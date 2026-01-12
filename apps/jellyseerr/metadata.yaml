@@ -1,0 +1,31 @@
+name: jellyseerr
+displayName: Jellyseerr
+description: Media request and discovery tool for Jellyfin
+category: media
+port: 5055
+image: fallenbagel/jellyseerr:latest
+
+integrations:
+  mediaServer:
+    required: true
+    multi: false
+    compatible:
+      - app: jellyfin
+  movieManager:
+    required: false
+    multi: false
+    compatible:
+      - app: radarr
+  tvManager:
+    required: false
+    multi: false
+    compatible:
+      - app: sonarr
+
+sso:
+  strategy: forward-auth
+
+healthCheck:
+  path: /api/v1/status
+  interval: 5
+  timeout: 60

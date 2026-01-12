@@ -1,0 +1,26 @@
+name: prowlarr
+displayName: Prowlarr
+description: Indexer manager for Radarr, Sonarr, and other *arr apps
+category: media
+port: 9696
+image: linuxserver/prowlarr:latest
+
+integrations:
+  movieManager:
+    required: false
+    multi: false
+    compatible:
+      - app: radarr
+  tvManager:
+    required: false
+    multi: false
+    compatible:
+      - app: sonarr
+
+sso:
+  strategy: forward-auth
+
+healthCheck:
+  path: /api/v1/health
+  interval: 5
+  timeout: 60

@@ -1,0 +1,20 @@
+{
+  "name": "@bloud/integration-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "../scripts/run-integration-tests",
+    "test:keep": "KEEP_TEST_VM=true ../scripts/run-integration-tests",
+    "test:headed": "KEEP_TEST_VM=true ../scripts/run-integration-tests --headed",
+    "test:debug": "KEEP_TEST_VM=true ../scripts/run-integration-tests --debug",
+    "test:ui": "KEEP_TEST_VM=true ../scripts/run-integration-tests --ui",
+    "report": "playwright show-report",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

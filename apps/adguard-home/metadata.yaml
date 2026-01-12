@@ -1,0 +1,21 @@
+name: adguard-home
+displayName: AdGuard Home
+description: Network-wide ad and tracker blocking DNS server
+category: security
+port: 3080
+
+image: adguard/adguardhome:latest
+integrations: {}
+
+healthCheck:
+  path: /
+  interval: 2
+  timeout: 60
+
+# SSO via Authentik forward auth (app doesn't support native OIDC)
+sso:
+  strategy: forward-auth
+
+# AdGuard Home uses absolute paths for redirects and doesn't support BASE_URL
+# URL rewriting is handled by the service worker (embed-sw.js)
+# See CLAUDE.md "Embedded App Routing Architecture" for details

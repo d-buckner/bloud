@@ -1,0 +1,78 @@
+# Lima configuration for NixOS test VM
+#
+# NOTE: This is a template. The lima/test script generates the actual config
+# by substituting __PROJECT_ROOT__ with the actual path.
+#
+# Test ports:
+#   - 3001: Go API (instead of 3000)
+#   - 5174: Vite (instead of 5173)
+#   - 8081: Traefik (instead of 8080)
+#
+
+# VM resources
+# Note: disk must be >= 15GB for NixOS + Authentik + other container images
+cpus: 4
+memory: 4GiB
+disk: 15GiB
+
+# Architecture (auto-detected: aarch64 for Apple Silicon, x86_64 for Intel)
+arch: default
+
+# Use QEMU instead of VZ for better NixOS compatibility
+vmType: "qemu"
+
+# Disable timezone to prevent lima-init from creating invalid mount
+timezone: ""
+
+# NixOS image (always from main repo - gitignored so not in worktrees)
+images:
+  - location: "__BLOUD_MAIN_REPO__/lima/imgs/nixos-24.11-lima.img"
+    arch: "aarch64"
+
+# Mount the project directory into the VM
+# For worktree support, mount at the original host path so git references resolve
+mounts:
+  # Mount the bloud project at its original path (for git worktree compatibility)
+  - location: "__PROJECT_ROOT__"
+    mountPoint: "__PROJECT_ROOT__"
+    writable: true
+    9p:
+      cache: "mmap"
+
+  # Mount main repo's .git for worktree support (worktrees reference the parent .git)
+  - location: "__BLOUD_MAIN_REPO__/.git"
+    mountPoint: "__BLOUD_MAIN_REPO__/.git"
+    writable: false
+    9p:
+      cache: "mmap"
+
+  # Writable temp directory (separate from dev VM)
+  - location: "/tmp/lima-test"
+    mountPoint: "/tmp/lima"
+    writable: true
+    9p:
+      cache: "mmap"
+
+# Port forwarding - test ports (different from dev VM)
+portForwards:
+  # Svelte dev server (HMR) - test port
+  - guestPort: 5174
+    hostPort: 5174
+
+  # Go backend (host-agent API) - test port
+  - guestPort: 3001
+    hostPort: 3001
+
+  # Traefik - test port
+  - guestPort: 8081
+    hostPort: 8081
+
+# Disable containerd (we use podman)
+containerd:
+  system: false
+  user: false
+
+# SSH configuration
+ssh:
+  localPort: 0  # Auto-assign
+  forwardAgent: true

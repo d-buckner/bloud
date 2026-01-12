@@ -1,0 +1,17 @@
+name: qbittorrent
+displayName: qBittorrent
+description: Feature-rich BitTorrent client with web UI
+category: media
+port: 8086
+image: linuxserver/qbittorrent:latest
+
+integrations: {}
+
+# SSO via Authentik forward auth (app doesn't support native OIDC)
+sso:
+  strategy: forward-auth
+
+healthCheck:
+  path: /
+  interval: 5
+  timeout: 60

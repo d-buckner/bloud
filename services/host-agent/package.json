@@ -1,0 +1,9 @@
+{
+  "name": "@bloud/host-agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "go run ./cmd/host-agent",
+    "build": "go build -o bin/host-agent ./cmd/host-agent"
+  }
+}

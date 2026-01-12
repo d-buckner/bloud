@@ -1,0 +1,63 @@
+name: actual-budget
+displayName: Actual Budget
+description: Privacy-focused personal budgeting app with optional sync
+category: productivity
+port: 5006
+
+image: actualbudget/actual-server:latest
+
+integrations:
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# SSO configuration for native OIDC support
+sso:
+  strategy: native-oidc
+  callbackPath: /openid/callback
+  providerName: Bloud SSO
+  userCreation: true
+  env:
+    clientId: ACTUAL_OPENID_CLIENT_ID
+    clientSecret: ACTUAL_OPENID_CLIENT_SECRET
+    discoveryUrl: ACTUAL_OPENID_DISCOVERY_URL
+    # Note: Actual Budget uses ACTUAL_OPENID_SERVER_HOSTNAME instead of redirect URL
+
+healthCheck:
+  path: /
+  interval: 5
+  timeout: 60
+
+# Custom headers for WebAssembly (SharedArrayBuffer requires COOP/COEP)
+# Using 'credentialless' instead of 'require-corp' - it enables SharedArrayBuffer
+# while being more permissive with cross-origin resources (no CORP header required)
+routing:
+  headers:
+    Cross-Origin-Opener-Policy: same-origin
+    Cross-Origin-Embedder-Policy: credentialless
+  # OAuth callback route at root level - Actual Budget builds redirect_uri as host:port/openid/callback
+  # (ACTUAL_OPENID_SERVER_HOSTNAME only affects the server URL, not the callback path)
+  absolutePaths:
+    - rule: "PathPrefix(`/openid`)"
+      priority: 90
+      headers:
+        X-Frame-Options: ""
+        Content-Security-Policy: "frame-ancestors 'self' http://localhost:* https://localhost:*"
+        Cross-Origin-Embedder-Policy: "credentialless"
+        Cross-Origin-Resource-Policy: "cross-origin"
+
+# Client-side pre-configuration before app loads in iframe
+# Sets server URL in IndexedDB so the app knows where to sync
+bootstrap:
+  indexedDB:
+    database: actual
+    entries:
+      - store: asyncStorage
+        key: server-url
+        value: "{{embedUrl}}"
+      - store: asyncStorage
+        key: theme
+        value: "light"

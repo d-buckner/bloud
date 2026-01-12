@@ -1,0 +1,15 @@
+name: redis
+displayName: Redis
+description: In-memory data structure store for caching and messaging
+category: infrastructure
+port: 6379
+isSystem: true
+
+image: redis:alpine
+
+healthCheck:
+  path: ""
+  interval: 2
+  timeout: 30
+
+integrations: {}

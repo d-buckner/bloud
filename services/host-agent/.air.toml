@@ -1,0 +1,41 @@
+# Air configuration for Go hot reload in Lima VM
+# https://github.com/air-verse/air
+
+root = "."
+tmp_dir = "/tmp/air"
+
+[build]
+# Main entry point
+cmd = "go build -o /tmp/air/host-agent ./cmd/host-agent"
+# Binary to run
+bin = "/tmp/air/host-agent"
+# Watch these extensions
+include_ext = ["go", "yaml"]
+# Exclude directories
+exclude_dir = ["web", "vendor", ".git"]
+# Exclude files
+exclude_file = []
+# Delay before rebuild (ms)
+delay = 1000
+# Kill old process before starting new one
+kill_delay = "1s"
+# Use polling instead of inotify (required for 9p mounts)
+poll = true
+poll_interval = 1000
+
+[log]
+# Show log time
+time = false
+# Only main log
+main_only = false
+
+[color]
+# Customize colors
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+[misc]
+# Delete tmp dir on exit
+clean_on_exit = true

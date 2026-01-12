@@ -1,0 +1,25 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/tmp
+/host-agent
+
+# Test binary
+*.test
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Frontend build output
+web/build/
+web/node_modules/
+web/.svelte-kit/

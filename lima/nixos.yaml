@@ -1,0 +1,103 @@
+# Lima configuration for NixOS development VM
+#
+# SETUP INSTRUCTIONS:
+#
+# 1. Build the NixOS image (requires a Linux machine or VM):
+#    nix build github:kasuboski/nixos-lima#packages.aarch64-linux.img
+#    mkdir -p lima/imgs
+#    cp $(readlink result)/nixos.img lima/imgs/nixos-aarch64.img
+#
+# 2. Start the VM:
+#    limactl start --name=bloud lima/nixos.yaml
+#
+# 3. SSH into the VM and apply our configuration:
+#    limactl shell bloud
+#    sudo nixos-rebuild switch --flake /home/bloud.linux/bloud-v3#vm-dev
+#
+# 4. The VM is now running with full bloud services.
+#
+
+# VM resources
+cpus: 4
+memory: 4GiB
+disk: 50GiB
+
+# Architecture (auto-detected: aarch64 for Apple Silicon, x86_64 for Intel)
+arch: default
+
+# Use QEMU instead of VZ for better NixOS compatibility
+vmType: "qemu"
+
+# Disable timezone to prevent lima-init from creating invalid mount
+timezone: ""
+
+# NixOS image (built with nixos-generators from NixOS 24.11, includes lima-init)
+images:
+  - location: "~/Projects/bloud-v3/lima/imgs/nixos-24.11-lima.img"
+    arch: "aarch64"
+
+# Mount the project directory into the VM
+mounts:
+  # Mount the bloud project (writable for development)
+  - location: "~/Projects/bloud-v3"
+    mountPoint: "/home/bloud.linux/bloud-v3"
+    writable: true
+    9p:
+      cache: "mmap"
+
+  # Writable temp directory
+  - location: "/tmp/lima"
+    mountPoint: "/tmp/lima"
+    writable: true
+    9p:
+      cache: "mmap"
+
+# Port forwarding - expose all bloud services on localhost
+portForwards:
+  # Svelte dev server (HMR)
+  - guestPort: 5173
+    hostPort: 5173
+
+  # Go backend (host-agent API)
+  - guestPort: 3000
+    hostPort: 3000
+
+  # Dev server (for remote rebuilds)
+  - guestPort: 9999
+    hostPort: 9999
+
+  # Traefik
+  - guestPort: 8080
+    hostPort: 8080
+  - guestPort: 8081
+    hostPort: 8081
+  - guestPort: 8082
+    hostPort: 8082
+
+  # Miniflux (direct)
+  - guestPort: 8085
+    hostPort: 8085
+
+  # Authentik
+  - guestPort: 9001
+    hostPort: 9001
+  - guestPort: 9443
+    hostPort: 9443
+
+  # Actual Budget (direct)
+  - guestPort: 5006
+    hostPort: 5006
+
+  # Host agent
+  - guestPort: 8088
+    hostPort: 8088
+
+# Disable containerd (we use podman)
+containerd:
+  system: false
+  user: false
+
+# SSH configuration
+ssh:
+  localPort: 0  # Auto-assign
+  forwardAgent: true

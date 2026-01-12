@@ -1,0 +1,31 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["build/**", "dist/**", ".svelte-kit/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "test": {
+      "dependsOn": ["^test"]
+    },
+    "test:go": {
+      "cache": false
+    },
+    "test:nix": {
+      "cache": false
+    },
+    "//#test:go": {
+      "cache": false
+    },
+    "//#test:nix": {
+      "cache": false
+    }
+  }
+}

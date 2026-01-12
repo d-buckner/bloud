@@ -1,0 +1,466 @@
+#!/bin/bash
+# Lima VM management script for integration testing
+#
+# This script manages a SEPARATE test VM that runs on different ports
+# from the dev VM, allowing tests to run in parallel with development.
+#
+# Test ports:
+#   - 3001: Go API (instead of 3000)
+#   - 5174: Vite (instead of 5173)
+#   - 8081: Traefik (instead of 8080)
+#
+# Usage:
+#   ./lima/test vm-create   - Create fresh test VM (deletes existing)
+#   ./lima/test vm-destroy  - Destroy test VM completely
+#   ./lima/test start       - Start test services
+#   ./lima/test stop        - Stop test services
+#   ./lima/test status      - Show test VM status
+#   ./lima/test shell       - Interactive shell in test VM
+#   ./lima/test rebuild     - Rebuild NixOS config
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VM_NAME="bloud-test"
+VM_USER="bloud"
+VM_PASSWORD="bloud"
+# Mount at original host path for git worktree compatibility
+PROJECT_IN_VM="$PROJECT_ROOT"
+TMUX_SESSION="bloud-test"
+
+# Generate Lima config from template with project root substituted
+# This allows the config to work across different worktrees
+generate_lima_config() {
+    log "Generating Lima config for: $PROJECT_ROOT"
+
+    # The main repo is where the NixOS image lives (it's gitignored, so not in worktrees)
+    # Default to ~/Projects/bloud-v3 but allow override via BLOUD_MAIN_REPO
+    local main_repo="${BLOUD_MAIN_REPO:-$HOME/Projects/bloud-v3}"
+
+    sed -e "s|__PROJECT_ROOT__|${PROJECT_ROOT}|g" \
+        -e "s|__BLOUD_MAIN_REPO__|${main_repo}|g" \
+        "$SCRIPT_DIR/test-nixos.yaml.template" > "$SCRIPT_DIR/test-nixos.yaml"
+}
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log() { echo -e "${GREEN}==>${NC} $1"; }
+warn() { echo -e "${YELLOW}Warning:${NC} $1"; }
+error() { echo -e "${RED}Error:${NC} $1"; exit 1; }
+
+# Check if VM is running
+check_vm() {
+    if ! limactl list 2>/dev/null | grep -q "$VM_NAME.*Running"; then
+        error "Test VM '$VM_NAME' is not running. Create it with: ./lima/test vm-create"
+    fi
+}
+
+# Wait for SSH to be ready using sshpass
+wait_for_ssh() {
+    local max_attempts=150  # 5 minutes (150 * 2s)
+    local attempt=1
+
+    while [ $attempt -le $max_attempts ]; do
+        local ssh_port
+        ssh_port=$(get_ssh_port 2>/dev/null)
+
+        if [ -n "$ssh_port" ] && [ "$ssh_port" != "null" ] && [ "$ssh_port" != "0" ]; then
+            if sshpass -p "$VM_PASSWORD" ssh \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o PreferredAuthentications=password \
+                -o PubkeyAuthentication=no \
+                -o LogLevel=ERROR \
+                -o ConnectTimeout=2 \
+                -p "$ssh_port" \
+                "$VM_USER@127.0.0.1" \
+                "true" 2>/dev/null; then
+                return 0
+            fi
+        fi
+
+        echo -ne "\r  Waiting for SSH... ($attempt/$max_attempts)"
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+
+    echo ""
+    return 1
+}
+
+# Get SSH port
+get_ssh_port() {
+    limactl list --format json 2>/dev/null | jq -r "select(.name==\"$VM_NAME\") | .sshLocalPort" | head -1
+}
+
+# Run command in VM
+vm_exec() {
+    local ssh_port
+    ssh_port=$(get_ssh_port)
+
+    if [ -z "$ssh_port" ] || [ "$ssh_port" = "null" ]; then
+        error "Could not determine SSH port for test VM"
+    fi
+
+    sshpass -p "$VM_PASSWORD" ssh \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o PreferredAuthentications=password \
+        -o PubkeyAuthentication=no \
+        -o LogLevel=ERROR \
+        -p "$ssh_port" \
+        "$VM_USER@127.0.0.1" \
+        "$@"
+}
+
+# Interactive SSH to VM
+vm_ssh() {
+    local ssh_port
+    ssh_port=$(get_ssh_port)
+
+    if [ -z "$ssh_port" ] || [ "$ssh_port" = "null" ]; then
+        error "Could not determine SSH port for test VM"
+    fi
+
+    sshpass -p "$VM_PASSWORD" ssh \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o PreferredAuthentications=password \
+        -o PubkeyAuthentication=no \
+        -o LogLevel=ERROR \
+        -t \
+        -p "$ssh_port" \
+        "$VM_USER@127.0.0.1" \
+        "$@"
+}
+
+# Create fresh test VM (deletes existing)
+cmd_vm_create() {
+    # Generate Lima config from template with correct paths for this worktree
+    generate_lima_config
+
+    # Create temp directory for test VM if it doesn't exist
+    mkdir -p /tmp/lima-test
+
+    # Stop and delete existing VM if it exists
+    if limactl list 2>/dev/null | grep -q "$VM_NAME"; then
+        log "Removing existing test VM..."
+        limactl stop "$VM_NAME" 2>/dev/null || true
+        limactl delete "$VM_NAME" --force 2>/dev/null || true
+    fi
+
+    log "Creating fresh test VM '$VM_NAME'..."
+    limactl start --name="$VM_NAME" "$SCRIPT_DIR/test-nixos.yaml" --tty=false &
+    local lima_pid=$!
+
+    # Wait for our password-based SSH to work
+    log "Waiting for test VM to boot..."
+    sleep 5  # Give QEMU time to start
+
+    if wait_for_ssh; then
+        echo ""
+        log "Test VM created successfully"
+
+        # Kill the limactl process if still waiting
+        kill $lima_pid 2>/dev/null || true
+
+        # Create mount directories and mount 9p filesystems
+        local main_repo="${BLOUD_MAIN_REPO:-$HOME/Projects/bloud-v3}"
+        log "Mounting shared directories..."
+        vm_exec "sudo mkdir -p ${PROJECT_ROOT} ${main_repo}/.git /tmp/lima"
+        vm_exec "sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=none,access=any mount0 ${PROJECT_ROOT} 2>/dev/null || true"
+        vm_exec "sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=none,ro,access=any mount1 ${main_repo}/.git 2>/dev/null || true"
+        vm_exec "sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=none,access=any mount2 /tmp/lima 2>/dev/null || true"
+
+        # Fix git safe.directory for mounted filesystem
+        # Add both the project root and main repo paths, plus wildcard for safety
+        vm_exec "sudo git config --system --add safe.directory '*'"
+        vm_exec "sudo git config --system --add safe.directory '${PROJECT_ROOT}'"
+        vm_exec "sudo git config --system --add safe.directory '${main_repo}'"
+
+        # Apply NixOS configuration
+        log "Applying NixOS configuration..."
+        vm_exec "sudo nixos-rebuild switch --flake $PROJECT_IN_VM#vm-test --impure"
+
+        # Fix home directory ownership (NixOS creates .local owned by root)
+        vm_exec "sudo chown -R bloud:users /home/bloud/.local"
+
+        echo ""
+        echo "Test VM is ready!"
+        echo "  ./lima/test start    # Start test services"
+    else
+        echo ""
+        error "Test VM failed to start (SSH not available after 2 minutes)"
+    fi
+}
+
+# Destroy test VM completely
+cmd_vm_destroy() {
+    log "Destroying test VM '$VM_NAME'..."
+
+    # Kill port forwarding first
+    pkill -f "ssh.*-L 3001:localhost:3001.*bloud@" 2>/dev/null || true
+
+    # Stop and delete VM if it exists
+    if limactl list 2>/dev/null | grep -q "$VM_NAME"; then
+        limactl stop "$VM_NAME" 2>/dev/null || true
+        limactl delete "$VM_NAME" --force 2>/dev/null || true
+    fi
+
+    # Clean up host temp directory
+    if [ -d "/tmp/lima-test" ]; then
+        log "Cleaning up /tmp/lima-test..."
+        rm -rf /tmp/lima-test
+    fi
+
+    log "Test VM destroyed"
+}
+
+start_port_forwarding() {
+    local ssh_port
+    ssh_port=$(get_ssh_port)
+
+    # Run SSH port forwarding in background - TEST PORTS
+    sshpass -p "$VM_PASSWORD" ssh \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o PreferredAuthentications=password \
+        -o PubkeyAuthentication=no \
+        -o LogLevel=ERROR \
+        -o ServerAliveInterval=60 \
+        -o ExitOnForwardFailure=yes \
+        -N \
+        -L 3001:localhost:3001 \
+        -L 5174:localhost:5174 \
+        -L 8081:localhost:8081 \
+        -p "$ssh_port" \
+        "$VM_USER@127.0.0.1" &
+}
+
+cmd_start() {
+    check_vm
+
+    # Start port forwarding in background if not already running
+    if ! pgrep -f "ssh.*-L 3001:localhost:3001.*bloud@" >/dev/null 2>&1; then
+        log "Starting port forwarding (test ports)..."
+        start_port_forwarding &
+        sleep 2
+    else
+        log "Port forwarding already running"
+    fi
+
+    log "Starting test services..."
+    vm_exec "bash $PROJECT_IN_VM/lima/start-test.sh '$PROJECT_IN_VM'"
+}
+
+cmd_stop() {
+    check_vm
+    log "Stopping test services..."
+
+    # Kill tmux session in VM
+    vm_exec "tmux kill-session -t $TMUX_SESSION 2>/dev/null || true"
+
+    # Also kill any stray processes
+    vm_exec 'pkill -f "air" 2>/dev/null || true; pkill -f "vite" 2>/dev/null || true'
+
+    # Kill port forwarding
+    pkill -f "ssh.*-L 3001:localhost:3001.*bloud@" 2>/dev/null || true
+    log "Test services stopped"
+}
+
+cmd_attach() {
+    check_vm
+
+    # Check if tmux session exists
+    if ! vm_exec "tmux has-session -t $TMUX_SESSION 2>/dev/null"; then
+        error "Test services not running. Start with: ./lima/test start"
+    fi
+
+    log "Attaching to test session (Ctrl-B D to detach)..."
+    vm_ssh "tmux attach -t $TMUX_SESSION"
+}
+
+cmd_logs() {
+    check_vm
+
+    # Check if tmux session exists
+    if ! vm_exec "tmux has-session -t $TMUX_SESSION 2>/dev/null"; then
+        error "Test services not running. Start with: ./lima/test start"
+    fi
+
+    log "Capturing output from test tmux..."
+    echo ""
+    echo -e "${CYAN}=== Go API (port 3001) ===${NC}"
+    vm_exec "tmux capture-pane -t $TMUX_SESSION:test.0 -p -S -50" 2>/dev/null || true
+    echo ""
+    echo -e "${CYAN}=== Vite (port 5174) ===${NC}"
+    vm_exec "tmux capture-pane -t $TMUX_SESSION:test.1 -p -S -50" 2>/dev/null || true
+}
+
+cmd_status() {
+    echo ""
+    log "Test VM Status"
+    echo ""
+
+    # Check if VM exists
+    if ! limactl list 2>/dev/null | grep -q "$VM_NAME"; then
+        echo -e "  VM:           ${RED}Not created${NC}"
+        echo ""
+        echo "  Run './lima/test vm-create' to create the test VM"
+        return
+    fi
+
+    # Check if VM is running
+    if ! limactl list 2>/dev/null | grep -q "$VM_NAME.*Running"; then
+        echo -e "  VM:           ${YELLOW}Stopped${NC}"
+        echo ""
+        echo "  Run './lima/test vm-create' to start fresh"
+        return
+    fi
+
+    echo -e "  VM:           ${GREEN}Running${NC}"
+
+    # Check if tmux session is running
+    if vm_exec "tmux has-session -t $TMUX_SESSION 2>/dev/null"; then
+        echo -e "  Tmux Session: ${GREEN}Running${NC}"
+    else
+        echo -e "  Tmux Session: ${RED}Not running${NC}"
+        echo ""
+        echo "  Run './lima/test start' to start test services"
+        return
+    fi
+
+    # Check host-agent on test port
+    if vm_exec 'curl -s http://localhost:3001/api/health 2>/dev/null' | grep -q "ok"; then
+        echo -e "  Host Agent:   ${GREEN}Running${NC} (http://localhost:3001)"
+    else
+        echo -e "  Host Agent:   ${YELLOW}Starting...${NC}"
+    fi
+
+    # Check web (via Traefik on test port)
+    if vm_exec 'curl -s http://localhost:8081 2>/dev/null' | grep -q "html"; then
+        echo -e "  Web UI:       ${GREEN}Running${NC} (http://localhost:8081)"
+    else
+        echo -e "  Web UI:       ${YELLOW}Starting...${NC}"
+    fi
+
+    # Check port forwarding
+    if pgrep -f "ssh.*-L 3001:localhost:3001.*bloud@" >/dev/null 2>&1; then
+        echo -e "  Port Forward: ${GREEN}Active${NC}"
+    else
+        echo -e "  Port Forward: ${RED}Not running${NC}"
+    fi
+
+    echo ""
+}
+
+cmd_shell() {
+    check_vm
+    if [ $# -gt 0 ]; then
+        # Run command if provided
+        vm_exec "$@"
+    else
+        # Interactive shell
+        vm_ssh bash
+    fi
+}
+
+cmd_rebuild() {
+    check_vm
+    log "Rebuilding NixOS configuration for test VM..."
+    vm_exec "sudo nixos-rebuild switch --flake $PROJECT_IN_VM#vm-test --impure"
+}
+
+cmd_ports() {
+    check_vm
+    local ssh_port
+    ssh_port=$(get_ssh_port)
+
+    log "Starting SSH port forwarding (test ports)..."
+    echo ""
+    echo "Forwarding TEST ports:"
+    echo "  3001 -> Host Agent API (test)"
+    echo "  5174 -> Web Dev Server (test)"
+    echo "  8081 -> Traefik (test)"
+    echo ""
+    echo "Press Ctrl+C to stop port forwarding"
+    echo ""
+
+    exec sshpass -p "$VM_PASSWORD" ssh \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o PreferredAuthentications=password \
+        -o PubkeyAuthentication=no \
+        -o LogLevel=ERROR \
+        -N \
+        -L 3001:localhost:3001 \
+        -L 5174:localhost:5174 \
+        -L 8081:localhost:8081 \
+        -p "$ssh_port" \
+        "$VM_USER@127.0.0.1"
+}
+
+cmd_help() {
+    echo "Bloud Lima Test VM Management"
+    echo ""
+    echo "Usage: ./lima/test <command> [args]"
+    echo ""
+    echo "This manages a SEPARATE test VM that runs on different ports"
+    echo "from the dev VM, allowing tests to run in parallel."
+    echo ""
+    echo "Test Ports:"
+    echo "  3001 - Go API (dev: 3000)"
+    echo "  5174 - Vite (dev: 5173)"
+    echo "  8081 - Traefik (dev: 8080)"
+    echo ""
+    echo "VM Commands:"
+    echo "  vm-create       Create fresh test VM (deletes existing)"
+    echo "  vm-destroy      Destroy test VM completely"
+    echo ""
+    echo "Service Commands:"
+    echo "  start           Start test services (Go + Vite)"
+    echo "  stop            Stop test services"
+    echo "  status          Show test VM and service status"
+    echo "  attach          Attach to tmux session (Ctrl-B D to detach)"
+    echo "  logs            Show recent output from servers"
+    echo ""
+    echo "Other Commands:"
+    echo "  shell [cmd]     Interactive shell in test VM (or run command)"
+    echo "  rebuild         Rebuild NixOS config"
+    echo "  ports           Start SSH port forwarding"
+    echo ""
+    echo "Typical test workflow:"
+    echo "  1. ./lima/test vm-create   # Create fresh test VM"
+    echo "  2. ./lima/test start       # Start test services"
+    echo "  3. npm test                # Run integration tests"
+    echo "  4. ./lima/test vm-destroy  # Clean up"
+    echo ""
+}
+
+# Check for sshpass
+if ! command -v sshpass &>/dev/null; then
+    echo "Installing sshpass..."
+    brew install hudochenkov/sshpass/sshpass
+fi
+
+# Main
+case "${1:-help}" in
+    vm-create)   cmd_vm_create ;;
+    vm-destroy)  cmd_vm_destroy ;;
+    start)       cmd_start ;;
+    stop)        cmd_stop ;;
+    attach)      cmd_attach ;;
+    logs)        cmd_logs ;;
+    status)      cmd_status ;;
+    shell)       shift; cmd_shell "$@" ;;
+    rebuild)     cmd_rebuild ;;
+    ports)       cmd_ports ;;
+    help|--help|-h) cmd_help ;;
+    *)           error "Unknown command: $1. Run './lima/test help' for usage." ;;
+esac

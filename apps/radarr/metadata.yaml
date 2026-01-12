@@ -1,0 +1,22 @@
+name: radarr
+displayName: Radarr
+description: Movie collection manager and downloader
+category: media
+port: 7878
+image: linuxserver/radarr:latest
+
+integrations:
+  downloadClient:
+    required: true
+    multi: false
+    compatible:
+      - app: qbittorrent
+        default: true
+
+sso:
+  strategy: forward-auth
+
+healthCheck:
+  path: /api/v3/system/status
+  interval: 5
+  timeout: 60

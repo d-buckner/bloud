@@ -1,0 +1,128 @@
+#!/bin/bash
+# Run integration tests in a fresh, isolated test VM
+#
+# This script handles the full test lifecycle:
+#   1. Creates a fresh test VM (destroys existing)
+#   2. Starts test services on ports 3001/5174/8081
+#   3. Runs Playwright tests
+#   4. Destroys the test VM (unless KEEP_TEST_VM=true)
+#
+# Usage:
+#   ./scripts/run-integration-tests              # Full test run
+#   KEEP_TEST_VM=true ./scripts/run-integration-tests  # Keep VM for debugging
+#
+# This can run in parallel with ./lima/dev (dev uses ports 3000/5173/8080)
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LIMA_TEST="$PROJECT_ROOT/lima/test"
+INTEGRATION_DIR="$PROJECT_ROOT/integration"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log() { echo -e "${GREEN}==>${NC} $1"; }
+warn() { echo -e "${YELLOW}Warning:${NC} $1"; }
+error() { echo -e "${RED}Error:${NC} $1"; }
+header() { echo -e "\n${CYAN}━━━ $1 ━━━${NC}\n"; }
+
+# Track start time
+START_TIME=$(date +%s)
+
+# Cleanup function
+cleanup() {
+    local exit_code=$?
+
+    if [ "$KEEP_TEST_VM" = "true" ]; then
+        echo ""
+        log "Keeping test VM running (KEEP_TEST_VM=true)"
+        log "Test services available at:"
+        log "  Web UI: http://localhost:8081"
+        log "  API:    http://localhost:3001"
+        log ""
+        log "To destroy later: ./lima/test vm-destroy"
+    else
+        header "Cleanup"
+        log "Destroying test VM..."
+        "$LIMA_TEST" vm-destroy 2>/dev/null || true
+    fi
+
+    # Calculate duration
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    MINUTES=$((DURATION / 60))
+    SECONDS=$((DURATION % 60))
+
+    echo ""
+    if [ $exit_code -eq 0 ]; then
+        echo -e "${GREEN}━━━ Tests completed successfully in ${MINUTES}m ${SECONDS}s ━━━${NC}"
+    else
+        echo -e "${RED}━━━ Tests failed after ${MINUTES}m ${SECONDS}s ━━━${NC}"
+    fi
+
+    exit $exit_code
+}
+
+# Set up cleanup trap
+trap cleanup EXIT
+
+# Main execution
+header "Integration Tests"
+echo "Test ports: API=3001, Vite=5174, Traefik=8081"
+echo ""
+
+# Step 1: Create fresh test VM
+header "Creating Fresh Test VM"
+log "This may take a few minutes on first run..."
+"$LIMA_TEST" vm-create
+
+# Step 2: Start test services
+header "Starting Test Services"
+"$LIMA_TEST" start
+
+# Step 3: Wait for services to be ready
+header "Waiting for Services"
+
+wait_for_service() {
+    local name="$1"
+    local url="$2"
+    local max_attempts=30
+    local attempt=1
+
+    while [ $attempt -le $max_attempts ]; do
+        if curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null | grep -q "200\|301\|302"; then
+            log "$name is ready"
+            return 0
+        fi
+        echo -ne "\r  Waiting for $name... ($attempt/$max_attempts)"
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+
+    echo ""
+    error "$name failed to start"
+    return 1
+}
+
+wait_for_service "Go API" "http://localhost:3001/api/health"
+wait_for_service "Vite" "http://localhost:5174"
+wait_for_service "Traefik" "http://localhost:8081"
+
+echo ""
+log "All services ready!"
+
+# Step 4: Run tests
+header "Running Playwright Tests"
+cd "$INTEGRATION_DIR"
+
+# Run playwright without its own setup/teardown (we handle VM lifecycle)
+# Pass through any additional arguments
+SKIP_VM_LIFECYCLE=true npx playwright test "$@"
+
+# Exit code will be captured by trap
