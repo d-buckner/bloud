@@ -8,6 +8,7 @@
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
 	import { uninstallApp as doUninstallApp } from '$lib/stores/appActions';
 	import { openApp } from '$lib/stores/openApps';
+	import WidgetContainer from '$lib/widgets/WidgetContainer.svelte';
 
 
 	let uninstallAppName = $state<string | null>(null);
@@ -81,6 +82,7 @@
 </svelte:head>
 
 <div class="launcher">
+	<div class="launcher-content">
 		{#if !mounted || $loading}
 			<div class="app-grid">
 				{#each Array(8) as _}
@@ -131,6 +133,12 @@
 				{/each}
 			</div>
 		{/if}
+	</div>
+
+	<!-- Widgets Section -->
+	<section class="widgets">
+		<WidgetContainer />
+	</section>
 </div>
 
 <!-- Context Menu -->
@@ -162,10 +170,15 @@
 <style>
 	.launcher {
 		display: flex;
-		align-items: center;
-		justify-content: center;
+		flex-direction: column;
 		min-height: 100vh;
 		padding: var(--space-2xl);
+	}
+
+	.launcher-content {
+		display: flex;
+		justify-content: center;
+		padding-top: var(--space-3xl);
 	}
 
 	.app-grid {
@@ -397,13 +410,30 @@
 		background: var(--color-border);
 	}
 
+	/* Widgets Section */
+	.widgets {
+		margin-top: auto;
+		padding-top: var(--space-3xl);
+		width: 100%;
+		display: flex;
+		justify-content: center;
+	}
+
 	@media (max-width: 768px) {
 		.launcher {
 			padding: var(--space-xl);
 		}
 
+		.launcher-content {
+			padding-top: var(--space-2xl);
+		}
+
 		.app-grid {
 			gap: var(--space-lg) var(--space-md);
+		}
+
+		.widgets {
+			padding-top: var(--space-2xl);
 		}
 	}
 </style>

@@ -321,14 +321,16 @@ func (o *Orchestrator) recordInstallIntent(req InstallRequest, plan *catalog.Ins
 		}
 	}
 
-	// Record the main app with port and isSystem from catalog
+	// Record the main app with port, isSystem, and displayName from catalog
 	mainApp, _ := o.catalogCache.Get(req.App)
 	opts := &store.InstallOptions{}
+	displayName := req.App // fallback to internal name
 	if mainApp != nil {
 		opts.Port = mainApp.Port
 		opts.IsSystem = mainApp.IsSystem
+		displayName = mainApp.DisplayName
 	}
-	if err := o.appStore.Install(req.App, req.App, "", integrationConfig, opts); err != nil {
+	if err := o.appStore.Install(req.App, displayName, "", integrationConfig, opts); err != nil {
 		return err
 	}
 
@@ -340,14 +342,16 @@ func (o *Orchestrator) recordInstallIntent(req InstallRequest, plan *catalog.Ins
 			return err // Real error
 		}
 		if existing == nil {
-			// Not installed yet, record it with port/isSystem from catalog
+			// Not installed yet, record it with port/isSystem/displayName from catalog
 			depApp, _ := o.catalogCache.Get(source)
 			depOpts := &store.InstallOptions{}
+			depDisplayName := source // fallback to internal name
 			if depApp != nil {
 				depOpts.Port = depApp.Port
 				depOpts.IsSystem = depApp.IsSystem
+				depDisplayName = depApp.DisplayName
 			}
-			if err := o.appStore.Install(source, source, "", nil, depOpts); err != nil {
+			if err := o.appStore.Install(source, depDisplayName, "", nil, depOpts); err != nil {
 				return err
 			}
 		}
@@ -636,25 +640,47 @@ func (o *Orchestrator) waitForHealthy(appName string) {
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	o.logger.Debug("polling health check", "app", appName, "url", url, "timeout", timeout)
+	o.logger.Info("polling health check", "app", appName, "url", url, "timeout", timeout, "interval", interval)
 
+	attempts := 0
+	var lastErr error
+	var lastStatus int
 	for time.Now().Before(deadline) {
+		attempts++
 		resp, err := client.Get(url)
-		if err == nil {
+		if err != nil {
+			lastErr = err
+			lastStatus = 0
+			o.logger.Debug("health check attempt failed",
+				"app", appName,
+				"attempt", attempts,
+				"error", err)
+		} else {
+			lastStatus = resp.StatusCode
+			lastErr = nil
 			resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-				o.logger.Info("health check passed", "app", appName, "status", resp.StatusCode)
+				o.logger.Info("health check passed", "app", appName, "status", resp.StatusCode, "attempts", attempts)
 				o.appStore.UpdateStatus(appName, "running")
 				// Ensure forward-auth providers are in the embedded outpost
 				// (async call to avoid blocking health check completion)
 				go o.ensureForwardAuthOutpostAssociation()
 				return
 			}
+			o.logger.Debug("health check got non-success status",
+				"app", appName,
+				"attempt", attempts,
+				"status", resp.StatusCode)
 		}
 		time.Sleep(interval)
 	}
 
-	o.logger.Warn("health check timed out", "app", appName)
+	o.logger.Warn("health check timed out",
+		"app", appName,
+		"attempts", attempts,
+		"lastError", lastErr,
+		"lastStatus", lastStatus,
+		"url", url)
 	o.appStore.UpdateStatus(appName, "error")
 }
 
@@ -798,9 +824,37 @@ func (o *Orchestrator) ensureForwardAuthOutpostAssociation() {
 	}
 }
 
+// systemAppInfo contains metadata for NixOS-managed system apps
+type systemAppInfo struct {
+	name        string
+	displayName string
+	port        int
+	serviceName string
+}
+
+// systemApps defines the NixOS-managed system apps
+// These apps have their own service names (not podman-{appName}.service)
+var systemApps = []systemAppInfo{
+	{"authentik", "Authentik", 9001, "podman-authentik-server.service"},
+	{"traefik", "Traefik", 8080, "podman-traefik.service"},
+	{"postgres", "PostgreSQL", 5432, "podman-postgres.service"},
+	{"redis", "Redis", 6379, "podman-redis.service"},
+}
+
+// getSystemdServiceName returns the systemd service name for an app
+func getSystemdServiceName(appName string) string {
+	for _, app := range systemApps {
+		if app.name == appName {
+			return app.serviceName
+		}
+	}
+	// Regular apps use podman-{appName}.service
+	return fmt.Sprintf("podman-%s.service", appName)
+}
+
 // checkSystemdServiceActive checks if a systemd user service is active
 func (o *Orchestrator) checkSystemdServiceActive(appName string) bool {
-	serviceName := fmt.Sprintf("podman-%s.service", appName)
+	serviceName := getSystemdServiceName(appName)
 	cmd := exec.Command("systemctl", "--user", "is-active", serviceName)
 	output, err := cmd.Output()
 	if err != nil {
@@ -809,10 +863,35 @@ func (o *Orchestrator) checkSystemdServiceActive(appName string) bool {
 	return strings.TrimSpace(string(output)) == "active"
 }
 
+// ensureSystemAppsRegistered ensures NixOS-managed system apps are in the database
+// This is needed so that authentikEnabled detection works (it checks the app database)
+// NOTE: In future, this should be handled via systemd dependencies
+func (o *Orchestrator) ensureSystemAppsRegistered() {
+	for _, app := range systemApps {
+		// Check if the systemd service is active
+		cmd := exec.Command("systemctl", "--user", "is-active", app.serviceName)
+		output, err := cmd.Output()
+		if err != nil || strings.TrimSpace(string(output)) != "active" {
+			continue // Service not running, don't register
+		}
+
+		// Register the system app
+		if err := o.appStore.EnsureSystemApp(app.name, app.displayName, app.port); err != nil {
+			o.logger.Warn("failed to register system app", "app", app.name, "error", err)
+		} else {
+			o.logger.Info("registered system app", "app", app.name)
+		}
+	}
+}
+
 // ReconcileState synchronizes database state with actual system state
 // Called on server startup to recover from crashes or stale states
 func (o *Orchestrator) ReconcileState() {
 	o.logger.Info("reconciling app states with system")
+
+	// Ensure system apps (Authentik, Traefik, etc.) are registered first
+	// This enables proper authentikEnabled detection for SSO middleware
+	o.ensureSystemAppsRegistered()
 
 	apps, err := o.appStore.GetAll()
 	if err != nil {
@@ -820,7 +899,16 @@ func (o *Orchestrator) ReconcileState() {
 		return
 	}
 
+	o.logger.Info("reconciling apps", "count", len(apps))
+
 	for _, app := range apps {
+		serviceName := getSystemdServiceName(app.Name)
+		o.logger.Debug("reconciling app",
+			"app", app.Name,
+			"status", app.Status,
+			"isSystem", app.IsSystem,
+			"serviceName", serviceName)
+
 		switch app.Status {
 		case "installing":
 			// Server crashed mid-install - mark as error
@@ -835,18 +923,36 @@ func (o *Orchestrator) ReconcileState() {
 
 		case "running":
 			// Verify service is actually running
-			if !o.checkSystemdServiceActive(app.Name) {
-				o.logger.Warn("app marked running but service not active", "app", app.Name)
+			serviceActive := o.checkSystemdServiceActive(app.Name)
+			o.logger.Debug("checking running app service",
+				"app", app.Name,
+				"serviceName", serviceName,
+				"serviceActive", serviceActive)
+			if !serviceActive {
+				o.logger.Warn("app marked running but service not active",
+					"app", app.Name,
+					"serviceName", serviceName)
 				// Try to restart health check - service might be starting
 				o.appStore.UpdateStatus(app.Name, "starting")
 				go o.waitForHealthy(app.Name)
+			} else {
+				o.logger.Debug("app service is active, keeping running status", "app", app.Name)
 			}
 
 		case "uninstalling":
 			// Server crashed mid-uninstall - mark as error
 			o.logger.Warn("found app stuck in uninstalling state", "app", app.Name)
 			o.appStore.UpdateStatus(app.Name, "error")
+
+		case "error", "failed":
+			o.logger.Debug("app in error/failed state, will be checked by watchdog", "app", app.Name)
 		}
+	}
+
+	// Regenerate Traefik routes now that system apps are registered
+	// This ensures authentikEnabled=true and forward-auth middleware is generated
+	if err := o.RegenerateRoutes(); err != nil {
+		o.logger.Warn("failed to regenerate routes during reconciliation", "error", err)
 	}
 
 	// Ensure forward-auth providers are in the embedded outpost
@@ -941,19 +1047,35 @@ func (o *Orchestrator) checkForStuckStates(cfg StateWatchdogConfig) {
 
 		case "running":
 			// Periodically verify running apps are still healthy
-			if !o.checkSystemdServiceActive(app.Name) {
+			serviceName := getSystemdServiceName(app.Name)
+			serviceActive := o.checkSystemdServiceActive(app.Name)
+			if !serviceActive {
 				o.logger.Warn("watchdog: running app service not active",
-					"app", app.Name)
+					"app", app.Name,
+					"serviceName", serviceName)
 				o.appStore.UpdateStatus(app.Name, "error")
-			} else if !o.checkHealthOnce(app.Name) {
+			} else if !app.IsSystem && !o.checkHealthOnce(app.Name) {
+				// Skip health checks for system apps - they're NixOS-managed and may have
+				// different ports per environment. Service being active is sufficient.
 				o.logger.Warn("watchdog: running app health check failed",
-					"app", app.Name)
+					"app", app.Name,
+					"serviceName", serviceName)
 				o.appStore.UpdateStatus(app.Name, "error")
 			}
 
 		case "error", "failed":
 			// Check if errored apps have recovered
-			if o.checkSystemdServiceActive(app.Name) && o.checkHealthOnce(app.Name) {
+			serviceName := getSystemdServiceName(app.Name)
+			serviceActive := o.checkSystemdServiceActive(app.Name)
+			// Skip health checks for system apps
+			healthOk := app.IsSystem || o.checkHealthOnce(app.Name)
+			o.logger.Debug("watchdog: checking error/failed app recovery",
+				"app", app.Name,
+				"serviceName", serviceName,
+				"serviceActive", serviceActive,
+				"healthOk", healthOk,
+				"isSystem", app.IsSystem)
+			if serviceActive && healthOk {
 				o.logger.Info("watchdog: app recovered",
 					"app", app.Name)
 				o.appStore.UpdateStatus(app.Name, "running")
@@ -968,17 +1090,20 @@ func (o *Orchestrator) checkHealthOnce(appName string) bool {
 	app, err := o.catalogCache.Get(appName)
 	if err != nil || app == nil {
 		// Can't get app info, assume healthy
+		o.logger.Debug("checkHealthOnce: no catalog entry, assuming healthy", "app", appName)
 		return true
 	}
 
 	// No health check configured, assume healthy
 	if app.HealthCheck.Path == "" {
+		o.logger.Debug("checkHealthOnce: no health check path configured, assuming healthy", "app", appName)
 		return true
 	}
 
 	port := o.getAppPort(appName)
 	if port == 0 {
 		// No port, assume healthy
+		o.logger.Debug("checkHealthOnce: no port configured, assuming healthy", "app", appName)
 		return true
 	}
 
@@ -987,11 +1112,16 @@ func (o *Orchestrator) checkHealthOnce(appName string) bool {
 
 	resp, err := client.Get(url)
 	if err != nil {
+		o.logger.Debug("checkHealthOnce: request failed", "app", appName, "url", url, "error", err)
 		return false
 	}
 	defer resp.Body.Close()
 
 	// Accept 2xx, 3xx, and auth errors (401/403) as healthy
 	// Auth errors mean the service is running but requires authentication
-	return resp.StatusCode < 500
+	healthy := resp.StatusCode < 500
+	if !healthy {
+		o.logger.Debug("checkHealthOnce: unhealthy status", "app", appName, "url", url, "status", resp.StatusCode)
+	}
+	return healthy
 }

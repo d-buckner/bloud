@@ -14,6 +14,10 @@ mkBloudApp {
   network = "host";
   dataDir = "/data";
 
+  # Depend on Authentik when SSO is enabled
+  # The configurator's PreStart waits for the OpenID endpoint
+  dependsOn = lib.optionals authentikEnabled [ "authentik-server" ];
+
   options = {
     openidDiscoveryUrl = {
       default = "http://authentik-proxy/application/o/actual-budget/.well-known/openid-configuration";
@@ -36,5 +40,7 @@ mkBloudApp {
     ACTUAL_OPENID_CLIENT_ID = cfg.openidClientId;
     ACTUAL_OPENID_CLIENT_SECRET = cfg.openidClientSecret;
     ACTUAL_OPENID_SERVER_HOSTNAME = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/actual-budget";
+    # Skip Actual Budget's own login - use Authentik only
+    ACTUAL_OPENID_ENFORCE = "true";
   };
 }

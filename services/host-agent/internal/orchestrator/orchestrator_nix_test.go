@@ -79,7 +79,7 @@ func (t *testOrchestrator) setupSuccessfulInstall(appName string, app *catalog.A
 	t.generator.On("Preview", mock.Anything).Return("preview")
 	t.generator.On("Apply", mock.Anything).Return(nil)
 
-	t.appStore.On("Install", appName, appName, "", mock.Anything, mock.Anything).Return(nil)
+	t.appStore.On("Install", appName, app.DisplayName, "", mock.Anything, mock.Anything).Return(nil)
 	t.appStore.On("UpdateStatus", appName, "starting").Return(nil)
 	t.appStore.On("GetInstalledNames").Return([]string{appName}, nil)
 
@@ -237,7 +237,7 @@ func TestInstall_RebuildFails(t *testing.T) {
 	to.generator.On("Preview", mock.Anything).Return("preview")
 	to.generator.On("Apply", mock.Anything).Return(nil)
 
-	to.appStore.On("Install", "qbittorrent", "qbittorrent", "", mock.Anything, mock.Anything).Return(nil)
+	to.appStore.On("Install", "qbittorrent", "qBittorrent", "", mock.Anything, mock.Anything).Return(nil)
 	to.appStore.On("UpdateStatus", "qbittorrent", "failed").Return(nil) // Should mark as failed
 
 	// Rebuild fails
@@ -270,7 +270,7 @@ func TestInstall_IntentRecordingFails(t *testing.T) {
 	to.generator.On("Preview", mock.Anything).Return("preview")
 
 	// Database write fails
-	to.appStore.On("Install", "qbittorrent", "qbittorrent", "", mock.Anything, mock.Anything).Return(errors.New("database locked"))
+	to.appStore.On("Install", "qbittorrent", "qBittorrent", "", mock.Anything, mock.Anything).Return(errors.New("database locked"))
 
 	ctx := context.Background()
 	result, err := to.orch.Install(ctx, InstallRequest{App: "qbittorrent"})
@@ -416,7 +416,7 @@ func TestInstall_TransactionStructure(t *testing.T) {
 		capturedTx = args.Get(0)
 	}).Return(nil)
 
-	to.appStore.On("Install", "qbittorrent", "qbittorrent", "", mock.Anything, mock.Anything).Return(nil)
+	to.appStore.On("Install", "qbittorrent", "qBittorrent", "", mock.Anything, mock.Anything).Return(nil)
 	to.appStore.On("UpdateStatus", "qbittorrent", "starting").Return(nil)
 	to.appStore.On("GetInstalledNames").Return([]string{"qbittorrent"}, nil)
 
@@ -463,7 +463,7 @@ func TestInstall_WithDependency_TransactionIncludesBoth(t *testing.T) {
 	to.graph.On("SetInstalled", mock.Anything).Return()
 
 	to.cache.On("Get", "miniflux").Return(app, nil)
-	to.cache.On("Get", "postgres").Return(&catalog.App{Name: "postgres", Port: 5432, IsSystem: true}, nil)
+	to.cache.On("Get", "postgres").Return(&catalog.App{Name: "postgres", DisplayName: "PostgreSQL", Port: 5432, IsSystem: true}, nil)
 	to.cache.On("GetAll").Return([]*catalog.App{app}, nil)
 
 	to.generator.On("LoadCurrent").Return(fixtureEmptyTransaction(), nil)
@@ -475,9 +475,9 @@ func TestInstall_WithDependency_TransactionIncludesBoth(t *testing.T) {
 		capturedTx = args.Get(0).(*nixgen.Transaction)
 	}).Return(nil)
 
-	to.appStore.On("Install", "miniflux", "miniflux", "", mock.Anything, mock.Anything).Return(nil)
+	to.appStore.On("Install", "miniflux", "Miniflux", "", mock.Anything, mock.Anything).Return(nil)
 	to.appStore.On("GetByName", "postgres").Return(nil, nil) // Not yet installed
-	to.appStore.On("Install", "postgres", "postgres", "", mock.Anything, mock.Anything).Return(nil)
+	to.appStore.On("Install", "postgres", "PostgreSQL", "", mock.Anything, mock.Anything).Return(nil)
 	to.appStore.On("UpdateStatus", "miniflux", "starting").Return(nil)
 	to.appStore.On("UpdateStatus", "postgres", "starting").Return(nil)
 	to.appStore.On("GetInstalledNames").Return([]string{"miniflux", "postgres"}, nil)
@@ -529,7 +529,7 @@ func TestInstall_InstallOptionsPassedCorrectly(t *testing.T) {
 	// Capture install options to verify port and system flag
 	var capturedPort int
 	var capturedOpts interface{}
-	to.appStore.On("Install", "qbittorrent", "qbittorrent", "", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	to.appStore.On("Install", "qbittorrent", "qBittorrent", "", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		capturedOpts = args.Get(4) // 5th argument (index 4) is InstallOptions
 	}).Return(nil)
 	to.appStore.On("UpdateStatus", "qbittorrent", "starting").Return(nil)
@@ -616,7 +616,7 @@ func TestInstall_TraefikRoutesIncludeAllInstalledApps(t *testing.T) {
 	to.generator.On("Preview", mock.Anything).Return("preview")
 	to.generator.On("Apply", mock.Anything).Return(nil)
 
-	to.appStore.On("Install", "qbittorrent", "qbittorrent", "", mock.Anything, mock.Anything).Return(nil)
+	to.appStore.On("Install", "qbittorrent", "qBittorrent", "", mock.Anything, mock.Anything).Return(nil)
 	to.appStore.On("UpdateStatus", "qbittorrent", "starting").Return(nil)
 	to.appStore.On("GetInstalledNames").Return([]string{"qbittorrent"}, nil)
 
