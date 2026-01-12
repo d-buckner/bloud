@@ -1,0 +1,14 @@
+name: traefik
+displayName: Traefik
+description: Cloud-native reverse proxy and load balancer with automatic HTTPS
+category: network
+port: 8080
+isSystem: true
+
+image: traefik:v3.0
+integrations: {}
+
+healthCheck:
+  path: /ping
+  interval: 2
+  timeout: 30

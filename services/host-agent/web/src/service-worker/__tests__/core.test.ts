@@ -1,0 +1,784 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  // Constants
+  RequestAction,
+  RequestType,
+  PassthroughReason,
+  RequestMode,
+  REWRITE_APPS,
+  RESERVED_SEGMENTS,
+  // Types
+  type ResponseLike,
+  // Functions
+  getAppFromPath,
+  isBloudRoute,
+  isServiceWorkerScript,
+  shouldHandleRequest,
+  rewriteRedirectLocation,
+  rewriteRootUrl,
+  isRedirectResponse,
+  shouldRedirectOAuthCallback,
+  getRequestAction,
+  processRedirectResponse,
+  resetTestState,
+  setActiveApp,
+  getActiveApp,
+} from '../core';
+
+/** Create a mock response with optional Location header */
+function mockResponse(status: number, location?: string, type?: string): ResponseLike {
+  const headers = new Map<string, string>();
+  if (location) {
+    headers.set('Location', location);
+  }
+  return {
+    status,
+    type,
+    headers: {
+      get: (name: string) => headers.get(name) ?? null,
+    },
+  };
+}
+
+describe('service-worker core', () => {
+  describe('getAppFromPath', () => {
+    it('extracts app name from /embed/{app}/ path', () => {
+      expect(getAppFromPath('/embed/actual-budget/')).toBe('actual-budget');
+      expect(getAppFromPath('/embed/adguard-home/')).toBe('adguard-home');
+      expect(getAppFromPath('/embed/miniflux/')).toBe('miniflux');
+    });
+
+    it('extracts app name from /apps/{app}/ path', () => {
+      expect(getAppFromPath('/apps/actual-budget/')).toBe('actual-budget');
+      expect(getAppFromPath('/apps/adguard-home/')).toBe('adguard-home');
+      expect(getAppFromPath('/apps/miniflux/')).toBe('miniflux');
+    });
+
+    it('extracts app name from /embed/{app} without trailing slash', () => {
+      expect(getAppFromPath('/embed/actual-budget')).toBe('actual-budget');
+    });
+
+    it('extracts app name from /apps/{app} without trailing slash', () => {
+      expect(getAppFromPath('/apps/actual-budget')).toBe('actual-budget');
+    });
+
+    it('extracts app name from deep paths', () => {
+      expect(getAppFromPath('/embed/actual-budget/static/app.js')).toBe('actual-budget');
+      expect(getAppFromPath('/embed/adguard-home/install.html')).toBe('adguard-home');
+      expect(getAppFromPath('/apps/actual-budget/settings')).toBe('actual-budget');
+      expect(getAppFromPath('/apps/adguard-home/control')).toBe('adguard-home');
+    });
+
+    it('returns null for non-app paths', () => {
+      expect(getAppFromPath('/api/apps')).toBe(null);
+      expect(getAppFromPath('/')).toBe(null);
+      expect(getAppFromPath('/install.html')).toBe(null);
+      expect(getAppFromPath('/catalog')).toBe(null);
+    });
+
+    it('returns null for /embed/ or /apps/ without app name', () => {
+      expect(getAppFromPath('/embed/')).toBe(null);
+      expect(getAppFromPath('/embed')).toBe(null);
+      expect(getAppFromPath('/apps/')).toBe(null);
+      expect(getAppFromPath('/apps')).toBe(null);
+    });
+  });
+
+  describe('isBloudRoute', () => {
+    it('returns true for API routes', () => {
+      expect(isBloudRoute('/api/apps')).toBe(true);
+      expect(isBloudRoute('/api/apps/installed')).toBe(true);
+    });
+
+    it('returns true for app management routes', () => {
+      expect(isBloudRoute('/apps/')).toBe(true);
+      expect(isBloudRoute('/catalog')).toBe(true);
+      expect(isBloudRoute('/versions')).toBe(true);
+      expect(isBloudRoute('/icons/app.png')).toBe(true);
+    });
+
+    it('returns true for SvelteKit routes', () => {
+      expect(isBloudRoute('/_app/')).toBe(true);
+      expect(isBloudRoute('/_app/immutable/chunks/app.js')).toBe(true);
+    });
+
+    it('returns true for Vite dev server routes', () => {
+      expect(isBloudRoute('/@vite/client')).toBe(true);
+      expect(isBloudRoute('/@fs/path')).toBe(true);
+      expect(isBloudRoute('/node_modules/.vite/deps/chunk.js')).toBe(true);
+      expect(isBloudRoute('/src/app.css')).toBe(true);
+    });
+
+    it('returns false for embed routes', () => {
+      expect(isBloudRoute('/embed/actual-budget/')).toBe(false);
+      expect(isBloudRoute('/embed/adguard-home/install.html')).toBe(false);
+    });
+
+    it('returns false for root-level app requests', () => {
+      expect(isBloudRoute('/install.html')).toBe(false);
+      expect(isBloudRoute('/static/app.js')).toBe(false);
+      expect(isBloudRoute('/control/')).toBe(false);
+    });
+
+    it('returns true for Authentik SSO routes', () => {
+      expect(isBloudRoute('/application/o/authorize/')).toBe(true);
+      expect(isBloudRoute('/flows/-/default/authentication-flow/')).toBe(true);
+      expect(isBloudRoute('/if/flow/default-authentication-flow/')).toBe(true);
+      expect(isBloudRoute('/-/api/v3/')).toBe(true);
+    });
+
+    it('handles edge cases for first segment extraction', () => {
+      // Single character paths
+      expect(isBloudRoute('/a')).toBe(false);
+    });
+
+    it('returns true for root path (home page)', () => {
+      expect(isBloudRoute('/')).toBe(true);
+    });
+  });
+
+  describe('isServiceWorkerScript', () => {
+    it('returns true for /sw.js', () => {
+      expect(isServiceWorkerScript('/sw.js')).toBe(true);
+    });
+
+    it('returns true for /service-worker.js', () => {
+      expect(isServiceWorkerScript('/service-worker.js')).toBe(true);
+    });
+
+    it('returns false for other js files', () => {
+      expect(isServiceWorkerScript('/app.js')).toBe(false);
+      expect(isServiceWorkerScript('/main.js')).toBe(false);
+      expect(isServiceWorkerScript('/static/sw.js')).toBe(false);
+    });
+
+    it('returns false for similar but different paths', () => {
+      expect(isServiceWorkerScript('/sw.json')).toBe(false);
+      expect(isServiceWorkerScript('/sw.js.map')).toBe(false);
+      expect(isServiceWorkerScript('/embed/app/sw.js')).toBe(false);
+    });
+  });
+
+  describe('RESERVED_SEGMENTS', () => {
+    it('contains all expected Bloud segments', () => {
+      expect(RESERVED_SEGMENTS.has('api')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('apps')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('catalog')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('versions')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('icons')).toBe(true);
+    });
+
+    it('contains SvelteKit development segments', () => {
+      expect(RESERVED_SEGMENTS.has('_app')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('node_modules')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('src')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('.svelte-kit')).toBe(true);
+    });
+
+    it('contains Authentik SSO segments', () => {
+      expect(RESERVED_SEGMENTS.has('application')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('flows')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('if')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('-')).toBe(true);
+    });
+
+    it('does not contain app names', () => {
+      expect(RESERVED_SEGMENTS.has('actual-budget')).toBe(false);
+      expect(RESERVED_SEGMENTS.has('adguard-home')).toBe(false);
+      expect(RESERVED_SEGMENTS.has('miniflux')).toBe(false);
+    });
+  });
+
+  describe('shouldHandleRequest', () => {
+    const origin = 'http://localhost:8080';
+
+    it('rejects cross-origin requests', () => {
+      const url = new URL('http://other.example.com/embed/actual-budget/');
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(false);
+      expect(result.reason).toBe(PassthroughReason.CROSS_ORIGIN);
+    });
+
+    it('rejects Bloud routes', () => {
+      const url = new URL('/api/apps', origin);
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(false);
+      expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+    });
+
+    it('handles embed requests for rewrite apps', () => {
+      const url = new URL('/embed/actual-budget/', origin);
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(true);
+      expect(result.type).toBe(RequestType.EMBED);
+      expect(result.appName).toBe('actual-budget');
+    });
+
+    it('handles embed requests for adguard-home', () => {
+      const url = new URL('/embed/adguard-home/', origin);
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(true);
+      expect(result.type).toBe(RequestType.EMBED);
+      expect(result.appName).toBe('adguard-home');
+    });
+
+    it('does not handle embed requests for non-rewrite apps', () => {
+      const url = new URL('/embed/miniflux/', origin);
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(false);
+      expect(result.reason).toBe(PassthroughReason.EMBED_NO_REWRITE);
+    });
+
+    it('handles root-level requests', () => {
+      const url = new URL('/install.html', origin);
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(true);
+      expect(result.type).toBe(RequestType.ROOT);
+    });
+
+    it('handles root-level asset requests', () => {
+      const url = new URL('/static/app.js', origin);
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(true);
+      expect(result.type).toBe(RequestType.ROOT);
+    });
+  });
+
+  describe('rewriteRedirectLocation', () => {
+    const origin = 'http://localhost:8080';
+
+    it('rewrites absolute path redirects', () => {
+      const result = rewriteRedirectLocation('/install.html', 'adguard-home', origin);
+      expect(result).toBe('http://localhost:8080/embed/adguard-home/install.html');
+    });
+
+    it('rewrites redirects with query strings', () => {
+      const result = rewriteRedirectLocation('/login?redirect=/dashboard', 'actual-budget', origin);
+      expect(result).toBe('http://localhost:8080/embed/actual-budget/login?redirect=/dashboard');
+    });
+
+    it('rewrites full URL redirects to same origin', () => {
+      const result = rewriteRedirectLocation('http://localhost:8080/control/', 'adguard-home', origin);
+      expect(result).toBe('http://localhost:8080/embed/adguard-home/control/');
+    });
+
+    it('does not rewrite already-prefixed redirects', () => {
+      const result = rewriteRedirectLocation('/embed/adguard-home/dashboard', 'adguard-home', origin);
+      expect(result).toBe(null);
+    });
+
+    it('handles deep path redirects', () => {
+      const result = rewriteRedirectLocation('/static/js/main.abc123.js', 'actual-budget', origin);
+      expect(result).toBe('http://localhost:8080/embed/actual-budget/static/js/main.abc123.js');
+    });
+  });
+
+  describe('rewriteRootUrl', () => {
+    it('rewrites root path to embed path', () => {
+      const url = new URL('http://localhost:8080/install.html');
+      const result = rewriteRootUrl(url, 'adguard-home');
+      expect(result).toBe('http://localhost:8080/embed/adguard-home/install.html');
+    });
+
+    it('preserves query strings', () => {
+      const url = new URL('http://localhost:8080/page?foo=bar&baz=qux');
+      const result = rewriteRootUrl(url, 'actual-budget');
+      expect(result).toBe('http://localhost:8080/embed/actual-budget/page?foo=bar&baz=qux');
+    });
+
+    it('handles static asset paths', () => {
+      const url = new URL('http://localhost:8080/install.214831cae43e25f9ac78.js');
+      const result = rewriteRootUrl(url, 'adguard-home');
+      expect(result).toBe('http://localhost:8080/embed/adguard-home/install.214831cae43e25f9ac78.js');
+    });
+  });
+
+  describe('isRedirectResponse', () => {
+    it('detects 301 redirects', () => {
+      expect(isRedirectResponse(mockResponse(301))).toBe(true);
+    });
+
+    it('detects 302 redirects', () => {
+      expect(isRedirectResponse(mockResponse(302))).toBe(true);
+    });
+
+    it('detects 307 redirects', () => {
+      expect(isRedirectResponse(mockResponse(307))).toBe(true);
+    });
+
+    it('detects 308 redirects', () => {
+      expect(isRedirectResponse(mockResponse(308))).toBe(true);
+    });
+
+    it('detects opaqueredirect type', () => {
+      expect(isRedirectResponse(mockResponse(0, undefined, 'opaqueredirect'))).toBe(true);
+    });
+
+    it('does not flag 200 responses', () => {
+      expect(isRedirectResponse(mockResponse(200))).toBe(false);
+    });
+
+    it('does not flag 404 responses', () => {
+      expect(isRedirectResponse(mockResponse(404))).toBe(false);
+    });
+
+    it('does not flag 500 responses', () => {
+      expect(isRedirectResponse(mockResponse(500))).toBe(false);
+    });
+  });
+
+  describe('REWRITE_APPS configuration', () => {
+    it('includes actual-budget', () => {
+      expect(REWRITE_APPS.has('actual-budget')).toBe(true);
+    });
+
+    it('includes adguard-home', () => {
+      expect(REWRITE_APPS.has('adguard-home')).toBe(true);
+    });
+
+    it('does not include miniflux (supports base URL)', () => {
+      expect(REWRITE_APPS.has('miniflux')).toBe(false);
+    });
+  });
+
+  describe('setActiveApp and getActiveApp', () => {
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('sets and gets active app context', () => {
+      expect(getActiveApp()).toBe(null);
+      setActiveApp('actual-budget');
+      expect(getActiveApp()).toBe('actual-budget');
+    });
+
+    it('clears active app with null', () => {
+      setActiveApp('actual-budget');
+      expect(getActiveApp()).toBe('actual-budget');
+      setActiveApp(null);
+      expect(getActiveApp()).toBe(null);
+    });
+
+    it('updates active app when switching', () => {
+      setActiveApp('actual-budget');
+      expect(getActiveApp()).toBe('actual-budget');
+      setActiveApp('adguard-home');
+      expect(getActiveApp()).toBe('adguard-home');
+    });
+  });
+
+  describe('getRequestAction', () => {
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('returns passthrough for cross-origin requests', () => {
+      const url = new URL('http://other.example.com/path');
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.CROSS_ORIGIN);
+    });
+
+    it('returns passthrough for Bloud routes', () => {
+      const url = new URL('/api/apps', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+    });
+
+    it('returns fetch for embed requests with rewrite app', () => {
+      const url = new URL('/embed/adguard-home/', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.FETCH);
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/adguard-home/');
+      expect(result.appName).toBe('adguard-home');
+    });
+
+    it('returns passthrough for embed requests with non-rewrite app', () => {
+      const url = new URL('/embed/miniflux/', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.EMBED_NO_REWRITE);
+    });
+
+    it('returns fetch with rewritten URL when activeApp is set', () => {
+      setActiveApp('adguard-home');
+      const url = new URL('/install.html', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.FETCH);
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/adguard-home/install.html');
+      expect(result.appName).toBe('adguard-home');
+    });
+
+    it('returns passthrough for root request without active app', () => {
+      const url = new URL('/install.html', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.NO_APP_CONTEXT);
+    });
+
+    it('returns passthrough for root request with non-rewrite active app', () => {
+      setActiveApp('miniflux');
+      const url = new URL('/install.html', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.NO_APP_CONTEXT);
+    });
+
+    it('returns correct type for embed requests', () => {
+      const url = new URL('/embed/actual-budget/', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.type).toBe(RequestType.EMBED);
+    });
+
+    it('returns correct type for root requests with active app', () => {
+      setActiveApp('adguard-home');
+      const url = new URL('/install.html', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.type).toBe(RequestType.ROOT);
+    });
+  });
+
+  describe('processRedirectResponse', () => {
+    const origin = 'http://localhost:8080';
+
+    it('returns null for non-redirect response', () => {
+      const result = processRedirectResponse(mockResponse(200), 'adguard-home', origin);
+      expect(result).toBe(null);
+    });
+
+    it('returns null for redirect without Location header', () => {
+      const result = processRedirectResponse(mockResponse(302), 'adguard-home', origin);
+      expect(result).toBe(null);
+    });
+
+    it('rewrites redirect location for 302 response', () => {
+      const result = processRedirectResponse(mockResponse(302, '/install.html'), 'adguard-home', origin);
+      expect(result).toBe('http://localhost:8080/embed/adguard-home/install.html');
+    });
+
+    it('rewrites redirect location for 301 response', () => {
+      const result = processRedirectResponse(mockResponse(301, '/dashboard'), 'actual-budget', origin);
+      expect(result).toBe('http://localhost:8080/embed/actual-budget/dashboard');
+    });
+
+    it('returns null for already-prefixed redirect', () => {
+      const result = processRedirectResponse(mockResponse(302, '/embed/adguard-home/install.html'), 'adguard-home', origin);
+      expect(result).toBe(null);
+    });
+
+    it('handles opaqueredirect type', () => {
+      const result = processRedirectResponse(mockResponse(0, '/install.html', 'opaqueredirect'), 'adguard-home', origin);
+      expect(result).toBe('http://localhost:8080/embed/adguard-home/install.html');
+    });
+  });
+
+  describe('Real-world scenarios with active app', () => {
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    describe('AdGuard Home initial load', () => {
+      it('step 1: user navigates to /embed/adguard-home/', () => {
+        const url = new URL('/embed/adguard-home/', origin);
+        const result = shouldHandleRequest(url, origin);
+        expect(result.handle).toBe(true);
+        expect(result.type).toBe(RequestType.EMBED);
+        expect(result.appName).toBe('adguard-home');
+      });
+
+      it('step 2: server redirects to /install.html - rewrite to /embed/adguard-home/install.html', () => {
+        const redirectLocation = '/install.html';
+        const newLocation = rewriteRedirectLocation(redirectLocation, 'adguard-home', origin);
+        expect(newLocation).toBe('http://localhost:8080/embed/adguard-home/install.html');
+      });
+
+      it('step 3: install.html requests /install.js with active app set', () => {
+        // Main frame sets active app via postMessage
+        setActiveApp('adguard-home');
+
+        const url = new URL('/install.214831cae43e25f9ac78.js', origin);
+        const result = getRequestAction(url, origin);
+        expect(result.action).toBe(RequestAction.FETCH);
+        expect(result.fetchUrl).toBe('http://localhost:8080/embed/adguard-home/install.214831cae43e25f9ac78.js');
+        expect(result.appName).toBe('adguard-home');
+      });
+    });
+
+    describe('Actual Budget with WebAssembly', () => {
+      it('handles WASM file requests with active app', () => {
+        setActiveApp('actual-budget');
+
+        const url = new URL('/static/wasm/app.wasm', origin);
+        const result = getRequestAction(url, origin);
+        expect(result.action).toBe(RequestAction.FETCH);
+        expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/static/wasm/app.wasm');
+      });
+    });
+
+    describe('Miniflux (no rewriting needed)', () => {
+      it('does not intercept miniflux embed requests', () => {
+        const url = new URL('/embed/miniflux/', origin);
+        const result = shouldHandleRequest(url, origin);
+        expect(result.handle).toBe(false);
+        expect(result.reason).toBe(PassthroughReason.EMBED_NO_REWRITE);
+      });
+    });
+
+    describe('Edge cases', () => {
+      it('handles root request without active app (no app context)', () => {
+        const url = new URL('/install.html', origin);
+        const result = getRequestAction(url, origin);
+        expect(result.action).toBe(RequestAction.PASSTHROUGH);
+        expect(result.reason).toBe(PassthroughReason.NO_APP_CONTEXT);
+      });
+
+      it('does not rewrite Bloud API calls even with active app', () => {
+        setActiveApp('adguard-home');
+        const url = new URL('/api/something', origin);
+        const result = getRequestAction(url, origin);
+        expect(result.action).toBe(RequestAction.PASSTHROUGH);
+        expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+      });
+    });
+  });
+
+  describe('App switching scenario', () => {
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('correctly switches context between apps', () => {
+      // Start with AdGuard
+      setActiveApp('adguard-home');
+      const adguardAsset = new URL('/control.js', origin);
+      const adguardResult = getRequestAction(adguardAsset, origin);
+      expect(adguardResult.appName).toBe('adguard-home');
+
+      // User switches to Actual Budget
+      setActiveApp('actual-budget');
+      const actualAsset = new URL('/static/app.js', origin);
+      const actualResult = getRequestAction(actualAsset, origin);
+      expect(actualResult.appName).toBe('actual-budget');
+    });
+
+    it('clears context when navigating away', () => {
+      setActiveApp('adguard-home');
+      expect(getActiveApp()).toBe('adguard-home');
+
+      // User navigates away, main frame clears active app
+      setActiveApp(null);
+      expect(getActiveApp()).toBe(null);
+
+      // Root requests no longer rewrite
+      const url = new URL('/install.html', origin);
+      const result = getRequestAction(url, origin);
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+    });
+  });
+
+  describe('URL edge cases', () => {
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    describe('rewriteRedirectLocation edge cases', () => {
+      it('handles root path redirect', () => {
+        const result = rewriteRedirectLocation('/', 'adguard-home', origin);
+        expect(result).toBe('http://localhost:8080/embed/adguard-home/');
+      });
+
+      it('handles redirect with hash fragment', () => {
+        const result = rewriteRedirectLocation('/page#section', 'actual-budget', origin);
+        expect(result).toBe('http://localhost:8080/embed/actual-budget/page');
+      });
+
+      it('handles complex query strings', () => {
+        const result = rewriteRedirectLocation('/login?redirect=%2Fdashboard&foo=bar%20baz', 'actual-budget', origin);
+        expect(result).toBe('http://localhost:8080/embed/actual-budget/login?redirect=%2Fdashboard&foo=bar%20baz');
+      });
+
+      it('handles double slashes in path', () => {
+        const result = rewriteRedirectLocation('//path//to//page', 'adguard-home', origin);
+        expect(result).toContain('/embed/adguard-home/');
+      });
+    });
+
+    describe('rewriteRootUrl edge cases', () => {
+      it('handles URL with port in origin', () => {
+        const url = new URL('http://localhost:3000/install.html');
+        const result = rewriteRootUrl(url, 'adguard-home');
+        expect(result).toBe('http://localhost:3000/embed/adguard-home/install.html');
+      });
+
+      it('handles HTTPS URLs', () => {
+        const url = new URL('https://example.com/page');
+        const result = rewriteRootUrl(url, 'actual-budget');
+        expect(result).toBe('https://example.com/embed/actual-budget/page');
+      });
+
+      it('handles root path', () => {
+        const url = new URL('http://localhost:8080/');
+        const result = rewriteRootUrl(url, 'adguard-home');
+        expect(result).toBe('http://localhost:8080/embed/adguard-home/');
+      });
+    });
+
+    describe('getAppFromPath edge cases', () => {
+      it('handles paths with special characters', () => {
+        expect(getAppFromPath('/embed/my-app-123/')).toBe('my-app-123');
+        expect(getAppFromPath('/apps/app_name/')).toBe('app_name');
+      });
+
+      it('handles very long app names', () => {
+        const longName = 'a'.repeat(100);
+        expect(getAppFromPath(`/embed/${longName}/`)).toBe(longName);
+      });
+
+      it('handles paths with query strings', () => {
+        expect(getAppFromPath('/embed/app?query=1')).toBe('app?query=1');
+      });
+    });
+
+    describe('shouldHandleRequest edge cases', () => {
+      it('handles URLs with hash fragments', () => {
+        const url = new URL('/embed/actual-budget/#section', origin);
+        const result = shouldHandleRequest(url, origin);
+        expect(result.handle).toBe(true);
+        expect(result.appName).toBe('actual-budget');
+      });
+
+      it('handles deep nested paths', () => {
+        const url = new URL('/embed/actual-budget/a/b/c/d/e/file.js', origin);
+        const result = shouldHandleRequest(url, origin);
+        expect(result.handle).toBe(true);
+        expect(result.appName).toBe('actual-budget');
+      });
+
+      it('handles different port for same host (cross-origin)', () => {
+        const url = new URL('http://localhost:3000/embed/actual-budget/');
+        const result = shouldHandleRequest(url, origin);
+        expect(result.handle).toBe(false);
+        expect(result.reason).toBe(PassthroughReason.CROSS_ORIGIN);
+      });
+    });
+  });
+
+  describe('isRedirectResponse edge cases', () => {
+    it('detects 303 redirects', () => {
+      expect(isRedirectResponse(mockResponse(303))).toBe(true);
+    });
+
+    it('handles boundary cases', () => {
+      expect(isRedirectResponse(mockResponse(299))).toBe(false);
+      expect(isRedirectResponse(mockResponse(300))).toBe(true);
+      expect(isRedirectResponse(mockResponse(399))).toBe(true);
+      expect(isRedirectResponse(mockResponse(400))).toBe(false);
+    });
+
+    it('handles responses with both type and status', () => {
+      expect(isRedirectResponse(mockResponse(200, undefined, 'opaqueredirect'))).toBe(true);
+      expect(isRedirectResponse(mockResponse(302, undefined, 'basic'))).toBe(true);
+    });
+  });
+
+  describe('shouldRedirectOAuthCallback', () => {
+    describe('returns true for OAuth callback navigation requests', () => {
+      it('returns true for navigate mode with /openid/callback', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/openid/callback')).toBe(true);
+      });
+
+      it('returns true for navigate mode with /openid/callback with query params', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/openid/callback?code=abc&state=xyz')).toBe(true);
+      });
+
+      it('returns true for /embed/app/openid/callback', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/embed/actual-budget/openid/callback')).toBe(true);
+      });
+    });
+
+    describe('returns false for non-OAuth or non-navigation requests', () => {
+      it('returns false for cors mode even with /openid/callback', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.CORS, '/openid/callback')).toBe(false);
+      });
+
+      it('returns false for same-origin mode even with /openid/callback', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.SAME_ORIGIN, '/openid/callback')).toBe(false);
+      });
+
+      it('returns false for navigate mode with other paths', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/login')).toBe(false);
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/callback')).toBe(false);
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/oauth/callback')).toBe(false);
+      });
+
+      it('returns false for navigate mode with openid in different context', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/openid')).toBe(false);
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/openid-config')).toBe(false);
+      });
+    });
+
+    describe('edge cases', () => {
+      it('returns false for undefined mode', () => {
+        expect(shouldRedirectOAuthCallback(undefined, '/openid/callback')).toBe(false);
+      });
+
+      it('returns false for null mode', () => {
+        expect(shouldRedirectOAuthCallback(null, '/openid/callback')).toBe(false);
+      });
+
+      it('returns false for empty pathname', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '')).toBe(false);
+      });
+
+      it('handles case sensitivity (pathname is case-sensitive)', () => {
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/openid/CALLBACK')).toBe(false);
+        expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/OPENID/callback')).toBe(false);
+      });
+    });
+  });
+
+  describe('OAuth callback integration scenario', () => {
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('OAuth callback from Authentik gets intercepted and should redirect', () => {
+      // User completes SSO login, Authentik redirects to /openid/callback?code=...
+      setActiveApp('actual-budget');
+
+      const url = new URL('/openid/callback?code=abc123&state=xyz', origin);
+      const result = getRequestAction(url, origin);
+
+      // SW should intercept this as a root request
+      expect(result.action).toBe(RequestAction.FETCH);
+      expect(result.type).toBe(RequestType.ROOT);
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/openid/callback?code=abc123&state=xyz');
+
+      // And when it's a navigate request, shouldRedirectOAuthCallback returns true
+      expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, url.pathname)).toBe(true);
+    });
+
+    it('non-navigate callback requests should not redirect', () => {
+      // AJAX/fetch requests to callback endpoint should use fetch-and-return
+      setActiveApp('actual-budget');
+
+      const url = new URL('/openid/callback', origin);
+
+      // cors mode (from fetch API call)
+      expect(shouldRedirectOAuthCallback(RequestMode.CORS, url.pathname)).toBe(false);
+      // same-origin mode
+      expect(shouldRedirectOAuthCallback(RequestMode.SAME_ORIGIN, url.pathname)).toBe(false);
+    });
+  });
+});

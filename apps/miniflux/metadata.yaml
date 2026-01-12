@@ -1,0 +1,37 @@
+name: miniflux
+displayName: Miniflux
+description: Minimalist and opinionated feed reader
+category: productivity
+port: 8085
+
+image: miniflux/miniflux:latest
+integrations:
+  database:
+    required: true
+    multi: false
+    compatible:
+      - app: postgres
+        default: true
+
+healthCheck:
+  path: /embed/miniflux/healthcheck
+  interval: 2
+  timeout: 60
+
+sso:
+  strategy: native-oidc
+  callbackPath: /oauth2/oidc/callback
+  providerName: Bloud SSO
+  userCreation: true
+  env:
+    clientId: OAUTH2_CLIENT_ID
+    clientSecret: OAUTH2_CLIENT_SECRET
+    discoveryUrl: OAUTH2_OIDC_DISCOVERY_ENDPOINT
+    redirectUrl: OAUTH2_REDIRECT_URL
+    provider: OAUTH2_PROVIDER
+    providerName: OAUTH2_OIDC_PROVIDER_NAME
+    userCreation: OAUTH2_USER_CREATION
+
+# Don't strip /embed/miniflux prefix - miniflux serves at this path when BASE_URL is set
+routing:
+  stripPrefix: false

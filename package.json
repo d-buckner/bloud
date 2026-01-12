@@ -1,0 +1,32 @@
+{
+  "name": "bloud-v3",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "services/host-agent",
+    "services/host-agent/web"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "frontend:dev": "npm run dev --workspace=services/host-agent/web",
+    "backend:dev": "cd services/host-agent && go run ./cmd/host-agent",
+    "backend:build": "cd services/host-agent && go build -o bin/host-agent ./cmd/host-agent",
+    "test": "npm run test:unit",
+    "test:go": "cd services/host-agent && go run gotest.tools/gotestsum@latest --format testdox ./...",
+    "test:go:coverage": "cd services/host-agent && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1",
+    "test:nix": "nix flake check",
+    "test:unit": "npm run test:go && npm run test:nix",
+    "test:integration": "cd integration && npm test --",
+    "test:integration:app": "cd integration && npm test -- --grep",
+    "test:all": "npm run test:unit && npm run test:integration"
+  },
+  "devDependencies": {
+    "playwright": "^1.57.0",
+    "turbo": "^2.0.0"
+  },
+  "packageManager": "npm@10.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

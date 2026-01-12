@@ -1,0 +1,46 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test-go:
+    runs-on: docker
+    container:
+      image: golang:1.24-alpine
+    steps:
+      - name: Install Node.js
+        run: apk add --no-cache nodejs npm
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Go tests
+        working-directory: services/host-agent
+        run: go run gotest.tools/gotestsum@latest --format testdox ./...
+
+  build-ui:
+    runs-on: docker
+    container:
+      image: golang:1.24-alpine
+    steps:
+      - name: Install Node.js
+        run: apk add --no-cache nodejs npm
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        working-directory: services/host-agent/web
+        run: npm ci
+
+      - name: Lint and typecheck
+        working-directory: services/host-agent/web
+        run: npm run check
+
+      - name: Build
+        working-directory: services/host-agent/web
+        run: npm run build

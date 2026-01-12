@@ -1,0 +1,51 @@
+# Nix build outputs
+result
+result-*
+
+# direnv
+.direnv/
+
+# Node.js / Turborepo
+node_modules/
+.turbo/
+*.log
+npm-debug.log*
+
+# Frontend build outputs
+build/
+dist/
+.svelte-kit/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+services/host-agent/bin/*
+.last-run.json
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Images
+*.img
+
+# Generated Lima config (from template)
+lima/test-nixos.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
