@@ -1,0 +1,50 @@
+/* Bloud Design System - CSS Variables */
+
+:root {
+	/* Color palette - warm, refined */
+	--color-bg: #FAF9F6;
+	--color-bg-elevated: #FFFFFF;
+	--color-bg-subtle: #F5F4F1;
+	--color-text: #1C1917;
+	--color-text-secondary: #57534E;
+	--color-text-muted: #A8A29E;
+	--color-border: #E7E5E4;
+	--color-border-subtle: #F0EFED;
+
+	/* Accent colors */
+	--color-accent: #1C1917;
+	--color-accent-hover: #292524;
+	--color-success: #166534;
+	--color-success-bg: #F0FDF4;
+	--color-error: #991B1B;
+	--color-error-bg: #FEF2F2;
+	--color-warning: #92400E;
+	--color-warning-bg: #FFFBEB;
+	--color-info: #0C4A6E;
+	--color-info-bg: #F0F9FF;
+
+	/* Typography */
+	--font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+	--font-mono: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+
+	/* Spacing scale */
+	--space-xs: 0.25rem;
+	--space-sm: 0.5rem;
+	--space-md: 1rem;
+	--space-lg: 1.5rem;
+	--space-xl: 2rem;
+	--space-2xl: 3rem;
+	--space-3xl: 4rem;
+
+	/* Border radius */
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+
+	/* Shadows */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+
+	/* Layout */
+	--sidebar-width: 220px;
+}

@@ -1,0 +1,22 @@
+name: sonarr
+displayName: Sonarr
+description: TV series collection manager and downloader
+category: media
+port: 8989
+image: linuxserver/sonarr:latest
+
+integrations:
+  downloadClient:
+    required: true
+    multi: false
+    compatible:
+      - app: qbittorrent
+        default: true
+
+sso:
+  strategy: forward-auth
+
+healthCheck:
+  path: /api/v3/system/status
+  interval: 5
+  timeout: 60

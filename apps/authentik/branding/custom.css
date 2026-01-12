@@ -1,0 +1,106 @@
+/* Bloud Design System for Authentik
+ *
+ * This CSS requires Authentik 2025.4.0+ to use via the branding_css field.
+ * Once upgraded, add this to the blueprint:
+ *   branding_css: |
+ *     <contents of this file>
+ */
+
+/* Import Newsreader font for headings */
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
+
+:root {
+  /* Bloud color palette */
+  --ak-accent: #1C1917 !important;
+  --ak-dark-foreground: #1C1917 !important;
+
+  /* Background colors */
+  --pf-v5-global--BackgroundColor--100: #FAF9F6 !important;
+  --pf-v5-global--BackgroundColor--200: #F5F4F1 !important;
+
+  /* Text colors */
+  --pf-v5-global--Color--100: #1C1917 !important;
+  --pf-v5-global--Color--200: #57534E !important;
+
+  /* Border colors */
+  --pf-v5-global--BorderColor--100: #E7E5E4 !important;
+  --pf-v5-global--BorderColor--200: #F0EFED !important;
+
+  /* Success/Error/Warning */
+  --pf-v5-global--success-color--100: #166534 !important;
+  --pf-v5-global--danger-color--100: #991B1B !important;
+  --pf-v5-global--warning-color--100: #92400E !important;
+  --pf-v5-global--info-color--100: #0C4A6E !important;
+
+  /* Primary button color */
+  --pf-v5-global--primary-color--100: #1C1917 !important;
+  --pf-v5-global--primary-color--200: #292524 !important;
+
+  /* Link colors */
+  --pf-v5-global--link--Color: #1C1917 !important;
+  --pf-v5-global--link--Color--hover: #292524 !important;
+}
+
+/* Typography - apply Newsreader to headings */
+h1, h2, h3, .pf-v5-c-title {
+  font-family: 'Newsreader', Georgia, 'Times New Roman', serif !important;
+  letter-spacing: -0.02em;
+}
+
+/* Flow executor background */
+.pf-v5-c-login {
+  background: #FAF9F6 !important;
+}
+
+.pf-v5-c-login__main {
+  background: #FFFFFF !important;
+  border: 1px solid #E7E5E4 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Button styling */
+.pf-v5-c-button.pf-m-primary {
+  background-color: #1C1917 !important;
+  border-color: #1C1917 !important;
+  border-radius: 6px !important;
+}
+
+.pf-v5-c-button.pf-m-primary:hover {
+  background-color: #292524 !important;
+  border-color: #292524 !important;
+}
+
+/* Input fields */
+.pf-v5-c-form-control {
+  border-radius: 6px !important;
+  border-color: #E7E5E4 !important;
+}
+
+.pf-v5-c-form-control:focus {
+  border-color: #1C1917 !important;
+  box-shadow: 0 0 0 1px #1C1917 !important;
+}
+
+/* Card styling */
+.pf-v5-c-card {
+  border-radius: 8px !important;
+  border: 1px solid #E7E5E4 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Sidebar */
+.pf-v5-c-page__sidebar {
+  background: #FFFFFF !important;
+  border-right: 1px solid #E7E5E4 !important;
+}
+
+/* Navigation items */
+.pf-v5-c-nav__link:hover {
+  background: #F5F4F1 !important;
+}
+
+.pf-v5-c-nav__link.pf-m-current {
+  background: #F5F4F1 !important;
+  border-left-color: #1C1917 !important;
+}
