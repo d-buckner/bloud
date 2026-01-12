@@ -50,6 +50,9 @@ providers:
 api:
   dashboard: true
 
+ping:
+  entryPoint: web
+
 log:
   level: DEBUG
 EOF

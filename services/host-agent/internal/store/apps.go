@@ -170,6 +170,28 @@ func (s *AppStore) UpdateStatus(name, status string) error {
 	return nil
 }
 
+// EnsureSystemApp ensures a system app (managed by NixOS, not user-installed) is registered
+// System apps are marked with is_system=true and their status is set to "running"
+// This is idempotent - it creates or updates the app entry
+func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
+	_, err := s.db.Exec(`
+		INSERT INTO apps (name, display_name, version, status, port, is_system, integration_config)
+		VALUES (?, ?, '', 'running', ?, 1, '{}')
+		ON CONFLICT(name) DO UPDATE SET
+			display_name = excluded.display_name,
+			status = 'running',
+			port = excluded.port,
+			is_system = 1,
+			updated_at = CURRENT_TIMESTAMP
+	`, name, displayName, port)
+	if err != nil {
+		return fmt.Errorf("failed to ensure system app: %w", err)
+	}
+
+	s.notify()
+	return nil
+}
+
 // UpdateIntegrationConfig updates the integration config for an app
 func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string) error {
 	configJSON, err := json.Marshal(config)

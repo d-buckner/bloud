@@ -107,6 +107,31 @@ func GetStats() (*Stats, error) {
 	}, nil
 }
 
+// StorageStats represents detailed storage information
+type StorageStats struct {
+	Used       uint64 `json:"used"`
+	Total      uint64 `json:"total"`
+	Free       uint64 `json:"free"`
+	Percentage int    `json:"percentage"`
+	Path       string `json:"path"`
+}
+
+// GetStorageStats returns detailed disk storage information
+func GetStorageStats() (*StorageStats, error) {
+	diskStats, err := disk.Usage("/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get disk usage: %w", err)
+	}
+
+	return &StorageStats{
+		Used:       diskStats.Used,
+		Total:      diskStats.Total,
+		Free:       diskStats.Free,
+		Percentage: int(math.Round(diskStats.UsedPercent)),
+		Path:       "/",
+	}, nil
+}
+
 // Generation represents a NixOS system generation
 type Generation struct {
 	Number  int    `json:"number"`

@@ -32,7 +32,9 @@ func (c *Configurator) Name() string {
 // This runs before/after the container starts and must be idempotent.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
 	// Ensure directories exist
-	configDir := filepath.Join(state.DataPath, "config", "qBittorrent")
+	// qBittorrent config lives at /config/qBittorrent/ inside container
+	// With dataDir="/config", state.DataPath maps directly to /config
+	configDir := filepath.Join(state.DataPath, "qBittorrent")
 	downloadDir := filepath.Join(state.BloudDataPath, "downloads") // Shared downloads folder
 
 	for _, dir := range []string{configDir, downloadDir} {
