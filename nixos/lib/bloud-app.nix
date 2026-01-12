@@ -173,6 +173,13 @@ let
     };
   };
 
+  # Extract host paths from volume mounts for directory creation
+  # Volume format: "hostPath:containerPath:options" or "hostPath:containerPath"
+  volumeHostPaths = map (v:
+    let parts = lib.splitString ":" v;
+    in builtins.elemAt parts 0
+  ) allVolumes;
+
 in
 {
   options.bloud.apps.${name} = {
@@ -181,13 +188,19 @@ in
 
   config = lib.mkIf appCfg.enable (lib.mkMerge [
     {
-      # Create data directory if needed
-      system.activationScripts = lib.optionalAttrs (dataDir != false) {
-        "bloud-${name}-dirs" = lib.stringAfter [ "users" ] ''
-          mkdir -p ${appDataPath}
-          chown -R ${bloudCfg.user}:users ${appDataPath}
-        '';
-      };
+      # Create all directories needed for volume mounts
+      # This ensures directories exist before podman tries to mount them
+      # NOTE: In future, this should be handled via systemd tmpfiles or a dedicated setup service
+      system.activationScripts."bloud-${name}-dirs" = lib.stringAfter [ "users" ] ''
+        # Create base data directory
+        mkdir -p ${appDataPath}
+        # Create all volume mount directories
+        ${lib.concatMapStrings (path: ''
+          mkdir -p ${path}
+        '') volumeHostPaths}
+        # Fix ownership
+        chown -R ${bloudCfg.user}:users ${appDataPath}
+      '';
 
       # Main container service
       systemd.user.services = {

@@ -187,6 +187,38 @@ func TestAPI_SystemStatus(t *testing.T) {
 	assert.Contains(t, stats, "disk", "response should contain disk field")
 }
 
+func TestAPI_Storage(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/system/storage", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var storage map[string]interface{}
+	err := json.NewDecoder(w.Body).Decode(&storage)
+	require.NoError(t, err)
+
+	// Check that required fields exist
+	assert.Contains(t, storage, "used", "response should contain used field")
+	assert.Contains(t, storage, "total", "response should contain total field")
+	assert.Contains(t, storage, "free", "response should contain free field")
+	assert.Contains(t, storage, "percentage", "response should contain percentage field")
+	assert.Contains(t, storage, "path", "response should contain path field")
+
+	// Verify values are sensible
+	used := storage["used"].(float64)
+	total := storage["total"].(float64)
+	free := storage["free"].(float64)
+
+	assert.Greater(t, total, float64(0), "total should be greater than 0")
+	assert.GreaterOrEqual(t, free, float64(0), "free should be >= 0")
+	assert.GreaterOrEqual(t, used, float64(0), "used should be >= 0")
+	assert.Equal(t, "/", storage["path"], "path should be root")
+}
+
 func TestAPI_RefreshCatalog(t *testing.T) {
 	server, appsDir := setupTestServer(t)
 

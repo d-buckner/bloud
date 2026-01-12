@@ -49,6 +49,7 @@ func (s *Server) setupRoutes() {
 		r.Route("/system", func(r chi.Router) {
 			r.Get("/status", s.handleSystemStatus)
 			r.Get("/status/stream", s.handleSystemStatusStream)
+			r.Get("/storage", s.handleStorage)
 			r.Get("/versions", s.handleListGenerations)
 			r.Get("/rebuild/stream", s.handleRebuildStream)
 		})
@@ -163,6 +164,18 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, stats)
+}
+
+// handleStorage returns detailed storage information
+func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
+	storage, err := system.GetStorageStats()
+	if err != nil {
+		s.logger.Error("failed to get storage stats", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to get storage stats")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, storage)
 }
 
 // handleRoot serves a simple welcome message

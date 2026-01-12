@@ -18,6 +18,9 @@ type AppStoreInterface interface {
 	// UpdateStatus updates the status of an installed app
 	UpdateStatus(name, status string) error
 
+	// EnsureSystemApp ensures a system app (managed by NixOS) is registered with running status
+	EnsureSystemApp(name, displayName string, port int) error
+
 	// UpdateIntegrationConfig updates the integration config for an app
 	UpdateIntegrationConfig(name string, config map[string]string) error
 

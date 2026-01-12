@@ -28,6 +28,9 @@ go.work
 services/host-agent/bin/*
 .last-run.json
 
+# CLI binary
+bloud
+
 # Environment
 .env
 .env.*
