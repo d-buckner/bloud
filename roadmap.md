@@ -220,13 +220,9 @@ Target: 10 core apps for alpha release
 - [ ] API authentication (security)
 
 ### Medium Priority
-- [ ] Switch host-agent from SQLite to system PostgreSQL
-  - Already have a shared PostgreSQL instance running
-  - Eliminates embedded database complexity
-  - Enables better querying and tooling
-  - Integration config and app state would be consistent with the "shared resources" architecture
+- [x] ~~Switch host-agent from SQLite to system PostgreSQL~~ (Done)
+- [x] ~~Frontend state management consolidation~~ (Done)
 - [ ] Defensive error handling in graph.go/plan.go
-- [ ] Frontend state management consolidation
 - [ ] Test coverage for edge cases
 
 ### Low Priority
@@ -247,3 +243,5 @@ Target: 10 core apps for alpha release
 ### Decision Log
 - **2026-01**: Service worker for OAuth callbacks (maintains routing architecture)
 - **2026-01**: Service worker routing stabilized (explicit app context, proper state management)
+- **2026-01**: Migrated host-agent from SQLite to PostgreSQL (shared infrastructure pattern)
+- **2026-01**: Frontend state management refactored (api/, services/, stores/ separation; no data duplication)

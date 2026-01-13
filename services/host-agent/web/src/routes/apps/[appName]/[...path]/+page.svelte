@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { type App, type CatalogApp, type IndexedDBEntry, AppStatus } from '$lib/types';
 	import type { ProtectedEntry } from '../../../../service-worker/types';
-	import { openApps } from '$lib/stores/openApps';
+	import { tabs } from '$lib/stores/tabs';
 	import Icon from '$lib/components/Icon.svelte';
-	import { bootstrap, setActiveApp, setProtectedEntries } from '$lib/bootstrap';
+	import { waitForServiceWorker, setActiveApp, setProtectedEntries } from '$lib/services/bootstrap';
 	import { executeBootstrap, type AppMetadata } from '$lib/appConfig';
 	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -40,7 +40,7 @@
 	});
 
 	// Wait for service worker before rendering iframe
-	bootstrap().then(async () => {
+	waitForServiceWorker().then(async () => {
 		// Set active app and wait for it to be set before rendering iframe
 		if (appName) {
 			await setActiveApp(appName);
@@ -96,7 +96,7 @@
 			}
 
 			app = foundApp;
-			openApps.open(foundApp);
+			tabs.open(foundApp.name);
 
 			// Fetch app metadata for bootstrap config
 			const metadataRes = await fetch(`/api/apps/${currentAppName}/metadata`);
@@ -181,7 +181,7 @@
 				const newUrl = `/apps/${appName}/${relativePath}`;
 
 				// Save the path to the store for tab restoration
-				openApps.setPath(appName, relativePath);
+				tabs.setPath(appName, relativePath);
 
 				// Only update browser URL if different from current
 				if (window.location.pathname + window.location.search !== newUrl) {
