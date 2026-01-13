@@ -184,11 +184,11 @@ pkgs.nixosTest {
     machine.wait_for_unit("user@1000.service")
 
     # Verify postgres
-    machine.succeed("sudo -u bloud systemctl --user start podman-postgres.service")
+    machine.succeed("sudo -u bloud systemctl --user start podman-apps-postgres.service")
     machine.wait_until_succeeds("sudo -u bloud podman exec apps-postgres pg_isready -U apps")
 
     # Verify redis
-    machine.succeed("sudo -u bloud systemctl --user start podman-redis.service")
+    machine.succeed("sudo -u bloud systemctl --user start podman-apps-redis.service")
     machine.wait_until_succeeds("sudo -u bloud podman exec apps-redis redis-cli ping | grep PONG")
 
     # Verify traefik

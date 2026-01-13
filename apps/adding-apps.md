@@ -397,7 +397,7 @@ in
       OIDC_CLIENT_SECRET = appCfg.openidClientSecret;
       OIDC_DISCOVERY_URL = appCfg.openidDiscoveryUrl;
     };
-    dependsOn = [ "apps-network" ] ++ lib.optional authentikEnabled "authentik-server";
+    dependsOn = [ "apps-network" ] ++ lib.optional authentikEnabled "apps-authentik-server";
   };
 }
 ```

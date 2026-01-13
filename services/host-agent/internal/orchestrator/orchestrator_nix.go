@@ -759,6 +759,9 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 		return nil // SSO not configured
 	}
 
+	// Track forward-auth providers for outpost blueprint
+	var forwardAuthProviders []sso.ForwardAuthProvider
+
 	for appName, appConfig := range tx.Apps {
 		if !appConfig.Enabled {
 			continue
@@ -777,7 +780,20 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 			if err := o.blueprintGen.GenerateForApp(app); err != nil {
 				return fmt.Errorf("failed to generate blueprint for %s: %w", appName, err)
 			}
+
+			// Track forward-auth providers for outpost association
+			if app.SSO.Strategy == "forward-auth" {
+				forwardAuthProviders = append(forwardAuthProviders, sso.ForwardAuthProvider{
+					DisplayName: app.DisplayName,
+				})
+			}
 		}
+	}
+
+	// Generate the outpost blueprint with all forward-auth providers.
+	// This adds the providers to the embedded outpost via blueprint (no API call needed).
+	if err := o.blueprintGen.GenerateOutpostBlueprint(forwardAuthProviders); err != nil {
+		return fmt.Errorf("failed to generate outpost blueprint: %w", err)
 	}
 
 	return nil
@@ -835,10 +851,10 @@ type systemAppInfo struct {
 // systemApps defines the NixOS-managed system apps
 // These apps have their own service names (not podman-{appName}.service)
 var systemApps = []systemAppInfo{
-	{"authentik", "Authentik", 9001, "podman-authentik-server.service"},
+	{"authentik", "Authentik", 9001, "podman-apps-authentik-server.service"},
 	{"traefik", "Traefik", 8080, "podman-traefik.service"},
-	{"postgres", "PostgreSQL", 5432, "podman-postgres.service"},
-	{"redis", "Redis", 6379, "podman-redis.service"},
+	{"postgres", "PostgreSQL", 5432, "podman-apps-postgres.service"},
+	{"redis", "Redis", 6379, "podman-apps-redis.service"},
 }
 
 // getSystemdServiceName returns the systemd service name for an app

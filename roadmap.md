@@ -220,6 +220,11 @@ Target: 10 core apps for alpha release
 - [ ] API authentication (security)
 
 ### Medium Priority
+- [ ] Switch host-agent from SQLite to system PostgreSQL
+  - Already have a shared PostgreSQL instance running
+  - Eliminates embedded database complexity
+  - Enables better querying and tooling
+  - Integration config and app state would be consistent with the "shared resources" architecture
 - [ ] Defensive error handling in graph.go/plan.go
 - [ ] Frontend state management consolidation
 - [ ] Test coverage for edge cases

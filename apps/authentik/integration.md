@@ -20,17 +20,17 @@ Marked as `isSystem: true` - core infrastructure, not user-facing.
 
 | Container | Purpose |
 |-----------|---------|
-| `authentik-postgres` | Dedicated PostgreSQL |
-| `authentik-redis` | Session cache/task queue |
-| `authentik-server` | Web server |
-| `authentik-worker` | Background tasks |
+| `apps-postgres` | Shared PostgreSQL |
+| `apps-redis` | Session cache/task queue |
+| `apps-authentik-server` | Web server |
+| `apps-authentik-worker` | Background tasks |
 
 Dependencies:
 ```
-authentik-postgres ─┐
-                    ├─► authentik-server
-authentik-redis ────┤
-                    └─► authentik-worker
+apps-postgres ───┐
+                 ├─► apps-authentik-server
+apps-redis ──────┤
+                 └─► apps-authentik-worker
 ```
 
 ## Special Requirements

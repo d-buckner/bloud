@@ -7,6 +7,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -268,6 +269,11 @@ func (m *MockBlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]stri
 		return nil
 	}
 	return args.Get(0).(map[string]string)
+}
+
+func (m *MockBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.ForwardAuthProvider) error {
+	args := m.Called(providers)
+	return args.Error(0)
 }
 
 // MockAuthentikClient implements authentik.ClientInterface for testing

@@ -1,5 +1,7 @@
 // Bootstrap - waits for service worker to be controlling the page
 
+import type { ProtectedEntry } from '../service-worker/types';
+
 let ready = false;
 let readyPromise: Promise<void> | null = null;
 
@@ -44,4 +46,46 @@ export async function setActiveApp(appName: string | null): Promise<void> {
       appName,
     });
   }
+}
+
+/**
+ * Send protected IndexedDB entries to the service worker.
+ * These entries will be injected into app HTML to intercept reads.
+ * Uses MessageChannel to wait for SW acknowledgment before resolving.
+ *
+ * @param appName - The app these entries belong to
+ * @param entries - Protected entries with database, store, key, and value
+ */
+export async function setProtectedEntries(
+  appName: string,
+  entries: ProtectedEntry[]
+): Promise<void> {
+  if (!('serviceWorker' in navigator)) {
+    return;
+  }
+
+  await bootstrap();
+
+  const controller = navigator.serviceWorker.controller;
+  if (!controller) {
+    return;
+  }
+
+  // Use MessageChannel to wait for SW acknowledgment
+  return new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+
+    channel.port1.onmessage = () => {
+      resolve();
+    };
+
+    controller.postMessage(
+      {
+        type: 'SET_PROTECTED_ENTRIES',
+        appName,
+        entries,
+      },
+      [channel.port2]
+    );
+  });
 }

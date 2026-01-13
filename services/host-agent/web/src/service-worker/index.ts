@@ -3,8 +3,9 @@
 
 /// <reference lib="webworker" />
 
-import { handleRequest, setActiveApp } from './handlers';
+import { handleRequest, setActiveApp, setProtectedEntries } from './handlers';
 import { getRequestAction } from './core';
+import { MessageType } from './types';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -25,12 +26,29 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Listen for messages from the main frame to set active app context
+// Listen for messages from the main frame
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SET_ACTIVE_APP') {
-    const appName = event.data.appName;
-    console.log('[embed-sw] Setting active app:', appName);
-    setActiveApp(appName);
+  if (!event.data || !event.data.type) {
+    return;
+  }
+
+  switch (event.data.type) {
+    case MessageType.SET_ACTIVE_APP: {
+      const appName = event.data.appName;
+      console.log('[embed-sw] Setting active app:', appName);
+      setActiveApp(appName);
+      break;
+    }
+    case MessageType.SET_PROTECTED_ENTRIES: {
+      const { appName, entries } = event.data;
+      console.log('[embed-sw] Setting protected entries for:', appName, entries);
+      setProtectedEntries(appName, entries);
+      // Respond via MessageChannel to signal completion
+      if (event.ports[0]) {
+        event.ports[0].postMessage({ type: 'ACK' });
+      }
+      break;
+    }
   }
 });
 

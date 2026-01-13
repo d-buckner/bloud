@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { type App, type CatalogApp, AppStatus } from '$lib/types';
+	import { type App, type CatalogApp, type IndexedDBEntry, AppStatus } from '$lib/types';
+	import type { ProtectedEntry } from '../../../../service-worker/types';
 	import { openApps } from '$lib/stores/openApps';
 	import Icon from '$lib/components/Icon.svelte';
-	import { bootstrap, setActiveApp } from '$lib/bootstrap';
+	import { bootstrap, setActiveApp, setProtectedEntries } from '$lib/bootstrap';
 	import { executeBootstrap, type AppMetadata } from '$lib/appConfig';
 	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -52,6 +53,34 @@
 		setActiveApp(null);
 	});
 
+	/**
+	 * Extract protected entries from bootstrap config and apply template substitution.
+	 */
+	function getProtectedEntries(
+		config: CatalogApp,
+		metadata: AppMetadata
+	): ProtectedEntry[] {
+		const indexedDB = config.bootstrap?.indexedDB;
+		if (!indexedDB?.entries) {
+			return [];
+		}
+
+		return indexedDB.entries
+			.filter((entry: IndexedDBEntry) => entry.protected)
+			.map((entry: IndexedDBEntry) => ({
+				database: indexedDB.database,
+				store: entry.store,
+				key: entry.key,
+				// Apply template substitution (same as executeBootstrap)
+				value: entry.value.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+					if (key in metadata) {
+						return String(metadata[key as keyof AppMetadata]);
+					}
+					return match;
+				})
+			}));
+	}
+
 	async function loadApp(currentAppName: string) {
 		try {
 			// Fetch installed apps
@@ -81,7 +110,14 @@
 				embedUrl: `${window.location.origin}/embed/${currentAppName}`
 			};
 
-			// Execute bootstrap configuration
+			// Send protected entries to SW BEFORE loading iframe
+			// This ensures the injection script is ready when the first HTML is fetched
+			const protectedEntries = getProtectedEntries(catalogApp, appMetadata);
+			if (protectedEntries.length > 0) {
+				await setProtectedEntries(currentAppName, protectedEntries);
+			}
+
+			// Execute bootstrap configuration (writes to IndexedDB)
 			const result = await executeBootstrap(currentAppName, catalogApp.bootstrap, appMetadata);
 
 			if (!result.success) {
