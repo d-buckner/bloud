@@ -11,8 +11,8 @@
 
 # VM resources
 # Note: disk must be >= 15GB for NixOS + Authentik + other container images
-cpus: 4
-memory: 4GiB
+cpus: 8
+memory: 8GiB
 disk: 15GiB
 
 # Architecture (auto-detected: aarch64 for Apple Silicon, x86_64 for Intel)
