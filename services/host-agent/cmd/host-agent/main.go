@@ -51,7 +51,7 @@ func runServer() {
 	)
 
 	// Initialize database
-	database, err := db.InitDB(cfg.DataDir)
+	database, err := db.InitDB(cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to initialize database", "error", err)
 		os.Exit(1)
@@ -117,3 +117,4 @@ func runServer() {
 
 	logger.Info("server stopped gracefully")
 }
+
