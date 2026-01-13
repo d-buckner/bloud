@@ -5,8 +5,6 @@ category: infrastructure
 port: 6379
 isSystem: true
 
-image: redis:alpine
-
 healthCheck:
   path: ""
   interval: 2

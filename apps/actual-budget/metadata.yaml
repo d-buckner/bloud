@@ -4,8 +4,6 @@ description: Privacy-focused personal budgeting app with optional sync
 category: productivity
 port: 5006
 
-image: actualbudget/actual-server:latest
-
 integrations:
   sso:
     required: false

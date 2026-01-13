@@ -3,7 +3,6 @@ package catalog
 // AppDefinition represents an application in the catalog
 type AppDefinition struct {
 	Name         string                 `yaml:"name" json:"name"`
-	Image        string                 `yaml:"image" json:"image"`
 	Integrations map[string]Integration `yaml:"integrations" json:"integrations"`
 }
 

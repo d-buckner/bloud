@@ -4,7 +4,6 @@ description: Network-wide ad and tracker blocking DNS server
 category: security
 port: 3080
 
-image: adguard/adguardhome:latest
 integrations: {}
 
 healthCheck:
