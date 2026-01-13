@@ -13,6 +13,9 @@ type BlueprintGeneratorInterface interface {
 
 	// GetSSOEnvVars returns the environment variables needed for an app's SSO config
 	GetSSOEnvVars(app *catalog.App) map[string]string
+
+	// GenerateOutpostBlueprint creates or updates the outpost blueprint with all forward-auth providers
+	GenerateOutpostBlueprint(providers []ForwardAuthProvider) error
 }
 
 // Compile-time assertion

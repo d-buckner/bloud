@@ -87,8 +87,8 @@ in
       # Database initialization for Authentik (creates database in shared postgres)
       authentik-db-init = {
         description = "Initialize Authentik database";
-        after = [ "podman-postgres.service" ];
-        requires = [ "podman-postgres.service" ];
+        after = [ "podman-apps-postgres.service" ];
+        requires = [ "podman-apps-postgres.service" ];
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
@@ -111,8 +111,8 @@ in
       };
 
       # Authentik Server
-      podman-authentik-server = mkPodmanService {
-        name = "authentik-server";
+      podman-apps-authentik-server = mkPodmanService {
+        name = "apps-authentik-server";
         image = "ghcr.io/goauthentik/server:2025.10.3";
         ports = [
           "${toString appCfg.port}:9000"
@@ -158,8 +158,8 @@ in
       };
 
       # Authentik Worker
-      podman-authentik-worker = mkPodmanService {
-        name = "authentik-worker";
+      podman-apps-authentik-worker = mkPodmanService {
+        name = "apps-authentik-worker";
         image = "ghcr.io/goauthentik/server:2025.10.3";
         cmd = [ "worker" ];
         environment = {
@@ -191,14 +191,14 @@ in
       };
 
       # Authentik nginx proxy (adds X-Forwarded-Host header for correct OAuth URLs)
-      podman-authentik-proxy = mkPodmanService {
-        name = "authentik-proxy";
+      podman-apps-authentik-proxy = mkPodmanService {
+        name = "apps-authentik-proxy";
         image = "nginx:alpine";
         volumes = [
           "${configPath}/authentik-proxy.conf:/etc/nginx/conf.d/default.conf:ro"
         ];
         network = "apps-net";
-        dependsOn = [ "apps-network" "authentik-server" ];
+        dependsOn = [ "apps-network" "apps-authentik-server" ];
       };
     };
 
@@ -206,7 +206,7 @@ in
     # NOTE: We intentionally do NOT set X-Forwarded-Host here.
     # This allows Authentik to return URLs with the actual Host header.
     # - When accessed via Traefik (browser): Traefik sets X-Forwarded-Host → localhost:8080 URLs
-    # - When accessed via authentik-proxy (container): Host is authentik-proxy → internal URLs
+    # - When accessed via apps-authentik-proxy (container): Host is apps-authentik-proxy → internal URLs
     # This is critical for server-to-server OAuth token exchange from containers.
     system.activationScripts.bloud-authentik-proxy-config = lib.stringAfter [ "bloud-authentik-dirs" ] ''
       cat > ${configPath}/authentik-proxy.conf <<'EOF'
@@ -215,7 +215,7 @@ server {
     server_name _;
 
     location / {
-        proxy_pass http://authentik-server:9000;
+        proxy_pass http://apps-authentik-server:9000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

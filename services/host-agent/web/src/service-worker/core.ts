@@ -19,6 +19,7 @@ import {
   type HandleRequestDecision,
   type RequestActionResult,
   type ResponseLike,
+  type ProtectedEntry,
 } from './types';
 
 // Re-export constants and types for consumers
@@ -43,9 +44,13 @@ export type {
 
 let activeAppContext: string | null = null;
 
+/** Protected IndexedDB entries per app */
+const protectedEntriesMap = new Map<string, ProtectedEntry[]>();
+
 /** Reset function for testing - clears module state */
 export function resetTestState(): void {
   activeAppContext = null;
+  protectedEntriesMap.clear();
 }
 
 /**
@@ -59,6 +64,18 @@ export function setActiveApp(appName: string | null): void {
 /** Get the active app context (for testing) */
 export function getActiveApp(): string | null {
   return activeAppContext;
+}
+
+/**
+ * Set protected IndexedDB entries for an app (called from message handler).
+ */
+export function setProtectedEntries(appName: string, entries: ProtectedEntry[]): void {
+  protectedEntriesMap.set(appName, entries);
+}
+
+/** Get protected entries for an app */
+export function getProtectedEntries(appName: string): ProtectedEntry[] {
+  return protectedEntriesMap.get(appName) ?? [];
 }
 
 // =============================================================================

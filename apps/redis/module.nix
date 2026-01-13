@@ -7,8 +7,8 @@ mkBloudApp {
   name = "redis";
   description = "Redis in-memory data store";
   containerName = "apps-redis";
-  # serviceName must match app name for Go API health checks
-  serviceName = "redis";
+  # serviceName should match containerName for consistent dependency resolution
+  serviceName = "apps-redis";
 
   image = "redis:alpine";
   port = 6379;

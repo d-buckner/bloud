@@ -55,6 +55,8 @@ in
 
   config = lib.mkIf cfg.enable {
     # Enable core infrastructure by default
+    bloud.apps.postgres.enable = lib.mkDefault true;   # Shared database
+    bloud.apps.redis.enable = lib.mkDefault true;      # Shared cache (used by Authentik)
     bloud.apps.traefik.enable = lib.mkDefault true;    # Routing
     bloud.apps.authentik.enable = lib.mkDefault true;  # Authentication/SSO
 
@@ -178,7 +180,7 @@ in
         fi
 
         # Test Authentik (only if running)
-        if ${pkgs.podman}/bin/podman ps --format "{{.Names}}" 2>/dev/null | grep -q "authentik-server"; then
+        if ${pkgs.podman}/bin/podman ps --format "{{.Names}}" 2>/dev/null | grep -q "apps-authentik-server"; then
           echo ""
           echo "Testing Authentik (detected running)..."
           test_service "Authentik" "http://localhost:9001/if/flow/initial-setup/" "302" ""

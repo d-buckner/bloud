@@ -161,6 +161,8 @@ func testStart() int {
 	// Build host-agent binary BEFORE nixos-rebuild so prestart/poststart hooks work
 	// NOTE: In production, this should be a systemd service dependency (bloud-host-agent.service)
 	// that ensures the binary exists before app services start. For dev, we build it here.
+	// We use nix-shell to get Go because the base NixOS image doesn't have Go installed yet
+	// (it's only added after nixos-rebuild switch applies our configuration).
 	log("Building host-agent binary (required for service hooks)...")
 	buildScript := fmt.Sprintf(`
 		set -e
@@ -173,7 +175,8 @@ func testStart() int {
 		sed -i 's|=> ../../apps|=> ../apps|g' "$LOCAL_SRC/host-agent/go.mod" 2>/dev/null || true
 		sed -i 's|=> ../services/host-agent|=> ../host-agent|g' "$LOCAL_SRC/apps/go.mod" 2>/dev/null || true
 		cd "$LOCAL_SRC/host-agent"
-		go build -o /tmp/host-agent-test ./cmd/host-agent
+		# Use nix-shell to get Go temporarily (base image doesn't have Go yet)
+		nix-shell -p go --run "go build -o /tmp/host-agent-test ./cmd/host-agent"
 		echo "Host-agent binary built at /tmp/host-agent-test"
 	`, projectRoot, projectRoot)
 	if err := vm.ExecStream(testVMName, buildScript); err != nil {
@@ -414,4 +417,20 @@ func isTestPortForwardingRunning() bool {
 	cmd := localExec("pgrep", "-f", pattern)
 	output, err := cmd.CombinedOutput()
 	return err == nil && strings.TrimSpace(string(output)) != ""
+}
+
+func testServices() int {
+	if !vm.IsRunning(testVMName) {
+		errorf("Test VM is not running. Start with: ./bloud test start")
+		return 1
+	}
+
+	output, err := vm.Exec(testVMName, "systemctl --user list-units 'podman-*' --all --no-pager")
+	if err != nil {
+		errorf("Failed to get services: %v", err)
+		return 1
+	}
+
+	fmt.Println(output)
+	return 0
 }

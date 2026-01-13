@@ -95,7 +95,7 @@ sleep 5
 # Check critical services
 echo "  → Checking service status..."
 systemctl --user status podman-traefik.service --no-pager --lines=5 || true
-systemctl --user status podman-authentik-server.service --no-pager --lines=5 || true
+systemctl --user status podman-apps-authentik-server.service --no-pager --lines=5 || true
 
 # Health checks
 echo "  → Running health checks..."

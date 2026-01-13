@@ -207,11 +207,11 @@ else
 fi
 
 # Authentik
-if systemctl --user is-active --quiet podman-authentik-server.service; then
+if systemctl --user is-active --quiet podman-apps-authentik-server.service; then
   echo "    ✓ Authentik running"
 else
   echo "    ✗ Authentik not running"
-  systemctl --user status podman-authentik-server.service --no-pager --lines=5 || true
+  systemctl --user status podman-apps-authentik-server.service --no-pager --lines=5 || true
 fi
 
 # Miniflux (if enabled)
@@ -272,5 +272,5 @@ echo "               then browse to http://localhost:9000"
 echo ""
 echo "View logs:"
 echo "  ssh ${REMOTE_HOST} \"journalctl --user -u podman-traefik -f\""
-echo "  ssh ${REMOTE_HOST} \"journalctl --user -u podman-authentik-server -f\""
+echo "  ssh ${REMOTE_HOST} \"journalctl --user -u podman-apps-authentik-server -f\""
 echo ""
