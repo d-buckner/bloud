@@ -15,9 +15,9 @@
   ]
   # Import generated config from either:
   # 1. Project's generated/ directory (for testing with git)
-  # 2. System's /var/lib/bloud/nix/ (for API-generated config, requires --impure)
+  # 2. User's data directory (for API-generated config, requires --impure)
   ++ lib.optional (builtins.pathExists ./generated/apps.nix) ./generated/apps.nix
-  ++ lib.optional (builtins.pathExists /var/lib/bloud/nix/apps.nix) /var/lib/bloud/nix/apps.nix;
+  ++ lib.optional (builtins.pathExists /home/bloud/.local/share/bloud/nix/apps.nix) /home/bloud/.local/share/bloud/nix/apps.nix;
 
   # Boot configuration - use GRUB to match base image
   boot.loader.grub.enable = true;

@@ -54,7 +54,8 @@ func (c *Configurator) Name() string {
 	return "miniflux"
 }
 
-// PreStart creates the SSO redirect config if Authentik integration is enabled
+// PreStart creates the SSO redirect config if Authentik integration is enabled.
+// SSO wait is handled automatically by the framework.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
 	// Check if SSO integration is enabled
 	if _, hasSSO := state.Integrations["sso"]; !hasSSO {

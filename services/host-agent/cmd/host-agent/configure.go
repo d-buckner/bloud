@@ -59,7 +59,7 @@ func runConfigure(args []string) int {
 			fmt.Fprintln(os.Stderr, "Usage: bloud-agent configure prestart <app-name>")
 			return 1
 		}
-		return runPreStart(ctx, args[1], registry, appStore, cfg.DataDir, logger)
+		return runPreStart(ctx, args[1], registry, appStore, cfg.DataDir, cfg, logger)
 
 	case "poststart":
 		if len(args) < 2 {
@@ -78,8 +78,29 @@ func runConfigure(args []string) int {
 	}
 }
 
-func runPreStart(ctx context.Context, appName string, registry *configurator.Registry, appStore *store.AppStore, dataDir string, logger *slog.Logger) int {
+func runPreStart(ctx context.Context, appName string, registry *configurator.Registry, appStore *store.AppStore, dataDir string, appCfg *config.Config, logger *slog.Logger) int {
 	logger.Info("running prestart", "app", appName)
+
+	// Framework-level SSO wait: check if this app has SSO configured in the database.
+	// If so, wait for Authentik's OpenID endpoint before the app starts.
+	// This ensures the OAuth2 provider/application has been created by the blueprint.
+	// We check the database (source of truth for configured integrations) rather than
+	// probing Authentik, because Authentik may not have processed the blueprint yet.
+	app, err := appStore.GetByName(appName)
+	if err != nil {
+		logger.Warn("failed to get app from database", "app", appName, "error", err)
+	}
+	if app != nil {
+		if _, hasSSO := app.IntegrationConfig["sso"]; hasSSO {
+			logger.Info("waiting for SSO to be ready", "app", appName)
+			timeout := 180 * time.Second
+			if err := configurator.WaitForSSOReady(ctx, appName, appCfg.AuthentikPort, timeout); err != nil {
+				logger.Error("SSO not ready", "app", appName, "error", err)
+				return 1
+			}
+			logger.Info("SSO is ready", "app", appName)
+		}
+	}
 
 	cfg := registry.Get(appName)
 	if cfg == nil {

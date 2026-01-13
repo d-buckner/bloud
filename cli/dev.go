@@ -294,6 +294,22 @@ func cmdRebuild() int {
 	return 0
 }
 
+func cmdServices() int {
+	if !vm.IsRunning(devVMName) {
+		errorf("VM is not running. Start with: ./bloud start")
+		return 1
+	}
+
+	output, err := vm.Exec(devVMName, "systemctl --user list-units 'podman-*' --all --no-pager")
+	if err != nil {
+		errorf("Failed to get services: %v", err)
+		return 1
+	}
+
+	fmt.Println(output)
+	return 0
+}
+
 // isPortForwardingRunning checks if port forwarding is running for a port
 func isPortForwardingRunning(port int) bool {
 	// Check for local SSH process doing port forwarding

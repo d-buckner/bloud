@@ -40,6 +40,8 @@ func main() {
 		exitCode = cmdStop()
 	case "status":
 		exitCode = cmdStatus()
+	case "services":
+		exitCode = cmdServices()
 	case "logs":
 		exitCode = cmdLogs()
 	case "attach":
@@ -90,6 +92,8 @@ func handleTest(args []string) int {
 		return testShell(testArgs)
 	case "rebuild":
 		return testRebuild()
+	case "services":
+		return testServices()
 	case "help", "--help", "-h":
 		printTestUsage()
 		return 0
@@ -109,6 +113,7 @@ func printUsage() {
 	fmt.Println("  start           Start dev environment (auto-starts VM if needed)")
 	fmt.Println("  stop            Stop dev services")
 	fmt.Println("  status          Show dev environment status")
+	fmt.Println("  services        Show podman service status")
 	fmt.Println("  logs            Show logs from dev services")
 	fmt.Println("  attach          Attach to tmux session (Ctrl-B D to detach)")
 	fmt.Println("  shell [cmd]     Shell into VM (or run a command)")
@@ -142,6 +147,7 @@ func printTestUsage() {
 	fmt.Println("  start           Create fresh test VM and start services")
 	fmt.Println("  stop            Stop services and destroy test VM")
 	fmt.Println("  status          Show test environment status")
+	fmt.Println("  services        Show podman service status")
 	fmt.Println("  logs            Show logs from test services")
 	fmt.Println("  attach          Attach to tmux session (Ctrl-B D to detach)")
 	fmt.Println("  shell [cmd]     Shell into VM (or run a command)")

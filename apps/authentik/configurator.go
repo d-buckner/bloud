@@ -66,7 +66,7 @@ except Exception as e:
 	cmd := exec.CommandContext(ctx, "podman", "exec",
 		"-e", fmt.Sprintf("BLOUD_ADMIN_PASSWORD=%s", c.bootstrapPassword),
 		"-e", fmt.Sprintf("BLOUD_ADMIN_EMAIL=%s", c.bootstrapEmail),
-		"authentik-server", "ak", "shell", "-c", pythonCode)
+		"apps-authentik-server", "ak", "shell", "-c", pythonCode)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to set admin password: %w (output: %s)", err, string(output))

@@ -16,11 +16,11 @@ mkBloudApp {
 
   # Depend on Authentik when SSO is enabled
   # The configurator's PreStart waits for the OpenID endpoint
-  dependsOn = lib.optionals authentikEnabled [ "authentik-server" ];
+  dependsOn = lib.optionals authentikEnabled [ "apps-authentik-server" ];
 
   options = {
     openidDiscoveryUrl = {
-      default = "http://authentik-proxy/application/o/actual-budget/.well-known/openid-configuration";
+      default = "http://apps-authentik-proxy/application/o/actual-budget/.well-known/openid-configuration";
       description = "OpenID Connect discovery URL";
     };
     openidClientId = {

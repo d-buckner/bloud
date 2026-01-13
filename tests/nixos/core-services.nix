@@ -66,7 +66,7 @@ pkgs.nixosTest {
     machine.wait_until_succeeds("sudo -u bloud systemctl --user is-active podman-apps-network.service", timeout=30)
 
     # Start PostgreSQL and verify it responds
-    machine.succeed("sudo -u bloud systemctl --user start podman-postgres.service")
+    machine.succeed("sudo -u bloud systemctl --user start podman-apps-postgres.service")
     machine.wait_until_succeeds(
       "sudo -u bloud podman exec apps-postgres pg_isready -U apps",
       timeout=60
@@ -78,7 +78,7 @@ pkgs.nixosTest {
     )
 
     # Start Redis and verify it responds
-    machine.succeed("sudo -u bloud systemctl --user start podman-redis.service")
+    machine.succeed("sudo -u bloud systemctl --user start podman-apps-redis.service")
     machine.wait_until_succeeds(
       "sudo -u bloud podman exec apps-redis redis-cli ping | grep -q PONG",
       timeout=30
@@ -100,8 +100,8 @@ pkgs.nixosTest {
     )
 
     # Verify all services are running
-    machine.succeed("sudo -u bloud systemctl --user is-active podman-postgres.service")
-    machine.succeed("sudo -u bloud systemctl --user is-active podman-redis.service")
+    machine.succeed("sudo -u bloud systemctl --user is-active podman-apps-postgres.service")
+    machine.succeed("sudo -u bloud systemctl --user is-active podman-apps-redis.service")
     machine.succeed("sudo -u bloud systemctl --user is-active podman-traefik.service")
 
     # List running containers (informational)

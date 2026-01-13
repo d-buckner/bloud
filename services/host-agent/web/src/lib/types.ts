@@ -78,6 +78,7 @@ export interface IndexedDBEntry {
 	store: string;
 	key: string;
 	value: string;
+	protected?: boolean;
 }
 
 export interface Resources {

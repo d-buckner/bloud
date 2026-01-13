@@ -24,7 +24,7 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 	traefikDynamicDir := filepath.Join(cfg.DataDir, "traefik", "dynamic")
 
 	// Register configurators from apps/ directory
-	registry.Register(actualbudget.NewConfigurator(5006, cfg.AuthentikPort))
+	registry.Register(actualbudget.NewConfigurator(5006))
 	registry.Register(adguardhome.NewConfigurator(3080))
 	registry.Register(authentik.NewConfigurator(cfg.AuthentikPort, cfg.AuthentikAdminPassword, cfg.AuthentikAdminEmail))
 	registry.Register(miniflux.NewConfigurator(8085, "admin", "admin123", traefikDynamicDir))

@@ -129,8 +129,8 @@ let
   dbInitService = lib.optionalAttrs (database != null) {
     "${serviceName}-db-init" = {
       description = "Initialize ${name} database";
-      after = [ "podman-postgres.service" ];
-      requires = [ "podman-postgres.service" ];
+      after = [ "podman-apps-postgres.service" ];
+      requires = [ "podman-apps-postgres.service" ];
       before = [ "podman-${serviceName}.service" ];
       wantedBy = [ "bloud-apps.target" ];
       partOf = [ "bloud-apps.target" ];

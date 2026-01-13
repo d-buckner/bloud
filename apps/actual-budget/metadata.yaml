@@ -58,6 +58,7 @@ bootstrap:
       - store: asyncStorage
         key: server-url
         value: "{{embedUrl}}"
+        protected: true
       - store: asyncStorage
         key: theme
         value: "light"

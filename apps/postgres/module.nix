@@ -7,8 +7,8 @@ mkBloudApp {
   name = "postgres";
   description = "PostgreSQL database for apps";
   containerName = "apps-postgres";
-  # serviceName must match app name for Go API health checks
-  serviceName = "postgres";
+  # serviceName should match containerName for consistent dependency resolution
+  serviceName = "apps-postgres";
 
   image = "postgres:16-alpine";
   # Expose on host port for apps using host networking (e.g., Miniflux with OIDC)

@@ -1,0 +1,57 @@
+#!/bin/bash
+# Run app integration tests
+#
+# Usage:
+#   ./test miniflux        # Test specific app
+#   ./test                  # Run all tests
+#   ./test --help          # Show help
+#
+# Assumes dev environment is already running (./lima/dev start)
+
+set -e
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+  echo "Usage: ./test [app-name]"
+  echo ""
+  echo "Examples:"
+  echo "  ./test              # Run all integration tests"
+  echo "  ./test miniflux     # Test miniflux app"
+  echo "  ./test actual-budget # Test actual-budget app"
+  echo ""
+  echo "Prerequisites:"
+  echo "  ./lima/dev start    # Start dev environment first"
+  echo ""
+  echo "Options:"
+  echo "  --help, -h          Show this help"
+  exit 0
+fi
+
+cd "$(dirname "$0")/integration"
+
+# Check if node_modules exists
+if [ ! -d "node_modules" ]; then
+  echo "Installing test dependencies..."
+  npm install
+fi
+
+# Skip VM setup - assume services are already running via ./lima/dev start
+export SKIP_VM_SETUP=true
+export SKIP_RESET=true
+
+if [ -n "$1" ]; then
+  # Test specific app
+  APP="$1"
+  TEST_FILE="apps/${APP}/test.ts"
+
+  if [ ! -f "../$TEST_FILE" ]; then
+    echo "Error: No test file found at ${TEST_FILE}"
+    exit 1
+  fi
+
+  echo "Testing ${APP}..."
+  npx playwright test "$TEST_FILE"
+else
+  # Run all tests
+  echo "Running all integration tests..."
+  npx playwright test
+fi
