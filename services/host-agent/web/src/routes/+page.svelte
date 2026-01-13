@@ -6,8 +6,8 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { AppStatus, type App } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
-	import { uninstallApp as doUninstallApp } from '$lib/stores/appActions';
-	import { openApp } from '$lib/stores/openApps';
+	import { uninstallApp as doUninstallApp } from '$lib/services/appLifecycle';
+	import { openApp } from '$lib/services/navigation';
 	import WidgetContainer from '$lib/widgets/WidgetContainer.svelte';
 
 

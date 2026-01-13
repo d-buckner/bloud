@@ -4,8 +4,8 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import Sidebar from '$lib/components/Sidebar.svelte';
-	import { initApps, disconnectApps } from '$lib/stores/appActions';
-	import { bootstrap, setActiveApp } from '$lib/bootstrap';
+	import { initApps, disconnectApps } from '$lib/services/appLifecycle';
+	import { waitForServiceWorker, setActiveApp } from '$lib/services/bootstrap';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -25,7 +25,7 @@
 	onMount(() => {
 		initApps();
 		// Register service worker for URL rewriting in embedded apps
-		bootstrap();
+		waitForServiceWorker();
 		return () => disconnectApps();
 	});
 </script>

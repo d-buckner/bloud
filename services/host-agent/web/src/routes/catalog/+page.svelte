@@ -5,8 +5,8 @@
 	import RollbackModal from '$lib/components/RollbackModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import type { CatalogApp } from '$lib/types';
-	import { apps as installedApps } from '$lib/stores/apps';
-	import { installApp } from '$lib/stores/appActions';
+	import { apps as installedApps, getAppStatus } from '$lib/stores/apps';
+	import { installApp } from '$lib/services/appLifecycle';
 
 	let catalogApps = $state<CatalogApp[]>([]);
 	let catalogLoading = $state(true);
@@ -50,12 +50,7 @@
 		return result;
 	});
 
-	// Get the status of an installed app
-	function getAppStatus(appName: string): string | null {
-		const app = $installedApps.find(a => a.name === appName);
-		return app?.status ?? null;
-	}
-
+	
 	onMount(async () => {
 		try {
 			const catalogRes = await fetch('/api/apps');
