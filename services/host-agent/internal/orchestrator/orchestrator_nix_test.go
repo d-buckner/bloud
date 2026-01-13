@@ -49,6 +49,9 @@ func newTestOrchestratorWithMocks() *testOrchestrator {
 		authentikClient: new(MockAuthentikClient),
 	}
 
+	// Default expectation for outpost blueprint generation (may be overridden)
+	t.blueprintGen.On("GenerateOutpostBlueprint", mock.Anything).Return(nil).Maybe()
+
 	t.orch = &Orchestrator{
 		graph:           t.graph,
 		catalogCache:    t.cache,
@@ -88,6 +91,8 @@ func (t *testOrchestrator) setupSuccessfulInstall(appName string, app *catalog.A
 
 	t.traefikGen.On("SetAuthentikEnabled", false).Return()
 	t.traefikGen.On("Generate", mock.Anything).Return(nil)
+
+	t.blueprintGen.On("GenerateOutpostBlueprint", mock.Anything).Return(nil)
 }
 
 // setupSuccessfulUninstall sets up mocks for a successful app uninstallation
