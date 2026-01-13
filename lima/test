@@ -35,8 +35,8 @@ generate_lima_config() {
     log "Generating Lima config for: $PROJECT_ROOT"
 
     # The main repo is where the NixOS image lives (it's gitignored, so not in worktrees)
-    # Default to ~/Projects/bloud-v3 but allow override via BLOUD_MAIN_REPO
-    local main_repo="${BLOUD_MAIN_REPO:-$HOME/Projects/bloud-v3}"
+    # Default to ~/Projects/bloud but allow override via BLOUD_MAIN_REPO
+    local main_repo="${BLOUD_MAIN_REPO:-$HOME/Projects/bloud}"
 
     sed -e "s|__PROJECT_ROOT__|${PROJECT_ROOT}|g" \
         -e "s|__BLOUD_MAIN_REPO__|${main_repo}|g" \
@@ -171,7 +171,7 @@ cmd_vm_create() {
         kill $lima_pid 2>/dev/null || true
 
         # Create mount directories and mount 9p filesystems
-        local main_repo="${BLOUD_MAIN_REPO:-$HOME/Projects/bloud-v3}"
+        local main_repo="${BLOUD_MAIN_REPO:-$HOME/Projects/bloud}"
         log "Mounting shared directories..."
         vm_exec "sudo mkdir -p ${PROJECT_ROOT} ${main_repo}/.git /tmp/lima"
         vm_exec "sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=none,access=any mount0 ${PROJECT_ROOT} 2>/dev/null || true"

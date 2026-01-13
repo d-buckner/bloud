@@ -37,18 +37,18 @@ build_on_vm() {
 
     # Copy project to VM's temp directory (to avoid 9p permission issues)
     echo "Copying project to VM..."
-    limactl shell nix-builder -- rm -rf /tmp/bloud-v3
-    limactl shell nix-builder -- mkdir -p /tmp/bloud-v3
+    limactl shell nix-builder -- rm -rf /tmp/bloud
+    limactl shell nix-builder -- mkdir -p /tmp/bloud
     rsync -av --exclude='.git' --exclude='node_modules' --exclude='result*' \
-        "$PROJECT_ROOT/" nix-builder:/tmp/bloud-v3/
+        "$PROJECT_ROOT/" nix-builder:/tmp/bloud/
 
     # Build the image
     echo "Building image..."
-    limactl shell nix-builder -- bash -c "cd /tmp/bloud-v3 && nix build .#lima-image -o result-lima-image"
+    limactl shell nix-builder -- bash -c "cd /tmp/bloud && nix build .#lima-image -o result-lima-image"
 
     # Copy the result back
     mkdir -p "$IMG_DIR"
-    limactl shell nix-builder -- cat /tmp/bloud-v3/result-lima-image/nixos.img > "$IMG_DIR/nixos-24.11-lima.img"
+    limactl shell nix-builder -- cat /tmp/bloud/result-lima-image/nixos.img > "$IMG_DIR/nixos-24.11-lima.img"
 
     echo "Image built: $IMG_DIR/nixos-24.11-lima.img"
 }

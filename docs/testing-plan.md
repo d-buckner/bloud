@@ -1,4 +1,4 @@
-# Bloud-v3 Testing Plan
+# Bloud Testing Plan
 
 This document outlines the comprehensive testing strategy for the orchestrator and NixOS modules.
 

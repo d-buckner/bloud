@@ -9,7 +9,7 @@ import (
 	"text/template"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/cli/vm"
+	"codeberg.org/d-buckner/bloud/cli/vm"
 )
 
 const (
@@ -55,7 +55,7 @@ func generateTestConfig(templatePath, outputPath, projectRoot string) error {
 	mainRepo := os.Getenv("BLOUD_MAIN_REPO")
 	if mainRepo == "" {
 		home, _ := os.UserHomeDir()
-		mainRepo = filepath.Join(home, "Projects", "bloud-v3")
+		mainRepo = filepath.Join(home, "Projects", "bloud")
 	}
 
 	data := map[string]string{
@@ -137,7 +137,7 @@ func testStart() int {
 	mainRepo := os.Getenv("BLOUD_MAIN_REPO")
 	if mainRepo == "" {
 		home, _ := os.UserHomeDir()
-		mainRepo = filepath.Join(home, "Projects", "bloud-v3")
+		mainRepo = filepath.Join(home, "Projects", "bloud")
 	}
 
 	// Create mount directories and mount filesystems

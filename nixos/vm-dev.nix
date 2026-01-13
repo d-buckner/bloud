@@ -1,7 +1,7 @@
 # VM-specific NixOS configuration for local development via Lima
 #
 # This module configures NixOS to run in a Lima VM on macOS.
-# After first boot, run: sudo nixos-rebuild switch --flake /home/bloud/bloud-v3#vm-dev
+# After first boot, run: sudo nixos-rebuild switch --flake /home/bloud.linux/bloud#vm-dev
 #
 
 { config, pkgs, lib, modulesPath, ... }:
@@ -166,6 +166,12 @@
     air            # Go hot reload
     nodejs_22      # Node.js for Vite
   ];
+
+  # Git configuration - mark mounted directories as safe
+  environment.etc."gitconfig".text = ''
+    [safe]
+      directory = *
+  '';
 
   # System state version
   system.stateVersion = "24.11";

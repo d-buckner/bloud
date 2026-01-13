@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/cli/vm"
+	"codeberg.org/d-buckner/bloud/cli/vm"
 )
 
 // localExec runs a command on the host machine (not in VM)
@@ -20,7 +20,7 @@ func localExec(name string, args ...string) *exec.Cmd {
 const (
 	devVMName       = "bloud"
 	devTmuxSession  = "bloud-dev"
-	devProjectInVM  = "/home/bloud.linux/bloud-v3"
+	devProjectInVM  = "/home/bloud.linux/bloud"
 )
 
 var devPorts = []vm.PortForward{
@@ -307,6 +307,25 @@ func cmdServices() int {
 	}
 
 	fmt.Println(output)
+	return 0
+}
+
+func cmdDestroy() int {
+	if !vm.Exists(devVMName) {
+		log("VM does not exist")
+		return 0
+	}
+
+	// Kill port forwarding first
+	_ = vm.KillPortForwarding(devVMName, devPorts[0].LocalPort)
+
+	log("Destroying dev VM...")
+	if err := vm.Delete(devVMName); err != nil {
+		errorf("Failed to destroy VM: %v", err)
+		return 1
+	}
+
+	log("Dev VM destroyed")
 	return 0
 }
 

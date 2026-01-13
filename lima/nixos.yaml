@@ -12,7 +12,7 @@
 #
 # 3. SSH into the VM and apply our configuration:
 #    limactl shell bloud
-#    sudo nixos-rebuild switch --flake /home/bloud.linux/bloud-v3#vm-dev
+#    sudo nixos-rebuild switch --flake /home/bloud.linux/bloud#vm-dev
 #
 # 4. The VM is now running with full bloud services.
 #
@@ -33,14 +33,14 @@ timezone: ""
 
 # NixOS image (built with nixos-generators from NixOS 24.11, includes lima-init)
 images:
-  - location: "~/Projects/bloud-v3/lima/imgs/nixos-24.11-lima.img"
+  - location: "~/Projects/bloud/lima/imgs/nixos-24.11-lima.img"
     arch: "aarch64"
 
 # Mount the project directory into the VM
 mounts:
   # Mount the bloud project (writable for development)
-  - location: "~/Projects/bloud-v3"
-    mountPoint: "/home/bloud.linux/bloud-v3"
+  - location: "~/Projects/bloud"
+    mountPoint: "/home/bloud.linux/bloud"
     writable: true
     9p:
       cache: "mmap"

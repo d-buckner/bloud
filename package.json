@@ -1,7 +1,8 @@
 {
-  "name": "bloud-v3",
-  "private": true,
+  "name": "bloud",
+  "private": false,
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "workspaces": [
     "services/host-agent",
     "services/host-agent/web"

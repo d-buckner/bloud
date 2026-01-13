@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"codeberg.org/d-buckner/bloud-v3/cli/vm"
+	"codeberg.org/d-buckner/bloud/cli/vm"
 )
 
 const (
@@ -52,6 +52,8 @@ func main() {
 		exitCode = cmdRebuild()
 	case "depgraph":
 		exitCode = cmdDepGraph()
+	case "destroy":
+		exitCode = cmdDestroy()
 
 	// Test commands (subcommand)
 	case "test":
@@ -121,6 +123,7 @@ func printUsage() {
 	fmt.Println("  shell [cmd]     Shell into VM (or run a command)")
 	fmt.Println("  rebuild         Rebuild NixOS configuration")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
+	fmt.Println("  destroy         Destroy the dev VM completely")
 	fmt.Println()
 	fmt.Println("Test Commands (ephemeral environment, ports 8081/3001/5174):")
 	fmt.Println("  test start      Create fresh test VM and start services")

@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VM_NAME="bloud"
 VM_USER="bloud"
 VM_PASSWORD="bloud"
-PROJECT_IN_VM="/home/bloud.linux/bloud-v3"
+PROJECT_IN_VM="/home/bloud.linux/bloud"
 TMUX_SESSION="bloud-dev"
 
 # Colors
@@ -107,7 +107,7 @@ cmd_vm_start() {
         # Using access=any so VM user can read/write Mac-owned files
         # Using cache=none to avoid stale metadata (important for hot reload)
         log "Mounting shared directories..."
-        vm_exec "sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=none,access=any mount0 /home/bloud.linux/bloud-v3 2>/dev/null || true"
+        vm_exec "sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=none,access=any mount0 /home/bloud.linux/bloud 2>/dev/null || true"
         vm_exec "sudo mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072,cache=none,access=any mount1 /tmp/lima 2>/dev/null || true"
 
         echo ""
