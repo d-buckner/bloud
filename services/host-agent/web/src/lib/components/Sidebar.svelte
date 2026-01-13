@@ -2,7 +2,8 @@
 	import { page } from '$app/state';
 	import Icon from './Icon.svelte';
 	import AppIcon from './AppIcon.svelte';
-	import { openAppsList, openApp, closeApp } from '$lib/stores/openApps';
+	import { openAppsList } from '$lib/stores/tabs';
+	import { openApp, closeApp } from '$lib/services/navigation';
 
 	interface Props {
 		collapsed?: boolean;
