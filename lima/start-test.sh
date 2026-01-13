@@ -14,7 +14,7 @@
 set -e
 
 # PROJECT_DIR can be passed as first argument or via environment variable
-PROJECT_DIR="${1:-${BLOUD_PROJECT_DIR:-/home/bloud.linux/bloud-v3}}"
+PROJECT_DIR="${1:-${BLOUD_PROJECT_DIR:-/home/bloud.linux/bloud}}"
 LOCAL_SRC="/tmp/bloud-test-src"
 DATA_DIR="/home/bloud/.local/share/bloud"  # Same as dev - VMs are separate
 LOCAL_NODE_MODULES="/tmp/bloud-test-node-modules"
