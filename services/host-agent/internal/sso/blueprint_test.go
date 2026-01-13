@@ -175,3 +175,87 @@ func TestDeleteBlueprint_NonExistent(t *testing.T) {
 		t.Errorf("DeleteBlueprint should not error for non-existent file: %v", err)
 	}
 }
+
+func TestGenerateOutpostBlueprint(t *testing.T) {
+	dir := t.TempDir()
+
+	gen := NewBlueprintGenerator(
+		"test-secret",
+		"http://localhost:8080",
+		"http://localhost:8080",
+		dir,
+	)
+
+	providers := []ForwardAuthProvider{
+		{DisplayName: "App One"},
+		{DisplayName: "App Two"},
+	}
+
+	err := gen.GenerateOutpostBlueprint(providers)
+	if err != nil {
+		t.Fatalf("GenerateOutpostBlueprint failed: %v", err)
+	}
+
+	// Read the generated file
+	content, err := os.ReadFile(filepath.Join(dir, "bloud-outpost.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+	t.Logf("Generated blueprint:\n%s", contentStr)
+
+	// Verify it references the embedded outpost
+	if !strings.Contains(contentStr, "authentik Embedded Outpost") {
+		t.Error("Expected 'authentik Embedded Outpost' identifier not found")
+	}
+
+	// Verify provider references using !Find syntax
+	if !strings.Contains(contentStr, `"App One Proxy Provider"`) {
+		t.Error("Expected App One provider reference not found")
+	}
+	if !strings.Contains(contentStr, `"App Two Proxy Provider"`) {
+		t.Error("Expected App Two provider reference not found")
+	}
+
+	// Verify config includes authentik_host and authentik_host_browser
+	if !strings.Contains(contentStr, `authentik_host: "http://localhost:8080"`) {
+		t.Error("Expected authentik_host config not found")
+	}
+	if !strings.Contains(contentStr, `authentik_host_browser: "http://localhost:8080"`) {
+		t.Error("Expected authentik_host_browser config not found")
+	}
+}
+
+func TestGenerateOutpostBlueprint_NoProviders(t *testing.T) {
+	dir := t.TempDir()
+
+	gen := NewBlueprintGenerator(
+		"test-secret",
+		"http://localhost:8080",
+		"http://localhost:8080",
+		dir,
+	)
+
+	// Create a blueprint file first
+	err := gen.GenerateOutpostBlueprint([]ForwardAuthProvider{{DisplayName: "Test"}})
+	if err != nil {
+		t.Fatalf("GenerateOutpostBlueprint failed: %v", err)
+	}
+
+	blueprintPath := filepath.Join(dir, "bloud-outpost.yaml")
+	if _, err := os.Stat(blueprintPath); os.IsNotExist(err) {
+		t.Fatal("Blueprint file was not created")
+	}
+
+	// Call with empty providers - should remove the file
+	err = gen.GenerateOutpostBlueprint([]ForwardAuthProvider{})
+	if err != nil {
+		t.Fatalf("GenerateOutpostBlueprint with empty providers failed: %v", err)
+	}
+
+	// Verify file is removed
+	if _, err := os.Stat(blueprintPath); !os.IsNotExist(err) {
+		t.Error("Blueprint file should be removed when no providers")
+	}
+}
