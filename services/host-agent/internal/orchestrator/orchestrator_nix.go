@@ -1080,18 +1080,13 @@ func (o *Orchestrator) checkForStuckStates(cfg StateWatchdogConfig) {
 			}
 
 		case "error", "failed":
-			// Check if errored apps have recovered
-			serviceName := getSystemdServiceName(app.Name)
-			serviceActive := o.checkSystemdServiceActive(app.Name)
-			// Skip health checks for system apps
+			// Check if errored apps have recovered - health check is sufficient proof
 			healthOk := app.IsSystem || o.checkHealthOnce(app.Name)
 			o.logger.Debug("watchdog: checking error/failed app recovery",
 				"app", app.Name,
-				"serviceName", serviceName,
-				"serviceActive", serviceActive,
 				"healthOk", healthOk,
 				"isSystem", app.IsSystem)
-			if serviceActive && healthOk {
+			if healthOk {
 				o.logger.Info("watchdog: app recovered",
 					"app", app.Name)
 				o.appStore.UpdateStatus(app.Name, "running")
