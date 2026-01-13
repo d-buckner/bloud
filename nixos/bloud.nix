@@ -98,6 +98,47 @@ in
       };
     };
 
+    # Initialize the bloud database (required for app configurator hooks)
+    # Apps with configurators should add this to their After= dependencies
+    systemd.user.services.bloud-db-init = {
+      description = "Initialize bloud database for host-agent";
+      after = [ "podman-apps-postgres.service" ];
+      requires = [ "podman-apps-postgres.service" ];
+      wantedBy = [ "bloud-apps.target" ];
+      before = [ "bloud-apps.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = pkgs.writeShellScript "bloud-db-init" ''
+          set -e
+
+          # Wait for postgres to be ready (with timeout)
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in $(seq 1 30); do
+            if ${pkgs.podman}/bin/podman exec apps-postgres pg_isready -U ${config.bloud.apps.postgres.user} > /dev/null 2>&1; then
+              echo "PostgreSQL is ready"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Timeout waiting for PostgreSQL"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          # Create database if not exists
+          if ! ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${config.bloud.apps.postgres.user} -tc "SELECT 1 FROM pg_database WHERE datname = 'bloud'" | grep -q 1; then
+            echo "Creating bloud database..."
+            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${config.bloud.apps.postgres.user} -c "CREATE DATABASE bloud"
+            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${config.bloud.apps.postgres.user} -c "GRANT ALL PRIVILEGES ON DATABASE bloud TO ${config.bloud.apps.postgres.user}"
+            echo "Database created successfully"
+          else
+            echo "Database bloud already exists"
+          fi
+        '';
+      };
+    };
+
     # Helper commands
     environment.systemPackages = [
       (pkgs.writeShellScriptBin "bloud-test" ''

@@ -42,7 +42,7 @@ func (c *Cache) Refresh(loader *Loader) error {
 	// Insert each app into cache
 	stmt, err := tx.Prepare(`
 		INSERT INTO catalog_cache (name, yaml_content, updated_at)
-		VALUES (?, ?, ?)
+		VALUES ($1, $2, $3)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -98,7 +98,7 @@ func (c *Cache) GetAll() ([]*App, error) {
 // Get returns a single app from the cache by name
 func (c *Cache) Get(name string) (*App, error) {
 	var yamlContent string
-	err := c.db.QueryRow("SELECT yaml_content FROM catalog_cache WHERE name = ?", name).Scan(&yamlContent)
+	err := c.db.QueryRow("SELECT yaml_content FROM catalog_cache WHERE name = $1", name).Scan(&yamlContent)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("app not found: %s", name)
 	}
