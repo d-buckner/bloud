@@ -50,6 +50,8 @@ func main() {
 		exitCode = cmdShell(args)
 	case "rebuild":
 		exitCode = cmdRebuild()
+	case "depgraph":
+		exitCode = cmdDepGraph()
 
 	// Test commands (subcommand)
 	case "test":
@@ -118,6 +120,7 @@ func printUsage() {
 	fmt.Println("  attach          Attach to tmux session (Ctrl-B D to detach)")
 	fmt.Println("  shell [cmd]     Shell into VM (or run a command)")
 	fmt.Println("  rebuild         Rebuild NixOS configuration")
+	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
 	fmt.Println()
 	fmt.Println("Test Commands (ephemeral environment, ports 8081/3001/5174):")
 	fmt.Println("  test start      Create fresh test VM and start services")
