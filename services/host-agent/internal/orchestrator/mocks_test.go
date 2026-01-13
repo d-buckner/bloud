@@ -70,6 +70,11 @@ func (m *MockAppStore) SetOnChange(fn func()) {
 	m.Called(fn)
 }
 
+func (m *MockAppStore) EnsureSystemApp(name, displayName string, port int) error {
+	args := m.Called(name, displayName, port)
+	return args.Error(0)
+}
+
 // MockCatalogCache implements catalog.CacheInterface for testing
 type MockCatalogCache struct {
 	mock.Mock
