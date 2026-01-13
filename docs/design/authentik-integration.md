@@ -232,11 +232,21 @@ entries:
 
 2. **external_host must be root URL**: Set to `http://localhost:8080` (not `http://localhost:8080/embed/qbittorrent/`). The OAuth callback path `/outpost.goauthentik.io/callback` is appended to this, and Traefik only routes this at the root level.
 
-3. **Embedded outpost association**: After creating the proxy provider via blueprint, the host-agent must add it to the "authentik Embedded Outpost" via API. Blueprints create providers but don't automatically associate them with outposts.
+3. **Embedded outpost association**: The host-agent generates a `bloud-outpost.yaml` blueprint that adds all forward-auth proxy providers to the embedded outpost and configures `authentik_host`/`authentik_host_browser` for correct OAuth redirects. This blueprint uses `!Find` to reference providers by name, so they can be created by separate app blueprints.
 
-```go
-// Host-agent adds provider to embedded outpost after blueprint applies
-client.AddProviderToEmbeddedOutpost("qBittorrent Proxy Provider")
+```yaml
+# bloud-outpost.yaml (auto-generated)
+entries:
+  - model: authentik_outposts.outpost
+    state: present
+    identifiers:
+      name: authentik Embedded Outpost
+    attrs:
+      providers:
+        - !Find [authentik_providers_proxy.proxyprovider, [name, "App Proxy Provider"]]
+      config:
+        authentik_host: "http://localhost:8080"
+        authentik_host_browser: "http://localhost:8080"
 ```
 
 ---
