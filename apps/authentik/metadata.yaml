@@ -5,7 +5,6 @@ category: security
 port: 9001
 isSystem: true
 
-image: ghcr.io/goauthentik/server:latest
 integrations:
   database:
     required: true

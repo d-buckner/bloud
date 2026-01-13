@@ -1,9 +1,8 @@
 name: qbittorrent
 displayName: qBittorrent
-description: Feature-rich BitTorrent client with web UI
+description: Feature-rich BitTorrent client with Flood web UI
 category: media
 port: 8086
-image: linuxserver/qbittorrent:latest
 
 integrations: {}
 

@@ -3,7 +3,6 @@ displayName: Prowlarr
 description: Indexer manager for Radarr, Sonarr, and other *arr apps
 category: media
 port: 9696
-image: linuxserver/prowlarr:latest
 
 integrations:
   movieManager:

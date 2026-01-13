@@ -3,7 +3,6 @@ displayName: Radarr
 description: Movie collection manager and downloader
 category: media
 port: 7878
-image: linuxserver/radarr:latest
 
 integrations:
   downloadClient:
