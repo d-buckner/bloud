@@ -1062,20 +1062,11 @@ func (o *Orchestrator) checkForStuckStates(cfg StateWatchdogConfig) {
 			}
 
 		case "running":
-			// Periodically verify running apps are still healthy
-			serviceName := getSystemdServiceName(app.Name)
-			serviceActive := o.checkSystemdServiceActive(app.Name)
-			if !serviceActive {
-				o.logger.Warn("watchdog: running app service not active",
-					"app", app.Name,
-					"serviceName", serviceName)
-				o.appStore.UpdateStatus(app.Name, "error")
-			} else if !app.IsSystem && !o.checkHealthOnce(app.Name) {
-				// Skip health checks for system apps - they're NixOS-managed and may have
-				// different ports per environment. Service being active is sufficient.
+			// Periodically verify running apps are still healthy via health check
+			// Skip health checks for system apps - they're NixOS-managed
+			if !app.IsSystem && !o.checkHealthOnce(app.Name) {
 				o.logger.Warn("watchdog: running app health check failed",
-					"app", app.Name,
-					"serviceName", serviceName)
+					"app", app.Name)
 				o.appStore.UpdateStatus(app.Name, "error")
 			}
 
