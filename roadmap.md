@@ -222,6 +222,7 @@ Target: 10 core apps for alpha release
 ### Medium Priority
 - [x] ~~Switch host-agent from SQLite to system PostgreSQL~~ (Done)
 - [x] ~~Frontend state management consolidation~~ (Done)
+- [ ] Multi-service app metadata - Apps should declare all services (not just one) so orchestrator can properly track health and dependencies (e.g., qbittorrent runs both `flood` and `qbittorrent` containers)
 - [ ] Defensive error handling in graph.go/plan.go
 - [ ] Test coverage for edge cases
 
