@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
@@ -314,6 +315,14 @@ func (m *MockAuthentikClient) DeleteOAuth2Provider(providerName string) error {
 func (m *MockAuthentikClient) DeleteProxyProvider(providerName string) error {
 	args := m.Called(providerName)
 	return args.Error(0)
+}
+
+func (m *MockAuthentikClient) ListUsers() ([]authentik.UserResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]authentik.UserResponse), args.Error(1)
 }
 
 // MockConfiguratorRegistry implements configurator.RegistryInterface for testing

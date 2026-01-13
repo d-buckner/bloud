@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
@@ -361,6 +362,10 @@ func (f *FakeAuthentikClient) DeleteOAuth2Provider(providerName string) error {
 
 func (f *FakeAuthentikClient) DeleteProxyProvider(providerName string) error {
 	return nil
+}
+
+func (f *FakeAuthentikClient) ListUsers() ([]authentik.UserResponse, error) {
+	return nil, nil
 }
 
 // Test helpers

@@ -21,6 +21,9 @@ type ClientInterface interface {
 
 	// DeleteProxyProvider deletes a proxy provider by name
 	DeleteProxyProvider(providerName string) error
+
+	// ListUsers fetches all users from Authentik
+	ListUsers() ([]UserResponse, error)
 }
 
 // Compile-time assertion

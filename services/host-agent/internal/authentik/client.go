@@ -205,6 +205,21 @@ func (c *Client) IsAvailable() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+// UserResponse represents an Authentik user in API responses
+type UserResponse struct {
+	UID      string `json:"uid"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+}
+
+// UserPaginatedResponse represents a paginated user API response
+type UserPaginatedResponse struct {
+	Pagination struct {
+		Next string `json:"next"`
+	} `json:"pagination"`
+	Results []UserResponse `json:"results"`
+}
+
 // OutpostResponse represents an Authentik outpost in API responses
 type OutpostResponse struct {
 	PK        string `json:"pk"`
@@ -324,4 +339,43 @@ func (c *Client) updateOutpostProviders(outpostPK string, providers []int) error
 	}
 
 	return nil
+}
+
+// ListUsers fetches all users from Authentik, handling pagination
+func (c *Client) ListUsers() ([]UserResponse, error) {
+	var allUsers []UserResponse
+	nextURL := fmt.Sprintf("%s/api/v3/core/users/", c.baseURL)
+
+	for nextURL != "" {
+		req, err := http.NewRequest(http.MethodGet, nextURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("executing request: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result UserPaginatedResponse
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decoding response: %w", err)
+		}
+		resp.Body.Close()
+
+		allUsers = append(allUsers, result.Results...)
+		nextURL = result.Pagination.Next
+	}
+
+	return allUsers, nil
 }

@@ -36,6 +36,7 @@ type Server struct {
 	ssoHostSecret  string
 	ssoBaseURL     string
 	authentikToken string
+	authentikPort  int
 	logger         *slog.Logger
 }
 
@@ -52,6 +53,7 @@ type ServerConfig struct {
 	SSOHostSecret  string // Master secret for deriving client secrets (required for SSO)
 	SSOBaseURL     string // Base URL for callbacks (e.g., "http://localhost:8080")
 	AuthentikToken string // Authentik API token for SSO cleanup
+	AuthentikPort  int    // Authentik internal port
 }
 
 // NewServer creates a new HTTP server instance
@@ -78,6 +80,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		ssoHostSecret:  cfg.SSOHostSecret,
 		ssoBaseURL:     cfg.SSOBaseURL,
 		authentikToken: cfg.AuthentikToken,
+		authentikPort:  cfg.AuthentikPort,
 		logger:         logger,
 	}
 

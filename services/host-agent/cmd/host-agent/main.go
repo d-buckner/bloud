@@ -71,6 +71,7 @@ func runServer() {
 		SSOHostSecret:  cfg.SSOHostSecret,
 		SSOBaseURL:     cfg.SSOBaseURL,
 		AuthentikToken: cfg.AuthentikToken,
+		AuthentikPort:  cfg.AuthentikPort,
 	}, logger)
 
 	// Setup graceful shutdown

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
 	"github.com/go-chi/chi/v5"
@@ -52,6 +53,12 @@ func (s *Server) setupRoutes() {
 			r.Get("/storage", s.handleStorage)
 			r.Get("/versions", s.handleListGenerations)
 			r.Get("/rebuild/stream", s.handleRebuildStream)
+		})
+
+		// User endpoints
+		r.Route("/users", func(r chi.Router) {
+			r.Get("/", s.handleListUsers)
+			r.Get("/me", s.handleCurrentUser)
 		})
 	})
 
@@ -468,5 +475,47 @@ func (s *Server) handleListGenerations(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"generations": generations,
+	})
+}
+
+// handleListUsers returns all users from Authentik
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	if s.authentikToken == "" {
+		respondError(w, http.StatusServiceUnavailable, "Authentik token not configured")
+		return
+	}
+
+	// Query Authentik directly
+	authentikURL := fmt.Sprintf("http://localhost:%d", s.authentikPort)
+	client := authentik.NewClient(authentikURL, s.authentikToken)
+
+	users, err := client.ListUsers()
+	if err != nil {
+		s.logger.Error("failed to fetch users from Authentik", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to fetch users")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"users": users,
+	})
+}
+
+// handleCurrentUser returns the current user based on request headers
+func (s *Server) handleCurrentUser(w http.ResponseWriter, r *http.Request) {
+	// Get user info from Authentik forward-auth headers
+	username := r.Header.Get("X-authentik-username")
+	if username == "" {
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"user": nil,
+		})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"user": map[string]string{
+			"username": username,
+			"name":     r.Header.Get("X-authentik-name"),
+		},
 	})
 }
