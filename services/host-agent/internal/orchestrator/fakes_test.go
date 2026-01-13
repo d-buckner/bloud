@@ -6,6 +6,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
 )
 
 // Fakes are test doubles that capture calls for later inspection.
@@ -276,6 +277,10 @@ func (f *FakeBlueprintGenerator) DeleteBlueprint(appName string) error {
 }
 
 func (f *FakeBlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
+	return nil
+}
+
+func (f *FakeBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.ForwardAuthProvider) error {
 	return nil
 }
 
