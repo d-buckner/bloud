@@ -15,6 +15,7 @@ type Config struct {
 	FlakePath    string // Path to flake.nix for nixos-rebuild
 	FlakeTarget  string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
 	NixosPath    string // Path to nixos/ modules directory
+	DatabaseURL  string // PostgreSQL connection string
 	// SSO configuration
 	SSOHostSecret  string // Master secret for deriving client secrets
 	SSOBaseURL     string // Base URL for callbacks (e.g., "http://localhost:8080")
@@ -43,6 +44,8 @@ func Load() *Config {
 		FlakePath:              getEnv("BLOUD_FLAKE_PATH", defaultFlakePath),
 		FlakeTarget:            getEnv("BLOUD_FLAKE_TARGET", "vm-dev"),
 		NixosPath:              getEnv("BLOUD_NIXOS_PATH", defaultNixosPath),
+		// Default matches postgres module defaults - NixOS injects actual values via DATABASE_URL
+		DatabaseURL:            getEnv("DATABASE_URL", "postgres://apps:testpass123@localhost:5432/bloud?sslmode=disable"),
 		SSOHostSecret:          getEnv("BLOUD_SSO_HOST_SECRET", "dev-secret-change-in-production"),
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		AuthentikToken:         getEnv("BLOUD_AUTHENTIK_TOKEN", "test-bootstrap-token-change-in-production"),

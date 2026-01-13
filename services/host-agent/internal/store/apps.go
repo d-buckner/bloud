@@ -73,7 +73,7 @@ func (s *AppStore) GetByName(name string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
 		SELECT id, name, display_name, version, status, port, is_system, integration_config, installed_at, updated_at
 		FROM apps
-		WHERE name = ?
+		WHERE name = $1
 	`, name)
 
 	app, err := s.scanAppRow(row)
@@ -121,19 +121,17 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 	}
 
 	var port sql.NullInt64
-	var isSystem int
+	var isSystem bool
 	if opts != nil {
 		if opts.Port > 0 {
 			port = sql.NullInt64{Int64: int64(opts.Port), Valid: true}
 		}
-		if opts.IsSystem {
-			isSystem = 1
-		}
+		isSystem = opts.IsSystem
 	}
 
 	_, err = s.db.Exec(`
 		INSERT INTO apps (name, display_name, version, status, port, is_system, integration_config)
-		VALUES (?, ?, ?, 'installing', ?, ?, ?)
+		VALUES ($1, $2, $3, 'installing', $4, $5, $6)
 		ON CONFLICT(name) DO UPDATE SET
 			display_name = excluded.display_name,
 			version = excluded.version,
@@ -154,8 +152,8 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 // UpdateStatus updates the status of an installed app
 func (s *AppStore) UpdateStatus(name, status string) error {
 	result, err := s.db.Exec(`
-		UPDATE apps SET status = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE name = ?
+		UPDATE apps SET status = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE name = $2
 	`, status, name)
 	if err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
@@ -176,12 +174,12 @@ func (s *AppStore) UpdateStatus(name, status string) error {
 func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
 	_, err := s.db.Exec(`
 		INSERT INTO apps (name, display_name, version, status, port, is_system, integration_config)
-		VALUES (?, ?, '', 'running', ?, 1, '{}')
+		VALUES ($1, $2, '', 'running', $3, true, '{}')
 		ON CONFLICT(name) DO UPDATE SET
 			display_name = excluded.display_name,
 			status = 'running',
 			port = excluded.port,
-			is_system = 1,
+			is_system = true,
 			updated_at = CURRENT_TIMESTAMP
 	`, name, displayName, port)
 	if err != nil {
@@ -200,8 +198,8 @@ func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string
 	}
 
 	result, err := s.db.Exec(`
-		UPDATE apps SET integration_config = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE name = ?
+		UPDATE apps SET integration_config = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE name = $2
 	`, string(configJSON), name)
 	if err != nil {
 		return fmt.Errorf("failed to update integration config: %w", err)
@@ -217,7 +215,7 @@ func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string
 
 // Uninstall removes an app from the database
 func (s *AppStore) Uninstall(name string) error {
-	result, err := s.db.Exec("DELETE FROM apps WHERE name = ?", name)
+	result, err := s.db.Exec("DELETE FROM apps WHERE name = $1", name)
 	if err != nil {
 		return fmt.Errorf("failed to delete app: %w", err)
 	}
@@ -234,7 +232,7 @@ func (s *AppStore) Uninstall(name string) error {
 // IsInstalled checks if an app is installed
 func (s *AppStore) IsInstalled(name string) (bool, error) {
 	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM apps WHERE name = ?", name).Scan(&count)
+	err := s.db.QueryRow("SELECT COUNT(*) FROM apps WHERE name = $1", name).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check if installed: %w", err)
 	}
@@ -244,7 +242,6 @@ func (s *AppStore) IsInstalled(name string) (bool, error) {
 func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 	var app InstalledApp
 	var port sql.NullInt64
-	var isSystem int
 	var configJSON sql.NullString
 
 	err := rows.Scan(
@@ -254,7 +251,7 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 		&app.Version,
 		&app.Status,
 		&port,
-		&isSystem,
+		&app.IsSystem,
 		&configJSON,
 		&app.InstalledAt,
 		&app.UpdatedAt,
@@ -266,7 +263,6 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 	if port.Valid {
 		app.Port = int(port.Int64)
 	}
-	app.IsSystem = isSystem == 1
 
 	if configJSON.Valid && configJSON.String != "" {
 		if err := json.Unmarshal([]byte(configJSON.String), &app.IntegrationConfig); err != nil {
@@ -280,7 +276,6 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 	var app InstalledApp
 	var port sql.NullInt64
-	var isSystem int
 	var configJSON sql.NullString
 
 	err := row.Scan(
@@ -290,7 +285,7 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 		&app.Version,
 		&app.Status,
 		&port,
-		&isSystem,
+		&app.IsSystem,
 		&configJSON,
 		&app.InstalledAt,
 		&app.UpdatedAt,
@@ -302,7 +297,6 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 	if port.Valid {
 		app.Port = int(port.Int64)
 	}
-	app.IsSystem = isSystem == 1
 
 	if configJSON.Valid && configJSON.String != "" {
 		if err := json.Unmarshal([]byte(configJSON.String), &app.IntegrationConfig); err != nil {

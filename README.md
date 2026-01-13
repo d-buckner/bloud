@@ -47,15 +47,27 @@ Self-hosting is overwhelming. Setting up Immich, Nextcloud, and Jellyfin takes h
 
 Bloud combines declarative configuration with a dependency graph and idempotent reconciliation to eliminate manual setup.
 
-**Integration Graph** - Each app declares what it needs: "I need PostgreSQL", "I support OAuth". Bloud builds a dependency graph from these declarations. Enable Miniflux, and the graph knows it needs a PostgreSQL database and Authentik OAuth. Enable any app with OAuth support, and it gets wired to Authentik automatically.
+### Integration Graph
 
-**Idempotent Reconciliation** - Instead of fragile setup scripts that run once, Bloud uses Go configurators that reconcile desired state. They run on every startup: "Miniflux should have this OAuth provider configured. Does it? No? Add it. Yes? Move on." This means partial failures self-heal, and you can add new apps without re-running setup for existing ones.
+Each app declares what it needs: "I need PostgreSQL", "I support OAuth". Bloud builds a dependency graph from these declarations. Enable Miniflux, and the graph knows it needs a PostgreSQL database and Authentik OAuth. Enable any app with OAuth support, and it gets wired to Authentik automatically.
 
-**Declarative Everything** - Apps are defined in `metadata.yaml` (what it needs) and `module.nix` (how to run it). Enable an app in your Nix config, rebuild, and NixOS generates the systemd units, creates the container, provisions the database, generates OAuth credentials, and starts everything in the right order.
+### Idempotent Reconciliation
 
-**Shared Infrastructure** - Instead of each app running its own PostgreSQL, all apps share one instance. Bloud creates databases and users automatically. Same for Redis. Fewer containers, less RAM, simpler backups.
+Instead of fragile setup scripts that run once, Bloud uses Go configurators that reconcile desired state. They run on every startup: "Miniflux should have this OAuth provider configured. Does it? No? Add it. Yes? Move on." This means partial failures self-heal, and you can add new apps without re-running setup for existing ones.
 
-**Health-Aware Startup** - The graph also determines startup order. Services declare dependencies with health checks. PostgreSQL starts first and becomes healthy. Then Authentik. Then apps that need both. Systemd handles the orchestration.
+### Declarative Everything
+
+Apps are defined in `metadata.yaml` (what it needs) and `module.nix` (how to run it). Enable an app in your Nix config, rebuild, and NixOS generates the systemd units, creates the container, provisions the database, generates OAuth credentials, and starts everything in the right order.
+
+### Shared Infrastructure
+
+Instead of each app running its own PostgreSQL, all apps share one instance. Bloud creates databases and users automatically. Same for Redis. Fewer containers, less RAM, simpler backups.
+
+### Health-Aware Startup
+
+The graph also determines startup order. Services declare dependencies with health checks. PostgreSQL starts first and becomes healthy. Then Authentik. Then apps that need both. Systemd handles the orchestration.
+
+---
 
 The result: enable apps in a config file, rebuild, and the system figures out what to provision, how to connect everything, and what order to start it.
 

@@ -1,40 +1,14 @@
 package catalog
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
-
-// setupTestDB creates a temporary SQLite database for testing
-func setupTestDB(t *testing.T) *sql.DB {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-
-	// Create catalog_cache table
-	schema := `
-		CREATE TABLE IF NOT EXISTS catalog_cache (
-			name TEXT PRIMARY KEY,
-			yaml_content TEXT NOT NULL,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-	`
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatalf("failed to create schema: %v", err)
-	}
-
-	return db
-}
 
 // setupTestCatalog creates a temporary apps directory with test apps
 func setupTestCatalog(t *testing.T) string {
@@ -103,67 +77,94 @@ func TestLoader_LoadAll(t *testing.T) {
 	assert.Equal(t, []string{"authentik"}, testApp.Dependencies)
 }
 
-func TestCache_RefreshAndGetAll(t *testing.T) {
-	db := setupTestDB(t)
+func TestCache_Refresh(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
 	defer db.Close()
 
 	catalogDir := setupTestCatalog(t)
 	loader := NewLoader(catalogDir)
 	cache := NewCache(db)
 
-	// Test refresh
-	err := cache.Refresh(loader)
+	// Expect transaction
+	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM catalog_cache`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectPrepare(`INSERT INTO catalog_cache`)
+	mock.ExpectExec(`INSERT INTO catalog_cache`).
+		WithArgs("test-app", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err = cache.Refresh(loader)
 	require.NoError(t, err, "Refresh should not return error")
 
-	// Test GetAll
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCache_GetAll(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cache := NewCache(db)
+
+	yamlContent := `name: test-app
+displayName: Test App
+category: testing
+`
+
+	rows := sqlmock.NewRows([]string{"yaml_content"}).
+		AddRow(yamlContent)
+
+	mock.ExpectQuery(`SELECT yaml_content FROM catalog_cache ORDER BY name`).
+		WillReturnRows(rows)
+
 	apps, err := cache.GetAll()
 	require.NoError(t, err, "GetAll should not return error")
 	require.Len(t, apps, 1, "should have exactly 1 app in cache")
 	assert.Equal(t, "test-app", apps[0].Name)
+
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCache_Get(t *testing.T) {
-	db := setupTestDB(t)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
 	defer db.Close()
 
-	catalogDir := setupTestCatalog(t)
-	loader := NewLoader(catalogDir)
 	cache := NewCache(db)
 
-	// Refresh cache first
-	err := cache.Refresh(loader)
-	require.NoError(t, err)
+	yamlContent := `name: test-app
+displayName: Test App
+category: testing
+`
 
-	// Test Get existing app
+	mock.ExpectQuery(`SELECT yaml_content FROM catalog_cache WHERE name = \$1`).
+		WithArgs("test-app").
+		WillReturnRows(sqlmock.NewRows([]string{"yaml_content"}).AddRow(yamlContent))
+
 	app, err := cache.Get("test-app")
 	require.NoError(t, err, "Get should return existing app without error")
 	assert.Equal(t, "test-app", app.Name)
 
-	// Test Get non-existent app
-	_, err = cache.Get("non-existent")
-	assert.Error(t, err, "Get should return error for non-existent app")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestCache_MultipleRefresh(t *testing.T) {
-	db := setupTestDB(t)
+func TestCache_Get_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
 	defer db.Close()
 
-	catalogDir := setupTestCatalog(t)
-	loader := NewLoader(catalogDir)
 	cache := NewCache(db)
 
-	// First refresh
-	err := cache.Refresh(loader)
-	require.NoError(t, err, "first refresh should succeed")
+	mock.ExpectQuery(`SELECT yaml_content FROM catalog_cache WHERE name = \$1`).
+		WithArgs("non-existent").
+		WillReturnRows(sqlmock.NewRows([]string{}))
 
-	// Second refresh (should clear and reload)
-	err = cache.Refresh(loader)
-	require.NoError(t, err, "second refresh should succeed")
+	_, err = cache.Get("non-existent")
+	assert.Error(t, err, "Get should return error for non-existent app")
 
-	// Verify still only 1 app
-	apps, err := cache.GetAll()
-	require.NoError(t, err)
-	assert.Len(t, apps, 1, "should still have exactly 1 app after multiple refreshes")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestLoader_ValidateApp(t *testing.T) {

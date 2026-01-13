@@ -35,8 +35,26 @@ func runConfigure(args []string) int {
 
 	cfg := config.Load()
 
-	// Initialize database (read-only for configure commands)
-	database, err := db.InitDB(cfg.DataDir)
+	// Create and populate registry first to check if app has a configurator
+	registry := configurator.NewRegistry(logger)
+	appconfig.RegisterAll(registry, cfg)
+
+	// For prestart/poststart, check if app has a configurator before initializing DB
+	// This avoids chicken-and-egg problems for infrastructure apps (postgres, redis)
+	if action == "prestart" || action == "poststart" {
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Usage: bloud-agent configure %s <app-name>\n", action)
+			return 1
+		}
+		appName := args[1]
+		if registry.Get(appName) == nil {
+			logger.Debug("no configurator registered, skipping", "app", appName)
+			return 0
+		}
+	}
+
+	// Initialize database (required for apps with configurators)
+	database, err := db.InitDB(cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to initialize database", "error", err)
 		return 1
@@ -46,26 +64,14 @@ func runConfigure(args []string) int {
 	// Create app store
 	appStore := store.NewAppStore(database)
 
-	// Create and populate registry
-	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	switch action {
 	case "prestart":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: bloud-agent configure prestart <app-name>")
-			return 1
-		}
 		return runPreStart(ctx, args[1], registry, appStore, cfg.DataDir, cfg, logger)
 
 	case "poststart":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: bloud-agent configure poststart <app-name>")
-			return 1
-		}
 		return runPostStart(ctx, args[1], registry, appStore, cfg.DataDir, logger)
 
 	case "reconcile":

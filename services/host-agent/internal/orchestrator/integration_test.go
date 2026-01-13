@@ -3,19 +3,18 @@ package orchestrator
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/testdb"
 )
 
-// Integration tests use real SQLite for the app store and fakes for external systems.
+// Integration tests use real PostgreSQL for the app store and fakes for external systems.
 // This tests actual orchestrator behavior with real database persistence.
 
 // integrationHarness provides a complete test environment
@@ -35,29 +34,8 @@ type integrationHarness struct {
 
 func newIntegrationHarness(t *testing.T) *integrationHarness {
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := sql.Open("sqlite", dbPath)
-	require.NoError(t, err)
-
-	// Create apps table
-	schema := `
-		CREATE TABLE IF NOT EXISTS apps (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			display_name TEXT NOT NULL,
-			version TEXT,
-			status TEXT NOT NULL DEFAULT 'stopped',
-			port INTEGER,
-			is_system INTEGER NOT NULL DEFAULT 0,
-			integration_config TEXT,
-			installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-	`
-	_, err = db.Exec(schema)
-	require.NoError(t, err)
-
+	db := testdb.SetupTestDB(t)
 	appStore := store.NewAppStore(db)
 
 	h := &integrationHarness{
@@ -91,7 +69,7 @@ func newIntegrationHarness(t *testing.T) *integrationHarness {
 }
 
 func (h *integrationHarness) Close() {
-	h.db.Close()
+	// Database connection is cleaned up by testdb
 }
 
 // ============================================================================

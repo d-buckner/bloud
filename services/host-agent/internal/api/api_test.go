@@ -1,7 +1,6 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,12 +10,12 @@ import (
 
 	"log/slog"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
-// setupTestServer creates a test server with in-memory database and test catalog
+// setupTestServer creates a test server with PostgreSQL database and test catalog
 func setupTestServer(t *testing.T) (*Server, string) {
 	// Create temp directory for test apps
 	tmpDir := t.TempDir()
@@ -59,39 +58,8 @@ tags:
 		t.Fatalf("failed to write test app file: %v", err)
 	}
 
-	// Create file-based database in temp dir (automatically cleaned up by test)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite", dbPath+"?_busy_timeout=5000")
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-	// Enable WAL mode for better concurrent access handling
-	db.Exec("PRAGMA journal_mode=WAL")
-
-	// Create schema
-	schema := `
-		CREATE TABLE IF NOT EXISTS apps (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			display_name TEXT NOT NULL,
-			version TEXT,
-			status TEXT NOT NULL DEFAULT 'stopped',
-			port INTEGER,
-			is_system INTEGER NOT NULL DEFAULT 0,
-			integration_config TEXT,
-			installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE TABLE IF NOT EXISTS catalog_cache (
-			name TEXT PRIMARY KEY,
-			yaml_content TEXT NOT NULL,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-	`
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatalf("failed to create schema: %v", err)
-	}
+	// Get database from testdb helper
+	db := testdb.SetupTestDB(t)
 
 	// Create logger that doesn't output during tests
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -101,9 +69,9 @@ tags:
 	// Create server
 	nixConfigDir := filepath.Join(tmpDir, "nix")
 	server := NewServer(db, ServerConfig{
-		AppsDir:      tmpDir,
+		AppsDir:   tmpDir,
 		ConfigDir: nixConfigDir,
-		Port:         8080,
+		Port:      8080,
 	}, logger)
 
 	return server, tmpDir
@@ -325,42 +293,16 @@ integrations:
 		require.NoError(t, os.WriteFile(filepath.Join(appDir, "metadata.yaml"), []byte(content), 0644))
 	}
 
-	// Use file-based db in temp dir (automatically cleaned up by test)
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite", dbPath+"?_busy_timeout=5000")
-	require.NoError(t, err)
-	// Enable WAL mode for better concurrent access handling
-	db.Exec("PRAGMA journal_mode=WAL")
-
-	schema := `
-		CREATE TABLE IF NOT EXISTS apps (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			display_name TEXT NOT NULL,
-			version TEXT,
-			status TEXT NOT NULL DEFAULT 'stopped',
-			port INTEGER,
-			is_system INTEGER NOT NULL DEFAULT 0,
-			integration_config TEXT,
-			installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE IF NOT EXISTS catalog_cache (
-			name TEXT PRIMARY KEY,
-			yaml_content TEXT NOT NULL,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-	`
-	_, err = db.Exec(schema)
-	require.NoError(t, err)
+	// Get database from testdb helper
+	db := testdb.SetupTestDB(t)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	nixConfigDir := filepath.Join(tmpDir, "nix")
 
 	return NewServer(db, ServerConfig{
-		AppsDir:      tmpDir,
+		AppsDir:   tmpDir,
 		ConfigDir: nixConfigDir,
-		Port:         8080,
+		Port:      8080,
 	}, logger)
 }
 

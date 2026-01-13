@@ -146,8 +146,10 @@ in
         network = "apps-net";
         dependsOn = [ "apps-network" "apps-postgres" "apps-redis" ];
         userns = "keep-id";
-        extraAfter = [ "authentik-db-init.service" ];
-        extraRequires = [ "authentik-db-init.service" ];
+        # bloud-db-init creates the host-agent database (needed by prestart hook)
+        # authentik-db-init creates the authentik database (needed by server)
+        extraAfter = [ "bloud-db-init.service" "authentik-db-init.service" ];
+        extraRequires = [ "bloud-db-init.service" "authentik-db-init.service" ];
         waitFor = [
           { container = "apps-postgres"; command = "pg_isready -U ${postgresUser}"; }
           { container = "apps-redis"; command = "redis-cli ping"; }
@@ -182,8 +184,10 @@ in
         network = "apps-net";
         dependsOn = [ "apps-network" "apps-postgres" "apps-redis" ];
         userns = "keep-id";
-        extraAfter = [ "authentik-db-init.service" ];
-        extraRequires = [ "authentik-db-init.service" ];
+        # bloud-db-init creates the host-agent database (needed by prestart hook)
+        # authentik-db-init creates the authentik database (needed by worker)
+        extraAfter = [ "bloud-db-init.service" "authentik-db-init.service" ];
+        extraRequires = [ "bloud-db-init.service" "authentik-db-init.service" ];
         waitFor = [
           { container = "apps-postgres"; command = "pg_isready -U ${postgresUser}"; }
           { container = "apps-redis"; command = "redis-cli ping"; }
