@@ -3,7 +3,6 @@ displayName: Jellyfin
 description: Free software media system for streaming movies, TV, and music
 category: media
 port: 8096
-image: jellyfin/jellyfin:latest
 
 integrations: {}
 # Jellyfin is a source app - provides media server to Jellyseerr

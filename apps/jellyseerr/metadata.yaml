@@ -3,7 +3,6 @@ displayName: Jellyseerr
 description: Media request and discovery tool for Jellyfin
 category: media
 port: 5055
-image: fallenbagel/jellyseerr:latest
 
 integrations:
   mediaServer:
