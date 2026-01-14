@@ -75,8 +75,11 @@ in
     '';
 
     # Extract Traefik routes from metadata.yaml (enables iframe embedding for SSO flows)
+    # IMPORTANT: Use atomic write (write to .tmp, then mv) to prevent Traefik from
+    # seeing truncated file during config reload
     system.activationScripts.bloud-authentik-traefik = lib.stringAfter [ "bloud-authentik-dirs" ] ''
-      ${pkgs.yq-go}/bin/yq '.traefikConfig' ${./metadata.yaml} > ${configPath}/traefik/dynamic/authentik.yml
+      ${pkgs.yq-go}/bin/yq '.traefikConfig' ${./metadata.yaml} > ${configPath}/traefik/dynamic/authentik.yml.tmp
+      mv ${configPath}/traefik/dynamic/authentik.yml.tmp ${configPath}/traefik/dynamic/authentik.yml
       chown ${bloudCfg.user}:users ${configPath}/traefik/dynamic/authentik.yml
     '';
 
@@ -212,8 +215,9 @@ in
     # - When accessed via Traefik (browser): Traefik sets X-Forwarded-Host → localhost:8080 URLs
     # - When accessed via apps-authentik-proxy (container): Host is apps-authentik-proxy → internal URLs
     # This is critical for server-to-server OAuth token exchange from containers.
+    # Atomic write to prevent nginx from seeing truncated file
     system.activationScripts.bloud-authentik-proxy-config = lib.stringAfter [ "bloud-authentik-dirs" ] ''
-      cat > ${configPath}/authentik-proxy.conf <<'EOF'
+      cat > ${configPath}/authentik-proxy.conf.tmp <<'EOF'
 server {
     listen 80;
     server_name _;
@@ -227,6 +231,7 @@ server {
     }
 }
 EOF
+      mv ${configPath}/authentik-proxy.conf.tmp ${configPath}/authentik-proxy.conf
       chown ${bloudCfg.user}:users ${configPath}/authentik-proxy.conf
     '';
   };
