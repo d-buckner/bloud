@@ -3,7 +3,7 @@
 
 /// <reference lib="webworker" />
 
-import { handleRequest, setActiveApp, setProtectedEntries } from './handlers';
+import { handleRequest, setActiveApp } from './handlers';
 import { getRequestAction } from './core';
 import { MessageType } from './types';
 
@@ -37,16 +37,6 @@ self.addEventListener('message', (event) => {
       const appName = event.data.appName;
       console.log('[embed-sw] Setting active app:', appName);
       setActiveApp(appName);
-      break;
-    }
-    case MessageType.SET_PROTECTED_ENTRIES: {
-      const { appName, entries } = event.data;
-      console.log('[embed-sw] Setting protected entries for:', appName, entries);
-      setProtectedEntries(appName, entries);
-      // Respond via MessageChannel to signal completion
-      if (event.ports[0]) {
-        event.ports[0].postMessage({ type: 'ACK' });
-      }
       break;
     }
   }

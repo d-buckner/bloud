@@ -113,16 +113,7 @@ export interface ResponseLike {
   };
 }
 
-/** Protected IndexedDB entry (sent from main frame) */
-export interface ProtectedEntry {
-  database: string;
-  store: string;
-  key: string;
-  value: string;
-}
-
 /** Message types for postMessage communication */
 export const MessageType = {
   SET_ACTIVE_APP: 'SET_ACTIVE_APP',
-  SET_PROTECTED_ENTRIES: 'SET_PROTECTED_ENTRIES',
 } as const;
