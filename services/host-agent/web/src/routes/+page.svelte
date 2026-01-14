@@ -3,6 +3,7 @@
 	import { browser } from '$app/environment';
 	import AppIcon from '$lib/components/AppIcon.svelte';
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
+	import LogsModal from '$lib/components/LogsModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { AppStatus, type App } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
@@ -12,6 +13,8 @@
 
 
 	let uninstallAppName = $state<string | null>(null);
+	let logsAppName = $state<string | null>(null);
+	let logsDisplayName = $state<string>('');
 	let contextMenuApp = $state<App | null>(null);
 	let contextMenuPos = $state({ x: 0, y: 0 });
 	let mounted = $state(false);
@@ -74,6 +77,14 @@
 		if (!browser || !contextMenuApp?.port) return;
 		window.open(`http://${window.location.hostname}:${contextMenuApp.port}`, '_blank');
 		contextMenuApp = null;
+	}
+
+	function handleViewLogs() {
+		if (contextMenuApp) {
+			logsAppName = contextMenuApp.name;
+			logsDisplayName = contextMenuApp.display_name;
+			contextMenuApp = null;
+		}
 	}
 </script>
 
@@ -153,6 +164,10 @@
 			<Icon name="external-link" size={16} />
 			Open in New Tab
 		</button>
+		<button class="context-item" onclick={handleViewLogs}>
+			<Icon name="terminal" size={16} />
+			View Logs
+		</button>
 		<hr class="context-divider" />
 		<button class="context-item danger" onclick={handleUninstall}>
 			<Icon name="trash" size={16} />
@@ -165,6 +180,12 @@
 	appName={uninstallAppName}
 	onclose={() => uninstallAppName = null}
 	onuninstall={doUninstall}
+/>
+
+<LogsModal
+	appName={logsAppName}
+	displayName={logsDisplayName}
+	onclose={() => logsAppName = null}
 />
 
 <style>
