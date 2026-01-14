@@ -52,11 +52,15 @@ routing:
 bootstrap:
   indexedDB:
     database: actual
-    entries:
+    # Intercepts: Values returned on read, injected into iframe via service worker
+    # The app can't overwrite these - reads always return our configured value
+    intercepts:
       - store: asyncStorage
         key: server-url
         value: "{{embedUrl}}"
-        protected: true
+    # Writes: Values written from main page before iframe loads
+    # Use for values the app doesn't overwrite on init
+    writes:
       - store: asyncStorage
         key: theme
         value: "light"

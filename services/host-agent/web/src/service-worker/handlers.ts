@@ -17,10 +17,13 @@ import {
   shouldRedirectOAuthCallback,
   processRedirectResponse,
   getActiveApp,
+  getInterceptConfig,
 } from './core';
 
-// Re-export state setter for index.ts message handler
-export { setActiveApp } from './core';
+import { injectIntoHtml } from './inject';
+
+// Re-export state setters for index.ts message handler
+export { setActiveApp, setInterceptConfig } from './core';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -128,6 +131,37 @@ function handleRootRequest(
 }
 
 /**
+ * Check if a response is HTML based on Content-Type header
+ */
+function isHtmlResponse(response: Response): boolean {
+  const contentType = response.headers.get('content-type') || '';
+  return contentType.includes('text/html');
+}
+
+/**
+ * Inject IndexedDB intercept script into HTML response if configured
+ */
+async function maybeInjectIntercepts(response: Response): Promise<Response> {
+  const config = getInterceptConfig();
+
+  // No injection needed if no config or not HTML
+  if (!config || !isHtmlResponse(response)) {
+    return response;
+  }
+
+  const html = await response.text();
+  const injectedHtml = injectIntoHtml(html, config);
+
+  console.log('[embed-sw] Injected IndexedDB intercepts into HTML response');
+
+  return new Response(injectedHtml, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+/**
  * Handle an embed navigation request with redirect rewriting
  */
 function handleEmbedNavigationRequest(
@@ -146,7 +180,8 @@ function handleEmbedNavigationRequest(
       return Response.redirect(newLocation, response.status || 302);
     }
 
-    return response;
+    // Inject IndexedDB intercepts into HTML responses
+    return maybeInjectIntercepts(response);
   };
 
   event.respondWith(doFetch());
@@ -167,20 +202,8 @@ export function handleRequest(event: FetchEvent): void {
   const origin = self.location.origin;
   const activeApp = getActiveApp();
 
-  console.log('[embed-sw] handleRequest called:', {
-    url: url.pathname,
-    mode: request.mode,
-    destination: request.destination,
-    origin: origin,
-    activeApp: activeApp,
-  });
-
   // Block embedded apps from registering their own service workers
   if (isServiceWorkerScript(url.pathname) && activeApp) {
-    console.log(
-      '[embed-sw] Blocking SW registration for embedded app:',
-      activeApp
-    );
     event.respondWith(
       new Response('// SW disabled for embedded apps', {
         status: 200,
@@ -193,40 +216,13 @@ export function handleRequest(event: FetchEvent): void {
   const result = getRequestAction(url, origin);
 
   if (result.action === RequestAction.PASSTHROUGH) {
-    console.log(
-      '[embed-sw] PASSTHROUGH - not intercepting:',
-      url.pathname,
-      'reason:',
-      result.reason
-    );
     return;
   }
 
-  console.log(
-    '[embed-sw] INTERCEPTING:',
-    url.pathname,
-    'action:',
-    result.action,
-    'type:',
-    result.type,
-    'fetchUrl:',
-    result.fetchUrl
-  );
-
   // Handle root-level requests (not under /embed/)
   if (result.type === RequestType.ROOT) {
-    console.log(
-      '[embed-sw] ROOT type - calling respondWith for:',
-      url.pathname,
-      '-> fetching from:',
-      result.fetchUrl
-    );
-
     // For OAuth callback navigation requests, use redirect instead of fetch-and-return
     if (shouldRedirectOAuthCallback(request.mode, url.pathname)) {
-      console.log(
-        '[embed-sw] OAuth callback navigation - using redirect instead of fetch'
-      );
       event.respondWith(Response.redirect(result.fetchUrl!, 302));
       return;
     }
