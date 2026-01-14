@@ -17,13 +17,10 @@ import {
   shouldRedirectOAuthCallback,
   processRedirectResponse,
   getActiveApp,
-  getProtectedEntries,
 } from './core';
 
-import { injectIntoHtml } from './inject';
-
-// Re-export state setters for index.ts message handler
-export { setActiveApp, setProtectedEntries } from './core';
+// Re-export state setter for index.ts message handler
+export { setActiveApp } from './core';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -131,15 +128,7 @@ function handleRootRequest(
 }
 
 /**
- * Check if a response is HTML based on content-type header
- */
-function isHtmlResponse(response: Response): boolean {
-  const contentType = response.headers.get('content-type') ?? '';
-  return contentType.includes('text/html');
-}
-
-/**
- * Handle an embed navigation request with redirect rewriting and script injection
+ * Handle an embed navigation request with redirect rewriting
  */
 function handleEmbedNavigationRequest(
   event: FetchEvent,
@@ -155,19 +144,6 @@ function handleEmbedNavigationRequest(
 
     if (newLocation) {
       return Response.redirect(newLocation, response.status || 302);
-    }
-
-    // Inject IndexedDB protection script into HTML responses
-    const protectedEntries = getProtectedEntries(appName);
-    if (protectedEntries.length > 0 && isHtmlResponse(response)) {
-      const html = await response.text();
-      const injectedHtml = injectIntoHtml(html, protectedEntries);
-      console.log('[embed-sw] Injected IndexedDB protection for:', appName);
-      return new Response(injectedHtml, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
     }
 
     return response;
