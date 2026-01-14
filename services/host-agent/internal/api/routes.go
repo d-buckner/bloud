@@ -38,6 +38,9 @@ func (s *Server) setupRoutes() {
 			r.Post("/{name}/uninstall", s.handleUninstall)
 			r.Post("/{name}/clear-data", s.handleClearData)
 
+			// Logs streaming
+			r.Get("/{name}/logs", s.handleAppLogs)
+
 			// Static assets
 			r.Get("/{name}/icon", s.handleAppIcon)
 		})
