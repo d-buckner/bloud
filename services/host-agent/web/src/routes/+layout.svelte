@@ -4,22 +4,15 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import AppFrames from '$lib/components/AppFrames.svelte';
 	import { initApps, disconnectApps } from '$lib/services/appLifecycle';
-	import { waitForServiceWorker, setActiveApp } from '$lib/services/bootstrap';
+	import { waitForServiceWorker } from '$lib/services/bootstrap';
 
 	let { children }: { children: Snippet } = $props();
 
 	let sidebarCollapsed = $state(false);
 
 	let isAppView = $derived(page.url.pathname.startsWith('/apps/'));
-
-	// Clear active app when navigating away from app pages
-	// The app page component sets the active app when it loads
-	$effect(() => {
-		if (!isAppView) {
-			setActiveApp(null);
-		}
-	});
 
 	// Initialize app store SSE connection and service worker
 	onMount(() => {
@@ -33,8 +26,14 @@
 <div class="app">
 	<Sidebar bind:collapsed={sidebarCollapsed} />
 
-	<main class:collapsed={sidebarCollapsed || isAppView}>
-		{@render children()}
+	<main class:collapsed={sidebarCollapsed}>
+		<!-- AppFrames manages all open iframes, preserving state across tab switches -->
+		<AppFrames visible={isAppView} />
+
+		<!-- Regular route content (hidden when viewing apps) -->
+		<div class="route-content" class:hidden={isAppView}>
+			{@render children()}
+		</div>
 	</main>
 </div>
 
@@ -49,10 +48,20 @@
 		margin-left: var(--sidebar-width);
 		min-height: 100vh;
 		transition: margin-left 0.2s ease;
+		display: flex;
+		flex-direction: column;
 	}
 
 	main.collapsed {
 		margin-left: 64px;
+	}
+
+	.route-content {
+		flex: 1;
+	}
+
+	.route-content.hidden {
+		display: none;
 	}
 
 	@media (max-width: 768px) {
