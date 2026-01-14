@@ -8,7 +8,6 @@
     "services/host-agent/web"
   ],
   "scripts": {
-    "prepare": "husky",
     "setup": "npm install && npm run cli:build",
     "cli:build": "cd cli && go build -o ../bloud .",
     "dev": "turbo run dev",

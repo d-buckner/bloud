@@ -1,269 +1,65 @@
 <script lang="ts">
-	import { type App, type CatalogApp, AppStatus } from '$lib/types';
-	import { tabs } from '$lib/stores/tabs';
-	import Icon from '$lib/components/Icon.svelte';
-	import { waitForServiceWorker, setActiveApp } from '$lib/services/bootstrap';
-	import { executeBootstrap, type AppMetadata } from '$lib/appConfig';
-	import { onDestroy } from 'svelte';
+	/**
+	 * App Route Handler
+	 *
+	 * This page component handles routing only:
+	 * - Opens the app tab
+	 * - Restores to saved path when switching back to an open app
+	 * - Updates the path in the tabs store
+	 * - Shows error for non-existent apps
+	 *
+	 * The actual iframe rendering is handled by AppFrames in the layout.
+	 */
+
 	import { goto } from '$app/navigation';
+	import { tabs } from '$lib/stores/tabs';
+	import { apps } from '$lib/stores/apps';
+	import { getAppRouteUrl } from '$lib/utils/embedUrl';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { data } = $props();
 
-	let app = $state<App | null>(null);
-	let loading = $state(true);
-	let iframeLoading = $state(true);
-	let error = $state<string | null>(null);
-	let iframeEl = $state<HTMLIFrameElement | null>(null);
-	let swReady = $state(false);
-	let configReady = $state(false);
-
 	let appName = $derived(data.appName);
+	let path = $derived(data.path);
 
-	// Track iframe src separately from URL - we control when to reload
-	let iframePath = $state<string>('');
-	let isSyncingUrl = false; // Flag to ignore our own goto() calls
+	// Check if app exists in the store
+	let appExists = $derived($apps.some((a) => a.name === appName));
+	let app = $derived($apps.find((a) => a.name === appName));
 
-	// Update iframe path when route changes, but NOT from our own URL sync
+	// Handle tab opening and path restoration
 	$effect(() => {
-		// Access appName to track it - we want to reset iframePath when app changes
-		void appName;
-		const currentPath = data.path;
+		if (!appName || !appExists) return;
 
-		if (isSyncingUrl) {
-			// This navigation came from our URL sync - ignore it
-			return;
+		const isAlreadyOpen = tabs.isOpen(appName);
+		const storedPath = tabs.getPath(appName);
+
+		if (isAlreadyOpen && !path && storedPath) {
+			// Switching back to open app without path - restore to stored path
+			goto(getAppRouteUrl(appName, storedPath), { replaceState: true });
+		} else {
+			// New tab or explicit path navigation
+			tabs.open(appName, path);
 		}
-
-		// User-initiated navigation (or app change) - update iframe src
-		iframePath = currentPath;
 	});
-
-	// Wait for service worker before rendering iframe
-	waitForServiceWorker().then(async () => {
-		// Set active app and wait for it to be set before rendering iframe
-		if (appName) {
-			await setActiveApp(appName);
-		}
-		swReady = true;
-	});
-
-	// Clear active app when component is destroyed (navigating away)
-	onDestroy(() => {
-		setActiveApp(null);
-	});
-
-	async function loadApp(currentAppName: string) {
-		try {
-			// Fetch installed apps
-			const installedRes = await fetch('/api/apps/installed');
-			if (!installedRes.ok) throw new Error('Failed to fetch installed apps');
-
-			const apps: App[] = await installedRes.json();
-			const foundApp = apps.find((a) => a.name === currentAppName);
-
-			if (!foundApp) {
-				error = `App "${currentAppName}" is not installed`;
-				return;
-			}
-
-			app = foundApp;
-			tabs.open(foundApp.name);
-
-			// Fetch app metadata for bootstrap config
-			const metadataRes = await fetch(`/api/apps/${currentAppName}/metadata`);
-			if (!metadataRes.ok) throw new Error('Failed to fetch app metadata');
-			const catalogApp: CatalogApp = await metadataRes.json();
-
-			// Build template variables (catalog metadata + computed runtime values)
-			const appMetadata: AppMetadata = {
-				...catalogApp,
-				origin: window.location.origin,
-				embedUrl: `${window.location.origin}/embed/${currentAppName}`
-			};
-
-			// Execute bootstrap configuration (writes to IndexedDB on main page)
-			const result = await executeBootstrap(currentAppName, catalogApp.bootstrap, appMetadata);
-
-			if (!result.success) {
-				error = `Bootstrap failed: ${result.error}`;
-				return;
-			}
-
-			configReady = true;
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to connect to API';
-		} finally {
-			loading = false;
-		}
-	}
-
-	// Load app data when appName changes
-	$effect(() => {
-		const currentAppName = appName;
-		if (!currentAppName) {
-			loading = false;
-			setActiveApp(null);
-			return;
-		}
-
-		// Notify SW of active app immediately (before loading app data)
-		setActiveApp(currentAppName);
-
-		// Reset state for new app
-		loading = true;
-		iframeLoading = true;
-		configReady = false;
-		error = null;
-
-		loadApp(currentAppName);
-	});
-
-	function getIframeSrc(name: string, path: string): string {
-		// App content is served from /embed/{appName}/ path
-		// Same-origin so cookies work in iframes
-		const basePath = `/embed/${name}/`;
-		return path ? `${basePath}${path}` : basePath;
-	}
-
-	function handleIframeLoad() {
-		iframeLoading = false;
-		syncUrlFromIframe();
-	}
-
-	function syncUrlFromIframe() {
-		if (!iframeEl?.contentWindow || !appName) return;
-
-		try {
-			// Get the iframe's current path (same-origin so we can access it)
-			const iframePath = iframeEl.contentWindow.location.pathname;
-			const iframeSearch = iframeEl.contentWindow.location.search;
-
-			// Extract the app-relative path from /embed/{appName}/...
-			const embedPrefix = `/embed/${appName}/`;
-			if (iframePath.startsWith(embedPrefix)) {
-				const relativePath = iframePath.slice(embedPrefix.length) + iframeSearch;
-				const newUrl = `/apps/${appName}/${relativePath}`;
-
-				// Save the path to the store for tab restoration
-				tabs.setPath(appName, relativePath);
-
-				// Only update browser URL if different from current
-				if (window.location.pathname + window.location.search !== newUrl) {
-					isSyncingUrl = true;
-					goto(newUrl, { replaceState: true, noScroll: true }).finally(() => {
-						isSyncingUrl = false;
-					});
-				}
-			}
-		} catch (e) {
-			// Cross-origin error - can't access iframe location
-			console.warn('Could not sync URL from iframe:', e);
-		}
-	}
 </script>
 
 <svelte:head>
 	<title>{app?.display_name ?? appName ?? 'App'} - Bloud</title>
 </svelte:head>
 
-{#if !appName}
-	<!-- Navigation transition - render nothing -->
-{:else if loading || !swReady}
-	<div class="status-container">
-		<div class="spinner"></div>
-		<p>Loading...</p>
-	</div>
-{:else if error}
-	<div class="status-container">
-		<div class="status-icon error">
+<!-- Only show error state - iframe is rendered by AppFrames in layout -->
+{#if appName && !appExists && $apps.length > 0}
+	<div class="error-container">
+		<div class="status-icon">
 			<Icon name="warning" size={32} />
 		</div>
-		<p class="error-text">{error}</p>
-		<a href="/" class="back-link">Back to Apps</a>
-	</div>
-{:else if app && app.status === AppStatus.Running && app.port && swReady && configReady}
-	<div class="iframe-wrapper">
-		{#if iframeLoading}
-			<div class="iframe-loading">
-				<div class="spinner"></div>
-				<p>Connecting to {app.display_name}...</p>
-			</div>
-		{/if}
-		<iframe
-			bind:this={iframeEl}
-			class="app-iframe"
-			src={getIframeSrc(app.name, iframePath)}
-			title={app.display_name}
-			onload={handleIframeLoad}
-		></iframe>
-	</div>
-{:else if app}
-	<div class="status-container">
-		{#if app.status === AppStatus.Installing}
-			<div class="spinner large"></div>
-			<p>Installing {app.display_name}</p>
-			<span class="status-text">This may take a few minutes...</span>
-		{:else if app.status === AppStatus.Starting}
-			<div class="spinner large"></div>
-			<p>Starting {app.display_name}</p>
-			<span class="status-text">Waiting for health check...</span>
-		{:else if app.status === AppStatus.Stopped}
-			<div class="status-icon stopped">
-				<Icon name="stop" size={32} />
-			</div>
-			<p>{app.display_name} is stopped</p>
-		{:else if app.status === AppStatus.Error || app.status === AppStatus.Failed}
-			<div class="status-icon error">
-				<Icon name="warning" size={32} />
-			</div>
-			<p>{app.display_name} failed to start</p>
-			<span class="status-text">Check logs for more details</span>
-		{:else}
-			<p>App is not available</p>
-			<span class="status-text">Status: {app.status}</span>
-		{/if}
-	</div>
-{:else}
-	<div class="status-container">
-		<p>App not found</p>
+		<p>App "{appName}" is not installed</p>
 		<a href="/" class="back-link">Back to Apps</a>
 	</div>
 {/if}
 
 <style>
-	.iframe-wrapper {
-		position: relative;
-		width: 100%;
-		height: 100vh;
-	}
-
-	.app-iframe {
-		width: 100%;
-		height: 100%;
-		border: none;
-	}
-
-	.iframe-loading {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-md);
-		background: var(--color-bg);
-		z-index: 1;
-	}
-
-	.iframe-loading p {
-		margin: 0;
-		color: var(--color-text-muted);
-	}
-
-	.status-container {
+	.error-container {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -273,51 +69,14 @@
 		color: var(--color-text-muted);
 	}
 
-	.status-container p {
+	.error-container p {
 		margin: 0;
 		font-size: 1.125rem;
-		color: var(--color-text);
-	}
-
-	.status-text {
-		font-size: 0.875rem;
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 2px solid var(--color-border);
-		border-top-color: var(--color-accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	.spinner.large {
-		width: 40px;
-		height: 40px;
-		border-width: 3px;
-		margin-bottom: var(--space-sm);
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
+		color: var(--color-error);
 	}
 
 	.status-icon {
 		margin-bottom: var(--space-sm);
-	}
-
-	.status-icon.stopped {
-		color: #F59E0B;
-	}
-
-	.status-icon.error {
-		color: var(--color-error);
-	}
-
-	.error-text {
 		color: var(--color-error);
 	}
 
