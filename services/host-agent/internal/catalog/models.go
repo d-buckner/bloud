@@ -84,8 +84,10 @@ type BootstrapConfig struct {
 
 // IndexedDBConfig defines IndexedDB setup requirements
 type IndexedDBConfig struct {
-	Database string           `yaml:"database" json:"database"`
-	Entries  []IndexedDBEntry `yaml:"entries,omitempty" json:"entries,omitempty"`
+	Database   string           `yaml:"database" json:"database"`
+	Intercepts []IndexedDBEntry `yaml:"intercepts,omitempty" json:"intercepts,omitempty"` // Values returned on read, injected via service worker
+	Writes     []IndexedDBEntry `yaml:"writes,omitempty" json:"writes,omitempty"`         // Values written from main page before iframe loads
+	Entries    []IndexedDBEntry `yaml:"entries,omitempty" json:"entries,omitempty"`       // Legacy: deprecated, use intercepts/writes instead
 }
 
 // IndexedDBEntry defines a key-value entry to write

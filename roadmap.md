@@ -82,6 +82,22 @@ Future features and improvements planned for Bloud.
 - Consider consolidating into single store with slices
 - Add proper loading/error states throughout UI
 
+#### Client-Side Storage Isolation
+- **Problem**: Embedded apps share the same origin, so they can read/overwrite each other's client-side storage
+- **Affected storage types**:
+  - **LocalStorage**: Persists across sessions, shared by all apps
+  - **SessionStorage**: Per-tab, but apps can conflict when switching between apps in the same Bloud tab
+  - **Cookies**: Shared across all apps, also sent with HTTP requests
+  - **IndexedDB**: Already handled via intercept injection (see `service-worker/inject.ts`)
+- **Solution approach**: Namespace isolation via service worker injection
+  - Inject script that patches `localStorage.getItem/setItem`, `sessionStorage.getItem/setItem`
+  - Transparently prefix keys with app name (e.g., `actual-budget:theme`)
+  - App reads/writes `theme`, actually stored as `actual-budget:theme`
+  - Prevents cross-app conflicts without app modifications
+- **Cookies**: TBD - more complex due to server-side interaction
+  - Options: `document.cookie` interception, path-based isolation, or accept shared cookies
+- **Related**: IndexedDB intercept system (`bootstrap.indexedDB.intercepts` in metadata.yaml)
+
 ### Testing Infrastructure
 
 #### End-to-End Tests
@@ -240,8 +256,10 @@ Target: 10 core apps for alpha release
 2. **Shared infrastructure** - Max one PostgreSQL/Redis/Authentik per host
 3. **Rootless containers** - No privileged Podman operations
 4. **Atomic updates** - NixOS rollback must always work
+5. **Same-origin embedding** - All apps served from same origin (enables SW control, requires storage isolation)
 
 ### Decision Log
+- **2026-01**: IndexedDB intercept injection via SW (solves app init overwriting configured values)
 - **2026-01**: Service worker for OAuth callbacks (maintains routing architecture)
 - **2026-01**: Service worker routing stabilized (explicit app context, proper state management)
 - **2026-01**: Migrated host-agent from SQLite to PostgreSQL (shared infrastructure pattern)

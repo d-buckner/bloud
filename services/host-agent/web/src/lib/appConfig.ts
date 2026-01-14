@@ -2,6 +2,8 @@
 // Executes bootstrap config from metadata.yaml before loading app in iframe
 
 import type { BootstrapConfig, CatalogApp, IndexedDBConfig, IndexedDBEntry } from './types';
+import type { IndexedDBInterceptConfig } from '../service-worker/inject';
+import { MessageType } from '../service-worker/types';
 
 export interface BootstrapResult {
 	success: boolean;
@@ -44,7 +46,18 @@ export async function executeBootstrap(
 
 	try {
 		if (config.indexedDB) {
-			await setupIndexedDB(config.indexedDB, metadata);
+			console.log('[appConfig] IndexedDB config:', {
+				database: config.indexedDB.database,
+				intercepts: config.indexedDB.intercepts?.length ?? 0,
+				writes: config.indexedDB.writes?.length ?? 0,
+				entries: config.indexedDB.entries?.length ?? 0,
+			});
+
+			// Send intercepts to service worker for injection into iframe
+			await sendInterceptsToSW(config.indexedDB, metadata);
+
+			// Write entries from main page (for values apps don't overwrite)
+			await writeIndexedDBEntries(config.indexedDB, metadata);
 		}
 
 		const result = { success: true };
@@ -66,11 +79,67 @@ export function clearBootstrapCache(appName: string): void {
 }
 
 /**
- * Set up IndexedDB entries from config.
+ * Send IndexedDB intercept config to service worker.
+ * The SW will inject a script into iframe HTML that patches IDBObjectStore.prototype.get
+ * to return these values regardless of what's actually stored.
+ */
+async function sendInterceptsToSW(config: IndexedDBConfig, metadata: AppMetadata): Promise<void> {
+	const intercepts = config.intercepts ?? [];
+
+	if (intercepts.length === 0) {
+		console.log('[appConfig] No intercepts to send, clearing SW config');
+		await postMessageToSW({
+			type: MessageType.SET_INDEXEDDB_INTERCEPTS,
+			config: null
+		});
+		return;
+	}
+
+	const interceptConfig: IndexedDBInterceptConfig = {
+		database: config.database,
+		intercepts: intercepts.map((entry) => ({
+			...entry,
+			value: substituteTemplates(entry.value, metadata)
+		}))
+	};
+
+	console.log('[appConfig] Sending intercepts to SW:', interceptConfig);
+	await postMessageToSW({
+		type: MessageType.SET_INDEXEDDB_INTERCEPTS,
+		config: interceptConfig
+	});
+}
+
+/**
+ * Post a message to the service worker and wait for acknowledgment.
+ * Uses MessageChannel for request-response pattern.
+ */
+async function postMessageToSW(message: unknown): Promise<void> {
+	const registration = await navigator.serviceWorker.ready;
+	const sw = registration.active;
+	if (!sw) return;
+
+	return new Promise<void>((resolve) => {
+		const channel = new MessageChannel();
+
+		channel.port1.onmessage = () => {
+			resolve();
+		};
+
+		sw.postMessage(message, [channel.port2]);
+
+		// Fallback timeout in case SW doesn't respond
+		setTimeout(resolve, 100);
+	});
+}
+
+/**
+ * Write IndexedDB entries from config (writes field, or legacy entries field).
  * Writes to existing stores only - if store doesn't exist, entry is skipped.
  */
-async function setupIndexedDB(config: IndexedDBConfig, metadata: AppMetadata): Promise<void> {
-	const entries = (config.entries ?? []).map((entry) => ({
+async function writeIndexedDBEntries(config: IndexedDBConfig, metadata: AppMetadata): Promise<void> {
+	// Use 'writes' field, falling back to legacy 'entries' field
+	const entries = (config.writes ?? config.entries ?? []).map((entry) => ({
 		...entry,
 		value: substituteTemplates(entry.value, metadata)
 	}));

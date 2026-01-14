@@ -58,18 +58,36 @@ export function isServiceWorkerReady(): boolean {
 // --- Service Worker Communication ---
 
 /**
- * Send the active app name to the service worker
- * This tells the SW which app context to use for URL rewriting
+ * Send the active app name to the service worker and wait for acknowledgment.
+ * Uses MessageChannel for request-response pattern to ensure the SW has
+ * processed the message before iframe content starts loading.
  */
 export async function setActiveApp(appName: string | null): Promise<void> {
 	if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
 
 	await waitForServiceWorker();
 
-	if (navigator.serviceWorker.controller) {
-		navigator.serviceWorker.controller.postMessage({
-			type: 'SET_ACTIVE_APP',
-			appName
-		});
-	}
+	const controller = navigator.serviceWorker.controller;
+	if (!controller) return;
+
+	return new Promise<void>((resolve) => {
+		const channel = new MessageChannel();
+
+		// Set up response handler on port1
+		channel.port1.onmessage = () => {
+			resolve();
+		};
+
+		// Send message with port2 for SW to reply on
+		controller.postMessage(
+			{
+				type: 'SET_ACTIVE_APP',
+				appName
+			},
+			[channel.port2]
+		);
+
+		// Fallback timeout in case SW doesn't respond (shouldn't happen)
+		setTimeout(resolve, 100);
+	});
 }
