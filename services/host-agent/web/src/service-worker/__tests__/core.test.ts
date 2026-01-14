@@ -23,7 +23,10 @@ import {
   resetTestState,
   setActiveApp,
   getActiveApp,
+  setInterceptConfig,
+  getInterceptConfig,
 } from '../core';
+import type { IndexedDBInterceptConfig } from '../inject';
 
 /** Create a mock response with optional Location header */
 function mockResponse(status: number, location?: string, type?: string): ResponseLike {
@@ -364,6 +367,69 @@ describe('service-worker core', () => {
       expect(getActiveApp()).toBe('actual-budget');
       setActiveApp('adguard-home');
       expect(getActiveApp()).toBe('adguard-home');
+    });
+  });
+
+  describe('setInterceptConfig and getInterceptConfig', () => {
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('starts with null config', () => {
+      expect(getInterceptConfig()).toBe(null);
+    });
+
+    it('sets and gets intercept config', () => {
+      const config: IndexedDBInterceptConfig = {
+        database: 'actual',
+        intercepts: [{ store: 'asyncStorage', key: 'server-url', value: 'http://example.com' }],
+      };
+
+      setInterceptConfig(config);
+      expect(getInterceptConfig()).toEqual(config);
+    });
+
+    it('clears config with null', () => {
+      const config: IndexedDBInterceptConfig = {
+        database: 'db',
+        intercepts: [{ store: 's', key: 'k', value: 'v' }],
+      };
+
+      setInterceptConfig(config);
+      expect(getInterceptConfig()).toEqual(config);
+
+      setInterceptConfig(null);
+      expect(getInterceptConfig()).toBe(null);
+    });
+
+    it('updates config when switching apps', () => {
+      const config1: IndexedDBInterceptConfig = {
+        database: 'db1',
+        intercepts: [{ store: 's1', key: 'k1', value: 'v1' }],
+      };
+      const config2: IndexedDBInterceptConfig = {
+        database: 'db2',
+        intercepts: [{ store: 's2', key: 'k2', value: 'v2' }],
+      };
+
+      setInterceptConfig(config1);
+      expect(getInterceptConfig()?.database).toBe('db1');
+
+      setInterceptConfig(config2);
+      expect(getInterceptConfig()?.database).toBe('db2');
+    });
+
+    it('is cleared by resetTestState', () => {
+      const config: IndexedDBInterceptConfig = {
+        database: 'db',
+        intercepts: [{ store: 's', key: 'k', value: 'v' }],
+      };
+
+      setInterceptConfig(config);
+      expect(getInterceptConfig()).not.toBe(null);
+
+      resetTestState();
+      expect(getInterceptConfig()).toBe(null);
     });
   });
 
