@@ -83,7 +83,7 @@ describe('widgetPrefs', () => {
 	});
 
 	describe('savePrefs', () => {
-		it('saves prefs to localStorage', () => {
+		it('persists prefs that can be loaded back', () => {
 			const prefs: WidgetPrefs = {
 				enabled: ['service-health'],
 				configs: { 'service-health': { test: true } },
@@ -91,10 +91,10 @@ describe('widgetPrefs', () => {
 
 			savePrefs(prefs);
 
-			expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
-				'bloud-widget-prefs',
-				JSON.stringify(prefs)
-			);
+			// Verify the prefs can be loaded back correctly
+			const loaded = loadPrefs();
+			expect(loaded.enabled).toEqual(prefs.enabled);
+			expect(loaded.configs).toEqual(prefs.configs);
 		});
 	});
 });
