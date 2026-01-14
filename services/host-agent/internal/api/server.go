@@ -21,9 +21,9 @@ import (
 type Server struct {
 	router         *chi.Mux
 	db             *sql.DB
-	catalog        *catalog.Cache
-	graph          *catalog.AppGraph
-	appStore       *store.AppStore
+	catalog        catalog.CacheInterface
+	graph          catalog.AppGraphInterface
+	appStore       store.AppStoreInterface
 	appHub         *AppEventHub
 	orchestrator   orchestrator.AppOrchestrator
 	appsDir        string
@@ -178,7 +178,7 @@ func (s *Server) refreshCatalog(appsDir string) {
 		s.logger.Error("failed to sync installed state", "error", err)
 	}
 
-	s.logger.Info("catalog refreshed successfully", "app_count", len(s.graph.Apps))
+	s.logger.Info("catalog refreshed successfully", "app_count", len(s.graph.GetApps()))
 }
 
 // syncInstalledState loads installed apps from DB and updates the graph

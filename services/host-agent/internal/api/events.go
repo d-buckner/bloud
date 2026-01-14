@@ -10,11 +10,11 @@ import (
 type AppEventHub struct {
 	subscribers map[chan []*store.InstalledApp]struct{}
 	mu          sync.RWMutex
-	appStore    *store.AppStore
+	appStore    store.AppStoreInterface
 }
 
 // NewAppEventHub creates a new app event hub
-func NewAppEventHub(appStore *store.AppStore) *AppEventHub {
+func NewAppEventHub(appStore store.AppStoreInterface) *AppEventHub {
 	return &AppEventHub{
 		subscribers: make(map[chan []*store.InstalledApp]struct{}),
 		appStore:    appStore,

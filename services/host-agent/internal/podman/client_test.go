@@ -139,15 +139,11 @@ func TestClient_CreateContainer(t *testing.T) {
 }
 
 func TestClient_StartStopContainer(t *testing.T) {
-	var startCalled, stopCalled bool
-
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/libpod/containers/mycontainer/start" && r.Method == http.MethodPost:
-			startCalled = true
 			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/libpod/containers/mycontainer/stop" && r.Method == http.MethodPost:
-			stopCalled = true
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
@@ -162,23 +158,22 @@ func TestClient_StartStopContainer(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Test that StartContainer succeeds when server returns 204
 	err = client.StartContainer(ctx, "mycontainer")
 	require.NoError(t, err)
-	assert.True(t, startCalled)
 
+	// Test that StopContainer succeeds when server returns 204
 	err = client.StopContainer(ctx, "mycontainer", 10)
 	require.NoError(t, err)
-	assert.True(t, stopCalled)
 }
 
 func TestClient_RemoveContainer(t *testing.T) {
-	var removeCalled bool
-	var forceUsed bool
+	var forceParamReceived bool
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/libpod/containers/mycontainer" && r.Method == http.MethodDelete {
-			removeCalled = true
-			forceUsed = r.URL.Query().Get("force") == "true"
+			// Capture whether force=true was passed in query params
+			forceParamReceived = r.URL.Query().Get("force") == "true"
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -191,10 +186,10 @@ func TestClient_RemoveContainer(t *testing.T) {
 	client, err := NewClientWithSocket(socketPath)
 	require.NoError(t, err)
 
+	// When calling RemoveContainer with force=true, the API should receive force=true
 	err = client.RemoveContainer(context.Background(), "mycontainer", true)
 	require.NoError(t, err)
-	assert.True(t, removeCalled)
-	assert.True(t, forceUsed)
+	assert.True(t, forceParamReceived, "force=true should be passed to API when requested")
 }
 
 func TestClient_GetContainer(t *testing.T) {

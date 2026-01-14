@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,17 +10,15 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/testdb"
 )
 
-// Integration tests use real PostgreSQL for the app store and fakes for external systems.
-// This tests actual orchestrator behavior with real database persistence.
+// Integration tests verify orchestrator behavior with all components working together.
+// All external systems (database, nix, traefik, etc.) are faked for isolation.
 
 // integrationHarness provides a complete test environment
 type integrationHarness struct {
 	orch         *Orchestrator
-	appStore     *store.AppStore
-	db           *sql.DB
+	appStore     *FakeAppStore
 	graph        *FakeAppGraph
 	cache        *FakeCatalogCache
 	generator    *FakeGenerator
@@ -35,12 +32,10 @@ type integrationHarness struct {
 func newIntegrationHarness(t *testing.T) *integrationHarness {
 	tmpDir := t.TempDir()
 
-	db := testdb.SetupTestDB(t)
-	appStore := store.NewAppStore(db)
+	appStore := NewFakeAppStore()
 
 	h := &integrationHarness{
 		appStore:     appStore,
-		db:           db,
 		graph:        NewFakeAppGraph(),
 		cache:        NewFakeCatalogCache(),
 		generator:    NewFakeGenerator(),
@@ -51,7 +46,7 @@ func newIntegrationHarness(t *testing.T) *integrationHarness {
 		tempDir:      tmpDir,
 	}
 
-	// Create orchestrator with real app store and fakes for external systems
+	// Create orchestrator with all fakes
 	h.orch = &Orchestrator{
 		graph:           h.graph,
 		catalogCache:    h.cache,
@@ -69,7 +64,7 @@ func newIntegrationHarness(t *testing.T) *integrationHarness {
 }
 
 func (h *integrationHarness) Close() {
-	// Database connection is cleaned up by testdb
+	// Nothing to clean up with fakes
 }
 
 // ============================================================================
@@ -413,3 +408,6 @@ func TestIntegration_StatusTransition_UninstallToRemoved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, app, "app should be removed after uninstall")
 }
+
+// Compile-time assertion that FakeAppStore implements store.AppStoreInterface
+var _ store.AppStoreInterface = (*FakeAppStore)(nil)

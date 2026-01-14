@@ -7,12 +7,10 @@ import (
 func TestNewGraph_BuildsDependents(t *testing.T) {
 	apps := []*AppDefinition{
 		{
-			Name:  "qbittorrent",
-			Image: "qbittorrent:latest",
+			Name: "qbittorrent",
 		},
 		{
-			Name:  "radarr",
-			Image: "radarr:latest",
+			Name: "radarr",
 			Integrations: map[string]Integration{
 				"downloadClient": {
 					Required: true,
@@ -26,13 +24,16 @@ func TestNewGraph_BuildsDependents(t *testing.T) {
 
 	g := NewGraph(apps)
 
-	// qbittorrent should have radarr as a dependent
-	deps := g.dependents["qbittorrent"]
+	// Mark radarr as installed so FindDependents returns it
+	g.SetInstalled([]string{"radarr"})
+
+	// qbittorrent should have radarr as a dependent via public API
+	deps := g.FindDependents("qbittorrent")
 	if len(deps) != 1 {
 		t.Fatalf("expected 1 dependent, got %d", len(deps))
 	}
-	if deps[0].App != "radarr" {
-		t.Errorf("expected radarr, got %s", deps[0].App)
+	if deps[0].Target != "radarr" {
+		t.Errorf("expected radarr, got %s", deps[0].Target)
 	}
 	if deps[0].Integration != "downloadClient" {
 		t.Errorf("expected downloadClient, got %s", deps[0].Integration)

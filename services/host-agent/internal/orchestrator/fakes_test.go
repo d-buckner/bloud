@@ -7,6 +7,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 )
 
 // Fakes are test doubles that capture calls for later inspection.
@@ -533,6 +534,135 @@ func (f *FakeCatalogCache) Refresh(loader *catalog.Loader) error {
 // Test helpers
 
 func (f *FakeCatalogCache) AddApp(app *catalog.App) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.apps[app.Name] = app
+}
+
+// ============================================================================
+// FakeAppStore - In-memory app store for testing
+// ============================================================================
+
+type FakeAppStore struct {
+	mu       sync.RWMutex
+	apps     map[string]*store.InstalledApp
+	onChange func()
+}
+
+func NewFakeAppStore() *FakeAppStore {
+	return &FakeAppStore{
+		apps: make(map[string]*store.InstalledApp),
+	}
+}
+
+func (f *FakeAppStore) GetAll() ([]*store.InstalledApp, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var apps []*store.InstalledApp
+	for _, app := range f.apps {
+		apps = append(apps, app)
+	}
+	return apps, nil
+}
+
+func (f *FakeAppStore) GetByName(name string) (*store.InstalledApp, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.apps[name], nil
+}
+
+func (f *FakeAppStore) GetInstalledNames() ([]string, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var names []string
+	for name := range f.apps {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+func (f *FakeAppStore) Install(name, displayName, version string, integrationConfig map[string]string, opts *store.InstallOptions) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	app := &store.InstalledApp{
+		Name:              name,
+		DisplayName:       displayName,
+		Version:           version,
+		Status:            "installing",
+		IntegrationConfig: integrationConfig,
+	}
+	if opts != nil {
+		app.Port = opts.Port
+		app.IsSystem = opts.IsSystem
+	}
+	f.apps[name] = app
+	f.notify()
+	return nil
+}
+
+func (f *FakeAppStore) UpdateStatus(name, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if app, ok := f.apps[name]; ok {
+		app.Status = status
+		f.notify()
+	}
+	return nil
+}
+
+func (f *FakeAppStore) EnsureSystemApp(name, displayName string, port int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.apps[name] = &store.InstalledApp{
+		Name:        name,
+		DisplayName: displayName,
+		Port:        port,
+		Status:      "running",
+		IsSystem:    true,
+	}
+	f.notify()
+	return nil
+}
+
+func (f *FakeAppStore) UpdateIntegrationConfig(name string, config map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if app, ok := f.apps[name]; ok {
+		app.IntegrationConfig = config
+	}
+	return nil
+}
+
+func (f *FakeAppStore) Uninstall(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.apps, name)
+	f.notify()
+	return nil
+}
+
+func (f *FakeAppStore) IsInstalled(name string) (bool, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	_, ok := f.apps[name]
+	return ok, nil
+}
+
+func (f *FakeAppStore) SetOnChange(fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onChange = fn
+}
+
+func (f *FakeAppStore) notify() {
+	if f.onChange != nil {
+		f.onChange()
+	}
+}
+
+// AddApp is a test helper to add an installed app directly
+func (f *FakeAppStore) AddApp(app *store.InstalledApp) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.apps[app.Name] = app

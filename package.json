@@ -8,6 +8,7 @@
     "services/host-agent/web"
   ],
   "scripts": {
+    "prepare": "husky",
     "setup": "npm install && npm run cli:build",
     "cli:build": "cd cli && go build -o ../bloud .",
     "dev": "turbo run dev",
@@ -17,14 +18,19 @@
     "backend:build": "cd services/host-agent && go build -o bin/host-agent ./cmd/host-agent",
     "test": "npm run test:unit",
     "test:go": "cd services/host-agent && go run gotest.tools/gotestsum@latest --format testdox ./...",
+    "test:go:apps": "cd apps && go run gotest.tools/gotestsum@latest --format testdox ./...",
+    "test:go:all": "npm run test:go && npm run test:go:apps",
+    "test:ts": "npm run test --workspace=@bloud/host-agent-web",
     "test:go:coverage": "cd services/host-agent && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1",
     "test:nix": "nix flake check",
-    "test:unit": "npm run test:go && npm run test:nix",
+    "test:unit": "npm run test:go:all && npm run test:ts",
+    "test:precommit": "npm run test:go:all && npm run test:ts",
     "test:integration": "cd integration && npm test --",
     "test:integration:app": "cd integration && npm test -- --grep",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test:all": "npm run test:unit && npm run test:nix && npm run test:integration"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
     "playwright": "^1.57.0",
     "turbo": "^2.0.0"
   },

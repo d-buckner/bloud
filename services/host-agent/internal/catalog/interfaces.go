@@ -1,6 +1,6 @@
 package catalog
 
-// CacheInterface defines the interface for catalog caching.
+// CacheInterface defines the interface for app catalog caching.
 // This interface enables mocking for testing.
 type CacheInterface interface {
 	// Get returns a single app from the cache by name
@@ -15,17 +15,20 @@ type CacheInterface interface {
 	// IsSystemAppByName checks if an app name corresponds to a system app
 	IsSystemAppByName(name string) bool
 
-	// Refresh loads all apps from the catalog and updates the database cache
+	// Refresh loads all apps from the catalog and updates the cache
 	Refresh(loader *Loader) error
 }
 
-// AppGraphInterface defines the interface for app dependency resolution.
+// Compile-time assertion that Cache implements CacheInterface
+var _ CacheInterface = (*Cache)(nil)
+
+// AppGraphInterface defines the interface for app dependency graph operations.
 // This interface enables mocking for testing.
 type AppGraphInterface interface {
-	// PlanInstall computes what happens when installing an app
+	// PlanInstall returns an install plan for an app
 	PlanInstall(appName string) (*InstallPlan, error)
 
-	// PlanRemove computes what happens when removing an app
+	// PlanRemove returns a remove plan for an app
 	PlanRemove(appName string) (*RemovePlan, error)
 
 	// SetInstalled updates which apps are installed
@@ -44,6 +47,5 @@ type AppGraphInterface interface {
 	GetApps() map[string]*AppDefinition
 }
 
-// Compile-time assertions
-var _ CacheInterface = (*Cache)(nil)
+// Compile-time assertion that AppGraph implements AppGraphInterface
 var _ AppGraphInterface = (*AppGraph)(nil)
