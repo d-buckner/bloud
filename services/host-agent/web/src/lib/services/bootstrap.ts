@@ -2,39 +2,24 @@
  * Service Worker Bootstrap Service
  *
  * Manages service worker registration and communication.
- * Exposes a readable store for SW ready state.
+ * The SW is used for URL rewriting for apps that don't support BASE_URL.
  */
-
-import { readable, get } from 'svelte/store';
-import type { ProtectedEntry } from '../../service-worker/types';
 
 // --- Service Worker Ready State ---
 
-interface BootstrapState {
-	ready: boolean;
-	error: string | null;
-}
-
+let swReady = false;
 let resolveReady: (() => void) | null = null;
 const readyPromise = new Promise<void>((resolve) => {
 	resolveReady = resolve;
 });
 
 /**
- * Service worker ready state as a Svelte store
- * Components can subscribe to this to show loading states
+ * Initialize the service worker.
+ * Called once at app startup.
  */
-export const swState = readable<BootstrapState>({ ready: false, error: null }, (set) => {
-	// Bootstrap on first subscription
-	bootstrapInternal(set);
-	return () => {
-		// No cleanup needed
-	};
-});
-
-async function bootstrapInternal(set: (value: BootstrapState) => void): Promise<void> {
-	if (!('serviceWorker' in navigator)) {
-		set({ ready: true, error: null });
+async function initServiceWorker(): Promise<void> {
+	if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+		swReady = true;
 		resolveReady?.();
 		return;
 	}
@@ -42,14 +27,18 @@ async function bootstrapInternal(set: (value: BootstrapState) => void): Promise<
 	try {
 		await navigator.serviceWorker.register('/service-worker.js', { scope: '/', type: 'module' });
 		await navigator.serviceWorker.ready;
-		set({ ready: true, error: null });
+		swReady = true;
 		resolveReady?.();
 	} catch (err) {
-		const errorMsg = err instanceof Error ? err.message : 'Failed to register service worker';
-		set({ ready: false, error: errorMsg });
 		console.error('Service worker registration failed:', err);
+		// Still mark as ready so the app doesn't block forever
+		swReady = true;
+		resolveReady?.();
 	}
 }
+
+// Start registration immediately when module loads
+initServiceWorker();
 
 /**
  * Wait for the service worker to be ready
@@ -63,7 +52,7 @@ export function waitForServiceWorker(): Promise<void> {
  * Check if the service worker is ready (non-reactive)
  */
 export function isServiceWorkerReady(): boolean {
-	return get(swState).ready;
+	return swReady;
 }
 
 // --- Service Worker Communication ---
@@ -73,7 +62,7 @@ export function isServiceWorkerReady(): boolean {
  * This tells the SW which app context to use for URL rewriting
  */
 export async function setActiveApp(appName: string | null): Promise<void> {
-	if (!('serviceWorker' in navigator)) return;
+	if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
 
 	await waitForServiceWorker();
 
@@ -83,38 +72,4 @@ export async function setActiveApp(appName: string | null): Promise<void> {
 			appName
 		});
 	}
-}
-
-/**
- * Send protected IndexedDB entries to the service worker
- * These entries will be injected into app HTML to intercept reads
- */
-export async function setProtectedEntries(
-	appName: string,
-	entries: ProtectedEntry[]
-): Promise<void> {
-	if (!('serviceWorker' in navigator)) return;
-
-	await waitForServiceWorker();
-
-	const controller = navigator.serviceWorker.controller;
-	if (!controller) return;
-
-	// Use MessageChannel to wait for SW acknowledgment
-	return new Promise<void>((resolve) => {
-		const channel = new MessageChannel();
-
-		channel.port1.onmessage = () => {
-			resolve();
-		};
-
-		controller.postMessage(
-			{
-				type: 'SET_PROTECTED_ENTRIES',
-				appName,
-				entries
-			},
-			[channel.port2]
-		);
-	});
 }
