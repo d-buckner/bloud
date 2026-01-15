@@ -67,6 +67,18 @@ export interface CatalogApp {
 // Bootstrap configuration for client-side app pre-configuration
 export interface BootstrapConfig {
 	indexedDB?: IndexedDBConfig;
+	localStorage?: LocalStorageConfig;
+}
+
+export interface LocalStorageConfig {
+	// Values returned on read, injected via service worker
+	intercepts?: LocalStorageEntry[];
+}
+
+export interface LocalStorageEntry {
+	key: string;
+	value?: string; // Simple value replacement (supports {{templates}})
+	jsonPatch?: Record<string, string>; // Patch fields in existing JSON value (supports {{templates}})
 }
 
 export interface IndexedDBConfig {

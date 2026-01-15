@@ -139,7 +139,7 @@ function isHtmlResponse(response: Response): boolean {
 }
 
 /**
- * Inject IndexedDB intercept script into HTML response if configured
+ * Inject storage intercept script into HTML response if configured
  */
 async function maybeInjectIntercepts(response: Response): Promise<Response> {
   const config = getInterceptConfig();
@@ -152,7 +152,7 @@ async function maybeInjectIntercepts(response: Response): Promise<Response> {
   const html = await response.text();
   const injectedHtml = injectIntoHtml(html, config);
 
-  console.log('[embed-sw] Injected IndexedDB intercepts into HTML response');
+  console.log('[embed-sw] Injected storage intercepts into HTML response');
 
   return new Response(injectedHtml, {
     status: response.status,

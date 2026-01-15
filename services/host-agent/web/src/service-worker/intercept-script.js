@@ -1,49 +1,61 @@
-// IndexedDB Get Intercept Script
+// Storage Intercept Script
 // This script is injected into iframe HTML by the service worker.
-// It patches IDBObjectStore.prototype.get to return configured values
-// regardless of what's actually stored in the database.
+// It patches IndexedDB and localStorage to return configured values.
 //
-// Config is read from a meta tag: <meta name="bloud-idb-config" content="...">
-// Format: { "dbName": { "storeName": { "key": "value" } } }
+// Config is read from a meta tag: <meta name="bloud-intercept-config" content="...">
+// Format: {
+//   "indexedDB": { "dbName": { "storeName": { "key": "value" } } },
+//   "localStorage": { "key": { "value": "exactValue" } | { "jsonPatch": { "path": "value" } } }
+// }
 
 (function () {
   'use strict';
 
-  var metaEl = document.querySelector('meta[name="bloud-idb-config"]');
+  var metaEl = document.querySelector('meta[name="bloud-intercept-config"]');
   if (!metaEl || !metaEl.content) {
     return;
   }
 
-  var intercepts;
+  var config;
   try {
-    intercepts = JSON.parse(metaEl.content);
+    config = JSON.parse(metaEl.content);
   } catch (e) {
-    console.error('[bloud-idb] Failed to parse intercept config:', e);
+    console.error('[bloud-intercept] Failed to parse config:', e);
     return;
   }
 
-  var originalGet = IDBObjectStore.prototype.get;
+  // IndexedDB interception
+  if (config.indexedDB && Object.keys(config.indexedDB).length > 0) {
+    setupIndexedDBIntercept(config.indexedDB);
+  }
 
-  IDBObjectStore.prototype.get = function (key) {
-    var dbName = this.transaction.db.name;
-    var storeName = this.name;
+  // localStorage interception
+  if (config.localStorage && Object.keys(config.localStorage).length > 0) {
+    setupLocalStorageIntercept(config.localStorage);
+  }
 
-    // Check if this key should be intercepted
-    var dbIntercepts = intercepts[dbName];
-    if (dbIntercepts) {
-      var storeIntercepts = dbIntercepts[storeName];
-      if (storeIntercepts && Object.prototype.hasOwnProperty.call(storeIntercepts, key)) {
-        var value = storeIntercepts[key];
-        console.log('[bloud-idb] Intercepting get:', dbName + '.' + storeName + '.' + key, '->', value);
-        return createFakeRequest(value, this);
+  function setupIndexedDBIntercept(intercepts) {
+    var originalGet = IDBObjectStore.prototype.get;
+
+    IDBObjectStore.prototype.get = function (key) {
+      var dbName = this.transaction.db.name;
+      var storeName = this.name;
+
+      var dbIntercepts = intercepts[dbName];
+      if (dbIntercepts) {
+        var storeIntercepts = dbIntercepts[storeName];
+        if (storeIntercepts && Object.prototype.hasOwnProperty.call(storeIntercepts, key)) {
+          var value = storeIntercepts[key];
+          console.log('[bloud-intercept] IndexedDB get:', dbName + '.' + storeName + '.' + key, '->', value);
+          return createFakeIDBRequest(value, this);
+        }
       }
-    }
 
-    return originalGet.call(this, key);
-  };
+      return originalGet.call(this, key);
+    };
+  }
 
-  function createFakeRequest(value, source) {
-    // Create an object that mimics IDBRequest
+  function createFakeIDBRequest(value, source) {
     var request = {
       result: value,
       error: null,
@@ -54,7 +66,6 @@
       onerror: null
     };
 
-    // Simulate async behavior - callbacks fire after current microtask
     Promise.resolve().then(function () {
       if (typeof request.onsuccess === 'function') {
         var event = { target: request, type: 'success' };
@@ -63,5 +74,84 @@
     });
 
     return request;
+  }
+
+  function setupLocalStorageIntercept(intercepts) {
+    var originalGetItem = Storage.prototype.getItem;
+
+    Storage.prototype.getItem = function (key) {
+      // Only intercept localStorage, not sessionStorage
+      if (this !== window.localStorage) {
+        return originalGetItem.call(this, key);
+      }
+
+      var interceptConfig = intercepts[key];
+      if (!interceptConfig) {
+        return originalGetItem.call(this, key);
+      }
+
+      // Simple value replacement
+      if (interceptConfig.value !== undefined) {
+        console.log('[bloud-intercept] localStorage get:', key, '-> (replaced)');
+        return interceptConfig.value;
+      }
+
+      // JSON patch mode - get existing value and patch it
+      if (interceptConfig.jsonPatch) {
+        var stored = originalGetItem.call(this, key);
+        if (!stored) {
+          // No existing value, create object from patches
+          var newObj = {};
+          applyPatches(newObj, interceptConfig.jsonPatch);
+          var result = JSON.stringify(newObj);
+          console.log('[bloud-intercept] localStorage get:', key, '-> (created from patches)');
+          return result;
+        }
+
+        try {
+          var obj = JSON.parse(stored);
+          applyPatches(obj, interceptConfig.jsonPatch);
+          var patched = JSON.stringify(obj);
+          console.log('[bloud-intercept] localStorage get:', key, '-> (patched)');
+          return patched;
+        } catch (e) {
+          console.error('[bloud-intercept] Failed to patch JSON for key:', key, e);
+          return stored;
+        }
+      }
+
+      return originalGetItem.call(this, key);
+    };
+  }
+
+  // Apply patches to an object using dot notation paths
+  // Supports array indices: "Servers.0.ManualAddress"
+  function applyPatches(obj, patches) {
+    for (var path in patches) {
+      if (Object.prototype.hasOwnProperty.call(patches, path)) {
+        setByPath(obj, path, patches[path]);
+      }
+    }
+  }
+
+  function setByPath(obj, path, value) {
+    var parts = path.split('.');
+    var current = obj;
+
+    for (var i = 0; i < parts.length - 1; i++) {
+      var part = parts[i];
+      var nextPart = parts[i + 1];
+      var isNextIndex = /^\d+$/.test(nextPart);
+
+      if (current[part] === undefined) {
+        // Create array or object based on next part
+        current[part] = isNextIndex ? [] : {};
+      }
+
+      current = current[part];
+    }
+
+    var lastPart = parts[parts.length - 1];
+    current[lastPart] = value;
   }
 })();

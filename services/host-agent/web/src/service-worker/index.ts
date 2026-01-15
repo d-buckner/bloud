@@ -5,7 +5,7 @@
 
 import { handleRequest, setActiveApp, setInterceptConfig } from './handlers';
 import { MessageType } from './types';
-import type { IndexedDBInterceptConfig } from './inject';
+import type { InterceptConfig } from './inject';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -35,10 +35,12 @@ self.addEventListener('message', (event) => {
       }
       break;
     }
-    case MessageType.SET_INDEXEDDB_INTERCEPTS: {
-      const config = event.data.config as IndexedDBInterceptConfig | null;
+    case MessageType.SET_INTERCEPTS: {
+      const config = event.data.config as InterceptConfig | null;
       if (config) {
-        console.log('[embed-sw] IndexedDB intercepts set:', config.database, config.intercepts.length, 'entries');
+        const idbCount = config.indexedDB?.intercepts.length ?? 0;
+        const lsCount = config.localStorage?.intercepts.length ?? 0;
+        console.log('[embed-sw] Intercepts set: IndexedDB=' + idbCount + ', localStorage=' + lsCount);
       }
       setInterceptConfig(config);
 

@@ -79,7 +79,20 @@ type Routing struct {
 
 // BootstrapConfig defines client-side pre-configuration for an app
 type BootstrapConfig struct {
-	IndexedDB *IndexedDBConfig `yaml:"indexedDB,omitempty" json:"indexedDB,omitempty"`
+	IndexedDB    *IndexedDBConfig    `yaml:"indexedDB,omitempty" json:"indexedDB,omitempty"`
+	LocalStorage *LocalStorageConfig `yaml:"localStorage,omitempty" json:"localStorage,omitempty"`
+}
+
+// LocalStorageConfig defines localStorage setup requirements
+type LocalStorageConfig struct {
+	Intercepts []LocalStorageEntry `yaml:"intercepts,omitempty" json:"intercepts,omitempty"` // Values returned on read, injected via service worker
+}
+
+// LocalStorageEntry defines a localStorage intercept
+type LocalStorageEntry struct {
+	Key       string            `yaml:"key" json:"key"`
+	Value     string            `yaml:"value,omitempty" json:"value,omitempty"`         // Simple value replacement (supports {{templates}})
+	JSONPatch map[string]string `yaml:"jsonPatch,omitempty" json:"jsonPatch,omitempty"` // Patch fields in existing JSON value (supports {{templates}})
 }
 
 // IndexedDBConfig defines IndexedDB setup requirements
