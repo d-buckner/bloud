@@ -1,21 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildInterceptMap,
+  buildIndexedDBInterceptMap,
+  buildLocalStorageInterceptMap,
+  buildScriptConfig,
   generateInterceptHtml,
   injectIntoHtml,
   escapeForAttribute,
   type IndexedDBInterceptConfig,
+  type LocalStorageInterceptConfig,
+  type InterceptConfig,
 } from '../inject';
 
 describe('inject', () => {
-  describe('buildInterceptMap', () => {
+  describe('buildIndexedDBInterceptMap', () => {
     it('builds map with single entry', () => {
       const config: IndexedDBInterceptConfig = {
         database: 'mydb',
         intercepts: [{ store: 'mystore', key: 'mykey', value: 'myvalue' }],
       };
 
-      const result = buildInterceptMap(config);
+      const result = buildIndexedDBInterceptMap(config);
 
       expect(result).toEqual({
         mydb: {
@@ -35,7 +39,7 @@ describe('inject', () => {
         ],
       };
 
-      const result = buildInterceptMap(config);
+      const result = buildIndexedDBInterceptMap(config);
 
       expect(result).toEqual({
         actual: {
@@ -56,7 +60,7 @@ describe('inject', () => {
         ],
       };
 
-      const result = buildInterceptMap(config);
+      const result = buildIndexedDBInterceptMap(config);
 
       expect(result).toEqual({
         testdb: {
@@ -72,7 +76,7 @@ describe('inject', () => {
         intercepts: [],
       };
 
-      const result = buildInterceptMap(config);
+      const result = buildIndexedDBInterceptMap(config);
 
       expect(result).toEqual({ emptydb: {} });
     });
@@ -86,10 +90,134 @@ describe('inject', () => {
         ],
       };
 
-      const result = buildInterceptMap(config);
+      const result = buildIndexedDBInterceptMap(config);
 
       expect(result.db.store.url).toBe('http://localhost:8080/embed/app/');
       expect(result.db.store.json).toBe('{"nested": "value"}');
+    });
+  });
+
+  describe('buildLocalStorageInterceptMap', () => {
+    it('builds map with simple value', () => {
+      const config: LocalStorageInterceptConfig = {
+        intercepts: [{ key: 'mykey', value: 'myvalue' }],
+      };
+
+      const result = buildLocalStorageInterceptMap(config);
+
+      expect(result).toEqual({
+        mykey: { value: 'myvalue' },
+      });
+    });
+
+    it('builds map with jsonPatch', () => {
+      const config: LocalStorageInterceptConfig = {
+        intercepts: [
+          {
+            key: 'jellyfin_credentials',
+            jsonPatch: { 'Servers.0.ManualAddress': 'http://localhost:8080/embed/jellyfin' },
+          },
+        ],
+      };
+
+      const result = buildLocalStorageInterceptMap(config);
+
+      expect(result).toEqual({
+        jellyfin_credentials: {
+          jsonPatch: { 'Servers.0.ManualAddress': 'http://localhost:8080/embed/jellyfin' },
+        },
+      });
+    });
+
+    it('handles multiple entries', () => {
+      const config: LocalStorageInterceptConfig = {
+        intercepts: [
+          { key: 'key1', value: 'value1' },
+          { key: 'key2', jsonPatch: { path: 'newValue' } },
+        ],
+      };
+
+      const result = buildLocalStorageInterceptMap(config);
+
+      expect(result).toEqual({
+        key1: { value: 'value1' },
+        key2: { jsonPatch: { path: 'newValue' } },
+      });
+    });
+  });
+
+  describe('buildScriptConfig', () => {
+    it('returns null for empty config', () => {
+      const config: InterceptConfig = {};
+      expect(buildScriptConfig(config)).toBeNull();
+    });
+
+    it('returns null for config with empty intercepts', () => {
+      const config: InterceptConfig = {
+        indexedDB: { database: 'db', intercepts: [] },
+        localStorage: { intercepts: [] },
+      };
+      expect(buildScriptConfig(config)).toBeNull();
+    });
+
+    it('builds config with only indexedDB', () => {
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'actual',
+          intercepts: [{ store: 'asyncStorage', key: 'server-url', value: 'http://example.com' }],
+        },
+      };
+
+      const result = buildScriptConfig(config);
+
+      expect(result).toEqual({
+        indexedDB: {
+          actual: {
+            asyncStorage: { 'server-url': 'http://example.com' },
+          },
+        },
+      });
+    });
+
+    it('builds config with only localStorage', () => {
+      const config: InterceptConfig = {
+        localStorage: {
+          intercepts: [{ key: 'credentials', jsonPatch: { 'path.to.field': 'value' } }],
+        },
+      };
+
+      const result = buildScriptConfig(config);
+
+      expect(result).toEqual({
+        localStorage: {
+          credentials: { jsonPatch: { 'path.to.field': 'value' } },
+        },
+      });
+    });
+
+    it('builds config with both indexedDB and localStorage', () => {
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'db',
+          intercepts: [{ store: 'store', key: 'key', value: 'value' }],
+        },
+        localStorage: {
+          intercepts: [{ key: 'lskey', value: 'lsvalue' }],
+        },
+      };
+
+      const result = buildScriptConfig(config);
+
+      expect(result).toEqual({
+        indexedDB: {
+          db: {
+            store: { key: 'value' },
+          },
+        },
+        localStorage: {
+          lskey: { value: 'lsvalue' },
+        },
+      });
     });
   });
 
@@ -124,56 +252,82 @@ describe('inject', () => {
       expect(result).toBe('');
     });
 
+    it('returns empty string for empty config', () => {
+      const config: InterceptConfig = {};
+      const result = generateInterceptHtml(config);
+      expect(result).toBe('');
+    });
+
     it('returns empty string for empty intercepts', () => {
-      const config: IndexedDBInterceptConfig = {
-        database: 'db',
-        intercepts: [],
+      const config: InterceptConfig = {
+        indexedDB: { database: 'db', intercepts: [] },
       };
 
       const result = generateInterceptHtml(config);
       expect(result).toBe('');
     });
 
-    it('generates meta tag with config', () => {
-      const config: IndexedDBInterceptConfig = {
-        database: 'actual',
-        intercepts: [{ store: 'asyncStorage', key: 'server-url', value: 'http://example.com' }],
+    it('generates meta tag with indexedDB config', () => {
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'actual',
+          intercepts: [{ store: 'asyncStorage', key: 'server-url', value: 'http://example.com' }],
+        },
       };
 
       const result = generateInterceptHtml(config);
 
-      // Should contain meta tag with config
-      expect(result).toContain('<meta name="bloud-idb-config" content="');
+      expect(result).toContain('<meta name="bloud-intercept-config" content="');
+      expect(result).toContain('indexedDB');
       expect(result).toContain('actual');
       expect(result).toContain('asyncStorage');
       expect(result).toContain('server-url');
     });
 
-    it('generates script with intercept code', () => {
-      const config: IndexedDBInterceptConfig = {
-        database: 'db',
-        intercepts: [{ store: 'store', key: 'key', value: 'value' }],
+    it('generates meta tag with localStorage config', () => {
+      const config: InterceptConfig = {
+        localStorage: {
+          intercepts: [{ key: 'credentials', jsonPatch: { 'Servers.0.Address': 'http://test.com' } }],
+        },
       };
 
       const result = generateInterceptHtml(config);
 
-      // Should contain the intercept script
+      expect(result).toContain('<meta name="bloud-intercept-config" content="');
+      expect(result).toContain('localStorage');
+      expect(result).toContain('credentials');
+      expect(result).toContain('jsonPatch');
+    });
+
+    it('generates script with intercept code', () => {
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'db',
+          intercepts: [{ store: 'store', key: 'key', value: 'value' }],
+        },
+      };
+
+      const result = generateInterceptHtml(config);
+
+      // Should contain the intercept script (both IndexedDB and localStorage handling)
       expect(result).toContain('IDBObjectStore.prototype.get');
-      expect(result).toContain('bloud-idb-config');
+      expect(result).toContain('bloud-intercept-config');
     });
 
     it('produces valid JSON in meta content after unescaping', () => {
-      const config: IndexedDBInterceptConfig = {
-        database: 'actual',
-        intercepts: [
-          { store: 'asyncStorage', key: 'server-url', value: 'http://localhost:8080/embed/actual-budget' },
-        ],
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'actual',
+          intercepts: [
+            { store: 'asyncStorage', key: 'server-url', value: 'http://localhost:8080/embed/actual-budget' },
+          ],
+        },
       };
 
       const result = generateInterceptHtml(config);
 
       // Extract content from meta tag
-      const contentMatch = result.match(/<meta name="bloud-idb-config" content="([^"]+)">/);
+      const contentMatch = result.match(/<meta name="bloud-intercept-config" content="([^"]+)">/);
       expect(contentMatch).not.toBeNull();
 
       // Unescape HTML entities (browser does this automatically)
@@ -185,14 +339,16 @@ describe('inject', () => {
         .replace(/&amp;/g, '&');
 
       const parsed = JSON.parse(unescaped);
-      expect(parsed.actual.asyncStorage['server-url']).toBe('http://localhost:8080/embed/actual-budget');
+      expect(parsed.indexedDB.actual.asyncStorage['server-url']).toBe('http://localhost:8080/embed/actual-budget');
     });
   });
 
   describe('injectIntoHtml', () => {
-    const testConfig: IndexedDBInterceptConfig = {
-      database: 'testdb',
-      intercepts: [{ store: 'store', key: 'key', value: 'value' }],
+    const testConfig: InterceptConfig = {
+      indexedDB: {
+        database: 'testdb',
+        intercepts: [{ store: 'store', key: 'key', value: 'value' }],
+      },
     };
 
     it('returns original HTML for null config', () => {
@@ -203,7 +359,7 @@ describe('inject', () => {
 
     it('returns original HTML for empty intercepts', () => {
       const html = '<!DOCTYPE html><html><head></head><body></body></html>';
-      const emptyConfig: IndexedDBInterceptConfig = { database: 'db', intercepts: [] };
+      const emptyConfig: InterceptConfig = { indexedDB: { database: 'db', intercepts: [] } };
       const result = injectIntoHtml(html, emptyConfig);
       expect(result).toBe(html);
     });
@@ -212,7 +368,7 @@ describe('inject', () => {
       const html = '<!DOCTYPE html><html><head><title>Test</title></head><body></body></html>';
       const result = injectIntoHtml(html, testConfig);
 
-      expect(result).toContain('<head><meta name="bloud-idb-config"');
+      expect(result).toContain('<head><meta name="bloud-intercept-config"');
       expect(result).toContain('</script><title>Test</title>');
     });
 
@@ -279,7 +435,7 @@ describe('inject', () => {
       const html = '<!DOCTYPE html><html><head><script src="/app.js"></script></head></html>';
       const result = injectIntoHtml(html, testConfig);
 
-      const injectionIndex = result.indexOf('bloud-idb-config');
+      const injectionIndex = result.indexOf('bloud-intercept-config');
       const appScriptIndex = result.indexOf('src="/app.js"');
 
       expect(injectionIndex).toBeLessThan(appScriptIndex);
@@ -287,12 +443,14 @@ describe('inject', () => {
   });
 
   describe('real-world scenarios', () => {
-    it('handles Actual Budget config', () => {
-      const config: IndexedDBInterceptConfig = {
-        database: 'actual',
-        intercepts: [
-          { store: 'asyncStorage', key: 'server-url', value: 'http://localhost:8080/embed/actual-budget' },
-        ],
+    it('handles Actual Budget config (IndexedDB)', () => {
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'actual',
+          intercepts: [
+            { store: 'asyncStorage', key: 'server-url', value: 'http://localhost:8080/embed/actual-budget' },
+          ],
+        },
       };
 
       const html = `<!DOCTYPE html>
@@ -310,50 +468,87 @@ describe('inject', () => {
       const result = injectIntoHtml(html, config);
 
       // Verify injection
-      expect(result).toContain('bloud-idb-config');
+      expect(result).toContain('bloud-intercept-config');
       expect(result).toContain('server-url'); // Quotes are escaped in HTML
       expect(result).toContain('actual-budget'); // URL is present (escaped)
 
       // Verify script runs before app
-      const configIndex = result.indexOf('bloud-idb-config');
+      const configIndex = result.indexOf('bloud-intercept-config');
       const rootIndex = result.indexOf('id="root"');
       expect(configIndex).toBeLessThan(rootIndex);
     });
 
+    it('handles Jellyfin config (localStorage jsonPatch)', () => {
+      const config: InterceptConfig = {
+        localStorage: {
+          intercepts: [
+            {
+              key: 'jellyfin_credentials',
+              jsonPatch: { 'Servers.0.ManualAddress': 'http://localhost:8080/embed/jellyfin' },
+            },
+          ],
+        },
+      };
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Jellyfin</title>
+</head>
+<body>
+  <div id="app"></div>
+</body>
+</html>`;
+
+      const result = injectIntoHtml(html, config);
+
+      // Verify injection
+      expect(result).toContain('bloud-intercept-config');
+      expect(result).toContain('localStorage');
+      expect(result).toContain('jellyfin_credentials');
+      expect(result).toContain('jsonPatch');
+      expect(result).toContain('Servers.0.ManualAddress');
+    });
+
     it('handles HTML with existing inline scripts', () => {
-      const config: IndexedDBInterceptConfig = {
-        database: 'db',
-        intercepts: [{ store: 's', key: 'k', value: 'v' }],
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'db',
+          intercepts: [{ store: 's', key: 'k', value: 'v' }],
+        },
       };
 
       const html = `<html><head><script>var x = 1;</script></head></html>`;
       const result = injectIntoHtml(html, config);
 
       // Our injection should come first
-      const ourScriptIndex = result.indexOf('bloud-idb-config');
+      const ourScriptIndex = result.indexOf('bloud-intercept-config');
       const existingScriptIndex = result.indexOf('var x = 1');
       expect(ourScriptIndex).toBeLessThan(existingScriptIndex);
     });
 
     it('handles special characters in values safely', () => {
-      const config: IndexedDBInterceptConfig = {
-        database: 'db',
-        intercepts: [
-          { store: 'store', key: 'html', value: '<script>alert("xss")</script>' },
-        ],
+      const config: InterceptConfig = {
+        indexedDB: {
+          database: 'db',
+          intercepts: [
+            { store: 'store', key: 'html', value: '<script>alert("xss")</script>' },
+          ],
+        },
       };
 
       const result = generateInterceptHtml(config);
 
       // Should use meta tag
-      expect(result).toContain('<meta name="bloud-idb-config"');
+      expect(result).toContain('<meta name="bloud-intercept-config"');
 
       // Angle brackets should be escaped in attribute
       expect(result).not.toContain('content="<script>');
       expect(result).toContain('&lt;script&gt;');
 
       // Extract and verify the value is recoverable
-      const contentMatch = result.match(/<meta name="bloud-idb-config" content="([^"]+)">/);
+      const contentMatch = result.match(/<meta name="bloud-intercept-config" content="([^"]+)">/);
       expect(contentMatch).not.toBeNull();
 
       // Unescape and parse
@@ -365,7 +560,7 @@ describe('inject', () => {
         .replace(/&amp;/g, '&');
 
       const parsed = JSON.parse(unescaped);
-      expect(parsed.db.store.html).toBe('<script>alert("xss")</script>');
+      expect(parsed.indexedDB.db.store.html).toBe('<script>alert("xss")</script>');
     });
   });
 });
