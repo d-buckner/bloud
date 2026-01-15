@@ -259,3 +259,160 @@ func TestGenerateOutpostBlueprint_NoProviders(t *testing.T) {
 		t.Error("Blueprint file should be removed when no providers")
 	}
 }
+
+func TestGenerateLDAPBlueprint(t *testing.T) {
+	dir := t.TempDir()
+
+	gen := NewBlueprintGenerator(
+		"test-secret",
+		"http://localhost:8080",
+		"http://localhost:8080",
+		dir,
+	)
+
+	app := &catalog.App{
+		Name:        "jellyfin",
+		DisplayName: "Jellyfin",
+		Port:        8096,
+		SSO: catalog.SSO{
+			Strategy: "ldap",
+		},
+	}
+
+	err := gen.GenerateForApp(app)
+	if err != nil {
+		t.Fatalf("GenerateForApp failed: %v", err)
+	}
+
+	// Read the generated file
+	content, err := os.ReadFile(filepath.Join(dir, "jellyfin.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+	t.Logf("Generated blueprint:\n%s", contentStr)
+
+	// Verify it creates groups
+	if !strings.Contains(contentStr, "jellyfin-users") {
+		t.Error("Expected jellyfin-users group not found")
+	}
+	if !strings.Contains(contentStr, "jellyfin-admins") {
+		t.Error("Expected jellyfin-admins group not found")
+	}
+
+	// Verify it creates an application entry
+	if !strings.Contains(contentStr, "authentik_core.application") {
+		t.Error("Expected application model not found")
+	}
+
+	// Verify launch URL
+	if !strings.Contains(contentStr, "http://localhost:8080/embed/jellyfin") {
+		t.Error("Expected launch URL not found")
+	}
+}
+
+func TestGenerateLDAPOutpostBlueprint(t *testing.T) {
+	dir := t.TempDir()
+
+	gen := NewBlueprintGenerator(
+		"test-secret",
+		"http://localhost:8080",
+		"http://localhost:8080",
+		dir,
+	)
+
+	apps := []LDAPApp{
+		{Name: "jellyfin", DisplayName: "Jellyfin"},
+	}
+
+	err := gen.GenerateLDAPOutpostBlueprint(apps, "test-bind-password")
+	if err != nil {
+		t.Fatalf("GenerateLDAPOutpostBlueprint failed: %v", err)
+	}
+
+	// Read the generated file
+	content, err := os.ReadFile(filepath.Join(dir, "bloud-ldap.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+	t.Logf("Generated blueprint:\n%s", contentStr)
+
+	// Verify LDAP provider
+	if !strings.Contains(contentStr, "authentik_providers_ldap.ldapprovider") {
+		t.Error("Expected LDAP provider model not found")
+	}
+	if !strings.Contains(contentStr, "Bloud LDAP Provider") {
+		t.Error("Expected LDAP provider name not found")
+	}
+
+	// Verify service account
+	if !strings.Contains(contentStr, "ldap-service") {
+		t.Error("Expected ldap-service user not found")
+	}
+	if !strings.Contains(contentStr, "service_account") {
+		t.Error("Expected service_account type not found")
+	}
+
+	// Verify bind password token
+	if !strings.Contains(contentStr, "test-bind-password") {
+		t.Error("Expected bind password not found")
+	}
+
+	// Verify LDAP outpost
+	if !strings.Contains(contentStr, "Bloud LDAP Outpost") {
+		t.Error("Expected LDAP outpost name not found")
+	}
+	if !strings.Contains(contentStr, "type: ldap") {
+		t.Error("Expected outpost type ldap not found")
+	}
+}
+
+func TestGenerateLDAPOutpostBlueprint_NoApps(t *testing.T) {
+	dir := t.TempDir()
+
+	gen := NewBlueprintGenerator(
+		"test-secret",
+		"http://localhost:8080",
+		"http://localhost:8080",
+		dir,
+	)
+
+	// Create a blueprint file first
+	err := gen.GenerateLDAPOutpostBlueprint([]LDAPApp{{Name: "test", DisplayName: "Test"}}, "password")
+	if err != nil {
+		t.Fatalf("GenerateLDAPOutpostBlueprint failed: %v", err)
+	}
+
+	blueprintPath := filepath.Join(dir, "bloud-ldap.yaml")
+	if _, err := os.Stat(blueprintPath); os.IsNotExist(err) {
+		t.Fatal("Blueprint file was not created")
+	}
+
+	// Call with empty apps - should remove the file
+	err = gen.GenerateLDAPOutpostBlueprint([]LDAPApp{}, "password")
+	if err != nil {
+		t.Fatalf("GenerateLDAPOutpostBlueprint with empty apps failed: %v", err)
+	}
+
+	// Verify file is removed
+	if _, err := os.Stat(blueprintPath); !os.IsNotExist(err) {
+		t.Error("Blueprint file should be removed when no LDAP apps")
+	}
+}
+
+func TestGetLDAPBindPassword(t *testing.T) {
+	gen := NewBlueprintGenerator(
+		"test-secret",
+		"http://localhost:8080",
+		"http://localhost:8080",
+		t.TempDir(),
+	)
+
+	password := gen.GetLDAPBindPassword()
+	if password == "" {
+		t.Error("Expected non-empty LDAP bind password")
+	}
+}

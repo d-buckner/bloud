@@ -9,7 +9,7 @@
 #   bloudAppName - if set, runs bloud-agent configure prestart/poststart hooks
 #   bloudAgentPath - path to bloud-agent binary (required if bloudAppName is set)
 
-{ name, image, ports ? [], environment ? {}, volumes ? [], network ? null, dependsOn ? [], cmd ? [], userns ? null, waitFor ? [], extraAfter ? [], extraRequires ? [], bloudAppName ? null, bloudAgentPath ? null }:
+{ name, image, ports ? [], environment ? {}, volumes ? [], network ? null, dependsOn ? [], cmd ? [], userns ? null, waitFor ? [], extraAfter ? [], extraRequires ? [], bloudAppName ? null, bloudAgentPath ? null, envFile ? null, preStartScript ? null }:
 let
   # Generate health check script for each waitFor entry
   mkHealthCheck = { container, command, timeout ? 60 }: ''
@@ -59,18 +59,20 @@ in
     ExecStartPre = [
       "-${pkgs.podman}/bin/podman rm -f ${name}"
     ] ++ lib.optional (waitFor != []) (pkgs.writeShellScript "${name}-wait-for-deps" healthCheckScript)
-      ++ lib.optional hasConfigurator prestartScript;
+      ++ lib.optional hasConfigurator prestartScript
+      ++ lib.optional (preStartScript != null) preStartScript;
 
     ExecStart =
       let
         portArgs = lib.concatMapStrings (p: " -p ${p}") ports;
         envArgs = lib.concatStrings (lib.mapAttrsToList (k: v: " -e ${k}=${lib.escapeShellArg v}") environment);
+        envFileArg = if envFile != null then " --env-file=${envFile}" else "";
         volArgs = lib.concatMapStrings (v: " -v ${v}") volumes;
         netArg = if network != null then " --network=${network}" else "";
         usernsArg = if userns != null then " --userns=${userns}" else "";
         cmdArgs = lib.concatMapStrings (c: " ${lib.escapeShellArg c}") cmd;
       in
-      "${pkgs.podman}/bin/podman run --pull=missing --sdnotify=conmon --name=${name} --rm${portArgs}${envArgs}${volArgs}${netArg}${usernsArg} ${image}${cmdArgs}";
+      "${pkgs.podman}/bin/podman run --pull=missing --sdnotify=conmon --name=${name} --rm${portArgs}${envArgs}${envFileArg}${volArgs}${netArg}${usernsArg} ${image}${cmdArgs}";
 
     ExecStartPost = lib.optional hasConfigurator poststartScript;
 

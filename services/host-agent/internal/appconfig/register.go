@@ -2,6 +2,7 @@
 package appconfig
 
 import (
+	"fmt"
 	"path/filepath"
 
 	actualbudget "codeberg.org/d-buckner/bloud-v3/apps/actual-budget"
@@ -26,12 +27,19 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 	// Register configurators from apps/ directory
 	registry.Register(actualbudget.NewConfigurator(5006))
 	registry.Register(adguardhome.NewConfigurator(3080))
-	registry.Register(authentik.NewConfigurator(cfg.AuthentikPort, cfg.AuthentikAdminPassword, cfg.AuthentikAdminEmail))
+	registry.Register(authentik.NewConfigurator(
+		cfg.AuthentikPort,
+		cfg.AuthentikAdminPassword,
+		cfg.AuthentikAdminEmail,
+		cfg.AuthentikToken,
+		cfg.LDAPBindPassword,
+		cfg.DataDir,
+	))
 	registry.Register(miniflux.NewConfigurator(8085, "admin", "admin123", traefikDynamicDir))
 	registry.Register(qbittorrent.NewConfigurator(8086))
 	registry.Register(radarr.NewConfigurator(7878))
 	registry.Register(sonarr.NewConfigurator(8989))
 	registry.Register(prowlarr.NewConfigurator(9696))
-	registry.Register(jellyfin.NewConfigurator(8096))
+	registry.Register(jellyfin.NewConfigurator(8096, fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort), cfg.AuthentikToken))
 	registry.Register(jellyseerr.NewConfigurator(5055))
 }

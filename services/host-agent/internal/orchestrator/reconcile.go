@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -39,28 +40,31 @@ func DefaultReconcileConfig() ReconcileConfig {
 // - Level 2: Apps that depend on Level 1 (e.g., Jellyseerr)
 // Apps within the same level can be configured in parallel.
 type Reconciler struct {
-	registry configurator.RegistryInterface
-	appStore store.AppStoreInterface
-	dataDir  string
-	logger   *slog.Logger
-	config   ReconcileConfig
-	stopCh   chan struct{}
+	registry     configurator.RegistryInterface
+	appStore     store.AppStoreInterface
+	catalogCache catalog.CacheInterface
+	dataDir      string
+	logger       *slog.Logger
+	config       ReconcileConfig
+	stopCh       chan struct{}
 }
 
 // NewReconciler creates a new reconciler
 func NewReconciler(
 	registry configurator.RegistryInterface,
 	appStore store.AppStoreInterface,
+	catalogCache catalog.CacheInterface,
 	dataDir string,
 	logger *slog.Logger,
 	config ReconcileConfig,
 ) *Reconciler {
 	return &Reconciler{
-		registry: registry,
-		appStore: appStore,
-		dataDir:  dataDir,
-		logger:   logger,
-		config:   config,
+		registry:     registry,
+		appStore:     appStore,
+		catalogCache: catalogCache,
+		dataDir:      dataDir,
+		logger:       logger,
+		config:       config,
 	}
 }
 
@@ -228,13 +232,25 @@ func (r *Reconciler) buildAppState(app *store.InstalledApp) *configurator.AppSta
 		integrations[name] = []string{source}
 	}
 
+	// Load SSO config from catalog if available
+	if r.catalogCache != nil {
+		if catalogApp, err := r.catalogCache.Get(app.Name); err == nil && catalogApp != nil {
+			if catalogApp.SSO.Strategy != "" {
+				integrations["sso"] = []string{catalogApp.SSO.Strategy}
+				r.logger.Debug("loaded SSO integration from catalog",
+					"app", app.Name,
+					"strategy", catalogApp.SSO.Strategy)
+			}
+		}
+	}
+
 	return &configurator.AppState{
 		Name:          app.Name,
 		DataPath:      filepath.Join(r.dataDir, app.Name),
 		BloudDataPath: r.dataDir,
 		Port:          app.Port,
 		Integrations:  integrations,
-		Options:       make(map[string]any), // TODO: Load from catalog or config
+		Options:       make(map[string]any),
 	}
 }
 

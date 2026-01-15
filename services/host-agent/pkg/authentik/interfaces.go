@@ -21,6 +21,15 @@ type ClientInterface interface {
 
 	// DeleteProxyProvider deletes a proxy provider by name
 	DeleteProxyProvider(providerName string) error
+
+	// EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
+	// if they don't already exist. This is called during app installation for LDAP-strategy apps.
+	// The ldapBindPassword is the password for the service account that apps will use to bind.
+	EnsureLDAPInfrastructure(ldapBindPassword string) error
+
+	// GetLDAPOutpostToken returns the auto-generated token for the LDAP outpost.
+	// This should be called after EnsureLDAPInfrastructure to get the token for the LDAP container.
+	GetLDAPOutpostToken() (string, error)
 }
 
 // Compile-time assertion

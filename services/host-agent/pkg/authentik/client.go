@@ -1,0 +1,906 @@
+package authentik
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"time"
+)
+
+// Client provides access to the Authentik API
+type Client struct {
+	baseURL    string
+	token      string
+	httpClient *http.Client
+}
+
+// NewClient creates a new Authentik API client
+func NewClient(baseURL, token string) *Client {
+	return &Client{
+		baseURL: baseURL,
+		token:   token,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+// ProviderResponse represents an Authentik provider in API responses
+type ProviderResponse struct {
+	PK   int    `json:"pk"`
+	Name string `json:"name"`
+}
+
+// PaginatedResponse represents a paginated Authentik API response
+type PaginatedResponse struct {
+	Pagination struct {
+		Count int `json:"count"`
+	} `json:"pagination"`
+	Results []ProviderResponse `json:"results"`
+}
+
+// DeleteApplication deletes an Authentik application by slug
+func (c *Client) DeleteApplication(slug string) error {
+	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
+
+	req, err := http.NewRequest(http.MethodDelete, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 204 No Content = success, 404 = already deleted (acceptable)
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+}
+
+// DeleteOAuth2Provider deletes an OAuth2 provider by name
+func (c *Client) DeleteOAuth2Provider(providerName string) error {
+	providerID, err := c.findProviderID("oauth2", providerName)
+	if err != nil {
+		return err
+	}
+	if providerID == 0 {
+		return nil // Provider doesn't exist
+	}
+
+	return c.deleteProviderByID("oauth2", providerID)
+}
+
+// DeleteProxyProvider deletes a proxy provider by name
+func (c *Client) DeleteProxyProvider(providerName string) error {
+	providerID, err := c.findProviderID("proxy", providerName)
+	if err != nil {
+		return err
+	}
+	if providerID == 0 {
+		return nil // Provider doesn't exist
+	}
+
+	return c.deleteProviderByID("proxy", providerID)
+}
+
+// findProviderID finds a provider ID by type and name
+func (c *Client) findProviderID(providerType, name string) (int, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/providers/%s/?search=%s", c.baseURL, providerType, url.QueryEscape(name))
+
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result PaginatedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("decoding response: %w", err)
+	}
+
+	// Find exact match
+	for _, provider := range result.Results {
+		if provider.Name == name {
+			return provider.PK, nil
+		}
+	}
+
+	return 0, nil // Not found
+}
+
+// deleteProviderByID deletes a provider by type and ID
+func (c *Client) deleteProviderByID(providerType string, id int) error {
+	reqURL := fmt.Sprintf("%s/api/v3/providers/%s/%d/", c.baseURL, providerType, id)
+
+	req, err := http.NewRequest(http.MethodDelete, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+}
+
+// DeleteAppSSO deletes both the application and provider for an app.
+// This is the main cleanup function to call during app uninstall.
+func (c *Client) DeleteAppSSO(appName, displayName, ssoStrategy string) error {
+	// Delete the application first (by slug)
+	if err := c.DeleteApplication(appName); err != nil {
+		return fmt.Errorf("deleting application: %w", err)
+	}
+
+	// Delete the provider based on strategy
+	switch ssoStrategy {
+	case "native-oidc":
+		providerName := fmt.Sprintf("%s OAuth2 Provider", displayName)
+		if err := c.DeleteOAuth2Provider(providerName); err != nil {
+			return fmt.Errorf("deleting OAuth2 provider: %w", err)
+		}
+	case "forward-auth":
+		providerName := fmt.Sprintf("%s Proxy Provider", displayName)
+		if err := c.DeleteProxyProvider(providerName); err != nil {
+			return fmt.Errorf("deleting proxy provider: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// IsAvailable checks if Authentik is available and the token is valid
+func (c *Client) IsAvailable() bool {
+	reqURL := fmt.Sprintf("%s/api/v3/core/applications/", c.baseURL)
+
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return false
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
+}
+
+// OutpostResponse represents an Authentik outpost in API responses
+type OutpostResponse struct {
+	PK        string `json:"pk"`
+	Name      string `json:"name"`
+	Providers []int  `json:"providers"`
+}
+
+// OutpostPaginatedResponse represents a paginated outpost API response
+type OutpostPaginatedResponse struct {
+	Pagination struct {
+		Count int `json:"count"`
+	} `json:"pagination"`
+	Results []OutpostResponse `json:"results"`
+}
+
+// AddProviderToEmbeddedOutpost adds a proxy provider to the embedded outpost
+func (c *Client) AddProviderToEmbeddedOutpost(providerName string) error {
+	// Find the proxy provider ID
+	providerID, err := c.findProviderID("proxy", providerName)
+	if err != nil {
+		return fmt.Errorf("finding provider: %w", err)
+	}
+	if providerID == 0 {
+		return fmt.Errorf("provider %s not found", providerName)
+	}
+
+	// Find the embedded outpost
+	outpost, err := c.findEmbeddedOutpost()
+	if err != nil {
+		return fmt.Errorf("finding embedded outpost: %w", err)
+	}
+	if outpost == nil {
+		return fmt.Errorf("embedded outpost not found")
+	}
+
+	// Check if provider is already in outpost
+	for _, pid := range outpost.Providers {
+		if pid == providerID {
+			return nil // Already added
+		}
+	}
+
+	// Add the provider to the outpost
+	outpost.Providers = append(outpost.Providers, providerID)
+	return c.updateOutpostProviders(outpost.PK, outpost.Providers)
+}
+
+// findEmbeddedOutpost finds the authentik Embedded Outpost
+func (c *Client) findEmbeddedOutpost() (*OutpostResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/?search=Embedded", c.baseURL)
+
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result OutpostPaginatedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	// Find the embedded outpost
+	for i, outpost := range result.Results {
+		if outpost.Name == "authentik Embedded Outpost" {
+			return &result.Results[i], nil
+		}
+	}
+
+	return nil, nil
+}
+
+// updateOutpostProviders updates the providers list for an outpost
+func (c *Client) updateOutpostProviders(outpostPK string, providers []int) error {
+	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/%s/", c.baseURL, outpostPK)
+
+	// Create the patch payload
+	payload := map[string]interface{}{
+		"providers": providers,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// LDAP Infrastructure constants
+const (
+	ldapProviderName     = "Bloud LDAP Provider"
+	ldapApplicationSlug  = "ldap"
+	ldapApplicationName  = "LDAP Authentication"
+	ldapOutpostName      = "Bloud LDAP Outpost"
+	ldapServiceUsername  = "ldap-service"
+	ldapServiceTokenID   = "ldap-service-bind-token"
+)
+
+// EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
+// if they don't already exist. This is idempotent - safe to call multiple times.
+func (c *Client) EnsureLDAPInfrastructure(ldapBindPassword string) error {
+	// 1. Create LDAP provider (if not exists)
+	providerID, err := c.ensureLDAPProvider()
+	if err != nil {
+		return fmt.Errorf("ensuring LDAP provider: %w", err)
+	}
+
+	// 2. Create LDAP application (if not exists)
+	if err := c.ensureLDAPApplication(providerID); err != nil {
+		return fmt.Errorf("ensuring LDAP application: %w", err)
+	}
+
+	// 3. Create service account (if not exists)
+	serviceAccountID, err := c.ensureLDAPServiceAccount()
+	if err != nil {
+		return fmt.Errorf("ensuring LDAP service account: %w", err)
+	}
+
+	// 4. Add service account to authentik Admins group (for LDAP search permissions)
+	if err := c.addUserToGroup(serviceAccountID, "authentik Admins"); err != nil {
+		return fmt.Errorf("adding service account to group: %w", err)
+	}
+
+	// 5. Create service account token (if not exists)
+	if err := c.ensureLDAPServiceToken(serviceAccountID, ldapBindPassword); err != nil {
+		return fmt.Errorf("ensuring LDAP service token: %w", err)
+	}
+
+	// 6. Create LDAP outpost (if not exists)
+	if err := c.ensureLDAPOutpost(providerID); err != nil {
+		return fmt.Errorf("ensuring LDAP outpost: %w", err)
+	}
+
+	return nil
+}
+
+// ensureLDAPProvider creates the LDAP provider if it doesn't exist
+func (c *Client) ensureLDAPProvider() (int, error) {
+	// Check if provider exists
+	providerID, err := c.findProviderID("ldap", ldapProviderName)
+	if err != nil {
+		return 0, err
+	}
+	if providerID != 0 {
+		return providerID, nil // Already exists
+	}
+
+	// Find required flows
+	authFlowID, err := c.findFlowID("default-authentication-flow")
+	if err != nil {
+		return 0, fmt.Errorf("finding auth flow: %w", err)
+	}
+	invalidFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+	if err != nil {
+		return 0, fmt.Errorf("finding invalidation flow: %w", err)
+	}
+
+	// Find search group (authentik Admins)
+	searchGroupID, err := c.findGroupID("authentik Admins")
+	if err != nil {
+		return 0, fmt.Errorf("finding search group: %w", err)
+	}
+
+	// Create the provider
+	payload := map[string]interface{}{
+		"name":               ldapProviderName,
+		"authorization_flow": authFlowID,
+		"invalidation_flow":  invalidFlowID,
+		"search_group":       searchGroupID,
+		"bind_mode":          "direct",
+		"search_mode":        "direct",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/ldap/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("creating LDAP provider: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+
+	return result.PK, nil
+}
+
+// ensureLDAPApplication creates the LDAP application if it doesn't exist
+func (c *Client) ensureLDAPApplication(providerID int) error {
+	// Check if application exists
+	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, ldapApplicationSlug)
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		return nil // Already exists
+	}
+
+	// Create the application
+	payload := map[string]interface{}{
+		"name":               ldapApplicationName,
+		"slug":               ldapApplicationSlug,
+		"provider":           providerID,
+		"policy_engine_mode": "any",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err = c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("creating LDAP application: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// ensureLDAPServiceAccount creates the service account if it doesn't exist
+func (c *Client) ensureLDAPServiceAccount() (int, error) {
+	// Check if user exists
+	userID, err := c.findUserID(ldapServiceUsername)
+	if err != nil {
+		return 0, err
+	}
+	if userID != 0 {
+		return userID, nil // Already exists
+	}
+
+	// Create the service account
+	payload := map[string]interface{}{
+		"username":  ldapServiceUsername,
+		"name":      "LDAP Service Account",
+		"path":      "users",
+		"type":      "service_account",
+		"is_active": true,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/users/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("creating service account: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+
+	return result.PK, nil
+}
+
+// ensureLDAPServiceToken creates the service account token if it doesn't exist
+func (c *Client) ensureLDAPServiceToken(userID int, password string) error {
+	// Check if token exists
+	tokenExists, err := c.tokenExists(ldapServiceTokenID)
+	if err != nil {
+		return err
+	}
+	if tokenExists {
+		return nil // Already exists
+	}
+
+	// Create the token
+	payload := map[string]interface{}{
+		"identifier": ldapServiceTokenID,
+		"user":       userID,
+		"intent":     "app_password",
+		"expiring":   false,
+		"key":        password,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/tokens/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("creating service token: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// ensureLDAPOutpost creates the LDAP outpost if it doesn't exist
+func (c *Client) ensureLDAPOutpost(providerID int) error {
+	// Check if outpost exists
+	outpost, err := c.findOutpostByName(ldapOutpostName)
+	if err != nil {
+		return err
+	}
+	if outpost != nil {
+		return nil // Already exists
+	}
+
+	// Create the outpost
+	payload := map[string]interface{}{
+		"name":      ldapOutpostName,
+		"type":      "ldap",
+		"providers": []int{providerID},
+		"config": map[string]interface{}{
+			"authentik_host": c.baseURL,
+			"log_level":      "info",
+		},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/outposts/instances/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("creating LDAP outpost: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// GetLDAPServiceTokenKey returns the LDAP service account token key for bind operations
+func (c *Client) GetLDAPServiceTokenKey() (string, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", c.baseURL, url.PathEscape(ldapServiceTokenID))
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("getting LDAP service token key: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.Key, nil
+}
+
+// GetLDAPOutpostToken returns the auto-generated token for the LDAP outpost
+func (c *Client) GetLDAPOutpostToken() (string, error) {
+	// Find the LDAP outpost
+	outpost, err := c.findOutpostByName(ldapOutpostName)
+	if err != nil {
+		return "", fmt.Errorf("finding outpost: %w", err)
+	}
+	if outpost == nil {
+		return "", fmt.Errorf("LDAP outpost not found")
+	}
+
+	// The token identifier follows the pattern ak-outpost-{uuid}-api
+	tokenIdentifier := fmt.Sprintf("ak-outpost-%s-api", outpost.PK)
+
+	// Query for the token key using the view_key endpoint
+	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", c.baseURL, url.PathEscape(tokenIdentifier))
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("getting token key: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.Key, nil
+}
+
+// Helper methods for LDAP infrastructure
+
+func (c *Client) findFlowID(slug string) (string, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/flows/instances/%s/", c.baseURL, url.PathEscape(slug))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("flow %s not found: status %d: %s", slug, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		PK string `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.PK, nil
+}
+
+func (c *Client) findGroupID(name string) (string, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/core/groups/?search=%s", c.baseURL, url.QueryEscape(name))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("searching groups: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			PK   string `json:"pk"`
+			Name string `json:"name"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	for _, group := range result.Results {
+		if group.Name == name {
+			return group.PK, nil
+		}
+	}
+
+	return "", fmt.Errorf("group %s not found", name)
+}
+
+func (c *Client) findUserID(username string) (int, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/core/users/?search=%s", c.baseURL, url.QueryEscape(username))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("searching users: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			PK       int    `json:"pk"`
+			Username string `json:"username"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+
+	for _, user := range result.Results {
+		if user.Username == username {
+			return user.PK, nil
+		}
+	}
+
+	return 0, nil // Not found
+}
+
+func (c *Client) addUserToGroup(userID int, groupName string) error {
+	// Find the group
+	groupID, err := c.findGroupID(groupName)
+	if err != nil {
+		return err
+	}
+
+	// Add user to group using the group's add_user endpoint
+	reqURL := fmt.Sprintf("%s/api/v3/core/groups/%s/add_user/", c.baseURL, groupID)
+	payload := map[string]int{"pk": userID}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// 204 = success, 200 = already in group (idempotent)
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("adding user to group: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func (c *Client) tokenExists(identifier string) (bool, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/?identifier=%s", c.baseURL, url.QueryEscape(identifier))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("searching tokens: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			Identifier string `json:"identifier"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, err
+	}
+
+	for _, token := range result.Results {
+		if token.Identifier == identifier {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (c *Client) findOutpostByName(name string) (*OutpostResponse, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/?search=%s", c.baseURL, url.QueryEscape(name))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("searching outposts: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result OutpostPaginatedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	for i, outpost := range result.Results {
+		if outpost.Name == name {
+			return &result.Results[i], nil
+		}
+	}
+
+	return nil, nil // Not found
+}
