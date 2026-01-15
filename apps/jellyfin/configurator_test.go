@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
@@ -32,7 +33,7 @@ func TestNewConfigurator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := NewConfigurator(tt.port)
+			c := NewConfigurator(tt.port, "http://localhost:9001", "test-token")
 			if c.Port != tt.wantPort {
 				t.Errorf("NewConfigurator(%d).Port = %d, want %d", tt.port, c.Port, tt.wantPort)
 			}
@@ -41,7 +42,7 @@ func TestNewConfigurator(t *testing.T) {
 }
 
 func TestConfigurator_Name(t *testing.T) {
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
 	if got := c.Name(); got != "jellyfin" {
 		t.Errorf("Name() = %q, want %q", got, "jellyfin")
 	}
@@ -51,7 +52,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
 	state := &configurator.AppState{
 		Name:          "jellyfin",
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
@@ -78,33 +79,35 @@ func TestConfigurator_PreStart(t *testing.T) {
 	}
 }
 
-func TestConfigurator_isWizardCompleted(t *testing.T) {
+func TestConfigurator_GetSystemInfo(t *testing.T) {
 	tests := []struct {
 		name       string
-		response   map[string]any
+		response   SystemInfo
 		statusCode int
-		want       bool
 		wantErr    bool
 	}{
 		{
-			name:       "wizard completed",
-			response:   map[string]any{"StartupWizardCompleted": true},
+			name: "wizard completed",
+			response: SystemInfo{
+				StartupWizardCompleted: true,
+				ServerName:             "Test Server",
+				Version:                "10.8.0",
+			},
 			statusCode: http.StatusOK,
-			want:       true,
 			wantErr:    false,
 		},
 		{
-			name:       "wizard not completed",
-			response:   map[string]any{"StartupWizardCompleted": false},
+			name: "wizard not completed",
+			response: SystemInfo{
+				StartupWizardCompleted: false,
+			},
 			statusCode: http.StatusOK,
-			want:       false,
 			wantErr:    false,
 		},
 		{
 			name:       "server error",
-			response:   nil,
+			response:   SystemInfo{},
 			statusCode: http.StatusInternalServerError,
-			want:       false,
 			wantErr:    true,
 		},
 	}
@@ -120,77 +123,82 @@ func TestConfigurator_isWizardCompleted(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.statusCode)
-				if tt.response != nil {
+				if tt.statusCode == http.StatusOK {
 					json.NewEncoder(w).Encode(tt.response)
 				}
 			}))
 			defer server.Close()
 
-			c := &Configurator{Port: 8096, baseURL: server.URL}
-			got, err := c.isWizardCompleted(context.Background())
+			c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+			c.baseURL = server.URL
+
+			got, err := c.getSystemInfo(context.Background())
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("isWizardCompleted() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("getSystemInfo() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got != tt.want {
-				t.Errorf("isWizardCompleted() = %v, want %v", got, tt.want)
+			if !tt.wantErr && got.StartupWizardCompleted != tt.response.StartupWizardCompleted {
+				t.Errorf("StartupWizardCompleted = %v, want %v", got.StartupWizardCompleted, tt.response.StartupWizardCompleted)
 			}
 		})
 	}
 }
 
-func TestConfigurator_completeSetupWizard(t *testing.T) {
+func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 	var calls []string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
-		}
-		if r.Header.Get("Content-Type") != "application/json" {
-			t.Errorf("expected Content-Type: application/json, got %s", r.Header.Get("Content-Type"))
-		}
-
-		// Verify payloads for each step
 		switch r.URL.Path {
 		case "/Startup/Configuration":
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
+			}
 			var payload map[string]string
 			json.NewDecoder(r.Body).Decode(&payload)
 			if payload["UICulture"] != "en-US" {
 				t.Errorf("expected UICulture=en-US, got %s", payload["UICulture"])
 			}
+			w.WriteHeader(http.StatusNoContent)
+
 		case "/Startup/User":
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
+			}
 			var payload map[string]string
 			json.NewDecoder(r.Body).Decode(&payload)
-			if payload["Name"] != "admin" {
-				t.Errorf("expected Name=admin, got %s", payload["Name"])
+			if payload["Name"] != bootstrapUsername {
+				t.Errorf("expected Name=%s, got %s", bootstrapUsername, payload["Name"])
 			}
-			if payload["Password"] != "admin123" {
-				t.Errorf("expected Password=admin123, got %s", payload["Password"])
-			}
+			w.WriteHeader(http.StatusNoContent)
+
 		case "/Startup/RemoteAccess":
-			var payload map[string]bool
-			json.NewDecoder(r.Body).Decode(&payload)
-			if !payload["EnableRemoteAccess"] {
-				t.Error("expected EnableRemoteAccess=true")
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
 			}
+			w.WriteHeader(http.StatusNoContent)
+
 		case "/Startup/Complete":
-			// No payload expected
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
+			}
+			w.WriteHeader(http.StatusNoContent)
+
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
-
-		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	c := &Configurator{Port: 8096, baseURL: server.URL}
-	err := c.completeSetupWizard(context.Background())
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
 
+	err := c.completeStartupWizard(context.Background())
 	if err != nil {
-		t.Fatalf("completeSetupWizard() error = %v", err)
+		t.Fatalf("completeStartupWizard() error = %v", err)
 	}
 
 	// Verify all steps were called in order
@@ -213,128 +221,328 @@ func TestConfigurator_completeSetupWizard(t *testing.T) {
 	}
 }
 
-func TestConfigurator_completeSetupWizard_stepFailure(t *testing.T) {
-	tests := []struct {
-		name      string
-		failAt    string
-		wantError string
-	}{
-		{
-			name:      "configuration step fails",
-			failAt:    "/Startup/Configuration",
-			wantError: "failed to set configuration",
-		},
-		{
-			name:      "user step fails",
-			failAt:    "/Startup/User",
-			wantError: "failed to create admin user",
-		},
-		{
-			name:      "remote access step fails",
-			failAt:    "/Startup/RemoteAccess",
-			wantError: "failed to enable remote access",
-		},
-		{
-			name:      "complete step fails",
-			failAt:    "/Startup/Complete",
-			wantError: "failed to complete wizard",
-		},
+func TestConfigurator_Authenticate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Users/AuthenticateByName" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		// Verify X-Emby-Authorization header
+		authHeader := r.Header.Get("X-Emby-Authorization")
+		if !strings.Contains(authHeader, "MediaBrowser") {
+			t.Error("Missing MediaBrowser in Authorization header")
+		}
+
+		resp := AuthResponse{
+			AccessToken: "test-token-123",
+		}
+		resp.User.ID = "user-id"
+		resp.User.Name = bootstrapUsername
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	token, err := c.authenticate(context.Background(), bootstrapUsername, bootstrapPassword)
+	if err != nil {
+		t.Fatalf("authenticate() error = %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == tt.failAt {
-					w.WriteHeader(http.StatusInternalServerError)
-					w.Write([]byte("server error"))
-					return
+	if token != "test-token-123" {
+		t.Errorf("Expected token 'test-token-123', got '%s'", token)
+	}
+}
+
+func TestConfigurator_GetPluginConfiguration(t *testing.T) {
+	expectedConfig := LDAPConfig{
+		LdapServer:          "test-server",
+		LdapPort:            389,
+		LdapBindUser:        "cn=admin",
+		CreateUsersFromLdap: true,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expectedPath := "/Plugins/" + ldapPluginID + "/Configuration"
+		if r.URL.Path != expectedPath {
+			t.Errorf("unexpected path: %s, expected %s", r.URL.Path, expectedPath)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		// Verify token in header
+		authHeader := r.Header.Get("X-Emby-Authorization")
+		if !strings.Contains(authHeader, "test-token") {
+			t.Error("Missing token in Authorization header")
+		}
+
+		json.NewEncoder(w).Encode(expectedConfig)
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	configBytes, err := c.getPluginConfiguration(context.Background(), "test-token", ldapPluginID)
+	if err != nil {
+		t.Fatalf("getPluginConfiguration() error = %v", err)
+	}
+
+	var config LDAPConfig
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		t.Fatalf("Failed to unmarshal config: %v", err)
+	}
+
+	if config.LdapServer != "test-server" {
+		t.Errorf("Expected LdapServer 'test-server', got '%s'", config.LdapServer)
+	}
+}
+
+func TestConfigurator_SetPluginConfiguration(t *testing.T) {
+	var receivedConfig LDAPConfig
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+
+		json.NewDecoder(r.Body).Decode(&receivedConfig)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	config := LDAPConfig{
+		LdapServer:          "new-server",
+		LdapPort:            636,
+		CreateUsersFromLdap: true,
+	}
+
+	configBytes, _ := json.Marshal(config)
+	err := c.setPluginConfiguration(context.Background(), "test-token", ldapPluginID, configBytes)
+	if err != nil {
+		t.Fatalf("setPluginConfiguration() error = %v", err)
+	}
+
+	if receivedConfig.LdapServer != "new-server" {
+		t.Errorf("Expected LdapServer 'new-server', got '%s'", receivedConfig.LdapServer)
+	}
+}
+
+func TestConfigurator_GetUsers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Users" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		users := []User{
+			{ID: "user-1", Name: "admin"},
+			{ID: "user-2", Name: bootstrapUsername},
+		}
+		json.NewEncoder(w).Encode(users)
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	users, err := c.getUsers(context.Background(), "test-token")
+	if err != nil {
+		t.Fatalf("getUsers() error = %v", err)
+	}
+
+	if len(users) != 2 {
+		t.Fatalf("Expected 2 users, got %d", len(users))
+	}
+
+	if users[1].Name != bootstrapUsername {
+		t.Errorf("Expected user name '%s', got '%s'", bootstrapUsername, users[1].Name)
+	}
+}
+
+func TestConfigurator_DeleteUser(t *testing.T) {
+	deletedUserID := ""
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			t.Errorf("Expected DELETE, got %s", r.Method)
+		}
+
+		// Extract user ID from path
+		parts := strings.Split(r.URL.Path, "/")
+		deletedUserID = parts[len(parts)-1]
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	err := c.deleteUser(context.Background(), "test-token", "user-123")
+	if err != nil {
+		t.Fatalf("deleteUser() error = %v", err)
+	}
+
+	if deletedUserID != "user-123" {
+		t.Errorf("Expected deleted user ID 'user-123', got '%s'", deletedUserID)
+	}
+}
+
+func TestConfigurator_DeleteBootstrapAdmin(t *testing.T) {
+	deleteCalled := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/Users" && r.Method == "GET":
+			users := []User{
+				{ID: "keep-me", Name: "admin"},
+				{ID: "delete-me", Name: bootstrapUsername},
+			}
+			json.NewEncoder(w).Encode(users)
+
+		case strings.HasPrefix(r.URL.Path, "/Users/") && r.Method == "DELETE":
+			userID := strings.TrimPrefix(r.URL.Path, "/Users/")
+			if userID != "delete-me" {
+				t.Errorf("Expected to delete 'delete-me', got '%s'", userID)
+			}
+			deleteCalled = true
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	err := c.deleteBootstrapAdmin(context.Background(), "test-token")
+	if err != nil {
+		t.Fatalf("deleteBootstrapAdmin() error = %v", err)
+	}
+
+	if !deleteCalled {
+		t.Error("Delete was not called for bootstrap admin")
+	}
+}
+
+func TestConfigurator_DeleteBootstrapAdmin_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return users without bootstrap admin
+		users := []User{
+			{ID: "user-1", Name: "admin"},
+			{ID: "user-2", Name: "other-user"},
+		}
+		json.NewEncoder(w).Encode(users)
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	// Should not error even if bootstrap admin is not found
+	err := c.deleteBootstrapAdmin(context.Background(), "test-token")
+	if err != nil {
+		t.Fatalf("deleteBootstrapAdmin() should not error when user not found: %v", err)
+	}
+}
+
+func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/System/Info/Public" {
+			resp := SystemInfo{StartupWizardCompleted: true}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		// No other endpoints should be called when wizard is complete and no SSO
+		t.Errorf("Unexpected endpoint called: %s", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	state := &configurator.AppState{
+		Name:         "jellyfin",
+		Integrations: map[string][]string{}, // No SSO
+	}
+
+	err := c.PostStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("PostStart() error = %v", err)
+	}
+}
+
+func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			resp := AuthResponse{AccessToken: "test-token"}
+			json.NewEncoder(w).Encode(resp)
+
+		case "/Plugins/" + ldapPluginID + "/Configuration":
+			if r.Method == "GET" {
+				// Return already configured LDAP
+				config := LDAPConfig{
+					LdapServer:   defaultLDAPHost,
+					LdapBindUser: "cn=already-configured",
 				}
-				w.WriteHeader(http.StatusOK)
-			}))
-			defer server.Close()
-
-			c := &Configurator{Port: 8096, baseURL: server.URL}
-			err := c.completeSetupWizard(context.Background())
-
-			if err == nil {
-				t.Error("expected error, got nil")
-				return
+				json.NewEncoder(w).Encode(config)
+			} else {
+				// POST should not be called
+				t.Error("SetPluginConfiguration should not be called when already configured")
+				w.WriteHeader(http.StatusBadRequest)
 			}
-			if !contains(err.Error(), tt.wantError) {
-				t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantError)
-			}
-		})
+
+		default:
+			t.Errorf("Unexpected endpoint: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	err := c.configureLDAP(context.Background())
+	if err != nil {
+		t.Fatalf("configureLDAP() error = %v", err)
 	}
 }
 
-func TestConfigurator_PostStart(t *testing.T) {
-	tests := []struct {
-		name            string
-		wizardCompleted bool
-		wantWizardCalls bool
-	}{
-		{
-			name:            "wizard already completed",
-			wizardCompleted: true,
-			wantWizardCalls: false,
-		},
-		{
-			name:            "wizard not completed",
-			wizardCompleted: false,
-			wantWizardCalls: true,
-		},
+func TestConfigurator_ConfigureLDAP_PluginNotInstalled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			resp := AuthResponse{AccessToken: "test-token"}
+			json.NewEncoder(w).Encode(resp)
+
+		case "/Plugins/" + ldapPluginID + "/Configuration":
+			// Plugin not found
+			w.WriteHeader(http.StatusNotFound)
+
+		default:
+			t.Errorf("Unexpected endpoint: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c.baseURL = server.URL
+
+	// Should not error when plugin is not installed
+	err := c.configureLDAP(context.Background())
+	if err != nil {
+		t.Fatalf("configureLDAP() should not error when plugin not installed: %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var wizardCalls int
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/System/Info/Public":
-					json.NewEncoder(w).Encode(map[string]bool{
-						"StartupWizardCompleted": tt.wizardCompleted,
-					})
-				default:
-					// Count wizard setup calls
-					wizardCalls++
-					w.WriteHeader(http.StatusOK)
-				}
-			}))
-			defer server.Close()
-
-			c := &Configurator{Port: 8096, baseURL: server.URL}
-			state := &configurator.AppState{
-				Name:          "jellyfin",
-				DataPath:      t.TempDir(),
-				BloudDataPath: t.TempDir(),
-			}
-
-			err := c.PostStart(context.Background(), state)
-			if err != nil {
-				t.Fatalf("PostStart() error = %v", err)
-			}
-
-			if tt.wantWizardCalls && wizardCalls == 0 {
-				t.Error("expected wizard setup calls, got none")
-			}
-			if !tt.wantWizardCalls && wizardCalls > 0 {
-				t.Errorf("expected no wizard setup calls, got %d", wizardCalls)
-			}
-		})
-	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr, 0))
-}
-
-func containsAt(s, substr string, start int) bool {
-	if start+len(substr) > len(s) {
-		return false
-	}
-	if s[start:start+len(substr)] == substr {
-		return true
-	}
-	return containsAt(s, substr, start+1)
 }

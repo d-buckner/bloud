@@ -32,6 +32,7 @@ func newTestReconciler() *testReconciler {
 	t.reconciler = NewReconciler(
 		t.registry,
 		t.appStore,
+		nil, // catalogCache - nil is handled gracefully
 		"/tmp/bloud-test",
 		newTestLogger(),
 		ReconcileConfig{

@@ -24,6 +24,8 @@ type Config struct {
 	AuthentikPort          int
 	AuthentikAdminPassword string
 	AuthentikAdminEmail    string
+	// LDAP configuration
+	LDAPBindPassword string
 }
 
 // Load reads configuration from environment variables with sensible defaults
@@ -52,6 +54,7 @@ func Load() *Config {
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: getEnv("BLOUD_AUTHENTIK_ADMIN_PASSWORD", "password"),
 		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),
+		LDAPBindPassword:       getEnv("BLOUD_LDAP_BIND_PASSWORD", "ldap-bind-password-change-in-production"),
 	}
 
 	return cfg

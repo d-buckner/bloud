@@ -16,9 +16,16 @@ type AppConfig struct {
 	Enabled      bool
 }
 
+// GlobalConfig represents global Nix configuration options
+type GlobalConfig struct {
+	// AuthentikLDAPEnable enables the LDAP outpost container for apps like Jellyfin
+	AuthentikLDAPEnable bool
+}
+
 // Transaction represents a complete Nix configuration change
 type Transaction struct {
-	Apps map[string]AppConfig
+	Apps   map[string]AppConfig
+	Global GlobalConfig
 }
 
 // Generator generates Nix configuration files
@@ -114,6 +121,11 @@ func (g *Generator) generateConfig(tx *Transaction) string {
 
 	// Note: App modules are imported by the main NixOS configuration (vm-dev.nix)
 	// This file only enables/configures apps that are installed
+
+	// Generate global configurations
+	if tx.Global.AuthentikLDAPEnable {
+		b.WriteString("  bloud.apps.authentik.ldap.enable = true;\n")
+	}
 
 	// Generate app configurations
 	if len(tx.Apps) > 0 {

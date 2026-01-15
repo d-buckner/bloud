@@ -285,6 +285,18 @@ func (f *FakeBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.Forwar
 	return nil
 }
 
+func (f *FakeBlueprintGenerator) GenerateLDAPOutpostBlueprint(apps []sso.LDAPApp, ldapBindPassword string) error {
+	return nil
+}
+
+func (f *FakeBlueprintGenerator) GetLDAPBindPassword() string {
+	return "test-ldap-bind-password"
+}
+
+func (f *FakeBlueprintGenerator) GetLDAPOutpostToken(ctx context.Context, authentikURL, apiToken string) (string, error) {
+	return "test-ldap-outpost-token", nil
+}
+
 // Test helpers
 
 func (f *FakeBlueprintGenerator) GeneratedApps() []*catalog.App {
@@ -361,6 +373,14 @@ func (f *FakeAuthentikClient) DeleteOAuth2Provider(providerName string) error {
 
 func (f *FakeAuthentikClient) DeleteProxyProvider(providerName string) error {
 	return nil
+}
+
+func (f *FakeAuthentikClient) EnsureLDAPInfrastructure(ldapBindPassword string) error {
+	return nil
+}
+
+func (f *FakeAuthentikClient) GetLDAPOutpostToken() (string, error) {
+	return "fake-ldap-outpost-token", nil
 }
 
 // Test helpers

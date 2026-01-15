@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/appconfig"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/db"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
@@ -67,15 +68,18 @@ func runConfigure(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	// Create catalog cache for SSO lookup
+	catalogCache := catalog.NewCache(database)
+
 	switch action {
 	case "prestart":
-		return runPreStart(ctx, args[1], registry, appStore, cfg.DataDir, cfg, logger)
+		return runPreStart(ctx, args[1], registry, appStore, catalogCache, cfg.DataDir, cfg, logger)
 
 	case "poststart":
-		return runPostStart(ctx, args[1], registry, appStore, cfg.DataDir, logger)
+		return runPostStart(ctx, args[1], registry, appStore, catalogCache, cfg.DataDir, logger)
 
 	case "reconcile":
-		return runReconcile(ctx, registry, appStore, cfg.DataDir, logger)
+		return runReconcile(ctx, registry, appStore, catalogCache, cfg.DataDir, logger)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown action: %s\n", action)
@@ -84,7 +88,7 @@ func runConfigure(args []string) int {
 	}
 }
 
-func runPreStart(ctx context.Context, appName string, registry *configurator.Registry, appStore *store.AppStore, dataDir string, appCfg *config.Config, logger *slog.Logger) int {
+func runPreStart(ctx context.Context, appName string, registry *configurator.Registry, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, appCfg *config.Config, logger *slog.Logger) int {
 	logger.Info("running prestart", "app", appName)
 
 	// Framework-level SSO wait: check if this app has SSO configured in the database.
@@ -115,7 +119,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 0
 	}
 
-	state, err := buildAppState(appName, appStore, dataDir)
+	state, err := buildAppState(appName, appStore, catalogCache, dataDir, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -130,7 +134,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 	return 0
 }
 
-func runPostStart(ctx context.Context, appName string, registry *configurator.Registry, appStore *store.AppStore, dataDir string, logger *slog.Logger) int {
+func runPostStart(ctx context.Context, appName string, registry *configurator.Registry, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) int {
 	logger.Info("running poststart", "app", appName)
 
 	cfg := registry.Get(appName)
@@ -147,7 +151,7 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 		return 1
 	}
 
-	state, err := buildAppState(appName, appStore, dataDir)
+	state, err := buildAppState(appName, appStore, catalogCache, dataDir, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -162,12 +166,13 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 	return 0
 }
 
-func runReconcile(ctx context.Context, registry *configurator.Registry, appStore *store.AppStore, dataDir string, logger *slog.Logger) int {
+func runReconcile(ctx context.Context, registry *configurator.Registry, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) int {
 	logger.Info("running full reconciliation")
 
 	reconciler := orchestrator.NewReconciler(
 		registry,
 		appStore,
+		catalogCache,
 		dataDir,
 		logger,
 		orchestrator.DefaultReconcileConfig(),
@@ -182,7 +187,7 @@ func runReconcile(ctx context.Context, registry *configurator.Registry, appStore
 	return 0
 }
 
-func buildAppState(appName string, appStore *store.AppStore, dataDir string) (*configurator.AppState, error) {
+func buildAppState(appName string, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) (*configurator.AppState, error) {
 	app, err := appStore.GetByName(appName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get app: %w", err)
@@ -197,6 +202,18 @@ func buildAppState(appName string, appStore *store.AppStore, dataDir string) (*c
 			integrations[name] = []string{source}
 		}
 		port = app.Port
+	}
+
+	// Load SSO config from catalog if available
+	if catalogCache != nil {
+		if catalogApp, err := catalogCache.Get(appName); err == nil && catalogApp != nil {
+			if catalogApp.SSO.Strategy != "" {
+				integrations["sso"] = []string{catalogApp.SSO.Strategy}
+				logger.Debug("loaded SSO integration from catalog",
+					"app", appName,
+					"strategy", catalogApp.SSO.Strategy)
+			}
+		}
 	}
 
 	return &configurator.AppState{

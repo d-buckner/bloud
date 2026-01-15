@@ -281,6 +281,21 @@ func (m *MockBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.Forwar
 	return args.Error(0)
 }
 
+func (m *MockBlueprintGenerator) GenerateLDAPOutpostBlueprint(apps []sso.LDAPApp, ldapBindPassword string) error {
+	args := m.Called(apps, ldapBindPassword)
+	return args.Error(0)
+}
+
+func (m *MockBlueprintGenerator) GetLDAPBindPassword() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func (m *MockBlueprintGenerator) GetLDAPOutpostToken(ctx context.Context, authentikURL, apiToken string) (string, error) {
+	args := m.Called(ctx, authentikURL, apiToken)
+	return args.String(0), args.Error(1)
+}
+
 // MockAuthentikClient implements authentik.ClientInterface for testing
 type MockAuthentikClient struct {
 	mock.Mock
@@ -314,6 +329,16 @@ func (m *MockAuthentikClient) DeleteOAuth2Provider(providerName string) error {
 func (m *MockAuthentikClient) DeleteProxyProvider(providerName string) error {
 	args := m.Called(providerName)
 	return args.Error(0)
+}
+
+func (m *MockAuthentikClient) EnsureLDAPInfrastructure(ldapBindPassword string) error {
+	args := m.Called(ldapBindPassword)
+	return args.Error(0)
+}
+
+func (m *MockAuthentikClient) GetLDAPOutpostToken() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
 }
 
 // MockConfiguratorRegistry implements configurator.RegistryInterface for testing

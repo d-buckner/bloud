@@ -241,6 +241,7 @@ Target: 10 core apps for alpha release
 - [ ] Multi-service app metadata - Apps should declare all services (not just one) so orchestrator can properly track health and dependencies (e.g., qbittorrent runs both `flood` and `qbittorrent` containers)
 - [ ] Defensive error handling in graph.go/plan.go
 - [ ] Test coverage for edge cases
+- [ ] **Investigate AUTHENTIK_BOOTSTRAP_TOKEN** - Currently using Django shell to create API token because bootstrap token wasn't working. Need to understand root cause before accepting this workaround. Observations: bootstrap completes in 5ms (skipped?), token not in DB. See `docs/investigations/ldap-infrastructure-design.md`. Possible causes: stale DB data, env var not passed, timing issue, version bug.
 
 ### Low Priority
 - [ ] Code comments for complex logic

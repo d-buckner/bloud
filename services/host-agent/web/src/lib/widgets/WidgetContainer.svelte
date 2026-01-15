@@ -148,7 +148,7 @@
 <style>
 	.widget-container {
 		width: 100%;
-		max-width: 600px;
+		max-width: 1000px;
 		container-type: inline-size;
 	}
 
@@ -190,8 +190,8 @@
 
 	.widget-grid {
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		grid-auto-rows: calc((100cqi - var(--space-lg)) / 2);
+		grid-template-columns: repeat(3, 1fr);
+		grid-auto-rows: minmax(180px, auto);
 		gap: var(--space-lg);
 	}
 
@@ -251,10 +251,17 @@
 		color: var(--color-text-muted);
 	}
 
-	@media (max-width: 500px) {
+	/* 2 columns on medium screens */
+	@container (max-width: 750px) {
+		.widget-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	/* 1 column on small screens */
+	@container (max-width: 500px) {
 		.widget-grid {
 			grid-template-columns: 1fr;
-			grid-auto-rows: 100cqi;
 		}
 	}
 </style>

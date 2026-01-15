@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/authentik"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
@@ -237,7 +237,8 @@ func (o *Orchestrator) buildInstallTransaction(req InstallRequest, plan *catalog
 	}
 
 	tx := &nixgen.Transaction{
-		Apps: make(map[string]nixgen.AppConfig),
+		Apps:   make(map[string]nixgen.AppConfig),
+		Global: current.Global, // Preserve existing global config
 	}
 
 	// Copy existing apps
@@ -278,6 +279,14 @@ func (o *Orchestrator) buildInstallTransaction(req InstallRequest, plan *catalog
 		Name:         req.App,
 		Enabled:      true,
 		Integrations: integrationConfig,
+	}
+
+	// Check if app needs LDAP outpost (enable if any app has LDAP strategy)
+	if mainApp, err := o.catalogCache.Get(req.App); err == nil && mainApp != nil {
+		if mainApp.SSO.Strategy == "ldap" {
+			tx.Global.AuthentikLDAPEnable = true
+			o.logger.Info("enabling LDAP outpost for app", "app", req.App)
+		}
 	}
 
 	// For each required integration choice, ensure that app is also enabled
@@ -761,6 +770,8 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 
 	// Track forward-auth providers for outpost blueprint
 	var forwardAuthProviders []sso.ForwardAuthProvider
+	// Track LDAP apps for LDAP outpost blueprint
+	var ldapApps []sso.LDAPApp
 
 	for appName, appConfig := range tx.Apps {
 		if !appConfig.Enabled {
@@ -774,8 +785,8 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 			continue
 		}
 
-		// Generate blueprint if app has SSO configured (native-oidc or forward-auth)
-		if app.SSO.Strategy == "native-oidc" || app.SSO.Strategy == "forward-auth" {
+		// Generate blueprint if app has SSO configured
+		if app.SSO.Strategy == "native-oidc" || app.SSO.Strategy == "forward-auth" || app.SSO.Strategy == "ldap" {
 			o.logger.Info("generating SSO blueprint", "app", appName, "strategy", app.SSO.Strategy)
 			if err := o.blueprintGen.GenerateForApp(app); err != nil {
 				return fmt.Errorf("failed to generate blueprint for %s: %w", appName, err)
@@ -787,6 +798,14 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 					DisplayName: app.DisplayName,
 				})
 			}
+
+			// Track LDAP apps for LDAP outpost blueprint
+			if app.SSO.Strategy == "ldap" {
+				ldapApps = append(ldapApps, sso.LDAPApp{
+					Name:        app.Name,
+					DisplayName: app.DisplayName,
+				})
+			}
 		}
 	}
 
@@ -794,6 +813,18 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 	// This adds the providers to the embedded outpost via blueprint (no API call needed).
 	if err := o.blueprintGen.GenerateOutpostBlueprint(forwardAuthProviders); err != nil {
 		return fmt.Errorf("failed to generate outpost blueprint: %w", err)
+	}
+
+	// Create LDAP infrastructure via API if there are LDAP apps.
+	// This is done via API (not blueprint) to ensure the resources exist BEFORE
+	// the LDAP container tries to start. Blueprint timing is unreliable.
+	if len(ldapApps) > 0 && o.authentikClient != nil && o.authentikClient.IsAvailable() {
+		ldapBindPassword := o.blueprintGen.GetLDAPBindPassword()
+		o.logger.Info("creating LDAP infrastructure via API", "apps", len(ldapApps))
+		if err := o.authentikClient.EnsureLDAPInfrastructure(ldapBindPassword); err != nil {
+			// Log warning but don't fail - LDAP container's prestart will retry
+			o.logger.Warn("failed to create LDAP infrastructure via API", "error", err)
+		}
 	}
 
 	return nil

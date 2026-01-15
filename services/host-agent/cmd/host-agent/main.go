@@ -10,6 +10,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/api"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/appconfig"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/db"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
@@ -84,9 +85,11 @@ func runServer() {
 	registry := configurator.NewRegistry(logger)
 	appconfig.RegisterAll(registry, cfg)
 	appStore := store.NewAppStore(database)
+	catalogCache := catalog.NewCache(database)
 	reconciler := orchestrator.NewReconciler(
 		registry,
 		appStore,
+		catalogCache,
 		cfg.DataDir,
 		logger,
 		orchestrator.DefaultReconcileConfig(),
