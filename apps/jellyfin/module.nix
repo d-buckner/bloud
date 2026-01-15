@@ -26,8 +26,8 @@ mkBloudApp {
   volumes = cfg: [
     "${cfg.appDataPath}/config:/config:z"
     "${cfg.appDataPath}/cache:/cache:z"
-    "${cfg.configPath}/movies:/movies:ro"
-    "${cfg.configPath}/tv:/tv:ro"
+    "${cfg.configPath}/media/movies:/movies:ro"
+    "${cfg.configPath}/media/shows:/shows:ro"
   ];
 
   dataDir = false;

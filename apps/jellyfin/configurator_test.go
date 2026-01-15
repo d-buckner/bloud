@@ -68,8 +68,8 @@ func TestConfigurator_PreStart(t *testing.T) {
 	expectedDirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
-		filepath.Join(state.BloudDataPath, "movies"),
-		filepath.Join(state.BloudDataPath, "tv"),
+		filepath.Join(state.BloudDataPath, "media", "movies"),
+		filepath.Join(state.BloudDataPath, "media", "shows"),
 	}
 
 	for _, dir := range expectedDirs {
@@ -153,6 +153,13 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 
 		switch r.URL.Path {
 		case "/Startup/Configuration":
+			if r.Method == http.MethodGet {
+				// waitForStartupWizardReady checks this endpoint
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{}`))
+				return
+			}
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
@@ -164,6 +171,13 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 
 		case "/Startup/User":
+			if r.Method == http.MethodGet {
+				// setStartupUser waits for initial user to be available
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{}`))
+				return
+			}
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
@@ -201,22 +215,26 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 		t.Fatalf("completeStartupWizard() error = %v", err)
 	}
 
-	// Verify all steps were called in order
-	expectedCalls := []string{
-		"POST /Startup/Configuration",
-		"POST /Startup/User",
-		"POST /Startup/RemoteAccess",
-		"POST /Startup/Complete",
+	// Verify key steps were called (GET calls for readiness checks may vary)
+	requiredCalls := []string{
+		"GET /Startup/Configuration",  // waitForStartupWizardReady
+		"POST /Startup/Configuration", // setStartupConfiguration
+		"GET /Startup/User",           // setStartupUser waits for user
+		"POST /Startup/User",          // setStartupUser updates user
+		"POST /Startup/RemoteAccess",  // setRemoteAccess
+		"POST /Startup/Complete",      // completeWizard
 	}
 
-	if len(calls) != len(expectedCalls) {
-		t.Errorf("expected %d calls, got %d: %v", len(expectedCalls), len(calls), calls)
-		return
-	}
-
-	for i, expected := range expectedCalls {
-		if calls[i] != expected {
-			t.Errorf("call %d: expected %q, got %q", i, expected, calls[i])
+	for _, required := range requiredCalls {
+		found := false
+		for _, call := range calls {
+			if call == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected call %q not found in %v", required, calls)
 		}
 	}
 }
@@ -459,14 +477,30 @@ func TestConfigurator_DeleteBootstrapAdmin_NotFound(t *testing.T) {
 
 func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/System/Info/Public" {
+		switch r.URL.Path {
+		case "/System/Info/Public":
 			resp := SystemInfo{StartupWizardCompleted: true}
 			json.NewEncoder(w).Encode(resp)
-			return
+
+		case "/Users/AuthenticateByName":
+			// configureLibraries needs to authenticate
+			resp := AuthResponse{AccessToken: "test-token"}
+			json.NewEncoder(w).Encode(resp)
+
+		case "/Library/VirtualFolders":
+			if r.Method == http.MethodGet {
+				// Return empty list - no libraries yet
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]VirtualFolder{})
+			} else if r.Method == http.MethodPost {
+				// Library creation
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		default:
+			t.Errorf("Unexpected endpoint called: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
-		// No other endpoints should be called when wizard is complete and no SSO
-		t.Errorf("Unexpected endpoint called: %s", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 

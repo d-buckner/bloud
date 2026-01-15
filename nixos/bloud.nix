@@ -62,7 +62,7 @@ in
 
     # Create shared directories used by multiple apps
     system.activationScripts.bloud-shared-dirs = lib.stringAfter [ "users" ] ''
-      mkdir -p /home/${cfg.user}/.local/share/${cfg.dataDir}/{downloads,media/{tv,movies}}
+      mkdir -p /home/${cfg.user}/.local/share/${cfg.dataDir}/{downloads,media/{shows,movies}}
       chown ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}
       chown ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}/downloads
       chown -R ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}/media
