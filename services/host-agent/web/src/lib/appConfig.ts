@@ -1,8 +1,8 @@
 // Metadata-driven app pre-configuration
 // Executes bootstrap config from metadata.yaml before loading app in iframe
 
-import type { BootstrapConfig, CatalogApp, IndexedDBConfig, IndexedDBEntry } from './types';
-import type { IndexedDBInterceptConfig } from '../service-worker/inject';
+import type { BootstrapConfig, CatalogApp, IndexedDBConfig, IndexedDBEntry, LocalStorageConfig } from './types';
+import type { InterceptConfig, IndexedDBInterceptConfig, LocalStorageInterceptConfig } from '../service-worker/inject';
 import { MessageType } from '../service-worker/types';
 
 export interface BootstrapResult {
@@ -45,19 +45,28 @@ export async function executeBootstrap(
 	}
 
 	try {
-		if (config.indexedDB) {
-			console.log('[appConfig] IndexedDB config:', {
-				database: config.indexedDB.database,
-				intercepts: config.indexedDB.intercepts?.length ?? 0,
-				writes: config.indexedDB.writes?.length ?? 0,
-				entries: config.indexedDB.entries?.length ?? 0,
+		const hasIndexedDB = config.indexedDB?.intercepts?.length || config.indexedDB?.writes?.length || config.indexedDB?.entries?.length;
+		const hasLocalStorage = config.localStorage?.intercepts?.length;
+
+		if (hasIndexedDB || hasLocalStorage) {
+			console.log('[appConfig] Bootstrap config:', {
+				indexedDB: config.indexedDB ? {
+					database: config.indexedDB.database,
+					intercepts: config.indexedDB.intercepts?.length ?? 0,
+					writes: config.indexedDB.writes?.length ?? 0,
+				} : null,
+				localStorage: config.localStorage ? {
+					intercepts: config.localStorage.intercepts?.length ?? 0,
+				} : null,
 			});
 
 			// Send intercepts to service worker for injection into iframe
-			await sendInterceptsToSW(config.indexedDB, metadata);
+			await sendInterceptsToSW(config, metadata);
 
-			// Write entries from main page (for values apps don't overwrite)
-			await writeIndexedDBEntries(config.indexedDB, metadata);
+			// Write IndexedDB entries from main page (for values apps don't overwrite)
+			if (config.indexedDB) {
+				await writeIndexedDBEntries(config.indexedDB, metadata);
+			}
 		}
 
 		const result = { success: true };
@@ -79,35 +88,82 @@ export function clearBootstrapCache(appName: string): void {
 }
 
 /**
- * Send IndexedDB intercept config to service worker.
- * The SW will inject a script into iframe HTML that patches IDBObjectStore.prototype.get
- * to return these values regardless of what's actually stored.
+ * Send unified intercept config to service worker.
+ * The SW will inject a script into iframe HTML that patches IndexedDB and localStorage.
  */
-async function sendInterceptsToSW(config: IndexedDBConfig, metadata: AppMetadata): Promise<void> {
-	const intercepts = config.intercepts ?? [];
+async function sendInterceptsToSW(config: BootstrapConfig, metadata: AppMetadata): Promise<void> {
+	const interceptConfig: InterceptConfig = {};
 
-	if (intercepts.length === 0) {
+	// Build IndexedDB intercept config
+	if (config.indexedDB?.intercepts?.length) {
+		interceptConfig.indexedDB = buildIndexedDBConfig(config.indexedDB, metadata);
+	}
+
+	// Build localStorage intercept config
+	if (config.localStorage?.intercepts?.length) {
+		interceptConfig.localStorage = buildLocalStorageConfig(config.localStorage, metadata);
+	}
+
+	// Check if there's anything to send
+	const hasIntercepts = interceptConfig.indexedDB || interceptConfig.localStorage;
+
+	if (!hasIntercepts) {
 		console.log('[appConfig] No intercepts to send, clearing SW config');
 		await postMessageToSW({
-			type: MessageType.SET_INDEXEDDB_INTERCEPTS,
+			type: MessageType.SET_INTERCEPTS,
 			config: null
 		});
 		return;
 	}
 
-	const interceptConfig: IndexedDBInterceptConfig = {
+	console.log('[appConfig] Sending intercepts to SW:', interceptConfig);
+	await postMessageToSW({
+		type: MessageType.SET_INTERCEPTS,
+		config: interceptConfig
+	});
+}
+
+/**
+ * Build IndexedDB intercept config with template substitution
+ */
+function buildIndexedDBConfig(config: IndexedDBConfig, metadata: AppMetadata): IndexedDBInterceptConfig {
+	const intercepts = config.intercepts ?? [];
+
+	return {
 		database: config.database,
 		intercepts: intercepts.map((entry) => ({
 			...entry,
 			value: substituteTemplates(entry.value, metadata)
 		}))
 	};
+}
 
-	console.log('[appConfig] Sending intercepts to SW:', interceptConfig);
-	await postMessageToSW({
-		type: MessageType.SET_INDEXEDDB_INTERCEPTS,
-		config: interceptConfig
-	});
+/**
+ * Build localStorage intercept config with template substitution
+ */
+function buildLocalStorageConfig(config: LocalStorageConfig, metadata: AppMetadata): LocalStorageInterceptConfig {
+	const intercepts = config.intercepts ?? [];
+
+	return {
+		intercepts: intercepts.map((entry) => {
+			const result: LocalStorageInterceptConfig['intercepts'][0] = {
+				key: entry.key
+			};
+
+			if (entry.value !== undefined) {
+				result.value = substituteTemplates(entry.value, metadata);
+			}
+
+			if (entry.jsonPatch) {
+				result.jsonPatch = {};
+				for (const [path, value] of Object.entries(entry.jsonPatch)) {
+					result.jsonPatch[path] = substituteTemplates(value, metadata);
+				}
+			}
+
+			return result;
+		})
+	};
 }
 
 /**

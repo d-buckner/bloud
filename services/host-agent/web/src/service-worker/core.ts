@@ -41,10 +41,10 @@ export type {
 // Active App Context (module state)
 // =============================================================================
 
-import type { IndexedDBInterceptConfig } from './inject';
+import type { InterceptConfig } from './inject';
 
 let activeAppContext: string | null = null;
-let interceptConfig: IndexedDBInterceptConfig | null = null;
+let interceptConfig: InterceptConfig | null = null;
 
 /** Reset function for testing - clears module state */
 export function resetTestState(): void {
@@ -66,15 +66,15 @@ export function getActiveApp(): string | null {
 }
 
 /**
- * Set the IndexedDB intercept configuration (called from message handler).
+ * Set the storage intercept configuration (called from message handler).
  * This config is used to inject intercept scripts into iframe HTML responses.
  */
-export function setInterceptConfig(config: IndexedDBInterceptConfig | null): void {
+export function setInterceptConfig(config: InterceptConfig | null): void {
   interceptConfig = config;
 }
 
 /** Get the current intercept configuration */
-export function getInterceptConfig(): IndexedDBInterceptConfig | null {
+export function getInterceptConfig(): InterceptConfig | null {
   return interceptConfig;
 }
 

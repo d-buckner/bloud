@@ -116,5 +116,5 @@ export interface ResponseLike {
 /** Message types for postMessage communication */
 export const MessageType = {
   SET_ACTIVE_APP: 'SET_ACTIVE_APP',
-  SET_INDEXEDDB_INTERCEPTS: 'SET_INDEXEDDB_INTERCEPTS',
+  SET_INTERCEPTS: 'SET_INTERCEPTS',
 } as const;

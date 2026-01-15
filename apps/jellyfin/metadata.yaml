@@ -7,10 +7,22 @@ port: 8096
 integrations: {}
 # Jellyfin is a source app - provides media server to Jellyseerr
 
+# LDAP SSO for TV apps, mobile clients, and other non-web interfaces
+# The web UI could also support OIDC in the future, but LDAP covers more use cases
 sso:
-  strategy: native-oidc
+  strategy: ldap
 
 healthCheck:
   path: /health
   interval: 5
   timeout: 60
+
+# Client-side pre-configuration before app loads in iframe
+# Fixes "Server Mismatch" warning by ensuring address fields match embed URL
+bootstrap:
+  localStorage:
+    intercepts:
+      - key: jellyfin_credentials
+        jsonPatch:
+          Servers.0.ManualAddress: "{{embedUrl}}"
+          Servers.0.LocalAddress: "{{embedUrl}}"

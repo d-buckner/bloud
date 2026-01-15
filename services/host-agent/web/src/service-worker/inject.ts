@@ -1,5 +1,5 @@
-// IndexedDB Intercept Injection
-// Builds HTML to inject into iframe responses for intercepting IndexedDB reads
+// Storage Intercept Injection
+// Builds HTML to inject into iframe responses for intercepting IndexedDB and localStorage reads
 
 import interceptScript from './intercept-script.js?raw';
 
@@ -16,17 +16,50 @@ export interface IndexedDBInterceptConfig {
 }
 
 /**
- * Intercept map structure used by the injected script
- * Format: { dbName: { storeName: { key: value } } }
+ * Configuration for localStorage intercepts sent from main page
  */
-export type InterceptMap = Record<string, Record<string, Record<string, string>>>;
+export interface LocalStorageInterceptConfig {
+  intercepts: Array<{
+    key: string;
+    value?: string;
+    jsonPatch?: Record<string, string>;
+  }>;
+}
 
 /**
- * Build the intercept map from config
+ * Unified intercept configuration
+ */
+export interface InterceptConfig {
+  indexedDB?: IndexedDBInterceptConfig | null;
+  localStorage?: LocalStorageInterceptConfig | null;
+}
+
+/**
+ * IndexedDB map structure used by the injected script
+ * Format: { dbName: { storeName: { key: value } } }
+ */
+export type IndexedDBInterceptMap = Record<string, Record<string, Record<string, string>>>;
+
+/**
+ * localStorage map structure used by the injected script
+ * Format: { key: { value: "..." } | { jsonPatch: { path: value } } }
+ */
+export type LocalStorageInterceptMap = Record<string, { value?: string; jsonPatch?: Record<string, string> }>;
+
+/**
+ * Full config structure passed to the injected script
+ */
+export interface ScriptInterceptConfig {
+  indexedDB?: IndexedDBInterceptMap;
+  localStorage?: LocalStorageInterceptMap;
+}
+
+/**
+ * Build the IndexedDB intercept map from config
  * Exported for testing
  */
-export function buildInterceptMap(config: IndexedDBInterceptConfig): InterceptMap {
-  const map: InterceptMap = {
+export function buildIndexedDBInterceptMap(config: IndexedDBInterceptConfig): IndexedDBInterceptMap {
+  const map: IndexedDBInterceptMap = {
     [config.database]: {},
   };
 
@@ -38,6 +71,47 @@ export function buildInterceptMap(config: IndexedDBInterceptConfig): InterceptMa
   }
 
   return map;
+}
+
+/**
+ * Build the localStorage intercept map from config
+ * Exported for testing
+ */
+export function buildLocalStorageInterceptMap(config: LocalStorageInterceptConfig): LocalStorageInterceptMap {
+  const map: LocalStorageInterceptMap = {};
+
+  for (const entry of config.intercepts) {
+    if (entry.value !== undefined) {
+      map[entry.key] = { value: entry.value };
+    } else if (entry.jsonPatch) {
+      map[entry.key] = { jsonPatch: entry.jsonPatch };
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Build the unified script config from intercept config
+ * Exported for testing
+ */
+export function buildScriptConfig(config: InterceptConfig): ScriptInterceptConfig | null {
+  const scriptConfig: ScriptInterceptConfig = {};
+
+  if (config.indexedDB && config.indexedDB.intercepts.length > 0) {
+    scriptConfig.indexedDB = buildIndexedDBInterceptMap(config.indexedDB);
+  }
+
+  if (config.localStorage && config.localStorage.intercepts.length > 0) {
+    scriptConfig.localStorage = buildLocalStorageInterceptMap(config.localStorage);
+  }
+
+  // Return null if no intercepts configured
+  if (!scriptConfig.indexedDB && !scriptConfig.localStorage) {
+    return null;
+  }
+
+  return scriptConfig;
 }
 
 /**
@@ -57,16 +131,20 @@ export function escapeForAttribute(str: string): string {
  * Generate the HTML to inject into iframe <head>
  * Returns empty string if no intercepts configured
  */
-export function generateInterceptHtml(config: IndexedDBInterceptConfig | null): string {
-  if (!config || config.intercepts.length === 0) {
+export function generateInterceptHtml(config: InterceptConfig | null): string {
+  if (!config) {
     return '';
   }
 
-  const interceptMap = buildInterceptMap(config);
-  const configJson = escapeForAttribute(JSON.stringify(interceptMap));
+  const scriptConfig = buildScriptConfig(config);
+  if (!scriptConfig) {
+    return '';
+  }
+
+  const configJson = escapeForAttribute(JSON.stringify(scriptConfig));
 
   // Meta tag for config + script that reads it
-  return `<meta name="bloud-idb-config" content="${configJson}">
+  return `<meta name="bloud-intercept-config" content="${configJson}">
 <script>${interceptScript}</script>`;
 }
 
@@ -74,7 +152,7 @@ export function generateInterceptHtml(config: IndexedDBInterceptConfig | null): 
  * Inject intercept script into HTML response
  * Returns original HTML if injection point not found
  */
-export function injectIntoHtml(html: string, config: IndexedDBInterceptConfig | null): string {
+export function injectIntoHtml(html: string, config: InterceptConfig | null): string {
   const injection = generateInterceptHtml(config);
   if (!injection) {
     return html;
