@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -74,8 +75,8 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
-		filepath.Join(state.BloudDataPath, "movies"),
-		filepath.Join(state.BloudDataPath, "tv"),
+		filepath.Join(state.BloudDataPath, "media", "movies"),
+		filepath.Join(state.BloudDataPath, "media", "shows"),
 	}
 
 	for _, dir := range dirs {
@@ -109,7 +110,12 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		log.Println("Jellyfin: Setup wizard completed")
 	}
 
-	// 2. Configure LDAP if SSO integration is enabled
+	// 2. Configure media libraries
+	if err := c.configureLibraries(ctx); err != nil {
+		return fmt.Errorf("failed to configure libraries: %w", err)
+	}
+
+	// 3. Configure LDAP if SSO integration is enabled
 	if _, hasSSO := state.Integrations["sso"]; hasSSO {
 		if err := c.configureLDAP(ctx); err != nil {
 			return fmt.Errorf("failed to configure LDAP: %w", err)
@@ -224,8 +230,8 @@ func (c *Configurator) setStartupConfiguration(ctx context.Context) error {
 	url := c.getBaseURL() + "/Startup/Configuration"
 
 	config := map[string]interface{}{
-		"UICulture":                  "en-US",
-		"MetadataCountryCode":        "US",
+		"UICulture":                 "en-US",
+		"MetadataCountryCode":       "US",
 		"PreferredMetadataLanguage": "en",
 	}
 
@@ -317,7 +323,7 @@ func (c *Configurator) setRemoteAccess(ctx context.Context) error {
 	url := c.getBaseURL() + "/Startup/RemoteAccess"
 
 	config := map[string]bool{
-		"EnableRemoteAccess":    true,
+		"EnableRemoteAccess":         true,
 		"EnableAutomaticPortMapping": false,
 	}
 
@@ -365,35 +371,143 @@ func (c *Configurator) completeWizard(ctx context.Context) error {
 	return nil
 }
 
+// VirtualFolder represents a Jellyfin library
+type VirtualFolder struct {
+	Name           string   `json:"Name"`
+	Locations      []string `json:"Locations"`
+	CollectionType string   `json:"CollectionType"`
+	ItemId         string   `json:"ItemId"`
+}
+
+// configureLibraries sets up the default media libraries
+func (c *Configurator) configureLibraries(ctx context.Context) error {
+	// Authenticate first
+	token, err := c.authenticate(ctx, bootstrapUsername, bootstrapPassword)
+	if err != nil {
+		return fmt.Errorf("authenticating: %w", err)
+	}
+
+	// Get existing libraries
+	existingLibraries, err := c.getVirtualFolders(ctx, token)
+	if err != nil {
+		return fmt.Errorf("getting libraries: %w", err)
+	}
+
+	// Create a map of existing library names
+	existingNames := make(map[string]bool)
+	for _, lib := range existingLibraries {
+		existingNames[lib.Name] = true
+	}
+
+	// Define libraries to create
+	libraries := []struct {
+		name           string
+		collectionType string
+		path           string
+	}{
+		{"Movies", "movies", "/movies"},
+		{"Shows", "shows", "/shows"},
+	}
+
+	for _, lib := range libraries {
+		if existingNames[lib.name] {
+			log.Printf("Jellyfin: Library '%s' already exists", lib.name)
+			continue
+		}
+
+		log.Printf("Jellyfin: Creating library '%s' at %s", lib.name, lib.path)
+		if err := c.addVirtualFolder(ctx, token, lib.name, lib.collectionType, lib.path); err != nil {
+			return fmt.Errorf("creating library %s: %w", lib.name, err)
+		}
+	}
+
+	return nil
+}
+
+// getVirtualFolders returns all configured libraries
+func (c *Configurator) getVirtualFolders(ctx context.Context, token string) ([]VirtualFolder, error) {
+	url := c.getBaseURL() + "/Library/VirtualFolders"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var folders []VirtualFolder
+	if err := json.NewDecoder(resp.Body).Decode(&folders); err != nil {
+		return nil, err
+	}
+
+	return folders, nil
+}
+
+// addVirtualFolder creates a new library
+func (c *Configurator) addVirtualFolder(ctx context.Context, token, name, collectionType, path string) error {
+	// The API uses query parameters for the folder metadata
+	reqURL := fmt.Sprintf("%s/Library/VirtualFolders?name=%s&collectionType=%s&paths=%s&refreshLibrary=false",
+		c.getBaseURL(), url.QueryEscape(name), url.QueryEscape(collectionType), url.QueryEscape(path))
+
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
 // LDAPConfig represents the LDAP plugin configuration
 type LDAPConfig struct {
-	LdapServer                     string `json:"LdapServer"`
-	LdapPort                       int    `json:"LdapPort"`
-	UseSsl                         bool   `json:"UseSsl"`
-	UseStartTls                    bool   `json:"UseStartTls"`
-	SkipSslVerify                  bool   `json:"SkipSslVerify"`
-	LdapBindUser                   string `json:"LdapBindUser"`
-	LdapBindPassword               string `json:"LdapBindPassword"`
-	LdapBaseDn                     string `json:"LdapBaseDn"`
-	LdapSearchFilter               string `json:"LdapSearchFilter"`
-	LdapAdminBaseDn                string `json:"LdapAdminBaseDn"`
-	LdapAdminFilter                string `json:"LdapAdminFilter"`
-	EnableLdapAdminFilterMemberUid bool   `json:"EnableLdapAdminFilterMemberUid"`
-	LdapSearchAttributes           string `json:"LdapSearchAttributes"`
-	LdapClientCertPath             string `json:"LdapClientCertPath"`
-	LdapClientKeyPath              string `json:"LdapClientKeyPath"`
-	LdapRootCaPath                 string `json:"LdapRootCaPath"`
-	CreateUsersFromLdap            bool   `json:"CreateUsersFromLdap"`
-	AllowPassChange                bool   `json:"AllowPassChange"`
-	LdapUidAttribute               string `json:"LdapUidAttribute"`
-	LdapUsernameAttribute          string `json:"LdapUsernameAttribute"`
-	LdapPasswordAttribute          string `json:"LdapPasswordAttribute"`
-	EnableLdapProfileImageSync     bool   `json:"EnableLdapProfileImageSync"`
-	RemoveImagesNotInLdap          bool   `json:"RemoveImagesNotInLdap"`
-	LdapProfileImageAttribute      string `json:"LdapProfileImageAttribute"`
-	EnableAllFolders               bool   `json:"EnableAllFolders"`
+	LdapServer                     string   `json:"LdapServer"`
+	LdapPort                       int      `json:"LdapPort"`
+	UseSsl                         bool     `json:"UseSsl"`
+	UseStartTls                    bool     `json:"UseStartTls"`
+	SkipSslVerify                  bool     `json:"SkipSslVerify"`
+	LdapBindUser                   string   `json:"LdapBindUser"`
+	LdapBindPassword               string   `json:"LdapBindPassword"`
+	LdapBaseDn                     string   `json:"LdapBaseDn"`
+	LdapSearchFilter               string   `json:"LdapSearchFilter"`
+	LdapAdminBaseDn                string   `json:"LdapAdminBaseDn"`
+	LdapAdminFilter                string   `json:"LdapAdminFilter"`
+	EnableLdapAdminFilterMemberUid bool     `json:"EnableLdapAdminFilterMemberUid"`
+	LdapSearchAttributes           string   `json:"LdapSearchAttributes"`
+	LdapClientCertPath             string   `json:"LdapClientCertPath"`
+	LdapClientKeyPath              string   `json:"LdapClientKeyPath"`
+	LdapRootCaPath                 string   `json:"LdapRootCaPath"`
+	CreateUsersFromLdap            bool     `json:"CreateUsersFromLdap"`
+	AllowPassChange                bool     `json:"AllowPassChange"`
+	LdapUidAttribute               string   `json:"LdapUidAttribute"`
+	LdapUsernameAttribute          string   `json:"LdapUsernameAttribute"`
+	LdapPasswordAttribute          string   `json:"LdapPasswordAttribute"`
+	EnableLdapProfileImageSync     bool     `json:"EnableLdapProfileImageSync"`
+	RemoveImagesNotInLdap          bool     `json:"RemoveImagesNotInLdap"`
+	LdapProfileImageAttribute      string   `json:"LdapProfileImageAttribute"`
+	EnableAllFolders               bool     `json:"EnableAllFolders"`
 	EnabledFolders                 []string `json:"EnabledFolders"`
-	PasswordResetUrl               string `json:"PasswordResetUrl"`
+	PasswordResetUrl               string   `json:"PasswordResetUrl"`
 }
 
 // configureLDAP configures the LDAP plugin to use Authentik
