@@ -56,7 +56,9 @@
   waitFor ? [],
   network ? "apps-net",
   cmd ? [],
-  userns ? null,
+  # Default to keep-id for rootless podman port forwarding to work correctly
+  # Apps can override to null if they need different behavior
+  userns ? (if network == "host" then null else "keep-id"),
   extraServices ? {},
   extraConfig ? {},
 }:

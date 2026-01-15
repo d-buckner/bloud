@@ -54,6 +54,32 @@ in
       default = "test-bootstrap-token-change-in-production";
       description = "Bootstrap API token";
     };
+
+    ldap = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Enable LDAP outpost for apps like Jellyfin (default: enabled)";
+      };
+
+      port = lib.mkOption {
+        type = lib.types.int;
+        default = 3389;
+        description = "LDAP port (unencrypted)";
+      };
+
+      securePort = lib.mkOption {
+        type = lib.types.int;
+        default = 6636;
+        description = "LDAPS port (TLS encrypted)";
+      };
+
+      outpostToken = lib.mkOption {
+        type = lib.types.str;
+        default = "ldap-outpost-token-change-in-production";
+        description = "API token for LDAP outpost to authenticate with Authentik (must match blueprint)";
+      };
+    };
   };
 
   config = lib.mkIf appCfg.enable {
@@ -206,6 +232,94 @@ in
         ];
         network = "apps-net";
         dependsOn = [ "apps-network" "apps-authentik-server" ];
+      };
+    } // lib.optionalAttrs appCfg.ldap.enable {
+      # LDAP Outpost - provides LDAP protocol for apps like Jellyfin (TV/mobile clients)
+      # Enabled by default (ldap.enable = true) as part of core Authentik infrastructure
+      #
+      # TIMING: The LDAP outpost is created by Authentik's PostStart (via API), but
+      # systemd After= only waits for container start, not ExecStartPost completion.
+      # So this prestart may run before the outpost exists. We handle this with retry logic.
+      podman-apps-authentik-ldap = mkPodmanService {
+        name = "apps-authentik-ldap";
+        image = "ghcr.io/goauthentik/ldap:2025.10.3";
+        ports = [
+          "${toString appCfg.ldap.port}:3389"
+          "${toString appCfg.ldap.securePort}:6636"
+        ];
+        # AUTHENTIK_HOST is static, AUTHENTIK_TOKEN comes from envFile
+        environment = {
+          # Connect to Authentik server via internal network
+          AUTHENTIK_HOST = "http://apps-authentik-server:9000";
+        };
+        network = "apps-net";
+        dependsOn = [ "apps-network" "apps-authentik-server" ];
+        # Wait for Authentik to be ready before starting LDAP outpost
+        extraAfter = [ "podman-apps-authentik-server.service" ];
+        extraRequires = [ "podman-apps-authentik-server.service" ];
+        waitFor = [
+          { container = "apps-authentik-server"; command = "curl -sf http://localhost:9000/-/health/ready/ || exit 1"; }
+        ];
+        # Query Authentik for the auto-generated LDAP outpost token via Django shell
+        # We use Django shell because the API doesn't expose token keys for security
+        #
+        # RACE CONDITION: Authentik's PostStart creates the LDAP outpost, but systemd
+        # After= only waits for container start, not ExecStartPost. So we retry here.
+        preStartScript = pkgs.writeShellScript "ldap-query-token" ''
+          set -euo pipefail
+
+          ENV_FILE="${configPath}/ldap-outpost.env"
+          OUTPOST_NAME="Bloud LDAP Outpost"
+
+          echo "Querying Authentik for LDAP outpost token via Django shell..."
+
+          # Query the outpost token via Django shell (API doesn't expose token keys)
+          # This gets the auto-generated token identifier and its key
+          PYTHON_CODE='
+from authentik.outposts.models import Outpost
+from authentik.core.models import Token
+try:
+    outpost = Outpost.objects.get(name="'"$OUTPOST_NAME"'")
+    token_id = f"ak-outpost-{outpost.pk}-api"
+    token = Token.objects.get(identifier=token_id)
+    print(f"TOKEN_KEY={token.key}")
+except Outpost.DoesNotExist:
+    print("ERROR: Outpost not found")
+    exit(1)
+except Token.DoesNotExist:
+    print("ERROR: Token not found")
+    exit(1)
+'
+
+          # Wait for the outpost to be created by Authentik PostStart (up to 90 seconds)
+          # Authentik PostStart runs after container is healthy, creates token + LDAP infra via API
+          for i in {1..30}; do
+            RESULT=$(${pkgs.podman}/bin/podman exec apps-authentik-server ak shell -c "$PYTHON_CODE" 2>/dev/null | grep -E "^(TOKEN_KEY=|ERROR:)" || true)
+
+            if echo "$RESULT" | grep -q "^TOKEN_KEY="; then
+              TOKEN_KEY=$(echo "$RESULT" | sed 's/TOKEN_KEY=//')
+              echo "Token retrieved successfully"
+              echo "AUTHENTIK_TOKEN=$TOKEN_KEY" > "$ENV_FILE"
+              chmod 600 "$ENV_FILE"
+              echo "LDAP outpost token written to env file"
+              exit 0
+            fi
+
+            if echo "$RESULT" | grep -q "ERROR:"; then
+              echo "Waiting for LDAP outpost to be created by Authentik PostStart... ($i/30)"
+              sleep 3
+            else
+              echo "Waiting for Authentik to respond... ($i/30)"
+              sleep 3
+            fi
+          done
+
+          echo "ERROR: Could not retrieve LDAP outpost token after 90 seconds"
+          echo "This usually means Authentik's PostStart failed to create the LDAP infrastructure"
+          exit 1
+        '';
+        # Pass the token via env file
+        envFile = "${configPath}/ldap-outpost.env";
       };
     };
 
