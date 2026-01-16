@@ -12,6 +12,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -26,6 +27,7 @@ type Server struct {
 	appStore       store.AppStoreInterface
 	appHub         *AppEventHub
 	orchestrator   orchestrator.AppOrchestrator
+	reconciler     *orchestrator.Reconciler
 	appsDir        string
 	nixConfigDir   string
 	dataDir        string
@@ -36,6 +38,7 @@ type Server struct {
 	ssoHostSecret  string
 	ssoBaseURL     string
 	authentikToken string
+	registry       configurator.RegistryInterface
 	logger         *slog.Logger
 }
 
@@ -52,6 +55,8 @@ type ServerConfig struct {
 	SSOHostSecret  string // Master secret for deriving client secrets (required for SSO)
 	SSOBaseURL     string // Base URL for callbacks (e.g., "http://localhost:8080")
 	AuthentikToken string // Authentik API token for SSO cleanup
+	// Registry holds app configurators for reconciliation
+	Registry configurator.RegistryInterface
 }
 
 // NewServer creates a new HTTP server instance
@@ -78,6 +83,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		ssoHostSecret:  cfg.SSOHostSecret,
 		ssoBaseURL:     cfg.SSOBaseURL,
 		authentikToken: cfg.AuthentikToken,
+		registry:       cfg.Registry,
 		logger:         logger,
 	}
 
@@ -86,6 +92,18 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 
 	// Initialize orchestrator (Podman client may not be available in tests)
 	s.initOrchestrator(appStore)
+
+	// Initialize reconciler if registry is provided
+	if cfg.Registry != nil {
+		s.reconciler = orchestrator.NewReconciler(
+			cfg.Registry,
+			appStore,
+			s.catalog,
+			cfg.DataDir,
+			logger,
+			orchestrator.DefaultReconcileConfig(),
+		)
+	}
 
 	// Regenerate Traefik routes on startup to ensure they're in sync
 	if s.orchestrator != nil {
@@ -287,6 +305,33 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
-	// Future: implement graceful shutdown
+	s.StopReconciler()
 	return nil
+}
+
+// StartReconciler starts the reconciliation watchdog
+func (s *Server) StartReconciler(ctx context.Context) {
+	if s.reconciler != nil {
+		s.reconciler.StartWatchdog(ctx)
+	}
+}
+
+// StopReconciler stops the reconciliation watchdog
+func (s *Server) StopReconciler() {
+	if s.reconciler != nil {
+		s.reconciler.StopWatchdog()
+	}
+}
+
+// triggerReconcile runs reconciliation in the background.
+// Called after successful install/uninstall to reconfigure dependent apps.
+func (s *Server) triggerReconcile() {
+	if s.reconciler == nil {
+		return
+	}
+	go func() {
+		if err := s.reconciler.Reconcile(context.Background()); err != nil {
+			s.logger.Warn("background reconciliation failed", "error", err)
+		}
+	}()
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/xmlutil"
 )
 
 // Configurator handles Radarr configuration
@@ -41,12 +41,12 @@ func (c *Configurator) Name() string {
 	return "radarr"
 }
 
-// PreStart ensures directories exist.
+// PreStart ensures directories exist and configures external authentication.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.BloudDataPath, "downloads"),
-		filepath.Join(state.BloudDataPath, "movies"),
+		filepath.Join(state.BloudDataPath, "media", "movies"),
 	}
 
 	for _, dir := range dirs {
@@ -55,12 +55,40 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		}
 	}
 
+	// Configure external authentication for forward-auth
+	// This must be done before Radarr starts to avoid double-auth prompts
+	if err := c.configureExternalAuth(state.DataPath); err != nil {
+		return fmt.Errorf("failed to configure external auth: %w", err)
+	}
+
 	return nil
+}
+
+// configureExternalAuth sets AuthenticationMethod to External in config.xml
+// This allows Radarr to trust forward-auth from Traefik/Authentik
+func (c *Configurator) configureExternalAuth(dataPath string) error {
+	configPath := filepath.Join(dataPath, "config", "config.xml")
+
+	cfg, err := xmlutil.Open(configPath, "Config")
+	if err != nil {
+		return err
+	}
+
+	// Check if already configured
+	if cfg.GetElement("AuthenticationMethod") == "External" {
+		return nil
+	}
+
+	cfg.SetElement("AuthenticationMethod", "External")
+	cfg.SetElement("AuthenticationRequired", "Enabled")
+
+	return cfg.Save()
 }
 
 // HealthCheck waits for Radarr's API to be ready
 func (c *Configurator) HealthCheck(ctx context.Context) error {
-	url := c.getBaseURL() + "/api/v3/system/status"
+	// Use /ping endpoint which doesn't require authentication
+	url := c.getBaseURL() + "/ping"
 	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
 }
 
@@ -89,23 +117,17 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 func (c *Configurator) getAPIKey(dataPath string) (string, error) {
 	configPath := filepath.Join(dataPath, "config", "config.xml")
 
-	data, err := os.ReadFile(configPath)
+	cfg, err := xmlutil.OpenExisting(configPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read config.xml: %w", err)
+		return "", err
 	}
 
-	var config struct {
-		APIKey string `xml:"ApiKey"`
-	}
-	if err := xml.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("failed to parse config.xml: %w", err)
-	}
-
-	if config.APIKey == "" {
+	apiKey := cfg.GetElement("ApiKey")
+	if apiKey == "" {
 		return "", fmt.Errorf("API key not found in config.xml")
 	}
 
-	return config.APIKey, nil
+	return apiKey, nil
 }
 
 // ensureDownloadClient ensures qBittorrent is configured as a download client
@@ -129,6 +151,8 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string, 
 	}
 
 	// Create the download client
+	// Connect via container network DNS name to qBittorrent's WebUI port
+	// qBittorrent has subnet auth bypass enabled for container networks
 	client := map[string]any{
 		"name":           "Bloud: qBittorrent",
 		"implementation": "QBittorrent",
@@ -136,11 +160,11 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string, 
 		"enable":         true,
 		"priority":       1,
 		"fields": []map[string]any{
-			{"name": "host", "value": "localhost"},
-			{"name": "port", "value": 8086},
+			{"name": "host", "value": "apps-qbittorrent"},
+			{"name": "port", "value": 8080},
 			{"name": "useSsl", "value": false},
-			{"name": "username", "value": "admin"},
-			{"name": "password", "value": "adminadmin"},
+			{"name": "username", "value": ""},
+			{"name": "password", "value": ""},
 			{"name": "movieCategory", "value": "radarr"},
 		},
 	}

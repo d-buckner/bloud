@@ -46,10 +46,14 @@ import type { InterceptConfig } from './inject';
 let activeAppContext: string | null = null;
 let interceptConfig: InterceptConfig | null = null;
 
+// Map clientId -> appName for tracking which iframe/worker belongs to which app
+const clientAppMap = new Map<string, string>();
+
 /** Reset function for testing - clears module state */
 export function resetTestState(): void {
   activeAppContext = null;
   interceptConfig = null;
+  clientAppMap.clear();
 }
 
 /**
@@ -76,6 +80,50 @@ export function setInterceptConfig(config: InterceptConfig | null): void {
 /** Get the current intercept configuration */
 export function getInterceptConfig(): InterceptConfig | null {
   return interceptConfig;
+}
+
+// =============================================================================
+// Client ID Tracking (for iframes and web workers)
+// =============================================================================
+
+/**
+ * Register a clientId as belonging to an app.
+ * Called when we handle embed navigation requests.
+ */
+export function registerClient(clientId: string, appName: string): void {
+  clientAppMap.set(clientId, appName);
+}
+
+/**
+ * Get the app name for a clientId.
+ */
+export function getAppForClient(clientId: string | undefined): string | null {
+  if (!clientId) return null;
+  return clientAppMap.get(clientId) ?? null;
+}
+
+/**
+ * Extract app name from Referer header (fallback for web workers).
+ * Web workers have their own clientId that isn't registered,
+ * but their Referer points back to the parent page.
+ */
+export function getAppFromReferer(referer: string | null, origin: string): string | null {
+  if (!referer) return null;
+
+  try {
+    const refererUrl = new URL(referer);
+    // Only trust same-origin referers
+    if (refererUrl.origin !== origin) return null;
+
+    return getAppFromPath(refererUrl.pathname);
+  } catch {
+    return null;
+  }
+}
+
+/** Get client map size (for testing) */
+export function getClientMapSize(): number {
+  return clientAppMap.size;
 }
 
 // =============================================================================

@@ -16,6 +16,6 @@ sso:
   strategy: forward-auth
 
 healthCheck:
-  path: /api/v3/system/status
+  path: /ping
   interval: 5
   timeout: 60

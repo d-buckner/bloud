@@ -10,11 +10,8 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/api"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/appconfig"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/db"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -60,6 +57,10 @@ func runServer() {
 	defer database.Close()
 	logger.Info("database initialized successfully")
 
+	// Create configurator registry
+	registry := configurator.NewRegistry(logger)
+	appconfig.RegisterAll(registry, cfg)
+
 	// Create HTTP server
 	server := api.NewServer(database, api.ServerConfig{
 		AppsDir:        cfg.AppsDir,
@@ -72,6 +73,7 @@ func runServer() {
 		SSOHostSecret:  cfg.SSOHostSecret,
 		SSOBaseURL:     cfg.SSOBaseURL,
 		AuthentikToken: cfg.AuthentikToken,
+		Registry:       registry,
 	}, logger)
 
 	// Setup graceful shutdown
@@ -81,21 +83,8 @@ func runServer() {
 	// Start background system stats collector
 	system.StartStatsCollector(ctx)
 
-	// Create and start reconciler watchdog
-	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg)
-	appStore := store.NewAppStore(database)
-	catalogCache := catalog.NewCache(database)
-	reconciler := orchestrator.NewReconciler(
-		registry,
-		appStore,
-		catalogCache,
-		cfg.DataDir,
-		logger,
-		orchestrator.DefaultReconcileConfig(),
-	)
-	reconciler.StartWatchdog(ctx)
-	defer reconciler.StopWatchdog()
+	// Start reconciler watchdog
+	server.StartReconciler(ctx)
 
 	// Start server in a goroutine
 	go func() {

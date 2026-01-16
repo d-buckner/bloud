@@ -3,10 +3,12 @@ package prowlarr
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
@@ -66,6 +68,89 @@ func TestConfigurator_PreStart(t *testing.T) {
 	configDir := filepath.Join(state.DataPath, "config")
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
 		t.Errorf("PreStart() did not create directory %s", configDir)
+	}
+
+	// Verify external auth config was created
+	configPath := filepath.Join(configDir, "config.xml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("PreStart() did not create config.xml: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "<AuthenticationMethod>External</AuthenticationMethod>") {
+		t.Error("PreStart() did not set AuthenticationMethod to External")
+	}
+	if !strings.Contains(content, "<AuthenticationRequired>Enabled</AuthenticationRequired>") {
+		t.Error("PreStart() did not set AuthenticationRequired to Enabled")
+	}
+}
+
+func TestConfigurator_configureExternalAuth(t *testing.T) {
+	tests := []struct {
+		name          string
+		existingXML   string
+		wantExternal  bool
+		wantRequired  bool
+	}{
+		{
+			name:         "no existing config",
+			existingXML:  "",
+			wantExternal: true,
+			wantRequired: true,
+		},
+		{
+			name:         "already configured correctly",
+			existingXML:  `<Config><AuthenticationMethod>External</AuthenticationMethod><AuthenticationRequired>Enabled</AuthenticationRequired></Config>`,
+			wantExternal: true,
+			wantRequired: true,
+		},
+		{
+			name:         "different auth method",
+			existingXML:  `<Config><AuthenticationMethod>Forms</AuthenticationMethod></Config>`,
+			wantExternal: true,
+			wantRequired: true,
+		},
+		{
+			name:         "missing auth method",
+			existingXML:  `<Config><ApiKey>test-key</ApiKey></Config>`,
+			wantExternal: true,
+			wantRequired: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configDir := filepath.Join(tmpDir, "config")
+			os.MkdirAll(configDir, 0755)
+
+			if tt.existingXML != "" {
+				os.WriteFile(filepath.Join(configDir, "config.xml"), []byte(tt.existingXML), 0644)
+			}
+
+			c := NewConfigurator(9696)
+			err := c.configureExternalAuth(tmpDir)
+			if err != nil {
+				t.Fatalf("configureExternalAuth() error = %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(configDir, "config.xml"))
+			if err != nil {
+				t.Fatalf("failed to read config.xml: %v", err)
+			}
+
+			content := string(data)
+			hasExternal := strings.Contains(content, "<AuthenticationMethod>External</AuthenticationMethod>")
+			hasRequired := strings.Contains(content, "<AuthenticationRequired>Enabled</AuthenticationRequired>")
+
+			if hasExternal != tt.wantExternal {
+				t.Errorf("AuthenticationMethod=External: got %v, want %v", hasExternal, tt.wantExternal)
+			}
+			if hasRequired != tt.wantRequired {
+				t.Errorf("AuthenticationRequired=Enabled: got %v, want %v", hasRequired, tt.wantRequired)
+			}
+		})
 	}
 }
 
@@ -275,6 +360,134 @@ func TestConfigurator_createApplication(t *testing.T) {
 			}
 			if !tt.wantErr && receivedPayload["name"] != "Bloud: Radarr" {
 				t.Errorf("expected name=Bloud: Radarr, got %v", receivedPayload["name"])
+			}
+		})
+	}
+}
+
+func TestConfigurator_getProwlarrURL(t *testing.T) {
+	t.Run("with baseURL override", func(t *testing.T) {
+		c := &Configurator{Port: 9696, baseURL: "http://test-server:9696"}
+		if got := c.getProwlarrURL(); got != "http://test-server:9696" {
+			t.Errorf("getProwlarrURL() = %q, want %q", got, "http://test-server:9696")
+		}
+	})
+
+	t.Run("without baseURL uses container DNS", func(t *testing.T) {
+		c := &Configurator{Port: 9696}
+		expected := "http://prowlarr:9696"
+		if got := c.getProwlarrURL(); got != expected {
+			t.Errorf("getProwlarrURL() = %q, want %q", got, expected)
+		}
+	})
+}
+
+func TestConfigurator_ensureApplication_payload(t *testing.T) {
+	tests := []struct {
+		name           string
+		appName        string
+		appDisplayName string
+		appPort        int
+		apiKey         string
+		wantBaseURL    string
+	}{
+		{
+			name:           "radarr",
+			appName:        "radarr",
+			appDisplayName: "Radarr",
+			appPort:        7878,
+			apiKey:         "radarr-api-key",
+			wantBaseURL:    "http://radarr:7878",
+		},
+		{
+			name:           "sonarr",
+			appName:        "sonarr",
+			appDisplayName: "Sonarr",
+			appPort:        8989,
+			apiKey:         "sonarr-api-key",
+			wantBaseURL:    "http://sonarr:8989",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			// Setup app config
+			appConfigDir := filepath.Join(tmpDir, tt.appName, "config")
+			os.MkdirAll(appConfigDir, 0755)
+			os.WriteFile(filepath.Join(appConfigDir, "config.xml"), []byte(fmt.Sprintf(`<Config><ApiKey>%s</ApiKey></Config>`, tt.apiKey)), 0644)
+
+			var receivedPayload map[string]any
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodGet:
+					json.NewEncoder(w).Encode([]application{})
+				case http.MethodPost:
+					json.NewDecoder(r.Body).Decode(&receivedPayload)
+					w.WriteHeader(http.StatusCreated)
+				}
+			}))
+			defer server.Close()
+
+			c := &Configurator{Port: 9696, baseURL: server.URL}
+			state := &configurator.AppState{
+				BloudDataPath: tmpDir,
+			}
+
+			err := c.ensureApplication(context.Background(), "prowlarr-key", state, tt.appName, tt.appDisplayName, tt.appPort)
+			if err != nil {
+				t.Fatalf("ensureApplication() error = %v", err)
+			}
+
+			// Verify payload structure
+			expectedName := fmt.Sprintf("Bloud: %s", tt.appDisplayName)
+			if receivedPayload["name"] != expectedName {
+				t.Errorf("expected name=%q, got %v", expectedName, receivedPayload["name"])
+			}
+			if receivedPayload["implementation"] != tt.appDisplayName {
+				t.Errorf("expected implementation=%q, got %v", tt.appDisplayName, receivedPayload["implementation"])
+			}
+			expectedContract := fmt.Sprintf("%sSettings", tt.appDisplayName)
+			if receivedPayload["configContract"] != expectedContract {
+				t.Errorf("expected configContract=%q, got %v", expectedContract, receivedPayload["configContract"])
+			}
+			if receivedPayload["syncLevel"] != "fullSync" {
+				t.Errorf("expected syncLevel='fullSync', got %v", receivedPayload["syncLevel"])
+			}
+
+			// Verify tags field is present (required by API)
+			if _, ok := receivedPayload["tags"]; !ok {
+				t.Error("expected tags field to be present")
+			}
+
+			// Verify fields array
+			fields, ok := receivedPayload["fields"].([]any)
+			if !ok {
+				t.Fatalf("expected fields to be an array, got %T", receivedPayload["fields"])
+			}
+
+			// Find and verify each field
+			fieldMap := make(map[string]any)
+			for _, f := range fields {
+				field := f.(map[string]any)
+				fieldMap[field["name"].(string)] = field["value"]
+			}
+
+			// Verify prowlarrUrl uses test server URL (simulating container DNS in tests)
+			if fieldMap["prowlarrUrl"] != server.URL {
+				t.Errorf("expected prowlarrUrl=%q, got %v", server.URL, fieldMap["prowlarrUrl"])
+			}
+
+			// Verify baseUrl uses container DNS format
+			if fieldMap["baseUrl"] != tt.wantBaseURL {
+				t.Errorf("expected baseUrl=%q, got %v", tt.wantBaseURL, fieldMap["baseUrl"])
+			}
+
+			// Verify apiKey is present
+			if fieldMap["apiKey"] != tt.apiKey {
+				t.Errorf("expected apiKey=%q, got %v", tt.apiKey, fieldMap["apiKey"])
 			}
 		})
 	}

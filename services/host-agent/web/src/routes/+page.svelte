@@ -4,6 +4,7 @@
 	import AppIcon from '$lib/components/AppIcon.svelte';
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
 	import LogsModal from '$lib/components/LogsModal.svelte';
+	import RenameModal from '$lib/components/RenameModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { AppStatus, type App } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
@@ -15,6 +16,8 @@
 	let uninstallAppName = $state<string | null>(null);
 	let logsAppName = $state<string | null>(null);
 	let logsDisplayName = $state<string>('');
+	let renameAppName = $state<string | null>(null);
+	let renameCurrentDisplayName = $state<string>('');
 	let contextMenuApp = $state<App | null>(null);
 	let contextMenuPos = $state({ x: 0, y: 0 });
 	let mounted = $state(false);
@@ -84,6 +87,30 @@
 			logsAppName = contextMenuApp.name;
 			logsDisplayName = contextMenuApp.display_name;
 			contextMenuApp = null;
+		}
+	}
+
+	function handleRenameClick() {
+		if (contextMenuApp) {
+			renameAppName = contextMenuApp.name;
+			renameCurrentDisplayName = contextMenuApp.display_name;
+			contextMenuApp = null;
+		}
+	}
+
+	async function doRename(appName: string, newDisplayName: string) {
+		try {
+			const res = await fetch(`/api/apps/${appName}/rename`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ displayName: newDisplayName })
+			});
+			if (!res.ok) {
+				const data = await res.json();
+				console.error('Rename failed:', data.error);
+			}
+		} catch (err) {
+			console.error('Rename failed:', err);
 		}
 	}
 </script>
@@ -168,6 +195,10 @@
 			<Icon name="terminal" size={16} />
 			View Logs
 		</button>
+		<button class="context-item" onclick={handleRenameClick}>
+			<Icon name="edit" size={16} />
+			Rename
+		</button>
 		<hr class="context-divider" />
 		<button class="context-item danger" onclick={handleUninstall}>
 			<Icon name="trash" size={16} />
@@ -186,6 +217,13 @@
 	appName={logsAppName}
 	displayName={logsDisplayName}
 	onclose={() => logsAppName = null}
+/>
+
+<RenameModal
+	appName={renameAppName}
+	currentDisplayName={renameCurrentDisplayName}
+	onclose={() => renameAppName = null}
+	onrename={doRename}
 />
 
 <style>
@@ -245,7 +283,7 @@
 	}
 
 	.app-icon-container :global(.app-icon) {
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+		box-shadow: none;
 	}
 
 	.install-progress {
@@ -280,14 +318,17 @@
 	}
 
 	.app-label {
-		font-size: 11px;
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		line-height: 1.3;
 		color: var(--color-text);
 		text-align: center;
-		max-width: 80px;
+		max-width: 76px;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
 		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		line-height: 1.2;
 	}
 
 	.app-slot.installing .app-label,

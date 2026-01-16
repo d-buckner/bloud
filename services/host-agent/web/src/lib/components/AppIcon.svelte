@@ -34,9 +34,6 @@
 	.app-icon {
 		width: 44px;
 		height: 44px;
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
 		display: flex;
 		align-items: center;
 		justify-content: center;

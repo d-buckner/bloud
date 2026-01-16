@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/xmlutil"
 )
 
 // Configurator handles Prowlarr configuration
@@ -41,18 +41,47 @@ func (c *Configurator) Name() string {
 	return "prowlarr"
 }
 
-// PreStart ensures directories exist.
+// PreStart ensures directories exist and configures external authentication.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
 	configDir := filepath.Join(state.DataPath, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", configDir, err)
 	}
+
+	// Configure external authentication for forward-auth
+	// This must be done before Prowlarr starts to avoid double-auth prompts
+	if err := c.configureExternalAuth(state.DataPath); err != nil {
+		return fmt.Errorf("failed to configure external auth: %w", err)
+	}
+
 	return nil
+}
+
+// configureExternalAuth sets AuthenticationMethod to External in config.xml
+// This allows Prowlarr to trust forward-auth from Traefik/Authentik
+func (c *Configurator) configureExternalAuth(dataPath string) error {
+	configPath := filepath.Join(dataPath, "config", "config.xml")
+
+	cfg, err := xmlutil.Open(configPath, "Config")
+	if err != nil {
+		return err
+	}
+
+	// Check if already configured
+	if cfg.GetElement("AuthenticationMethod") == "External" {
+		return nil
+	}
+
+	cfg.SetElement("AuthenticationMethod", "External")
+	cfg.SetElement("AuthenticationRequired", "Enabled")
+
+	return cfg.Save()
 }
 
 // HealthCheck waits for Prowlarr's API to be ready
 func (c *Configurator) HealthCheck(ctx context.Context) error {
-	url := c.getBaseURL() + "/api/v1/health"
+	// Use /ping endpoint which doesn't require authentication
+	url := c.getBaseURL() + "/ping"
 	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
 }
 
@@ -83,42 +112,29 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 func (c *Configurator) getAPIKey(dataPath string) (string, error) {
 	configPath := filepath.Join(dataPath, "config", "config.xml")
 
-	data, err := os.ReadFile(configPath)
+	cfg, err := xmlutil.OpenExisting(configPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read config.xml: %w", err)
+		return "", err
 	}
 
-	var config struct {
-		APIKey string `xml:"ApiKey"`
-	}
-	if err := xml.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("failed to parse config.xml: %w", err)
-	}
-
-	if config.APIKey == "" {
+	apiKey := cfg.GetElement("ApiKey")
+	if apiKey == "" {
 		return "", fmt.Errorf("API key not found in config.xml")
 	}
 
-	return config.APIKey, nil
+	return apiKey, nil
 }
 
 // getArrAPIKey reads the API key from another *arr app's config.xml
 func (c *Configurator) getArrAPIKey(bloudDataPath, appName string) (string, error) {
 	configPath := filepath.Join(bloudDataPath, appName, "config", "config.xml")
 
-	data, err := os.ReadFile(configPath)
+	cfg, err := xmlutil.OpenExisting(configPath)
 	if err != nil {
 		return "", err // App not installed or not configured yet
 	}
 
-	var config struct {
-		APIKey string `xml:"ApiKey"`
-	}
-	if err := xml.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("failed to parse config.xml: %w", err)
-	}
-
-	return config.APIKey, nil
+	return cfg.GetElement("ApiKey"), nil
 }
 
 // ensureApplication adds an *arr app as an application in Prowlarr
@@ -142,21 +158,36 @@ func (c *Configurator) ensureApplication(ctx context.Context, prowlarrAPIKey str
 		}
 	}
 
+	// Build URLs for container-to-container communication
+	// Prowlarr needs to reach the apps via container DNS names, not localhost
+	// Container names in Bloud are just the app name (e.g., "radarr", "sonarr")
+	prowlarrURL := c.getProwlarrURL()
+	appURL := fmt.Sprintf("http://%s:%d", appName, appPort)
+
 	// Create the application
 	application := map[string]any{
-		"name":             bloudAppName,
-		"implementation":   appDisplayName,
-		"configContract":   fmt.Sprintf("%sSettings", appDisplayName),
-		"syncLevel":        "fullSync",
-		"syncCategories":   c.getSyncCategories(appName),
+		"name":           bloudAppName,
+		"implementation": appDisplayName,
+		"configContract": fmt.Sprintf("%sSettings", appDisplayName),
+		"syncLevel":      "fullSync",
+		"syncCategories": c.getSyncCategories(appName),
+		"tags":           []int{},
 		"fields": []map[string]any{
-			{"name": "prowlarrUrl", "value": fmt.Sprintf("http://localhost:%d", c.Port)},
-			{"name": "baseUrl", "value": fmt.Sprintf("http://localhost:%d", appPort)},
+			{"name": "prowlarrUrl", "value": prowlarrURL},
+			{"name": "baseUrl", "value": appURL},
 			{"name": "apiKey", "value": appAPIKey},
 		},
 	}
 
 	return c.createApplication(ctx, prowlarrAPIKey, application)
+}
+
+// getProwlarrURL returns the URL that other apps should use to reach Prowlarr
+func (c *Configurator) getProwlarrURL() string {
+	if c.baseURL != "" {
+		return c.baseURL // For testing
+	}
+	return fmt.Sprintf("http://prowlarr:%d", c.Port)
 }
 
 // getSyncCategories returns appropriate category IDs for the app type

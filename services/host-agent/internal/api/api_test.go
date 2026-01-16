@@ -118,6 +118,17 @@ func (f *FakeAppStore) UpdateIntegrationConfig(name string, config map[string]st
 	return nil
 }
 
+func (f *FakeAppStore) UpdateDisplayName(name, displayName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if app, ok := f.apps[name]; ok {
+		app.DisplayName = displayName
+		app.UpdatedAt = time.Now()
+		f.notify()
+	}
+	return nil
+}
+
 func (f *FakeAppStore) Uninstall(name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
