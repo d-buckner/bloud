@@ -16,10 +16,14 @@ mkBloudApp {
     TZ = "Etc/UTC";
   };
 
+  # Volumes:
+  # - /config: Sonarr's internal config (app-specific)
+  # - /downloads: Shared downloads folder with qBittorrent
+  # - /tv: Shared shows folder with Jellyfin (maps to media/shows)
   volumes = cfg: [
     "${cfg.appDataPath}/config:/config:z"
     "${cfg.configPath}/downloads:/downloads:z"
-    "${cfg.configPath}/tv:/tv:z"
+    "${cfg.configPath}/media/shows:/tv:z"
   ];
 
   dataDir = false;

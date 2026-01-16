@@ -190,6 +190,25 @@ func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
 	return nil
 }
 
+// UpdateDisplayName updates the display name of an installed app
+func (s *AppStore) UpdateDisplayName(name, displayName string) error {
+	result, err := s.db.Exec(`
+		UPDATE apps SET display_name = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE name = $2
+	`, displayName, name)
+	if err != nil {
+		return fmt.Errorf("failed to update display name: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("app not found: %s", name)
+	}
+
+	s.notify()
+	return nil
+}
+
 // UpdateIntegrationConfig updates the integration config for an app
 func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string) error {
 	configJSON, err := json.Marshal(config)

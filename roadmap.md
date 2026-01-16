@@ -234,6 +234,7 @@ Target: 10 core apps for alpha release
 ### High Priority
 - [ ] Secrets management (blocking for production)
 - [ ] API authentication (security)
+- [ ] **Concurrent install race condition** - Multiple rapid install requests can corrupt `apps.nix` or cause nixos-rebuild conflicts. Solution: Install queue with batching. See `docs/design/install-queue.md`
 
 ### Medium Priority
 - [x] ~~Switch host-agent from SQLite to system PostgreSQL~~ (Done)

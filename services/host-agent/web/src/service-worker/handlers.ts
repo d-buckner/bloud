@@ -18,7 +18,16 @@ import {
   processRedirectResponse,
   getActiveApp,
   getInterceptConfig,
+  registerClient,
+  getAppForClient,
+  getAppFromReferer,
+  isBloudRoute,
+  REWRITE_APPS,
+  rewriteRootUrl,
+  PassthroughReason,
 } from './core';
+
+import { EMBED_PATH_PREFIX } from './types';
 
 import { injectIntoHtml } from './inject';
 
@@ -213,9 +222,34 @@ export function handleRequest(event: FetchEvent): void {
     return;
   }
 
+  // Check clientId map to identify requests from known app iframes.
+  // This handles cases where the path looks like a Bloud route (e.g., /api/)
+  // but is actually from an embedded app like sonarr/radarr.
+  const clientApp = getAppForClient(event.clientId);
+  if (clientApp && REWRITE_APPS.has(clientApp) && url.origin === origin) {
+    // Only intercept if not already under /embed/ and not a Bloud route we need to preserve
+    if (!url.pathname.startsWith(EMBED_PATH_PREFIX) && !isBloudRoute(url.pathname)) {
+      const fetchUrl = rewriteRootUrl(url, clientApp);
+      handleRootRequest(event, request, fetchUrl);
+      return;
+    }
+  }
+
   const result = getRequestAction(url, origin);
 
   if (result.action === RequestAction.PASSTHROUGH) {
+    // Fallback: check Referer header for web workers and other cases
+    // where activeAppContext isn't set
+    if (result.reason === PassthroughReason.NO_APP_CONTEXT) {
+      const referer = request.headers.get('Referer');
+      const refererApp = getAppFromReferer(referer, origin);
+
+      if (refererApp && REWRITE_APPS.has(refererApp)) {
+        const fetchUrl = rewriteRootUrl(url, refererApp);
+        handleRootRequest(event, request, fetchUrl);
+        return;
+      }
+    }
     return;
   }
 
@@ -235,6 +269,13 @@ export function handleRequest(event: FetchEvent): void {
   // Only handle navigation requests - static assets pass through directly
   if (request.mode !== RequestMode.NAVIGATE) {
     return;
+  }
+
+  // Register the resulting clientId with this app for future requests
+  // This enables tracking requests from web workers spawned by this iframe
+  const resultingClientId = event.resultingClientId;
+  if (resultingClientId && result.appName) {
+    registerClient(resultingClientId, result.appName);
   }
 
   handleEmbedNavigationRequest(

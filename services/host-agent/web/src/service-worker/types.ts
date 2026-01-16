@@ -50,7 +50,7 @@ export const SW_SCRIPT_PATHS = new Set(['/sw.js', '/service-worker.js']);
 export const CONTENT_TYPE_JS = 'application/javascript';
 
 /** Apps that need URL rewriting (don't support BASE_URL config) */
-export const REWRITE_APPS = new Set(['actual-budget', 'adguard-home']);
+export const REWRITE_APPS = new Set(['actual-budget', 'adguard-home', 'sonarr', 'radarr', 'prowlarr']);
 
 /** First path segments reserved for Bloud routes (O(1) lookup) */
 export const RESERVED_SEGMENTS = new Set([
