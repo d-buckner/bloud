@@ -25,6 +25,7 @@
 
 	/* Typography */
 	--font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+	--font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 	--font-mono: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
 
 	/* Spacing scale */

@@ -37,6 +37,7 @@ func (s *Server) setupRoutes() {
 			r.Post("/{name}/install", s.handleInstall)
 			r.Post("/{name}/uninstall", s.handleUninstall)
 			r.Post("/{name}/clear-data", s.handleClearData)
+			r.Patch("/{name}/rename", s.handleRename)
 
 			// Logs streaming
 			r.Get("/{name}/logs", s.handleAppLogs)
@@ -279,6 +280,9 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Trigger reconciliation to configure dependent apps
+	s.triggerReconcile()
+
 	respondJSON(w, http.StatusOK, result)
 }
 
@@ -316,6 +320,9 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusBadRequest, result)
 		return
 	}
+
+	// Trigger reconciliation to update dependent apps
+	s.triggerReconcile()
 
 	respondJSON(w, http.StatusOK, result)
 }
@@ -367,6 +374,36 @@ func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status": "data cleared",
 		"app":    name,
+	})
+}
+
+// handleRename updates the display name of an installed app
+func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	var req struct {
+		DisplayName string `json:"displayName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.DisplayName == "" {
+		respondError(w, http.StatusBadRequest, "displayName is required")
+		return
+	}
+
+	if err := s.appStore.UpdateDisplayName(name, req.DisplayName); err != nil {
+		s.logger.Error("failed to rename app", "app", name, "error", err)
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"status":      "renamed",
+		"app":         name,
+		"displayName": req.DisplayName,
 	})
 }
 

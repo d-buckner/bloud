@@ -24,6 +24,9 @@ type AppStoreInterface interface {
 	// UpdateIntegrationConfig updates the integration config for an app
 	UpdateIntegrationConfig(name string, config map[string]string) error
 
+	// UpdateDisplayName updates the display name of an installed app
+	UpdateDisplayName(name, displayName string) error
+
 	// Uninstall removes an app from the database
 	Uninstall(name string) error
 

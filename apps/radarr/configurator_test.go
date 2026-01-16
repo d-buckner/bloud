@@ -67,7 +67,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	expectedDirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.BloudDataPath, "downloads"),
-		filepath.Join(state.BloudDataPath, "movies"),
+		filepath.Join(state.BloudDataPath, "media", "movies"),
 	}
 
 	for _, dir := range expectedDirs {

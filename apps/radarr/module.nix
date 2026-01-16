@@ -16,10 +16,14 @@ mkBloudApp {
     TZ = "Etc/UTC";
   };
 
+  # Volumes:
+  # - /config: Radarr's internal config (app-specific)
+  # - /downloads: Shared downloads folder with qBittorrent
+  # - /movies: Shared movies folder with Jellyfin
   volumes = cfg: [
     "${cfg.appDataPath}/config:/config:z"
     "${cfg.configPath}/downloads:/downloads:z"
-    "${cfg.configPath}/movies:/movies:z"
+    "${cfg.configPath}/media/movies:/movies:z"
   ];
 
   dataDir = false;

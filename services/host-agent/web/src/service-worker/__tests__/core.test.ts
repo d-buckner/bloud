@@ -5,7 +5,6 @@ import {
   RequestType,
   PassthroughReason,
   RequestMode,
-  REWRITE_APPS,
   RESERVED_SEGMENTS,
   // Types
   type ResponseLike,
@@ -25,6 +24,11 @@ import {
   getActiveApp,
   setInterceptConfig,
   getInterceptConfig,
+  // Client ID tracking
+  registerClient,
+  getAppForClient,
+  getAppFromReferer,
+  getClientMapSize,
 } from '../core';
 import type { InterceptConfig } from '../inject';
 
@@ -330,20 +334,6 @@ describe('service-worker core', () => {
     });
   });
 
-  describe('REWRITE_APPS configuration', () => {
-    it('includes actual-budget', () => {
-      expect(REWRITE_APPS.has('actual-budget')).toBe(true);
-    });
-
-    it('includes adguard-home', () => {
-      expect(REWRITE_APPS.has('adguard-home')).toBe(true);
-    });
-
-    it('does not include miniflux (supports base URL)', () => {
-      expect(REWRITE_APPS.has('miniflux')).toBe(false);
-    });
-  });
-
   describe('setActiveApp and getActiveApp', () => {
     beforeEach(() => {
       resetTestState();
@@ -367,6 +357,94 @@ describe('service-worker core', () => {
       expect(getActiveApp()).toBe('actual-budget');
       setActiveApp('adguard-home');
       expect(getActiveApp()).toBe('adguard-home');
+    });
+  });
+
+  describe('registerClient and getAppForClient', () => {
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('starts with empty map', () => {
+      expect(getClientMapSize()).toBe(0);
+    });
+
+    it('registers and retrieves client-app mapping', () => {
+      registerClient('client-123', 'my-app');
+      expect(getAppForClient('client-123')).toBe('my-app');
+      expect(getClientMapSize()).toBe(1);
+    });
+
+    it('returns null for unregistered clientId', () => {
+      expect(getAppForClient('unknown-client')).toBe(null);
+    });
+
+    it('returns null for undefined clientId', () => {
+      expect(getAppForClient(undefined)).toBe(null);
+    });
+
+    it('can register multiple clients for different apps', () => {
+      registerClient('client-1', 'app-a');
+      registerClient('client-2', 'app-b');
+      registerClient('client-3', 'app-a');
+
+      expect(getAppForClient('client-1')).toBe('app-a');
+      expect(getAppForClient('client-2')).toBe('app-b');
+      expect(getAppForClient('client-3')).toBe('app-a');
+      expect(getClientMapSize()).toBe(3);
+    });
+
+    it('overwrites existing registration for same clientId', () => {
+      registerClient('client-123', 'app-a');
+      expect(getAppForClient('client-123')).toBe('app-a');
+
+      registerClient('client-123', 'app-b');
+      expect(getAppForClient('client-123')).toBe('app-b');
+      expect(getClientMapSize()).toBe(1);
+    });
+
+    it('is cleared by resetTestState', () => {
+      registerClient('client-123', 'my-app');
+      expect(getClientMapSize()).toBe(1);
+
+      resetTestState();
+      expect(getClientMapSize()).toBe(0);
+      expect(getAppForClient('client-123')).toBe(null);
+    });
+  });
+
+  describe('getAppFromReferer', () => {
+    const origin = 'http://localhost:8080';
+
+    it('extracts app from /embed/{app}/ referer', () => {
+      expect(getAppFromReferer('http://localhost:8080/embed/my-app/', origin)).toBe('my-app');
+      expect(getAppFromReferer('http://localhost:8080/embed/other-app/page.html', origin)).toBe('other-app');
+    });
+
+    it('extracts app from /apps/{app}/ referer', () => {
+      expect(getAppFromReferer('http://localhost:8080/apps/my-app/', origin)).toBe('my-app');
+    });
+
+    it('returns null for non-app referer paths', () => {
+      expect(getAppFromReferer('http://localhost:8080/', origin)).toBe(null);
+      expect(getAppFromReferer('http://localhost:8080/api/apps', origin)).toBe(null);
+      expect(getAppFromReferer('http://localhost:8080/catalog', origin)).toBe(null);
+    });
+
+    it('returns null for null referer', () => {
+      expect(getAppFromReferer(null, origin)).toBe(null);
+    });
+
+    it('returns null for cross-origin referer', () => {
+      expect(getAppFromReferer('http://other.example.com/embed/actual-budget/', origin)).toBe(null);
+    });
+
+    it('returns null for different port (cross-origin)', () => {
+      expect(getAppFromReferer('http://localhost:3000/embed/actual-budget/', origin)).toBe(null);
+    });
+
+    it('returns null for invalid URL', () => {
+      expect(getAppFromReferer('not-a-valid-url', origin)).toBe(null);
     });
   });
 
@@ -625,11 +703,35 @@ describe('service-worker core', () => {
       });
 
       it('does not rewrite Bloud API calls even with active app', () => {
-        setActiveApp('adguard-home');
+        setActiveApp('my-app');
         const url = new URL('/api/something', origin);
         const result = getRequestAction(url, origin);
         expect(result.action).toBe(RequestAction.PASSTHROUGH);
         expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+      });
+    });
+
+    describe('Reserved path conflict resolution via clientId', () => {
+      // NOTE: The core getRequestAction function returns PASSTHROUGH for reserved paths
+      // like /api/ because they're in RESERVED_SEGMENTS.
+      // However, handlers.ts uses the clientId map to bypass this:
+      // If a request comes from a registered app iframe (via clientId),
+      // the handler rewrites /api/... to /embed/{app}/api/... BEFORE calling
+      // getRequestAction, allowing the embedded app's API to work.
+
+      it('core logic treats /api as Bloud route (passthrough)', () => {
+        setActiveApp('my-app');
+        const url = new URL('/api/v3/status', origin);
+        const result = getRequestAction(url, origin);
+        expect(result.action).toBe(RequestAction.PASSTHROUGH);
+        expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+      });
+
+      it('clientId can be used to identify app for reserved paths', () => {
+        // handlers.ts checks clientId BEFORE calling getRequestAction
+        // to handle this case - we just verify the clientId mechanism works
+        registerClient('iframe-abc', 'my-app');
+        expect(getAppForClient('iframe-abc')).toBe('my-app');
       });
     });
   });
@@ -667,6 +769,110 @@ describe('service-worker core', () => {
       const url = new URL('/install.html', origin);
       const result = getRequestAction(url, origin);
       expect(result.action).toBe(RequestAction.PASSTHROUGH);
+    });
+  });
+
+  describe('Regression tests: fetchUrl construction', () => {
+    // These tests verify the full rewrite flow - activeApp set -> fetchUrl correctly constructed
+    // This catches regressions where getRequestAction logic is broken but unit tests pass
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('rewrites root request to embed path when activeApp is set', () => {
+      setActiveApp('actual-budget');
+      const url = new URL('/static/app.js', origin);
+      const result = getRequestAction(url, origin);
+
+      expect(result.action).toBe(RequestAction.FETCH);
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/static/app.js');
+      expect(result.type).toBe(RequestType.ROOT);
+    });
+
+    it('preserves query string in rewritten URL', () => {
+      setActiveApp('actual-budget');
+      const url = new URL('/sync?token=abc&ts=123', origin);
+      const result = getRequestAction(url, origin);
+
+      expect(result.action).toBe(RequestAction.FETCH);
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/sync?token=abc&ts=123');
+    });
+
+    it('returns passthrough for app not in REWRITE_APPS', () => {
+      // miniflux supports BASE_URL so it's not in REWRITE_APPS
+      setActiveApp('miniflux');
+      const url = new URL('/entries', origin);
+      const result = getRequestAction(url, origin);
+
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.NO_APP_CONTEXT);
+    });
+
+    it('handles deeply nested paths', () => {
+      setActiveApp('actual-budget');
+      const url = new URL('/static/js/chunks/vendor.abc123.js', origin);
+      const result = getRequestAction(url, origin);
+
+      expect(result.action).toBe(RequestAction.FETCH);
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/static/js/chunks/vendor.abc123.js');
+    });
+  });
+
+  describe('Regression tests: reserved segment conflicts', () => {
+    // These tests document the expected behavior when embedded apps use paths
+    // that conflict with RESERVED_SEGMENTS (like /api, /icons, etc.)
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    it('core logic passes through /api even with activeApp set', () => {
+      // This is expected - handlers.ts uses clientId to bypass this
+      setActiveApp('sonarr');
+      const url = new URL('/api/v3/system/status', origin);
+      const result = getRequestAction(url, origin);
+
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+    });
+
+    it('core logic passes through /icons even with activeApp set', () => {
+      setActiveApp('some-app');
+      const url = new URL('/icons/favicon.png', origin);
+      const result = getRequestAction(url, origin);
+
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+    });
+
+    it('clientId + rewriteRootUrl can bypass reserved segments', () => {
+      // This tests the mechanism handlers.ts uses to bypass reserved segments
+      // When clientId is known, handlers.ts calls rewriteRootUrl directly
+      registerClient('sonarr-iframe', 'sonarr');
+      const appName = getAppForClient('sonarr-iframe');
+
+      expect(appName).toBe('sonarr');
+
+      // Verify rewriteRootUrl produces correct URL for /api path
+      const url = new URL('http://localhost:8080/api/v3/status');
+      const rewrittenUrl = rewriteRootUrl(url, appName!);
+      expect(rewrittenUrl).toBe('http://localhost:8080/embed/sonarr/api/v3/status');
+    });
+
+    it('Referer fallback can identify app for requests without activeApp', () => {
+      // When activeApp is null and clientId is unknown, Referer is the fallback
+      const referer = 'http://localhost:8080/embed/radarr/movies';
+      const appName = getAppFromReferer(referer, origin);
+
+      expect(appName).toBe('radarr');
+
+      // Verify rewriteRootUrl works with the extracted app
+      const url = new URL('http://localhost:8080/api/v3/movie/123');
+      const rewrittenUrl = rewriteRootUrl(url, appName!);
+      expect(rewrittenUrl).toBe('http://localhost:8080/embed/radarr/api/v3/movie/123');
     });
   });
 
