@@ -22,7 +22,7 @@ echo ""
 # Check if project is mounted
 if [ ! -d "$PROJECT_DIR/nixos" ]; then
     echo "Error: Project directory not mounted at $PROJECT_DIR"
-    echo "Run: ./lima/dev vm-start"
+    echo "Run: ./bloud vm-start"
     exit 1
 fi
 
@@ -226,8 +226,8 @@ chmod +x "$VITE_WRAPPER"
 if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
     echo "Dev environment already running!"
     echo ""
-    echo "To view: ./lima/dev attach"
-    echo "To stop: ./lima/dev stop"
+    echo "To view: ./bloud attach"
+    echo "To stop: ./bloud stop"
     exit 0
 fi
 
@@ -256,10 +256,10 @@ echo "  Go API:  http://localhost:3000  (syncing + rebuilding on *.go changes)"
 echo "  Web UI:  http://localhost:5173  (syncing + vite HMR)"
 echo ""
 echo "Commands:"
-echo "  ./lima/dev attach   - View tmux session (Ctrl-B D to detach)"
-echo "  ./lima/dev logs     - View server output"
-echo "  ./lima/dev stop     - Stop dev servers"
-echo "  ./lima/dev status   - Check service status"
+echo "  ./bloud attach   - View tmux session (Ctrl-B D to detach)"
+echo "  ./bloud logs     - View server output"
+echo "  ./bloud stop     - Stop dev servers"
+echo "  ./bloud status   - Check service status"
 echo ""
 echo "Edit files on your Mac - changes sync and reload in the VM!"
 echo ""

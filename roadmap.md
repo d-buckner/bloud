@@ -23,7 +23,7 @@ Future features and improvements planned for Bloud.
 - Traefik reverse proxy with dynamic routing
 - `mkBloudApp` helper for standardized app modules
 - Integration graph with dependency resolution and install planning
-- 7 apps working: Postgres, Traefik, Authentik, Miniflux, Actual Budget, AdGuard Home, Redis
+- 14 apps implemented: Postgres, Redis, Traefik, Authentik, Miniflux, Actual Budget, AdGuard Home, qBittorrent, Jellyfin, Jellyseerr, Affine, Prowlarr, Radarr, Sonarr
 
 ### In Progress
 
@@ -113,7 +113,7 @@ Future features and improvements planned for Bloud.
 - Test database initialization and migrations
 
 ### App Catalog Expansion
-Target: 10 core apps for alpha release
+Target: 10 core apps for alpha release (exceeded - 14 implemented)
 - [x] Postgres (infrastructure)
 - [x] Traefik (infrastructure)
 - [x] Authentik (SSO)
@@ -121,8 +121,14 @@ Target: 10 core apps for alpha release
 - [x] Actual Budget (finance)
 - [x] AdGuard Home (DNS)
 - [x] Redis (infrastructure)
+- [x] Jellyfin (media server)
+- [x] Jellyseerr (media requests)
+- [x] qBittorrent (downloads)
+- [x] Prowlarr (indexer manager)
+- [x] Radarr (movie management)
+- [x] Sonarr (TV management)
+- [x] Affine (notes/whiteboard)
 - [ ] Immich (photos)
-- [ ] Jellyfin (media server)
 - [ ] Nextcloud or alternative (files)
 
 ---
@@ -208,6 +214,7 @@ Target: 10 core apps for alpha release
 - Optimize Traefik config generation
 - Consider lazy-loading for large app catalogs
 - Database query optimization for host-agent
+- **App install performance logging** - Instrument the install flow to track total install time and per-step timing (dependency resolution, NixOS rebuild, container pull, configurator execution, health checks). Surface this in logs and potentially in UI for debugging slow installs.
 
 ### Developer Experience
 - Hot reload improvements for NixOS modules

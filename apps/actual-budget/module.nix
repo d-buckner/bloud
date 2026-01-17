@@ -36,7 +36,8 @@ mkBloudApp {
   environment = cfg: {
     ACTUAL_SERVER_URL = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/actual-budget";
   } // lib.optionalAttrs authentikEnabled {
-    ACTUAL_OPENID_DISCOVERY_URL = "${cfg.externalHost}:${toString cfg.traefikPort}/application/o/actual-budget/.well-known/openid-configuration";
+    # Discovery URL uses auth subdomain to avoid SW rewriting
+    ACTUAL_OPENID_DISCOVERY_URL = "${cfg.authentikExternalHost}:${toString cfg.traefikPort}/application/o/actual-budget/.well-known/openid-configuration";
     ACTUAL_OPENID_CLIENT_ID = cfg.openidClientId;
     ACTUAL_OPENID_CLIENT_SECRET = cfg.openidClientSecret;
     ACTUAL_OPENID_SERVER_HOSTNAME = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/actual-budget";

@@ -12,9 +12,7 @@ import {
   RequestMode,
   EMBED_PATH_PREFIX,
   OAUTH_CALLBACK_PATH,
-  AUTHENTIK_STATIC_PREFIX,
   SW_SCRIPT_PATHS,
-  REWRITE_APPS,
   RESERVED_SEGMENTS,
   type HandleRequestDecision,
   type RequestActionResult,
@@ -27,7 +25,6 @@ export {
   RequestType,
   PassthroughReason,
   RequestMode,
-  REWRITE_APPS,
   RESERVED_SEGMENTS,
 } from './types';
 
@@ -49,19 +46,46 @@ let interceptConfig: InterceptConfig | null = null;
 // Map clientId -> appName for tracking which iframe/worker belongs to which app
 const clientAppMap = new Map<string, string>();
 
+// Cache for needsRewrite config per app (populated via SET_ACTIVE_APP messages)
+const rewriteConfigCache = new Map<string, boolean>();
+
 /** Reset function for testing - clears module state */
 export function resetTestState(): void {
   activeAppContext = null;
   interceptConfig = null;
   clientAppMap.clear();
+  rewriteConfigCache.clear();
 }
 
 /**
  * Set the active app context (called from message handler).
  * This is the single source of truth for which app is currently open.
+ *
+ * @param appName - The app name, or null to clear
+ * @param needsRewrite - Whether the app needs URL rewriting (from metadata).
+ *                       When provided, it's cached for future lookups.
  */
-export function setActiveApp(appName: string | null): void {
+export function setActiveApp(appName: string | null, needsRewrite?: boolean): void {
   activeAppContext = appName;
+
+  // Cache needsRewrite when provided
+  if (appName && needsRewrite !== undefined) {
+    rewriteConfigCache.set(appName, needsRewrite);
+  }
+}
+
+/**
+ * Check if an app needs URL rewriting.
+ * Uses cached config from SET_ACTIVE_APP (derived from routing.stripPrefix).
+ * Defaults to true (most apps need rewriting) if config hasn't been received yet.
+ */
+export function appNeedsRewrite(appName: string): boolean {
+  if (rewriteConfigCache.has(appName)) {
+    return rewriteConfigCache.get(appName)!;
+  }
+
+  // Default to true - most apps don't support BASE_URL
+  return true;
 }
 
 /** Get the active app context (for testing) */
@@ -152,10 +176,8 @@ export function isBloudRoute(pathname: string): boolean {
     return true;
   }
 
-  // Authentik static assets at /static/dist/ - NOT embedded app assets
-  if (pathname.startsWith(AUTHENTIK_STATIC_PREFIX)) {
-    return true;
-  }
+  // Note: Authentik routes are now on auth.localhost subdomain (cross-origin),
+  // so they're passed through automatically via the cross-origin check.
 
   // Extract first segment: /api/foo -> api, /catalog -> catalog
   const secondSlash = pathname.indexOf('/', 1);
@@ -201,7 +223,7 @@ export function shouldHandleRequest(
 
   // URL is under /embed/
   const appName = getAppFromPath(url.pathname);
-  if (!appName || !REWRITE_APPS.has(appName)) {
+  if (!appName || !appNeedsRewrite(appName)) {
     return { handle: false, reason: PassthroughReason.EMBED_NO_REWRITE };
   }
 
@@ -249,7 +271,7 @@ export function getRequestAction(url: URL, origin: string): RequestActionResult 
   const appName = activeAppContext;
 
   // Only rewrite for apps that need it
-  if (!appName || !REWRITE_APPS.has(appName)) {
+  if (!appName || !appNeedsRewrite(appName)) {
     return { action: RequestAction.PASSTHROUGH, reason: PassthroughReason.NO_APP_CONTEXT };
   }
 
@@ -304,6 +326,18 @@ export function isRedirectResponse(response: ResponseLike): boolean {
     return true;
   }
   return response.status >= 300 && response.status < 400;
+}
+
+/**
+ * Check if a redirect URL is to the auth subdomain (cross-origin auth)
+ */
+export function isAuthRedirect(location: string, origin: string): boolean {
+  try {
+    const locationUrl = new URL(location, origin);
+    return locationUrl.hostname.startsWith('auth.');
+  } catch {
+    return false;
+  }
 }
 
 /**

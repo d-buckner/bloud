@@ -79,6 +79,13 @@ http:
       service: host-agent
       priority: 90
 
+    # Authentik outpost endpoints (for OAuth start/callback flows)
+    # Traefik adds X-Forwarded-* headers which the outpost needs to match providers
+    authentik-outpost:
+      rule: "PathPrefix(`/outpost.goauthentik.io`)"
+      service: authentik-outpost
+      priority: 85
+
     # Bloud UI (catch-all, handles /{appname} routes internally)
     bloud-ui:
       rule: "PathPrefix(`/`)"
@@ -120,6 +127,12 @@ http:
       loadBalancer:
         servers:
           - url: "http://localhost:${toString appCfg.uiPort}"
+
+    # Authentik server (serves outpost endpoints via embedded outpost)
+    authentik-outpost:
+      loadBalancer:
+        servers:
+          - url: "http://localhost:9001"
 EOF
       mv ${configPath}/traefik/dynamic/base.yml.tmp ${configPath}/traefik/dynamic/base.yml
 

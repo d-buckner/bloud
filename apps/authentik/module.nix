@@ -162,9 +162,13 @@ in
           AUTHENTIK_BOOTSTRAP_TOKEN = appCfg.bootstrapToken;
           # Enable blueprint discovery
           AUTHENTIK_BLUEPRINTS_DIR = "/blueprints";
-          # External host for OAuth redirects (goes through Traefik for iframe headers)
-          AUTHENTIK_HOST = "http://localhost:${toString traefikCfg.port}";
-          AUTHENTIK_HOST_BROWSER = "http://localhost:${toString traefikCfg.port}";
+          # External host for OAuth redirects - uses subdomain to avoid SW rewriting
+          # auth.localhost is cross-origin from localhost, so SW passes it through
+          AUTHENTIK_HOST = "http://auth.localhost:${toString traefikCfg.port}";
+          AUTHENTIK_HOST_BROWSER = "http://auth.localhost:${toString traefikCfg.port}";
+          # Allow cookies in cross-origin iframes (required for SSO in embedded apps)
+          # SameSite=none normally requires Secure, but browsers treat localhost as secure
+          AUTHENTIK_COOKIE_SAMESITE = "none";
         };
         volumes = [
           "${configPath}/authentik-media:/media:z"

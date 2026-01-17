@@ -1,5 +1,7 @@
 # *Arr Stack Implementation Plan
 
+> **Status: IMPLEMENTED** - All apps (Radarr, Sonarr, Prowlarr, Jellyfin, Jellyseerr) have NixOS modules.
+
 ## Overview
 
 This document outlines the plan for adding Radarr, Sonarr, Prowlarr, Jellyfin, and Jellyseerr to Bloud. These apps form the core media automation stack.

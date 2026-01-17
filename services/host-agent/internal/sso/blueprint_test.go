@@ -179,10 +179,12 @@ func TestDeleteBlueprint_NonExistent(t *testing.T) {
 func TestGenerateOutpostBlueprint(t *testing.T) {
 	dir := t.TempDir()
 
+	// Use different URLs for baseURL and authentikURL to test the distinction
+	// baseURL = main app URL, authentikURL = Authentik SSO URL for OAuth redirects
 	gen := NewBlueprintGenerator(
 		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
+		"http://localhost:8080",        // baseURL - where apps are served
+		"http://auth.localhost:8080",   // authentikURL - where Authentik is served
 		dir,
 	)
 
@@ -218,12 +220,42 @@ func TestGenerateOutpostBlueprint(t *testing.T) {
 		t.Error("Expected App Two provider reference not found")
 	}
 
-	// Verify config includes authentik_host and authentik_host_browser
-	if !strings.Contains(contentStr, `authentik_host: "http://localhost:8080"`) {
-		t.Error("Expected authentik_host config not found")
+	// Verify config uses authentikURL (NOT baseURL) for OAuth redirects
+	// This is critical: the outpost needs to redirect to auth.localhost, not localhost
+	if !strings.Contains(contentStr, `authentik_host: "http://auth.localhost:8080"`) {
+		t.Error("Expected authentik_host to use authentikURL (auth.localhost:8080), not baseURL")
 	}
-	if !strings.Contains(contentStr, `authentik_host_browser: "http://localhost:8080"`) {
-		t.Error("Expected authentik_host_browser config not found")
+	if !strings.Contains(contentStr, `authentik_host_browser: "http://auth.localhost:8080"`) {
+		t.Error("Expected authentik_host_browser to use authentikURL (auth.localhost:8080), not baseURL")
+	}
+}
+
+// TestGenerateOutpostBlueprint_UsesAuthentikURL verifies the embedded outpost
+// uses authentikURL for OAuth redirects (not baseURL).
+func TestGenerateOutpostBlueprint_UsesAuthentikURL(t *testing.T) {
+	dir := t.TempDir()
+
+	baseURL := "http://localhost:8080"
+	authentikURL := "http://auth.localhost:8080"
+
+	gen := NewBlueprintGenerator("test-secret", baseURL, authentikURL, dir)
+
+	err := gen.GenerateOutpostBlueprint([]ForwardAuthProvider{{DisplayName: "Test App"}})
+	if err != nil {
+		t.Fatalf("GenerateOutpostBlueprint failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "bloud-outpost.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	contentStr := string(content)
+
+	if !strings.Contains(contentStr, `authentik_host: "http://auth.localhost:8080"`) {
+		t.Error("authentik_host should use authentikURL")
+	}
+	if !strings.Contains(contentStr, `authentik_host_browser: "http://auth.localhost:8080"`) {
+		t.Error("authentik_host_browser should use authentikURL")
 	}
 }
 

@@ -93,6 +93,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("failed to get API key: %w", err)
 	}
 
+	// Setup Internet Archive indexer for public domain content
+	if err := c.ensureInternetArchiveIndexer(ctx, apiKey); err != nil {
+		fmt.Printf("Note: Could not configure Internet Archive indexer: %v\n", err)
+	}
+
 	// Try to add Radarr as an application (if installed)
 	if err := c.ensureApplication(ctx, apiKey, state, "radarr", "Radarr", 7878); err != nil {
 		// Log but don't fail - Radarr might not be installed
@@ -261,6 +266,152 @@ func (c *Configurator) createApplication(ctx context.Context, apiKey string, app
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to create application: %d - %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// ensureInternetArchiveIndexer adds the Internet Archive as an indexer for public domain content
+func (c *Configurator) ensureInternetArchiveIndexer(ctx context.Context, apiKey string) error {
+	// Check if already configured
+	indexers, err := c.getIndexers(ctx, apiKey)
+	if err != nil {
+		return err
+	}
+
+	for _, idx := range indexers {
+		if idx.Implementation == "InternetArchive" {
+			return nil // Already configured
+		}
+	}
+
+	// Get the schema for Internet Archive indexer
+	schema, err := c.getIndexerSchema(ctx, apiKey, "InternetArchive")
+	if err != nil {
+		return fmt.Errorf("failed to get Internet Archive schema: %w", err)
+	}
+
+	// Configure the indexer fields
+	// Enable "noMagnet" since archive.org often doesn't have magnet links
+	c.setSchemaField(schema, "noMagnet", true)
+
+	// Set categories for movies and TV
+	schema["enable"] = true
+	schema["appProfileId"] = 1 // Default profile
+
+	return c.createIndexer(ctx, apiKey, schema)
+}
+
+type indexer struct {
+	ID             int    `json:"id"`
+	Name           string `json:"name"`
+	Implementation string `json:"implementation"`
+}
+
+func (c *Configurator) getIndexers(ctx context.Context, apiKey string) ([]indexer, error) {
+	url := c.getBaseURL() + "/api/v1/indexer"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var indexers []indexer
+	if err := json.NewDecoder(resp.Body).Decode(&indexers); err != nil {
+		return nil, err
+	}
+
+	return indexers, nil
+}
+
+func (c *Configurator) getIndexerSchema(ctx context.Context, apiKey, implementation string) (map[string]any, error) {
+	url := c.getBaseURL() + "/api/v1/indexer/schema"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var schemas []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&schemas); err != nil {
+		return nil, err
+	}
+
+	for _, schema := range schemas {
+		if schema["implementation"] == implementation {
+			return schema, nil
+		}
+	}
+
+	return nil, fmt.Errorf("schema not found for %s", implementation)
+}
+
+func (c *Configurator) setSchemaField(schema map[string]any, fieldName string, value any) {
+	fields, ok := schema["fields"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, f := range fields {
+		field, ok := f.(map[string]any)
+		if !ok {
+			continue
+		}
+		if field["name"] == fieldName {
+			field["value"] = value
+			return
+		}
+	}
+}
+
+func (c *Configurator) createIndexer(ctx context.Context, apiKey string, indexer map[string]any) error {
+	url := c.getBaseURL() + "/api/v1/indexer"
+
+	body, err := json.Marshal(indexer)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create indexer: %d - %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

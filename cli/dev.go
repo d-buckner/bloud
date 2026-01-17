@@ -72,9 +72,18 @@ func getDevConfigPath() (string, error) {
 func cmdStart() int {
 	ctx := context.Background()
 
-	configPath, err := getDevConfigPath()
+	projectRoot, err := getProjectRoot()
 	if err != nil {
-		errorf("Could not find config: %v", err)
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	configPath := filepath.Join(projectRoot, "lima", "nixos.yaml")
+
+	// Run pre-flight checks before attempting to start
+	preflightResult := vm.RunPreflightChecks(projectRoot)
+	if preflightResult.HasErrors() {
+		vm.PrintPreflightErrors(preflightResult)
 		return 1
 	}
 
@@ -336,4 +345,98 @@ func isPortForwardingRunning(port int) bool {
 	cmd := localExec("pgrep", "-f", pattern)
 	output, err := cmd.CombinedOutput()
 	return err == nil && strings.TrimSpace(string(output)) != ""
+}
+
+func cmdInstall(args []string) int {
+	if len(args) < 1 {
+		errorf("Usage: ./bloud install <app-name>")
+		return 1
+	}
+
+	appName := args[0]
+	return installApp(devVMName, 3000, appName)
+}
+
+func cmdUninstall(args []string) int {
+	if len(args) < 1 {
+		errorf("Usage: ./bloud uninstall <app-name>")
+		return 1
+	}
+
+	appName := args[0]
+	return uninstallApp(devVMName, 3000, appName)
+}
+
+// installApp calls the host-agent API to install an app
+func installApp(vmName string, apiPort int, appName string) int {
+	if !vm.IsRunning(vmName) {
+		errorf("VM is not running. Start with: ./bloud start")
+		return 1
+	}
+
+	log(fmt.Sprintf("Installing %s...", appName))
+
+	// Call the host-agent API
+	cmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/install`, apiPort, appName)
+	output, err := vm.Exec(vmName, cmd)
+	if err != nil {
+		errorf("Failed to call install API: %v", err)
+		return 1
+	}
+
+	// Parse response - last line is HTTP status code
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 1 {
+		errorf("Empty response from API")
+		return 1
+	}
+
+	httpCode := lines[len(lines)-1]
+	responseBody := strings.Join(lines[:len(lines)-1], "\n")
+
+	if httpCode != "200" && httpCode != "201" {
+		errorf("Install failed (HTTP %s): %s", httpCode, responseBody)
+		return 1
+	}
+
+	log(fmt.Sprintf("Successfully installed %s", appName))
+	fmt.Println(responseBody)
+	return 0
+}
+
+// uninstallApp calls the host-agent API to uninstall an app
+func uninstallApp(vmName string, apiPort int, appName string) int {
+	if !vm.IsRunning(vmName) {
+		errorf("VM is not running. Start with: ./bloud start")
+		return 1
+	}
+
+	log(fmt.Sprintf("Uninstalling %s...", appName))
+
+	// Call the host-agent API
+	cmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/uninstall`, apiPort, appName)
+	output, err := vm.Exec(vmName, cmd)
+	if err != nil {
+		errorf("Failed to call uninstall API: %v", err)
+		return 1
+	}
+
+	// Parse response - last line is HTTP status code
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 1 {
+		errorf("Empty response from API")
+		return 1
+	}
+
+	httpCode := lines[len(lines)-1]
+	responseBody := strings.Join(lines[:len(lines)-1], "\n")
+
+	if httpCode != "200" {
+		errorf("Uninstall failed (HTTP %s): %s", httpCode, responseBody)
+		return 1
+	}
+
+	log(fmt.Sprintf("Successfully uninstalled %s", appName))
+	fmt.Println(responseBody)
+	return 0
 }

@@ -24,67 +24,19 @@ healthCheck:
   interval: 2
   timeout: 90
 
-# Traefik routes for Authentik - system service needs root-level routes for OAuth/OIDC
+# Traefik routes for Authentik - uses subdomain to avoid SW rewriting issues
+# All Authentik traffic goes to auth.localhost which is cross-origin from localhost,
+# so the service worker naturally passes it through without interference.
 traefikConfig:
   http:
     routers:
-      # Authentik embedded outpost for forward auth
-      # Note: Forward auth middleware calls this directly on port 9001, but we also
-      # expose it through Traefik for the authentication redirect flow
-      authentik-outpost:
-        rule: "PathPrefix(`/outpost.goauthentik.io`)"
+      # Main Authentik router - catches all traffic to auth.localhost
+      authentik:
+        rule: "Host(`auth.localhost`)"
         middlewares:
           - authentik-iframe-headers
         service: authentik
-        priority: 96
-
-      # Authentik API v3 endpoints (must have higher priority than Bloud /api routes)
-      authentik-api:
-        rule: "PathPrefix(`/api/v3`)"
-        middlewares:
-          - authentik-iframe-headers
-        service: authentik
-        priority: 95
-
-      # Authentik OAuth/OIDC endpoints
-      authentik-application:
-        rule: "PathPrefix(`/application`)"
-        middlewares:
-          - authentik-iframe-headers
-        service: authentik
-        priority: 85
-
-      # Authentik flows (login, logout, etc.) - /flows/ for backend, /if/ for frontend
-      authentik-flows:
-        rule: "PathPrefix(`/flows`)"
-        middlewares:
-          - authentik-iframe-headers
-        service: authentik
-        priority: 85
-
-      # Authentik Identity Frontend UI
-      authentik-if:
-        rule: "PathPrefix(`/if`)"
-        middlewares:
-          - authentik-iframe-headers
-        service: authentik
-        priority: 85
-
-      # Authentik internal endpoints
-      authentik-internal:
-        rule: "PathPrefix(`/-`)"
-        middlewares:
-          - authentik-iframe-headers
-        service: authentik
-        priority: 85
-
-      # Authentik static assets
-      authentik-static:
-        rule: "PathPrefix(`/static`)"
-        middlewares:
-          - authentik-iframe-headers
-        service: authentik
-        priority: 85
+        priority: 100
 
     middlewares:
       # Allow Authentik to be embedded in iframes from same origin
@@ -93,8 +45,8 @@ traefikConfig:
           customResponseHeaders:
             # Clear X-Frame-Options (CSP takes precedence in modern browsers)
             X-Frame-Options: ""
-            # Allow framing from same origin
-            Content-Security-Policy: "frame-ancestors 'self' http://localhost:* https://localhost:*"
+            # Allow framing from same origin (both localhost and auth.localhost)
+            Content-Security-Policy: "frame-ancestors 'self' http://localhost:* https://localhost:* http://auth.localhost:* https://auth.localhost:*"
             # COEP required when parent has COEP (Actual Budget uses it for SharedArrayBuffer)
             Cross-Origin-Embedder-Policy: "credentialless"
             Cross-Origin-Resource-Policy: "cross-origin"

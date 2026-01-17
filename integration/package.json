@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "test": "../scripts/run-integration-tests",
+    "test:quick": "SKIP_VM_LIFECYCLE=true npx playwright test",
     "test:keep": "KEEP_TEST_VM=true ../scripts/run-integration-tests",
     "test:headed": "KEEP_TEST_VM=true ../scripts/run-integration-tests --headed",
     "test:debug": "KEEP_TEST_VM=true ../scripts/run-integration-tests --debug",
