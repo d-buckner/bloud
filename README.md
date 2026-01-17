@@ -88,6 +88,8 @@ Development uses [Lima](https://lima-vm.io/) to run a NixOS VM on your local mac
 
 ### Quick Start
 
+The `npm run setup` command checks all prerequisites and offers to download the pre-built NixOS VM image (~2.5GB download, ~7GB extracted).
+
 ```bash
 # 1. Clone and build CLI, check prerequisites and download VM image
 git clone https://github.com/d-buckner/bloud.git
@@ -97,8 +99,6 @@ npm run setup
 # 3. Start development environment
 ./bloud start
 ```
-
-The `./bloud setup` command checks all prerequisites and offers to download the pre-built NixOS VM image (~2.5GB download, ~7GB extracted).
 
 ### Building the Image Manually
 
