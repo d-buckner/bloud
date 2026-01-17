@@ -22,7 +22,7 @@ on:
 jobs:
   build-aarch64:
     if: ${{ inputs.architecture == 'aarch64' || inputs.architecture == 'both' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Free disk space
         run: |
@@ -68,7 +68,7 @@ jobs:
 
   build-x86_64:
     if: ${{ inputs.architecture == 'x86_64' || inputs.architecture == 'both' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Free disk space
         run: |
