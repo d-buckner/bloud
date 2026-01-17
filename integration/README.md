@@ -39,8 +39,8 @@ This deletes and recreates the VM from scratch. Takes longer but guarantees pris
 npm run test:quick
 ```
 
-Use this when you already have the dev environment running via `./lima/dev start`.
-Still resets app state before tests.
+Use this when you already have the dev environment running via `./bloud start`.
+Runs tests against the current state without resetting.
 
 ### Keep Services Running After Tests
 
@@ -77,21 +77,20 @@ npx playwright test -g "can install app"
 
 | Variable | Description |
 |----------|-------------|
-| `FRESH_VM=true` | Delete and recreate VM for clean state |
-| `SKIP_VM_SETUP=true` | Skip all VM management |
-| `SKIP_RESET=true` | Skip uninstalling apps before tests |
-| `KEEP_VM=true` | Keep dev services running after tests |
-| `BASE_URL` | Override web UI URL (default: http://localhost:5173) |
-| `API_URL` | Override API URL (default: http://localhost:3000) |
+| `KEEP_TEST_VM=true` | Keep test VM running after tests (for debugging) |
+| `SKIP_VM_LIFECYCLE=true` | Skip VM management (used by `test:quick`) |
+| `BASE_URL` | Override web UI URL (default: http://localhost:8081) |
+| `API_URL` | Override API URL (default: http://localhost:3001) |
 
 ## Test Organization
 
 ```
 tests/
-  catalog.spec.ts       # App catalog and installation
-  home.spec.ts          # Home page and app launcher
-  embedded-apps.spec.ts # Embedded app views and URL rewriting
-  uninstall.spec.ts     # App uninstallation
+  catalog.spec.ts          # App catalog and installation
+  home.spec.ts             # Home page and app launcher
+  embedded-apps.spec.ts    # Embedded app views and URL rewriting
+  app-functionality.spec.ts # Per-app login and basic functionality
+  uninstall.spec.ts        # App uninstallation
 ```
 
 ## Debugging Failed Tests
@@ -112,9 +111,15 @@ npm run report
 
 ### User Apps Tested
 
-- **miniflux** - RSS reader (supports BASE_URL, no rewriting needed)
+- **miniflux** - RSS reader (supports BASE_URL, native OIDC SSO)
 - **actual-budget** - Budgeting app (requires URL rewriting)
 - **adguard-home** - DNS ad-blocker (requires URL rewriting)
+- **jellyfin** - Media server (requires URL rewriting, LDAP SSO)
+- **qbittorrent** - Torrent client (requires URL rewriting, forward-auth SSO)
+- **affine** - Knowledge base (requires URL rewriting, native OIDC SSO)
+- **radarr** - Movie manager (requires URL rewriting, forward-auth SSO)
+- **sonarr** - TV show manager (requires URL rewriting, forward-auth SSO)
+- **prowlarr** - Indexer manager (requires URL rewriting, forward-auth SSO)
 
 ### Key User Flows
 
@@ -122,5 +127,6 @@ npm run report
 2. **App Installation** - Install from catalog, handle integration choices
 3. **App Launching** - Click to open in iframe viewer
 4. **Embedded App Navigation** - URL rewriting for apps without BASE_URL support
-5. **App Uninstallation** - Context menu uninstall, confirmation modal
-6. **Real-time Updates** - SSE-driven UI updates
+5. **App Functionality** - Login forms, basic UI interactions
+6. **App Uninstallation** - Context menu uninstall, confirmation modal
+7. **Real-time Updates** - SSE-driven UI updates

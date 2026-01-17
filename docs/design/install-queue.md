@@ -1,5 +1,7 @@
 # Design: Install Queue with Batching
 
+> **Status: NOT IMPLEMENTED** - Planned feature to prevent concurrent install race conditions.
+
 ## Overview
 
 Handle concurrent app install requests safely by queuing requests and batching them into single nixos-rebuild operations. This prevents race conditions where multiple simultaneous installs could corrupt the generated Nix config or cause nixos-rebuild conflicts.

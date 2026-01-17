@@ -1,26 +1,17 @@
 # Lima configuration for NixOS development VM
 #
-# SETUP INSTRUCTIONS:
+# Don't use this file directly - use the ./bloud CLI instead:
+#   ./bloud start    # Creates VM and starts services
+#   ./bloud stop     # Stops services
+#   ./bloud status   # Shows what's running
 #
-# 1. Build the NixOS image (requires a Linux machine or VM):
-#    nix build github:kasuboski/nixos-lima#packages.aarch64-linux.img
-#    mkdir -p lima/imgs
-#    cp $(readlink result)/nixos.img lima/imgs/nixos-aarch64.img
-#
-# 2. Start the VM:
-#    limactl start --name=bloud lima/nixos.yaml
-#
-# 3. SSH into the VM and apply our configuration:
-#    limactl shell bloud
-#    sudo nixos-rebuild switch --flake /home/bloud.linux/bloud#vm-dev
-#
-# 4. The VM is now running with full bloud services.
+# See README.md for setup instructions including how to build the NixOS image.
 #
 
 # VM resources
 cpus: 4
 memory: 4GiB
-disk: 50GiB
+disk: 25GiB
 
 # Architecture (auto-detected: aarch64 for Apple Silicon, x86_64 for Intel)
 arch: default

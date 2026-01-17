@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PROJECT_ROOT = join(__dirname, '../..');
-const LIMA_TEST = join(PROJECT_ROOT, 'lima/test');
+const BLOUD_CLI = join(PROJECT_ROOT, 'bloud');
 const STATE_FILE = join(__dirname, '../.test-state.json');
 
 interface TestState {
@@ -32,8 +32,8 @@ function exec(cmd: string) {
   }
 }
 
-function runLimaTest(command: string) {
-  exec(`${LIMA_TEST} ${command}`);
+function runBloudTest(command: string) {
+  exec(`${BLOUD_CLI} test ${command}`);
 }
 
 function loadState(): TestState | null {
@@ -75,13 +75,13 @@ export default async function globalTeardown() {
     log('  Web UI: http://localhost:8081');
     log('  API: http://localhost:3001');
     log('');
-    log('To destroy later: ./lima/test vm-destroy');
+    log('To destroy later: ./bloud test stop');
     return;
   }
 
   // Destroy the test VM completely
   log('Destroying test VM...');
-  runLimaTest('vm-destroy');
+  runBloudTest('stop');
 
   log('Teardown complete - test VM destroyed');
 }

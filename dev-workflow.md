@@ -4,7 +4,7 @@
 
 > **Note:** This document describes the *planned* development workflow. The scripts referenced
 > (e.g., `scripts/nixos-deploy-test.sh`) have not yet been created. For current development,
-> use the Lima VM workflow documented in `CLAUDE.md` and `lima/README.md` with `./lima/dev`.
+> use the Lima VM workflow documented in `CLAUDE.md` and `README.md` with `./bloud`.
 
 ---
 

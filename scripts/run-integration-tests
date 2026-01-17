@@ -11,13 +11,13 @@
 #   ./scripts/run-integration-tests              # Full test run
 #   KEEP_TEST_VM=true ./scripts/run-integration-tests  # Keep VM for debugging
 #
-# This can run in parallel with ./lima/dev (dev uses ports 3000/5173/8080)
+# This can run in parallel with ./bloud (dev uses ports 3000/5173/8080)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-LIMA_TEST="$PROJECT_ROOT/lima/test"
+BLOUD_CLI="$PROJECT_ROOT/bloud"
 INTEGRATION_DIR="$PROJECT_ROOT/integration"
 
 # Colors
@@ -46,11 +46,11 @@ cleanup() {
         log "  Web UI: http://localhost:8081"
         log "  API:    http://localhost:3001"
         log ""
-        log "To destroy later: ./lima/test vm-destroy"
+        log "To destroy later: ./bloud test stop"
     else
         header "Cleanup"
         log "Destroying test VM..."
-        "$LIMA_TEST" vm-destroy 2>/dev/null || true
+        "$BLOUD_CLI" test stop 2>/dev/null || true
     fi
 
     # Calculate duration
@@ -77,14 +77,10 @@ header "Integration Tests"
 echo "Test ports: API=3001, Vite=5174, Traefik=8081"
 echo ""
 
-# Step 1: Create fresh test VM
-header "Creating Fresh Test VM"
+# Step 1: Start test environment (creates VM if needed)
+header "Starting Test Environment"
 log "This may take a few minutes on first run..."
-"$LIMA_TEST" vm-create
-
-# Step 2: Start test services
-header "Starting Test Services"
-"$LIMA_TEST" start
+"$BLOUD_CLI" test start
 
 # Step 3: Wait for services to be ready
 header "Waiting for Services"

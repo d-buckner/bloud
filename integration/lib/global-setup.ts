@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PROJECT_ROOT = join(__dirname, '../..');
-const LIMA_TEST = join(PROJECT_ROOT, 'lima/test');
+const BLOUD_CLI = join(PROJECT_ROOT, 'bloud');
 const STATE_FILE = join(__dirname, '../.test-state.json');
 
 // Test ports (different from dev)
@@ -39,8 +39,8 @@ function exec(cmd: string, options: { timeout?: number } = {}) {
   }
 }
 
-function runLimaTest(command: string, timeout = 120000): string {
-  return exec(`${LIMA_TEST} ${command}`, { timeout });
+function runBloudTest(command: string, timeout = 120000): string {
+  return exec(`${BLOUD_CLI} test ${command}`, { timeout });
 }
 
 async function waitForService(
@@ -114,12 +114,12 @@ export default async function globalSetup() {
     } else {
       // Create fresh test VM for maximum isolation
       log('Creating fresh test VM (this may take a few minutes)...');
-      runLimaTest('vm-create', 600000); // 10 minute timeout for VM creation + NixOS rebuild
+      runBloudTest('start', 600000); // 10 minute timeout for VM creation + NixOS rebuild
       state.vmCreated = true;
 
       // Start test services
       log('Starting test services...');
-      runLimaTest('start', 60000);
+      // Services started as part of ./bloud test start
 
       // Wait for services on test ports
       log('Waiting for services to be ready...');

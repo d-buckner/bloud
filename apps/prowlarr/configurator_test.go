@@ -650,11 +650,22 @@ func TestConfigurator_PostStart_noArrs(t *testing.T) {
 	os.MkdirAll(prowlarrConfigDir, 0755)
 	os.WriteFile(filepath.Join(prowlarrConfigDir, "config.xml"), []byte(`<Config><ApiKey>prowlarr-key</ApiKey></Config>`), 0644)
 
-	var apiCalled bool
+	var applicationAPICalled bool
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		apiCalled = true
-		json.NewEncoder(w).Encode([]application{})
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/indexer"):
+			// Indexer API calls are expected (for Internet Archive setup)
+			if r.URL.Path == "/api/v1/indexer/schema" {
+				// Return empty schema list - indexer setup will fail gracefully
+				json.NewEncoder(w).Encode([]map[string]any{})
+			} else {
+				json.NewEncoder(w).Encode([]indexer{})
+			}
+		case r.URL.Path == "/api/v1/applications":
+			applicationAPICalled = true
+			json.NewEncoder(w).Encode([]application{})
+		}
 	}))
 	defer server.Close()
 
@@ -671,8 +682,8 @@ func TestConfigurator_PostStart_noArrs(t *testing.T) {
 		t.Fatalf("PostStart() error = %v", err)
 	}
 
-	// API should not have been called since no apps to configure
-	if apiCalled {
-		t.Error("API should not be called when no *arr apps exist")
+	// Application API should not have been called since no arr apps to configure
+	if applicationAPICalled {
+		t.Error("Application API should not be called when no *arr apps exist")
 	}
 }

@@ -3,6 +3,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	test: {
+		exclude: ['e2e/**', 'node_modules/**']
+	},
 	ssr: {
 		// Fix Vite 6 SSR circular dependency with Svelte 5 stores
 		noExternal: ['svelte']

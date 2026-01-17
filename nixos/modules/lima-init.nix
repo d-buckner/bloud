@@ -111,7 +111,7 @@ in
 
   # Lima guest agent for port forwarding
   # NOTE: Disabled because the nixpkgs 'lima' package doesn't include lima-guestagent
-  # (that's the host-side package). Use SSH port forwarding instead: ./lima/dev ports
+  # (that's the host-side package). The ./bloud CLI handles SSH port forwarding automatically.
   # TODO: Build lima-guestagent from source if native port forwarding is needed
   # systemd.services.lima-guestagent = { ... };
 

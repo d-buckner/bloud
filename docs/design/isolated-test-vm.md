@@ -1,5 +1,7 @@
 # Isolated Test VM Design
 
+> **Status: IMPLEMENTED** - Test VM available via `./bloud test` commands.
+
 ## Overview
 
 Create a completely isolated test environment using a separate NixOS VM that can run integration tests in parallel with the development environment on different ports.
@@ -28,7 +30,7 @@ Run a separate test VM (`bloud-test`) alongside the dev VM (`bloud`) on differen
 │  Port 5173 → Vite                   │  Port 5174 → Vite         │
 │  Port 8080 → Traefik                │  Port 8081 → Traefik      │
 │                                     │                           │
-│  ./lima/dev                         │  ./lima/test              │
+│  ./bloud                            │  ./bloud test             │
 └─────────────────────────────────────┴───────────────────────────┘
 ```
 
@@ -101,18 +103,18 @@ Copy from `vm-dev.nix` with modifications:
 }
 ```
 
-### 3. Test VM Management Script
+### 3. Test VM Management CLI
 
-**File**: `lima/test`
+**CLI**: `./bloud test <command>`
 
 Commands:
-- `vm-create` - Create fresh test VM (deletes existing first)
-- `vm-destroy` - Destroy test VM completely
-- `start` - Start test services (Go + Vite on test ports)
-- `stop` - Stop test services
+- `start` - Start test environment (creates VM if needed)
+- `stop` - Stop test environment (destroys VM)
 - `status` - Check test VM status
 - `shell` - SSH into test VM
 - `rebuild` - Rebuild NixOS config
+- `logs` - View service logs
+- `attach` - Attach to tmux session
 
 Key implementation details:
 - VM name: `bloud-test`
@@ -171,16 +173,16 @@ export default defineConfig({
 **File**: `integration/lib/global-setup.ts`
 
 New behavior:
-1. Create fresh test VM (`./lima/test vm-create`)
-2. Start test services (`./lima/test start`)
+1. Create fresh test VM (`./bloud test vm-create`)
+2. Start test services (`./bloud test start`)
 3. Wait for services on test ports (3001, 5174, 8081)
 4. No app state reset needed (fresh VM = clean state)
 
 **File**: `integration/lib/global-teardown.ts`
 
 New behavior:
-1. Stop test services (`./lima/test stop`)
-2. Destroy test VM (`./lima/test vm-destroy`)
+1. Stop test services (`./bloud test stop`)
+2. Destroy test VM (`./bloud test vm-destroy`)
 3. `KEEP_TEST_VM=true` preserves VM for debugging
 
 ## Data Isolation
@@ -199,7 +201,7 @@ Test VM uses separate data directories:
 |------|--------|---------|
 | `scripts/run-integration-tests` | Create | Main test runner script |
 | `lima/test-nixos.yaml` | Create | Lima config for test VM |
-| `lima/test` | Create | Test VM management script |
+| `cli/test.go` | Create | Test VM management (Go CLI) |
 | `lima/start-test.sh` | Create | Start services on test ports |
 | `nixos/vm-test.nix` | Create | NixOS config with test ports |
 | `flake.nix` | Modify | Add vm-test configuration |
@@ -229,7 +231,7 @@ npm test
 ### Running tests while developing
 ```bash
 # Terminal 1: Dev environment (ports 3000/5173/8080)
-./lima/dev start
+./bloud start
 
 # Terminal 2: Tests (ports 3001/5174/8081)
 cd integration && npm test
@@ -241,33 +243,33 @@ cd integration && npm test
 KEEP_TEST_VM=true npm test
 
 # Then inspect
-./lima/test shell
-./lima/test logs
-./lima/test status
+./bloud test shell
+./bloud test logs
+./bloud test status
 ```
 
 ### Manual test VM management
 ```bash
 # Create test VM manually
-./lima/test vm-create
+./bloud test vm-create
 
 # Start services
-./lima/test start
+./bloud test start
 
 # Run specific test
 cd integration && npx playwright test tests/home.spec.ts
 
 # Clean up
-./lima/test vm-destroy
+./bloud test vm-destroy
 ```
 
 ## Verification Checklist
 
 After implementation, verify:
 
-- [ ] `./lima/dev start` works on ports 3000/5173/8080
-- [ ] `./lima/test vm-create` creates separate VM named `bloud-test`
-- [ ] `./lima/test start` works on ports 3001/5174/8081
+- [x] `./bloud start` works on ports 3000/5173/8080
+- [x] `./bloud test start` creates separate VM named `bloud-test`
+- [x] `./bloud test start` works on ports 3001/5174/8081
 - [ ] Both VMs can run simultaneously without conflicts
 - [ ] `npm test` creates fresh VM, runs tests, destroys VM
 - [ ] `KEEP_TEST_VM=true npm test` preserves VM after tests

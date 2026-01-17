@@ -1,0 +1,160 @@
+name: Build NixOS VM Image
+
+# Manual trigger only - this is an expensive build (~30 min)
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: 'Architecture to build'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - aarch64
+          - x86_64
+          - both
+      create_release:
+        description: 'Create/update GitHub release'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build-aarch64:
+    if: ${{ inputs.architecture == 'aarch64' || inputs.architecture == 'both' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Install QEMU for aarch64 emulation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static binfmt-support
+          sudo update-binfmts --enable qemu-aarch64
+
+      - name: Build aarch64 image
+        run: |
+          nix build github:kasuboski/nixos-lima#packages.aarch64-linux.img \
+            --extra-platforms aarch64-linux \
+            --system aarch64-linux
+          cp $(readlink result)/nixos.img nixos-24.11-aarch64.img
+
+      - name: Compress image
+        run: |
+          gzip -9 nixos-24.11-aarch64.img
+          ls -lh nixos-24.11-aarch64.img.gz
+
+      - name: Generate checksum
+        run: |
+          sha256sum nixos-24.11-aarch64.img.gz > nixos-24.11-aarch64.img.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nixos-image-aarch64
+          path: |
+            nixos-24.11-aarch64.img.gz
+            nixos-24.11-aarch64.img.gz.sha256
+
+  build-x86_64:
+    if: ${{ inputs.architecture == 'x86_64' || inputs.architecture == 'both' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build x86_64 image
+        run: |
+          nix build github:kasuboski/nixos-lima#packages.x86_64-linux.img
+          cp $(readlink result)/nixos.img nixos-24.11-x86_64.img
+
+      - name: Compress image
+        run: |
+          gzip -9 nixos-24.11-x86_64.img
+          ls -lh nixos-24.11-x86_64.img.gz
+
+      - name: Generate checksum
+        run: |
+          sha256sum nixos-24.11-x86_64.img.gz > nixos-24.11-x86_64.img.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nixos-image-x86_64
+          path: |
+            nixos-24.11-x86_64.img.gz
+            nixos-24.11-x86_64.img.gz.sha256
+
+  release:
+    needs: [build-aarch64, build-x86_64]
+    # Run even if one arch was skipped, but only if release requested and at least one succeeded
+    if: ${{ always() && inputs.create_release && (needs.build-aarch64.result == 'success' || needs.build-x86_64.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download aarch64 artifact
+        if: ${{ needs.build-aarch64.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: nixos-image-aarch64
+          path: artifacts/
+
+      - name: Download x86_64 artifact
+        if: ${{ needs.build-x86_64.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: nixos-image-x86_64
+          path: artifacts/
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vm-images
+          name: NixOS VM Images
+          body: |
+            Pre-built NixOS VM images for Bloud development.
+
+            ## Download
+
+            Use `./bloud setup` to automatically download the right image for your system.
+
+            Or download manually:
+            - **Apple Silicon (M1/M2/M3):** `nixos-24.11-aarch64.img.gz`
+            - **Intel/AMD:** `nixos-24.11-x86_64.img.gz`
+
+            ## Manual Installation
+
+            ```bash
+            mkdir -p lima/imgs
+            gunzip -c nixos-24.11-<arch>.img.gz > lima/imgs/nixos-24.11-lima.img
+            ```
+
+            ## Verification
+
+            SHA256 checksums are provided for each image.
+          files: artifacts/*
+          draft: false
+          prerelease: false

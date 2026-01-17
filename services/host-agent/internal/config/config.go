@@ -17,9 +17,10 @@ type Config struct {
 	NixosPath    string // Path to nixos/ modules directory
 	DatabaseURL  string // PostgreSQL connection string
 	// SSO configuration
-	SSOHostSecret  string // Master secret for deriving client secrets
-	SSOBaseURL     string // Base URL for callbacks (e.g., "http://localhost:8080")
-	AuthentikToken string // Authentik API token for SSO cleanup
+	SSOHostSecret    string // Master secret for deriving client secrets
+	SSOBaseURL       string // Base URL for callbacks (e.g., "http://localhost:8080")
+	SSOAuthentikURL  string // Authentik external URL for discovery (e.g., "http://auth.localhost:8080")
+	AuthentikToken   string // Authentik API token for SSO cleanup
 	// Authentik bootstrap configuration
 	AuthentikPort          int
 	AuthentikAdminPassword string
@@ -50,6 +51,7 @@ func Load() *Config {
 		DatabaseURL:            getEnv("DATABASE_URL", "postgres://apps:testpass123@localhost:5432/bloud?sslmode=disable"),
 		SSOHostSecret:          getEnv("BLOUD_SSO_HOST_SECRET", "dev-secret-change-in-production"),
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
+		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://auth.localhost:8080"),
 		AuthentikToken:         getEnv("BLOUD_AUTHENTIK_TOKEN", "test-bootstrap-token-change-in-production"),
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: getEnv("BLOUD_AUTHENTIK_ADMIN_PASSWORD", "password"),

@@ -1,6 +1,6 @@
 # Lima configuration for NixOS test VM
 #
-# NOTE: This is a template. The lima/test script generates the actual config
+# NOTE: This is a template. The ./bloud test command generates the actual config
 # by substituting __PROJECT_ROOT__ with the actual path.
 #
 # Test ports:
@@ -13,7 +13,7 @@
 # Note: disk must be >= 15GB for NixOS + Authentik + other container images
 cpus: 8
 memory: 8GiB
-disk: 15GiB
+disk: 20GiB
 
 # Architecture (auto-detected: aarch64 for Apple Silicon, x86_64 for Intel)
 arch: default

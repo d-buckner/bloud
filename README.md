@@ -22,11 +22,11 @@ Self-hosting is overwhelming. Setting up Immich, Nextcloud, and Jellyfin takes h
 
 ## What's Working Now
 
-- **NixOS + Rootless Podman** - Declarative configuration with atomic rollback
+- **NixOS + Rootless Pdman** - Declarative configuration with atomic rollback
 - **Automatic SSO** - Apps pre-configured with Authentik OAuth
 - **Shared Infrastructure** - Single PostgreSQL/Redis instance per host
 - **Service Dependencies** - Health checks, proper startup ordering
-- **9+ Apps** with NixOS modules and integrations
+- **14 Apps** with NixOS modules and integrations
 
 ## Apps
 
@@ -34,7 +34,7 @@ Self-hosting is overwhelming. Setting up Immich, Nextcloud, and Jellyfin takes h
 |----------|------|
 | **Infrastructure** | PostgreSQL, Redis, Traefik, Authentik |
 | **Media** | Jellyfin, Jellyseerr |
-| **Productivity** | Miniflux (RSS), Actual Budget |
+| **Productivity** | Miniflux (RSS), Actual Budget, Affine |
 | **Network** | AdGuard Home |
 
 ## What's Not Built Yet
@@ -73,36 +73,100 @@ The result: enable apps in a config file, rebuild, and the system figures out wh
 
 ## Development
 
-Development uses [Lima](https://lima-vm.io/) to run a NixOS VM. The `./bloud` CLI manages the VM and development services.
+Development uses [Lima](https://lima-vm.io/) to run a NixOS VM on your local machine. The `./bloud` CLI manages the VM and development services.
 
-**macOS:**
+### Prerequisites
+
+| Requirement | macOS | Linux |
+|-------------|-------|-------|
+| **Lima** | `brew install lima` | [See install guide](https://lima-vm.io/docs/installation/) |
+| **Node.js 18+** | `brew install node` | `sudo apt install nodejs npm` |
+| **Go 1.21+** | `brew install go` | `sudo apt install golang` |
+| **NixOS VM Image** | See below | See below |
+
+> **Note:** `sshpass` is no longer required. SSH key auth is used automatically.
+
+### Quick Start
+
 ```bash
-brew install lima
-```
-
-**Linux:**
-```bash
-# Arch
-pacman -S lima
-
-# Ubuntu/Debian - see https://lima-vm.io/docs/installation/
-```
-
-**Then:**
-```bash
-# Clone and build CLI
+# 1. Clone and build CLI
 git clone https://github.com/d-buckner/bloud.git
 cd bloud
-cd cli && go build -o ../bloud . && cd ..
+npm run setup
 
-# Start development environment (creates VM on first run)
+# 2. Check prerequisites and download VM image
+./bloud setup
+
+# 3. Start development environment
 ./bloud start
-
-# Access via Traefik
-open http://localhost:8080
 ```
 
-See [dev-workflow.md](dev-workflow.md) for detailed setup.
+The `./bloud setup` command checks all prerequisites and offers to download the pre-built NixOS VM image (~2.5GB download, ~7GB extracted).
+
+### Building the Image Manually
+
+If pre-built images aren't available or you prefer to build yourself:
+
+**If you have a Linux machine with Nix:**
+```bash
+cd lima && ./build-image.sh --local
+```
+
+**If you only have macOS**, create a temporary builder VM:
+```bash
+# Create Ubuntu VM with Nix
+limactl start --name=nix-builder template://default
+limactl shell nix-builder
+
+# Inside VM: install Nix and build image
+curl -L https://nixos.org/nix/install | sh -s -- --daemon
+. /etc/profile.d/nix.sh
+nix build github:kasuboski/nixos-lima#packages.aarch64-linux.img \
+    --extra-experimental-features 'nix-command flakes'
+cp $(readlink result)/nixos.img /tmp/lima/nixos-24.11-lima.img
+
+# Exit VM and copy image to project
+exit
+mkdir -p lima/imgs
+cp /tmp/lima/nixos-24.11-lima.img lima/imgs/
+
+# Clean up builder VM
+limactl delete nix-builder --force
+```
+
+> **Note:** Use `x86_64-linux` instead of `aarch64-linux` for Intel Macs.
+
+### Usage
+
+```bash
+./bloud setup      # Check prerequisites, download VM image
+./bloud start      # Start dev environment (VM + services)
+./bloud stop       # Stop dev services (VM stays running)
+./bloud status     # Check what's running
+./bloud logs       # View recent output
+./bloud attach     # Attach to tmux session (Ctrl-B D to detach)
+./bloud shell      # SSH into VM
+./bloud rebuild    # Apply NixOS config changes
+```
+
+Access the web UI at **http://localhost:8080**
+
+### Troubleshooting
+
+**"Lima is not installed"**
+- macOS: `brew install lima`
+- Linux: `curl -fsSL https://lima-vm.io/install.sh | bash`
+
+**"NixOS VM image not found"**
+- The image must be built on Linux. See "NixOS VM Image" section above.
+- Image should be at: `lima/imgs/nixos-24.11-lima.img`
+
+**VM boots but services don't start**
+- Check logs: `./bloud logs`
+- Rebuild NixOS: `./bloud rebuild`
+- Nuclear option: `./bloud destroy && ./bloud start`
+
+See [claude.md](claude.md) for detailed development guidelines.
 
 ## Architecture
 

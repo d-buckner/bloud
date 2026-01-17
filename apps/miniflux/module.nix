@@ -49,7 +49,8 @@ mkBloudApp {
     OAUTH2_PROVIDER = "oidc";
     OAUTH2_CLIENT_ID = cfg.openidClientId;
     OAUTH2_CLIENT_SECRET = cfg.openidClientSecret;
-    OAUTH2_OIDC_DISCOVERY_ENDPOINT = "${cfg.externalHost}:${toString cfg.traefikPort}/application/o/miniflux/";
+    # Discovery endpoint uses auth subdomain to avoid SW rewriting
+    OAUTH2_OIDC_DISCOVERY_ENDPOINT = "${cfg.authentikExternalHost}:${toString cfg.traefikPort}/application/o/miniflux/";
     OAUTH2_REDIRECT_URL = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/miniflux/oauth2/oidc/callback";
     OAUTH2_OIDC_PROVIDER_NAME = "Bloud SSO";
     OAUTH2_USER_CREATION = "1";

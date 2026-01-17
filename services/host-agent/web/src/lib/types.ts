@@ -61,7 +61,12 @@ export interface CatalogApp {
 	healthCheck?: HealthCheck;
 	docs?: Docs;
 	tags?: string[];
+	routing?: Routing;
 	bootstrap?: BootstrapConfig;
+}
+
+export interface Routing {
+	stripPrefix?: boolean;
 }
 
 // Bootstrap configuration for client-side app pre-configuration

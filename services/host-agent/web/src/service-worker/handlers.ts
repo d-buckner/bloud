@@ -21,9 +21,9 @@ import {
   registerClient,
   getAppForClient,
   getAppFromReferer,
-  isBloudRoute,
-  REWRITE_APPS,
+  appNeedsRewrite,
   rewriteRootUrl,
+  isAuthRedirect,
   PassthroughReason,
 } from './core';
 
@@ -73,26 +73,6 @@ async function buildFetchOptions(request: Request): Promise<RequestInit> {
     options.body = await clonedRequest.arrayBuffer();
   } catch (e) {
     console.error('[embed-sw] Failed to read request body:', (e as Error).message);
-  }
-
-  return options;
-}
-
-/**
- * Build fetch options for an embed navigation request
- */
-function buildEmbedFetchOptions(request: Request): RequestInit {
-  const options: RequestInit = {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-    credentials: request.credentials,
-    cache: request.cache,
-    redirect: 'manual',
-  };
-
-  if (request.body) {
-    (options as RequestInit & { duplex: string }).duplex = 'half';
   }
 
   return options;
@@ -171,6 +151,81 @@ async function maybeInjectIntercepts(response: Response): Promise<Response> {
 }
 
 /**
+ * Create an HTML page that redirects the top-level window to Authentik's OAuth start endpoint.
+ * Uses Authentik's `rd` parameter to specify where to redirect after successful auth.
+ *
+ * This is needed because:
+ * 1. Cross-origin OAuth flows don't work well in iframes
+ * 2. We need to redirect the TOP-LEVEL window, not the iframe
+ */
+function createTopLevelRedirectPage(returnPath: string): Response {
+  // Use Authentik's /start endpoint with rd parameter - this is the standard way
+  // to start an OAuth flow with a specific redirect destination
+  const startUrl = `/outpost.goauthentik.io/start?rd=${encodeURIComponent(returnPath)}`;
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting to login...</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      background: #1a1a1a;
+      color: #e0e0e0;
+    }
+    .container { text-align: center; }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 2px solid #333;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="spinner"></div>
+    <p>Redirecting to login...</p>
+  </div>
+  <script>
+    (function() {
+      const startUrl = ${JSON.stringify(startUrl)};
+      console.log('[embed-sw-redirect] Redirecting to Authentik start:', startUrl);
+
+      // Redirect the top-level window to start the OAuth flow
+      if (window.top !== window.self) {
+        window.top.location.href = startUrl;
+      } else {
+        window.location.href = startUrl;
+      }
+    })();
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Frame-Options': 'SAMEORIGIN',
+      'Content-Security-Policy': "frame-ancestors 'self'",
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    },
+  });
+}
+
+/**
  * Handle an embed navigation request with redirect rewriting
  */
 function handleEmbedNavigationRequest(
@@ -180,13 +235,56 @@ function handleEmbedNavigationRequest(
   appName: string,
   origin: string
 ): void {
-  const doFetch = async (): Promise<Response> => {
-    const fetchOptions = buildEmbedFetchOptions(request);
-    const response = await fetch(fetchUrl, fetchOptions);
-    const newLocation = processRedirectResponse(response, appName, origin);
+  console.log('[embed-sw] handleEmbedNavigationRequest:', { fetchUrl, appName });
 
-    if (newLocation) {
-      return Response.redirect(newLocation, response.status || 302);
+  const doFetch = async (): Promise<Response> => {
+    console.log('[embed-sw] doFetch starting for:', fetchUrl);
+
+    // Use redirect: 'manual' to intercept redirects before they happen
+    // This allows us to detect auth redirects and handle them specially
+    const response = await fetch(fetchUrl, {
+      method: request.method,
+      headers: request.headers,
+      credentials: request.credentials,
+      redirect: 'manual',
+    });
+
+    console.log('[embed-sw] Embed response:', {
+      status: response.status,
+      type: response.type,
+      ok: response.ok,
+    });
+
+    // Check for opaqueredirect - this means a cross-origin redirect happened
+    // In our architecture, cross-origin redirects from /embed/ paths are auth redirects
+    if (response.type === 'opaqueredirect') {
+      // Redirect to Authentik's /start endpoint with the return path
+      // Authentik will redirect back to this path after successful auth
+      const returnPath = `/apps/${appName}`;
+      console.log('[embed-sw] Opaqueredirect detected, auth required, return path:', returnPath);
+      return createTopLevelRedirectPage(returnPath);
+    }
+
+    // Check for same-origin redirects (status 3xx with Location header)
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('Location');
+      console.log('[embed-sw] Redirect response:', { status: response.status, location });
+
+      if (location) {
+        const isAuth = isAuthRedirect(location, origin);
+        if (isAuth) {
+          // Redirect to Authentik's /start endpoint with the return path
+          const returnPath = `/apps/${appName}`;
+          console.log('[embed-sw] Auth redirect detected, return path:', returnPath);
+          return createTopLevelRedirectPage(returnPath);
+        }
+
+        // For same-origin redirects, rewrite to stay within /embed/{appName}/ namespace
+        const newLocation = processRedirectResponse(response, appName, origin);
+        if (newLocation) {
+          return Response.redirect(newLocation, response.status);
+        }
+      }
     }
 
     // Inject IndexedDB intercepts into HTML responses
@@ -222,14 +320,15 @@ export function handleRequest(event: FetchEvent): void {
     return;
   }
 
-  // Check clientId map to identify requests from known app iframes.
-  // This handles cases where the path looks like a Bloud route (e.g., /api/)
-  // but is actually from an embedded app like sonarr/radarr.
+  // ClientId tracking: if this request comes from a registered app iframe, rewrite it.
+  // This is authoritative - ignores RESERVED_SEGMENTS since apps like Radarr use /api/v3/.
   const clientApp = getAppForClient(event.clientId);
-  if (clientApp && REWRITE_APPS.has(clientApp) && url.origin === origin) {
-    // Only intercept if not already under /embed/ and not a Bloud route we need to preserve
-    if (!url.pathname.startsWith(EMBED_PATH_PREFIX) && !isBloudRoute(url.pathname)) {
+
+  if (clientApp && appNeedsRewrite(clientApp) && url.origin === origin) {
+    const isAuthentikRoute = url.pathname.startsWith('/outpost.goauthentik.io');
+    if (!url.pathname.startsWith(EMBED_PATH_PREFIX) && !isAuthentikRoute) {
       const fetchUrl = rewriteRootUrl(url, clientApp);
+      console.log('[embed-sw] Rewriting via clientId:', { clientApp, from: url.pathname });
       handleRootRequest(event, request, fetchUrl);
       return;
     }
@@ -238,13 +337,12 @@ export function handleRequest(event: FetchEvent): void {
   const result = getRequestAction(url, origin);
 
   if (result.action === RequestAction.PASSTHROUGH) {
-    // Fallback: check Referer header for web workers and other cases
-    // where activeAppContext isn't set
+    // Fallback: check Referer header for web workers where clientId isn't registered
     if (result.reason === PassthroughReason.NO_APP_CONTEXT) {
       const referer = request.headers.get('Referer');
       const refererApp = getAppFromReferer(referer, origin);
 
-      if (refererApp && REWRITE_APPS.has(refererApp)) {
+      if (refererApp && appNeedsRewrite(refererApp)) {
         const fetchUrl = rewriteRootUrl(url, refererApp);
         handleRootRequest(event, request, fetchUrl);
         return;
@@ -253,29 +351,24 @@ export function handleRequest(event: FetchEvent): void {
     return;
   }
 
-  // Handle root-level requests (not under /embed/)
+  // Root-level requests (not under /embed/)
   if (result.type === RequestType.ROOT) {
-    // For OAuth callback navigation requests, use redirect instead of fetch-and-return
     if (shouldRedirectOAuthCallback(request.mode, url.pathname)) {
       event.respondWith(Response.redirect(result.fetchUrl!, 302));
       return;
     }
-
     handleRootRequest(event, request, result.fetchUrl!);
     return;
   }
 
-  // Embed request (URL already under /embed/appName/)
-  // Only handle navigation requests - static assets pass through directly
+  // Embed navigation requests only - static assets pass through
   if (request.mode !== RequestMode.NAVIGATE) {
     return;
   }
 
-  // Register the resulting clientId with this app for future requests
-  // This enables tracking requests from web workers spawned by this iframe
-  const resultingClientId = event.resultingClientId;
-  if (resultingClientId && result.appName) {
-    registerClient(resultingClientId, result.appName);
+  // Register clientId for future request tracking
+  if (event.resultingClientId && result.appName) {
+    registerClient(event.resultingClientId, result.appName);
   }
 
   handleEmbedNavigationRequest(

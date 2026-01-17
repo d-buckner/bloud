@@ -1,5 +1,7 @@
 # Bloud App Graph and Configurator System
 
+> **Status: IMPLEMENTED** - Graph, planning, and configurator system are working.
+
 ## Overview
 
 Bloud manages self-hosted applications through a two-phase system:

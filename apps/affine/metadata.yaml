@@ -1,0 +1,27 @@
+name: affine
+displayName: AFFiNE
+description: Knowledge base with docs, whiteboards, and databases
+category: productivity
+port: 3010
+
+integrations:
+  database:
+    required: true
+    multi: false
+    compatible:
+      - app: postgres
+        default: true
+
+healthCheck:
+  path: /
+  interval: 5
+  timeout: 120
+
+sso:
+  strategy: native-oidc
+  callbackPath: /oauth/callback
+  providerName: Bloud SSO
+  userCreation: true
+
+routing:
+  stripPrefix: true

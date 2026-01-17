@@ -177,7 +177,7 @@ func (g *BlueprintGenerator) renderOutpostBlueprint(providers []ForwardAuthProvi
 		AuthentikURL string // Browser-accessible URL for OAuth redirects
 	}{
 		Providers:    providers,
-		AuthentikURL: g.baseURL,
+		AuthentikURL: g.authentikURL,
 	}
 
 	tmpl, err := template.New("outpost").Parse(outpostBlueprintTemplate)

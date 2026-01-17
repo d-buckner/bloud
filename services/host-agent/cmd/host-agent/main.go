@@ -69,10 +69,11 @@ func runServer() {
 		FlakePath:      cfg.FlakePath,
 		FlakeTarget:    cfg.FlakeTarget,
 		NixosPath:      cfg.NixosPath,
-		Port:           cfg.Port,
-		SSOHostSecret:  cfg.SSOHostSecret,
-		SSOBaseURL:     cfg.SSOBaseURL,
-		AuthentikToken: cfg.AuthentikToken,
+		Port:            cfg.Port,
+		SSOHostSecret:   cfg.SSOHostSecret,
+		SSOBaseURL:      cfg.SSOBaseURL,
+		SSOAuthentikURL: cfg.SSOAuthentikURL,
+		AuthentikToken:  cfg.AuthentikToken,
 		Registry:       registry,
 	}, logger)
 

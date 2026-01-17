@@ -9,11 +9,16 @@ import type { InterceptConfig } from './inject';
 
 declare const self: ServiceWorkerGlobalScope;
 
+// Version identifier - change this to verify SW updates
+const SW_VERSION = '2025-01-16-opaque-redirect-fix';
+
 self.addEventListener('install', (event) => {
+  console.log('[embed-sw] Installing version:', SW_VERSION);
   event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', (event) => {
+  console.log('[embed-sw] Activated version:', SW_VERSION);
   event.waitUntil(self.clients.claim());
 });
 
@@ -25,9 +30,9 @@ self.addEventListener('message', (event) => {
 
   switch (event.data.type) {
     case MessageType.SET_ACTIVE_APP: {
-      const appName = event.data.appName;
-      console.log('[embed-sw] Active app:', appName ?? '(none)');
-      setActiveApp(appName);
+      const {appName, needsRewrite} = event.data;
+      console.log('[embed-sw] Active app:', appName ?? '(none)', needsRewrite !== undefined ? `(needsRewrite: ${needsRewrite})` : '');
+      setActiveApp(appName, needsRewrite);
 
       // Reply on the MessageChannel port to acknowledge processing
       if (event.ports && event.ports[0]) {

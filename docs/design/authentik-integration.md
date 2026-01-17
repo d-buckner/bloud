@@ -1,5 +1,7 @@
 # Authentik SSO Integration Design
 
+> **Status: PARTIALLY IMPLEMENTED** - Forward auth and OIDC working. LDAP in progress (see `docs/investigations/ldap-infrastructure-design.md`).
+
 ## Overview
 
 Every app in Bloud should automatically get SSO via Authentik. This document describes how we achieve automatic, zero-config SSO integration for all apps.

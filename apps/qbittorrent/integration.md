@@ -20,7 +20,7 @@ On first launch, the web UI requires authentication:
 - **Password:** Check container logs for the randomly generated password
 
 ```bash
-./lima/dev shell "podman logs qbittorrent 2>&1 | grep -i password"
+./bloud shell "podman logs qbittorrent 2>&1 | grep -i password"
 ```
 
 You should change this password immediately after first login via Settings > Web UI.
@@ -53,23 +53,23 @@ The web UI runs on port 8086 by default. The container's internal port is 8080.
 
 Check logs:
 ```bash
-./lima/dev shell "journalctl --user -u podman-qbittorrent -n 50"
-./lima/dev shell "podman logs qbittorrent"
+./bloud shell "journalctl --user -u podman-qbittorrent -n 50"
+./bloud shell "podman logs qbittorrent"
 ```
 
 ### Permission issues
 
 The container runs as PUID/PGID 1000. Ensure the data directories are owned correctly:
 ```bash
-./lima/dev shell "ls -la ~/.local/share/bloud/qbittorrent/"
+./bloud shell "ls -la ~/.local/share/bloud/qbittorrent/"
 ```
 
 ### Web UI not accessible
 
 Verify the container is running and listening:
 ```bash
-./lima/dev shell "podman ps | grep qbittorrent"
-./lima/dev shell "curl -v http://localhost:8086/"
+./bloud shell "podman ps | grep qbittorrent"
+./bloud shell "curl -v http://localhost:8086/"
 ```
 
 ## Notes

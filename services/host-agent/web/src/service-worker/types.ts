@@ -41,16 +41,12 @@ export const HttpMethod = {
 /** Path constants */
 export const EMBED_PATH_PREFIX = '/embed/';
 export const OAUTH_CALLBACK_PATH = 'openid/callback';
-export const AUTHENTIK_STATIC_PREFIX = '/static/dist/';
 
 /** Service worker script paths that embedded apps might try to register */
 export const SW_SCRIPT_PATHS = new Set(['/sw.js', '/service-worker.js']);
 
 /** Content types */
 export const CONTENT_TYPE_JS = 'application/javascript';
-
-/** Apps that need URL rewriting (don't support BASE_URL config) */
-export const REWRITE_APPS = new Set(['actual-budget', 'adguard-home', 'sonarr', 'radarr', 'prowlarr']);
 
 /** First path segments reserved for Bloud routes (O(1) lookup) */
 export const RESERVED_SEGMENTS = new Set([
@@ -64,11 +60,9 @@ export const RESERVED_SEGMENTS = new Set([
   'node_modules',
   'src',
   '.svelte-kit',
-  // Authentik SSO routes - must not be rewritten
-  'application', // OAuth2/OIDC endpoints
-  'flows', // Authentik authentication flows (/flows/-/default/...)
-  'if', // Authentik Identity Frontend UI
-  '-', // Authentik internal API
+  // Authentik outpost endpoints (OAuth start/callback flows)
+  // These are routed to the Authentik server via Traefik
+  'outpost.goauthentik.io',
 ]);
 
 // =============================================================================

@@ -1,5 +1,7 @@
 # Design: Granular Install Status + PostgreSQL Migration
 
+> **Status: IMPLEMENTED** - PostgreSQL migration complete. Granular status tracking working.
+
 ## Overview
 
 This document describes two related changes to the host-agent:
