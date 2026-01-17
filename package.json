@@ -8,7 +8,7 @@
     "services/host-agent/web"
   ],
   "scripts": {
-    "setup": "npm install && npm run cli:build",
+    "setup": "npm install && npm run cli:build && ./bloud setup",
     "cli:build": "cd cli && go build -o ../bloud .",
     "dev": "turbo run dev",
     "build": "turbo run build",

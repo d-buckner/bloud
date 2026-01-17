@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/cli/vm"
 )
@@ -80,19 +82,92 @@ func cmdSetup() int {
 
 	fmt.Println()
 
-	if allGood {
-		fmt.Printf("%s✓ All prerequisites satisfied!%s\n", colorGreen, colorReset)
+	if !allGood {
+		fmt.Printf("%s✗ Some prerequisites are missing.%s\n", colorRed, colorReset)
 		fmt.Println()
-		fmt.Println("  Run './bloud start' to start the development environment.")
+		fmt.Println("  Fix the issues above, then run './bloud setup' again.")
 		fmt.Println()
-		return 0
+		return 1
 	}
 
-	fmt.Printf("%s✗ Some prerequisites are missing.%s\n", colorRed, colorReset)
+	// 4. Create VM if it doesn't exist
+	fmt.Print("  Checking VM...                ")
+	vmExists := vm.Exists(devVMName)
+	vmRunning := vm.IsRunning(devVMName)
+
+	if vmExists && vmRunning {
+		fmt.Printf("%s✓ running%s\n", colorGreen, colorReset)
+	} else if vmExists {
+		fmt.Printf("%s○ stopped%s\n", colorYellow, colorReset)
+		fmt.Println()
+		fmt.Println("  Starting VM...")
+		if err := vm.Start(devVMName); err != nil {
+			errorf("Failed to start VM: %v", err)
+			return 1
+		}
+		// Wait for SSH
+		if err := waitForVMReady(devVMName); err != nil {
+			errorf("VM failed to become ready: %v", err)
+			return 1
+		}
+	} else {
+		fmt.Printf("%s○ not created%s\n", colorYellow, colorReset)
+		fmt.Println()
+		fmt.Println("  Creating VM (this may take a minute)...")
+
+		configPath := filepath.Join(projectRoot, "lima", "nixos.yaml")
+		if err := vm.Create(devVMName, configPath); err != nil {
+			errorf("Failed to create VM: %v", err)
+			return 1
+		}
+		// Wait for SSH
+		if err := waitForVMReady(devVMName); err != nil {
+			errorf("VM failed to become ready: %v", err)
+			return 1
+		}
+		fmt.Printf("  VM created:                   %s✓ running%s\n", colorGreen, colorReset)
+	}
+
+	// 5. Mount filesystems so flake is accessible
+	mounts := []vm.Mount{
+		{Tag: "mount0", MountPath: devProjectInVM},
+		{Tag: "mount1", MountPath: "/tmp/lima"},
+	}
+	if err := vm.MountFilesystems(devVMName, mounts); err != nil {
+		warn(fmt.Sprintf("Mount warning: %v", err))
+	}
+
+	// 6. Check if bloud module is applied (bloud-apps.target exists)
+	fmt.Print("  Checking NixOS config...      ")
+	output, err := vm.Exec(devVMName, "systemctl --user cat bloud-apps.target 2>/dev/null")
+	needsRebuild := err != nil || !strings.Contains(output, "[Unit]")
+
+	if needsRebuild {
+		fmt.Printf("%s○ needs update%s\n", colorYellow, colorReset)
+		fmt.Println()
+		fmt.Println("  Rebuilding NixOS configuration (this may take a few minutes)...")
+		fmt.Println()
+		// Set git safe.directory for both user and root (sudo runs as root)
+		// This is needed for older images that don't have it in /etc/gitconfig
+		_, _ = vm.Exec(devVMName, "git config --global --add safe.directory '*'")
+		_, _ = vm.Exec(devVMName, "sudo git config --global --add safe.directory '*'")
+		rebuildCmd := fmt.Sprintf("sudo nixos-rebuild switch --flake %s#vm-dev --impure", devProjectInVM)
+		if err := vm.ExecStream(devVMName, rebuildCmd); err != nil {
+			errorf("NixOS rebuild failed: %v", err)
+			return 1
+		}
+		fmt.Println()
+		fmt.Printf("  NixOS config:                 %s✓ rebuilt%s\n", colorGreen, colorReset)
+	} else {
+		fmt.Printf("%s✓ up to date%s\n", colorGreen, colorReset)
+	}
+
 	fmt.Println()
-	fmt.Println("  Fix the issues above, then run './bloud setup' again.")
+	fmt.Printf("%s✓ Setup complete!%s\n", colorGreen, colorReset)
 	fmt.Println()
-	return 1
+	fmt.Println("  Run './bloud start' to start the development environment.")
+	fmt.Println()
+	return 0
 }
 
 func checkCommand(name string) bool {
@@ -323,4 +398,19 @@ func progressBar(percent, width int) string {
 
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
 	return bar
+}
+
+// waitForVMReady waits for the VM to boot and SSH to become available
+func waitForVMReady(vmName string) error {
+	ctx := context.Background()
+
+	// Give QEMU time to start
+	time.Sleep(5 * time.Second)
+
+	// Wait for SSH
+	if err := vm.WaitForSSH(ctx, vmName, 2*time.Minute); err != nil {
+		return err
+	}
+
+	return nil
 }

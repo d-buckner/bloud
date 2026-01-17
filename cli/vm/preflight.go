@@ -82,22 +82,14 @@ func checkSshpass(result *PreflightResult) {
 
 // checkVMImage verifies the NixOS VM image exists
 func checkVMImage(result *PreflightResult, projectRoot string) {
-	// Expand ~ in path
-	homeDir, _ := os.UserHomeDir()
-	imagePath := filepath.Join(homeDir, "Projects", "bloud", "lima", "imgs", "nixos-24.11-lima.img")
-
-	// Also check relative to project root as fallback
-	altImagePath := filepath.Join(projectRoot, "lima", "imgs", "nixos-24.11-lima.img")
-
+	imagePath := GetImagePath(projectRoot)
 	if _, err := os.Stat(imagePath); err != nil {
-		if _, err := os.Stat(altImagePath); err != nil {
-			result.AddError(
-				"vm-image",
-				fmt.Sprintf("NixOS VM image not found at:\n    %s", imagePath),
-				"",
-				"",
-			)
-		}
+		result.AddError(
+			"vm-image",
+			fmt.Sprintf("NixOS VM image not found at:\n    %s", imagePath),
+			"",
+			"",
+		)
 	}
 }
 
@@ -183,21 +175,13 @@ func QuickPreflightCheck() error {
 
 // GetImagePath returns the expected path to the VM image
 func GetImagePath(projectRoot string) string {
-	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, "Projects", "bloud", "lima", "imgs", "nixos-24.11-lima.img")
+	return filepath.Join(projectRoot, "lima", "imgs", "nixos-24.11-lima.img")
 }
 
 // ImageExists checks if the VM image exists
 func ImageExists(projectRoot string) bool {
 	imagePath := GetImagePath(projectRoot)
 	_, err := os.Stat(imagePath)
-	if err == nil {
-		return true
-	}
-
-	// Also check relative path
-	altPath := filepath.Join(projectRoot, "lima", "imgs", "nixos-24.11-lima.img")
-	_, err = os.Stat(altPath)
 	return err == nil
 }
 
