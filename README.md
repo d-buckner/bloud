@@ -1,4 +1,4 @@
-# Bloud
+\# Bloud
 
 **Home Cloud Operating System**
 
@@ -99,39 +99,6 @@ npm run setup
 # 3. Start development environment
 ./bloud start
 ```
-
-### Building the Image Manually
-
-If pre-built images aren't available or you prefer to build yourself:
-
-**If you have a Linux machine with Nix:**
-```bash
-cd lima && ./build-image.sh --local
-```
-
-**If you only have macOS**, create a temporary builder VM:
-```bash
-# Create Ubuntu VM with Nix
-limactl start --name=nix-builder template://default
-limactl shell nix-builder
-
-# Inside VM: install Nix and build image
-curl -L https://nixos.org/nix/install | sh -s -- --daemon
-. /etc/profile.d/nix.sh
-nix build github:kasuboski/nixos-lima#packages.aarch64-linux.img \
-    --extra-experimental-features 'nix-command flakes'
-cp $(readlink result)/nixos.img /tmp/lima/nixos-24.11-lima.img
-
-# Exit VM and copy image to project
-exit
-mkdir -p lima/imgs
-cp /tmp/lima/nixos-24.11-lima.img lima/imgs/
-
-# Clean up builder VM
-limactl delete nix-builder --force
-```
-
-> **Note:** Use `x86_64-linux` instead of `aarch64-linux` for Intel Macs.
 
 ### Usage
 
