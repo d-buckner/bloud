@@ -89,13 +89,10 @@ Development uses [Lima](https://lima-vm.io/) to run a NixOS VM on your local mac
 ### Quick Start
 
 ```bash
-# 1. Clone and build CLI
+# 1. Clone and build CLI, check prerequisites and download VM image
 git clone https://github.com/d-buckner/bloud.git
 cd bloud
 npm run setup
-
-# 2. Check prerequisites and download VM image
-./bloud setup
 
 # 3. Start development environment
 ./bloud start
