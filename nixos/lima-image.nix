@@ -3,6 +3,9 @@
 # Build with: nix build .#packages.aarch64-linux.lima-image
 # The resulting image will be in result/nixos.img
 #
+# This image includes all dev tools needed for bloud development so that
+# ./bloud setup doesn't need to run nixos-rebuild just for basic tooling.
+#
 
 { config, pkgs, lib, modulesPath, ... }:
 
@@ -52,12 +55,13 @@
     initialPassword = "lima";
   };
 
-  # Also create bloud user for our services
+  # Bloud user for services - with linger for user services at boot
   users.users.bloud = {
     isNormalUser = true;
     description = "Bloud development user";
     extraGroups = [ "wheel" "podman" ];
     initialPassword = "bloud";
+    linger = true;  # Enable user services at boot without login
   };
 
   # Root user with password for emergency access
@@ -75,6 +79,13 @@
     };
   };
 
+  # Podman for rootless containers (pre-configured for bloud module)
+  virtualisation.podman = {
+    enable = true;
+    dockerCompat = true;
+    defaultNetwork.settings.dns_enabled = true;
+  };
+
   # Nix settings
   nix = {
     settings = {
@@ -83,13 +94,25 @@
     };
   };
 
-  # Basic packages
+  # Git configuration - mark mounted directories as safe (9p mounts have different ownership)
+  environment.etc."gitconfig".text = ''
+    [safe]
+      directory = *
+  '';
+
+  # Basic packages + dev tools for hot reload
   environment.systemPackages = with pkgs; [
+    # Basic utilities
     vim
     git
     curl
     htop
     jq
+    # Dev tools for hot reload (same as vm-dev.nix)
+    tmux           # Session management
+    go             # Go compiler
+    air            # Go hot reload
+    nodejs_22      # Node.js for Vite
   ];
 
   system.stateVersion = "24.11";
