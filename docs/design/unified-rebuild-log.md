@@ -1,5 +1,7 @@
 # Design: Unified Rebuild Log
 
+> **Status: NOT IMPLEMENTED** - Proposed design for structured rebuild logging.
+
 ## Overview
 
 A singular, structured log for each nixos-rebuild operation that serves as the source of truth for debugging. When an app isn't working or a rebuild fails, this log provides everything an investigation agent (or human) needs to identify the issue.

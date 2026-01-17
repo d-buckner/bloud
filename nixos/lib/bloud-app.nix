@@ -81,6 +81,7 @@ let
   cfg = appCfg // {
     # Common values contributors will need
     externalHost = bloudCfg.externalHost;
+    authentikExternalHost = bloudCfg.authentikExternalHost;
     traefikPort = traefikCfg.port;
     bloudUser = bloudCfg.user;
     configPath = configPath;
@@ -177,10 +178,12 @@ let
 
   # Extract host paths from volume mounts for directory creation
   # Volume format: "hostPath:containerPath:options" or "hostPath:containerPath"
-  volumeHostPaths = map (v:
+  # Filter out file mounts (paths ending with common file extensions) - those are created by configurators
+  isFilePath = path: builtins.match ".*\\.(js|json|yaml|yml|toml|conf|cfg|ini|env)$" path != null;
+  volumeHostPaths = builtins.filter (p: !isFilePath p) (map (v:
     let parts = lib.splitString ":" v;
     in builtins.elemAt parts 0
-  ) allVolumes;
+  ) allVolumes);
 
 in
 {

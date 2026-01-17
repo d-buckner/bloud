@@ -16,6 +16,7 @@ import {
   rewriteRedirectLocation,
   rewriteRootUrl,
   isRedirectResponse,
+  isAuthRedirect,
   shouldRedirectOAuthCallback,
   getRequestAction,
   processRedirectResponse,
@@ -29,6 +30,7 @@ import {
   getAppForClient,
   getAppFromReferer,
   getClientMapSize,
+  appNeedsRewrite,
 } from '../core';
 import type { InterceptConfig } from '../inject';
 
@@ -127,12 +129,9 @@ describe('service-worker core', () => {
       expect(isBloudRoute('/control/')).toBe(false);
     });
 
-    it('returns true for Authentik SSO routes', () => {
-      expect(isBloudRoute('/application/o/authorize/')).toBe(true);
-      expect(isBloudRoute('/flows/-/default/authentication-flow/')).toBe(true);
-      expect(isBloudRoute('/if/flow/default-authentication-flow/')).toBe(true);
-      expect(isBloudRoute('/-/api/v3/')).toBe(true);
-    });
+    // Note: Authentik routes are now on auth.localhost subdomain (cross-origin),
+    // so they're passed through automatically via the cross-origin check.
+    // No need to test them as Bloud routes.
 
     it('handles edge cases for first segment extraction', () => {
       // Single character paths
@@ -182,12 +181,8 @@ describe('service-worker core', () => {
       expect(RESERVED_SEGMENTS.has('.svelte-kit')).toBe(true);
     });
 
-    it('contains Authentik SSO segments', () => {
-      expect(RESERVED_SEGMENTS.has('application')).toBe(true);
-      expect(RESERVED_SEGMENTS.has('flows')).toBe(true);
-      expect(RESERVED_SEGMENTS.has('if')).toBe(true);
-      expect(RESERVED_SEGMENTS.has('-')).toBe(true);
-    });
+    // Note: Authentik routes are now on auth.localhost subdomain (cross-origin),
+    // so they don't need to be in RESERVED_SEGMENTS.
 
     it('does not contain app names', () => {
       expect(RESERVED_SEGMENTS.has('actual-budget')).toBe(false);
@@ -229,7 +224,9 @@ describe('service-worker core', () => {
       expect(result.appName).toBe('adguard-home');
     });
 
-    it('does not handle embed requests for non-rewrite apps', () => {
+    it('does not handle embed requests for apps that support BASE_URL', () => {
+      // miniflux supports BASE_URL, so needsRewrite is false
+      setActiveApp('miniflux', false);
       const url = new URL('/embed/miniflux/', origin);
       const result = shouldHandleRequest(url, origin);
       expect(result.handle).toBe(false);
@@ -561,7 +558,9 @@ describe('service-worker core', () => {
       expect(result.appName).toBe('adguard-home');
     });
 
-    it('returns passthrough for embed requests with non-rewrite app', () => {
+    it('returns passthrough for embed requests with app that supports BASE_URL', () => {
+      // miniflux supports BASE_URL, so needsRewrite is false
+      setActiveApp('miniflux', false);
       const url = new URL('/embed/miniflux/', origin);
       const result = getRequestAction(url, origin);
       expect(result.action).toBe(RequestAction.PASSTHROUGH);
@@ -584,8 +583,9 @@ describe('service-worker core', () => {
       expect(result.reason).toBe(PassthroughReason.NO_APP_CONTEXT);
     });
 
-    it('returns passthrough for root request with non-rewrite active app', () => {
-      setActiveApp('miniflux');
+    it('returns passthrough for root request with active app that supports BASE_URL', () => {
+      // miniflux supports BASE_URL, so needsRewrite is false
+      setActiveApp('miniflux', false);
       const url = new URL('/install.html', origin);
       const result = getRequestAction(url, origin);
       expect(result.action).toBe(RequestAction.PASSTHROUGH);
@@ -685,8 +685,10 @@ describe('service-worker core', () => {
       });
     });
 
-    describe('Miniflux (no rewriting needed)', () => {
+    describe('Miniflux (supports BASE_URL, no rewriting needed)', () => {
       it('does not intercept miniflux embed requests', () => {
+        // miniflux supports BASE_URL, so needsRewrite is false
+        setActiveApp('miniflux', false);
         const url = new URL('/embed/miniflux/', origin);
         const result = shouldHandleRequest(url, origin);
         expect(result.handle).toBe(false);
@@ -732,6 +734,65 @@ describe('service-worker core', () => {
         // to handle this case - we just verify the clientId mechanism works
         registerClient('iframe-abc', 'my-app');
         expect(getAppForClient('iframe-abc')).toBe('my-app');
+      });
+
+      it('clientId bypass works for Radarr/Sonarr /api/v3/* paths (regression test)', () => {
+        // This test verifies the fix for the bug where /api/v3/* requests from
+        // embedded apps like Radarr/Sonarr were incorrectly treated as Bloud routes
+        // and returned 404 instead of being rewritten.
+        //
+        // The handlers.ts logic for clientId-based rewriting is:
+        //   const clientApp = getAppForClient(event.clientId);
+        //   if (clientApp && appNeedsRewrite(clientApp) && url.origin === origin) {
+        //     if (!url.pathname.startsWith(EMBED_PATH_PREFIX)) {
+        //       const fetchUrl = rewriteRootUrl(url, clientApp);
+        //       // ... handle request with rewritten URL
+        //     }
+        //   }
+        //
+        // CRITICAL: The clientId check must NOT include isBloudRoute() because
+        // the clientId is authoritative - if we registered the iframe as belonging
+        // to radarr, then ALL requests from that clientId should be rewritten.
+
+        // Simulate: Radarr iframe was registered with clientId
+        registerClient('radarr-iframe-123', 'radarr');
+
+        // Simulate: Request comes from that clientId to /api/v3/movies
+        const clientApp = getAppForClient('radarr-iframe-123');
+        expect(clientApp).toBe('radarr');
+
+        // Verify app needs rewriting (Radarr doesn't support BASE_URL)
+        expect(appNeedsRewrite(clientApp!)).toBe(true);
+
+        // Simulate the handler's rewrite logic
+        const url = new URL('/api/v3/movie', origin);
+        const isNotAlreadyEmbed = !url.pathname.startsWith('/embed/');
+        expect(isNotAlreadyEmbed).toBe(true);
+
+        // The handler should rewrite this to /embed/radarr/api/v3/movie
+        // (NOT pass it through as a "Bloud route")
+        const fetchUrl = rewriteRootUrl(url, clientApp!);
+        expect(fetchUrl).toBe('http://localhost:8080/embed/radarr/api/v3/movie');
+      });
+
+      it('clientId bypass handles all RESERVED_SEGMENTS paths from embedded apps', () => {
+        // Embedded apps might request paths that match any reserved segment.
+        // When we have a valid clientId, we should rewrite ALL of them.
+        const reservedPaths = [
+          '/api/v3/system/status', // Radarr/Sonarr API
+          '/api/v1/config', // Generic API pattern
+          '/icons/app-icon.png', // App might serve its own icons
+          '/images/poster.jpg', // App might serve images
+        ];
+
+        registerClient('test-app-iframe', 'test-app');
+        const clientApp = getAppForClient('test-app-iframe');
+
+        for (const path of reservedPaths) {
+          const url = new URL(path, origin);
+          const fetchUrl = rewriteRootUrl(url, clientApp!);
+          expect(fetchUrl).toBe(`http://localhost:8080/embed/test-app${path}`);
+        }
       });
     });
   });
@@ -800,9 +861,9 @@ describe('service-worker core', () => {
       expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/sync?token=abc&ts=123');
     });
 
-    it('returns passthrough for app not in REWRITE_APPS', () => {
-      // miniflux supports BASE_URL so it's not in REWRITE_APPS
-      setActiveApp('miniflux');
+    it('returns passthrough for app that supports BASE_URL (needsRewrite: false)', () => {
+      // miniflux supports BASE_URL so it doesn't need rewriting
+      setActiveApp('miniflux', false);
       const url = new URL('/entries', origin);
       const result = getRequestAction(url, origin);
 
@@ -980,6 +1041,75 @@ describe('service-worker core', () => {
     it('handles responses with both type and status', () => {
       expect(isRedirectResponse(mockResponse(200, undefined, 'opaqueredirect'))).toBe(true);
       expect(isRedirectResponse(mockResponse(302, undefined, 'basic'))).toBe(true);
+    });
+  });
+
+  describe('isAuthRedirect', () => {
+    const origin = 'http://localhost:8080';
+
+    describe('detects auth subdomain redirects', () => {
+      it('returns true for auth.localhost', () => {
+        expect(isAuthRedirect('http://auth.localhost:8080/login', origin)).toBe(true);
+      });
+
+      it('returns true for auth.localhost with path', () => {
+        expect(isAuthRedirect('http://auth.localhost:8080/application/o/authorize/', origin)).toBe(true);
+      });
+
+      it('returns true for auth.example.com', () => {
+        expect(isAuthRedirect('http://auth.example.com/login', origin)).toBe(true);
+      });
+
+      it('returns true for auth subdomain with different port', () => {
+        expect(isAuthRedirect('http://auth.localhost:9000/login', origin)).toBe(true);
+      });
+
+      it('returns true for https auth subdomain', () => {
+        expect(isAuthRedirect('https://auth.example.com/login', origin)).toBe(true);
+      });
+    });
+
+    describe('returns false for non-auth redirects', () => {
+      it('returns false for same-origin redirect', () => {
+        expect(isAuthRedirect('/login', origin)).toBe(false);
+      });
+
+      it('returns false for localhost without auth prefix', () => {
+        expect(isAuthRedirect('http://localhost:8080/login', origin)).toBe(false);
+      });
+
+      it('returns false for other subdomains', () => {
+        expect(isAuthRedirect('http://api.localhost:8080/login', origin)).toBe(false);
+        expect(isAuthRedirect('http://app.localhost:8080/login', origin)).toBe(false);
+      });
+
+      it('returns false for domain containing auth but not as subdomain', () => {
+        expect(isAuthRedirect('http://authentication.com/login', origin)).toBe(false);
+        expect(isAuthRedirect('http://myauth.com/login', origin)).toBe(false);
+      });
+
+      it('returns false for relative paths', () => {
+        expect(isAuthRedirect('/embed/app/login', origin)).toBe(false);
+        expect(isAuthRedirect('/auth/login', origin)).toBe(false);
+      });
+    });
+
+    describe('handles edge cases', () => {
+      it('returns false for invalid URL', () => {
+        expect(isAuthRedirect('not-a-url', origin)).toBe(false);
+      });
+
+      it('returns false for empty string', () => {
+        expect(isAuthRedirect('', origin)).toBe(false);
+      });
+
+      it('handles URL with query params', () => {
+        expect(isAuthRedirect('http://auth.localhost:8080/login?next=/app', origin)).toBe(true);
+      });
+
+      it('handles URL with fragment', () => {
+        expect(isAuthRedirect('http://auth.localhost:8080/login#section', origin)).toBe(true);
+      });
     });
   });
 

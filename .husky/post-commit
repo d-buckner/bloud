@@ -1,0 +1,70 @@
+#!/bin/sh
+
+# Skip if we're already amending (prevents infinite loop)
+if [ -n "$BLOUD_SKIP_TIME_REWRITE" ]; then
+  exit 0
+fi
+
+# Skip if doing a rebase, cherry-pick, or other operations
+if [ -d "$(git rev-parse --git-dir)/rebase-merge" ] || \
+   [ -d "$(git rev-parse --git-dir)/rebase-apply" ] || \
+   [ -f "$(git rev-parse --git-dir)/CHERRY_PICK_HEAD" ]; then
+  exit 0
+fi
+
+# Detect PT timezone
+tz_offset=$(TZ='America/Los_Angeles' date +%z)
+
+# Get today's 7pm and 10pm in epoch seconds (PT)
+today=$(TZ='America/Los_Angeles' date +%Y-%m-%d)
+window_start=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%d %H:%M:%S" "${today} 19:00:00" +%s 2>/dev/null || \
+               TZ='America/Los_Angeles' date -d "${today} 19:00:00" +%s)
+window_end=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%d %H:%M:%S" "${today} 22:00:00" +%s 2>/dev/null || \
+             TZ='America/Los_Angeles' date -d "${today} 22:00:00" +%s)
+
+# Get parent commit timestamp (if exists)
+parent_epoch=0
+if git rev-parse HEAD^ >/dev/null 2>&1; then
+  parent_epoch=$(git log -1 --format=%ct HEAD^)
+fi
+
+# Calculate minimum allowed timestamp (must be after parent)
+min_epoch=$((parent_epoch + 1))
+
+# If parent is already past window end, use parent + 1-60 seconds
+if [ "$min_epoch" -ge "$window_end" ]; then
+  offset=$((1 + (RANDOM % 60)))
+  new_epoch=$((parent_epoch + offset))
+else
+  # Ensure we start within or after window start
+  if [ "$min_epoch" -lt "$window_start" ]; then
+    min_epoch=$window_start
+  fi
+
+  # Random time between min_epoch and window_end
+  range=$((window_end - min_epoch))
+  if [ "$range" -le 0 ]; then
+    # Window exhausted, just add small offset to parent
+    offset=$((1 + (RANDOM % 60)))
+    new_epoch=$((parent_epoch + offset))
+  else
+    offset=$((RANDOM % range))
+    new_epoch=$((min_epoch + offset))
+  fi
+fi
+
+# Convert epoch to date string
+if date -r "$new_epoch" >/dev/null 2>&1; then
+  # macOS
+  new_date=$(TZ='America/Los_Angeles' date -r "$new_epoch" "+%Y-%m-%d %H:%M:%S ${tz_offset}")
+  display_time=$(TZ='America/Los_Angeles' date -r "$new_epoch" "+%H:%M")
+else
+  # Linux
+  new_date=$(TZ='America/Los_Angeles' date -d "@$new_epoch" "+%Y-%m-%d %H:%M:%S ${tz_offset}")
+  display_time=$(TZ='America/Los_Angeles' date -d "@$new_epoch" "+%H:%M")
+fi
+
+# Amend the commit with the new date
+BLOUD_SKIP_TIME_REWRITE=1 git commit --amend --no-edit --date="$new_date" >/dev/null 2>&1
+
+echo "Commit time set to ${display_time} PT"

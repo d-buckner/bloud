@@ -89,15 +89,22 @@ func generateTestConfig(templatePath, outputPath, projectRoot string) error {
 func testStart() int {
 	ctx := context.Background()
 
-	configPath, err := getTestConfigPath()
-	if err != nil {
-		errorf("Could not generate config: %v", err)
-		return 1
-	}
-
 	projectRoot, err := getProjectRoot()
 	if err != nil {
 		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	// Run pre-flight checks before attempting to start
+	preflightResult := vm.RunPreflightChecks(projectRoot)
+	if preflightResult.HasErrors() {
+		vm.PrintPreflightErrors(preflightResult)
+		return 1
+	}
+
+	configPath, err := getTestConfigPath()
+	if err != nil {
+		errorf("Could not generate config: %v", err)
 		return 1
 	}
 
@@ -433,4 +440,24 @@ func testServices() int {
 
 	fmt.Println(output)
 	return 0
+}
+
+func testInstall(args []string) int {
+	if len(args) < 1 {
+		errorf("Usage: ./bloud test install <app-name>")
+		return 1
+	}
+
+	appName := args[0]
+	return installApp(testVMName, 3001, appName)
+}
+
+func testUninstall(args []string) int {
+	if len(args) < 1 {
+		errorf("Usage: ./bloud test uninstall <app-name>")
+		return 1
+	}
+
+	appName := args[0]
+	return uninstallApp(testVMName, 3001, appName)
 }

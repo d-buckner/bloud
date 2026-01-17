@@ -13,22 +13,44 @@ Do NOT suggest or assume port 5173 is being used. Do NOT suggest proxying throug
 
 ## Debugging Principles
 
+**THIS IS NON-NEGOTIABLE. Do not skip these steps.**
+
 ### Always Gather Evidence First
 Before proposing any fix or making claims about root causes:
-1. Gather actual evidence by running commands and observing output
+1. Gather actual evidence by running commands, adding logs, and observing output
 2. Explain what evidence was gathered and what it shows
 3. Walk through the reasoning step by step
 4. Only then propose changes, with clear justification tied to the evidence
 
-### Never Guess
-- Do not propose changes based on assumptions
+### Never Guess - Theory Without Data is Worthless
+- Do not propose changes based on assumptions or theories
 - Do not claim to know the cause without evidence
 - If asked "why is this needed?", have concrete evidence ready
+- A plausible-sounding theory is NOT evidence
+
+### Anti-Pattern: Theorizing Without Data
+**NEVER do this:**
+```
+"The issue is probably X because Y could happen" → proposes code change
+```
+
+**ALWAYS do this:**
+```
+"I suspect X. Let me add logging to verify" → gathers data → shows output →
+confirms/refutes theory with evidence → THEN proposes fix
+```
+
+**Real example of what NOT to do:**
+- User reports 404 errors on /api/v3/* requests
+- BAD: "The issue is the SW update clears the clientAppMap" → proposes fix
+- GOOD: "Let me add debug logging to see what clientId and clientApp values are" →
+  observes: before SW update clientApp='radarr', after update clientApp=null →
+  "Evidence confirms the SW update clears the map" → proposes fix
 
 ### Explain Before Executing
 When debugging:
 1. State what you're checking and why
-2. Run the command
+2. Run the command or add the logging
 3. Explain what the output means
 4. Then decide next steps
 
@@ -52,9 +74,12 @@ Located in `apps/<name>/` with each app having:
 - `module.nix` - NixOS module for the app
 - `configure.go` - Go configurator for runtime integrations
 
-Current implemented apps: postgres, redis, traefik, authentik, miniflux, actual-budget, adguard-home, qbittorrent
-
-Unimplemented apps (metadata only) remain in `catalog/apps/` until they get Nix modules.
+Current implemented apps (14 total):
+- **Infrastructure:** postgres, redis, traefik, authentik
+- **Media:** jellyfin, jellyseerr
+- **Arr stack:** prowlarr, radarr, sonarr, qbittorrent
+- **Productivity:** miniflux, actual-budget, affine
+- **Network:** adguard-home
 
 ### Helper Library
 - `nixos/lib/podman-service.nix` - Creates systemd user services for podman containers
@@ -153,38 +178,9 @@ systemd-analyze --user verify podman-<name>.service
 
 **CRITICAL CONSTRAINT: No app-specific routes at root level.**
 
-All embedded apps MUST be served under `/embed/{appName}/` paths. We CANNOT have app-specific assets served at the root level (e.g., `/static/`, `/install.html`, `/control/`).
+All embedded apps MUST be served under `/embed/{appName}/` paths. URL rewriting via service worker handles apps that use absolute paths.
 
-**Why this matters:**
-- **Path collisions**: Multiple apps could have `/static/`, `/api/`, or similar paths
-- **Not scalable**: Every new app would need its own set of root-level Traefik routes
-- **Maintenance nightmare**: `traefik/module.nix` would grow unbounded with app-specific routes
-- **Unpredictable conflicts**: App A's `/data/` would clash with App B's `/data/`
-
-**The Problem:**
-Some apps (AdGuard Home, Actual Budget) use absolute paths and don't support `BASE_URL` configuration:
-- AdGuard Home redirects to `/install.html`, loads `/install.*.js`
-- Actual Budget loads `/static/`, `/sync/`, etc.
-
-**The Solution:**
-URL rewriting via service worker (`embed-sw.js`). The SW intercepts requests from embedded iframes and rewrites absolute paths to include the app prefix.
-
-Example flow:
-1. Iframe loads `/embed/adguard-home/`
-2. App redirects to `/install.html` (absolute)
-3. SW intercepts request, sees referer is `/embed/adguard-home/`
-4. SW rewrites to `/embed/adguard-home/install.html`
-5. Traefik routes to AdGuard Home with prefix stripped
-
-**What NOT to do:**
-- ❌ Add `absolutePaths` to `metadata.yaml` for root-level routes
-- ❌ Add app-specific routes to `traefik/module.nix`
-- ❌ Create Traefik rules like `Path(\`/install.html\`)` pointing to specific apps
-
-**What TO do:**
-- ✅ Fix the service worker if it's not working
-- ✅ All app content flows through `/embed/{appName}/` routes
-- ✅ Keep `traefik/module.nix` app-agnostic (only base routes: `/api`, `/dashboard`, `/embed/*`)
+See `docs/embedded-app-routing.md` for full details.
 
 ### Future: Systemd-Based Startup Architecture
 
@@ -251,23 +247,18 @@ Use the `./bloud` CLI which manages a Lima VM with hot reload. Works on macOS an
 **macOS:**
 ```bash
 brew install lima
-brew install hudochenkov/sshpass/sshpass
 ```
 
 **Linux (Debian/Ubuntu):**
 ```bash
-# Lima
 curl -fsSL https://lima-vm.io/install.sh | bash
-# sshpass
-sudo apt install sshpass
 ```
 
 **Setup (all platforms):**
 ```bash
 npm run setup    # Installs deps + builds ./bloud CLI
+./bloud setup    # Checks prerequisites and downloads VM image
 ```
-
-You also need a NixOS image at `lima/imgs/nixos-24.11-lima.img` (see "Building the NixOS Image" below).
 
 ### The `./bloud` CLI
 
@@ -350,14 +341,16 @@ The dev environment uses:
 
 Edit files in your Mac editor → Changes detected via polling → Files synced → Auto-rebuild/reload
 
-### Building the NixOS Image
+### Getting the NixOS Image
 
-On a Linux machine (or Ubuntu Lima VM):
+The easiest way is to run `./bloud setup` which offers to download a pre-built image.
+
+If you prefer to build manually (requires Linux with Nix):
 ```bash
-nix build github:kasuboski/nixos-lima#packages.aarch64-linux.img
-mkdir -p lima/imgs
-cp $(readlink result)/nixos.img lima/imgs/nixos-aarch64.img
+cd lima && ./build-image.sh --local
 ```
+
+See README.md for detailed instructions.
 
 ### Configurable Username
 

@@ -18,6 +18,87 @@ const (
 	vmPassword = "bloud"
 )
 
+// sshMethod tracks which SSH method is available
+type sshMethod int
+
+const (
+	sshMethodUnknown sshMethod = iota
+	sshMethodKey               // SSH key auth via Lima's config
+	sshMethodPassword          // Password auth via sshpass
+)
+
+// cachedSSHMethod stores the detected SSH method to avoid repeated checks
+var cachedSSHMethod = sshMethodUnknown
+
+// detectSSHMethod determines the best available SSH method
+func detectSSHMethod(vmName string) sshMethod {
+	if cachedSSHMethod != sshMethodUnknown {
+		return cachedSSHMethod
+	}
+
+	port, err := GetSSHPort(vmName)
+	if err != nil || port == 0 {
+		return sshMethodUnknown
+	}
+
+	// Try key-based SSH first (preferred - no sshpass needed)
+	if tryKeySSH(port) {
+		cachedSSHMethod = sshMethodKey
+		return sshMethodKey
+	}
+
+	// Fall back to password auth if sshpass is available
+	if hasSshpass() && tryPasswordSSH(port) {
+		cachedSSHMethod = sshMethodPassword
+		return sshMethodPassword
+	}
+
+	return sshMethodUnknown
+}
+
+// tryKeySSH tests if key-based SSH works
+func tryKeySSH(port int) bool {
+	cmd := exec.Command("ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "BatchMode=yes", // Fail instead of prompting for password
+		"-o", "ConnectTimeout=2",
+		"-o", "LogLevel=ERROR",
+		"-p", strconv.Itoa(port),
+		vmUser+"@127.0.0.1",
+		"true",
+	)
+	return cmd.Run() == nil
+}
+
+// tryPasswordSSH tests if password-based SSH works
+func tryPasswordSSH(port int) bool {
+	cmd := exec.Command("sshpass", "-p", vmPassword,
+		"ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "PreferredAuthentications=password",
+		"-o", "PubkeyAuthentication=no",
+		"-o", "LogLevel=ERROR",
+		"-o", "ConnectTimeout=2",
+		"-p", strconv.Itoa(port),
+		vmUser+"@127.0.0.1",
+		"true",
+	)
+	return cmd.Run() == nil
+}
+
+// hasSshpass checks if sshpass is installed
+func hasSshpass() bool {
+	_, err := exec.LookPath("sshpass")
+	return err == nil
+}
+
+// ResetSSHMethod clears the cached SSH method (useful after VM restart)
+func ResetSSHMethod() {
+	cachedSSHMethod = sshMethodUnknown
+}
+
 // VMStatus represents the status of a Lima VM
 type VMStatus string
 
@@ -232,19 +313,15 @@ func WaitForSSH(ctx context.Context, vmName string, timeout time.Duration) error
 
 // testSSH attempts an SSH connection to verify it works
 func testSSH(port int) bool {
-	cmd := exec.Command("sshpass", "-p", vmPassword,
-		"ssh",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "PreferredAuthentications=password",
-		"-o", "PubkeyAuthentication=no",
-		"-o", "LogLevel=ERROR",
-		"-o", "ConnectTimeout=2",
-		"-p", strconv.Itoa(port),
-		vmUser+"@127.0.0.1",
-		"true",
-	)
-	return cmd.Run() == nil
+	// Try key-based first
+	if tryKeySSH(port) {
+		return true
+	}
+	// Fall back to password if sshpass available
+	if hasSshpass() {
+		return tryPasswordSSH(port)
+	}
+	return false
 }
 
 // Exec runs a command in the VM and returns the output
@@ -254,24 +331,59 @@ func Exec(vmName string, command string) (string, error) {
 		return "", err
 	}
 
-	cmd := exec.Command("sshpass", "-p", vmPassword,
-		"ssh",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "PreferredAuthentications=password",
-		"-o", "PubkeyAuthentication=no",
-		"-o", "LogLevel=ERROR",
-		"-p", strconv.Itoa(port),
-		vmUser+"@127.0.0.1",
-		command,
-	)
-
+	cmd := buildSSHCommand(vmName, port, false, command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("command failed: %w", err)
 	}
 
 	return string(output), nil
+}
+
+// buildSSHCommand creates an SSH command using the best available auth method
+func buildSSHCommand(vmName string, port int, interactive bool, command string) *exec.Cmd {
+	method := detectSSHMethod(vmName)
+
+	var args []string
+
+	if method == sshMethodPassword && hasSshpass() {
+		// Use sshpass for password auth
+		args = append(args, "-p", vmPassword, "ssh")
+		args = append(args,
+			"-o", "PreferredAuthentications=password",
+			"-o", "PubkeyAuthentication=no",
+		)
+	} else {
+		// Use key-based auth (default)
+		args = []string{}
+	}
+
+	// Common SSH options
+	sshArgs := []string{
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+	}
+
+	if interactive {
+		sshArgs = append(sshArgs, "-t")
+	}
+
+	sshArgs = append(sshArgs,
+		"-p", strconv.Itoa(port),
+		vmUser+"@127.0.0.1",
+	)
+
+	if command != "" {
+		sshArgs = append(sshArgs, command)
+	}
+
+	if method == sshMethodPassword && hasSshpass() {
+		args = append(args, sshArgs...)
+		return exec.Command("sshpass", args...)
+	}
+
+	return exec.Command("ssh", sshArgs...)
 }
 
 // ExecStream runs a command in the VM and streams output to stdout/stderr
@@ -281,17 +393,7 @@ func ExecStream(vmName string, command string) error {
 		return err
 	}
 
-	cmd := exec.Command("sshpass", "-p", vmPassword,
-		"ssh",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "PreferredAuthentications=password",
-		"-o", "PubkeyAuthentication=no",
-		"-o", "LogLevel=ERROR",
-		"-p", strconv.Itoa(port),
-		vmUser+"@127.0.0.1",
-		command,
-	)
+	cmd := buildSSHCommand(vmName, port, false, command)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -305,25 +407,12 @@ func InteractiveShell(vmName string, command string) error {
 		return err
 	}
 
-	args := []string{"-p", vmPassword,
-		"ssh",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "PreferredAuthentications=password",
-		"-o", "PubkeyAuthentication=no",
-		"-o", "LogLevel=ERROR",
-		"-t",
-		"-p", strconv.Itoa(port),
-		vmUser + "@127.0.0.1",
+	// For interactive, if no command specified, use bash
+	if command == "" {
+		command = "bash"
 	}
 
-	if command != "" {
-		args = append(args, command)
-	} else {
-		args = append(args, "bash")
-	}
-
-	cmd := exec.Command("sshpass", args...)
+	cmd := buildSSHCommand(vmName, port, true, command)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -364,17 +453,30 @@ func StartPortForwarding(vmName string, ports []PortForward) (func(), error) {
 		return nil, err
 	}
 
-	args := []string{"-p", vmPassword,
-		"ssh",
+	method := detectSSHMethod(vmName)
+
+	var args []string
+	var cmdName string
+
+	if method == sshMethodPassword && hasSshpass() {
+		cmdName = "sshpass"
+		args = []string{"-p", vmPassword, "ssh",
+			"-o", "PreferredAuthentications=password",
+			"-o", "PubkeyAuthentication=no",
+		}
+	} else {
+		cmdName = "ssh"
+		args = []string{}
+	}
+
+	args = append(args,
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "PreferredAuthentications=password",
-		"-o", "PubkeyAuthentication=no",
 		"-o", "LogLevel=ERROR",
 		"-o", "ServerAliveInterval=60",
 		"-o", "ExitOnForwardFailure=yes",
 		"-N",
-	}
+	)
 
 	for _, p := range ports {
 		args = append(args, "-L", fmt.Sprintf("%d:localhost:%d", p.LocalPort, p.RemotePort))
@@ -382,7 +484,7 @@ func StartPortForwarding(vmName string, ports []PortForward) (func(), error) {
 
 	args = append(args, "-p", strconv.Itoa(port), vmUser+"@127.0.0.1")
 
-	cmd := exec.Command("sshpass", args...)
+	cmd := exec.Command(cmdName, args...)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start port forwarding: %w", err)
 	}
@@ -438,11 +540,23 @@ func EnsureRunning(ctx context.Context, vmName, configPath string) error {
 	return nil
 }
 
-// EnsureSshpass checks that sshpass is installed
+// EnsureSshpass checks that sshpass is installed (only needed for password auth fallback)
 func EnsureSshpass() error {
-	_, err := exec.LookPath("sshpass")
-	if err != nil {
-		return fmt.Errorf("sshpass not installed. Install with: brew install hudochenkov/sshpass/sshpass")
+	if hasSshpass() {
+		return nil
 	}
+	return fmt.Errorf("sshpass not installed (only needed if SSH key auth fails). Install with: brew install hudochenkov/sshpass/sshpass")
+}
+
+// EnsureSSHAvailable checks that some form of SSH auth will work
+// Returns an error only if neither key auth nor password auth is possible
+func EnsureSSHAvailable() error {
+	// Check if SSH client is available
+	if _, err := exec.LookPath("ssh"); err != nil {
+		return fmt.Errorf("ssh client not found")
+	}
+
+	// sshpass is optional - we prefer key auth
+	// We'll detect the right method when we actually connect
 	return nil
 }

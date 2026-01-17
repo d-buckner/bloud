@@ -28,7 +28,7 @@ echo ""
 # Check if project is mounted
 if [ ! -d "$PROJECT_DIR/nixos" ]; then
     echo "Error: Project directory not mounted at $PROJECT_DIR"
-    echo "Run: ./lima/test vm-create"
+    echo "Run: ./bloud test vm-create"
     exit 1
 fi
 
@@ -64,6 +64,7 @@ export BLOUD_FLAKE_PATH="$PROJECT_DIR"
 export BLOUD_FLAKE_TARGET="vm-test"
 export BLOUD_NIXOS_PATH="$PROJECT_DIR/nixos"
 export BLOUD_SSO_BASE_URL="http://localhost:8081"
+export BLOUD_SSO_AUTHENTIK_URL="http://auth.localhost:8081"
 
 if go build -o "$AGENT_BIN" ./cmd/host-agent 2>&1; then
     echo "Host-agent built successfully at $AGENT_BIN"
@@ -113,6 +114,7 @@ export BLOUD_FLAKE_PATH="$SRC_DIR"
 export BLOUD_FLAKE_TARGET="vm-test"  # TEST FLAKE TARGET
 export BLOUD_NIXOS_PATH="$SRC_DIR/nixos"
 export BLOUD_SSO_BASE_URL="http://localhost:8081"  # TEST PORT
+export BLOUD_SSO_AUTHENTIK_URL="http://auth.localhost:8081"  # TEST PORT
 
 BIN="/tmp/host-agent-test"
 LAST_HASH=""
@@ -236,8 +238,8 @@ chmod +x "$VITE_WRAPPER"
 if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
     echo "Test environment already running!"
     echo ""
-    echo "To view: ./lima/test attach"
-    echo "To stop: ./lima/test stop"
+    echo "To view: ./bloud test attach"
+    echo "To stop: ./bloud test stop"
     exit 0
 fi
 
@@ -267,8 +269,8 @@ echo "  Web UI:  http://localhost:5174  (test port)"
 echo "  Traefik: http://localhost:8081  (test port)"
 echo ""
 echo "Commands:"
-echo "  ./lima/test attach   - View tmux session (Ctrl-B D to detach)"
-echo "  ./lima/test logs     - View server output"
-echo "  ./lima/test stop     - Stop test servers"
-echo "  ./lima/test status   - Check service status"
+echo "  ./bloud test attach   - View tmux session (Ctrl-B D to detach)"
+echo "  ./bloud test logs     - View server output"
+echo "  ./bloud test stop     - Stop test servers"
+echo "  ./bloud test status   - Check service status"
 echo ""

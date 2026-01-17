@@ -34,10 +34,11 @@ type Server struct {
 	flakePath      string
 	flakeTarget    string
 	nixosPath      string
-	port           int
-	ssoHostSecret  string
-	ssoBaseURL     string
-	authentikToken string
+	port            int
+	ssoHostSecret   string
+	ssoBaseURL      string
+	ssoAuthentikURL string
+	authentikToken  string
 	registry       configurator.RegistryInterface
 	logger         *slog.Logger
 }
@@ -52,9 +53,10 @@ type ServerConfig struct {
 	NixosPath    string
 	Port         int
 	// SSO configuration
-	SSOHostSecret  string // Master secret for deriving client secrets (required for SSO)
-	SSOBaseURL     string // Base URL for callbacks (e.g., "http://localhost:8080")
-	AuthentikToken string // Authentik API token for SSO cleanup
+	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
+	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
+	SSOAuthentikURL string // Authentik URL for discovery (e.g., "http://auth.localhost:8080")
+	AuthentikToken  string // Authentik API token for SSO cleanup
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
 }
@@ -79,10 +81,11 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		flakePath:      cfg.FlakePath,
 		flakeTarget:    cfg.FlakeTarget,
 		nixosPath:      cfg.NixosPath,
-		port:           cfg.Port,
-		ssoHostSecret:  cfg.SSOHostSecret,
-		ssoBaseURL:     cfg.SSOBaseURL,
-		authentikToken: cfg.AuthentikToken,
+		port:            cfg.Port,
+		ssoHostSecret:   cfg.SSOHostSecret,
+		ssoBaseURL:      cfg.SSOBaseURL,
+		ssoAuthentikURL: cfg.SSOAuthentikURL,
+		authentikToken:  cfg.AuthentikToken,
 		registry:       cfg.Registry,
 		logger:         logger,
 	}
@@ -149,7 +152,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		// SSO configuration
 		SSOHostSecret:    s.ssoHostSecret,
 		SSOBaseURL:       s.ssoBaseURL,
-		SSOAuthentikURL:  s.ssoBaseURL, // Same URL - Authentik is accessed through Traefik
+		SSOAuthentikURL:  s.ssoAuthentikURL,
 		SSOBlueprintsDir: ssoBlueprintsDir,
 		AuthentikToken:   s.authentikToken,
 	})

@@ -463,7 +463,7 @@ see `apps/miniflux/test.ts` and `apps/actual-budget/test.ts` for real examples.
 ./test                   # run all tests
 ```
 
-make sure the dev environment is running (`./lima/dev start`) before running tests.
+make sure the dev environment is running (`./bloud start`) before running tests.
 
 ## routing and embedding
 
@@ -502,33 +502,26 @@ the service worker intercepts requests from the iframe and rewrites absolute pat
 
 ## testing your app
 
-1. add your app to `nixos/generated/apps.nix`:
-
-```nix
-bloud.apps.your-app.enable = true;
-```
-
-2. rebuild and start services:
+1. install your app using the CLI:
 
 ```bash
-./lima/dev rebuild
-./lima/dev restart
+./bloud install your-app
 ```
 
-3. check the service:
+2. check the service:
 
 ```bash
-./lima/dev shell "systemctl --user status podman-your-app"
-./lima/dev shell "journalctl --user -u podman-your-app -f"
+./bloud shell "systemctl --user status podman-your-app"
+./bloud shell "journalctl --user -u podman-your-app -f"
 ```
 
-4. verify routing:
+3. verify routing:
 
 ```bash
 curl http://localhost:8080/embed/your-app/
 ```
 
-5. check in the ui at `http://localhost:8080`
+4. check in the ui at `http://localhost:8080`
 
 ## common patterns
 
@@ -589,7 +582,7 @@ before submitting:
 - [ ] healthCheck path is correct
 
 **testing:**
-- [ ] service starts cleanly after `./lima/dev rebuild`
+- [ ] service starts cleanly after `./bloud rebuild`
 - [ ] app works in iframe embedding
 - [ ] health check endpoint responds
 - [ ] `test.ts` passes (`npx playwright test apps/your-app/test.ts`)
@@ -601,8 +594,8 @@ before submitting:
 check the service status and logs:
 
 ```bash
-./lima/dev shell "systemctl --user status podman-your-app"
-./lima/dev shell "journalctl --user -u podman-your-app --no-pager -n 50"
+./bloud shell "systemctl --user status podman-your-app"
+./bloud shell "journalctl --user -u podman-your-app --no-pager -n 50"
 ```
 
 common issues:
@@ -615,14 +608,14 @@ common issues:
 check if the container is actually running:
 
 ```bash
-./lima/dev shell "podman ps -a"
-./lima/dev shell "podman logs your-app"
+./bloud shell "podman ps -a"
+./bloud shell "podman logs your-app"
 ```
 
 test from inside the vm:
 
 ```bash
-./lima/dev shell "curl -v http://localhost:YOUR_PORT/"
+./bloud shell "curl -v http://localhost:YOUR_PORT/"
 ```
 
 ### routing issues
@@ -630,7 +623,7 @@ test from inside the vm:
 verify traefik routes are generated:
 
 ```bash
-./lima/dev shell "cat ~/.local/share/bloud/traefik/dynamic/apps-routes.yml"
+./bloud shell "cat ~/.local/share/bloud/traefik/dynamic/apps-routes.yml"
 ```
 
 test the embed path:
@@ -641,16 +634,16 @@ curl -v http://localhost:8080/embed/your-app/
 
 if you get 404, check:
 - metadata.yaml `name` matches the path
-- app is enabled in `nixos/generated/apps.nix`
-- traefik config was regenerated (`./lima/dev rebuild`)
+- app is installed (`./bloud install your-app`)
+- traefik config was regenerated (`./bloud rebuild`)
 
 ### database connection fails
 
 verify postgres is running and database exists:
 
 ```bash
-./lima/dev shell "podman exec apps-postgres psql -U apps -l"
-./lima/dev shell "podman exec apps-postgres psql -U apps -d yourapp -c 'SELECT 1'"
+./bloud shell "podman exec apps-postgres psql -U apps -l"
+./bloud shell "podman exec apps-postgres psql -U apps -d yourapp -c 'SELECT 1'"
 ```
 
 check your app's DATABASE_URL matches the database name.
@@ -660,7 +653,7 @@ check your app's DATABASE_URL matches the database name.
 if rebuild fails with nix errors, check syntax:
 
 ```bash
-./lima/dev shell "nix-instantiate --parse /home/bloud.linux/bloud-v3/apps/your-app/module.nix"
+./bloud shell "nix-instantiate --parse /home/bloud.linux/bloud/apps/your-app/module.nix"
 ```
 
 common mistakes:
@@ -674,5 +667,5 @@ nix flakes only see git-tracked files. if you created a new file:
 
 ```bash
 git add apps/your-app/module.nix
-./lima/dev rebuild
+./bloud rebuild
 ```
