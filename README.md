@@ -11,7 +11,7 @@ An opinionated, zero-config home server OS that makes self-hosting actually acce
 
 ## The Problem
 
-Self-hosting is overwhelming. Setting up Immich, Nextcloud, and Jellyfin takes hours of configuring reverse proxies, SSL certificates, SSO, and making apps talk to each other. Even senior engineers find this tedious.
+Self-hosting is overwhelming. Setting up Immich, Nextcloud, and Jellyfin takes hours of configuring reverse proxies, SSL certificates, SSO, and making apps talk to each other.
 
 ## The Vision
 
