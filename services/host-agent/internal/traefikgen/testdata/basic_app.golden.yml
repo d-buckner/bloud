@@ -10,6 +10,7 @@ http:
         - miniflux-stripprefix
         - iframe-headers
         - embed-isolation
+        - embed-forwarded-headers
       service: miniflux
       priority: 100
 

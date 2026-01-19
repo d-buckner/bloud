@@ -15,6 +15,7 @@ import (
 
 	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/xmlutil"
 )
 
 const (
@@ -70,7 +71,7 @@ func (c *Configurator) Name() string {
 	return "jellyfin"
 }
 
-// PreStart ensures directories exist.
+// PreStart ensures directories exist and configures network settings.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
@@ -85,6 +86,57 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		}
 	}
 
+	// Configure network.xml for reverse proxy support
+	// This enables Jellyfin to use X-Forwarded-Host headers from Traefik
+	// to return the correct LocalAddress in API responses, fixing the
+	// "server mismatch" warning when embedded in an iframe
+	if err := c.configureNetwork(state.DataPath); err != nil {
+		return fmt.Errorf("failed to configure network: %w", err)
+	}
+
+	return nil
+}
+
+// configureNetwork creates or updates network.xml with reverse proxy settings
+func (c *Configurator) configureNetwork(dataPath string) error {
+	networkPath := filepath.Join(dataPath, "config", "network.xml")
+
+	cfg, err := xmlutil.Open(networkPath, "NetworkConfiguration")
+	if err != nil {
+		return err
+	}
+
+	// Check if already configured
+	if cfg.GetElement("EnablePublishedServerUriByRequest") == "true" {
+		log.Println("Jellyfin: network.xml already configured for reverse proxy")
+		return nil
+	}
+
+	// Enable dynamic server URI based on request headers (X-Forwarded-Host, etc.)
+	cfg.SetElement("EnablePublishedServerUriByRequest", "true")
+
+	// Trust localhost as a known proxy (Traefik runs on the same host)
+	cfg.SetStringArray("KnownProxies", []string{"127.0.0.1", "::1"})
+
+	// Standard network settings
+	cfg.SetElement("EnableHttps", "false")
+	cfg.SetElement("RequireHttps", "false")
+	cfg.SetElement("InternalHttpPort", "8096")
+	cfg.SetElement("InternalHttpsPort", "8920")
+	cfg.SetElement("PublicHttpPort", "8096")
+	cfg.SetElement("PublicHttpsPort", "8920")
+	cfg.SetElement("EnableRemoteAccess", "true")
+	cfg.SetElement("EnableIPv4", "true")
+	cfg.SetElement("EnableIPv6", "false")
+	cfg.SetElement("EnableUPnP", "false")
+	cfg.SetElement("AutoDiscovery", "true")
+	cfg.SetElement("IgnoreVirtualInterfaces", "true")
+
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+
+	log.Println("Jellyfin: Configured network.xml for reverse proxy support")
 	return nil
 }
 

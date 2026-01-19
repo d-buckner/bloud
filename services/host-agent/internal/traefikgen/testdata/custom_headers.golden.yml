@@ -9,6 +9,7 @@ http:
       middlewares:
         - actual-budget-stripprefix
         - iframe-headers
+        - embed-forwarded-headers
         - actual-budget-headers
       service: actual-budget
       priority: 100

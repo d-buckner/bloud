@@ -117,6 +117,15 @@ http:
           Cross-Origin-Opener-Policy: "same-origin"
           Cross-Origin-Embedder-Policy: "credentialless"
 
+    # Forward headers for embedded apps - ensures apps know their public URL
+    # This is critical for apps like Jellyfin that need to return correct
+    # LocalAddress in API responses to avoid "server mismatch" warnings
+    embed-forwarded-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Host: "localhost:${toString appCfg.port}"
+          X-Forwarded-Proto: "http"
+
   services:
     host-agent:
       loadBalancer:
