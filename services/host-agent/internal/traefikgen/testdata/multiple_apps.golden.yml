@@ -10,6 +10,7 @@ http:
         - actual-budget-stripprefix
         - iframe-headers
         - embed-isolation
+        - embed-forwarded-headers
       service: actual-budget
       priority: 100
     adguard-home-backend:
@@ -18,6 +19,7 @@ http:
         - adguard-home-stripprefix
         - iframe-headers
         - embed-isolation
+        - embed-forwarded-headers
       service: adguard-home
       priority: 100
     miniflux-backend:
@@ -26,6 +28,7 @@ http:
         - miniflux-stripprefix
         - iframe-headers
         - embed-isolation
+        - embed-forwarded-headers
       service: miniflux
       priority: 100
 

@@ -98,6 +98,9 @@ func TestGenerator_Generate_BasicApp(t *testing.T) {
 	if !strings.Contains(contentStr, "- embed-isolation") {
 		t.Error("Expected embed-isolation middleware")
 	}
+	if !strings.Contains(contentStr, "- embed-forwarded-headers") {
+		t.Error("Expected embed-forwarded-headers middleware for X-Forwarded-Host/Proto")
+	}
 
 	// Check stripPrefix middleware definition
 	if !strings.Contains(contentStr, "miniflux-stripprefix:") {

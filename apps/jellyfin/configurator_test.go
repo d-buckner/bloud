@@ -77,6 +77,148 @@ func TestConfigurator_PreStart(t *testing.T) {
 			t.Errorf("PreStart() did not create directory %s", dir)
 		}
 	}
+
+	// Verify network.xml was created with reverse proxy settings
+	networkPath := filepath.Join(state.DataPath, "config", "network.xml")
+	content, err := os.ReadFile(networkPath)
+	if err != nil {
+		t.Fatalf("PreStart() did not create network.xml: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Check EnablePublishedServerUriByRequest is enabled
+	if !strings.Contains(contentStr, "<EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>") {
+		t.Error("network.xml should have EnablePublishedServerUriByRequest=true")
+	}
+
+	// Check KnownProxies includes localhost
+	if !strings.Contains(contentStr, "<string>127.0.0.1</string>") {
+		t.Error("network.xml should have 127.0.0.1 in KnownProxies")
+	}
+}
+
+func TestConfigurator_ConfigureNetwork_CreatesNewFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataPath := filepath.Join(tmpDir, "jellyfin")
+
+	// Create config directory
+	if err := os.MkdirAll(filepath.Join(dataPath, "config"), 0755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	err := c.configureNetwork(dataPath)
+	if err != nil {
+		t.Fatalf("configureNetwork() error = %v", err)
+	}
+
+	// Verify file was created
+	networkPath := filepath.Join(dataPath, "config", "network.xml")
+	content, err := os.ReadFile(networkPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Verify key settings
+	checks := []struct {
+		name     string
+		contains string
+	}{
+		{"EnablePublishedServerUriByRequest", "<EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>"},
+		{"KnownProxies localhost", "<string>127.0.0.1</string>"},
+		{"KnownProxies IPv6", "<string>::1</string>"},
+		{"EnableRemoteAccess", "<EnableRemoteAccess>true</EnableRemoteAccess>"},
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(contentStr, check.contains) {
+			t.Errorf("network.xml missing %s: expected %q", check.name, check.contains)
+		}
+	}
+}
+
+func TestConfigurator_ConfigureNetwork_SkipsIfAlreadyConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataPath := filepath.Join(tmpDir, "jellyfin")
+	configDir := filepath.Join(dataPath, "config")
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	// Create existing network.xml with EnablePublishedServerUriByRequest=true
+	existing := `<?xml version="1.0" encoding="UTF-8"?>
+<NetworkConfiguration>
+  <EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>
+  <CustomSetting>should-be-preserved</CustomSetting>
+</NetworkConfiguration>`
+	networkPath := filepath.Join(configDir, "network.xml")
+	if err := os.WriteFile(networkPath, []byte(existing), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	err := c.configureNetwork(dataPath)
+	if err != nil {
+		t.Fatalf("configureNetwork() error = %v", err)
+	}
+
+	// Verify file wasn't modified (custom setting preserved)
+	content, err := os.ReadFile(networkPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	if !strings.Contains(string(content), "should-be-preserved") {
+		t.Error("configureNetwork() should not modify already-configured file")
+	}
+}
+
+func TestConfigurator_ConfigureNetwork_UpdatesExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataPath := filepath.Join(tmpDir, "jellyfin")
+	configDir := filepath.Join(dataPath, "config")
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	// Create existing network.xml with EnablePublishedServerUriByRequest=false
+	existing := `<?xml version="1.0" encoding="UTF-8"?>
+<NetworkConfiguration>
+  <EnablePublishedServerUriByRequest>false</EnablePublishedServerUriByRequest>
+  <SomeOtherSetting>value</SomeOtherSetting>
+</NetworkConfiguration>`
+	networkPath := filepath.Join(configDir, "network.xml")
+	if err := os.WriteFile(networkPath, []byte(existing), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	err := c.configureNetwork(dataPath)
+	if err != nil {
+		t.Fatalf("configureNetwork() error = %v", err)
+	}
+
+	// Verify setting was updated
+	content, err := os.ReadFile(networkPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	contentStr := string(content)
+
+	if !strings.Contains(contentStr, "<EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>") {
+		t.Error("configureNetwork() should update EnablePublishedServerUriByRequest to true")
+	}
+
+	// Verify KnownProxies was added
+	if !strings.Contains(contentStr, "<string>127.0.0.1</string>") {
+		t.Error("configureNetwork() should add KnownProxies")
+	}
 }
 
 func TestConfigurator_GetSystemInfo(t *testing.T) {

@@ -17,12 +17,3 @@ healthCheck:
   interval: 5
   timeout: 60
 
-# Client-side pre-configuration before app loads in iframe
-# Fixes "Server Mismatch" warning by ensuring address fields match embed URL
-bootstrap:
-  localStorage:
-    intercepts:
-      - key: jellyfin_credentials
-        jsonPatch:
-          Servers.0.ManualAddress: "{{embedUrl}}"
-          Servers.0.LocalAddress: "{{embedUrl}}"

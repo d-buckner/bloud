@@ -84,6 +84,27 @@ func (c *ConfigFile) SetElement(name, value string) {
 	el.SetText(value)
 }
 
+// SetStringArray sets a child element to contain multiple <string> children.
+// This is used for .NET XML serialization format like:
+//
+//	<KnownProxies>
+//	  <string>127.0.0.1</string>
+//	  <string>::1</string>
+//	</KnownProxies>
+func (c *ConfigFile) SetStringArray(name string, values []string) {
+	// Remove existing element if present
+	if existing := c.root.SelectElement(name); existing != nil {
+		c.root.RemoveChild(existing)
+	}
+
+	// Create new element with string children
+	el := c.root.CreateElement(name)
+	for _, v := range values {
+		child := el.CreateElement("string")
+		child.SetText(v)
+	}
+}
+
 // Save writes the document back to disk with proper indentation.
 func (c *ConfigFile) Save() error {
 	// Ensure parent directory exists

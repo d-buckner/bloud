@@ -9,6 +9,7 @@ http:
       middlewares:
         - iframe-headers
         - embed-isolation
+        - embed-forwarded-headers
       service: miniflux
       priority: 100
 
