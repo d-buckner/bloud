@@ -159,6 +159,11 @@ func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikE
 		middlewares = append(middlewares, "embed-isolation")
 	}
 
+	// embed-forwarded-headers ensures apps receive correct X-Forwarded-Host/Proto
+	// This is critical for apps like Jellyfin that use these headers to determine
+	// their public URL and avoid "server mismatch" warnings
+	middlewares = append(middlewares, "embed-forwarded-headers")
+
 	// Add custom headers middleware if app has routing headers
 	if app.Routing != nil && len(app.Routing.Headers) > 0 {
 		middlewares = append(middlewares, fmt.Sprintf("%s-headers", app.Name))
