@@ -19,11 +19,11 @@ import {
   getActiveApp,
   getInterceptConfig,
   registerClient,
+  unregisterClient,
   getAppForClient,
   getAppFromReferer,
   appNeedsRewrite,
   rewriteRootUrl,
-  isAuthRedirect,
   PassthroughReason,
 } from './core';
 
@@ -151,81 +151,6 @@ async function maybeInjectIntercepts(response: Response): Promise<Response> {
 }
 
 /**
- * Create an HTML page that redirects the top-level window to Authentik's OAuth start endpoint.
- * Uses Authentik's `rd` parameter to specify where to redirect after successful auth.
- *
- * This is needed because:
- * 1. Cross-origin OAuth flows don't work well in iframes
- * 2. We need to redirect the TOP-LEVEL window, not the iframe
- */
-function createTopLevelRedirectPage(returnPath: string): Response {
-  // Use Authentik's /start endpoint with rd parameter - this is the standard way
-  // to start an OAuth flow with a specific redirect destination
-  const startUrl = `/outpost.goauthentik.io/start?rd=${encodeURIComponent(returnPath)}`;
-
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Redirecting to login...</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-      background: #1a1a1a;
-      color: #e0e0e0;
-    }
-    .container { text-align: center; }
-    .spinner {
-      width: 32px;
-      height: 32px;
-      border: 2px solid #333;
-      border-top-color: #3b82f6;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin: 0 auto 16px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="spinner"></div>
-    <p>Redirecting to login...</p>
-  </div>
-  <script>
-    (function() {
-      const startUrl = ${JSON.stringify(startUrl)};
-      console.log('[embed-sw-redirect] Redirecting to Authentik start:', startUrl);
-
-      // Redirect the top-level window to start the OAuth flow
-      if (window.top !== window.self) {
-        window.top.location.href = startUrl;
-      } else {
-        window.location.href = startUrl;
-      }
-    })();
-  </script>
-</body>
-</html>`;
-
-  return new Response(html, {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'X-Frame-Options': 'SAMEORIGIN',
-      'Content-Security-Policy': "frame-ancestors 'self'",
-      'Cross-Origin-Resource-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'credentialless',
-    },
-  });
-}
-
-/**
  * Handle an embed navigation request with redirect rewriting
  */
 function handleEmbedNavigationRequest(
@@ -255,30 +180,22 @@ function handleEmbedNavigationRequest(
       ok: response.ok,
     });
 
-    // Check for opaqueredirect - this means a cross-origin redirect happened
-    // (rare case, kept for edge cases where apps redirect to external URLs)
+    // Opaque redirect means the browser is navigating away from the app
+    // (likely to Authentik login). Unregister the client so subsequent
+    // requests from that context (e.g., Authentik's static assets) aren't rewritten.
     if (response.type === 'opaqueredirect') {
-      const returnPath = `/apps/${appName}`;
-      console.log('[embed-sw] Opaqueredirect detected, return path:', returnPath);
-      return createTopLevelRedirectPage(returnPath);
+      unregisterClient(event.clientId);
+      unregisterClient(event.resultingClientId);
     }
 
     // Check for redirects (status 3xx with Location header)
-    // Auth redirects go to /auth/* (same-origin) and require top-level window redirect
+    // Rewrite redirect URLs to stay within /embed/{appName}/ namespace
+    // Auth is handled by the app/Traefik, not the service worker
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('Location');
       console.log('[embed-sw] Redirect response:', { status: response.status, location });
 
       if (location) {
-        const isAuth = isAuthRedirect(location, origin);
-        if (isAuth) {
-          // Auth redirect to /auth/* - redirect top-level window for login flow
-          const returnPath = `/apps/${appName}`;
-          console.log('[embed-sw] Auth redirect detected, return path:', returnPath);
-          return createTopLevelRedirectPage(returnPath);
-        }
-
-        // For same-origin redirects, rewrite to stay within /embed/{appName}/ namespace
         const newLocation = processRedirectResponse(response, appName, origin);
         if (newLocation) {
           return Response.redirect(newLocation, response.status);

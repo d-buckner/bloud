@@ -119,6 +119,16 @@ export function registerClient(clientId: string, appName: string): void {
 }
 
 /**
+ * Unregister a clientId from the app map.
+ * Called when the client navigates away from the app (e.g., to Authentik login).
+ */
+export function unregisterClient(clientId: string | undefined): void {
+  if (clientId) {
+    clientAppMap.delete(clientId);
+  }
+}
+
+/**
  * Get the app name for a clientId.
  */
 export function getAppForClient(clientId: string | undefined): string | null {
@@ -323,37 +333,6 @@ export function isRedirectResponse(response: ResponseLike): boolean {
     return true;
   }
   return response.status >= 300 && response.status < 400;
-}
-
-/**
- * Authentik OAuth/OIDC path prefixes that indicate an auth redirect.
- * These are the root-level paths used by Authentik for authentication flows.
- */
-const AUTHENTIK_AUTH_PREFIXES = [
-  '/application/', // OAuth2/OIDC authorization endpoints
-  '/flows/', // Authentication flows (login, consent, etc.)
-  '/if/', // Authentik Identity Frontend UI
-];
-
-/**
- * Check if a redirect URL is to an Authentik auth endpoint (same-origin).
- * Used to detect when an embedded app redirects to OAuth/login flows,
- * so we can break out of the iframe for proper authentication.
- */
-export function isAuthRedirect(location: string, origin: string): boolean {
-  try {
-    const locationUrl = new URL(location, origin);
-    // Only same-origin redirects can be auth redirects
-    if (locationUrl.origin !== origin) {
-      return false;
-    }
-    // Check if path starts with any Authentik auth prefix
-    return AUTHENTIK_AUTH_PREFIXES.some((prefix) =>
-      locationUrl.pathname.startsWith(prefix)
-    );
-  } catch {
-    return false;
-  }
 }
 
 /**

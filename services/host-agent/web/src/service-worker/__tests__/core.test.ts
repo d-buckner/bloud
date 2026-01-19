@@ -16,7 +16,6 @@ import {
   rewriteRedirectLocation,
   rewriteRootUrl,
   isRedirectResponse,
-  isAuthRedirect,
   shouldRedirectOAuthCallback,
   getRequestAction,
   processRedirectResponse,
@@ -27,6 +26,7 @@ import {
   getInterceptConfig,
   // Client ID tracking
   registerClient,
+  unregisterClient,
   getAppForClient,
   getAppFromReferer,
   getClientMapSize,
@@ -430,6 +430,34 @@ describe('service-worker core', () => {
       resetTestState();
       expect(getClientMapSize()).toBe(0);
       expect(getAppForClient('client-123')).toBe(null);
+    });
+
+    it('unregisters a client', () => {
+      registerClient('client-123', 'my-app');
+      expect(getAppForClient('client-123')).toBe('my-app');
+      expect(getClientMapSize()).toBe(1);
+
+      unregisterClient('client-123');
+      expect(getAppForClient('client-123')).toBe(null);
+      expect(getClientMapSize()).toBe(0);
+    });
+
+    it('unregisterClient handles undefined gracefully', () => {
+      registerClient('client-123', 'my-app');
+      expect(getClientMapSize()).toBe(1);
+
+      unregisterClient(undefined);
+      expect(getClientMapSize()).toBe(1);
+      expect(getAppForClient('client-123')).toBe('my-app');
+    });
+
+    it('unregisterClient handles unknown clientId gracefully', () => {
+      registerClient('client-123', 'my-app');
+      expect(getClientMapSize()).toBe(1);
+
+      unregisterClient('unknown-client');
+      expect(getClientMapSize()).toBe(1);
+      expect(getAppForClient('client-123')).toBe('my-app');
     });
   });
 
@@ -1076,77 +1104,6 @@ describe('service-worker core', () => {
     it('handles responses with both type and status', () => {
       expect(isRedirectResponse(mockResponse(200, undefined, 'opaqueredirect'))).toBe(true);
       expect(isRedirectResponse(mockResponse(302, undefined, 'basic'))).toBe(true);
-    });
-  });
-
-  describe('isAuthRedirect', () => {
-    const origin = 'http://localhost:8080';
-
-    describe('detects Authentik auth redirects (root-level paths)', () => {
-      it('returns true for /application/ path (OAuth2/OIDC)', () => {
-        expect(isAuthRedirect('/application/o/authorize/', origin)).toBe(true);
-      });
-
-      it('returns true for /flows/ path (authentication flows)', () => {
-        expect(isAuthRedirect('/flows/-/default/authentication/', origin)).toBe(true);
-      });
-
-      it('returns true for /if/ path (Identity Frontend UI)', () => {
-        expect(isAuthRedirect('/if/flow/default-authentication-flow/', origin)).toBe(true);
-      });
-
-      it('returns true for absolute URL with auth path', () => {
-        expect(isAuthRedirect('http://localhost:8080/application/o/authorize/', origin)).toBe(true);
-      });
-
-      it('returns true for auth path with query params', () => {
-        expect(isAuthRedirect('/application/o/authorize/?client_id=abc', origin)).toBe(true);
-      });
-
-      it('returns true for auth path with fragment', () => {
-        expect(isAuthRedirect('/if/flow/login/#section', origin)).toBe(true);
-      });
-    });
-
-    describe('returns false for non-auth redirects', () => {
-      it('returns false for non-auth same-origin redirect', () => {
-        expect(isAuthRedirect('/login', origin)).toBe(false);
-      });
-
-      it('returns false for localhost without auth path', () => {
-        expect(isAuthRedirect('http://localhost:8080/login', origin)).toBe(false);
-      });
-
-      it('returns false for /embed/ paths', () => {
-        expect(isAuthRedirect('/embed/app/login', origin)).toBe(false);
-      });
-
-      it('returns false for paths containing application but not starting with /application/', () => {
-        expect(isAuthRedirect('/api/application/check', origin)).toBe(false);
-      });
-
-      it('returns false for cross-origin auth paths', () => {
-        expect(isAuthRedirect('http://other.example.com/application/o/authorize/', origin)).toBe(false);
-      });
-    });
-
-    describe('handles edge cases', () => {
-      it('returns false for invalid URL', () => {
-        expect(isAuthRedirect('not-a-url', origin)).toBe(false);
-      });
-
-      it('returns false for empty string', () => {
-        expect(isAuthRedirect('', origin)).toBe(false);
-      });
-
-      it('returns false for /application without trailing slash', () => {
-        // Must be /application/..., not just /application
-        expect(isAuthRedirect('/application', origin)).toBe(false);
-      });
-
-      it('returns false for /flows without trailing slash', () => {
-        expect(isAuthRedirect('/flows', origin)).toBe(false);
-      });
     });
   });
 
