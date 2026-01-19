@@ -256,16 +256,15 @@ function handleEmbedNavigationRequest(
     });
 
     // Check for opaqueredirect - this means a cross-origin redirect happened
-    // In our architecture, cross-origin redirects from /embed/ paths are auth redirects
+    // (rare case, kept for edge cases where apps redirect to external URLs)
     if (response.type === 'opaqueredirect') {
-      // Redirect to Authentik's /start endpoint with the return path
-      // Authentik will redirect back to this path after successful auth
       const returnPath = `/apps/${appName}`;
-      console.log('[embed-sw] Opaqueredirect detected, auth required, return path:', returnPath);
+      console.log('[embed-sw] Opaqueredirect detected, return path:', returnPath);
       return createTopLevelRedirectPage(returnPath);
     }
 
-    // Check for same-origin redirects (status 3xx with Location header)
+    // Check for redirects (status 3xx with Location header)
+    // Auth redirects go to /auth/* (same-origin) and require top-level window redirect
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('Location');
       console.log('[embed-sw] Redirect response:', { status: response.status, location });
@@ -273,7 +272,7 @@ function handleEmbedNavigationRequest(
       if (location) {
         const isAuth = isAuthRedirect(location, origin);
         if (isAuth) {
-          // Redirect to Authentik's /start endpoint with the return path
+          // Auth redirect to /auth/* - redirect top-level window for login flow
           const returnPath = `/apps/${appName}`;
           console.log('[embed-sw] Auth redirect detected, return path:', returnPath);
           return createTopLevelRedirectPage(returnPath);

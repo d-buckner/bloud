@@ -64,7 +64,7 @@ export BLOUD_FLAKE_PATH="$PROJECT_DIR"
 export BLOUD_FLAKE_TARGET="vm-test"
 export BLOUD_NIXOS_PATH="$PROJECT_DIR/nixos"
 export BLOUD_SSO_BASE_URL="http://localhost:8081"
-export BLOUD_SSO_AUTHENTIK_URL="http://auth.localhost:8081"
+export BLOUD_SSO_AUTHENTIK_URL="http://localhost:8081"
 
 if go build -o "$AGENT_BIN" ./cmd/host-agent 2>&1; then
     echo "Host-agent built successfully at $AGENT_BIN"
@@ -114,7 +114,7 @@ export BLOUD_FLAKE_PATH="$SRC_DIR"
 export BLOUD_FLAKE_TARGET="vm-test"  # TEST FLAKE TARGET
 export BLOUD_NIXOS_PATH="$SRC_DIR/nixos"
 export BLOUD_SSO_BASE_URL="http://localhost:8081"  # TEST PORT
-export BLOUD_SSO_AUTHENTIK_URL="http://auth.localhost:8081"  # TEST PORT
+export BLOUD_SSO_AUTHENTIK_URL="http://localhost:8081"  # TEST PORT
 
 BIN="/tmp/host-agent-test"
 LAST_HASH=""
