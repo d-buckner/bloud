@@ -42,9 +42,9 @@ in
 
     authentikExternalHost = lib.mkOption {
       type = lib.types.str;
-      default = "http://auth.localhost";
-      description = "External host URL for Authentik SSO (scheme + hostname, no port). Authentik uses a subdomain to avoid service worker interference.";
-      example = "https://auth.mybox.example.com";
+      default = "http://localhost";
+      description = "External host URL for Authentik SSO (scheme + hostname, no port). Authentik is served at root-level paths (/application/, /flows/, etc.).";
+      example = "https://mybox.example.com";
     };
 
     agentPath = lib.mkOption {
@@ -66,12 +66,6 @@ in
     bloud.apps.redis.enable = lib.mkDefault true;      # Shared cache (used by Authentik)
     bloud.apps.traefik.enable = lib.mkDefault true;    # Routing
     bloud.apps.authentik.enable = lib.mkDefault true;  # Authentication/SSO
-
-    # Add auth.localhost to /etc/hosts for SSO discovery endpoints
-    # Apps need to resolve auth.localhost to reach Authentik for OAuth flows
-    networking.hosts = {
-      "127.0.0.1" = [ "auth.localhost" ];
-    };
 
     # Create shared directories used by multiple apps
     system.activationScripts.bloud-shared-dirs = lib.stringAfter [ "users" ] ''

@@ -5,7 +5,8 @@ import { test, expect } from '@playwright/test';
  *
  * These tests verify that when an embedded app (like qbittorrent) requires
  * authentication, the service worker correctly redirects the TOP-LEVEL window
- * to auth.localhost instead of loading the auth page in the iframe.
+ * to Authentik's auth pages (e.g., /flows/, /if/) instead of loading the auth
+ * page in the iframe.
  *
  * Prerequisites:
  *   1. Test environment running: ./bloud test start
@@ -13,7 +14,7 @@ import { test, expect } from '@playwright/test';
  */
 
 test.describe('Forward-auth redirect handling', () => {
-  test('redirects to auth.localhost when accessing protected app', async ({ page }) => {
+  test('redirects to Authentik login when accessing protected app', async ({ page }) => {
     // Collect all console logs to debug behavior
     const allLogs: string[] = [];
     page.on('console', (msg) => {
@@ -28,6 +29,10 @@ test.describe('Forward-auth redirect handling', () => {
     const allResponses: { url: string; status: number; type: string }[] = [];
     const allRequests: { url: string; resourceType: string }[] = [];
 
+    // Helper to check if URL is an Authentik auth path
+    const isAuthUrl = (url: string) =>
+      url.includes('/embed/') || url.includes('/flows/') || url.includes('/if/') || url.includes('/application/') || url.includes('/outpost.goauthentik.io');
+
     page.on('request', (request) => {
       const url = request.url();
       const entry = {
@@ -36,7 +41,7 @@ test.describe('Forward-auth redirect handling', () => {
       };
       allRequests.push(entry);
       // Log embed requests specifically
-      if (url.includes('/embed/') || url.includes('auth.localhost')) {
+      if (isAuthUrl(url)) {
         console.log('EMBED REQUEST:', entry);
       }
     });
@@ -50,7 +55,7 @@ test.describe('Forward-auth redirect handling', () => {
       };
       allResponses.push(entry);
       // Log embed/auth responses specifically
-      if (url.includes('/embed/') || url.includes('auth.localhost')) {
+      if (isAuthUrl(url)) {
         console.log('EMBED RESPONSE:', entry);
       }
     });
@@ -58,7 +63,7 @@ test.describe('Forward-auth redirect handling', () => {
     // Listen for failed requests
     page.on('requestfailed', (request) => {
       const url = request.url();
-      if (url.includes('/embed/') || url.includes('auth')) {
+      if (isAuthUrl(url)) {
         console.log('REQUEST FAILED:', { url: url.substring(0, 100), error: request.failure()?.errorText });
       }
     });
@@ -99,24 +104,20 @@ test.describe('Forward-auth redirect handling', () => {
 
     // Now navigate to qbittorrent app page
     // The service worker should intercept the iframe's navigation to /embed/qbittorrent/
-    // and when it gets a redirect to auth.localhost, redirect the top-level window
+    // and when it gets a redirect to /auth/, redirect the top-level window
     await page.goto('/apps/qbittorrent');
 
     // Wait for either:
-    // 1. The page URL to change to auth.localhost (success - top-level redirect worked)
-    // 2. The iframe to load auth.localhost (failure - redirect happened in iframe)
+    // 1. The page URL to change to /auth/ (success - top-level redirect worked)
+    // 2. The iframe to load /auth/ (failure - redirect happened in iframe)
 
     // Give the page time to load and potentially redirect
     await page.waitForTimeout(3000);
 
     // Log captured messages for debugging
     console.log('All logs:', allLogs.filter(l => l.includes('[embed-sw')));
-    console.log('Embed/auth requests:', allRequests.filter(r =>
-      r.url.includes('/embed/') || r.url.includes('auth')
-    ));
-    console.log('Embed/auth responses:', allResponses.filter(r =>
-      r.url.includes('/embed/') || r.url.includes('auth')
-    ));
+    console.log('Embed/auth requests:', allRequests.filter(r => isAuthUrl(r.url)));
+    console.log('Embed/auth responses:', allResponses.filter(r => isAuthUrl(r.url)));
 
     // Debug: check iframe state
     const iframeInfo = await page.evaluate(() => {
@@ -129,9 +130,11 @@ test.describe('Forward-auth redirect handling', () => {
     });
     console.log('Iframes found:', iframeInfo);
 
-    // Check that the TOP-LEVEL window URL is now auth.localhost
+    // Check that the TOP-LEVEL window URL is now on an Authentik auth page
+    // Authentik uses /flows/ for authentication flows and /if/ for Identity Frontend
     const url = page.url();
-    expect(url).toContain('auth.localhost');
+    const isOnAuthPage = url.includes('/flows/') || url.includes('/if/') || url.includes('/outpost.goauthentik.io');
+    expect(isOnAuthPage).toBe(true);
 
     // Verify we're on the Authentik login page
     // The page should show the login form, not be inside an iframe
@@ -178,7 +181,7 @@ test.describe('Full authentication flow', () => {
   test.skip('redirects back to app after successful login', async ({ page }) => {
     // This test verifies the complete auth flow:
     // 1. User visits protected app (/apps/qbittorrent)
-    // 2. Gets redirected to auth.localhost for login
+    // 2. Gets redirected to /auth/ for login
     // 3. Logs in with valid credentials
     // 4. Gets redirected back to the original app page (via Authentik's rd parameter)
 
@@ -188,7 +191,7 @@ test.describe('Full authentication flow', () => {
     // Wait for SW to be ready and controlling the page
     await page.evaluate(async () => {
       if (!('serviceWorker' in navigator)) return;
-      const reg = await navigator.serviceWorker.ready;
+      await navigator.serviceWorker.ready;
       if (!navigator.serviceWorker.controller) {
         await new Promise<void>((resolve) => {
           navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true });
@@ -200,8 +203,8 @@ test.describe('Full authentication flow', () => {
     // Navigate to the protected app
     await page.goto('/apps/qbittorrent');
 
-    // Wait for redirect to auth.localhost
-    await page.waitForURL(/auth\.localhost/, { timeout: 15000 });
+    // Wait for redirect to Authentik auth page (either /flows/ or /if/)
+    await page.waitForURL(/\/(flows|if|outpost\.goauthentik\.io)\//, { timeout: 15000 });
 
     // Wait for the login form and enter credentials
     const usernameField = page.locator('input[name="uidField"]');
@@ -217,9 +220,11 @@ test.describe('Full authentication flow', () => {
     // Click submit - Authentik's SPA handles the form via JS
     await page.locator('button[type="submit"]').click();
 
-    // Wait for the page to leave auth.localhost - this happens after Authentik processes the login
+    // Wait for the page to leave Authentik auth pages - this happens after login
     await page.waitForFunction(
-      () => !window.location.href.includes('auth.localhost'),
+      () => !window.location.pathname.startsWith('/flows/') &&
+            !window.location.pathname.startsWith('/if/') &&
+            !window.location.pathname.startsWith('/outpost.goauthentik.io/'),
       { timeout: 30000 }
     );
 
@@ -236,12 +241,11 @@ test.describe('Full authentication flow', () => {
   });
 });
 
-test.describe('Service worker opaque redirect handling', () => {
-  test('detects opaque redirect and follows to discover destination', async ({ page }) => {
-    // This test verifies the fix for cross-origin redirect handling.
-    // When redirect: 'manual' encounters a cross-origin redirect, we get an
-    // opaqueredirect response. The SW should make a HEAD request to discover
-    // the actual destination.
+test.describe('Service worker auth redirect handling', () => {
+  test('detects auth redirect and triggers top-level navigation', async ({ page }) => {
+    // This test verifies that the service worker correctly detects redirects
+    // to Authentik auth pages (/flows/, /if/, /application/) and triggers a
+    // top-level window redirect instead of loading the auth page inside the iframe.
 
     // Collect console logs to verify SW behavior
     const swLogs: string[] = [];
@@ -257,21 +261,18 @@ test.describe('Service worker opaque redirect handling', () => {
     await page.waitForTimeout(3000);
 
     // Check that we saw the expected SW log messages
-    const hasOpaqueRedirectLog = swLogs.some((log) =>
-      log.includes('Opaque redirect detected')
-    );
-    const hasHeadResponseLog = swLogs.some((log) =>
-      log.includes('HEAD response URL')
-    );
     const hasAuthRedirectLog = swLogs.some((log) =>
-      log.includes('Auth redirect detected via opaque redirect')
+      log.includes('Auth redirect detected')
+    );
+    const hasRedirectLog = swLogs.some((log) =>
+      log.includes('Redirect response')
     );
 
     // At least one of these should be true if the SW is working correctly
-    // (The exact logs depend on whether the redirect was opaque or not)
+    const url = page.url();
+    const isOnAuthPage = url.includes('/flows/') || url.includes('/if/') || url.includes('/outpost.goauthentik.io');
     expect(
-      hasOpaqueRedirectLog || hasHeadResponseLog || hasAuthRedirectLog ||
-      page.url().includes('auth.localhost')
+      hasAuthRedirectLog || hasRedirectLog || isOnAuthPage
     ).toBe(true);
   });
 });

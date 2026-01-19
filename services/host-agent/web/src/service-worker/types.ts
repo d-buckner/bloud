@@ -60,9 +60,13 @@ export const RESERVED_SEGMENTS = new Set([
   'node_modules',
   'src',
   '.svelte-kit',
-  // Authentik outpost endpoints (OAuth start/callback flows)
-  // These are routed to the Authentik server via Traefik
-  'outpost.goauthentik.io',
+  // Authentik SSO routes - must not be rewritten
+  'outpost.goauthentik.io', // Embedded outpost OAuth start/callback
+  'application', // OAuth2/OIDC endpoints
+  'flows', // Authentik authentication flows (/flows/-/default/...)
+  'if', // Authentik Identity Frontend UI
+  '-', // Authentik internal API
+  'static', // Authentik static assets (embedded apps use /embed/{app}/static/)
 ]);
 
 // =============================================================================

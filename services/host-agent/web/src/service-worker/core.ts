@@ -176,10 +176,7 @@ export function isBloudRoute(pathname: string): boolean {
     return true;
   }
 
-  // Note: Authentik routes are now on auth.localhost subdomain (cross-origin),
-  // so they're passed through automatically via the cross-origin check.
-
-  // Extract first segment: /api/foo -> api, /catalog -> catalog
+  // Extract first segment: /api/foo -> api, /catalog -> catalog, /auth/login -> auth
   const secondSlash = pathname.indexOf('/', 1);
   const firstSegment =
     secondSlash === -1 ? pathname.slice(1) : pathname.slice(1, secondSlash);
@@ -329,12 +326,31 @@ export function isRedirectResponse(response: ResponseLike): boolean {
 }
 
 /**
- * Check if a redirect URL is to the auth subdomain (cross-origin auth)
+ * Authentik OAuth/OIDC path prefixes that indicate an auth redirect.
+ * These are the root-level paths used by Authentik for authentication flows.
+ */
+const AUTHENTIK_AUTH_PREFIXES = [
+  '/application/', // OAuth2/OIDC authorization endpoints
+  '/flows/', // Authentication flows (login, consent, etc.)
+  '/if/', // Authentik Identity Frontend UI
+];
+
+/**
+ * Check if a redirect URL is to an Authentik auth endpoint (same-origin).
+ * Used to detect when an embedded app redirects to OAuth/login flows,
+ * so we can break out of the iframe for proper authentication.
  */
 export function isAuthRedirect(location: string, origin: string): boolean {
   try {
     const locationUrl = new URL(location, origin);
-    return locationUrl.hostname.startsWith('auth.');
+    // Only same-origin redirects can be auth redirects
+    if (locationUrl.origin !== origin) {
+      return false;
+    }
+    // Check if path starts with any Authentik auth prefix
+    return AUTHENTIK_AUTH_PREFIXES.some((prefix) =>
+      locationUrl.pathname.startsWith(prefix)
+    );
   } catch {
     return false;
   }

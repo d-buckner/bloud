@@ -55,7 +55,7 @@ type ServerConfig struct {
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
-	SSOAuthentikURL string // Authentik URL for discovery (e.g., "http://auth.localhost:8080")
+	SSOAuthentikURL string // Authentik URL for discovery (e.g., "http://localhost:8080")
 	AuthentikToken  string // Authentik API token for SSO cleanup
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface

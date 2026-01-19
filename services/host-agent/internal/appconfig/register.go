@@ -28,7 +28,7 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 	// Register configurators from apps/ directory
 	registry.Register(actualbudget.NewConfigurator(5006))
 	registry.Register(adguardhome.NewConfigurator(3080))
-	// Affine uses SSOAuthentikURL for OpenID discovery (points to auth.localhost subdomain)
+	// Affine uses SSOAuthentikURL for OpenID discovery (root-level paths)
 	registry.Register(affine.NewConfigurator(3010, cfg.DataDir, cfg.SSOAuthentikURL, "affine-client", "affine-secret-change-in-production"))
 	registry.Register(authentik.NewConfigurator(
 		cfg.AuthentikPort,
