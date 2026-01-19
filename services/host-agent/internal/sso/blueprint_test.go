@@ -179,12 +179,12 @@ func TestDeleteBlueprint_NonExistent(t *testing.T) {
 func TestGenerateOutpostBlueprint(t *testing.T) {
 	dir := t.TempDir()
 
-	// Use different URLs for baseURL and authentikURL to test the distinction
-	// baseURL = main app URL, authentikURL = Authentik SSO URL for OAuth redirects
+	// With root-level Authentik paths, baseURL and authentikURL are the same
+	// Authentik is accessed at /application/, /flows/, etc. on the same origin
 	gen := NewBlueprintGenerator(
 		"test-secret",
-		"http://localhost:8080",        // baseURL - where apps are served
-		"http://auth.localhost:8080",   // authentikURL - where Authentik is served
+		"http://localhost:8080", // baseURL - where apps are served
+		"http://localhost:8080", // authentikURL - same origin, root-level paths
 		dir,
 	)
 
@@ -220,23 +220,24 @@ func TestGenerateOutpostBlueprint(t *testing.T) {
 		t.Error("Expected App Two provider reference not found")
 	}
 
-	// Verify config uses authentikURL (NOT baseURL) for OAuth redirects
-	// This is critical: the outpost needs to redirect to auth.localhost, not localhost
-	if !strings.Contains(contentStr, `authentik_host: "http://auth.localhost:8080"`) {
-		t.Error("Expected authentik_host to use authentikURL (auth.localhost:8080), not baseURL")
+	// Verify config uses authentikURL for OAuth redirects
+	// With root-level paths, this is the same as baseURL (no /auth prefix)
+	if !strings.Contains(contentStr, `authentik_host: "http://localhost:8080"`) {
+		t.Error("Expected authentik_host to use authentikURL (localhost:8080)")
 	}
-	if !strings.Contains(contentStr, `authentik_host_browser: "http://auth.localhost:8080"`) {
-		t.Error("Expected authentik_host_browser to use authentikURL (auth.localhost:8080), not baseURL")
+	if !strings.Contains(contentStr, `authentik_host_browser: "http://localhost:8080"`) {
+		t.Error("Expected authentik_host_browser to use authentikURL (localhost:8080)")
 	}
 }
 
 // TestGenerateOutpostBlueprint_UsesAuthentikURL verifies the embedded outpost
-// uses authentikURL for OAuth redirects (not baseURL).
+// uses authentikURL for OAuth redirects.
 func TestGenerateOutpostBlueprint_UsesAuthentikURL(t *testing.T) {
 	dir := t.TempDir()
 
+	// With root-level Authentik paths, both URLs are the same
 	baseURL := "http://localhost:8080"
-	authentikURL := "http://auth.localhost:8080"
+	authentikURL := "http://localhost:8080"
 
 	gen := NewBlueprintGenerator("test-secret", baseURL, authentikURL, dir)
 
@@ -251,10 +252,10 @@ func TestGenerateOutpostBlueprint_UsesAuthentikURL(t *testing.T) {
 	}
 	contentStr := string(content)
 
-	if !strings.Contains(contentStr, `authentik_host: "http://auth.localhost:8080"`) {
+	if !strings.Contains(contentStr, `authentik_host: "http://localhost:8080"`) {
 		t.Error("authentik_host should use authentikURL")
 	}
-	if !strings.Contains(contentStr, `authentik_host_browser: "http://auth.localhost:8080"`) {
+	if !strings.Contains(contentStr, `authentik_host_browser: "http://localhost:8080"`) {
 		t.Error("authentik_host_browser should use authentikURL")
 	}
 }

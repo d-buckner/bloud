@@ -125,13 +125,22 @@ describe('service-worker core', () => {
 
     it('returns false for root-level app requests', () => {
       expect(isBloudRoute('/install.html')).toBe(false);
-      expect(isBloudRoute('/static/app.js')).toBe(false);
       expect(isBloudRoute('/control/')).toBe(false);
     });
 
-    // Note: Authentik routes are now on auth.localhost subdomain (cross-origin),
-    // so they're passed through automatically via the cross-origin check.
-    // No need to test them as Bloud routes.
+    it('returns true for /static routes (reserved for Authentik)', () => {
+      // /static is reserved for Authentik's static assets
+      // Embedded apps use /embed/{app}/static/ for their static files
+      expect(isBloudRoute('/static/app.js')).toBe(true);
+      expect(isBloudRoute('/static/dist/authentik.css')).toBe(true);
+    });
+
+    it('returns true for Authentik SSO routes (root-level)', () => {
+      expect(isBloudRoute('/application/o/authorize/')).toBe(true);
+      expect(isBloudRoute('/flows/-/default/authentication/')).toBe(true);
+      expect(isBloudRoute('/if/flow/default-authentication-flow/')).toBe(true);
+      expect(isBloudRoute('/outpost.goauthentik.io/start')).toBe(true);
+    });
 
     it('handles edge cases for first segment extraction', () => {
       // Single character paths
@@ -181,8 +190,14 @@ describe('service-worker core', () => {
       expect(RESERVED_SEGMENTS.has('.svelte-kit')).toBe(true);
     });
 
-    // Note: Authentik routes are now on auth.localhost subdomain (cross-origin),
-    // so they don't need to be in RESERVED_SEGMENTS.
+    it('contains Authentik SSO segments (root-level)', () => {
+      expect(RESERVED_SEGMENTS.has('application')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('flows')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('if')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('-')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('outpost.goauthentik.io')).toBe(true);
+      expect(RESERVED_SEGMENTS.has('static')).toBe(true);
+    });
 
     it('does not contain app names', () => {
       expect(RESERVED_SEGMENTS.has('actual-budget')).toBe(false);
@@ -240,8 +255,16 @@ describe('service-worker core', () => {
       expect(result.type).toBe(RequestType.ROOT);
     });
 
-    it('handles root-level asset requests', () => {
+    it('does not handle /static (reserved for Authentik)', () => {
+      // /static is reserved for Authentik's static assets
       const url = new URL('/static/app.js', origin);
+      const result = shouldHandleRequest(url, origin);
+      expect(result.handle).toBe(false);
+      expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
+    });
+
+    it('handles root-level asset requests', () => {
+      const url = new URL('/install.html', origin);
       const result = shouldHandleRequest(url, origin);
       expect(result.handle).toBe(true);
       expect(result.type).toBe(RequestType.ROOT);
@@ -678,10 +701,12 @@ describe('service-worker core', () => {
       it('handles WASM file requests with active app', () => {
         setActiveApp('actual-budget');
 
-        const url = new URL('/static/wasm/app.wasm', origin);
+        // Note: /static is reserved for Authentik, so apps use different paths
+        // Actual Budget uses /wasm/ for its WebAssembly files
+        const url = new URL('/wasm/app.wasm', origin);
         const result = getRequestAction(url, origin);
         expect(result.action).toBe(RequestAction.FETCH);
-        expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/static/wasm/app.wasm');
+        expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/wasm/app.wasm');
       });
     });
 
@@ -813,7 +838,7 @@ describe('service-worker core', () => {
 
       // User switches to Actual Budget
       setActiveApp('actual-budget');
-      const actualAsset = new URL('/static/app.js', origin);
+      const actualAsset = new URL('/bundle.js', origin);
       const actualResult = getRequestAction(actualAsset, origin);
       expect(actualResult.appName).toBe('actual-budget');
     });
@@ -844,11 +869,11 @@ describe('service-worker core', () => {
 
     it('rewrites root request to embed path when activeApp is set', () => {
       setActiveApp('actual-budget');
-      const url = new URL('/static/app.js', origin);
+      const url = new URL('/bundle.js', origin);
       const result = getRequestAction(url, origin);
 
       expect(result.action).toBe(RequestAction.FETCH);
-      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/static/app.js');
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/bundle.js');
       expect(result.type).toBe(RequestType.ROOT);
     });
 
@@ -873,11 +898,21 @@ describe('service-worker core', () => {
 
     it('handles deeply nested paths', () => {
       setActiveApp('actual-budget');
-      const url = new URL('/static/js/chunks/vendor.abc123.js', origin);
+      const url = new URL('/assets/js/chunks/vendor.abc123.js', origin);
       const result = getRequestAction(url, origin);
 
       expect(result.action).toBe(RequestAction.FETCH);
-      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/static/js/chunks/vendor.abc123.js');
+      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/assets/js/chunks/vendor.abc123.js');
+    });
+
+    it('passes through /static (reserved for Authentik) even with activeApp', () => {
+      setActiveApp('actual-budget');
+      const url = new URL('/static/dist/authentik.css', origin);
+      const result = getRequestAction(url, origin);
+
+      // /static is reserved - should not be rewritten
+      expect(result.action).toBe(RequestAction.PASSTHROUGH);
+      expect(result.reason).toBe(PassthroughReason.BLOUD_ROUTE);
     });
   });
 
@@ -1047,50 +1082,51 @@ describe('service-worker core', () => {
   describe('isAuthRedirect', () => {
     const origin = 'http://localhost:8080';
 
-    describe('detects auth subdomain redirects', () => {
-      it('returns true for auth.localhost', () => {
-        expect(isAuthRedirect('http://auth.localhost:8080/login', origin)).toBe(true);
+    describe('detects Authentik auth redirects (root-level paths)', () => {
+      it('returns true for /application/ path (OAuth2/OIDC)', () => {
+        expect(isAuthRedirect('/application/o/authorize/', origin)).toBe(true);
       });
 
-      it('returns true for auth.localhost with path', () => {
-        expect(isAuthRedirect('http://auth.localhost:8080/application/o/authorize/', origin)).toBe(true);
+      it('returns true for /flows/ path (authentication flows)', () => {
+        expect(isAuthRedirect('/flows/-/default/authentication/', origin)).toBe(true);
       });
 
-      it('returns true for auth.example.com', () => {
-        expect(isAuthRedirect('http://auth.example.com/login', origin)).toBe(true);
+      it('returns true for /if/ path (Identity Frontend UI)', () => {
+        expect(isAuthRedirect('/if/flow/default-authentication-flow/', origin)).toBe(true);
       });
 
-      it('returns true for auth subdomain with different port', () => {
-        expect(isAuthRedirect('http://auth.localhost:9000/login', origin)).toBe(true);
+      it('returns true for absolute URL with auth path', () => {
+        expect(isAuthRedirect('http://localhost:8080/application/o/authorize/', origin)).toBe(true);
       });
 
-      it('returns true for https auth subdomain', () => {
-        expect(isAuthRedirect('https://auth.example.com/login', origin)).toBe(true);
+      it('returns true for auth path with query params', () => {
+        expect(isAuthRedirect('/application/o/authorize/?client_id=abc', origin)).toBe(true);
+      });
+
+      it('returns true for auth path with fragment', () => {
+        expect(isAuthRedirect('/if/flow/login/#section', origin)).toBe(true);
       });
     });
 
     describe('returns false for non-auth redirects', () => {
-      it('returns false for same-origin redirect', () => {
+      it('returns false for non-auth same-origin redirect', () => {
         expect(isAuthRedirect('/login', origin)).toBe(false);
       });
 
-      it('returns false for localhost without auth prefix', () => {
+      it('returns false for localhost without auth path', () => {
         expect(isAuthRedirect('http://localhost:8080/login', origin)).toBe(false);
       });
 
-      it('returns false for other subdomains', () => {
-        expect(isAuthRedirect('http://api.localhost:8080/login', origin)).toBe(false);
-        expect(isAuthRedirect('http://app.localhost:8080/login', origin)).toBe(false);
-      });
-
-      it('returns false for domain containing auth but not as subdomain', () => {
-        expect(isAuthRedirect('http://authentication.com/login', origin)).toBe(false);
-        expect(isAuthRedirect('http://myauth.com/login', origin)).toBe(false);
-      });
-
-      it('returns false for relative paths', () => {
+      it('returns false for /embed/ paths', () => {
         expect(isAuthRedirect('/embed/app/login', origin)).toBe(false);
-        expect(isAuthRedirect('/auth/login', origin)).toBe(false);
+      });
+
+      it('returns false for paths containing application but not starting with /application/', () => {
+        expect(isAuthRedirect('/api/application/check', origin)).toBe(false);
+      });
+
+      it('returns false for cross-origin auth paths', () => {
+        expect(isAuthRedirect('http://other.example.com/application/o/authorize/', origin)).toBe(false);
       });
     });
 
@@ -1103,12 +1139,13 @@ describe('service-worker core', () => {
         expect(isAuthRedirect('', origin)).toBe(false);
       });
 
-      it('handles URL with query params', () => {
-        expect(isAuthRedirect('http://auth.localhost:8080/login?next=/app', origin)).toBe(true);
+      it('returns false for /application without trailing slash', () => {
+        // Must be /application/..., not just /application
+        expect(isAuthRedirect('/application', origin)).toBe(false);
       });
 
-      it('handles URL with fragment', () => {
-        expect(isAuthRedirect('http://auth.localhost:8080/login#section', origin)).toBe(true);
+      it('returns false for /flows without trailing slash', () => {
+        expect(isAuthRedirect('/flows', origin)).toBe(false);
       });
     });
   });

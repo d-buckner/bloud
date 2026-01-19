@@ -40,7 +40,7 @@ mkBloudApp {
     AFFINE_SERVER_EXTERNAL_URL = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/affine";
   } // lib.optionalAttrs authentikEnabled {
     # OIDC configuration via environment variables
-    # Use authentikExternalHost (auth.localhost) to avoid service worker URL rewriting
+    # Authentik is served at root-level paths (/application/, /flows/, etc.)
     OAUTH_OIDC_ENABLED = "true";
     OAUTH_OIDC_ISSUER = "${cfg.authentikExternalHost}:${toString cfg.traefikPort}/application/o/affine/";
     OAUTH_OIDC_CLIENT_ID = cfg.openidClientId;
