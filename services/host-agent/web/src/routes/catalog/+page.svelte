@@ -4,8 +4,8 @@
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
 	import RollbackModal from '$lib/components/RollbackModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import type { CatalogApp } from '$lib/types';
-	import { apps as installedApps, getAppStatus } from '$lib/stores/apps';
+	import type { CatalogApp, AppStatus } from '$lib/types';
+	import { apps as installedApps } from '$lib/stores/apps';
 	import { installApp } from '$lib/services/appLifecycle';
 
 	let catalogApps = $state<CatalogApp[]>([]);
@@ -14,6 +14,11 @@
 
 	let selectedApp = $state<CatalogApp | null>(null);
 	let showRollback = $state(false);
+
+	// Reactive status lookup from the apps store
+	function getAppStatus(name: string): AppStatus | undefined {
+		return $installedApps.find((a) => a.name === name)?.status;
+	}
 
 	// Search and filtering
 	let searchQuery = $state('');

@@ -4,7 +4,7 @@
 	interface Props {
 		open: boolean;
 		onclose: () => void;
-		size?: 'default' | 'lg';
+		size?: 'default' | 'lg' | 'xl' | 'fullscreen';
 		children: Snippet;
 	}
 
@@ -36,6 +36,8 @@
 	bind:this={dialog}
 	class="modal"
 	class:modal-lg={size === 'lg'}
+	class:modal-xl={size === 'xl'}
+	class:modal-fullscreen={size === 'fullscreen'}
 	onclick={handleClick}
 	oncancel={handleCancel}
 >
@@ -67,6 +69,29 @@
 
 	dialog.modal-lg {
 		max-width: 540px;
+	}
+
+	dialog.modal-xl {
+		max-width: 900px;
+		max-height: 90vh;
+	}
+
+	dialog.modal-xl .modal-content {
+		max-height: 90vh;
+	}
+
+	dialog.modal-fullscreen {
+		width: 100%;
+		max-width: 100%;
+		height: 100%;
+		max-height: 100%;
+		border-radius: 0;
+	}
+
+	dialog.modal-fullscreen .modal-content {
+		max-height: 100%;
+		height: 100%;
+		border-radius: 0;
 	}
 
 	.modal-content {

@@ -1170,32 +1170,39 @@ describe('service-worker core', () => {
       resetTestState();
     });
 
-    it('OAuth callback from Authentik gets intercepted and should redirect', () => {
+    it('OAuth callback from Authentik gets rewritten to embed path', () => {
       // User completes SSO login, Authentik redirects to /openid/callback?code=...
+      // SW rewrites to /embed/{app}/openid/callback to keep iframe in embed namespace
       setActiveApp('actual-budget');
 
       const url = new URL('/openid/callback?code=abc123&state=xyz', origin);
       const result = getRequestAction(url, origin);
 
-      // SW should intercept this as a root request
+      // SW should rewrite OAuth callbacks to embed path
       expect(result.action).toBe(RequestAction.FETCH);
       expect(result.type).toBe(RequestType.ROOT);
-      expect(result.fetchUrl).toBe('http://localhost:8080/embed/actual-budget/openid/callback?code=abc123&state=xyz');
-
-      // And when it's a navigate request, shouldRedirectOAuthCallback returns true
-      expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, url.pathname)).toBe(true);
+      expect(result.fetchUrl).toBe(
+        'http://localhost:8080/embed/actual-budget/openid/callback?code=abc123&state=xyz'
+      );
     });
 
-    it('non-navigate callback requests should not redirect', () => {
-      // AJAX/fetch requests to callback endpoint should use fetch-and-return
+    it('OAuth callback at embed path still works normally', () => {
+      // If an app explicitly uses /embed/app/openid/callback as redirect_uri
       setActiveApp('actual-budget');
 
-      const url = new URL('/openid/callback', origin);
+      const url = new URL('/embed/actual-budget/openid/callback?code=abc123', origin);
+      const result = getRequestAction(url, origin);
 
-      // cors mode (from fetch API call)
-      expect(shouldRedirectOAuthCallback(RequestMode.CORS, url.pathname)).toBe(false);
-      // same-origin mode
-      expect(shouldRedirectOAuthCallback(RequestMode.SAME_ORIGIN, url.pathname)).toBe(false);
+      // Embed paths are handled normally
+      expect(result.action).toBe(RequestAction.FETCH);
+      expect(result.type).toBe(RequestType.EMBED);
+    });
+
+    it('shouldRedirectOAuthCallback detects OAuth callbacks for redirect handling', () => {
+      // This function is used to determine if we should use redirect vs fetch-and-return
+      expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/embed/app/openid/callback')).toBe(true);
+      expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/openid/callback')).toBe(true);
+      expect(shouldRedirectOAuthCallback(RequestMode.CORS, '/openid/callback')).toBe(false);
     });
   });
 });
