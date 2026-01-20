@@ -66,7 +66,15 @@ export function resetTestState(): void {
  *                       When provided, it's cached for future lookups.
  */
 export function setActiveApp(appName: string | null, needsRewrite?: boolean): void {
+  const prevContext = activeAppContext;
   activeAppContext = appName;
+
+  // DEBUG: Log every context change
+  console.log('[embed-sw] setActiveApp:', {
+    previous: prevContext,
+    new: appName,
+    needsRewrite,
+  });
 
   // Cache needsRewrite when provided
   if (appName && needsRewrite !== undefined) {
@@ -261,6 +269,16 @@ export function shouldRedirectOAuthCallback(
 export function getRequestAction(url: URL, origin: string): RequestActionResult {
   const decision = shouldHandleRequest(url, origin);
 
+  // DEBUG: Log ALL root-level requests to trace rewrite decisions
+  const isRootLevel = !url.pathname.startsWith(EMBED_PATH_PREFIX);
+  if (isRootLevel) {
+    console.log('[embed-sw] getRequestAction ROOT:', {
+      pathname: url.pathname,
+      decision: decision.handle ? decision.type : decision.reason,
+      activeAppContext,
+    });
+  }
+
   if (!decision.handle) {
     return { action: RequestAction.PASSTHROUGH, reason: decision.reason };
   }
@@ -277,15 +295,29 @@ export function getRequestAction(url: URL, origin: string): RequestActionResult 
   // Root request - determine app from active context (set by main frame via postMessage)
   const appName = activeAppContext;
 
+  // DEBUG: Log root request handling with context
+  console.log('[embed-sw] ROOT request rewrite check:', {
+    pathname: url.pathname,
+    activeAppContext,
+    needsRewrite: appName ? appNeedsRewrite(appName) : 'N/A',
+    willRewrite: appName && appNeedsRewrite(appName),
+  });
+
   // Only rewrite for apps that need it
   if (!appName || !appNeedsRewrite(appName)) {
     return { action: RequestAction.PASSTHROUGH, reason: PassthroughReason.NO_APP_CONTEXT };
   }
 
+  const fetchUrl = rewriteRootUrl(url, appName);
+  console.log('[embed-sw] ROOT request REWRITING:', {
+    from: url.pathname,
+    to: fetchUrl,
+  });
+
   return {
     action: RequestAction.FETCH,
     type: RequestType.ROOT,
-    fetchUrl: rewriteRootUrl(url, appName),
+    fetchUrl,
     appName,
   };
 }

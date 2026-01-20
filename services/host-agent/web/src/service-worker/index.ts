@@ -10,7 +10,7 @@ import type { InterceptConfig } from './inject';
 declare const self: ServiceWorkerGlobalScope;
 
 // Version identifier - change this to verify SW updates
-const SW_VERSION = '2025-01-16-opaque-redirect-fix';
+const SW_VERSION = '2025-01-19-auth-redirect-fix';
 
 self.addEventListener('install', (event) => {
   console.log('[embed-sw] Installing version:', SW_VERSION);
