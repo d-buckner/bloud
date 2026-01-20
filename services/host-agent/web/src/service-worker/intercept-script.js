@@ -11,6 +11,29 @@
 (function () {
   'use strict';
 
+  // DEBUG: Log auth state on every page load
+  console.log('[bloud-intercept] Page loaded:', window.location.href);
+  console.log('[bloud-intercept] document.cookie:', document.cookie || '(empty)');
+
+  // Log all localStorage keys
+  var lsKeys = [];
+  for (var i = 0; i < localStorage.length; i++) {
+    var key = localStorage.key(i);
+    lsKeys.push(key);
+    // Log auth-related keys with values
+    if (key && (key.includes('auth') || key.includes('token') || key.includes('session') || key.includes('user'))) {
+      console.log('[bloud-intercept] localStorage[' + key + ']:', localStorage.getItem(key));
+    }
+  }
+  console.log('[bloud-intercept] localStorage keys:', lsKeys.join(', ') || '(empty)');
+
+  // Log IndexedDB databases (async)
+  if (indexedDB.databases) {
+    indexedDB.databases().then(function(dbs) {
+      console.log('[bloud-intercept] IndexedDB databases:', dbs.map(function(db) { return db.name; }).join(', ') || '(none)');
+    }).catch(function() {});
+  }
+
   var metaEl = document.querySelector('meta[name="bloud-intercept-config"]');
   if (!metaEl || !metaEl.content) {
     return;

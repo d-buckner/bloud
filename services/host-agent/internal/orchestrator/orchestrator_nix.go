@@ -668,7 +668,9 @@ func (o *Orchestrator) waitForHealthy(appName string) {
 			lastStatus = resp.StatusCode
 			lastErr = nil
 			resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+			// Accept 2xx, 3xx, 401, and 403 as "healthy"
+			// 401/403 means the service is responding but requires authentication
+			if (resp.StatusCode >= 200 && resp.StatusCode < 400) || resp.StatusCode == 401 || resp.StatusCode == 403 {
 				o.logger.Info("health check passed", "app", appName, "status", resp.StatusCode, "attempts", attempts)
 				o.appStore.UpdateStatus(appName, "running")
 				// Ensure forward-auth providers are in the embedded outpost
@@ -1012,7 +1014,7 @@ func (o *Orchestrator) ReconcileState() {
 type StateWatchdogConfig struct {
 	CheckInterval     time.Duration // How often to check (default: 30s)
 	InstallingTimeout time.Duration // Max time in "installing" state (default: 10m)
-	StartingTimeout   time.Duration // Max time in "starting" state (default: 2m)
+	StartingTimeout   time.Duration // Max time in "starting" state (default: 5m)
 }
 
 // DefaultWatchdogConfig returns default watchdog configuration
@@ -1020,7 +1022,7 @@ func DefaultWatchdogConfig() StateWatchdogConfig {
 	return StateWatchdogConfig{
 		CheckInterval:     30 * time.Second,
 		InstallingTimeout: 10 * time.Minute,
-		StartingTimeout:   2 * time.Minute,
+		StartingTimeout:   5 * time.Minute,
 	}
 }
 

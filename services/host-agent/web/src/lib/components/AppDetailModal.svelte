@@ -14,9 +14,9 @@
 
 	let { app, status = null, onclose, oninstall }: Props = $props();
 
-	const installed = status === 'running' || status === 'error' || status === 'failed';
-	const installing = status === 'installing' || status === 'starting';
-	const isUninstalling = status === 'uninstalling';
+	let installed = $derived(status === 'running' || status === 'error' || status === 'failed');
+	let installing = $derived(status === 'installing' || status === 'starting');
+	let isUninstalling = $derived(status === 'uninstalling');
 
 	let installPlan = $state<InstallPlan | null>(null);
 	let loadingPlan = $state(false);

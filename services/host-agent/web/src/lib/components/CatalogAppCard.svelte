@@ -10,9 +10,9 @@
 
 	let { app, status = null, onclick }: Props = $props();
 
-	const installed = status === 'running' || status === 'error' || status === 'failed';
-	const installing = status === 'installing' || status === 'starting';
-	const uninstalling = status === 'uninstalling';
+	let installed = $derived(status === 'running' || status === 'error' || status === 'failed');
+	let installing = $derived(status === 'installing' || status === 'starting');
+	let uninstalling = $derived(status === 'uninstalling');
 
 	function formatAppName(name: string): string {
 		return name.charAt(0).toUpperCase() + name.slice(1);
