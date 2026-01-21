@@ -14,54 +14,67 @@ import (
 
 // setupRoutes configures all HTTP routes
 func (s *Server) setupRoutes() {
+	// Auth routes at root level (for OAuth redirects)
+	s.router.Get("/auth/login", s.handleLogin)
+	s.router.Get("/auth/callback", s.handleCallback)
+	s.router.Post("/auth/logout", s.handleLogout)
+
 	// API routes
 	s.router.Route("/api", func(r chi.Router) {
-		// Health check
+		// Public routes (no auth required)
 		r.Get("/health", s.handleHealth)
 
-		// Setup endpoints (unauthenticated - used before first user exists)
+		// Setup endpoints (public - used before first user exists)
 		r.Route("/setup", func(r chi.Router) {
 			r.Get("/status", s.handleSetupStatus)
 			r.Post("/create-user", s.handleCreateUser)
 		})
 
-		// Apps endpoints
-		r.Route("/apps", func(r chi.Router) {
-			r.Get("/", s.handleListApps)
-			r.Get("/installed", s.handleListInstalledApps)
-			r.Get("/events", s.handleAppEvents)
-			r.Post("/refresh-catalog", s.handleRefreshCatalog)
+		// Auth info endpoint (public - returns user or 401)
+		r.Get("/auth/me", s.handleGetCurrentUser)
 
-			// Plan endpoints (use graph)
-			r.Get("/{name}/plan-install", s.handlePlanInstall)
-			r.Get("/{name}/plan-remove", s.handlePlanRemove)
+		// Protected routes (require auth when session store is available)
+		r.Group(func(r chi.Router) {
+			if s.sessionStore != nil {
+				r.Use(s.authMiddleware)
+			}
 
-			// Metadata endpoint
-			r.Get("/{name}/metadata", s.handleAppMetadata)
+			// Apps endpoints
+			r.Route("/apps", func(r chi.Router) {
+				r.Get("/", s.handleListApps)
+				r.Get("/installed", s.handleListInstalledApps)
+				r.Get("/events", s.handleAppEvents)
+				r.Post("/refresh-catalog", s.handleRefreshCatalog)
 
-			// Action endpoints (use orchestrator)
-			r.Post("/{name}/install", s.handleInstall)
-			r.Post("/{name}/uninstall", s.handleUninstall)
-			r.Post("/{name}/clear-data", s.handleClearData)
-			r.Patch("/{name}/rename", s.handleRename)
+				// Plan endpoints (use graph)
+				r.Get("/{name}/plan-install", s.handlePlanInstall)
+				r.Get("/{name}/plan-remove", s.handlePlanRemove)
 
-			// Logs streaming
-			r.Get("/{name}/logs", s.handleAppLogs)
+				// Metadata endpoint
+				r.Get("/{name}/metadata", s.handleAppMetadata)
 
-			// Static assets
-			r.Get("/{name}/icon", s.handleAppIcon)
-		})
+				// Action endpoints (use orchestrator)
+				r.Post("/{name}/install", s.handleInstall)
+				r.Post("/{name}/uninstall", s.handleUninstall)
+				r.Post("/{name}/clear-data", s.handleClearData)
+				r.Patch("/{name}/rename", s.handleRename)
 
-		// System endpoints
-		r.Post("/system/rollback", s.handleRollback)
+				// Logs streaming
+				r.Get("/{name}/logs", s.handleAppLogs)
 
-		// System endpoints
-		r.Route("/system", func(r chi.Router) {
-			r.Get("/status", s.handleSystemStatus)
-			r.Get("/status/stream", s.handleSystemStatusStream)
-			r.Get("/storage", s.handleStorage)
-			r.Get("/versions", s.handleListGenerations)
-			r.Get("/rebuild/stream", s.handleRebuildStream)
+				// Static assets
+				r.Get("/{name}/icon", s.handleAppIcon)
+			})
+
+			// System endpoints
+			r.Post("/system/rollback", s.handleRollback)
+			r.Route("/system", func(r chi.Router) {
+				r.Get("/status", s.handleSystemStatus)
+				r.Get("/status/stream", s.handleSystemStatusStream)
+				r.Get("/storage", s.handleStorage)
+				r.Get("/versions", s.handleListGenerations)
+				r.Get("/rebuild/stream", s.handleRebuildStream)
+			})
 		})
 	})
 

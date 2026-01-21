@@ -5,11 +5,17 @@
 	import { openAppsList } from '$lib/stores/tabs';
 	import { openApp, closeApp } from '$lib/services/navigation';
 
-	interface Props {
-		collapsed?: boolean;
+	interface User {
+		id: number;
+		username: string;
 	}
 
-	let { collapsed = $bindable(false) }: Props = $props();
+	interface Props {
+		collapsed?: boolean;
+		user?: User | null;
+	}
+
+	let { collapsed = $bindable(false), user = null }: Props = $props();
 
 	let currentPath = $derived(page.url.pathname);
 	let isAppView = $derived(currentPath.startsWith('/apps/'));
@@ -105,6 +111,19 @@
 	{/if}
 
 	<div class="sidebar-footer">
+		{#if user}
+			<div class="user-section">
+				<span class="username" title={user.username}>
+					<Icon name="user" size={16} />
+					<span class="username-text">{user.username}</span>
+				</span>
+				<form action="/auth/logout" method="POST" class="logout-form">
+					<button type="submit" class="logout-btn" title="Sign out">
+						<Icon name="logout" size={16} />
+					</button>
+				</form>
+			</div>
+		{/if}
 		<a href="/versions" class="version">v0.1.0</a>
 	</div>
 </nav>
@@ -325,6 +344,50 @@
 		border-top: 1px solid var(--color-border-subtle);
 	}
 
+	.user-section {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: var(--space-sm);
+	}
+
+	.username {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		color: var(--color-text-secondary);
+		font-size: 0.8125rem;
+		overflow: hidden;
+	}
+
+	.username-text {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.logout-form {
+		margin: 0;
+	}
+
+	.logout-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: var(--space-xs);
+		background: transparent;
+		border: none;
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.logout-btn:hover {
+		background: var(--color-bg-subtle);
+		color: var(--color-text);
+	}
+
 	.version {
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
@@ -392,6 +455,19 @@
 
 	.sidebar.collapsed .close-tab {
 		display: none;
+	}
+
+	.sidebar.collapsed .user-section {
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.sidebar.collapsed .username-text {
+		display: none;
+	}
+
+	.sidebar.collapsed .username {
+		justify-content: center;
 	}
 
 	/* Mobile - always collapsed */

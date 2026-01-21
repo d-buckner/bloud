@@ -65,18 +65,19 @@ func runServer() {
 
 	// Create HTTP server
 	server := api.NewServer(database, api.ServerConfig{
-		AppsDir:        cfg.AppsDir,
-		ConfigDir:      cfg.NixConfigDir,
-		DataDir:        cfg.DataDir,
-		FlakePath:      cfg.FlakePath,
-		FlakeTarget:    cfg.FlakeTarget,
-		NixosPath:      cfg.NixosPath,
+		AppsDir:         cfg.AppsDir,
+		ConfigDir:       cfg.NixConfigDir,
+		DataDir:         cfg.DataDir,
+		FlakePath:       cfg.FlakePath,
+		FlakeTarget:     cfg.FlakeTarget,
+		NixosPath:       cfg.NixosPath,
 		Port:            cfg.Port,
 		SSOHostSecret:   cfg.SSOHostSecret,
 		SSOBaseURL:      cfg.SSOBaseURL,
 		SSOAuthentikURL: cfg.SSOAuthentikURL,
 		AuthentikToken:  cfg.AuthentikToken,
-		Registry:       registry,
+		RedisAddr:       cfg.RedisAddr,
+		Registry:        registry,
 	}, logger)
 
 	// Setup graceful shutdown

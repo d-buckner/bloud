@@ -142,8 +142,8 @@ jobs:
             Use `./bloud setup` to automatically download the right image for your system.
 
             Or download manually:
-            - **Apple Silicon (M1/M2/M3):** `nixos-24.11-aarch64.img.gz`
-            - **Intel/AMD:** `nixos-24.11-x86_64.img.gz`
+            - **ARM64 (Apple Silicon):** `nixos-24.11-aarch64.img.gz`
+            - **x86_64:** `nixos-24.11-x86_64.img.gz`
 
             ## Manual Installation
 
