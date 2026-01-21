@@ -560,3 +560,83 @@ func EnsureSSHAvailable() error {
 	// We'll detect the right method when we actually connect
 	return nil
 }
+
+// SnapshotCreate creates a new snapshot of a VM
+// The VM must be stopped before creating a snapshot
+func SnapshotCreate(vmName, snapshotName string) error {
+	if IsRunning(vmName) {
+		return fmt.Errorf("VM must be stopped before creating a snapshot")
+	}
+
+	cmd := exec.Command("limactl", "snapshot", "create", vmName, "--tag", snapshotName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create snapshot: %s: %w", string(output), err)
+	}
+
+	return nil
+}
+
+// SnapshotApply restores a VM to a snapshot state
+// The VM must be stopped before applying a snapshot
+func SnapshotApply(vmName, snapshotName string) error {
+	if IsRunning(vmName) {
+		return fmt.Errorf("VM must be stopped before applying a snapshot")
+	}
+
+	cmd := exec.Command("limactl", "snapshot", "apply", vmName, "--tag", snapshotName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to apply snapshot: %s: %w", string(output), err)
+	}
+
+	return nil
+}
+
+// SnapshotDelete deletes a snapshot from a VM
+func SnapshotDelete(vmName, snapshotName string) error {
+	cmd := exec.Command("limactl", "snapshot", "delete", vmName, "--tag", snapshotName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to delete snapshot: %s: %w", string(output), err)
+	}
+
+	return nil
+}
+
+// SnapshotList lists all snapshots for a VM
+func SnapshotList(vmName string) ([]string, error) {
+	cmd := exec.Command("limactl", "snapshot", "list", vmName, "--quiet")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// No snapshots returns error, treat as empty list
+		return []string{}, nil
+	}
+
+	var snapshots []string
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			snapshots = append(snapshots, line)
+		}
+	}
+
+	return snapshots, nil
+}
+
+// SnapshotExists checks if a snapshot exists for a VM
+func SnapshotExists(vmName, snapshotName string) bool {
+	snapshots, err := SnapshotList(vmName)
+	if err != nil {
+		return false
+	}
+
+	for _, s := range snapshots {
+		if s == snapshotName {
+			return true
+		}
+	}
+
+	return false
+}
