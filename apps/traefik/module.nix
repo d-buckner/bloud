@@ -79,6 +79,12 @@ http:
       service: host-agent
       priority: 90
 
+    # Host agent auth routes (OAuth login/callback/logout)
+    host-auth:
+      rule: "PathPrefix(`/auth`)"
+      service: host-agent
+      priority: 89
+
     # Authentik outpost endpoints (for OAuth start/callback flows)
     # Traefik adds X-Forwarded-* headers which the outpost needs to match providers
     authentik-outpost:

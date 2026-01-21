@@ -8,7 +8,7 @@ import (
 
 // User represents a Bloud user (credentials stored in Authentik)
 type User struct {
-	ID        int       `json:"id"`
+	ID        string    `json:"id"`
 	Username  string    `json:"username"`
 	CreatedAt time.Time `json:"created_at"`
 }

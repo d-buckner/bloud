@@ -1018,3 +1018,353 @@ func (c *Client) DeleteUser(username string) error {
 
 	return nil
 }
+
+// OIDC constants for Bloud's own OAuth2 application
+const (
+	bloudAppSlug         = "bloud"
+	bloudAppName         = "Bloud"
+	bloudProviderName    = "Bloud OAuth2 Provider"
+	bloudRedirectURI     = "/auth/callback"
+)
+
+// OIDCConfig holds the OAuth2/OIDC configuration for Bloud
+type OIDCConfig struct {
+	ClientID     string
+	ClientSecret string
+	AuthURL      string
+	TokenURL     string
+	UserInfoURL  string
+	Issuer       string
+}
+
+// TokenResponse represents the OAuth2 token response
+type TokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	IDToken      string `json:"id_token,omitempty"`
+}
+
+// UserInfo represents the OIDC userinfo response
+type UserInfo struct {
+	Sub               string   `json:"sub"`
+	PreferredUsername string   `json:"preferred_username"`
+	Email             string   `json:"email,omitempty"`
+	EmailVerified     bool     `json:"email_verified,omitempty"`
+	Name              string   `json:"name,omitempty"`
+	Groups            []string `json:"groups,omitempty"`
+}
+
+// EnsureBloudOAuthApp creates the OAuth2 provider and application for Bloud if they don't exist.
+// Returns the OIDC configuration needed for the login flow.
+func (c *Client) EnsureBloudOAuthApp(baseURL, clientSecret string) (*OIDCConfig, error) {
+	redirectURI := baseURL + bloudRedirectURI
+
+	// Check if provider already exists
+	providerID, err := c.findProviderID("oauth2", bloudProviderName)
+	if err != nil {
+		return nil, fmt.Errorf("checking existing provider: %w", err)
+	}
+
+	if providerID == 0 {
+		// Create the OAuth2 provider
+		providerID, err = c.createBloudOAuth2Provider(redirectURI, clientSecret)
+		if err != nil {
+			return nil, fmt.Errorf("creating OAuth2 provider: %w", err)
+		}
+	}
+
+	// Check if application already exists
+	exists, err := c.applicationExists(bloudAppSlug)
+	if err != nil {
+		return nil, fmt.Errorf("checking existing application: %w", err)
+	}
+
+	if !exists {
+		// Create the application
+		if err := c.createBloudApplication(providerID); err != nil {
+			return nil, fmt.Errorf("creating application: %w", err)
+		}
+	}
+
+	// Return OIDC configuration
+	return &OIDCConfig{
+		ClientID:     bloudAppSlug,
+		ClientSecret: clientSecret,
+		AuthURL:      c.baseURL + "/application/o/authorize/",
+		TokenURL:     c.baseURL + "/application/o/token/",
+		UserInfoURL:  c.baseURL + "/application/o/userinfo/",
+		Issuer:       c.baseURL + "/application/o/" + bloudAppSlug + "/",
+	}, nil
+}
+
+// createBloudOAuth2Provider creates the OAuth2 provider for Bloud
+func (c *Client) createBloudOAuth2Provider(redirectURI, clientSecret string) (int, error) {
+	// Find required flows
+	authFlowID, err := c.findFlowID("default-provider-authorization-implicit-consent")
+	if err != nil {
+		// Fall back to explicit consent flow
+		authFlowID, err = c.findFlowID("default-provider-authorization-explicit-consent")
+		if err != nil {
+			return 0, fmt.Errorf("finding authorization flow: %w", err)
+		}
+	}
+
+	invalidFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+	if err != nil {
+		return 0, fmt.Errorf("finding invalidation flow: %w", err)
+	}
+
+	// Get certificate UUID for signing (Authentik API requires UUID, not name)
+	certUUID, err := c.getFirstCertificateUUID()
+	if err != nil {
+		return 0, fmt.Errorf("getting signing certificate: %w", err)
+	}
+
+	// Get scope property mappings for openid, profile, and email
+	scopeMappings, err := c.getScopePropertyMappings([]string{"openid", "profile", "email"})
+	if err != nil {
+		return 0, fmt.Errorf("getting scope mappings: %w", err)
+	}
+
+	payload := map[string]interface{}{
+		"name":               bloudProviderName,
+		"authorization_flow": authFlowID,
+		"invalidation_flow":  invalidFlowID,
+		"client_type":        "confidential",
+		"client_id":          bloudAppSlug,
+		"client_secret":      clientSecret,
+		"redirect_uris": []map[string]string{
+			{"matching_mode": "strict", "url": redirectURI},
+		},
+		"signing_key":                certUUID,
+		"property_mappings":          scopeMappings,
+		"sub_mode":                   "user_username",
+		"include_claims_in_id_token": true,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/oauth2/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("creating OAuth2 provider: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+
+	return result.PK, nil
+}
+
+// getFirstCertificateUUID retrieves the UUID of the first available certificate keypair
+// This is needed because the Authentik API requires a UUID for signing_key, not a name
+func (c *Client) getFirstCertificateUUID() (string, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/crypto/certificatekeypairs/", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("listing certificates: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			PK string `json:"pk"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	if len(result.Results) == 0 {
+		return "", fmt.Errorf("no certificates found in Authentik")
+	}
+
+	return result.Results[0].PK, nil
+}
+
+// getScopePropertyMappings retrieves the UUIDs of scope property mappings by scope name
+func (c *Client) getScopePropertyMappings(scopes []string) ([]string, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/propertymappings/provider/scope/?page_size=50", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("listing scope mappings: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			PK        string `json:"pk"`
+			ScopeName string `json:"scope_name"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	// Build a set of requested scopes for quick lookup
+	scopeSet := make(map[string]bool)
+	for _, s := range scopes {
+		scopeSet[s] = true
+	}
+
+	// Find matching mappings
+	var mappings []string
+	for _, mapping := range result.Results {
+		if scopeSet[mapping.ScopeName] {
+			mappings = append(mappings, mapping.PK)
+		}
+	}
+
+	return mappings, nil
+}
+
+// applicationExists checks if an application with the given slug exists
+func (c *Client) applicationExists(slug string) (bool, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK, nil
+}
+
+// createBloudApplication creates the Authentik application for Bloud
+func (c *Client) createBloudApplication(providerID int) error {
+	payload := map[string]interface{}{
+		"name":               bloudAppName,
+		"slug":               bloudAppSlug,
+		"provider":           providerID,
+		"policy_engine_mode": "any",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("creating application: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// ExchangeCode exchanges an authorization code for tokens
+func (c *Client) ExchangeCode(code, redirectURI, clientID, clientSecret string) (*TokenResponse, error) {
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", code)
+	data.Set("redirect_uri", redirectURI)
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/application/o/token/", bytes.NewReader([]byte(data.Encode())))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("token exchange failed: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp TokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return &tokenResp, nil
+}
+
+// GetUserInfo retrieves user information using an access token
+func (c *Client) GetUserInfo(accessToken string) (*UserInfo, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/application/o/userinfo/", nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("userinfo request failed: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var userInfo UserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return &userInfo, nil
+}

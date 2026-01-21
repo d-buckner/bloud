@@ -14,36 +14,59 @@
 		authentikReady: boolean;
 	}
 
+	interface User {
+		id: number;
+		username: string;
+	}
+
 	let { children }: { children: Snippet } = $props();
 
 	let sidebarCollapsed = $state(false);
 	let setupRequired = $state(false);
 	let loading = $state(true);
+	let user = $state<User | null>(null);
 
 	let isAppView = $derived(page.url.pathname.startsWith('/apps/'));
 
-	// Check setup status first, then initialize app if setup complete
+	// Check setup status and auth, then initialize app if ready
 	onMount(() => {
-		checkSetupStatus();
+		checkStatusAndAuth();
 
 		return () => {
 			disconnectApps();
 		};
 	});
 
-	async function checkSetupStatus() {
+	async function checkStatusAndAuth() {
 		try {
-			const res = await fetch('/api/setup/status');
-			const data: SetupStatus = await res.json();
-			setupRequired = data.setupRequired;
+			// First check setup status
+			const setupRes = await fetch('/api/setup/status');
+			const setupData: SetupStatus = await setupRes.json();
+			setupRequired = setupData.setupRequired;
+
+			// If setup is required, don't check auth
+			if (setupRequired) {
+				loading = false;
+				return;
+			}
+
+			// Check if user is authenticated
+			const authRes = await fetch('/api/auth/me');
+			if (authRes.ok) {
+				user = await authRes.json();
+			} else {
+				// Not authenticated - redirect to login
+				window.location.href = '/auth/login';
+				return;
+			}
 		} catch {
-			// If we can't reach the API, proceed with normal app
+			// If we can't reach the API, proceed with normal app (dev mode)
 			setupRequired = false;
 		}
 		loading = false;
 
-		// Only initialize app connections if setup is complete
-		if (!setupRequired) {
+		// Only initialize app connections if setup is complete and user is authenticated
+		if (!setupRequired && user) {
 			initApps();
 			waitForServiceWorker();
 		}
@@ -58,7 +81,7 @@
 	<SetupWizard />
 {:else}
 	<div class="app">
-		<Sidebar bind:collapsed={sidebarCollapsed} />
+		<Sidebar bind:collapsed={sidebarCollapsed} {user} />
 
 		<main class:collapsed={sidebarCollapsed}>
 			<!-- AppFrames manages all open iframes, preserving state across tab switches -->
