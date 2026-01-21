@@ -9,15 +9,21 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 )
 
-func TestGenerateOIDCBlueprint(t *testing.T) {
-	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
+// testBlueprintGenerator creates a BlueprintGenerator for testing
+func testBlueprintGenerator(t *testing.T, dir string) *BlueprintGenerator {
+	return NewBlueprintGenerator(
 		"test-secret",
+		"test-ldap-password",
 		"http://localhost:8080",
 		"http://localhost:8080",
 		dir,
+		nil, // No secrets manager for tests
 	)
+}
+
+func TestGenerateOIDCBlueprint(t *testing.T) {
+	dir := t.TempDir()
+	gen := testBlueprintGenerator(t, dir)
 
 	app := &catalog.App{
 		Name:        "actual-budget",
@@ -59,21 +65,19 @@ func TestGenerateOIDCBlueprint(t *testing.T) {
 		t.Error("Expected client ID 'actual-budget-client' not found")
 	}
 
-	// Verify client secret
-	if !strings.Contains(contentStr, "actual-budget-secret-change-in-production") {
-		t.Error("Expected client secret not found")
+	// Verify client secret is derived (not the old static pattern)
+	// HKDF-derived secrets are base64-encoded, so they should have alphanumeric/+/= chars
+	if strings.Contains(contentStr, "actual-budget-secret-change-in-production") {
+		t.Error("Client secret should be derived, not static pattern")
+	}
+	if !strings.Contains(contentStr, "client_secret:") {
+		t.Error("Expected client_secret field not found")
 	}
 }
 
 func TestGenerateForwardAuthBlueprint(t *testing.T) {
 	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	app := &catalog.App{
 		Name:        "adguard-home",
@@ -117,13 +121,7 @@ func TestGenerateForwardAuthBlueprint(t *testing.T) {
 
 func TestDeleteBlueprint(t *testing.T) {
 	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	// Create a blueprint file first
 	app := &catalog.App{
@@ -161,13 +159,7 @@ func TestDeleteBlueprint(t *testing.T) {
 
 func TestDeleteBlueprint_NonExistent(t *testing.T) {
 	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	// Deleting non-existent file should not error
 	err := gen.DeleteBlueprint("nonexistent-app")
@@ -181,12 +173,7 @@ func TestGenerateOutpostBlueprint(t *testing.T) {
 
 	// With root-level Authentik paths, baseURL and authentikURL are the same
 	// Authentik is accessed at /application/, /flows/, etc. on the same origin
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080", // baseURL - where apps are served
-		"http://localhost:8080", // authentikURL - same origin, root-level paths
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	providers := []ForwardAuthProvider{
 		{DisplayName: "App One"},
@@ -236,10 +223,7 @@ func TestGenerateOutpostBlueprint_UsesAuthentikURL(t *testing.T) {
 	dir := t.TempDir()
 
 	// With root-level Authentik paths, both URLs are the same
-	baseURL := "http://localhost:8080"
-	authentikURL := "http://localhost:8080"
-
-	gen := NewBlueprintGenerator("test-secret", baseURL, authentikURL, dir)
+	gen := testBlueprintGenerator(t, dir)
 
 	err := gen.GenerateOutpostBlueprint([]ForwardAuthProvider{{DisplayName: "Test App"}})
 	if err != nil {
@@ -262,13 +246,7 @@ func TestGenerateOutpostBlueprint_UsesAuthentikURL(t *testing.T) {
 
 func TestGenerateOutpostBlueprint_NoProviders(t *testing.T) {
 	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	// Create a blueprint file first
 	err := gen.GenerateOutpostBlueprint([]ForwardAuthProvider{{DisplayName: "Test"}})
@@ -295,13 +273,7 @@ func TestGenerateOutpostBlueprint_NoProviders(t *testing.T) {
 
 func TestGenerateLDAPBlueprint(t *testing.T) {
 	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	app := &catalog.App{
 		Name:        "jellyfin",
@@ -347,13 +319,7 @@ func TestGenerateLDAPBlueprint(t *testing.T) {
 
 func TestGenerateLDAPOutpostBlueprint(t *testing.T) {
 	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	apps := []LDAPApp{
 		{Name: "jellyfin", DisplayName: "Jellyfin"},
@@ -405,13 +371,7 @@ func TestGenerateLDAPOutpostBlueprint(t *testing.T) {
 
 func TestGenerateLDAPOutpostBlueprint_NoApps(t *testing.T) {
 	dir := t.TempDir()
-
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		dir,
-	)
+	gen := testBlueprintGenerator(t, dir)
 
 	// Create a blueprint file first
 	err := gen.GenerateLDAPOutpostBlueprint([]LDAPApp{{Name: "test", DisplayName: "Test"}}, "password")
@@ -437,15 +397,71 @@ func TestGenerateLDAPOutpostBlueprint_NoApps(t *testing.T) {
 }
 
 func TestGetLDAPBindPassword(t *testing.T) {
-	gen := NewBlueprintGenerator(
-		"test-secret",
-		"http://localhost:8080",
-		"http://localhost:8080",
-		t.TempDir(),
-	)
+	gen := testBlueprintGenerator(t, t.TempDir())
 
 	password := gen.GetLDAPBindPassword()
-	if password == "" {
-		t.Error("Expected non-empty LDAP bind password")
+	if password != "test-ldap-password" {
+		t.Errorf("Expected 'test-ldap-password', got '%s'", password)
+	}
+}
+
+func TestDeriveSecret_Deterministic(t *testing.T) {
+	// Same inputs should produce same output
+	secret1 := deriveSecret("master-secret", "app-name", 32)
+	secret2 := deriveSecret("master-secret", "app-name", 32)
+
+	if secret1 != secret2 {
+		t.Error("deriveSecret should be deterministic")
+	}
+}
+
+func TestDeriveSecret_UniquePerApp(t *testing.T) {
+	// Different app names should produce different secrets
+	secretA := deriveSecret("master-secret", "app-a", 32)
+	secretB := deriveSecret("master-secret", "app-b", 32)
+
+	if secretA == secretB {
+		t.Error("Different apps should have different secrets")
+	}
+}
+
+func TestDeriveSecret_UniquePerHost(t *testing.T) {
+	// Different host secrets should produce different secrets
+	secret1 := deriveSecret("host-secret-1", "app-name", 32)
+	secret2 := deriveSecret("host-secret-2", "app-name", 32)
+
+	if secret1 == secret2 {
+		t.Error("Different host secrets should produce different app secrets")
+	}
+}
+
+func TestDeriveSecret_EmptyMaster(t *testing.T) {
+	// Empty master should use fallback
+	secret := deriveSecret("", "app-name", 32)
+
+	if secret == "" {
+		t.Error("Should return fallback for empty master")
+	}
+	if !strings.Contains(secret, "app-name") {
+		t.Error("Fallback should contain context")
+	}
+}
+
+func TestDeriveSecret_NoPadding(t *testing.T) {
+	// Derived secrets should not contain '=' padding characters.
+	// The '=' character causes issues with openid-client which URL-encodes
+	// credentials per RFC 6749 before base64 encoding for Basic auth.
+	// Authentik doesn't URL-decode after base64 decoding, causing auth failures.
+	secret := deriveSecret("test-master-secret", "oauth-client-secret:actual-budget", 32)
+
+	if strings.Contains(secret, "=") {
+		t.Errorf("Derived secret should not contain '=' padding, got: %s", secret)
+	}
+
+	// Also verify it's a valid base64 URL-safe string (alphanumeric, -, _)
+	for _, c := range secret {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			t.Errorf("Secret contains invalid character '%c', should only contain URL-safe base64 chars", c)
+		}
 	}
 }

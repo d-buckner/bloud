@@ -11,7 +11,9 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -20,27 +22,30 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	router         *chi.Mux
-	db             *sql.DB
-	catalog        catalog.CacheInterface
-	graph          catalog.AppGraphInterface
-	appStore       store.AppStoreInterface
-	appHub         *AppEventHub
-	orchestrator   orchestrator.AppOrchestrator
-	reconciler     *orchestrator.Reconciler
-	appsDir        string
-	nixConfigDir   string
-	dataDir        string
-	flakePath      string
-	flakeTarget    string
-	nixosPath      string
+	router          *chi.Mux
+	db              *sql.DB
+	catalog         catalog.CacheInterface
+	graph           catalog.AppGraphInterface
+	appStore        store.AppStoreInterface
+	userStore       *store.UserStore
+	appHub          *AppEventHub
+	orchestrator    orchestrator.AppOrchestrator
+	reconciler      *orchestrator.Reconciler
+	authentikClient *authentik.Client
+	appsDir         string
+	nixConfigDir    string
+	dataDir         string
+	flakePath       string
+	flakeTarget     string
+	nixosPath       string
 	port            int
 	ssoHostSecret   string
 	ssoBaseURL      string
 	ssoAuthentikURL string
 	authentikToken  string
-	registry       configurator.RegistryInterface
-	logger         *slog.Logger
+	registry        configurator.RegistryInterface
+	logger          *slog.Logger
+	secrets         *secrets.Manager
 }
 
 // ServerConfig holds paths for server initialization
@@ -64,30 +69,47 @@ type ServerConfig struct {
 // NewServer creates a new HTTP server instance
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	appStore := store.NewAppStore(db)
+	userStore := store.NewUserStore(db)
 	appHub := NewAppEventHub(appStore)
 
 	// Wire up automatic broadcasts when app state changes
 	appStore.SetOnChange(appHub.Broadcast)
 
+	// Initialize secrets manager
+	secretsPath := filepath.Join(cfg.DataDir, "secrets.json")
+	secretsMgr := secrets.NewManager(secretsPath)
+	if err := secretsMgr.Load(); err != nil {
+		logger.Error("failed to load secrets", "error", err)
+	}
+
+	// Initialize Authentik client if token is available
+	var authentikClient *authentik.Client
+	if cfg.AuthentikToken != "" && cfg.SSOAuthentikURL != "" {
+		authentikClient = authentik.NewClient(cfg.SSOAuthentikURL, cfg.AuthentikToken)
+	}
+
 	s := &Server{
-		router:         chi.NewRouter(),
-		db:             db,
-		catalog:        catalog.NewCache(db),
-		appStore:       appStore,
-		appHub:         appHub,
-		appsDir:        cfg.AppsDir,
-		nixConfigDir:   cfg.ConfigDir,
-		dataDir:        cfg.DataDir,
-		flakePath:      cfg.FlakePath,
-		flakeTarget:    cfg.FlakeTarget,
-		nixosPath:      cfg.NixosPath,
+		router:          chi.NewRouter(),
+		db:              db,
+		catalog:         catalog.NewCache(db),
+		appStore:        appStore,
+		userStore:       userStore,
+		appHub:          appHub,
+		authentikClient: authentikClient,
+		appsDir:         cfg.AppsDir,
+		nixConfigDir:    cfg.ConfigDir,
+		dataDir:         cfg.DataDir,
+		flakePath:       cfg.FlakePath,
+		flakeTarget:     cfg.FlakeTarget,
+		nixosPath:       cfg.NixosPath,
 		port:            cfg.Port,
 		ssoHostSecret:   cfg.SSOHostSecret,
 		ssoBaseURL:      cfg.SSOBaseURL,
 		ssoAuthentikURL: cfg.SSOAuthentikURL,
 		authentikToken:  cfg.AuthentikToken,
-		registry:       cfg.Registry,
-		logger:         logger,
+		registry:        cfg.Registry,
+		logger:          logger,
+		secrets:         secretsMgr,
 	}
 
 	// Initialize catalog and graph on startup
@@ -155,6 +177,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		SSOAuthentikURL:  s.ssoAuthentikURL,
 		SSOBlueprintsDir: ssoBlueprintsDir,
 		AuthentikToken:   s.authentikToken,
+		Secrets:          s.secrets,
 	})
 
 	s.orchestrator = nixOrch

@@ -67,6 +67,10 @@ echo "Building host-agent binary..."
 cd "$LOCAL_SRC/host-agent"
 if go build -o /tmp/host-agent ./cmd/host-agent 2>&1; then
     echo "Host-agent binary built at /tmp/host-agent"
+    # Initialize secrets before NixOS services start
+    # This ensures the secrets.json exists so NixOS can read it during rebuild
+    echo "Initializing secrets..."
+    /tmp/host-agent init-secrets "$DATA_DIR"
 else
     echo "Warning: Failed to build host-agent, services may fail"
 fi

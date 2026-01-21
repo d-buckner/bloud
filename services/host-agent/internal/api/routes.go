@@ -19,6 +19,12 @@ func (s *Server) setupRoutes() {
 		// Health check
 		r.Get("/health", s.handleHealth)
 
+		// Setup endpoints (unauthenticated - used before first user exists)
+		r.Route("/setup", func(r chi.Router) {
+			r.Get("/status", s.handleSetupStatus)
+			r.Post("/create-user", s.handleCreateUser)
+		})
+
 		// Apps endpoints
 		r.Route("/apps", func(r chi.Router) {
 			r.Get("/", s.handleListApps)
@@ -249,7 +255,8 @@ func (s *Server) handlePlanRemove(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if s.orchestrator == nil {
+	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
+	if !ok || nixOrch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available (podman not running?)")
 		return
 	}
@@ -265,7 +272,8 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.orchestrator.Install(r.Context(), orchestrator.InstallRequest{
+	// Use the queue to serialize concurrent install requests
+	result, err := nixOrch.EnqueueInstall(r.Context(), orchestrator.InstallRequest{
 		App:     name,
 		Choices: req.Choices,
 	})
@@ -290,7 +298,8 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if s.orchestrator == nil {
+	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
+	if !ok || nixOrch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available (podman not running?)")
 		return
 	}
@@ -306,7 +315,8 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.orchestrator.Uninstall(r.Context(), orchestrator.UninstallRequest{
+	// Use the queue to serialize concurrent uninstall requests
+	result, err := nixOrch.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
 		App:       name,
 		ClearData: req.ClearData,
 	})
@@ -341,10 +351,11 @@ func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 
 	// Check if app is installed
 	app, _ := s.appStore.GetByName(name)
-	if app != nil && s.orchestrator != nil {
-		// App is installed - uninstall with clearData=true
+	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
+	if app != nil && ok && nixOrch != nil {
+		// App is installed - uninstall with clearData=true using the queue
 		s.logger.Info("uninstalling app with data cleanup", "app", name)
-		result, err := s.orchestrator.Uninstall(r.Context(), orchestrator.UninstallRequest{
+		result, err := nixOrch.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
 			App:       name,
 			ClearData: true,
 		})
