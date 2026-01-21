@@ -1,9 +1,12 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 )
 
 // Config holds the application configuration
@@ -27,10 +30,19 @@ type Config struct {
 	AuthentikAdminEmail    string
 	// LDAP configuration
 	LDAPBindPassword string
+	// Secrets manager for accessing generated secrets
+	Secrets *secrets.Manager
 }
 
-// Load reads configuration from environment variables with sensible defaults
+// Load reads configuration from environment variables with sensible defaults.
+// It also initializes the secrets manager and uses generated secrets for
+// any values not explicitly set via environment variables.
 func Load() *Config {
+	return LoadWithLogger(slog.Default())
+}
+
+// LoadWithLogger is like Load but allows specifying a logger.
+func LoadWithLogger(logger *slog.Logger) *Config {
 	dataDir := getEnv("BLOUD_DATA_DIR", getDefaultDataDir())
 	appsDir := getEnv("BLOUD_APPS_DIR", "../../apps")
 
@@ -38,6 +50,27 @@ func Load() *Config {
 	// but can be overridden for dev environments where apps is synced separately
 	defaultFlakePath := filepath.Clean(filepath.Join(appsDir, ".."))
 	defaultNixosPath := filepath.Clean(filepath.Join(appsDir, "..", "nixos"))
+
+	// Initialize secrets manager
+	secretsPath := filepath.Join(dataDir, "secrets.json")
+	secretsMgr := secrets.NewManager(secretsPath)
+	if err := secretsMgr.Load(); err != nil {
+		logger.Warn("failed to load secrets, using fallback defaults", "error", err, "path", secretsPath)
+		// Don't fail - use fallback defaults
+	} else {
+		logger.Info("loaded secrets", "path", secretsPath)
+	}
+
+	// Get secrets with fallbacks to env vars or static defaults
+	// Priority: env var > generated secret > static fallback
+	postgresPassword := getEnvOrSecret("BLOUD_POSTGRES_PASSWORD", secretsMgr.GetPostgresPassword(), "testpass123")
+	ssoHostSecret := getEnvOrSecret("BLOUD_SSO_HOST_SECRET", secretsMgr.GetSSOHostSecret(), "dev-secret-change-in-production")
+	authentikToken := getEnvOrSecret("BLOUD_AUTHENTIK_TOKEN", secretsMgr.GetAuthentikBootstrapToken(), "test-bootstrap-token-change-in-production")
+	authentikAdminPassword := getEnvOrSecret("BLOUD_AUTHENTIK_ADMIN_PASSWORD", secretsMgr.GetAuthentikBootstrapPassword(), "password")
+	ldapBindPassword := getEnvOrSecret("BLOUD_LDAP_BIND_PASSWORD", secretsMgr.GetLDAPBindPassword(), "ldap-bind-password-change-in-production")
+
+	// Build database URL using postgres password
+	defaultDatabaseURL := "postgres://apps:" + postgresPassword + "@localhost:5432/bloud?sslmode=disable"
 
 	cfg := &Config{
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
@@ -47,16 +80,16 @@ func Load() *Config {
 		FlakePath:              getEnv("BLOUD_FLAKE_PATH", defaultFlakePath),
 		FlakeTarget:            getEnv("BLOUD_FLAKE_TARGET", "vm-dev"),
 		NixosPath:              getEnv("BLOUD_NIXOS_PATH", defaultNixosPath),
-		// Default matches postgres module defaults - NixOS injects actual values via DATABASE_URL
-		DatabaseURL:            getEnv("DATABASE_URL", "postgres://apps:testpass123@localhost:5432/bloud?sslmode=disable"),
-		SSOHostSecret:          getEnv("BLOUD_SSO_HOST_SECRET", "dev-secret-change-in-production"),
+		DatabaseURL:            getEnv("DATABASE_URL", defaultDatabaseURL),
+		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
-		AuthentikToken:         getEnv("BLOUD_AUTHENTIK_TOKEN", "test-bootstrap-token-change-in-production"),
+		AuthentikToken:         authentikToken,
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
-		AuthentikAdminPassword: getEnv("BLOUD_AUTHENTIK_ADMIN_PASSWORD", "password"),
+		AuthentikAdminPassword: authentikAdminPassword,
 		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),
-		LDAPBindPassword:       getEnv("BLOUD_LDAP_BIND_PASSWORD", "ldap-bind-password-change-in-production"),
+		LDAPBindPassword:       ldapBindPassword,
+		Secrets:                secretsMgr,
 	}
 
 	return cfg
@@ -77,6 +110,17 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getEnvOrSecret returns the value from: env var > secret > fallback
+func getEnvOrSecret(envKey, secretValue, fallback string) string {
+	if value := os.Getenv(envKey); value != "" {
+		return value
+	}
+	if secretValue != "" {
+		return secretValue
+	}
+	return fallback
 }
 
 // getEnvAsInt reads an environment variable as an integer or returns a default value

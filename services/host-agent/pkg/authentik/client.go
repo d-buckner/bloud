@@ -904,3 +904,117 @@ func (c *Client) findOutpostByName(name string) (*OutpostResponse, error) {
 
 	return nil, nil // Not found
 }
+
+// CreateUser creates a new user in Authentik and sets their password
+func (c *Client) CreateUser(username, password string) (int, error) {
+	// Create the user
+	payload := map[string]interface{}{
+		"username":  username,
+		"name":      username,
+		"path":      "users",
+		"is_active": true,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/users/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return 0, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("creating user: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("decoding response: %w", err)
+	}
+
+	// Set the user's password
+	if err := c.setUserPassword(result.PK, password); err != nil {
+		return 0, fmt.Errorf("setting password: %w", err)
+	}
+
+	return result.PK, nil
+}
+
+// setUserPassword sets a user's password via the Authentik API
+func (c *Client) setUserPassword(userID int, password string) error {
+	reqURL := fmt.Sprintf("%s/api/v3/core/users/%d/set_password/", c.baseURL, userID)
+	payload := map[string]string{"password": password}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// 204 No Content = success
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("setting password: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// AddUserToGroup adds a user to a group by name (public wrapper around internal method)
+func (c *Client) AddUserToGroup(userID int, groupName string) error {
+	return c.addUserToGroup(userID, groupName)
+}
+
+// DeleteUser deletes a user by username
+func (c *Client) DeleteUser(username string) error {
+	// Find the user ID first
+	userID, err := c.findUserID(username)
+	if err != nil {
+		return fmt.Errorf("finding user: %w", err)
+	}
+	if userID == 0 {
+		return nil // User doesn't exist, nothing to delete
+	}
+
+	// Delete the user
+	reqURL := fmt.Sprintf("%s/api/v3/core/users/%d/", c.baseURL, userID)
+	req, err := http.NewRequest(http.MethodDelete, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 204 No Content = success, 404 = already deleted
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("deleting user: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}

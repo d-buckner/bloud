@@ -3,8 +3,11 @@ package sso
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,23 +15,29 @@ import (
 	"text/template"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
+	"golang.org/x/crypto/hkdf"
 )
 
 // BlueprintGenerator generates Authentik OAuth2 blueprints from catalog SSO config
 type BlueprintGenerator struct {
-	hostSecret    string
-	baseURL       string
-	authentikURL  string
-	blueprintsDir string
+	hostSecret       string
+	ldapBindPassword string
+	baseURL          string
+	authentikURL     string
+	blueprintsDir    string
+	secrets          *secrets.Manager
 }
 
 // NewBlueprintGenerator creates a new blueprint generator
-func NewBlueprintGenerator(hostSecret, baseURL, authentikURL, blueprintsDir string) *BlueprintGenerator {
+func NewBlueprintGenerator(hostSecret, ldapBindPassword, baseURL, authentikURL, blueprintsDir string, secretsMgr *secrets.Manager) *BlueprintGenerator {
 	return &BlueprintGenerator{
-		hostSecret:    hostSecret,
-		baseURL:       baseURL,
-		authentikURL:  authentikURL,
-		blueprintsDir: blueprintsDir,
+		hostSecret:       hostSecret,
+		ldapBindPassword: ldapBindPassword,
+		baseURL:          baseURL,
+		authentikURL:     authentikURL,
+		blueprintsDir:    blueprintsDir,
+		secrets:          secretsMgr,
 	}
 }
 
@@ -240,10 +249,38 @@ func (g *BlueprintGenerator) generateClientID(appName string) string {
 }
 
 func (g *BlueprintGenerator) generateClientSecret(appName string) string {
-	// TODO: For production, derive secrets properly and sync with NixOS modules.
-	// For now, use static pattern matching NixOS module defaults to ensure consistency.
-	// The NixOS modules use "{appName}-secret-change-in-production" as default.
-	return fmt.Sprintf("%s-secret-change-in-production", appName)
+	// Use HKDF to derive a deterministic, unique secret for each app from the host secret.
+	// This ensures:
+	// 1. Same secret is generated for the same app + hostSecret
+	// 2. Different apps get different secrets
+	// 3. Secrets are cryptographically strong
+	secret := deriveSecret(g.hostSecret, "oauth-client-secret:"+appName, 32)
+
+	// Persist the derived secret so NixOS modules can read it
+	if g.secrets != nil {
+		_ = g.secrets.SetAppSecret(appName, "oauthClientSecret", secret)
+	}
+
+	return secret
+}
+
+// deriveSecret uses HKDF-SHA256 to derive a deterministic secret from a master secret.
+func deriveSecret(masterSecret, context string, length int) string {
+	if masterSecret == "" {
+		// Fallback to old behavior if no master secret configured
+		return context + "-fallback-secret"
+	}
+
+	hkdfReader := hkdf.New(sha256.New, []byte(masterSecret), nil, []byte(context))
+	key := make([]byte, length)
+	if _, err := io.ReadFull(hkdfReader, key); err != nil {
+		// This should never happen with HKDF
+		panic(fmt.Sprintf("HKDF read failed: %v", err))
+	}
+	// Use RawURLEncoding (no padding) to avoid the '=' character.
+	// Some OAuth clients URL-encode credentials per RFC 6749 before base64 encoding,
+	// but Authentik doesn't URL-decode them, causing authentication failures.
+	return base64.RawURLEncoding.EncodeToString(key)
 }
 
 func (g *BlueprintGenerator) renderOIDCBlueprint(app *catalog.App, clientID, clientSecret string, redirectURIs []string, launchURL string) (string, error) {
@@ -388,8 +425,7 @@ func (g *BlueprintGenerator) renderLDAPOutpostBlueprint(apps []LDAPApp, ldapBind
 // GetLDAPBindPassword returns the LDAP bind password for apps to use
 // This should match what's in the blueprint
 func (g *BlueprintGenerator) GetLDAPBindPassword() string {
-	// For now, use a static password. In production, this should be derived securely.
-	return "ldap-bind-password-change-in-production"
+	return g.ldapBindPassword
 }
 
 const oidcBlueprintTemplate = `# Authentik Blueprint for {{.DisplayName}}

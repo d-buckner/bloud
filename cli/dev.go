@@ -293,6 +293,12 @@ func cmdRebuild() int {
 		return 1
 	}
 
+	// Initialize secrets before rebuild to ensure NixOS can read them
+	log("Ensuring secrets are initialized...")
+	if _, err := vm.Exec(devVMName, "/tmp/host-agent init-secrets /home/bloud/.local/share/bloud"); err != nil {
+		warn(fmt.Sprintf("Failed to initialize secrets: %v (continuing anyway)", err))
+	}
+
 	log("Rebuilding NixOS configuration...")
 	cmd := fmt.Sprintf("sudo nixos-rebuild switch --flake %s#vm-dev --impure", devProjectInVM)
 	if err := vm.ExecStream(devVMName, cmd); err != nil {

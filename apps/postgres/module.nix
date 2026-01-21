@@ -2,6 +2,8 @@
 
 let
   mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+  bloudCfg = config.bloud;
+  secretsDir = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
 in
 mkBloudApp {
   name = "postgres";
@@ -16,14 +18,16 @@ mkBloudApp {
 
   options = {
     user = { default = "apps"; description = "PostgreSQL user"; };
-    password = { default = "testpass123"; description = "PostgreSQL password"; };
     database = { default = "apps"; description = "Default database name"; };
   };
+
+  # Load POSTGRES_PASSWORD from env file at container start time
+  envFile = "${secretsDir}/postgres.env";
 
   environment = cfg: {
     POSTGRES_USER = cfg.user;
     POSTGRES_DB = cfg.database;
-    POSTGRES_PASSWORD = cfg.password;
+    # POSTGRES_PASSWORD loaded from envFile
   };
 
   # Use explicit volume since data path is "apps-postgres" not "postgres"

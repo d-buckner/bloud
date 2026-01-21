@@ -1,5 +1,12 @@
 -- Bloud Host Agent Database Schema (PostgreSQL)
 
+-- Users registered in Bloud (credentials stored in Authentik)
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Apps installed on this host
 CREATE TABLE IF NOT EXISTS apps (
     id SERIAL PRIMARY KEY,
@@ -14,17 +21,6 @@ CREATE TABLE IF NOT EXISTS apps (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- NixOS rebuild history
-CREATE TABLE IF NOT EXISTS rebuild_history (
-    id SERIAL PRIMARY KEY,
-    trigger TEXT NOT NULL,        -- 'install_app', 'uninstall_app', 'config_change'
-    app_name TEXT,                -- NULL for non-app changes
-    status TEXT NOT NULL,         -- 'running', 'success', 'failed'
-    log_path TEXT,                -- Path to full rebuild log file
-    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP
-);
-
 -- App catalog cache (synced from git repository)
 CREATE TABLE IF NOT EXISTS catalog_cache (
     name TEXT PRIMARY KEY,
@@ -34,5 +30,3 @@ CREATE TABLE IF NOT EXISTS catalog_cache (
 
 -- Create indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_apps_status ON apps(status);
-CREATE INDEX IF NOT EXISTS idx_rebuild_status ON rebuild_history(status);
-CREATE INDEX IF NOT EXISTS idx_rebuild_app ON rebuild_history(app_name);

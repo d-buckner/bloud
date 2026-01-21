@@ -30,7 +30,6 @@ These changes improve user experience during app installation by showing meaning
 ### Database
 - SQLite file at `{dataDir}/state/bloud.db`
 - 2 active tables: `apps`, `catalog_cache`
-- 3 unused tables: `hosts`, `config`, `rebuild_history`
 - Driver: `modernc.org/sqlite` (pure Go)
 
 ### Install Status

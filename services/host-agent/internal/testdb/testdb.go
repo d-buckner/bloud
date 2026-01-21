@@ -33,16 +33,6 @@ CREATE TABLE IF NOT EXISTS apps (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS rebuild_history (
-    id SERIAL PRIMARY KEY,
-    trigger TEXT NOT NULL,
-    app_name TEXT,
-    status TEXT NOT NULL,
-    log_path TEXT,
-    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS catalog_cache (
     name TEXT PRIMARY KEY,
     yaml_content TEXT NOT NULL,
@@ -50,8 +40,6 @@ CREATE TABLE IF NOT EXISTS catalog_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_apps_status ON apps(status);
-CREATE INDEX IF NOT EXISTS idx_rebuild_status ON rebuild_history(status);
-CREATE INDEX IF NOT EXISTS idx_rebuild_app ON rebuild_history(app_name);
 `
 
 // getTestDatabaseURL returns the database URL for testing
@@ -102,7 +90,7 @@ func SetupTestDB(t *testing.T) *sql.DB {
 	})
 
 	// Clean up existing data for test isolation
-	cleanupTables := []string{"apps", "rebuild_history", "catalog_cache"}
+	cleanupTables := []string{"apps", "catalog_cache"}
 	for _, table := range cleanupTables {
 		_, _ = testDB.Exec(fmt.Sprintf("DELETE FROM %s", table))
 	}

@@ -2,6 +2,8 @@
 
 let
   mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+  bloudCfg = config.bloud;
+  secretsDir = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
   authentikCfg = config.bloud.apps.authentik;
   authentikEnabled = authentikCfg.enable or false;
 in
@@ -13,6 +15,9 @@ mkBloudApp {
   containerPort = 5006;
   network = "host";
   dataDir = "/data";
+
+  # Load secrets from env file: ACTUAL_OPENID_CLIENT_SECRET
+  envFile = "${secretsDir}/actual-budget.env";
 
   # Depend on Authentik when SSO is enabled
   # The configurator's PreStart waits for the OpenID endpoint
@@ -27,10 +32,7 @@ mkBloudApp {
       default = "actual-budget-client";
       description = "OpenID Connect client ID";
     };
-    openidClientSecret = {
-      default = "actual-budget-secret-change-in-production";
-      description = "OpenID Connect client secret";
-    };
+    # openidClientSecret loaded from actual-budget.env as ACTUAL_OPENID_CLIENT_SECRET
   };
 
   environment = cfg: {
@@ -39,7 +41,7 @@ mkBloudApp {
     # Discovery URL uses auth subdomain to avoid SW rewriting
     ACTUAL_OPENID_DISCOVERY_URL = "${cfg.authentikExternalHost}:${toString cfg.traefikPort}/application/o/actual-budget/.well-known/openid-configuration";
     ACTUAL_OPENID_CLIENT_ID = cfg.openidClientId;
-    ACTUAL_OPENID_CLIENT_SECRET = cfg.openidClientSecret;
+    # ACTUAL_OPENID_CLIENT_SECRET loaded from envFile
     ACTUAL_OPENID_SERVER_HOSTNAME = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/actual-budget";
     # Skip Actual Budget's own login - use Authentik only
     ACTUAL_OPENID_ENFORCE = "true";
