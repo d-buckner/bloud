@@ -191,6 +191,13 @@ func testStart() int {
 		return 1
 	}
 
+	// Initialize secrets BEFORE nixos-rebuild so NixOS can read them
+	log("Initializing secrets...")
+	if err := vm.ExecStream(testVMName, "/tmp/host-agent-test init-secrets /home/bloud/.local/share/bloud"); err != nil {
+		errorf("Failed to initialize secrets: %v", err)
+		return 1
+	}
+
 	// Apply NixOS configuration
 	log("Applying NixOS configuration...")
 	if err := vm.ExecStream(testVMName, fmt.Sprintf("sudo nixos-rebuild switch --flake %s#vm-test --impure", projectRoot)); err != nil {

@@ -61,6 +61,8 @@
   userns ? (if network == "host" then null else "keep-id"),
   extraServices ? {},
   extraConfig ? {},
+  # Environment file for secrets (loaded at container start, not Nix eval time)
+  envFile ? null,
 }:
 
 let
@@ -77,6 +79,9 @@ let
   configPath = "${userHome}/.local/share/${bloudCfg.dataDir}";
   appDataPath = "${configPath}/${name}";
 
+  # Path to secrets directory (env files are written here by host-agent)
+  secretsDir = "${configPath}";
+
   # Build the cfg object passed to environment function
   cfg = appCfg // {
     # Common values contributors will need
@@ -86,9 +91,9 @@ let
     bloudUser = bloudCfg.user;
     configPath = configPath;
     appDataPath = appDataPath;
+    secretsDir = secretsDir;
     # Postgres config (if available)
     postgresUser = postgresCfg.user or "apps";
-    postgresPassword = postgresCfg.password or "testpass123";
     # Authentik/SSO config (if available)
     authentikEnabled = authentikCfg.enable or false;
     # App name for SSO client ID derivation
@@ -225,7 +230,8 @@ in
         # Only add port mappings for non-host networking (host networking binds directly)
         } // lib.optionalAttrs (port != null && network != "host") {
           ports = [ "${toString appCfg.port}:${toString containerPort}" ];
-        } // lib.optionalAttrs (userns != null) { inherit userns; });
+        } // lib.optionalAttrs (userns != null) { inherit userns; }
+          // lib.optionalAttrs (envFile != null) { inherit envFile; });
       } // dbInitService // resolvedExtraServices;
     }
     resolvedExtraConfig

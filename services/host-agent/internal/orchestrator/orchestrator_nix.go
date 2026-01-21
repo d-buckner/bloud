@@ -14,6 +14,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
@@ -31,6 +32,7 @@ type Orchestrator struct {
 	rebuilder       nixgen.RebuilderInterface
 	dataDir         string
 	logger          *slog.Logger
+	queue           *OperationQueue
 }
 
 // Config holds Orchestrator configuration
@@ -51,6 +53,8 @@ type Config struct {
 	SSOAuthentikURL  string // Authentik URL for discovery (e.g., "http://localhost:8080")
 	SSOBlueprintsDir string // Directory to write blueprints to
 	AuthentikToken   string // Authentik API token for SSO cleanup
+	LDAPBindPassword string // LDAP bind password for service accounts
+	Secrets          *secrets.Manager // Secrets manager for persisting derived secrets
 
 	// Optional: inject dependencies for testing (if nil, defaults will be created)
 	Generator       nixgen.GeneratorInterface
@@ -87,9 +91,11 @@ func New(cfg Config) *Orchestrator {
 	if blueprintGen == nil && cfg.SSOBlueprintsDir != "" {
 		blueprintGen = sso.NewBlueprintGenerator(
 			cfg.SSOHostSecret,
+			cfg.LDAPBindPassword,
 			cfg.SSOBaseURL,
 			cfg.SSOAuthentikURL,
 			cfg.SSOBlueprintsDir,
+			cfg.Secrets,
 		)
 	}
 
@@ -99,7 +105,7 @@ func New(cfg Config) *Orchestrator {
 		authentikClient = authentik.NewClient(cfg.SSOBaseURL, cfg.AuthentikToken)
 	}
 
-	return &Orchestrator{
+	o := &Orchestrator{
 		graph:           cfg.Graph,
 		catalogCache:    cfg.CatalogCache,
 		appStore:        cfg.AppStore,
@@ -111,6 +117,31 @@ func New(cfg Config) *Orchestrator {
 		dataDir:         cfg.DataDir,
 		logger:          cfg.Logger,
 	}
+
+	// Create and start the operation queue
+	o.queue = NewOperationQueue(o, DefaultQueueConfig(), cfg.Logger)
+	o.queue.Start()
+
+	return o
+}
+
+// Stop gracefully shuts down the orchestrator, including the operation queue.
+func (o *Orchestrator) Stop() {
+	if o.queue != nil {
+		o.queue.Stop()
+	}
+}
+
+// EnqueueInstall adds an install request to the queue and waits for the result.
+// This is the primary entry point for install operations from HTTP handlers.
+func (o *Orchestrator) EnqueueInstall(ctx context.Context, req InstallRequest) (InstallResponse, error) {
+	return o.queue.EnqueueInstall(ctx, req)
+}
+
+// EnqueueUninstall adds an uninstall request to the queue and waits for the result.
+// This is the primary entry point for uninstall operations from HTTP handlers.
+func (o *Orchestrator) EnqueueUninstall(ctx context.Context, req UninstallRequest) (UninstallResponse, error) {
+	return o.queue.EnqueueUninstall(ctx, req)
 }
 
 // InstallResult describes the outcome of a Nix-based installation
