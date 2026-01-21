@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,8 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"log/slog"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
@@ -945,4 +945,238 @@ func TestRespondError(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
 	assert.Equal(t, "something went wrong", response["error"])
+}
+
+// FakeSessionStore implements a simple in-memory session store for testing
+type FakeSessionStore struct {
+	sessions map[string]*store.Session
+	mu       sync.RWMutex
+}
+
+func NewFakeSessionStore() *FakeSessionStore {
+	return &FakeSessionStore{
+		sessions: make(map[string]*store.Session),
+	}
+}
+
+func (f *FakeSessionStore) Create(userID string, username string) *store.Session {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	session := &store.Session{
+		ID:        fmt.Sprintf("test-session-%d", len(f.sessions)+1),
+		UserID:    userID,
+		Username:  username,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	f.sessions[session.ID] = session
+	return session
+}
+
+func (f *FakeSessionStore) Get(sessionID string) *store.Session {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.sessions[sessionID]
+}
+
+func (f *FakeSessionStore) Delete(sessionID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.sessions, sessionID)
+}
+
+// setupTestServerWithAuth creates a test server with auth enabled
+func setupTestServerWithAuth(t *testing.T) (*Server, *FakeSessionStore) {
+	server, _ := setupTestServer(t)
+
+	// Create a fake session store wrapper that mimics the real one
+	fakeStore := NewFakeSessionStore()
+
+	// Create a real session store adapter that uses the fake
+	server.sessionStore = &store.SessionStore{}
+
+	// Re-setup routes to include auth middleware
+	server.router = chi.NewRouter()
+	server.setupMiddleware()
+	server.setupRoutes()
+
+	return server, fakeStore
+}
+
+// Auth Middleware Tests
+
+func TestAuthMiddleware_NoSession(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Create a mock session store to enable auth
+	server.sessionStore = &store.SessionStore{}
+
+	// Re-setup routes to include auth middleware
+	server.router = chi.NewRouter()
+	server.setupMiddleware()
+	server.setupRoutes()
+
+	// Request a protected endpoint without session cookie
+	req := httptest.NewRequest("GET", "/api/apps", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "Not authenticated", response["error"])
+}
+
+// Note: TestAuthMiddleware_InvalidSession requires a real Redis connection
+// and is tested via integration tests rather than unit tests.
+
+func TestAPI_PublicEndpoints_NoAuthRequired(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Enable auth by setting a session store
+	server.sessionStore = &store.SessionStore{}
+
+	// Re-setup routes
+	server.router = chi.NewRouter()
+	server.setupMiddleware()
+	server.setupRoutes()
+
+	// Test public endpoints without session
+	publicEndpoints := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/health"},
+		{"GET", "/api/setup/status"},
+		{"GET", "/api/auth/me"},
+	}
+
+	for _, ep := range publicEndpoints {
+		t.Run(ep.path, func(t *testing.T) {
+			req := httptest.NewRequest(ep.method, ep.path, nil)
+			w := httptest.NewRecorder()
+
+			server.router.ServeHTTP(w, req)
+
+			// Should not return 401 (may return other codes, but not Unauthorized)
+			// Health returns 200, setup/status returns 200/500, auth/me returns 401 (expected for unauthenticated)
+			if ep.path == "/api/auth/me" {
+				assert.Equal(t, http.StatusUnauthorized, w.Code, "auth/me should return 401 when unauthenticated")
+			} else {
+				assert.NotEqual(t, http.StatusUnauthorized, w.Code, "public endpoint %s should not require auth", ep.path)
+			}
+		})
+	}
+}
+
+func TestAPI_GetCurrentUser_Unauthenticated(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/auth/me", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "Not authenticated", response["error"])
+}
+
+func TestAPI_Login_NoAuthConfig(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// No auth config set
+	req := httptest.NewRequest("GET", "/auth/login", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestAPI_Callback_NoAuthConfig(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/auth/callback?code=test", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestAPI_Logout_ClearsCookie(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("POST", "/auth/logout", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  "bloud_session",
+		Value: "some-session-id",
+	})
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	// Should redirect to home
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "/", w.Header().Get("Location"))
+
+	// Check that session cookie is cleared
+	cookies := w.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "bloud_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	require.NotNil(t, sessionCookie, "session cookie should be set")
+	assert.Equal(t, "", sessionCookie.Value, "session cookie value should be empty")
+	assert.True(t, sessionCookie.MaxAge < 0, "session cookie should have negative MaxAge to delete it")
+}
+
+// Test getUserFromContext
+func TestGetUserFromContext(t *testing.T) {
+	t.Run("no user in context", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test", nil)
+		user := getUserFromContext(req.Context())
+		assert.Nil(t, user)
+	})
+
+	t.Run("user in context", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test", nil)
+		expectedUser := &store.User{
+			ID:       "550e8400-e29b-41d4-a716-446655440000",
+			Username: "testuser",
+		}
+		ctx := req.Context()
+		ctx = context.WithValue(ctx, userContextKey, expectedUser)
+		req = req.WithContext(ctx)
+
+		user := getUserFromContext(req.Context())
+		require.NotNil(t, user)
+		assert.Equal(t, "550e8400-e29b-41d4-a716-446655440000", user.ID)
+		assert.Equal(t, "testuser", user.Username)
+	})
+}
+
+// Test generateState
+func TestGenerateState(t *testing.T) {
+	state1, err := generateState()
+	require.NoError(t, err)
+	assert.Len(t, state1, 32) // 16 bytes = 32 hex chars
+
+	state2, err := generateState()
+	require.NoError(t, err)
+	assert.Len(t, state2, 32)
+
+	// Should be unique
+	assert.NotEqual(t, state1, state2)
 }

@@ -19,6 +19,7 @@ type Config struct {
 	FlakeTarget  string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
 	NixosPath    string // Path to nixos/ modules directory
 	DatabaseURL  string // PostgreSQL connection string
+	RedisAddr    string // Redis address for session storage
 	// SSO configuration
 	SSOHostSecret    string // Master secret for deriving client secrets
 	SSOBaseURL       string // Base URL for callbacks (e.g., "http://localhost:8080")
@@ -65,9 +66,13 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	// Priority: env var > generated secret > static fallback
 	postgresPassword := getEnvOrSecret("BLOUD_POSTGRES_PASSWORD", secretsMgr.GetPostgresPassword(), "testpass123")
 	ssoHostSecret := getEnvOrSecret("BLOUD_SSO_HOST_SECRET", secretsMgr.GetSSOHostSecret(), "dev-secret-change-in-production")
-	authentikToken := getEnvOrSecret("BLOUD_AUTHENTIK_TOKEN", secretsMgr.GetAuthentikBootstrapToken(), "test-bootstrap-token-change-in-production")
 	authentikAdminPassword := getEnvOrSecret("BLOUD_AUTHENTIK_ADMIN_PASSWORD", secretsMgr.GetAuthentikBootstrapPassword(), "password")
 	ldapBindPassword := getEnvOrSecret("BLOUD_LDAP_BIND_PASSWORD", secretsMgr.GetLDAPBindPassword(), "ldap-bind-password-change-in-production")
+
+	// Authentik token priority: env var > api-token file (created by configurator) > secrets.json > fallback
+	// The api-token file is created by the Authentik configurator via Django shell and is always valid,
+	// whereas the bootstrap token in secrets.json only works on first Authentik boot.
+	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
 
 	// Build database URL using postgres password
 	defaultDatabaseURL := "postgres://apps:" + postgresPassword + "@localhost:5432/bloud?sslmode=disable"
@@ -81,6 +86,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		FlakeTarget:            getEnv("BLOUD_FLAKE_TARGET", "vm-dev"),
 		NixosPath:              getEnv("BLOUD_NIXOS_PATH", defaultNixosPath),
 		DatabaseURL:            getEnv("DATABASE_URL", defaultDatabaseURL),
+		RedisAddr:              getEnv("BLOUD_REDIS_ADDR", "localhost:6379"),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
@@ -136,4 +142,37 @@ func getEnvAsInt(key string, defaultValue int) int {
 	}
 
 	return value
+}
+
+// getAuthentikToken returns the Authentik API token with the following priority:
+// 1. BLOUD_AUTHENTIK_TOKEN env var
+// 2. api-token file created by Authentik configurator (always valid)
+// 3. Bootstrap token from secrets.json (only works on first Authentik boot)
+// 4. Static fallback for development
+func getAuthentikToken(dataDir string, secretsMgr *secrets.Manager, logger *slog.Logger) string {
+	// Check env var first
+	if value := os.Getenv("BLOUD_AUTHENTIK_TOKEN"); value != "" {
+		return value
+	}
+
+	// Check api-token file created by Authentik configurator
+	// This token is created via Django shell and is always valid
+	tokenPath := filepath.Join(dataDir, "authentik", "api-token")
+	if data, err := os.ReadFile(tokenPath); err == nil {
+		token := string(data)
+		if token != "" {
+			logger.Info("using Authentik API token from configurator", "path", tokenPath)
+			return token
+		}
+	}
+
+	// Fall back to bootstrap token from secrets.json
+	// Note: This only works if Authentik was bootstrapped with this token
+	if token := secretsMgr.GetAuthentikBootstrapToken(); token != "" {
+		logger.Info("using Authentik bootstrap token from secrets.json")
+		return token
+	}
+
+	// Static fallback for development
+	return "test-bootstrap-token-change-in-production"
 }

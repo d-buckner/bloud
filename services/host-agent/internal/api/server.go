@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -28,10 +29,12 @@ type Server struct {
 	graph           catalog.AppGraphInterface
 	appStore        store.AppStoreInterface
 	userStore       *store.UserStore
+	sessionStore    *store.SessionStore
 	appHub          *AppEventHub
 	orchestrator    orchestrator.AppOrchestrator
 	reconciler      *orchestrator.Reconciler
 	authentikClient *authentik.Client
+	authConfig      *AuthConfig
 	appsDir         string
 	nixConfigDir    string
 	dataDir         string
@@ -43,6 +46,7 @@ type Server struct {
 	ssoBaseURL      string
 	ssoAuthentikURL string
 	authentikToken  string
+	redisAddr       string
 	registry        configurator.RegistryInterface
 	logger          *slog.Logger
 	secrets         *secrets.Manager
@@ -62,6 +66,8 @@ type ServerConfig struct {
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
 	SSOAuthentikURL string // Authentik URL for discovery (e.g., "http://localhost:8080")
 	AuthentikToken  string // Authentik API token for SSO cleanup
+	// Redis for session storage
+	RedisAddr string // Redis address (e.g., "localhost:6379")
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
 }
@@ -88,12 +94,24 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		authentikClient = authentik.NewClient(cfg.SSOAuthentikURL, cfg.AuthentikToken)
 	}
 
+	// Initialize session store if Redis is configured
+	var sessionStore *store.SessionStore
+	if cfg.RedisAddr != "" {
+		var err error
+		sessionStore, err = store.NewSessionStore(cfg.RedisAddr)
+		if err != nil {
+			logger.Warn("failed to connect to Redis for sessions", "error", err)
+			// Continue without session store - auth will be disabled
+		}
+	}
+
 	s := &Server{
 		router:          chi.NewRouter(),
 		db:              db,
 		catalog:         catalog.NewCache(db),
 		appStore:        appStore,
 		userStore:       userStore,
+		sessionStore:    sessionStore,
 		appHub:          appHub,
 		authentikClient: authentikClient,
 		appsDir:         cfg.AppsDir,
@@ -107,6 +125,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		ssoBaseURL:      cfg.SSOBaseURL,
 		ssoAuthentikURL: cfg.SSOAuthentikURL,
 		authentikToken:  cfg.AuthentikToken,
+		redisAddr:       cfg.RedisAddr,
 		registry:        cfg.Registry,
 		logger:          logger,
 		secrets:         secretsMgr,
@@ -136,6 +155,9 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 			logger.Warn("failed to regenerate Traefik routes on startup", "error", err)
 		}
 	}
+
+	// Initialize authentication (OAuth2 app in Authentik)
+	s.initAuth()
 
 	s.setupMiddleware()
 	s.setupRoutes()
@@ -360,4 +382,94 @@ func (s *Server) triggerReconcile() {
 			s.logger.Warn("background reconciliation failed", "error", err)
 		}
 	}()
+}
+
+// tryInitAuth attempts to initialize authentication, refreshing the token if needed.
+// This is called lazily on first auth request to handle the case where the Authentik
+// configurator runs after server start and creates the api-token file.
+func (s *Server) tryInitAuth() {
+	// Already initialized
+	if s.authConfig != nil {
+		return
+	}
+
+	// Try to read fresh token from api-token file (created by Authentik configurator)
+	tokenPath := filepath.Join(s.dataDir, "authentik", "api-token")
+	if data, err := os.ReadFile(tokenPath); err == nil {
+		token := string(data)
+		if token != "" && token != s.authentikToken {
+			s.logger.Info("found new Authentik API token from configurator", "path", tokenPath)
+			s.authentikToken = token
+			// Create new client with fresh token
+			if s.ssoAuthentikURL != "" {
+				s.authentikClient = authentik.NewClient(s.ssoAuthentikURL, token)
+			}
+		}
+	}
+
+	// Now try to initialize
+	s.initAuth()
+}
+
+// initAuth initializes authentication by ensuring the Bloud OAuth2 app exists in Authentik
+func (s *Server) initAuth() {
+	// Skip if required components aren't available
+	if s.authentikClient == nil || s.sessionStore == nil || s.ssoBaseURL == "" {
+		s.logger.Info("authentication disabled (missing Authentik client, Redis, or base URL)")
+		return
+	}
+
+	// Check if Authentik is available
+	if !s.authentikClient.IsAvailable() {
+		s.logger.Warn("Authentik not available, auth will be initialized on first request")
+		return
+	}
+
+	// Generate a client secret from the host secret
+	clientSecret := s.deriveClientSecret("bloud-oauth")
+
+	// Ensure the Bloud OAuth2 app exists
+	oidcConfig, err := s.authentikClient.EnsureBloudOAuthApp(s.ssoBaseURL, clientSecret)
+	if err != nil {
+		s.logger.Error("failed to ensure Bloud OAuth app", "error", err)
+		return
+	}
+
+	s.authConfig = &AuthConfig{
+		OIDCConfig:  oidcConfig,
+		BaseURL:     s.ssoBaseURL,
+		RedirectURI: s.ssoBaseURL + "/auth/callback",
+	}
+
+	s.logger.Info("authentication initialized", "clientID", oidcConfig.ClientID)
+}
+
+// deriveClientSecret generates a deterministic client secret from the host secret
+func (s *Server) deriveClientSecret(appName string) string {
+	// Use the secrets manager if available
+	if s.secrets != nil {
+		// Check if we already have a secret stored
+		secret := s.secrets.GetAppSecret(appName, "oauthClientSecret")
+		if secret != "" {
+			return secret
+		}
+
+		// Generate a new secret based on the host secret
+		if s.ssoHostSecret != "" {
+			// Use HMAC-like derivation: hostSecret + appName
+			// In production, consider using proper HKDF
+			secret = s.ssoHostSecret[:32] + "-" + appName
+			if err := s.secrets.SetAppSecret(appName, "oauthClientSecret", secret); err != nil {
+				s.logger.Warn("failed to save client secret", "error", err)
+			}
+			return secret
+		}
+	}
+
+	// Fallback: derive from host secret using simple concatenation
+	if s.ssoHostSecret != "" {
+		return s.ssoHostSecret[:32] + "-" + appName
+	}
+
+	return ""
 }
