@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	testVMName      = "bloud-test"
-	testTmuxSession = "bloud-test"
+	testVMName       = "bloud-test"
+	testTmuxSession  = "bloud-test"
+	testSnapshotName = "ready" // Snapshot taken after NixOS is configured
 )
 
 var testPorts = []vm.PortForward{
@@ -102,20 +103,31 @@ func testStart() int {
 		return 1
 	}
 
+	// Create temp directory for test VM
+	if err := os.MkdirAll("/tmp/lima-test", 0755); err != nil {
+		warn(fmt.Sprintf("Could not create temp dir: %v", err))
+	}
+
+	// Check if we can do a warm start (VM exists with snapshot)
+	if vm.Exists(testVMName) && vm.SnapshotExists(testVMName, testSnapshotName) {
+		return testWarmStart(ctx, projectRoot)
+	}
+
+	// Cold start: create VM from scratch and create snapshot
+	return testColdStart(ctx, projectRoot)
+}
+
+// testColdStart creates a fresh VM, configures it, and creates a snapshot for future warm starts
+func testColdStart(ctx context.Context, projectRoot string) int {
 	configPath, err := getTestConfigPath()
 	if err != nil {
 		errorf("Could not generate config: %v", err)
 		return 1
 	}
 
-	// Create temp directory for test VM
-	if err := os.MkdirAll("/tmp/lima-test", 0755); err != nil {
-		warn(fmt.Sprintf("Could not create temp dir: %v", err))
-	}
-
-	// Delete existing VM if it exists (ephemeral)
+	// Delete existing VM if it exists (starting fresh)
 	if vm.Exists(testVMName) {
-		log("Removing existing test VM...")
+		log("Removing existing test VM (no snapshot found)...")
 		if err := vm.Delete(testVMName); err != nil {
 			errorf("Failed to delete existing VM: %v", err)
 			return 1
@@ -123,7 +135,7 @@ func testStart() int {
 	}
 
 	// Create fresh VM
-	log(fmt.Sprintf("Creating fresh test VM '%s'...", testVMName))
+	log(fmt.Sprintf("Creating fresh test VM '%s' (cold start)...", testVMName))
 	if err := vm.Create(testVMName, configPath); err != nil {
 		errorf("Failed to create VM: %v", err)
 		return 1
@@ -166,10 +178,6 @@ func testStart() int {
 	_, _ = vm.Exec(testVMName, fmt.Sprintf("sudo git config --system --add safe.directory '%s'", mainRepo))
 
 	// Build host-agent binary BEFORE nixos-rebuild so prestart/poststart hooks work
-	// NOTE: In production, this should be a systemd service dependency (bloud-host-agent.service)
-	// that ensures the binary exists before app services start. For dev, we build it here.
-	// We use nix-shell to get Go because the base NixOS image doesn't have Go installed yet
-	// (it's only added after nixos-rebuild switch applies our configuration).
 	log("Building host-agent binary (required for service hooks)...")
 	buildScript := fmt.Sprintf(`
 		set -e
@@ -208,6 +216,32 @@ func testStart() int {
 	// Fix home directory ownership
 	_, _ = vm.Exec(testVMName, "sudo chown -R bloud:users /home/bloud/.local")
 
+	// Create snapshot for future warm starts
+	log("Creating snapshot for future warm starts...")
+	if err := vm.Stop(testVMName); err != nil {
+		warn(fmt.Sprintf("Could not stop VM for snapshot: %v", err))
+	} else {
+		if err := vm.SnapshotCreate(testVMName, testSnapshotName); err != nil {
+			warn(fmt.Sprintf("Could not create snapshot: %v", err))
+		} else {
+			log("Snapshot created successfully!")
+		}
+		// Start VM again
+		if err := vm.Start(testVMName); err != nil {
+			errorf("Failed to start VM after snapshot: %v", err)
+			return 1
+		}
+		time.Sleep(3 * time.Second)
+		if err := vm.WaitForSSH(ctx, testVMName, 2*time.Minute); err != nil {
+			errorf("Failed to wait for SSH after snapshot: %v", err)
+			return 1
+		}
+		// Re-mount filesystems after restart
+		if err := vm.MountFilesystems(testVMName, mounts); err != nil {
+			warn(fmt.Sprintf("Mount warning after restart: %v", err))
+		}
+	}
+
 	// Start port forwarding
 	log("Starting port forwarding (test ports)...")
 	if _, err := vm.StartPortForwarding(testVMName, testPorts); err != nil {
@@ -224,6 +258,86 @@ func testStart() int {
 		}
 	}
 
+	printTestReady()
+	return 0
+}
+
+// testWarmStart restores from snapshot for fast startup
+func testWarmStart(ctx context.Context, projectRoot string) int {
+	log("Warm start: restoring from snapshot...")
+
+	// Stop VM if running (required for snapshot apply)
+	if vm.IsRunning(testVMName) {
+		log("Stopping VM to apply snapshot...")
+		_ = vm.KillPortForwarding(testVMName, testPorts[0].LocalPort)
+		if err := vm.Stop(testVMName); err != nil {
+			errorf("Failed to stop VM: %v", err)
+			return 1
+		}
+	}
+
+	// Apply snapshot
+	log("Applying snapshot...")
+	if err := vm.SnapshotApply(testVMName, testSnapshotName); err != nil {
+		errorf("Failed to apply snapshot: %v", err)
+		return 1
+	}
+
+	// Start VM
+	log("Starting VM from snapshot...")
+	if err := vm.Start(testVMName); err != nil {
+		errorf("Failed to start VM: %v", err)
+		return 1
+	}
+
+	// Wait for SSH (should be fast since VM is already configured)
+	time.Sleep(3 * time.Second)
+	if err := vm.WaitForSSH(ctx, testVMName, 2*time.Minute); err != nil {
+		errorf("Failed to wait for SSH: %v", err)
+		return 1
+	}
+
+	// Get main repo path for mounts
+	mainRepo := os.Getenv("BLOUD_MAIN_REPO")
+	if mainRepo == "" {
+		home, _ := os.UserHomeDir()
+		mainRepo = filepath.Join(home, "Projects", "bloud")
+	}
+
+	// Re-mount filesystems (9p mounts don't persist across reboot)
+	log("Mounting shared directories...")
+	_, _ = vm.Exec(testVMName, fmt.Sprintf("sudo mkdir -p %s %s/.git /tmp/lima", projectRoot, mainRepo))
+
+	mounts := []vm.Mount{
+		{Tag: "mount0", MountPath: projectRoot},
+		{Tag: "mount1", MountPath: mainRepo + "/.git", ReadOnly: true},
+		{Tag: "mount2", MountPath: "/tmp/lima"},
+	}
+	if err := vm.MountFilesystems(testVMName, mounts); err != nil {
+		warn(fmt.Sprintf("Mount warning: %v", err))
+	}
+
+	// Start port forwarding
+	log("Starting port forwarding (test ports)...")
+	if _, err := vm.StartPortForwarding(testVMName, testPorts); err != nil {
+		warn(fmt.Sprintf("Port forwarding warning: %v", err))
+	}
+	time.Sleep(1 * time.Second)
+
+	// Start test services
+	log("Starting test services...")
+	if _, err := vm.Exec(testVMName, fmt.Sprintf("bash %s/lima/start-test.sh '%s'", projectRoot, projectRoot)); err != nil {
+		if !strings.Contains(err.Error(), "already running") {
+			errorf("Failed to start test services: %v", err)
+			return 1
+		}
+	}
+
+	printTestReady()
+	return 0
+}
+
+func printTestReady() {
 	fmt.Println()
 	fmt.Println("Test VM is ready!")
 	fmt.Println()
@@ -234,9 +348,8 @@ func testStart() int {
 	fmt.Println("Commands:")
 	fmt.Println("  ./bloud test logs     View server output")
 	fmt.Println("  ./bloud test attach   Attach to tmux session")
-	fmt.Println("  ./bloud test stop     Stop and destroy test VM")
-
-	return 0
+	fmt.Println("  ./bloud test reset    Reset to clean state (fast)")
+	fmt.Println("  ./bloud test stop     Stop test VM (preserves snapshot)")
 }
 
 func testStop() int {
@@ -250,14 +363,145 @@ func testStop() int {
 	// Kill port forwarding first
 	_ = vm.KillPortForwarding(testVMName, testPorts[0].LocalPort)
 
+	// If VM is running, kill tmux session and stop VM
+	if vm.IsRunning(testVMName) {
+		_, _ = vm.Exec(testVMName, fmt.Sprintf("tmux kill-session -t %s 2>/dev/null || true", testTmuxSession))
+		_, _ = vm.Exec(testVMName, `pkill -f "air" 2>/dev/null || true; pkill -f "vite" 2>/dev/null || true`)
+
+		log("Stopping test VM (preserving snapshot for fast restart)...")
+		if err := vm.Stop(testVMName); err != nil {
+			errorf("Failed to stop VM: %v", err)
+			return 1
+		}
+	}
+
+	hasSnapshot := vm.SnapshotExists(testVMName, testSnapshotName)
+	if hasSnapshot {
+		log("Test VM stopped. Snapshot preserved for fast restart.")
+		fmt.Println()
+		fmt.Println("Next './bloud test start' will be fast (warm start from snapshot)")
+		fmt.Println("To fully destroy: './bloud test destroy'")
+	} else {
+		log("Test VM stopped (no snapshot)")
+	}
+
+	return 0
+}
+
+// testReset resets the test environment to clean state (from snapshot)
+func testReset() int {
+	if !vm.Exists(testVMName) {
+		errorf("Test VM does not exist. Run './bloud test start' first.")
+		return 1
+	}
+
+	if !vm.SnapshotExists(testVMName, testSnapshotName) {
+		errorf("No snapshot found. Run './bloud test start' to create one.")
+		return 1
+	}
+
+	ctx := context.Background()
+
+	projectRoot, err := getProjectRoot()
+	if err != nil {
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	log("Resetting test environment to clean state...")
+
+	// Kill port forwarding
+	_ = vm.KillPortForwarding(testVMName, testPorts[0].LocalPort)
+
+	// Stop VM if running
+	if vm.IsRunning(testVMName) {
+		_, _ = vm.Exec(testVMName, fmt.Sprintf("tmux kill-session -t %s 2>/dev/null || true", testTmuxSession))
+		if err := vm.Stop(testVMName); err != nil {
+			errorf("Failed to stop VM: %v", err)
+			return 1
+		}
+	}
+
+	// Apply snapshot
+	log("Restoring from snapshot...")
+	if err := vm.SnapshotApply(testVMName, testSnapshotName); err != nil {
+		errorf("Failed to apply snapshot: %v", err)
+		return 1
+	}
+
+	// Start VM
+	log("Starting VM...")
+	if err := vm.Start(testVMName); err != nil {
+		errorf("Failed to start VM: %v", err)
+		return 1
+	}
+
+	time.Sleep(3 * time.Second)
+	if err := vm.WaitForSSH(ctx, testVMName, 2*time.Minute); err != nil {
+		errorf("Failed to wait for SSH: %v", err)
+		return 1
+	}
+
+	// Get main repo path for mounts
+	mainRepo := os.Getenv("BLOUD_MAIN_REPO")
+	if mainRepo == "" {
+		home, _ := os.UserHomeDir()
+		mainRepo = filepath.Join(home, "Projects", "bloud")
+	}
+
+	// Re-mount filesystems
+	log("Mounting shared directories...")
+	_, _ = vm.Exec(testVMName, fmt.Sprintf("sudo mkdir -p %s %s/.git /tmp/lima", projectRoot, mainRepo))
+
+	mounts := []vm.Mount{
+		{Tag: "mount0", MountPath: projectRoot},
+		{Tag: "mount1", MountPath: mainRepo + "/.git", ReadOnly: true},
+		{Tag: "mount2", MountPath: "/tmp/lima"},
+	}
+	if err := vm.MountFilesystems(testVMName, mounts); err != nil {
+		warn(fmt.Sprintf("Mount warning: %v", err))
+	}
+
+	// Start port forwarding
+	log("Starting port forwarding...")
+	if _, err := vm.StartPortForwarding(testVMName, testPorts); err != nil {
+		warn(fmt.Sprintf("Port forwarding warning: %v", err))
+	}
+	time.Sleep(1 * time.Second)
+
+	// Start test services
+	log("Starting test services...")
+	if _, err := vm.Exec(testVMName, fmt.Sprintf("bash %s/lima/start-test.sh '%s'", projectRoot, projectRoot)); err != nil {
+		if !strings.Contains(err.Error(), "already running") {
+			errorf("Failed to start test services: %v", err)
+			return 1
+		}
+	}
+
+	fmt.Println()
+	log("Test environment reset to clean state!")
+	return 0
+}
+
+// testDestroy completely removes the test VM and snapshot
+func testDestroy() int {
+	if !vm.Exists(testVMName) {
+		log("Test VM does not exist")
+		return 0
+	}
+
+	log("Destroying test VM completely...")
+
+	// Kill port forwarding first
+	_ = vm.KillPortForwarding(testVMName, testPorts[0].LocalPort)
+
 	// If VM is running, kill tmux session
 	if vm.IsRunning(testVMName) {
 		_, _ = vm.Exec(testVMName, fmt.Sprintf("tmux kill-session -t %s 2>/dev/null || true", testTmuxSession))
 		_, _ = vm.Exec(testVMName, `pkill -f "air" 2>/dev/null || true; pkill -f "vite" 2>/dev/null || true`)
 	}
 
-	// Delete VM (ephemeral)
-	log("Destroying test VM...")
+	// Delete VM (this also removes snapshots)
 	if err := vm.Delete(testVMName); err != nil {
 		errorf("Failed to delete VM: %v", err)
 		return 1
@@ -268,7 +512,7 @@ func testStop() int {
 		warn(fmt.Sprintf("Could not clean up temp dir: %v", err))
 	}
 
-	log("Test VM destroyed")
+	log("Test VM destroyed completely")
 	return 0
 }
 
@@ -280,16 +524,29 @@ func testStatus() int {
 	// Check if VM exists
 	if !vm.Exists(testVMName) {
 		fmt.Printf("  VM:           %sNot created%s\n", colorRed, colorReset)
+		fmt.Printf("  Snapshot:     %sNone%s\n", colorRed, colorReset)
 		fmt.Println()
-		fmt.Println("  Run './bloud test start' to create the test VM")
+		fmt.Println("  Run './bloud test start' to create the test VM (cold start)")
 		return 0
+	}
+
+	// Check snapshot status
+	hasSnapshot := vm.SnapshotExists(testVMName, testSnapshotName)
+	if hasSnapshot {
+		fmt.Printf("  Snapshot:     %sAvailable%s (fast restart enabled)\n", colorGreen, colorReset)
+	} else {
+		fmt.Printf("  Snapshot:     %sNone%s\n", colorYellow, colorReset)
 	}
 
 	// Check if VM is running
 	if !vm.IsRunning(testVMName) {
 		fmt.Printf("  VM:           %sStopped%s\n", colorYellow, colorReset)
 		fmt.Println()
-		fmt.Println("  Run './bloud test start' to create a fresh test VM")
+		if hasSnapshot {
+			fmt.Println("  Run './bloud test start' for warm start from snapshot")
+		} else {
+			fmt.Println("  Run './bloud test start' for cold start")
+		}
 		return 0
 	}
 
