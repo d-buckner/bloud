@@ -230,7 +230,7 @@
 		line-height: 1.4;
 	}
 
-	.popover-suggestion svg {
+	.popover-suggestion :global(svg) {
 		flex-shrink: 0;
 		margin-top: 1px;
 		color: var(--color-text-muted);

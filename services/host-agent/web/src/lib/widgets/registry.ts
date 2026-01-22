@@ -1,15 +1,15 @@
 import type { Component } from 'svelte';
-import ServiceHealth from './ServiceHealth.svelte';
+import SystemStats from './SystemStats.svelte';
 import Storage from './Storage.svelte';
-import Weather from './Weather.svelte';
+import QuickNotes from './QuickNotes.svelte';
 
 /**
  * Widget size in grid units
- * Grid is 2 columns, rows are fixed height
+ * Grid is 6 columns, rows are fixed height
  */
 export interface WidgetSize {
-	/** Width in columns (1 = half, 2 = full) */
-	cols: 1 | 2;
+	/** Width in columns (1-3 in a 6-col grid) */
+	cols: 1 | 2 | 3;
 	/** Height in rows */
 	rows: 1 | 2 | 3;
 }
@@ -49,35 +49,31 @@ export interface WidgetDefinition {
  */
 export const widgetRegistry: WidgetDefinition[] = [
 	{
-		id: 'service-health',
-		name: 'Service Health',
-		description: 'Shows the status of your installed apps',
-		component: ServiceHealth,
+		id: 'system-stats',
+		name: 'System',
+		description: 'CPU, memory, and disk usage',
+		component: SystemStats,
 		defaultConfig: {},
-		size: { cols: 2, rows: 1 },
+		size: { cols: 2, rows: 3 },
 		configurable: false,
 	},
 	{
 		id: 'storage',
 		name: 'Storage',
-		description: 'Shows disk usage and available space',
+		description: 'Disk space breakdown',
 		component: Storage,
 		defaultConfig: {},
-		size: { cols: 1, rows: 1 },
+		size: { cols: 2, rows: 2 },
 		configurable: false,
 	},
 	{
-		id: 'weather',
-		name: 'Weather',
-		description: 'Current weather and forecast for your location',
-		component: Weather,
-		defaultConfig: {
-			latitude: 40.7128,
-			longitude: -74.006,
-			locationName: 'New York, NY',
-		},
-		size: { cols: 1, rows: 1 },
-		configurable: true,
+		id: 'quick-notes',
+		name: 'Notes',
+		description: 'Quick notes and reminders',
+		component: QuickNotes,
+		defaultConfig: {},
+		size: { cols: 2, rows: 2 },
+		configurable: false,
 	},
 ];
 
