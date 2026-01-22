@@ -2,7 +2,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { widgetRegistry } from './registry';
-	import { widgetPrefs } from '$lib/stores/widgetPrefs';
+	import { layout, enabledWidgetIds } from '$lib/stores/layout';
 
 	interface Props {
 		open: boolean;
@@ -12,11 +12,11 @@
 	let { open, onclose }: Props = $props();
 
 	function isEnabled(widgetId: string): boolean {
-		return $widgetPrefs.enabled.includes(widgetId);
+		return $enabledWidgetIds.includes(widgetId);
 	}
 
 	function handleToggle(widgetId: string): void {
-		widgetPrefs.toggleWidget(widgetId);
+		layout.toggleWidget(widgetId);
 	}
 </script>
 

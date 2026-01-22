@@ -10,7 +10,7 @@
 	}
 
 	let { appName, currentDisplayName, onclose, onrename }: Props = $props();
-	let newName = $state(currentDisplayName);
+	let newName = $state('');
 	let inputEl: HTMLInputElement | undefined = $state();
 
 	$effect(() => {

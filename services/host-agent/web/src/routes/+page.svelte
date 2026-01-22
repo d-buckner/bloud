@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
-	import AppIcon from '$lib/components/AppIcon.svelte';
+	import UnifiedGrid from '$lib/components/UnifiedGrid.svelte';
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
 	import LogsModal from '$lib/components/LogsModal.svelte';
 	import RenameModal from '$lib/components/RenameModal.svelte';
+	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { AppStatus, type App } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
 	import { uninstallApp as doUninstallApp } from '$lib/services/appLifecycle';
 	import { openApp } from '$lib/services/navigation';
-	import WidgetContainer from '$lib/widgets/WidgetContainer.svelte';
-
+	import { layout } from '$lib/stores/layout';
 
 	let uninstallAppName = $state<string | null>(null);
 	let logsAppName = $state<string | null>(null);
@@ -21,6 +21,7 @@
 	let contextMenuApp = $state<App | null>(null);
 	let contextMenuPos = $state({ x: 0, y: 0 });
 	let mounted = $state(false);
+	let showWidgetPicker = $state(false);
 
 	onMount(() => {
 		mounted = true;
@@ -113,6 +114,7 @@
 			console.error('Rename failed:', err);
 		}
 	}
+
 </script>
 
 <svelte:head>
@@ -120,72 +122,46 @@
 </svelte:head>
 
 <div class="launcher">
-	<div class="launcher-content">
-		{#if !mounted || $loading}
-			<div class="app-grid">
-				{#each Array(8) as _}
-					<div class="app-slot skeleton">
-						<div class="skeleton-icon"></div>
-						<div class="skeleton-label"></div>
-					</div>
-				{/each}
-			</div>
-		{:else if $error}
-			<div class="error-state">
-				<p>{$error}</p>
-			</div>
-		{:else if $apps.length === 0}
-			<div class="empty-state">
-				<div class="empty-icon">
-					<Icon name="grid" size={64} />
+	{#if !mounted || $loading}
+		<div class="loading-grid">
+			{#each Array(8) as _}
+				<div class="skeleton-item">
+					<div class="skeleton-icon"></div>
+					<div class="skeleton-label"></div>
 				</div>
-				<h2>No apps yet</h2>
-				<p>Browse the App Store to get started</p>
-				<a href="/catalog" class="get-apps-btn">Get Apps</a>
+			{/each}
+		</div>
+	{:else if $error}
+		<div class="error-state">
+			<p>{$error}</p>
+		</div>
+	{:else if $apps.length === 0 && $layout.items.filter(i => i.type === 'widget').length === 0}
+		<div class="empty-state">
+			<div class="empty-icon">
+				<Icon name="grid" size={64} />
 			</div>
-		{:else}
-			<div class="app-grid">
-				{#each $apps as app}
-					{@const isInstalling = app.status === AppStatus.Installing || app.status === AppStatus.Starting}
-					{@const isUninstalling = app.status === AppStatus.Uninstalling}
-					{@const isBusy = isInstalling || isUninstalling}
-					{@const hasError = app.status === AppStatus.Error}
-					<button
-						class="app-slot"
-						class:installing={isBusy}
-						class:error={hasError}
-						onclick={() => handleAppClick(app)}
-						oncontextmenu={(e) => handleContextMenu(e, app)}
-					>
-						<div class="app-icon-container">
-							{#if isBusy}
-								<div class="install-progress"></div>
-							{/if}
-							<AppIcon appName={app.name} displayName={app.display_name} size="lg" transparent={isBusy} />
-							{#if hasError}
-								<div class="error-badge">!</div>
-							{/if}
-						</div>
-						<span class="app-label">{app.display_name}</span>
-					</button>
-				{/each}
-			</div>
-		{/if}
-	</div>
-
-	<!-- Widgets Section -->
-	<section class="widgets">
-		<WidgetContainer />
-	</section>
+			<h2>No apps yet</h2>
+			<p>Browse the App Store to get started</p>
+			<a href="/catalog" class="get-apps-btn">Get Apps</a>
+		</div>
+	{:else}
+		<UnifiedGrid
+			onAppClick={handleAppClick}
+			onAppContextMenu={handleContextMenu}
+			onAddWidget={() => showWidgetPicker = true}
+		/>
+	{/if}
 </div>
 
 <!-- Context Menu -->
 {#if contextMenuApp}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		class="context-menu"
 		style="left: {contextMenuPos.x}px; top: {contextMenuPos.y}px;"
 		onclick={(e) => e.stopPropagation()}
+		role="menu"
+		tabindex="-1"
 	>
 		<button class="context-item" onclick={handleOpenInNewTab}>
 			<Icon name="external-link" size={16} />
@@ -226,6 +202,11 @@
 	onrename={doRename}
 />
 
+<WidgetPicker
+	open={showWidgetPicker}
+	onclose={() => showWidgetPicker = false}
+/>
+
 <style>
 	.launcher {
 		display: flex;
@@ -234,111 +215,22 @@
 		padding: var(--space-2xl);
 	}
 
-	.launcher-content {
-		display: flex;
-		justify-content: center;
-		padding-top: var(--space-3xl);
-	}
-
-	.app-grid {
+	/* Loading skeleton */
+	.loading-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(88px, 88px));
-		gap: var(--space-xl) var(--space-lg);
-		justify-content: center;
-		max-width: 600px;
+		grid-template-columns: repeat(6, 1fr);
+		gap: var(--space-lg);
+		max-width: 1200px;
+		margin: 0 auto;
+		width: 100%;
 	}
 
-	.app-slot {
+	.skeleton-item {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: var(--space-sm);
-		padding: var(--space-sm);
-		background: transparent;
-		border: none;
-		cursor: pointer;
-		transition: transform 0.1s ease;
-	}
-
-	.app-slot:hover {
-		transform: scale(1.05);
-	}
-
-	.app-slot:active {
-		transform: scale(0.95);
-	}
-
-	.app-slot.installing {
-		pointer-events: none;
-	}
-
-	.app-slot.error {
-		cursor: default;
-	}
-
-	.app-icon-container {
-		position: relative;
-		width: 60px;
-		height: 60px;
-	}
-
-	.app-icon-container :global(.app-icon) {
-		box-shadow: none;
-	}
-
-	.install-progress {
-		position: absolute;
-		inset: -3px;
-		border: 2.5px solid var(--color-border);
-		border-top-color: var(--color-accent);
-		border-radius: 50%;
-		animation: spin 1s linear infinite;
-	}
-
-
-	.error-badge {
-		position: absolute;
-		top: -4px;
-		right: -4px;
-		width: 18px;
-		height: 18px;
-		background: var(--color-error);
-		color: white;
-		font-size: 12px;
-		font-weight: 600;
-		border-radius: 50%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
-	}
-
-	.app-label {
-		font-family: var(--font-sans);
-		font-size: 12px;
-		font-weight: 500;
-		line-height: 1.3;
-		color: var(--color-text);
-		text-align: center;
-		max-width: 76px;
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-
-	.app-slot.installing .app-label,
-	.app-slot.error .app-label {
-		color: var(--color-text-muted);
-	}
-
-	/* Skeleton */
-	.app-slot.skeleton {
-		pointer-events: none;
+		padding: var(--space-md);
 	}
 
 	.skeleton-icon {
@@ -370,8 +262,10 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
 		text-align: center;
 		gap: var(--space-md);
+		padding-top: var(--space-3xl);
 	}
 
 	.empty-icon {
@@ -472,30 +366,19 @@
 		background: var(--color-border);
 	}
 
-	/* Widgets Section */
-	.widgets {
-		margin-top: auto;
-		padding-top: var(--space-3xl);
-		width: 100%;
-		display: flex;
-		justify-content: center;
-	}
-
 	@media (max-width: 768px) {
 		.launcher {
 			padding: var(--space-xl);
 		}
 
-		.launcher-content {
-			padding-top: var(--space-2xl);
+		.loading-grid {
+			grid-template-columns: repeat(3, 1fr);
 		}
+	}
 
-		.app-grid {
-			gap: var(--space-lg) var(--space-md);
-		}
-
-		.widgets {
-			padding-top: var(--space-2xl);
+	@media (max-width: 400px) {
+		.loading-grid {
+			grid-template-columns: repeat(2, 1fr);
 		}
 	}
 </style>

@@ -8,28 +8,25 @@ import {
 
 describe('widget registry', () => {
 	describe('widgetRegistry', () => {
-		it('contains service-health widget', () => {
-			const widget = widgetRegistry.find((w) => w.id === 'service-health');
+		it('contains system-stats widget', () => {
+			const widget = widgetRegistry.find((w) => w.id === 'system-stats');
 			expect(widget).toBeDefined();
-			expect(widget?.name).toBe('Service Health');
+			expect(widget?.name).toBe('System');
+			expect(widget?.size).toEqual({ cols: 2, rows: 3 });
 		});
 
 		it('contains storage widget', () => {
 			const widget = widgetRegistry.find((w) => w.id === 'storage');
 			expect(widget).toBeDefined();
 			expect(widget?.name).toBe('Storage');
-			expect(widget?.size).toEqual({ cols: 1, rows: 1 });
+			expect(widget?.size).toEqual({ cols: 2, rows: 2 });
 		});
 
-		it('contains weather widget', () => {
-			const widget = widgetRegistry.find((w) => w.id === 'weather');
+		it('contains quick-notes widget', () => {
+			const widget = widgetRegistry.find((w) => w.id === 'quick-notes');
 			expect(widget).toBeDefined();
-			expect(widget?.name).toBe('Weather');
-			expect(widget?.size).toEqual({ cols: 1, rows: 1 });
-			expect(widget?.configurable).toBe(true);
-			expect(widget?.defaultConfig).toHaveProperty('latitude');
-			expect(widget?.defaultConfig).toHaveProperty('longitude');
-			expect(widget?.defaultConfig).toHaveProperty('locationName');
+			expect(widget?.name).toBe('Notes');
+			expect(widget?.size).toEqual({ cols: 2, rows: 2 });
 		});
 
 		it('all widgets have required properties', () => {
@@ -41,7 +38,7 @@ describe('widget registry', () => {
 				expect(widget.defaultConfig).toBeDefined();
 				expect(widget.size).toHaveProperty('cols');
 				expect(widget.size).toHaveProperty('rows');
-				expect([1, 2]).toContain(widget.size.cols);
+				expect([1, 2, 3]).toContain(widget.size.cols);
 				expect([1, 2, 3]).toContain(widget.size.rows);
 				expect(typeof widget.configurable).toBe('boolean');
 			}
@@ -56,9 +53,9 @@ describe('widget registry', () => {
 
 	describe('getWidgetById', () => {
 		it('returns widget definition for valid ID', () => {
-			const widget = getWidgetById('service-health');
+			const widget = getWidgetById('system-stats');
 			expect(widget).toBeDefined();
-			expect(widget?.id).toBe('service-health');
+			expect(widget?.id).toBe('system-stats');
 		});
 
 		it('returns undefined for invalid ID', () => {
@@ -79,9 +76,9 @@ describe('widget registry', () => {
 			expect(ids.length).toBeGreaterThan(0);
 		});
 
-		it('includes service-health', () => {
+		it('includes system-stats', () => {
 			const ids = getAllWidgetIds();
-			expect(ids).toContain('service-health');
+			expect(ids).toContain('system-stats');
 		});
 
 		it('includes storage', () => {
@@ -89,15 +86,15 @@ describe('widget registry', () => {
 			expect(ids).toContain('storage');
 		});
 
-		it('includes weather', () => {
+		it('includes quick-notes', () => {
 			const ids = getAllWidgetIds();
-			expect(ids).toContain('weather');
+			expect(ids).toContain('quick-notes');
 		});
 	});
 
 	describe('isValidWidgetId', () => {
 		it('returns true for valid widget ID', () => {
-			expect(isValidWidgetId('service-health')).toBe(true);
+			expect(isValidWidgetId('system-stats')).toBe(true);
 		});
 
 		it('returns false for invalid widget ID', () => {

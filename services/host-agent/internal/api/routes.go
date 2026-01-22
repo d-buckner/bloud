@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
 	"github.com/go-chi/chi/v5"
 )
@@ -74,6 +75,12 @@ func (s *Server) setupRoutes() {
 				r.Get("/storage", s.handleStorage)
 				r.Get("/versions", s.handleListGenerations)
 				r.Get("/rebuild/stream", s.handleRebuildStream)
+			})
+
+			// User preferences endpoints
+			r.Route("/user", func(r chi.Router) {
+				r.Get("/layout", s.handleGetLayout)
+				r.Put("/layout", s.handleSetLayout)
 			})
 		})
 	})
@@ -301,6 +308,14 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Add app to all users' layouts (non-system apps only)
+	catalogApp, _ := s.catalog.Get(name)
+	if catalogApp != nil && !catalogApp.IsSystem {
+		if err := s.userStore.AddAppToAllUsersLayouts(name); err != nil {
+			s.logger.Warn("failed to add app to users layouts", "app", name, "error", err)
+		}
+	}
+
 	// Trigger reconciliation to configure dependent apps
 	s.triggerReconcile()
 
@@ -342,6 +357,11 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	if !result.IsSuccess() {
 		respondJSON(w, http.StatusBadRequest, result)
 		return
+	}
+
+	// Remove app from all users' layouts
+	if err := s.userStore.RemoveAppFromAllUsersLayouts(name); err != nil {
+		s.logger.Warn("failed to remove app from users layouts", "app", name, "error", err)
 	}
 
 	// Trigger reconciliation to update dependent apps
@@ -532,5 +552,56 @@ func (s *Server) handleListGenerations(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"generations": generations,
+	})
+}
+
+// handleGetLayout returns the user's layout
+func (s *Server) handleGetLayout(w http.ResponseWriter, r *http.Request) {
+	user := getUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	layout, err := s.userStore.GetLayout(user.ID)
+	if err != nil {
+		s.logger.Error("failed to get layout", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to get layout")
+		return
+	}
+
+	if layout == nil {
+		// Return empty defaults
+		layout = &store.Layout{
+			Items:         []store.GridItem{},
+			WidgetConfigs: map[string]map[string]any{},
+		}
+	}
+
+	respondJSON(w, http.StatusOK, layout)
+}
+
+// handleSetLayout updates the user's layout
+func (s *Server) handleSetLayout(w http.ResponseWriter, r *http.Request) {
+	user := getUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	var layout store.Layout
+	if err := json.NewDecoder(r.Body).Decode(&layout); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := s.userStore.SetLayout(user.ID, &layout); err != nil {
+		s.logger.Error("failed to set layout", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to save layout")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"status": "saved",
 	})
 }
