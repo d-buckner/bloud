@@ -7,9 +7,14 @@
  * - Install/uninstall operations with optimistic UI updates
  *
  * Business logic lives here, not in components.
+ *
+ * Note: Layout sync for apps is handled by the backend. The backend adds apps to
+ * users' layouts on install and removes them on uninstall. The frontend just needs
+ * to refresh the layout store when apps change to pick up backend changes.
  */
 
 import { apps, loading, error } from '$lib/stores/apps';
+import { layout } from '$lib/stores/layout';
 import { fetchInstalledApps, installApp as apiInstall, uninstallApp as apiUninstall } from '$lib/api/apps';
 import { connectSSE, disconnectSSE } from '$lib/api/sse';
 import type { InstallResult, UninstallResult } from '$lib/types';
@@ -41,6 +46,8 @@ export async function initApps(): Promise<void> {
 		onApps: (appList) => {
 			apps.set(appList);
 			error.set(null);
+			// Refresh layout from backend to pick up any app additions/removals
+			layout.refresh();
 		},
 		onError: () => {
 			// SSE handles reconnection internally

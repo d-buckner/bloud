@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username TEXT UNIQUE NOT NULL,
+    layout JSONB DEFAULT '{"items":[],"widgetConfigs":{}}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
