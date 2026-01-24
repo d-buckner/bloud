@@ -108,7 +108,7 @@ bloud/
 │   ├── miniflux/
 │   │   ├── metadata.yaml          # What Miniflux needs (integrations, SSO, port)
 │   │   ├── module.nix             # How to run the container
-│   │   └── configurator.go        # Runtime configuration via API
+│   │   └── configurator.go        # configuration
 │   ├── postgres/
 │   ├── authentik/
 │   └── ...
@@ -203,7 +203,7 @@ mkBloudApp {
 
 The `mkBloudApp` helper handles the boilerplate - creating systemd services, setting up podman, managing volumes. When you specify `database = "miniflux"`, it automatically creates that database in the shared postgres instance.
 
-### configurator.go - Runtime Configuration
+### configurator.go - App Configuration
 
 Configurators run as systemd hooks (ExecStartPre and ExecStartPost):
 
