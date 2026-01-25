@@ -78,3 +78,6 @@ containerd:
 ssh:
   localPort: 0  # Auto-assign
   forwardAgent: true
+
+# User configuration - NixOS VM has 'bloud' user
+user: bloud
