@@ -9,7 +9,7 @@ This directory contains Lima VM configuration for NixOS development.
 
 - `nixos.yaml` - Lima VM configuration (dev environment)
 - `test-nixos.yaml.template` - Lima VM configuration template (test environment)
-- `build-image.sh` - Builds NixOS VM image
+- `build-image.sh` - Builds VM image
 - `start-dev.sh` - Dev server startup script (runs inside VM)
 - `start-test.sh` - Test server startup script (runs inside VM)
 - `imgs/` - VM images directory

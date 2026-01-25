@@ -59,7 +59,7 @@ func cmdSetup() int {
 	}
 
 	// 3. Check VM image
-	fmt.Print("  Checking NixOS VM image...    ")
+	fmt.Print("  Checking VM image...    ")
 	imagePath := vm.GetImagePath(projectRoot)
 	if vm.ImageExists(projectRoot) {
 		fmt.Printf("%s✓ found%s\n", colorGreen, colorReset)
@@ -71,7 +71,7 @@ func cmdSetup() int {
 		if offerImageDownload(projectRoot) {
 			// Re-check after download
 			if vm.ImageExists(projectRoot) {
-				fmt.Printf("\n  NixOS VM image...             %s✓ downloaded%s\n", colorGreen, colorReset)
+				fmt.Printf("\n  VM image...             %s✓ downloaded%s\n", colorGreen, colorReset)
 			} else {
 				allGood = false
 			}
@@ -254,7 +254,7 @@ func offerImageDownload(projectRoot string) bool {
 
 func downloadImage(url, projectRoot, arch string) bool {
 	fmt.Println()
-	fmt.Println("  Downloading NixOS VM image...")
+	fmt.Println("  Downloading VM image...")
 
 	// Create imgs directory
 	imgsDir := filepath.Join(projectRoot, "lima", "imgs")
