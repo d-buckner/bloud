@@ -53,10 +53,10 @@ func generateTestConfig(templatePath, outputPath, projectRoot string) error {
 	}
 
 	// Get main repo path (for git worktree support)
+	// In CI or when not in a worktree, use projectRoot as the main repo
 	mainRepo := os.Getenv("BLOUD_MAIN_REPO")
 	if mainRepo == "" {
-		home, _ := os.UserHomeDir()
-		mainRepo = filepath.Join(home, "Projects", "bloud")
+		mainRepo = projectRoot
 	}
 
 	data := map[string]string{

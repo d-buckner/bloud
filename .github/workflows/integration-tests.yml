@@ -59,6 +59,34 @@ jobs:
           ls -la /dev/kvm || echo "/dev/kvm not found"
           echo "Checking QEMU..."
           which qemu-system-x86_64 || which qemu-system-aarch64 || echo "QEMU not in PATH"
+          echo "Checking user groups..."
+          id
+          groups
+          echo "Testing KVM access..."
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            echo "KVM is readable and writable"
+          else
+            echo "WARNING: KVM access may be restricted"
+            ls -la /dev/kvm
+          fi
+
+      - name: Install sshpass
+        run: |
+          if ! command -v sshpass &> /dev/null; then
+            echo "Extracting sshpass from Debian package..."
+            mkdir -p "$GITHUB_WORKSPACE/.bin" "$GITHUB_WORKSPACE/.tmp"
+            cd "$GITHUB_WORKSPACE/.tmp"
+            curl -fsSL http://deb.debian.org/debian/pool/main/s/sshpass/sshpass_1.10-0.1_amd64.deb -o sshpass.deb
+            ar x sshpass.deb
+            tar --no-same-owner --no-same-permissions -xf data.tar.xz
+            cp usr/bin/sshpass "$GITHUB_WORKSPACE/.bin/"
+            cd "$GITHUB_WORKSPACE"
+            rm -rf "$GITHUB_WORKSPACE/.tmp"
+            echo "$GITHUB_WORKSPACE/.bin" >> $GITHUB_PATH
+          fi
+
+      - name: Verify sshpass
+        run: sshpass -V
 
       - name: Build CLI
         run: |
@@ -95,8 +123,23 @@ jobs:
           # Clean up any existing test VM
           ./bloud test stop 2>/dev/null || true
 
-          # Start fresh test VM
-          ./bloud test start
+          # Show generated Lima config for debugging
+          echo "=== Generated Lima config ==="
+          cat lima/test-nixos.yaml 2>/dev/null || echo "Config not generated yet"
+
+          # Start fresh test VM with verbose output
+          ./bloud test start &
+          BLOUD_PID=$!
+
+          # Monitor VM startup in background
+          sleep 10
+          echo "=== Lima VM status ==="
+          limactl list --json || true
+          echo "=== QEMU processes ==="
+          ps aux | grep -E "(qemu|lima)" | grep -v grep || true
+
+          # Wait for bloud to complete
+          wait $BLOUD_PID
         timeout-minutes: 20
 
       - name: Wait for services
@@ -153,6 +196,21 @@ jobs:
           name: test-results
           path: integration/test-results/
           retention-days: 7
+
+      - name: Debug VM state on failure
+        if: failure()
+        run: |
+          echo "=== Lima VM status ==="
+          limactl list --json 2>&1 || true
+          echo "=== Lima VM info ==="
+          limactl info bloud-test 2>&1 || true
+          echo "=== QEMU processes ==="
+          ps aux | grep -E "(qemu|lima)" | grep -v grep || true
+          echo "=== Lima logs ==="
+          cat "$LIMA_HOME/bloud-test/ha.stderr.log" 2>/dev/null | tail -100 || true
+          cat "$LIMA_HOME/bloud-test/serial.log" 2>/dev/null | tail -100 || true
+          echo "=== Generated Lima config ==="
+          cat lima/test-nixos.yaml 2>/dev/null || true
 
       - name: Cleanup test VM
         if: always()
