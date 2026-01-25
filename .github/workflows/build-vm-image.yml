@@ -1,4 +1,4 @@
-name: Build NixOS VM Image
+name: Build VM Image
 
 # Manual trigger only - this is an expensive build (~30 min)
 on:
@@ -133,9 +133,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: vm-images
-          name: NixOS VM Images
+          name: VM Images
           body: |
-            Pre-built NixOS VM images for Bloud development.
+            Pre-built VM images for Bloud development.
 
             ## Download
 

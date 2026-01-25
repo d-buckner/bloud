@@ -82,13 +82,13 @@ Development uses [Lima](https://lima-vm.io/) to run a NixOS VM on your local mac
 | **Lima** | `brew install lima` | [See install guide](https://lima-vm.io/docs/installation/) |
 | **Node.js 18+** | `brew install node` | `sudo apt install nodejs npm` |
 | **Go 1.21+** | `brew install go` | `sudo apt install golang` |
-| **NixOS VM Image** | See below | See below |
+| **NixOS Image** | See below | See below |
 
 > **Note:** `sshpass` is no longer required. SSH key auth is used automatically.
 
 ### Quick Start
 
-The `npm run setup` command checks all prerequisites and offers to download the pre-built NixOS VM image (~2.5GB download, ~7GB extracted).
+The `npm run setup` command checks all prerequisites and offers to download the pre-built VM image (~2.5GB download, ~7GB extracted).
 
 ```bash
 # 1. Clone and build CLI, check prerequisites and download VM image
@@ -121,8 +121,8 @@ Access the web UI at **http://localhost:8080**
 - macOS: `brew install lima`
 - Linux: `curl -fsSL https://lima-vm.io/install.sh | bash`
 
-**"NixOS VM image not found"**
-- The image must be built on Linux. See "NixOS VM Image" section above.
+**"VM image not found"**
+- The image must be built on Linux. See "VM Image" section above.
 - Image should be at: `lima/imgs/nixos-24.11-lima.img`
 
 **VM boots but services don't start**

@@ -80,13 +80,13 @@ func checkSshpass(result *PreflightResult) {
 	// Only warn, don't add as error
 }
 
-// checkVMImage verifies the NixOS VM image exists
+// checkVMImage verifies the VM image exists
 func checkVMImage(result *PreflightResult, projectRoot string) {
 	imagePath := GetImagePath(projectRoot)
 	if _, err := os.Stat(imagePath); err != nil {
 		result.AddError(
 			"vm-image",
-			fmt.Sprintf("NixOS VM image not found at:\n    %s", imagePath),
+			fmt.Sprintf("VM image not found at:\n    %s", imagePath),
 			"",
 			"",
 		)
@@ -121,7 +121,7 @@ func PrintPreflightErrors(result *PreflightResult) {
 }
 
 func PrintImageBuildInstructions() {
-	fmt.Println("\033[1;36m━━━ How to get the NixOS VM image ━━━\033[0m")
+	fmt.Println("\033[1;36m━━━ How to get the VM image ━━━\033[0m")
 	fmt.Println()
 
 	arch := runtime.GOARCH
