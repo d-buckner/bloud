@@ -48,6 +48,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.lima-install"
           curl -fsSL "$LIMA_URL" | tar xzf - -C "$GITHUB_WORKSPACE/.lima-install"
           echo "$GITHUB_WORKSPACE/.lima-install/bin" >> $GITHUB_PATH
+          echo "LIMA_HOME=$GITHUB_WORKSPACE/.lima" >> $GITHUB_ENV
 
       - name: Verify Lima
         run: limactl --version
