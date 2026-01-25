@@ -13,6 +13,20 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      - name: Mask sensitive paths
+        run: |
+          echo "::add-mask::$HOME"
+          echo "::add-mask::$(pwd)"
+
+      - name: Set architecture
+        id: set-arch
+        run: |
+          if [ "${{ runner.arch }}" = "ARM64" ]; then
+            echo "ARCH=aarch64" >> $GITHUB_ENV
+          else
+            echo "ARCH=x86_64" >> $GITHUB_ENV
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -29,13 +43,21 @@ jobs:
 
       - name: Install Lima
         run: |
-          if ! command -v limactl &> /dev/null; then
-            echo "Installing Lima..."
-            curl -fsSL https://lima-vm.io/install.sh | bash
-            echo "$HOME/.lima/bin" >> $GITHUB_PATH
-          else
-            echo "Lima already installed: $(limactl --version)"
-          fi
+          LIMA_VERSION="v2.0.3"
+          LIMA_URL="https://github.com/lima-vm/lima/releases/download/${LIMA_VERSION}/lima-${LIMA_VERSION#v}-Linux-${ARCH}.tar.gz"
+          mkdir -p "$GITHUB_WORKSPACE/.lima-install"
+          curl -fsSL "$LIMA_URL" | tar xzf - -C "$GITHUB_WORKSPACE/.lima-install"
+          echo "$GITHUB_WORKSPACE/.lima-install/bin" >> $GITHUB_PATH
+
+      - name: Verify Lima
+        run: limactl --version
+
+      - name: Check virtualization support
+        run: |
+          echo "Checking KVM..."
+          ls -la /dev/kvm || echo "/dev/kvm not found"
+          echo "Checking QEMU..."
+          which qemu-system-x86_64 || which qemu-system-aarch64 || echo "QEMU not in PATH"
 
       - name: Build CLI
         run: |
@@ -46,24 +68,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: lima/imgs/nixos-24.11-lima.img
-          key: vm-image-nixos-24.11-${{ runner.arch }}
+          key: vm-image-nixos-24.11-${{ env.ARCH }}
 
       - name: Download VM image
         if: steps.cache-vm-image.outputs.cache-hit != 'true'
         run: |
           mkdir -p lima/imgs
 
-          # Map runner.arch to image arch
-          if [ "${{ runner.arch }}" = "ARM64" ]; then
-            ARCH="aarch64"
-          else
-            ARCH="x86_64"
-          fi
-
           IMAGE_URL="https://github.com/d-buckner/bloud/releases/latest/download/nixos-24.11-${ARCH}.img.gz"
           echo "Downloading VM image from: $IMAGE_URL"
 
-          curl -fSL "$IMAGE_URL" | gunzip > lima/imgs/nixos-24.11-lima.img
+          curl -fsSL "$IMAGE_URL" | gunzip > lima/imgs/nixos-24.11-lima.img
 
           echo "VM image downloaded and extracted"
           ls -lh lima/imgs/
