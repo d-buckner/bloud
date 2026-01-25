@@ -27,6 +27,16 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Install Lima
+        run: |
+          if ! command -v limactl &> /dev/null; then
+            echo "Installing Lima..."
+            curl -fsSL https://lima-vm.io/install.sh | bash
+            echo "$HOME/.lima/bin" >> $GITHUB_PATH
+          else
+            echo "Lima already installed: $(limactl --version)"
+          fi
+
       - name: Build CLI
         run: |
           cd cli && go build -o ../bloud .
