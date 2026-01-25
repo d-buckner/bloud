@@ -1,0 +1,134 @@
+name: Integration Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  integration-tests:
+    runs-on: self-hosted
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build CLI
+        run: |
+          cd cli && go build -o ../bloud .
+
+      - name: Cache VM image
+        id: cache-vm-image
+        uses: actions/cache@v4
+        with:
+          path: lima/imgs/nixos-24.11-lima.img
+          key: vm-image-nixos-24.11-${{ runner.arch }}
+
+      - name: Download VM image
+        if: steps.cache-vm-image.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p lima/imgs
+
+          # Map runner.arch to image arch
+          if [ "${{ runner.arch }}" = "ARM64" ]; then
+            ARCH="aarch64"
+          else
+            ARCH="x86_64"
+          fi
+
+          IMAGE_URL="https://github.com/d-buckner/bloud/releases/latest/download/nixos-24.11-${ARCH}.img.gz"
+          echo "Downloading VM image from: $IMAGE_URL"
+
+          curl -fSL "$IMAGE_URL" | gunzip > lima/imgs/nixos-24.11-lima.img
+
+          echo "VM image downloaded and extracted"
+          ls -lh lima/imgs/
+
+      - name: Install integration test dependencies
+        working-directory: integration
+        run: |
+          npm ci
+          npx playwright install chromium
+
+      - name: Start test VM
+        run: |
+          # Clean up any existing test VM
+          ./bloud test stop 2>/dev/null || true
+
+          # Start fresh test VM
+          ./bloud test start
+        timeout-minutes: 20
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for services to be ready..."
+
+          wait_for_service() {
+            local name="$1"
+            local url="$2"
+            local max_attempts=30
+            local attempt=1
+
+            while [ $attempt -le $max_attempts ]; do
+              if curl -sf -o /dev/null "$url" 2>/dev/null; then
+                echo "$name is ready"
+                return 0
+              fi
+              echo "Waiting for $name... ($attempt/$max_attempts)"
+              sleep 2
+              attempt=$((attempt + 1))
+            done
+
+            echo "Error: $name failed to start"
+            return 1
+          }
+
+          wait_for_service "Go API" "http://localhost:3001/api/health"
+          wait_for_service "Vite" "http://localhost:5174"
+          wait_for_service "Traefik" "http://localhost:8081"
+
+          echo "All services ready!"
+
+      - name: Run integration tests
+        working-directory: integration
+        run: |
+          SKIP_VM_LIFECYCLE=true npx playwright test
+        env:
+          BASE_URL: http://localhost:8081
+          API_URL: http://localhost:3001
+          CI: true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: integration/playwright-report/
+          retention-days: 30
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: integration/test-results/
+          retention-days: 7
+
+      - name: Cleanup test VM
+        if: always()
+        run: |
+          ./bloud test stop 2>/dev/null || true
