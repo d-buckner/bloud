@@ -28,6 +28,8 @@ timezone: ""
 images:
   - location: "__BLOUD_MAIN_REPO__/lima/imgs/nixos-24.11-lima.img"
     arch: "aarch64"
+  - location: "__BLOUD_MAIN_REPO__/lima/imgs/nixos-24.11-lima.img"
+    arch: "x86_64"
 
 # Mount the project directory into the VM
 # For worktree support, mount at the original host path so git references resolve
