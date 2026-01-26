@@ -2,7 +2,7 @@
 	import AppIcon from './AppIcon.svelte';
 	import Widget from '$lib/widgets/Widget.svelte';
 	import { getWidgetById, type WidgetDefinition } from '$lib/widgets/registry';
-	import { layout, getWidgetConfig, type GridItem } from '$lib/stores/layout';
+	import { layout, type GridElement } from '$lib/stores/layout';
 	import { visibleApps } from '$lib/stores/apps';
 	import { type App } from '$lib/types';
 
@@ -11,24 +11,23 @@
 	interface Props {
 		onAppClick?: (app: App) => void;
 		onAppContextMenu?: (e: MouseEvent, app: App) => void;
-		onWidgetConfigure?: (widgetId: string) => void;
 		onAddWidget?: () => void;
 	}
 
-	let { onAppClick, onAppContextMenu, onWidgetConfigure, onAddWidget }: Props = $props();
+	let { onAppClick, onAppContextMenu, onAddWidget }: Props = $props();
 
 	// Local optimistic state for drag operations
-	let localItems = $state<GridItem[]>([]);
+	let localItems = $state<GridElement[]>([]);
 	let isDragging = $state(false);
 	let draggedItemId = $state<string | null>(null);
 	let dragOverCell = $state<{ col: number; row: number } | null>(null);
 	// Snapshot of layout when drag started - used as base for all reflow calculations
-	let dragStartItems = $state<GridItem[]>([]);
+	let dragStartItems = $state<GridElement[]>([]);
 
 	// Sync local state with store when not dragging
 	$effect(() => {
 		if (!isDragging) {
-			localItems = [...$layout.items];
+			localItems = [...$layout];
 		}
 	});
 
@@ -40,7 +39,7 @@
 
 	// Resolve grid items to their full data
 	interface ResolvedItem {
-		item: GridItem;
+		item: GridElement;
 		app?: App;
 		widget?: WidgetDefinition;
 	}
@@ -65,7 +64,7 @@
 	});
 
 	// Check if two items overlap
-	function itemsOverlap(a: GridItem, b: GridItem): boolean {
+	function itemsOverlap(a: GridElement, b: GridElement): boolean {
 		const aEndCol = a.col + a.colspan - 1;
 		const aEndRow = a.row + a.rowspan - 1;
 		const bEndCol = b.col + b.colspan - 1;
@@ -85,8 +84,8 @@
 	}
 
 	// Find all items that would overlap with the dragged item at the target position
-	function findOverlappingItems(items: GridItem[], draggedId: string, targetCol: number, targetRow: number, colspan: number, rowspan: number): GridItem[] {
-		const targetItem: GridItem = {
+	function findOverlappingItems(items: GridElement[], draggedId: string, targetCol: number, targetRow: number, colspan: number, rowspan: number): GridElement[] {
+		const targetItem: GridElement = {
 			type: 'app',
 			id: '__target__',
 			col: targetCol,
@@ -99,12 +98,12 @@
 	}
 
 	// Find the next available position for an item, searching row by row
-	function findAvailablePosition(items: GridItem[], excludeId: string, colspan: number, rowspan: number, startRow: number = 1): { col: number; row: number } {
+	function findAvailablePosition(items: GridElement[], excludeId: string, colspan: number, rowspan: number, startRow: number = 1): { col: number; row: number } {
 		const maxRow = Math.max(...items.map((i) => i.row + i.rowspan - 1), startRow) + 10;
 
 		for (let row = startRow; row <= maxRow; row++) {
 			for (let col = 1; col <= GRID_COLS - colspan + 1; col++) {
-				const testItem: GridItem = {
+				const testItem: GridElement = {
 					type: 'app',
 					id: '__test__',
 					col,
@@ -124,7 +123,7 @@
 	}
 
 	// Reflow items to resolve any overlaps after a move
-	function reflowItems(items: GridItem[], movedItemId: string): GridItem[] {
+	function reflowItems(items: GridElement[], movedItemId: string): GridElement[] {
 		const result = [...items];
 		const movedItem = result.find((i) => i.id === movedItemId);
 		if (!movedItem) return result;
@@ -162,11 +161,11 @@
 	}
 
 	// Drag handlers
-	function handleDragStart(e: DragEvent, item: GridItem) {
+	function handleDragStart(e: DragEvent, item: GridElement) {
 		isDragging = true;
 		draggedItemId = item.id;
 		// Store snapshot of current layout as base for reflow calculations
-		dragStartItems = [...$layout.items];
+		dragStartItems = [...$layout];
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'move';
 			e.dataTransfer.setData('text/plain', item.id);
@@ -221,7 +220,7 @@
 
 		// Commit to store (local state is already updated)
 		// Even if dragOverCell is null (dropped in same spot), persist current localItems
-		layout.setItems(localItems);
+		layout.setElements(localItems);
 		resetDragState();
 	}
 
@@ -230,7 +229,7 @@
 		// So isDragging will be false if drop was successful
 		// Only revert if drag was cancelled (e.g., pressed Escape or dropped outside)
 		if (isDragging) {
-			localItems = [...$layout.items];
+			localItems = [...$layout];
 			resetDragState();
 		}
 	}
@@ -305,10 +304,7 @@
 						</button>
 					{:else if resolved.widget}
 						<Widget title={resolved.widget.name} onRemove={() => handleWidgetRemove(resolved.widget!.id)}>
-							<resolved.widget.component
-								config={getWidgetConfig(resolved.widget.id)}
-								onConfigure={resolved.widget.configurable ? () => onWidgetConfigure?.(resolved.widget!.id) : undefined}
-							/>
+							<resolved.widget.component />
 						</Widget>
 					{/if}
 				</div>

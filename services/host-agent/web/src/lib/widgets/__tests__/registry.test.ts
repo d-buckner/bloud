@@ -35,12 +35,10 @@ describe('widget registry', () => {
 				expect(widget.name).toBeTruthy();
 				expect(widget.description).toBeTruthy();
 				expect(widget.component).toBeDefined();
-				expect(widget.defaultConfig).toBeDefined();
 				expect(widget.size).toHaveProperty('cols');
 				expect(widget.size).toHaveProperty('rows');
 				expect([1, 2, 3]).toContain(widget.size.cols);
 				expect([1, 2, 3]).toContain(widget.size.rows);
-				expect(typeof widget.configurable).toBe('boolean');
 			}
 		});
 

@@ -1,8 +1,4 @@
 <script lang="ts">
-	import type { WidgetProps } from './registry';
-
-	let { config }: WidgetProps = $props();
-
 	interface StorageStats {
 		used: number;
 		total: number;

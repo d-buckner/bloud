@@ -6,7 +6,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import type { CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
-	import { installApp } from '$lib/services/appLifecycle';
+	import { installApp } from '$lib/services/appFacade';
 
 	let catalogApps = $state<CatalogApp[]>([]);
 	let catalogLoading = $state(true);

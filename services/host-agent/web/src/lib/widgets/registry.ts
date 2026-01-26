@@ -15,16 +15,6 @@ export interface WidgetSize {
 }
 
 /**
- * Props that all widget components receive
- */
-export interface WidgetProps {
-	/** Widget-specific configuration */
-	config: Record<string, unknown>;
-	/** Callback to open configuration modal (if configurable) */
-	onConfigure?: () => void;
-}
-
-/**
  * Definition for a widget that can be displayed on the home page
  */
 export interface WidgetDefinition {
@@ -35,13 +25,9 @@ export interface WidgetDefinition {
 	/** Description shown in the widget picker */
 	description: string;
 	/** The Svelte component to render */
-	component: Component<WidgetProps>;
-	/** Default configuration for the widget */
-	defaultConfig: Record<string, unknown>;
+	component: Component;
 	/** Widget size in grid units (cols x rows) */
 	size: WidgetSize;
-	/** Whether the widget has a configuration modal */
-	configurable: boolean;
 }
 
 /**
@@ -53,27 +39,21 @@ export const widgetRegistry: WidgetDefinition[] = [
 		name: 'System',
 		description: 'CPU, memory, and disk usage',
 		component: SystemStats,
-		defaultConfig: {},
 		size: { cols: 2, rows: 3 },
-		configurable: false,
 	},
 	{
 		id: 'storage',
 		name: 'Storage',
 		description: 'Disk space breakdown',
 		component: Storage,
-		defaultConfig: {},
 		size: { cols: 2, rows: 2 },
-		configurable: false,
 	},
 	{
 		id: 'quick-notes',
 		name: 'Notes',
 		description: 'Quick notes and reminders',
 		component: QuickNotes,
-		defaultConfig: {},
 		size: { cols: 2, rows: 2 },
-		configurable: false,
 	},
 ];
 
