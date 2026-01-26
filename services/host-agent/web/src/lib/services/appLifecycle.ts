@@ -67,12 +67,15 @@ export function disconnectApps(): void {
 /**
  * Install an app with optional integration choices
  *
+ * Optimistically adds the app to the layout so it appears immediately.
  * The store will be updated via SSE when the backend state changes.
  */
 export async function installApp(
 	name: string,
 	choices: Record<string, string> = {}
 ): Promise<InstallResult> {
+	// Optimistically add to layout so it shows immediately
+	layout.addApp(name);
 	return apiInstall(name, choices);
 }
 

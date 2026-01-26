@@ -47,15 +47,6 @@
 		if (app.status === AppStatus.Error) return;
 		if (app.status === AppStatus.Installing || app.status === AppStatus.Starting || app.status === AppStatus.Uninstalling) return;
 
-		// System apps (postgres, traefik, authentik) open in new tab
-		// User-facing apps use embedded iframe viewer
-		if (app.is_system) {
-			if (app.port) {
-				window.open(`http://${window.location.hostname}:${app.port}`, '_blank');
-			}
-			return;
-		}
-
 		// Use embedded AppViewer for user-facing apps
 		openApp(app);
 	}
