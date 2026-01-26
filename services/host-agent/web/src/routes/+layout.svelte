@@ -6,7 +6,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import AppFrames from '$lib/components/AppFrames.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
-	import { initApps, disconnectApps } from '$lib/services/appLifecycle';
+	import { initApps, disconnectApps } from '$lib/services/appFacade';
 	import { waitForServiceWorker } from '$lib/services/bootstrap';
 
 	interface SetupStatus {
