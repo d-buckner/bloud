@@ -313,6 +313,26 @@ function createLayoutStore() {
 		},
 
 		/**
+		 * Add an app to the grid at the next available position (optimistic)
+		 * Used when install starts - backend will also add it, but this shows it immediately
+		 */
+		addApp(appName: string): void {
+			update((layout) => {
+				// Don't add duplicates
+				const exists = layout.items.some((item) => item.type === 'app' && item.id === appName);
+				if (exists) return layout;
+
+				// Apps are always 1x1
+				const { col, row } = findNextAvailablePosition(layout.items, 1, 1);
+
+				return {
+					...layout,
+					items: [...layout.items, { type: 'app', id: appName, col, row, colspan: 1, rowspan: 1 }],
+				};
+			});
+		},
+
+		/**
 		 * Remove a widget from the grid
 		 */
 		removeWidget(widgetId: string): void {

@@ -52,8 +52,8 @@
 		return localItems
 			.map((item) => {
 				if (item.type === 'app') {
+					// App may be undefined if still installing (optimistic layout update)
 					const app = appMap.get(item.id);
-					if (!app) return null;
 					return { item, app } as ResolvedItem;
 				} else {
 					const widget = getWidgetById(item.id);
@@ -283,16 +283,25 @@
 					ondragend={handleDragEnd}
 					role="listitem"
 				>
-					{#if isApp && resolved.app}
+					{#if isApp}
+						{@const app = resolved.app}
+						{@const appName = app?.name ?? resolved.item.id}
+						{@const displayName = app?.display_name ?? resolved.item.id}
+						{@const isInstalling = !app || app.status === 'installing' || app.status === 'starting'}
 						<button
 							class="app-slot"
-							onclick={() => onAppClick?.(resolved.app!)}
-							oncontextmenu={(e) => onAppContextMenu?.(e, resolved.app!)}
+							class:installing={isInstalling}
+							onclick={() => app && onAppClick?.(app)}
+							oncontextmenu={(e) => app && onAppContextMenu?.(e, app)}
+							disabled={isInstalling}
 						>
-							<div class="app-icon-container">
-								<AppIcon appName={resolved.app.name} displayName={resolved.app.display_name} size="lg" />
+							<div class="app-icon-wrapper">
+								<AppIcon {appName} {displayName} size="lg" transparent={isInstalling} />
+								{#if isInstalling}
+									<div class="install-spinner"></div>
+								{/if}
 							</div>
-							<span class="app-label">{resolved.app.display_name}</span>
+							<span class="app-label">{displayName}</span>
 						</button>
 					{:else if resolved.widget}
 						<Widget title={resolved.widget.name} onRemove={() => handleWidgetRemove(resolved.widget!.id)}>
@@ -385,6 +394,7 @@
 
 	/* App slot styling */
 	.app-slot {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -407,17 +417,41 @@
 		transform: scale(0.95);
 	}
 
-	.app-icon-container {
+	.app-slot.installing {
+		opacity: 0.7;
+		cursor: default;
+		pointer-events: none;
+	}
+
+	.app-slot.installing:hover {
+		transform: none;
+	}
+
+	.app-icon-wrapper {
+		position: relative;
 		width: 52px;
 		height: 52px;
 	}
 
-	.app-icon-container :global(.app-icon.size-lg) {
+	.install-spinner {
+		position: absolute;
+		inset: -4px;
+		border: 2px solid var(--color-border);
+		border-top-color: var(--color-accent);
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.app-icon-wrapper :global(.app-icon.size-lg) {
 		width: 52px;
 		height: 52px;
 	}
 
-	.app-icon-container :global(.app-icon.size-lg img) {
+	.app-icon-wrapper :global(.app-icon.size-lg img) {
 		width: 38px;
 		height: 38px;
 	}
