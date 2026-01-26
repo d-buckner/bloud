@@ -308,14 +308,6 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add app to all users' layouts (non-system apps only)
-	catalogApp, _ := s.catalog.Get(name)
-	if catalogApp != nil && !catalogApp.IsSystem {
-		if err := s.userStore.AddAppToAllUsersLayouts(name); err != nil {
-			s.logger.Warn("failed to add app to users layouts", "app", name, "error", err)
-		}
-	}
-
 	// Trigger reconciliation to configure dependent apps
 	s.triggerReconcile()
 
@@ -357,11 +349,6 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	if !result.IsSuccess() {
 		respondJSON(w, http.StatusBadRequest, result)
 		return
-	}
-
-	// Remove app from all users' layouts
-	if err := s.userStore.RemoveAppFromAllUsersLayouts(name); err != nil {
-		s.logger.Warn("failed to remove app from users layouts", "app", name, "error", err)
 	}
 
 	// Trigger reconciliation to update dependent apps
@@ -563,22 +550,18 @@ func (s *Server) handleGetLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	layout, err := s.userStore.GetLayout(user.ID)
+	elements, err := s.userStore.GetLayout(user.ID)
 	if err != nil {
 		s.logger.Error("failed to get layout", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to get layout")
 		return
 	}
 
-	if layout == nil {
-		// Return empty defaults
-		layout = &store.Layout{
-			Items:         []store.GridItem{},
-			WidgetConfigs: map[string]map[string]any{},
-		}
+	if elements == nil {
+		elements = []store.GridElement{}
 	}
 
-	respondJSON(w, http.StatusOK, layout)
+	respondJSON(w, http.StatusOK, elements)
 }
 
 // handleSetLayout updates the user's layout
@@ -589,13 +572,13 @@ func (s *Server) handleSetLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var layout store.Layout
-	if err := json.NewDecoder(r.Body).Decode(&layout); err != nil {
+	var elements []store.GridElement
+	if err := json.NewDecoder(r.Body).Decode(&elements); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	if err := s.userStore.SetLayout(user.ID, &layout); err != nil {
+	if err := s.userStore.SetLayout(user.ID, elements); err != nil {
 		s.logger.Error("failed to set layout", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to save layout")
 		return

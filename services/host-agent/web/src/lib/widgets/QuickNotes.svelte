@@ -1,8 +1,5 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import type { WidgetProps } from './registry';
-
-	let { config }: WidgetProps = $props();
 
 	const STORAGE_KEY = 'bloud-quick-notes';
 
