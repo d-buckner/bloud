@@ -14,9 +14,6 @@ import (
 
 // ReconcileConfig holds configuration for the reconciliation loop
 type ReconcileConfig struct {
-	// WatchdogInterval is how often the watchdog runs reconciliation (default: 5 minutes)
-	WatchdogInterval time.Duration
-
 	// HealthCheckTimeout is the max time to wait for an app to become healthy
 	HealthCheckTimeout time.Duration
 }
@@ -24,7 +21,6 @@ type ReconcileConfig struct {
 // DefaultReconcileConfig returns default reconciliation configuration
 func DefaultReconcileConfig() ReconcileConfig {
 	return ReconcileConfig{
-		WatchdogInterval:   5 * time.Minute,
 		HealthCheckTimeout: 60 * time.Second,
 	}
 }
@@ -46,7 +42,6 @@ type Reconciler struct {
 	dataDir      string
 	logger       *slog.Logger
 	config       ReconcileConfig
-	stopCh       chan struct{}
 }
 
 // NewReconciler creates a new reconciler
@@ -254,42 +249,3 @@ func (r *Reconciler) buildAppState(app *store.InstalledApp) *configurator.AppSta
 	}
 }
 
-// StartWatchdog starts the reconciliation watchdog that runs every 5 minutes.
-// Returns immediately; reconciliation runs in a background goroutine.
-func (r *Reconciler) StartWatchdog(ctx context.Context) {
-	r.stopCh = make(chan struct{})
-
-	go func() {
-		ticker := time.NewTicker(r.config.WatchdogInterval)
-		defer ticker.Stop()
-
-		r.logger.Info("reconciliation watchdog started", "interval", r.config.WatchdogInterval)
-
-		// Run initial reconciliation
-		if err := r.Reconcile(ctx); err != nil {
-			r.logger.Error("initial reconciliation failed", "error", err)
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				r.logger.Info("reconciliation watchdog stopped (context cancelled)")
-				return
-			case <-r.stopCh:
-				r.logger.Info("reconciliation watchdog stopped")
-				return
-			case <-ticker.C:
-				if err := r.Reconcile(ctx); err != nil {
-					r.logger.Error("watchdog reconciliation failed", "error", err)
-				}
-			}
-		}
-	}()
-}
-
-// StopWatchdog stops the reconciliation watchdog
-func (r *Reconciler) StopWatchdog() {
-	if r.stopCh != nil {
-		close(r.stopCh)
-	}
-}

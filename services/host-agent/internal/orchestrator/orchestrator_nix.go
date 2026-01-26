@@ -726,22 +726,6 @@ func (o *Orchestrator) waitForHealthy(appName string) {
 	o.appStore.UpdateStatus(appName, "error")
 }
 
-// RecheckFailedApps checks health of apps with "failed" or "error" status
-// Called on server startup to recover from stale failure states
-func (o *Orchestrator) RecheckFailedApps() {
-	apps, err := o.appStore.GetAll()
-	if err != nil {
-		o.logger.Warn("failed to get apps for health recheck", "error", err)
-		return
-	}
-
-	for _, app := range apps {
-		if app.Status == "failed" || app.Status == "error" {
-			o.logger.Info("rechecking failed app", "app", app.Name, "status", app.Status)
-			go o.waitForHealthy(app.Name)
-		}
-	}
-}
 
 // getAppPort returns the port for an app from the catalog
 func (o *Orchestrator) getAppPort(appName string) int {
@@ -1025,7 +1009,7 @@ func (o *Orchestrator) ReconcileState() {
 			o.appStore.UpdateStatus(app.Name, "error")
 
 		case "error", "failed":
-			o.logger.Debug("app in error/failed state, will be checked by watchdog", "app", app.Name)
+			o.logger.Debug("app in error/failed state", "app", app.Name)
 		}
 	}
 
@@ -1041,153 +1025,3 @@ func (o *Orchestrator) ReconcileState() {
 	o.logger.Info("state reconciliation complete")
 }
 
-// StateWatchdogConfig configures the state watchdog
-type StateWatchdogConfig struct {
-	CheckInterval     time.Duration // How often to check (default: 30s)
-	InstallingTimeout time.Duration // Max time in "installing" state (default: 10m)
-	StartingTimeout   time.Duration // Max time in "starting" state (default: 5m)
-}
-
-// DefaultWatchdogConfig returns default watchdog configuration
-func DefaultWatchdogConfig() StateWatchdogConfig {
-	return StateWatchdogConfig{
-		CheckInterval:     30 * time.Second,
-		InstallingTimeout: 10 * time.Minute,
-		StartingTimeout:   5 * time.Minute,
-	}
-}
-
-// StartStateWatchdog starts a background goroutine that monitors for stuck states
-// Returns a channel that can be closed to stop the watchdog
-func (o *Orchestrator) StartStateWatchdog(cfg StateWatchdogConfig) chan struct{} {
-	stop := make(chan struct{})
-
-	go func() {
-		ticker := time.NewTicker(cfg.CheckInterval)
-		defer ticker.Stop()
-
-		o.logger.Info("state watchdog started",
-			"interval", cfg.CheckInterval,
-			"installingTimeout", cfg.InstallingTimeout,
-			"startingTimeout", cfg.StartingTimeout)
-
-		for {
-			select {
-			case <-stop:
-				o.logger.Info("state watchdog stopped")
-				return
-			case <-ticker.C:
-				o.checkForStuckStates(cfg)
-			}
-		}
-	}()
-
-	return stop
-}
-
-// checkForStuckStates checks for apps that have been in transitional states too long
-func (o *Orchestrator) checkForStuckStates(cfg StateWatchdogConfig) {
-	apps, err := o.appStore.GetAll()
-	if err != nil {
-		o.logger.Warn("watchdog: failed to get apps", "error", err)
-		return
-	}
-
-	now := time.Now()
-
-	for _, app := range apps {
-		stuckDuration := now.Sub(app.UpdatedAt)
-
-		switch app.Status {
-		case "installing":
-			if stuckDuration > cfg.InstallingTimeout {
-				o.logger.Warn("watchdog: app stuck in installing state",
-					"app", app.Name,
-					"duration", stuckDuration,
-					"timeout", cfg.InstallingTimeout)
-				o.appStore.UpdateStatus(app.Name, "error")
-			}
-
-		case "starting":
-			if stuckDuration > cfg.StartingTimeout {
-				o.logger.Warn("watchdog: app stuck in starting state",
-					"app", app.Name,
-					"duration", stuckDuration,
-					"timeout", cfg.StartingTimeout)
-				o.appStore.UpdateStatus(app.Name, "error")
-			}
-
-		case "uninstalling":
-			if stuckDuration > cfg.InstallingTimeout {
-				o.logger.Warn("watchdog: app stuck in uninstalling state",
-					"app", app.Name,
-					"duration", stuckDuration)
-				o.appStore.UpdateStatus(app.Name, "error")
-			}
-
-		case "running":
-			// Periodically verify running apps are still healthy via health check
-			// Skip health checks for system apps - they're NixOS-managed
-			if !app.IsSystem && !o.checkHealthOnce(app.Name) {
-				o.logger.Warn("watchdog: running app health check failed",
-					"app", app.Name)
-				o.appStore.UpdateStatus(app.Name, "error")
-			}
-
-		case "error", "failed":
-			// Check if errored apps have recovered - health check is sufficient proof
-			healthOk := app.IsSystem || o.checkHealthOnce(app.Name)
-			o.logger.Debug("watchdog: checking error/failed app recovery",
-				"app", app.Name,
-				"healthOk", healthOk,
-				"isSystem", app.IsSystem)
-			if healthOk {
-				o.logger.Info("watchdog: app recovered",
-					"app", app.Name)
-				o.appStore.UpdateStatus(app.Name, "running")
-			}
-		}
-	}
-}
-
-// checkHealthOnce performs a single health check for an app
-// Returns true if healthy, false otherwise
-func (o *Orchestrator) checkHealthOnce(appName string) bool {
-	app, err := o.catalogCache.Get(appName)
-	if err != nil || app == nil {
-		// Can't get app info, assume healthy
-		o.logger.Debug("checkHealthOnce: no catalog entry, assuming healthy", "app", appName)
-		return true
-	}
-
-	// No health check configured, assume healthy
-	if app.HealthCheck.Path == "" {
-		o.logger.Debug("checkHealthOnce: no health check path configured, assuming healthy", "app", appName)
-		return true
-	}
-
-	port := o.getAppPort(appName)
-	if port == 0 {
-		// No port, assume healthy
-		o.logger.Debug("checkHealthOnce: no port configured, assuming healthy", "app", appName)
-		return true
-	}
-
-	url := fmt.Sprintf("http://localhost:%d%s", port, app.HealthCheck.Path)
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	resp, err := client.Get(url)
-	if err != nil {
-		o.logger.Debug("checkHealthOnce: request failed", "app", appName, "url", url, "error", err)
-		return false
-	}
-	defer resp.Body.Close()
-
-	// Accept 2xx, 3xx, and auth errors (401/403) as healthy
-	// Auth errors mean the service is running but requires authentication
-	healthy := resp.StatusCode < 500
-	if !healthy {
-		o.logger.Debug("checkHealthOnce: unhealthy status", "app", appName, "url", url, "status", resp.StatusCode)
-	}
-	return healthy
-}

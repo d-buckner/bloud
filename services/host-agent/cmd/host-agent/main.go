@@ -87,9 +87,6 @@ func runServer() {
 	// Start background system stats collector
 	system.StartStatsCollector(ctx)
 
-	// Start reconciler watchdog
-	server.StartReconciler(ctx)
-
 	// Start server in a goroutine
 	go func() {
 		if err := server.Start(); err != nil {
