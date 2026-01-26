@@ -36,7 +36,6 @@ func newTestReconciler() *testReconciler {
 		"/tmp/bloud-test",
 		newTestLogger(),
 		ReconcileConfig{
-			WatchdogInterval:   100 * time.Millisecond, // Fast for tests
 			HealthCheckTimeout: 100 * time.Millisecond,
 		},
 	)
@@ -408,70 +407,6 @@ func TestBuildAppState_Integrations(t *testing.T) {
 
 	assert.Equal(t, []string{"qbittorrent"}, state.Integrations["download-client"])
 	assert.Equal(t, []string{"jellyfin"}, state.Integrations["media-server"])
-}
-
-// ============================================================================
-// Watchdog Tests
-// ============================================================================
-
-func TestWatchdog_InitialReconcile(t *testing.T) {
-	tr := newTestReconciler()
-
-	tr.appStore.On("GetAll").Return([]*store.InstalledApp{}, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	tr.reconciler.StartWatchdog(ctx)
-
-	// Wait for initial reconcile
-	time.Sleep(50 * time.Millisecond)
-
-	tr.reconciler.StopWatchdog()
-
-	// Verify GetAll was called (initial reconcile)
-	tr.appStore.AssertCalled(t, "GetAll")
-}
-
-func TestWatchdog_Stop(t *testing.T) {
-	tr := newTestReconciler()
-
-	// Return empty apps each time
-	tr.appStore.On("GetAll").Return([]*store.InstalledApp{}, nil)
-
-	ctx := context.Background()
-	tr.reconciler.StartWatchdog(ctx)
-
-	// Wait briefly
-	time.Sleep(50 * time.Millisecond)
-
-	// Stop should not panic
-	tr.reconciler.StopWatchdog()
-
-	// Wait a bit more to ensure goroutine stopped
-	time.Sleep(50 * time.Millisecond)
-}
-
-func TestWatchdog_ContextCanceled(t *testing.T) {
-	tr := newTestReconciler()
-
-	tr.appStore.On("GetAll").Return([]*store.InstalledApp{}, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	tr.reconciler.StartWatchdog(ctx)
-
-	// Wait for initial reconcile
-	time.Sleep(50 * time.Millisecond)
-
-	// Cancel context
-	cancel()
-
-	// Wait for goroutine to exit
-	time.Sleep(50 * time.Millisecond)
-
-	// Verify GetAll was called at least once
-	tr.appStore.AssertCalled(t, "GetAll")
 }
 
 // ============================================================================

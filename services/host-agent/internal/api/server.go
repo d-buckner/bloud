@@ -209,15 +209,8 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	// This handles apps stuck in transitional states from server crashes
 	nixOrch.ReconcileState()
 
-	// Recheck health of any apps that were in failed/error state
-	// This recovers from stale failure states after server restart
-	nixOrch.RecheckFailedApps()
-
-	// Start background watchdog to detect and recover stuck states
-	nixOrch.StartStateWatchdog(orchestrator.DefaultWatchdogConfig())
-
-	// Note: For development/testing without NixOS, we could fall back to Podman orchestrator
-	// But for production, we always use Nix for robustness
+	// Note: Configuration now runs via systemd hooks (ExecStartPre/ExecStartPost)
+	// rather than background watchdogs. See podman-service.nix for hook setup.
 }
 
 // refreshCatalog loads apps from YAML files and updates the cache and graph
@@ -353,22 +346,7 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
-	s.StopReconciler()
 	return nil
-}
-
-// StartReconciler starts the reconciliation watchdog
-func (s *Server) StartReconciler(ctx context.Context) {
-	if s.reconciler != nil {
-		s.reconciler.StartWatchdog(ctx)
-	}
-}
-
-// StopReconciler stops the reconciliation watchdog
-func (s *Server) StopReconciler() {
-	if s.reconciler != nil {
-		s.reconciler.StopWatchdog()
-	}
 }
 
 // triggerReconcile runs reconciliation in the background.
