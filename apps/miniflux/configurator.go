@@ -1,11 +1,8 @@
 package miniflux
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 
@@ -33,19 +30,15 @@ http:
 
 // Configurator handles Miniflux configuration
 type Configurator struct {
-	port          int
-	adminUsername string
-	adminPassword string
-	traefikDir    string // Path to traefik dynamic config dir
+	port       int
+	traefikDir string // Path to traefik dynamic config dir
 }
 
 // NewConfigurator creates a new Miniflux configurator
-func NewConfigurator(port int, adminUsername, adminPassword, traefikDir string) *Configurator {
+func NewConfigurator(port int, traefikDir string) *Configurator {
 	return &Configurator{
-		port:          port,
-		adminUsername: adminUsername,
-		adminPassword: adminPassword,
-		traefikDir:    traefikDir,
+		port:       port,
+		traefikDir: traefikDir,
 	}
 }
 
@@ -83,37 +76,7 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
 	return configurator.WaitForHTTP(ctx, url, configurator.DefaultHealthCheckTimeout)
 }
 
-// PostStart configures Miniflux settings via API (e.g., admin theme)
+// PostStart is a no-op since users are created via SSO (no local admin exists)
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	// Set light theme for admin user (user ID 1 is always the initial admin)
-	// Miniflux requires the BASE_URL path prefix for all endpoints
-	// Note: PUT /v1/me doesn't exist, must use /v1/users/{id}
-	url := fmt.Sprintf("http://localhost:%d/embed/miniflux/v1/users/1", c.port)
-
-	payload := map[string]string{"theme": "light_serif"}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.adminUsername, c.adminPassword)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to configure miniflux: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("miniflux API returned status %d", resp.StatusCode)
-	}
-
 	return nil
 }

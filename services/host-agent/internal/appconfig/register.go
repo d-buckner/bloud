@@ -38,7 +38,7 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 		cfg.LDAPBindPassword,
 		cfg.DataDir,
 	))
-	registry.Register(miniflux.NewConfigurator(8085, "admin", "admin123", traefikDynamicDir))
+	registry.Register(miniflux.NewConfigurator(8085, traefikDynamicDir))
 	registry.Register(qbittorrent.NewConfigurator(8086))
 	registry.Register(radarr.NewConfigurator(7878))
 	registry.Register(sonarr.NewConfigurator(8989))
