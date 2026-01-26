@@ -75,9 +75,11 @@ Here's what happens when you install Miniflux:
 ┌─────────────────────────────────────────────────────────────────────┐
 │  2. NIX GENERATION                                                  │
 │                                                                     │
-│     Write apps.nix:                                                 │
-│       bloud.apps.postgres.enable = true;                            │
-│       bloud.apps.miniflux.enable = true;                            │
+│     Generate configuration:                                         │
+│       • apps.nix        → NixOS enables postgres + miniflux         │
+│       • apps-routes.yml → Traefik routing for /embed/miniflux       │
+│       • blueprints/     → Authentik OAuth2 provider for miniflux    │
+│       • secrets/        → Database URL, OAuth credentials           │
 │                                                                     │
 │     Run: nixos-rebuild switch                                       │
 │     → Containers created, systemd services started                  │
@@ -193,9 +195,6 @@ mkBloudApp {
   database = "miniflux";  # Auto-creates postgres DB
 
   environment = cfg: {
-    RUN_MIGRATIONS = "1";
-    CREATE_ADMIN = "1";
-    ADMIN_USERNAME = cfg.adminUsername;
     BASE_URL = "${cfg.externalHost}/embed/miniflux";
   };
 }
