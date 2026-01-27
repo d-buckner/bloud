@@ -211,17 +211,26 @@ type Configurator struct{}
 
 func (c *Configurator) Name() string { return "miniflux" }
 
-// StaticConfig runs as ExecStartPre - before container starts
-func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) error {
-    // Write Traefik SSO redirect config if SSO integration is available
+// StaticConfig runs before container starts - returns whether config changed
+func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) (bool, error) {
+    // Determine desired config
+    var desired []byte
     if _, hasSSO := state.Integrations["sso"]; hasSSO {
-        return os.WriteFile(
-            filepath.Join(c.traefikDir, "miniflux-sso.yml"),
-            []byte(traefikSSOConfig),
-            0644,
-        )
+        desired = []byte(traefikSSOConfig)
     }
-    return nil
+
+    // Compare with current config
+    configPath := filepath.Join(c.traefikDir, "miniflux-sso.yml")
+    current, _ := os.ReadFile(configPath)
+    if bytes.Equal(current, desired) {
+        return false, nil  // No change needed
+    }
+
+    // Write new config
+    if err := os.WriteFile(configPath, desired, 0644); err != nil {
+        return false, err
+    }
+    return true, nil  // Config changed, restart needed
 }
 
 // HealthCheck waits for the app to be ready
@@ -330,10 +339,10 @@ The key distinction is whether a restart is needed:
 
 | Phase         | Restart Required | Examples                                      |
 | ------------- | ---------------- | --------------------------------------------- |
-| StaticConfig  | Yes              | Config files, environment vars, certificates  |
+| StaticConfig  | If changed=true  | Config files, environment vars, certificates  |
 | DynamicConfig | No               | API calls, database records, runtime settings |
 
-**StaticConfig** handles things the app reads on startup. If you change a config file while the app is running, it won't see the change until restart.
+**StaticConfig** handles things the app reads on startup. It returns `(changed bool, err error)` - the app only restarts if config actually changed.
 
 **DynamicConfig** handles things that can change while running. API calls modify the app's internal state immediately.
 
@@ -341,12 +350,34 @@ Example: Miniflux's SSO redirect config is written to a Traefik config file - th
 
 ### Idempotency
 
-Every phase must be safe to run repeatedly:
+Every phase must be safe to run repeatedly. StaticConfig returns `changed bool` to indicate if restart is needed:
 
 ```go
-// GOOD: Idempotent - writes same content every time
-func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) error {
-    return os.WriteFile(configPath, []byte(config), 0644)
+// GOOD: Only compare/write the keys we manage, preserve user's other settings
+func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) (bool, error) {
+    // Keys we manage (user can set other keys freely)
+    managedKeys := []string{"DATABASE_URL", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET"}
+
+    // Desired values for our managed keys
+    desired := map[string]string{
+        "DATABASE_URL":       state.Database.URL,
+        "OAUTH_CLIENT_ID":    state.OAuth.ClientID,
+        "OAUTH_CLIENT_SECRET": state.OAuth.ClientSecret,
+    }
+
+    // Read current file and extract only our managed keys
+    current := c.readManagedKeys(configPath, managedKeys)
+
+    // Compare only our keys (ignore user's other settings)
+    if maps.Equal(desired, current) {
+        return false, nil  // Our config unchanged
+    }
+
+    // Write only our managed keys (merge with existing file)
+    if err := c.writeManagedKeys(configPath, desired); err != nil {
+        return false, err
+    }
+    return true, nil  // Our config changed, needs restart
 }
 
 // GOOD: Idempotent - API call sets to desired state
@@ -354,15 +385,19 @@ func (c *Configurator) DynamicConfig(ctx context.Context, state *AppState) error
     return c.setUserTheme(ctx, 1, "light_serif")  // Always sets to light
 }
 
-// BAD: Not idempotent - appends on every call
-func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) error {
-    f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-    f.WriteString("new line\n")  // Grows forever!
-    return nil
+// BAD: Compares whole file - user changes would cause unnecessary restarts
+func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) (bool, error) {
+    desired := []byte(fullConfig)
+    current, _ := os.ReadFile(configPath)
+    if !bytes.Equal(current, desired) {  // User edited other keys? restart!
+        os.WriteFile(configPath, desired, 0644)
+        return true, nil
+    }
+    return false, nil
 }
 ```
 
-If your configurator isn't idempotent, you'll have problems - systemd may run the hooks multiple times (service restarts, system reboots, etc.).
+**Key insight:** Only compare the keys you manage. Users can edit other parts of config files without triggering restarts.
 
 ## Orchestration
 
@@ -408,8 +443,8 @@ Action: User installs auth-provider
 2. System checks: "Who has auth integration that auth-provider provides?"
    → app-a has auth integration, auth-provider is compatible
 3. app-a marked as invalidated
-4. app-a service restarted via systemctl
-5. ExecStartPre runs StaticConfig (writes new config)
+4. Orchestrator runs app-a.StaticConfig() → returns changed=true
+5. Orchestrator restarts app-a (in dependency order)
 6. Container starts
 7. ExecStartPost runs DynamicConfig (configures via API)
 8. Auth configured
@@ -447,16 +482,20 @@ CREATE TABLE app_integrations (
 │     → [app-a, app-b]                                                │
 │         │                                                           │
 │         ▼                                                           │
-│  4. Update database: INSERT into app_integrations                   │
-│     (app-a, auth, auth-provider, NULL)  -- NULL = not yet configured│
+│  4. Mark apps as invalidated in database                            │
 │         │                                                           │
 │         ▼                                                           │
-│  5. Restart affected services                                       │
-│     systemctl restart podman-app-a podman-app-b                     │
+│  5. Run StaticConfig for each invalidated app                       │
+│     app-a.StaticConfig() → changed=true                             │
+│     app-b.StaticConfig() → changed=true                             │
 │         │                                                           │
 │         ▼                                                           │
-│  6. Systemd runs ExecStartPre (StaticConfig)                        │
-│     Then ExecStartPost (DynamicConfig) after healthy                │
+│  6. Restart apps where changed=true (in dependency order)           │
+│     Orchestrator queries systemd D-Bus for dependencies             │
+│     Topological sort → restart dependencies before dependents       │
+│         │                                                           │
+│         ▼                                                           │
+│  7. ExecStartPost runs DynamicConfig after container healthy        │
 │     UPDATE app_integrations SET configured_at = NOW()               │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -474,16 +513,16 @@ We **mark** apps for invalidation immediately, but **defer** the actual restart.
 
 **1. Deduplication**
 
-If multiple changes affect the same app, it only restarts once:
+If multiple changes affect the same app, StaticConfig runs once:
 
 ```
 Install service-x + service-y simultaneously
     │
     ├── app-a marked for invalidation (integration-x available)
-    ├── app-a marked for invalidation (integration-y available)  ← same app
+    ├── app-a marked for invalidation (integration-y available)  ← deduplicated
     │
     ▼
-Issue restart for app-a
+Run app-a.StaticConfig() once → changed=true
     │
     ▼
 Restart once, configure both integrations
@@ -491,7 +530,7 @@ Restart once, configure both integrations
 
 **2. Correct Ordering**
 
-Systemd ensures apps restart in dependency order:
+The orchestrator builds a dependency graph from `app_integrations` table and restarts in topological order:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -501,17 +540,20 @@ Systemd ensures apps restart in dependency order:
 │    - app-a (needs auth)                                             │
 │    - app-b (needs auth)                                             │
 │                                                                     │
-│  Systemd restart order (respects After=/Requires=):                 │
+│  Orchestrator builds dependency graph from app_integrations:        │
+│    - app-a depends on auth-provider (source_app)                    │
+│    - app-b depends on auth-provider (source_app)                    │
+│    - Topological sort                                               │
 │                                                                     │
-│  Level 0: database, cache        ← no invalidation needed           │
-│  Level 1: auth-provider          ← just installed, starting up      │
-│  Level 2: app-a, app-b           ← restart after auth-provider      │
+│  Restart order (dependencies first):                                │
+│    auth-provider (already running, healthy)                         │
+│    app-a, app-b (can restart in parallel, no deps between them)     │
 │                                                                     │
 │  app-a and app-b don't restart until auth-provider is healthy.      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**The rule:** Mark immediately, let systemd order the restarts. Apps only restart when their dependencies are ready.
+**The rule:** Mark immediately, run StaticConfig, restart only if changed (in dependency order).
 
 ---
 
@@ -717,10 +759,10 @@ This section tracks what's implemented vs. what's planned.
 ### In Progress / Planned
 
 - [ ] **Rename configurator methods** - `PreStart` → `StaticConfig`, `PostStart` → `DynamicConfig`
-- [ ] **Systemd hooks** - Run configurators via `ExecStartPre`/`ExecStartPost` instead of host-agent
+- [ ] **StaticConfig returns changed** - `StaticConfig() (changed bool, err error)` to detect if restart needed
 - [ ] **Container invalidation** - Mark apps for restart when new integrations become available
 - [ ] **app_integrations table** - Track integration state in database
-- [ ] **Deferred restart** - Batch invalidations, let systemd order restarts
+- [ ] **Dependency graph traversal** - Build graph from app_integrations, restart in topological order
 - [ ] **Remove watchdog references** - Clean up old self-healing code/comments from `pkg/configurator/interface.go`
 
 ### Not Planned
