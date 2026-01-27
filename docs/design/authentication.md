@@ -53,7 +53,7 @@ Forward auth won't work well because:
 
 ### 1.1 Create Bloud OAuth2 Application in Authentik
 
-During Authentik's PostStart configuration, create an OAuth2 provider and application for Bloud itself:
+During Authentik's DynamicConfig phase, create an OAuth2 provider and application for Bloud itself:
 
 ```go
 // In authentik configurator

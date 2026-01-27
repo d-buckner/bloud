@@ -51,11 +51,11 @@ This means if Service B has `After=Service A`, Service B's ExecStartPre can begi
 `ExecStartPre` runs these steps in order (all before container starts):
 1. `podman rm -f <name>` - cleanup (with `-` prefix so failure OK)
 2. Health check script (if `waitFor` specified) - polls until deps ready
-3. Bloud prestart script (if `bloudAppName` set) - calls `host-agent configure prestart <appName>`
+3. Bloud StaticConfig script (if `bloudAppName` set) - calls `host-agent configure static <appName>`
 4. Custom `preStartScript` (if provided)
 
 `ExecStartPost` runs after container starts:
-1. Bloud poststart script (if `bloudAppName` set) - calls `host-agent configure poststart <appName>`
+1. Bloud DynamicConfig script (if `bloudAppName` set) - calls `host-agent configure dynamic <appName>`
 
 **For LDAP outpost currently:**
 - Has `waitFor` that checks authentik-server health: `curl -sf http://localhost:9000/-/health/ready/`
@@ -105,7 +105,7 @@ This means if Service B has `After=Service A`, Service B's ExecStartPre can begi
 
 **Root cause**: Bootstrap token creation is unreliable. We cannot depend on it.
 
-**Solution**: Create the API token programmatically in Authentik's PostStart configurator, which runs after the container is healthy.
+**Solution**: Create the API token programmatically in Authentik's DynamicConfig phase, which runs after the container is healthy.
 
 **Update (2026-01-15)**: Fresh test environment investigation:
 - `AUTHENTIK_BOOTSTRAP_TOKEN` env var IS being passed correctly
@@ -133,26 +133,26 @@ LDAP infrastructure is always present as part of Authentik, not created on-deman
 - Similar to how embedded outpost is always present for forward-auth
 - Minimal overhead (one additional container)
 
-### Decision 2: API Token Created in Authentik PostStart
+### Decision 2: API Token Created in Authentik DynamicConfig
 
-The Authentik Go configurator creates the API token in its PostStart hook.
+The Authentik Go configurator creates the API token in its DynamicConfig phase.
 
 **Rationale**:
 - `AUTHENTIK_BOOTSTRAP_TOKEN` is unreliable (known issues, first-boot-only)
-- PostStart runs after container is healthy, guarantees Authentik is ready
+- DynamicConfig runs after container is healthy, guarantees Authentik is ready
 - Single place for Authentik initialization logic
 - Idempotent (check if exists, create if not)
 
-### Decision 3: LDAP Setup in LDAP Outpost PreStart
+### Decision 3: LDAP Setup in LDAP Outpost StaticConfig
 
-The LDAP outpost's prestart script:
+The LDAP outpost's StaticConfig phase:
 1. Calls Authentik API to ensure LDAP infrastructure exists
 2. Queries for outpost token
 3. Writes token to env file for container
 
 **Rationale**:
-- PreStart runs before container starts, so token is available
-- `waitFor` already ensures Authentik is healthy before prestart runs
+- StaticConfig runs before container starts, so token is available
+- `waitFor` already ensures Authentik is healthy before StaticConfig runs
 - API calls are idempotent (ensure = create if not exists)
 - No separate oneshot service needed
 
@@ -171,7 +171,7 @@ LDAP outpost token written to file, container reads via `--env-file=`.
 
 ### Phase 1: Fix Token Creation
 
-1. **Modify Authentik configurator PostStart** (`apps/authentik/configurator.go`)
+1. **Modify Authentik configurator DynamicConfig** (`apps/authentik/configurator.go`)
    - After health check, ensure API token exists via Django shell
    - Token identifier: `bloud-api-token`
    - Token key: read from config or generate deterministically
@@ -186,7 +186,7 @@ LDAP outpost token written to file, container reads via `--env-file=`.
    - Change `ldap.enable` default to `true`
    - LDAP outpost always runs as part of Authentik
 
-4. **Modify LDAP prestart** (`apps/authentik/module.nix`)
+4. **Modify LDAP StaticConfig** (`apps/authentik/module.nix`)
    - Replace "wait for blueprint" with "ensure via API"
    - Call host-agent or use curl to create LDAP infrastructure
    - Query outpost token, write to env file
