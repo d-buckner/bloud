@@ -102,16 +102,16 @@ services/host-agent/internal/orchestrator/
 | `TestHealthCheck_Timeout` | Health never responds |
 | `TestHealthCheck_NonSuccessStatus` | Returns 5xx |
 
-#### State Watchdog (7 tests)
+#### Container Invalidation (7 tests)
 | Test | Description |
 |------|-------------|
-| `TestWatchdog_StuckInstalling` | App in installing > timeout |
-| `TestWatchdog_StuckStarting` | App in starting > timeout |
-| `TestWatchdog_StuckUninstalling` | App in uninstalling > timeout |
-| `TestWatchdog_RunningButServiceDead` | Service not active |
-| `TestWatchdog_RunningHealthFailed` | Health check fails |
-| `TestWatchdog_ErrorRecovery` | Service/health recovered |
-| `TestWatchdog_StopChannel` | Stop signal sent |
+| `TestInvalidation_MarkAppInvalidated` | Mark app as needing reconfiguration |
+| `TestInvalidation_ProcessInvalidations` | Process pending invalidations |
+| `TestInvalidation_StaticConfigChanged` | StaticConfig returns changed=true, triggers restart |
+| `TestInvalidation_StaticConfigUnchanged` | StaticConfig returns changed=false, no restart |
+| `TestInvalidation_DependencyOrder` | Apps restart in dependency order |
+| `TestInvalidation_CascadeToConsumers` | Invalidating provider invalidates consumers |
+| `TestInvalidation_ClearAfterProcess` | Invalidation flags cleared after processing |
 
 ### Reconciler Test Cases
 
@@ -132,9 +132,9 @@ services/host-agent/internal/orchestrator/
 | `TestReconcile_SingleApp_WithConfigurator` | App with configurator |
 | `TestReconcile_MultiLevel_CorrectOrder` | Apps with dependencies |
 | `TestReconcile_UninstallingSkipped` | App with status=uninstalling |
-| `TestReconcile_PreStartFails` | PreStart returns error |
+| `TestReconcile_StaticConfigFails` | StaticConfig returns error |
 | `TestReconcile_HealthCheckFails` | HealthCheck times out |
-| `TestReconcile_PostStartFails` | PostStart returns error |
+| `TestReconcile_DynamicConfigFails` | DynamicConfig returns error |
 
 #### buildAppState (2 tests)
 | Test | Description |
@@ -142,13 +142,13 @@ services/host-agent/internal/orchestrator/
 | `TestBuildAppState_BasicFields` | App with port and name |
 | `TestBuildAppState_Integrations` | App with integration config |
 
-#### Watchdog (4 tests)
+#### Event-Driven Invalidation (4 tests)
 | Test | Description |
 |------|-------------|
-| `TestWatchdog_InitialReconcile` | StartWatchdog called |
-| `TestWatchdog_PeriodicReconcile` | Wait for interval |
-| `TestWatchdog_Stop` | StopWatchdog called |
-| `TestWatchdog_ContextCanceled` | Context canceled |
+| `TestInvalidation_OnInstall` | Install triggers invalidation of consumers |
+| `TestInvalidation_OnUninstall` | Uninstall triggers invalidation of consumers |
+| `TestInvalidation_OnConfigChange` | Config change triggers invalidation |
+| `TestInvalidation_BatchProcessing` | Multiple invalidations processed together |
 
 ---
 
