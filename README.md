@@ -51,7 +51,7 @@ Bloud makes self-hosting accessible through three core ideas:
 
 2. **Declarative Deployment** - NixOS handles the actual containers. Enable an app, rebuild, and NixOS creates systemd services, volumes, networking - atomically.
 
-3. **Idempotent Configuration** - Go configurators run as systemd hooks. StaticConfig (ExecStartPre) handles config files and directories. DynamicConfig (ExecStartPost) handles API calls and integrations. Both run on every service start.
+3. **Idempotent Configuration** - StaticConfig (ExecStartPre) handles config files and directories. DynamicConfig (ExecStartPost) handles API calls and integrations. Both run on every service start.
 
 ### The Big Picture
 
