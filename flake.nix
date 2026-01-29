@@ -70,6 +70,13 @@
             format = "raw-efi";
             modules = [ ./nixos/lima-image.nix ];
           };
+
+          # Proxmox VM template image
+          proxmox-image = nixos-generators.nixosGenerate {
+            inherit pkgs;
+            format = "proxmox";
+            modules = [ ./nixos/proxmox-image.nix ];
+          };
         }
       );
 
