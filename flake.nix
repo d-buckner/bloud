@@ -56,6 +56,16 @@
             ./nixos/bloud.nix
           ];
         };
+
+        # Native Proxmox VM for development
+        # Deploy with: sudo nixos-rebuild switch --flake .#dev-server
+        dev-server = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/dev-server.nix
+            ./nixos/bloud.nix
+          ];
+        };
       };
 
       # Packages for building images
@@ -69,13 +79,6 @@
             inherit pkgs;
             format = "raw-efi";
             modules = [ ./nixos/lima-image.nix ];
-          };
-
-          # Proxmox VM template image
-          proxmox-image = nixos-generators.nixosGenerate {
-            inherit pkgs;
-            format = "proxmox";
-            modules = [ ./nixos/proxmox-image.nix ];
           };
         }
       );
