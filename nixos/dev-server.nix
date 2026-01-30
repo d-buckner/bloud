@@ -38,7 +38,7 @@
 
   # Network configuration
   networking = {
-    hostName = "dev-server";
+    hostName = "bloud";  # Will be bloud.local via mDNS
     useDHCP = true;
 
     # Open firewall for all bloud services
@@ -124,11 +124,23 @@
     };
   };
 
+  # mDNS for bloud.local resolution
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    publish = {
+      enable = true;
+      addresses = true;
+    };
+  };
+
   # Bloud infrastructure
   bloud = {
     enable = true;
     user = "bloud";
     agentPath = "/tmp/host-agent";  # Build with: go build -o /tmp/host-agent ./cmd/host-agent
+    externalHost = "http://bloud.local:8080";
+    authentikExternalHost = "http://bloud.local:8080";
   };
 
   # Nix settings - enable flakes
