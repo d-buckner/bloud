@@ -40,11 +40,35 @@ func runConfigure(args []string) int {
 	registry := configurator.NewRegistry(logger)
 	appconfig.RegisterAll(registry, cfg)
 
-	// For prestart/poststart, check if app has a configurator before initializing DB
-	// This avoids chicken-and-egg problems for infrastructure apps (postgres, redis)
-	if action == "prestart" || action == "poststart" {
+	// For prestart, always regenerate env files from secrets.json before starting any app
+	// This ensures secrets.json is always the source of truth
+	if action == "prestart" {
 		if len(args) < 2 {
-			fmt.Fprintf(os.Stderr, "Usage: bloud-agent configure %s <app-name>\n", action)
+			fmt.Fprintln(os.Stderr, "Usage: bloud-agent configure prestart <app-name>")
+			return 1
+		}
+		appName := args[1]
+
+		// Regenerate env files from secrets.json (source of truth)
+		if cfg.Secrets != nil {
+			if err := cfg.Secrets.WriteEnvFiles(); err != nil {
+				logger.Error("failed to regenerate env files", "error", err)
+				return 1
+			}
+			logger.Info("regenerated env files from secrets.json")
+		}
+
+		// If no configurator, we're done
+		if registry.Get(appName) == nil {
+			logger.Debug("no configurator registered, skipping", "app", appName)
+			return 0
+		}
+	}
+
+	// For poststart, check if app has a configurator before initializing DB
+	if action == "poststart" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: bloud-agent configure poststart <app-name>")
 			return 1
 		}
 		appName := args[1]
