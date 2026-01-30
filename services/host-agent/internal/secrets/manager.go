@@ -445,6 +445,20 @@ func (m *Manager) Path() string {
 	return m.path
 }
 
+// WriteEnvFiles regenerates all env files from the current secrets.
+// This ensures env files are always in sync with secrets.json.
+func (m *Manager) WriteEnvFiles() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.secrets == nil {
+		return fmt.Errorf("secrets not loaded")
+	}
+
+	dir := filepath.Dir(m.path)
+	return m.writeEnvFiles(dir)
+}
+
 // generateSecret generates a cryptographically random secret of the given length.
 // The result is base64 URL-encoded for safe use in configs.
 func generateSecret(length int) string {
