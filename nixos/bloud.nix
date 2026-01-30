@@ -68,8 +68,12 @@ in
     bloud.apps.authentik.enable = lib.mkDefault true;  # Authentication/SSO
 
     # Create shared directories used by multiple apps
+    # IMPORTANT: Also fix ownership of parent dirs (.local, .local/share) since
+    # activation scripts run as root and may create these with root ownership
     system.activationScripts.bloud-shared-dirs = lib.stringAfter [ "users" ] ''
       mkdir -p /home/${cfg.user}/.local/share/${cfg.dataDir}/{downloads,media/{shows,movies}}
+      chown ${cfg.user}:users /home/${cfg.user}/.local
+      chown ${cfg.user}:users /home/${cfg.user}/.local/share
       chown ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}
       chown ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}/downloads
       chown -R ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}/media
@@ -93,6 +97,7 @@ in
     };
 
     # Podman network creation (apps declare dependency on this via After=)
+    # Note: Check if network exists first to avoid masking real errors with || true
     systemd.user.services.podman-apps-network = {
       description = "Create podman network for apps stack";
       wantedBy = [ "bloud-apps.target" ];
@@ -100,7 +105,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network create apps-net || true'";
+        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network exists apps-net || ${pkgs.podman}/bin/podman network create apps-net'";
         ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network rm apps-net || true'";
       };
     };
