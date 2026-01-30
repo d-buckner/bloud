@@ -46,6 +46,7 @@
       enable = true;
       allowedTCPPorts = [
         22    # SSH
+        80    # HTTP (redirects to 8080)
         3000  # Host Agent API
         5173  # Vite Dev Server
         8080  # Traefik (main entry point)
@@ -58,7 +59,17 @@
         9999  # Dev server API (if enabled)
       ];
     };
+
   };
+
+  # Redirect port 80 -> 8080 (Traefik runs as unprivileged user)
+  # Using iptables REDIRECT which rewrites the destination port in-place
+  networking.firewall.extraCommands = ''
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+  '';
+  networking.firewall.extraStopCommands = ''
+    iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
+  '';
 
   # Bloud user - dedicated service user
   users.users.bloud = {
@@ -139,8 +150,8 @@
     enable = true;
     user = "bloud";
     agentPath = "/tmp/host-agent";  # Build with: go build -o /tmp/host-agent ./cmd/host-agent
-    externalHost = "http://bloud.local:8080";
-    authentikExternalHost = "http://bloud.local:8080";
+    externalHost = "http://bloud.local";
+    authentikExternalHost = "http://bloud.local";
   };
 
   # Nix settings - enable flakes
