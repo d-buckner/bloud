@@ -12,6 +12,7 @@ export default defineConfig({
 	},
 	server: {
 		host: '0.0.0.0',
+		allowedHosts: ['bloud.local', 'localhost'],
 		watch: {
 			// Use polling for 9p/NFS mounts (Lima VM)
 			usePolling: true,
