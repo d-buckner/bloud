@@ -153,6 +153,87 @@ in
 
     # Helper commands
     environment.systemPackages = [
+      (pkgs.writeShellScriptBin "bloud-reset" ''
+        echo "╔════════════════════════════════════════════════════════════╗"
+        echo "║              Bloud Reset (Full State Wipe)                 ║"
+        echo "╚════════════════════════════════════════════════════════════╝"
+        echo ""
+
+        # Parse args
+        KEEP_SECRETS=true
+        for arg in "$@"; do
+          case $arg in
+            --include-secrets)
+              KEEP_SECRETS=false
+              ;;
+          esac
+        done
+
+        DATA_DIR="$HOME/.local/share/${cfg.dataDir}"
+
+        echo "This will:"
+        echo "  • Stop all Bloud services"
+        echo "  • Remove all containers and networks"
+        echo "  • Delete all app data in $DATA_DIR"
+        if [ "$KEEP_SECRETS" = "false" ]; then
+          echo "  • Delete secrets.json and env files (--include-secrets)"
+        else
+          echo "  • Keep secrets.json (use --include-secrets to also remove)"
+        fi
+        echo ""
+
+        read -p "Are you sure? [y/N] " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+          echo "Aborted."
+          exit 1
+        fi
+
+        echo ""
+        echo "Stopping services..."
+        systemctl --user stop bloud-apps.target 2>/dev/null || true
+        systemctl --user stop podman-apps-network.service 2>/dev/null || true
+
+        echo "Removing containers..."
+        ${pkgs.podman}/bin/podman stop -a 2>/dev/null || true
+        ${pkgs.podman}/bin/podman rm -a -f 2>/dev/null || true
+
+        echo "Removing networks..."
+        ${pkgs.podman}/bin/podman network rm apps-net 2>/dev/null || true
+
+        echo "Removing app data..."
+        if [ -d "$DATA_DIR" ]; then
+          if [ "$KEEP_SECRETS" = "true" ]; then
+            for item in "$DATA_DIR"/*; do
+              [ -e "$item" ] || continue
+              name=$(basename "$item")
+              case "$name" in
+                secrets.json|*.env)
+                  echo "  Keeping: $name"
+                  ;;
+                *)
+                  echo "  Removing: $name"
+                  ${pkgs.podman}/bin/podman unshare rm -rf "$item" 2>/dev/null || rm -rf "$item" 2>/dev/null || true
+                  ;;
+              esac
+            done
+          else
+            echo "  Removing: $DATA_DIR"
+            ${pkgs.podman}/bin/podman unshare rm -rf "$DATA_DIR" 2>/dev/null || rm -rf "$DATA_DIR" 2>/dev/null || true
+          fi
+        fi
+
+        echo "Resetting systemd state..."
+        systemctl --user reset-failed 2>/dev/null || true
+
+        echo ""
+        echo "════════════════════════════════════════════════════════════"
+        echo "Reset complete. To restart with fresh state:"
+        echo ""
+        echo "  cd ~/bloud/services/host-agent && go build -o /tmp/host-agent ./cmd/host-agent"
+        echo "  sudo nixos-rebuild switch --flake ~/bloud#dev-server --impure"
+        echo "  sudo systemctl restart bloud-user-services"
+        echo "════════════════════════════════════════════════════════════"
+      '')
       (pkgs.writeShellScriptBin "bloud-test" ''
         echo "╔════════════════════════════════════════════════════════════╗"
         echo "║           Bloud Local Testing (Rootless)                  ║"
