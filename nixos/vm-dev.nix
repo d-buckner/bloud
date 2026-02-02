@@ -135,6 +135,9 @@
     };
   };
 
+  # VS Code Remote SSH support
+  services.vscode-server.enable = true;
+
   # Enable Bloud infrastructure
   bloud = {
     enable = true;
