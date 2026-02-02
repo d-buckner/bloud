@@ -46,6 +46,7 @@
       enable = true;
       allowedTCPPorts = [
         22    # SSH
+        53    # DNS (redirects to 5353)
         80    # HTTP (redirects to 8080)
         3000  # Host Agent API
         5173  # Vite Dev Server
@@ -58,17 +59,25 @@
         5006  # Actual Budget direct
         9999  # Dev server API (if enabled)
       ];
+      allowedUDPPorts = [
+        53    # DNS (redirects to 5353)
+      ];
     };
 
   };
 
-  # Redirect port 80 -> 8080 (Traefik runs as unprivileged user)
-  # Using iptables REDIRECT which rewrites the destination port in-place
+  # Redirect privileged ports to unprivileged ports (rootless containers)
+  # Port 80 -> 8080 (Traefik)
+  # Port 53 -> 5353 (AdGuard DNS)
   networking.firewall.extraCommands = ''
     iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+    iptables -t nat -A PREROUTING -p tcp --dport 53 -j REDIRECT --to-port 5353
+    iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-port 5353
   '';
   networking.firewall.extraStopCommands = ''
     iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
+    iptables -t nat -D PREROUTING -p tcp --dport 53 -j REDIRECT --to-port 5353 || true
+    iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-port 5353 || true
   '';
 
   # Bloud user - dedicated service user
