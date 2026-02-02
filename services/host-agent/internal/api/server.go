@@ -54,13 +54,13 @@ type Server struct {
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
-	AppsDir      string
-	ConfigDir string
-	DataDir      string // Path to bloud data directory (for Traefik config, etc.)
-	FlakePath    string
-	FlakeTarget  string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
-	NixosPath    string
-	Port         int
+	AppsDir     string
+	ConfigDir   string
+	DataDir     string // Path to bloud data directory (for Traefik config, etc.)
+	FlakePath   string
+	FlakeTarget string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
+	NixosPath   string
+	Port        int
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
@@ -97,11 +97,22 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	// Initialize session store if Redis is configured
 	var sessionStore *store.SessionStore
 	if cfg.RedisAddr != "" {
-		var err error
-		sessionStore, err = store.NewSessionStore(cfg.RedisAddr)
-		if err != nil {
-			logger.Warn("failed to connect to Redis for sessions", "error", err)
-			// Continue without session store - auth will be disabled
+		// Retry Redis connection with backoff (Redis may still be starting)
+		maxRetries := 10
+		for i := 0; i < maxRetries; i++ {
+			var err error
+			sessionStore, err = store.NewSessionStore(cfg.RedisAddr)
+			if err == nil {
+				break
+			}
+
+			if i < maxRetries-1 {
+				logger.Info("waiting for Redis...", "attempt", i+1, "error", err)
+				time.Sleep(time.Duration(i+1) * time.Second)
+				continue
+			}
+
+			logger.Warn("failed to connect to Redis after retries", "error", err)
 		}
 	}
 
