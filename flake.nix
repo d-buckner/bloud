@@ -8,9 +8,13 @@
       url = "github:nix-community/nixos-generators";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nixos-vscode-server = {
+      url = "github:nix-community/nixos-vscode-server";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nixos-generators }:
+  outputs = { self, nixpkgs, nixos-generators, nixos-vscode-server }:
     let
       # Support both Apple Silicon and Intel Macs
       supportedSystems = [ "aarch64-linux" "x86_64-linux" ];
@@ -27,6 +31,7 @@
           modules = [
             ./nixos/vm-dev.nix
             ./nixos/bloud.nix
+            nixos-vscode-server.nixosModules.default
           ];
         };
 
@@ -36,6 +41,7 @@
           modules = [
             ./nixos/vm-dev.nix
             ./nixos/bloud.nix
+            nixos-vscode-server.nixosModules.default
           ];
         };
 
