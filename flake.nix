@@ -70,6 +70,7 @@
           modules = [
             ./nixos/dev-server.nix
             ./nixos/bloud.nix
+            nixos-vscode-server.nixosModules.default
           ];
         };
       };

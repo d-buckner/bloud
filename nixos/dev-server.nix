@@ -144,6 +144,9 @@
     };
   };
 
+  # VS Code Remote SSH support
+  services.vscode-server.enable = true;
+
   # mDNS for bloud.local resolution
   services.avahi = {
     enable = true;
