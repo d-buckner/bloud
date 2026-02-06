@@ -145,7 +145,9 @@
   };
 
   # VS Code Remote SSH support
+  # This auto-patches VS Code server binaries for NixOS compatibility
   services.vscode-server.enable = true;
+  services.vscode-server.enableFHS = true;  # Use FHS environment for better compatibility
 
   # mDNS for bloud.local resolution
   services.avahi = {
@@ -192,6 +194,16 @@
     lsof
     netcat
     tcpdump
+
+    # Claude Code CLI wrapper (actual install via npm)
+    (writeShellScriptBin "claude" ''
+      # Ensure Claude Code is installed
+      if ! command -v ${pkgs.nodejs_22}/bin/npx &> /dev/null; then
+        echo "Node.js not available"
+        exit 1
+      fi
+      exec ${pkgs.nodejs_22}/bin/npx -y @anthropic-ai/claude-code@latest "$@"
+    '')
   ];
 
   # Git configuration - mark mounted directories as safe
