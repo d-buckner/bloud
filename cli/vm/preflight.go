@@ -161,6 +161,24 @@ func PrintImageBuildInstructions() {
 	fmt.Println()
 }
 
+// RunNativePreflightChecks runs preflight checks for native NixOS
+func RunNativePreflightChecks() *PreflightResult {
+	result := &PreflightResult{}
+
+	for _, tool := range []struct{ name, fixHint string }{
+		{"go", "Ensure Go is available in your NixOS configuration"},
+		{"node", "Ensure Node.js is available in your NixOS configuration"},
+		{"tmux", "Ensure tmux is available in your NixOS configuration"},
+		{"podman", "Ensure podman is available in your NixOS configuration"},
+	} {
+		if _, err := exec.LookPath(tool.name); err != nil {
+			result.AddError(tool.name, tool.name+" is not installed", tool.fixHint, "")
+		}
+	}
+
+	return result
+}
+
 // QuickPreflightCheck does a fast check and returns a simple error if anything fails
 // Used for commands that just need to know if the basics are ready
 func QuickPreflightCheck() error {
