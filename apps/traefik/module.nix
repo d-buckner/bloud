@@ -32,6 +32,7 @@ in
   };
 
   config = lib.mkIf appCfg.enable {
+    bloud.pullImages = [ "traefik:v3.0" ];
     # Create Traefik configuration files
     # IMPORTANT: Use atomic writes (write to .tmp, then mv) to prevent Traefik from
     # seeing truncated files during config reload. Non-atomic writes cause race conditions

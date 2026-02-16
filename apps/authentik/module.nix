@@ -65,6 +65,13 @@ in
   };
 
   config = lib.mkIf appCfg.enable {
+    bloud.pullImages = [
+      "ghcr.io/goauthentik/server:2025.10.3"
+      "nginx:alpine"
+    ] ++ lib.optionals appCfg.ldap.enable [
+      "ghcr.io/goauthentik/ldap:2025.10.3"
+    ];
+
     # Ensure shared infrastructure is enabled
     bloud.apps.postgres.enable = true;
     bloud.apps.redis.enable = true;
