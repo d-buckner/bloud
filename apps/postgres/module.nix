@@ -36,6 +36,7 @@ mkBloudApp {
 
   # Create data directory manually
   extraConfig = cfg: {
+    bloud.pullImages = [ "postgres:16-alpine" ];
     system.activationScripts.bloud-apps-postgres-dirs = lib.stringAfter [ "users" ] ''
       mkdir -p ${cfg.configPath}/apps-postgres
       chown -R ${cfg.bloudUser}:users ${cfg.configPath}/apps-postgres
