@@ -44,6 +44,7 @@ lima/test-nixos.yaml
 
 # OS
 .DS_Store
+*.iso
 Thumbs.db
 
 # Editor

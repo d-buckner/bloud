@@ -2,127 +2,96 @@
 
 let
   cfg = config.bloud.host-agent;
-  postgresCfg = config.bloud.apps.postgres;
+  bloudCfg = config.bloud;
+  userHome = "/home/${bloudCfg.user}";
+  dataDir = "${userHome}/.local/share/${bloudCfg.dataDir}";
 
-  userHome = "/home/${cfg.user}";
-  defaultDataDir = "${userHome}/.local/share/bloud";
+  defaultPackage = pkgs.callPackage ../packages/host-agent.nix {
+    frontend = pkgs.callPackage ../packages/frontend.nix {};
+  };
 
-  # Build database URL from postgres config
-  databaseURL = "postgres://${postgresCfg.user}:${postgresCfg.password}@localhost:5432/bloud?sslmode=disable";
-
-  # For initial development, we'll use a manually built binary
-  # The binary should be built and placed at /tmp/host-agent
-  # Later: Use buildGoModule for proper Nix packaging
-  host-agent-dev = pkgs.writeShellScriptBin "host-agent-dev" ''
-    # Check if the manually built binary exists
-    if [ ! -f /tmp/host-agent ]; then
-      echo "ERROR: host-agent binary not found at /tmp/host-agent"
-      echo "Please build it first: cd services/host-agent && go build -o /tmp/host-agent ./cmd/host-agent"
-      exit 1
-    fi
-
-    exec /tmp/host-agent
-  '';
+  pkg = cfg.package;
 
 in
 {
   options.bloud.host-agent = {
     enable = lib.mkEnableOption "Bloud host agent service";
 
-    user = lib.mkOption {
-      type = lib.types.str;
-      default = "daniel";
-      description = "User to run host agent as";
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = defaultPackage;
+      description = "The bloud host-agent package to use";
     };
 
     port = lib.mkOption {
       type = lib.types.int;
-      default = 8080;
+      default = 3000;
       description = "HTTP port for web UI and API";
     };
 
-    dataDir = lib.mkOption {
+    flakeTarget = lib.mkOption {
       type = lib.types.str;
-      default = defaultDataDir;
-      description = "Directory for host agent data (configs, catalog)";
+      default = "dev-server";
+      description = "Flake target for nixos-rebuild (e.g., 'dev-server', 'iso')";
+    };
+
+    sourceDir = lib.mkOption {
+      type = lib.types.str;
+      default = "${pkg}/share/bloud";
+      description = "Path to the bloud source tree (apps, nixos modules, flake)";
     };
   };
 
   config = lib.mkIf cfg.enable {
     # Create data directories
     system.activationScripts.bloud-host-agent-dirs = lib.stringAfter [ "users" ] ''
-      mkdir -p ${cfg.dataDir}/{nixos/apps,catalog}
-      chown -R ${cfg.user}:users ${cfg.dataDir}
+      mkdir -p ${dataDir}/{nix,catalog}
+      chown -R ${bloudCfg.user}:users ${dataDir}
     '';
-
-    # Database initialization service
-    systemd.services.bloud-host-agent-db-init = {
-      description = "Initialize bloud host-agent database";
-      after = [ "podman-apps-postgres.service" ];
-      requires = [ "podman-apps-postgres.service" ];
-      before = [ "bloud-host-agent.service" ];
-      wantedBy = [ "multi-user.target" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        User = cfg.user;
-        Group = "users";
-        ExecStart = pkgs.writeShellScript "bloud-db-init" ''
-          set -e
-
-          # Wait for postgres to be ready
-          echo "Waiting for PostgreSQL to be ready..."
-          for i in $(seq 1 30); do
-            if ${pkgs.podman}/bin/podman exec apps-postgres pg_isready -U ${postgresCfg.user} > /dev/null 2>&1; then
-              echo "PostgreSQL is ready"
-              break
-            fi
-            if [ $i -eq 30 ]; then
-              echo "Timeout waiting for PostgreSQL"
-              exit 1
-            fi
-            sleep 2
-          done
-
-          # Create database if not exists
-          if ! ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${postgresCfg.user} -tc "SELECT 1 FROM pg_database WHERE datname = 'bloud'" | grep -q 1; then
-            echo "Creating bloud database..."
-            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${postgresCfg.user} -c "CREATE DATABASE bloud"
-            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${postgresCfg.user} -c "GRANT ALL PRIVILEGES ON DATABASE bloud TO ${postgresCfg.user}"
-            echo "Database created successfully"
-          else
-            echo "Database bloud already exists"
-          fi
-        '';
-      };
-    };
 
     # systemd service (system-wide, NOT user service)
     # Runs as user but system-wide so it can manage system state
     systemd.services.bloud-host-agent = {
       description = "Bloud Host Agent - App Management & Web UI";
-      after = [ "network-online.target" "bloud-host-agent-db-init.service" ];
+      after = [ "network-online.target" "bloud-user-services.service" ];
       wants = [ "network-online.target" ];
-      requires = [ "bloud-host-agent-db-init.service" ];
       wantedBy = [ "multi-user.target" ];
 
       environment = {
         BLOUD_PORT = toString cfg.port;
-        BLOUD_DATA_DIR = cfg.dataDir;
-        DATABASE_URL = databaseURL;
+        BLOUD_DATA_DIR = dataDir;
+        # DATABASE_URL is built by host-agent from secrets.json at runtime
+        BLOUD_APPS_DIR = "${cfg.sourceDir}/apps";
+        BLOUD_FLAKE_PATH = cfg.sourceDir;
+        BLOUD_NIXOS_PATH = "${cfg.sourceDir}/nixos";
+        BLOUD_FLAKE_TARGET = cfg.flakeTarget;
       };
 
       serviceConfig = {
         Type = "simple";
-        User = cfg.user;
+        User = bloudCfg.user;
         Group = "users";
-        ExecStart = "${host-agent-dev}/bin/host-agent-dev";
+
+        ExecStartPre = pkgs.writeShellScript "bloud-host-agent-wait-db" ''
+          set -e
+          echo "Waiting for PostgreSQL and bloud database..."
+          for i in $(seq 1 120); do
+            if ${pkgs.podman}/bin/podman exec apps-postgres psql -U apps -d bloud -c "SELECT 1" > /dev/null 2>&1; then
+              echo "Database ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Timeout waiting for database"
+          exit 1
+        '';
+
+        ExecStart = "${pkg}/bin/host-agent";
         Restart = "always";
         RestartSec = "10s";
 
-        # Working directory
-        WorkingDirectory = userHome;
+        # Working directory for web/build/ lookup
+        WorkingDirectory = "${cfg.sourceDir}";
 
         # Allow service to continue during system shutdown
         KillMode = "mixed";
@@ -136,10 +105,10 @@ in
       };
     };
 
-    # Allow user to run nixos-rebuild without password (for future app installation feature)
+    # Allow user to run nixos-rebuild without password
     security.sudo.extraRules = [
       {
-        users = [ cfg.user ];
+        users = [ bloudCfg.user ];
         commands = [
           {
             command = "${pkgs.nixos-rebuild}/bin/nixos-rebuild";
@@ -151,7 +120,6 @@ in
 
     # Add helper commands to systemPackages
     environment.systemPackages = [
-      # Status checker
       (pkgs.writeShellScriptBin "bloud-host-agent-status" ''
         echo "╔═══════════════════════════════════════════════════╗"
         echo "║           Bloud Host Agent Status                ║"
@@ -166,12 +134,10 @@ in
         journalctl -u bloud-host-agent.service -n 20 --no-pager
       '')
 
-      # Log viewer
       (pkgs.writeShellScriptBin "bloud-host-agent-logs" ''
         journalctl -u bloud-host-agent.service -f
       '')
 
-      # Restart helper
       (pkgs.writeShellScriptBin "bloud-host-agent-restart" ''
         sudo systemctl restart bloud-host-agent.service
         sleep 2

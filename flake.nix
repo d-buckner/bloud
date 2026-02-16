@@ -73,6 +73,15 @@
             nixos-vscode-server.nixosModules.default
           ];
         };
+
+        # Bootable appliance ISO (x86_64 only)
+        # Build with: nix build .#packages.x86_64-linux.iso
+        iso = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/iso.nix
+          ];
+        };
       };
 
       # Packages for building images
@@ -88,6 +97,10 @@
             modules = [ ./nixos/lima-image.nix ];
           };
         }
+        // (if system == "x86_64-linux" then {
+          # Bootable appliance ISO
+          iso = self.nixosConfigurations.iso.config.system.build.isoImage;
+        } else {})
       );
 
       # Development shells for each platform
