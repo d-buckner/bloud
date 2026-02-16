@@ -16,4 +16,8 @@ mkBloudApp {
   cmd = [ "--save" "60" "1" "--loglevel" "warning" ];
 
   dataDir = "/data";
+
+  extraConfig = _: {
+    bloud.pullImages = [ "redis:alpine" ];
+  };
 }

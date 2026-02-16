@@ -58,6 +58,12 @@ in
       default = "bloud";
       description = "Name of the data directory under ~/.local/share/ (e.g., 'bloud' or 'bloud-test')";
     };
+
+    pullImages = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Container images to pull sequentially before starting apps (avoids parallel pull storms)";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -107,6 +113,28 @@ in
         RemainAfterExit = true;
         ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network exists apps-net || ${pkgs.podman}/bin/podman network create apps-net'";
         ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network rm apps-net || true'";
+      };
+    };
+
+    # Pull container images sequentially before starting apps.
+    # Prevents parallel pull storms that exhaust Docker Hub rate limits.
+    systemd.user.services.bloud-pull-images = lib.mkIf (cfg.pullImages != []) {
+      description = "Pull container images sequentially";
+      wantedBy = [ "bloud-apps.target" ];
+      before = [ "bloud-apps.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = pkgs.writeShellScript "pull-images" ''
+          set -e
+          ${lib.concatMapStringsSep "\n" (img: ''
+            echo "Pulling ${img}..."
+            ${pkgs.podman}/bin/podman pull ${img}
+          '') (lib.unique cfg.pullImages)}
+          echo "All images pulled"
+        '';
       };
     };
 
