@@ -124,6 +124,7 @@ in
       before = [ "bloud-apps.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      path = [ "/run/wrappers" pkgs.podman ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
