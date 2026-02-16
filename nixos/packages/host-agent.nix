@@ -32,7 +32,7 @@ pkgs.buildGo124Module {
 
   subPackages = [ "cmd/host-agent" ];
 
-  vendorHash = "sha256-AZMr4gpXHbLYCezFELHkB2AlVXaJkFMuzFxec2n02EY=";
+  vendorHash = "sha256-4VJtJOwd/Yy/AvHgALEJ9xTvAAHRjj9+ZAmoNTHZt7c=";
 
   # The apps/go.mod has a reverse `replace` back to host-agent, creating a
   # circular module reference. Remove it before go mod download and go build.
