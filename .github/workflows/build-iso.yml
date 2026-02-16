@@ -3,6 +3,9 @@ name: Build ISO
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-iso:
     runs-on: ubuntu-latest
@@ -26,17 +29,32 @@ jobs:
         run: |
           nix build .#packages.x86_64-linux.iso --out-link result-iso
 
-      - name: Rename ISO with build timestamp
+      - name: Prepare release
         run: |
-          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          TAG="iso-$(date -u +%Y%m%d-%H%M%S)"
           ISO_SRC=$(find result-iso/iso -name '*.iso' | head -1)
           ISO_NAME="bloud-${TIMESTAMP}.iso"
           cp "$ISO_SRC" "$ISO_NAME"
+          sha256sum "$ISO_NAME" > "$ISO_NAME.sha256"
+          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          echo "TAG=$TAG" >> $GITHUB_ENV
           echo "ISO_NAME=$ISO_NAME" >> $GITHUB_ENV
           ls -lh "$ISO_NAME"
 
-      - name: Upload ISO
-        uses: actions/upload-artifact@v4
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ env.ISO_NAME }}
-          path: ${{ env.ISO_NAME }}
+          tag_name: ${{ env.TAG }}
+          name: bloud
+          body: |
+            Bloud ISO built at ${{ env.TIMESTAMP }}.
+
+            Flash to USB or boot in a VM (Proxmox, QEMU, etc).
+
+            Default credentials: `bloud` / `bloud`
+          files: |
+            ${{ env.ISO_NAME }}
+            ${{ env.ISO_NAME }}.sha256
+          draft: false
+          prerelease: false
