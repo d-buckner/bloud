@@ -65,6 +65,8 @@ in
         BLOUD_FLAKE_PATH = cfg.sourceDir;
         BLOUD_NIXOS_PATH = "${cfg.sourceDir}/nixos";
         BLOUD_FLAKE_TARGET = cfg.flakeTarget;
+        BLOUD_SSO_BASE_URL = bloudCfg.externalHost;
+        BLOUD_SSO_AUTHENTIK_URL = bloudCfg.authentikExternalHost;
       };
 
       serviceConfig = {

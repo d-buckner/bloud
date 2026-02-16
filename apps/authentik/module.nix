@@ -153,9 +153,10 @@ in
           # AUTHENTIK_BOOTSTRAP_TOKEN loaded from envFile
           # Enable blueprint discovery
           AUTHENTIK_BLUEPRINTS_DIR = "/blueprints";
-          # External host for OAuth redirects (goes through Traefik for iframe headers)
+          # Internal: Authentik talks to itself via Traefik inside the VM
           AUTHENTIK_HOST = "http://localhost:${toString traefikCfg.port}";
-          AUTHENTIK_HOST_BROWSER = "http://localhost:${toString traefikCfg.port}";
+          # External: URLs sent to browsers for OAuth redirects
+          AUTHENTIK_HOST_BROWSER = "${bloudCfg.externalHost}";
         };
         volumes = [
           "${configPath}/authentik-media:/media:z"
