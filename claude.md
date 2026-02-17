@@ -200,6 +200,7 @@ mkdir -p build
 cd services/host-agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/host-agent ./cmd/host-agent
 cd ../.. && npm ci && npm run build --workspace=services/host-agent/web
 cp -r services/host-agent/web/build build/frontend
+git add -f build/   # Nix flakes only see git-tracked files
 nix build .#packages.x86_64-linux.iso
 ```
 
