@@ -72,19 +72,11 @@ except Exception as e:
 `
 
 	// Run via podman exec with env vars for password/email (avoids shell injection)
-	cmd := exec.CommandContext(ctx, "podman", "exec",
-		"-e", fmt.Sprintf("BLOUD_ADMIN_PASSWORD=%s", c.bootstrapPassword),
-		"-e", fmt.Sprintf("BLOUD_ADMIN_EMAIL=%s", c.bootstrapEmail),
-		"apps-authentik-server", "ak", "shell", "-c", pythonCode)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to set admin password: %w (output: %s)", err, string(output))
-	}
-
-	outputStr := strings.TrimSpace(string(output))
-	// Look for OK in the output (there may be logging before it)
-	if !strings.Contains(outputStr, "OK") {
-		return fmt.Errorf("unexpected output from password set: %s", outputStr)
+	if err := runDjangoShell(ctx, map[string]string{
+		"BLOUD_ADMIN_PASSWORD": c.bootstrapPassword,
+		"BLOUD_ADMIN_EMAIL":    c.bootstrapEmail,
+	}, pythonCode); err != nil {
+		return fmt.Errorf("failed to set admin password: %w", err)
 	}
 
 	// Step 2: Ensure API token exists via Django shell
@@ -112,14 +104,29 @@ except Exception as e:
 	return nil
 }
 
-// ensureAPIToken creates or updates the API token via Django shell
-// This is more reliable than AUTHENTIK_BOOTSTRAP_TOKEN which has known issues
+// ensureAPIToken creates or updates the API token via Django shell.
+// Uses a dedicated bloud-api service account so the token survives akadmin deletion.
 func (c *Configurator) ensureAPIToken(ctx context.Context) error {
 	pythonCode := `
 import os
-from authentik.core.models import Token, User
+from authentik.core.models import Token, User, Group
 try:
-    user = User.objects.get(username='akadmin')
+    # Get or create a dedicated service account for the API token
+    user, _ = User.objects.get_or_create(
+        username='bloud-api',
+        defaults={
+            'name': 'Bloud API Service Account',
+            'type': 'internal_service_account',
+            'path': 'users',
+            'is_active': True,
+        }
+    )
+
+    # Add to authentik Admins group for API access
+    group = Group.objects.get(name='authentik Admins')
+    group.users.add(user)
+
+    # Create or update the API token
     token, created = Token.objects.get_or_create(
         identifier='bloud-api-token',
         defaults={
@@ -131,8 +138,10 @@ try:
         }
     )
     if not created:
-        # Update key and intent if they don't match
         needs_save = False
+        if token.user != user:
+            token.user = user
+            needs_save = True
         if token.key != os.environ['BLOUD_TOKEN_KEY']:
             token.key = os.environ['BLOUD_TOKEN_KEY']
             needs_save = True
@@ -146,17 +155,28 @@ except Exception as e:
     print(f'ERROR: {e}')
 `
 
-	cmd := exec.CommandContext(ctx, "podman", "exec",
-		"-e", fmt.Sprintf("BLOUD_TOKEN_KEY=%s", c.tokenKey),
-		"apps-authentik-server", "ak", "shell", "-c", pythonCode)
-	output, err := cmd.CombinedOutput()
+	return runDjangoShell(ctx, map[string]string{
+		"BLOUD_TOKEN_KEY": c.tokenKey,
+	}, pythonCode)
+}
+
+// runDjangoShell executes a Python script inside the Authentik container via `ak shell`.
+// Environment variables are passed securely via podman exec -e flags.
+// The script must print 'OK' on success or 'ERROR: ...' on failure.
+func runDjangoShell(ctx context.Context, env map[string]string, script string) error {
+	args := []string{"exec"}
+	for k, v := range env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
+	}
+	args = append(args, "apps-authentik-server", "ak", "shell", "-c", script)
+
+	output, err := exec.CommandContext(ctx, "podman", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("django shell failed: %w (output: %s)", err, string(output))
 	}
 
-	outputStr := strings.TrimSpace(string(output))
-	if !strings.Contains(outputStr, "OK") {
-		return fmt.Errorf("unexpected output: %s", outputStr)
+	if !strings.Contains(strings.TrimSpace(string(output)), "OK") {
+		return fmt.Errorf("django shell failed: %s", string(output))
 	}
 
 	return nil
