@@ -27,6 +27,13 @@
   # Boot loader (override iso-image.nix default of 10)
   boot.loader.timeout = lib.mkForce 5;
 
+  # Give root tmpfs 80% of RAM (default 50% is too small for container images)
+  fileSystems."/" = lib.mkForce {
+    device = "tmpfs";
+    fsType = "tmpfs";
+    options = [ "size=80%" "mode=755" ];
+  };
+
   # QEMU guest agent for Proxmox/KVM integration
   services.qemuGuest.enable = true;
 
