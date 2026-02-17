@@ -6,9 +6,7 @@ let
   userHome = "/home/${bloudCfg.user}";
   dataDir = "${userHome}/.local/share/${bloudCfg.dataDir}";
 
-  defaultPackage = pkgs.callPackage ../packages/host-agent.nix {
-    frontend = pkgs.callPackage ../packages/frontend.nix {};
-  };
+  defaultPackage = pkgs.callPackage ../packages/host-agent.nix {};
 
   pkg = cfg.package;
 
