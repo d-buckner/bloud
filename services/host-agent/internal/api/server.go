@@ -64,8 +64,9 @@ type ServerConfig struct {
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
-	SSOAuthentikURL string // Authentik URL for discovery (e.g., "http://localhost:8080")
+	SSOAuthentikURL string // Authentik external URL for browser OAuth discovery
 	AuthentikToken  string // Authentik API token for SSO cleanup
+	AuthentikPort   int    // Authentik API port (default 9001)
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
 	// Registry holds app configurators for reconciliation
@@ -89,9 +90,12 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	}
 
 	// Initialize Authentik client if token is available
+	// Uses localhost:{port} for server-side API calls. SSOAuthentikURL is the
+	// browser-facing external URL used for OAuth discovery/redirects.
 	var authentikClient *authentik.Client
-	if cfg.AuthentikToken != "" && cfg.SSOAuthentikURL != "" {
-		authentikClient = authentik.NewClient(cfg.SSOAuthentikURL, cfg.AuthentikToken)
+	if cfg.AuthentikToken != "" && cfg.AuthentikPort > 0 {
+		internalURL := fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort)
+		authentikClient = authentik.NewClient(internalURL, cfg.AuthentikToken)
 	}
 
 	// Initialize session store if Redis is configured

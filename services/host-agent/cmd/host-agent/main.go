@@ -76,6 +76,7 @@ func runServer() {
 		SSOBaseURL:      cfg.SSOBaseURL,
 		SSOAuthentikURL: cfg.SSOAuthentikURL,
 		AuthentikToken:  cfg.AuthentikToken,
+		AuthentikPort:   cfg.AuthentikPort,
 		RedisAddr:       cfg.RedisAddr,
 		Registry:        registry,
 	}, logger)
