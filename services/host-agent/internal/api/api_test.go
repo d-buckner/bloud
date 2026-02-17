@@ -296,16 +296,18 @@ tags:
 
 	// Create server with fakes
 	server := &Server{
-		router:       chi.NewRouter(),
-		catalog:      catalogCache,
-		graph:        graph,
-		appStore:     appStore,
-		appHub:       appHub,
-		appsDir:      tmpDir,
-		nixConfigDir: filepath.Join(tmpDir, "nix"),
-		dataDir:      tmpDir,
-		port:         8080,
-		logger:       logger,
+		cfg: ServerConfig{
+			AppsDir:   tmpDir,
+			ConfigDir: filepath.Join(tmpDir, "nix"),
+			DataDir:   tmpDir,
+			Port:      8080,
+		},
+		router:   chi.NewRouter(),
+		catalog:  catalogCache,
+		graph:    graph,
+		appStore: appStore,
+		appHub:   appHub,
+		logger:   logger,
 	}
 
 	server.setupMiddleware()
@@ -381,16 +383,18 @@ integrations:
 
 	// Create server
 	server := &Server{
-		router:       chi.NewRouter(),
-		catalog:      catalogCache,
-		graph:        graph,
-		appStore:     appStore,
-		appHub:       appHub,
-		appsDir:      tmpDir,
-		nixConfigDir: filepath.Join(tmpDir, "nix"),
-		dataDir:      tmpDir,
-		port:         8080,
-		logger:       logger,
+		cfg: ServerConfig{
+			AppsDir:   tmpDir,
+			ConfigDir: filepath.Join(tmpDir, "nix"),
+			DataDir:   tmpDir,
+			Port:      8080,
+		},
+		router:   chi.NewRouter(),
+		catalog:  catalogCache,
+		graph:    graph,
+		appStore: appStore,
+		appHub:   appHub,
+		logger:   logger,
 	}
 
 	server.setupMiddleware()
@@ -829,7 +833,7 @@ func TestAPI_ClearData_OrphanedData(t *testing.T) {
 	require.NoError(t, os.MkdirAll(appDataDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(appDataDir, "data.txt"), []byte("test"), 0644))
 
-	server.dataDir = dataDir
+	server.cfg.DataDir = dataDir
 
 	req := httptest.NewRequest("POST", "/api/apps/test-app/clear-data", nil)
 	w := httptest.NewRecorder()
