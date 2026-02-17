@@ -94,8 +94,6 @@ export interface IndexedDBConfig {
 	// Writes: Values written from main page before iframe loads
 	// Use for values that apps don't overwrite on init
 	writes?: IndexedDBEntry[];
-	// Legacy: entries field (deprecated, use intercepts/writes instead)
-	entries?: IndexedDBEntry[];
 }
 
 export interface IndexedDBEntry {

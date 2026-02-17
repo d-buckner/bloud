@@ -25,6 +25,7 @@ dist/
 *.test
 *.out
 go.work
+go.work.sum
 services/host-agent/bin/*
 .last-run.json
 

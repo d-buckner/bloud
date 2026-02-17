@@ -74,7 +74,7 @@ When debugging:
 Located in `apps/<name>/` with each app having:
 - `metadata.yaml` - App catalog info (name, description, integrations, etc.)
 - `module.nix` - NixOS module for the app
-- `configure.go` - Go configurator for runtime integrations
+- `configurator.go` - Go configurator for runtime integrations
 
 Current implemented apps (14 total):
 - **Infrastructure:** postgres, redis, traefik, authentik

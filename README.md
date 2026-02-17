@@ -51,7 +51,7 @@ Bloud makes self-hosting accessible through three core ideas:
 
 2. **Declarative Deployment** - NixOS handles the actual containers. Enable an app, rebuild, and NixOS creates systemd services, volumes, networking - atomically.
 
-3. **Idempotent Configuration** - StaticConfig (ExecStartPre) handles config files and directories. DynamicConfig (ExecStartPost) handles API calls and integrations. Both run on every service start.
+3. **Idempotent Configuration** - PreStart (ExecStartPre) handles config files and directories. PostStart (ExecStartPost) handles API calls and integrations. Both run on every service start.
 
 ### The Big Picture
 
@@ -89,9 +89,9 @@ Here's what happens when you install Miniflux:
 ┌─────────────────────────────────────────────────────────────────────┐
 │  3. CONFIGURATION                                                   │
 │                                                                     │
-│     StaticConfig: Create directories, write Traefik SSO redirect    │
+│     PreStart: Create directories, write Traefik SSO redirect        │
 │     HealthCheck: Wait for /healthcheck to respond                   │
-│     DynamicConfig: Set admin user theme via Miniflux API            │
+│     PostStart: Set admin user theme via Miniflux API                │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -211,26 +211,17 @@ type Configurator struct{}
 
 func (c *Configurator) Name() string { return "miniflux" }
 
-// StaticConfig runs before container starts - returns whether config changed
-func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) (bool, error) {
+// PreStart runs before container starts - creates config files, directories
+func (c *Configurator) PreStart(ctx context.Context, state *AppState) error {
     // Determine desired config
     var desired []byte
     if _, hasSSO := state.Integrations["sso"]; hasSSO {
         desired = []byte(traefikSSOConfig)
     }
 
-    // Compare with current config
+    // Write config (idempotent - overwrites with same content)
     configPath := filepath.Join(c.traefikDir, "miniflux-sso.yml")
-    current, _ := os.ReadFile(configPath)
-    if bytes.Equal(current, desired) {
-        return false, nil  // No change needed
-    }
-
-    // Write new config
-    if err := os.WriteFile(configPath, desired, 0644); err != nil {
-        return false, err
-    }
-    return true, nil  // Config changed, restart needed
+    return os.WriteFile(configPath, desired, 0644)
 }
 
 // HealthCheck waits for the app to be ready
@@ -239,8 +230,8 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
     return configurator.WaitForHTTP(ctx, url, 60*time.Second)
 }
 
-// DynamicConfig runs as ExecStartPost - after container is healthy
-func (c *Configurator) DynamicConfig(ctx context.Context, state *AppState) error {
+// PostStart runs as ExecStartPost - after container is healthy
+func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
     // Wait for app to be ready
     if err := c.HealthCheck(ctx); err != nil {
         return err
@@ -286,7 +277,7 @@ Level 1: authentik                ← Depends on postgres + redis
 Level 2: miniflux, jellyfin       ← Depend on postgres and authentik
 ```
 
-Configuration runs level by level. Miniflux's DynamicConfig can assume postgres is already healthy.
+Configuration runs level by level. Miniflux's PostStart can assume postgres is already healthy.
 
 ## The Configuration Lifecycle
 
@@ -294,8 +285,8 @@ Configurators run as systemd hooks during service start:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  ExecStartPre: StaticConfig                                         │
-│  ───────────────────────────                                        │
+│  ExecStartPre: PreStart                                              │
+│  ──────────────────────                                              │
 │  Runs BEFORE container starts                                       │
 │                                                                     │
 │  • Create directories (container will mount them)                   │
@@ -321,8 +312,8 @@ Configurators run as systemd hooks during service start:
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  ExecStartPost: DynamicConfig                                       │
-│  ────────────────────────────                                       │
+│  ExecStartPost: PostStart                                            │
+│  ────────────────────────                                            │
 │  Runs AFTER container is healthy                                    │
 │                                                                     │
 │  • Configure app via its REST API                                   │
@@ -333,71 +324,43 @@ Configurators run as systemd hooks during service start:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Why Static vs Dynamic?
+### Why PreStart vs PostStart?
 
-The key distinction is whether a restart is needed:
+The key distinction is timing relative to the container lifecycle:
 
-| Phase         | Restart Required | Examples                                      |
-| ------------- | ---------------- | --------------------------------------------- |
-| StaticConfig  | If changed=true  | Config files, environment vars, certificates  |
-| DynamicConfig | No               | API calls, database records, runtime settings |
+| Phase     | When It Runs            | Examples                                      |
+| --------- | ----------------------- | --------------------------------------------- |
+| PreStart  | Before container starts | Config files, directories, certificates       |
+| PostStart | After container healthy | API calls, database records, runtime settings |
 
-**StaticConfig** handles things the app reads on startup. It returns `(changed bool, err error)` - the app only restarts if config actually changed.
+**PreStart** handles things the app reads on startup — config files, directories, environment setup. If PreStart fails, the container won't start.
 
-**DynamicConfig** handles things that can change while running. API calls modify the app's internal state immediately.
+**PostStart** handles things that require the app to be running. API calls modify the app's internal state immediately, no restart needed.
 
-Example: Miniflux's SSO redirect config is written to a Traefik config file - that's StaticConfig. But setting the admin user's theme via the Miniflux API applies immediately - that's DynamicConfig.
+Example: Miniflux's SSO redirect config is written to a Traefik config file — that's PreStart. But setting the admin user's theme via the Miniflux API applies immediately — that's PostStart.
 
 ### Idempotency
 
-Every phase must be safe to run repeatedly. StaticConfig returns `changed bool` to indicate if restart is needed:
+Every phase must be safe to run repeatedly. Write the desired state every time — don't assume previous runs succeeded:
 
 ```go
-// GOOD: Only compare/write the keys we manage, preserve user's other settings
-func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) (bool, error) {
-    // Keys we manage (user can set other keys freely)
-    managedKeys := []string{"DATABASE_URL", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET"}
-
-    // Desired values for our managed keys
+// GOOD: Idempotent - writes desired config state
+func (c *Configurator) PreStart(ctx context.Context, state *AppState) error {
     desired := map[string]string{
         "DATABASE_URL":       state.Database.URL,
         "OAUTH_CLIENT_ID":    state.OAuth.ClientID,
         "OAUTH_CLIENT_SECRET": state.OAuth.ClientSecret,
     }
 
-    // Read current file and extract only our managed keys
-    current := c.readManagedKeys(configPath, managedKeys)
-
-    // Compare only our keys (ignore user's other settings)
-    if maps.Equal(desired, current) {
-        return false, nil  // Our config unchanged
-    }
-
     // Write only our managed keys (merge with existing file)
-    if err := c.writeManagedKeys(configPath, desired); err != nil {
-        return false, err
-    }
-    return true, nil  // Our config changed, needs restart
+    return c.writeManagedKeys(configPath, desired)
 }
 
 // GOOD: Idempotent - API call sets to desired state
-func (c *Configurator) DynamicConfig(ctx context.Context, state *AppState) error {
+func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
     return c.setUserTheme(ctx, 1, "light_serif")  // Always sets to light
 }
-
-// BAD: Compares whole file - user changes would cause unnecessary restarts
-func (c *Configurator) StaticConfig(ctx context.Context, state *AppState) (bool, error) {
-    desired := []byte(fullConfig)
-    current, _ := os.ReadFile(configPath)
-    if !bytes.Equal(current, desired) {  // User edited other keys? restart!
-        os.WriteFile(configPath, desired, 0644)
-        return true, nil
-    }
-    return false, nil
-}
 ```
-
-**Key insight:** Only compare the keys you manage. Users can edit other parts of config files without triggering restarts.
 
 ## Orchestration
 
@@ -412,19 +375,19 @@ Systemd is the single source of truth for service dependencies and lifecycle. Co
 │  Requires=podman-database.service                                   │
 │                                                                     │
 │  [Service]                                                          │
-│  ExecStartPre=bloud-agent configure static app-a                    │
+│  ExecStartPre=bloud-agent configure prestart app-a                   │
 │  ExecStart=podman run app-a-image ...                               │
-│  ExecStartPost=bloud-agent configure dynamic app-a                  │
+│  ExecStartPost=bloud-agent configure poststart app-a                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 **How it works:**
 
 1. Systemd starts services in dependency order (After=/Requires=)
-2. Before container starts: `ExecStartPre` runs StaticConfig
+2. Before container starts: `ExecStartPre` runs PreStart
    - Writes config files, creates directories
 3. Container starts and becomes healthy
-4. After container healthy: `ExecStartPost` runs DynamicConfig
+4. After container healthy: `ExecStartPost` runs PostStart
    - Configures integrations via API
 
 Systemd handles everything: ordering, lifecycle, and running configurators at the right time.
@@ -443,10 +406,10 @@ Action: User installs auth-provider
 2. System checks: "Who has auth integration that auth-provider provides?"
    → app-a has auth integration, auth-provider is compatible
 3. app-a marked as invalidated
-4. Orchestrator runs app-a.StaticConfig() → returns changed=true
-5. Orchestrator restarts app-a (in dependency order)
+4. Orchestrator restarts app-a (in dependency order)
+5. ExecStartPre runs PreStart (writes updated config)
 6. Container starts
-7. ExecStartPost runs DynamicConfig (configures via API)
+7. ExecStartPost runs PostStart (configures via API)
 8. Auth configured
 ```
 
@@ -462,7 +425,7 @@ CREATE TABLE app_integrations (
     app_name TEXT,
     integration_name TEXT,
     source_app TEXT,           -- Which app provides this integration
-    configured_at TIMESTAMP,   -- When DynamicConfig last configured this
+    configured_at TIMESTAMP,   -- When PostStart last configured this
     PRIMARY KEY (app_name, integration_name)
 );
 ```
@@ -485,17 +448,13 @@ CREATE TABLE app_integrations (
 │  4. Mark apps as invalidated in database                            │
 │         │                                                           │
 │         ▼                                                           │
-│  5. Run StaticConfig for each invalidated app                       │
-│     app-a.StaticConfig() → changed=true                             │
-│     app-b.StaticConfig() → changed=true                             │
-│         │                                                           │
-│         ▼                                                           │
-│  6. Restart apps where changed=true (in dependency order)           │
+│  5. Restart invalidated apps (in dependency order)                   │
 │     Orchestrator queries systemd D-Bus for dependencies             │
 │     Topological sort → restart dependencies before dependents       │
 │         │                                                           │
 │         ▼                                                           │
-│  7. ExecStartPost runs DynamicConfig after container healthy        │
+│  6. ExecStartPre runs PreStart (writes updated config)              │
+│     ExecStartPost runs PostStart after container healthy            │
 │     UPDATE app_integrations SET configured_at = NOW()               │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -513,7 +472,7 @@ We **mark** apps for invalidation immediately, but **defer** the actual restart.
 
 **1. Deduplication**
 
-If multiple changes affect the same app, StaticConfig runs once:
+If multiple changes affect the same app, it only restarts once:
 
 ```
 Install service-x + service-y simultaneously
@@ -522,10 +481,10 @@ Install service-x + service-y simultaneously
     ├── app-a marked for invalidation (integration-y available)  ← deduplicated
     │
     ▼
-Run app-a.StaticConfig() once → changed=true
+Restart app-a once
     │
     ▼
-Restart once, configure both integrations
+PreStart + PostStart configure both integrations
 ```
 
 **2. Correct Ordering**
@@ -553,7 +512,7 @@ The orchestrator builds a dependency graph from `app_integrations` table and res
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**The rule:** Mark immediately, run StaticConfig, restart only if changed (in dependency order).
+**The rule:** Mark immediately, restart in dependency order. PreStart and PostStart handle reconfiguration.
 
 ---
 
@@ -659,7 +618,7 @@ Orchestrator.Install()
                 systemd starts containers
                         │
                         ▼
-                Systemd hooks configure apps (StaticConfig/DynamicConfig)
+                Systemd hooks configure apps (PreStart/PostStart)
 ```
 
 NixOS provides atomic deploys - if something fails, the previous generation still exists. You can always `nixos-rebuild --rollback`.
@@ -758,12 +717,11 @@ This section tracks what's implemented vs. what's planned.
 
 ### In Progress / Planned
 
-- [ ] **Rename configurator methods** - `PreStart` → `StaticConfig`, `PostStart` → `DynamicConfig`
-- [ ] **StaticConfig returns changed** - `StaticConfig() (changed bool, err error)` to detect if restart needed
+- [ ] **PreStart returns changed** - `PreStart() (changed bool, err error)` to detect if restart needed
 - [ ] **Container invalidation** - Mark apps for restart when new integrations become available
 - [ ] **app_integrations table** - Track integration state in database
 - [ ] **Dependency graph traversal** - Build graph from app_integrations, restart in topological order
-- [ ] **Remove watchdog references** - Clean up old self-healing code/comments from `pkg/configurator/interface.go`
+- [x] **Remove watchdog references** - Cleaned up old self-healing code/comments from `pkg/configurator/interface.go`
 
 ### Not Planned
 
@@ -824,7 +782,7 @@ Development uses [Lima](https://lima-vm.io/) to run a NixOS VM on your local mac
 # Check host-agent logs
 journalctl --user -u bloud-host-agent -f
 
-# Check app container logs (includes StaticConfig/DynamicConfig output)
+# Check app container logs (includes PreStart/PostStart output)
 journalctl --user -u podman-miniflux -f
 
 # Check systemd service status
@@ -844,7 +802,7 @@ curl http://localhost:8080/api/apps/postgres/plan-remove
 
 1. Create `apps/myapp/metadata.yaml` with integrations and port
 2. Create `apps/myapp/module.nix` with container definition
-3. Create `apps/myapp/configurator.go` implementing StaticConfig, HealthCheck, and DynamicConfig
+3. Create `apps/myapp/configurator.go` implementing PreStart, HealthCheck, and PostStart
 4. Register the configurator in `internal/appconfig/register.go`
 
 See [apps/adding-apps.md](apps/adding-apps.md) for details.
@@ -855,7 +813,6 @@ See [apps/adding-apps.md](apps/adding-apps.md) for details.
 
 Contributions welcome! See:
 - [apps/adding-apps.md](apps/adding-apps.md) - Adding new apps
-- [docs/dev-workflow.md](docs/dev-workflow.md) - Development setup
 
 ### Getting Started
 
