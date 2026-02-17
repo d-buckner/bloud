@@ -108,6 +108,20 @@ jobs:
           draft: false
           prerelease: true
 
+      - name: Prepare latest release assets
+        run: |
+          cp "$ISO_NAME" bloud-latest.iso
+          sha256sum bloud-latest.iso > bloud-latest.iso.sha256
+
+      - name: Clear old assets from latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view iso-latest --json assets --jq '.assets[].name' 2>/dev/null \
+            | while read -r name; do
+                gh release delete-asset iso-latest "$name" --yes
+              done || true
+
       - name: Update latest release
         uses: softprops/action-gh-release@v2
         with:
@@ -131,8 +145,8 @@ jobs:
             ${{ env.RECENT_COMMITS }}
             ```
           files: |
-            ${{ env.ISO_NAME }}
-            ${{ env.ISO_NAME }}.sha256
+            bloud-latest.iso
+            bloud-latest.iso.sha256
           draft: false
           prerelease: false
           make_latest: true
