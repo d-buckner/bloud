@@ -14,7 +14,7 @@ func testBlueprintGenerator(t *testing.T, dir string) *BlueprintGenerator {
 	return NewBlueprintGenerator(
 		"test-secret",
 		"test-ldap-password",
-		"http://localhost:8080",
+		[]string{"http://localhost:8080"},
 		"http://localhost:8080",
 		dir,
 		nil, // No secrets manager for tests

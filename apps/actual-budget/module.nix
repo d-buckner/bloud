@@ -38,12 +38,10 @@ mkBloudApp {
   environment = cfg: {
     ACTUAL_SERVER_URL = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/actual-budget";
   } // lib.optionalAttrs authentikEnabled {
-    # Discovery URL uses auth subdomain to avoid SW rewriting
-    ACTUAL_OPENID_DISCOVERY_URL = "${cfg.authentikExternalHost}:${toString cfg.traefikPort}/application/o/actual-budget/.well-known/openid-configuration";
-    ACTUAL_OPENID_CLIENT_ID = cfg.openidClientId;
-    # ACTUAL_OPENID_CLIENT_SECRET loaded from envFile
-    ACTUAL_OPENID_SERVER_HOSTNAME = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/actual-budget";
     # Skip Actual Budget's own login - use Authentik only
     ACTUAL_OPENID_ENFORCE = "true";
+    # Host-dependent SSO env vars (ACTUAL_OPENID_DISCOVERY_URL, ACTUAL_OPENID_CLIENT_ID,
+    # ACTUAL_OPENID_CLIENT_SECRET, ACTUAL_OPENID_SERVER_HOSTNAME) are written to the env file
+    # at runtime by the host-agent prestart hook, using detected local IPs.
   };
 }

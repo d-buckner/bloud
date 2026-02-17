@@ -12,7 +12,9 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/db"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -56,9 +58,14 @@ func runConfigure(args []string) int {
 				return 1
 			}
 			logger.Info("regenerated env files from secrets.json")
+
+			// Append host-dependent SSO env vars to the app's env file.
+			// These are derived at runtime from detected local IPs so OAuth
+			// works regardless of which hostname/IP the user accesses.
+			writeSSOEnvVars(appName, cfg, logger)
 		}
 
-		// If no configurator, we're done
+		// If no configurator, we're done (prestart env files are already written)
 		if registry.Get(appName) == nil {
 			logger.Debug("no configurator registered, skipping", "app", appName)
 			return 0
@@ -248,4 +255,50 @@ func buildAppState(appName string, appStore *store.AppStore, catalogCache catalo
 		Integrations:  integrations,
 		Options:       make(map[string]any),
 	}, nil
+}
+
+// writeSSOEnvVars appends host-dependent SSO environment variables to the app's env file.
+// This uses detected local IPs so the discovery URL and redirect URL resolve correctly
+// regardless of whether the user accesses via hostname or IP.
+func writeSSOEnvVars(appName string, cfg *config.Config, logger *slog.Logger) {
+	if cfg.SSOBaseURL == "" || cfg.SSOHostSecret == "" {
+		return
+	}
+
+	// Load catalog to check if this app has SSO
+	loader := catalog.NewLoader(cfg.AppsDir)
+	allApps, err := loader.LoadAll()
+	if err != nil {
+		logger.Warn("failed to load catalog for SSO env vars", "error", err)
+		return
+	}
+	catalogApp, ok := allApps[appName]
+	if !ok || catalogApp.SSO.Strategy != "native-oidc" {
+		return
+	}
+
+	// Build base URLs with detected IPs
+	baseURLs := netutil.BuildBaseURLs(cfg.SSOBaseURL)
+
+	// Create a blueprint generator to derive SSO env vars
+	gen := sso.NewBlueprintGenerator(
+		cfg.SSOHostSecret,
+		cfg.LDAPBindPassword,
+		baseURLs,
+		cfg.SSOAuthentikURL,
+		"", // blueprintsDir not needed for env vars
+		cfg.Secrets,
+	)
+
+	ssoVars := gen.GetSSOEnvVars(catalogApp)
+	if len(ssoVars) == 0 {
+		return
+	}
+
+	if err := cfg.Secrets.AppendEnvVars(appName, ssoVars); err != nil {
+		logger.Error("failed to append SSO env vars", "app", appName, "error", err)
+		return
+	}
+
+	logger.Info("appended SSO env vars to env file", "app", appName, "vars", len(ssoVars))
 }
