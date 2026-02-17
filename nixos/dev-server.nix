@@ -144,11 +144,6 @@
     };
   };
 
-  # VS Code Remote SSH support
-  # This auto-patches VS Code server binaries for NixOS compatibility
-  services.vscode-server.enable = true;
-  services.vscode-server.enableFHS = true;  # Use FHS environment for better compatibility
-
   # mDNS for bloud.local resolution
   services.avahi = {
     enable = true;
