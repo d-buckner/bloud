@@ -153,7 +153,17 @@ if [ "$SKIP_DEPLOY" = false ]; then
   fi
 
   # ── Step 2: Create and start VM ──────────────────────────────────
-  # Clean up any existing VM
+  # Clean up any existing VMs named "bloud" (from previous test runs)
+  log "Checking for old test VMs..."
+  OLD_VMIDS=$(pve "qm list 2>/dev/null | awk '\$2 == \"$VM_NAME\" {print \$1}'" 2>/dev/null || true)
+  if [ -n "$OLD_VMIDS" ]; then
+    for old_id in $OLD_VMIDS; do
+      warn "Destroying old VM $old_id ($VM_NAME)..."
+      pve "qm stop $old_id 2>/dev/null || true; sleep 3; qm destroy $old_id --purge 2>/dev/null || true"
+    done
+  fi
+
+  # Also clean up target VMID if it exists with a different name
   if pve "qm status $VMID" > /dev/null 2>&1; then
     warn "VM $VMID already exists, destroying..."
     pve "qm stop $VMID 2>/dev/null || true; sleep 3; qm destroy $VMID --purge 2>/dev/null || true"
