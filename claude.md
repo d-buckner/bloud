@@ -1,15 +1,17 @@
 # Claude Code Guidelines for bloud-v3
 
-## Critical: Development Environment Access
+## Critical: Access URLs & Port Architecture
 
-**ALWAYS access the application through port 8080 (Traefik). NEVER access Vite directly on port 5173.**
+**Production / ISO:** Users access Bloud at `http://bloud.local` (port 80). Rootless containers can't bind privileged ports, so Traefik listens on 8080 and iptables NAT redirects port 80 → 8080. Users never see port 8080.
 
-- All browser access: `http://localhost:8080`
-- Service worker is registered on port 8080
-- Iframe content is served from port 8080
-- Everything is same-origin (8080)
+**Local dev (Lima VM):** Access via `http://localhost:8080` (Traefik). Port forwarding handles the mapping from host to VM.
 
-Do NOT suggest or assume port 5173 is being used. Do NOT suggest proxying through Vite. The architecture is: Browser → Traefik (8080) → Vite/Apps.
+- Service worker is registered on the Traefik port
+- Iframe content is served through Traefik
+- Everything is same-origin
+- NEVER access Vite directly on port 5173
+
+The architecture is: Browser → port 80 (iptables PREROUTING) → Traefik (8080) → Vite/Apps.
 
 ## Debugging Principles
 

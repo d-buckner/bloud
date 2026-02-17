@@ -1058,6 +1058,8 @@ type UserInfo struct {
 
 // EnsureBloudOAuthApp creates the OAuth2 provider and application for Bloud if they don't exist.
 // Returns the OIDC configuration needed for the login flow.
+// baseURL is the external host URL (e.g., "http://bloud.local") used for both the
+// redirect URI and browser-facing OIDC endpoints (routed to Authentik via Traefik).
 func (c *Client) EnsureBloudOAuthApp(baseURL, clientSecret string) (*OIDCConfig, error) {
 	redirectURI := baseURL + bloudRedirectURI
 
@@ -1088,14 +1090,16 @@ func (c *Client) EnsureBloudOAuthApp(baseURL, clientSecret string) (*OIDCConfig,
 		}
 	}
 
-	// Return OIDC configuration
+	// Return OIDC configuration using the external baseURL (e.g., "http://bloud.local").
+	// Authentik is behind Traefik on the same domain, so browser-facing OIDC paths
+	// use baseURL, not c.baseURL (which is the internal localhost:port for API calls).
 	return &OIDCConfig{
 		ClientID:     bloudAppSlug,
 		ClientSecret: clientSecret,
-		AuthURL:      c.baseURL + "/application/o/authorize/",
-		TokenURL:     c.baseURL + "/application/o/token/",
-		UserInfoURL:  c.baseURL + "/application/o/userinfo/",
-		Issuer:       c.baseURL + "/application/o/" + bloudAppSlug + "/",
+		AuthURL:      baseURL + "/application/o/authorize/",
+		TokenURL:     baseURL + "/application/o/token/",
+		UserInfoURL:  baseURL + "/application/o/userinfo/",
+		Issuer:       baseURL + "/application/o/" + bloudAppSlug + "/",
 	}, nil
 }
 

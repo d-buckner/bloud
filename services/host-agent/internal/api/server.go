@@ -369,9 +369,10 @@ func (s *Server) tryInitAuth() {
 		if token != "" && token != s.cfg.AuthentikToken {
 			s.logger.Info("found new Authentik API token from configurator", "path", tokenPath)
 			s.cfg.AuthentikToken = token
-			// Create new client with fresh token
-			if s.cfg.SSOAuthentikURL != "" {
-				s.authentikClient = authentik.NewClient(s.cfg.SSOAuthentikURL, token)
+			// Create new client with fresh token (internal URL for server-side API calls)
+			if s.cfg.AuthentikPort > 0 {
+				internalURL := fmt.Sprintf("http://localhost:%d", s.cfg.AuthentikPort)
+				s.authentikClient = authentik.NewClient(internalURL, token)
 			}
 		}
 	}
