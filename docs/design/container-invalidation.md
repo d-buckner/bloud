@@ -1,5 +1,7 @@
 # Container Invalidation Design
 
+> **Status: Design Proposal — Not Implemented.** This document describes a planned approach to container invalidation. None of the schemas, return values, or orchestration flows described here exist in the codebase yet. See the "In Progress / Planned" section of the README for current status.
+
 ## Core Concept
 
 **StaticConfig determines whether restart is needed.**

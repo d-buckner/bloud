@@ -9,15 +9,14 @@ import (
 
 // Configurator handles app-specific configuration.
 // All methods must be idempotent - safe to call repeatedly.
-// Configurators are called during the reconciliation loop which runs:
-// - On agent startup
-// - After install/uninstall
-// - Every 5 minutes via watchdog
+// Configurators run as systemd hooks on every service start:
+// - PreStart runs as ExecStartPre (before container)
+// - PostStart runs as ExecStartPost (after container healthy)
 type Configurator interface {
 	// Name returns the app name this configurator handles
 	Name() string
 
-	// PreStart runs before/after container starts.
+	// PreStart runs before the container starts.
 	// Use for: config files, directories, certificates, initial setup.
 	// Called every reconciliation - must be idempotent.
 	PreStart(ctx context.Context, state *AppState) error
