@@ -23,6 +23,7 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
+	cfg             ServerConfig
 	router          *chi.Mux
 	db              *sql.DB
 	catalog         catalog.CacheInterface
@@ -35,19 +36,6 @@ type Server struct {
 	reconciler      *orchestrator.Reconciler
 	authentikClient *authentik.Client
 	authConfig      *AuthConfig
-	appsDir         string
-	nixConfigDir    string
-	dataDir         string
-	flakePath       string
-	flakeTarget     string
-	nixosPath       string
-	port            int
-	ssoHostSecret   string
-	ssoBaseURL      string
-	ssoAuthentikURL string
-	authentikToken  string
-	redisAddr       string
-	registry        configurator.RegistryInterface
 	logger          *slog.Logger
 	secrets         *secrets.Manager
 }
@@ -121,6 +109,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	}
 
 	s := &Server{
+		cfg:             cfg,
 		router:          chi.NewRouter(),
 		db:              db,
 		catalog:         catalog.NewCache(db),
@@ -129,36 +118,23 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		sessionStore:    sessionStore,
 		appHub:          appHub,
 		authentikClient: authentikClient,
-		appsDir:         cfg.AppsDir,
-		nixConfigDir:    cfg.ConfigDir,
-		dataDir:         cfg.DataDir,
-		flakePath:       cfg.FlakePath,
-		flakeTarget:     cfg.FlakeTarget,
-		nixosPath:       cfg.NixosPath,
-		port:            cfg.Port,
-		ssoHostSecret:   cfg.SSOHostSecret,
-		ssoBaseURL:      cfg.SSOBaseURL,
-		ssoAuthentikURL: cfg.SSOAuthentikURL,
-		authentikToken:  cfg.AuthentikToken,
-		redisAddr:       cfg.RedisAddr,
-		registry:        cfg.Registry,
 		logger:          logger,
 		secrets:         secretsMgr,
 	}
 
 	// Initialize catalog and graph on startup
-	s.refreshCatalog(cfg.AppsDir)
+	s.refreshCatalog(s.cfg.AppsDir)
 
 	// Initialize orchestrator (Podman client may not be available in tests)
 	s.initOrchestrator(appStore)
 
 	// Initialize reconciler if registry is provided
-	if cfg.Registry != nil {
+	if s.cfg.Registry != nil {
 		s.reconciler = orchestrator.NewReconciler(
-			cfg.Registry,
+			s.cfg.Registry,
 			appStore,
 			s.catalog,
-			cfg.DataDir,
+			s.cfg.DataDir,
 			logger,
 			orchestrator.DefaultReconcileConfig(),
 		)
@@ -183,18 +159,18 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 // initOrchestrator sets up the orchestrator - prefers Nix, falls back to Podman
 func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	// Use configured paths (set via env vars or defaults)
-	configPath := filepath.Join(s.nixConfigDir, "apps.nix")
-	traefikConfigPath := filepath.Join(s.dataDir, "traefik", "dynamic", "apps-routes.yml")
+	configPath := filepath.Join(s.cfg.ConfigDir, "apps.nix")
+	traefikConfigPath := filepath.Join(s.cfg.DataDir, "traefik", "dynamic", "apps-routes.yml")
 
 	s.logger.Info("orchestrator paths",
-		"flakePath", s.flakePath,
-		"nixosPath", s.nixosPath,
+		"flakePath", s.cfg.FlakePath,
+		"nixosPath", s.cfg.NixosPath,
 		"configPath", configPath,
 		"traefikConfigPath", traefikConfigPath,
 	)
 
 	// SSO blueprints directory
-	ssoBlueprintsDir := filepath.Join(s.dataDir, "authentik-blueprints")
+	ssoBlueprintsDir := filepath.Join(s.cfg.DataDir, "authentik-blueprints")
 
 	// Try to initialize Nix-based orchestrator (preferred)
 	nixOrch := orchestrator.New(orchestrator.Config{
@@ -204,16 +180,16 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		Logger:            s.logger,
 		ConfigPath:        configPath,
 		TraefikConfigPath: traefikConfigPath,
-		NixosPath:         s.nixosPath,
-		FlakePath:         s.flakePath,
-		Hostname:          s.flakeTarget,
-		DataDir:           s.dataDir,
+		NixosPath:         s.cfg.NixosPath,
+		FlakePath:         s.cfg.FlakePath,
+		Hostname:          s.cfg.FlakeTarget,
+		DataDir:           s.cfg.DataDir,
 		// SSO configuration
-		SSOHostSecret:    s.ssoHostSecret,
-		SSOBaseURL:       s.ssoBaseURL,
-		SSOAuthentikURL:  s.ssoAuthentikURL,
+		SSOHostSecret:    s.cfg.SSOHostSecret,
+		SSOBaseURL:       s.cfg.SSOBaseURL,
+		SSOAuthentikURL:  s.cfg.SSOAuthentikURL,
 		SSOBlueprintsDir: ssoBlueprintsDir,
-		AuthentikToken:   s.authentikToken,
+		AuthentikToken:   s.cfg.AuthentikToken,
 		Secrets:          s.secrets,
 	})
 
@@ -345,7 +321,7 @@ func (s *Server) setupMiddleware() {
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
-	addr := fmt.Sprintf(":%d", s.port)
+	addr := fmt.Sprintf(":%d", s.cfg.Port)
 	s.logger.Info("starting HTTP server", "addr", addr)
 
 	server := &http.Server{
@@ -387,15 +363,15 @@ func (s *Server) tryInitAuth() {
 	}
 
 	// Try to read fresh token from api-token file (created by Authentik configurator)
-	tokenPath := filepath.Join(s.dataDir, "authentik", "api-token")
+	tokenPath := filepath.Join(s.cfg.DataDir, "authentik", "api-token")
 	if data, err := os.ReadFile(tokenPath); err == nil {
 		token := string(data)
-		if token != "" && token != s.authentikToken {
+		if token != "" && token != s.cfg.AuthentikToken {
 			s.logger.Info("found new Authentik API token from configurator", "path", tokenPath)
-			s.authentikToken = token
+			s.cfg.AuthentikToken = token
 			// Create new client with fresh token
-			if s.ssoAuthentikURL != "" {
-				s.authentikClient = authentik.NewClient(s.ssoAuthentikURL, token)
+			if s.cfg.SSOAuthentikURL != "" {
+				s.authentikClient = authentik.NewClient(s.cfg.SSOAuthentikURL, token)
 			}
 		}
 	}
@@ -407,7 +383,7 @@ func (s *Server) tryInitAuth() {
 // initAuth initializes authentication by ensuring the Bloud OAuth2 app exists in Authentik
 func (s *Server) initAuth() {
 	// Skip if required components aren't available
-	if s.authentikClient == nil || s.sessionStore == nil || s.ssoBaseURL == "" {
+	if s.authentikClient == nil || s.sessionStore == nil || s.cfg.SSOBaseURL == "" {
 		s.logger.Info("authentication disabled (missing Authentik client, Redis, or base URL)")
 		return
 	}
@@ -422,7 +398,7 @@ func (s *Server) initAuth() {
 	clientSecret := s.deriveClientSecret("bloud-oauth")
 
 	// Ensure the Bloud OAuth2 app exists
-	oidcConfig, err := s.authentikClient.EnsureBloudOAuthApp(s.ssoBaseURL, clientSecret)
+	oidcConfig, err := s.authentikClient.EnsureBloudOAuthApp(s.cfg.SSOBaseURL, clientSecret)
 	if err != nil {
 		s.logger.Error("failed to ensure Bloud OAuth app", "error", err)
 		return
@@ -430,8 +406,8 @@ func (s *Server) initAuth() {
 
 	s.authConfig = &AuthConfig{
 		OIDCConfig:  oidcConfig,
-		BaseURL:     s.ssoBaseURL,
-		RedirectURI: s.ssoBaseURL + "/auth/callback",
+		BaseURL:     s.cfg.SSOBaseURL,
+		RedirectURI: s.cfg.SSOBaseURL + "/auth/callback",
 	}
 
 	s.logger.Info("authentication initialized", "clientID", oidcConfig.ClientID)
@@ -448,10 +424,10 @@ func (s *Server) deriveClientSecret(appName string) string {
 		}
 
 		// Generate a new secret based on the host secret
-		if s.ssoHostSecret != "" {
+		if s.cfg.SSOHostSecret != "" {
 			// Use HMAC-like derivation: hostSecret + appName
 			// In production, consider using proper HKDF
-			secret = s.ssoHostSecret[:32] + "-" + appName
+			secret = s.cfg.SSOHostSecret[:32] + "-" + appName
 			if err := s.secrets.SetAppSecret(appName, "oauthClientSecret", secret); err != nil {
 				s.logger.Warn("failed to save client secret", "error", err)
 			}
@@ -460,8 +436,8 @@ func (s *Server) deriveClientSecret(appName string) string {
 	}
 
 	// Fallback: derive from host secret using simple concatenation
-	if s.ssoHostSecret != "" {
-		return s.ssoHostSecret[:32] + "-" + appName
+	if s.cfg.SSOHostSecret != "" {
+		return s.cfg.SSOHostSecret[:32] + "-" + appName
 	}
 
 	return ""

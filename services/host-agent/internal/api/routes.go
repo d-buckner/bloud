@@ -149,7 +149,7 @@ func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
 
 // handleRefreshCatalog reloads the app catalog from YAML files
 func (s *Server) handleRefreshCatalog(w http.ResponseWriter, r *http.Request) {
-	s.refreshCatalog(s.appsDir)
+	s.refreshCatalog(s.cfg.AppsDir)
 
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status": "catalog refreshed",
@@ -391,7 +391,7 @@ func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// App not installed - just clean up any orphaned data
 		s.logger.Info("cleaning up orphaned app data", "app", name)
-		appDataDir := filepath.Join(s.dataDir, name)
+		appDataDir := filepath.Join(s.cfg.DataDir, name)
 		if err := os.RemoveAll(appDataDir); err != nil {
 			s.logger.Error("failed to remove app data directory", "app", name, "error", err)
 			respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to remove data directory: %v", err))
@@ -468,7 +468,7 @@ func (s *Server) dropAppDatabase(appName string) error {
 // handleAppIcon serves the icon.png for an app
 func (s *Server) handleAppIcon(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	iconPath := filepath.Join(s.appsDir, name, "icon.png")
+	iconPath := filepath.Join(s.cfg.AppsDir, name, "icon.png")
 
 	if _, err := os.Stat(iconPath); os.IsNotExist(err) {
 		http.NotFound(w, r)
