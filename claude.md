@@ -182,6 +182,29 @@ All embedded apps MUST be served under `/embed/{appName}/` paths. URL rewriting 
 
 See `docs/embedded-app-routing.md` for full details.
 
+### Pre-Built Artifacts (No vendorHash/npmDepsHash)
+
+**Go and npm are built outside the Nix sandbox using their native toolchains.** Nix only packages the pre-built artifacts into the ISO.
+
+**Why:** Nix's sandbox blocks network access during builds. `buildGoModule` and `buildNpmPackage` work around this with fixed-output derivations that require pre-declared hashes (`vendorHash`, `npmDepsHash`). These hashes break on every dependency change. Since Go builds are already reproducible (pinned by `go.sum` + Go version) and npm builds by `package-lock.json`, building inside the sandbox adds no meaningful reproducibility — only fragility.
+
+**How it works:**
+1. CI builds the Go binary and frontend with native toolchains (see `.github/workflows/build-iso.yml`)
+2. Artifacts are placed in `build/host-agent` and `build/frontend/`
+3. `nixos/packages/host-agent.nix` packages them into a Nix derivation (just file copying, no compilation)
+4. If artifacts don't exist, a stub derivation is used so `nix flake check` still passes
+
+**Local ISO builds** require building the artifacts first:
+```bash
+mkdir -p build
+cd services/host-agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/host-agent ./cmd/host-agent
+cd ../.. && npm ci && npm run build --workspace=services/host-agent/web
+cp -r services/host-agent/web/build build/frontend
+nix build .#packages.x86_64-linux.iso
+```
+
+**Local dev is unaffected** — `./bloud start` uses `go-watch`/Vite directly, never touches Nix package builds.
+
 ### Future: Systemd-Based Startup Architecture
 
 **Current State (Dev Workaround):**
@@ -193,13 +216,7 @@ The dev environment has a startup ordering issue where NixOS services start befo
 **Future Production Architecture:**
 All startup dependencies should be managed via systemd, not dev scripts:
 
-1. **Host-Agent as Nix Derivation:**
-   ```nix
-   # Build host-agent as part of NixOS, not separately
-   bloud.hostAgent = pkgs.buildGoModule { ... };
-   ```
-
-2. **Systemd Service Dependencies:**
+1. **Systemd Service Dependencies:**
    ```nix
    # bloud-host-agent.service starts before app services
    systemd.user.services.bloud-host-agent = {
@@ -214,7 +231,7 @@ All startup dependencies should be managed via systemd, not dev scripts:
    };
    ```
 
-3. **Systemd Tmpfiles for Directories:**
+2. **Systemd Tmpfiles for Directories:**
    ```nix
    # Use tmpfiles.d instead of activation scripts for runtime dirs
    systemd.user.tmpfiles.rules = [
@@ -222,7 +239,7 @@ All startup dependencies should be managed via systemd, not dev scripts:
    ];
    ```
 
-4. **Health-Based Dependencies:**
+3. **Health-Based Dependencies:**
    ```nix
    # Use sd-notify for proper health signaling
    systemd.user.services.bloud-host-agent = {
@@ -232,11 +249,10 @@ All startup dependencies should be managed via systemd, not dev scripts:
    ```
 
 **Migration Path:**
-1. Package host-agent as Nix derivation
-2. Create bloud-host-agent.service with proper dependencies
-3. Update app services to require host-agent
-4. Move directory creation to systemd tmpfiles
-5. Remove dev script workarounds
+1. Create bloud-host-agent.service with proper dependencies
+2. Update app services to require host-agent
+3. Move directory creation to systemd tmpfiles
+4. Remove dev script workarounds
 
 ## Local Development
 
