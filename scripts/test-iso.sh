@@ -20,7 +20,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────
 PVE_HOST="${BLOUD_PVE_HOST:-root@192.168.0.62}"
 VMID="${BLOUD_PVE_VMID:-9999}"
-VM_MEMORY=4096
+VM_MEMORY=8192
 VM_CORES=2
 VM_NAME="bloud-test-iso"
 ISO_STORAGE="/var/lib/vz/template/iso"
@@ -99,10 +99,10 @@ check() {
   echo -n "  Checking $name... "
   if "$@" > /dev/null 2>&1; then
     echo -e "${GREEN}PASS${NC}"
-    ((PASSED++))
+    PASSED=$((PASSED + 1))
   else
     echo -e "${RED}FAIL${NC}"
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
   fi
 }
 
@@ -135,7 +135,7 @@ if [ "$SKIP_DEPLOY" = false ]; then
   # Resolve ISO source
   if [ -z "$ISO_SOURCE" ]; then
     log "Finding latest GitHub release..."
-    ISO_SOURCE=$(gh release view --json assets --jq '.assets[] | select(.name | endswith(".iso")) | .url' 2>/dev/null || true)
+    ISO_SOURCE=$(gh release view --json assets --jq '[.assets[] | select(.name | endswith(".iso"))] | last | .url' 2>/dev/null || true)
     if [ -z "$ISO_SOURCE" ]; then
       err "No ISO source provided and no GitHub release found"
       exit 1

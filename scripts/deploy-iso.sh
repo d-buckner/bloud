@@ -14,7 +14,7 @@ echo "==> Downloading ISO to Proxmox"
 ssh "$PVE" "curl -L -o /var/lib/vz/template/iso/bloud-test.iso '$URL'"
 
 echo "==> Creating VM $VMID"
-ssh "$PVE" "qm create $VMID --name bloud-test --memory 4096 --cores 2 --ostype l26 \
+ssh "$PVE" "qm create $VMID --name bloud-test --memory 8192 --cores 2 --ostype l26 \
   --cdrom local:iso/bloud-test.iso --boot order=ide2 \
   --net0 virtio,bridge=vmbr0 --agent enabled=1 --serial0 socket"
 
