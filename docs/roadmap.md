@@ -4,8 +4,7 @@ Future features and improvements planned for Bloud.
 
 ---
 
-## Phase 0: Prototype (Current)
-
+## Phase 0: Prototype (Complete)
 
 #### Scalable OAuth Callback Pattern
 - **Issue identified**: Actual Budget's native OIDC approach used root-level Traefik routes (`/openid`), violating the "no app-specific root routes" architecture
@@ -19,17 +18,33 @@ Future features and improvements planned for Bloud.
 #### Core Infrastructure
 - NixOS + rootless Podman working
 - Shared PostgreSQL for all apps
+- Shared Redis for all apps (Authentik, future apps)
 - Authentik SSO (forward auth + OIDC patterns)
 - Traefik reverse proxy with dynamic routing
 - `mkBloudApp` helper for standardized app modules
 - Integration graph with dependency resolution and install planning
 - 14 apps implemented: Postgres, Redis, Traefik, Authentik, Miniflux, Actual Budget, AdGuard Home, qBittorrent, Jellyfin, Jellyseerr, Affine, Prowlarr, Radarr, Sonarr
 
-### In Progress
+#### Secrets Management
+- Go-based secrets manager auto-generates cryptographic secrets on first boot
+- Secrets stored in `secrets.json` (0600 permissions), env files generated per-service
+- Covers: PostgreSQL password, Authentik keys, LDAP credentials, SSO host secret, per-app OAuth/admin secrets
+- Bootstrap credentials (`admin123`) only used as throwaway values during initial app setup, deleted after LDAP configuration
 
-#### SSO Coverage Expansion
-- **Miniflux**: Supports header auth (`AUTH_PROXY_HEADER`). Use forward auth + header injection. (Working)
-- **AdGuard Home**: Research SSO options. May need native OIDC (use same SW pattern as Actual Budget).
+#### App Configurator System
+- Prestart/poststart hooks wired through systemd → host-agent → per-app `configurator.go`
+- Configurators handle: Authentik API token creation (via Django shell), LDAP setup, app-specific bootstrap
+- Idempotent — safe to re-run on every service start
+
+#### API Authentication
+- OIDC login flow via Authentik with session management
+- All `/api/*` endpoints require valid session (except `/api/health`, `/api/setup/*`, `/api/auth/me`)
+- Sessions stored in Redis
+
+#### Install Queue
+- Operation queue with 5-second batching window for concurrent install requests
+- Deduplication merges multiple requests for the same app
+- Prevents `apps.nix` corruption and nixos-rebuild conflicts
 
 #### SSO Implementation Patterns
 1. **Forward Auth + Headers** (preferred for apps that support it)
@@ -43,27 +58,26 @@ Future features and improvements planned for Bloud.
    - SW rewrites callback to `/embed/{app}/` path
    - No root-level Traefik routes needed
 
+#### ISO Build Pipeline
+- GitHub Actions builds Go binary and frontend outside Nix sandbox
+- NixOS ISO packages pre-built artifacts (no vendorHash/npmDepsHash fragility)
+- First-boot `bloud-init-secrets` service generates secrets before apps start
+- Port 80 → 8080 NAT redirection for rootless Traefik
+
 ---
 
-## Phase 1: Alpha
+## Phase 1: Alpha (Current)
 
-### Security Hardening (Pre-Alpha Blocker)
+### Security Hardening
 
-#### Secrets Management
-- **Problem**: Hardcoded credentials throughout codebase (`admin123`, `testpass123`)
-- **Solution**: Integrate sops-nix or agenix for encrypted secrets
-- **Scope**:
-  - PostgreSQL credentials
-  - Authentik admin/API keys
-  - Per-app secrets (OAuth client secrets, API keys)
-  - User-configurable secrets via UI
-
-#### API Authentication
-- **Problem**: Host-agent API endpoints appear to lack authentication
-- **Solution**:
-  - Require Authentik session for all `/api/*` endpoints
-  - Add CSRF protection for state-changing operations
-  - Consider API rate limiting
+#### Disk Encryption (LUKS)
+- **Problem**: Secrets are properly permissioned (0600) but stored as plaintext on disk. Protects against running-system access but not physical disk theft or image cloning.
+- **Solution**: LUKS full-disk encryption on the ISO image
+  - TPM2 auto-unlock for headless boot (no passphrase needed)
+  - Protects all data at rest — secrets, databases, app volumes, everything
+  - NixOS has built-in support via `boot.initrd.luks.devices`
+- **Why not sops-nix**: Secrets are generated at runtime (never in git), and the decryption key would sit on the same disk. LUKS protects the entire disk with hardware-backed keys.
+- **Why not systemd-creds**: Only protects individual credential files, requires re-encryption on every secret change, and secrets still end up in container environments at runtime. LUKS is simpler and more comprehensive.
 
 #### Container Security
 - Audit container network isolation
@@ -76,11 +90,6 @@ Future features and improvements planned for Bloud.
 - When switching tabs, maintain old iframe elements (hidden) to preserve app state
 - Only dispose iframe when tab is explicitly closed
 - Prevents apps from losing unsaved state on tab switch
-
-#### Unified State Management
-- Current: Multiple stores (`apps`, `openApps`, `appActions`)
-- Consider consolidating into single store with slices
-- Add proper loading/error states throughout UI
 
 #### Client-Side Storage Isolation
 - **Problem**: Embedded apps share the same origin, so they can read/overwrite each other's client-side storage
@@ -157,27 +166,6 @@ Target: 10 core apps for alpha release (exceeded - 14 implemented)
 - Network partition handling
 - Conflict resolution for concurrent changes
 
-### App Configurator System
-
-#### Current State
-- `configure.go` files exist in app directories
-- Infrastructure for configurators exists but isn't wired up
-
-#### Needed
-1. **Execution pipeline** - Run configurators after app install
-2. **Integration API** - Standard interface for:
-   - Authentik OAuth2 provider creation
-   - Inter-app configuration (Sonarr → qBittorrent)
-   - Traefik route registration
-3. **Idempotency** - Configurators must be safe to re-run
-4. **Error handling** - Rollback on configuration failure
-
-### Shared Redis Consolidation
-- Currently Authentik runs its own Redis instance
-- Consolidate to single shared Redis per host
-- Update Authentik config to use shared instance
-- Benefits: Lower memory usage, simpler operations
-
 ---
 
 ## Phase 3: 1.0 Release
@@ -238,18 +226,10 @@ Target: 10 core apps for alpha release (exceeded - 14 implemented)
 
 ## Technical Debt
 
-### High Priority
-- [ ] Secrets management (blocking for production)
-- [ ] API authentication (security)
-- [ ] **Concurrent install race condition** - Multiple rapid install requests can corrupt `apps.nix` or cause nixos-rebuild conflicts. Solution: Install queue with batching. See `docs/design/install-queue.md`
-
 ### Medium Priority
-- [x] ~~Switch host-agent from SQLite to system PostgreSQL~~ (Done)
-- [x] ~~Frontend state management consolidation~~ (Done)
 - [ ] Multi-service app metadata - Apps should declare all services (not just one) so orchestrator can properly track health and dependencies (e.g., qbittorrent runs both `flood` and `qbittorrent` containers)
 - [ ] Defensive error handling in graph.go/plan.go
 - [ ] Test coverage for edge cases
-- [ ] **Investigate AUTHENTIK_BOOTSTRAP_TOKEN** - Currently using Django shell to create API token because bootstrap token wasn't working. Need to understand root cause before accepting this workaround. Observations: bootstrap completes in 5ms (skipped?), token not in DB. See `docs/investigations/ldap-infrastructure-design.md`. Possible causes: stale DB data, env var not passed, timing issue, version bug.
 
 ### Low Priority
 - [ ] Code comments for complex logic
@@ -268,6 +248,9 @@ Target: 10 core apps for alpha release (exceeded - 14 implemented)
 5. **Same-origin embedding** - All apps served from same origin (enables SW control, requires storage isolation)
 
 ### Decision Log
+- **2026-02**: LUKS over sops-nix for secrets-at-rest — secrets are runtime-generated (never in git), LUKS protects entire disk with TPM2 auto-unlock
+- **2026-02**: External host URLs split into browser-facing and server-side Authentik endpoints
+- **2026-02**: Pre-built artifacts in ISO (Go/npm built outside Nix sandbox, eliminates vendorHash churn)
 - **2026-01**: IndexedDB intercept injection via SW (solves app init overwriting configured values)
 - **2026-01**: Service worker for OAuth callbacks (maintains routing architecture)
 - **2026-01**: Service worker routing stabilized (explicit app context, proper state management)
