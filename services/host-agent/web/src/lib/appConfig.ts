@@ -45,7 +45,7 @@ export async function executeBootstrap(
 	}
 
 	try {
-		const hasIndexedDB = config.indexedDB?.intercepts?.length || config.indexedDB?.writes?.length || config.indexedDB?.entries?.length;
+		const hasIndexedDB = config.indexedDB?.intercepts?.length || config.indexedDB?.writes?.length;
 		const hasLocalStorage = config.localStorage?.intercepts?.length;
 
 		if (hasIndexedDB || hasLocalStorage) {
@@ -194,8 +194,7 @@ async function postMessageToSW(message: unknown): Promise<void> {
  * Writes to existing stores only - if store doesn't exist, entry is skipped.
  */
 async function writeIndexedDBEntries(config: IndexedDBConfig, metadata: AppMetadata): Promise<void> {
-	// Use 'writes' field, falling back to legacy 'entries' field
-	const entries = (config.writes ?? config.entries ?? []).map((entry) => ({
+	const entries = (config.writes ?? []).map((entry) => ({
 		...entry,
 		value: substituteTemplates(entry.value, metadata)
 	}));

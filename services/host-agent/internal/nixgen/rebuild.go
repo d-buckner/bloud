@@ -347,31 +347,6 @@ func (r *Rebuilder) StopUserService(ctx context.Context, appName string) error {
 	return nil
 }
 
-// StartUserService starts a systemd user service for an app
-// Deprecated: Use ReloadAndRestartApps instead, which properly handles
-// daemon-reload and restarts all apps via the bloud-apps.target
-func (r *Rebuilder) StartUserService(ctx context.Context, appName string) error {
-	serviceName := fmt.Sprintf("podman-%s.service", appName)
-
-	r.logger.Info("starting user service", "service", serviceName)
-
-	var cmd *exec.Cmd
-	if r.useSudo {
-		cmd = exec.CommandContext(ctx, "sudo", "machinectl", "shell", "bloud@",
-			"/run/current-system/sw/bin/systemctl", "--user", "start", serviceName)
-	} else {
-		cmd = exec.CommandContext(ctx, "systemctl", "--user", "start", serviceName)
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		r.logger.Warn("failed to start service", "service", serviceName, "error", err, "output", string(output))
-		return fmt.Errorf("failed to start %s: %w", serviceName, err)
-	}
-
-	r.logger.Info("service started", "service", serviceName)
-	return nil
-}
 
 // ReloadAndRestartApps reloads systemd user daemon and restarts all bloud apps
 // This should be called after nixos-rebuild to:
