@@ -44,6 +44,9 @@ jobs:
           npm run build --workspace=services/host-agent/web
           cp -r services/host-agent/web/build build/frontend
 
+      - name: Stage build artifacts for Nix
+        run: git add -f build/
+
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
