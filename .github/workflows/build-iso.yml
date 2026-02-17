@@ -61,30 +61,90 @@ jobs:
 
       - name: Prepare release
         run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
           TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          DATE=$(date -u +%Y-%m-%d)
           TAG="iso-$(date -u +%Y%m%d-%H%M%S)"
           ISO_SRC=$(find result-iso/iso -name '*.iso' | head -1)
           ISO_NAME="bloud-${TIMESTAMP}.iso"
+          ISO_SIZE=$(du -h "$ISO_SRC" | cut -f1)
           cp "$ISO_SRC" "$ISO_NAME"
           sha256sum "$ISO_NAME" > "$ISO_NAME.sha256"
+          RECENT_COMMITS=$(git log --oneline -10)
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
           echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          echo "DATE=$DATE" >> $GITHUB_ENV
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "ISO_NAME=$ISO_NAME" >> $GITHUB_ENV
+          echo "ISO_SIZE=$ISO_SIZE" >> $GITHUB_ENV
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "RECENT_COMMITS<<$EOF" >> $GITHUB_ENV
+          echo "$RECENT_COMMITS" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
           ls -lh "$ISO_NAME"
 
-      - name: Create release
+      - name: Create build release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
-          name: bloud
+          name: "bloud ${{ env.DATE }} (${{ env.SHORT_SHA }})"
           body: |
-            Bloud ISO built at ${{ env.TIMESTAMP }}.
+            > **Pre-alpha** — This is an early development build. Expect breaking changes.
+
+            ISO built from [`${{ env.SHORT_SHA }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) at ${{ env.TIMESTAMP }}.
+
+            **Size:** ${{ env.ISO_SIZE }}
 
             Flash to USB or boot in a VM (Proxmox, QEMU, etc).
-
             Default credentials: `bloud` / `bloud`
+
+            ### Recent commits
+            ```
+            ${{ env.RECENT_COMMITS }}
+            ```
+          files: |
+            ${{ env.ISO_NAME }}
+            ${{ env.ISO_NAME }}.sha256
+          draft: false
+          prerelease: true
+
+      - name: Update latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: iso-latest
+          name: "Bloud ISO (latest)"
+          body: |
+            > **Pre-alpha** — This is an early development build. Expect breaking changes.
+
+            The latest Bloud ISO, automatically updated on every build.
+
+            **Current build:** [`${{ env.SHORT_SHA }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) — ${{ env.TIMESTAMP }}
+            **Size:** ${{ env.ISO_SIZE }}
+
+            ## Usage
+
+            Flash to USB or boot in a VM (Proxmox, QEMU, etc).
+            Default credentials: `bloud` / `bloud`
+
+            ### Recent commits
+            ```
+            ${{ env.RECENT_COMMITS }}
+            ```
           files: |
             ${{ env.ISO_NAME }}
             ${{ env.ISO_NAME }}.sha256
           draft: false
           prerelease: false
+          make_latest: true
+
+      - name: Clean up old build releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Keep the 5 most recent per-build ISO releases, delete the rest
+          gh release list --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("iso-2")) | .tagName] | sort | reverse | .[5:][]' \
+            | while read -r tag; do
+              echo "Deleting old release: $tag"
+              gh release delete "$tag" --yes --cleanup-tag
+            done
