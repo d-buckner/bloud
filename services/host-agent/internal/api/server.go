@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
@@ -23,21 +25,22 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	cfg             ServerConfig
-	router          *chi.Mux
-	db              *sql.DB
-	catalog         catalog.CacheInterface
-	graph           catalog.AppGraphInterface
-	appStore        store.AppStoreInterface
-	userStore       *store.UserStore
-	sessionStore    *store.SessionStore
-	appHub          *AppEventHub
-	orchestrator    orchestrator.AppOrchestrator
-	reconciler      *orchestrator.Reconciler
-	authentikClient *authentik.Client
-	authConfig      *AuthConfig
-	logger          *slog.Logger
-	secrets         *secrets.Manager
+	cfg                  ServerConfig
+	router               *chi.Mux
+	db                   *sql.DB
+	catalog              catalog.CacheInterface
+	graph                catalog.AppGraphInterface
+	appStore             store.AppStoreInterface
+	userStore            *store.UserStore
+	sessionStore         *store.SessionStore
+	appHub               *AppEventHub
+	orchestrator         orchestrator.AppOrchestrator
+	reconciler           *orchestrator.Reconciler
+	authentikClient      *authentik.Client
+	authConfig           *AuthConfig
+	knownRedirectURIs    sync.Map // tracks redirect URIs already registered in Authentik
+	logger               *slog.Logger
+	secrets              *secrets.Manager
 }
 
 // ServerConfig holds paths for server initialization
@@ -186,7 +189,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		DataDir:           s.cfg.DataDir,
 		// SSO configuration
 		SSOHostSecret:    s.cfg.SSOHostSecret,
-		SSOBaseURL:       s.cfg.SSOBaseURL,
+		SSOBaseURLs:      netutil.BuildBaseURLs(s.cfg.SSOBaseURL),
 		SSOAuthentikURL:  s.cfg.SSOAuthentikURL,
 		SSOBlueprintsDir: ssoBlueprintsDir,
 		AuthentikToken:   s.cfg.AuthentikToken,
@@ -381,7 +384,9 @@ func (s *Server) tryInitAuth() {
 	s.initAuth()
 }
 
-// initAuth initializes authentication by ensuring the Bloud OAuth2 app exists in Authentik
+// initAuth initializes authentication by ensuring the Bloud OAuth2 app exists in Authentik.
+// Registers redirect URIs for the configured base URL plus all detected local IPs,
+// so OAuth works regardless of which host the user accesses.
 func (s *Server) initAuth() {
 	// Skip if required components aren't available
 	if s.authentikClient == nil || s.sessionStore == nil || s.cfg.SSOBaseURL == "" {
@@ -398,17 +403,25 @@ func (s *Server) initAuth() {
 	// Generate a client secret from the host secret
 	clientSecret := s.deriveClientSecret("bloud-oauth")
 
-	// Ensure the Bloud OAuth2 app exists
-	oidcConfig, err := s.authentikClient.EnsureBloudOAuthApp(s.cfg.SSOBaseURL, clientSecret)
+	// Build base URLs: configured host + detected local IPs.
+	// Port is extracted from SSOBaseURL via net/url.Parse inside BuildBaseURLs.
+	baseURLs := netutil.BuildBaseURLs(s.cfg.SSOBaseURL)
+	s.logger.Info("registering OAuth redirect URIs", "baseURLs", baseURLs)
+
+	// Ensure the Bloud OAuth2 app exists with redirect URIs for all base URLs
+	oidcConfig, err := s.authentikClient.EnsureBloudOAuthApp(baseURLs, clientSecret)
 	if err != nil {
 		s.logger.Error("failed to ensure Bloud OAuth app", "error", err)
 		return
 	}
 
 	s.authConfig = &AuthConfig{
-		OIDCConfig:  oidcConfig,
-		BaseURL:     s.cfg.SSOBaseURL,
-		RedirectURI: s.cfg.SSOBaseURL + "/auth/callback",
+		OIDCConfig: oidcConfig,
+	}
+
+	// Seed known redirect URIs so we skip lazy registration for these hosts
+	for _, baseURL := range baseURLs {
+		s.knownRedirectURIs.Store(baseURL+"/auth/callback", true)
 	}
 
 	s.logger.Info("authentication initialized", "clientID", oidcConfig.ClientID)

@@ -32,13 +32,9 @@ mkBloudApp {
     PORT = toString cfg.port;
     # SSO via Authentik - users created via OAuth, no local admin needed
     DISABLE_LOCAL_AUTH = "true";
-    OAUTH2_PROVIDER = "oidc";
-    OAUTH2_CLIENT_ID = cfg.openidClientId;
-    # OAUTH2_CLIENT_SECRET loaded from envFile as OAUTH_CLIENT_SECRET
-    OAUTH2_OIDC_DISCOVERY_ENDPOINT = "${cfg.authentikExternalHost}:${toString cfg.traefikPort}/application/o/miniflux/";
-    OAUTH2_REDIRECT_URL = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/miniflux/oauth2/oidc/callback";
-    OAUTH2_OIDC_PROVIDER_NAME = "Bloud SSO";
-    OAUTH2_USER_CREATION = "1";
+    # Host-dependent SSO env vars (OAUTH2_OIDC_DISCOVERY_ENDPOINT, OAUTH2_REDIRECT_URL,
+    # OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET, etc.) are written to the env file at runtime
+    # by the host-agent prestart hook, using detected local IPs for dynamic host support.
   };
 
   # All runtime configuration handled by Go configurator:

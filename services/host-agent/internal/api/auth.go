@@ -22,11 +22,11 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
-// AuthConfig holds OIDC configuration for authentication
+// AuthConfig holds OIDC configuration for authentication.
+// OIDCConfig contains path templates only (no host). Full URLs are derived
+// from the incoming request's Host header so OAuth works via any hostname/IP.
 type AuthConfig struct {
-	OIDCConfig   *authentik.OIDCConfig
-	BaseURL      string // e.g., "http://localhost:8080"
-	RedirectURI  string // e.g., "http://localhost:8080/auth/callback"
+	OIDCConfig *authentik.OIDCConfig
 }
 
 // handleLogin initiates the OIDC login flow
@@ -61,8 +61,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// Build authorization URL
-	authURL, err := url.Parse(s.authConfig.OIDCConfig.AuthURL)
+	// Build authorization URL using the request's Host header
+	baseURL := requestBaseURL(r)
+	redirectURI := baseURL + "/auth/callback"
+
+	// Lazily register this redirect URI in Authentik if we haven't seen this host before.
+	// This handles access via mDNS, Tailscale, custom DNS, or any unexpected hostname.
+	if _, known := s.knownRedirectURIs.Load(redirectURI); !known {
+		if s.authentikClient != nil && s.authConfig.OIDCConfig.ProviderID > 0 {
+			if err := s.authentikClient.AddRedirectURI(s.authConfig.OIDCConfig.ProviderID, redirectURI); err != nil {
+				s.logger.Warn("failed to register redirect URI lazily", "uri", redirectURI, "error", err)
+				// Continue anyway — it may already be registered, or the flow may still work
+			} else {
+				s.logger.Info("lazily registered redirect URI", "uri", redirectURI)
+			}
+			s.knownRedirectURIs.Store(redirectURI, true)
+		}
+	}
+
+	authURL, err := url.Parse(baseURL + s.authConfig.OIDCConfig.AuthURL)
 	if err != nil {
 		s.logger.Error("failed to parse auth URL", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -71,7 +88,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	q := authURL.Query()
 	q.Set("client_id", s.authConfig.OIDCConfig.ClientID)
-	q.Set("redirect_uri", s.authConfig.RedirectURI)
+	q.Set("redirect_uri", redirectURI)
 	q.Set("response_type", "code")
 	q.Set("scope", "openid profile email")
 	q.Set("state", state)
@@ -128,10 +145,13 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build redirect URI from request Host (must match what was sent in /auth/login)
+	redirectURI := requestBaseURL(r) + "/auth/callback"
+
 	// Exchange code for tokens
 	tokenResp, err := s.authentikClient.ExchangeCode(
 		code,
-		s.authConfig.RedirectURI,
+		redirectURI,
 		s.authConfig.OIDCConfig.ClientID,
 		s.authConfig.OIDCConfig.ClientSecret,
 	)
@@ -323,6 +343,30 @@ func getUserFromContext(ctx context.Context) *store.User {
 		return nil
 	}
 	return user
+}
+
+// requestBaseURL derives the base URL (scheme + host) from the incoming request.
+// This allows OAuth redirects to work with any hostname/IP the user accesses.
+// It respects X-Forwarded-Proto and X-Forwarded-Host headers set by Traefik.
+func requestBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+
+	host := r.Host
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		host = fwdHost
+	}
+
+	u := &url.URL{
+		Scheme: scheme,
+		Host:   host,
+	}
+	return u.String()
 }
 
 // generateState creates a cryptographically secure random state parameter

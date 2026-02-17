@@ -22,7 +22,7 @@ sso:
     clientId: ACTUAL_OPENID_CLIENT_ID
     clientSecret: ACTUAL_OPENID_CLIENT_SECRET
     discoveryUrl: ACTUAL_OPENID_DISCOVERY_URL
-    # Note: Actual Budget uses ACTUAL_OPENID_SERVER_HOSTNAME instead of redirect URL
+    serverHostname: ACTUAL_OPENID_SERVER_HOSTNAME
 
 healthCheck:
   path: /

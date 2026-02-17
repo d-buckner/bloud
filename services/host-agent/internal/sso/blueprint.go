@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,22 +24,31 @@ import (
 type BlueprintGenerator struct {
 	hostSecret       string
 	ldapBindPassword string
-	baseURL          string
+	baseURLs         []string // All base URLs (configured host + detected IPs)
 	authentikURL     string
 	blueprintsDir    string
 	secrets          *secrets.Manager
 }
 
-// NewBlueprintGenerator creates a new blueprint generator
-func NewBlueprintGenerator(hostSecret, ldapBindPassword, baseURL, authentikURL, blueprintsDir string, secretsMgr *secrets.Manager) *BlueprintGenerator {
+// NewBlueprintGenerator creates a new blueprint generator.
+// baseURLs should contain the configured host URL first, followed by IP-based URLs.
+func NewBlueprintGenerator(hostSecret, ldapBindPassword string, baseURLs []string, authentikURL, blueprintsDir string, secretsMgr *secrets.Manager) *BlueprintGenerator {
 	return &BlueprintGenerator{
 		hostSecret:       hostSecret,
 		ldapBindPassword: ldapBindPassword,
-		baseURL:          baseURL,
+		baseURLs:         baseURLs,
 		authentikURL:     authentikURL,
 		blueprintsDir:    blueprintsDir,
 		secrets:          secretsMgr,
 	}
+}
+
+// primaryBaseURL returns the first (configured) base URL.
+func (g *BlueprintGenerator) primaryBaseURL() string {
+	if len(g.baseURLs) > 0 {
+		return g.baseURLs[0]
+	}
+	return ""
 }
 
 // GenerateForApp generates an Authentik blueprint for an app with SSO
@@ -55,35 +65,36 @@ func (g *BlueprintGenerator) GenerateForApp(app *catalog.App) error {
 	}
 }
 
-// generateOIDCBlueprint creates an OAuth2 Provider blueprint for native OIDC apps
+// generateOIDCBlueprint creates an OAuth2 Provider blueprint for native OIDC apps.
+// Registers redirect URIs for all base URLs so OAuth works from any host/IP.
 func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
 	clientID := g.generateClientID(app.Name)
 	clientSecret := g.generateClientSecret(app.Name)
 
-	// Build redirect URIs
-	redirectURIs := []string{
-		// Primary: embed path (for apps that use ACTUAL_OPENID_SERVER_HOSTNAME correctly)
-		fmt.Sprintf("%s/embed/%s%s", g.baseURL, app.Name, app.SSO.CallbackPath),
+	// Build redirect URIs for ALL base URLs
+	var redirectURIs []string
+	for _, baseURL := range g.baseURLs {
+		// Embed path (for apps that use ACTUAL_OPENID_SERVER_HOSTNAME correctly)
+		redirectURIs = append(redirectURIs,
+			fmt.Sprintf("%s/embed/%s%s", baseURL, app.Name, app.SSO.CallbackPath))
 		// Root-level callback: some apps (Actual Budget) build redirect_uri from window.location.origin
-		// which is the Traefik host, not the embed path. This requires routing.absolutePaths in metadata.
-		fmt.Sprintf("%s%s", g.baseURL, app.SSO.CallbackPath),
-	}
-	if app.Port > 0 {
-		// Add direct port access for debugging
-		// Extract host from baseURL (remove port if present)
-		host := g.baseURL
-		if idx := len(host) - 1; idx > 0 {
-			for i := len(host) - 1; i >= 0; i-- {
-				if host[i] == ':' {
-					host = host[:i]
-					break
-				}
-			}
-		}
-		redirectURIs = append(redirectURIs, fmt.Sprintf("%s:%d%s", host, app.Port, app.SSO.CallbackPath))
+		redirectURIs = append(redirectURIs,
+			fmt.Sprintf("%s%s", baseURL, app.SSO.CallbackPath))
 	}
 
-	launchURL := fmt.Sprintf("%s/embed/%s", g.baseURL, app.Name)
+	// Add direct port access for debugging (primary base URL only)
+	if app.Port > 0 {
+		parsed, err := url.Parse(g.primaryBaseURL())
+		if err == nil {
+			debugURL := &url.URL{
+				Scheme: parsed.Scheme,
+				Host:   net.JoinHostPort(parsed.Hostname(), fmt.Sprintf("%d", app.Port)),
+			}
+			redirectURIs = append(redirectURIs, debugURL.String()+app.SSO.CallbackPath)
+		}
+	}
+
+	launchURL := fmt.Sprintf("%s/embed/%s", g.primaryBaseURL(), app.Name)
 
 	blueprint, err := g.renderOIDCBlueprint(app, clientID, clientSecret, redirectURIs, launchURL)
 	if err != nil {
@@ -97,8 +108,8 @@ func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
 func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) error {
 	// external_host should be the root URL, not the app-specific path.
 	// The callback URL (/outpost.goauthentik.io/callback) is handled at root level by Traefik.
-	externalHost := g.baseURL
-	launchURL := fmt.Sprintf("%s/embed/%s", g.baseURL, app.Name)
+	externalHost := g.primaryBaseURL()
+	launchURL := fmt.Sprintf("%s/embed/%s", g.primaryBaseURL(), app.Name)
 
 	blueprint, err := g.renderForwardAuthBlueprint(app, externalHost, launchURL)
 	if err != nil {
@@ -111,7 +122,7 @@ func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) erro
 // generateLDAPBlueprint creates app-specific groups for LDAP authentication
 // The LDAP provider and outpost are created separately via GenerateLDAPOutpostBlueprint
 func (g *BlueprintGenerator) generateLDAPBlueprint(app *catalog.App) error {
-	launchURL := fmt.Sprintf("%s/embed/%s", g.baseURL, app.Name)
+	launchURL := fmt.Sprintf("%s/embed/%s", g.primaryBaseURL(), app.Name)
 
 	blueprint, err := g.renderLDAPBlueprint(app, launchURL)
 	if err != nil {
@@ -202,16 +213,20 @@ func (g *BlueprintGenerator) renderOutpostBlueprint(providers []ForwardAuthProvi
 	return buf.String(), nil
 }
 
-// GetSSOEnvVars returns the environment variables needed for an app's SSO config
+// GetSSOEnvVars returns the environment variables needed for an app's SSO config.
+// Uses the primary base URL for redirect/discovery URLs.
 func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
 	if app.SSO.Strategy != "native-oidc" {
 		return nil
 	}
 
+	baseURL := g.primaryBaseURL()
 	clientID := g.generateClientID(app.Name)
 	clientSecret := g.generateClientSecret(app.Name)
 	discoveryURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.Name)
-	redirectURL := fmt.Sprintf("%s/embed/%s%s", g.baseURL, app.Name, app.SSO.CallbackPath)
+	redirectURL := fmt.Sprintf("%s/embed/%s%s", baseURL, app.Name, app.SSO.CallbackPath)
+	serverHostname := fmt.Sprintf("%s/embed/%s", baseURL, app.Name)
+	issuerURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.Name)
 
 	env := make(map[string]string)
 
@@ -226,6 +241,12 @@ func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
 	}
 	if app.SSO.Env.RedirectURL != "" {
 		env[app.SSO.Env.RedirectURL] = redirectURL
+	}
+	if app.SSO.Env.ServerHostname != "" {
+		env[app.SSO.Env.ServerHostname] = serverHostname
+	}
+	if app.SSO.Env.Issuer != "" {
+		env[app.SSO.Env.Issuer] = issuerURL
 	}
 	if app.SSO.Env.Provider != "" {
 		env[app.SSO.Env.Provider] = "oidc"
