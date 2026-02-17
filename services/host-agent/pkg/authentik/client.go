@@ -1029,6 +1029,7 @@ const (
 
 // OIDCConfig holds the OAuth2/OIDC configuration for Bloud
 type OIDCConfig struct {
+	ProviderID   int    // Authentik provider PK, used for lazy redirect URI registration
 	ClientID     string
 	ClientSecret string
 	AuthURL      string
@@ -1058,10 +1059,15 @@ type UserInfo struct {
 
 // EnsureBloudOAuthApp creates the OAuth2 provider and application for Bloud if they don't exist.
 // Returns the OIDC configuration needed for the login flow.
-// baseURL is the external host URL (e.g., "http://bloud.local") used for both the
-// redirect URI and browser-facing OIDC endpoints (routed to Authentik via Traefik).
-func (c *Client) EnsureBloudOAuthApp(baseURL, clientSecret string) (*OIDCConfig, error) {
-	redirectURI := baseURL + bloudRedirectURI
+// baseURLs contains the external host URLs (e.g., ["http://bloud.local", "http://192.168.1.50:8080"]).
+// A redirect URI is registered for each base URL so OAuth works regardless of which host the user accesses.
+// The returned OIDCConfig contains path templates (no host) — callers derive full URLs from the request Host.
+func (c *Client) EnsureBloudOAuthApp(baseURLs []string, clientSecret string) (*OIDCConfig, error) {
+	// Build redirect URIs for all base URLs
+	var redirectURIs []string
+	for _, baseURL := range baseURLs {
+		redirectURIs = append(redirectURIs, baseURL+bloudRedirectURI)
+	}
 
 	// Check if provider already exists
 	providerID, err := c.findProviderID("oauth2", bloudProviderName)
@@ -1070,10 +1076,15 @@ func (c *Client) EnsureBloudOAuthApp(baseURL, clientSecret string) (*OIDCConfig,
 	}
 
 	if providerID == 0 {
-		// Create the OAuth2 provider
-		providerID, err = c.createBloudOAuth2Provider(redirectURI, clientSecret)
+		// Create the OAuth2 provider with all redirect URIs
+		providerID, err = c.createBloudOAuth2Provider(redirectURIs, clientSecret)
 		if err != nil {
 			return nil, fmt.Errorf("creating OAuth2 provider: %w", err)
+		}
+	} else {
+		// Provider exists — update redirect URIs to include any new IPs
+		if err := c.updateBloudOAuth2ProviderRedirectURIs(providerID, redirectURIs); err != nil {
+			return nil, fmt.Errorf("updating redirect URIs: %w", err)
 		}
 	}
 
@@ -1090,21 +1101,22 @@ func (c *Client) EnsureBloudOAuthApp(baseURL, clientSecret string) (*OIDCConfig,
 		}
 	}
 
-	// Return OIDC configuration using the external baseURL (e.g., "http://bloud.local").
-	// Authentik is behind Traefik on the same domain, so browser-facing OIDC paths
-	// use baseURL, not c.baseURL (which is the internal localhost:port for API calls).
+	// Return OIDC configuration with path templates only (no host baked in).
+	// The auth handlers derive full URLs from the incoming request's Host header.
+	// ProviderID is included so callers can lazily add redirect URIs for new hosts.
 	return &OIDCConfig{
+		ProviderID:   providerID,
 		ClientID:     bloudAppSlug,
 		ClientSecret: clientSecret,
-		AuthURL:      baseURL + "/application/o/authorize/",
-		TokenURL:     baseURL + "/application/o/token/",
-		UserInfoURL:  baseURL + "/application/o/userinfo/",
-		Issuer:       baseURL + "/application/o/" + bloudAppSlug + "/",
+		AuthURL:      "/application/o/authorize/",
+		TokenURL:     "/application/o/token/",
+		UserInfoURL:  "/application/o/userinfo/",
+		Issuer:       "/application/o/" + bloudAppSlug + "/",
 	}, nil
 }
 
 // createBloudOAuth2Provider creates the OAuth2 provider for Bloud
-func (c *Client) createBloudOAuth2Provider(redirectURI, clientSecret string) (int, error) {
+func (c *Client) createBloudOAuth2Provider(redirectURIs []string, clientSecret string) (int, error) {
 	// Find required flows
 	authFlowID, err := c.findFlowID("default-provider-authorization-implicit-consent")
 	if err != nil {
@@ -1132,16 +1144,23 @@ func (c *Client) createBloudOAuth2Provider(redirectURI, clientSecret string) (in
 		return 0, fmt.Errorf("getting scope mappings: %w", err)
 	}
 
+	// Build redirect URI entries for all base URLs
+	var uriEntries []map[string]string
+	for _, uri := range redirectURIs {
+		uriEntries = append(uriEntries, map[string]string{
+			"matching_mode": "strict",
+			"url":           uri,
+		})
+	}
+
 	payload := map[string]interface{}{
-		"name":               bloudProviderName,
-		"authorization_flow": authFlowID,
-		"invalidation_flow":  invalidFlowID,
-		"client_type":        "confidential",
-		"client_id":          bloudAppSlug,
-		"client_secret":      clientSecret,
-		"redirect_uris": []map[string]string{
-			{"matching_mode": "strict", "url": redirectURI},
-		},
+		"name":                       bloudProviderName,
+		"authorization_flow":         authFlowID,
+		"invalidation_flow":          invalidFlowID,
+		"client_type":                "confidential",
+		"client_id":                  bloudAppSlug,
+		"client_secret":              clientSecret,
+		"redirect_uris":             uriEntries,
 		"signing_key":                certUUID,
 		"property_mappings":          scopeMappings,
 		"sub_mode":                   "user_username",
@@ -1176,6 +1195,124 @@ func (c *Client) createBloudOAuth2Provider(redirectURI, clientSecret string) (in
 	}
 
 	return result.PK, nil
+}
+
+// AddRedirectURI adds a redirect URI to an OAuth2 provider if it's not already registered.
+// This is called lazily on first request from an unknown host.
+func (c *Client) AddRedirectURI(providerID int, redirectURI string) error {
+	// Fetch current provider to get existing redirect URIs
+	reqURL := fmt.Sprintf("%s/api/v3/providers/oauth2/%d/", c.baseURL, providerID)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching provider: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("fetching provider: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var provider struct {
+		RedirectURIs []struct {
+			MatchingMode string `json:"matching_mode"`
+			URL          string `json:"url"`
+		} `json:"redirect_uris"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&provider); err != nil {
+		return fmt.Errorf("decoding provider: %w", err)
+	}
+
+	// Check if already registered
+	for _, uri := range provider.RedirectURIs {
+		if uri.URL == redirectURI {
+			return nil // Already registered
+		}
+	}
+
+	// Build updated list with new URI appended
+	var uriEntries []map[string]string
+	for _, uri := range provider.RedirectURIs {
+		uriEntries = append(uriEntries, map[string]string{
+			"matching_mode": uri.MatchingMode,
+			"url":           uri.URL,
+		})
+	}
+	uriEntries = append(uriEntries, map[string]string{
+		"matching_mode": "strict",
+		"url":           redirectURI,
+	})
+
+	payload := map[string]interface{}{
+		"redirect_uris": uriEntries,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	patchReq, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("creating patch request: %w", err)
+	}
+	patchReq.Header.Set("Authorization", "Bearer "+c.token)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("Accept", "application/json")
+
+	patchResp, err := c.httpClient.Do(patchReq)
+	if err != nil {
+		return fmt.Errorf("patching provider: %w", err)
+	}
+	defer patchResp.Body.Close()
+
+	if patchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(patchResp.Body)
+		return fmt.Errorf("patching redirect URIs: status %d: %s", patchResp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// updateBloudOAuth2ProviderRedirectURIs patches the redirect URIs on an existing provider
+func (c *Client) updateBloudOAuth2ProviderRedirectURIs(providerID int, redirectURIs []string) error {
+	var uriEntries []map[string]string
+	for _, uri := range redirectURIs {
+		uriEntries = append(uriEntries, map[string]string{
+			"matching_mode": "strict",
+			"url":           uri,
+		})
+	}
+
+	payload := map[string]interface{}{
+		"redirect_uris": uriEntries,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	reqURL := fmt.Sprintf("%s/api/v3/providers/oauth2/%d/", c.baseURL, providerID)
+	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("updating redirect URIs: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
 // getFirstCertificateUUID retrieves the UUID of the first available certificate keypair

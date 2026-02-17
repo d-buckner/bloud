@@ -41,16 +41,15 @@ mkBloudApp {
     AFFINE_INDEXER_ENABLED = "false";
     AFFINE_SERVER_EXTERNAL_URL = "${cfg.externalHost}:${toString cfg.traefikPort}/embed/affine";
   } // lib.optionalAttrs authentikEnabled {
-    # OIDC configuration via environment variables
-    # Authentik is served at root-level paths (/application/, /flows/, etc.)
+    # Static OIDC settings (not host-dependent)
     OAUTH_OIDC_ENABLED = "true";
-    OAUTH_OIDC_ISSUER = "${cfg.authentikExternalHost}:${toString cfg.traefikPort}/application/o/affine/";
-    OAUTH_OIDC_CLIENT_ID = cfg.openidClientId;
-    # OAUTH_OIDC_CLIENT_SECRET loaded from envFile
     OAUTH_OIDC_SCOPE = "openid email profile offline_access";
     OAUTH_OIDC_CLAIM_MAP_ID = "sub";
     OAUTH_OIDC_CLAIM_MAP_EMAIL = "email";
     OAUTH_OIDC_CLAIM_MAP_NAME = "name";
+    # Host-dependent SSO env vars (OAUTH_OIDC_ISSUER, OAUTH_OIDC_CLIENT_ID,
+    # OAUTH_OIDC_CLIENT_SECRET) are written to the env file at runtime
+    # by the host-agent prestart hook, using detected local IPs.
   };
 
   dependsOn = [ "postgres" "redis" ];

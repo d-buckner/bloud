@@ -22,6 +22,10 @@ sso:
   callbackPath: /oauth/callback
   providerName: Bloud SSO
   userCreation: true
+  env:
+    clientId: OAUTH_OIDC_CLIENT_ID
+    clientSecret: OAUTH_OIDC_CLIENT_SECRET
+    issuer: OAUTH_OIDC_ISSUER
 
 routing:
   stripPrefix: true

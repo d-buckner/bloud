@@ -48,9 +48,9 @@ type Config struct {
 	Hostname          string // NixOS hostname
 	DataDir           string // Path to bloud data directory
 	// SSO configuration
-	SSOHostSecret    string // Master secret for deriving client secrets
-	SSOBaseURL       string // Base URL for callbacks (e.g., "http://localhost:8080")
-	SSOAuthentikURL  string // Authentik URL for discovery (e.g., "http://localhost:8080")
+	SSOHostSecret    string   // Master secret for deriving client secrets
+	SSOBaseURLs      []string // Base URLs for callbacks (configured host + detected IPs)
+	SSOAuthentikURL  string   // Authentik URL for discovery (e.g., "http://localhost:8080")
 	SSOBlueprintsDir string // Directory to write blueprints to
 	AuthentikToken   string // Authentik API token for SSO cleanup
 	LDAPBindPassword string // LDAP bind password for service accounts
@@ -92,7 +92,7 @@ func New(cfg Config) *Orchestrator {
 		blueprintGen = sso.NewBlueprintGenerator(
 			cfg.SSOHostSecret,
 			cfg.LDAPBindPassword,
-			cfg.SSOBaseURL,
+			cfg.SSOBaseURLs,
 			cfg.SSOAuthentikURL,
 			cfg.SSOBlueprintsDir,
 			cfg.Secrets,
@@ -101,8 +101,8 @@ func New(cfg Config) *Orchestrator {
 
 	// Authentik client (if token is provided)
 	var authentikClient authentik.ClientInterface = cfg.AuthentikClient
-	if authentikClient == nil && cfg.AuthentikToken != "" && cfg.SSOBaseURL != "" {
-		authentikClient = authentik.NewClient(cfg.SSOBaseURL, cfg.AuthentikToken)
+	if authentikClient == nil && cfg.AuthentikToken != "" && len(cfg.SSOBaseURLs) > 0 {
+		authentikClient = authentik.NewClient(cfg.SSOBaseURLs[0], cfg.AuthentikToken)
 	}
 
 	o := &Orchestrator{

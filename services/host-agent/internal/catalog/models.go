@@ -40,13 +40,15 @@ type SSO struct {
 
 // SSOEnv maps SSO config values to app-specific environment variable names
 type SSOEnv struct {
-	ClientID     string `yaml:"clientId" json:"clientId"`
-	ClientSecret string `yaml:"clientSecret" json:"clientSecret"`
-	DiscoveryURL string `yaml:"discoveryUrl" json:"discoveryUrl"`
-	RedirectURL  string `yaml:"redirectUrl" json:"redirectUrl"`
-	Provider     string `yaml:"provider" json:"provider"`
-	ProviderName string `yaml:"providerName" json:"providerName"`
-	UserCreation string `yaml:"userCreation" json:"userCreation"`
+	ClientID       string `yaml:"clientId" json:"clientId"`
+	ClientSecret   string `yaml:"clientSecret" json:"clientSecret"`
+	DiscoveryURL   string `yaml:"discoveryUrl" json:"discoveryUrl"`
+	RedirectURL    string `yaml:"redirectUrl" json:"redirectUrl"`
+	ServerHostname string `yaml:"serverHostname" json:"serverHostname"` // Base URL for app server (e.g., ACTUAL_OPENID_SERVER_HOSTNAME)
+	Issuer         string `yaml:"issuer" json:"issuer"`                 // OIDC issuer URL (e.g., OAUTH_OIDC_ISSUER)
+	Provider       string `yaml:"provider" json:"provider"`
+	ProviderName   string `yaml:"providerName" json:"providerName"`
+	UserCreation   string `yaml:"userCreation" json:"userCreation"`
 }
 
 // HealthCheck defines health check configuration

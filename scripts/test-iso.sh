@@ -22,7 +22,7 @@ PVE_HOST="${BLOUD_PVE_HOST:-root@192.168.0.62}"
 VMID="${BLOUD_PVE_VMID:-9999}"
 VM_MEMORY=8192
 VM_CORES=2
-VM_NAME="bloud-test-iso"
+VM_NAME="bloud"
 ISO_STORAGE="/var/lib/vz/template/iso"
 ISO_FILENAME="bloud-test.iso"
 
@@ -206,19 +206,29 @@ log "VM is up at $VM_IP"
 
 # ── Step 4: Wait for services ────────────────────────────────────
 log "Waiting for Bloud services to start (timeout: ${SERVICE_TIMEOUT}s)..."
+log "Streaming VM journal..."
+echo ""
+
+# Stream journal in background so we can see what's happening during boot
+vm_ssh "journalctl --follow --no-pager -o short-iso" 2>/dev/null &
+JOURNAL_PID=$!
+
 for i in $(seq 1 "$SERVICE_TIMEOUT"); do
   if vm_ssh "curl -sf http://localhost:3000/api/health" 2>/dev/null; then
+    echo ""
     log "Services are up (took ${i}s)"
     break
   fi
   if [ "$i" -eq "$SERVICE_TIMEOUT" ]; then
+    echo ""
     warn "Timeout waiting for services — running checks anyway"
-  fi
-  if [ $((i % 15)) -eq 0 ]; then
-    echo "  ... waiting ($i/${SERVICE_TIMEOUT}s)"
   fi
   sleep 1
 done
+
+# Stop the journal stream
+kill "$JOURNAL_PID" 2>/dev/null || true
+wait "$JOURNAL_PID" 2>/dev/null || true
 
 # ── Step 5: Health checks ────────────────────────────────────────
 echo ""
