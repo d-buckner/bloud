@@ -259,7 +259,10 @@ All startup dependencies should be managed via systemd, not dev scripts:
 
 ## Local Development
 
-Use the `./bloud` CLI which manages a Lima VM with hot reload. Works on macOS and Linux.
+The `./bloud` CLI has two modes, detected automatically:
+
+- **Lima mode** (default) — manages a Lima VM for iterative development with hot reload
+- **Proxmox mode** (when `BLOUD_PVE_HOST` is set) — deploys the ISO to a Proxmox host for integration testing
 
 ### Prerequisites
 
@@ -281,8 +284,8 @@ npm run setup    # Installs deps + builds ./bloud CLI
 
 ### The `./bloud` CLI
 
+**Lima mode** (development):
 ```bash
-# Dev environment (persistent VM, ports 8080/3000/5173)
 ./bloud start          # Start dev environment (auto-starts VM if needed)
 ./bloud stop           # Stop dev services
 ./bloud status         # Show dev environment status
@@ -291,15 +294,21 @@ npm run setup    # Installs deps + builds ./bloud CLI
 ./bloud shell          # Shell into VM
 ./bloud shell "cmd"    # Run a command in VM
 ./bloud rebuild        # Rebuild NixOS configuration
+```
 
-# Test environment (ephemeral VM, ports 8081/3001/5174)
-./bloud test start     # Create fresh test VM and start services
-./bloud test stop      # Stop services and destroy test VM
-./bloud test status    # Show test environment status
-./bloud test logs      # Show logs from test services
-./bloud test attach    # Attach to test tmux session
-./bloud test shell     # Shell into test VM
-./bloud test rebuild   # Rebuild test VM NixOS config
+**Proxmox mode** (ISO integration testing, requires `BLOUD_PVE_HOST`):
+```bash
+./bloud start [iso]          # Deploy ISO → create VM → boot → check → destroy
+./bloud start [iso] --keep   # Same, but keep VM running after checks
+./bloud start --skip-deploy  # Reuse existing VM, re-run checks
+./bloud stop                 # Stop VM
+./bloud destroy              # Destroy VM
+./bloud status               # Show VM and service status
+./bloud logs                 # Stream VM journalctl
+./bloud shell [cmd]          # SSH into VM
+./bloud checks               # Run health checks against running VM
+./bloud install <app>        # Install app via API
+./bloud uninstall <app>      # Uninstall app via API
 ```
 
 ### Typical Development Session
@@ -327,19 +336,16 @@ open http://localhost:3000   # Go API (direct)
 ./bloud stop     # Stop dev servers (VM stays for fast restart)
 ```
 
-### Running Tests in Isolation
+### ISO Integration Testing
 
-The test environment runs on different ports so dev and tests can run simultaneously:
+Set `BLOUD_PVE_HOST` to point at your Proxmox host, then:
 
 ```bash
-# Start ephemeral test VM (fresh state, isolated)
-./bloud test start
-
-# Run your integration tests against port 8081/3001
-npm test
-
-# Test VM auto-destroys when stopped
-./bloud test stop
+./bloud start          # Test latest GitHub release (deploy → boot → check → destroy)
+./bloud start --keep   # Keep VM running for manual inspection after checks
+./bloud shell          # SSH into the running VM
+./bloud logs           # Stream journalctl output
+./bloud checks         # Re-run health checks against a running VM
 ```
 
 ### After Changing NixOS Config
