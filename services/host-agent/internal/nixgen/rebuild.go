@@ -68,10 +68,10 @@ func (r *Rebuilder) Switch(ctx context.Context) (*RebuildResult, error) {
 
 	var cmd *exec.Cmd
 	if r.useSudo {
-		sudoArgs := append([]string{"nixos-rebuild"}, args...)
-		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+		sudoArgs := append([]string{"/run/current-system/sw/bin/nixos-rebuild"}, args...)
+		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", sudoArgs...)
 	} else {
-		cmd = exec.CommandContext(ctx, "nixos-rebuild", args...)
+		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
 	}
 
 	// Capture both stdout and stderr
@@ -181,10 +181,10 @@ func (r *Rebuilder) Test(ctx context.Context) (*RebuildResult, error) {
 
 	var cmd *exec.Cmd
 	if r.useSudo {
-		sudoArgs := append([]string{"nixos-rebuild"}, args...)
-		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+		sudoArgs := append([]string{"/run/current-system/sw/bin/nixos-rebuild"}, args...)
+		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", sudoArgs...)
 	} else {
-		cmd = exec.CommandContext(ctx, "nixos-rebuild", args...)
+		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
 	}
 	output, err := cmd.CombinedOutput()
 
@@ -236,10 +236,10 @@ func (r *Rebuilder) SwitchStream(ctx context.Context, events chan<- RebuildEvent
 
 	var cmd *exec.Cmd
 	if r.useSudo {
-		sudoArgs := append([]string{"nixos-rebuild"}, args...)
-		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+		sudoArgs := append([]string{"/run/current-system/sw/bin/nixos-rebuild"}, args...)
+		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", sudoArgs...)
 	} else {
-		cmd = exec.CommandContext(ctx, "nixos-rebuild", args...)
+		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
 	}
 
 	stdout, err := cmd.StdoutPipe()
@@ -298,9 +298,9 @@ func (r *Rebuilder) Rollback(ctx context.Context) (*RebuildResult, error) {
 
 	var cmd *exec.Cmd
 	if r.useSudo {
-		cmd = exec.CommandContext(ctx, "sudo", "nixos-rebuild", "switch", "--rollback")
+		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "/run/current-system/sw/bin/nixos-rebuild", "switch", "--rollback")
 	} else {
-		cmd = exec.CommandContext(ctx, "nixos-rebuild", "switch", "--rollback")
+		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", "switch", "--rollback")
 	}
 	output, err := cmd.CombinedOutput()
 
@@ -331,7 +331,7 @@ func (r *Rebuilder) StopUserService(ctx context.Context, appName string) error {
 	// This is the same approach used in bloud-user-services
 	var cmd *exec.Cmd
 	if r.useSudo {
-		cmd = exec.CommandContext(ctx, "sudo", "machinectl", "shell", "bloud@",
+		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "machinectl", "shell", "bloud@",
 			"/run/current-system/sw/bin/systemctl", "--user", "stop", serviceName)
 	} else {
 		cmd = exec.CommandContext(ctx, "systemctl", "--user", "stop", serviceName)
@@ -358,7 +358,7 @@ func (r *Rebuilder) ReloadAndRestartApps(ctx context.Context) error {
 	// Step 1: daemon-reload to pick up new/changed unit files
 	var reloadCmd *exec.Cmd
 	if r.useSudo {
-		reloadCmd = exec.CommandContext(ctx, "sudo", "machinectl", "shell", "bloud@",
+		reloadCmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "machinectl", "shell", "bloud@",
 			"/run/current-system/sw/bin/systemctl", "--user", "daemon-reload")
 	} else {
 		reloadCmd = exec.CommandContext(ctx, "systemctl", "--user", "daemon-reload")
@@ -375,7 +375,7 @@ func (r *Rebuilder) ReloadAndRestartApps(ctx context.Context) error {
 	// Using "try-restart" so it only restarts if already active
 	var restartCmd *exec.Cmd
 	if r.useSudo {
-		restartCmd = exec.CommandContext(ctx, "sudo", "machinectl", "shell", "bloud@",
+		restartCmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "machinectl", "shell", "bloud@",
 			"/run/current-system/sw/bin/systemctl", "--user", "restart", "bloud-apps.target")
 	} else {
 		restartCmd = exec.CommandContext(ctx, "systemctl", "--user", "restart", "bloud-apps.target")
