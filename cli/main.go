@@ -172,8 +172,7 @@ func printUsage() {
 		fmt.Println("Usage: ./bloud <command> [args]")
 		fmt.Println()
 		fmt.Println("Commands:")
-		fmt.Println("  start [iso] [flags]   Deploy ISO → create VM → boot → check → destroy")
-		fmt.Println("    --keep              Keep VM running after checks (for debugging)")
+		fmt.Println("  start [iso] [flags]   Deploy ISO → create VM → boot → check (VM stays running)")
 		fmt.Println("    --skip-deploy       Reuse existing VM (skip ISO upload + VM create)")
 		fmt.Println("    --pve-host <host>   Override Proxmox SSH target")
 		fmt.Println("    --vmid <id>         Override VM ID")
@@ -192,7 +191,7 @@ func printUsage() {
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  ./bloud start                         # test latest GitHub release")
-		fmt.Println("  ./bloud start ./bloud.iso --keep      # test local ISO, keep VM after")
+		fmt.Println("  ./bloud start ./bloud.iso             # test local ISO")
 		fmt.Println("  ./bloud start --skip-deploy           # re-run checks on existing VM")
 		return
 	}
