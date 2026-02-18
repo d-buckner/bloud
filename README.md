@@ -2,7 +2,7 @@
 
 **Home Cloud Operating System**
 
-An opinionated, zero-config home server OS that makes self-hosting actually accessible. Install apps with automatic SSO integration—no manual OAuth configuration, no reverse proxy setup.
+An opinionated, zero-config home server OS that makes self-hosting accessible. Install apps with automatic SSO integration. No manual OAuth configuration, reverse proxy setup, or integration configurations.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()

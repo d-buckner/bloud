@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -73,6 +74,13 @@ func (r *Rebuilder) Switch(ctx context.Context) (*RebuildResult, error) {
 	} else {
 		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
 	}
+
+	// Skip nixos-rebuild's re-exec mechanism: it tries to build
+	// $flake#nixosConfigurations.$host.config.system.build.nixos-rebuild and
+	// re-exec from there. When BLOUD_FLAKE_PATH points to a bundled store path,
+	// this resolves to the bloud-host-agent package (not nixos-rebuild).
+	// Setting _NIXOS_REBUILD_REEXEC=1 skips that step.
+	cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
 
 	// Capture both stdout and stderr
 	stdout, err := cmd.StdoutPipe()
@@ -241,6 +249,7 @@ func (r *Rebuilder) SwitchStream(ctx context.Context, events chan<- RebuildEvent
 	} else {
 		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
 	}
+	cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
