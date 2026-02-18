@@ -27,13 +27,12 @@ func main() {
 	args := os.Args[2:]
 
 	// Handle setup command before any other checks
-	// (setup needs to work even when dependencies are missing)
 	if cmd == "setup" {
 		os.Exit(cmdSetup())
 	}
 
 	// For Lima mode, ensure SSH is available
-	if !vm.IsNative() {
+	if !vm.IsNative() && !isPVEMode() {
 		if err := vm.EnsureSSHAvailable(); err != nil {
 			fmt.Fprintf(os.Stderr, "%sError:%s %v\n", colorRed, colorReset, err)
 			fmt.Fprintf(os.Stderr, "\nRun './bloud setup' to check all prerequisites.\n")
@@ -44,35 +43,70 @@ func main() {
 	var exitCode int
 
 	switch cmd {
-	// Dev commands (top-level)
 	case "start":
-		exitCode = cmdStart()
+		if isPVEMode() {
+			exitCode = cmdStartPVE(args)
+		} else {
+			exitCode = cmdStart()
+		}
 	case "stop":
-		exitCode = cmdStop()
+		if isPVEMode() {
+			exitCode = cmdStopPVE()
+		} else {
+			exitCode = cmdStop()
+		}
 	case "status":
-		exitCode = cmdStatus()
+		if isPVEMode() {
+			exitCode = cmdStatusPVE()
+		} else {
+			exitCode = cmdStatus()
+		}
+	case "logs":
+		if isPVEMode() {
+			exitCode = cmdLogsPVE()
+		} else {
+			exitCode = cmdLogs()
+		}
+	case "shell":
+		if isPVEMode() {
+			exitCode = cmdShellPVE(args)
+		} else {
+			exitCode = cmdShell(args)
+		}
+	case "install":
+		if isPVEMode() {
+			exitCode = cmdInstallPVE(args)
+		} else {
+			exitCode = cmdInstall(args)
+		}
+	case "uninstall":
+		if isPVEMode() {
+			exitCode = cmdUninstallPVE(args)
+		} else {
+			exitCode = cmdUninstall(args)
+		}
+	case "destroy":
+		if isPVEMode() {
+			exitCode = cmdDestroyPVE()
+		} else {
+			exitCode = cmdDestroy()
+		}
+	case "checks":
+		if isPVEMode() {
+			exitCode = cmdChecksPVE()
+		} else {
+			fmt.Fprintf(os.Stderr, "%sError:%s 'checks' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
+			exitCode = 1
+		}
+	// Lima-only commands
 	case "services":
 		exitCode = cmdServices()
-	case "logs":
-		exitCode = cmdLogs()
 	case "attach":
 		exitCode = cmdAttach()
-	case "shell":
-		exitCode = cmdShell(args)
 	case "rebuild":
 		exitCode = cmdRebuild()
-	case "install":
-		exitCode = cmdInstall(args)
-	case "uninstall":
-		exitCode = cmdUninstall(args)
 	case "depgraph":
 		exitCode = cmdDepGraph()
-	case "destroy":
-		exitCode = cmdDestroy()
-
-	// Test commands (subcommand)
-	case "test":
-		exitCode = handleTest(args)
 
 	case "help", "--help", "-h":
 		printUsage()
@@ -87,63 +121,45 @@ func main() {
 	os.Exit(exitCode)
 }
 
-func handleTest(args []string) int {
-	if vm.IsNative() {
-		fmt.Println("Test commands are not available on native NixOS.")
-		fmt.Println("Test isolation requires Lima VMs (macOS/non-NixOS Linux).")
-		return 1
-	}
-
-	if len(args) < 1 {
-		printTestUsage()
-		return 0
-	}
-
-	cmd := args[0]
-	testArgs := args[1:]
-
-	switch cmd {
-	case "start":
-		return testStart()
-	case "stop":
-		return testStop()
-	case "reset":
-		return testReset()
-	case "destroy":
-		return testDestroy()
-	case "status":
-		return testStatus()
-	case "logs":
-		return testLogs()
-	case "attach":
-		return testAttach()
-	case "shell":
-		return testShell(testArgs)
-	case "rebuild":
-		return testRebuild()
-	case "services":
-		return testServices()
-	case "install":
-		return testInstall(testArgs)
-	case "uninstall":
-		return testUninstall(testArgs)
-	case "help", "--help", "-h":
-		printTestUsage()
-		return 0
-	default:
-		fmt.Fprintf(os.Stderr, "%sError:%s Unknown test command: %s\n", colorRed, colorReset, cmd)
-		printTestUsage()
-		return 1
-	}
-}
-
 func printUsage() {
-	fmt.Println("Bloud Development CLI")
+	fmt.Println("Bloud CLI")
+	fmt.Println()
+
+	if isPVEMode() {
+		fmt.Printf("  Backend: %sProxmox%s (%s)\n", colorCyan, colorReset, os.Getenv("BLOUD_PVE_HOST"))
+		fmt.Println()
+		fmt.Println("Usage: ./bloud <command> [args]")
+		fmt.Println()
+		fmt.Println("Commands:")
+		fmt.Println("  start [iso] [flags]   Deploy ISO → create VM → boot → check → destroy")
+		fmt.Println("    --keep              Keep VM running after checks (for debugging)")
+		fmt.Println("    --skip-deploy       Reuse existing VM (skip ISO upload + VM create)")
+		fmt.Println("    --pve-host <host>   Override Proxmox SSH target")
+		fmt.Println("    --vmid <id>         Override VM ID")
+		fmt.Println("  stop                  Stop VM")
+		fmt.Println("  destroy               Destroy VM completely")
+		fmt.Println("  status                Show VM and service status")
+		fmt.Println("  logs                  Stream VM journalctl")
+		fmt.Println("  shell [cmd]           SSH into VM")
+		fmt.Println("  checks                Run health checks against running VM")
+		fmt.Println("  install <app>         Install an app via API")
+		fmt.Println("  uninstall <app>       Uninstall an app via API")
+		fmt.Println()
+		fmt.Println("Environment:")
+		fmt.Println("  BLOUD_PVE_HOST        Proxmox SSH target (e.g. root@192.168.0.62)")
+		fmt.Println("  BLOUD_PVE_VMID        VM ID (default: 9999)")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  ./bloud start                         # test latest GitHub release")
+		fmt.Println("  ./bloud start ./bloud.iso --keep      # test local ISO, keep VM after")
+		fmt.Println("  ./bloud start --skip-deploy           # re-run checks on existing VM")
+		return
+	}
 
 	if vm.IsNative() {
-		fmt.Println("  Runtime: Native NixOS")
+		fmt.Println("  Backend: Native NixOS")
 	} else {
-		fmt.Println("  Runtime: Lima VM")
+		fmt.Println("  Backend: Lima VM")
 	}
 
 	fmt.Println()
@@ -158,10 +174,10 @@ func printUsage() {
 	fmt.Println()
 
 	if vm.IsNative() {
-		fmt.Println("Dev Commands (ports 8080/3000/5173):")
+		fmt.Println("Commands:")
 		fmt.Println("  start           Start dev environment")
 	} else {
-		fmt.Println("Dev Commands (persistent environment, ports 8080/3000/5173):")
+		fmt.Println("Commands (persistent Lima VM, ports 8080/3000/5173):")
 		fmt.Println("  start           Start dev environment (auto-starts VM if needed)")
 	}
 	fmt.Println("  stop            Stop dev services")
@@ -182,58 +198,11 @@ func printUsage() {
 		fmt.Println("  destroy         Destroy the dev VM completely")
 	}
 	fmt.Println()
-
-	if !vm.IsNative() {
-		fmt.Println("Test Commands (isolated environment, ports 8081/3001/5174):")
-		fmt.Println("  test start      Start test VM (warm start from snapshot if available)")
-		fmt.Println("  test stop       Stop test VM (preserves snapshot for fast restart)")
-		fmt.Println("  test reset      Reset to clean state from snapshot (fast)")
-		fmt.Println("  test destroy    Completely destroy test VM and snapshot")
-		fmt.Println("  test status     Show test environment status")
-		fmt.Println("  test logs       Show logs from test services")
-		fmt.Println("  test attach     Attach to test tmux session")
-		fmt.Println("  test shell      Shell into test VM")
-		fmt.Println("  test rebuild    Rebuild test VM NixOS config")
-		fmt.Println("  test install    Install an app in test VM")
-		fmt.Println("  test uninstall  Uninstall an app from test VM")
-		fmt.Println()
-	}
-
 	fmt.Println("URLs (after start):")
-	fmt.Println("  http://localhost:8080     Dev - Web UI (via Traefik)")
-	fmt.Println("  http://localhost:3000     Dev - Go API")
-	if !vm.IsNative() {
-		fmt.Println("  http://localhost:8081     Test - Web UI (via Traefik)")
-		fmt.Println("  http://localhost:3001     Test - Go API")
-	}
-}
-
-func printTestUsage() {
-	fmt.Println("Bloud Test Environment")
+	fmt.Println("  http://localhost:8080     Web UI (via Traefik)")
+	fmt.Println("  http://localhost:3000     Go API")
 	fmt.Println()
-	fmt.Println("Usage: ./bloud test <command> [args]")
-	fmt.Println()
-	fmt.Println("The test environment uses snapshots for fast startup:")
-	fmt.Println("  - First 'test start' does a cold start (creates VM + snapshot)")
-	fmt.Println("  - Subsequent 'test start' does a warm start from snapshot (fast!)")
-	fmt.Println("  - 'test reset' restores to clean state without rebuilding")
-	fmt.Println("  - 'test destroy' removes VM and snapshot completely")
-	fmt.Println()
-	fmt.Println("It runs on different ports (8081/3001/5174) so it can run alongside dev.")
-	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  start           Start test VM (warm start if snapshot exists)")
-	fmt.Println("  stop            Stop test VM (preserves snapshot)")
-	fmt.Println("  reset           Reset to clean state from snapshot (fast)")
-	fmt.Println("  destroy         Completely destroy test VM and snapshot")
-	fmt.Println("  status          Show test environment status")
-	fmt.Println("  services        Show podman service status")
-	fmt.Println("  logs            Show logs from test services")
-	fmt.Println("  attach          Attach to tmux session (Ctrl-B D to detach)")
-	fmt.Println("  shell [cmd]     Shell into VM (or run a command)")
-	fmt.Println("  rebuild         Rebuild NixOS configuration")
-	fmt.Println("  install <app>   Install an app")
-	fmt.Println("  uninstall <app> Uninstall an app")
+	fmt.Println("Proxmox mode: set BLOUD_PVE_HOST to switch to ISO testing against Proxmox")
 }
 
 func log(msg string) {

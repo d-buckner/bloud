@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -276,9 +277,27 @@ func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// isLocalRequest returns true if the request originates from localhost (127.0.0.1 or ::1).
+// Requests from localhost have implicit CLI-level trust — if you have shell access to the
+// machine you can already do anything, so no session is required.
+func isLocalRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // authMiddleware checks for a valid session and adds user to context
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Requests from localhost bypass session auth — shell access implies CLI trust
+		if isLocalRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Check for session cookie
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil || cookie.Value == "" {
