@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	pveDefaultHost    = "root@192.168.0.62"
 	pveDefaultVMID    = "9999"
 	pveDefaultMemory  = 8192
 	pveDefaultCores   = 2
@@ -35,16 +34,12 @@ func isPVEMode() bool {
 }
 
 func getPVEConfig() pveConfig {
-	host := os.Getenv("BLOUD_PVE_HOST")
-	if host == "" {
-		host = pveDefaultHost
-	}
 	vmid := os.Getenv("BLOUD_PVE_VMID")
 	if vmid == "" {
 		vmid = pveDefaultVMID
 	}
 	return pveConfig{
-		Host:   host,
+		Host:   os.Getenv("BLOUD_PVE_HOST"),
 		VMID:   vmid,
 		Memory: pveDefaultMemory,
 		Cores:  pveDefaultCores,
@@ -295,18 +290,15 @@ func doDeploy(cfg pveConfig, isoSource string) int {
 // ── Commands ───────────────────────────────────────────────────────────────────
 
 // cmdStartPVE is the main ISO test lifecycle:
-// deploy ISO → clean old VMs → create VM → boot → wait for services → checks → destroy
-// Flags: --keep (don't destroy), --skip-deploy (reuse existing VM)
+// deploy ISO → clean old VMs → create VM → boot → wait for services → checks
+// VM stays running after checks. Flags: --skip-deploy (reuse existing VM)
 func cmdStartPVE(args []string) int {
 	cfg := getPVEConfig()
-	keep := false
 	skipDeploy := false
 	isoSource := ""
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--keep":
-			keep = true
 		case "--skip-deploy":
 			skipDeploy = true
 		case "--pve-host":
@@ -326,15 +318,8 @@ func cmdStartPVE(args []string) int {
 		}
 	}
 
-	cleanup := func() {
-		if keep {
-			warn(fmt.Sprintf("Keeping VM %s running (--keep). IP shown above.", cfg.VMID))
-			warn(fmt.Sprintf("Teardown: ssh %s 'qm stop %s && qm destroy %s --purge'", cfg.Host, cfg.VMID, cfg.VMID))
-			return
-		}
-		if !skipDeploy {
-			pveDestroyVM(cfg)
-		}
+	printVMInfo := func() {
+		fmt.Printf("  VM is running. To tear down: ./bloud destroy\n")
 	}
 
 	if !skipDeploy {
@@ -364,7 +349,6 @@ func cmdStartPVE(args []string) int {
 	vmIP := waitForPVEVMReady(cfg)
 	if vmIP == "" {
 		errorf("Timeout: VM did not become reachable via SSH within %ds", pveBootTimeout)
-		cleanup()
 		return 1
 	}
 
@@ -418,7 +402,7 @@ func cmdStartPVE(args []string) int {
 	_ = vmExecStream(vmIP, `podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'`)
 
 	printPVEResults(vmIP, passed, failed)
-	cleanup()
+	printVMInfo()
 
 	if failed > 0 {
 		return 1
