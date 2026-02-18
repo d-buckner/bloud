@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"codeberg.org/d-buckner/bloud/cli/vm"
 )
@@ -15,7 +18,45 @@ const (
 	colorReset  = "\033[0m"
 )
 
+// loadDotEnv reads a .env file from the project root and sets any variables
+// not already present in the environment. This lets users configure BLOUD_PVE_HOST
+// and other settings without needing to export them from their shell profile.
+func loadDotEnv() {
+	root, err := getProjectRoot()
+	if err != nil {
+		return
+	}
+	f, err := os.Open(filepath.Join(root, ".env"))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		// Strip optional surrounding quotes
+		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			value = value[1 : len(value)-1]
+		}
+		// Only set if not already in environment
+		if os.Getenv(key) == "" {
+			os.Setenv(key, value)
+		}
+	}
+}
+
 func main() {
+	loadDotEnv()
 	vm.DetectRuntime()
 
 	if len(os.Args) < 2 {
