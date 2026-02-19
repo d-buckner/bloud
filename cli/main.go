@@ -146,6 +146,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%sError:%s 'setup-builder' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
 			exitCode = 1
 		}
+	case "destroy-builder":
+		if isPVEMode() {
+			exitCode = cmdDestroyBuilderPVE()
+		} else {
+			fmt.Fprintf(os.Stderr, "%sError:%s 'destroy-builder' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
+			exitCode = 1
+		}
 	// Lima-only commands
 	case "services":
 		exitCode = cmdServices()
@@ -193,6 +200,7 @@ func printUsage() {
 		fmt.Println("  install <app>         Install an app via API")
 		fmt.Println("  uninstall <app>       Uninstall an app via API")
 		fmt.Println("  setup-builder         Provision or update the ISO build VM (VMID 9998)")
+		fmt.Println("  destroy-builder       Destroy the ISO build VM")
 		fmt.Println()
 		fmt.Println("Environment:")
 		fmt.Println("  BLOUD_PVE_HOST        Proxmox SSH target (e.g. root@192.168.0.62)")

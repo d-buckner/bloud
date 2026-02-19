@@ -880,6 +880,17 @@ func cmdDestroyPVE() int {
 	return 0
 }
 
+func cmdDestroyBuilderPVE() int {
+	cfg := getPVEConfig()
+	bc := builderCfg(cfg)
+	if !pveVMExists(bc) {
+		log(fmt.Sprintf("Build VM %s does not exist", pveBuildVMID))
+		return 0
+	}
+	pveDestroyVM(bc)
+	return 0
+}
+
 func cmdStatusPVE() int {
 	cfg := getPVEConfig()
 	fmt.Println()
