@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -21,15 +22,17 @@ const (
 	pveBootTimeout    = 180
 	pveServiceTimeout = 300
 
-	// Build VM — persistent NixOS VM used to build ISOs locally
-	pveBuildVMID    = "9998"
-	pveBuildVMName  = "bloud-builder"
-	pveBuildMemory  = 8192
-	pveBuildCores   = 4
-	pveBuildDisk    = "40" // GB
-	pveBuildDir     = "/home/bloud/bloud"
-	pveBuildISOFile = "nixos-24.11-minimal.iso"
-	pveBuildISOURL  = "https://channels.nixos.org/nixos-24.11/latest-nixos-minimal-x86_64-linux.iso"
+	// Build VM — persistent Ubuntu VM (VMID 9998) used to build ISOs locally.
+	// Ubuntu cloud image + Nix daemon: no manual OS install required.
+	pveBuildVMID      = "9998"
+	pveBuildVMName    = "bloud-builder"
+	pveBuildMemory    = 8192
+	pveBuildCores     = 4
+	pveBuildDisk      = "40G"
+	pveBuildDir       = "/root/bloud"
+	pveBuildImageURL  = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+	pveBuildImageFile = "noble-server-cloudimg-amd64.img"
+	pveBuildKeyPath   = ".bloud/builder_rsa" // relative to $HOME
 )
 
 type pveConfig struct {
@@ -306,10 +309,31 @@ func builderCfg(cfg pveConfig) pveConfig {
 	return c
 }
 
-// builderRootExec runs a command on the build VM as root (password: bloud).
-func builderRootExec(ip, cmd string) (string, error) {
-	c := exec.Command("sshpass", "-p", "bloud",
-		"ssh",
+// builderKeyPaths returns the private and public key paths for builder SSH.
+func builderKeyPaths() (private, public string) {
+	home, _ := os.UserHomeDir()
+	private = filepath.Join(home, pveBuildKeyPath)
+	public = private + ".pub"
+	return
+}
+
+// ensureBuilderKey generates the builder SSH keypair if it doesn't exist.
+func ensureBuilderKey() error {
+	privKey, _ := builderKeyPaths()
+	if _, err := os.Stat(privKey); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(privKey), 0700); err != nil {
+		return err
+	}
+	return exec.Command("ssh-keygen", "-t", "ed25519", "-f", privKey, "-N", "", "-C", "bloud-builder").Run()
+}
+
+// builderExec runs a command on the build VM as root using the SSH keypair.
+func builderExec(ip, cmd string) (string, error) {
+	privKey, _ := builderKeyPaths()
+	c := exec.Command("ssh",
+		"-i", privKey,
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=5",
@@ -321,9 +345,10 @@ func builderRootExec(ip, cmd string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-func builderRootExecStream(ip, cmd string) error {
-	c := exec.Command("sshpass", "-p", "bloud",
-		"ssh",
+func builderExecStream(ip, cmd string) error {
+	privKey, _ := builderKeyPaths()
+	c := exec.Command("ssh",
+		"-i", privKey,
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
@@ -335,14 +360,15 @@ func builderRootExecStream(ip, cmd string) error {
 	return c.Run()
 }
 
-// waitForBuilderRootSSH waits for SSH access to the build VM as root.
-func waitForBuilderRootSSH(bc pveConfig) string {
+// waitForBuilderSSH waits for root SSH access to the build VM using the keypair.
+func waitForBuilderSSH(bc pveConfig) string {
+	privKey, _ := builderKeyPaths()
 	log(fmt.Sprintf("Waiting for build VM SSH (timeout: %ds)...", pveBootTimeout))
 	for i := 0; i < pveBootTimeout; i++ {
 		ip := getVMIP(bc)
 		if ip != "" {
-			c := exec.Command("sshpass", "-p", "bloud",
-				"ssh",
+			c := exec.Command("ssh",
+				"-i", privKey,
 				"-o", "StrictHostKeyChecking=no",
 				"-o", "UserKnownHostsFile=/dev/null",
 				"-o", "ConnectTimeout=3",
@@ -362,33 +388,119 @@ func waitForBuilderRootSSH(bc pveConfig) string {
 	return ""
 }
 
-// createBuilderVM downloads the NixOS installer ISO and creates the build VM.
+// createBuilderVM downloads the Ubuntu 24.04 cloud image, creates the VM,
+// imports the disk, and configures cloud-init with our SSH public key.
+// No manual OS installation required — Ubuntu boots immediately.
 func createBuilderVM(cfg pveConfig) int {
-	isoPath := fmt.Sprintf("%s/%s", pveISOStorage, pveBuildISOFile)
+	if err := ensureBuilderKey(); err != nil {
+		errorf("Failed to generate builder SSH key: %v", err)
+		return 1
+	}
+	_, pubKey := builderKeyPaths()
 
-	if _, err := pveExec(cfg, fmt.Sprintf("test -f %s", isoPath)); err != nil {
-		log("Downloading NixOS installer ISO (~250MB)...")
+	imgPath := fmt.Sprintf("%s/%s", pveISOStorage, pveBuildImageFile)
+	if _, err := pveExec(cfg, fmt.Sprintf("test -f %s", imgPath)); err != nil {
+		log("Downloading Ubuntu 24.04 cloud image (~700MB)...")
 		if err := pveExecStream(cfg, fmt.Sprintf(
-			"curl -L --progress-bar -o '%s' '%s'", isoPath, pveBuildISOURL,
+			"curl -L --progress-bar -o '%s' '%s'", imgPath, pveBuildImageURL,
 		)); err != nil {
-			errorf("Failed to download NixOS ISO: %v", err)
+			errorf("Failed to download Ubuntu cloud image: %v", err)
 			return 1
 		}
 	} else {
-		log("NixOS installer ISO already present")
+		log("Ubuntu cloud image already present")
 	}
 
 	log(fmt.Sprintf("Creating build VM (VMID %s)...", pveBuildVMID))
 	createCmd := fmt.Sprintf(
 		"qm create %s --name %s --memory %d --cores %d --ostype l26"+
-			" --cdrom 'local:iso/%s' --boot order=ide2"+
-			" --virtio0 local-lvm:%s --net0 virtio,bridge=vmbr0"+
-			" --agent enabled=1 --serial0 socket",
+			" --net0 virtio,bridge=vmbr0 --agent enabled=1 --serial0 socket",
 		pveBuildVMID, pveBuildVMName, pveBuildMemory, pveBuildCores,
-		pveBuildISOFile, pveBuildDisk,
 	)
 	if err := pveExecStream(cfg, createCmd); err != nil {
 		errorf("Failed to create build VM: %v", err)
+		return 1
+	}
+
+	log("Importing cloud image disk...")
+	importOut, err := pveExec(cfg, fmt.Sprintf(
+		"qm importdisk %s %s local-lvm 2>&1", pveBuildVMID, imgPath,
+	))
+	if err != nil {
+		errorf("Failed to import disk: %v\n%s", err, importOut)
+		return 1
+	}
+
+	// Parse disk name from import output:
+	// "Successfully imported disk as 'unused0:local-lvm:vm-9998-disk-0'"
+	diskName := ""
+	for _, line := range strings.Split(importOut, "\n") {
+		if strings.Contains(line, "Successfully imported disk as") {
+			parts := strings.Split(line, "'")
+			if len(parts) >= 2 {
+				_, after, _ := strings.Cut(parts[1], ":")
+				diskName = after
+			}
+			break
+		}
+	}
+	if diskName == "" {
+		// Fallback: query unused disks from VM config
+		configOut, _ := pveExec(cfg, fmt.Sprintf("qm config %s", pveBuildVMID))
+		for _, line := range strings.Split(configOut, "\n") {
+			if strings.HasPrefix(line, "unused0:") {
+				diskName = strings.TrimSpace(strings.TrimPrefix(line, "unused0:"))
+				break
+			}
+		}
+	}
+	if diskName == "" {
+		errorf("Could not determine imported disk name.\nImport output: %s", importOut)
+		return 1
+	}
+
+	log(fmt.Sprintf("Attaching disk: %s", diskName))
+	if err := pveExecStream(cfg, fmt.Sprintf(
+		"qm set %s --virtio0 %s --boot order=virtio0", pveBuildVMID, diskName,
+	)); err != nil {
+		errorf("Failed to attach disk: %v", err)
+		return 1
+	}
+
+	if err := pveExecStream(cfg, fmt.Sprintf(
+		"qm disk resize %s virtio0 %s", pveBuildVMID, pveBuildDisk,
+	)); err != nil {
+		errorf("Failed to resize disk: %v", err)
+		return 1
+	}
+
+	if err := pveExecStream(cfg, fmt.Sprintf(
+		"qm set %s --ide2 local-lvm:cloudinit --ipconfig0 ip=dhcp --ciuser root",
+		pveBuildVMID,
+	)); err != nil {
+		errorf("Failed to add cloud-init drive: %v", err)
+		return 1
+	}
+
+	log("Configuring root SSH key access...")
+	// Upload public key to Proxmox, then pass it to cloud-init
+	scpKey := exec.Command("scp",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		pubKey,
+		cfg.Host+":/tmp/builder_key.pub",
+	)
+	scpKey.Stdout = os.Stdout
+	scpKey.Stderr = os.Stderr
+	if err := scpKey.Run(); err != nil {
+		errorf("Failed to upload SSH public key to Proxmox: %v", err)
+		return 1
+	}
+	if err := pveExecStream(cfg, fmt.Sprintf(
+		"qm set %s --sshkeys /tmp/builder_key.pub", pveBuildVMID,
+	)); err != nil {
+		errorf("Failed to configure SSH key: %v", err)
 		return 1
 	}
 
@@ -401,46 +513,50 @@ func createBuilderVM(cfg pveConfig) int {
 	return 0
 }
 
-// doConfigureBuilder rsyncs the source tree to the build VM and applies the
-// build-server NixOS configuration via nixos-rebuild switch.
+// doConfigureBuilder installs Nix, Go, and Node.js on the Ubuntu build VM.
+// Idempotent: skips if the VM has already been provisioned.
 func doConfigureBuilder(ip string) int {
-	root, err := getProjectRoot()
-	if err != nil {
-		errorf("Could not find project root: %v", err)
+	if out, _ := builderExec(ip, "test -f /root/.bloud-provisioned && echo yes"); out == "yes" {
+		log("Build VM already provisioned")
+		return 0
+	}
+
+	log("Provisioning build VM with Nix, Go, and Node.js (this may take a while)...")
+	provisionScript := `set -e
+export DEBIAN_FRONTEND=noninteractive
+
+echo '==> Installing system packages...'
+apt-get update -y
+apt-get install -y git rsync curl ca-certificates
+
+echo '==> Installing Go 1.23...'
+curl -sL https://go.dev/dl/go1.23.4.linux-amd64.tar.gz | tar -C /usr/local -xz
+echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+
+echo '==> Installing Node.js 22...'
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
+
+echo '==> Installing Nix (with flakes)...'
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+    | sh -s -- install --no-confirm
+
+git config --global --add safe.directory '*'
+touch /root/.bloud-provisioned
+echo 'Provisioning complete.'`
+
+	if err := builderExecStream(ip, provisionScript); err != nil {
+		errorf("Failed to provision build VM: %v", err)
 		return 1
 	}
 
-	log("Syncing source to build VM...")
-	rsync := exec.Command("rsync", "-av", "--delete",
-		"--exclude=build/",
-		"--exclude=node_modules/",
-		"--exclude=.direnv/",
-		"-e", "sshpass -p bloud ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
-		root+"/",
-		"root@"+ip+":/root/bloud/",
-	)
-	rsync.Stdout = os.Stdout
-	rsync.Stderr = os.Stderr
-	if err := rsync.Run(); err != nil {
-		errorf("Failed to sync source: %v", err)
-		return 1
-	}
-
-	log("Applying build-server NixOS configuration (this may take a while)...")
-	if err := builderRootExecStream(ip,
-		"nixos-rebuild switch --flake /root/bloud#build-server --impure 2>&1",
-	); err != nil {
-		errorf("Failed to apply build-server config: %v", err)
-		return 1
-	}
-
-	log("Build VM configured successfully")
+	log("Build VM provisioned successfully")
 	fmt.Printf("  Run './bloud start --build' to build and test the ISO\n")
 	return 0
 }
 
-// doBuild rsyncs source to the build VM, builds the ISO, and copies it to
-// Proxmox ISO storage — replacing the normal ISO download step.
+// doBuild rsyncs source to the build VM, builds the ISO, then copies it
+// Mac→Proxmox ISO storage — replacing the normal ISO download step.
 func doBuild(cfg pveConfig) int {
 	bc := builderCfg(cfg)
 
@@ -458,7 +574,7 @@ func doBuild(cfg pveConfig) int {
 	}
 
 	log("Waiting for build VM...")
-	ip := waitForPVEVMReady(bc)
+	ip := waitForBuilderSSH(bc)
 	if ip == "" {
 		errorf("Build VM did not become reachable via SSH")
 		return 1
@@ -470,14 +586,16 @@ func doBuild(cfg pveConfig) int {
 		return 1
 	}
 
+	privKey, _ := builderKeyPaths()
+
 	log("Syncing source to build VM...")
 	rsync := exec.Command("rsync", "-av", "--delete",
 		"--exclude=build/",
 		"--exclude=node_modules/",
 		"--exclude=.direnv/",
-		"-e", "sshpass -p bloud ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
+		"-e", fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR", privKey),
 		root+"/",
-		fmt.Sprintf("%s@%s:%s/", pveVMSSHUser, ip, pveBuildDir),
+		"root@"+ip+":"+pveBuildDir+"/",
 	)
 	rsync.Stdout = os.Stdout
 	rsync.Stderr = os.Stderr
@@ -488,6 +606,7 @@ func doBuild(cfg pveConfig) int {
 
 	log("Building ISO (first build may take 15-30 minutes)...")
 	buildScript := fmt.Sprintf(`set -e
+export PATH="$PATH:/usr/local/go/bin:/nix/var/nix/profiles/default/bin"
 cd %s
 mkdir -p build
 
@@ -497,7 +616,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/host-agent ./cmd/h
 cd ../..
 
 echo '==> Building frontend...'
-npm ci
+npm ci --prefer-offline
 npm run build --workspace=services/host-agent/web
 cp -r services/host-agent/web/build build/frontend
 
@@ -507,34 +626,59 @@ git add -f build/
 echo '==> Building ISO...'
 nix build .#packages.x86_64-linux.iso --no-link`, pveBuildDir)
 
-	if err := vmExecStream(ip, buildScript); err != nil {
+	if err := builderExecStream(ip, buildScript); err != nil {
 		errorf("ISO build failed: %v", err)
 		return 1
 	}
 
-	// Get the ISO path from the Nix store (instant — reads from cache)
-	isoDir, err := vmExec(ip, fmt.Sprintf(
-		"nix build %s/.#packages.x86_64-linux.iso --no-link --print-out-paths",
+	// Get the store path from cache (instant — build already done above)
+	storePath, err := builderExec(ip, fmt.Sprintf(
+		`export PATH="$PATH:/nix/var/nix/profiles/default/bin"; cd %s && nix build .#packages.x86_64-linux.iso --no-link --print-out-paths`,
 		pveBuildDir,
 	))
-	if err != nil || isoDir == "" {
-		errorf("Failed to get ISO output path: %v", err)
+	if err != nil || storePath == "" {
+		errorf("Failed to get ISO store path: %v", err)
 		return 1
 	}
-	isoPath, err := vmExec(ip, fmt.Sprintf("find '%s/iso' -name '*.iso' | head -1", isoDir))
+	isoPath, err := builderExec(ip, fmt.Sprintf("find '%s/iso' -name '*.iso' | head -1", storePath))
 	if err != nil || isoPath == "" {
-		errorf("Could not find .iso file in %s/iso", isoDir)
+		errorf("Could not find .iso file in %s/iso", storePath)
 		return 1
 	}
 
 	log(fmt.Sprintf("ISO built: %s", isoPath))
-	log("Copying ISO to Proxmox...")
-	copyCmd := fmt.Sprintf(
-		"sshpass -p '%s' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %s@%s:%s %s/%s",
-		pveVMSSHPass, pveVMSSHUser, ip, isoPath, pveISOStorage, pveISOFilename,
+
+	// Copy ISO: build VM → Mac → Proxmox
+	localISO := "/tmp/bloud-built.iso"
+	log("Downloading ISO from build VM...")
+	scpDown := exec.Command("scp",
+		"-i", privKey,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		"root@"+ip+":"+isoPath,
+		localISO,
 	)
-	if err := pveExecStream(cfg, copyCmd); err != nil {
-		errorf("Failed to copy ISO to Proxmox: %v", err)
+	scpDown.Stdout = os.Stdout
+	scpDown.Stderr = os.Stderr
+	if err := scpDown.Run(); err != nil {
+		errorf("Failed to download ISO from build VM: %v", err)
+		return 1
+	}
+	defer os.Remove(localISO)
+
+	log("Uploading ISO to Proxmox...")
+	scpUp := exec.Command("scp",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		localISO,
+		cfg.Host+":"+pveISOStorage+"/"+pveISOFilename,
+	)
+	scpUp.Stdout = os.Stdout
+	scpUp.Stderr = os.Stderr
+	if err := scpUp.Run(); err != nil {
+		errorf("Failed to upload ISO to Proxmox: %v", err)
 		return 1
 	}
 
@@ -543,32 +687,22 @@ nix build .#packages.x86_64-linux.iso --no-link`, pveBuildDir)
 }
 
 // cmdSetupBuilderPVE provisions or updates the build VM.
+// First run: downloads Ubuntu cloud image, creates VM, provisions Nix/Go/Node.
+// Subsequent runs: re-runs provisioning if not already done (idempotent).
 func cmdSetupBuilderPVE() int {
 	cfg := getPVEConfig()
 	bc := builderCfg(cfg)
 
+	if err := ensureBuilderKey(); err != nil {
+		errorf("Failed to generate builder SSH key: %v", err)
+		return 1
+	}
+
 	if !pveVMExists(bc) {
-		log("Build VM not found. Creating...")
+		log("Build VM not found. Creating from Ubuntu cloud image...")
 		if code := createBuilderVM(cfg); code != 0 {
 			return code
 		}
-		fmt.Println()
-		fmt.Printf("  %sBuild VM (VMID %s) created and booting NixOS installer.%s\n", colorYellow, pveBuildVMID, colorReset)
-		fmt.Println()
-		fmt.Println("  Complete the one-time NixOS install:")
-		fmt.Println("  1. Open the VM console in Proxmox web UI")
-		fmt.Println("  2. When the installer boots, set root password:")
-		fmt.Println("       passwd   # enter: bloud")
-		fmt.Println("  3. Install NixOS:")
-		fmt.Println("       nixos-generate-config --root /mnt")
-		fmt.Println("       # Add to /mnt/etc/nixos/configuration.nix:")
-		fmt.Println("       #   services.openssh.enable = true;")
-		fmt.Println("       #   users.users.root.initialPassword = \"bloud\";")
-		fmt.Println("       #   nix.settings.experimental-features = [\"nix-command\" \"flakes\"];")
-		fmt.Println("       nixos-install --no-root-passwd && reboot")
-		fmt.Println()
-		fmt.Println("  4. After reboot: ./bloud setup-builder")
-		return 0
 	}
 
 	if !pveVMIsRunning(bc) {
@@ -579,9 +713,9 @@ func cmdSetupBuilderPVE() int {
 		}
 	}
 
-	ip := waitForBuilderRootSSH(bc)
+	ip := waitForBuilderSSH(bc)
 	if ip == "" {
-		errorf("Build VM did not become reachable via SSH (root/bloud)")
+		errorf("Build VM did not become reachable via SSH")
 		return 1
 	}
 
