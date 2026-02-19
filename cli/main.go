@@ -139,6 +139,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%sError:%s 'checks' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
 			exitCode = 1
 		}
+	case "setup-builder":
+		if isPVEMode() {
+			exitCode = cmdSetupBuilderPVE()
+		} else {
+			fmt.Fprintf(os.Stderr, "%sError:%s 'setup-builder' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
+			exitCode = 1
+		}
 	// Lima-only commands
 	case "services":
 		exitCode = cmdServices()
@@ -173,6 +180,7 @@ func printUsage() {
 		fmt.Println()
 		fmt.Println("Commands:")
 		fmt.Println("  start [iso] [flags]   Deploy ISO → create VM → boot → check (VM stays running)")
+		fmt.Println("    --build             Build ISO locally via build VM instead of downloading")
 		fmt.Println("    --skip-deploy       Reuse existing VM (skip ISO upload + VM create)")
 		fmt.Println("    --pve-host <host>   Override Proxmox SSH target")
 		fmt.Println("    --vmid <id>         Override VM ID")
@@ -184,6 +192,7 @@ func printUsage() {
 		fmt.Println("  checks                Run health checks against running VM")
 		fmt.Println("  install <app>         Install an app via API")
 		fmt.Println("  uninstall <app>       Uninstall an app via API")
+		fmt.Println("  setup-builder         Provision or update the ISO build VM (VMID 9998)")
 		fmt.Println()
 		fmt.Println("Environment:")
 		fmt.Println("  BLOUD_PVE_HOST        Proxmox SSH target (e.g. root@192.168.0.62)")
@@ -192,6 +201,7 @@ func printUsage() {
 		fmt.Println("Examples:")
 		fmt.Println("  ./bloud start                         # test latest GitHub release")
 		fmt.Println("  ./bloud start ./bloud.iso             # test local ISO")
+		fmt.Println("  ./bloud start --build                 # build ISO locally and test")
 		fmt.Println("  ./bloud start --skip-deploy           # re-run checks on existing VM")
 		return
 	}

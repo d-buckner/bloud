@@ -20,6 +20,16 @@ const (
 	pveVMSSHPass      = "bloud"
 	pveBootTimeout    = 180
 	pveServiceTimeout = 300
+
+	// Build VM — persistent NixOS VM used to build ISOs locally
+	pveBuildVMID    = "9998"
+	pveBuildVMName  = "bloud-builder"
+	pveBuildMemory  = 8192
+	pveBuildCores   = 4
+	pveBuildDisk    = "40" // GB
+	pveBuildDir     = "/home/bloud/bloud"
+	pveBuildISOFile = "nixos-24.11-minimal.iso"
+	pveBuildISOURL  = "https://channels.nixos.org/nixos-24.11/latest-nixos-minimal-x86_64-linux.iso"
 )
 
 type pveConfig struct {
@@ -287,6 +297,297 @@ func doDeploy(cfg pveConfig, isoSource string) int {
 	return 0
 }
 
+// ── Build VM helpers ───────────────────────────────────────────────────────
+
+// builderCfg returns a pveConfig targeting the build VM (VMID 9998).
+func builderCfg(cfg pveConfig) pveConfig {
+	c := cfg
+	c.VMID = pveBuildVMID
+	return c
+}
+
+// builderRootExec runs a command on the build VM as root (password: bloud).
+func builderRootExec(ip, cmd string) (string, error) {
+	c := exec.Command("sshpass", "-p", "bloud",
+		"ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=5",
+		"-o", "LogLevel=ERROR",
+		"root@"+ip,
+		cmd,
+	)
+	out, err := c.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+func builderRootExecStream(ip, cmd string) error {
+	c := exec.Command("sshpass", "-p", "bloud",
+		"ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		"root@"+ip,
+		cmd,
+	)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+// waitForBuilderRootSSH waits for SSH access to the build VM as root.
+func waitForBuilderRootSSH(bc pveConfig) string {
+	log(fmt.Sprintf("Waiting for build VM SSH (timeout: %ds)...", pveBootTimeout))
+	for i := 0; i < pveBootTimeout; i++ {
+		ip := getVMIP(bc)
+		if ip != "" {
+			c := exec.Command("sshpass", "-p", "bloud",
+				"ssh",
+				"-o", "StrictHostKeyChecking=no",
+				"-o", "UserKnownHostsFile=/dev/null",
+				"-o", "ConnectTimeout=3",
+				"-o", "LogLevel=ERROR",
+				"root@"+ip, "true",
+			)
+			if c.Run() == nil {
+				log(fmt.Sprintf("Build VM reachable at %s", ip))
+				return ip
+			}
+		}
+		if i > 0 && i%15 == 0 {
+			fmt.Printf("  ... waiting (%d/%ds)\n", i, pveBootTimeout)
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return ""
+}
+
+// createBuilderVM downloads the NixOS installer ISO and creates the build VM.
+func createBuilderVM(cfg pveConfig) int {
+	isoPath := fmt.Sprintf("%s/%s", pveISOStorage, pveBuildISOFile)
+
+	if _, err := pveExec(cfg, fmt.Sprintf("test -f %s", isoPath)); err != nil {
+		log("Downloading NixOS installer ISO (~250MB)...")
+		if err := pveExecStream(cfg, fmt.Sprintf(
+			"curl -L --progress-bar -o '%s' '%s'", isoPath, pveBuildISOURL,
+		)); err != nil {
+			errorf("Failed to download NixOS ISO: %v", err)
+			return 1
+		}
+	} else {
+		log("NixOS installer ISO already present")
+	}
+
+	log(fmt.Sprintf("Creating build VM (VMID %s)...", pveBuildVMID))
+	createCmd := fmt.Sprintf(
+		"qm create %s --name %s --memory %d --cores %d --ostype l26"+
+			" --cdrom 'local:iso/%s' --boot order=ide2"+
+			" --virtio0 local-lvm:%s --net0 virtio,bridge=vmbr0"+
+			" --agent enabled=1 --serial0 socket",
+		pveBuildVMID, pveBuildVMName, pveBuildMemory, pveBuildCores,
+		pveBuildISOFile, pveBuildDisk,
+	)
+	if err := pveExecStream(cfg, createCmd); err != nil {
+		errorf("Failed to create build VM: %v", err)
+		return 1
+	}
+
+	log("Starting build VM...")
+	if err := pveExecStream(cfg, fmt.Sprintf("qm start %s", pveBuildVMID)); err != nil {
+		errorf("Failed to start build VM: %v", err)
+		return 1
+	}
+
+	return 0
+}
+
+// doConfigureBuilder rsyncs the source tree to the build VM and applies the
+// build-server NixOS configuration via nixos-rebuild switch.
+func doConfigureBuilder(ip string) int {
+	root, err := getProjectRoot()
+	if err != nil {
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	log("Syncing source to build VM...")
+	rsync := exec.Command("rsync", "-av", "--delete",
+		"--exclude=build/",
+		"--exclude=node_modules/",
+		"--exclude=.direnv/",
+		"-e", "sshpass -p bloud ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
+		root+"/",
+		"root@"+ip+":/root/bloud/",
+	)
+	rsync.Stdout = os.Stdout
+	rsync.Stderr = os.Stderr
+	if err := rsync.Run(); err != nil {
+		errorf("Failed to sync source: %v", err)
+		return 1
+	}
+
+	log("Applying build-server NixOS configuration (this may take a while)...")
+	if err := builderRootExecStream(ip,
+		"nixos-rebuild switch --flake /root/bloud#build-server --impure 2>&1",
+	); err != nil {
+		errorf("Failed to apply build-server config: %v", err)
+		return 1
+	}
+
+	log("Build VM configured successfully")
+	fmt.Printf("  Run './bloud start --build' to build and test the ISO\n")
+	return 0
+}
+
+// doBuild rsyncs source to the build VM, builds the ISO, and copies it to
+// Proxmox ISO storage — replacing the normal ISO download step.
+func doBuild(cfg pveConfig) int {
+	bc := builderCfg(cfg)
+
+	if !pveVMExists(bc) {
+		errorf("Build VM not found. Run: ./bloud setup-builder")
+		return 1
+	}
+
+	if !pveVMIsRunning(bc) {
+		log("Starting build VM...")
+		if err := pveExecStream(cfg, fmt.Sprintf("qm start %s", pveBuildVMID)); err != nil {
+			errorf("Failed to start build VM: %v", err)
+			return 1
+		}
+	}
+
+	log("Waiting for build VM...")
+	ip := waitForPVEVMReady(bc)
+	if ip == "" {
+		errorf("Build VM did not become reachable via SSH")
+		return 1
+	}
+
+	root, err := getProjectRoot()
+	if err != nil {
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	log("Syncing source to build VM...")
+	rsync := exec.Command("rsync", "-av", "--delete",
+		"--exclude=build/",
+		"--exclude=node_modules/",
+		"--exclude=.direnv/",
+		"-e", "sshpass -p bloud ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
+		root+"/",
+		fmt.Sprintf("%s@%s:%s/", pveVMSSHUser, ip, pveBuildDir),
+	)
+	rsync.Stdout = os.Stdout
+	rsync.Stderr = os.Stderr
+	if err := rsync.Run(); err != nil {
+		errorf("Failed to sync source: %v", err)
+		return 1
+	}
+
+	log("Building ISO (first build may take 15-30 minutes)...")
+	buildScript := fmt.Sprintf(`set -e
+cd %s
+mkdir -p build
+
+echo '==> Building Go binary...'
+cd services/host-agent
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/host-agent ./cmd/host-agent
+cd ../..
+
+echo '==> Building frontend...'
+npm ci
+npm run build --workspace=services/host-agent/web
+cp -r services/host-agent/web/build build/frontend
+
+echo '==> Staging artifacts for Nix...'
+git add -f build/
+
+echo '==> Building ISO...'
+nix build .#packages.x86_64-linux.iso --no-link`, pveBuildDir)
+
+	if err := vmExecStream(ip, buildScript); err != nil {
+		errorf("ISO build failed: %v", err)
+		return 1
+	}
+
+	// Get the ISO path from the Nix store (instant — reads from cache)
+	isoDir, err := vmExec(ip, fmt.Sprintf(
+		"nix build %s/.#packages.x86_64-linux.iso --no-link --print-out-paths",
+		pveBuildDir,
+	))
+	if err != nil || isoDir == "" {
+		errorf("Failed to get ISO output path: %v", err)
+		return 1
+	}
+	isoPath, err := vmExec(ip, fmt.Sprintf("find '%s/iso' -name '*.iso' | head -1", isoDir))
+	if err != nil || isoPath == "" {
+		errorf("Could not find .iso file in %s/iso", isoDir)
+		return 1
+	}
+
+	log(fmt.Sprintf("ISO built: %s", isoPath))
+	log("Copying ISO to Proxmox...")
+	copyCmd := fmt.Sprintf(
+		"sshpass -p '%s' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %s@%s:%s %s/%s",
+		pveVMSSHPass, pveVMSSHUser, ip, isoPath, pveISOStorage, pveISOFilename,
+	)
+	if err := pveExecStream(cfg, copyCmd); err != nil {
+		errorf("Failed to copy ISO to Proxmox: %v", err)
+		return 1
+	}
+
+	log("ISO ready in Proxmox")
+	return 0
+}
+
+// cmdSetupBuilderPVE provisions or updates the build VM.
+func cmdSetupBuilderPVE() int {
+	cfg := getPVEConfig()
+	bc := builderCfg(cfg)
+
+	if !pveVMExists(bc) {
+		log("Build VM not found. Creating...")
+		if code := createBuilderVM(cfg); code != 0 {
+			return code
+		}
+		fmt.Println()
+		fmt.Printf("  %sBuild VM (VMID %s) created and booting NixOS installer.%s\n", colorYellow, pveBuildVMID, colorReset)
+		fmt.Println()
+		fmt.Println("  Complete the one-time NixOS install:")
+		fmt.Println("  1. Open the VM console in Proxmox web UI")
+		fmt.Println("  2. When the installer boots, set root password:")
+		fmt.Println("       passwd   # enter: bloud")
+		fmt.Println("  3. Install NixOS:")
+		fmt.Println("       nixos-generate-config --root /mnt")
+		fmt.Println("       # Add to /mnt/etc/nixos/configuration.nix:")
+		fmt.Println("       #   services.openssh.enable = true;")
+		fmt.Println("       #   users.users.root.initialPassword = \"bloud\";")
+		fmt.Println("       #   nix.settings.experimental-features = [\"nix-command\" \"flakes\"];")
+		fmt.Println("       nixos-install --no-root-passwd && reboot")
+		fmt.Println()
+		fmt.Println("  4. After reboot: ./bloud setup-builder")
+		return 0
+	}
+
+	if !pveVMIsRunning(bc) {
+		log("Starting build VM...")
+		if err := pveExecStream(cfg, fmt.Sprintf("qm start %s", pveBuildVMID)); err != nil {
+			errorf("Failed to start build VM: %v", err)
+			return 1
+		}
+	}
+
+	ip := waitForBuilderRootSSH(bc)
+	if ip == "" {
+		errorf("Build VM did not become reachable via SSH (root/bloud)")
+		return 1
+	}
+
+	return doConfigureBuilder(ip)
+}
+
 // ── Commands ───────────────────────────────────────────────────────────────────
 
 // cmdStartPVE is the main ISO test lifecycle:
@@ -294,11 +595,14 @@ func doDeploy(cfg pveConfig, isoSource string) int {
 // VM stays running after checks. Flags: --skip-deploy (reuse existing VM)
 func cmdStartPVE(args []string) int {
 	cfg := getPVEConfig()
+	build := false
 	skipDeploy := false
 	isoSource := ""
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--build":
+			build = true
 		case "--skip-deploy":
 			skipDeploy = true
 		case "--pve-host":
@@ -323,8 +627,14 @@ func cmdStartPVE(args []string) int {
 	}
 
 	if !skipDeploy {
-		if code := doDeploy(cfg, isoSource); code != 0 {
-			return code
+		if build {
+			if code := doBuild(cfg); code != 0 {
+				return code
+			}
+		} else {
+			if code := doDeploy(cfg, isoSource); code != 0 {
+				return code
+			}
 		}
 		pveCleanOldVMs(cfg)
 

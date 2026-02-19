@@ -208,11 +208,30 @@ nix build .#packages.x86_64-linux.iso
 
 **Local dev is unaffected** — `./bloud start` uses `go-watch`/Vite directly, never touches Nix package builds.
 
+### nixos-rebuild Re-Exec Gotcha
+
+`nixos-rebuild` has a self-update mechanism: before switching, it builds `$flake#nixosConfigurations.$host.config.system.build.nixos-rebuild` and re-execs from the result. When `BLOUD_FLAKE_PATH` points to the bundled store path (e.g. `/nix/store/<hash>-bloud-host-agent-0.1.0/share/bloud`), this attribute resolves to the bloud-host-agent derivation — which has no `bin/nixos-rebuild`. The exec fails.
+
+**Fix:** Set `_NIXOS_REBUILD_REEXEC=1` in the command environment before calling nixos-rebuild. This tells the script it has already been re-exec'd and skips the step. See `services/host-agent/internal/nixgen/rebuild.go`.
+
+### systemd Service PATH
+
+systemd services run with a stripped PATH that excludes `/run/wrappers/bin` (sudo) and `/run/current-system/sw/bin` (nixos-rebuild, systemctl, etc.). Always use absolute paths in any code that runs inside a systemd service:
+
+- `sudo` → `/run/wrappers/bin/sudo`
+- `nixos-rebuild` → `/run/current-system/sw/bin/nixos-rebuild`
+- `systemctl` → `/run/current-system/sw/bin/systemctl`
+
+### host-agent API Auth
+
+The host-agent API (`localhost:3000`) uses session cookie auth. Requests from `127.0.0.1` (loopback) bypass auth automatically — shell access to the machine implies CLI trust. This is how `./bloud install` works: it SSHes into the VM and curls localhost:3000 directly.
+
+External requests (through Traefik or from the browser) still require a valid session cookie.
+
 ### Future: Systemd-Based Startup Architecture
 
 **Current State (Dev Workaround):**
 The dev environment has a startup ordering issue where NixOS services start before the host-agent binary is available. Current workarounds:
-- `cli/test.go` builds the Go binary before `nixos-rebuild switch`
 - Go configurators create directories in PreStart hooks
 - System apps are registered in the database during reconciliation
 
@@ -298,8 +317,7 @@ npm run setup    # Installs deps + builds ./bloud CLI
 
 **Proxmox mode** (ISO integration testing, requires `BLOUD_PVE_HOST`):
 ```bash
-./bloud start [iso]          # Deploy ISO → create VM → boot → check → destroy
-./bloud start [iso] --keep   # Same, but keep VM running after checks
+./bloud start [iso]          # Deploy ISO → create VM → boot → check (VM stays running)
 ./bloud start --skip-deploy  # Reuse existing VM, re-run checks
 ./bloud stop                 # Stop VM
 ./bloud destroy              # Destroy VM
@@ -338,14 +356,21 @@ open http://localhost:3000   # Go API (direct)
 
 ### ISO Integration Testing
 
-Set `BLOUD_PVE_HOST` to point at your Proxmox host, then:
+Set `BLOUD_PVE_HOST` in your `.env` file or environment, then:
 
 ```bash
-./bloud start          # Test latest GitHub release (deploy → boot → check → destroy)
-./bloud start --keep   # Keep VM running for manual inspection after checks
+./bloud start          # Test latest GitHub release (VM stays running after checks)
+./bloud start ./bloud.iso  # Test a local ISO
 ./bloud shell          # SSH into the running VM
 ./bloud logs           # Stream journalctl output
 ./bloud checks         # Re-run health checks against a running VM
+./bloud install <app>  # Install an app on the running VM
+./bloud destroy        # Tear down the VM when done
+```
+
+`BLOUD_PVE_HOST` can be set in a `.env` file at the project root — the CLI loads it automatically:
+```
+BLOUD_PVE_HOST=root@192.168.0.62
 ```
 
 ### After Changing NixOS Config

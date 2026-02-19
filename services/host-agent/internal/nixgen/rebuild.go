@@ -12,6 +12,15 @@ import (
 	"time"
 )
 
+// Stable NixOS binary paths. These are fixed by the system profile and the
+// sudo wrapper dir — safe to hardcode rather than relying on PATH, which
+// systemd strips for services running as root.
+const (
+	binSudo         = "/run/wrappers/bin/sudo"
+	binNixosRebuild = "/run/current-system/sw/bin/nixos-rebuild"
+	binSystemctl    = "/run/current-system/sw/bin/systemctl"
+)
+
 // Rebuilder handles nixos-rebuild operations
 type Rebuilder struct {
 	flakePath string
@@ -28,7 +37,6 @@ func NewRebuilder(flakePath, hostname string, logger *slog.Logger) *Rebuilder {
 		flakePath: flakePath,
 		hostname:  hostname,
 		logger:    logger,
-		dryRun:    false,
 		impure:    true, // Enable by default for development
 		useSudo:   true, // nixos-rebuild switch requires root
 	}
@@ -41,6 +49,43 @@ type RebuildResult struct {
 	ErrorMessage string
 	Duration     time.Duration
 	Changes      []string
+}
+
+// nixosRebuildCmd constructs a nixos-rebuild command with the correct sudo
+// wrapping and _NIXOS_REBUILD_REEXEC=1 to skip the re-exec mechanism.
+//
+// nixos-rebuild normally builds $flake#$host.config.system.build.nixos-rebuild
+// before switching and re-execs from the result. When BLOUD_FLAKE_PATH points
+// to the bundled store path the attribute resolves to the bloud-host-agent
+// package (which has no bin/nixos-rebuild), causing exec to fail.
+//
+// _NIXOS_REBUILD_REEXEC=1 skips that step. It must be passed inline via
+// `sudo env` because sudo strips environment variables by default.
+func (r *Rebuilder) nixosRebuildCmd(ctx context.Context, args []string) *exec.Cmd {
+	if r.useSudo {
+		sudoArgs := append([]string{
+			"env", "_NIXOS_REBUILD_REEXEC=1",
+			binNixosRebuild,
+		}, args...)
+		return exec.CommandContext(ctx, binSudo, sudoArgs...)
+	}
+	cmd := exec.CommandContext(ctx, binNixosRebuild, args...)
+	cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
+	return cmd
+}
+
+// userSystemctlCmd constructs a systemctl --user command for the bloud user.
+// When useSudo is true, it uses machinectl shell to run in the user's login
+// session (required to reach the user's systemd instance from a root service).
+func (r *Rebuilder) userSystemctlCmd(ctx context.Context, args []string) *exec.Cmd {
+	if r.useSudo {
+		machinectlArgs := append([]string{
+			"shell", "bloud@",
+			binSystemctl, "--user",
+		}, args...)
+		return exec.CommandContext(ctx, binSudo, append([]string{"machinectl"}, machinectlArgs...)...)
+	}
+	return exec.CommandContext(ctx, binSystemctl, append([]string{"--user"}, args...)...)
 }
 
 // Switch performs a nixos-rebuild switch
@@ -67,23 +112,7 @@ func (r *Rebuilder) Switch(ctx context.Context) (*RebuildResult, error) {
 
 	r.logger.Info("running nixos-rebuild", "args", args, "sudo", r.useSudo)
 
-	// Skip nixos-rebuild's re-exec mechanism: it tries to build
-	// $flake#nixosConfigurations.$host.config.system.build.nixos-rebuild and
-	// re-exec from there. When BLOUD_FLAKE_PATH points to a bundled store path,
-	// this resolves to the bloud-host-agent package (not nixos-rebuild).
-	// Pass _NIXOS_REBUILD_REEXEC=1 inline via `sudo env` so it survives sudo's
-	// environment stripping.
-	var cmd *exec.Cmd
-	if r.useSudo {
-		sudoArgs := append([]string{
-			"env", "_NIXOS_REBUILD_REEXEC=1",
-			"/run/current-system/sw/bin/nixos-rebuild",
-		}, args...)
-		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", sudoArgs...)
-	} else {
-		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
-		cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
-	}
+	cmd := r.nixosRebuildCmd(ctx, args)
 
 	// Capture both stdout and stderr
 	stdout, err := cmd.StdoutPipe()
@@ -174,9 +203,8 @@ func (r *Rebuilder) parseOutputLine(line string, result *RebuildResult) {
 	}
 }
 
-// Test performs a nixos-rebuild test (doesn't change bootloader)
+// Test performs a nixos-rebuild test (applies config without touching bootloader)
 func (r *Rebuilder) Test(ctx context.Context) (*RebuildResult, error) {
-	// Similar to Switch but uses 'test' instead of 'switch'
 	start := time.Now()
 
 	result := &RebuildResult{
@@ -187,16 +215,13 @@ func (r *Rebuilder) Test(ctx context.Context) (*RebuildResult, error) {
 	if r.flakePath != "" {
 		args = append(args, "--flake", fmt.Sprintf("%s#%s", r.flakePath, r.hostname))
 	}
+	if r.impure {
+		args = append(args, "--impure")
+	}
 
 	r.logger.Info("running nixos-rebuild test", "args", args, "sudo", r.useSudo)
 
-	var cmd *exec.Cmd
-	if r.useSudo {
-		sudoArgs := append([]string{"/run/current-system/sw/bin/nixos-rebuild"}, args...)
-		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", sudoArgs...)
-	} else {
-		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
-	}
+	cmd := r.nixosRebuildCmd(ctx, args)
 	output, err := cmd.CombinedOutput()
 
 	result.Duration = time.Since(start)
@@ -245,17 +270,7 @@ func (r *Rebuilder) SwitchStream(ctx context.Context, events chan<- RebuildEvent
 	r.logger.Info("running nixos-rebuild (streaming)", "args", args, "sudo", r.useSudo)
 	events <- RebuildEvent{Type: "output", Message: fmt.Sprintf("Running: nixos-rebuild %s", strings.Join(args, " "))}
 
-	var cmd *exec.Cmd
-	if r.useSudo {
-		sudoArgs := append([]string{
-			"env", "_NIXOS_REBUILD_REEXEC=1",
-			"/run/current-system/sw/bin/nixos-rebuild",
-		}, args...)
-		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", sudoArgs...)
-	} else {
-		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", args...)
-		cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
-	}
+	cmd := r.nixosRebuildCmd(ctx, args)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -311,12 +326,7 @@ func (r *Rebuilder) Rollback(ctx context.Context) (*RebuildResult, error) {
 
 	r.logger.Info("rolling back nixos configuration", "sudo", r.useSudo)
 
-	var cmd *exec.Cmd
-	if r.useSudo {
-		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "/run/current-system/sw/bin/nixos-rebuild", "switch", "--rollback")
-	} else {
-		cmd = exec.CommandContext(ctx, "/run/current-system/sw/bin/nixos-rebuild", "switch", "--rollback")
-	}
+	cmd := r.nixosRebuildCmd(ctx, []string{"switch", "--rollback"})
 	output, err := cmd.CombinedOutput()
 
 	result.Duration = time.Since(start)
@@ -337,22 +347,10 @@ func (r *Rebuilder) Rollback(ctx context.Context) (*RebuildResult, error) {
 
 // StopUserService stops a systemd user service for an app
 func (r *Rebuilder) StopUserService(ctx context.Context, appName string) error {
-	// Map app names to service names
 	serviceName := fmt.Sprintf("podman-%s.service", appName)
-
 	r.logger.Info("stopping user service", "service", serviceName)
 
-	// Use machinectl to run systemctl in the user's session
-	// This is the same approach used in bloud-user-services
-	var cmd *exec.Cmd
-	if r.useSudo {
-		cmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "machinectl", "shell", "bloud@",
-			"/run/current-system/sw/bin/systemctl", "--user", "stop", serviceName)
-	} else {
-		cmd = exec.CommandContext(ctx, "systemctl", "--user", "stop", serviceName)
-	}
-
-	output, err := cmd.CombinedOutput()
+	output, err := r.userSystemctlCmd(ctx, []string{"stop", serviceName}).CombinedOutput()
 	if err != nil {
 		r.logger.Warn("failed to stop service", "service", serviceName, "error", err, "output", string(output))
 		return fmt.Errorf("failed to stop %s: %w", serviceName, err)
@@ -362,41 +360,19 @@ func (r *Rebuilder) StopUserService(ctx context.Context, appName string) error {
 	return nil
 }
 
-
-// ReloadAndRestartApps reloads systemd user daemon and restarts all bloud apps
-// This should be called after nixos-rebuild to:
-// 1. Reload unit files (daemon-reload) so systemd sees new/changed services
-// 2. Restart bloud-apps.target which restarts all apps (via PartOf=)
+// ReloadAndRestartApps reloads systemd user daemon and restarts all bloud apps.
+// Call after nixos-rebuild to pick up new/changed unit files and restart apps.
 func (r *Rebuilder) ReloadAndRestartApps(ctx context.Context) error {
 	r.logger.Info("reloading systemd user daemon and restarting apps")
 
-	// Step 1: daemon-reload to pick up new/changed unit files
-	var reloadCmd *exec.Cmd
-	if r.useSudo {
-		reloadCmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "machinectl", "shell", "bloud@",
-			"/run/current-system/sw/bin/systemctl", "--user", "daemon-reload")
-	} else {
-		reloadCmd = exec.CommandContext(ctx, "systemctl", "--user", "daemon-reload")
-	}
-
-	output, err := reloadCmd.CombinedOutput()
+	output, err := r.userSystemctlCmd(ctx, []string{"daemon-reload"}).CombinedOutput()
 	if err != nil {
 		r.logger.Error("failed to reload user daemon", "error", err, "output", string(output))
 		return fmt.Errorf("daemon-reload failed: %w", err)
 	}
 	r.logger.Info("user daemon reloaded")
 
-	// Step 2: restart bloud-apps.target to restart all apps
-	// Using "try-restart" so it only restarts if already active
-	var restartCmd *exec.Cmd
-	if r.useSudo {
-		restartCmd = exec.CommandContext(ctx, "/run/wrappers/bin/sudo", "machinectl", "shell", "bloud@",
-			"/run/current-system/sw/bin/systemctl", "--user", "restart", "bloud-apps.target")
-	} else {
-		restartCmd = exec.CommandContext(ctx, "systemctl", "--user", "restart", "bloud-apps.target")
-	}
-
-	output, err = restartCmd.CombinedOutput()
+	output, err = r.userSystemctlCmd(ctx, []string{"restart", "bloud-apps.target"}).CombinedOutput()
 	if err != nil {
 		r.logger.Error("failed to restart bloud-apps.target", "error", err, "output", string(output))
 		return fmt.Errorf("restart bloud-apps.target failed: %w", err)
