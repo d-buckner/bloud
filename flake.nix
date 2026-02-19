@@ -67,6 +67,15 @@
           ];
         };
 
+        # ISO build server in Proxmox (VMID 9998)
+        # Deploy with: ./bloud setup-builder
+        build-server = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/build-server.nix
+          ];
+        };
+
         # Bootable appliance ISO (x86_64 only)
         # Build with: nix build .#packages.x86_64-linux.iso
         iso = nixpkgs.lib.nixosSystem {
