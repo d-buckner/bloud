@@ -12,6 +12,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/appconfig"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/db"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -32,6 +33,12 @@ func main() {
 }
 
 func runServer() {
+	// Ensure system binaries are resolvable by bare name. systemd strips PATH
+	// to a minimal set that excludes /run/current-system/sw/bin and
+	// /run/wrappers/bin. Setting it here covers all exec.Command calls
+	// throughout the process (systemctl, journalctl, podman, nix, sudo, etc.).
+	_ = os.Setenv("PATH", nixgen.NixosSystemPath)
+
 	// Setup structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

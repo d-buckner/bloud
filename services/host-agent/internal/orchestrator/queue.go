@@ -356,8 +356,14 @@ func (q *OperationQueue) executeBatch(batch []QueuedOperation) {
 }
 
 // executeInstall runs a single install operation.
+// context.WithoutCancel detaches execution from the HTTP request context so
+// that a client disconnect (browser navigation, timeout) cannot cancel
+// nixos-rebuild mid-flight. Without this, Go 1.21+ exec.CommandContext returns
+// context.Canceled immediately if the context is already done, leaving the app
+// stuck in "installing" status in the database permanently.
 func (q *OperationQueue) executeInstall(op QueuedOperation) {
-	result, err := q.orchestrator.Install(op.Ctx, *op.Install)
+	ctx := context.WithoutCancel(op.Ctx)
+	result, err := q.orchestrator.Install(ctx, *op.Install)
 	op.ResultCh <- OperationResult{
 		InstallResult: result,
 		Err:           err,
@@ -365,8 +371,10 @@ func (q *OperationQueue) executeInstall(op QueuedOperation) {
 }
 
 // executeUninstall runs a single uninstall operation.
+// Uses a detached context for the same reason as executeInstall.
 func (q *OperationQueue) executeUninstall(op QueuedOperation) {
-	result, err := q.orchestrator.Uninstall(op.Ctx, *op.Uninstall)
+	ctx := context.WithoutCancel(op.Ctx)
+	result, err := q.orchestrator.Uninstall(ctx, *op.Uninstall)
 	op.ResultCh <- OperationResult{
 		UninstallResult: result,
 		Err:             err,
