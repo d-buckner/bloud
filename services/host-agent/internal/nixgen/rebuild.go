@@ -12,14 +12,16 @@ import (
 	"time"
 )
 
-// Stable NixOS binary paths. These are fixed by the system profile and the
-// sudo wrapper dir — safe to hardcode rather than relying on PATH, which
-// systemd strips for services running as root.
-const (
-	binSudo         = "/run/wrappers/bin/sudo"
-	binNixosRebuild = "/run/current-system/sw/bin/nixos-rebuild"
-	binSystemctl    = "/run/current-system/sw/bin/systemctl"
-)
+// NixosSystemPath is the PATH required for NixOS system commands.
+// Validated against the ISO: all binaries (nix, nixos-rebuild, systemctl,
+// journalctl, podman, machinectl, sudo) live in these two directories.
+// /usr/bin is empty on NixOS; /nix/var/nix/profiles/default/bin does not
+// exist on this system. /bin contains only sh.
+//
+// Set via os.Setenv in main so all exec.Command calls resolve bare names,
+// and passed explicitly via "sudo env" so child processes inherit it too
+// (sudo resets the environment by default).
+const NixosSystemPath = "/run/current-system/sw/bin:/run/wrappers/bin:/bin"
 
 // Rebuilder handles nixos-rebuild operations
 type Rebuilder struct {
@@ -64,12 +66,14 @@ type RebuildResult struct {
 func (r *Rebuilder) nixosRebuildCmd(ctx context.Context, args []string) *exec.Cmd {
 	if r.useSudo {
 		sudoArgs := append([]string{
-			"env", "_NIXOS_REBUILD_REEXEC=1",
-			binNixosRebuild,
+			"env",
+			"_NIXOS_REBUILD_REEXEC=1",
+			"PATH=" + NixosSystemPath,
+			"nixos-rebuild",
 		}, args...)
-		return exec.CommandContext(ctx, binSudo, sudoArgs...)
+		return exec.CommandContext(ctx, "sudo", sudoArgs...)
 	}
-	cmd := exec.CommandContext(ctx, binNixosRebuild, args...)
+	cmd := exec.CommandContext(ctx, "nixos-rebuild", args...)
 	cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
 	return cmd
 }
@@ -81,11 +85,11 @@ func (r *Rebuilder) userSystemctlCmd(ctx context.Context, args []string) *exec.C
 	if r.useSudo {
 		machinectlArgs := append([]string{
 			"shell", "bloud@",
-			binSystemctl, "--user",
+			"systemctl", "--user",
 		}, args...)
-		return exec.CommandContext(ctx, binSudo, append([]string{"machinectl"}, machinectlArgs...)...)
+		return exec.CommandContext(ctx, "sudo", append([]string{"machinectl"}, machinectlArgs...)...)
 	}
-	return exec.CommandContext(ctx, binSystemctl, append([]string{"--user"}, args...)...)
+	return exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, args...)...)
 }
 
 // Switch performs a nixos-rebuild switch
