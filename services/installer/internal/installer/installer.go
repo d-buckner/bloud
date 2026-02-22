@@ -137,7 +137,7 @@ func (inst *Installer) StartMock(req InstallRequest) error {
 	return nil
 }
 
-func (inst *Installer) Start(ctx context.Context, req InstallRequest) error {
+func (inst *Installer) Start(_ context.Context, req InstallRequest) error {
 	inst.mu.Lock()
 	if inst.phase != PhaseIdle && inst.phase != PhaseFailed {
 		inst.mu.Unlock()
@@ -146,7 +146,9 @@ func (inst *Installer) Start(ctx context.Context, req InstallRequest) error {
 	inst.phase = PhaseValidating
 	inst.mu.Unlock()
 
-	go inst.run(ctx, req)
+	// Use context.Background() so the installation continues even after
+	// the HTTP request that triggered it closes.
+	go inst.run(context.Background(), req)
 	return nil
 }
 
