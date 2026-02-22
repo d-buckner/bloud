@@ -10,6 +10,12 @@ import (
 )
 
 func Prepare(ctx context.Context, device string, emit func(string)) error {
+	// Unmount any partitions left over from a previous install attempt.
+	// Errors are intentionally ignored — these may not be mounted.
+	emit("Unmounting any existing mounts on " + device)
+	exec.CommandContext(ctx, "umount", "-f", "/mnt/boot").Run() //nolint:errcheck
+	exec.CommandContext(ctx, "umount", "-f", "/mnt").Run()       //nolint:errcheck
+
 	steps := []struct {
 		description string
 		args        []string
