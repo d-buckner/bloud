@@ -9,6 +9,13 @@ import (
 )
 
 func Install(ctx context.Context, flakePath string, emit func(string)) error {
+	if flakePath == "" {
+		flakePath = os.Getenv("INSTALLER_FLAKE_PATH")
+	}
+	if flakePath == "" {
+		flakePath = "/etc/bloud"
+	}
+
 	if err := writeConfigStub(); err != nil {
 		return fmt.Errorf("writing nixos config stub: %w", err)
 	}
