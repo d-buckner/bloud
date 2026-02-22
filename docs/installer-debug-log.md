@@ -165,6 +165,31 @@ if systemPath := os.Getenv("INSTALLER_SYSTEM_PATH"); systemPath != "" {
 
 ---
 
+## Diagnostic fix — CLI now streams SSE events
+
+**Commit:** `d88c8f8`
+**File:** `cli/pve.go`, `services/installer/internal/installer/installer.go`, `services/installer/internal/api/handlers.go`
+
+The CLI only printed the phase name (e.g. `[partitioning]`), never the error message. Because the polling interval was 2 seconds and partitioning/formatting completed in under one cycle, every failure showed `[partitioning]` then `[failed]`, making it look like partitioning was broken when it wasn't.
+
+Changes:
+- CLI now streams the SSE `/api/progress` endpoint in a goroutine, printing `[phase] message` in real time
+- Installer tracks `lastMessage` and exposes it in `/api/status` as `lastMessage`
+- CLI fetches and prints `lastMessage` on failure
+
+With the new diagnostics the actual error was immediately visible:
+```
+[installing] Running nixos-install --no-root-passwd --flake .../bloud-installer-0.1.0/...
+[installing] this path will be fetched (0.00 MiB, 11.14 MiB unpacked):
+[installing]   /nix/store/pn18ir9...bloud-installer-0.1.0  ← installer pkg, not NixOS system
+[installing] chroot: failed to run command '/nix/var/nix/profiles/system/activate': No such file or directory
+[failed] nixos-install failed: nixos-install: exit status 127
+```
+
+**Root cause confirmed:** The bundled flake evaluates `nixosConfigurations.bloud` to the installer package (11 MiB), not the NixOS system. This is exactly what Bug 10 diagnosed and fixed. The fix is not yet in the released ISO.
+
+---
+
 ## Current Status
 
-All 10 bugs fixed and pushed. Waiting for a new ISO build to validate the full end-to-end flow.
+All 11 bugs fixed. Waiting for CI to publish a new ISO from commits through `d88c8f8`. The Bug 10 fix (`nixos-install --system <path>` instead of `--flake`) should resolve the final install failure.
