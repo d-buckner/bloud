@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -62,8 +63,8 @@ func Prepare(ctx context.Context, device string, emit func(string)) error {
 	}
 
 	emit("Creating /mnt/boot directory")
-	if out, err := exec.CommandContext(ctx, "mkdir", "-p", "/mnt/boot").CombinedOutput(); err != nil {
-		return fmt.Errorf("mkdir /mnt/boot: %w\n%s", err, string(out))
+	if err := os.MkdirAll("/mnt/boot", 0755); err != nil {
+		return fmt.Errorf("mkdir /mnt/boot: %w", err)
 	}
 
 	emit("Mounting EFI partition " + efi + " at /mnt/boot")
