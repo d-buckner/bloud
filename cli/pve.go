@@ -275,16 +275,27 @@ func runInstaller(cfg pveConfig, ip string) int {
 	return 1
 
 installDone:
-	// Switch VM boot order to disk so SeaBIOS boots the installed GRUB on next start.
-	// Eject the ISO as well so it can't interfere if the boot order is ever reset.
+	// Update boot order and eject ISO in the config file.
 	log("Updating VM boot order to disk...")
 	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --boot 'order=sata0' --ide2 none,media=cdrom", cfg.VMID)); err != nil {
 		errorf("Failed to update boot order: %v", err)
 		return 1
 	}
 
-	log("Triggering reboot...")
-	_, _ = isoExec(ip, "curl -sf -X POST "+pveInstallerAPI+"/reboot")
+	// Stop and start the VM so QEMU reloads with the updated bootindex config.
+	// An in-place OS reboot keeps the QEMU process alive and reuses the old
+	// command-line bootindex (CD-ROM first), so SeaBIOS would ignore the disk.
+	log("Stopping VM to apply new boot order...")
+	if _, err := pveExec(cfg, fmt.Sprintf("qm stop %s", cfg.VMID)); err != nil {
+		errorf("Failed to stop VM: %v", err)
+		return 1
+	}
+	time.Sleep(3 * time.Second)
+	log("Starting VM with new boot order (sata0)...")
+	if _, err := pveExec(cfg, fmt.Sprintf("qm start %s", cfg.VMID)); err != nil {
+		errorf("Failed to start VM: %v", err)
+		return 1
+	}
 	return 0
 }
 
@@ -968,7 +979,6 @@ func cmdStartPVE(args []string) int {
 		if code := runInstaller(cfg, vmIP); code != 0 {
 			return code
 		}
-		waitForReboot(vmIP)
 	}
 
 	// Phase 3: Wait for the installed system (bloud user, bloud password).
