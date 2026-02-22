@@ -73,6 +73,13 @@
           system = "x86_64-linux";
           modules = [
             ./nixos/iso.nix
+            # Include the installed system's store closure so nixos-install
+            # can copy it to /mnt without needing network access.
+            {
+              isoImage.storeContents = [
+                self.nixosConfigurations.bloud.config.system.build.toplevel
+              ];
+            }
           ];
         };
 
