@@ -25,7 +25,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-          cache-dependency-path: services/host-agent/go.sum
+          cache-dependency-path: |
+            services/host-agent/go.sum
+            services/installer/go.sum
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -39,11 +41,18 @@ jobs:
           cd services/host-agent
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/host-agent ./cmd/host-agent
 
-      - name: Build frontend
+      - name: Build installer binary
+        run: |
+          cd services/installer
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/installer ./cmd/installer
+
+      - name: Build frontends
         run: |
           npm ci
           npm run build --workspace=services/host-agent/web
           cp -r services/host-agent/web/build build/frontend
+          npm run build --workspace=@bloud/installer-web
+          cp -r services/installer/web/build build/installer-web
 
       - name: Stage build artifacts for Nix
         run: git add -f build/
