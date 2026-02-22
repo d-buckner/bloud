@@ -92,6 +92,9 @@
     };
   };
 
+  # Allow PAM to accept empty passwords (required for sshpass -p "" to work)
+  security.pam.services.sshd.allowNullPassword = true;
+
   # Root password for SSH debug access on the installer
   users.users.root.initialHashedPassword = "";
 
