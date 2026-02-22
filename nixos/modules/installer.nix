@@ -35,22 +35,12 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
 
+      # NixOS `path` is the correct idiom for adding packages to a service PATH.
+      # Setting PATH via `environment` causes Nix evaluation errors with store paths.
+      path = with pkgs; [ parted util-linux dosfstools e2fsprogs cryptsetup ];
+
       environment = {
         INSTALLER_PORT = toString cfg.port;
-        # systemd strips PATH — explicitly include disk tools and nix
-        # nixos-install is at /run/current-system/sw/bin on NixOS
-        PATH = lib.concatStringsSep ":" [
-          "${pkgs.parted}/bin"
-          "${pkgs.util-linux}/bin"      # wipefs, blkid, mount, umount
-          "${pkgs.dosfstools}/bin"      # mkfs.vfat
-          "${pkgs.e2fsprogs}/bin"       # mkfs.ext4
-          "${pkgs.cryptsetup}/bin"      # LUKS
-          "${pkgs.nix}/bin"
-          "/run/current-system/sw/bin"  # nixos-install, systemctl, etc.
-          "/run/wrappers/bin"           # sudo
-          "/usr/bin"
-          "/bin"
-        ];
       };
 
       serviceConfig = {
