@@ -41,6 +41,7 @@ in
 
       environment = {
         INSTALLER_PORT = toString cfg.port;
+        INSTALLER_FLAKE_PATH = cfg.flakePath;
       };
 
       serviceConfig = {
