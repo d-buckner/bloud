@@ -162,6 +162,12 @@ func main() {
 		exitCode = cmdRebuild()
 	case "depgraph":
 		exitCode = cmdDepGraph()
+	case "installer":
+		if len(args) > 0 && args[0] == "stop" {
+			exitCode = cmdInstallerStop()
+		} else {
+			exitCode = cmdInstaller()
+		}
 
 	case "help", "--help", "-h":
 		printUsage()
@@ -252,6 +258,8 @@ func printUsage() {
 	fmt.Println("  install <app>   Install an app")
 	fmt.Println("  uninstall <app> Uninstall an app")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
+	fmt.Println("  installer       Start installer UI in mock mode (http://localhost:5174)")
+	fmt.Println("  installer stop  Stop the installer dev server")
 	if !vm.IsNative() {
 		fmt.Println("  destroy         Destroy the dev VM completely")
 	}
