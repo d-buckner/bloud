@@ -160,6 +160,10 @@
     enable = true;
     port = 8080;
     apiPort = 3000;
+    # On the installed system the host-agent serves the static frontend build
+    # directly from web/build at port 3000. The default uiPort (5173) is the
+    # Vite dev server which does not run on installed systems.
+    uiPort = 3000;
   };
 
   # Nix settings (needed for nixos-rebuild post-install)
