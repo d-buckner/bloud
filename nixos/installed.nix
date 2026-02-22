@@ -141,6 +141,9 @@
     user = "bloud";
     externalHost = "http://bloud.local";
     authentikExternalHost = "http://bloud.local";
+    # Point prestart/poststart hooks to the installed binary.
+    # The default (/tmp/host-agent) only exists in dev; production uses the Nix store path.
+    agentPath = "${config.bloud.host-agent.package}/bin/host-agent";
   };
 
   # Host agent — app management API and web UI
