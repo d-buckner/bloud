@@ -38,6 +38,7 @@ type InstallRequest struct {
 type Installer struct {
 	mu          sync.Mutex
 	phase       Phase
+	lastMessage string
 	subscribers []chan LogEvent
 }
 
@@ -53,9 +54,16 @@ func (inst *Installer) Phase() Phase {
 	return inst.phase
 }
 
+func (inst *Installer) LastMessage() string {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	return inst.lastMessage
+}
+
 func (inst *Installer) Emit(phase Phase, message string) {
 	inst.mu.Lock()
 	inst.phase = phase
+	inst.lastMessage = message
 	subs := make([]chan LogEvent, len(inst.subscribers))
 	copy(subs, inst.subscribers)
 	inst.mu.Unlock()
