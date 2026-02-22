@@ -47,13 +47,13 @@ func Prepare(ctx context.Context, device string, emit func(string)) error {
 	efi := partitionDevice(device, "1")
 	root := partitionDevice(device, "2")
 
-	emit("Formatting EFI partition " + efi + " as FAT32")
-	if out, err := exec.CommandContext(ctx, "mkfs.vfat", "-F32", efi).CombinedOutput(); err != nil {
+	emit("Formatting EFI partition " + efi + " as FAT32 (label: ESP)")
+	if out, err := exec.CommandContext(ctx, "mkfs.vfat", "-F32", "-n", "ESP", efi).CombinedOutput(); err != nil {
 		return fmt.Errorf("mkfs.vfat %s: %w\n%s", efi, err, string(out))
 	}
 
-	emit("Formatting root partition " + root + " as ext4")
-	if out, err := exec.CommandContext(ctx, "mkfs.ext4", "-F", root).CombinedOutput(); err != nil {
+	emit("Formatting root partition " + root + " as ext4 (label: nixos)")
+	if out, err := exec.CommandContext(ctx, "mkfs.ext4", "-F", "-L", "nixos", root).CombinedOutput(); err != nil {
 		return fmt.Errorf("mkfs.ext4 %s: %w\n%s", root, err, string(out))
 	}
 
