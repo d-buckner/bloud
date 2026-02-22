@@ -15,6 +15,25 @@ let
   hasPrebuilt = builtins.pathExists (buildDir + "/installer")
     && builtins.pathExists (buildDir + "/installer-web");
 
+  # Source tree — same filter pattern as host-agent.nix
+  src = builtins.path {
+    path = ../..;
+    name = "bloud-source";
+    filter = path: type:
+      let baseName = builtins.baseNameOf path; in
+      baseName != ".git"
+      && baseName != "node_modules"
+      && baseName != "result"
+      && baseName != "result-iso"
+      && baseName != ".direnv"
+      && baseName != "cli"
+      && baseName != "lima"
+      && baseName != "integration"
+      && baseName != "web"
+      && baseName != "build"
+      && baseName != "services";
+  };
+
   realPackage = pkgs.runCommand "bloud-installer-0.1.0" {} ''
     mkdir -p $out/bin
     cp ${buildDir + "/installer"} $out/bin/bloud-installer
@@ -24,6 +43,14 @@ let
     # The installer looks for web/build relative to WorkingDirectory
     mkdir -p $out/share/bloud-installer/web/build
     cp -r ${buildDir + "/installer-web"}/* $out/share/bloud-installer/web/build/
+
+    # Bloud flake for nixos-install — installer runs:
+    #   nixos-install --flake $out/share/bloud-installer/bloud#bloud
+    mkdir -p $out/share/bloud-installer/bloud/nixos
+    cp -r ${src}/nixos/* $out/share/bloud-installer/bloud/nixos/ 2>/dev/null || true
+    cp -r ${src}/apps $out/share/bloud-installer/bloud/apps 2>/dev/null || true
+    cp ${src}/flake.nix $out/share/bloud-installer/bloud/
+    cp ${src}/flake.lock $out/share/bloud-installer/bloud/
   '';
 
   stubPackage = pkgs.runCommand "bloud-installer-stub-0.1.0" {} ''

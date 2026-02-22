@@ -22,6 +22,15 @@ const (
 	pveBootTimeout    = 180
 	pveServiceTimeout = 300
 
+	// Installer ISO — live system runs bloud-installer on port 3001 as root (empty password)
+	pveInstallerPort    = "3001"
+	pveInstallerAPI     = "http://localhost:" + pveInstallerPort + "/api"
+	pveInstallTimeout   = 600
+
+	// Disk provisioned for the test VM so the installer has a target
+	pveDiskStorage = "local-lvm"
+	pveDiskSizeGB  = 40
+
 	// Build VM — persistent Ubuntu VM (VMID 9998) used to build ISOs locally.
 	// Ubuntu cloud image + Nix daemon: no manual OS install required.
 	pveBuildVMID      = "9998"
@@ -135,6 +144,122 @@ func vmInteractive(ip, cmd string) error {
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()
+}
+
+// ── ISO phase helpers ──────────────────────────────────────────────────────────
+// The live installer ISO runs as root with an empty password (no bloud user).
+
+func isoExec(ip, cmd string) (string, error) {
+	c := exec.Command("sshpass", "-p", "",
+		"ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=5",
+		"-o", "LogLevel=ERROR",
+		"root@"+ip,
+		cmd,
+	)
+	output, err := c.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
+}
+
+// waitForISOReady waits for the live installer ISO to boot and accept SSH as root.
+// Returns the VM IP, or empty string on timeout.
+func waitForISOReady(cfg pveConfig) string {
+	log(fmt.Sprintf("Waiting for ISO to boot (timeout: %ds)...", pveBootTimeout))
+	for i := 0; i < pveBootTimeout; i++ {
+		ip := getVMIP(cfg)
+		if ip != "" {
+			c := exec.Command("sshpass", "-p", "",
+				"ssh",
+				"-o", "StrictHostKeyChecking=no",
+				"-o", "UserKnownHostsFile=/dev/null",
+				"-o", "ConnectTimeout=3",
+				"-o", "LogLevel=ERROR",
+				"root@"+ip,
+				"true",
+			)
+			if c.Run() == nil {
+				log(fmt.Sprintf("ISO is up at %s", ip))
+				return ip
+			}
+		}
+		if i > 0 && i%15 == 0 {
+			fmt.Printf("  ... waiting (%d/%ds)\n", i, pveBootTimeout)
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return ""
+}
+
+// runInstaller drives the installer API: auto-selects disk, triggers install,
+// polls until complete, updates Proxmox boot order to disk, then reboots.
+func runInstaller(cfg pveConfig, ip string) int {
+	log("Getting disk info from installer...")
+	disk, err := isoExec(ip, "curl -sf "+pveInstallerAPI+"/disks | jq -r '.autoSelected'")
+	if err != nil || disk == "" || disk == "null" {
+		errorf("Failed to get auto-selected disk (got %q): %v", disk, err)
+		return 1
+	}
+	log(fmt.Sprintf("Installing to disk: %s", disk))
+
+	log("Starting installation...")
+	installBody := fmt.Sprintf(`{"disk":"%s","encryption":false}`, disk)
+	out, err := isoExec(ip, fmt.Sprintf(
+		`curl -sf -X POST -H 'Content-Type: application/json' -d '%s' `+pveInstallerAPI+`/install`,
+		installBody,
+	))
+	if err != nil {
+		errorf("Failed to start installation: %v\n%s", err, out)
+		return 1
+	}
+
+	log(fmt.Sprintf("Waiting for installation to complete (timeout: %ds)...", pveInstallTimeout))
+	var lastPhase string
+	for i := 0; i < pveInstallTimeout; i += 2 {
+		phase, _ := isoExec(ip, "curl -sf "+pveInstallerAPI+"/status | jq -r '.phase'")
+		if phase != lastPhase && phase != "" && phase != "null" {
+			fmt.Printf("  [%s]\n", phase)
+			lastPhase = phase
+		}
+		switch phase {
+		case "complete":
+			log("Installation complete")
+			goto installDone
+		case "failed":
+			errorf("Installation failed")
+			return 1
+		}
+		if i > 0 && i%60 == 0 {
+			fmt.Printf("  ... still installing (%d/%ds)\n", i, pveInstallTimeout)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	errorf("Timeout waiting for installation to complete (%ds)", pveInstallTimeout)
+	return 1
+
+installDone:
+	// Switch VM boot order to disk before rebooting so it boots the installed system
+	log("Updating VM boot order to disk...")
+	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --boot 'order=scsi0'", cfg.VMID)); err != nil {
+		errorf("Failed to update boot order: %v", err)
+		return 1
+	}
+
+	log("Triggering reboot...")
+	_, _ = isoExec(ip, "curl -sf -X POST "+pveInstallerAPI+"/reboot")
+	return 0
+}
+
+// waitForReboot waits for the ISO SSH to go dark, signalling the reboot has started.
+func waitForReboot(ip string) {
+	log("Waiting for reboot...")
+	for i := 0; i < 60; i++ {
+		if _, err := isoExec(ip, "true"); err != nil {
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
 }
 
 // ── VM state helpers ───────────────────────────────────────────────────────────
@@ -760,6 +885,8 @@ func cmdStartPVE(args []string) int {
 		fmt.Printf("  VM is running. To tear down: ./bloud destroy\n")
 	}
 
+	var vmIP string
+
 	if !skipDeploy {
 		if build {
 			if code := doBuild(cfg); code != 0 {
@@ -774,8 +901,8 @@ func cmdStartPVE(args []string) int {
 
 		log(fmt.Sprintf("Creating VM %s...", cfg.VMID))
 		createCmd := fmt.Sprintf(
-			"qm create %s --name %s --memory %d --cores %d --ostype l26 --cdrom 'local:iso/%s' --boot 'order=ide2' --net0 'virtio,bridge=vmbr0' --agent enabled=1 --serial0 socket",
-			cfg.VMID, pveVMName, cfg.Memory, cfg.Cores, pveISOFilename,
+			"qm create %s --name %s --memory %d --cores %d --ostype l26 --cdrom 'local:iso/%s' --boot 'order=ide2' --net0 'virtio,bridge=vmbr0' --agent enabled=1 --serial0 socket --scsihw virtio-scsi-pci --scsi0 %s:%d",
+			cfg.VMID, pveVMName, cfg.Memory, cfg.Cores, pveISOFilename, pveDiskStorage, pveDiskSizeGB,
 		)
 		if err := pveExecStream(cfg, createCmd); err != nil {
 			errorf("Failed to create VM: %v", err)
@@ -787,12 +914,27 @@ func cmdStartPVE(args []string) int {
 			errorf("Failed to start VM: %v", err)
 			return 1
 		}
+
+		// Phase 1: Wait for the live installer ISO to boot (root, empty password)
+		vmIP = waitForISOReady(cfg)
+		if vmIP == "" {
+			errorf("Timeout: ISO did not become reachable via SSH within %ds", pveBootTimeout)
+			return 1
+		}
+
+		// Phase 2: Drive the installer API — partition, install, reboot
+		if code := runInstaller(cfg, vmIP); code != 0 {
+			return code
+		}
+		waitForReboot(vmIP)
 	}
 
-	// Wait for VM to boot and accept SSH
-	vmIP := waitForPVEVMReady(cfg)
+	// Phase 3: Wait for the installed system (bloud user, bloud password).
+	// Always runs — whether after a fresh install or with --skip-deploy.
+	log("Waiting for installed system to come up...")
+	vmIP = waitForPVEVMReady(cfg)
 	if vmIP == "" {
-		errorf("Timeout: VM did not become reachable via SSH within %ds", pveBootTimeout)
+		errorf("Timeout: installed system did not become reachable via SSH within %ds", pveBootTimeout)
 		return 1
 	}
 

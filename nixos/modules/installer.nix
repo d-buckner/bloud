@@ -23,7 +23,7 @@ in
 
     flakePath = lib.mkOption {
       type = lib.types.str;
-      default = "/etc/bloud";
+      default = "${pkg}/share/bloud-installer/bloud";
       description = "Path to the bloud flake used by nixos-install";
     };
   };
