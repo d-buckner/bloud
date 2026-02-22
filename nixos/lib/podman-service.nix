@@ -41,8 +41,8 @@ let
 in
 {
   description = "Podman container: ${name}";
-  after = [ "network-online.target" ] ++ (map (dep: "podman-${dep}.service") dependsOn) ++ extraAfter;
-  wants = [ "network-online.target" ] ++ (map (dep: "podman-${dep}.service") dependsOn);
+  after = [ "network-online.target" "bloud-init-secrets.service" ] ++ (map (dep: "podman-${dep}.service") dependsOn) ++ extraAfter;
+  wants = [ "network-online.target" "bloud-init-secrets.service" ] ++ (map (dep: "podman-${dep}.service") dependsOn);
   requires = extraRequires;
   wantedBy = [ "bloud-apps.target" ];
 
