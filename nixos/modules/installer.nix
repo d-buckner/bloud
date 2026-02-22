@@ -37,7 +37,7 @@ in
 
       # NixOS `path` is the correct idiom for adding packages to a service PATH.
       # Setting PATH via `environment` causes Nix evaluation errors with store paths.
-      path = with pkgs; [ parted util-linux dosfstools e2fsprogs cryptsetup ];
+      path = with pkgs; [ parted util-linux dosfstools e2fsprogs cryptsetup nix ];
 
       environment = {
         INSTALLER_PORT = toString cfg.port;

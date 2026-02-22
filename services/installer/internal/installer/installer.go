@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -182,6 +183,9 @@ func (inst *Installer) run(ctx context.Context, req InstallRequest) {
 	}
 
 	flakePath := req.FlakePath
+	if flakePath == "" {
+		flakePath = os.Getenv("INSTALLER_FLAKE_PATH")
+	}
 	if flakePath == "" {
 		flakePath = "/etc/bloud"
 	}
