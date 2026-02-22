@@ -5,7 +5,9 @@
   "license": "AGPL-3.0-only",
   "workspaces": [
     "services/host-agent",
-    "services/host-agent/web"
+    "services/host-agent/web",
+    "services/installer/web",
+    "packages/ui"
   ],
   "scripts": {
     "setup": "npm install && npm run cli:build && ./bloud setup",

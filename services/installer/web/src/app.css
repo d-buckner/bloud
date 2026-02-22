@@ -1,0 +1,88 @@
+/* Bloud Design System */
+
+@font-face {
+	font-family: 'Inter';
+	font-style: normal;
+	font-weight: 400 700;
+	font-display: swap;
+	src: url('/fonts/inter-latin.woff2') format('woff2');
+}
+
+@font-face {
+	font-family: 'Newsreader';
+	font-style: normal;
+	font-weight: 400 600;
+	font-display: swap;
+	src: url('/fonts/newsreader-latin.woff2') format('woff2');
+}
+
+@font-face {
+	font-family: 'Newsreader';
+	font-style: italic;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/newsreader-latin-italic.woff2') format('woff2');
+}
+
+*, *::before, *::after {
+	box-sizing: border-box;
+}
+
+html {
+	font-size: 17px;
+}
+
+body {
+	margin: 0;
+	padding: 0;
+	font-family: var(--font-serif);
+	background: var(--color-bg);
+	color: var(--color-text);
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+	font-weight: 500;
+	line-height: 1.3;
+	letter-spacing: -0.01em;
+}
+
+button {
+	font-family: var(--font-serif);
+}
+
+:root {
+	--color-bg: #FAF9F6;
+	--color-bg-elevated: #FFFFFF;
+	--color-bg-subtle: #F5F4F1;
+	--color-text: #1C1917;
+	--color-text-secondary: #57534E;
+	--color-text-muted: #A8A29E;
+	--color-border: #E7E5E4;
+	--color-border-subtle: #F0EFED;
+	--color-accent: #1C1917;
+	--color-accent-hover: #292524;
+	--color-success: #166534;
+	--color-success-bg: #F0FDF4;
+	--color-error: #991B1B;
+	--color-error-bg: #FEF2F2;
+	--color-warning: #92400E;
+	--color-warning-bg: #FFFBEB;
+	--font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+	--font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	--font-mono: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+	--space-xs: 0.25rem;
+	--space-sm: 0.5rem;
+	--space-md: 1rem;
+	--space-lg: 1.5rem;
+	--space-xl: 2rem;
+	--space-2xl: 3rem;
+	--space-3xl: 4rem;
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
