@@ -57,6 +57,11 @@ func Prepare(ctx context.Context, device string, emit func(string)) error {
 		return fmt.Errorf("mkfs.ext4 %s: %w\n%s", root, err, string(out))
 	}
 
+	emit("Creating mount point /mnt")
+	if err := os.MkdirAll("/mnt", 0755); err != nil {
+		return fmt.Errorf("mkdir /mnt: %w", err)
+	}
+
 	emit("Mounting root partition " + root + " at /mnt")
 	if out, err := exec.CommandContext(ctx, "mount", root, "/mnt").CombinedOutput(); err != nil {
 		return fmt.Errorf("mounting root: %w\n%s", err, string(out))
