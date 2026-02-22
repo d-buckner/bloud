@@ -18,6 +18,7 @@ import (
 
 type StatusResponse struct {
 	Phase       installer.Phase `json:"phase"`
+	LastMessage string          `json:"lastMessage"`
 	Hostname    string          `json:"hostname"`
 	IPAddresses []string        `json:"ipAddresses"`
 	CPU         string          `json:"cpu"`
@@ -80,6 +81,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if s.mock {
 		respondJSON(w, http.StatusOK, StatusResponse{
 			Phase:       s.installer.Phase(),
+			LastMessage: s.installer.LastMessage(),
 			Hostname:    "bloud",
 			IPAddresses: []string{"192.168.1.42"},
 			CPU:         "Intel Core i5-8250U (mock)",
@@ -95,6 +97,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, StatusResponse{
 		Phase:       s.installer.Phase(),
+		LastMessage: s.installer.LastMessage(),
 		Hostname:    hostname,
 		IPAddresses: ips,
 		CPU:         cpu,

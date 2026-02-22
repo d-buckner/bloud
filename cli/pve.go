@@ -149,6 +149,21 @@ func vmInteractive(ip, cmd string) error {
 // ── ISO phase helpers ──────────────────────────────────────────────────────────
 // The live installer ISO runs as root with an empty password (no bloud user).
 
+func isoExecStream(ip, cmd string) error {
+	c := exec.Command("sshpass", "-p", "",
+		"ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=5",
+		"-o", "LogLevel=ERROR",
+		"root@"+ip,
+		cmd,
+	)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
 func isoExec(ip, cmd string) (string, error) {
 	c := exec.Command("sshpass", "-p", "",
 		"ssh",
@@ -214,12 +229,28 @@ func runInstaller(cfg pveConfig, ip string) int {
 		return 1
 	}
 
-	log(fmt.Sprintf("Waiting for installation to complete (timeout: %ds)...", pveInstallTimeout))
+	log(fmt.Sprintf("Streaming installation progress (timeout: %ds)...", pveInstallTimeout))
+
+	// Stream SSE events from /api/progress in the background.
+	// The server closes the stream on complete or failed, so curl exits naturally.
+	go func() {
+		_ = isoExecStream(ip, fmt.Sprintf(
+			`curl -N -sf %s/progress | while IFS= read -r line; do`+
+				`  if [[ "$line" == data:* ]]; then`+
+				`    json="${line#data: }";`+
+				`    phase=$(printf '%%s' "$json" | jq -r '.phase // empty' 2>/dev/null);`+
+				`    msg=$(printf '%%s' "$json" | jq -r '.message // empty' 2>/dev/null);`+
+				`    [ -n "$msg" ] && echo "  [$phase] $msg";`+
+				`  fi;`+
+				`done`,
+			pveInstallerAPI,
+		))
+	}()
+
 	var lastPhase string
 	for i := 0; i < pveInstallTimeout; i += 2 {
 		phase, _ := isoExec(ip, "curl -sf "+pveInstallerAPI+"/status | jq -r '.phase'")
 		if phase != lastPhase && phase != "" && phase != "null" {
-			fmt.Printf("  [%s]\n", phase)
 			lastPhase = phase
 		}
 		switch phase {
@@ -227,6 +258,11 @@ func runInstaller(cfg pveConfig, ip string) int {
 			log("Installation complete")
 			goto installDone
 		case "failed":
+			// Fetch the last message for diagnostics
+			msg, _ := isoExec(ip, "curl -sf "+pveInstallerAPI+"/status | jq -r '.lastMessage // empty'")
+			if msg != "" && msg != "null" {
+				fmt.Printf("  Last error: %s\n", msg)
+			}
 			errorf("Installation failed")
 			return 1
 		}
