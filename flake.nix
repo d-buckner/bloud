@@ -75,6 +75,16 @@
             ./nixos/iso.nix
           ];
         };
+
+        # Installed system — applied to disk by the Bloud installer
+        # nixos-install --flake <pkg>/share/bloud-installer/bloud#bloud
+        bloud = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/installed.nix
+            ./nixos/bloud.nix
+          ];
+        };
       };
 
       # Packages for building images

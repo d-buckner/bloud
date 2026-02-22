@@ -13,12 +13,12 @@ func Install(ctx context.Context, flakePath string, emit func(string)) error {
 		return fmt.Errorf("writing nixos config stub: %w", err)
 	}
 
-	emit("Running nixos-install --no-root-passwd --flake " + flakePath + "#iso --root /mnt")
+	emit("Running nixos-install --no-root-passwd --flake " + flakePath + "#bloud --root /mnt")
 
 	cmd := exec.CommandContext(ctx,
 		"/run/current-system/sw/bin/nixos-install",
 		"--no-root-passwd",
-		"--flake", flakePath+"#iso",
+		"--flake", flakePath+"#bloud",
 		"--root", "/mnt",
 	)
 
