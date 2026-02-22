@@ -26,6 +26,12 @@ in
       default = "${pkg}/share/bloud-installer/bloud";
       description = "Path to the bloud flake used by nixos-install";
     };
+
+    systemPath = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Pre-built NixOS system store path. When set, nixos-install uses --system instead of --flake, bypassing flake re-evaluation.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -42,6 +48,7 @@ in
       environment = {
         INSTALLER_PORT = toString cfg.port;
         INSTALLER_FLAKE_PATH = cfg.flakePath;
+        INSTALLER_SYSTEM_PATH = cfg.systemPath;
       };
 
       serviceConfig = {

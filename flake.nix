@@ -75,10 +75,13 @@
             ./nixos/iso.nix
             # Include the installed system's store closure so nixos-install
             # can copy it to /mnt without needing network access.
+            # Also pass the exact store path so the installer uses --system
+            # instead of --flake, bypassing flake re-evaluation hash mismatch.
             {
               isoImage.storeContents = [
                 self.nixosConfigurations.bloud.config.system.build.toplevel
               ];
+              bloud.installer.systemPath = "${self.nixosConfigurations.bloud.config.system.build.toplevel}";
             }
           ];
         };
