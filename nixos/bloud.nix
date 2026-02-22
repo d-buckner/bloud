@@ -139,6 +139,24 @@ in
       };
     };
 
+    # Initialize secrets before any container prestart hooks run.
+    # Multiple container prestarts run concurrently on first boot. Without this
+    # service, each prestart calls config.Load() simultaneously, and the concurrent
+    # generateAndSave() calls create a race where secrets.json and the env files
+    # may be written by different processes with different passwords.
+    # This service ensures secrets.json is created by exactly one process first.
+    systemd.user.services.bloud-init-secrets = {
+      description = "Initialize bloud secrets before containers start";
+      before = [ "bloud-apps.target" ];
+      wantedBy = [ "bloud-apps.target" ];
+      after = [ "network-online.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${cfg.agentPath} init-secrets";
+      };
+    };
+
     # Initialize the bloud database (required for app configurator hooks)
     # Apps with configurators should add this to their After= dependencies
     systemd.user.services.bloud-db-init = {
