@@ -4,8 +4,9 @@
 # The installer runs: nixos-install --flake <pkg>/share/bloud-installer/bloud#bloud
 #
 # Disk layout (created by services/installer/internal/partition/partition.go):
-#   EFI partition  → label "ESP"   → /boot (FAT32)
-#   Root partition → label "nixos" → /     (ext4)
+#   Partition 1 → BIOS boot (1MiB–2MiB, bios_grub type, no filesystem)
+#   Partition 2 → label "ESP"   → /boot (FAT32, EFI)
+#   Partition 3 → label "nixos" → /     (ext4)
 
 { config, pkgs, lib, ... }:
 
@@ -20,11 +21,13 @@
   # QEMU guest agent for Proxmox IP detection and lifecycle management
   services.qemuGuest.enable = true;
 
-  # Boot: GRUB with EFI (installer partitions with GPT + EFI partition)
+  # Boot: hybrid GRUB — installs to both MBR (BIOS boot) and EFI partition.
+  # This supports SeaBIOS (test VMs) and UEFI firmware (real hardware) with one image.
+  # Requires: GPT disk with a 1MiB BIOS boot partition (type bios_grub) + FAT32 EFI partition.
   boot.loader.grub.enable = true;
   boot.loader.grub.efiSupport = true;
   boot.loader.grub.efiInstallAsRemovable = true;
-  boot.loader.grub.device = "nodev";
+  boot.loader.grub.device = "/dev/sda";  # Install BIOS GRUB to MBR/BIOS-boot-partition
   boot.loader.timeout = 3;
 
   # Kernel modules for virtio hardware (Proxmox/QEMU)

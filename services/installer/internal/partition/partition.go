@@ -28,17 +28,29 @@ func Prepare(ctx context.Context, device string, emit func(string)) error {
 			"Creating GPT partition table on " + device,
 			[]string{"parted", "-s", device, "mklabel", "gpt"},
 		},
+		// Partition 1: BIOS boot — GRUB embeds its core image here for SeaBIOS/BIOS boot.
+		// Required when grub.device is set (non-"nodev") on a GPT disk.
 		{
-			"Creating EFI partition (1MiB–513MiB)",
-			[]string{"parted", "-s", device, "mkpart", "EFI", "fat32", "1MiB", "513MiB"},
+			"Creating BIOS boot partition (1MiB–2MiB)",
+			[]string{"parted", "-s", device, "mkpart", "BIOS", "1MiB", "2MiB"},
 		},
 		{
-			"Setting EFI partition boot flag",
-			[]string{"parted", "-s", device, "set", "1", "esp", "on"},
+			"Setting bios_grub flag on partition 1",
+			[]string{"parted", "-s", device, "set", "1", "bios_grub", "on"},
+		},
+		// Partition 2: EFI — for UEFI firmware (real hardware, OVMF-based VMs).
+		{
+			"Creating EFI partition (2MiB–514MiB)",
+			[]string{"parted", "-s", device, "mkpart", "EFI", "fat32", "2MiB", "514MiB"},
 		},
 		{
-			"Creating root partition (513MiB–100%)",
-			[]string{"parted", "-s", device, "mkpart", "root", "ext4", "513MiB", "100%"},
+			"Setting ESP flag on partition 2",
+			[]string{"parted", "-s", device, "set", "2", "esp", "on"},
+		},
+		// Partition 3: root filesystem.
+		{
+			"Creating root partition (514MiB–100%)",
+			[]string{"parted", "-s", device, "mkpart", "root", "ext4", "514MiB", "100%"},
 		},
 	}
 
@@ -50,8 +62,8 @@ func Prepare(ctx context.Context, device string, emit func(string)) error {
 		}
 	}
 
-	efi := partitionDevice(device, "1")
-	root := partitionDevice(device, "2")
+	efi := partitionDevice(device, "2")
+	root := partitionDevice(device, "3")
 
 	emit("Formatting EFI partition " + efi + " as FAT32 (label: ESP)")
 	if out, err := exec.CommandContext(ctx, "mkfs.vfat", "-F32", "-n", "ESP", efi).CombinedOutput(); err != nil {

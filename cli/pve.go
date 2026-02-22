@@ -275,9 +275,10 @@ func runInstaller(cfg pveConfig, ip string) int {
 	return 1
 
 installDone:
-	// Switch VM boot order to disk before rebooting so it boots the installed system
+	// Switch VM boot order to disk so SeaBIOS boots the installed GRUB on next start.
+	// Eject the ISO as well so it can't interfere if the boot order is ever reset.
 	log("Updating VM boot order to disk...")
-	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --boot 'order=scsi0'", cfg.VMID)); err != nil {
+	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --boot 'order=sata0' --ide2 none,media=cdrom", cfg.VMID)); err != nil {
 		errorf("Failed to update boot order: %v", err)
 		return 1
 	}
@@ -936,8 +937,13 @@ func cmdStartPVE(args []string) int {
 		pveCleanOldVMs(cfg)
 
 		log(fmt.Sprintf("Creating VM %s...", cfg.VMID))
+		// SeaBIOS (the default, no --bios flag needed) boots via MBR/BIOS GRUB.
+		// installed.nix uses hybrid GRUB: BIOS stage installed to the 1MiB bios_grub
+		// partition + EFI fallback at EFI/BOOT/BOOTX64.EFI for real UEFI hardware.
+		// --sata0: AHCI SATA disk; SeaBIOS boots it via the standard BIOS boot path.
+		// Boot order: ide2 (ISO) during install, then updated to sata0 after install.
 		createCmd := fmt.Sprintf(
-			"qm create %s --name %s --memory %d --cores %d --ostype l26 --cdrom 'local:iso/%s' --boot 'order=ide2' --net0 'virtio,bridge=vmbr0' --agent enabled=1 --serial0 socket --scsihw virtio-scsi-pci --scsi0 %s:%d",
+			"qm create %s --name %s --memory %d --cores %d --ostype l26 --cdrom 'local:iso/%s' --boot 'order=ide2' --net0 'virtio,bridge=vmbr0' --agent enabled=1 --serial0 socket --sata0 %s:%d",
 			cfg.VMID, pveVMName, cfg.Memory, cfg.Cores, pveISOFilename, pveDiskStorage, pveDiskSizeGB,
 		)
 		if err := pveExecStream(cfg, createCmd); err != nil {
