@@ -7,6 +7,7 @@
 	import type { CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
 	import { installApp } from '$lib/services/appFacade';
+	import { fetchCatalog } from '$lib/api/catalog';
 
 	let catalogApps = $state<CatalogApp[]>([]);
 	let catalogLoading = $state(true);
@@ -58,10 +59,7 @@
 	
 	onMount(async () => {
 		try {
-			const catalogRes = await fetch('/api/apps');
-			const catalogData = await catalogRes.json();
-			// Filter out system apps (postgres, traefik, etc) - users shouldn't see these
-			catalogApps = (catalogData.apps || []).filter((app: CatalogApp) => !app.isSystem);
+			catalogApps = await fetchCatalog();
 		} catch (err) {
 			catalogError = err instanceof Error ? err.message : 'Failed to load apps';
 		} finally {
