@@ -21,6 +21,15 @@ let
   hasPrebuilt = builtins.pathExists (buildDir + "/host-agent")
     && builtins.pathExists (buildDir + "/frontend");
 
+  # When this file is evaluated from within a deployed store path, the host-agent
+  # binary already exists 4 directories above (nixos/packages/ -> nixos/ ->
+  # share/bloud/ -> share/ -> /nix/store/hash-bloud-host-agent-0.1.0/).
+  # builtins.storePath verifies the path is in the store and returns it as a
+  # Nix path type (satisfies lib.types.package check), without triggering a build.
+  installedPackageRoot = ../../../..;
+  hasInstalled = !hasPrebuilt
+    && builtins.pathExists (installedPackageRoot + "/bin/host-agent");
+
   src = builtins.path {
     path = ../..;
     name = "bloud-source";
@@ -50,7 +59,7 @@ let
     mkdir -p $out/share/bloud/web/build
     cp -r ${buildDir + "/frontend"}/* $out/share/bloud/web/build/
 
-    # App metadata and icons (needed at runtime for catalog API)
+    # App metadata, icons, and NixOS modules (needed at runtime for catalog API and nixos-rebuild)
     mkdir -p $out/share/bloud/apps
     for app in ${src}/apps/*/; do
       appName=$(basename "$app")
@@ -58,6 +67,9 @@ let
         mkdir -p "$out/share/bloud/apps/$appName"
         cp "$app/metadata.yaml" "$out/share/bloud/apps/$appName/"
         [ -f "$app/icon.png" ] && cp "$app/icon.png" "$out/share/bloud/apps/$appName/"
+        # module.nix is required for nixos-rebuild from the store flake path.
+        # bloud.nix imports ../apps/*/module.nix, which resolves to this directory.
+        [ -f "$app/module.nix" ] && cp "$app/module.nix" "$out/share/bloud/apps/$appName/"
       fi
     done
 
@@ -77,4 +89,6 @@ let
   '';
 
 in
-if hasPrebuilt then realPackage else stubPackage
+if hasPrebuilt then realPackage
+else if hasInstalled then builtins.storePath (toString installedPackageRoot)
+else stubPackage

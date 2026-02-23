@@ -208,11 +208,27 @@ nix build .#packages.x86_64-linux.iso
 
 **Local dev is unaffected** — `./bloud start` uses `go-watch`/Vite directly, never touches Nix package builds.
 
-### nixos-rebuild Re-Exec Gotcha
+### nixos-rebuild Store Flake Gotchas
 
-`nixos-rebuild` has a self-update mechanism: before switching, it builds `$flake#nixosConfigurations.$host.config.system.build.nixos-rebuild` and re-execs from the result. When `BLOUD_FLAKE_PATH` points to the bundled store path (e.g. `/nix/store/<hash>-bloud-host-agent-0.1.0/share/bloud`), this attribute resolves to the bloud-host-agent derivation — which has no `bin/nixos-rebuild`. The exec fails.
+**Three issues** arise when `BLOUD_FLAKE_PATH` points to a bundled store path (e.g. `/nix/store/<hash>-bloud-host-agent-0.1.0/share/bloud`):
 
-**Fix:** Set `_NIXOS_REBUILD_REEXEC=1` in the command environment before calling nixos-rebuild. This tells the script it has already been re-exec'd and skips the step. See `services/host-agent/internal/nixgen/rebuild.go`.
+**1. Re-exec step (`_NIXOS_REBUILD_REEXEC=1`)**
+`nixos-rebuild` builds `$flake#...nixos-rebuild` and re-execs from it before switching. Setting `_NIXOS_REBUILD_REEXEC=1` skips this optimization step (it's safe to skip). Must be passed inline via `sudo env` since sudo strips env vars.
+
+**2. Nix treats store paths as already-built (`path:` prefix)**
+`nix build /nix/store/hash/subdir#attr` treats the whole URI as a store path reference, returning the STORE ROOT (`/nix/store/hash`) directly without evaluating the flake at all. This causes `switch-to-configuration` to be looked up in the host-agent package (which doesn't have it).
+
+**Fix:** Use `path:/nix/store/.../share/bloud` — the `path:` URI scheme forces Nix to evaluate the flake.nix properly. See `flakeURI()` in `services/host-agent/internal/nixgen/rebuild.go`.
+
+**3. App `module.nix` files not in store**
+`bloud.nix` imports `../apps/*/module.nix` to load app NixOS modules. The original package only copied `metadata.yaml` and `icon.png` from each app. Without `module.nix`, `bloud.apps.*` options are undefined, causing eval failure.
+
+**Fix:** `nixos/packages/host-agent.nix` now copies `module.nix` alongside metadata.
+
+**4. Host-agent package defaults to stub from store**
+When `packages/host-agent.nix` is evaluated from the store, `../../build` doesn't exist, so `hasPrebuilt=false` and the stub is used. The stub fails to build, blocking `nix build system.build.toplevel`.
+
+**Fix:** Detect when running from a deployed store path (binary exists 4 dirs up at `../../../../bin/host-agent`) and use `builtins.storePath` to reference the already-deployed package without rebuilding.
 
 ### systemd Service PATH
 
