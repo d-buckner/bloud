@@ -43,7 +43,16 @@ export async function request<T>(url: string, options: RequestOptions = {}): Pro
 	const text = await res.text();
 	if (!text) return undefined as T;
 
-	return JSON.parse(text) as T;
+	const contentType = res.headers.get('content-type') ?? '';
+	if (!contentType.includes('application/json')) {
+		throw { status: res.status, message: 'Server returned an unexpected response' } as HttpError;
+	}
+
+	try {
+		return JSON.parse(text) as T;
+	} catch {
+		throw { status: res.status, message: 'Invalid response from server' } as HttpError;
+	}
 }
 
 /**
