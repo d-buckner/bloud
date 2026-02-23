@@ -83,6 +83,11 @@ func (s *Server) setupRoutes() {
 				r.Put("/layout", s.handleSetLayout)
 			})
 		})
+
+		// Any unmatched /api/** path returns JSON 404, never HTML
+		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+			respondError(w, http.StatusNotFound, "not found")
+		})
 	})
 
 	// Serve frontend static files
