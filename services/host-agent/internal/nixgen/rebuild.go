@@ -44,6 +44,18 @@ func NewRebuilder(flakePath, hostname string, logger *slog.Logger) *Rebuilder {
 	}
 }
 
+// flakeURI returns the flake path with the path: URI scheme prefix when the
+// path is absolute. This forces Nix to evaluate the flake rather than treating
+// the path as an already-built store derivation. Without path:, Nix interprets
+// /nix/store/hash/subdir as a store path and returns the store root directly —
+// skipping flake evaluation entirely and producing the wrong build output.
+func (r *Rebuilder) flakeURI() string {
+	if strings.HasPrefix(r.flakePath, "/") && !strings.HasPrefix(r.flakePath, "path:") {
+		return "path:" + r.flakePath
+	}
+	return r.flakePath
+}
+
 // RebuildResult contains the result of a rebuild operation
 type RebuildResult struct {
 	Success      bool
@@ -54,15 +66,14 @@ type RebuildResult struct {
 }
 
 // nixosRebuildCmd constructs a nixos-rebuild command with the correct sudo
-// wrapping and _NIXOS_REBUILD_REEXEC=1 to skip the re-exec mechanism.
+// wrapping and _NIXOS_REBUILD_REEXEC=1 to skip the unnecessary re-exec step.
 //
 // nixos-rebuild normally builds $flake#$host.config.system.build.nixos-rebuild
-// before switching and re-execs from the result. When BLOUD_FLAKE_PATH points
-// to the bundled store path the attribute resolves to the bloud-host-agent
-// package (which has no bin/nixos-rebuild), causing exec to fail.
-//
-// _NIXOS_REBUILD_REEXEC=1 skips that step. It must be passed inline via
-// `sudo env` because sudo strips environment variables by default.
+// and re-execs from the result before switching. This is an optimization to use
+// the latest nixos-rebuild script, but it adds an extra build step.
+// _NIXOS_REBUILD_REEXEC=1 skips it safely since we're already using the correct
+// nixos-rebuild version. It must be passed inline via `sudo env` because sudo
+// strips environment variables by default.
 func (r *Rebuilder) nixosRebuildCmd(ctx context.Context, args []string) *exec.Cmd {
 	if r.useSudo {
 		sudoArgs := append([]string{
@@ -103,7 +114,7 @@ func (r *Rebuilder) Switch(ctx context.Context) (*RebuildResult, error) {
 	args := []string{"switch"}
 
 	if r.flakePath != "" {
-		args = append(args, "--flake", fmt.Sprintf("%s#%s", r.flakePath, r.hostname))
+		args = append(args, "--flake", fmt.Sprintf("%s#%s", r.flakeURI(), r.hostname))
 	}
 
 	if r.impure {
@@ -217,7 +228,7 @@ func (r *Rebuilder) Test(ctx context.Context) (*RebuildResult, error) {
 
 	args := []string{"test"}
 	if r.flakePath != "" {
-		args = append(args, "--flake", fmt.Sprintf("%s#%s", r.flakePath, r.hostname))
+		args = append(args, "--flake", fmt.Sprintf("%s#%s", r.flakeURI(), r.hostname))
 	}
 	if r.impure {
 		args = append(args, "--impure")
@@ -264,7 +275,7 @@ func (r *Rebuilder) SwitchStream(ctx context.Context, events chan<- RebuildEvent
 	args := []string{"switch"}
 
 	if r.flakePath != "" {
-		args = append(args, "--flake", fmt.Sprintf("%s#%s", r.flakePath, r.hostname))
+		args = append(args, "--flake", fmt.Sprintf("%s#%s", r.flakeURI(), r.hostname))
 	}
 
 	if r.impure {
