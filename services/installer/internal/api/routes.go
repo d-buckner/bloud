@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func (s *Server) setupRoutes() {
@@ -32,8 +33,16 @@ func (s *Server) setupFrontend() {
 		filePath := filepath.Join(buildDir, filepath.Clean(urlPath))
 
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			w.Header().Set("Cache-Control", "no-store")
 			http.ServeFile(w, r, filepath.Join(buildDir, "index.html"))
 			return
+		}
+
+		switch {
+		case urlPath == "/index.html":
+			w.Header().Set("Cache-Control", "no-store")
+		case strings.HasPrefix(urlPath, "/_app/immutable/"):
+			w.Header().Set("Cache-Control", "public, immutable, max-age=31536000")
 		}
 
 		http.ServeFile(w, r, filePath)

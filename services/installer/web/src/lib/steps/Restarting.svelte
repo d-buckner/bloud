@@ -5,6 +5,18 @@
 	let interval: ReturnType<typeof setInterval> | null = null;
 	let slowTimeout: ReturnType<typeof setTimeout> | null = null;
 
+	async function navigateToInstalledSystem(): Promise<void> {
+		// Unregister any service workers left over from a prior bloud install.
+		// A stale host-agent SW at this origin would otherwise intercept the
+		// initial requests to the installed system before its own SW registers.
+		if ('serviceWorker' in navigator) {
+			const registrations = await navigator.serviceWorker.getRegistrations();
+			await Promise.all(registrations.map((r) => r.unregister()));
+		}
+
+		window.location.href = '/';
+	}
+
 	onMount(() => {
 		slowTimeout = setTimeout(() => {
 			slow = true;
@@ -14,7 +26,9 @@
 			try {
 				const res = await fetch('/api/health');
 				if (res.ok) {
-					window.location.href = '/';
+					if (interval) clearInterval(interval);
+					if (slowTimeout) clearTimeout(slowTimeout);
+					await navigateToInstalledSystem();
 				}
 			} catch {
 				// Machine is rebooting — network errors are expected, keep polling

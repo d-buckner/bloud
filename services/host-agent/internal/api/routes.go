@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
@@ -121,11 +122,24 @@ func (s *Server) setupFrontend() {
 		// Check if file exists
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			// File doesn't exist - serve index.html for SPA routing
+			w.Header().Set("Cache-Control", "no-store")
 			http.ServeFile(w, r, filepath.Join(buildDir, "index.html"))
 			return
 		}
 
-		// File exists - serve it directly
+		// Set cache headers based on path:
+		// - index.html and service-worker.js must never be cached — they are the
+		//   entry points that reference versioned assets, and stale copies cause
+		//   broken loads after updates or after the installer→installed transition.
+		// - Hashed immutable assets can be cached forever; the hash in the filename
+		//   guarantees a new URL on every content change.
+		switch {
+		case urlPath == "/index.html" || urlPath == "/service-worker.js":
+			w.Header().Set("Cache-Control", "no-store")
+		case strings.HasPrefix(urlPath, "/_app/immutable/"):
+			w.Header().Set("Cache-Control", "public, immutable, max-age=31536000")
+		}
+
 		http.ServeFile(w, r, filePath)
 	})
 }
