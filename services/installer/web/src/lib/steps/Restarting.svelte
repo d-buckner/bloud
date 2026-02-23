@@ -79,7 +79,7 @@
 	.spinner-wrap {
 		display: flex;
 		align-items: center;
-		justify-content: flex-start;
+		justify-content: center;
 	}
 
 	.ring {

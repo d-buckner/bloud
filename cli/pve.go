@@ -275,39 +275,28 @@ func runInstaller(cfg pveConfig, ip string) int {
 	return 1
 
 installDone:
-	// Update boot order and eject ISO in the config file.
-	log("Updating VM boot order to disk...")
-	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --boot 'order=sata0' --ide2 none,media=cdrom", cfg.VMID)); err != nil {
-		errorf("Failed to update boot order: %v", err)
-		return 1
-	}
-
-	// Stop and start the VM so QEMU reloads with the updated bootindex config.
-	// An in-place OS reboot keeps the QEMU process alive and reuses the old
-	// command-line bootindex (CD-ROM first), so SeaBIOS would ignore the disk.
-	log("Stopping VM to apply new boot order...")
-	if _, err := pveExec(cfg, fmt.Sprintf("qm stop %s", cfg.VMID)); err != nil {
-		errorf("Failed to stop VM: %v", err)
-		return 1
-	}
-	time.Sleep(3 * time.Second)
-	log("Starting VM with new boot order (sata0)...")
-	if _, err := pveExec(cfg, fmt.Sprintf("qm start %s", cfg.VMID)); err != nil {
-		errorf("Failed to start VM: %v", err)
-		return 1
+	// Eject the ISO so it's tidy, but boot order doesn't need changing —
+	// sata0 is already first and will now win since the HD has a bootable OS.
+	log("Ejecting ISO...")
+	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --ide2 none,media=cdrom", cfg.VMID)); err != nil {
+		warn(fmt.Sprintf("Failed to eject ISO (non-fatal): %v", err))
 	}
 	return 0
 }
 
-// waitForReboot waits for the ISO SSH to go dark, signalling the reboot has started.
-func waitForReboot(ip string) {
-	log("Waiting for reboot...")
-	for i := 0; i < 60; i++ {
-		if _, err := isoExec(ip, "true"); err != nil {
-			return
+// vmMAC returns a stable locally-administered MAC address derived from the VMID.
+// Using the same MAC across destroy/recreate cycles means DHCP renews the same
+// lease rather than allocating a new IP each time.
+// Format: 02:42:00:00:HH:LL where HHLL = VMID as big-endian uint16.
+func vmMAC(vmid string) string {
+	n := uint64(0)
+	for _, c := range vmid {
+		if c >= '0' && c <= '9' {
+			n = n*10 + uint64(c-'0')
 		}
-		time.Sleep(1 * time.Second)
 	}
+	n &= 0xffff
+	return fmt.Sprintf("02:42:00:00:%02x:%02x", (n>>8)&0xff, n&0xff)
 }
 
 // ── VM state helpers ───────────────────────────────────────────────────────────
@@ -898,12 +887,15 @@ func cmdSetupBuilderPVE() int {
 // ── Commands ───────────────────────────────────────────────────────────────────
 
 // cmdStartPVE is the main ISO test lifecycle:
-// deploy ISO → clean old VMs → create VM → boot → wait for services → checks
-// VM stays running after checks. Flags: --skip-deploy (reuse existing VM)
+// deploy ISO → clean old VMs → create VM → boot live ISO → (optional: install + checks)
+// Without --install: boots the live ISO and exits, leaving it running for manual install.
+// With --install: drives the installer API automatically, then runs health checks.
+// VM stays running after completion. Flags: --skip-deploy (reuse existing VM)
 func cmdStartPVE(args []string) int {
 	cfg := getPVEConfig()
 	build := false
 	skipDeploy := false
+	autoInstall := false
 	isoSource := ""
 
 	for i := 0; i < len(args); i++ {
@@ -912,6 +904,8 @@ func cmdStartPVE(args []string) int {
 			build = true
 		case "--skip-deploy":
 			skipDeploy = true
+		case "--install":
+			autoInstall = true
 		case "--pve-host":
 			if i+1 < len(args) {
 				cfg.Host = args[i+1]
@@ -947,15 +941,20 @@ func cmdStartPVE(args []string) int {
 		}
 		pveCleanOldVMs(cfg)
 
-		log(fmt.Sprintf("Creating VM %s...", cfg.VMID))
+		mac := vmMAC(cfg.VMID)
+		log(fmt.Sprintf("Creating VM %s (MAC %s)...", cfg.VMID, mac))
 		// SeaBIOS (the default, no --bios flag needed) boots via MBR/BIOS GRUB.
 		// installed.nix uses hybrid GRUB: BIOS stage installed to the 1MiB bios_grub
 		// partition + EFI fallback at EFI/BOOT/BOOTX64.EFI for real UEFI hardware.
 		// --sata0: AHCI SATA disk; SeaBIOS boots it via the standard BIOS boot path.
-		// Boot order: ide2 (ISO) during install, then updated to sata0 after install.
+		// Boot order: sata0 first, ide2 (ISO) as fallback. On first boot the disk is
+		// empty so BIOS falls back to the ISO. After installation the HD wins
+		// automatically — no boot order update needed after install.
+		// A fixed MAC (derived from VMID) keeps DHCP from allocating a new lease on
+		// every destroy/recreate cycle.
 		createCmd := fmt.Sprintf(
-			"qm create %s --name %s --memory %d --cores %d --ostype l26 --cdrom 'local:iso/%s' --boot 'order=ide2' --net0 'virtio,bridge=vmbr0' --agent enabled=1 --serial0 socket --sata0 %s:%d",
-			cfg.VMID, pveVMName, cfg.Memory, cfg.Cores, pveISOFilename, pveDiskStorage, pveDiskSizeGB,
+			"qm create %s --name %s --memory %d --cores %d --ostype l26 --cdrom 'local:iso/%s' --boot 'order=sata0;ide2' --net0 'virtio,bridge=vmbr0,macaddr=%s' --agent enabled=1 --serial0 socket --sata0 %s:%d",
+			cfg.VMID, pveVMName, cfg.Memory, cfg.Cores, pveISOFilename, mac, pveDiskStorage, pveDiskSizeGB,
 		)
 		if err := pveExecStream(cfg, createCmd); err != nil {
 			errorf("Failed to create VM: %v", err)
@@ -975,6 +974,18 @@ func cmdStartPVE(args []string) int {
 			return 1
 		}
 
+		if !autoInstall {
+			// Manual install mode: leave the live ISO running for the user.
+			fmt.Println()
+			log(fmt.Sprintf("Live ISO is up at %s", vmIP))
+			fmt.Printf("  SSH:        ssh root@%s  (empty password)\n", vmIP)
+			fmt.Printf("  Installer:  http://%s:%s\n", vmIP, pveInstallerPort)
+			fmt.Println()
+			fmt.Println("  Install manually, then run: ./bloud checks")
+			fmt.Println("  To tear down:               ./bloud destroy")
+			return 0
+		}
+
 		// Phase 2: Drive the installer API — partition, install, reboot
 		if code := runInstaller(cfg, vmIP); code != 0 {
 			return code
@@ -982,7 +993,7 @@ func cmdStartPVE(args []string) int {
 	}
 
 	// Phase 3: Wait for the installed system (bloud user, bloud password).
-	// Always runs — whether after a fresh install or with --skip-deploy.
+	// Runs after --install or --skip-deploy (assumes system already installed).
 	log("Waiting for installed system to come up...")
 	vmIP = waitForPVEVMReady(cfg)
 	if vmIP == "" {
