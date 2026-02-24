@@ -21,7 +21,7 @@ import (
 // Set via os.Setenv in main so all exec.Command calls resolve bare names,
 // and passed explicitly via "sudo env" so child processes inherit it too
 // (sudo resets the environment by default).
-const NixosSystemPath = "/run/current-system/sw/bin:/run/wrappers/bin:/bin"
+const NixosSystemPath = "/run/wrappers/bin:/run/current-system/sw/bin:/bin"
 
 // Rebuilder handles nixos-rebuild operations
 type Rebuilder struct {
