@@ -159,7 +159,25 @@ func main() {
 	case "attach":
 		exitCode = cmdAttach()
 	case "rebuild":
-		exitCode = cmdRebuild()
+		if isPVEMode() {
+			exitCode = cmdRebuildPVE()
+		} else {
+			exitCode = cmdRebuild()
+		}
+	case "push":
+		if isPVEMode() {
+			exitCode = cmdPushPVE()
+		} else {
+			fmt.Fprintf(os.Stderr, "%sError:%s 'push' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
+			exitCode = 1
+		}
+	case "snapshot":
+		if isPVEMode() {
+			exitCode = cmdSnapshotPVE(args)
+		} else {
+			fmt.Fprintf(os.Stderr, "%sError:%s 'snapshot' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
+			exitCode = 1
+		}
 	case "depgraph":
 		exitCode = cmdDepGraph()
 	case "installer":
@@ -191,13 +209,22 @@ func printUsage() {
 		fmt.Println()
 		fmt.Println("Usage: ./bloud <command> [args]")
 		fmt.Println()
-		fmt.Println("Commands:")
+		fmt.Println("Fast iteration (no ISO rebuild required):")
+		fmt.Println("  push                  Cross-compile + hot-swap binary via drop-in (~30s)")
+		fmt.Println("  rebuild               rsync NixOS config + nixos-rebuild switch (~2-3 min)")
+		fmt.Println("  snapshot save [name]  Save VM snapshot (default: base-installed)")
+		fmt.Println("  snapshot restore [n]  Restore snapshot and start VM (~15s)")
+		fmt.Println("  snapshot list         List all snapshots for the test VM")
+		fmt.Println()
+		fmt.Println("Full ISO cycle:")
 		fmt.Println("  start [iso] [flags]   Deploy ISO → create VM → boot live ISO")
 		fmt.Println("    --install           Auto-install via API, then run health checks")
 		fmt.Println("    --build             Build ISO locally via build VM instead of downloading")
 		fmt.Println("    --skip-deploy       Reuse existing VM (skip ISO upload + VM create)")
 		fmt.Println("    --pve-host <host>   Override Proxmox SSH target")
 		fmt.Println("    --vmid <id>         Override VM ID")
+		fmt.Println()
+		fmt.Println("VM management:")
 		fmt.Println("  stop                  Stop VM")
 		fmt.Println("  destroy               Destroy VM completely")
 		fmt.Println("  status                Show VM and service status")
@@ -213,12 +240,18 @@ func printUsage() {
 		fmt.Println("  BLOUD_PVE_HOST        Proxmox SSH target (e.g. root@192.168.0.62)")
 		fmt.Println("  BLOUD_PVE_VMID        VM ID (default: 9999)")
 		fmt.Println()
-		fmt.Println("Examples:")
+		fmt.Println("Typical workflow:")
+		fmt.Println("  ./bloud start --install               # full install (first time)")
+		fmt.Println("  ./bloud snapshot save                 # save clean state")
+		fmt.Println("  # --- iterate ---")
+		fmt.Println("  ./bloud push                          # test Go code change (~30s)")
+		fmt.Println("  ./bloud rebuild                       # test NixOS config change (~2-3 min)")
+		fmt.Println("  ./bloud snapshot restore              # reset to clean state")
+		fmt.Println()
+		fmt.Println("Other examples:")
 		fmt.Println("  ./bloud start                         # boot live ISO (manual install)")
-		fmt.Println("  ./bloud start --install               # boot + auto-install + checks")
-		fmt.Println("  ./bloud start ./bloud.iso             # boot local ISO")
 		fmt.Println("  ./bloud start ./bloud.iso --install   # boot local ISO + auto-install")
-		fmt.Println("  ./bloud start --build                 # build ISO locally and boot")
+		fmt.Println("  ./bloud start --build                 # build ISO on builder VM and boot")
 		fmt.Println("  ./bloud start --skip-deploy           # re-run checks on existing VM")
 		return
 	}
