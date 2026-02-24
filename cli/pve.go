@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const pveSyncDir = "/tmp/bloud-src"
+
 const (
 	pveDefaultVMID    = "9999"
 	pveDefaultMemory  = 8192
@@ -1298,5 +1300,321 @@ func cmdUninstallPVE(args []string) int {
 	}
 	log(fmt.Sprintf("Successfully uninstalled %s", appName))
 	fmt.Println(body)
+	return 0
+}
+
+// ── Fast iteration commands ────────────────────────────────────────────────────
+
+// cmdRebuildPVE syncs the NixOS configuration from the local project to a running
+// installed VM and applies it via nixos-rebuild switch. Avoids a full ISO rebuild
+// by patching the live system in place (~2-3 minutes vs ~15 minutes).
+//
+// Flow:
+//  1. Initialize /tmp/bloud-src on VM from the currently deployed Nix store
+//     (gives Nix the pre-built binary + frontend without rebuilding them)
+//  2. Rsync local nixos/ and apps/ on top (only changed files transfer)
+//  3. nixos-rebuild switch --flake path:/tmp/bloud-src#bloud --impure
+//  4. Wait for host-agent health + run checks
+func cmdRebuildPVE() int {
+	cfg := getPVEConfig()
+
+	if !pveVMIsRunning(cfg) {
+		errorf("VM is not running. Run './bloud start --install' first to create an installed system.")
+		return 1
+	}
+
+	ip := getVMIP(cfg)
+	if ip == "" {
+		errorf("Could not get VM IP (is the QEMU guest agent running?)")
+		return 1
+	}
+
+	root, err := getProjectRoot()
+	if err != nil {
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	// Step 1: Initialize /tmp/bloud-src on the VM from the currently deployed
+	// Nix store path. We read the binary path from the main unit file (not the
+	// drop-in, which may point to /tmp/host-agent-push after a ./bloud push).
+	// The store path gives us the pre-built binary + frontend + NixOS modules,
+	// so Nix can reuse the existing derivation for a config-only change.
+	log("Initializing " + pveSyncDir + " from deployed store...")
+	initScript := `set -e
+UNIT_PATH=$(systemctl show bloud-host-agent.service -p FragmentPath --value)
+AGENT_BIN=$(grep '^ExecStart=' "$UNIT_PATH" | head -1 | sed 's/^ExecStart=//')
+if [ -z "$AGENT_BIN" ] || [[ "$AGENT_BIN" != /nix/store/* ]]; then
+  echo "ERROR: Could not find Nix store binary in $UNIT_PATH" >&2
+  echo "  ExecStart: $AGENT_BIN" >&2
+  exit 1
+fi
+PKG=$(echo "$AGENT_BIN" | sed 's|/bin/host-agent||')
+SRC="$PKG/share/bloud"
+echo "==> Source: $SRC"
+rm -rf ` + pveSyncDir + `
+cp -r "$SRC" ` + pveSyncDir + `
+mkdir -p ` + pveSyncDir + `/build
+cp "$AGENT_BIN" ` + pveSyncDir + `/build/host-agent
+chmod +x ` + pveSyncDir + `/build/host-agent
+cp -r "$PKG/share/bloud/web/build" ` + pveSyncDir + `/build/frontend
+echo "==> ` + pveSyncDir + ` ready"`
+
+	if err := vmExecStream(ip, initScript); err != nil {
+		errorf("Failed to initialize %s on VM: %v", pveSyncDir, err)
+		return 1
+	}
+
+	// Step 2: Rsync the local nixos/ and apps/ directories onto the VM,
+	// overwriting what was copied from the store. rsync only transfers diffs.
+	log("Syncing NixOS configuration...")
+	sshCmd := fmt.Sprintf("sshpass -p %s ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR", pveVMSSHPass)
+
+	for _, dir := range []struct{ local, remote string }{
+		{filepath.Join(root, "nixos") + "/", pveVMSSHUser + "@" + ip + ":" + pveSyncDir + "/nixos/"},
+		{filepath.Join(root, "apps") + "/", pveVMSSHUser + "@" + ip + ":" + pveSyncDir + "/apps/"},
+	} {
+		c := exec.Command("rsync", "-av", "-e", sshCmd, dir.local, dir.remote)
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		if err := c.Run(); err != nil {
+			errorf("rsync failed for %s: %v", dir.local, err)
+			return 1
+		}
+	}
+
+	// Sync flake root files (flake.nix and flake.lock only).
+	c := exec.Command("rsync", "-av", "-e", sshCmd,
+		"--include=flake.nix", "--include=flake.lock", "--exclude=*",
+		root+"/",
+		pveVMSSHUser+"@"+ip+":"+pveSyncDir+"/",
+	)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		errorf("rsync of flake files failed: %v", err)
+		return 1
+	}
+
+	// Step 3: Run nixos-rebuild switch on the VM.
+	// path: forces Nix to evaluate the flake from the directory (not treat it as a store path).
+	// --impure allows access to /tmp/bloud-src without a git repo present.
+	log("Running nixos-rebuild switch (1-3 minutes)...")
+	fmt.Println()
+	rebuildCmd := "sudo /run/current-system/sw/bin/nixos-rebuild switch" +
+		" --flake path:" + pveSyncDir + "#bloud --impure 2>&1"
+	if err := vmExecStream(ip, rebuildCmd); err != nil {
+		errorf("nixos-rebuild failed: %v", err)
+		return 1
+	}
+
+	// Step 4: Wait for the host-agent to come back up after the switch.
+	fmt.Println()
+	log("Waiting for host-agent to come up...")
+	for i := 0; i < 60; i++ {
+		out, _ := vmExec(ip, "curl -sf http://localhost:3000/api/health 2>/dev/null")
+		if strings.Contains(out, "ok") {
+			break
+		}
+		if i > 0 && i%10 == 0 {
+			fmt.Printf("  ... waiting (%d/60s)\n", i)
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	passed, failed := runPVEChecks(ip)
+	printPVEResults(ip, passed, failed)
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// cmdPushPVE cross-compiles the host-agent binary for linux/amd64 and hot-swaps
+// it on the running VM via a systemd drop-in override, bypassing Nix entirely.
+// This is the fastest path for testing Go code changes (~30s end-to-end).
+//
+// The drop-in at /etc/systemd/system/bloud-host-agent.service.d/dev-override.conf
+// overrides ExecStart to point to /tmp/host-agent-push. All other service settings
+// (env vars, user, restart policy) are inherited from the main unit.
+//
+// Note: the override persists across restarts but NOT across nixos-rebuild switch,
+// which regenerates the unit file and drops the override directory.
+func cmdPushPVE() int {
+	cfg := getPVEConfig()
+
+	if !pveVMIsRunning(cfg) {
+		errorf("VM is not running. Run './bloud start --install' first.")
+		return 1
+	}
+
+	ip := getVMIP(cfg)
+	if ip == "" {
+		errorf("Could not get VM IP (is the QEMU guest agent running?)")
+		return 1
+	}
+
+	root, err := getProjectRoot()
+	if err != nil {
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	// Cross-compile the host-agent binary for linux/amd64.
+	// Go cross-compilation is hermetic (CGO_ENABLED=0) and typically takes ~5s.
+	log("Building host-agent (linux/amd64)...")
+	localBinary := "/tmp/bloud-push-binary"
+	buildCmd := exec.Command("go", "build", "-o", localBinary, "./cmd/host-agent")
+	buildCmd.Dir = filepath.Join(root, "services", "host-agent")
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		errorf("Build failed: %v", err)
+		return 1
+	}
+	defer os.Remove(localBinary)
+
+	// Upload the binary to the VM.
+	log("Uploading binary to VM...")
+	scpCmd := exec.Command("sshpass", "-p", pveVMSSHPass,
+		"scp",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		localBinary,
+		pveVMSSHUser+"@"+ip+":/tmp/host-agent-push",
+	)
+	scpCmd.Stdout = os.Stdout
+	scpCmd.Stderr = os.Stderr
+	if err := scpCmd.Run(); err != nil {
+		errorf("Failed to upload binary: %v", err)
+		return 1
+	}
+
+	// Create/update a systemd drop-in that overrides ExecStart, then restart.
+	// The empty ExecStart= line clears the inherited value before setting the new
+	// one — systemd requires this pattern for ExecStart overrides.
+	log("Installing binary override and restarting service...")
+	installScript := `set -e
+chmod +x /tmp/host-agent-push
+sudo mkdir -p /etc/systemd/system/bloud-host-agent.service.d
+printf '[Service]\nExecStart=\nExecStart=/tmp/host-agent-push\n' \
+  | sudo tee /etc/systemd/system/bloud-host-agent.service.d/dev-override.conf > /dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart bloud-host-agent.service
+echo "Service restarted with pushed binary"`
+
+	if err := vmExecStream(ip, installScript); err != nil {
+		errorf("Failed to install override: %v", err)
+		return 1
+	}
+
+	// Poll for health before running full checks.
+	log("Waiting for service to come up...")
+	for i := 0; i < 30; i++ {
+		out, _ := vmExec(ip, "curl -sf http://localhost:3000/api/health 2>/dev/null")
+		if strings.Contains(out, "ok") {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	passed, failed := runPVEChecks(ip)
+	printPVEResults(ip, passed, failed)
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// cmdSnapshotPVE manages Proxmox VM snapshots for the test VM.
+// Snapshots let you restore a clean installed state (~15s) without a full ISO reinstall.
+//
+// Typical workflow:
+//
+//	./bloud snapshot save          # Save state right after fresh install
+//	./bloud rebuild                # Iterate on NixOS config
+//	./bloud snapshot restore       # Reset to clean state when needed
+func cmdSnapshotPVE(args []string) int {
+	cfg := getPVEConfig()
+
+	if len(args) == 0 {
+		errorf("Usage: ./bloud snapshot <save|restore|list> [name]")
+		return 1
+	}
+
+	action := args[0]
+	name := "base-installed"
+	if len(args) > 1 {
+		name = args[1]
+	}
+
+	switch action {
+	case "save":
+		if !pveVMExists(cfg) {
+			errorf("VM %s does not exist", cfg.VMID)
+			return 1
+		}
+		log(fmt.Sprintf("Saving snapshot '%s'...", name))
+		if err := pveExecStream(cfg, fmt.Sprintf(
+			"qm snapshot %s %s --description 'bloud dev snapshot'", cfg.VMID, name,
+		)); err != nil {
+			errorf("Failed to save snapshot: %v", err)
+			return 1
+		}
+		log(fmt.Sprintf("Snapshot '%s' saved", name))
+		fmt.Printf("  Restore with: ./bloud snapshot restore %s\n", name)
+
+	case "restore":
+		if !pveVMExists(cfg) {
+			errorf("VM %s does not exist", cfg.VMID)
+			return 1
+		}
+		if pveVMIsRunning(cfg) {
+			log("Stopping VM before snapshot restore...")
+			if _, err := pveExec(cfg, fmt.Sprintf("qm stop %s", cfg.VMID)); err != nil {
+				errorf("Failed to stop VM: %v", err)
+				return 1
+			}
+			for i := 0; i < 30; i++ {
+				if !pveVMIsRunning(cfg) {
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+		}
+		log(fmt.Sprintf("Rolling back to snapshot '%s'...", name))
+		if err := pveExecStream(cfg, fmt.Sprintf("qm rollback %s %s", cfg.VMID, name)); err != nil {
+			errorf("Failed to restore snapshot: %v", err)
+			return 1
+		}
+		log("Starting VM...")
+		if err := pveExecStream(cfg, fmt.Sprintf("qm start %s", cfg.VMID)); err != nil {
+			errorf("Failed to start VM after restore: %v", err)
+			return 1
+		}
+		log("VM started")
+		fmt.Printf("  Stream logs: ./bloud logs\n")
+		fmt.Printf("  SSH in:      ./bloud shell\n")
+		fmt.Printf("  Run checks:  ./bloud checks\n")
+
+	case "list":
+		if !pveVMExists(cfg) {
+			errorf("VM %s does not exist", cfg.VMID)
+			return 1
+		}
+		out, err := pveExec(cfg, fmt.Sprintf("qm listsnapshots %s", cfg.VMID))
+		if err != nil {
+			errorf("Failed to list snapshots: %v", err)
+			return 1
+		}
+		fmt.Println(out)
+
+	default:
+		errorf("Unknown action '%s'. Use: save, restore, list", action)
+		return 1
+	}
+
 	return 0
 }
