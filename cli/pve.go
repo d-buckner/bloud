@@ -275,11 +275,26 @@ func runInstaller(cfg pveConfig, ip string) int {
 	return 1
 
 installDone:
-	// Eject the ISO so it's tidy, but boot order doesn't need changing —
-	// sata0 is already first and will now win since the HD has a bootable OS.
+	// Eject the ISO so the disk wins on next boot.
 	log("Ejecting ISO...")
 	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --ide2 none,media=cdrom", cfg.VMID)); err != nil {
 		warn(fmt.Sprintf("Failed to eject ISO (non-fatal): %v", err))
+	}
+
+	// Reboot into the installed system.
+	log("Rebooting into installed system...")
+	if _, err := pveExec(cfg, fmt.Sprintf("qm reboot %s", cfg.VMID)); err != nil {
+		warn(fmt.Sprintf("Failed to reboot VM (non-fatal): %v", err))
+	}
+
+	// Wait for the VM to go offline before returning so waitForPVEVMReady
+	// doesn't pick up the ISO's still-active QEMU guest agent IP and burn
+	// its retry budget on a system that's mid-shutdown.
+	for i := 0; i < 30; i++ {
+		if getVMIP(cfg) == "" {
+			break
+		}
+		time.Sleep(1 * time.Second)
 	}
 	return 0
 }
