@@ -1352,8 +1352,9 @@ fi
 PKG=$(echo "$AGENT_BIN" | sed 's|/bin/host-agent||')
 SRC="$PKG/share/bloud"
 echo "==> Source: $SRC"
-rm -rf ` + pveSyncDir + `
+sudo rm -rf ` + pveSyncDir + `
 cp -r "$SRC" ` + pveSyncDir + `
+chmod -R u+w ` + pveSyncDir + `
 mkdir -p ` + pveSyncDir + `/build
 cp "$AGENT_BIN" ` + pveSyncDir + `/build/host-agent
 chmod +x ` + pveSyncDir + `/build/host-agent
