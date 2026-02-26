@@ -1497,11 +1497,13 @@ func cmdPushPVE() int {
 	// The empty ExecStart= line clears the inherited value before setting the new
 	// one — systemd requires this pattern for ExecStart overrides.
 	log("Installing binary override and restarting service...")
+	// Use /run/systemd/system/ for drop-ins — /etc/systemd/system/ is read-only
+	// on NixOS (Nix-managed). /run is a tmpfs that's always writable.
 	installScript := `set -e
 chmod +x /tmp/host-agent-push
-sudo mkdir -p /etc/systemd/system/bloud-host-agent.service.d
+sudo mkdir -p /run/systemd/system/bloud-host-agent.service.d
 printf '[Service]\nExecStart=\nExecStart=/tmp/host-agent-push\n' \
-  | sudo tee /etc/systemd/system/bloud-host-agent.service.d/dev-override.conf > /dev/null
+  | sudo tee /run/systemd/system/bloud-host-agent.service.d/dev-override.conf > /dev/null
 sudo systemctl daemon-reload
 sudo systemctl restart bloud-host-agent.service
 echo "Service restarted with pushed binary"`
