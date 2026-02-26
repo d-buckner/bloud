@@ -21,14 +21,19 @@ let
   hasPrebuilt = builtins.pathExists (buildDir + "/host-agent")
     && builtins.pathExists (buildDir + "/frontend");
 
-  # When this file is evaluated from within a deployed store path, the host-agent
-  # binary already exists 4 directories above (nixos/packages/ -> nixos/ ->
-  # share/bloud/ -> share/ -> /nix/store/hash-bloud-host-agent-0.1.0/).
-  # builtins.storePath verifies the path is in the store and returns it as a
-  # Nix path type (satisfies lib.types.package check), without triggering a build.
-  installedPackageRoot = ../../../..;
+  # When running from a deployed store, BLOUD_FLAKE_PATH is set in the environment
+  # to /nix/store/HASH-bloud-host-agent-0.1.0/share/bloud. We go up 2 dirs to
+  # get the package root. This is more reliable than path arithmetic (../../../..)
+  # which resolves relative to the flake SOURCE copy that nix creates for path:
+  # flakes — not the original deployed store path.
+  # Requires --impure (passed by nixos-rebuild in nixgen/rebuild.go).
+  flakePath = builtins.getEnv "BLOUD_FLAKE_PATH";
+  deployedPkgRoot = if flakePath != ""
+    then builtins.dirOf (builtins.dirOf flakePath)
+    else "";
   hasInstalled = !hasPrebuilt
-    && builtins.pathExists (installedPackageRoot + "/bin/host-agent");
+    && deployedPkgRoot != ""
+    && builtins.pathExists (deployedPkgRoot + "/bin/host-agent");
 
   src = builtins.path {
     path = ../..;
@@ -59,7 +64,7 @@ let
     mkdir -p $out/share/bloud/web/build
     cp -r ${buildDir + "/frontend"}/* $out/share/bloud/web/build/
 
-    # App metadata, icons, and NixOS modules (needed at runtime for catalog API and nixos-rebuild)
+    # App metadata, icons, NixOS modules, and resource subdirs (needed at runtime for catalog API and nixos-rebuild)
     mkdir -p $out/share/bloud/apps
     for app in ${src}/apps/*/; do
       appName=$(basename "$app")
@@ -70,6 +75,10 @@ let
         # module.nix is required for nixos-rebuild from the store flake path.
         # bloud.nix imports ../apps/*/module.nix, which resolves to this directory.
         [ -f "$app/module.nix" ] && cp "$app/module.nix" "$out/share/bloud/apps/$appName/"
+        # Copy resource subdirectories (e.g., authentik/branding/) referenced by module.nix.
+        for subdir in "$app"*/; do
+          [ -d "$subdir" ] && cp -r "$subdir" "$out/share/bloud/apps/$appName/"
+        done
       fi
     done
 
@@ -90,5 +99,5 @@ let
 
 in
 if hasPrebuilt then realPackage
-else if hasInstalled then builtins.storePath (toString installedPackageRoot)
+else if hasInstalled then builtins.storePath deployedPkgRoot
 else stubPackage
