@@ -53,6 +53,12 @@ in
       description = "Path to the host-agent binary for app configuration hooks";
     };
 
+    appsDir = lib.mkOption {
+      type = lib.types.str;
+      default = toString ../apps;
+      description = "Absolute path to the apps directory (passed to prestart hooks as BLOUD_APPS_DIR)";
+    };
+
     dataDir = lib.mkOption {
       type = lib.types.str;
       default = "bloud";
