@@ -75,6 +75,7 @@ type RebuildResult struct {
 // nixos-rebuild version. It must be passed inline via `sudo env` because sudo
 // strips environment variables by default.
 func (r *Rebuilder) nixosRebuildCmd(ctx context.Context, args []string) *exec.Cmd {
+	var cmd *exec.Cmd
 	if r.useSudo {
 		sudoArgs := append([]string{
 			"env",
@@ -82,10 +83,14 @@ func (r *Rebuilder) nixosRebuildCmd(ctx context.Context, args []string) *exec.Cm
 			"PATH=" + NixosSystemPath,
 			"nixos-rebuild",
 		}, args...)
-		return exec.CommandContext(ctx, "sudo", sudoArgs...)
+		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+	} else {
+		cmd = exec.CommandContext(ctx, "nixos-rebuild", args...)
+		cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
 	}
-	cmd := exec.CommandContext(ctx, "nixos-rebuild", args...)
-	cmd.Env = append(os.Environ(), "_NIXOS_REBUILD_REEXEC=1")
+	// Must not run from a nix store path CWD: nix uses CWD as a cache hint
+	// and returns the wrong derivation (the store root) even with path: URI.
+	cmd.Dir = "/tmp"
 	return cmd
 }
 
