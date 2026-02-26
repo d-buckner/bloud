@@ -77,12 +77,18 @@ type RebuildResult struct {
 func (r *Rebuilder) nixosRebuildCmd(ctx context.Context, args []string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if r.useSudo {
-		sudoArgs := append([]string{
+		sudoArgs := []string{
 			"env",
 			"_NIXOS_REBUILD_REEXEC=1",
 			"PATH=" + NixosSystemPath,
-			"nixos-rebuild",
-		}, args...)
+		}
+		// Pass BLOUD_FLAKE_PATH through sudo so builtins.getEnv in host-agent.nix
+		// can detect the deployed package root during --impure flake evaluation.
+		if r.flakePath != "" {
+			sudoArgs = append(sudoArgs, "BLOUD_FLAKE_PATH="+r.flakePath)
+		}
+		sudoArgs = append(sudoArgs, "nixos-rebuild")
+		sudoArgs = append(sudoArgs, args...)
 		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
 	} else {
 		cmd = exec.CommandContext(ctx, "nixos-rebuild", args...)
