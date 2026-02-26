@@ -231,7 +231,10 @@ in
         } // lib.optionalAttrs (port != null && network != "host") {
           ports = [ "${toString appCfg.port}:${toString containerPort}" ];
         } // lib.optionalAttrs (userns != null) { inherit userns; }
-          // lib.optionalAttrs (envFile != null) { inherit envFile; });
+          // lib.optionalAttrs (envFile != null) { inherit envFile; }) // {
+          # Pass BLOUD_APPS_DIR so prestart hooks can load catalog metadata (e.g. for SSO config)
+          environment = { BLOUD_APPS_DIR = config.bloud.appsDir; };
+        };
       } // dbInitService // resolvedExtraServices;
     }
     resolvedExtraConfig
