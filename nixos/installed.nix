@@ -65,11 +65,16 @@
     };
 
     # Redirect port 80 → Traefik 8080 (rootless containers can't bind privileged ports)
+    # PREROUTING: external traffic (browser → bloud.local)
+    # OUTPUT: locally-generated traffic (host processes and host-network containers
+    #         fetching http://bloud.local so Authentik returns external URLs in OIDC discovery)
     firewall.extraCommands = ''
       iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+      iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080
     '';
     firewall.extraStopCommands = ''
       iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
+      iptables -t nat -D OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
     '';
   };
 

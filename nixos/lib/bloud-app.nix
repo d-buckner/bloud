@@ -232,8 +232,19 @@ in
           ports = [ "${toString appCfg.port}:${toString containerPort}" ];
         } // lib.optionalAttrs (userns != null) { inherit userns; }
           // lib.optionalAttrs (envFile != null) { inherit envFile; }) // {
-          # Pass BLOUD_APPS_DIR so prestart hooks can load catalog metadata (e.g. for SSO config)
-          environment = { BLOUD_APPS_DIR = config.bloud.appsDir; };
+          # Pass BLOUD env vars so prestart hooks generate correct SSO URLs.
+          # BLOUD_SSO_BASE_URL = externalHost: OAuth redirect URLs must use the mDNS
+          # hostname (bloud.local) so the browser can reach the callback after Authentik auth.
+          # BLOUD_SSO_AUTHENTIK_URL = authentikExternalHost: the OIDC discovery endpoint
+          # URL sent to apps (e.g. OAUTH2_OIDC_DISCOVERY_ENDPOINT). Using bloud.local here
+          # causes Authentik to return bloud.local authorization_endpoint URLs in the OIDC
+          # discovery response, which the browser can follow. Requires the OUTPUT iptables
+          # rule (port 80 → 8080) so bloud.local is reachable from host-network containers.
+          environment = {
+            BLOUD_APPS_DIR = config.bloud.appsDir;
+            BLOUD_SSO_BASE_URL = config.bloud.externalHost;
+            BLOUD_SSO_AUTHENTIK_URL = config.bloud.authentikExternalHost;
+          };
         };
       } // dbInitService // resolvedExtraServices;
     }

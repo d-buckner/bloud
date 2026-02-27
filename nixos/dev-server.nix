@@ -71,11 +71,13 @@
   # Port 53 -> 5353 (AdGuard DNS)
   networking.firewall.extraCommands = ''
     iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+    iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080
     iptables -t nat -A PREROUTING -p tcp --dport 53 -j REDIRECT --to-port 5353
     iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-port 5353
   '';
   networking.firewall.extraStopCommands = ''
     iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
+    iptables -t nat -D OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
     iptables -t nat -D PREROUTING -p tcp --dport 53 -j REDIRECT --to-port 5353 || true
     iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-port 5353 || true
   '';
