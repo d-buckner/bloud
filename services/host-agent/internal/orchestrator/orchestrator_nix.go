@@ -927,23 +927,16 @@ func (o *Orchestrator) checkSystemdServiceActive(appName string) bool {
 	return strings.TrimSpace(string(output)) == "active"
 }
 
-// ensureSystemAppsRegistered ensures NixOS-managed system apps are in the database
-// This is needed so that authentikEnabled detection works (it checks the app database)
-// NOTE: In future, this should be handled via systemd dependencies
+// ensureSystemAppsRegistered ensures NixOS-managed system apps are in the database.
+// System apps are always defined by the NixOS configuration, so they are registered
+// unconditionally — no service check needed. This ensures authentikEnabled detection
+// works correctly (it checks the app database for the "authentik" entry).
 func (o *Orchestrator) ensureSystemAppsRegistered() {
 	for _, app := range systemApps {
-		// Check if the systemd service is active
-		cmd := exec.Command("systemctl", "--user", "is-active", app.serviceName)
-		output, err := cmd.Output()
-		if err != nil || strings.TrimSpace(string(output)) != "active" {
-			continue // Service not running, don't register
-		}
-
-		// Register the system app
 		if err := o.appStore.EnsureSystemApp(app.name, app.displayName, app.port); err != nil {
 			o.logger.Warn("failed to register system app", "app", app.name, "error", err)
 		} else {
-			o.logger.Info("registered system app", "app", app.name)
+			o.logger.Debug("registered system app", "app", app.name)
 		}
 	}
 }
