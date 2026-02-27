@@ -105,9 +105,10 @@ func (r *Rebuilder) nixosRebuildCmd(ctx context.Context, args []string) *exec.Cm
 // session (required to reach the user's systemd instance from a root service).
 func (r *Rebuilder) userSystemctlCmd(ctx context.Context, args []string) *exec.Cmd {
 	if r.useSudo {
+		// machinectl shell requires an absolute path to the binary being invoked.
 		machinectlArgs := append([]string{
 			"shell", "bloud@",
-			"systemctl", "--user",
+			"/run/current-system/sw/bin/systemctl", "--user",
 		}, args...)
 		return exec.CommandContext(ctx, "sudo", append([]string{"machinectl"}, machinectlArgs...)...)
 	}
