@@ -7,7 +7,6 @@ import (
 
 	actualbudget "codeberg.org/d-buckner/bloud-v3/apps/actual-budget"
 	adguardhome "codeberg.org/d-buckner/bloud-v3/apps/adguard-home"
-	"codeberg.org/d-buckner/bloud-v3/apps/affine"
 	"codeberg.org/d-buckner/bloud-v3/apps/authentik"
 	"codeberg.org/d-buckner/bloud-v3/apps/jellyfin"
 	"codeberg.org/d-buckner/bloud-v3/apps/jellyseerr"
@@ -28,7 +27,6 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 	// Register configurators from apps/ directory
 	registry.Register(actualbudget.NewConfigurator(5006))
 	registry.Register(adguardhome.NewConfigurator(3080))
-	registry.Register(affine.NewConfigurator(3010, cfg.DataDir))
 	registry.Register(authentik.NewConfigurator(
 		cfg.AuthentikPort,
 		cfg.AuthentikAdminPassword,
