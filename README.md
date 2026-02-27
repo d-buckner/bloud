@@ -115,7 +115,7 @@ bloud/
 │   ├── authentik/
 │   └── ...
 │
-├── services/host-agent/           # The brain - Go server
+├── services/host-agent/           # The go server
 │   ├── cmd/host-agent/            # Entry points
 │   ├── internal/
 │   │   ├── orchestrator/          # Install/uninstall coordination
