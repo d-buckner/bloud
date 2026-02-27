@@ -176,14 +176,22 @@ func (s *Server) handleRefreshCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 
-// handleListInstalledApps returns the list of installed apps
-// Uses the same data source as SSE for consistency
+// handleListInstalledApps returns the list of user-installed apps.
+// System apps (traefik, postgres, redis, authentik) are filtered out since
+// they are managed by NixOS, not installed by the user.
 func (s *Server) handleListInstalledApps(w http.ResponseWriter, r *http.Request) {
-	apps, err := s.appStore.GetAll()
+	all, err := s.appStore.GetAll()
 	if err != nil {
 		s.logger.Error("failed to get apps", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to get apps")
 		return
+	}
+
+	apps := make([]*store.InstalledApp, 0, len(all))
+	for _, app := range all {
+		if !app.IsSystem {
+			apps = append(apps, app)
+		}
 	}
 
 	respondJSON(w, http.StatusOK, apps)
