@@ -149,6 +149,10 @@
     # Point prestart/poststart hooks to the installed binary.
     # The default (/tmp/host-agent) only exists in dev; production uses the Nix store path.
     agentPath = "${config.bloud.host-agent.package}/bin/host-agent";
+    # Override appsDir to the deployed package's apps directory.
+    # The default (toString ../apps) resolves to a Nix source copy at eval time
+    # (/nix/store/...-source/apps) which doesn't exist at runtime.
+    appsDir = "${config.bloud.host-agent.package}/share/bloud/apps";
   };
 
   # Host agent — app management API and web UI
