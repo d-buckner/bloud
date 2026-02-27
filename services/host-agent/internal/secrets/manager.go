@@ -198,7 +198,7 @@ AUTHENTIK_REDIS__PASSWORD=
 
 	// Write per-app environment files
 	// Always generate env files for known apps (they need DATABASE_URL etc.)
-	knownApps := []string{"miniflux", "actual-budget", "affine"}
+	knownApps := []string{"miniflux", "actual-budget"}
 	for _, appName := range knownApps {
 		appSecrets := m.secrets.AppSecrets[appName] // May be empty struct
 		if err := m.writeAppEnvFile(dir, appName, appSecrets); err != nil {
@@ -257,14 +257,6 @@ func (m *Manager) writeAppEnvFile(dir, appName string, appSecrets AppSecrets) er
 func getDatabaseURL(appName, password string) string {
 	// Apps using bridge networking connect to apps-postgres
 	// Apps using host networking connect to localhost
-	bridgeNetworkApps := map[string]bool{
-		"affine": true,
-		// Add other bridge-networked apps here
-	}
-
-	if bridgeNetworkApps[appName] {
-		return fmt.Sprintf("postgresql://apps:%s@apps-postgres:5432/%s", password, appName)
-	}
 	// Default: host networking
 	return fmt.Sprintf("postgres://apps:%s@localhost:5432/%s?sslmode=disable", password, appName)
 }
@@ -275,7 +267,6 @@ func getOAuthEnvVarName(appName string) string {
 	appOAuthEnvVars := map[string]string{
 		"miniflux":      "OAUTH2_CLIENT_SECRET",
 		"actual-budget": "ACTUAL_OPENID_CLIENT_SECRET",
-		"affine":        "OAUTH_OIDC_CLIENT_SECRET",
 	}
 	if envName, ok := appOAuthEnvVars[appName]; ok {
 		return envName

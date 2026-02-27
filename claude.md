@@ -80,7 +80,7 @@ Current implemented apps (14 total):
 - **Infrastructure:** postgres, redis, traefik, authentik
 - **Media:** jellyfin, jellyseerr
 - **Arr stack:** prowlarr, radarr, sonarr, qbittorrent
-- **Productivity:** miniflux, actual-budget, affine
+- **Productivity:** miniflux, actual-budget
 - **Network:** adguard-home
 
 ### Helper Library

@@ -116,7 +116,6 @@ npm run report
 - **adguard-home** - DNS ad-blocker (requires URL rewriting)
 - **jellyfin** - Media server (requires URL rewriting, LDAP SSO)
 - **qbittorrent** - Torrent client (requires URL rewriting, forward-auth SSO)
-- **affine** - Knowledge base (requires URL rewriting, native OIDC SSO)
 - **radarr** - Movie manager (requires URL rewriting, forward-auth SSO)
 - **sonarr** - TV show manager (requires URL rewriting, forward-auth SSO)
 - **prowlarr** - Indexer manager (requires URL rewriting, forward-auth SSO)

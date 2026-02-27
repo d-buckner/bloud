@@ -37,8 +37,8 @@ Access the web UI at **http://localhost:8080**
 | Category | Apps |
 |----------|------|
 | **Infrastructure** | PostgreSQL, Redis, Traefik, Authentik |
-| **Media** | Jellyfin, Jellyseerr |
-| **Productivity** | Miniflux (RSS), Actual Budget, Affine |
+| **Media** | Jellyfin |
+| **Productivity** | Miniflux (RSS), Actual Budget |
 | **Network** | AdGuard Home |
 
 ---
