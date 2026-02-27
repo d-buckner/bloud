@@ -54,6 +54,14 @@
     hostName = "bloud";
     useDHCP = true;
 
+    # Map bloud.local to loopback so Go processes (e.g. app containers with --network=host)
+    # can resolve it. Go's DNS resolver reads /etc/resolv.conf directly, bypassing mDNS/Avahi,
+    # so bloud.local would otherwise fail to resolve from inside containers.
+    # Combined with the OUTPUT iptables rule, http://bloud.local works from everywhere on the host.
+    hosts = {
+      "127.0.0.1" = [ "bloud.local" ];
+    };
+
     firewall = {
       enable = true;
       allowedTCPPorts = [
