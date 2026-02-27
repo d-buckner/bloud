@@ -23,7 +23,7 @@ Future features and improvements planned for Bloud.
 - Traefik reverse proxy with dynamic routing
 - `mkBloudApp` helper for standardized app modules
 - Integration graph with dependency resolution and install planning
-- 14 apps implemented: Postgres, Redis, Traefik, Authentik, Miniflux, Actual Budget, AdGuard Home, qBittorrent, Jellyfin, Jellyseerr, Affine, Prowlarr, Radarr, Sonarr
+- 13 apps implemented: Postgres, Redis, Traefik, Authentik, Miniflux, Actual Budget, AdGuard Home, qBittorrent, Jellyfin, Jellyseerr, Prowlarr, Radarr, Sonarr
 
 #### Secrets Management
 - Go-based secrets manager auto-generates cryptographic secrets on first boot
@@ -136,7 +136,6 @@ Target: 10 core apps for alpha release (exceeded - 14 implemented)
 - [x] Prowlarr (indexer manager)
 - [x] Radarr (movie management)
 - [x] Sonarr (TV management)
-- [x] Affine (notes/whiteboard)
 - [ ] Immich (photos)
 - [ ] Nextcloud or alternative (files)
 

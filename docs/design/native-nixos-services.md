@@ -28,7 +28,7 @@ with no good nixpkgs module (or complex integration requirements) as Podman cont
 | Shared directory location | `/var/lib/bloud/` | Conventional for system services; easy to put on a dedicated mount |
 | App-specific state | `/var/lib/<appname>` | NixOS module defaults; no need to override |
 | Authentik | Stay as Podman | `services.authentik` is too new; integration is complex |
-| Jellyseerr, actual-budget, affine | Stay as Podman | No suitable nixpkgs module |
+| Jellyseerr, actual-budget | Stay as Podman | No suitable nixpkgs module |
 | Migration cadence | One app at a time | Validate each before proceeding |
 
 ---
@@ -51,7 +51,6 @@ with no good nixpkgs module (or complex integration requirements) as Podman cont
 | authentik | Podman | **Podman** | — | Too complex; revisit separately |
 | jellyseerr | Podman | **Podman** | — | No nixpkgs module |
 | actual-budget | Podman | **Podman** | — | No nixpkgs module |
-| affine | Podman | **Podman** | — | No nixpkgs module |
 
 ### Note: qbittorrent + Flood
 
@@ -287,7 +286,7 @@ Each step: update `module.nix` → rebuild → smoke test → commit before proc
 ## Out of Scope
 
 - **Authentik** — remains as Podman; revisit separately when `services.authentik` matures
-- **jellyseerr, actual-budget, affine** — remain as Podman; no suitable nixpkgs module
+- **jellyseerr, actual-budget** — remain as Podman; no suitable nixpkgs module
 - **`bloud-app.nix`** — not changed; continues to serve the remaining Podman-based apps
 - **host-agent configurator logic** — Go code is unchanged; only how hooks are wired changes
 - **Traefik routing config generation** — host-agent continues writing `apps-routes.yml`
