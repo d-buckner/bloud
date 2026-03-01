@@ -27,6 +27,7 @@ export interface App {
 	integration_config?: Record<string, string>;
 	installed_at: string;
 	updated_at: string;
+	sso_launch_path?: string;
 }
 
 export interface AppsResponse {

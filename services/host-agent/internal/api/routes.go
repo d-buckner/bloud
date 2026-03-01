@@ -176,6 +176,12 @@ func (s *Server) handleRefreshCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 
+// installedAppResponse extends InstalledApp with catalog-derived fields
+type installedAppResponse struct {
+	*store.InstalledApp
+	SSOLaunchPath string `json:"sso_launch_path,omitempty"`
+}
+
 // handleListInstalledApps returns the list of user-installed apps.
 // System apps (traefik, postgres, redis, authentik) are filtered out since
 // they are managed by NixOS, not installed by the user.
@@ -187,14 +193,27 @@ func (s *Server) handleListInstalledApps(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	apps := make([]*store.InstalledApp, 0, len(all))
-	for _, app := range all {
-		if !app.IsSystem {
-			apps = append(apps, app)
+	// Build launch path map from catalog (avoids importing catalog package by name)
+	launchPaths := make(map[string]string)
+	if catalogApps, err := s.catalog.GetAll(); err == nil {
+		for _, ca := range catalogApps {
+			if ca.SSO.LaunchPath != "" {
+				launchPaths[ca.Name] = ca.SSO.LaunchPath
+			}
 		}
 	}
 
-	respondJSON(w, http.StatusOK, apps)
+	result := make([]installedAppResponse, 0, len(all))
+	for _, app := range all {
+		if !app.IsSystem {
+			result = append(result, installedAppResponse{
+				InstalledApp:  app,
+				SSOLaunchPath: launchPaths[app.Name],
+			})
+		}
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }
 
 // handleAppMetadata returns the full catalog metadata for a single app
