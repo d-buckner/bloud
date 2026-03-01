@@ -31,6 +31,7 @@ import {
   getAppFromReferer,
   getClientMapSize,
   appNeedsRewrite,
+  getEmbedRedirectForRootNav,
 } from '../core';
 import type { InterceptConfig } from '../inject';
 
@@ -1203,6 +1204,52 @@ describe('service-worker core', () => {
       expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/embed/app/openid/callback')).toBe(true);
       expect(shouldRedirectOAuthCallback(RequestMode.NAVIGATE, '/openid/callback')).toBe(true);
       expect(shouldRedirectOAuthCallback(RequestMode.CORS, '/openid/callback')).toBe(false);
+    });
+  });
+
+  describe('getEmbedRedirectForRootNav', () => {
+    const origin = 'http://localhost:8080';
+
+    beforeEach(() => {
+      resetTestState();
+    });
+
+    // AdGuard Home's openDashboard() constructs a URL from window.location.hostname
+    // without the /embed/{app}/ prefix after setup wizard completion, resulting in
+    // a navigation to '/' that would otherwise load the Bloud SPA inside the iframe.
+    it('returns embed URL when registered app navigates to root', () => {
+      registerClient('client-123', 'adguard-home');
+      setActiveApp('adguard-home', true);
+
+      const result = getEmbedRedirectForRootNav('/', 'adguard-home', origin);
+      expect(result).toBe('http://localhost:8080/embed/adguard-home/');
+    });
+
+    it('returns null for non-root paths', () => {
+      expect(getEmbedRedirectForRootNav('/login.html', 'adguard-home', origin)).toBeNull();
+      expect(getEmbedRedirectForRootNav('/install.html', 'adguard-home', origin)).toBeNull();
+      expect(getEmbedRedirectForRootNav('/application/o/authorize/', 'adguard-home', origin)).toBeNull();
+      expect(getEmbedRedirectForRootNav('/flows/-/default/auth/', 'adguard-home', origin)).toBeNull();
+    });
+
+    it('returns null when clientApp is null (unregistered client)', () => {
+      expect(getEmbedRedirectForRootNav('/', null, origin)).toBeNull();
+    });
+
+    it('returns null for apps that do not need URL rewriting (BASE_URL support)', () => {
+      setActiveApp('miniflux', false); // miniflux supports BASE_URL
+      expect(getEmbedRedirectForRootNav('/', 'miniflux', origin)).toBeNull();
+    });
+
+    it('returns embed URL for actual-budget navigating to root', () => {
+      const result = getEmbedRedirectForRootNav('/', 'actual-budget', origin);
+      expect(result).toBe('http://localhost:8080/embed/actual-budget/');
+    });
+
+    it('Authentik SSO routes (non-root Bloud routes) return null - those still unregister', () => {
+      // The fix is only for '/' — Authentik routes should still cause client unregistration
+      expect(getEmbedRedirectForRootNav('/application/o/authorize/', 'adguard-home', origin)).toBeNull();
+      expect(getEmbedRedirectForRootNav('/flows/-/default/authentication/', 'adguard-home', origin)).toBeNull();
     });
   });
 });
