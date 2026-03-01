@@ -20,17 +20,17 @@
 </script>
 
 <div class="field">
-	{#if label}
-		<label class="label">{label}</label>
-	{/if}
-	<input
-		class="input"
-		class:has-error={!!error}
-		{type}
-		{placeholder}
-		{disabled}
-		bind:value
-	/>
+	<label class="label">
+		{#if label}{label}{/if}
+		<input
+			class="input"
+			class:has-error={!!error}
+			{type}
+			{placeholder}
+			{disabled}
+			bind:value
+		/>
+	</label>
 	{#if error}
 		<span class="error">{error}</span>
 	{/if}
@@ -44,6 +44,9 @@
 	}
 
 	.label {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
 		font-size: 0.875rem;
 		color: var(--color-text-secondary);
 	}
