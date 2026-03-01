@@ -167,6 +167,11 @@ test.describe('Embedded Apps', () => {
 
       // Verify AdGuard loaded - should have setup wizard or dashboard
       await expect(frame.getByText(/AdGuard|Setup|Dashboard|DNS/i).first()).toBeVisible({ timeout: 10000 });
+
+      // Check for dual sidebar: if the Bloud shell loaded inside the iframe,
+      // it would create a nested <iframe> for AdGuard. No nested iframes = correct.
+      const nestedIframe = frame.locator('iframe');
+      await expect(nestedIframe, 'Dual sidebar: Bloud shell is rendering inside the AdGuard iframe').toHaveCount(0);
     });
   });
 });

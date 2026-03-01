@@ -23,6 +23,7 @@ import {
   getAppFromReferer,
   appNeedsRewrite,
   rewriteRootUrl,
+  getEmbedRedirectForRootNav,
   PassthroughReason,
 } from './core';
 
@@ -337,6 +338,20 @@ export function handleRequest(event: FetchEvent): void {
   // (e.g., Authentik SSO at /application/o/authorize/). If so, unregister the client
   // since they're leaving the app context and we shouldn't rewrite subsequent requests.
   if (request.mode === RequestMode.NAVIGATE && clientApp && isBloudRoute(url.pathname)) {
+    // Special case: apps navigating to '/' should be redirected to their embed path.
+    // This handles AdGuard's openDashboard() which calls window.location.replace('http://bloud.local/')
+    // after setup wizard completion — it constructs the URL from window.location.hostname
+    // without the /embed/{app}/ prefix, which would otherwise load the Bloud SPA inside the iframe.
+    const embedRedirect = getEmbedRedirectForRootNav(url.pathname, clientApp, origin);
+    if (embedRedirect) {
+      console.log('[embed-sw] App navigating to root, redirecting to embed path:', {
+        clientApp,
+        to: embedRedirect,
+      });
+      event.respondWith(Response.redirect(embedRedirect, 302));
+      return;
+    }
+
     console.log('[embed-sw] Client navigating to reserved route, unregistering:', {
       clientApp,
       destination: url.pathname,
