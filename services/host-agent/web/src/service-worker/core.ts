@@ -353,6 +353,28 @@ export function rewriteRootUrl(url: URL, appName: string): string {
   return new URL(newPath + url.search, url.origin).href;
 }
 
+/**
+ * Check if a navigation to a Bloud route from a registered app client should be
+ * redirected back to the app's embed path instead of unregistering the client.
+ *
+ * This handles apps like AdGuard Home whose post-setup openDashboard() constructs
+ * a URL from window.location.hostname without knowing about the /embed/{app}/ prefix,
+ * resulting in a navigation to the Bloud root that would otherwise load the Bloud SPA
+ * inside the iframe (the "dual sidebar" bug).
+ *
+ * Returns the embed redirect URL if applicable, null otherwise.
+ */
+export function getEmbedRedirectForRootNav(
+  pathname: string,
+  clientApp: string | null,
+  origin: string
+): string | null {
+  if (pathname !== '/') return null;
+  if (!clientApp) return null;
+  if (!appNeedsRewrite(clientApp)) return null;
+  return new URL(`${EMBED_PATH_PREFIX}${clientApp}/`, origin).href;
+}
+
 // =============================================================================
 // Response Processing Functions
 // =============================================================================
