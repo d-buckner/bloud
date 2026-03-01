@@ -1,5 +1,6 @@
 # Authentik Blueprint for Bloud Branding
 # Applies custom branding to match the Bloud design system
+# CSS source: services/host-agent/web/static/authentik-branding.css
 version: 1
 metadata:
   name: bloud-brand
@@ -29,59 +30,4 @@ entries:
         settings:
           theme:
             base: light
-      branding_custom_css: |
-        /* Bloud Design System for Authentik */
-        @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
-
-        :root {
-          /* Authentik accent color */
-          --ak-accent: #1C1917 !important;
-
-          /* PatternFly global colors */
-          --pf-global--primary-color--100: #1C1917 !important;
-          --pf-global--primary-color--200: #292524 !important;
-          --pf-global--link--Color: #1C1917 !important;
-          --pf-global--link--Color--hover: #292524 !important;
-        }
-
-        /* Typography */
-        h1, h2, h3, .pf-c-title {
-          font-family: 'Newsreader', Georgia, 'Times New Roman', serif !important;
-          letter-spacing: -0.02em;
-        }
-
-        /* Hide default background image */
-        .pf-c-login {
-          background-image: none !important;
-          background-color: #FAF9F6 !important;
-        }
-
-        /* Login card styling */
-        .pf-c-login__main {
-          background: #FFFFFF !important;
-          border: 1px solid #E7E5E4 !important;
-          border-radius: 8px !important;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
-        }
-
-        /* Primary button - dark charcoal */
-        .pf-c-button.pf-m-primary {
-          background-color: #1C1917 !important;
-          border-color: #1C1917 !important;
-          border-radius: 6px !important;
-        }
-
-        .pf-c-button.pf-m-primary:hover {
-          background-color: #292524 !important;
-          border-color: #292524 !important;
-        }
-
-        /* Form inputs */
-        .pf-c-form-control {
-          border-radius: 6px !important;
-        }
-
-        /* Footer text */
-        .pf-c-login__footer {
-          color: #57534E !important;
-        }
+      branding_custom_css: "@import url('/authentik-branding.css');"
