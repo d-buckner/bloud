@@ -19,11 +19,14 @@ import type { App } from '$lib/types';
  * @param appOrName - Either an App object or app name string
  */
 export function openApp(appOrName: App | string): void {
-	const appName = typeof appOrName === 'string' ? appOrName : appOrName.name;
+	const app = typeof appOrName === 'string' ? null : appOrName;
+	const appName = app ? app.name : appOrName as string;
 
-	// If passed an App object directly (e.g., from clicking on home grid),
-	// we know it exists. If passed a name, the tabs store will handle it.
-	tabs.open(appName);
+	// Use the SSO launch path as the initial path when first opening an app.
+	// For apps like miniflux with native OIDC, this navigates directly to the
+	// OIDC redirect endpoint so the user is auto-signed-in without seeing a button.
+	const initialPath = app?.sso_launch_path ?? '';
+	tabs.open(appName, initialPath);
 
 	goto(`/apps/${appName}`);
 }

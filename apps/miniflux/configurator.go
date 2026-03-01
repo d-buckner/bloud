@@ -9,12 +9,17 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
 
-// Traefik config for SSO redirect (redirects /embed/miniflux/login to SSO)
+// Traefik config for SSO redirect.
+// Miniflux doesn't redirect to /login - it serves the login page as a 200 at the
+// root path. The only case where a Traefik-level redirect is needed is when the
+// user's miniflux session expires and they try to access an authenticated page:
+// miniflux 302s to /?redirect_url=<path>, which Traefik then intercepts and
+// redirects to OIDC. After auth, miniflux redirects to the home page.
 const traefikSSOConfig = `# Auto-redirect Miniflux login to SSO
 http:
   routers:
     miniflux-login-redirect:
-      rule: "Path(` + "`" + `/embed/miniflux/login` + "`" + `)"
+      rule: "Path(` + "`" + `/embed/miniflux/` + "`" + `) && QueryRegexp(` + "`" + `redirect_url` + "`" + `, ` + "`" + `.+` + "`" + `)"
       middlewares:
         - miniflux-sso-redirect
       service: miniflux
