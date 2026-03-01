@@ -35,6 +35,7 @@ type SSO struct {
 	CallbackPath string `yaml:"callbackPath" json:"callbackPath"` // e.g. /oauth2/oidc/callback
 	ProviderName string `yaml:"providerName" json:"providerName"` // e.g. "Bloud SSO"
 	UserCreation bool   `yaml:"userCreation" json:"userCreation"` // Auto-create users on first login
+	LaunchPath   string `yaml:"launchPath" json:"launchPath,omitempty"` // Initial path to open when launching the app (overrides root)
 	Env          SSOEnv `yaml:"env" json:"env"`                   // Environment variable mappings
 }
 
