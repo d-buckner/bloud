@@ -10,7 +10,7 @@ import { get } from '$lib/clients/httpClient';
  */
 export async function fetchCatalog(): Promise<CatalogApp[]> {
 	const data = await get<{ apps: CatalogApp[] }>('/api/apps');
-	return data?.apps ?? [];
+	return (data?.apps ?? []).filter(app => !app.isSystem);
 }
 
 /**
