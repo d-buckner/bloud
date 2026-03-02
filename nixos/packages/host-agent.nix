@@ -48,7 +48,6 @@ let
       && baseName != "result-iso"
       && baseName != ".direnv"
       && baseName != "cli"
-      && baseName != "lima"
       && baseName != "integration"
       && baseName != "web"
       && baseName != "build"

@@ -72,15 +72,6 @@ func main() {
 		os.Exit(cmdSetup())
 	}
 
-	// For Lima mode, ensure SSH is available
-	if !vm.IsNative() && !isPVEMode() {
-		if err := vm.EnsureSSHAvailable(); err != nil {
-			fmt.Fprintf(os.Stderr, "%sError:%s %v\n", colorRed, colorReset, err)
-			fmt.Fprintf(os.Stderr, "\nRun './bloud setup' to check all prerequisites.\n")
-			os.Exit(1)
-		}
-	}
-
 	var exitCode int
 
 	switch cmd {
@@ -153,7 +144,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%sError:%s 'destroy-builder' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
 			exitCode = 1
 		}
-	// Lima-only commands
 	case "services":
 		exitCode = cmdServices()
 	case "attach":
@@ -256,49 +246,27 @@ func printUsage() {
 		return
 	}
 
-	if vm.IsNative() {
-		fmt.Println("  Backend: Native NixOS")
-	} else {
-		fmt.Println("  Backend: Lima VM")
-	}
-
+	fmt.Println("  Backend: Native NixOS")
 	fmt.Println()
 	fmt.Println("Usage: ./bloud <command> [args]")
 	fmt.Println()
 	fmt.Println("Setup:")
-	if vm.IsNative() {
-		fmt.Println("  setup           Check prerequisites and apply NixOS configuration")
-	} else {
-		fmt.Println("  setup           Check prerequisites and download VM image")
-	}
+	fmt.Println("  setup           Check prerequisites and apply NixOS configuration")
 	fmt.Println()
-
-	if vm.IsNative() {
-		fmt.Println("Commands:")
-		fmt.Println("  start           Start dev environment")
-	} else {
-		fmt.Println("Commands (persistent Lima VM, ports 8080/3000/5173):")
-		fmt.Println("  start           Start dev environment (auto-starts VM if needed)")
-	}
+	fmt.Println("Commands:")
+	fmt.Println("  start           Start dev environment")
 	fmt.Println("  stop            Stop dev services")
 	fmt.Println("  status          Show dev environment status")
 	fmt.Println("  services        Show podman service status")
 	fmt.Println("  logs            Show logs from dev services")
 	fmt.Println("  attach          Attach to tmux session (Ctrl-B D to detach)")
-	if vm.IsNative() {
-		fmt.Println("  shell [cmd]     Run a command (or open a shell)")
-	} else {
-		fmt.Println("  shell [cmd]     Shell into VM (or run a command)")
-	}
+	fmt.Println("  shell [cmd]     Run a command (or open a shell)")
 	fmt.Println("  rebuild         Rebuild NixOS configuration")
 	fmt.Println("  install <app>   Install an app")
 	fmt.Println("  uninstall <app> Uninstall an app")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
 	fmt.Println("  installer       Start installer UI in mock mode (http://localhost:5174)")
 	fmt.Println("  installer stop  Stop the installer dev server")
-	if !vm.IsNative() {
-		fmt.Println("  destroy         Destroy the dev VM completely")
-	}
 	fmt.Println()
 	fmt.Println("URLs (after start):")
 	fmt.Println("  http://localhost:8080     Web UI (via Traefik)")
