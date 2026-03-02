@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1169,6 +1170,87 @@ func TestGetUserFromContext(t *testing.T) {
 		assert.Equal(t, "550e8400-e29b-41d4-a716-446655440000", user.ID)
 		assert.Equal(t, "testuser", user.Username)
 	})
+}
+
+// SSO launch path tests
+
+func TestHandleListInstalledApps_IncludesSSOLaunchPath(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Add catalog app with SSO launch path
+	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		Name: "miniflux",
+		SSO:  catalog.SSO{LaunchPath: "oauth2/oidc/redirect"},
+	})
+
+	// Add matching installed app
+	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		Name:   "miniflux",
+		Status: "running",
+	})
+
+	req := httptest.NewRequest("GET", "/api/apps/installed", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var apps []map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&apps))
+	require.Len(t, apps, 1)
+	assert.Equal(t, "oauth2/oidc/redirect", apps[0]["sso_launch_path"])
+}
+
+func TestHandleAppEvents_IncludesSSOLaunchPath(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Add catalog app with SSO launch path
+	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		Name: "miniflux",
+		SSO:  catalog.SSO{LaunchPath: "oauth2/oidc/redirect"},
+	})
+
+	// Add matching installed app
+	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		Name:   "miniflux",
+		Status: "running",
+	})
+
+	// Cancel the context immediately so the SSE handler writes the initial event
+	// and exits on the first select iteration
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest("GET", "/api/apps/events", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	require.Contains(t, body, "data:", "SSE response should contain at least one event")
+
+	// Extract JSON from the first "data: ..." line
+	var jsonLine string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "data: ") {
+			jsonLine = strings.TrimPrefix(line, "data: ")
+			break
+		}
+	}
+	require.NotEmpty(t, jsonLine, "SSE event should have a data line")
+
+	var apps []map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(jsonLine), &apps))
+
+	var miniflux map[string]interface{}
+	for _, app := range apps {
+		if app["name"] == "miniflux" {
+			miniflux = app
+			break
+		}
+	}
+	require.NotNil(t, miniflux, "miniflux should be in SSE app list")
+	assert.Equal(t, "oauth2/oidc/redirect", miniflux["sso_launch_path"],
+		"SSE event must include sso_launch_path so the frontend can auto-redirect to OIDC on first open")
 }
 
 // Test generateState
