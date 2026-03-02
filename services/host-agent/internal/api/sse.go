@@ -136,12 +136,15 @@ func (s *Server) handleAppEvents(w http.ResponseWriter, r *http.Request) {
 	ch := s.appHub.Subscribe()
 	defer s.appHub.Unsubscribe(ch)
 
+	// Build launch paths map once for this connection (catalog doesn't change at runtime)
+	launchPaths := s.buildLaunchPaths()
+
 	// Send initial app list
 	apps, err := s.appStore.GetAll()
 	if err != nil {
 		s.logger.Error("failed to get apps for SSE", "error", err)
 	} else {
-		data, _ := json.Marshal(apps)
+		data, _ := json.Marshal(enrichApps(apps, launchPaths))
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -157,7 +160,7 @@ func (s *Server) handleAppEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			data, err := json.Marshal(apps)
+			data, err := json.Marshal(enrichApps(apps, launchPaths))
 			if err != nil {
 				s.logger.Error("failed to marshal apps for SSE", "error", err)
 				continue

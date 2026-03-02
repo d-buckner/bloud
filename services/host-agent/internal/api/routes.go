@@ -182,6 +182,31 @@ type installedAppResponse struct {
 	SSOLaunchPath string `json:"sso_launch_path,omitempty"`
 }
 
+// buildLaunchPaths returns a map of app name → SSO launch path from the catalog.
+func (s *Server) buildLaunchPaths() map[string]string {
+	launchPaths := make(map[string]string)
+	if catalogApps, err := s.catalog.GetAll(); err == nil {
+		for _, ca := range catalogApps {
+			if ca.SSO.LaunchPath != "" {
+				launchPaths[ca.Name] = ca.SSO.LaunchPath
+			}
+		}
+	}
+	return launchPaths
+}
+
+// enrichApps wraps store apps with catalog-derived fields (e.g. sso_launch_path).
+func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string) []installedAppResponse {
+	result := make([]installedAppResponse, 0, len(apps))
+	for _, app := range apps {
+		result = append(result, installedAppResponse{
+			InstalledApp:  app,
+			SSOLaunchPath: launchPaths[app.Name],
+		})
+	}
+	return result
+}
+
 // handleListInstalledApps returns the list of user-installed apps.
 // System apps (traefik, postgres, redis, authentik) are filtered out since
 // they are managed by NixOS, not installed by the user.
@@ -193,27 +218,14 @@ func (s *Server) handleListInstalledApps(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Build launch path map from catalog (avoids importing catalog package by name)
-	launchPaths := make(map[string]string)
-	if catalogApps, err := s.catalog.GetAll(); err == nil {
-		for _, ca := range catalogApps {
-			if ca.SSO.LaunchPath != "" {
-				launchPaths[ca.Name] = ca.SSO.LaunchPath
-			}
-		}
-	}
-
-	result := make([]installedAppResponse, 0, len(all))
+	userApps := make([]*store.InstalledApp, 0, len(all))
 	for _, app := range all {
 		if !app.IsSystem {
-			result = append(result, installedAppResponse{
-				InstalledApp:  app,
-				SSOLaunchPath: launchPaths[app.Name],
-			})
+			userApps = append(userApps, app)
 		}
 	}
 
-	respondJSON(w, http.StatusOK, result)
+	respondJSON(w, http.StatusOK, enrichApps(userApps, s.buildLaunchPaths()))
 }
 
 // handleAppMetadata returns the full catalog metadata for a single app
