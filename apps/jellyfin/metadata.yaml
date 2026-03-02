@@ -17,3 +17,9 @@ healthCheck:
   interval: 5
   timeout: 60
 
+bootstrap:
+  localStorage:
+    intercepts:
+      - key: jellyfin_credentials
+        jsonPatch:
+          Servers.0.ManualAddress: "{{embedUrl}}"
