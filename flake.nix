@@ -2,61 +2,18 @@
   description = "Bloud - Home Cloud Operating System";
 
   inputs = {
-    # Use nixos-24.11 for better nixos-generators compatibility
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
-    nixos-generators = {
-      url = "github:nix-community/nixos-generators";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, nixos-generators }:
+  outputs = { self, nixpkgs }:
     let
-      # Support both Apple Silicon and Intel Macs
       supportedSystems = [ "aarch64-linux" "x86_64-linux" ];
 
-      # Helper to generate outputs for each system
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
     in
     {
       # NixOS configurations
       nixosConfigurations = {
-        # Development VM configuration
-        vm-dev = nixpkgs.lib.nixosSystem {
-          system = "aarch64-linux"; # Apple Silicon default
-          modules = [
-            ./nixos/vm-dev.nix
-            ./nixos/bloud.nix
-          ];
-        };
-
-        # Intel VM variant
-        vm-dev-x86 = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            ./nixos/vm-dev.nix
-            ./nixos/bloud.nix
-          ];
-        };
-
-        # Test VM configuration (runs on different ports from dev)
-        vm-test = nixpkgs.lib.nixosSystem {
-          system = "aarch64-linux"; # Apple Silicon default
-          modules = [
-            ./nixos/vm-test.nix
-            ./nixos/bloud.nix
-          ];
-        };
-
-        # Intel test VM variant
-        vm-test-x86 = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            ./nixos/vm-test.nix
-            ./nixos/bloud.nix
-          ];
-        };
-
         # Native Proxmox VM for development
         # Deploy with: sudo nixos-rebuild switch --flake .#dev-server
         dev-server = nixpkgs.lib.nixosSystem {
@@ -102,15 +59,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
         in
-        {
-          # Lima-compatible disk image with NixOS 24.05
-          lima-image = nixos-generators.nixosGenerate {
-            inherit pkgs;
-            format = "raw-efi";
-            modules = [ ./nixos/lima-image.nix ];
-          };
-        }
-        // (if system == "x86_64-linux" then {
+        (if system == "x86_64-linux" then {
           # Bootable appliance ISO
           iso = self.nixosConfigurations.iso.config.system.build.isoImage;
         } else {})
@@ -126,7 +75,6 @@
             buildInputs = with pkgs; [
               go
               nodejs
-              lima
             ];
           };
         }
