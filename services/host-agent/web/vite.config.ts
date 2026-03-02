@@ -14,16 +14,14 @@ export default defineConfig({
 		host: '0.0.0.0',
 		allowedHosts: ['bloud.local', 'localhost'],
 		watch: {
-			// Use polling for 9p/NFS mounts (Lima VM)
+			// Use polling for NFS/network mounts
 			usePolling: true,
 			interval: 1000
 		},
 		fs: {
 			// Allow serving files outside web project
 			allow: [
-				'..',                           // Parent directories
-				'/tmp/bloud-node-modules',      // Lima dev VM node_modules
-				'/tmp/bloud-test-node-modules'  // Lima test VM node_modules
+				'..'  // Parent directories
 			]
 		}
 	}

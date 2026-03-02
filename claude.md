@@ -4,7 +4,7 @@
 
 **Production / ISO:** Users access Bloud at `http://bloud.local` (port 80). Rootless containers can't bind privileged ports, so Traefik listens on 8080 and iptables NAT redirects port 80 → 8080. Users never see port 8080.
 
-**Local dev (Lima VM):** Access via `http://localhost:8080` (Traefik). Port forwarding handles the mapping from host to VM.
+**Local dev (NixOS dev-server):** Access via `http://localhost:8080` (Traefik). The dev-server NixOS config runs Traefik on 8080.
 
 - Service worker is registered on the Traefik port
 - Iframe content is served through Traefik
@@ -58,7 +58,7 @@ When debugging:
 
 ## File Permissions
 
-**IMPORTANT:** Always create new files with 644 permissions (readable by all). The Lima VM dev environment syncs files from the host, and files without read permissions will fail to sync.
+**IMPORTANT:** Always create new files with 644 permissions (readable by all).
 
 ## Project Structure
 
@@ -296,38 +296,28 @@ All startup dependencies should be managed via systemd, not dev scripts:
 
 The `./bloud` CLI has two modes, detected automatically:
 
-- **Lima mode** (default) — manages a Lima VM for iterative development with hot reload
+- **Native NixOS mode** (default) — runs dev services directly on a NixOS machine with hot reload
 - **Proxmox mode** (when `BLOUD_PVE_HOST` is set) — deploys the ISO to a Proxmox host for integration testing
 
 ### Prerequisites
 
-**macOS:**
-```bash
-brew install lima
-```
+Requires a NixOS machine (physical or VM) with the `dev-server` flake configuration applied.
 
-**Linux (Debian/Ubuntu):**
-```bash
-curl -fsSL https://lima-vm.io/install.sh | bash
-```
-
-**Setup (all platforms):**
 ```bash
 npm run setup    # Installs deps + builds ./bloud CLI
-./bloud setup    # Checks prerequisites and downloads VM image
+./bloud setup    # Checks prerequisites and applies NixOS configuration
 ```
 
 ### The `./bloud` CLI
 
-**Lima mode** (development):
+**Native NixOS mode** (development):
 ```bash
-./bloud start          # Start dev environment (auto-starts VM if needed)
+./bloud start          # Start dev environment
 ./bloud stop           # Stop dev services
 ./bloud status         # Show dev environment status
 ./bloud logs           # Show logs from dev services
 ./bloud attach         # Attach to tmux session (Ctrl-B D to detach)
-./bloud shell          # Shell into VM
-./bloud shell "cmd"    # Run a command in VM
+./bloud shell [cmd]    # Run a command (or open a shell)
 ./bloud rebuild        # Rebuild NixOS configuration
 ```
 
@@ -348,10 +338,10 @@ npm run setup    # Installs deps + builds ./bloud CLI
 ### Typical Development Session
 
 ```bash
-# Start dev environment (VM + services + port forwarding - all automatic)
+# Start dev environment
 ./bloud start
 
-# Edit files on your Mac:
+# Edit files - changes are detected automatically:
 #   - Go files (*.go) → auto-rebuild and restart
 #   - Svelte files (*.svelte, *.ts) → Vite hot-reloads in browser
 
@@ -367,7 +357,7 @@ open http://localhost:3000   # Go API (direct)
 ./bloud status
 
 # When done
-./bloud stop     # Stop dev servers (VM stays for fast restart)
+./bloud stop     # Stop dev servers
 ```
 
 ### ISO Integration Testing
@@ -399,24 +389,9 @@ If you modify `.nix` files (like adding new apps):
 ### Hot Reload Architecture
 
 The dev environment uses:
-- **Custom Go watcher** - Polls for `*.go` file changes, syncs to local dir, rebuilds and restarts
+- **Custom Go watcher** - Polls for `*.go` file changes, rebuilds and restarts host-agent
 - **Vite** - Svelte dev server with HMR (Hot Module Replacement)
-- **tmux** - Session management so dev servers survive SSH disconnects
-- **9p mount** - Your Mac's project directory is mounted in the VM
-- **File sync** - Source files are synced from 9p mount to `/tmp/bloud-src` for compilation
-
-Edit files in your Mac editor → Changes detected via polling → Files synced → Auto-rebuild/reload
-
-### Getting the NixOS Image
-
-The easiest way is to run `./bloud setup` which offers to download a pre-built image.
-
-If you prefer to build manually (requires Linux with Nix):
-```bash
-cd lima && ./build-image.sh --local
-```
-
-See README.md for detailed instructions.
+- **tmux** - Session management so dev servers survive disconnects
 
 ### Configurable Username
 
@@ -429,8 +404,6 @@ bloud = {
   user = "bloud";  # Default: "daniel"
 };
 ```
-
-This is used by the VM configuration (`nixos/vm-dev.nix`) to run services as the `bloud` user.
 
 ### App Configuration (Generated)
 
