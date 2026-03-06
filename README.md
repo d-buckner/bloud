@@ -846,4 +846,4 @@ AGPL v3 - See [LICENSE](LICENSE) for details. If you modify Bloud and offer it a
 
 ---
 
-**Built with NixOS, Podman, Go, and Svelte.**
+**Built with NixOS, Podman, Systemd, Go, and Svelte.**
