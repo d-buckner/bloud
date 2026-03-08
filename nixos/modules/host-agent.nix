@@ -76,7 +76,11 @@ in
           set -e
           echo "Waiting for PostgreSQL and bloud database..."
           for i in $(seq 1 120); do
-            if ${pkgs.podman}/bin/podman exec apps-postgres psql -U apps -d bloud -c "SELECT 1" > /dev/null 2>&1; then
+            if ${config.services.postgresql.package}/bin/psql \
+                -U apps \
+                -h 127.0.0.1 \
+                -d bloud \
+                -c "SELECT 1" > /dev/null 2>&1; then
               echo "Database ready"
               exit 0
             fi
