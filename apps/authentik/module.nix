@@ -76,6 +76,8 @@ in
     bloud.apps.postgres.enable = true;
     bloud.apps.redis.enable = true;
 
+    services.postgresql.ensureDatabases = [ "authentik" ];
+
     # Create Authentik directories
     system.activationScripts.bloud-authentik-dirs = lib.stringAfter [ "users" ] ''
       mkdir -p ${configPath}/{authentik-media,authentik-templates,authentik-certs,authentik-blueprints}
@@ -102,32 +104,6 @@ in
     # by the host-agent from each app's metadata.yaml SSO config
 
     systemd.user.services = {
-      # Database initialization for Authentik (creates database in shared postgres)
-      authentik-db-init = {
-        description = "Initialize Authentik database";
-        after = [ "podman-apps-postgres.service" ];
-        requires = [ "podman-apps-postgres.service" ];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          ExecStart = pkgs.writeShellScript "authentik-db-init" ''
-            # Wait for postgres to be ready
-            for i in {1..30}; do
-              if ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${postgresUser} -d ${postgresUser} -c "SELECT 1" &>/dev/null; then
-                break
-              fi
-              echo "Waiting for postgres... ($i/30)"
-              sleep 1
-            done
-
-            # Create database if it doesn't exist
-            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${postgresUser} -c "CREATE DATABASE ${postgresDb};" 2>/dev/null || true
-            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${postgresUser} -c "GRANT ALL PRIVILEGES ON DATABASE ${postgresDb} TO ${postgresUser};" || true
-            echo "Authentik database ready"
-          '';
-        };
-      };
-
       # Authentik Server
       podman-apps-authentik-server = mkPodmanService {
         name = "apps-authentik-server";
@@ -142,8 +118,8 @@ in
         envFile = "${secretsDir}/authentik.env";
         environment = {
           AUTHENTIK_REDIS__HOST = "apps-redis";
-          # Use shared postgres
-          AUTHENTIK_POSTGRESQL__HOST = "apps-postgres";
+          # Use native postgres via host gateway
+          AUTHENTIK_POSTGRESQL__HOST = "10.89.0.1";
           AUTHENTIK_POSTGRESQL__USER = postgresUser;
           AUTHENTIK_POSTGRESQL__NAME = postgresDb;
           # AUTHENTIK_POSTGRESQL__PASSWORD loaded from envFile
@@ -165,14 +141,12 @@ in
           "${configPath}/authentik-blueprints:/blueprints/custom:z"
         ];
         network = "apps-net";
-        dependsOn = [ "apps-network" "apps-postgres" "apps-redis" ];
+        dependsOn = [ "apps-network" "apps-redis" ];
         userns = "keep-id";
         # bloud-db-init creates the host-agent database (needed by prestart hook)
-        # authentik-db-init creates the authentik database (needed by server)
-        extraAfter = [ "bloud-db-init.service" "authentik-db-init.service" ];
-        extraRequires = [ "bloud-db-init.service" "authentik-db-init.service" ];
+        extraAfter = [ "bloud-db-init.service" ];
+        extraRequires = [ "bloud-db-init.service" ];
         waitFor = [
-          { container = "apps-postgres"; command = "pg_isready -U ${postgresUser}"; }
           { container = "apps-redis"; command = "redis-cli ping"; }
         ];
         # Wire up configurator to run after container starts (sets admin password, etc.)
@@ -189,8 +163,8 @@ in
         envFile = "${secretsDir}/authentik.env";
         environment = {
           AUTHENTIK_REDIS__HOST = "apps-redis";
-          # Use shared postgres
-          AUTHENTIK_POSTGRESQL__HOST = "apps-postgres";
+          # Use native postgres via host gateway
+          AUTHENTIK_POSTGRESQL__HOST = "10.89.0.1";
           AUTHENTIK_POSTGRESQL__USER = postgresUser;
           AUTHENTIK_POSTGRESQL__NAME = postgresDb;
           # AUTHENTIK_POSTGRESQL__PASSWORD loaded from envFile
@@ -204,14 +178,12 @@ in
           "${configPath}/authentik-blueprints:/blueprints/custom:z"
         ];
         network = "apps-net";
-        dependsOn = [ "apps-network" "apps-postgres" "apps-redis" ];
+        dependsOn = [ "apps-network" "apps-redis" ];
         userns = "keep-id";
         # bloud-db-init creates the host-agent database (needed by prestart hook)
-        # authentik-db-init creates the authentik database (needed by worker)
-        extraAfter = [ "bloud-db-init.service" "authentik-db-init.service" ];
-        extraRequires = [ "bloud-db-init.service" "authentik-db-init.service" ];
+        extraAfter = [ "bloud-db-init.service" ];
+        extraRequires = [ "bloud-db-init.service" ];
         waitFor = [
-          { container = "apps-postgres"; command = "pg_isready -U ${postgresUser}"; }
           { container = "apps-redis"; command = "redis-cli ping"; }
         ];
       };
