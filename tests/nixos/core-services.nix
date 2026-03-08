@@ -65,16 +65,16 @@ pkgs.nixosTest {
     machine.succeed("sudo -u bloud systemctl --user start podman-apps-network.service")
     machine.wait_until_succeeds("sudo -u bloud systemctl --user is-active podman-apps-network.service", timeout=30)
 
-    # Start PostgreSQL and verify it responds
-    machine.succeed("sudo -u bloud systemctl --user start podman-apps-postgres.service")
+    # Verify native PostgreSQL is running (system service, starts automatically)
     machine.wait_until_succeeds(
-      "sudo -u bloud podman exec apps-postgres pg_isready -U apps",
-      timeout=60
+      "systemctl is-active postgresql.service",
+      timeout=30
     )
 
-    # Verify PostgreSQL can handle queries
-    machine.succeed(
-      "sudo -u bloud podman exec apps-postgres psql -U apps -d apps -c 'SELECT 1'"
+    # Verify PostgreSQL accepts connections
+    machine.wait_until_succeeds(
+      "sudo -u bloud psql -U apps -h 127.0.0.1 -d apps -c 'SELECT 1'",
+      timeout=30
     )
 
     # Start Redis and verify it responds
@@ -100,7 +100,7 @@ pkgs.nixosTest {
     )
 
     # Verify all services are running
-    machine.succeed("sudo -u bloud systemctl --user is-active podman-apps-postgres.service")
+    machine.succeed("systemctl is-active postgresql.service")
     machine.succeed("sudo -u bloud systemctl --user is-active podman-apps-redis.service")
     machine.succeed("sudo -u bloud systemctl --user is-active podman-traefik.service")
 

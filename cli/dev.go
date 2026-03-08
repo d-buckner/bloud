@@ -230,8 +230,8 @@ func cmdStartNative() int {
 	log("Checking for failed services...")
 	_, _ = vm.LocalExec("systemctl --user reset-failed 2>/dev/null || true")
 	services := []string{
-		"podman-apps-postgres", "podman-apps-redis", "bloud-db-init",
-		"authentik-db-init", "podman-apps-authentik-server",
+		"podman-apps-redis", "bloud-db-init",
+		"podman-apps-authentik-server",
 		"podman-apps-authentik-worker", "podman-apps-authentik-proxy",
 	}
 	for _, svc := range services {

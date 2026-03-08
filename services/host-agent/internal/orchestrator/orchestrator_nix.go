@@ -625,8 +625,8 @@ func (o *Orchestrator) dropAppDatabase(appName string) error {
 
 	o.logger.Info("dropping app database", "app", appName, "database", dbName)
 
-	// Use podman exec to run psql command
-	cmd := exec.Command("podman", "exec", "apps-postgres", "psql", "-U", "apps", "-c",
+	// Connect directly to native postgres via localhost
+	cmd := exec.Command("psql", "-U", "apps", "-h", "127.0.0.1", "-c",
 		fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -890,19 +890,20 @@ func (o *Orchestrator) ensureForwardAuthOutpostAssociation() {
 
 // systemAppInfo contains metadata for NixOS-managed system apps
 type systemAppInfo struct {
-	name        string
-	displayName string
-	port        int
-	serviceName string
+	name            string
+	displayName     string
+	port            int
+	serviceName     string
+	isSystemService bool // true for system-level services (use systemctl without --user)
 }
 
 // systemApps defines the NixOS-managed system apps
 // These apps have their own service names (not podman-{appName}.service)
 var systemApps = []systemAppInfo{
-	{"authentik", "Authentik", 9001, "podman-apps-authentik-server.service"},
-	{"traefik", "Traefik", 8080, "podman-traefik.service"},
-	{"postgres", "PostgreSQL", 5432, "podman-apps-postgres.service"},
-	{"redis", "Redis", 6379, "podman-apps-redis.service"},
+	{"authentik", "Authentik", 9001, "podman-apps-authentik-server.service", false},
+	{"traefik", "Traefik", 8080, "podman-traefik.service", false},
+	{"postgres", "PostgreSQL", 5432, "postgresql.service", true},
+	{"redis", "Redis", 6379, "podman-apps-redis.service", false},
 }
 
 // getSystemdServiceName returns the systemd service name for an app
@@ -916,10 +917,26 @@ func getSystemdServiceName(appName string) string {
 	return fmt.Sprintf("podman-%s.service", appName)
 }
 
-// checkSystemdServiceActive checks if a systemd user service is active
+// checkSystemdServiceActive checks if a systemd service is active.
+// Uses --user flag for user services, omits it for system services (e.g. postgresql.service).
 func (o *Orchestrator) checkSystemdServiceActive(appName string) bool {
 	serviceName := getSystemdServiceName(appName)
-	cmd := exec.Command("systemctl", "--user", "is-active", serviceName)
+
+	// Check if this is a system-level service
+	isSystemSvc := false
+	for _, app := range systemApps {
+		if app.name == appName {
+			isSystemSvc = app.isSystemService
+			break
+		}
+	}
+
+	var cmd *exec.Cmd
+	if isSystemSvc {
+		cmd = exec.Command("systemctl", "is-active", serviceName)
+	} else {
+		cmd = exec.Command("systemctl", "--user", "is-active", serviceName)
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return false
