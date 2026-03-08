@@ -628,40 +628,65 @@ echo 'Build complete.'`
 	return 0
 }
 
-// cmdSetupBuilderPVE provisions or updates the build VM.
-// First run: downloads Ubuntu cloud image, creates VM, provisions Nix/Go/Node.
-// Subsequent runs: re-runs provisioning if not already done (idempotent).
+// cmdSetupBuilderPVE provisions the builder host specified by BLOUD_BUILDER_HOST.
+// Requires Nix to already be installed on the host.
+// Idempotent: skips if ~/.bloud-provisioned exists.
 func cmdSetupBuilderPVE() int {
-	cfg := getPVEConfig()
-	bc := builderCfg(cfg)
-
-	if err := ensureBuilderKey(); err != nil {
-		errorf("Failed to generate builder SSH key: %v", err)
+	host := getBuilderHost()
+	if host == "" {
+		errorf("BLOUD_BUILDER_HOST is not set. Add it to .env (e.g. builder@192.168.0.105)")
 		return 1
 	}
 
-	if !pveVMExists(bc) {
-		log("Build VM not found. Creating from Ubuntu cloud image...")
-		if code := createBuilderVM(cfg); code != 0 {
-			return code
-		}
-	}
+	log(fmt.Sprintf("Checking builder host (%s)...", host))
 
-	if !pveVMIsRunning(bc) {
-		log("Starting build VM...")
-		if err := pveExecStream(cfg, fmt.Sprintf("qm start %s", pveBuildVMID)); err != nil {
-			errorf("Failed to start build VM: %v", err)
-			return 1
-		}
-	}
-
-	ip := waitForBuilderSSH(bc)
-	if ip == "" {
-		errorf("Build VM did not become reachable via SSH")
+	// Verify SSH connectivity
+	if _, err := builderSSHExec(host, "echo ok"); err != nil {
+		errorf("Cannot reach builder host %s via SSH: %v", host, err)
 		return 1
 	}
 
-	return doConfigureBuilder(ip)
+	// Verify Nix is installed
+	if _, err := builderSSHExec(host, "command -v nix || /nix/var/nix/profiles/default/bin/nix --version"); err != nil {
+		errorf("Nix is not installed on %s. Install it first: https://nixos.org/download", host)
+		return 1
+	}
+
+	// Check sentinel
+	if out, _ := builderSSHExec(host, "test -f ~/.bloud-provisioned && echo yes"); out == "yes" {
+		log("Builder already provisioned")
+		fmt.Printf("  Run './bloud start --build' to build and test the ISO\n")
+		return 0
+	}
+
+	log("Provisioning builder with Go and Node.js via Nix...")
+	provisionScript := `set -e
+export PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+
+echo '==> Installing git and rsync...'
+if ! command -v git >/dev/null || ! command -v rsync >/dev/null; then
+    sudo apt-get install -y git rsync
+fi
+
+echo '==> Installing Go and Node.js via nix profile...'
+nix profile install nixpkgs#go nixpkgs#nodejs_22
+
+echo '==> Verifying...'
+go version
+node --version
+
+git config --global --add safe.directory '*'
+touch ~/.bloud-provisioned
+echo 'Provisioning complete.'`
+
+	if err := builderSSHExecStream(host, provisionScript); err != nil {
+		errorf("Failed to provision builder: %v", err)
+		return 1
+	}
+
+	log("Builder provisioned successfully")
+	fmt.Printf("  Run './bloud start --build' to build and test the ISO\n")
+	return 0
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────────
