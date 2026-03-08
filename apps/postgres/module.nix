@@ -33,12 +33,17 @@ in
 
       # Trust auth: homelab machine — if you can log in to the box you can access the DB.
       # Covers:
-      #   local          — unix socket connections (system services running as postgres)
-      #   127.0.0.1/32   — TCP localhost (host-agent, miniflux, etc.)
+      #   local          — unix socket connections (system services and rootless containers
+      #                    that mount /run/postgresql — e.g. Authentik)
+      #   127.0.0.1/32   — TCP localhost (host-agent, native NixOS services like miniflux)
       #   ::1/128        — TCP IPv6 localhost
-      #   10.89.0.0/24   — apps-net podman bridge subnet (Authentik containers)
-      # The 10.89.0.0/24 subnet matches the fixed apps-net podman bridge network.
-      # See podman-apps-network in nixos/bloud.nix — must be kept in sync.
+      #   10.89.0.0/24   — apps-net bridge subnet (reserved; not currently reachable from
+      #                    rootless podman due to user/root netns isolation — containers use
+      #                    the Unix socket path instead)
+      # NOTE: rootless podman containers cannot reach postgres via the bridge gateway IP
+      # (10.89.0.1) because the bridge is in the user network namespace and postgres runs in
+      # the root namespace. Containers that need postgres must mount /run/postgresql and set
+      # POSTGRESQL_HOST to the socket directory. See apps/authentik/module.nix for the pattern.
       authentication = lib.mkForce ''
         local all all              trust
         host  all all 127.0.0.1/32 trust
