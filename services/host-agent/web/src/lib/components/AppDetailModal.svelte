@@ -168,39 +168,6 @@
 							</ul>
 						</div>
 					{:else}
-						{#if installPlan.choices.length > 0}
-							<div class="choices-section">
-								<h4>Configuration</h4>
-								{#each installPlan.choices as choice}
-									<div class="choice-field">
-										<label for="choice-{choice.integration}">
-											{choice.integration}
-											{#if choice.required}<span class="required">*</span>{/if}
-										</label>
-										<select id="choice-{choice.integration}" bind:value={choices[choice.integration]}>
-											<option value="">Select...</option>
-											{#if choice.installed}
-												<optgroup label="Installed">
-													{#each choice.installed as opt}
-														<option value={opt.app}>{formatAppName(opt.app)}</option>
-													{/each}
-												</optgroup>
-											{/if}
-											{#if choice.available}
-												<optgroup label="Will be installed">
-													{#each choice.available as opt}
-														<option value={opt.app}>
-															{formatAppName(opt.app)}
-															{#if opt.default}(recommended){/if}
-														</option>
-													{/each}
-												</optgroup>
-											{/if}
-										</select>
-									</div>
-								{/each}
-							</div>
-						{/if}
 					{/if}
 				{/if}
 			</div>
@@ -306,42 +273,6 @@
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
-
-	.choices-section {
-		margin-bottom: var(--space-lg);
-	}
-
-	.choices-section h4 {
-		margin: 0 0 var(--space-md) 0;
-		font-size: 0.8125rem;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-		color: var(--color-text-muted);
-	}
-
-	.choice-field {
-		margin-bottom: var(--space-md);
-	}
-
-	.choice-field label {
-		display: block;
-		font-size: 0.875rem;
-		color: var(--color-text-secondary);
-		margin-bottom: var(--space-xs);
-	}
-
-	.required { color: var(--color-error); }
-
-	.choice-field select {
-		width: 100%;
-		padding: var(--space-sm) var(--space-md);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		font-size: 0.9375rem;
-		font-family: var(--font-serif);
-		background: white;
-	}
-
 	.alert {
 		padding: var(--space-md);
 		border-radius: var(--radius-md);
