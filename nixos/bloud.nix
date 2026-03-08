@@ -117,7 +117,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network exists apps-net || ${pkgs.podman}/bin/podman network create apps-net'";
+        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network exists apps-net || ${pkgs.podman}/bin/podman network create --subnet 10.89.0.0/24 --gateway 10.89.0.1 apps-net'";
         ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network rm apps-net || true'";
       };
     };
@@ -166,9 +166,7 @@ in
     # Initialize the bloud database (required for app configurator hooks)
     # Apps with configurators should add this to their After= dependencies
     systemd.user.services.bloud-db-init = {
-      description = "Initialize bloud database for host-agent";
-      after = [ "podman-apps-postgres.service" ];
-      requires = [ "podman-apps-postgres.service" ];
+      description = "Wait for PostgreSQL to be ready (bloud database managed declaratively)";
       wantedBy = [ "bloud-apps.target" ];
       before = [ "bloud-apps.target" ];
       serviceConfig = {
@@ -176,30 +174,21 @@ in
         RemainAfterExit = true;
         ExecStart = pkgs.writeShellScript "bloud-db-init" ''
           set -e
-
-          # Wait for postgres to be ready (with timeout)
           echo "Waiting for PostgreSQL to be ready..."
           for i in $(seq 1 30); do
-            if ${pkgs.podman}/bin/podman exec apps-postgres pg_isready -U ${config.bloud.apps.postgres.user} > /dev/null 2>&1; then
+            if ${config.services.postgresql.package}/bin/pg_isready \
+                -h 127.0.0.1 \
+                -U ${config.bloud.apps.postgres.user} > /dev/null 2>&1; then
               echo "PostgreSQL is ready"
-              break
+              exit 0
             fi
-            if [ $i -eq 30 ]; then
+            if [ "$i" -eq 30 ]; then
               echo "Timeout waiting for PostgreSQL"
               exit 1
             fi
-            sleep 2
+            echo "Waiting... ($i/30)"
+            sleep 1
           done
-
-          # Create database if not exists
-          if ! ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${config.bloud.apps.postgres.user} -tc "SELECT 1 FROM pg_database WHERE datname = 'bloud'" | grep -q 1; then
-            echo "Creating bloud database..."
-            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${config.bloud.apps.postgres.user} -c "CREATE DATABASE bloud"
-            ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${config.bloud.apps.postgres.user} -c "GRANT ALL PRIVILEGES ON DATABASE bloud TO ${config.bloud.apps.postgres.user}"
-            echo "Database created successfully"
-          else
-            echo "Database bloud already exists"
-          fi
         '';
       };
     };
@@ -303,7 +292,7 @@ in
         echo "  systemctl --user status podman-*    - View container status"
         echo "  podman ps                            - List running containers"
         echo "  podman logs <container>              - View logs"
-        echo "  podman exec apps-postgres psql -U apps  - Access PostgreSQL"
+        echo "  psql -U apps -h 127.0.0.1               - Access PostgreSQL"
         echo ""
       '')
       (pkgs.writeShellScriptBin "bloud-test-integration" ''
@@ -358,7 +347,7 @@ in
 
         # Test database
         echo -n "Testing PostgreSQL... "
-        if ${pkgs.podman}/bin/podman exec apps-postgres psql -U apps -d apps -c "SELECT 1" &>/dev/null; then
+        if ${config.services.postgresql.package}/bin/psql -U apps -h 127.0.0.1 -d apps -c "SELECT 1" &>/dev/null; then
           echo "✓ PASS"
           ((PASSED++))
         else
