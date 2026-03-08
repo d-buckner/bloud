@@ -505,28 +505,13 @@ func builderSSHExecStream(host, cmd string) error {
 	return c.Run()
 }
 
-// doBuild rsyncs source to the build VM, builds the ISO, then copies it
-// Mac→Proxmox ISO storage — replacing the normal ISO download step.
+// doBuild rsyncs source to the builder host, builds the ISO, then copies it
+// to Proxmox ISO storage — replacing the normal ISO download step.
+// Requires BLOUD_BUILDER_HOST to be set (e.g. "builder@192.168.0.105").
 func doBuild(cfg pveConfig) int {
-	bc := builderCfg(cfg)
-
-	if !pveVMExists(bc) {
-		errorf("Build VM not found. Run: ./bloud setup-builder")
-		return 1
-	}
-
-	if !pveVMIsRunning(bc) {
-		log("Starting build VM...")
-		if err := pveExecStream(cfg, fmt.Sprintf("qm start %s", pveBuildVMID)); err != nil {
-			errorf("Failed to start build VM: %v", err)
-			return 1
-		}
-	}
-
-	log("Waiting for build VM...")
-	ip := waitForBuilderSSH(bc)
-	if ip == "" {
-		errorf("Build VM did not become reachable via SSH")
+	host := getBuilderHost()
+	if host == "" {
+		errorf("BLOUD_BUILDER_HOST is not set. Add it to .env (e.g. builder@192.168.0.105)")
 		return 1
 	}
 
@@ -536,16 +521,14 @@ func doBuild(cfg pveConfig) int {
 		return 1
 	}
 
-	privKey, _ := builderKeyPaths()
-
-	log("Syncing source to build VM...")
+	log(fmt.Sprintf("Syncing source to builder (%s)...", host))
 	rsync := exec.Command("rsync", "-av", "--delete",
 		"--exclude=build/",
 		"--exclude=node_modules/",
 		"--exclude=.direnv/",
-		"-e", fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR", privKey),
+		"-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
 		root+"/",
-		"root@"+ip+":"+pveBuildDir+"/",
+		host+":~/bloud/",
 	)
 	rsync.Stdout = os.Stdout
 	rsync.Stderr = os.Stderr
@@ -555,14 +538,19 @@ func doBuild(cfg pveConfig) int {
 	}
 
 	log("Building ISO (first build may take 15-30 minutes)...")
-	buildScript := fmt.Sprintf(`set -e
-export PATH="$PATH:/usr/local/go/bin:/nix/var/nix/profiles/default/bin"
-cd %s
+	buildScript := `set -e
+export PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+cd ~/bloud
 mkdir -p build
 
-echo '==> Building Go binary...'
+echo '==> Building host-agent binary...'
 cd services/host-agent
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/host-agent ./cmd/host-agent
+cd ../..
+
+echo '==> Building installer binary...'
+cd services/installer
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/installer ./cmd/installer
 cd ../..
 
 echo '==> Building frontend...'
@@ -570,49 +558,53 @@ npm ci --prefer-offline
 npm run build --workspace=services/host-agent/web
 cp -r services/host-agent/web/build build/frontend
 
+echo '==> Building installer web...'
+npm run build --workspace=@bloud/installer-web
+cp -r services/installer/web/build build/installer-web
+
 echo '==> Staging artifacts for Nix...'
 git add -f build/
 
 echo '==> Building ISO...'
-nix build .#packages.x86_64-linux.iso --no-link`, pveBuildDir)
+nix build .#packages.x86_64-linux.iso --no-link
+echo 'Build complete.'`
 
-	if err := builderExecStream(ip, buildScript); err != nil {
+	if err := builderSSHExecStream(host, buildScript); err != nil {
 		errorf("ISO build failed: %v", err)
 		return 1
 	}
 
-	// Get the store path from cache (instant — build already done above)
-	storePath, err := builderExec(ip, fmt.Sprintf(
-		`export PATH="$PATH:/nix/var/nix/profiles/default/bin"; cd %s && nix build .#packages.x86_64-linux.iso --no-link --print-out-paths`,
-		pveBuildDir,
-	))
+	// Get the store path (instant — build already done above)
+	storePath, err := builderSSHExec(host,
+		`export PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"; `+
+			`cd ~/bloud && nix build .#packages.x86_64-linux.iso --no-link --print-out-paths`,
+	)
 	if err != nil || storePath == "" {
 		errorf("Failed to get ISO store path: %v", err)
 		return 1
 	}
-	isoPath, err := builderExec(ip, fmt.Sprintf("find '%s/iso' -name '*.iso' | head -1", storePath))
+
+	isoPath, err := builderSSHExec(host, fmt.Sprintf("find '%s/iso' -name '*.iso' | head -1", storePath))
 	if err != nil || isoPath == "" {
 		errorf("Could not find .iso file in %s/iso", storePath)
 		return 1
 	}
-
 	log(fmt.Sprintf("ISO built: %s", isoPath))
 
-	// Copy ISO: build VM → Mac → Proxmox
+	// Copy ISO: builder → local → Proxmox
 	localISO := "/tmp/bloud-built.iso"
-	log("Downloading ISO from build VM...")
+	log("Downloading ISO from builder...")
 	scpDown := exec.Command("scp",
-		"-i", privKey,
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		"root@"+ip+":"+isoPath,
+		host+":"+isoPath,
 		localISO,
 	)
 	scpDown.Stdout = os.Stdout
 	scpDown.Stderr = os.Stderr
 	if err := scpDown.Run(); err != nil {
-		errorf("Failed to download ISO from build VM: %v", err)
+		errorf("Failed to download ISO from builder: %v", err)
 		return 1
 	}
 	defer os.Remove(localISO)
