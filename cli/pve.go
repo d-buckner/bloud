@@ -582,10 +582,12 @@ echo 'Build complete.'`
 		return 1
 	}
 
-	// Get the store path (instant — build already done above)
+	// Get the store path (instant — build already done above).
+	// Redirect stderr to suppress "dirty tree" warnings; grep ensures we only
+	// capture the /nix/store path even if warnings slip through.
 	storePath, err := builderSSHExec(host,
 		`export PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"; `+
-			`cd ~/bloud && nix build .#packages.x86_64-linux.iso --no-link --print-out-paths`,
+			`cd ~/bloud && nix build .#packages.x86_64-linux.iso --no-link --print-out-paths 2>/dev/null | grep '^/nix/store'`,
 	)
 	if err != nil || storePath == "" {
 		errorf("Failed to get ISO store path: %v", err)
