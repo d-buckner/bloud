@@ -4,7 +4,7 @@
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
 	import RollbackModal from '$lib/components/RollbackModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import { type CatalogApp, type AppStatus, AppStatus } from '$lib/types';
+	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
 	import { installApp, pendingInstalls } from '$lib/services/appFacade';
 	import { fetchCatalog } from '$lib/api/catalog';
