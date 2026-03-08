@@ -46,7 +46,13 @@ in
         host  all all 10.89.0.0/24 trust
       '';
 
-      settings.port = appCfg.port;
+      settings = {
+        port = appCfg.port;
+        # Listen on localhost and the apps-net bridge gateway so Authentik containers
+        # can connect. 10.89.0.1 is the host-side gateway of the apps-net podman network.
+        # Must be kept in sync with the subnet in nixos/bloud.nix.
+        listen_addresses = "127.0.0.1,10.89.0.1";
+      };
 
       # Declarative database creation — idempotent, runs on every boot via ExecStartPost.
       # Each app that needs a DB adds to this list in its own module.nix.
