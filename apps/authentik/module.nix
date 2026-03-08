@@ -15,6 +15,25 @@ let
   # Shared postgres credentials
   postgresUser = postgresCfg.user or "apps";
   postgresDb = "authentik";
+
+  # Poll the native redis socket before starting Authentik containers.
+  # Replaces the old waitFor container check now that redis is a system service.
+  # Runs on the host (as the bloud user) — socket is world-accessible (perm 777).
+  waitForRedisScript = pkgs.writeShellScript "wait-for-redis-socket" ''
+    echo "Waiting for native redis socket to be ready..."
+    for i in $(seq 1 30); do
+      if ${pkgs.redis}/bin/redis-cli -s /run/redis-bloud/redis.sock ping > /dev/null 2>&1; then
+        echo "Redis is ready"
+        exit 0
+      fi
+      if [ "$i" -eq 30 ]; then
+        echo "Redis not ready after 30s, giving up"
+        exit 1
+      fi
+      echo "Waiting for redis... ($i/30)"
+      sleep 1
+    done
+  '';
 in
 {
   options.bloud.apps.authentik = {
@@ -156,6 +175,7 @@ in
         extraAfter = [ "bloud-db-init.service" ];
         extraRequires = [ "bloud-db-init.service" ];
         waitFor = [];
+        preStartScript = waitForRedisScript;
         # Wire up configurator to run after container starts (sets admin password, etc.)
         bloudAppName = "authentik";
         bloudAgentPath = bloudCfg.agentPath;
@@ -196,8 +216,8 @@ in
         # bloud-db-init creates the host-agent database (needed by prestart hook)
         extraAfter = [ "bloud-db-init.service" ];
         extraRequires = [ "bloud-db-init.service" ];
-        waitFor = [
-        ];
+        waitFor = [];
+        preStartScript = waitForRedisScript;
       };
 
       # Authentik nginx proxy (adds X-Forwarded-Host header for correct OAuth URLs)
