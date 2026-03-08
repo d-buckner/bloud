@@ -220,6 +220,8 @@ in
       };
 
       # Authentik nginx proxy (adds X-Forwarded-Host header for correct OAuth URLs)
+      # Hard dependency on authentik-server: nginx resolves upstream hostnames at startup,
+      # so we must wait for apps-authentik-server to be healthy before starting.
       podman-apps-authentik-proxy = mkPodmanService {
         name = "apps-authentik-proxy";
         image = "nginx:alpine";
@@ -227,7 +229,12 @@ in
           "${configPath}/authentik-proxy.conf:/etc/nginx/conf.d/default.conf:ro"
         ];
         network = "apps-net";
-        dependsOn = [ "apps-network" "apps-authentik-server" ];
+        dependsOn = [ "apps-network" ];
+        extraAfter = [ "podman-apps-authentik-server.service" ];
+        extraRequires = [ "podman-apps-authentik-server.service" ];
+        waitFor = [
+          { container = "apps-authentik-server"; command = "wget -qO- http://localhost:9000/-/health/live/ 2>/dev/null || exit 1"; }
+        ];
       };
     } // lib.optionalAttrs appCfg.ldap.enable {
       # LDAP Outpost - provides LDAP protocol for apps like Jellyfin (TV/mobile clients)
