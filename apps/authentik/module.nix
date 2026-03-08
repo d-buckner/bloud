@@ -118,8 +118,9 @@ in
         envFile = "${secretsDir}/authentik.env";
         environment = {
           AUTHENTIK_REDIS__HOST = "apps-redis";
-          # Use native postgres via host gateway
-          AUTHENTIK_POSTGRESQL__HOST = "10.89.0.1";
+          # Connect to native postgres via Unix socket (avoids rootless podman netns boundary).
+          # The socket is mounted at /run/postgresql inside the container.
+          AUTHENTIK_POSTGRESQL__HOST = "/run/postgresql";
           AUTHENTIK_POSTGRESQL__USER = postgresUser;
           AUTHENTIK_POSTGRESQL__NAME = postgresDb;
           # AUTHENTIK_POSTGRESQL__PASSWORD loaded from envFile
@@ -139,6 +140,9 @@ in
           "${configPath}/authentik-templates:/templates:z"
           # Mount custom blueprints alongside default ones (don't replace /blueprints entirely)
           "${configPath}/authentik-blueprints:/blueprints/custom:z"
+          # Mount postgres Unix socket so containers can reach the native postgres service
+          # without crossing the rootless podman / root netns boundary.
+          "/run/postgresql:/run/postgresql:ro"
         ];
         network = "apps-net";
         dependsOn = [ "apps-network" "apps-redis" ];
@@ -163,8 +167,8 @@ in
         envFile = "${secretsDir}/authentik.env";
         environment = {
           AUTHENTIK_REDIS__HOST = "apps-redis";
-          # Use native postgres via host gateway
-          AUTHENTIK_POSTGRESQL__HOST = "10.89.0.1";
+          # Connect to native postgres via Unix socket (avoids rootless podman netns boundary).
+          AUTHENTIK_POSTGRESQL__HOST = "/run/postgresql";
           AUTHENTIK_POSTGRESQL__USER = postgresUser;
           AUTHENTIK_POSTGRESQL__NAME = postgresDb;
           # AUTHENTIK_POSTGRESQL__PASSWORD loaded from envFile
@@ -176,6 +180,9 @@ in
           "${configPath}/authentik-certs:/certs:z"
           # Worker needs access to blueprints for discovery
           "${configPath}/authentik-blueprints:/blueprints/custom:z"
+          # Mount postgres Unix socket so containers can reach the native postgres service
+          # without crossing the rootless podman / root netns boundary.
+          "/run/postgresql:/run/postgresql:ro"
         ];
         network = "apps-net";
         dependsOn = [ "apps-network" "apps-redis" ];
