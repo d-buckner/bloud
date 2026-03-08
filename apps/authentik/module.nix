@@ -30,7 +30,7 @@ let
         echo "Redis not ready after 10s, giving up"
         exit 1
       fi
-      sleep 0.2
+      sleep 0.5
     done
   '';
 in
