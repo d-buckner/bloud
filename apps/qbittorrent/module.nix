@@ -1,13 +1,13 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
   mkPodmanService = import ../../nixos/lib/podman-service.nix { inherit pkgs lib; };
   bloudCfg = config.bloud;
   appCfg = config.bloud.apps.qbittorrent;
   configPath = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
 in
-mkBloudApp {
+mkPodmanApp {
   name = "qbittorrent";
   description = "Feature-rich BitTorrent client with Flood web UI";
 
