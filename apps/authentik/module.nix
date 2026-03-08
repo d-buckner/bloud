@@ -21,17 +21,16 @@ let
   # Runs on the host (as the bloud user) — socket is world-accessible (perm 777).
   waitForRedisScript = pkgs.writeShellScript "wait-for-redis-socket" ''
     echo "Waiting for native redis socket to be ready..."
-    for i in $(seq 1 30); do
+    for i in $(seq 1 50); do
       if ${pkgs.redis}/bin/redis-cli -s /run/redis-bloud/redis.sock ping > /dev/null 2>&1; then
         echo "Redis is ready"
         exit 0
       fi
-      if [ "$i" -eq 30 ]; then
-        echo "Redis not ready after 30s, giving up"
+      if [ "$i" -eq 50 ]; then
+        echo "Redis not ready after 10s, giving up"
         exit 1
       fi
-      echo "Waiting for redis... ($i/30)"
-      sleep 1
+      sleep 0.2
     done
   '';
 in
