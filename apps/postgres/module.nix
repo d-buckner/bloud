@@ -37,12 +37,16 @@ in
       #   127.0.0.1/32   — TCP localhost (host-agent, miniflux, etc.)
       #   ::1/128        — TCP IPv6 localhost
       #   10.89.0.0/24   — apps-net podman bridge subnet (Authentik containers)
+      # The 10.89.0.0/24 subnet matches the fixed apps-net podman bridge network.
+      # See podman-apps-network in nixos/bloud.nix — must be kept in sync.
       authentication = lib.mkForce ''
         local all all              trust
         host  all all 127.0.0.1/32 trust
         host  all all ::1/128      trust
         host  all all 10.89.0.0/24 trust
       '';
+
+      settings.port = appCfg.port;
 
       # Declarative database creation — idempotent, runs on every boot via ExecStartPost.
       # Each app that needs a DB adds to this list in its own module.nix.
