@@ -117,7 +117,10 @@ in
         # AUTHENTIK_BOOTSTRAP_TOKEN, AUTHENTIK_POSTGRESQL__PASSWORD
         envFile = "${secretsDir}/authentik.env";
         environment = {
-          AUTHENTIK_REDIS__HOST = "apps-redis";
+          # Connect to native redis via Unix socket (avoids rootless podman netns boundary).
+          # The socket is mounted at /run/redis-bloud inside the container.
+          # NixOS services.redis.servers.bloud creates RuntimeDirectory=redis-bloud.
+          AUTHENTIK_REDIS__HOST = "unix:///run/redis-bloud/redis.sock";
           # Connect to native postgres via Unix socket (avoids rootless podman netns boundary).
           # The socket is mounted at /run/postgresql inside the container.
           AUTHENTIK_POSTGRESQL__HOST = "/run/postgresql";
@@ -143,16 +146,16 @@ in
           # Mount postgres Unix socket so containers can reach the native postgres service
           # without crossing the rootless podman / root netns boundary.
           "/run/postgresql:/run/postgresql:ro"
+          # Mount redis Unix socket so containers can reach the native redis service.
+          "/run/redis-bloud:/run/redis-bloud:ro"
         ];
         network = "apps-net";
-        dependsOn = [ "apps-network" "apps-redis" ];
+        dependsOn = [ "apps-network" ];
         userns = "keep-id";
         # bloud-db-init creates the host-agent database (needed by prestart hook)
         extraAfter = [ "bloud-db-init.service" ];
         extraRequires = [ "bloud-db-init.service" ];
-        waitFor = [
-          { container = "apps-redis"; command = "redis-cli ping"; }
-        ];
+        waitFor = [];
         # Wire up configurator to run after container starts (sets admin password, etc.)
         bloudAppName = "authentik";
         bloudAgentPath = bloudCfg.agentPath;
@@ -166,7 +169,8 @@ in
         # Load secrets from env file: AUTHENTIK_SECRET_KEY, AUTHENTIK_POSTGRESQL__PASSWORD
         envFile = "${secretsDir}/authentik.env";
         environment = {
-          AUTHENTIK_REDIS__HOST = "apps-redis";
+          # Connect to native redis via Unix socket (avoids rootless podman netns boundary).
+          AUTHENTIK_REDIS__HOST = "unix:///run/redis-bloud/redis.sock";
           # Connect to native postgres via Unix socket (avoids rootless podman netns boundary).
           AUTHENTIK_POSTGRESQL__HOST = "/run/postgresql";
           AUTHENTIK_POSTGRESQL__USER = postgresUser;
@@ -183,15 +187,16 @@ in
           # Mount postgres Unix socket so containers can reach the native postgres service
           # without crossing the rootless podman / root netns boundary.
           "/run/postgresql:/run/postgresql:ro"
+          # Mount redis Unix socket so containers can reach the native redis service.
+          "/run/redis-bloud:/run/redis-bloud:ro"
         ];
         network = "apps-net";
-        dependsOn = [ "apps-network" "apps-redis" ];
+        dependsOn = [ "apps-network" ];
         userns = "keep-id";
         # bloud-db-init creates the host-agent database (needed by prestart hook)
         extraAfter = [ "bloud-db-init.service" ];
         extraRequires = [ "bloud-db-init.service" ];
         waitFor = [
-          { container = "apps-redis"; command = "redis-cli ping"; }
         ];
       };
 
