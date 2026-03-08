@@ -133,12 +133,14 @@ let
 
   customOptions = lib.mapAttrs mkOption options;
 
-  # Database init service (if database is specified)
+  # Database init service (if database is specified).
+  # Uses psql directly — postgres is now a native NixOS service, not a Podman container.
   dbInitService = lib.optionalAttrs (database != null) {
     "${serviceName}-db-init" = {
       description = "Initialize ${name} database";
-      after = [ "podman-apps-postgres.service" ];
-      requires = [ "podman-apps-postgres.service" ];
+      # postgres is a system service; by the time user services start it should be running.
+      # Poll pg_isready as a safety check (no direct systemd dep across user/system boundary).
+      after = [ "bloud-init-secrets.service" ];
       before = [ "podman-${serviceName}.service" ];
       wantedBy = [ "bloud-apps.target" ];
       partOf = [ "bloud-apps.target" ];
@@ -149,19 +151,29 @@ let
           set -e
           echo "Waiting for postgres to be ready..."
           for i in {1..30}; do
-            if ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${cfg.postgresUser} -d ${cfg.postgresUser} -c "SELECT 1" &>/dev/null; then
+            if ${config.services.postgresql.package}/bin/pg_isready \
+                -h 127.0.0.1 \
+                -U ${cfg.postgresUser} > /dev/null 2>&1; then
               echo "Postgres is ready"
               break
             fi
-            if [ $i -eq 30 ]; then
-              echo "ERROR: Postgres not ready after 60 seconds, giving up"
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: Postgres not ready after 30 seconds, giving up"
               exit 1
             fi
             echo "Waiting for postgres... ($i/30)"
             sleep 2
           done
-          ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${cfg.postgresUser} -c "CREATE DATABASE ${database};" 2>/dev/null || echo "Database ${database} already exists"
-          ${pkgs.podman}/bin/podman exec apps-postgres psql -U ${cfg.postgresUser} -c "GRANT ALL PRIVILEGES ON DATABASE ${database} TO ${cfg.postgresUser};" || true
+          ${config.services.postgresql.package}/bin/psql \
+            -U ${cfg.postgresUser} \
+            -h 127.0.0.1 \
+            -c "CREATE DATABASE \"${database}\"" 2>/dev/null \
+            || echo "Database ${database} already exists"
+          ${config.services.postgresql.package}/bin/psql \
+            -U ${cfg.postgresUser} \
+            -h 127.0.0.1 \
+            -c "GRANT ALL PRIVILEGES ON DATABASE \"${database}\" TO \"${cfg.postgresUser}\"" \
+            || true
           echo "${name} database initialized"
         '';
       };
