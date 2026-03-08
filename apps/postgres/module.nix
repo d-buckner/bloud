@@ -48,10 +48,12 @@ in
 
       settings = {
         port = appCfg.port;
-        # Listen on localhost and the apps-net bridge gateway so Authentik containers
-        # can connect. 10.89.0.1 is the host-side gateway of the apps-net podman network.
-        # Must be kept in sync with the subnet in nixos/bloud.nix.
-        listen_addresses = lib.mkForce "127.0.0.1,10.89.0.1";
+        # Listen on all interfaces so Authentik containers (and any future workloads)
+        # can connect regardless of which bridge address is in use. Access control is
+        # enforced by pg_hba.conf above — only local sockets and the apps-net subnet
+        # are trusted. This avoids binding to a specific interface IP that may not exist
+        # at service startup time (e.g. the podman bridge comes up later as a user service).
+        listen_addresses = lib.mkForce "*";
       };
 
       # Declarative database creation — idempotent, runs on every boot via ExecStartPost.
