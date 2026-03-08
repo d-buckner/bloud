@@ -1,14 +1,14 @@
-# mkBloudApp - Helper for creating Bloud app modules
+# mkPodmanApp - Helper for creating Bloud Podman container app modules
 #
-# Standard way to define apps. Handles container setup, database init,
+# Standard way to define Podman-based apps. Handles container setup, database init,
 # volume mounts, and systemd service creation.
 #
 # Usage:
 #   { config, pkgs, lib, ... }:
 #   let
-#     mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+#     mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
 #   in
-#   mkBloudApp {
+#   mkPodmanApp {
 #     name = "myapp";
 #     description = "My App description";
 #     image = "myapp/myapp:latest";

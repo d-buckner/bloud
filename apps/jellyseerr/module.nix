@@ -1,9 +1,9 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
 in
-mkBloudApp {
+mkPodmanApp {
   name = "jellyseerr";
   description = "Media request and discovery tool for Jellyfin";
 
