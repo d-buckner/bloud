@@ -468,6 +468,43 @@ func doDeploy(cfg pveConfig, isoSource string) int {
 	return 0
 }
 
+// ── Builder host helpers ────────────────────────────────────────────────────
+
+// getBuilderHost returns the BLOUD_BUILDER_HOST env var (e.g. "builder@192.168.0.105").
+// Empty string means no builder host is configured.
+func getBuilderHost() string {
+	return os.Getenv("BLOUD_BUILDER_HOST")
+}
+
+// builderSSHExec runs a command on the builder host using the default SSH key.
+func builderSSHExec(host, cmd string) (string, error) {
+	c := exec.Command("ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=10",
+		"-o", "LogLevel=ERROR",
+		host,
+		cmd,
+	)
+	out, err := c.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// builderSSHExecStream runs a command on the builder host, streaming output.
+func builderSSHExecStream(host, cmd string) error {
+	c := exec.Command("ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=10",
+		"-o", "LogLevel=ERROR",
+		host,
+		cmd,
+	)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
 // doBuild rsyncs source to the build VM, builds the ISO, then copies it
 // Mac→Proxmox ISO storage — replacing the normal ISO download step.
 func doBuild(cfg pveConfig) int {
