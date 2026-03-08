@@ -13,6 +13,10 @@
  */
 
 import { apps, loading, error } from '$lib/stores/apps';
+import { writable } from 'svelte/store';
+
+// Names of apps whose install has been triggered but not yet reflected in the apps store via SSE
+export const pendingInstalls = writable<Set<string>>(new Set());
 import { layout } from '$lib/stores/layout';
 import {
 	fetchInstalledApps,
@@ -22,7 +26,7 @@ import {
 	type RenameResult,
 } from '$lib/clients/appClient';
 import { connectSSE, disconnectSSE } from '$lib/api/sse';
-import type { InstallResult, UninstallResult } from '$lib/types';
+import { type InstallResult, type UninstallResult, AppStatus } from '$lib/types';
 
 export { renameApp, type RenameResult };
 
@@ -53,6 +57,13 @@ export async function initApps(): Promise<void> {
 		onApps: (appList) => {
 			apps.set(appList);
 			error.set(null);
+			// Clear pending installs that now have real status from the backend
+			pendingInstalls.update((pending) => {
+				if (pending.size === 0) return pending;
+				const appNames = new Set(appList.map((a) => a.name));
+				const next = new Set([...pending].filter((n) => !appNames.has(n)));
+				return next.size === pending.size ? pending : next;
+			});
 			// Refresh layout for cross-device sync
 			layout.refresh();
 		},
@@ -75,7 +86,7 @@ export function disconnectApps(): void {
  * Install an app with optional integration choices
  *
  * Adds the app to the layout immediately so it appears on the grid.
- * App status (installing, running, etc.) is tracked in the apps store.
+ * Marks as pending so the UI can show 'installing' before SSE arrives.
  */
 export async function installApp(
 	name: string,
@@ -83,6 +94,10 @@ export async function installApp(
 ): Promise<InstallResult> {
 	// Add to layout so it shows on the grid immediately
 	layout.addApp(name);
+
+	// Mark as pending so the catalog can show 'installing' before SSE arrives
+	pendingInstalls.update((s) => new Set(s).add(name));
+
 	return apiInstall(name, choices);
 }
 
@@ -95,7 +110,7 @@ export async function installApp(
 export async function uninstallApp(name: string): Promise<UninstallResult> {
 	// Optimistic update: set status to 'uninstalling' immediately
 	apps.update((current) =>
-		current.map((app) => (app.name === name ? { ...app, status: 'uninstalling' as const } : app))
+		current.map((app) => (app.name === name ? { ...app, status: AppStatus.Uninstalling } : app))
 	);
 
 	try {
@@ -106,7 +121,7 @@ export async function uninstallApp(name: string): Promise<UninstallResult> {
 	} catch (err) {
 		// Revert optimistic update on error
 		apps.update((current) =>
-			current.map((app) => (app.name === name ? { ...app, status: 'running' as const } : app))
+			current.map((app) => (app.name === name ? { ...app, status: AppStatus.Running } : app))
 		);
 		throw err;
 	}
