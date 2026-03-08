@@ -1,45 +1,77 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
-  bloudCfg = config.bloud;
-  secretsDir = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
+  appCfg = config.bloud.apps.postgres;
 in
-mkBloudApp {
-  name = "postgres";
-  description = "PostgreSQL database for apps";
-  containerName = "apps-postgres";
-  # serviceName should match containerName for consistent dependency resolution
-  serviceName = "apps-postgres";
+{
+  options.bloud.apps.postgres = {
+    enable = lib.mkEnableOption "PostgreSQL database for apps";
 
-  image = "postgres:16-alpine";
-  # Expose on host port for apps using host networking (e.g., Miniflux with OIDC)
-  port = 5432;
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "apps";
+      description = "PostgreSQL role used by all Bloud apps";
+    };
 
-  options = {
-    user = { default = "apps"; description = "PostgreSQL user"; };
-    database = { default = "apps"; description = "Default database name"; };
+    database = lib.mkOption {
+      type = lib.types.str;
+      default = "apps";
+      description = "Default database name (also used as the role's owned database)";
+    };
+
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 5432;
+      description = "PostgreSQL port";
+    };
   };
 
-  # Load POSTGRES_PASSWORD from env file at container start time
-  envFile = "${secretsDir}/postgres.env";
+  config = lib.mkIf appCfg.enable {
+    services.postgresql = {
+      enable = true;
+      package = pkgs.postgresql_16;
 
-  environment = cfg: {
-    POSTGRES_USER = cfg.user;
-    POSTGRES_DB = cfg.database;
-    # POSTGRES_PASSWORD loaded from envFile
-  };
+      # Trust auth: homelab machine — if you can log in to the box you can access the DB.
+      # Covers:
+      #   local          — unix socket connections (system services running as postgres)
+      #   127.0.0.1/32   — TCP localhost (host-agent, miniflux, etc.)
+      #   ::1/128        — TCP IPv6 localhost
+      #   10.89.0.0/24   — apps-net podman bridge subnet (Authentik containers)
+      authentication = lib.mkForce ''
+        local all all              trust
+        host  all all 127.0.0.1/32 trust
+        host  all all ::1/128      trust
+        host  all all 10.89.0.0/24 trust
+      '';
 
-  # Use explicit volume since data path is "apps-postgres" not "postgres"
-  volumes = cfg: [ "${cfg.configPath}/apps-postgres:/var/lib/postgresql/data:Z" ];
-  userns = "keep-id:uid=70,gid=70";
+      # Declarative database creation — idempotent, runs on every boot via ExecStartPost.
+      # Each app that needs a DB adds to this list in its own module.nix.
+      ensureDatabases = [ appCfg.database "bloud" ];
 
-  # Create data directory manually
-  extraConfig = cfg: {
-    bloud.pullImages = [ "postgres:16-alpine" ];
-    system.activationScripts.bloud-apps-postgres-dirs = lib.stringAfter [ "users" ] ''
-      mkdir -p ${cfg.configPath}/apps-postgres
-      chown -R ${cfg.bloudUser}:users ${cfg.configPath}/apps-postgres
-    '';
+      # Create the apps role. ensureDBOwnership=true makes it own the "apps" database.
+      ensureUsers = [{
+        name = appCfg.user;
+        ensureDBOwnership = true;
+      }];
+    };
+
+    # Grant SUPERUSER to the apps role so it can access all databases and schemas
+    # without per-database GRANT statements (PostgreSQL 15+ removed public schema grants).
+    # This runs on every boot after postgresql.service and is idempotent.
+    systemd.services.bloud-postgresql-setup = {
+      description = "Grant SUPERUSER to Bloud apps PostgreSQL role";
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        User = "postgres";
+        ExecStart = pkgs.writeShellScript "bloud-postgres-setup" ''
+          ${config.services.postgresql.package}/bin/psql \
+            -c "ALTER ROLE ${appCfg.user} SUPERUSER LOGIN;"
+        '';
+      };
+    };
   };
 }
