@@ -1018,9 +1018,8 @@ func cmdStartPVE(args []string) int {
 		return 1
 	}
 
-	// Stream journal in background while waiting for services
+	// Stream journal in background while waiting for services (warnings/errors only to reduce noise)
 	log(fmt.Sprintf("Waiting for Bloud services (timeout: %ds)...", pveServiceTimeout))
-	log("Streaming VM journal...")
 	fmt.Println()
 
 	ctx, cancelJournal := context.WithCancel(context.Background())
@@ -1031,7 +1030,7 @@ func cmdStartPVE(args []string) int {
 			"-o", "UserKnownHostsFile=/dev/null",
 			"-o", "LogLevel=ERROR",
 			pveVMSSHUser+"@"+vmIP,
-			"journalctl --follow --no-pager -o short-iso",
+			"journalctl --follow --no-pager -o short-iso -p warning",
 		)
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
