@@ -167,7 +167,6 @@
 								{/each}
 							</ul>
 						</div>
-					{:else}
 					{/if}
 				{/if}
 			</div>
