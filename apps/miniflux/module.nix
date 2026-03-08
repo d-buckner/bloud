@@ -1,11 +1,11 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
   bloudCfg = config.bloud;
   secretsDir = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
 in
-mkBloudApp {
+mkPodmanApp {
   name = "miniflux";
   description = "Miniflux RSS reader";
   image = "miniflux/miniflux:latest";

@@ -1,13 +1,13 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
   bloudCfg = config.bloud;
   secretsDir = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
   authentikCfg = config.bloud.apps.authentik;
   authentikEnabled = authentikCfg.enable or false;
 in
-mkBloudApp {
+mkPodmanApp {
   name = "actual-budget";
   description = "Actual Budget";
   image = "actualbudget/actual-server:latest";

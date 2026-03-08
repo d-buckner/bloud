@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkBloudApp = import ../../nixos/lib/bloud-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
 
   # LDAP Authentication plugin for Jellyfin
   # This enables authentication via Authentik's LDAP outpost
@@ -10,7 +10,7 @@ let
     hash = "sha256-wjhsABvkOcmUYoCgLWJhDynjJdQJToO9MSId4/eqIK4=";
   };
 in
-mkBloudApp {
+mkPodmanApp {
   name = "jellyfin";
   description = "Free software media system for streaming movies, TV, and music";
 
