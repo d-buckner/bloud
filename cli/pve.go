@@ -523,6 +523,7 @@ func doBuild(cfg pveConfig) int {
 
 	log(fmt.Sprintf("Syncing source to builder (%s)...", host))
 	rsync := exec.Command("rsync", "-av", "--delete",
+		"--exclude=.git/",
 		"--exclude=build/",
 		"--exclude=node_modules/",
 		"--exclude=.direnv/",
@@ -563,6 +564,8 @@ npm run build --workspace=@bloud/installer-web
 cp -r services/installer/web/build build/installer-web
 
 echo '==> Staging artifacts for Nix...'
+git init -q 2>/dev/null || true
+git add -A
 git add -f build/
 
 echo '==> Building ISO...'
