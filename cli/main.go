@@ -216,11 +216,12 @@ func printUsage() {
 		fmt.Println("  checks                Run health checks against running VM")
 		fmt.Println("  install <app>         Install an app via API")
 		fmt.Println("  uninstall <app>       Uninstall an app via API")
-		fmt.Println("  setup-builder         Provision or update the ISO build VM (VMID 9998)")
+		fmt.Println("  setup-builder         Provision BLOUD_BUILDER_HOST with Go + Node via Nix")
 		fmt.Println()
 		fmt.Println("Environment:")
 		fmt.Println("  BLOUD_PVE_HOST        Proxmox SSH target (e.g. root@192.168.0.62)")
 		fmt.Println("  BLOUD_PVE_VMID        VM ID (default: 9999)")
+		fmt.Println("  BLOUD_BUILDER_HOST    SSH target for local ISO builds (e.g. builder@192.168.0.105)")
 		fmt.Println()
 		fmt.Println("Typical workflow:")
 		fmt.Println("  ./bloud start --install               # full install (first time)")
@@ -233,7 +234,7 @@ func printUsage() {
 		fmt.Println("Other examples:")
 		fmt.Println("  ./bloud start                         # boot live ISO (manual install)")
 		fmt.Println("  ./bloud start ./bloud.iso --install   # boot local ISO + auto-install")
-		fmt.Println("  ./bloud start --build                 # build ISO on builder VM and boot")
+		fmt.Println("  ./bloud start --build                 # build ISO on BLOUD_BUILDER_HOST and boot")
 		fmt.Println("  ./bloud start --skip-deploy           # re-run checks on existing VM")
 		return
 	}
