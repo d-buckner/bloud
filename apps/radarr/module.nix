@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; appDir = ./.; };
 in
 mkPodmanApp {
   name = "radarr";
@@ -27,5 +27,4 @@ mkPodmanApp {
   ];
 
   dataDir = false;
-  metadataFile = ./metadata.yaml;
 }
