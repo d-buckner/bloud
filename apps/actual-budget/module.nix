@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; appDir = ./.; };
   bloudCfg = config.bloud;
   secretsDir = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
   authentikCfg = config.bloud.apps.authentik;
@@ -44,6 +44,4 @@ mkPodmanApp {
     # ACTUAL_OPENID_CLIENT_SECRET, ACTUAL_OPENID_SERVER_HOSTNAME) are written to the env file
     # at runtime by the host-agent prestart hook, using detected local IPs.
   };
-
-  metadataFile = ./metadata.yaml;
 }
