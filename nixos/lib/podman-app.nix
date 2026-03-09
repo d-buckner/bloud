@@ -70,12 +70,11 @@
 }:
 
 let
-  mkPodmanService = import ./podman-service.nix { inherit pkgs lib; };
+  # Pass appDir so mkPodmanService auto-derives native deps from metadata.yaml.
+  mkPodmanService = import ./podman-service.nix { inherit pkgs lib; inherit appDir; };
   nativeDeps = import ./metadata.nix { inherit pkgs lib; };
 
-  # Auto-derive native service deps from metadata.yaml (IFD) when appDir is provided.
-  # Convention: integrations.*.compatible[].app → "{app}.service" (canonical alias).
-  # Native apps (postgres, redis) expose real system aliases; container app names are no-ops.
+  # Used for the db-init service's after list (mkPodmanService handles the main container).
   nativeIntegrationDeps = if appDir == null then [] else nativeDeps (appDir + "/metadata.yaml");
 
   # References to other configs
@@ -190,11 +189,9 @@ let
     };
   };
 
-  # Extra systemd dependencies for database init + native integration deps
+  # Extra systemd dependencies for database init (native deps handled by mkPodmanService)
   dbExtraAfter = lib.optionals (database != null) [ "${serviceName}-db-init.service" ];
   dbExtraRequires = lib.optionals (database != null) [ "${serviceName}-db-init.service" ];
-  containerExtraAfter = dbExtraAfter ++ nativeIntegrationDeps;
-  containerExtraRequires = dbExtraRequires ++ nativeIntegrationDeps;
 
   # Port option (only if port is specified)
   portOption = lib.optionalAttrs (port != null) {
@@ -245,8 +242,8 @@ in
           volumes = allVolumes;
           network = network;
           dependsOn = [ "apps-network" ] ++ normalizedDependsOn;
-          extraAfter = containerExtraAfter;
-          extraRequires = containerExtraRequires;
+          extraAfter = dbExtraAfter;
+          extraRequires = dbExtraRequires;
           # Bloud configurator hooks (uses dev path for now, will be packaged later)
           bloudAppName = name;
           bloudAgentPath = config.bloud.agentPath;
