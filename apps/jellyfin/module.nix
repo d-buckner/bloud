@@ -38,6 +38,8 @@ mkPodmanApp {
     bloud.apps.authentik.ldap.enable = true;
   };
 
+  metadataFile = ./metadata.yaml;
+
   # Pre-install LDAP plugin by extracting it to the plugins directory
   extraServices = cfg: {
     jellyfin-ldap-plugin = {

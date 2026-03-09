@@ -67,7 +67,7 @@ pkgs.nixosTest {
 
     # Verify native PostgreSQL is running (system service, starts automatically)
     machine.wait_until_succeeds(
-      "systemctl is-active postgresql.service",
+      "systemctl is-active postgres.service",
       timeout=30
     )
 
@@ -100,7 +100,7 @@ pkgs.nixosTest {
     )
 
     # Verify all services are running
-    machine.succeed("systemctl is-active postgresql.service")
+    machine.succeed("systemctl is-active postgres.service")
     machine.succeed("sudo -u bloud systemctl --user is-active podman-apps-redis.service")
     machine.succeed("sudo -u bloud systemctl --user is-active podman-traefik.service")
 

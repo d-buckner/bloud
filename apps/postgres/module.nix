@@ -72,6 +72,23 @@ in
       }];
     };
 
+    # Canonical alias so app modules can declare `postgres.service` as a dependency
+    # without knowing the NixOS-generated service name (postgresql.service).
+    # Convention: native apps expose {appName}.service for systemd dependency tracking.
+    # Depends on bloud-postgresql-setup (which itself requires postgresql.service),
+    # so callers are guaranteed both postgres running and initial setup complete.
+    systemd.services.postgres = {
+      description = "PostgreSQL (Bloud canonical alias)";
+      requires = [ "bloud-postgresql-setup.service" ];
+      after = [ "bloud-postgresql-setup.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.coreutils}/bin/true";
+      };
+      wantedBy = [ "multi-user.target" ];
+    };
+
     # Grant SUPERUSER to the apps role so it can access all databases and schemas
     # without per-database GRANT statements (PostgreSQL 15+ removed public schema grants).
     # This runs on every boot after postgresql.service and is idempotent.

@@ -104,6 +104,8 @@ CONF
     };
   };
 
+  metadataFile = ./metadata.yaml;
+
   extraConfig = cfg: {
     # Create data directories
     system.activationScripts."bloud-qbittorrent-dirs" = lib.stringAfter [ "users" ] ''
