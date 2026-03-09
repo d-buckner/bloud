@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; appDir = ./.; };
   mkPodmanService = import ../../nixos/lib/podman-service.nix { inherit pkgs lib; };
   bloudCfg = config.bloud;
   appCfg = config.bloud.apps.qbittorrent;
@@ -103,8 +103,6 @@ CONF
       extraRequires = [ "qbittorrent-init.service" ];
     };
   };
-
-  metadataFile = ./metadata.yaml;
 
   extraConfig = cfg: {
     # Create data directories

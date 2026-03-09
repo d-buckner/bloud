@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; appDir = ./.; };
 
   # LDAP Authentication plugin for Jellyfin
   # This enables authentication via Authentik's LDAP outpost
@@ -37,8 +37,6 @@ mkPodmanApp {
   extraConfig = cfg: {
     bloud.apps.authentik.ldap.enable = true;
   };
-
-  metadataFile = ./metadata.yaml;
 
   # Pre-install LDAP plugin by extracting it to the plugins directory
   extraServices = cfg: {

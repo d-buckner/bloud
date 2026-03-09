@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; appDir = ./.; };
   bloudCfg = config.bloud;
   secretsDir = "/home/${bloudCfg.user}/.local/share/${bloudCfg.dataDir}";
 in
@@ -36,8 +36,6 @@ mkPodmanApp {
     # OAUTH2_CLIENT_ID, OAUTH2_CLIENT_SECRET, etc.) are written to the env file at runtime
     # by the host-agent prestart hook, using detected local IPs for dynamic host support.
   };
-
-  metadataFile = ./metadata.yaml;
 
   # All runtime configuration handled by Go configurator:
   # apps/miniflux/configurator.go

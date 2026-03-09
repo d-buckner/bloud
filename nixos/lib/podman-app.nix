@@ -36,10 +36,12 @@
 #   serviceName   - Override systemd service name (defaults to containerName)
 #   extraServices - Additional systemd services (attrset OR function cfg -> attrset)
 #   extraConfig   - Additional NixOS config (attrset OR function cfg -> attrset)
-#   metadataFile  - Path to metadata.yaml (auto-derives native service deps via IFD)
 #   envFile       - Environment file for secrets (loaded at container start)
+#
+# Pass appDir = ./. in the import to auto-derive native service deps from metadata.yaml:
+#   mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; appDir = ./.; };
 
-{ config, pkgs, lib }:
+{ config, pkgs, lib, appDir ? null }:
 
 {
   name,
@@ -65,31 +67,16 @@
   extraConfig ? {},
   # Environment file for secrets (loaded at container start, not Nix eval time)
   envFile ? null,
-  # Path to metadata.yaml for auto-deriving native service deps via IFD
-  metadataFile ? null,
 }:
 
 let
   mkPodmanService = import ./podman-service.nix { inherit pkgs lib; };
+  nativeDeps = import ./metadata.nix { inherit pkgs lib; };
 
-  # IFD: convert metadata.yaml → JSON at eval time so we can read it with builtins.fromJSON.
-  # yq-go is near-instant on these tiny files; IFD is allowed by default in NixOS flakes.
-  metadataJsonDrv = if metadataFile == null then null else
-    pkgs.runCommand "metadata-json" { buildInputs = [ pkgs.yq-go ]; } ''
-      yq -o=json ${metadataFile} > $out
-    '';
-  metadata = if metadataJsonDrv == null then {} else
-    builtins.fromJSON (builtins.readFile metadataJsonDrv);
-
-  # Derive native service deps from integrations.*.compatible[].app.
-  # Convention: each app name maps to "{app}.service" (canonical alias for native services).
-  # For native apps (postgres, redis) these resolve to real system service aliases.
-  # For container apps (qbittorrent, etc.) these are harmless no-ops in user context.
-  nativeIntegrationDeps = lib.unique (lib.flatten (
-    lib.mapAttrsToList (_: int:
-      map (compat: "${compat.app}.service") (int.compatible or [])
-    ) (metadata.integrations or {})
-  ));
+  # Auto-derive native service deps from metadata.yaml (IFD) when appDir is provided.
+  # Convention: integrations.*.compatible[].app → "{app}.service" (canonical alias).
+  # Native apps (postgres, redis) expose real system aliases; container app names are no-ops.
+  nativeIntegrationDeps = if appDir == null then [] else nativeDeps (appDir + "/metadata.yaml");
 
   # References to other configs
   bloudCfg = config.bloud;

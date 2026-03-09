@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; };
+  mkPodmanApp = import ../../nixos/lib/podman-app.nix { inherit config pkgs lib; appDir = ./.; };
 in
 mkPodmanApp {
   name = "adguard-home";
@@ -21,5 +21,4 @@ mkPodmanApp {
     "${cfg.appDataPath}/work:/opt/adguardhome/work:Z"
     "${cfg.appDataPath}/conf:/opt/adguardhome/conf:Z"
   ];
-  metadataFile = ./metadata.yaml;
 }
