@@ -1,16 +1,17 @@
-{ pkgs, lib, ... }:
-
-# Helper function to create a systemd user service for a podman container
-# This abstracts the common patterns for running containers with rootless podman
+# Pass appDir = ./. in the import to auto-derive native service deps from metadata.yaml:
+#   mkPodmanService = import ../../nixos/lib/podman-service.nix { inherit pkgs lib; appDir = ./.; };
 #
 # Parameters:
-#   waitFor - list of {container, command} to health check before starting
-#             e.g. [{ container = "postgres"; command = "pg_isready -U user"; }]
+#   waitFor      - list of {container, command} to health check before starting
 #   bloudAppName - if set, runs bloud-agent configure prestart/poststart hooks
 #   bloudAgentPath - path to bloud-agent binary (required if bloudAppName is set)
 
+{ pkgs, lib, appDir ? null }:
+
 { name, image, ports ? [], environment ? {}, volumes ? [], network ? null, dependsOn ? [], cmd ? [], userns ? null, waitFor ? [], extraAfter ? [], extraRequires ? [], bloudAppName ? null, bloudAgentPath ? null, envFile ? null, preStartScript ? null }:
 let
+  nativeDeps = import ./metadata.nix { inherit pkgs lib; };
+  nativeIntegrationDeps = if appDir == null then [] else nativeDeps (appDir + "/metadata.yaml");
   # Generate health check script for each waitFor entry
   mkHealthCheck = { container, command, timeout ? 60 }: ''
     echo "Waiting for ${container} to be ready..."
@@ -41,9 +42,9 @@ let
 in
 {
   description = "Podman container: ${name}";
-  after = [ "network-online.target" "bloud-init-secrets.service" ] ++ (map (dep: "podman-${dep}.service") dependsOn) ++ extraAfter;
+  after = [ "network-online.target" "bloud-init-secrets.service" ] ++ (map (dep: "podman-${dep}.service") dependsOn) ++ extraAfter ++ nativeIntegrationDeps;
   wants = [ "network-online.target" "bloud-init-secrets.service" ] ++ (map (dep: "podman-${dep}.service") dependsOn);
-  requires = extraRequires;
+  requires = extraRequires ++ nativeIntegrationDeps;
   wantedBy = [ "bloud-apps.target" ];
 
   # Add /run/wrappers/bin to PATH for newuidmap/newgidmap (rootless podman)
