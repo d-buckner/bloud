@@ -21,4 +21,5 @@ mkPodmanApp {
     "${cfg.appDataPath}/work:/opt/adguardhome/work:Z"
     "${cfg.appDataPath}/conf:/opt/adguardhome/conf:Z"
   ];
+  metadataFile = ./metadata.yaml;
 }

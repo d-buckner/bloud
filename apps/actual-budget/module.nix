@@ -44,4 +44,6 @@ mkPodmanApp {
     # ACTUAL_OPENID_CLIENT_SECRET, ACTUAL_OPENID_SERVER_HOSTNAME) are written to the env file
     # at runtime by the host-agent prestart hook, using detected local IPs.
   };
+
+  metadataFile = ./metadata.yaml;
 }

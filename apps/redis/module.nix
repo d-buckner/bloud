@@ -28,5 +28,20 @@ mkNativeApp {
       unixSocket = "/run/redis-bloud/redis.sock";
       unixSocketPerm = 777;
     };
+
+    # Canonical alias so app modules can declare `redis.service` as a dependency
+    # without knowing the NixOS-generated service name (redis-bloud.service).
+    # Convention: native apps expose {appName}.service for systemd dependency tracking.
+    systemd.services.redis = {
+      description = "Redis (Bloud canonical alias)";
+      requires = [ "redis-bloud.service" ];
+      after = [ "redis-bloud.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.coreutils}/bin/true";
+      };
+      wantedBy = [ "multi-user.target" ];
+    };
   };
 }
