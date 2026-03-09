@@ -19,4 +19,5 @@ mkPodmanApp {
   ];
 
   dataDir = false;
+  metadataFile = ./metadata.yaml;
 }

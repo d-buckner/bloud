@@ -37,6 +37,8 @@ mkPodmanApp {
     # by the host-agent prestart hook, using detected local IPs for dynamic host support.
   };
 
+  metadataFile = ./metadata.yaml;
+
   # All runtime configuration handled by Go configurator:
   # apps/miniflux/configurator.go
   # - PreStart: Creates traefik SSO redirect config (when Authentik enabled)
