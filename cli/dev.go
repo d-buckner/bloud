@@ -200,7 +200,6 @@ func cmdStartNative() int {
 	log("Ensuring data directories exist...")
 	for _, dir := range []string{
 		nativeDataDir + "/nix",
-		nativeDataDir + "/traefik/dynamic",
 	} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			errorf("Failed to create directory %s: %v", dir, err)
@@ -302,6 +301,7 @@ export BLOUD_PORT=3000
 export BLOUD_DATA_DIR="%s"
 export BLOUD_APPS_DIR="%s/apps"
 export BLOUD_NIX_CONFIG_DIR="%s/nix"
+export BLOUD_TRAEFIK_DYNAMIC_DIR="/var/lib/traefik/dynamic"
 export BLOUD_FLAKE_PATH="%s"
 export BLOUD_FLAKE_TARGET="dev-server"
 export BLOUD_NIXOS_PATH="%s/nixos"
