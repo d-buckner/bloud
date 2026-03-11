@@ -47,7 +47,8 @@ type Server struct {
 type ServerConfig struct {
 	AppsDir     string
 	ConfigDir   string
-	DataDir     string // Path to bloud data directory (for Traefik config, etc.)
+	DataDir           string // Path to bloud data directory
+	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	FlakePath   string
 	FlakeTarget string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
 	NixosPath   string
@@ -163,7 +164,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	// Use configured paths (set via env vars or defaults)
 	configPath := filepath.Join(s.cfg.ConfigDir, "apps.nix")
-	traefikConfigPath := filepath.Join(s.cfg.DataDir, "traefik", "dynamic", "apps-routes.yml")
+	traefikConfigPath := filepath.Join(s.cfg.TraefikDynamicDir, "apps-routes.yml")
 
 	s.logger.Info("orchestrator paths",
 		"flakePath", s.cfg.FlakePath,
