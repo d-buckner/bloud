@@ -89,12 +89,35 @@ let
   # Uses + prefix so hooks run as root — needed because native services run
   # as their own system users (not as the bloud user), but the configurator
   # binary and its output files are owned by the bloud user.
-  # NOTE: If a future app's NixOS module already sets ExecStartPre/Post,
-  # use a list here and handle ordering per-app.
+  # ExecStartPost uses mkBefore so the configurator runs before the readiness sentinel.
   hookConfig = lib.optionalAttrs (configuratorHooks && serviceName != null) {
     systemd.services.${serviceName}.serviceConfig = {
       ExecStartPre = lib.mkBefore [ "+${bloudCfg.agentPath} configure prestart ${name}" ];
-      ExecStartPost = [ "+${bloudCfg.agentPath} configure poststart ${name}" ];
+      ExecStartPost = lib.mkBefore [ "+${bloudCfg.agentPath} configure poststart ${name}" ];
+    };
+  };
+
+  # Readiness convention for native apps:
+  # - System service writes /run/bloud-ready/{name} in ExecStartPost (after configurator)
+  # - User-scope path unit watches for this file via inotify (no polling)
+  # - User-scope service is activated by the path unit, providing a dep target
+  #   that podman container services can declare Requires= on
+  readinessConfig = lib.optionalAttrs (serviceName != null) {
+    systemd.services.${serviceName}.serviceConfig = {
+      ExecStartPost = lib.mkAfter [ "+${pkgs.coreutils}/bin/touch /run/bloud-ready/${name}" ];
+    };
+    systemd.user.paths.${name} = {
+      description = "Watch for ${name} readiness sentinel";
+      pathConfig.PathExists = "/run/bloud-ready/${name}";
+      wantedBy = [ "default.target" ];
+    };
+    systemd.user.services.${name} = {
+      description = "${name} ready (user scope alias)";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.coreutils}/bin/true";
+      };
     };
   };
 
@@ -112,6 +135,7 @@ in
   config = lib.mkIf appCfg.enable (lib.mkMerge [
     resolvedNixosConfig
     hookConfig
+    readinessConfig
     mediaConfig
   ]);
 }

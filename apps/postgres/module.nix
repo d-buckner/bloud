@@ -72,6 +72,24 @@ in
       }];
     };
 
+    # User-scope readiness for postgres: watch the actual socket via inotify.
+    # The socket appearing IS the readiness signal — no sentinel file needed.
+    # Podman container services declare Requires=postgres.service (user scope).
+    systemd.user.paths.postgres = {
+      description = "Watch for PostgreSQL socket";
+      pathConfig.PathExists = "/run/postgresql/.s.PGSQL.5432";
+      wantedBy = [ "default.target" ];
+    };
+
+    systemd.user.services.postgres = {
+      description = "PostgreSQL ready (user scope alias)";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.coreutils}/bin/true";
+      };
+    };
+
     # Canonical alias so app modules can declare `postgres.service` as a dependency
     # without knowing the NixOS-generated service name (postgresql.service).
     # Convention: native apps expose {appName}.service for systemd dependency tracking.
