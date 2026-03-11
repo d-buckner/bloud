@@ -376,7 +376,7 @@ Set `BLOUD_PVE_HOST` in your `.env` file or environment, then:
 
 `BLOUD_PVE_HOST` can be set in a `.env` file at the project root — the CLI loads it automatically:
 ```
-BLOUD_PVE_HOST=root@192.168.0.62
+BLOUD_PVE_HOST=root@10.0.0.165
 ```
 
 ### After Changing NixOS Config
