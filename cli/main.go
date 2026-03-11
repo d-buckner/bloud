@@ -219,7 +219,7 @@ func printUsage() {
 		fmt.Println("  setup-builder         Provision BLOUD_BUILDER_HOST with Go + Node via Nix")
 		fmt.Println()
 		fmt.Println("Environment:")
-		fmt.Println("  BLOUD_PVE_HOST        Proxmox SSH target (e.g. root@192.168.0.62)")
+		fmt.Println("  BLOUD_PVE_HOST        Proxmox SSH target (e.g. root@10.0.0.165)")
 		fmt.Println("  BLOUD_PVE_VMID        VM ID (default: 9999)")
 		fmt.Println("  BLOUD_BUILDER_HOST    SSH target for local ISO builds (e.g. builder@192.168.0.105)")
 		fmt.Println()

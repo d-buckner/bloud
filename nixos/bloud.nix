@@ -91,6 +91,11 @@ in
       chown -R ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}/media
     '';
 
+    # Create /run/bloud-ready/ for native app readiness sentinels.
+    # Native apps write {name} here on ExecStartPost; user-scope path units watch
+    # for these files via inotify to signal readiness to podman container services.
+    systemd.tmpfiles.rules = [ "d /run/bloud-ready 0755 root root -" ];
+
     # Enable rootless Podman
     virtualisation.podman = {
       enable = true;
@@ -114,6 +119,7 @@ in
       description = "Create podman network for apps stack";
       wantedBy = [ "bloud-apps.target" ];
       before = [ "bloud-apps.target" ];
+      path = [ "/run/wrappers" pkgs.podman ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
