@@ -1,71 +1,64 @@
 { config, pkgs, lib, ... }:
 
 let
-  appCfg = config.bloud.apps.traefik;
-  bloudCfg = config.bloud;
-  mkPodmanService = import ../../nixos/lib/podman-service.nix { inherit pkgs lib; };
-
-  userHome = "/home/${bloudCfg.user}";
-  configPath = "${userHome}/.local/share/${bloudCfg.dataDir}";
+  mkNativeApp = import ../../nixos/lib/native-app.nix { inherit config pkgs lib; };
 in
-{
-  options.bloud.apps.traefik = {
-    enable = lib.mkEnableOption "Traefik reverse proxy";
-
-    port = lib.mkOption {
-      type = lib.types.int;
-      default = 8080;
-      description = "Port for Traefik web entrypoint (path-based routing)";
-    };
-
-    apiPort = lib.mkOption {
+mkNativeApp {
+  name = "traefik";
+  description = "Traefik reverse proxy";
+  port = 8080;
+  serviceName = "traefik";
+  # Traefik has no configurator — no runtime secrets or config injection needed
+  configuratorHooks = false;
+  options = {
+    apiPort = {
       type = lib.types.int;
       default = 3000;
       description = "Port for the host-agent API backend";
     };
-
-    uiPort = lib.mkOption {
+    uiPort = {
       type = lib.types.int;
       default = 5173;
       description = "Port for the Bloud UI (Vite dev server)";
     };
   };
 
-  config = lib.mkIf appCfg.enable {
-    bloud.pullImages = [ "traefik:v3.0" ];
-    # Create Traefik configuration files
-    # IMPORTANT: Use atomic writes (write to .tmp, then mv) to prevent Traefik from
-    # seeing truncated files during config reload. Non-atomic writes cause race conditions
-    # where Traefik reloads mid-write and sees empty/partial config.
+  nixosConfig = cfg: {
+    services.traefik = {
+      enable = true;
+      staticConfigOptions = {
+        entryPoints.web.address = ":${toString cfg.port}";
+        providers.file = {
+          directory = "/var/lib/traefik/dynamic/";
+          watch = true;
+        };
+        api.dashboard = true;
+        ping.entryPoint = "web";
+        log.level = "DEBUG";
+      };
+    };
+
+    # Add bloud user to traefik group so host-agent can write to the dynamic config dir.
+    users.users.${cfg.bloudUser}.extraGroups = [ "traefik" ];
+
+    # Dynamic config directory with setgid: new files inherit the traefik group.
+    # bloud user (in traefik group, mode 2775) can write; traefik service can read.
+    systemd.tmpfiles.rules = [
+      "d /var/lib/traefik/dynamic 2775 traefik traefik -"
+    ];
+
+    # Write static dynamic config files atomically on every NixOS activation.
+    # IMPORTANT: Use atomic writes (write to .tmp, then mv) to prevent Traefik
+    # from seeing truncated files during config reload.
+    # base.yml: static routes — UI, API, dashboard, common middlewares.
+    # apps-routes.yml: managed by host-agent traefikgen at runtime; only create
+    # placeholder on first activation, never overwrite an existing file.
     system.activationScripts.bloud-traefik-config = lib.stringAfter [ "users" ] ''
-      mkdir -p ${configPath}/traefik/dynamic
+      mkdir -p /var/lib/traefik/dynamic
+      chown traefik:traefik /var/lib/traefik/dynamic
+      chmod 2775 /var/lib/traefik/dynamic
 
-      # Main Traefik config (atomic write)
-      cat > ${configPath}/traefik/traefik.yml.tmp <<'EOF'
-entryPoints:
-  web:
-    address: ":${toString appCfg.port}"
-
-providers:
-  file:
-    directory: /etc/traefik/dynamic/
-    watch: true
-
-api:
-  dashboard: true
-
-ping:
-  entryPoint: web
-
-log:
-  level: DEBUG
-EOF
-      mv ${configPath}/traefik/traefik.yml.tmp ${configPath}/traefik/traefik.yml
-
-      # Base routes (static - UI, API, dashboard, common middlewares)
-      # App-specific routes are generated dynamically in apps-routes.yml by host-agent
-      # Atomic write to prevent Traefik from seeing truncated file
-      cat > ${configPath}/traefik/dynamic/base.yml.tmp <<'EOF'
+      cat > /var/lib/traefik/dynamic/base.yml.tmp <<'EOF'
 http:
   routers:
     # Traefik dashboard (access via /dashboard/)
@@ -130,19 +123,19 @@ http:
     embed-forwarded-headers:
       headers:
         customRequestHeaders:
-          X-Forwarded-Host: "localhost:${toString appCfg.port}"
+          X-Forwarded-Host: "localhost:${toString cfg.port}"
           X-Forwarded-Proto: "http"
 
   services:
     host-agent:
       loadBalancer:
         servers:
-          - url: "http://localhost:${toString appCfg.apiPort}"
+          - url: "http://localhost:${toString cfg.apiPort}"
 
     bloud-ui:
       loadBalancer:
         servers:
-          - url: "http://localhost:${toString appCfg.uiPort}"
+          - url: "http://localhost:${toString cfg.uiPort}"
 
     # Authentik server (serves outpost endpoints via embedded outpost)
     authentik-outpost:
@@ -150,36 +143,22 @@ http:
         servers:
           - url: "http://localhost:9001"
 EOF
-      mv ${configPath}/traefik/dynamic/base.yml.tmp ${configPath}/traefik/dynamic/base.yml
+      mv /var/lib/traefik/dynamic/base.yml.tmp /var/lib/traefik/dynamic/base.yml
+      chown traefik:traefik /var/lib/traefik/dynamic/base.yml
 
       # App routes (generated by host-agent traefikgen)
       # Create empty placeholder if not exists (atomic write)
-      if [ ! -f ${configPath}/traefik/dynamic/apps-routes.yml ]; then
-        cat > ${configPath}/traefik/dynamic/apps-routes.yml.tmp <<'EOF'
+      if [ ! -f /var/lib/traefik/dynamic/apps-routes.yml ]; then
+        cat > /var/lib/traefik/dynamic/apps-routes.yml.tmp <<'EOF'
 # Generated by Bloud - DO NOT EDIT MANUALLY
 # This file is managed by the Bloud host agent
 # Traefik watches this file for changes
 
 # No routable apps installed yet
 EOF
-        mv ${configPath}/traefik/dynamic/apps-routes.yml.tmp ${configPath}/traefik/dynamic/apps-routes.yml
+        mv /var/lib/traefik/dynamic/apps-routes.yml.tmp /var/lib/traefik/dynamic/apps-routes.yml
+        chown traefik:traefik /var/lib/traefik/dynamic/apps-routes.yml
       fi
-
-      chown -R ${bloudCfg.user}:users ${configPath}
     '';
-
-    # Traefik container service
-    systemd.user.services.podman-traefik = mkPodmanService {
-      name = "traefik";
-      image = "traefik:v3.0";
-      ports = [
-        "${toString appCfg.port}:${toString appCfg.port}"
-      ];
-      volumes = [
-        "${configPath}/traefik/traefik.yml:/etc/traefik/traefik.yml:ro"
-        "${configPath}/traefik/dynamic:/etc/traefik/dynamic:ro"
-      ];
-      network = "host";
-    };
   };
 }

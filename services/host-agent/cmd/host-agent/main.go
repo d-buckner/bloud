@@ -74,7 +74,8 @@ func runServer() {
 	server := api.NewServer(database, api.ServerConfig{
 		AppsDir:         cfg.AppsDir,
 		ConfigDir:       cfg.NixConfigDir,
-		DataDir:         cfg.DataDir,
+		DataDir:           cfg.DataDir,
+		TraefikDynamicDir: cfg.TraefikDynamicDir,
 		FlakePath:       cfg.FlakePath,
 		FlakeTarget:     cfg.FlakeTarget,
 		NixosPath:       cfg.NixosPath,
