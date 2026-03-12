@@ -3,6 +3,7 @@ import type { APIRequestContext } from '@playwright/test';
 interface SetupStatus {
   setupRequired: boolean;
   authentikReady: boolean;
+  authReady: boolean;
 }
 
 interface CreateUserResponse {
@@ -22,7 +23,7 @@ export class SmokeApi {
         const response = await this.request.get(`${this.baseUrl}/api/setup/status`);
         if (response.ok()) {
           const data: SetupStatus = await response.json();
-          if (data.authentikReady) return;
+          if (data.authentikReady && data.authReady) return;
         }
       } catch {
         // not up yet

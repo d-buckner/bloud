@@ -11,6 +11,7 @@ import (
 type SetupStatusResponse struct {
 	SetupRequired  bool `json:"setupRequired"`
 	AuthentikReady bool `json:"authentikReady"`
+	AuthReady      bool `json:"authReady"`
 }
 
 // CreateUserRequest represents the request body for POST /api/setup/create-user
@@ -39,9 +40,15 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 
 	authentikReady := s.authentikClient != nil && s.authentikClient.IsAvailable()
 
+	// Try to initialize auth on each poll so authReady reflects the current state.
+	if s.authConfig == nil {
+		s.tryInitAuth()
+	}
+
 	respondJSON(w, http.StatusOK, SetupStatusResponse{
 		SetupRequired:  !hasUsers,
 		AuthentikReady: authentikReady,
+		AuthReady:      s.authConfig != nil,
 	})
 }
 
@@ -128,28 +135,6 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("first user created successfully", "username", req.Username)
-
-	// Create a session so the user is immediately signed in without a second login prompt.
-	// We've already verified their identity by accepting their credentials to create the account.
-	if s.sessionStore != nil {
-		user, err := s.userStore.GetByUsername(req.Username)
-		if err == nil && user != nil {
-			ctx := r.Context()
-			session, err := s.sessionStore.Create(ctx, user.ID, user.Username)
-			if err == nil {
-				http.SetCookie(w, &http.Cookie{
-					Name:     sessionCookieName,
-					Value:    session.ID,
-					Path:     "/",
-					Expires:  session.ExpiresAt,
-					HttpOnly: true,
-					SameSite: http.SameSiteLaxMode,
-				})
-			} else {
-				s.logger.Warn("failed to create session after setup, user will need to log in manually", "error", err)
-			}
-		}
-	}
 
 	respondJSON(w, http.StatusOK, CreateUserResponse{
 		Success: true,
