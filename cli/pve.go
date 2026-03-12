@@ -1407,3 +1407,72 @@ func cmdSnapshotPVE(args []string) int {
 
 	return 0
 }
+
+// cmdSmokePVE builds a fresh ISO, deploys it to the Proxmox test VM, then runs
+// the Playwright smoke suite in smoke/ against http://bloud.local.
+//
+// Always implies --build and --install: a fresh ISO is built and installed every run.
+// VM is left running after completion for manual inspection.
+//
+// Flags:
+//
+//	--update-snapshots  Pass through to Playwright to refresh committed baseline images
+func cmdSmokePVE(args []string) int {
+	updateSnapshots := false
+	for _, arg := range args {
+		if arg == "--update-snapshots" {
+			updateSnapshots = true
+		}
+	}
+
+	// Build ISO + deploy VM + run installer + health checks
+	if code := cmdStartPVE([]string{"--build", "--install"}); code != 0 {
+		return code
+	}
+
+	root, err := getProjectRoot()
+	if err != nil {
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	smokeDir := filepath.Join(root, "smoke")
+
+	// Install node_modules if not present
+	if _, err := os.Stat(filepath.Join(smokeDir, "node_modules")); os.IsNotExist(err) {
+		log("Installing smoke test dependencies...")
+		npmCmd := exec.Command("npm", "ci")
+		npmCmd.Dir = smokeDir
+		npmCmd.Stdout = os.Stdout
+		npmCmd.Stderr = os.Stderr
+		if err := npmCmd.Run(); err != nil {
+			errorf("Failed to install smoke test dependencies: %v", err)
+			return 1
+		}
+	}
+
+	// Run Playwright smoke tests
+	log("Running smoke tests against http://bloud.local...")
+	fmt.Println()
+
+	playwrightArgs := []string{"playwright", "test"}
+	if updateSnapshots {
+		playwrightArgs = append(playwrightArgs, "--update-snapshots")
+	}
+
+	playwrightCmd := exec.Command("npx", playwrightArgs...)
+	playwrightCmd.Dir = smokeDir
+	playwrightCmd.Stdout = os.Stdout
+	playwrightCmd.Stderr = os.Stderr
+	if err := playwrightCmd.Run(); err != nil {
+		fmt.Println()
+		errorf("Smoke tests failed")
+		fmt.Printf("  View report: cd smoke && npx playwright show-report\n")
+		return 1
+	}
+
+	fmt.Println()
+	log("Smoke tests passed")
+	fmt.Printf("  VM is running. To tear down: ./bloud destroy\n")
+	return 0
+}
