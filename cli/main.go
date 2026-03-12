@@ -161,6 +161,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%sError:%s 'snapshot' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
 			exitCode = 1
 		}
+	case "smoke":
+		if isPVEMode() {
+			exitCode = cmdSmokePVE(args)
+		} else {
+			fmt.Fprintf(os.Stderr, "%sError:%s 'smoke' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
+			exitCode = 1
+		}
 	case "depgraph":
 		exitCode = cmdDepGraph()
 	case "installer":
@@ -206,6 +213,9 @@ func printUsage() {
 		fmt.Println("    --skip-deploy       Reuse existing VM (skip ISO upload + VM create)")
 		fmt.Println("    --pve-host <host>   Override Proxmox SSH target")
 		fmt.Println("    --vmid <id>         Override VM ID")
+		fmt.Println()
+		fmt.Println("Change validation:")
+		fmt.Println("  smoke [--update-snapshots]  Build ISO + full install + Playwright visual regression")
 		fmt.Println()
 		fmt.Println("VM management:")
 		fmt.Println("  stop                  Stop VM")
