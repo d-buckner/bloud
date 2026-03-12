@@ -91,6 +91,11 @@ in
       chown -R ${cfg.user}:users /home/${cfg.user}/.local/share/${cfg.dataDir}/media
     '';
 
+    # Allow system services to traverse into the bloud user's home dir.
+    # 711 = owner rwx, world x-only (can traverse directories, cannot list).
+    # Note: services with ProtectHome=true (e.g. traefik) use BindReadOnlyPaths instead.
+    users.users.${cfg.user}.homeMode = "711";
+
     # Create /run/bloud-ready/ for native app readiness sentinels.
     # Native apps write {name} here on ExecStartPost; user-scope path units watch
     # for these files via inotify to signal readiness to podman container services.
