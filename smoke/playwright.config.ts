@@ -17,8 +17,8 @@ export default defineConfig({
     actionTimeout: 30_000,
     navigationTimeout: 60_000,
   },
-  // 15 minutes: waitForSetupReady (5 min) + waitForAppRunning (5 min) + buffer
-  timeout: 900_000,
+  // 20 minutes: installer (~5 min) + reboot + services (~3 min) + setup + miniflux (~5 min) + buffer
+  timeout: 1_200_000,
   expect: {
     timeout: 10_000,
     toHaveScreenshot: {

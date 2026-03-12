@@ -10,11 +10,6 @@ interface CreateUserResponse {
   error?: string;
 }
 
-interface InstalledApp {
-  name: string;
-  status: 'running' | 'starting' | 'installing' | 'uninstalling' | 'stopped' | 'error';
-}
-
 export class SmokeApi {
   private readonly baseUrl = 'http://bloud.local';
 
@@ -49,34 +44,6 @@ export class SmokeApi {
     if (!data.success) {
       throw new Error(`Failed to create user: ${data.error}`);
     }
-  }
-
-  async installApp(name: string): Promise<void> {
-    const response = await this.request.post(`${this.baseUrl}/api/apps/${name}/install`, {
-      data: {},
-    });
-    if (!response.ok()) {
-      const text = await response.text();
-      throw new Error(`Failed to install ${name}: ${response.status()} - ${text}`);
-    }
-  }
-
-  async waitForAppRunning(name: string, timeoutMs = 5 * 60 * 1000): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const response = await this.request.get(`${this.baseUrl}/api/apps/installed`);
-        if (response.ok()) {
-          const apps: InstalledApp[] = await response.json();
-          const app = apps.find((a) => a.name === name);
-          if (app?.status === 'running') return;
-        }
-      } catch {
-        // not up yet
-      }
-      await sleep(10_000);
-    }
-    throw new Error(`Timeout waiting for ${name} to reach running state (5 minutes)`);
   }
 }
 
