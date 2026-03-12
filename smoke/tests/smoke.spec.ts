@@ -1,84 +1,95 @@
 import { test, expect } from '@playwright/test';
 import { SmokeApi } from '../lib/api';
+import { LoginPage } from '../lib/login-page';
 
 const TEST_USERNAME = 'smoketest';
 const TEST_PASSWORD = 'smoketest123';
 
 test('installer, setup wizard, miniflux install, and shell embed', async ({ page }) => {
-  // Use page.request so the session cookie from create-user flows through to page.goto()
   const api = new SmokeApi(page.request);
+  const loginPage = new LoginPage(page);
 
   // ── Installer ────────────────────────────────────────────────────────────────
 
-  // 1. Navigate to installer (live ISO serves it at bloud.local)
-  await page.goto('/');
-
-  // Wait for hardware detection — retry if the disk API fails on first load after boot
   const installButton = page.getByRole('button', { name: 'Install Bloud' });
-  await expect(async () => {
-    const retryBtn = page.getByRole('button', { name: 'Retry' });
-    if (await retryBtn.isVisible({ timeout: 0 })) {
-      await retryBtn.click();
-    }
-    await expect(installButton).toBeEnabled();
-  }).toPass({ timeout: 60_000, intervals: [3_000] });
 
-  // Screenshot: installer welcome page
-  await expect(page).toHaveScreenshot('installer-welcome.png', { fullPage: true });
+  await test.step('load installer', async () => {
+    await page.goto('/');
 
-  // 2. Click Install with defaults (auto-selected disk, encryption enabled)
-  await installButton.click();
+    // Wait for hardware detection — retry if the disk API fails on first load after boot
+    await expect(async () => {
+      const retryBtn = page.getByRole('button', { name: 'Retry' });
+      if (await retryBtn.isVisible({ timeout: 0 })) {
+        await retryBtn.click();
+      }
+      await expect(installButton).toBeEnabled();
+    }).toPass({ timeout: 60_000, intervals: [3_000] });
 
-  // Wait for installation to complete — "Your server is restarting." indicates success
-  await page.getByText('Your server is restarting.').waitFor({
-    state: 'visible',
-    timeout: 10 * 60 * 1000,
+    await expect(page).toHaveScreenshot('installer-welcome.png', { fullPage: true });
   });
 
-  // Screenshot: post-install restarting page
-  await expect(page).toHaveScreenshot('installer-restarting.png', { fullPage: true });
+  await test.step('run installer', async () => {
+    await installButton.click();
 
-  // ── Post-install setup ───────────────────────────────────────────────────────
+    // Wait for installation to complete — "Your server is restarting." indicates success
+    await page.getByText('Your server is restarting.').waitFor({
+      state: 'visible',
+      timeout: 10 * 60 * 1000,
+    });
 
-  // 3. Wait for Authentik to be ready on the installed system
-  // (Restarting.svelte polls /api/health and auto-redirects when installed system is up)
-  await api.waitForSetupReady();
+    await expect(page).toHaveScreenshot('installer-restarting.png', { fullPage: true });
+  });
 
-  // 4. Create initial admin user — response sets session cookie in this page context
-  await api.createUser(TEST_USERNAME, TEST_PASSWORD);
+  // ── Setup wizard ─────────────────────────────────────────────────────────────
+
+  await test.step('wait for services', async () => {
+    await api.waitForSetupReady();
+  });
+
+  await test.step('complete setup wizard', async () => {
+    await page.goto('/');
+    await page.getByLabel('Username').fill(TEST_USERNAME);
+    await page.getByLabel('Password', { exact: true }).fill(TEST_PASSWORD);
+    await page.getByLabel('Confirm Password').fill(TEST_PASSWORD);
+    await page.getByRole('button', { name: 'Create Account' }).click();
+  });
+
+  await test.step('authenticate with Authentik', async () => {
+    // After submit, the page reloads with no session — redirects to /auth/login which
+    // starts the OIDC flow, establishing both the Bloud and Authentik sessions.
+    // The Authentik session is what allows app OIDC flows (e.g. Miniflux) to auto-approve.
+    await loginPage.login(TEST_USERNAME, TEST_PASSWORD);
+    await page.waitForURL('/', { timeout: 30_000 });
+  });
 
   // ── App install ──────────────────────────────────────────────────────────────
 
-  // 5. Navigate to the app catalog and install Miniflux via the UI
-  await page.goto('/catalog');
+  await test.step('install Miniflux', async () => {
+    await page.goto('/catalog');
+    await page.getByRole('heading', { name: 'Miniflux' }).click();
 
-  // Click the Miniflux card to open the detail modal
-  await page.getByRole('heading', { name: 'Miniflux' }).click();
+    // Scoped to dialog to avoid matching app-card buttons behind the modal overlay
+    const modal = page.locator('dialog');
+    const getButton = modal.getByRole('button', { name: 'Get', exact: true });
+    await expect(getButton).toBeVisible({ timeout: 15_000 });
+    await getButton.click();
 
-  // Wait for install plan to load, then click "Get" — scoped to dialog to avoid matching
-  // app-card buttons behind the modal overlay
-  const modal = page.locator('dialog');
-  const getButton = modal.getByRole('button', { name: 'Get', exact: true });
-  await expect(getButton).toBeVisible({ timeout: 15_000 });
-  await getButton.click();
+    await expect(page.getByText('Installed')).toBeVisible({
+      timeout: 5 * 60 * 1000,
+    });
 
-  // Wait for installation to complete — modal shows "This app is installed" when running (up to 5 min)
-  await expect(modal.getByText('This app is installed')).toBeVisible({
-    timeout: 5 * 60 * 1000,
+    await page.goto('/');
   });
-
-  // Close the modal to return to the catalog
-  await modal.getByRole('button', { name: 'Close' }).click();
 
   // ── Visual regression ────────────────────────────────────────────────────────
 
-  // 7. Navigate to Miniflux in the Bloud shell — session cookie is present
-  await page.goto('/apps/miniflux');
+  await test.step('screenshot Miniflux in shell', async () => {
+    // sso_launch_path redirects the iframe directly to the OIDC endpoint so
+    // Authentik auto-approves and Miniflux loads logged in — no login prompt.
+    await page.getByText('Miniflux').click();
 
-  // Wait for the iframe to be attached — Miniflux may have polling requests that
-  // would cause waitForLoadState('networkidle') to hang indefinitely
-  await page.waitForSelector('iframe', { state: 'attached' });
-
-  // Screenshot: Bloud shell with Miniflux embedded
-  await expect(page).toHaveScreenshot('miniflux.png', { fullPage: true });
+    const miniflux = page.frameLocator('iframe');
+    await expect(miniflux.getByRole('link', { name: 'Unread' })).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveScreenshot('miniflux.png', { fullPage: true });
+  });
 });

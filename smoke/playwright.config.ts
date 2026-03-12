@@ -12,8 +12,9 @@ export default defineConfig({
   ],
   use: {
     baseURL: 'http://bloud.local',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
     actionTimeout: 10_000,
     navigationTimeout: 60_000,
   },

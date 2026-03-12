@@ -14,7 +14,7 @@ const pveSyncDir = "/tmp/bloud-src"
 
 const (
 	pveDefaultVMID    = "9999"
-	pveDefaultMemory  = 8192
+	pveDefaultMemory  = 6144
 	pveDefaultCores   = 2
 	pveVMName         = "bloud"
 	pveISOStorage     = "/var/lib/vz/template/iso"
@@ -25,14 +25,13 @@ const (
 	pveServiceTimeout = 300
 
 	// Installer ISO — live system runs bloud-installer on port 3001 as root (empty password)
-	pveInstallerPort    = "3001"
-	pveInstallerAPI     = "http://localhost:" + pveInstallerPort + "/api"
-	pveInstallTimeout   = 600
+	pveInstallerPort  = "3001"
+	pveInstallerAPI   = "http://localhost:" + pveInstallerPort + "/api"
+	pveInstallTimeout = 600
 
 	// Disk provisioned for the test VM so the installer has a target
 	pveDiskStorage = "local-lvm"
 	pveDiskSizeGB  = 40
-
 )
 
 type pveConfig struct {
@@ -545,7 +544,13 @@ func doBuild(cfg pveConfig) int {
 
 	log("Building ISO (first build may take 15-30 minutes)...")
 	buildScript := `set -e
-export PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+
+echo '==> Cleaning up from previous builds...'
+rm -rf ~/bloud/build/
+nix profile remove '.*' 2>/dev/null || true
+nix-collect-garbage -d 2>/dev/null || true
+
 cd ~/bloud
 mkdir -p build
 
@@ -669,17 +674,16 @@ func cmdSetupBuilderPVE() int {
 		return 0
 	}
 
-	log("Provisioning builder with Go and Node.js via Nix...")
+	log("Provisioning builder with Go and Node.js...")
 	provisionScript := `set -e
-export PATH="$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
 
-echo '==> Installing git and rsync...'
-if ! command -v git >/dev/null || ! command -v rsync >/dev/null; then
-    sudo apt-get install -y git rsync
-fi
+echo '==> Installing git, rsync, and Go...'
+sudo apt-get update -qq
+sudo apt-get install -y git rsync golang-go
 
-echo '==> Installing Go and Node.js via nix profile...'
-nix profile install nixpkgs#go nixpkgs#nodejs_22
+echo '==> Installing Node.js 22...'
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
 
 echo '==> Verifying...'
 go version
@@ -872,7 +876,6 @@ func cmdStartPVE(args []string) int {
 	}
 	return 0
 }
-
 
 func cmdStopPVE() int {
 	cfg := getPVEConfig()
@@ -1421,11 +1424,17 @@ func cmdSnapshotPVE(args []string) int {
 // Flags:
 //
 //	--update-snapshots  Pass through to Playwright to refresh committed baseline images
+//	--headed            Run Playwright in headed (non-headless) mode — opens a visible browser
+//	--headful           Alias for --headed
 func cmdSmokePVE(args []string) int {
 	updateSnapshots := false
+	headed := false
 	for _, arg := range args {
-		if arg == "--update-snapshots" {
+		switch arg {
+		case "--update-snapshots":
 			updateSnapshots = true
+		case "--headed", "--headful":
+			headed = true
 		}
 	}
 
@@ -1460,13 +1469,19 @@ func cmdSmokePVE(args []string) int {
 		}
 	}
 
+	// Clear previous report so show-report always displays current results
+	os.RemoveAll(filepath.Join(smokeDir, "playwright-report"))
+
 	// Run Playwright smoke tests
 	log("Running smoke tests against http://bloud.local...")
 	fmt.Println()
 
-	playwrightArgs := []string{"playwright", "test"}
+	playwrightArgs := []string{"playwright", "test", "--reporter=list"}
 	if updateSnapshots {
 		playwrightArgs = append(playwrightArgs, "--update-snapshots")
+	}
+	if headed {
+		playwrightArgs = append(playwrightArgs, "--headed")
 	}
 
 	playwrightCmd := exec.Command("npx", playwrightArgs...)
