@@ -1411,7 +1411,8 @@ func cmdSnapshotPVE(args []string) int {
 // cmdSmokePVE builds a fresh ISO, deploys it to the Proxmox test VM, then runs
 // the Playwright smoke suite in smoke/ against http://bloud.local.
 //
-// Always implies --build and --install: a fresh ISO is built and installed every run.
+// Always implies --build: a fresh ISO is built and booted every run. Playwright
+// drives the full installer UI (no --install flag — the test owns the install flow).
 // VM is left running after completion for manual inspection.
 //
 // Flags:
@@ -1425,9 +1426,17 @@ func cmdSmokePVE(args []string) int {
 		}
 	}
 
-	// Build ISO + deploy VM + run installer + health checks
-	if code := cmdStartPVE([]string{"--build", "--install"}); code != 0 {
+	// Build ISO + deploy VM + boot live ISO (no --install: Playwright drives the installer)
+	if code := cmdStartPVE([]string{"--build"}); code != 0 {
 		return code
+	}
+
+	// Eject the ISO so the disk wins after Playwright drives the install + reboot.
+	// The live system runs from RAM so ejection is safe before Playwright starts.
+	cfg := getPVEConfig()
+	log("Ejecting ISO (live system running from RAM)...")
+	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --ide2 none,media=cdrom", cfg.VMID)); err != nil {
+		warn(fmt.Sprintf("Failed to eject ISO (non-fatal): %v", err))
 	}
 
 	root, err := getProjectRoot()
