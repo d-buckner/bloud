@@ -21,9 +21,8 @@ type CreateUserRequest struct {
 
 // CreateUserResponse represents the response for POST /api/setup/create-user
 type CreateUserResponse struct {
-	Success  bool   `json:"success"`
-	LoginURL string `json:"loginUrl,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
 }
 
 // handleSetupStatus returns whether initial setup is required
@@ -130,9 +129,30 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("first user created successfully", "username", req.Username)
 
+	// Create a session so the user is immediately signed in without a second login prompt.
+	// We've already verified their identity by accepting their credentials to create the account.
+	if s.sessionStore != nil {
+		user, err := s.userStore.GetByUsername(req.Username)
+		if err == nil && user != nil {
+			ctx := r.Context()
+			session, err := s.sessionStore.Create(ctx, user.ID, user.Username)
+			if err == nil {
+				http.SetCookie(w, &http.Cookie{
+					Name:     sessionCookieName,
+					Value:    session.ID,
+					Path:     "/",
+					Expires:  session.ExpiresAt,
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+				})
+			} else {
+				s.logger.Warn("failed to create session after setup, user will need to log in manually", "error", err)
+			}
+		}
+	}
+
 	respondJSON(w, http.StatusOK, CreateUserResponse{
-		Success:  true,
-		LoginURL: "/auth/login",
+		Success: true,
 	})
 }
 

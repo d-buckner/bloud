@@ -55,16 +55,20 @@ test('installer, setup wizard, miniflux install, and shell embed', async ({ page
   // Click the Miniflux card to open the detail modal
   await page.getByRole('heading', { name: 'Miniflux' }).click();
 
-  // Click the "Get" button to trigger installation
-  await page.getByRole('button', { name: 'Get' }).click();
+  // Wait for install plan to load, then click "Get" — scoped to dialog to avoid matching
+  // app-card buttons behind the modal overlay
+  const modal = page.locator('dialog');
+  const getButton = modal.getByRole('button', { name: 'Get', exact: true });
+  await expect(getButton).toBeVisible({ timeout: 15_000 });
+  await getButton.click();
 
   // Wait for installation to complete — modal shows "This app is installed" when running (up to 5 min)
-  await expect(page.getByText('This app is installed')).toBeVisible({
+  await expect(modal.getByText('This app is installed')).toBeVisible({
     timeout: 5 * 60 * 1000,
   });
 
   // Close the modal to return to the catalog
-  await page.getByRole('button', { name: 'Close' }).click();
+  await modal.getByRole('button', { name: 'Close' }).click();
 
   // ── Visual regression ────────────────────────────────────────────────────────
 
