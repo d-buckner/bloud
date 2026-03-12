@@ -1413,6 +1413,9 @@ func cmdSnapshotPVE(args []string) int {
 //
 // Always implies --build: a fresh ISO is built and booted every run. Playwright
 // drives the full installer UI (no --install flag — the test owns the install flow).
+// The ISO is not ejected before Playwright runs — the live Nix store lives on the
+// ISO and ejecting it would break lsblk and installer tools. Boot order sata0;ide2
+// ensures the installed disk wins on reboot automatically.
 // VM is left running after completion for manual inspection.
 //
 // Flags:
@@ -1431,13 +1434,10 @@ func cmdSmokePVE(args []string) int {
 		return code
 	}
 
-	// Eject the ISO so the disk wins after Playwright drives the install + reboot.
-	// The live system runs from RAM so ejection is safe before Playwright starts.
-	cfg := getPVEConfig()
-	log("Ejecting ISO (live system running from RAM)...")
-	if _, err := pveExec(cfg, fmt.Sprintf("qm set %s --ide2 none,media=cdrom", cfg.VMID)); err != nil {
-		warn(fmt.Sprintf("Failed to eject ISO (non-fatal): %v", err))
-	}
+	// No ISO ejection here — the live system's Nix store lives on the ISO, so
+	// ejecting before Playwright runs would break lsblk and other tools the
+	// installer needs. The boot order (sata0;ide2) already ensures the installed
+	// disk wins on reboot because GRUB is written to it during installation.
 
 	root, err := getProjectRoot()
 	if err != nil {
