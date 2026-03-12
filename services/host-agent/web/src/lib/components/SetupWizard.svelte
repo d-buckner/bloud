@@ -8,7 +8,6 @@
 
 	interface CreateUserResponse {
 		success: boolean;
-		loginUrl?: string;
 		error?: string;
 	}
 
