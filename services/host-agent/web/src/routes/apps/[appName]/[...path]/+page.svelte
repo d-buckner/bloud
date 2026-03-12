@@ -37,8 +37,10 @@
 			// Switching back to open app without path - restore to stored path
 			goto(getAppRouteUrl(appName, storedPath), { replaceState: true });
 		} else {
-			// New tab or explicit path navigation
-			tabs.open(appName, path);
+			// New tab or explicit path navigation — fall back to sso_launch_path
+			// when opening fresh with no URL path so the iframe skips the app's
+			// login page and goes straight to the OIDC endpoint.
+			tabs.open(appName, path || app?.sso_launch_path || '');
 		}
 	});
 </script>

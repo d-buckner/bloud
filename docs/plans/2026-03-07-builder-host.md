@@ -19,7 +19,7 @@ Remove the following constants (lines ~36-47):
 ```go
 pveBuildVMID      = "9998"
 pveBuildVMName    = "bloud-builder"
-pveBuildMemory    = 8192
+pveBuildMemory    = 6144
 pveBuildCores     = 4
 pveBuildDisk      = "40G"
 pveBuildDir       = "/root/bloud"
