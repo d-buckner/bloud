@@ -14,7 +14,7 @@ export default defineConfig({
     baseURL: 'http://bloud.local',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    actionTimeout: 30_000,
+    actionTimeout: 10_000,
     navigationTimeout: 60_000,
   },
   // 20 minutes: installer (~5 min) + reboot + services (~3 min) + setup + miniflux (~5 min) + buffer
