@@ -13,9 +13,15 @@ test('installer, setup wizard, miniflux install, and shell embed', async ({ page
   // 1. Navigate to installer (live ISO serves it at bloud.local)
   await page.goto('/');
 
-  // Wait for hardware detection to complete — button is disabled until disk is auto-selected
+  // Wait for hardware detection — retry if the disk API fails on first load after boot
   const installButton = page.getByRole('button', { name: 'Install Bloud' });
-  await expect(installButton).toBeEnabled({ timeout: 60_000 });
+  await expect(async () => {
+    const retryBtn = page.getByRole('button', { name: 'Retry' });
+    if (await retryBtn.isVisible({ timeout: 0 })) {
+      await retryBtn.click();
+    }
+    await expect(installButton).toBeEnabled();
+  }).toPass({ timeout: 60_000, intervals: [3_000] });
 
   // Screenshot: installer welcome page
   await expect(page).toHaveScreenshot('installer-welcome.png', { fullPage: true });
