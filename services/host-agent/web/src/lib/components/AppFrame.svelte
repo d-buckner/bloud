@@ -56,24 +56,20 @@
 		const contentWindow = iframeEl?.contentWindow;
 		if (!contentWindow || !isActive) return;
 
-		try {
-			const {pathname, search} = contentWindow.location;
-			const relativePath = extractRelativePath(pathname, app.name);
-			if (relativePath === null) {
-				return;
-			}
+		const { pathname, search } = contentWindow.location;
+		const relativePath = extractRelativePath(pathname, app.name);
+		if (relativePath === null) {
+			return;
+		}
 
-			const fullPath = relativePath + search;
+		const fullPath = relativePath + search;
 
-			// Save path to store
-			tabs.setPath(app.name, fullPath);
+		// Save path to store
+		tabs.setPath(app.name, fullPath);
 
-			// Notify parent for URL update
-			if (onNavigate && fullPath !== lastSetPath) {
-				onNavigate(fullPath);
-			}
-		} catch {
-			// Cross-origin error - ignore
+		// Notify parent for URL update
+		if (onNavigate && fullPath !== lastSetPath) {
+			onNavigate(fullPath);
 		}
 	}
 

@@ -17,9 +17,7 @@ healthCheck:
   interval: 5
   timeout: 60
 
-bootstrap:
-  localStorage:
-    intercepts:
-      - key: jellyfin_credentials
-        jsonPatch:
-          Servers.0.ManualAddress: "{{embedUrl}}"
+# Jellyfin serves at /embed/jellyfin when BaseUrl is set in network.xml (configured by PreStart hook)
+# No URL rewriting or localStorage intercept needed — Jellyfin handles its own prefix natively
+routing:
+  stripPrefix: false
