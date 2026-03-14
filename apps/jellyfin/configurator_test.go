@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/xmlutil"
 )
 
 func TestNewConfigurator(t *testing.T) {
@@ -87,6 +88,11 @@ func TestConfigurator_PreStart(t *testing.T) {
 
 	contentStr := string(content)
 
+	// Check PublishedServerUri is set for reverse proxy
+	if !strings.Contains(contentStr, "<PublishedServerUri>http://bloud.local/embed/jellyfin</PublishedServerUri>") {
+		t.Error("network.xml should have PublishedServerUri set")
+	}
+
 	// Check EnablePublishedServerUriByRequest is enabled
 	if !strings.Contains(contentStr, "<EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>") {
 		t.Error("network.xml should have EnablePublishedServerUriByRequest=true")
@@ -98,126 +104,57 @@ func TestConfigurator_PreStart(t *testing.T) {
 	}
 }
 
-func TestConfigurator_ConfigureNetwork_CreatesNewFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	dataPath := filepath.Join(tmpDir, "jellyfin")
-
-	// Create config directory
-	if err := os.MkdirAll(filepath.Join(dataPath, "config"), 0755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
-	err := c.configureNetwork(dataPath)
+func newNetworkConfig(t *testing.T) *xmlutil.ConfigFile {
+	t.Helper()
+	cfg, err := xmlutil.Open(filepath.Join(t.TempDir(), "network.xml"), "NetworkConfiguration")
 	if err != nil {
-		t.Fatalf("configureNetwork() error = %v", err)
+		t.Fatalf("xmlutil.Open() error = %v", err)
 	}
+	return cfg
+}
 
-	// Verify file was created
-	networkPath := filepath.Join(dataPath, "config", "network.xml")
-	content, err := os.ReadFile(networkPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
+func TestApplyNetworkConfig_AppliesAllSettings(t *testing.T) {
+	cfg := newNetworkConfig(t)
+
+	changed := applyNetworkConfig(cfg)
+
+	if !changed {
+		t.Error("applyNetworkConfig() = false for new config, want true")
 	}
-
-	contentStr := string(content)
-
-	// Verify key settings
-	checks := []struct {
-		name     string
-		contains string
-	}{
-		{"EnablePublishedServerUriByRequest", "<EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>"},
-		{"KnownProxies localhost", "<string>127.0.0.1</string>"},
-		{"KnownProxies IPv6", "<string>::1</string>"},
-		{"EnableRemoteAccess", "<EnableRemoteAccess>true</EnableRemoteAccess>"},
+	if !cfg.HasConfig(jellyfinNetworkConfig) {
+		t.Error("HasConfig() = false after applyNetworkConfig()")
 	}
-
-	for _, check := range checks {
-		if !strings.Contains(contentStr, check.contains) {
-			t.Errorf("network.xml missing %s: expected %q", check.name, check.contains)
-		}
+	if got := cfg.GetElement("PublishedServerUri"); got != "http://bloud.local/embed/jellyfin" {
+		t.Errorf("PublishedServerUri = %q, want %q", got, "http://bloud.local/embed/jellyfin")
 	}
 }
 
-func TestConfigurator_ConfigureNetwork_SkipsIfAlreadyConfigured(t *testing.T) {
-	tmpDir := t.TempDir()
-	dataPath := filepath.Join(tmpDir, "jellyfin")
-	configDir := filepath.Join(dataPath, "config")
+func TestApplyNetworkConfig_SkipsIfAlreadyConfigured(t *testing.T) {
+	cfg := newNetworkConfig(t)
+	cfg.ApplyConfig(jellyfinNetworkConfig)
+	cfg.SetElement("CustomSetting", "should-be-preserved")
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
+	changed := applyNetworkConfig(cfg)
+
+	if changed {
+		t.Error("applyNetworkConfig() = true for already-configured file, want false")
 	}
-
-	// Create existing network.xml with EnablePublishedServerUriByRequest=true
-	existing := `<?xml version="1.0" encoding="UTF-8"?>
-<NetworkConfiguration>
-  <EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>
-  <CustomSetting>should-be-preserved</CustomSetting>
-</NetworkConfiguration>`
-	networkPath := filepath.Join(configDir, "network.xml")
-	if err := os.WriteFile(networkPath, []byte(existing), 0644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
-	err := c.configureNetwork(dataPath)
-	if err != nil {
-		t.Fatalf("configureNetwork() error = %v", err)
-	}
-
-	// Verify file wasn't modified (custom setting preserved)
-	content, err := os.ReadFile(networkPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-
-	if !strings.Contains(string(content), "should-be-preserved") {
-		t.Error("configureNetwork() should not modify already-configured file")
+	if got := cfg.GetElement("CustomSetting"); got != "should-be-preserved" {
+		t.Errorf("applyNetworkConfig() modified file: CustomSetting = %q, want %q", got, "should-be-preserved")
 	}
 }
 
-func TestConfigurator_ConfigureNetwork_UpdatesExistingFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	dataPath := filepath.Join(tmpDir, "jellyfin")
-	configDir := filepath.Join(dataPath, "config")
+func TestApplyNetworkConfig_UpdatesPartialConfig(t *testing.T) {
+	cfg := newNetworkConfig(t)
+	cfg.SetElement("EnablePublishedServerUriByRequest", "false")
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
+	changed := applyNetworkConfig(cfg)
+
+	if !changed {
+		t.Error("applyNetworkConfig() = false for partially-configured file, want true")
 	}
-
-	// Create existing network.xml with EnablePublishedServerUriByRequest=false
-	existing := `<?xml version="1.0" encoding="UTF-8"?>
-<NetworkConfiguration>
-  <EnablePublishedServerUriByRequest>false</EnablePublishedServerUriByRequest>
-  <SomeOtherSetting>value</SomeOtherSetting>
-</NetworkConfiguration>`
-	networkPath := filepath.Join(configDir, "network.xml")
-	if err := os.WriteFile(networkPath, []byte(existing), 0644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
-	err := c.configureNetwork(dataPath)
-	if err != nil {
-		t.Fatalf("configureNetwork() error = %v", err)
-	}
-
-	// Verify setting was updated
-	content, err := os.ReadFile(networkPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-
-	contentStr := string(content)
-
-	if !strings.Contains(contentStr, "<EnablePublishedServerUriByRequest>true</EnablePublishedServerUriByRequest>") {
-		t.Error("configureNetwork() should update EnablePublishedServerUriByRequest to true")
-	}
-
-	// Verify KnownProxies was added
-	if !strings.Contains(contentStr, "<string>127.0.0.1</string>") {
-		t.Error("configureNetwork() should add KnownProxies")
+	if !cfg.HasConfig(jellyfinNetworkConfig) {
+		t.Error("HasConfig() = false after applyNetworkConfig() on partial config")
 	}
 }
 

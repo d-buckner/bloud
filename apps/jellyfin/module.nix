@@ -36,6 +36,8 @@ mkPodmanApp {
   # This provides LDAP authentication for TV/mobile clients
   extraConfig = cfg: {
     bloud.apps.authentik.ldap.enable = true;
+    # Open port 8096 for native clients (Infuse, Jellyfin iOS/Android, Kodi, etc.)
+    networking.firewall.allowedTCPPorts = [ 8096 ];
   };
 
   # Pre-install LDAP plugin by extracting it to the plugins directory

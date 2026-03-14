@@ -187,6 +187,72 @@ func TestSetStringArray_ReplacesExisting(t *testing.T) {
 	}
 }
 
+func TestHasConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.xml")
+
+	cfg, err := Open(path, "Config")
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	cfg.SetElement("KeyA", "ValueA")
+	cfg.SetElement("KeyB", "ValueB")
+	cfg.SetStringArray("Proxies", []string{"127.0.0.1", "::1"})
+
+	// All pairs match
+	if !cfg.HasConfig(ConfigValues{"KeyA": "ValueA", "KeyB": "ValueB", "Proxies": []string{"127.0.0.1", "::1"}}) {
+		t.Error("HasConfig() = false, want true when all values match")
+	}
+
+	// String value missing
+	if cfg.HasConfig(ConfigValues{"KeyA": "ValueA", "KeyC": "ValueC"}) {
+		t.Error("HasConfig() = true, want false when a string key is missing")
+	}
+
+	// String value wrong
+	if cfg.HasConfig(ConfigValues{"KeyA": "ValueA", "KeyB": "WrongValue"}) {
+		t.Error("HasConfig() = true, want false when a string value doesn't match")
+	}
+
+	// Array wrong value
+	if cfg.HasConfig(ConfigValues{"Proxies": []string{"127.0.0.1", "10.0.0.1"}}) {
+		t.Error("HasConfig() = true, want false when array values don't match")
+	}
+
+	// Array wrong length
+	if cfg.HasConfig(ConfigValues{"Proxies": []string{"127.0.0.1"}}) {
+		t.Error("HasConfig() = true, want false when array length differs")
+	}
+
+	// Empty map always matches
+	if !cfg.HasConfig(ConfigValues{}) {
+		t.Error("HasConfig() = false, want true for empty ConfigValues")
+	}
+}
+
+func TestApplyConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.xml")
+
+	cfg, err := Open(path, "Config")
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	values := ConfigValues{
+		"KeyA":    "ValueA",
+		"KeyB":    "ValueB",
+		"Proxies": []string{"127.0.0.1", "::1"},
+	}
+
+	cfg.ApplyConfig(values)
+
+	if !cfg.HasConfig(values) {
+		t.Error("HasConfig() = false after ApplyConfig(), want true")
+	}
+}
+
 func TestSetStringArray_EmptyArray(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "config.xml")

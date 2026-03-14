@@ -941,7 +941,7 @@ func cmdStatusPVE() int {
 			if name == "bloud-host-agent" || name == "avahi-daemon" {
 				scope = ""
 			}
-			out, _ := vmExec(ip, fmt.Sprintf("systemctl %s is-active %s.service 2>/dev/null || systemctl %s is-active %s 2>/dev/null", scope, name, scope, name))
+			out, _ := vmExec(ip, fmt.Sprintf("systemctl %s is-active %s.service >/dev/null 2>&1 && echo active || systemctl %s is-active %s 2>/dev/null", scope, name, scope, name))
 			state := strings.TrimSpace(out)
 			color := colorRed
 			if state == "active" {
@@ -1411,25 +1411,23 @@ func cmdSnapshotPVE(args []string) int {
 	return 0
 }
 
-// cmdSmokePVE builds a fresh ISO, deploys it to the Proxmox test VM, then runs
-// the Playwright smoke suite in smoke/ against http://bloud.local.
+// cmdSmokePVE runs the Playwright smoke suite in smoke/ against http://bloud.local.
 //
-// Always implies --build: a fresh ISO is built and booted every run. Playwright
-// drives the full installer UI (no --install flag — the test owns the install flow).
-// The ISO is not ejected before Playwright runs — the live Nix store lives on the
-// ISO and ejecting it would break lsblk and installer tools. Boot order sata0;ide2
-// ensures the installed disk wins on reboot automatically.
+// By default skips ISO build/deploy and runs tests against the existing VM.
+// Use --install to build a fresh ISO, deploy it, and drive the full installer UI
+// before running tests.
 // VM is left running after completion for manual inspection.
 //
 // Flags:
 //
+//	--install           Build ISO + deploy VM + boot live ISO before running tests
 //	--update-snapshots  Pass through to Playwright to refresh committed baseline images
 //	--headed            Run Playwright in headed (non-headless) mode — opens a visible browser
 //	--headful           Alias for --headed
 func cmdSmokePVE(args []string) int {
 	updateSnapshots := false
 	headed := false
-	skipDeploy := false
+	install := false
 	var apps []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -1437,8 +1435,8 @@ func cmdSmokePVE(args []string) int {
 			updateSnapshots = true
 		case "--headed", "--headful":
 			headed = true
-		case "--skip-deploy":
-			skipDeploy = true
+		case "--install":
+			install = true
 		case "--apps":
 			for i++; i < len(args) && !strings.HasPrefix(args[i], "--"); i++ {
 				apps = append(apps, args[i])
@@ -1448,7 +1446,7 @@ func cmdSmokePVE(args []string) int {
 	}
 
 	// Build ISO + deploy VM + boot live ISO (no --install: Playwright drives the installer)
-	if !skipDeploy {
+	if install {
 		if code := cmdStartPVE([]string{"--build"}); code != 0 {
 			return code
 		}
@@ -1495,7 +1493,7 @@ func cmdSmokePVE(args []string) int {
 		playwrightArgs = append(playwrightArgs, "--headed")
 	}
 
-	if skipDeploy {
+	if !install {
 		// Skip setup project entirely — app tests handle auth themselves via ensureSignedIn.
 		playwrightArgs = append(playwrightArgs, "--no-deps")
 		if len(apps) == 0 {
@@ -1517,7 +1515,7 @@ func cmdSmokePVE(args []string) int {
 			playwrightArgs = append(playwrightArgs, "--project="+app)
 		}
 	} else {
-		// Normal flow: --apps limits which app projects run; setup runs via project dependency.
+		// --install flow: --apps limits which app projects run; setup runs via project dependency.
 		// Without --apps, all projects run.
 		for _, app := range apps {
 			playwrightArgs = append(playwrightArgs, "--project="+app)
