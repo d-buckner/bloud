@@ -6,7 +6,7 @@ in
 mkNativeApp {
   name = "traefik";
   description = "Traefik reverse proxy";
-  port = 8080;
+  port = 80;
   serviceName = "traefik";
   # Traefik has no configurator — no runtime secrets or config injection needed
   configuratorHooks = false;

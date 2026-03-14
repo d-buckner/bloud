@@ -2,16 +2,16 @@
 
 ## Critical: Access URLs & Port Architecture
 
-**Production / ISO:** Users access Bloud at `http://bloud.local` (port 80). Rootless containers can't bind privileged ports, so Traefik listens on 8080 and iptables NAT redirects port 80 → 8080. Users never see port 8080.
+**Production / ISO:** Users access Bloud at `http://bloud.local` (port 80). Native NixOS Traefik service binds directly to port 80 via `CAP_NET_BIND_SERVICE`. No iptables redirect needed.
 
-**Local dev (NixOS dev-server):** Access via `http://localhost:8080` (Traefik). The dev-server NixOS config runs Traefik on 8080.
+**Local dev (NixOS dev-server):** Access via `http://localhost` (port 80, Traefik). The dev-server NixOS config runs Traefik on port 80.
 
 - Service worker is registered on the Traefik port
 - Iframe content is served through Traefik
 - Everything is same-origin
 - NEVER access Vite directly on port 5173
 
-The architecture is: Browser → port 80 (iptables PREROUTING) → Traefik (8080) → Vite/Apps.
+The architecture is: Browser → port 80 → Traefik → Vite/Apps.
 
 ## Debugging Principles
 

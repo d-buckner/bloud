@@ -93,16 +93,16 @@ pkgs.nixosTest {
     )
 
     # Start Traefik and verify dashboard is accessible
-    machine.succeed("sudo -u bloud systemctl --user start podman-traefik.service")
+    machine.succeed("systemctl start traefik.service")
     machine.wait_until_succeeds(
-      "curl -sf http://localhost:8080/api/overview",
+      "curl -sf http://localhost/api/overview",
       timeout=30
     )
 
     # Verify all services are running
     machine.succeed("systemctl is-active postgres.service")
     machine.succeed("sudo -u bloud systemctl --user is-active podman-apps-redis.service")
-    machine.succeed("sudo -u bloud systemctl --user is-active podman-traefik.service")
+    machine.succeed("systemctl is-active traefik.service")
 
     # List running containers (informational)
     machine.succeed("sudo -u bloud podman ps")
