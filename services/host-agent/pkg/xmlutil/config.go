@@ -66,6 +66,11 @@ func OpenExisting(path string) (*ConfigFile, error) {
 	return &ConfigFile{doc: doc, path: path, root: root}, nil
 }
 
+// ConfigValues is a JSON-like definition of desired XML config state.
+// Values may be string (simple elements) or []string (array elements).
+// Use HasConfig to check and ApplyConfig to write.
+type ConfigValues map[string]any
+
 // GetElement returns the text value of a child element, or empty string if not found.
 func (c *ConfigFile) GetElement(name string) string {
 	el := c.root.SelectElement(name)
@@ -73,6 +78,54 @@ func (c *ConfigFile) GetElement(name string) string {
 		return ""
 	}
 	return el.Text()
+}
+
+// getStringArray returns the <string> children of a named element.
+func (c *ConfigFile) getStringArray(name string) []string {
+	el := c.root.SelectElement(name)
+	if el == nil {
+		return nil
+	}
+	var values []string
+	for _, child := range el.ChildElements() {
+		values = append(values, child.Text())
+	}
+	return values
+}
+
+// HasConfig returns true if all values in the ConfigValues match the current file.
+func (c *ConfigFile) HasConfig(values ConfigValues) bool {
+	for name, value := range values {
+		switch v := value.(type) {
+		case string:
+			if c.GetElement(name) != v {
+				return false
+			}
+		case []string:
+			current := c.getStringArray(name)
+			if len(current) != len(v) {
+				return false
+			}
+			for i := range v {
+				if current[i] != v[i] {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// ApplyConfig writes all values in the ConfigValues to the file.
+func (c *ConfigFile) ApplyConfig(values ConfigValues) {
+	for name, value := range values {
+		switch v := value.(type) {
+		case string:
+			c.SetElement(name, v)
+		case []string:
+			c.SetStringArray(name, v)
+		}
+	}
 }
 
 // SetElement sets the value of a child element, creating it if it doesn't exist.

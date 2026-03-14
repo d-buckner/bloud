@@ -97,6 +97,37 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	return nil
 }
 
+// jellyfinNetworkConfig returns the desired XML config for network.xml.
+var jellyfinNetworkConfig = xmlutil.ConfigValues{
+	"PublishedServerUri":                "http://bloud.local/embed/jellyfin",
+	"EnablePublishedServerUriByRequest": "true",
+	"KnownProxies":                      []string{"127.0.0.1", "::1"},
+	"EnableHttps":                       "false",
+	"RequireHttps":                      "false",
+	"InternalHttpPort":                  "8096",
+	"InternalHttpsPort":                 "8920",
+	"PublicHttpPort":                    "8096",
+	"PublicHttpsPort":                   "8920",
+	"EnableRemoteAccess":                "true",
+	"EnableIPv4":                        "true",
+	"EnableIPv6":                        "false",
+	"EnableUPnP":                        "false",
+	"AutoDiscovery":                     "true",
+	"IgnoreVirtualInterfaces":           "true",
+}
+
+// applyNetworkConfig applies jellyfinNetworkConfig to cfg if not already set.
+// Returns true if changes were made.
+func applyNetworkConfig(cfg *xmlutil.ConfigFile) bool {
+	if cfg.HasConfig(jellyfinNetworkConfig) {
+		log.Println("Jellyfin: network.xml already configured for reverse proxy")
+		return false
+	}
+	cfg.ApplyConfig(jellyfinNetworkConfig)
+	log.Println("Jellyfin: Configured network.xml for reverse proxy support")
+	return true
+}
+
 // configureNetwork creates or updates network.xml with reverse proxy settings
 func (c *Configurator) configureNetwork(dataPath string) error {
 	networkPath := filepath.Join(dataPath, "config", "network.xml")
@@ -106,38 +137,11 @@ func (c *Configurator) configureNetwork(dataPath string) error {
 		return err
 	}
 
-	// Check if already configured
-	if cfg.GetElement("EnablePublishedServerUriByRequest") == "true" {
-		log.Println("Jellyfin: network.xml already configured for reverse proxy")
+	if !applyNetworkConfig(cfg) {
 		return nil
 	}
 
-	// Enable dynamic server URI based on request headers (X-Forwarded-Host, etc.)
-	cfg.SetElement("EnablePublishedServerUriByRequest", "true")
-
-	// Trust localhost as a known proxy (Traefik runs on the same host)
-	cfg.SetStringArray("KnownProxies", []string{"127.0.0.1", "::1"})
-
-	// Standard network settings
-	cfg.SetElement("EnableHttps", "false")
-	cfg.SetElement("RequireHttps", "false")
-	cfg.SetElement("InternalHttpPort", "8096")
-	cfg.SetElement("InternalHttpsPort", "8920")
-	cfg.SetElement("PublicHttpPort", "8096")
-	cfg.SetElement("PublicHttpsPort", "8920")
-	cfg.SetElement("EnableRemoteAccess", "true")
-	cfg.SetElement("EnableIPv4", "true")
-	cfg.SetElement("EnableIPv6", "false")
-	cfg.SetElement("EnableUPnP", "false")
-	cfg.SetElement("AutoDiscovery", "true")
-	cfg.SetElement("IgnoreVirtualInterfaces", "true")
-
-	if err := cfg.Save(); err != nil {
-		return err
-	}
-
-	log.Println("Jellyfin: Configured network.xml for reverse proxy support")
-	return nil
+	return cfg.Save()
 }
 
 // HealthCheck waits for Jellyfin's API to be ready
