@@ -171,6 +171,7 @@ function buildLocalStorageConfig(config: LocalStorageConfig, metadata: AppMetada
  * Uses MessageChannel for request-response pattern.
  */
 async function postMessageToSW(message: unknown): Promise<void> {
+	if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
 	const registration = await navigator.serviceWorker.ready;
 	const sw = registration.active;
 	if (!sw) return;

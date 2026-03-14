@@ -14,7 +14,7 @@ const pveSyncDir = "/tmp/bloud-src"
 
 const (
 	pveDefaultVMID    = "9999"
-	pveDefaultMemory  = 6144
+	pveDefaultMemory  = 8192
 	pveDefaultCores   = 2
 	pveVMName         = "bloud"
 	pveISOStorage     = "/var/lib/vz/template/iso"
@@ -1429,18 +1429,29 @@ func cmdSnapshotPVE(args []string) int {
 func cmdSmokePVE(args []string) int {
 	updateSnapshots := false
 	headed := false
-	for _, arg := range args {
-		switch arg {
+	skipDeploy := false
+	var apps []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--update-snapshots":
 			updateSnapshots = true
 		case "--headed", "--headful":
 			headed = true
+		case "--skip-deploy":
+			skipDeploy = true
+		case "--apps":
+			for i++; i < len(args) && !strings.HasPrefix(args[i], "--"); i++ {
+				apps = append(apps, args[i])
+			}
+			i-- // back up so outer loop increment lands correctly
 		}
 	}
 
 	// Build ISO + deploy VM + boot live ISO (no --install: Playwright drives the installer)
-	if code := cmdStartPVE([]string{"--build"}); code != 0 {
-		return code
+	if !skipDeploy {
+		if code := cmdStartPVE([]string{"--build"}); code != 0 {
+			return code
+		}
 	}
 
 	// No ISO ejection here — the live system's Nix store lives on the ISO, so
@@ -1482,6 +1493,35 @@ func cmdSmokePVE(args []string) int {
 	}
 	if headed {
 		playwrightArgs = append(playwrightArgs, "--headed")
+	}
+
+	if skipDeploy {
+		// Skip setup project entirely — app tests handle auth themselves via ensureSignedIn.
+		playwrightArgs = append(playwrightArgs, "--no-deps")
+		if len(apps) == 0 {
+			// Discover all app projects by listing tests/apps/*.spec.ts
+			appsDir := filepath.Join(smokeDir, "tests", "apps")
+			entries, err := os.ReadDir(appsDir)
+			if err != nil {
+				errorf("Failed to read apps test directory: %v", err)
+				return 1
+			}
+			for _, e := range entries {
+				name := e.Name()
+				if strings.HasSuffix(name, ".spec.ts") {
+					apps = append(apps, strings.TrimSuffix(name, ".spec.ts"))
+				}
+			}
+		}
+		for _, app := range apps {
+			playwrightArgs = append(playwrightArgs, "--project="+app)
+		}
+	} else {
+		// Normal flow: --apps limits which app projects run; setup runs via project dependency.
+		// Without --apps, all projects run.
+		for _, app := range apps {
+			playwrightArgs = append(playwrightArgs, "--project="+app)
+		}
 	}
 
 	playwrightCmd := exec.Command("npx", playwrightArgs...)
