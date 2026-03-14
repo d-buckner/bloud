@@ -18,7 +18,7 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 60_000,
   },
-  // 20 minutes: installer (~5 min) + reboot + services (~3 min) + setup + miniflux (~5 min) + buffer
+  // 20 minutes: installer (~5 min) + reboot + services (~3 min) + setup + apps (~5 min) + buffer
   timeout: 1_200_000,
   expect: {
     timeout: 10_000,
@@ -28,7 +28,26 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: 'setup',
+      testMatch: 'tests/setup.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'miniflux',
+      testMatch: 'tests/apps/miniflux.spec.ts',
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'jellyfin',
+      testMatch: 'tests/apps/jellyfin.spec.ts',
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'adguard-home',
+      testMatch: 'tests/apps/adguard-home.spec.ts',
+      dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'] },
     },
   ],
