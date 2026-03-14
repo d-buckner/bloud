@@ -292,10 +292,10 @@ in
         echo "║           Bloud Local Testing (Rootless)                  ║"
         echo "╚════════════════════════════════════════════════════════════╝"
         echo ""
-        echo "Services (via Traefik on port 8080):"
-        echo "  • Dashboard:      http://localhost:8080/dashboard/"
-        echo "  • Actual Budget:  http://localhost:8080/embed/actual-budget/"
-        echo "  • Miniflux:       http://localhost:8080/embed/miniflux/ (admin/admin123)"
+        echo "Services (via Traefik on port 80):"
+        echo "  • Dashboard:      http://localhost/dashboard/"
+        echo "  • Actual Budget:  http://localhost/embed/actual-budget/"
+        echo "  • Miniflux:       http://localhost/embed/miniflux/ (admin/admin123)"
         echo "  • Authentik:      http://localhost:9001 (akadmin/password)"
         echo ""
         echo "Commands:"
@@ -352,9 +352,9 @@ in
 
         # Test services
         echo "Testing service endpoints..."
-        test_service "Traefik Dashboard" "http://localhost:8080/dashboard/" "200" "Traefik"
-        test_service "Miniflux" "http://localhost:8080/embed/miniflux/" "200" "Miniflux"
-        test_service "Actual Budget" "http://localhost:8080/embed/actual-budget/" "200" ""
+        test_service "Traefik Dashboard" "http://localhost/dashboard/" "200" "Traefik"
+        test_service "Miniflux" "http://localhost/embed/miniflux/" "200" "Miniflux"
+        test_service "Actual Budget" "http://localhost/embed/actual-budget/" "200" ""
 
         # Test database
         echo -n "Testing PostgreSQL... "

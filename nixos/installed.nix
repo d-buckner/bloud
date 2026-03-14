@@ -57,7 +57,6 @@
     # Map bloud.local to loopback so Go processes (e.g. app containers with --network=host)
     # can resolve it. Go's DNS resolver reads /etc/resolv.conf directly, bypassing mDNS/Avahi,
     # so bloud.local would otherwise fail to resolve from inside containers.
-    # Combined with the OUTPUT iptables rule, http://bloud.local works from everywhere on the host.
     hosts = {
       "127.0.0.1" = [ "bloud.local" ];
     };
@@ -66,24 +65,10 @@
       enable = true;
       allowedTCPPorts = [
         22    # SSH
-        80    # HTTP (iptables redirects to Traefik on 8080)
+        80    # HTTP (Traefik)
         3000  # Host Agent API
-        8080  # Traefik (main entry point)
       ];
     };
-
-    # Redirect port 80 → Traefik 8080 (rootless containers can't bind privileged ports)
-    # PREROUTING: external traffic (browser → bloud.local)
-    # OUTPUT: locally-generated traffic (host processes and host-network containers
-    #         fetching http://bloud.local so Authentik returns external URLs in OIDC discovery)
-    firewall.extraCommands = ''
-      iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
-      iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080
-    '';
-    firewall.extraStopCommands = ''
-      iptables -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
-      iptables -t nat -D OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080 || true
-    '';
   };
 
   # bloud user — runs app containers and host-agent
@@ -175,7 +160,7 @@
   # Traefik — routes / to host-agent, proxies app UIs
   bloud.apps.traefik = {
     enable = true;
-    port = 8080;
+    # port defaults to 80 (module.nix) — native service can bind privileged ports directly
     apiPort = 3000;
     # On the installed system the host-agent serves the static frontend build
     # directly from web/build at port 3000. The default uiPort (5173) is the

@@ -106,11 +106,15 @@ func (c *Configurator) configureNetwork(dataPath string) error {
 		return err
 	}
 
-	// Check if already configured
-	if cfg.GetElement("EnablePublishedServerUriByRequest") == "true" {
-		log.Println("Jellyfin: network.xml already configured for reverse proxy")
+	// Check if already configured with the correct BaseUrl
+	if cfg.GetElement("BaseUrl") == "/embed/jellyfin" {
+		log.Println("Jellyfin: network.xml already configured")
 		return nil
 	}
+
+	// Set base URL so Jellyfin serves under /embed/jellyfin and reports
+	// the correct server address to the web client — no localStorage patching needed
+	cfg.SetElement("BaseUrl", "/embed/jellyfin")
 
 	// Enable dynamic server URI based on request headers (X-Forwarded-Host, etc.)
 	cfg.SetElement("EnablePublishedServerUriByRequest", "true")
@@ -136,7 +140,7 @@ func (c *Configurator) configureNetwork(dataPath string) error {
 		return err
 	}
 
-	log.Println("Jellyfin: Configured network.xml for reverse proxy support")
+	log.Println("Jellyfin: Configured network.xml with BaseUrl=/embed/jellyfin")
 	return nil
 }
 
