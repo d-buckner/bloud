@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const baseURL = process.env.BLOUD_URL ?? 'http://bloud.local';
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
@@ -11,7 +13,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: 'http://bloud.local',
+    baseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -30,6 +32,12 @@ export default defineConfig({
     {
       name: 'setup',
       testMatch: 'tests/setup.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'authentik',
+      testMatch: 'tests/apps/authentik.spec.ts',
+      dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'] },
     },
     {

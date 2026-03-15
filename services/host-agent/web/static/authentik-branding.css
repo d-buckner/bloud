@@ -30,41 +30,188 @@
   --ak-accent: #1C1917 !important;
   --ak-dark-foreground: #1C1917 !important;
 
+  /* Remove the default aerial photo background */
+  --ak-flow-background: none !important;
+
+  /* Collapse the logo header area (logo is hidden) */
+  --pf-c-login__main-header--PaddingTop: 0 !important;
+  --pf-c-login__main-header--PaddingBottom: 0 !important;
+  --pf-c-login__main-header--last-child--PaddingBottom: 0 !important;
+
+  /* PatternFly v4 variables (used by Authentik flow/login pages) */
+  --pf-global--BackgroundColor--100: #FAF9F6 !important;
+  --pf-global--BackgroundColor--200: #F5F4F1 !important;
+  --pf-global--Color--100: #1C1917 !important;
+  --pf-global--Color--200: #57534E !important;
+  --pf-global--BorderColor--100: #E7E5E4 !important;
+  --pf-global--BorderColor--200: #F0EFED !important;
+  --pf-global--primary-color--100: #1C1917 !important;
+  --pf-global--primary-color--200: #292524 !important;
+  --pf-global--link--Color: #1C1917 !important;
+  --pf-global--link--Color--hover: #292524 !important;
+  --pf-global--success-color--100: #166534 !important;
+  --pf-global--danger-color--100: #991B1B !important;
+  --pf-global--warning-color--100: #92400E !important;
+  --pf-global--info-color--100: #0C4A6E !important;
+
+  /* PatternFly v5 variables (used by Authentik admin pages) */
   --pf-v5-global--BackgroundColor--100: #FAF9F6 !important;
   --pf-v5-global--BackgroundColor--200: #F5F4F1 !important;
-
   --pf-v5-global--Color--100: #1C1917 !important;
   --pf-v5-global--Color--200: #57534E !important;
-
   --pf-v5-global--BorderColor--100: #E7E5E4 !important;
   --pf-v5-global--BorderColor--200: #F0EFED !important;
-
+  --pf-v5-global--primary-color--100: #1C1917 !important;
+  --pf-v5-global--primary-color--200: #292524 !important;
+  --pf-v5-global--link--Color: #1C1917 !important;
+  --pf-v5-global--link--Color--hover: #292524 !important;
   --pf-v5-global--success-color--100: #166534 !important;
   --pf-v5-global--danger-color--100: #991B1B !important;
   --pf-v5-global--warning-color--100: #92400E !important;
   --pf-v5-global--info-color--100: #0C4A6E !important;
-
-  --pf-v5-global--primary-color--100: #1C1917 !important;
-  --pf-v5-global--primary-color--200: #292524 !important;
-
-  --pf-v5-global--link--Color: #1C1917 !important;
-  --pf-v5-global--link--Color--hover: #292524 !important;
 }
 
-h1, h2, h3, .pf-v5-c-title {
+h1, h2, h3, .pf-c-title, .pf-v5-c-title {
   font-family: 'Newsreader', Georgia, 'Times New Roman', serif !important;
   letter-spacing: -0.02em;
 }
 
+/* Hide the brand area entirely — title comes from flow title "Sign in to Bloud" */
+.ak-brand {
+  display: none !important;
+}
+
+/* Hide required field asterisk (generated via ::after on data-required-label) */
+.pf-c-form__label-text[data-required-label]::after,
+.pf-c-form__label[aria-required] .pf-c-form__label-text::after,
+.pf-c-form__label-required,
+.pf-v5-c-form__label-required {
+  display: none !important;
+}
+
+.ak-login-container {
+  height: unset !important;
+}
+
+/* Tighten gap between last field and submit button */
+.pf-c-form__group.pf-m-action {
+  margin-top: 1rem !important;
+}
+
+.pf-c-login__main-header {
+  text-align: center !important;
+  margin-bottom: 1.5rem !important;
+}
+
+/* Hide "Login to continue to [app]." sub-heading shown during OAuth redirects */
+.pf-c-login__main-header-desc,
+.pf-v5-c-login__main-header-desc,
+form.pf-c-form > p {
+  display: none !important;
+}
+
+.pf-c-login__main-header h1,
+.pf-c-login__main-header .pf-c-title {
+  font-size: 2.25rem !important;
+}
+
+.pf-c-login {
+  align-items: center !important;
+  background: #FAF9F6 !important;
+}
+
+.pf-c-login__main {
+  background: #FFFFFF !important;
+  border: none !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07) !important;
+  max-width: 420px !important;
+  width: 100% !important;
+}
+
+.pf-c-login__footer {
+  display: none !important;
+}
+
+.pf-c-avatar {
+  display: none !important;
+}
+
+.pf-c-button.pf-m-primary {
+  background-color: #1C1917 !important;
+  border-color: #1C1917 !important;
+  border-radius: 8px !important;
+  color: transparent !important;
+  position: relative !important;
+}
+
+.pf-c-button.pf-m-primary::after {
+  content: 'Sign in';
+  color: #FFFFFF;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+.pf-c-button.pf-m-primary:hover {
+  background-color: #292524 !important;
+  border-color: #292524 !important;
+}
+
+.pf-c-form-control,
+input {
+  border-radius: 6px !important;
+  border-color: #E7E5E4 !important;
+  background-color: #F5F4F1 !important;
+}
+
+.pf-c-form-control:focus,
+input:focus {
+  outline: none !important;
+  border-color: #1C1917 !important;
+  box-shadow: 0 0 0 1px #1C1917 !important;
+}
+
+.pf-c-form__label,
+.pf-c-form__label-text {
+  color: #57534E !important;
+}
+
+.pf-c-card {
+  border-radius: 8px !important;
+  border: 1px solid #E7E5E4 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+.pf-c-page__sidebar {
+  background: #FFFFFF !important;
+  border-right: 1px solid #E7E5E4 !important;
+}
+
+.pf-c-nav__link:hover {
+  background: #F5F4F1 !important;
+}
+
+.pf-c-nav__link.pf-m-current {
+  background: #F5F4F1 !important;
+  border-left-color: #1C1917 !important;
+}
+
+/* PatternFly v5 (admin interface pages) */
 .pf-v5-c-login {
   background: #FAF9F6 !important;
 }
 
 .pf-v5-c-login__main {
   background: #FFFFFF !important;
-  border: 1px solid #E7E5E4 !important;
-  border-radius: 8px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+  border: none !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07) !important;
+  max-width: 420px !important;
+  width: 100% !important;
 }
 
 .pf-v5-c-login__footer {
@@ -78,7 +225,7 @@ h1, h2, h3, .pf-v5-c-title {
 .pf-v5-c-button.pf-m-primary {
   background-color: #1C1917 !important;
   border-color: #1C1917 !important;
-  border-radius: 6px !important;
+  border-radius: 8px !important;
 }
 
 .pf-v5-c-button.pf-m-primary:hover {

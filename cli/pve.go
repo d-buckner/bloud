@@ -1420,7 +1420,7 @@ func cmdSnapshotPVE(args []string) int {
 //
 // Flags:
 //
-//	--install           Build ISO + deploy VM + boot live ISO before running tests
+//	--install, --build  Build ISO + deploy VM + boot live ISO before running tests
 //	--update-snapshots  Pass through to Playwright to refresh committed baseline images
 //	--headed            Run Playwright in headed (non-headless) mode — opens a visible browser
 //	--headful           Alias for --headed
@@ -1435,7 +1435,7 @@ func cmdSmokePVE(args []string) int {
 			updateSnapshots = true
 		case "--headed", "--headful":
 			headed = true
-		case "--install":
+		case "--install", "--build":
 			install = true
 		case "--apps":
 			for i++; i < len(args) && !strings.HasPrefix(args[i], "--"); i++ {
