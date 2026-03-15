@@ -1019,6 +1019,72 @@ func (c *Client) DeleteUser(username string) error {
 	return nil
 }
 
+// EnsureBranding updates the default Authentik brand with the provided CSS.
+// The CSS is pushed inline because Authentik uses Constructable Stylesheets
+// which forbid @import rules in branding_custom_css.
+// This is idempotent — safe to call on every PostStart.
+func (c *Client) EnsureBranding(css string) error {
+	// Find the default brand (domain = "authentik-default")
+	reqURL := fmt.Sprintf("%s/api/v3/core/brands/?domain=authentik-default", c.baseURL)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching brands: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("fetching brands: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			PK string `json:"pk"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decoding brands: %w", err)
+	}
+
+	if len(result.Results) == 0 {
+		return fmt.Errorf("default brand not found")
+	}
+
+	brandPK := result.Results[0].PK
+	patchURL := fmt.Sprintf("%s/api/v3/core/brands/%s/", c.baseURL, brandPK)
+
+	payload := map[string]string{"branding_custom_css": css}
+	payloadBytes, _ := json.Marshal(payload)
+
+	patchReq, err := http.NewRequest(http.MethodPatch, patchURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("creating patch request: %w", err)
+	}
+	patchReq.Header.Set("Authorization", "Bearer "+c.token)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("Accept", "application/json")
+
+	patchResp, err := c.httpClient.Do(patchReq)
+	if err != nil {
+		return fmt.Errorf("patching brand: %w", err)
+	}
+	defer patchResp.Body.Close()
+
+	if patchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(patchResp.Body)
+		return fmt.Errorf("patching brand CSS: status %d: %s", patchResp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // OIDC constants for Bloud's own OAuth2 application
 const (
 	bloudAppSlug         = "bloud"

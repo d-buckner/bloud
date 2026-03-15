@@ -17,6 +17,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/apps/sonarr"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/web/static"
 )
 
 // RegisterAll registers all available configurators with the registry.
@@ -34,6 +35,7 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 		cfg.AuthentikToken,
 		cfg.LDAPBindPassword,
 		cfg.DataDir,
+		static.AuthentikBrandingCSS,
 	))
 	registry.Register(miniflux.NewConfigurator(8085, traefikDynamicDir))
 	registry.Register(qbittorrent.NewConfigurator(8086))
