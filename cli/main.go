@@ -216,7 +216,7 @@ func printUsage() {
 		fmt.Println()
 		fmt.Println("Change validation:")
 		fmt.Println("  smoke [flags]               Run Playwright smoke tests against existing VM")
-		fmt.Println("    --install                 Build ISO + deploy VM + run full install before tests")
+		fmt.Println("    --install, --build        Build ISO + deploy VM + run full install before tests")
 		fmt.Println("    --apps <app1> <app2>      Run only specified app tests (default: all apps)")
 		fmt.Println("    --update-snapshots        Refresh committed baseline screenshots")
 		fmt.Println()

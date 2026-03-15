@@ -20,10 +20,11 @@ type Configurator struct {
 	tokenKey          string // API token key for host-agent
 	ldapBindPassword  string // LDAP bind password for service account
 	dataPath          string // Path to write token file
+	brandingCSS       string // Inline CSS to push to Authentik brand API
 }
 
 // NewConfigurator creates a new Authentik configurator
-func NewConfigurator(port int, bootstrapPassword, bootstrapEmail, tokenKey, ldapBindPassword, dataPath string) *Configurator {
+func NewConfigurator(port int, bootstrapPassword, bootstrapEmail, tokenKey, ldapBindPassword, dataPath, brandingCSS string) *Configurator {
 	return &Configurator{
 		port:              port,
 		bootstrapPassword: bootstrapPassword,
@@ -31,6 +32,7 @@ func NewConfigurator(port int, bootstrapPassword, bootstrapEmail, tokenKey, ldap
 		tokenKey:          tokenKey,
 		ldapBindPassword:  ldapBindPassword,
 		dataPath:          dataPath,
+		brandingCSS:       brandingCSS,
 	}
 }
 
@@ -99,6 +101,15 @@ except Exception as e:
 	client := authentikClient.NewClient(fmt.Sprintf("http://localhost:%d", c.port), c.tokenKey)
 	if err := client.EnsureLDAPInfrastructure(c.ldapBindPassword); err != nil {
 		return fmt.Errorf("failed to ensure LDAP infrastructure: %w", err)
+	}
+
+	// Step 4: Push branding CSS inline via API
+	// Authentik uses Constructable Stylesheets which forbid @import rules,
+	// so we must push the full CSS content directly.
+	if c.brandingCSS != "" {
+		if err := client.EnsureBranding(c.brandingCSS); err != nil {
+			return fmt.Errorf("failed to ensure branding: %w", err)
+		}
 	}
 
 	return nil
