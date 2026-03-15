@@ -76,13 +76,37 @@ h1, h2, h3, .pf-c-title, .pf-v5-c-title {
   letter-spacing: -0.02em;
 }
 
-/* Layout fixes */
+/* Hide the brand area entirely — title comes from flow title "Sign in to Bloud" */
 .ak-brand {
+  display: none !important;
+}
+
+/* Hide required field asterisk (generated via ::after on data-required-label) */
+.pf-c-form__label-text[data-required-label]::after,
+.pf-c-form__label[aria-required] .pf-c-form__label-text::after,
+.pf-c-form__label-required,
+.pf-v5-c-form__label-required {
   display: none !important;
 }
 
 .ak-login-container {
   height: unset !important;
+}
+
+.pf-c-login__main-header {
+  text-align: center !important;
+  margin-bottom: 1.5rem !important;
+}
+
+/* Hide "Login to continue to [app]." sub-heading shown during OAuth redirects */
+.pf-c-login__main-header-desc,
+.pf-v5-c-login__main-header-desc {
+  display: none !important;
+}
+
+.pf-c-login__main-header h1,
+.pf-c-login__main-header .pf-c-title {
+  font-size: 2.25rem !important;
 }
 
 .pf-c-login {
@@ -92,9 +116,11 @@ h1, h2, h3, .pf-c-title, .pf-v5-c-title {
 
 .pf-c-login__main {
   background: #FFFFFF !important;
-  border: 1px solid #E7E5E4 !important;
-  border-radius: 8px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+  border: none !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07) !important;
+  max-width: 420px !important;
+  width: 100% !important;
 }
 
 .pf-c-login__footer {
@@ -108,7 +134,18 @@ h1, h2, h3, .pf-c-title, .pf-v5-c-title {
 .pf-c-button.pf-m-primary {
   background-color: #1C1917 !important;
   border-color: #1C1917 !important;
-  border-radius: 6px !important;
+  border-radius: 8px !important;
+  color: transparent !important;
+  position: relative !important;
+}
+
+.pf-c-button.pf-m-primary::after {
+  content: 'Sign in';
+  color: #FFFFFF;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .pf-c-button.pf-m-primary:hover {
@@ -116,9 +153,23 @@ h1, h2, h3, .pf-c-title, .pf-v5-c-title {
   border-color: #292524 !important;
 }
 
-.pf-c-form-control {
+.pf-c-form-control,
+input {
   border-radius: 6px !important;
   border-color: #E7E5E4 !important;
+  background-color: #F5F4F1 !important;
+}
+
+.pf-c-form-control:focus,
+input:focus {
+  outline: none !important;
+  border-color: #1C1917 !important;
+  box-shadow: 0 0 0 1px #1C1917 !important;
+}
+
+.pf-c-form__label,
+.pf-c-form__label-text {
+  color: #57534E !important;
 }
 
 .pf-c-card {
@@ -148,9 +199,11 @@ h1, h2, h3, .pf-c-title, .pf-v5-c-title {
 
 .pf-v5-c-login__main {
   background: #FFFFFF !important;
-  border: 1px solid #E7E5E4 !important;
-  border-radius: 8px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+  border: none !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07) !important;
+  max-width: 420px !important;
+  width: 100% !important;
 }
 
 .pf-v5-c-login__footer {
@@ -164,7 +217,7 @@ h1, h2, h3, .pf-c-title, .pf-v5-c-title {
 .pf-v5-c-button.pf-m-primary {
   background-color: #1C1917 !important;
   border-color: #1C1917 !important;
-  border-radius: 6px !important;
+  border-radius: 8px !important;
 }
 
 .pf-v5-c-button.pf-m-primary:hover {
