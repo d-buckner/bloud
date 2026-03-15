@@ -4,6 +4,7 @@ result-*
 
 # direnv
 .direnv/
+.playwrite-mcp/
 
 # Node.js / Turborepo
 node_modules/

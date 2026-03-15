@@ -14,9 +14,22 @@ entries:
       slug: default-authentication-flow
     state: present
     attrs:
-      title: Sign in
+      title: Sign in to Bloud
+
+  # Show only username field (not email) on the login page
+  - model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: default-authentication-identification
+    state: present
+    attrs:
+      user_fields:
+        - username
 
   # Update the default brand with Bloud branding
+  # Note: branding_custom_css is NOT set here — it is pushed inline via the
+  # configurator PostStart. Authentik uses Constructable Stylesheets which
+  # forbid @import rules, so the full CSS must be set via the API, not here.
+  # Setting it here would wipe whatever the configurator pushed.
   - model: authentik_brands.brand
     identifiers:
       domain: authentik-default
@@ -30,4 +43,3 @@ entries:
         settings:
           theme:
             base: light
-      branding_custom_css: "@import url('/authentik-branding.css');"
