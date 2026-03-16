@@ -112,6 +112,11 @@ except Exception as e:
 		}
 	}
 
+	// Step 5: Apply login page configuration (flow title + username-only identification)
+	if err := client.EnsureLoginConfiguration(); err != nil {
+		return fmt.Errorf("failed to ensure login configuration: %w", err)
+	}
+
 	return nil
 }
 

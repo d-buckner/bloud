@@ -1019,6 +1019,198 @@ func (c *Client) DeleteUser(username string) error {
 	return nil
 }
 
+// EnsureLoginConfiguration applies Bloud-specific login page settings:
+// - Sets the authentication flow title to "Sign in to Bloud"
+// - Configures the identification stage to only accept username (not email)
+// This is idempotent — safe to call on every PostStart.
+//
+// Authentik creates default flows asynchronously via blueprints after the health endpoint
+// returns ready, so we retry until our changes stick. The blueprint for the default
+// authentication flow runs during startup and can overwrite a patch applied just before it
+// completes. We detect this by re-reading the flow title 3 seconds after patching — if a
+// blueprint reset it, the outer loop retries, eventually patching after all blueprints finish.
+//
+// Refs:
+//   - PATCH /api/v3/flows/instances/:slug/ (slug path param, title body field)
+//   - GET  /api/v3/flows/instances/:slug/ (verify title)
+//   - PATCH /api/v3/stages/identification/:stage_uuid/ (UUID path param, user_fields body field)
+func (c *Client) EnsureLoginConfiguration() error {
+	const (
+		timeout  = 2 * time.Minute
+		interval = 10 * time.Second
+	)
+	deadline := time.Now().Add(timeout)
+
+	for {
+		err := c.applyAndVerifyLoginConfiguration()
+		if err == nil {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for login configuration to apply: %w", err)
+		}
+
+		time.Sleep(interval)
+	}
+}
+
+// applyAndVerifyLoginConfiguration patches the flow title and identification stage, then
+// waits 3 seconds and re-reads the flow title to confirm a blueprint didn't overwrite it.
+func (c *Client) applyAndVerifyLoginConfiguration() error {
+	if err := c.ensureFlowTitle("default-authentication-flow", "Sign in to Bloud"); err != nil {
+		return fmt.Errorf("ensuring flow title: %w", err)
+	}
+
+	if err := c.ensureIdentificationStageUsernameOnly("default-authentication-identification"); err != nil {
+		return fmt.Errorf("ensuring identification stage: %w", err)
+	}
+
+	// Wait briefly, then re-read the flow title to confirm no blueprint overwrote our patch.
+	time.Sleep(3 * time.Second)
+
+	title, err := c.getFlowTitle("default-authentication-flow")
+	if err != nil {
+		return fmt.Errorf("verifying flow title: %w", err)
+	}
+	if title != "Sign in to Bloud" {
+		return fmt.Errorf("flow title was reset to %q by a blueprint, will retry", title)
+	}
+
+	return nil
+}
+
+// getFlowTitle fetches the current title of a flow by slug.
+func (c *Client) getFlowTitle(slug string) (string, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/flows/instances/%s/", c.baseURL, url.PathEscape(slug))
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("fetching flow: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding flow: %w", err)
+	}
+	return result.Title, nil
+}
+
+// ensureFlowTitle PATCHes the title of a flow by slug.
+// API: PATCH /api/v3/flows/instances/:slug/ — slug is the URL path parameter.
+func (c *Client) ensureFlowTitle(slug, title string) error {
+	reqURL := fmt.Sprintf("%s/api/v3/flows/instances/%s/", c.baseURL, url.PathEscape(slug))
+	payload := map[string]string{"title": title}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("patching flow title: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// ensureIdentificationStageUsernameOnly sets user_fields to ["username"] on an identification stage.
+// API: GET /api/v3/stages/identification/?search=name to find the stage UUID,
+// then PATCH /api/v3/stages/identification/:stage_uuid/ with user_fields.
+// Valid user_fields values: email, username, upn.
+func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
+	reqURL := fmt.Sprintf("%s/api/v3/stages/identification/?search=%s", c.baseURL, url.QueryEscape(stageName))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching identification stages: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("fetching identification stages: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// pk is a UUID string (stage_uuid), used as the path parameter for PATCH
+	var result struct {
+		Results []struct {
+			PK   string `json:"pk"`
+			Name string `json:"name"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decoding identification stages: %w", err)
+	}
+
+	var stageUUID string
+	for _, stage := range result.Results {
+		if stage.Name == stageName {
+			stageUUID = stage.PK
+			break
+		}
+	}
+
+	if stageUUID == "" {
+		return fmt.Errorf("identification stage %q not found", stageName)
+	}
+
+	patchURL := fmt.Sprintf("%s/api/v3/stages/identification/%s/", c.baseURL, stageUUID)
+	payload := map[string]interface{}{
+		"user_fields": []string{"username"},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	patchReq, err := http.NewRequest(http.MethodPatch, patchURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	patchReq.Header.Set("Authorization", "Bearer "+c.token)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("Accept", "application/json")
+
+	patchResp, err := c.httpClient.Do(patchReq)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer patchResp.Body.Close()
+
+	if patchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(patchResp.Body)
+		return fmt.Errorf("patching identification stage: status %d: %s", patchResp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // EnsureBranding updates the default Authentik brand with the provided CSS.
 // The CSS is pushed inline because Authentik uses Constructable Stylesheets
 // which forbid @import rules in branding_custom_css.
