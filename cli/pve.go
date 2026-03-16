@@ -1481,8 +1481,16 @@ func cmdSmokePVE(args []string) int {
 	// Clear previous report so show-report always displays current results
 	os.RemoveAll(filepath.Join(smokeDir, "playwright-report"))
 
+	// Resolve VM IP to pass as BLOUD_URL — avoids relying on mDNS (bloud.local) which
+	// doesn't work reliably when the test runner is on a different host.
+	cfg := getPVEConfig()
+	vmURL := "http://bloud.local"
+	if ip := getVMIP(cfg); ip != "" {
+		vmURL = "http://" + ip
+	}
+
 	// Run Playwright smoke tests
-	log("Running smoke tests against http://bloud.local...")
+	log("Running smoke tests against " + vmURL + "...")
 	fmt.Println()
 
 	playwrightArgs := []string{"playwright", "test", "--reporter=list"}
@@ -1526,6 +1534,7 @@ func cmdSmokePVE(args []string) int {
 	playwrightCmd.Dir = smokeDir
 	playwrightCmd.Stdout = os.Stdout
 	playwrightCmd.Stderr = os.Stderr
+	playwrightCmd.Env = append(os.Environ(), "BLOUD_URL="+vmURL)
 	if err := playwrightCmd.Run(); err != nil {
 		fmt.Println()
 		errorf("Smoke tests failed")

@@ -12,7 +12,7 @@ interface CreateUserResponse {
 }
 
 export class SmokeApi {
-  private readonly baseUrl = 'http://bloud.local';
+  private readonly baseUrl = process.env.BLOUD_URL ?? 'http://bloud.local';
 
   constructor(private readonly request: APIRequestContext) {}
 
