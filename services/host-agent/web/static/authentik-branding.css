@@ -127,6 +127,7 @@ form.pf-c-form > p {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07) !important;
   max-width: 420px !important;
   width: 100% !important;
+  align-self: center;
 }
 
 .pf-c-login__footer {
