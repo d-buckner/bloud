@@ -13,7 +13,7 @@
  */
 
 import { apps, loading, error } from '$lib/stores/apps';
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 
 // Names of apps whose install has been triggered but not yet reflected in the apps store via SSE
 export const pendingInstalls = writable<Set<string>>(new Set());
@@ -25,6 +25,7 @@ import {
 	renameApp,
 	type RenameResult,
 } from '$lib/clients/appClient';
+import { saveLayout } from '$lib/clients/layoutClient';
 import { connectSSE, disconnectSSE } from '$lib/api/sse';
 import { type InstallResult, type UninstallResult, AppStatus } from '$lib/types';
 
@@ -94,6 +95,10 @@ export async function installApp(
 ): Promise<InstallResult> {
 	// Add to layout so it shows on the grid immediately
 	layout.addApp(name);
+	// Persist immediately — a 500ms debounced save would lose the new app if SSE
+	// reconnects (triggered by the nixos-rebuild) within that window and overwrites
+	// the in-memory layout with the stale API state.
+	saveLayout(get(layout));
 
 	// Mark as pending so the catalog can show 'installing' before SSE arrives
 	pendingInstalls.update((s) => new Set(s).add(name));

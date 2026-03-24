@@ -1056,7 +1056,7 @@ func (c *Client) EnsureLoginConfiguration() error {
 }
 
 // applyAndVerifyLoginConfiguration patches the flow title and identification stage, then
-// waits 3 seconds and re-reads the flow title to confirm a blueprint didn't overwrite it.
+// waits 3 seconds and re-reads both to confirm a blueprint didn't overwrite them.
 func (c *Client) applyAndVerifyLoginConfiguration() error {
 	if err := c.ensureFlowTitle("default-authentication-flow", "Sign in to Bloud"); err != nil {
 		return fmt.Errorf("ensuring flow title: %w", err)
@@ -1066,7 +1066,8 @@ func (c *Client) applyAndVerifyLoginConfiguration() error {
 		return fmt.Errorf("ensuring identification stage: %w", err)
 	}
 
-	// Wait briefly, then re-read the flow title to confirm no blueprint overwrote our patch.
+	// Wait briefly, then re-read both the flow title and identification stage user_fields
+	// to confirm no blueprint overwrote our patches.
 	time.Sleep(3 * time.Second)
 
 	title, err := c.getFlowTitle("default-authentication-flow")
@@ -1075,6 +1076,14 @@ func (c *Client) applyAndVerifyLoginConfiguration() error {
 	}
 	if title != "Sign in to Bloud" {
 		return fmt.Errorf("flow title was reset to %q by a blueprint, will retry", title)
+	}
+
+	userFields, err := c.getIdentificationStageUserFields("default-authentication-identification")
+	if err != nil {
+		return fmt.Errorf("verifying identification stage: %w", err)
+	}
+	if len(userFields) != 1 || userFields[0] != "username" {
+		return fmt.Errorf("identification stage user_fields was reset to %v by a blueprint, will retry", userFields)
 	}
 
 	return nil
@@ -1108,6 +1117,42 @@ func (c *Client) getFlowTitle(slug string) (string, error) {
 		return "", fmt.Errorf("decoding flow: %w", err)
 	}
 	return result.Title, nil
+}
+
+// getIdentificationStageUserFields fetches the current user_fields of an identification stage by name.
+func (c *Client) getIdentificationStageUserFields(stageName string) ([]string, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/stages/identification/?search=%s", c.baseURL, url.QueryEscape(stageName))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching identification stage: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetching identification stage: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			Name       string   `json:"name"`
+			UserFields []string `json:"user_fields"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding identification stage: %w", err)
+	}
+
+	for _, stage := range result.Results {
+		if stage.Name == stageName {
+			return stage.UserFields, nil
+		}
+	}
+	return nil, fmt.Errorf("identification stage %q not found", stageName)
 }
 
 // ensureFlowTitle PATCHes the title of a flow by slug.

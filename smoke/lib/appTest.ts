@@ -33,10 +33,15 @@ export function appTest(appName: string, displayName: string, callback: AppTestC
 
       const modal = page.locator('dialog');
       const getButton = modal.getByRole('button', { name: 'Get', exact: true });
-      const alreadyInstalled = !(await getButton.isVisible({ timeout: 15_000 }).catch(() => false));
-      if (!alreadyInstalled) {
+      const needsInstall = await getButton.waitFor({ state: 'visible', timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (needsInstall) {
         await getButton.click();
-        await expect(page.getByText('Installed')).toBeVisible({ timeout: 5 * 60 * 1000 });
+        // Wait for the catalog card (not the modal) to show the "Installed" badge.
+        // The modal may close on its own after install; the card badge is stable.
+        const card = page.getByRole('button', { name: title });
+        await expect(card.getByText('Installed')).toBeVisible({ timeout: 7 * 60 * 1000 });
       }
 
       await page.goto('/');

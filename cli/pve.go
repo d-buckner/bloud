@@ -434,6 +434,10 @@ func printPVEResults(ip string, passed, failed int) {
 // ── ISO deploy ─────────────────────────────────────────────────────────────────
 
 func doDeploy(cfg pveConfig, isoSource string) int {
+	if isoSource == "keep-existing" {
+		log("Using existing ISO on Proxmox (skipping copy)...")
+		return 0
+	}
 	if isoSource == "" {
 		log("Finding latest GitHub release...")
 		out, err := exec.Command("gh", "release", "view", "--json", "assets",
@@ -721,6 +725,8 @@ func cmdStartPVE(args []string) int {
 		switch args[i] {
 		case "--build":
 			build = true
+		case "--no-iso-copy":
+			isoSource = "keep-existing"
 		case "--skip-deploy":
 			skipDeploy = true
 		case "--install":
@@ -1414,13 +1420,13 @@ func cmdSnapshotPVE(args []string) int {
 // cmdSmokePVE runs the Playwright smoke suite in smoke/ against http://bloud.local.
 //
 // By default skips ISO build/deploy and runs tests against the existing VM.
-// Use --install to build a fresh ISO, deploy it, and drive the full installer UI
+// Use --build to build a fresh ISO, deploy it, and drive the full installer UI
 // before running tests.
 // VM is left running after completion for manual inspection.
 //
 // Flags:
 //
-//	--install, --build  Build ISO + deploy VM + boot live ISO before running tests
+//	--build  Build ISO + deploy VM + boot live ISO before running tests
 //	--update-snapshots  Pass through to Playwright to refresh committed baseline images
 //	--headed            Run Playwright in headed (non-headless) mode — opens a visible browser
 //	--headful           Alias for --headed
@@ -1428,6 +1434,7 @@ func cmdSmokePVE(args []string) int {
 	updateSnapshots := false
 	headed := false
 	install := false
+	noIsoCopy := false
 	var apps []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -1435,19 +1442,33 @@ func cmdSmokePVE(args []string) int {
 			updateSnapshots = true
 		case "--headed", "--headful":
 			headed = true
-		case "--install", "--build":
+		case "--build":
 			install = true
+		case "--no-build":
+			install = true
+			noIsoCopy = true
 		case "--apps":
 			for i++; i < len(args) && !strings.HasPrefix(args[i], "--"); i++ {
 				apps = append(apps, args[i])
 			}
 			i-- // back up so outer loop increment lands correctly
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				fmt.Fprintf(os.Stderr, "%sError:%s unknown flag '%s'\n", colorRed, colorReset, args[i])
+				fmt.Fprintf(os.Stderr, "Run './bloud help' for usage.\n")
+				return 1
+			}
 		}
 	}
 
-	// Build ISO + deploy VM + boot live ISO (no --install: Playwright drives the installer)
+	// Build ISO + deploy VM + boot live ISO. Playwright drives the installer via setup.spec.ts.
 	if install {
-		if code := cmdStartPVE([]string{"--build"}); code != 0 {
+		startArgs := []string{"--build"}
+		if noIsoCopy {
+			// Skip ISO build/copy (ISO already on Proxmox); just create VM + boot
+			startArgs = []string{"--no-iso-copy"}
+		}
+		if code := cmdStartPVE(startArgs); code != 0 {
 			return code
 		}
 	}
@@ -1481,19 +1502,20 @@ func cmdSmokePVE(args []string) int {
 	// Clear previous report so show-report always displays current results
 	os.RemoveAll(filepath.Join(smokeDir, "playwright-report"))
 
-	// Resolve VM IP to pass as BLOUD_URL — avoids relying on mDNS (bloud.local) which
-	// doesn't work reliably when the test runner is on a different host.
-	cfg := getPVEConfig()
+	// Use bloud.local for all smoke tests — Authentik session cookies are bound to this domain,
+	// so using the VM IP would break SSO flows (cookie domain mismatch, cross-origin iframes).
+	// BLOUD_VM_IP lets playwright.config.ts inject --host-resolver-rules so the browser
+	// resolves bloud.local → VM IP even when mDNS (Avahi) isn't reachable from the test host.
 	vmURL := "http://bloud.local"
-	if ip := getVMIP(cfg); ip != "" {
-		vmURL = "http://" + ip
-	}
+
+	cfg := getPVEConfig()
+	vmIP := getVMIP(cfg)
 
 	// Run Playwright smoke tests
-	log("Running smoke tests against " + vmURL + "...")
+	log("Running smoke tests against " + vmURL + " (VM IP: " + vmIP + ")...")
 	fmt.Println()
 
-	playwrightArgs := []string{"playwright", "test", "--reporter=list"}
+	playwrightArgs := []string{"playwright", "test"}
 	if updateSnapshots {
 		playwrightArgs = append(playwrightArgs, "--update-snapshots")
 	}
@@ -1534,7 +1556,11 @@ func cmdSmokePVE(args []string) int {
 	playwrightCmd.Dir = smokeDir
 	playwrightCmd.Stdout = os.Stdout
 	playwrightCmd.Stderr = os.Stderr
-	playwrightCmd.Env = append(os.Environ(), "BLOUD_URL="+vmURL)
+	playwrightEnv := append(os.Environ(), "BLOUD_URL="+vmURL)
+	if vmIP != "" {
+		playwrightEnv = append(playwrightEnv, "BLOUD_VM_IP="+vmIP)
+	}
+	playwrightCmd.Env = playwrightEnv
 	if err := playwrightCmd.Run(); err != nil {
 		fmt.Println()
 		errorf("Smoke tests failed")
