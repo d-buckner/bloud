@@ -13,6 +13,8 @@ mkPodmanApp {
 
   # Flood serves the UI, qBittorrent runs as backend
   image = "jesec/flood:latest";
+  # qBittorrent backend uses a separate image — pre-pull so install doesn't hit the network
+  pullImages = [ "linuxserver/qbittorrent:latest" ];
 
   # Flood serves the UI on this port
   port = 8086;

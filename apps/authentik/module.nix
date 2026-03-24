@@ -210,7 +210,7 @@ in
         extraAfter = [ "podman-apps-authentik-server.service" ];
         extraRequires = [ "podman-apps-authentik-server.service" ];
         waitFor = [
-          { container = "apps-authentik-server"; command = "wget -qO- http://localhost:9000/-/health/live/ 2>/dev/null || exit 1"; }
+          { container = "apps-authentik-server"; command = "curl -sf http://localhost:9000/-/health/live/"; }
         ];
       };
     } // lib.optionalAttrs appCfg.ldap.enable {

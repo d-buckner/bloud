@@ -2,6 +2,33 @@ import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = process.env.BLOUD_URL ?? 'http://bloud.local';
 
+// When running against a Proxmox VM, mDNS (bloud.local) may not reach the test host
+// across network boundaries (e.g. WiFi ↔ wired bridge). Inject a Chrome host resolver
+// rule so the browser resolves bloud.local → VM IP without relying on mDNS.
+const vmIP = process.env.BLOUD_VM_IP;
+const chromeLaunchArgs = vmIP
+  ? [`--host-resolver-rules=MAP bloud.local ${vmIP}`]
+  : [];
+const APPS = [
+  'authentik',
+  'miniflux',
+  'jellyfin',
+  'adguard-home',
+  'qbittorrent',
+  'sonarr',
+  'radarr',
+  'prowlarr',
+];
+
+function createAppEntries() {
+  return APPS.map(name => ({
+    name,
+    testMatch: `tests/apps/${name}.spec.ts`,
+    dependencies: ['setup'],
+    use: { ...devices['Desktop Chrome'], launchOptions: { args: chromeLaunchArgs } },
+  }));
+}
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
@@ -32,32 +59,9 @@ export default defineConfig({
     {
       name: 'setup',
       testMatch: 'tests/setup.spec.ts',
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], launchOptions: { args: chromeLaunchArgs } },
     },
-    {
-      name: 'authentik',
-      testMatch: 'tests/apps/authentik.spec.ts',
-      dependencies: ['setup'],
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'miniflux',
-      testMatch: 'tests/apps/miniflux.spec.ts',
-      dependencies: ['setup'],
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'jellyfin',
-      testMatch: 'tests/apps/jellyfin.spec.ts',
-      dependencies: ['setup'],
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'adguard-home',
-      testMatch: 'tests/apps/adguard-home.spec.ts',
-      dependencies: ['setup'],
-      use: { ...devices['Desktop Chrome'] },
-    },
+    ...createAppEntries(),
   ],
   outputDir: 'test-results',
 });

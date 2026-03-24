@@ -67,6 +67,9 @@
   extraConfig ? {},
   # Environment file for secrets (loaded at container start, not Nix eval time)
   envFile ? null,
+  # Additional images to pre-pull at VM startup (beyond the main `image`).
+  # Use this for apps that run multiple containers with different images.
+  pullImages ? [],
 }:
 
 let
@@ -217,7 +220,13 @@ in
     enable = lib.mkEnableOption description;
   } // portOption // customOptions;
 
-  config = lib.mkIf appCfg.enable (lib.mkMerge [
+  config = lib.mkMerge [
+    # Pre-pull container images at VM startup, even before the app is enabled.
+    # This ensures images are cached when the user installs the app, avoiding
+    # multi-minute internet pulls that would cause install timeout failures.
+    { bloud.pullImages = [ image ] ++ pullImages; }
+
+    (lib.mkIf appCfg.enable (lib.mkMerge [
     {
       # Create all directories needed for volume mounts
       # This ensures directories exist before podman tries to mount them
@@ -270,5 +279,6 @@ in
       } // dbInitService // resolvedExtraServices;
     }
     resolvedExtraConfig
-  ]);
+  ]))
+  ];
 }
