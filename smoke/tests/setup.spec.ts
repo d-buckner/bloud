@@ -8,7 +8,8 @@ test('installer', async ({ page }) => {
   const installButton = page.getByRole('button', { name: 'Install Bloud' });
 
   await test.step('load installer', async () => {
-    await page.goto('/');
+    // Retry navigation — bloud.local mDNS may lag a few seconds after ISO boot
+    await expect(() => page.goto('/')).toPass({ timeout: 60_000, intervals: [5_000] });
 
     // Wait for hardware detection — retry if the disk API fails on first load after boot
     await expect(async () => {
