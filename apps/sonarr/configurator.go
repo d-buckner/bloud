@@ -148,8 +148,6 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string, 
 		}
 	}
 
-	// Create the download client
-	// Connect via container network DNS name to qBittorrent's WebUI port
 	client := map[string]any{
 		"name":           "Bloud: qBittorrent",
 		"implementation": "QBittorrent",
@@ -157,7 +155,7 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string, 
 		"enable":         true,
 		"priority":       1,
 		"fields": []map[string]any{
-			{"name": "host", "value": "apps-qbittorrent"},
+			{"name": "host", "value": "qbittorrent"},
 			{"name": "port", "value": 8080},
 			{"name": "useSsl", "value": false},
 			{"name": "username", "value": ""},
