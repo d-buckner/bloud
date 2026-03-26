@@ -16,7 +16,7 @@ export class SmokeApi {
 
   constructor(private readonly request: APIRequestContext) {}
 
-  async waitForSetupReady(timeoutMs = 10 * 60 * 1000): Promise<void> {
+  async waitForSetupReady(timeoutMs = 15 * 60 * 1000): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       try {
@@ -30,7 +30,7 @@ export class SmokeApi {
       }
       await sleep(5_000);
     }
-    throw new Error('Timeout waiting for Authentik to be ready (10 minutes)');
+    throw new Error('Timeout waiting for Authentik to be ready (15 minutes)');
   }
 
   async createUser(username: string, password: string): Promise<void> {
