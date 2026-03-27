@@ -160,8 +160,6 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string, 
 			{"name": "host", "value": "qbittorrent"},
 			{"name": "port", "value": 8080},
 			{"name": "useSsl", "value": false},
-			{"name": "username", "value": ""},
-			{"name": "password", "value": ""},
 			{"name": "movieCategory", "value": "radarr"},
 		},
 	}
