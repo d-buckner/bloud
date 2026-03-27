@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
+
+// ReconfigDispatcher is notified when an app's optional dependency transitions to
+// healthy. The implementation decides whether to restart the app (static config
+// change) or re-run PostStart only (dynamic config change).
+type ReconfigDispatcher interface {
+	DispatchReconfig(ctx context.Context, appName string, installedApps map[string]*store.InstalledApp)
+}
 
 // ReconcileConfig holds configuration for the reconciliation loop
 type ReconcileConfig struct {
@@ -42,6 +50,18 @@ type Reconciler struct {
 	dataDir      string
 	logger       *slog.Logger
 	config       ReconcileConfig
+
+	mu          sync.Mutex
+	prevHealthy map[string]bool
+	dispatcher  ReconfigDispatcher
+}
+
+// SetReconfigDispatcher registers a dispatcher to be called when an app's optional
+// dependency transitions to healthy. Safe to call at any time.
+func (r *Reconciler) SetReconfigDispatcher(d ReconfigDispatcher) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dispatcher = d
 }
 
 // NewReconciler creates a new reconciler
@@ -88,6 +108,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 
 	var reconciled []string
 	var errors []string
+	currentlyHealthy := make(map[string]bool)
 
 	// Phase 1: PreStart for all apps (can run in any order)
 	r.logger.Debug("phase 1: running PreStart for all apps")
@@ -134,6 +155,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 				continue
 			}
 			cancel()
+			currentlyHealthy[app.Name] = true
 
 			// Run PostStart
 			state := r.buildAppState(app, appMap)
@@ -147,6 +169,18 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	// Detect newly-healthy apps and dispatch reconfig for any parent apps that
+	// have a non-required integration on them and were already healthy last cycle.
+	r.mu.Lock()
+	prev := r.prevHealthy
+	r.prevHealthy = currentlyHealthy
+	dispatcher := r.dispatcher
+	r.mu.Unlock()
+
+	if dispatcher != nil {
+		r.dispatchOptionalDepTransitions(ctx, currentlyHealthy, prev, appMap, dispatcher)
+	}
+
 	duration := time.Since(startTime)
 	r.logger.Info("reconciliation complete",
 		"duration", duration,
@@ -155,6 +189,57 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	)
 
 	return nil
+}
+
+// dispatchOptionalDepTransitions finds apps that transitioned from not-healthy to healthy
+// this cycle, locates installed parent apps that declare a non-required integration on
+// each, and dispatches a reconfig for parents that were already healthy last cycle.
+// Parents that are themselves new this cycle don't need dispatch — the level-ordered
+// PostStart already ran after the dep became healthy.
+func (r *Reconciler) dispatchOptionalDepTransitions(
+	ctx context.Context,
+	currentlyHealthy, prevHealthy map[string]bool,
+	installedApps map[string]*store.InstalledApp,
+	dispatcher ReconfigDispatcher,
+) {
+	if r.catalogCache == nil {
+		return
+	}
+
+	for newApp := range currentlyHealthy {
+		if prevHealthy[newApp] {
+			continue // not a transition
+		}
+
+		// newApp just became healthy — find parents with optional integration on it
+		for parentName := range installedApps {
+			if parentName == newApp {
+				continue
+			}
+			if !prevHealthy[parentName] {
+				continue // parent is also new; its PostStart handled registration directly
+			}
+
+			catalogApp, err := r.catalogCache.Get(parentName)
+			if err != nil || catalogApp == nil {
+				continue
+			}
+
+			for _, integration := range catalogApp.Integrations {
+				if integration.Required {
+					continue
+				}
+				for _, compatible := range integration.Compatible {
+					if compatible.App == newApp {
+						r.logger.Info("dispatching reconfig: optional dep became healthy",
+							"parent", parentName, "dep", newApp)
+						dispatcher.DispatchReconfig(ctx, parentName, installedApps)
+						break
+					}
+				}
+			}
+		}
+	}
 }
 
 // computeLevels computes execution levels for apps.
