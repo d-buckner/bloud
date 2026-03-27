@@ -23,7 +23,7 @@ export class SmokeApi {
         const response = await this.request.get(`${this.baseUrl}/api/setup/status`);
         if (response.ok()) {
           const data: SetupStatus = await response.json();
-          if (data.authentikReady && data.authReady) return;
+          if (data.authentikReady && data.authReady && (await this.isForwardAuthReady())) return;
         }
       } catch {
         // not up yet
@@ -31,6 +31,18 @@ export class SmokeApi {
       await sleep(5_000);
     }
     throw new Error('Timeout waiting for Authentik to be ready (15 minutes)');
+  }
+
+  // Verifies the forward-auth redirect chain is working by checking that an
+  // unauthenticated request to / is redirected to the Authentik login flow.
+  // The API may report "ready" before the outpost has loaded its config.
+  private async isForwardAuthReady(): Promise<boolean> {
+    try {
+      const response = await this.request.get(`${this.baseUrl}/`);
+      return response.url().includes('/if/flow/');
+    } catch {
+      return false;
+    }
   }
 
   async createUser(username: string, password: string): Promise<void> {

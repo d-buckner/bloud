@@ -34,7 +34,10 @@ type Orchestrator struct {
 	dataDir         string
 	logger          *slog.Logger
 	queue           *OperationQueue
-	outpostMu       sync.Mutex // serializes ensureForwardAuthOutpostAssociation calls
+	outpostMu       sync.Mutex    // serializes ensureForwardAuthOutpostAssociation calls
+	outpostSignal   chan struct{}  // debounces ensureForwardAuthOutpostAssociation calls
+	outpostDone     chan struct{}  // closed by Stop() to exit the worker goroutine
+	outpostDebounce time.Duration // debounce window; 0 uses outpostAssociationDebounce default
 }
 
 // Config holds Orchestrator configuration
@@ -115,14 +118,18 @@ func New(cfg Config) *Orchestrator {
 		traefikGen:      traefikGen,
 		blueprintGen:    blueprintGen,
 		authentikClient: authentikClient,
-		rebuilder:       rebuilder,
-		dataDir:         cfg.DataDir,
-		logger:          cfg.Logger,
+		rebuilder:      rebuilder,
+		dataDir:        cfg.DataDir,
+		logger:         cfg.Logger,
+		outpostSignal:  make(chan struct{}, 1),
+		outpostDone:    make(chan struct{}),
 	}
 
 	// Create and start the operation queue
 	o.queue = NewOperationQueue(o, DefaultQueueConfig(), cfg.Logger)
 	o.queue.Start()
+
+	go o.outpostAssociationWorker()
 
 	return o
 }
@@ -131,6 +138,9 @@ func New(cfg Config) *Orchestrator {
 func (o *Orchestrator) Stop() {
 	if o.queue != nil {
 		o.queue.Stop()
+	}
+	if o.outpostDone != nil {
+		close(o.outpostDone)
 	}
 }
 
@@ -706,9 +716,7 @@ func (o *Orchestrator) waitForHealthy(appName string) {
 			if (resp.StatusCode >= 200 && resp.StatusCode < 400) || resp.StatusCode == 401 || resp.StatusCode == 403 {
 				o.logger.Info("health check passed", "app", appName, "status", resp.StatusCode, "attempts", attempts)
 				o.appStore.UpdateStatus(appName, "running")
-				// Ensure forward-auth providers are in the embedded outpost
-				// (async call to avoid blocking health check completion)
-				go o.ensureForwardAuthOutpostAssociation()
+				o.triggerOutpostAssociation()
 				return
 			}
 			o.logger.Debug("health check got non-success status",
@@ -849,8 +857,46 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 	return nil
 }
 
-// ensureForwardAuthOutpostAssociation ensures forward-auth providers are added to the embedded outpost
-// This is called after Authentik has had time to process blueprints.
+// outpostAssociationDebounce is the default debounce window.
+const outpostAssociationDebounce = 5 * time.Second
+
+// triggerOutpostAssociation signals the debounce worker to run ensureForwardAuthOutpostAssociation.
+// Safe to call from multiple goroutines; rapid calls are coalesced into a single delayed run.
+func (o *Orchestrator) triggerOutpostAssociation() {
+	select {
+	case o.outpostSignal <- struct{}{}:
+	default: // already pending — worker will pick it up
+	}
+}
+
+// outpostAssociationWorker debounces calls to ensureForwardAuthOutpostAssociation.
+// Each signal resets the timer; the association only runs after a quiet period.
+func (o *Orchestrator) outpostAssociationWorker() {
+	debounce := o.outpostDebounce
+	if debounce == 0 {
+		debounce = outpostAssociationDebounce
+	}
+	timer := time.NewTimer(debounce)
+	timer.Stop()
+	for {
+		select {
+		case <-o.outpostDone:
+			return
+		case <-o.outpostSignal:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(debounce)
+		case <-timer.C:
+			o.ensureForwardAuthOutpostAssociation()
+		}
+	}
+}
+
+// ensureForwardAuthOutpostAssociation ensures forward-auth providers are added to the embedded outpost.
 // Serialized via mutex to prevent concurrent outpost updates causing Postgres deadlocks.
 func (o *Orchestrator) ensureForwardAuthOutpostAssociation() {
 	o.outpostMu.Lock()
@@ -1035,8 +1081,7 @@ func (o *Orchestrator) ReconcileState() {
 		o.logger.Warn("failed to regenerate routes during reconciliation", "error", err)
 	}
 
-	// Ensure forward-auth providers are in the embedded outpost
-	o.ensureForwardAuthOutpostAssociation()
+	o.triggerOutpostAssociation()
 
 	o.logger.Info("state reconciliation complete")
 }

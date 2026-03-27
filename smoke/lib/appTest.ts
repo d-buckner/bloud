@@ -1,6 +1,8 @@
 import { test, expect, type Page, type FrameLocator } from '@playwright/test';
 import { LoginPage } from './login-page';
 
+const BLOUD_URL = process.env.BLOUD_URL ?? 'http://bloud.local';
+
 type AppTestFixtures = {
   page: Page;
   appFrame: FrameLocator;
@@ -45,6 +47,20 @@ export function appTest(appName: string, displayName: string, callback: AppTestC
       }
 
       await page.goto('/');
+    });
+
+    await test.step(`check ${title} embed endpoint`, async () => {
+      // Verify the embed endpoint is reachable before opening the iframe.
+      // Retry on 5xx (app may still be starting). Fail fast with a clear error.
+      await expect(async () => {
+        const response = await page.request.get(`${BLOUD_URL}/embed/${appName}/`);
+        const status = response.status();
+        if (status >= 500) {
+          throw new Error(
+            `Embed endpoint /embed/${appName}/ returned ${status} — app is not running`,
+          );
+        }
+      }).toPass({ timeout: 2 * 60 * 1000, intervals: [5_000] });
     });
 
     const appFrame = await test.step(`open ${title}`, async () => {
