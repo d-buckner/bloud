@@ -19,6 +19,7 @@ mkPodmanApp {
     PGID = "1000";
     TZ = "UTC";
     WEBUI_PORT = "8080";
+    WEBUI_BYPASS_AUTH_SUBNET = bloudCfg.network.subnet;
   };
 
   volumes = _: [

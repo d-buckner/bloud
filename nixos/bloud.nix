@@ -70,9 +70,28 @@ in
       default = [];
       description = "Container images to pull sequentially before starting apps (avoids parallel pull storms)";
     };
+
+    network = {
+      subnet = lib.mkOption {
+        type = lib.types.str;
+        default = "10.89.0.0/24";
+        description = "CIDR subnet for the apps-net podman network. Used for inter-container routing and auth bypass rules (e.g. qBittorrent WEBUI_BYPASS_AUTH_SUBNET).";
+        example = "10.89.0.0/24";
+      };
+    };
   };
 
-  config = lib.mkIf cfg.enable {
+  config =
+    let
+      # Derive gateway from subnet: replace the last octet with 1
+      # e.g. "10.89.0.0/24" → "10.89.0.1"
+      networkGateway =
+        let
+          ip = lib.head (lib.splitString "/" cfg.network.subnet);
+          parts = lib.splitString "." ip;
+        in "${lib.elemAt parts 0}.${lib.elemAt parts 1}.${lib.elemAt parts 2}.1";
+    in
+    lib.mkIf cfg.enable {
     # Enable core infrastructure by default
     bloud.apps.postgres.enable = lib.mkDefault true;   # Shared database
     bloud.apps.redis.enable = lib.mkDefault true;      # Shared cache (used by Authentik)
@@ -128,7 +147,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network exists apps-net || ${pkgs.podman}/bin/podman network create --subnet 10.89.0.0/24 --gateway 10.89.0.1 apps-net'";
+        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network exists apps-net || ${pkgs.podman}/bin/podman network create --subnet ${cfg.network.subnet} --gateway ${networkGateway} apps-net'";
         ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.podman}/bin/podman network rm apps-net || true'";
       };
     };
