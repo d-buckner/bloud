@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
@@ -33,6 +34,7 @@ type Orchestrator struct {
 	dataDir         string
 	logger          *slog.Logger
 	queue           *OperationQueue
+	outpostMu       sync.Mutex // serializes ensureForwardAuthOutpostAssociation calls
 }
 
 // Config holds Orchestrator configuration
@@ -848,8 +850,12 @@ func (o *Orchestrator) generateSSOBlueprints(tx *nixgen.Transaction) error {
 }
 
 // ensureForwardAuthOutpostAssociation ensures forward-auth providers are added to the embedded outpost
-// This is called after Authentik has had time to process blueprints
+// This is called after Authentik has had time to process blueprints.
+// Serialized via mutex to prevent concurrent outpost updates causing Postgres deadlocks.
 func (o *Orchestrator) ensureForwardAuthOutpostAssociation() {
+	o.outpostMu.Lock()
+	defer o.outpostMu.Unlock()
+
 	if o.authentikClient == nil {
 		return
 	}
