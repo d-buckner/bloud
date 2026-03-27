@@ -101,7 +101,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			continue
 		}
 
-		state := r.buildAppState(app)
+		state := r.buildAppState(app, appMap)
 		if err := cfg.PreStart(ctx, state); err != nil {
 			r.logger.Warn("PreStart failed", "app", app.Name, "error", err)
 			errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.Name, err))
@@ -136,7 +136,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			cancel()
 
 			// Run PostStart
-			state := r.buildAppState(app)
+			state := r.buildAppState(app, appMap)
 			if err := cfg.PostStart(ctx, state); err != nil {
 				r.logger.Warn("PostStart failed", "app", app.Name, "error", err)
 				errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.Name, err))
@@ -160,15 +160,38 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 // computeLevels computes execution levels for apps.
 // Level 0 contains apps with no dependencies (leaf nodes).
 // Level N contains apps whose dependencies are all in levels < N.
+// Both required integrations (from DB) and non-required integrations whose
+// compatible app is currently installed contribute to ordering.
 // Returns a slice of levels, each containing app names.
 func (r *Reconciler) computeLevels(apps map[string]*store.InstalledApp) [][]string {
 	// Build dependency graph: app -> apps it depends on
 	deps := make(map[string][]string)
 	for name, app := range apps {
+		// Required integrations stored in DB
 		for _, source := range app.IntegrationConfig {
-			// Only count dependencies on other installed apps
 			if _, installed := apps[source]; installed {
 				deps[name] = append(deps[name], source)
+			}
+		}
+
+		// Non-required (optional) integrations from catalog — soft ordering constraints.
+		// If the compatible app is installed, run the parent app after it so PostStart
+		// can configure the integration immediately rather than on the next reconcile.
+		if r.catalogCache == nil {
+			continue
+		}
+		catalogApp, err := r.catalogCache.Get(name)
+		if err != nil || catalogApp == nil {
+			continue
+		}
+		for _, integration := range catalogApp.Integrations {
+			if integration.Required {
+				continue // already handled via IntegrationConfig
+			}
+			for _, compatible := range integration.Compatible {
+				if _, installed := apps[compatible.App]; installed {
+					deps[name] = append(deps[name], compatible.App)
+				}
 			}
 		}
 	}
@@ -219,22 +242,37 @@ func (r *Reconciler) computeLevels(apps map[string]*store.InstalledApp) [][]stri
 	return result
 }
 
-// buildAppState creates an AppState from a database app record
-func (r *Reconciler) buildAppState(app *store.InstalledApp) *configurator.AppState {
-	// Parse integrations from database
+// buildAppState creates an AppState from a database app record.
+// installedApps is used to resolve optional integrations — pass the full
+// installed app map from the current reconcile cycle (or nil to skip).
+func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[string]*store.InstalledApp) *configurator.AppState {
+	// Required integrations from the database
 	integrations := make(map[string][]string)
 	for name, source := range app.IntegrationConfig {
 		integrations[name] = []string{source}
 	}
 
-	// Load SSO config from catalog if available
 	if r.catalogCache != nil {
 		if catalogApp, err := r.catalogCache.Get(app.Name); err == nil && catalogApp != nil {
+			// SSO strategy
 			if catalogApp.SSO.Strategy != "" {
 				integrations["sso"] = []string{catalogApp.SSO.Strategy}
 				r.logger.Debug("loaded SSO integration from catalog",
 					"app", app.Name,
 					"strategy", catalogApp.SSO.Strategy)
+			}
+
+			// Non-required integrations: include those whose compatible app is installed
+			for intName, integration := range catalogApp.Integrations {
+				if integration.Required {
+					continue
+				}
+				for _, compatible := range integration.Compatible {
+					if _, installed := installedApps[compatible.App]; installed {
+						integrations[intName] = []string{compatible.App}
+						break // first installed compatible app wins
+					}
+				}
 			}
 		}
 	}

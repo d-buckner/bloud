@@ -20,6 +20,7 @@ type App struct {
 	Tags          []string               `yaml:"tags" json:"tags"`
 	Routing       *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
 	Bootstrap     *BootstrapConfig       `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
+	Integrations  map[string]Integration `yaml:"integrations" json:"integrations"`
 }
 
 // Resources defines resource requirements for an app
