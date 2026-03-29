@@ -15,9 +15,6 @@ const APPS = [
   'jellyfin',
   'adguard-home',
   'qbittorrent',
-  'sonarr',
-  'radarr',
-  'prowlarr',
 ];
 
 function createAppEntries() {

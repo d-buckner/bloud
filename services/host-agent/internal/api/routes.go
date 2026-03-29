@@ -121,6 +121,13 @@ func (s *Server) setupFrontend() {
 
 		// Check if file exists
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			// /embed/ paths are served by Traefik-routed app containers, not the
+			// SPA. Return 404 so the smoke-test embed check retries until the
+			// actual Traefik route for the app is configured and active.
+			if strings.HasPrefix(urlPath, "/embed/") {
+				http.NotFound(w, r)
+				return
+			}
 			// File doesn't exist - serve index.html for SPA routing
 			w.Header().Set("Cache-Control", "no-store")
 			http.ServeFile(w, r, filepath.Join(buildDir, "index.html"))
