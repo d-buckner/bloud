@@ -96,7 +96,7 @@ func runConfigure(args []string) int {
 	// Create app store
 	appStore := store.NewAppStore(database)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
 	// Create catalog cache for SSO lookup

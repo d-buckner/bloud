@@ -7,10 +7,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
+
+// healthCheckTimeout allows for first-boot DB migrations which can take 3-5 minutes.
+const healthCheckTimeout = 8 * time.Minute
 
 // Configurator handles Authentik configuration
 type Configurator struct {
@@ -49,7 +53,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 // HealthCheck waits for Authentik to be ready
 func (c *Configurator) HealthCheck(ctx context.Context) error {
 	url := fmt.Sprintf("http://localhost:%d/-/health/ready/", c.port)
-	return configurator.WaitForHTTP(ctx, url, configurator.DefaultHealthCheckTimeout)
+	return configurator.WaitForHTTP(ctx, url, healthCheckTimeout)
 }
 
 // PostStart ensures the admin user has the correct password
