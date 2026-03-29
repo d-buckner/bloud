@@ -144,10 +144,6 @@ func (f *FakeRebuilder) Switch(ctx context.Context) (*nixgen.RebuildResult, erro
 	return f.switchResult, nil
 }
 
-func (f *FakeRebuilder) Rollback(ctx context.Context) (*nixgen.RebuildResult, error) {
-	return &nixgen.RebuildResult{Success: true}, nil
-}
-
 func (f *FakeRebuilder) SwitchStream(ctx context.Context, events chan<- nixgen.RebuildEvent) {
 	close(events)
 }

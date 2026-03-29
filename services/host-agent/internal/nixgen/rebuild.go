@@ -345,33 +345,6 @@ func (r *Rebuilder) SwitchStream(ctx context.Context, events chan<- RebuildEvent
 	events <- RebuildEvent{Type: "complete", Success: true, Message: "Rebuild completed successfully"}
 }
 
-// Rollback rolls back to the previous generation
-func (r *Rebuilder) Rollback(ctx context.Context) (*RebuildResult, error) {
-	start := time.Now()
-
-	result := &RebuildResult{}
-
-	r.logger.Info("rolling back nixos configuration", "sudo", r.useSudo)
-
-	cmd := r.nixosRebuildCmd(ctx, []string{"switch", "--rollback"})
-	output, err := cmd.CombinedOutput()
-
-	result.Duration = time.Since(start)
-	result.Output = string(output)
-
-	if err != nil {
-		result.Success = false
-		result.ErrorMessage = err.Error()
-		r.logger.Error("rollback failed", "error", err)
-		return result, nil
-	}
-
-	result.Success = true
-	r.logger.Info("rollback completed successfully")
-
-	return result, nil
-}
-
 // StopUserService stops a systemd user service for an app
 func (r *Rebuilder) StopUserService(ctx context.Context, appName string) error {
 	serviceName := fmt.Sprintf("podman-%s.service", appName)

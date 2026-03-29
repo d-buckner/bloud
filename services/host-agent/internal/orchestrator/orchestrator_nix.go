@@ -412,40 +412,6 @@ func (o *Orchestrator) recordInstallIntent(req InstallRequest, plan *catalog.Ins
 	return nil
 }
 
-// Rollback reverts to the previous NixOS generation
-func (o *Orchestrator) Rollback(ctx context.Context) (*nixgen.RebuildResult, error) {
-	o.logger.Info("starting NixOS rollback")
-
-	// Call nixos-rebuild switch --rollback
-	result, err := o.rebuilder.Rollback(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("rollback failed: %w", err)
-	}
-
-	if !result.Success {
-		return result, fmt.Errorf("rollback unsuccessful: %s", result.ErrorMessage)
-	}
-
-	// Sync database state from current Nix config
-	// This ensures DB reflects what's actually running after rollback
-	current, err := o.generator.LoadCurrent()
-	if err != nil {
-		o.logger.Warn("failed to load current state after rollback", "error", err)
-	} else {
-		// Update installed apps in database to match Nix state
-		installedNames := []string{}
-		for name, app := range current.Apps {
-			if app.Enabled {
-				installedNames = append(installedNames, name)
-			}
-		}
-		o.graph.SetInstalled(installedNames)
-	}
-
-	o.logger.Info("rollback complete")
-	return result, nil
-}
-
 // RebuildStream triggers a nixos-rebuild switch with streaming output
 func (o *Orchestrator) RebuildStream(ctx context.Context, events chan<- nixgen.RebuildEvent) {
 	o.logger.Info("starting streaming NixOS rebuild")

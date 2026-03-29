@@ -35,8 +35,7 @@
 
 	const navItems = [
 		{ href: '/', label: 'Apps', icon: 'home' },
-		{ href: '/catalog', label: 'Catalog', icon: 'store' },
-		{ href: '/versions', label: 'History', icon: 'history' }
+		{ href: '/catalog', label: 'Catalog', icon: 'store' }
 	];
 
 	function handleTabClick(e: MouseEvent, appName: string) {
@@ -124,7 +123,7 @@
 				</form>
 			</div>
 		{/if}
-		<a href="/versions" class="version">v0.1.0</a>
+		<span class="version">v0.1.0</span>
 	</div>
 </nav>
 
@@ -392,12 +391,6 @@
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		font-family: var(--font-mono);
-		text-decoration: none;
-		transition: color 0.1s ease;
-	}
-
-	.version:hover {
-		color: var(--color-text-secondary);
 	}
 
 	/* Collapsed sidebar - icons only */

@@ -801,18 +801,6 @@ func TestAPI_Uninstall_NoOrchestrator(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestAPI_Rollback_NoNixOrchestrator(t *testing.T) {
-	server, _ := setupTestServer(t)
-	server.orchestrator = nil
-
-	req := httptest.NewRequest("POST", "/api/system/rollback", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestAPI_ClearData_NotFound(t *testing.T) {
 	server, _ := setupTestServer(t)
 

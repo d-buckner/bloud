@@ -69,12 +69,10 @@ func (s *Server) setupRoutes() {
 			})
 
 			// System endpoints
-			r.Post("/system/rollback", s.handleRollback)
 			r.Route("/system", func(r chi.Router) {
 				r.Get("/status", s.handleSystemStatus)
 				r.Get("/status/stream", s.handleSystemStatusStream)
 				r.Get("/storage", s.handleStorage)
-				r.Get("/versions", s.handleListGenerations)
 				r.Get("/rebuild/stream", s.handleRebuildStream)
 			})
 
@@ -555,55 +553,6 @@ func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, map[string]string{
 		"error": message,
-	})
-}
-
-// handleRollback reverts to the previous NixOS generation
-func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
-	// Only Orchestrator supports rollback
-	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
-	if !ok {
-		respondError(w, http.StatusServiceUnavailable, "rollback only available with Nix orchestrator")
-		return
-	}
-
-	s.logger.Info("rollback requested")
-
-	result, err := nixOrch.Rollback(r.Context())
-	if err != nil {
-		s.logger.Error("rollback failed", "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"success":      result.Success,
-		"output":       result.Output,
-		"errorMessage": result.ErrorMessage,
-		"changes":      result.Changes,
-		"duration":     result.Duration.String(),
-	})
-}
-
-// handleListGenerations lists NixOS system generations
-func (s *Server) handleListGenerations(w http.ResponseWriter, r *http.Request) {
-	// Run nixos-rebuild list-generations
-	output, err := system.ListGenerations()
-	if err != nil {
-		s.logger.Error("failed to list generations", "error", err)
-		respondError(w, http.StatusInternalServerError, "failed to list generations")
-		return
-	}
-
-	generations, err := system.ParseGenerations(output)
-	if err != nil {
-		s.logger.Error("failed to parse generations", "error", err)
-		respondError(w, http.StatusInternalServerError, "failed to parse generations")
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"generations": generations,
 	})
 }
 
