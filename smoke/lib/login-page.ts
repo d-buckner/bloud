@@ -34,6 +34,13 @@ export class LoginPage {
       .waitForURL(url => url.href.includes(LOGIN_PATH), { timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
+
+    // Fail fast if the setup wizard is showing — the VM hasn't been configured yet.
+    const isSetupWizard = await this.page.getByRole('heading', { name: 'Welcome to Bloud' }).isVisible();
+    if (isSetupWizard) {
+      throw new Error('VM is unconfigured: setup wizard is showing. Run ./bloud smoke --build to initialize the VM first.');
+    }
+
     if (!isAuthPage) return;
     await this.login();
     await this.page.waitForURL('/', { timeout: 30_000 });
