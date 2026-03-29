@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -40,6 +43,24 @@ type pveConfig struct {
 	Memory int
 	Cores  int
 }
+
+// smokeTimings collects phase durations for the timing report printed at the end of cmdSmokePVE.
+type smokeTimings struct {
+	buildDuration    time.Duration
+	downloadDuration time.Duration
+	uploadDuration   time.Duration
+	tests            []smokeTestResult
+}
+
+// smokeTestResult holds the timing for one Playwright test project.
+type smokeTestResult struct {
+	project  string
+	duration time.Duration
+	passed   bool
+}
+
+// currentSmokeTimings is set by cmdSmokePVE so doBuild can record build/transfer durations.
+var currentSmokeTimings *smokeTimings
 
 func isPVEMode() bool {
 	return os.Getenv("BLOUD_PVE_HOST") != ""
@@ -547,6 +568,7 @@ func doBuild(cfg pveConfig) int {
 	}
 
 	log("Building ISO (first build may take 15-30 minutes)...")
+	buildStart := time.Now()
 	buildScript := `set -e
 export PATH="/nix/var/nix/profiles/default/bin:$PATH"
 
@@ -590,6 +612,9 @@ echo 'Build complete.'`
 		errorf("ISO build failed: %v", err)
 		return 1
 	}
+	if currentSmokeTimings != nil {
+		currentSmokeTimings.buildDuration = time.Since(buildStart)
+	}
 
 	// Get the store path (instant — build already done above).
 	// Redirect stderr to suppress "dirty tree" warnings; grep ensures we only
@@ -613,6 +638,7 @@ echo 'Build complete.'`
 	// Copy ISO: builder → local → Proxmox
 	localISO := "/tmp/bloud-built.iso"
 	log("Downloading ISO from builder...")
+	downloadStart := time.Now()
 	scpDown := exec.Command("scp",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -627,8 +653,12 @@ echo 'Build complete.'`
 		return 1
 	}
 	defer os.Remove(localISO)
+	if currentSmokeTimings != nil {
+		currentSmokeTimings.downloadDuration = time.Since(downloadStart)
+	}
 
 	log("Uploading ISO to Proxmox...")
+	uploadStart := time.Now()
 	scpUp := exec.Command("scp",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -641,6 +671,9 @@ echo 'Build complete.'`
 	if err := scpUp.Run(); err != nil {
 		errorf("Failed to upload ISO to Proxmox: %v", err)
 		return 1
+	}
+	if currentSmokeTimings != nil {
+		currentSmokeTimings.uploadDuration = time.Since(uploadStart)
 	}
 
 	log("ISO ready in Proxmox")
@@ -1417,6 +1450,77 @@ func cmdSnapshotPVE(args []string) int {
 	return 0
 }
 
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[mK]`)
+
+// playwrightTestLineRe matches Playwright list reporter lines like:
+//
+//	✓  1 [qbittorrent] › lib/appTest.ts:15:3 › qbittorrent (23.9s)
+//	✘  5 [qbittorrent] › lib/appTest.ts:15:3 › qbittorrent (24.5s)
+var playwrightTestLineRe = regexp.MustCompile(`[✓✔✘✗]\s+\d+\s+\[([^\]]+)\].*\(([^)]+)\)\s*$`)
+
+func parsePlaywrightTestLine(line string) (smokeTestResult, bool) {
+	clean := ansiEscapeRe.ReplaceAllString(line, "")
+	m := playwrightTestLineRe.FindStringSubmatch(clean)
+	if m == nil {
+		return smokeTestResult{}, false
+	}
+	passed := strings.ContainsRune(clean, '✓') || strings.ContainsRune(clean, '✔')
+	d, err := time.ParseDuration(m[2])
+	if err != nil {
+		return smokeTestResult{}, false
+	}
+	return smokeTestResult{project: m[1], duration: d, passed: passed}, true
+}
+
+func formatSmokeDuration(d time.Duration) string {
+	if d >= time.Minute {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		return fmt.Sprintf("%dm %02ds", m, s)
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func printSmokeReport(t *smokeTimings) {
+	hasBuild := t.buildDuration > 0
+	hasTransfer := t.downloadDuration > 0 || t.uploadDuration > 0
+	if !hasBuild && !hasTransfer && len(t.tests) == 0 {
+		return
+	}
+	fmt.Printf("%s==> Smoke timings%s\n", colorGreen, colorReset)
+	if hasBuild {
+		fmt.Printf("  ISO build:      %s\n", formatSmokeDuration(t.buildDuration))
+	}
+	if hasTransfer {
+		total := t.downloadDuration + t.uploadDuration
+		fmt.Printf("  File transfer:  %s  (↓ %s builder→local, ↑ %s local→Proxmox)\n",
+			formatSmokeDuration(total),
+			formatSmokeDuration(t.downloadDuration),
+			formatSmokeDuration(t.uploadDuration),
+		)
+	}
+	if len(t.tests) > 0 {
+		maxLen := 0
+		for _, r := range t.tests {
+			if len(r.project) > maxLen {
+				maxLen = len(r.project)
+			}
+		}
+		fmt.Println()
+		fmt.Println("  Tests:")
+		for _, r := range t.tests {
+			color := colorGreen
+			mark := "✓"
+			if !r.passed {
+				color = colorRed
+				mark = "✘"
+			}
+			fmt.Printf("    %s%-*s  %6s  %s%s\n",
+				color, maxLen, r.project, formatSmokeDuration(r.duration), mark, colorReset)
+		}
+	}
+}
+
 // cmdSmokePVE runs the Playwright smoke suite in smoke/ against http://bloud.local.
 //
 // By default skips ISO build/deploy and runs tests against the existing VM.
@@ -1434,7 +1538,6 @@ func cmdSmokePVE(args []string) int {
 	updateSnapshots := false
 	headed := false
 	install := false
-	noIsoCopy := false
 	var apps []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -1444,9 +1547,6 @@ func cmdSmokePVE(args []string) int {
 			headed = true
 		case "--build":
 			install = true
-		case "--no-build":
-			install = true
-			noIsoCopy = true
 		case "--apps":
 			for i++; i < len(args) && !strings.HasPrefix(args[i], "--"); i++ {
 				apps = append(apps, args[i])
@@ -1461,14 +1561,14 @@ func cmdSmokePVE(args []string) int {
 		}
 	}
 
+	// Initialize timings — populated by doBuild (build/transfer) and playwright parsing below.
+	timings := &smokeTimings{}
+	currentSmokeTimings = timings
+	defer func() { currentSmokeTimings = nil }()
+
 	// Build ISO + deploy VM + boot live ISO. Playwright drives the installer via setup.spec.ts.
 	if install {
-		startArgs := []string{"--build"}
-		if noIsoCopy {
-			// Skip ISO build/copy (ISO already on Proxmox); just create VM + boot
-			startArgs = []string{"--no-iso-copy"}
-		}
-		if code := cmdStartPVE(startArgs); code != 0 {
+		if code := cmdStartPVE([]string{"--build"}); code != 0 {
 			return code
 		}
 	}
@@ -1554,21 +1654,45 @@ func cmdSmokePVE(args []string) int {
 
 	playwrightCmd := exec.Command("npx", playwrightArgs...)
 	playwrightCmd.Dir = smokeDir
-	playwrightCmd.Stdout = os.Stdout
 	playwrightCmd.Stderr = os.Stderr
-	playwrightEnv := append(os.Environ(), "BLOUD_URL="+vmURL)
+	// FORCE_COLOR=1 ensures Playwright uses ANSI + unicode symbols even when stdout is piped.
+	playwrightEnv := append(os.Environ(), "BLOUD_URL="+vmURL, "FORCE_COLOR=1")
 	if vmIP != "" {
 		playwrightEnv = append(playwrightEnv, "BLOUD_VM_IP="+vmIP)
 	}
 	playwrightCmd.Env = playwrightEnv
-	if err := playwrightCmd.Run(); err != nil {
-		fmt.Println()
+
+	// Capture playwright stdout for timing parsing while streaming to terminal.
+	pr, pw := io.Pipe()
+	playwrightCmd.Stdout = io.MultiWriter(os.Stdout, pw)
+
+	var parsedTests []smokeTestResult
+	parseDone := make(chan struct{})
+	go func() {
+		defer close(parseDone)
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			if r, ok := parsePlaywrightTestLine(scanner.Text()); ok {
+				parsedTests = append(parsedTests, r)
+			}
+		}
+	}()
+
+	playwrightErr := playwrightCmd.Run()
+	pw.Close()
+	<-parseDone
+	timings.tests = parsedTests
+
+	fmt.Println()
+	printSmokeReport(timings)
+	fmt.Println()
+
+	if playwrightErr != nil {
 		errorf("Smoke tests failed")
 		fmt.Printf("  View report: cd smoke && npx playwright show-report\n")
 		return 1
 	}
 
-	fmt.Println()
 	log("Smoke tests passed")
 	fmt.Printf("  VM is running. To tear down: ./bloud destroy\n")
 	return 0
