@@ -386,7 +386,7 @@ func TestBuildAppState_BasicFields(t *testing.T) {
 
 	app := fixtureInstalledAppWithPort("qbittorrent", "running", 8180)
 
-	state := tr.reconciler.buildAppState(app)
+	state := tr.reconciler.buildAppState(app, nil)
 
 	assert.Equal(t, "qbittorrent", state.Name)
 	assert.Equal(t, "/tmp/bloud-test/qbittorrent", state.DataPath)
@@ -403,7 +403,7 @@ func TestBuildAppState_Integrations(t *testing.T) {
 		"media-server":    "jellyfin",
 	})
 
-	state := tr.reconciler.buildAppState(app)
+	state := tr.reconciler.buildAppState(app, nil)
 
 	assert.Equal(t, []string{"qbittorrent"}, state.Integrations["download-client"])
 	assert.Equal(t, []string{"jellyfin"}, state.Integrations["media-server"])

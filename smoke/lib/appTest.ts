@@ -1,7 +1,14 @@
 import { test, expect, type Page, type FrameLocator } from '@playwright/test';
 import { LoginPage } from './login-page';
 
-const BLOUD_URL = process.env.BLOUD_URL ?? 'http://bloud.local';
+// When BLOUD_VM_IP is set, use the VM IP directly for Node.js HTTP requests to
+// bypass mDNS resolution failures across network boundaries (e.g. WiFi ↔ wired).
+// The Host header ensures Traefik and Authentik forward-auth match the domain.
+const vmIP = process.env.BLOUD_VM_IP;
+const EMBED_BASE = vmIP
+  ? `http://${vmIP}`
+  : (process.env.BLOUD_URL ?? 'http://bloud.local');
+const embedHostHeader = vmIP ? { Host: 'bloud.local' } : {};
 
 type AppTestFixtures = {
   page: Page;
@@ -16,16 +23,8 @@ export function appTest(appName: string, displayName: string, callback: AppTestC
   test(appName, async ({ page }) => {
     const consoleLogs: string[] = [];
 
-    page.on('console', (msg) => {
-      const text = `[${msg.type()}] ${msg.text()}`;
-      consoleLogs.push(text);
-      process.stdout.write(`  PAGE LOG: ${text}\n`);
-    });
-    page.on('pageerror', (err) => {
-      const text = `[pageerror] ${err.message}`;
-      consoleLogs.push(text);
-      process.stdout.write(`  PAGE ERROR: ${text}\n`);
-    });
+    page.on('console', (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
+    page.on('pageerror', (err) => consoleLogs.push(`[pageerror] ${err.message}`));
 
     await new LoginPage(page).ensureSignedIn();
 
@@ -51,11 +50,15 @@ export function appTest(appName: string, displayName: string, callback: AppTestC
 
     await test.step(`check ${title} embed endpoint`, async () => {
       // Verify the embed endpoint is reachable before opening the iframe.
-      // Retry on 5xx (app may still be starting). Fail fast with a clear error.
+      // Don't follow redirects — auth redirects (302) mean the app is running.
+      // Retry on 4xx (app not configured yet) and 5xx (app still starting).
       await expect(async () => {
-        const response = await page.request.get(`${BLOUD_URL}/embed/${appName}/`);
+        const response = await page.request.get(`${EMBED_BASE}/embed/${appName}/`, {
+          headers: embedHostHeader,
+          maxRedirects: 0,
+        });
         const status = response.status();
-        if (status >= 500) {
+        if (status >= 400) {
           throw new Error(
             `Embed endpoint /embed/${appName}/ returned ${status} — app is not running`,
           );
