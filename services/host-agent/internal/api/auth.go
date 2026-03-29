@@ -218,7 +218,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-// handleLogout clears the session and redirects to Authentik logout
+// handleLogout clears the session and redirects to Authentik to end the SSO session
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Get session from cookie and delete from store if available
 	cookie, err := r.Cookie(sessionCookieName)
@@ -238,7 +238,22 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 	})
 
-	// Redirect to home (which will show login page)
+	// Redirect to Authentik end_session endpoint to also clear the SSO session.
+	// Without this, the user would be silently re-authenticated on the next visit
+	// because Authentik still considers them logged in.
+	if s.authConfig != nil && s.authConfig.OIDCConfig != nil {
+		baseURL := requestBaseURL(r)
+		endSessionURL, urlErr := url.Parse(baseURL + s.authConfig.OIDCConfig.Issuer + "end-session/")
+		if urlErr == nil {
+			q := endSessionURL.Query()
+			q.Set("post_logout_redirect_uri", baseURL+"/")
+			endSessionURL.RawQuery = q.Encode()
+			http.Redirect(w, r, endSessionURL.String(), http.StatusFound)
+			return
+		}
+	}
+
+	// Fallback when auth is not configured (e.g. dev mode without Authentik)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 

@@ -217,14 +217,6 @@ func (m *MockRebuilder) Switch(ctx context.Context) (*nixgen.RebuildResult, erro
 	return args.Get(0).(*nixgen.RebuildResult), args.Error(1)
 }
 
-func (m *MockRebuilder) Rollback(ctx context.Context) (*nixgen.RebuildResult, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*nixgen.RebuildResult), args.Error(1)
-}
-
 func (m *MockRebuilder) SwitchStream(ctx context.Context, events chan<- nixgen.RebuildEvent) {
 	m.Called(ctx, events)
 }

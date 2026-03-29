@@ -24,9 +24,6 @@ type RebuilderInterface interface {
 	// Switch performs a nixos-rebuild switch
 	Switch(ctx context.Context) (*RebuildResult, error)
 
-	// Rollback rolls back to the previous generation
-	Rollback(ctx context.Context) (*RebuildResult, error)
-
 	// SwitchStream performs a nixos-rebuild switch with streaming output
 	SwitchStream(ctx context.Context, events chan<- RebuildEvent)
 

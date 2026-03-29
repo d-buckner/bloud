@@ -4,11 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os/exec"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -132,56 +127,3 @@ func GetStorageStats() (*StorageStats, error) {
 	}, nil
 }
 
-// Generation represents a NixOS system generation
-type Generation struct {
-	Number  int    `json:"number"`
-	Date    string `json:"date"`
-	Current bool   `json:"current"`
-	NixosVersion string `json:"nixosVersion,omitempty"`
-}
-
-// ListGenerations returns output from nixos-rebuild list-generations
-func ListGenerations() (string, error) {
-	cmd := exec.Command("nixos-rebuild", "list-generations")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("failed to run nixos-rebuild list-generations: %w", err)
-	}
-	return string(output), nil
-}
-
-// ParseGenerations parses the output from nixos-rebuild list-generations
-// Example line: "  1   2024-01-01 12:00:00"
-// Example current: "  5   2024-01-05 15:30:00   (current)"
-func ParseGenerations(output string) ([]Generation, error) {
-	var generations []Generation
-
-	// Regex to match generation lines
-	// Example: "  5   2024-01-05 15:30:00   (current)"
-	re := regexp.MustCompile(`\s*(\d+)\s+([0-9]{4}-[0-9]{2}-[0-9]{2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2})(\s+\(current\))?`)
-
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		matches := re.FindStringSubmatch(line)
-		if len(matches) >= 3 {
-			number, err := strconv.Atoi(matches[1])
-			if err != nil {
-				continue
-			}
-
-			gen := Generation{
-				Number:  number,
-				Date:    matches[2],
-				Current: len(matches) > 3 && matches[3] != "",
-			}
-			generations = append(generations, gen)
-		}
-	}
-
-	// Sort by date descending (most recent first)
-	sort.Slice(generations, func(i, j int) bool {
-		return generations[i].Date > generations[j].Date
-	})
-
-	return generations, nil
-}

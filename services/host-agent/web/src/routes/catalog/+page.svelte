@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import CatalogAppCard from '$lib/components/CatalogAppCard.svelte';
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
-	import RollbackModal from '$lib/components/RollbackModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
@@ -14,7 +13,6 @@
 	let catalogError = $state('');
 
 	let selectedApp = $state<CatalogApp | null>(null);
-	let showRollback = $state(false);
 
 	// Reactive status lookup — falls back to 'installing' for pending installs
 	function getAppStatus(name: string): AppStatus | undefined {
@@ -92,10 +90,6 @@
 			<h1>App Catalog</h1>
 			<p class="subtitle">One-click installs with automatic integration</p>
 		</div>
-		<button class="btn btn-secondary" onclick={() => showRollback = true}>
-			<Icon name="rollback" size={16} />
-			Rollback
-		</button>
 	</header>
 
 	{#if catalogLoading}
@@ -173,21 +167,12 @@
 	oninstall={handleInstall}
 />
 
-<RollbackModal
-	open={showRollback}
-	onclose={() => showRollback = false}
-	onrollback={() => {}}
-/>
-
 <style>
 	.page {
 		padding: var(--space-2xl) var(--space-xl);
 	}
 
 	.page-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
 		margin-bottom: var(--space-2xl);
 		padding-bottom: var(--space-xl);
 		border-bottom: 1px solid var(--color-border);
@@ -338,29 +323,6 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
 		gap: var(--space-lg);
-	}
-
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-lg);
-		border-radius: var(--radius-md);
-		font-size: 0.9375rem;
-		font-family: var(--font-serif);
-		cursor: pointer;
-		border: 1px solid transparent;
-		transition: all 0.15s ease;
-	}
-
-	.btn-secondary {
-		background: var(--color-bg-elevated);
-		color: var(--color-text);
-		border-color: var(--color-border);
-	}
-
-	.btn-secondary:hover:not(:disabled) {
-		background: var(--color-bg-subtle);
 	}
 
 	@media (max-width: 768px) {

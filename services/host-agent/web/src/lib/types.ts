@@ -194,24 +194,3 @@ export interface UninstallResult {
 	unconfigured?: string[];
 }
 
-// Rollback result
-export interface RollbackResult {
-	success: boolean;
-	output: string;
-	errorMessage?: string;
-	changes?: string[];
-	duration: string;
-}
-
-// NixOS Generation
-export interface Generation {
-	number: number;
-	date: string;
-	current: boolean;
-	nixosVersion?: string;
-	description?: string;
-}
-
-export interface GenerationsResponse {
-	generations: Generation[];
-}
