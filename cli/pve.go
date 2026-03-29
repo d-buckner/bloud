@@ -480,7 +480,16 @@ func doDeploy(cfg pveConfig, isoSource string) int {
 		}
 	} else {
 		log("Copying ISO to Proxmox...")
-		c := exec.Command("scp", isoSource, cfg.Host+":"+pveISOStorage+"/"+pveISOFilename)
+		f, err := os.Open(isoSource)
+		if err != nil {
+			errorf("Failed to open ISO: %v", err)
+			return 1
+		}
+		defer f.Close()
+		c := exec.Command("ssh", cfg.Host,
+			fmt.Sprintf("dd of=%s/%s bs=4M", pveISOStorage, pveISOFilename),
+		)
+		c.Stdin = f
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		if err := c.Run(); err != nil {
@@ -635,23 +644,29 @@ echo 'Build complete.'`
 	}
 	log(fmt.Sprintf("ISO built: %s", isoPath))
 
-	// Copy ISO: builder → local → Proxmox
+	// Stream ISO: builder → local → Proxmox
 	localISO := "/tmp/bloud-built.iso"
 	log("Downloading ISO from builder...")
 	downloadStart := time.Now()
-	scpDown := exec.Command("scp",
+	dlFile, err := os.Create(localISO)
+	if err != nil {
+		errorf("Failed to create local ISO file: %v", err)
+		return 1
+	}
+	sshDown := exec.Command("ssh",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		host+":"+isoPath,
-		localISO,
+		host, fmt.Sprintf("cat %s", isoPath),
 	)
-	scpDown.Stdout = os.Stdout
-	scpDown.Stderr = os.Stderr
-	if err := scpDown.Run(); err != nil {
+	sshDown.Stdout = dlFile
+	sshDown.Stderr = os.Stderr
+	if err := sshDown.Run(); err != nil {
+		dlFile.Close()
 		errorf("Failed to download ISO from builder: %v", err)
 		return 1
 	}
+	dlFile.Close()
 	defer os.Remove(localISO)
 	if currentSmokeTimings != nil {
 		currentSmokeTimings.downloadDuration = time.Since(downloadStart)
@@ -659,16 +674,23 @@ echo 'Build complete.'`
 
 	log("Uploading ISO to Proxmox...")
 	uploadStart := time.Now()
-	scpUp := exec.Command("scp",
+	ulFile, err := os.Open(localISO)
+	if err != nil {
+		errorf("Failed to open local ISO file: %v", err)
+		return 1
+	}
+	defer ulFile.Close()
+	sshUp := exec.Command("ssh",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		localISO,
-		cfg.Host+":"+pveISOStorage+"/"+pveISOFilename,
+		cfg.Host,
+		fmt.Sprintf("dd of=%s/%s bs=4M", pveISOStorage, pveISOFilename),
 	)
-	scpUp.Stdout = os.Stdout
-	scpUp.Stderr = os.Stderr
-	if err := scpUp.Run(); err != nil {
+	sshUp.Stdin = ulFile
+	sshUp.Stdout = os.Stdout
+	sshUp.Stderr = os.Stderr
+	if err := sshUp.Run(); err != nil {
 		errorf("Failed to upload ISO to Proxmox: %v", err)
 		return 1
 	}
