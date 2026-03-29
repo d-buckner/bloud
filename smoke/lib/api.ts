@@ -24,36 +24,47 @@ export class SmokeApi {
 
   async waitForSetupReady(timeoutMs = 15 * 60 * 1000): Promise<void> {
     const start = Date.now();
+    let inlineActive = false;
+
     while (Date.now() - start < timeoutMs) {
       const elapsed = Math.floor((Date.now() - start) / 1000);
-      if (await this.pollSetupReady(elapsed)) return;
+
+      let response;
+      try {
+        response = await this.request.get(`${this.apiBase}/api/setup/status`, {
+          headers: this.hostHeader,
+        });
+      } catch {
+        process.stdout.write(`\r\x1b[K  Waiting for install to complete... [${elapsed}s]`);
+        inlineActive = true;
+        await sleep(5_000);
+        continue;
+      }
+
+      if (!response.ok()) {
+        process.stdout.write(`\r\x1b[K  Waiting for install to complete... [${elapsed}s]`);
+        inlineActive = true;
+        await sleep(5_000);
+        continue;
+      }
+
+      if (inlineActive) {
+        process.stdout.write('\n');
+        inlineActive = false;
+      }
+
+      const data: SetupStatus = await response.json();
+      const forwardAuth = await this.isForwardAuthReady();
+      process.stdout.write(
+        `  [${elapsed}s] authentik=${r(data.authentikReady)}, auth=${r(data.authReady)}, forwardAuth=${r(forwardAuth)}\n`,
+      );
+      if (data.authentikReady && data.authReady && forwardAuth) return;
+
       await sleep(5_000);
     }
+
+    if (inlineActive) process.stdout.write('\n');
     throw new Error('Timeout waiting for setup to be ready (15 minutes)');
-  }
-
-  private async pollSetupReady(elapsed: number): Promise<boolean> {
-    let response;
-    try {
-      response = await this.request.get(`${this.apiBase}/api/setup/status`, {
-        headers: this.hostHeader,
-      });
-    } catch (e) {
-      process.stdout.write(`  [${elapsed}s] unreachable — ${e}\n`);
-      return false;
-    }
-
-    if (!response.ok()) {
-      process.stdout.write(`  [${elapsed}s] API returned ${response.status()}\n`);
-      return false;
-    }
-
-    const data: SetupStatus = await response.json();
-    const forwardAuth = await this.isForwardAuthReady();
-    process.stdout.write(
-      `  [${elapsed}s] authentik=${r(data.authentikReady)}, auth=${r(data.authReady)}, forwardAuth=${r(forwardAuth)}\n`,
-    );
-    return data.authentikReady && data.authReady && forwardAuth;
   }
 
   // Verifies the Authentik proxy outpost is healthy and connected by pinging its
