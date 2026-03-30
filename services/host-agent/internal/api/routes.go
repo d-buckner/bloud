@@ -506,9 +506,8 @@ func (s *Server) dropAppDatabase(appName string) error {
 	// Apps that use shared postgres and their database names
 	// TODO: Move this to catalog metadata
 	appDatabases := map[string]string{
-		"actual-budget": "actual_budget",
-		"miniflux":      "miniflux",
-		"authentik":     "authentik", // Uses its own postgres, but include for completeness
+		"miniflux":  "miniflux",
+		"authentik": "authentik", // Uses its own postgres, but include for completeness
 	}
 
 	dbName, ok := appDatabases[appName]
