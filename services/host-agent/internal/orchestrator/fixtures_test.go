@@ -20,26 +20,11 @@ func fixtureQBittorrent() *catalog.App {
 	}
 }
 
-func fixtureRadarr() *catalog.App {
+func fixtureJellyfin() *catalog.App {
 	return &catalog.App{
-		Name:        "radarr",
-		DisplayName: "Radarr",
-		Port:        7878,
-		Category:    "media",
-		IsSystem:    false,
-		HealthCheck: catalog.HealthCheck{
-			Path:     "/health",
-			Interval: 2,
-			Timeout:  30,
-		},
-	}
-}
-
-func fixtureSonarr() *catalog.App {
-	return &catalog.App{
-		Name:        "sonarr",
-		DisplayName: "Sonarr",
-		Port:        8989,
+		Name:        "jellyfin",
+		DisplayName: "Jellyfin",
+		Port:        8096,
 		Category:    "media",
 		IsSystem:    false,
 		HealthCheck: catalog.HealthCheck{
@@ -65,20 +50,6 @@ func fixtureMiniflux() *catalog.App {
 			Path:     "/healthcheck",
 			Interval: 2,
 			Timeout:  30,
-		},
-	}
-}
-
-func fixtureActualBudget() *catalog.App {
-	return &catalog.App{
-		Name:        "actual-budget",
-		DisplayName: "Actual Budget",
-		Port:        5006,
-		Category:    "productivity",
-		IsSystem:    false,
-		SSO: catalog.SSO{
-			Strategy:     "native-oidc",
-			CallbackPath: "/openid/callback",
 		},
 	}
 }
