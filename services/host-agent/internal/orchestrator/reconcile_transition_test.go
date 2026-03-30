@@ -24,92 +24,92 @@ func (m *MockReconfigDispatcher) DispatchReconfig(ctx context.Context, appName s
 // ============================================================================
 
 // TestReconcile_OptionalDep_NewlyHealthy_DispatchesReconfigForParent verifies the core
-// use case: Prowlarr is already running; Radarr is installed later. On the reconcile
-// where Radarr first becomes healthy, Prowlarr's reconfig should be dispatched.
+// use case: Miniflux is already running; Jellyfin is installed later. On the reconcile
+// where Jellyfin first becomes healthy, Miniflux's reconfig should be dispatched.
 func TestReconcile_OptionalDep_NewlyHealthy_DispatchesReconfigForParent(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 	dispatcher := new(MockReconfigDispatcher)
 	tr.reconciler.SetReconfigDispatcher(dispatcher)
 
-	prowlarrCatalog := fixtureCatalogAppWithOptionalIntegration("prowlarr", "movieManager", "radarr")
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
-	tr.cache.On("Get", "radarr").Return(fixtureRadarr(), nil)
+	minifluxCatalog := fixtureCatalogAppWithOptionalIntegration("miniflux", "movieManager", "jellyfin")
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
+	tr.cache.On("Get", "jellyfin").Return(fixtureJellyfin(), nil)
 
-	mockProwlarrCfg := new(MockConfigurator)
-	mockRadarrCfg := new(MockConfigurator)
-	tr.registry.On("Get", "prowlarr").Return(mockProwlarrCfg)
-	tr.registry.On("Get", "radarr").Return(mockRadarrCfg)
+	mockMinifluxCfg := new(MockConfigurator)
+	mockJellyfinCfg := new(MockConfigurator)
+	tr.registry.On("Get", "miniflux").Return(mockMinifluxCfg)
+	tr.registry.On("Get", "jellyfin").Return(mockJellyfinCfg)
 
-	mockProwlarrCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
-	mockProwlarrCfg.On("HealthCheck", mock.Anything).Return(nil)
-	mockProwlarrCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
-	mockRadarrCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
-	mockRadarrCfg.On("HealthCheck", mock.Anything).Return(nil)
-	mockRadarrCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockMinifluxCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockMinifluxCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockMinifluxCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockJellyfinCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockJellyfinCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockJellyfinCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
-	// First reconcile: only Prowlarr installed
+	// First reconcile: only Miniflux installed
 	tr.appStore.On("GetAll").Return([]*store.InstalledApp{
-		fixtureInstalledApp("prowlarr", "running"),
+		fixtureInstalledApp("miniflux", "running"),
 	}, nil).Once()
 
 	err := tr.reconciler.Reconcile(context.Background())
 	require.NoError(t, err)
 	dispatcher.AssertNotCalled(t, "DispatchReconfig")
 
-	// Second reconcile: Radarr now installed and healthy for the first time
+	// Second reconcile: Jellyfin now installed and healthy for the first time
 	tr.appStore.On("GetAll").Return([]*store.InstalledApp{
-		fixtureInstalledApp("prowlarr", "running"),
-		fixtureInstalledApp("radarr", "running"),
+		fixtureInstalledApp("miniflux", "running"),
+		fixtureInstalledApp("jellyfin", "running"),
 	}, nil).Once()
 
-	dispatcher.On("DispatchReconfig", mock.Anything, "prowlarr", mock.Anything).Return()
+	dispatcher.On("DispatchReconfig", mock.Anything, "miniflux", mock.Anything).Return()
 
 	err = tr.reconciler.Reconcile(context.Background())
 	require.NoError(t, err)
 
-	dispatcher.AssertCalled(t, "DispatchReconfig", mock.Anything, "prowlarr", mock.Anything)
+	dispatcher.AssertCalled(t, "DispatchReconfig", mock.Anything, "miniflux", mock.Anything)
 	dispatcher.AssertNumberOfCalls(t, "DispatchReconfig", 1)
 }
 
 // TestReconcile_OptionalDep_AlreadyHealthy_NoDispatchOnRepeat verifies that a parent
 // is not re-dispatched on every subsequent reconcile once both apps are healthy.
-// Uses 3 cycles: Prowlarr-only → Radarr appears (dispatch) → steady state (no dispatch).
+// Uses 3 cycles: Miniflux-only → Jellyfin appears (dispatch) → steady state (no dispatch).
 func TestReconcile_OptionalDep_AlreadyHealthy_NoDispatchOnRepeat(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 	dispatcher := new(MockReconfigDispatcher)
 	tr.reconciler.SetReconfigDispatcher(dispatcher)
 
-	prowlarrCatalog := fixtureCatalogAppWithOptionalIntegration("prowlarr", "movieManager", "radarr")
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
-	tr.cache.On("Get", "radarr").Return(fixtureRadarr(), nil)
+	minifluxCatalog := fixtureCatalogAppWithOptionalIntegration("miniflux", "movieManager", "jellyfin")
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
+	tr.cache.On("Get", "jellyfin").Return(fixtureJellyfin(), nil)
 
-	mockProwlarrCfg := new(MockConfigurator)
-	mockRadarrCfg := new(MockConfigurator)
-	tr.registry.On("Get", "prowlarr").Return(mockProwlarrCfg)
-	tr.registry.On("Get", "radarr").Return(mockRadarrCfg)
+	mockMinifluxCfg := new(MockConfigurator)
+	mockJellyfinCfg := new(MockConfigurator)
+	tr.registry.On("Get", "miniflux").Return(mockMinifluxCfg)
+	tr.registry.On("Get", "jellyfin").Return(mockJellyfinCfg)
 
-	mockProwlarrCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
-	mockProwlarrCfg.On("HealthCheck", mock.Anything).Return(nil)
-	mockProwlarrCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
-	mockRadarrCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
-	mockRadarrCfg.On("HealthCheck", mock.Anything).Return(nil)
-	mockRadarrCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockMinifluxCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockMinifluxCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockMinifluxCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockJellyfinCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockJellyfinCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockJellyfinCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	bothInstalled := []*store.InstalledApp{
-		fixtureInstalledApp("prowlarr", "running"),
-		fixtureInstalledApp("radarr", "running"),
+		fixtureInstalledApp("miniflux", "running"),
+		fixtureInstalledApp("jellyfin", "running"),
 	}
 
-	// Cycle 1: only Prowlarr — establishes prevHealthy = {prowlarr}
+	// Cycle 1: only Miniflux — establishes prevHealthy = {miniflux}
 	tr.appStore.On("GetAll").Return([]*store.InstalledApp{
-		fixtureInstalledApp("prowlarr", "running"),
+		fixtureInstalledApp("miniflux", "running"),
 	}, nil).Once()
 	require.NoError(t, tr.reconciler.Reconcile(context.Background()))
 	dispatcher.AssertNotCalled(t, "DispatchReconfig")
 
-	// Cycle 2: Radarr appears — Prowlarr was in prevHealthy, dispatch fires
+	// Cycle 2: Jellyfin appears — Miniflux was in prevHealthy, dispatch fires
 	tr.appStore.On("GetAll").Return(bothInstalled, nil).Once()
-	dispatcher.On("DispatchReconfig", mock.Anything, "prowlarr", mock.Anything).Return()
+	dispatcher.On("DispatchReconfig", mock.Anything, "miniflux", mock.Anything).Return()
 	require.NoError(t, tr.reconciler.Reconcile(context.Background()))
 	dispatcher.AssertNumberOfCalls(t, "DispatchReconfig", 1)
 
@@ -146,36 +146,36 @@ func TestReconcile_OptionalDep_NoParent_NoDispatch(t *testing.T) {
 
 // TestReconcile_OptionalDep_ParentNotYetHealthy_NoDispatch verifies that if the
 // parent app is also new this cycle (not in prevHealthy), no dispatch fires —
-// the level-ordering from bloud-yjl ensures Prowlarr's PostStart handles it directly.
+// the level-ordering from bloud-yjl ensures Miniflux's PostStart handles it directly.
 func TestReconcile_OptionalDep_ParentNotYetHealthy_NoDispatch(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 	dispatcher := new(MockReconfigDispatcher)
 	tr.reconciler.SetReconfigDispatcher(dispatcher)
 
-	prowlarrCatalog := fixtureCatalogAppWithOptionalIntegration("prowlarr", "movieManager", "radarr")
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
-	tr.cache.On("Get", "radarr").Return(fixtureRadarr(), nil)
+	minifluxCatalog := fixtureCatalogAppWithOptionalIntegration("miniflux", "movieManager", "jellyfin")
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
+	tr.cache.On("Get", "jellyfin").Return(fixtureJellyfin(), nil)
 
-	mockProwlarrCfg := new(MockConfigurator)
-	mockRadarrCfg := new(MockConfigurator)
-	tr.registry.On("Get", "prowlarr").Return(mockProwlarrCfg)
-	tr.registry.On("Get", "radarr").Return(mockRadarrCfg)
+	mockMinifluxCfg := new(MockConfigurator)
+	mockJellyfinCfg := new(MockConfigurator)
+	tr.registry.On("Get", "miniflux").Return(mockMinifluxCfg)
+	tr.registry.On("Get", "jellyfin").Return(mockJellyfinCfg)
 
-	mockProwlarrCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
-	mockProwlarrCfg.On("HealthCheck", mock.Anything).Return(nil)
-	mockProwlarrCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
-	mockRadarrCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
-	mockRadarrCfg.On("HealthCheck", mock.Anything).Return(nil)
-	mockRadarrCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockMinifluxCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockMinifluxCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockMinifluxCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockJellyfinCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockJellyfinCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockJellyfinCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
-	// Both installed fresh in the same reconcile — Prowlarr is also a new transition
+	// Both installed fresh in the same reconcile — Miniflux is also a new transition
 	tr.appStore.On("GetAll").Return([]*store.InstalledApp{
-		fixtureInstalledApp("prowlarr", "running"),
-		fixtureInstalledApp("radarr", "running"),
+		fixtureInstalledApp("miniflux", "running"),
+		fixtureInstalledApp("jellyfin", "running"),
 	}, nil)
 
 	require.NoError(t, tr.reconciler.Reconcile(context.Background()))
 
-	// Prowlarr was not in prevHealthy, so no dispatch — its own PostStart handled it
+	// Miniflux was not in prevHealthy, so no dispatch — its own PostStart handled it
 	dispatcher.AssertNotCalled(t, "DispatchReconfig")
 }

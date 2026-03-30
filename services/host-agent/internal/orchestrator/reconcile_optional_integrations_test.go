@@ -46,68 +46,68 @@ type testReconcilerWithCache struct {
 func TestComputeLevels_OptionalIntegration_InstalledCompatibleAppAddsOrderingConstraint(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 
-	// Prowlarr has a non-required integration compatible with radarr
-	prowlarrCatalog := fixtureCatalogAppWithOptionalIntegration("prowlarr", "movieManager", "radarr")
+	// Miniflux has a non-required integration compatible with jellyfin
+	minifluxCatalog := fixtureCatalogAppWithOptionalIntegration("miniflux", "movieManager", "jellyfin")
 
 	apps := map[string]*store.InstalledApp{
-		"radarr":   fixtureInstalledApp("radarr", "running"),
-		"prowlarr": fixtureInstalledApp("prowlarr", "running"),
+		"jellyfin": fixtureInstalledApp("jellyfin", "running"),
+		"miniflux": fixtureInstalledApp("miniflux", "running"),
 	}
 
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
-	tr.cache.On("Get", "radarr").Return(fixtureRadarr(), nil)
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
+	tr.cache.On("Get", "jellyfin").Return(fixtureJellyfin(), nil)
 
 	levels := tr.reconciler.computeLevels(apps)
 
-	require.Len(t, levels, 2, "prowlarr should be at a higher level than radarr")
-	assert.Equal(t, []string{"radarr"}, levels[0])
-	assert.Equal(t, []string{"prowlarr"}, levels[1])
+	require.Len(t, levels, 2, "miniflux should be at a higher level than jellyfin")
+	assert.Equal(t, []string{"jellyfin"}, levels[0])
+	assert.Equal(t, []string{"miniflux"}, levels[1])
 }
 
 func TestComputeLevels_OptionalIntegration_UninstalledCompatibleAppIgnored(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 
-	prowlarrCatalog := fixtureCatalogAppWithOptionalIntegration("prowlarr", "movieManager", "radarr")
+	minifluxCatalog := fixtureCatalogAppWithOptionalIntegration("miniflux", "movieManager", "jellyfin")
 
-	// Only prowlarr is installed — radarr is absent
+	// Only miniflux is installed — jellyfin is absent
 	apps := map[string]*store.InstalledApp{
-		"prowlarr": fixtureInstalledApp("prowlarr", "running"),
+		"miniflux": fixtureInstalledApp("miniflux", "running"),
 	}
 
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
 
 	levels := tr.reconciler.computeLevels(apps)
 
-	require.Len(t, levels, 1, "prowlarr should stay at level 0 when optional dep is not installed")
-	assert.Equal(t, []string{"prowlarr"}, levels[0])
+	require.Len(t, levels, 1, "miniflux should stay at level 0 when optional dep is not installed")
+	assert.Equal(t, []string{"miniflux"}, levels[0])
 }
 
 func TestComputeLevels_MultipleOptionalIntegrations_AllInstalledOrderedCorrectly(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 
-	// Prowlarr optionally integrates with both radarr and sonarr
-	prowlarrCatalog := &catalog.App{
-		Name: "prowlarr",
+	// Miniflux optionally integrates with both jellyfin and qbittorrent
+	minifluxCatalog := &catalog.App{
+		Name: "miniflux",
 		Integrations: map[string]catalog.Integration{
-			"movieManager": {Required: false, Compatible: []catalog.CompatibleApp{{App: "radarr"}}},
-			"tvManager":    {Required: false, Compatible: []catalog.CompatibleApp{{App: "sonarr"}}},
+			"movieManager": {Required: false, Compatible: []catalog.CompatibleApp{{App: "jellyfin"}}},
+			"tvManager":    {Required: false, Compatible: []catalog.CompatibleApp{{App: "qbittorrent"}}},
 		},
 	}
 
 	apps := map[string]*store.InstalledApp{
-		"radarr":   fixtureInstalledApp("radarr", "running"),
-		"sonarr":   fixtureInstalledApp("sonarr", "running"),
-		"prowlarr": fixtureInstalledApp("prowlarr", "running"),
+		"jellyfin":    fixtureInstalledApp("jellyfin", "running"),
+		"qbittorrent": fixtureInstalledApp("qbittorrent", "running"),
+		"miniflux":    fixtureInstalledApp("miniflux", "running"),
 	}
 
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
-	tr.cache.On("Get", "radarr").Return(fixtureRadarr(), nil)
-	tr.cache.On("Get", "sonarr").Return(fixtureSonarr(), nil)
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
+	tr.cache.On("Get", "jellyfin").Return(fixtureJellyfin(), nil)
+	tr.cache.On("Get", "qbittorrent").Return(fixtureQBittorrent(), nil)
 
 	levels := tr.reconciler.computeLevels(apps)
 
 	require.Len(t, levels, 2)
-	assert.Equal(t, []string{"prowlarr"}, levels[1], "prowlarr must run after both radarr and sonarr")
+	assert.Equal(t, []string{"miniflux"}, levels[1], "miniflux must run after both jellyfin and qbittorrent")
 }
 
 // ============================================================================
@@ -117,57 +117,57 @@ func TestComputeLevels_MultipleOptionalIntegrations_AllInstalledOrderedCorrectly
 func TestBuildAppState_OptionalIntegration_IncludedWhenCompatibleAppInstalled(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 
-	prowlarrCatalog := fixtureCatalogAppWithOptionalIntegration("prowlarr", "movieManager", "radarr")
-	prowlarrApp := fixtureInstalledApp("prowlarr", "running")
+	minifluxCatalog := fixtureCatalogAppWithOptionalIntegration("miniflux", "movieManager", "jellyfin")
+	minifluxApp := fixtureInstalledApp("miniflux", "running")
 
 	installedApps := map[string]*store.InstalledApp{
-		"prowlarr": prowlarrApp,
-		"radarr":   fixtureInstalledApp("radarr", "running"),
+		"miniflux": minifluxApp,
+		"jellyfin": fixtureInstalledApp("jellyfin", "running"),
 	}
 
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
 
-	state := tr.reconciler.buildAppState(prowlarrApp, installedApps)
+	state := tr.reconciler.buildAppState(minifluxApp, installedApps)
 
-	assert.Equal(t, []string{"radarr"}, state.Integrations["movieManager"])
+	assert.Equal(t, []string{"jellyfin"}, state.Integrations["movieManager"])
 }
 
 func TestBuildAppState_OptionalIntegration_NotIncludedWhenCompatibleAppAbsent(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 
-	prowlarrCatalog := fixtureCatalogAppWithOptionalIntegration("prowlarr", "movieManager", "radarr")
-	prowlarrApp := fixtureInstalledApp("prowlarr", "running")
+	minifluxCatalog := fixtureCatalogAppWithOptionalIntegration("miniflux", "movieManager", "jellyfin")
+	minifluxApp := fixtureInstalledApp("miniflux", "running")
 
 	installedApps := map[string]*store.InstalledApp{
-		"prowlarr": prowlarrApp,
-		// radarr not installed
+		"miniflux": minifluxApp,
+		// jellyfin not installed
 	}
 
-	tr.cache.On("Get", "prowlarr").Return(prowlarrCatalog, nil)
+	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
 
-	state := tr.reconciler.buildAppState(prowlarrApp, installedApps)
+	state := tr.reconciler.buildAppState(minifluxApp, installedApps)
 
 	_, hasMovieManager := state.Integrations["movieManager"]
-	assert.False(t, hasMovieManager, "movieManager should be absent when radarr is not installed")
+	assert.False(t, hasMovieManager, "movieManager should be absent when jellyfin is not installed")
 }
 
 func TestBuildAppState_RequiredIntegrationsUnaffected(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 
 	// App has a required integration already in IntegrationConfig
-	radarrApp := fixtureInstalledAppWithIntegrations("radarr", "running", map[string]string{
+	jellyfinApp := fixtureInstalledAppWithIntegrations("jellyfin", "running", map[string]string{
 		"downloadClient": "qbittorrent",
 	})
 
 	installedApps := map[string]*store.InstalledApp{
-		"radarr":      radarrApp,
+		"jellyfin":    jellyfinApp,
 		"qbittorrent": fixtureInstalledApp("qbittorrent", "running"),
 	}
 
-	// radarr catalog has no optional integrations
-	tr.cache.On("Get", "radarr").Return(fixtureRadarr(), nil)
+	// jellyfin catalog has no optional integrations
+	tr.cache.On("Get", "jellyfin").Return(fixtureJellyfin(), nil)
 
-	state := tr.reconciler.buildAppState(radarrApp, installedApps)
+	state := tr.reconciler.buildAppState(jellyfinApp, installedApps)
 
 	assert.Equal(t, []string{"qbittorrent"}, state.Integrations["downloadClient"])
 }

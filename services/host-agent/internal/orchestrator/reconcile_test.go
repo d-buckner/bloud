@@ -88,13 +88,13 @@ func TestComputeLevels_LinearChain(t *testing.T) {
 func TestComputeLevels_DiamondDependency(t *testing.T) {
 	tr := newTestReconciler()
 
-	// Diamond: postgres is dep for both miniflux and actual-budget
+	// Diamond: postgres is dep for both miniflux and adguard-home
 	apps := map[string]*store.InstalledApp{
 		"postgres": fixtureInstalledApp("postgres", "running"),
 		"miniflux": fixtureInstalledAppWithIntegrations("miniflux", "running", map[string]string{
 			"database": "postgres",
 		}),
-		"actual-budget": fixtureInstalledAppWithIntegrations("actual-budget", "running", map[string]string{
+		"adguard-home": fixtureInstalledAppWithIntegrations("adguard-home", "running", map[string]string{
 			"database": "postgres",
 		}),
 	}
@@ -106,16 +106,16 @@ func TestComputeLevels_DiamondDependency(t *testing.T) {
 
 	// Both should be at level 1
 	sort.Strings(levels[1])
-	assert.Equal(t, []string{"actual-budget", "miniflux"}, levels[1])
+	assert.Equal(t, []string{"adguard-home", "miniflux"}, levels[1])
 }
 
 func TestComputeLevels_MixedDeps(t *testing.T) {
 	tr := newTestReconciler()
 
-	// Mixed: qbittorrent (L0), radarr depends on qbittorrent (L1)
+	// Mixed: qbittorrent (L0), jellyfin depends on qbittorrent (L1)
 	apps := map[string]*store.InstalledApp{
 		"qbittorrent": fixtureInstalledApp("qbittorrent", "running"),
-		"radarr": fixtureInstalledAppWithIntegrations("radarr", "running", map[string]string{
+		"jellyfin": fixtureInstalledAppWithIntegrations("jellyfin", "running", map[string]string{
 			"download-client": "qbittorrent",
 		}),
 		"postgres": fixtureInstalledApp("postgres", "running"),
@@ -134,7 +134,7 @@ func TestComputeLevels_MixedDeps(t *testing.T) {
 
 	// Level 1: apps that depend on level 0
 	sort.Strings(levels[1])
-	assert.Equal(t, []string{"miniflux", "radarr"}, levels[1])
+	assert.Equal(t, []string{"jellyfin", "miniflux"}, levels[1])
 }
 
 func TestComputeLevels_UninstalledDepsIgnored(t *testing.T) {
@@ -279,12 +279,12 @@ func TestReconcile_UninstallingSkipped(t *testing.T) {
 
 	apps := []*store.InstalledApp{
 		fixtureInstalledApp("qbittorrent", "running"),
-		fixtureInstalledApp("radarr", "uninstalling"), // Should be skipped
+		fixtureInstalledApp("jellyfin", "uninstalling"), // Should be skipped
 	}
 
 	tr.appStore.On("GetAll").Return(apps, nil)
 	tr.registry.On("Get", "qbittorrent").Return(mockCfg)
-	// Note: registry.Get for "radarr" should NOT be called
+	// Note: registry.Get for "jellyfin" should NOT be called
 
 	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
 	mockCfg.On("HealthCheck", mock.Anything).Return(nil)
@@ -294,8 +294,8 @@ func TestReconcile_UninstallingSkipped(t *testing.T) {
 
 	require.NoError(t, err)
 
-	// Verify radarr was never looked up
-	tr.registry.AssertNotCalled(t, "Get", "radarr")
+	// Verify jellyfin was never looked up
+	tr.registry.AssertNotCalled(t, "Get", "jellyfin")
 }
 
 func TestReconcile_PreStartFails(t *testing.T) {
@@ -398,15 +398,15 @@ func TestBuildAppState_BasicFields(t *testing.T) {
 func TestBuildAppState_Integrations(t *testing.T) {
 	tr := newTestReconciler()
 
-	app := fixtureInstalledAppWithIntegrations("radarr", "running", map[string]string{
+	app := fixtureInstalledAppWithIntegrations("jellyfin", "running", map[string]string{
 		"download-client": "qbittorrent",
-		"media-server":    "jellyfin",
+		"media-server":    "miniflux",
 	})
 
 	state := tr.reconciler.buildAppState(app, nil)
 
 	assert.Equal(t, []string{"qbittorrent"}, state.Integrations["download-client"])
-	assert.Equal(t, []string{"jellyfin"}, state.Integrations["media-server"])
+	assert.Equal(t, []string{"miniflux"}, state.Integrations["media-server"])
 }
 
 // ============================================================================

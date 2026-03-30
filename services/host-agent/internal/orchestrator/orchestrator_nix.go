@@ -592,8 +592,7 @@ func (o *Orchestrator) dropAppDatabase(appName string) error {
 	// Apps that use shared postgres and their database names
 	// TODO: Move this to catalog metadata
 	appDatabases := map[string]string{
-		"actual-budget": "actual_budget",
-		"miniflux":      "miniflux",
+		"miniflux": "miniflux",
 	}
 
 	dbName, ok := appDatabases[appName]

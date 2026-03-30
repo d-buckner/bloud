@@ -198,7 +198,7 @@ AUTHENTIK_REDIS__PASSWORD=
 
 	// Write per-app environment files
 	// Always generate env files for known apps (they need DATABASE_URL etc.)
-	knownApps := []string{"miniflux", "actual-budget"}
+	knownApps := []string{"miniflux"}
 	for _, appName := range knownApps {
 		appSecrets := m.secrets.AppSecrets[appName] // May be empty struct
 		if err := m.writeAppEnvFile(dir, appName, appSecrets); err != nil {
@@ -265,8 +265,7 @@ func getDatabaseURL(appName, password string) string {
 func getOAuthEnvVarName(appName string) string {
 	// Map app names to their expected OAuth env var names
 	appOAuthEnvVars := map[string]string{
-		"miniflux":      "OAUTH2_CLIENT_SECRET",
-		"actual-budget": "ACTUAL_OPENID_CLIENT_SECRET",
+		"miniflux": "OAUTH2_CLIENT_SECRET",
 	}
 	if envName, ok := appOAuthEnvVars[appName]; ok {
 		return envName

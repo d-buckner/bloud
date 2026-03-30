@@ -313,7 +313,6 @@ in
         echo ""
         echo "Services (via Traefik on port 80):"
         echo "  • Dashboard:      http://localhost/dashboard/"
-        echo "  • Actual Budget:  http://localhost/embed/actual-budget/"
         echo "  • Miniflux:       http://localhost/embed/miniflux/ (admin/admin123)"
         echo "  • Authentik:      http://localhost:9001 (akadmin/password)"
         echo ""
@@ -373,7 +372,6 @@ in
         echo "Testing service endpoints..."
         test_service "Traefik Dashboard" "http://localhost/dashboard/" "200" "Traefik"
         test_service "Miniflux" "http://localhost/embed/miniflux/" "200" "Miniflux"
-        test_service "Actual Budget" "http://localhost/embed/actual-budget/" "200" ""
 
         # Test database
         echo -n "Testing PostgreSQL... "
@@ -391,14 +389,6 @@ in
           echo "Testing Authentik (detected running)..."
           test_service "Authentik" "http://localhost:9001/if/flow/initial-setup/" "302" ""
           test_service "Authentik API" "http://localhost:9001/api/v3/root/config/" "200" "error_reporting"
-          echo -n "Testing Authentik OAuth2 provider... "
-          if ${pkgs.curl}/bin/curl -s "http://localhost:9001/application/o/actual-budget/.well-known/openid-configuration" | grep -q "authorization_endpoint" 2>/dev/null; then
-            echo "✓ PASS"
-            ((PASSED++))
-          else
-            echo "✗ FAIL"
-            ((FAILED++))
-          fi
         else
           echo ""
           echo "Skipping Authentik tests (not running)"
