@@ -6,9 +6,12 @@ const baseURL = process.env.BLOUD_URL ?? 'http://bloud.local';
 // across network boundaries (e.g. WiFi ↔ wired bridge). Inject a Chrome host resolver
 // rule so the browser resolves bloud.local → VM IP without relying on mDNS.
 const vmIP = process.env.BLOUD_VM_IP;
-const chromeLaunchArgs = vmIP
-  ? [`--host-resolver-rules=MAP bloud.local ${vmIP}`]
-  : [];
+const chromeLaunchArgs = [
+  // Required for headless Chromium on NixOS / sandboxless CI environments
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
+  ...(vmIP ? [`--host-resolver-rules=MAP bloud.local ${vmIP}`] : []),
+];
 const APPS = [
   'authentik',
   'miniflux',
