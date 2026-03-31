@@ -1620,17 +1620,14 @@ func cmdSmokePVE(args []string) int {
 
 	smokeDir := filepath.Join(root, "smoke")
 
-	// Install node_modules if not present
-	if _, err := os.Stat(filepath.Join(smokeDir, "node_modules")); os.IsNotExist(err) {
-		log("Installing smoke test dependencies...")
-		npmCmd := exec.Command("npm", "ci")
-		npmCmd.Dir = smokeDir
-		npmCmd.Stdout = os.Stdout
-		npmCmd.Stderr = os.Stderr
-		if err := npmCmd.Run(); err != nil {
-			errorf("Failed to install smoke test dependencies: %v", err)
-			return 1
-		}
+	log("Installing smoke test dependencies...")
+	npmCmd := exec.Command("npm", "ci")
+	npmCmd.Dir = smokeDir
+	npmCmd.Stdout = os.Stdout
+	npmCmd.Stderr = os.Stderr
+	if err := npmCmd.Run(); err != nil {
+		errorf("Failed to install smoke test dependencies: %v", err)
+		return 1
 	}
 
 	// Clear previous report so show-report always displays current results
