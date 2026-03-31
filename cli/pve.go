@@ -1552,7 +1552,8 @@ func printSmokeReport(t *smokeTimings) {
 //
 // Flags:
 //
-//	--build  Build ISO + deploy VM + boot live ISO before running tests
+//	--build             Build ISO + deploy VM + full install before running tests
+//	--iso-url <url>     Deploy ISO from URL + full install before running tests (used in CI)
 //	--update-snapshots  Pass through to Playwright to refresh committed baseline images
 //	--headed            Run Playwright in headed (non-headless) mode — opens a visible browser
 //	--headful           Alias for --headed
@@ -1560,6 +1561,7 @@ func cmdSmokePVE(args []string) int {
 	updateSnapshots := false
 	headed := false
 	install := false
+	isoURL := ""
 	var apps []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -1569,6 +1571,11 @@ func cmdSmokePVE(args []string) int {
 			headed = true
 		case "--build":
 			install = true
+		case "--iso-url":
+			if i+1 < len(args) {
+				isoURL = args[i+1]
+				i++
+			}
 		case "--apps":
 			for i++; i < len(args) && !strings.HasPrefix(args[i], "--"); i++ {
 				apps = append(apps, args[i])
@@ -1588,11 +1595,16 @@ func cmdSmokePVE(args []string) int {
 	currentSmokeTimings = timings
 	defer func() { currentSmokeTimings = nil }()
 
-	// Build ISO + deploy VM + boot live ISO. Playwright drives the installer via setup.spec.ts.
+	// Deploy VM + boot live ISO. Playwright's setup.spec.ts drives the installer.
 	if install {
 		if code := cmdStartPVE([]string{"--build"}); code != 0 {
 			return code
 		}
+	} else if isoURL != "" {
+		if code := cmdStartPVE([]string{isoURL}); code != 0 {
+			return code
+		}
+		install = true
 	}
 
 	// No ISO ejection here — the live system's Nix store lives on the ISO, so
