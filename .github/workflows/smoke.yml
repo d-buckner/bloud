@@ -46,6 +46,14 @@ jobs:
           fi
           ./bloud smoke --iso-url "${{ steps.iso.outputs.url }}" $EXTRA_FLAGS
 
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: smoke/playwright-report/
+          retention-days: 30
+
       - name: Upload updated snapshots
         if: inputs.update-snapshots == true
         uses: actions/upload-artifact@v4
