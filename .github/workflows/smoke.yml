@@ -1,0 +1,38 @@
+name: Smoke Test
+
+on:
+  workflow_run:
+    workflows: [Build ISO]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, bloud-builder]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Build CLI
+        run: npm run cli:build
+
+      - name: Get ISO URL
+        id: iso
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          url=$(gh release view latest --json assets \
+            --jq '[.assets[] | select(.name | endswith(".iso"))] | last | .url')
+          echo "url=$url" >> $GITHUB_OUTPUT
+
+      - name: Run smoke tests
+        env:
+          BLOUD_PVE_HOST: ${{ secrets.BLOUD_PVE_HOST }}
+        run: ./bloud smoke --iso-url "${{ steps.iso.outputs.url }}"
