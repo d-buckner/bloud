@@ -62,12 +62,6 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], launchOptions: { args: chromeLaunchArgs } },
     },
     ...createAppEntries(),
-    {
-      name: 'teardown',
-      testMatch: 'tests/auth.spec.ts',
-      dependencies: APPS,
-      use: { ...devices['Desktop Chrome'], launchOptions: { args: chromeLaunchArgs } },
-    },
   ],
   outputDir: 'test-results',
 });
