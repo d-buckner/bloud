@@ -5,6 +5,12 @@ on:
     workflows: [Build ISO]
     branches: [main]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      update-snapshots:
+        description: 'Update Playwright baseline snapshots'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,7 +18,7 @@ permissions:
 
 jobs:
   smoke:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, bloud-builder]
     steps:
       - name: Checkout
@@ -33,4 +39,16 @@ jobs:
       - name: Run smoke tests
         env:
           BLOUD_PVE_HOST: ${{ secrets.BLOUD_PVE_HOST }}
-        run: ./bloud smoke --iso-url "${{ steps.iso.outputs.url }}"
+        run: |
+          EXTRA_FLAGS=""
+          if [ "${{ inputs.update-snapshots }}" = "true" ]; then
+            EXTRA_FLAGS="--update-snapshots"
+          fi
+          ./bloud smoke --iso-url "${{ steps.iso.outputs.url }}" $EXTRA_FLAGS
+
+      - name: Upload updated snapshots
+        if: inputs.update-snapshots == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-snapshots-linux
+          path: smoke/tests/**/*-linux.png
