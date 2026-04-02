@@ -100,11 +100,16 @@ except Exception as e:
 		return fmt.Errorf("failed to write token file: %w", err)
 	}
 
-	// Step 3: Create LDAP infrastructure via API
 	// Now that we have a valid token, use the API client
 	client := authentikClient.NewClient(fmt.Sprintf("http://localhost:%d", c.port), c.tokenKey)
-	if err := client.EnsureLDAPInfrastructure(c.ldapBindPassword); err != nil {
-		return fmt.Errorf("failed to ensure LDAP infrastructure: %w", err)
+
+	// Step 3: Apply login page configuration (flow title + username-only identification).
+	// This runs before LDAP infra because:
+	//   a) It has a built-in retry loop that waits for default blueprints to create flows.
+	//   b) It must succeed even if subsequent LDAP steps fail.
+	//   c) Once it returns, the default flows are confirmed to exist — which LDAP infra also needs.
+	if err := client.EnsureLoginConfiguration(); err != nil {
+		return fmt.Errorf("failed to ensure login configuration: %w", err)
 	}
 
 	// Step 4: Push branding CSS inline via API
@@ -116,9 +121,11 @@ except Exception as e:
 		}
 	}
 
-	// Step 5: Apply login page configuration (flow title + username-only identification)
-	if err := client.EnsureLoginConfiguration(); err != nil {
-		return fmt.Errorf("failed to ensure login configuration: %w", err)
+	// Step 5: Create LDAP infrastructure via API.
+	// Runs after EnsureLoginConfiguration so that default flows are guaranteed to exist
+	// (EnsureLoginConfiguration only returns success after verifying the flow is present).
+	if err := client.EnsureLDAPInfrastructure(c.ldapBindPassword); err != nil {
+		return fmt.Errorf("failed to ensure LDAP infrastructure: %w", err)
 	}
 
 	return nil

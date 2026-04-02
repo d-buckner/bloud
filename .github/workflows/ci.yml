@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
 
 permissions:
   contents: write
@@ -179,6 +180,9 @@ jobs:
 
   smoke:
     needs: build-iso
+    # Only run against self-hosted infrastructure for trusted PRs from the repo owner.
+    # External contributors can open PRs but must not trigger jobs on private runners.
+    if: github.actor == 'd-buckner'
     runs-on: [self-hosted, bloud-builder]
     steps:
       - name: Checkout
