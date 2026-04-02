@@ -16,13 +16,18 @@ entries:
     identifiers:
       name: Default - Password change flow
     required: false
+# Remove the upstream default flow (slug renamed to 'auth')
+- identifiers:
+    slug: default-authentication-flow
+  model: authentik_flows.flow
+  state: absent
 - attrs:
     designation: authentication
     name: Welcome to authentik!
     title: Welcome to authentik!
     authentication: none
   identifiers:
-    slug: default-authentication-flow
+    slug: auth
   model: authentik_flows.flow
   id: flow
 - attrs:
@@ -62,13 +67,13 @@ entries:
     target: !KeyOf flow
   attrs:
     re_evaluate_policies: true
-  id: default-authentication-flow-password-binding
+  id: auth-flow-password-binding
   model: authentik_flows.flowstagebinding
 - identifiers:
     order: 30
     stage: !KeyOf default-authentication-mfa-validation
     target: !KeyOf flow
-  id: default-authentication-flow-authenticator-validation-binding
+  id: auth-flow-authenticator-validation-binding
   model: authentik_flows.flowstagebinding
 - identifiers:
     order: 100
@@ -76,9 +81,9 @@ entries:
     target: !KeyOf flow
   model: authentik_flows.flowstagebinding
 - model: authentik_policies_expression.expressionpolicy
-  id: default-authentication-flow-password-optional
+  id: auth-flow-password-optional
   identifiers:
-    name: default-authentication-flow-password-stage
+    name: auth-flow-password-stage
   attrs:
     expression: |
       flow_plan = request.context.get("flow_plan")
@@ -88,9 +93,9 @@ entries:
       # been authenticated yet and we need the password stage
       return not hasattr(flow_plan.context.get("pending_user"), "backend")
 - model: authentik_policies_expression.expressionpolicy
-  id: default-authentication-flow-authenticator-validate-optional
+  id: auth-flow-authenticator-validate-optional
   identifiers:
-    name: default-authentication-flow-authenticator-validate-stage
+    name: auth-flow-authenticator-validate-stage
   attrs:
     expression: |
       flow_plan = request.context.get("flow_plan")
@@ -102,14 +107,14 @@ entries:
 - model: authentik_policies.policybinding
   identifiers:
     order: 10
-    target: !KeyOf default-authentication-flow-password-binding
-    policy: !KeyOf default-authentication-flow-password-optional
+    target: !KeyOf auth-flow-password-binding
+    policy: !KeyOf auth-flow-password-optional
   attrs:
     failure_result: true
 - model: authentik_policies.policybinding
   identifiers:
     order: 10
-    target: !KeyOf default-authentication-flow-authenticator-validation-binding
-    policy: !KeyOf default-authentication-flow-authenticator-validate-optional
+    target: !KeyOf auth-flow-authenticator-validation-binding
+    policy: !KeyOf auth-flow-authenticator-validate-optional
   attrs:
     failure_result: true

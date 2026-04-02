@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('authentik login page styling', async ({ page }) => {
   await test.step('load Authentik login page', async () => {
-    await page.goto('/if/flow/default-authentication-flow/');
+    await page.goto('/if/flow/auth/');
     await page.locator('input[name="uidField"]').waitFor({ state: 'visible', timeout: 30_000 });
   });
 

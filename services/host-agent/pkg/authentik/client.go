@@ -386,7 +386,7 @@ func (c *Client) ensureLDAPProvider() (int, error) {
 	}
 
 	// Find required flows
-	authFlowID, err := c.findFlowID("default-authentication-flow")
+	authFlowID, err := c.findFlowID("auth")
 	if err != nil {
 		return 0, fmt.Errorf("finding auth flow: %w", err)
 	}
@@ -1058,7 +1058,7 @@ func (c *Client) EnsureLoginConfiguration() error {
 // applyAndVerifyLoginConfiguration patches the flow title and identification stage, then
 // waits 3 seconds and re-reads both to confirm a blueprint didn't overwrite them.
 func (c *Client) applyAndVerifyLoginConfiguration() error {
-	if err := c.ensureFlowTitle("default-authentication-flow", "Sign in to Bloud"); err != nil {
+	if err := c.ensureFlowTitle("auth", "Sign in to Bloud"); err != nil {
 		return fmt.Errorf("ensuring flow title: %w", err)
 	}
 
@@ -1070,7 +1070,7 @@ func (c *Client) applyAndVerifyLoginConfiguration() error {
 	// to confirm no blueprint overwrote our patches.
 	time.Sleep(3 * time.Second)
 
-	title, err := c.getFlowTitle("default-authentication-flow")
+	title, err := c.getFlowTitle("auth")
 	if err != nil {
 		return fmt.Errorf("verifying flow title: %w", err)
 	}

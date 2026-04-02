@@ -622,7 +622,7 @@ entries:
     identifiers:
       name: Bloud LDAP Provider
     attrs:
-      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, auth]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       search_group: !Find [authentik_core.group, [name, authentik Admins]]
       bind_mode: direct

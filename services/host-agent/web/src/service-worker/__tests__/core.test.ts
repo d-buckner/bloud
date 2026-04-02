@@ -139,7 +139,7 @@ describe('service-worker core', () => {
     it('returns true for Authentik SSO routes (root-level)', () => {
       expect(isBloudRoute('/application/o/authorize/')).toBe(true);
       expect(isBloudRoute('/flows/-/default/authentication/')).toBe(true);
-      expect(isBloudRoute('/if/flow/default-authentication-flow/')).toBe(true);
+      expect(isBloudRoute('/if/flow/auth/')).toBe(true);
       expect(isBloudRoute('/outpost.goauthentik.io/start')).toBe(true);
     });
 
