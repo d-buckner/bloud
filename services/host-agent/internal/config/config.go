@@ -13,7 +13,6 @@ import (
 type Config struct {
 	Port         int
 	DataDir      string
-	AppsDir      string // Path to apps/ directory containing app definitions
 	NixConfigDir      string
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	FlakePath         string // Path to flake.nix for nixos-rebuild
@@ -81,7 +80,6 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	cfg := &Config{
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
-		AppsDir:                appsDir,
 		NixConfigDir:           getEnv("BLOUD_NIX_CONFIG_DIR", filepath.Join(dataDir, "nix")),
 		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
 		FlakePath:              getEnv("BLOUD_FLAKE_PATH", defaultFlakePath),

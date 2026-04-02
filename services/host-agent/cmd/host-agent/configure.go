@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	appsregistry "codeberg.org/d-buckner/bloud-v3/apps"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/appconfig"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
@@ -266,7 +267,7 @@ func writeSSOEnvVars(appName string, cfg *config.Config, logger *slog.Logger) {
 	}
 
 	// Load catalog to check if this app has SSO
-	loader := catalog.NewLoader(cfg.AppsDir)
+	loader := catalog.NewLoaderFromFS(appsregistry.FS)
 	allApps, err := loader.LoadAll()
 	if err != nil {
 		logger.Warn("failed to load catalog for SSO env vars", "error", err)

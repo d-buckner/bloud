@@ -52,7 +52,6 @@ func runServer() {
 	logger.Info("loaded configuration",
 		"port", cfg.Port,
 		"data_dir", cfg.DataDir,
-		"apps_dir", cfg.AppsDir,
 		"flake_path", cfg.FlakePath,
 		"nixos_path", cfg.NixosPath,
 	)
@@ -72,7 +71,6 @@ func runServer() {
 
 	// Create HTTP server
 	server := api.NewServer(database, api.ServerConfig{
-		AppsDir:         cfg.AppsDir,
 		ConfigDir:       cfg.NixConfigDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,

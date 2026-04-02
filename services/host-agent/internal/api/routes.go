@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	appsregistry "codeberg.org/d-buckner/bloud-v3/apps"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
@@ -173,7 +175,7 @@ func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
 
 // handleRefreshCatalog reloads the app catalog from YAML files
 func (s *Server) handleRefreshCatalog(w http.ResponseWriter, r *http.Request) {
-	s.refreshCatalog(s.cfg.AppsDir)
+	s.refreshCatalog()
 
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status": "catalog refreshed",
@@ -527,18 +529,20 @@ func (s *Server) dropAppDatabase(appName string) error {
 	return nil
 }
 
-// handleAppIcon serves the icon.png for an app
+// handleAppIcon serves the icon.png for an app from the embedded registry
 func (s *Server) handleAppIcon(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	iconPath := filepath.Join(s.cfg.AppsDir, name, "icon.png")
+	iconPath := name + "/icon.png"
 
-	if _, err := os.Stat(iconPath); os.IsNotExist(err) {
+	data, err := fs.ReadFile(appsregistry.FS, iconPath)
+	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	http.ServeFile(w, r, iconPath)
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(data)
 }
 
 // Helper functions for JSON responses

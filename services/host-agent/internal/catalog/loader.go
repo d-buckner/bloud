@@ -2,23 +2,27 @@ package catalog
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Loader handles loading app definitions from YAML files
 type Loader struct {
-	appsDir string
+	fsys fs.FS
 }
 
-// NewLoader creates a new catalog loader
-// appsDir should be the path to the apps/ directory containing app subdirectories
+// NewLoader creates a catalog loader that reads from the given directory path.
 func NewLoader(appsDir string) *Loader {
-	return &Loader{
-		appsDir: appsDir,
-	}
+	return &Loader{fsys: os.DirFS(appsDir)}
+}
+
+// NewLoaderFromFS creates a catalog loader that reads from an fs.FS.
+// Use this with the embedded app registry for self-contained binaries.
+func NewLoaderFromFS(fsys fs.FS) *Loader {
+	return &Loader{fsys: fsys}
 }
 
 // LoadAll loads all app definitions from the apps directory
@@ -26,7 +30,7 @@ func NewLoader(appsDir string) *Loader {
 func (l *Loader) LoadAll() (map[string]*App, error) {
 	apps := make(map[string]*App)
 
-	entries, err := os.ReadDir(l.appsDir)
+	entries, err := fs.ReadDir(l.fsys, ".")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read apps directory: %w", err)
 	}
@@ -36,8 +40,8 @@ func (l *Loader) LoadAll() (map[string]*App, error) {
 			continue
 		}
 
-		metadataPath := filepath.Join(l.appsDir, entry.Name(), "metadata.yaml")
-		if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
+		metadataPath := path.Join(entry.Name(), "metadata.yaml")
+		if _, err := fs.Stat(l.fsys, metadataPath); err != nil {
 			continue
 		}
 
@@ -54,7 +58,7 @@ func (l *Loader) LoadAll() (map[string]*App, error) {
 
 // loadAppFromFile loads a single app definition from a YAML file
 func (l *Loader) loadAppFromFile(filePath string) (*App, error) {
-	data, err := os.ReadFile(filePath)
+	data, err := fs.ReadFile(l.fsys, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
@@ -90,7 +94,7 @@ func (l *Loader) validateApp(app *App) error {
 
 // LoadGraph loads app definitions and builds an AppGraph
 func (l *Loader) LoadGraph() (*AppGraph, error) {
-	entries, err := os.ReadDir(l.appsDir)
+	entries, err := fs.ReadDir(l.fsys, ".")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read apps directory: %w", err)
 	}
@@ -102,8 +106,8 @@ func (l *Loader) LoadGraph() (*AppGraph, error) {
 			continue
 		}
 
-		metadataPath := filepath.Join(l.appsDir, entry.Name(), "metadata.yaml")
-		if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
+		metadataPath := path.Join(entry.Name(), "metadata.yaml")
+		if _, err := fs.Stat(l.fsys, metadataPath); err != nil {
 			continue
 		}
 
@@ -120,7 +124,7 @@ func (l *Loader) LoadGraph() (*AppGraph, error) {
 
 // loadAppDefinition loads a single AppDefinition from a YAML file
 func (l *Loader) loadAppDefinition(filePath string) (*AppDefinition, error) {
-	data, err := os.ReadFile(filePath)
+	data, err := fs.ReadFile(l.fsys, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}

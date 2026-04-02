@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	appsregistry "codeberg.org/d-buckner/bloud-v3/apps"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
@@ -45,7 +46,6 @@ type Server struct {
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
-	AppsDir     string
 	ConfigDir   string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
@@ -127,7 +127,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	}
 
 	// Initialize catalog and graph on startup
-	s.refreshCatalog(s.cfg.AppsDir)
+	s.refreshCatalog()
 
 	// Initialize orchestrator (Podman client may not be available in tests)
 	s.initOrchestrator(appStore)
@@ -208,11 +208,11 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	// rather than background watchdogs. See podman-service.nix for hook setup.
 }
 
-// refreshCatalog loads apps from YAML files and updates the cache and graph
-func (s *Server) refreshCatalog(appsDir string) {
-	s.logger.Info("refreshing app catalog", "apps_dir", appsDir)
+// refreshCatalog loads apps from the embedded registry and updates the cache and graph
+func (s *Server) refreshCatalog() {
+	s.logger.Info("refreshing app catalog")
 
-	loader := catalog.NewLoader(appsDir)
+	loader := catalog.NewLoaderFromFS(appsregistry.FS)
 
 	// Refresh the legacy catalog cache
 	if err := s.catalog.Refresh(loader); err != nil {

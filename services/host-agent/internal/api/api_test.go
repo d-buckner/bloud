@@ -298,7 +298,6 @@ tags:
 	// Create server with fakes
 	server := &Server{
 		cfg: ServerConfig{
-			AppsDir:   tmpDir,
 			ConfigDir: filepath.Join(tmpDir, "nix"),
 			DataDir:   tmpDir,
 			Port:      8080,
@@ -385,7 +384,6 @@ integrations:
 	// Create server
 	server := &Server{
 		cfg: ServerConfig{
-			AppsDir:   tmpDir,
 			ConfigDir: filepath.Join(tmpDir, "nix"),
 			DataDir:   tmpDir,
 			Port:      8080,
@@ -515,40 +513,7 @@ func TestAPI_Storage(t *testing.T) {
 }
 
 func TestAPI_RefreshCatalog(t *testing.T) {
-	server, appsDir := setupTestServer(t)
-
-	// Add another app to catalog
-	newAppDir := filepath.Join(appsDir, "new-app")
-	require.NoError(t, os.MkdirAll(newAppDir, 0755))
-
-	newAppYAML := `name: new-app
-displayName: New App
-description: A newly added app
-category: testing
-version: 2.0.0
-dependencies: []
-resources:
-  minRam: 256
-  minDisk: 2
-  gpu: false
-sso:
-  enabled: false
-  protocol: ""
-  blueprint: ""
-defaultConfig: {}
-healthCheck:
-  path: /
-  interval: 30
-  timeout: 5
-docs:
-  homepage: https://example.com
-  source: https://github.com/example/new-app
-tags:
-  - new
-`
-	newAppFile := filepath.Join(newAppDir, "metadata.yaml")
-	err := os.WriteFile(newAppFile, []byte(newAppYAML), 0644)
-	require.NoError(t, err, "should be able to write new app file")
+	server, _ := setupTestServer(t)
 
 	// Refresh catalog
 	req := httptest.NewRequest("POST", "/api/apps/refresh-catalog", nil)
@@ -558,19 +523,19 @@ tags:
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// Verify new app is in catalog
+	// Catalog is now embedded at build time - verify it loads real apps after refresh
 	req = httptest.NewRequest("GET", "/api/apps", nil)
 	w = httptest.NewRecorder()
 
 	server.router.ServeHTTP(w, req)
 
 	var response map[string]interface{}
-	err = json.NewDecoder(w.Body).Decode(&response)
+	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
 
 	apps, ok := response["apps"].([]interface{})
 	require.True(t, ok, "response should contain apps array")
-	assert.Len(t, apps, 2, "should have 2 apps after refresh")
+	assert.NotEmpty(t, apps, "catalog should contain embedded apps after refresh")
 }
 
 func TestAPI_PlanInstall(t *testing.T) {
@@ -750,14 +715,10 @@ func TestAPI_AppMetadata_NotFound(t *testing.T) {
 }
 
 func TestAPI_AppIcon(t *testing.T) {
-	server, appsDir := setupTestServer(t)
+	server, _ := setupTestServer(t)
 
-	// Create an icon file
-	iconPath := filepath.Join(appsDir, "test-app", "icon.png")
-	iconData := []byte{0x89, 0x50, 0x4E, 0x47} // PNG magic bytes
-	require.NoError(t, os.WriteFile(iconPath, iconData, 0644))
-
-	req := httptest.NewRequest("GET", "/api/apps/test-app/icon", nil)
+	// Icons are served from the embedded registry - use a real app
+	req := httptest.NewRequest("GET", "/api/apps/miniflux/icon", nil)
 	w := httptest.NewRecorder()
 
 	server.router.ServeHTTP(w, req)
