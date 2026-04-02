@@ -103,28 +103,28 @@ except Exception as e:
 	// Now that we have a valid token, use the API client
 	client := authentikClient.NewClient(fmt.Sprintf("http://localhost:%d", c.port), c.tokenKey)
 
-	// Step 3: Apply login page configuration (flow title + username-only identification).
-	// This runs before LDAP infra because:
-	//   a) It has a built-in retry loop that waits for default blueprints to create flows.
-	//   b) It must succeed even if subsequent LDAP steps fail.
-	//   c) Once it returns, the default flows are confirmed to exist — which LDAP infra also needs.
-	if err := client.EnsureLoginConfiguration(); err != nil {
-		return fmt.Errorf("failed to ensure login configuration: %w", err)
-	}
-
-	// Step 4: Re-apply branding CSS via API as a safety net.
-	// The CSS is primarily applied via the bloud-brand.yaml blueprint (embedded at Nix
-	// eval time), which runs during Authentik startup before the service is accessible.
-	// This PostStart call idempotently re-applies it in case an admin cleared it via the UI.
+	// Step 3: Push branding CSS inline via API.
+	// MUST run before EnsureLoginConfiguration — the smoke test uses the login page title
+	// ("Sign in to Bloud") as its synchronization signal, polling until PostStart sets it.
+	// CSS must already be applied by the time the title becomes correct, otherwise there
+	// is a window where the page shows the right title but wrong styling.
+	// The default brand always exists after DB migration, so this call is safe to make
+	// before flows are created by blueprints.
 	if c.brandingCSS != "" {
 		if err := client.EnsureBranding(c.brandingCSS); err != nil {
 			return fmt.Errorf("failed to ensure branding: %w", err)
 		}
 	}
 
+	// Step 4: Apply login page configuration (flow title + username-only identification).
+	// Has a built-in retry loop that waits for default blueprints to create flows.
+	// Once it returns, the default flows are confirmed to exist — which LDAP infra also needs.
+	if err := client.EnsureLoginConfiguration(); err != nil {
+		return fmt.Errorf("failed to ensure login configuration: %w", err)
+	}
+
 	// Step 5: Create LDAP infrastructure via API.
-	// Runs after EnsureLoginConfiguration so that default flows are guaranteed to exist
-	// (EnsureLoginConfiguration only returns success after verifying the flow is present).
+	// Runs after EnsureLoginConfiguration so that default flows are guaranteed to exist.
 	if err := client.EnsureLDAPInfrastructure(c.ldapBindPassword); err != nil {
 		return fmt.Errorf("failed to ensure LDAP infrastructure: %w", err)
 	}
