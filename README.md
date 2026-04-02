@@ -2,197 +2,136 @@
 
 **Home Cloud Operating System**
 
-An opinionated, zero-config home server OS that makes self-hosting accessible. Install apps with automatic SSO integration. No manual OAuth configuration, reverse proxy setup, or integration configurations.
-
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
 
 > **Status:** Early alpha. Core infrastructure and web UI working.
 
-## The Problem
+---
 
-Self-hosting is overwhelming. Setting up Immich, Nextcloud, and Jellyfin takes hours of configuring reverse proxies, SSL certificates, SSO, and making apps talk to each other.
+
+
+## You wanted to escape vendor lock-in. You got a second job managing config files.
+
+Self-hosting's hard part isn't installation. Every platform has solved that. The hard part is  when you add a second service and realize the first one doesn't know it exists.
+
+To connect two services manually, you typically:
+
+- Generate an API key in one service
+- Open the second service's settings, paste the key
+- Create an OAuth client in your identity provider - client ID, secret, callback URL
+- Paste those back into the first service
+- Register the second service with the identity provider separately
+- Write a reverse proxy rule for each
+- Provision and wire a database for each
+- Remember all of this when you reinstall or migrate
+
+On every other platform, *you* are the integration layer — the person who knows which credentials go where and how the pieces fit together. You don't configure services. You configure the relationships between services. That knowledge lives in your head, not in the platform.
+
+**Bloud flips this.** Apps declare what they provide and what they consume. The system holds the integration knowledge and wires everything automatically - on install, on restart, forever.
+
+```mermaid
+graph LR
+    DB[(Database)]
+    IP[Identity Provider]
+    S1[Service]
+    S2[Service]
+    RP[Reverse Proxy]
+
+    DB -->|credentials| S1
+    DB -->|credentials| S2
+    DB -->|credentials| IP
+    S1 -->|SSO client| IP
+    S2 -->|SSO client| IP
+    S1 <-->|API key| S2
+    S1 -->|route| RP
+    S2 -->|route| RP
+    IP -->|auth middleware| RP
+```
+
+Every edge in this graph is a manual step on every other platform. Bloud generates all of them and regenerates them correctly every time a service starts.
+
+---
 
 ## The Vision
 
 - Flash USB drive, boot on any x86_64 hardware
 - Access web UI, install apps with one click
-- Everything pre-integrated: SSO automatic, related apps pre-configured
+- Every integration automatic: SSO, routing, credentials, app-to-app connections
 - Multi-host orchestration for scaling across machines
+
+---
 
 ## Quick Start
 
+Bloud runs as a bootable ISO. Flash it to a USB drive or deploy it to a VM.
+
+For **development**, you'll need a NixOS machine (see [Local Development](#local-development) below).
+
 ```bash
-# Install Lima (macOS: brew install lima, Linux: see lima-vm.io)
-git clone https://github.com/d-buckner/bloud.git
+git clone https://codeberg.org/d-buckner/bloud.git
 cd bloud
-npm run setup    # Check prerequisites, download VM image
+npm run setup    # Install deps, build CLI
+./bloud setup    # Check prerequisites, apply NixOS config
 ./bloud start    # Start dev environment
 ```
 
-Access the web UI at **http://localhost:8080**
+Access the web UI at **http://bloud.local** (port 80, through Traefik).
+
+---
 
 ## Apps
 
-| Category | Apps |
-|----------|------|
+| Category           | Apps                                  |
+| ------------------ | ------------------------------------- |
 | **Infrastructure** | PostgreSQL, Redis, Traefik, Authentik |
-| **Media** | Jellyfin |
-| **Productivity** | Miniflux (RSS), Actual Budget |
-| **Network** | AdGuard Home |
+| **Media**          | Jellyfin                              |
+| **Productivity**   | Miniflux (RSS)                        |
+| **Network**        | AdGuard Home                          |
+| **Utility**        | qBittorrent                           |
 
 ---
 
 ## How It Works
 
-Bloud makes self-hosting accessible through three core ideas:
+### 1. The Dependency Graph
 
-1. **Dependency Graph** - Apps declare what they need ("I require a database"). Bloud figures out what to install and wire together.
-
-2. **Declarative Deployment** - NixOS handles the actual containers. Enable an app, rebuild, and NixOS creates systemd services, volumes, networking - atomically.
-
-3. **Idempotent Configuration** - PreStart (ExecStartPre) handles config files and directories. PostStart (ExecStartPost) handles API calls and integrations. Both run on every service start.
-
-### The Big Picture
-
-Here's what happens when you install Miniflux:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                       User clicks "Install Miniflux"                │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  1. PLANNING                                                        │
-│                                                                     │
-│     Graph analyzes: "Miniflux needs a database"                     │
-│     PostgreSQL is the only compatible option                        │
-│     → Auto-select postgres (no user choice needed)                  │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  2. NIX GENERATION                                                  │
-│                                                                     │
-│     Generate configuration:                                         │
-│       • apps.nix        → NixOS enables postgres + miniflux         │
-│       • apps-routes.yml → Traefik routing for /embed/miniflux       │
-│       • blueprints/     → Authentik OAuth2 provider for miniflux    │
-│       • secrets/        → Database URL, OAuth credentials           │
-│                                                                     │
-│     Run: nixos-rebuild switch                                       │
-│     → Containers created, systemd services started                  │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  3. CONFIGURATION                                                   │
-│                                                                     │
-│     PreStart: Create directories, write Traefik SSO redirect        │
-│     HealthCheck: Wait for /healthcheck to respond                   │
-│     PostStart: Set admin user theme via Miniflux API                │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  4. RUNNING                                                         │
-│                                                                     │
-│     Miniflux is live, connected to postgres, SSO configured         │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## Project Structure
-
-```
-bloud/
-├── apps/                          # App definitions
-│   ├── miniflux/
-│   │   ├── metadata.yaml          # What Miniflux needs (integrations, SSO, port)
-│   │   ├── module.nix             # How to run the container
-│   │   └── configurator.go        # configuration
-│   ├── postgres/
-│   ├── authentik/
-│   └── ...
-│
-├── services/host-agent/           # The go server
-│   ├── cmd/host-agent/            # Entry points
-│   ├── internal/
-│   │   ├── orchestrator/          # Install/uninstall coordination
-│   │   ├── catalog/               # App graph and dependency resolution
-│   │   ├── nixgen/                # Generates apps.nix
-│   │   ├── store/                 # Database layer
-│   │   └── api/                   # HTTP server
-│   ├── pkg/configurator/          # Configurator interface
-│   └── web/                       # Svelte frontend
-│
-├── nixos/
-│   ├── bloud.nix                  # Main NixOS module
-│   ├── lib/
-│   │   ├── bloud-app.nix          # Helper for app modules
-│   │   └── podman-service.nix     # Systemd service generator
-│   └── generated/
-│       └── apps.nix               # Generated by host-agent
-│
-└── docs/
-```
-
-## How Apps Are Defined
-
-Each app has three files that work together:
-
-### metadata.yaml - The Catalog Entry
-
-This tells Bloud what the app is and what it needs:
+Every app declares its integrations in `metadata.yaml`:
 
 ```yaml
-name: miniflux
-displayName: Miniflux
-description: Minimalist and opinionated feed reader
-category: productivity
-port: 8085
-
+# example metadata.yaml
 integrations:
   database:
-    required: true              # Must have a database
-    multi: false                # Only one at a time
+    required: true
     compatible:
       - app: postgres
         default: true
-
-healthCheck:
-  path: /embed/miniflux/healthcheck
-  interval: 2
-  timeout: 60
-
-sso:
-  strategy: native-oidc         # Miniflux handles OAuth2 itself
-  callbackPath: /oauth2/oidc/callback
-  providerName: Bloud SSO
-  userCreation: true
-  env:
-    clientId: OAUTH2_CLIENT_ID
-    clientSecret: OAUTH2_CLIENT_SECRET
-    discoveryUrl: OAUTH2_OIDC_DISCOVERY_ENDPOINT
-    redirectUrl: OAUTH2_REDIRECT_URL
-
-routing:
-  stripPrefix: false            # Miniflux serves at /embed/miniflux when BASE_URL is set
+  sso:
+    required: false
+    compatible:
+      - app: authentik
 ```
 
-The `integrations` section is key. It declares dependencies without hardcoding them. Miniflux needs a database - and postgres is the compatible option.
+When you install an app, Bloud builds a graph of everything it needs. Dependencies with only one compatible option are auto-selected. If postgres isn't installed yet, it goes in first. If it's already there, the new app just gets wired to it.
 
-### module.nix - The Container Definition
+The graph also determines **execution order** — infrastructure first, then dependents:
 
-This is NixOS configuration for running the container:
+```
+Level 0: postgres, redis          ← No dependencies
+Level 1: authentik                ← Needs postgres + redis
+Level 2: jellyfin, miniflux       ← Need postgres and authentik
+```
+
+### 2. Declarative Container Definitions
+
+Each app has a `module.nix` defining how to run the container:
 
 ```nix
 mkBloudApp {
   name = "miniflux";
-  description = "Miniflux RSS reader";
   image = "miniflux/miniflux:latest";
   port = 8085;
-  database = "miniflux";  # Auto-creates postgres DB
+  database = "miniflux";  # Auto-creates postgres DB and user
 
   environment = cfg: {
     BASE_URL = "${cfg.externalHost}/embed/miniflux";
@@ -200,581 +139,164 @@ mkBloudApp {
 }
 ```
 
-The `mkBloudApp` helper handles the boilerplate - creating systemd services, setting up podman, managing volumes. When you specify `database = "miniflux"`, it automatically creates that database in the shared postgres instance.
+The `mkBloudApp` helper handles systemd services, podman networking, volumes, and dependency wiring. When you enable an app, NixOS creates everything atomically.
 
-### configurator.go - App Configuration
+### 3. Idempotent Configurators
 
-Configurators run as systemd hooks (ExecStartPre and ExecStartPost):
+SSO, routing, and credentials are wired automatically by the platform — apps don't configure those themselves. What configurators handle is app-specific setup that can't be expressed in Nix: creating directories, writing config files, setting app-specific defaults.
 
 ```go
-type Configurator struct{}
-
-func (c *Configurator) Name() string { return "miniflux" }
-
-// PreStart runs before container starts - creates config files, directories
+// PreStart: runs before the container starts
 func (c *Configurator) PreStart(ctx context.Context, state *AppState) error {
-    // Determine desired config
-    var desired []byte
-    if _, hasSSO := state.Integrations["sso"]; hasSSO {
-        desired = []byte(traefikSSOConfig)
-    }
-
-    // Write config (idempotent - overwrites with same content)
-    configPath := filepath.Join(c.traefikDir, "miniflux-sso.yml")
-    return os.WriteFile(configPath, desired, 0644)
-}
-
-// HealthCheck waits for the app to be ready
-func (c *Configurator) HealthCheck(ctx context.Context) error {
-    url := fmt.Sprintf("http://localhost:%d/embed/miniflux/healthcheck", c.port)
-    return configurator.WaitForHTTP(ctx, url, 60*time.Second)
-}
-
-// PostStart runs as ExecStartPost - after container is healthy
-func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
-    // Wait for app to be ready
-    if err := c.HealthCheck(ctx); err != nil {
+    // Ensure directories exist
+    if err := os.MkdirAll(filepath.Join(state.DataPath, "config"), 0755); err != nil {
         return err
     }
-    // Set light theme for admin user via Miniflux API
-    return c.setUserTheme(ctx, 1, "light_serif")
-}
-```
 
-## The Dependency Graph
-
-When you install an app, Bloud builds a graph of what's needed:
-
-```
-User wants: Miniflux
-            │
-            ▼
-┌─────────────────────────────────────┐
-│  Miniflux.integrations:             │
-│    database: required               │
-│      compatible: [postgres]         │
-└─────────────────────────────────────┘
-            │
-            ▼
-Is postgres installed? No
-            │
-            ▼
-┌─────────────────────────────────────┐
-│  Install Plan:                      │
-│    AutoConfig (only 1 option):      │
-│      - database → postgres          │
-│    No user choices needed           │
-└─────────────────────────────────────┘
-```
-
-The graph also determines **execution order**. Apps that provide services must be configured before apps that consume them:
-
-```
-Level 0: postgres, redis          ← Infrastructure, no dependencies
-         │
-Level 1: authentik                ← Depends on postgres + redis
-         │
-Level 2: miniflux, jellyfin       ← Depend on postgres and authentik
-```
-
-Configuration runs level by level. Miniflux's PostStart can assume postgres is already healthy.
-
-## The Configuration Lifecycle
-
-Configurators run as systemd hooks during service start:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ExecStartPre: PreStart                                              │
-│  ──────────────────────                                              │
-│  Runs BEFORE container starts                                       │
-│                                                                     │
-│  • Create directories (container will mount them)                   │
-│  • Write config files (container reads on startup)                  │
-│  • Generate Traefik routing rules                                   │
-│                                                                     │
-│  If this fails, container won't start                               │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    [ Container starts ]
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  HealthCheck (built into ExecStartPost)                             │
-│  ───────────────────────────────────────                            │
-│  Waits for the app to be ready                                      │
-│                                                                     │
-│  • Poll an HTTP endpoint until it responds                          │
-│  • Check database connectivity                                      │
-│  • Verify the app initialized properly                              │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  ExecStartPost: PostStart                                            │
-│  ────────────────────────                                            │
-│  Runs AFTER container is healthy                                    │
-│                                                                     │
-│  • Configure app via its REST API                                   │
-│  • Set up integrations                                              │
-│  • Register OAuth clients                                           │
-│                                                                     │
-│  This is where the "magic wiring" happens                           │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Why PreStart vs PostStart?
-
-The key distinction is timing relative to the container lifecycle:
-
-| Phase     | When It Runs            | Examples                                      |
-| --------- | ----------------------- | --------------------------------------------- |
-| PreStart  | Before container starts | Config files, directories, certificates       |
-| PostStart | After container healthy | API calls, database records, runtime settings |
-
-**PreStart** handles things the app reads on startup — config files, directories, environment setup. If PreStart fails, the container won't start.
-
-**PostStart** handles things that require the app to be running. API calls modify the app's internal state immediately, no restart needed.
-
-Example: Miniflux's SSO redirect config is written to a Traefik config file — that's PreStart. But setting the admin user's theme via the Miniflux API applies immediately — that's PostStart.
-
-### Idempotency
-
-Every phase must be safe to run repeatedly. Write the desired state every time — don't assume previous runs succeeded:
-
-```go
-// GOOD: Idempotent - writes desired config state
-func (c *Configurator) PreStart(ctx context.Context, state *AppState) error {
-    desired := map[string]string{
-        "DATABASE_URL":       state.Database.URL,
-        "OAUTH_CLIENT_ID":    state.OAuth.ClientID,
-        "OAUTH_CLIENT_SECRET": state.OAuth.ClientSecret,
-    }
-
-    // Write only our managed keys (merge with existing file)
-    return c.writeManagedKeys(configPath, desired)
+    // Write app config with required settings for Bloud's embedding
+    ini, _ := configurator.LoadINI(configPath)
+    ini.EnsureKeys("Preferences", map[string]string{
+        "WebUI\\HostHeaderValidation": "false",
+        "WebUI\\CSRFProtection":       "false",
+        "Downloads\\SavePath":         "/downloads",
+    })
+    return ini.Save(configPath)
 }
 
-// GOOD: Idempotent - API call sets to desired state
+// PostStart: runs after the container is healthy
+// Used for apps that require API calls to configure (e.g. Authentik)
 func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
-    return c.setUserTheme(ctx, 1, "light_serif")  // Always sets to light
+    return nil // most apps are fully configured by PreStart
 }
 ```
 
-## Orchestration
+Configurators always write the *desired* state — running them again produces the same result.
 
-Systemd is the single source of truth for service dependencies and lifecycle. Configurators run as **systemd hooks**:
+### 4. Container Invalidation
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  podman-app-a.service                                               │
-│                                                                     │
-│  [Unit]                                                             │
-│  After=podman-database.service podman-auth-provider.service         │
-│  Requires=podman-database.service                                   │
-│                                                                     │
-│  [Service]                                                          │
-│  ExecStartPre=bloud-agent configure prestart app-a                   │
-│  ExecStart=podman run app-a-image ...                               │
-│  ExecStartPost=bloud-agent configure poststart app-a                │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**How it works:**
-
-1. Systemd starts services in dependency order (After=/Requires=)
-2. Before container starts: `ExecStartPre` runs PreStart
-   - Writes config files, creates directories
-3. Container starts and becomes healthy
-4. After container healthy: `ExecStartPost` runs PostStart
-   - Configures integrations via API
-
-Systemd handles everything: ordering, lifecycle, and running configurators at the right time.
-
-### Container Invalidation
-
-When a new app is installed that provides an integration, existing apps that consume that integration need to be reconfigured. This is handled through **container invalidation**.
-
-**Example: Installing an auth provider when app-a is already running**
+When a new integration becomes available, existing apps that can use it get automatically reconfigured:
 
 ```
-State: app-a running (no auth)
-Action: User installs auth-provider
-
-1. auth-provider installed and started
-2. System checks: "Who has auth integration that auth-provider provides?"
-   → app-a has auth integration, auth-provider is compatible
-3. app-a marked as invalidated
-4. Orchestrator restarts app-a (in dependency order)
-5. ExecStartPre runs PreStart (writes updated config)
-6. Container starts
-7. ExecStartPost runs PostStart (configures via API)
-8. Auth configured
-```
-
-### Configuration State in Database
-
-Integration state is tracked explicitly in postgres, not derived from NixOS configuration hashes. This gives us explicit control over what triggers reconfiguration.
-
-**Schema concept:**
-
-```sql
--- Tracks current integration state per app
-CREATE TABLE app_integrations (
-    app_name TEXT,
-    integration_name TEXT,
-    source_app TEXT,           -- Which app provides this integration
-    configured_at TIMESTAMP,   -- When PostStart last configured this
-    PRIMARY KEY (app_name, integration_name)
-);
-```
-
-**Flow when auth-provider is installed:**
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  1. Orchestrator installs auth-provider                             │
-│         │                                                           │
-│         ▼                                                           │
-│  2. Query graph: "What integrations does auth-provider provide?"    │
-│     → auth                                                          │
-│         │                                                           │
-│         ▼                                                           │
-│  3. Query installed apps: "Who has auth integration?"               │
-│     → [app-a, app-b]                                                │
-│         │                                                           │
-│         ▼                                                           │
-│  4. Mark apps as invalidated in database                            │
-│         │                                                           │
-│         ▼                                                           │
-│  5. Restart invalidated apps (in dependency order)                   │
-│     Orchestrator queries systemd D-Bus for dependencies             │
-│     Topological sort → restart dependencies before dependents       │
-│         │                                                           │
-│         ▼                                                           │
-│  6. ExecStartPre runs PreStart (writes updated config)              │
-│     ExecStartPost runs PostStart after container healthy            │
-│     UPDATE app_integrations SET configured_at = NOW()               │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**Benefits of database-tracked state:**
-
-- Explicit record of what's configured vs. what needs configuration
-- Configurators can check: "Has my integration state changed?"
-- Go controls restarts directly, no NixOS hash tricks
-- Can track configuration failures and retry
-
-### Deferred Restart
-
-We **mark** apps for invalidation immediately, but **defer** the actual restart. This provides two benefits:
-
-**1. Deduplication**
-
-If multiple changes affect the same app, it only restarts once:
-
-```
-Install service-x + service-y simultaneously
-    │
-    ├── app-a marked for invalidation (integration-x available)
-    ├── app-a marked for invalidation (integration-y available)  ← deduplicated
+Service A installed (no SSO)
+Identity provider installed
     │
     ▼
-Restart app-a once
+Graph: "Who declared an SSO integration?"
+    → Service A
     │
     ▼
-PreStart + PostStart configure both integrations
+Service A marked for reconfiguration
+Service A restarted in dependency order
+PreStart + PostStart wire the new integration
 ```
 
-**2. Correct Ordering**
-
-The orchestrator builds a dependency graph from `app_integrations` table and restarts in topological order:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Install auth-provider                                              │
-│                                                                     │
-│  Mark for invalidation:                                             │
-│    - app-a (needs auth)                                             │
-│    - app-b (needs auth)                                             │
-│                                                                     │
-│  Orchestrator builds dependency graph from app_integrations:        │
-│    - app-a depends on auth-provider (source_app)                    │
-│    - app-b depends on auth-provider (source_app)                    │
-│    - Topological sort                                               │
-│                                                                     │
-│  Restart order (dependencies first):                                │
-│    auth-provider (already running, healthy)                         │
-│    app-a, app-b (can restart in parallel, no deps between them)     │
-│                                                                     │
-│  app-a and app-b don't restart until auth-provider is healthy.      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**The rule:** Mark immediately, restart in dependency order. PreStart and PostStart handle reconfiguration.
+No user action needed. Apps gain integrations as you install their dependencies.
 
 ---
-
-## Generated Configuration
-
-When you install an app, Bloud generates several configuration files:
-
-### 1. NixOS Configuration (apps.nix)
-
-Enables apps in NixOS. Each app's `module.nix` defines what `enable = true` means - usually creating a systemd service that runs a podman container.
-
-```nix
-# Generated by Bloud - DO NOT EDIT
-{
-  bloud.apps.postgres.enable = true;
-  bloud.apps.authentik.enable = true;
-  bloud.apps.miniflux.enable = true;
-}
-```
-
-### 2. Traefik Routing (apps-routes.yml)
-
-Dynamic routing configuration with routers, middlewares, and services for each app:
-
-```yaml
-# Generated by Bloud - DO NOT EDIT
-http:
-  routers:
-    miniflux-backend:
-      rule: "PathPrefix(`/embed/miniflux`)"
-      middlewares:
-        - miniflux-stripprefix
-        - iframe-headers
-        - embed-isolation
-      service: miniflux
-
-  middlewares:
-    miniflux-stripprefix:
-      stripPrefix:
-        prefixes:
-          - "/embed/miniflux"
-
-  services:
-    miniflux:
-      loadBalancer:
-        servers:
-          - url: "http://localhost:8085"
-```
-
-### 3. Authentik Blueprints
-
-SSO configuration for each app - OAuth providers, forward-auth configs, or LDAP:
-
-```yaml
-# miniflux.yaml - Generated by Bloud
-version: 1
-metadata:
-  name: miniflux-sso-blueprint
-  labels:
-    managed-by: bloud
-
-entries:
-  - model: authentik_providers_oauth2.oauth2provider
-    identifiers:
-      name: Miniflux OAuth2 Provider
-    attrs:
-      client_id: miniflux-client
-      client_secret: <derived-from-host-secret>
-      redirect_uris:
-        - url: "http://localhost:8080/embed/miniflux/oauth2/oidc/callback"
-```
-
-### 4. Secrets & Environment Files
-
-Per-app `.env` files with database URLs, OAuth secrets, and admin passwords:
-
-```bash
-# miniflux.env
-DATABASE_URL=postgres://apps:xxx@localhost:5432/miniflux?sslmode=disable
-OAUTH2_CLIENT_SECRET=xxx
-ADMIN_PASSWORD=xxx
-```
-
-### The Flow
-
-```
-Orchestrator.Install()
-        │
-        ├── Write apps.nix (NixOS config)
-        ├── Write apps-routes.yml (Traefik routing)
-        ├── Write authentik blueprints (SSO)
-        └── Write secret env files
-                │
-                ▼
-        nixos-rebuild switch
-                │
-                ├── Evaluates all NixOS modules
-                ├── Builds new system configuration
-                ├── Creates/updates systemd services
-                └── Activates new configuration
-                        │
-                        ▼
-                systemd starts containers
-                        │
-                        ▼
-                Systemd hooks configure apps (PreStart/PostStart)
-```
-
-NixOS provides atomic deploys - if something fails, the previous generation still exists. You can always `nixos-rebuild --rollback`.
-
-## SSO Integration
-
-Apps can use SSO three ways:
-
-### Native OIDC
-
-The app handles OAuth2 itself. Bloud generates Authentik blueprints to create the OAuth client, and passes credentials via environment variables.
-
-```yaml
-sso:
-  strategy: native-oidc
-  callbackPath: /oauth2/callback
-  env:
-    clientId: OAUTH2_CLIENT_ID
-    clientSecret: OAUTH2_CLIENT_SECRET
-```
-
-Miniflux uses this - it has built-in OIDC support.
-
-### Forward Auth
-
-Traefik intercepts requests and checks authentication with Authentik. The app never sees auth - it just gets `X-Remote-User` headers.
-
-```yaml
-sso:
-  strategy: forward-auth
-```
-
-Good for apps that don't speak OAuth2.
-
-### None
-
-App handles its own auth or doesn't need it.
-
-```yaml
-sso:
-  strategy: none
-```
 
 ## Shared Infrastructure
 
-Instead of each app running its own database, all apps share:
+Each Bloud host runs exactly one instance of each infrastructure service. All apps share them:
 
-- **PostgreSQL** - One instance, apps get separate databases
-- **Redis** - Session storage, caching
-- **Traefik** - Reverse proxy, routing, SSO middleware
-- **Authentik** - Identity provider
-
-This reduces resource usage and simplifies backups.
-
-When an app declares `database: "miniflux"` in its module.nix, the postgres module automatically creates that database and user.
-
-## Key Design Principles
-
-### 1. Declarative Over Imperative
-
-Apps declare what they need, not how to get it. The system figures out the how.
-
-### 2. Idempotent Everything
-
-Every operation can run repeatedly without side effects. Configurators run on every service start.
-
-### 3. Fail Open, Log Clearly
-
-If configuration fails, log it clearly. The next service restart will retry automatically via the systemd hooks.
-
-### 4. Atomic Deploys
-
-NixOS rebuilds are all-or-nothing. No partial states.
-
-### 5. Single Source of Truth
-
-`apps.nix` defines what's installed. Systemd hooks configure apps on every start to match.
+- **PostgreSQL** — one instance, apps get separate databases and users
+- **Redis** — session storage and caching, shared across apps
+- **Traefik** — reverse proxy, routing, SSO middleware
+- **Authentik** — identity provider, SSO for all apps
 
 ---
 
-## Implementation Status
+## SSO Integration
 
-This section tracks what's implemented vs. what's planned.
+Apps get SSO automatically. Three strategies depending on the app:
 
-### Done
+| Strategy         | How It Works                                                          | Example Apps              |
+| ---------------- | --------------------------------------------------------------------- | ------------------------- |
+| **Native OIDC**  | App handles OAuth2 itself; Bloud provides credentials via env vars    | Miniflux                  |
+| **Forward Auth** | Traefik checks auth with Authentik before the request reaches the app | AdGuard Home, qBittorrent |
+| **LDAP**         | Authentik LDAP for apps that don't speak OAuth2                       | Jellyfin                  |
 
-- [x] **App definitions** - `metadata.yaml` and `module.nix` structure
-- [x] **Dependency graph** - Planning installs/uninstalls with auto-selection
-- [x] **NixOS integration** - `apps.nix` generation and `nixos-rebuild`
-- [x] **Orchestrator** - Install/uninstall coordination with queuing
-- [x] **Configurator interface** - `PreStart`, `HealthCheck`, `PostStart` methods
-- [x] **App configurators** - Miniflux, Authentik, Arr stack, etc.
-- [x] **Shared infrastructure** - Single postgres/redis per host
-- [x] **SSO integration** - Native OIDC and forward-auth strategies
-- [x] **Traefik routing** - Dynamic config generation for apps
-
-### In Progress / Planned
-
-- [ ] **PreStart returns changed** - `PreStart() (changed bool, err error)` to detect if restart needed
-- [ ] **Container invalidation** - Mark apps for restart when new integrations become available
-- [ ] **app_integrations table** - Track integration state in database
-- [ ] **Dependency graph traversal** - Build graph from app_integrations, restart in topological order
-- [x] **Remove watchdog references** - Cleaned up old self-healing code/comments from `pkg/configurator/interface.go`
-
-### Not Planned
-
-- ~~Periodic reconciliation~~ - Replaced by systemd hooks (event-driven)
-- ~~Self-healing watchdog~~ - Configuration runs on service start only
-
-### What's Not Built Yet
-
-- Bootable USB image
-- Multi-host orchestration
-- Automatic backups
+All three are configured automatically at install time.
 
 ---
 
-## Development
+## Project Structure
 
-Development uses [Lima](https://lima-vm.io/) to run a NixOS VM on your local machine. The `./bloud` CLI manages the VM and development services.
+```
+bloud/
+├── apps/                          # App definitions
+│   ├── miniflux/
+│   │   ├── metadata.yaml          # Integrations, SSO, port, routing
+│   │   ├── module.nix             # Container definition
+│   │   └── configurator.go        # PreStart/PostStart hooks
+│   ├── postgres/
+│   ├── authentik/
+│   └── ...
+│
+├── services/host-agent/           # Go backend
+│   ├── cmd/host-agent/
+│   ├── internal/
+│   │   ├── orchestrator/          # Install/uninstall coordination
+│   │   ├── catalog/               # App graph and dependency resolution
+│   │   ├── nixgen/                # Generates apps.nix, Traefik config, blueprints
+│   │   ├── store/                 # Database layer
+│   │   └── api/                   # HTTP API
+│   ├── pkg/configurator/          # Configurator interface
+│   └── web/                       # Svelte frontend
+│
+├── nixos/
+│   ├── bloud.nix                  # Main NixOS module
+│   ├── lib/
+│   │   ├── bloud-app.nix          # mkBloudApp helper
+│   │   └── podman-service.nix     # Systemd service generator
+│   └── generated/
+│       └── apps.nix               # Generated by host-agent on install
+│
+└── cli/                           # ./bloud CLI (Go)
+```
 
-### Prerequisites
+---
 
-| Requirement | macOS | Linux |
-|-------------|-------|-------|
-| **Lima** | `brew install lima` | [See install guide](https://lima-vm.io/docs/installation/) |
-| **Node.js 18+** | `brew install node` | `sudo apt install nodejs npm` |
-| **Go 1.21+** | `brew install go` | `sudo apt install golang` |
+## Local Development
+
+Requires a NixOS machine (physical or VM with the `dev-server` config applied).
+
+```bash
+npm run setup    # Install deps + build ./bloud CLI
+./bloud setup    # Check prerequisites, apply NixOS config
+./bloud start    # Start dev environment
+```
 
 ### CLI Commands
 
+**Native NixOS mode** (development on a NixOS machine):
+
 ```bash
-./bloud setup      # Check prerequisites, download VM image
-./bloud start      # Start dev environment (VM + services)
-./bloud stop       # Stop dev services (VM stays running)
-./bloud status     # Check what's running
-./bloud logs       # View recent output
-./bloud attach     # Attach to tmux session (Ctrl-B D to detach)
-./bloud shell      # SSH into VM
-./bloud rebuild    # Apply NixOS config changes
+./bloud start          # Start dev environment
+./bloud stop           # Stop dev services
+./bloud status         # Show status
+./bloud logs           # Show logs
+./bloud attach         # Attach to tmux session (Ctrl-B D to detach)
+./bloud shell [cmd]    # Run a command or open a shell
+./bloud rebuild        # Apply NixOS config changes
 ```
 
-### Troubleshooting
+**Proxmox mode** (ISO integration testing, set `BLOUD_PVE_HOST`):
 
-**"Lima is not installed"**
-- macOS: `brew install lima`
-- Linux: `curl -fsSL https://lima-vm.io/install.sh | bash`
+```bash
+./bloud start [iso]          # Deploy ISO → create VM → boot → check
+./bloud start --skip-deploy  # Reuse existing VM, re-run checks
+./bloud stop                 # Stop VM
+./bloud destroy              # Destroy VM
+./bloud shell [cmd]          # SSH into VM
+./bloud checks               # Run health checks
+./bloud install <app>        # Install app via API
+```
 
-**"VM image not found"**
-- Run `./bloud setup` to download the pre-built image
-- Image location: `lima/imgs/nixos-24.11-lima.img`
+### After Changing NixOS Config
 
-**VM boots but services don't start**
-- Check logs: `./bloud logs`
-- Rebuild NixOS: `./bloud rebuild`
-- Nuclear option: `./bloud destroy && ./bloud start`
+```bash
+./bloud rebuild   # Apply changes to the running dev machine
+```
 
 ### Debugging
 
@@ -785,64 +307,48 @@ journalctl --user -u bloud-host-agent -f
 # Check app container logs (includes PreStart/PostStart output)
 journalctl --user -u podman-miniflux -f
 
-# Check systemd service status
-systemctl --user status podman-miniflux
-
 # Restart a service to re-run configurators
 systemctl --user restart podman-miniflux
 
-# See what would be installed (includes dependencies)
-curl http://localhost:8080/api/apps/miniflux/plan-install
-
-# See what would be removed (includes dependents)
-curl http://localhost:8080/api/apps/postgres/plan-remove
+# Check install plan (shows resolved dependency graph)
+curl http://localhost/api/apps/miniflux/plan-install
 ```
 
 ### Adding a New App
 
-1. Create `apps/myapp/metadata.yaml` with integrations and port
-2. Create `apps/myapp/module.nix` with container definition
-3. Create `apps/myapp/configurator.go` implementing PreStart, HealthCheck, and PostStart
-4. Register the configurator in `internal/appconfig/register.go`
+1. Create `apps/myapp/metadata.yaml` — integrations, SSO strategy, port
+2. Create `apps/myapp/module.nix` — container definition using `mkBloudApp`
+3. Create `apps/myapp/configurator.go` — PreStart, HealthCheck, PostStart
+4. Register in `services/host-agent/internal/appconfig/register.go`
 
 See [apps/adding-apps.md](apps/adding-apps.md) for details.
 
 ---
 
+## Further Reading
+
+- [docs/embedded-app-routing.md](docs/embedded-app-routing.md) — How apps are served in iframes
+- [docs/design/authentication.md](docs/design/authentication.md) — SSO and auth flows
+- [apps/adding-apps.md](apps/adding-apps.md) — Contributor guide for new apps
+
+---
+
 ## Contributing
 
-Contributions welcome! See:
-- [apps/adding-apps.md](apps/adding-apps.md) - Adding new apps
-
-### Getting Started
+Contributions welcome.
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
 4. Open a Pull Request
 
-### Reporting Issues
+[Open an issue](https://codeberg.org/d-buckner/bloud/issues) with a clear description and steps to reproduce for bugs.
 
-[Open an issue](https://github.com/d-buckner/bloud/issues) with:
-- Clear description of the problem
-- Steps to reproduce (for bugs)
-- Your environment
-
-## Further Reading
-
-- [docs/design/graph-configurator-system.md](docs/design/graph-configurator-system.md) - Detailed configurator design
-- [docs/embedded-app-routing.md](docs/embedded-app-routing.md) - How apps are served in iframes
-- [docs/design/authentication.md](docs/design/authentication.md) - SSO and auth flows
-- [docs/design/production-architecture.md](docs/design/production-architecture.md) - Production deployment
-
-## Philosophy
-
-- **Simplicity Over Features** - Opinionated defaults for 80% of users
-- **Privacy by Default** - Everything runs locally on your hardware
+---
 
 ## License
 
-AGPL v3 - See [LICENSE](LICENSE) for details. If you modify Bloud and offer it as a service, you must share your changes.
+AGPL v3 — See [LICENSE](LICENSE) for details. If you modify Bloud and offer it as a service, you must share your changes.
 
 ---
 
