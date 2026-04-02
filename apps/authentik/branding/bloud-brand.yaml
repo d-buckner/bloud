@@ -8,23 +8,6 @@ metadata:
     managed-by: bloud
 
 entries:
-  # Update authentication flow title
-  - model: authentik_flows.flow
-    identifiers:
-      slug: default-authentication-flow
-    state: present
-    attrs:
-      title: Sign in to Bloud
-
-  # Show only username field (not email) on the login page
-  - model: authentik_stages_identification.identificationstage
-    identifiers:
-      name: default-authentication-identification
-    state: present
-    attrs:
-      user_fields:
-        - username
-
   # Update the default brand with Bloud branding
   # Note: branding_custom_css is NOT set here — it is pushed inline via the
   # configurator PostStart. Authentik uses Constructable Stylesheets which
