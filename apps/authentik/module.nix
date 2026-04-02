@@ -12,6 +12,9 @@ let
   configPath = "${userHome}/.local/share/${bloudCfg.dataDir}";
   secretsDir = configPath;
 
+  # Path to the CSS file — resolved to a Nix store path for use in the activation script.
+  brandingCSSFile = ../../services/host-agent/web/static/authentik-branding.css;
+
   # Shared postgres credentials
   postgresUser = postgresCfg.user or "apps";
   postgresDb = "authentik";
@@ -86,9 +89,18 @@ in
       chown -R ${bloudCfg.user}:users ${configPath}/authentik-*
     '';
 
-    # Copy Bloud brand blueprint (logo/favicon served from main UI /images/)
+    # Deploy Bloud brand blueprint with CSS injected via yq.
+    # The CSS is read from the Nix store and injected into branding_custom_css at activation
+    # time so it is applied during Authentik's blueprint run (startup), before the service
+    # is accessible through Traefik. Users never see the unstyled default Authentik page.
+    # Atomic write (tmp + mv) prevents Authentik from reading a partial file.
     system.activationScripts.bloud-authentik-branding = lib.stringAfter [ "bloud-authentik-dirs" ] ''
-      cp ${./branding/bloud-brand.yaml} ${configPath}/authentik-blueprints/bloud-brand.yaml
+      CSS=$(cat ${brandingCSSFile}) \
+        ${pkgs.yq-go}/bin/yq e \
+          '(.entries[] | select(.model == "authentik_brands.brand")).attrs.branding_custom_css = env(CSS)' \
+          ${./branding/bloud-brand.yaml} \
+          > ${configPath}/authentik-blueprints/bloud-brand.yaml.tmp
+      mv ${configPath}/authentik-blueprints/bloud-brand.yaml.tmp ${configPath}/authentik-blueprints/bloud-brand.yaml
       chown ${bloudCfg.user}:users ${configPath}/authentik-blueprints/bloud-brand.yaml
     '';
 

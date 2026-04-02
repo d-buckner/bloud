@@ -112,9 +112,10 @@ except Exception as e:
 		return fmt.Errorf("failed to ensure login configuration: %w", err)
 	}
 
-	// Step 4: Push branding CSS inline via API
-	// Authentik uses Constructable Stylesheets which forbid @import rules,
-	// so we must push the full CSS content directly.
+	// Step 4: Re-apply branding CSS via API as a safety net.
+	// The CSS is primarily applied via the bloud-brand.yaml blueprint (embedded at Nix
+	// eval time), which runs during Authentik startup before the service is accessible.
+	// This PostStart call idempotently re-applies it in case an admin cleared it via the UI.
 	if c.brandingCSS != "" {
 		if err := client.EnsureBranding(c.brandingCSS); err != nil {
 			return fmt.Errorf("failed to ensure branding: %w", err)
