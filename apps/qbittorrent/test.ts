@@ -45,7 +45,7 @@ test.describe('qbittorrent', () => {
     const frame = await openApp();
 
     // Wait for Authentik's login form to load
-    // Forward-auth redirects to /if/flow/auth/
+    // Forward-auth redirects to /if/flow/default-authentication-flow/
     // The username field may take time to render (Authentik uses web components)
     const usernameField = frame.locator('input[name="uidField"]');
 
