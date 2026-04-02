@@ -25,6 +25,14 @@ test('authentik login page styling', async ({ page }) => {
   });
 
   await test.step('screenshot login page', async () => {
-    await expect(page).toHaveScreenshot('authentik-login.png', { fullPage: true });
+    // CSS branding is applied by PostStart (ExecStartPost), which runs asynchronously
+    // after the container is healthy. The blueprint sets the title/username field before
+    // PostStart runs, so we must explicitly wait for the CSS to be applied too.
+    // Reload until the screenshot matches the baseline (off-white background, no forest image).
+    await expect(async () => {
+      await page.reload();
+      await page.locator('input[name="uidField"]').waitFor({ state: 'visible', timeout: 30_000 });
+      await expect(page).toHaveScreenshot('authentik-login.png', { fullPage: true });
+    }).toPass({ timeout: 120_000, intervals: [5_000] });
   });
 });
