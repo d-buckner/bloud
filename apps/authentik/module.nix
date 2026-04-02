@@ -92,6 +92,12 @@ in
       chown ${bloudCfg.user}:users ${configPath}/authentik-blueprints/bloud-brand.yaml
     '';
 
+    # Copy auth flow blueprint override (replaces Authentik's default to set username-only)
+    system.activationScripts.bloud-authentik-auth-flow = lib.stringAfter [ "bloud-authentik-dirs" ] ''
+      cp ${./auth.yaml} ${configPath}/authentik-auth-flow.yaml
+      chown ${bloudCfg.user}:users ${configPath}/authentik-auth-flow.yaml
+    '';
+
     # Extract Traefik routes from metadata.yaml (enables iframe embedding for SSO flows)
     # IMPORTANT: Use atomic write (write to .tmp, then mv) to prevent Traefik from
     # seeing truncated file during config reload
@@ -142,8 +148,10 @@ in
         volumes = [
           "${configPath}/authentik-media:/media:z"
           "${configPath}/authentik-templates:/templates:z"
-          # Mount custom blueprints alongside default ones (don't replace /blueprints entirely)
-          "${configPath}/authentik-blueprints:/blueprints/custom:z"
+          # Replace Authentik's default auth flow blueprint with ours (username-only identification).
+          "${configPath}/authentik-auth-flow.yaml:/blueprints/default/flow-default-authentication-flow.yaml:ro,z"
+          # Mount Bloud brand blueprint (logo, favicon, theme).
+          "${configPath}/authentik-blueprints:/blueprints/bloud:z"
           # Mount postgres Unix socket so containers can reach the native postgres service
           # without crossing the rootless podman / root netns boundary.
           "/run/postgresql:/run/postgresql:ro"
@@ -181,8 +189,10 @@ in
           "${configPath}/authentik-media:/media:z"
           "${configPath}/authentik-templates:/templates:z"
           "${configPath}/authentik-certs:/certs:z"
-          # Worker needs access to blueprints for discovery
-          "${configPath}/authentik-blueprints:/blueprints/custom:z"
+          # Replace Authentik's default auth flow blueprint with ours (username-only identification).
+          "${configPath}/authentik-auth-flow.yaml:/blueprints/default/flow-default-authentication-flow.yaml:ro,z"
+          # Mount Bloud brand blueprint (logo, favicon, theme).
+          "${configPath}/authentik-blueprints:/blueprints/bloud:z"
           # Mount postgres Unix socket so containers can reach the native postgres service
           # without crossing the rootless podman / root netns boundary.
           "/run/postgresql:/run/postgresql:ro"

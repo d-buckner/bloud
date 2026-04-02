@@ -63,21 +63,13 @@ let
     mkdir -p $out/share/bloud/web/build
     cp -r ${buildDir + "/frontend"}/* $out/share/bloud/web/build/
 
-    # App metadata, icons, NixOS modules, and resource subdirs (needed at runtime for catalog API and nixos-rebuild)
+    # App metadata, icons, NixOS modules, and all other app files (needed at runtime for catalog API and nixos-rebuild)
     mkdir -p $out/share/bloud/apps
     for app in ${src}/apps/*/; do
       appName=$(basename "$app")
       if [ -f "$app/metadata.yaml" ]; then
         mkdir -p "$out/share/bloud/apps/$appName"
-        cp "$app/metadata.yaml" "$out/share/bloud/apps/$appName/"
-        [ -f "$app/icon.png" ] && cp "$app/icon.png" "$out/share/bloud/apps/$appName/"
-        # module.nix is required for nixos-rebuild from the store flake path.
-        # bloud.nix imports ../apps/*/module.nix, which resolves to this directory.
-        [ -f "$app/module.nix" ] && cp "$app/module.nix" "$out/share/bloud/apps/$appName/"
-        # Copy resource subdirectories (e.g., authentik/branding/) referenced by module.nix.
-        for subdir in "$app"*/; do
-          [ -d "$subdir" ] && cp -r "$subdir" "$out/share/bloud/apps/$appName/"
-        done
+        cp -r "$app/." "$out/share/bloud/apps/$appName/"
       fi
     done
 
