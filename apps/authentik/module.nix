@@ -68,7 +68,7 @@ in
   config = lib.mkIf appCfg.enable {
     bloud.pullImages = [
       "ghcr.io/goauthentik/server:2025.10.3"
-      "nginx:alpine"
+      "nginx:1.27.5-alpine"
     ] ++ lib.optionals appCfg.ldap.enable [
       "ghcr.io/goauthentik/ldap:2025.10.3"
     ];
@@ -211,7 +211,7 @@ in
       # so we must wait for apps-authentik-server to be healthy before starting.
       podman-apps-authentik-proxy = mkPodmanService {
         name = "apps-authentik-proxy";
-        image = "nginx:alpine";
+        image = "nginx:1.27.5-alpine";
         volumes = [
           "${configPath}/authentik-proxy.conf:/etc/nginx/conf.d/default.conf:ro"
         ];

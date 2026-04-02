@@ -10,7 +10,7 @@ jobs:
   test-go:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.24-alpine
+      image: golang:1.24.2-alpine
     steps:
       - name: Install Node.js
         run: apk add --no-cache nodejs npm
@@ -25,7 +25,7 @@ jobs:
   build-ui:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.24-alpine
+      image: golang:1.24.2-alpine
     steps:
       - name: Install Node.js
         run: apk add --no-cache nodejs npm
