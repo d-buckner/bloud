@@ -142,11 +142,8 @@ in
         volumes = [
           "${configPath}/authentik-media:/media:z"
           "${configPath}/authentik-templates:/templates:z"
-          # Mount custom blueprints alongside default ones (don't replace /blueprints entirely).
-          # Use zz-custom/ so it sorts after default/ alphabetically — Authentik's blueprint
-          # runner processes directories in filesystem order, so this ensures our overrides
-          # apply after Authentik's default blueprints, not before.
-          "${configPath}/authentik-blueprints:/blueprints/zz-custom:z"
+          # Mount Bloud blueprints alongside Authentik's defaults (don't replace /blueprints entirely).
+          "${configPath}/authentik-blueprints:/blueprints/bloud:z"
           # Mount postgres Unix socket so containers can reach the native postgres service
           # without crossing the rootless podman / root netns boundary.
           "/run/postgresql:/run/postgresql:ro"
@@ -184,8 +181,8 @@ in
           "${configPath}/authentik-media:/media:z"
           "${configPath}/authentik-templates:/templates:z"
           "${configPath}/authentik-certs:/certs:z"
-          # Worker needs access to blueprints for discovery (zz-custom/ sorts after default/)
-          "${configPath}/authentik-blueprints:/blueprints/zz-custom:z"
+          # Worker needs access to blueprints for discovery
+          "${configPath}/authentik-blueprints:/blueprints/bloud:z"
           # Mount postgres Unix socket so containers can reach the native postgres service
           # without crossing the rootless podman / root netns boundary.
           "/run/postgresql:/run/postgresql:ro"
