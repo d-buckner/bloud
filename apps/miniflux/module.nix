@@ -8,7 +8,7 @@ in
 mkPodmanApp {
   name = "miniflux";
   description = "Miniflux RSS reader";
-  image = "miniflux/miniflux:latest";
+  image = "miniflux/miniflux:2.2.18";
   port = 8085;
   network = "host";
   database = "miniflux";

@@ -14,7 +14,7 @@ mkPodmanApp {
   name = "jellyfin";
   description = "Free software media system for streaming movies, TV, and music";
 
-  image = "jellyfin/jellyfin:latest";
+  image = "jellyfin/jellyfin:10.11.7";
   port = 8096;
 
   environment = cfg: {
