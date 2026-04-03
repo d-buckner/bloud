@@ -11,7 +11,7 @@
 #   mkPodmanApp {
 #     name = "myapp";
 #     description = "My App description";
-#     image = "myapp/myapp:latest";
+#     image = "myapp/myapp:1.0.0";
 #     port = 8080;
 #     # ... see parameters below
 #   }

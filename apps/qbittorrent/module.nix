@@ -8,7 +8,7 @@ in
 mkPodmanApp {
   name = "qbittorrent";
   description = "BitTorrent client with web UI";
-  image = "lscr.io/linuxserver/qbittorrent:latest";
+  image = "lscr.io/linuxserver/qbittorrent:5.1.4-r2-ls447";
   port = 8086;
   containerPort = 8080;
 
