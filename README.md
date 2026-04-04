@@ -9,10 +9,6 @@
 
 ---
 
-
-
-## You wanted to escape vendor lock-in. You got a second job managing config files.
-
 Self-hosting's hard part isn't installation. Every platform has solved that. The hard part is  when you add a second service and realize the first one doesn't know it exists.
 
 To connect two services manually, you typically:
