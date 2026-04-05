@@ -310,14 +310,14 @@ systemctl --user restart podman-miniflux
 curl http://localhost/api/apps/miniflux/plan-install
 ```
 
-### Adding a New App
+### Contributing a New App
 
 1. Create `apps/myapp/metadata.yaml` — integrations, SSO strategy, port
 2. Create `apps/myapp/module.nix` — container definition using `mkBloudApp`
 3. Create `apps/myapp/configurator.go` — PreStart, HealthCheck, PostStart
 4. Register in `services/host-agent/internal/appconfig/register.go`
 
-See [apps/adding-apps.md](apps/adding-apps.md) for details.
+See [docs/contributing-apps.md](docs/contributing-apps.md) for details.
 
 ---
 
