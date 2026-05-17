@@ -7,6 +7,18 @@ import (
 	"context"
 )
 
+// AppSecretsProvider provides access to app-specific secrets.
+// Implemented by the secrets.Manager in internal/secrets; exposed here so
+// app configurators (in the separate apps/ module) can accept it without
+// importing an internal package.
+type AppSecretsProvider interface {
+	// GenerateAppAdminPassword returns an existing admin password for the app,
+	// or generates and persists a new one if none exists yet.
+	GenerateAppAdminPassword(appName string) (string, error)
+	// GetAppSecret returns a specific secret for an app (e.g. "oauthClientSecret").
+	GetAppSecret(appName, key string) string
+}
+
 // Configurator handles app-specific configuration.
 // All methods must be idempotent - safe to call repeatedly.
 // Configurators run as systemd hooks on every service start:

@@ -1,0 +1,48 @@
+name: immich
+displayName: Immich
+description: Self-hosted photo and video backup solution
+category: media
+port: 2283
+
+integrations:
+  database:
+    required: true
+    multi: false
+    compatible:
+      - app: postgres
+        default: true
+  cache:
+    required: true
+    multi: false
+    compatible:
+      - app: redis
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+healthCheck:
+  path: /api/server/ping
+  interval: 5
+  timeout: 120
+
+sso:
+  strategy: native-oidc
+  callbackPath: /auth/login
+  providerName: Bloud SSO
+  userCreation: true
+  # Immich configures OIDC via admin API (PUT /api/system/config), not env vars.
+  # The blueprint generator creates the Authentik OAuth2 provider automatically.
+  # env is empty because the configurator reads credentials via derived secrets.
+  env: {}
+
+routing:
+  # /auth/login is Immich's OAuth callback — must be routable at root level.
+  # After Authentik auth, the browser is redirected to http://bloud.local/auth/login?code=xxx.
+  # Traefik needs a root-level rule to forward this to the Immich container.
+  absolutePaths:
+    - rule: "Path(`/auth/login`)"
+      priority: 100

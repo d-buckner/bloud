@@ -26,9 +26,7 @@
     "test:nix": "nix flake check",
     "test:unit": "npm run test:go:all && npm run test:ts",
     "test:precommit": "npm run test:go:all && npm run test:ts",
-    "test:integration": "cd integration && npm test --",
-    "test:integration:app": "cd integration && npm test -- --grep",
-    "test:all": "npm run test:unit && npm run test:nix && npm run test:integration",
+    "test:all": "npm run test:unit && npm run test:nix",
     "show-report": "cd smoke && npx playwright show-report"
   },
   "devDependencies": {

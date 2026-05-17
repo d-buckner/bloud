@@ -7,6 +7,7 @@ import (
 
 	adguardhome "codeberg.org/d-buckner/bloud-v3/apps/adguard-home"
 	"codeberg.org/d-buckner/bloud-v3/apps/authentik"
+	"codeberg.org/d-buckner/bloud-v3/apps/immich"
 	"codeberg.org/d-buckner/bloud-v3/apps/jellyfin"
 	"codeberg.org/d-buckner/bloud-v3/apps/miniflux"
 	"codeberg.org/d-buckner/bloud-v3/apps/qbittorrent"
@@ -31,6 +32,7 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 		cfg.DataDir,
 		static.AuthentikBrandingCSS,
 	))
+	registry.Register(immich.NewConfigurator(2283, cfg.SSOAuthentikURL, cfg.Secrets))
 	registry.Register(miniflux.NewConfigurator(8085, traefikDynamicDir))
 	registry.Register(qbittorrent.NewConfigurator(8086))
 	registry.Register(jellyfin.NewConfigurator(8096, fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort), cfg.AuthentikToken))

@@ -1185,11 +1185,10 @@ func cmdRebuildPVE() int {
 		return 1
 	}
 
-	// Step 1: Initialize /tmp/bloud-src on the VM from the currently deployed
-	// Nix store path. We read the binary path from the main unit file (not the
-	// drop-in, which may point to /tmp/host-agent-push after a ./bloud push).
-	// The store path gives us the pre-built binary + frontend + NixOS modules,
-	// so Nix can reuse the existing derivation for a config-only change.
+	// Step 1a: Initialize /tmp/bloud-src on the VM from the currently deployed
+	// Nix store path. This gives us the NixOS modules, frontend build, and a
+	// baseline binary. The binary will be replaced in step 1b with a fresh
+	// cross-compile from local source.
 	log("Initializing " + pveSyncDir + " from deployed store...")
 	initScript := `set -e
 UNIT_PATH=$(systemctl show bloud-host-agent.service -p FragmentPath --value)
@@ -1206,8 +1205,6 @@ sudo rm -rf ` + pveSyncDir + `
 cp -r "$SRC" ` + pveSyncDir + `
 chmod -R u+w ` + pveSyncDir + `
 mkdir -p ` + pveSyncDir + `/build
-cp "$AGENT_BIN" ` + pveSyncDir + `/build/host-agent
-chmod +x ` + pveSyncDir + `/build/host-agent
 cp -r "$PKG/share/bloud/web/build" ` + pveSyncDir + `/build/frontend
 echo "==> ` + pveSyncDir + ` ready"`
 
@@ -1216,10 +1213,41 @@ echo "==> ` + pveSyncDir + ` ready"`
 		return 1
 	}
 
+	// Step 1b: Cross-compile a fresh host-agent binary from local source and
+	// upload it. This ensures new app configurator registrations (e.g. immich)
+	// and any other Go changes are included in the rebuild, not just NixOS
+	// config changes. Without this, the store-path binary from the original
+	// ISO would be used, which lacks any new app support.
+	log("Building host-agent (linux/amd64)...")
+	localBinary := "/tmp/bloud-rebuild-binary"
+	buildCmd := exec.Command("go", "build", "-o", localBinary, "./cmd/host-agent")
+	buildCmd.Dir = filepath.Join(root, "services", "host-agent")
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		errorf("Build failed: %v", err)
+		return 1
+	}
+	defer os.Remove(localBinary)
+
+	log("Uploading binary to VM...")
+	sshCmd := fmt.Sprintf("sshpass -p %s ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR", pveVMSSHPass)
+	scpCmd := exec.Command("rsync", "-av", "-e", sshCmd, localBinary, pveVMSSHUser+"@"+ip+":"+pveSyncDir+"/build/host-agent")
+	scpCmd.Stdout = os.Stdout
+	scpCmd.Stderr = os.Stderr
+	if err := scpCmd.Run(); err != nil {
+		errorf("Failed to upload binary: %v", err)
+		return 1
+	}
+	if err := vmExecStream(ip, "chmod +x "+pveSyncDir+"/build/host-agent"); err != nil {
+		errorf("Failed to chmod binary: %v", err)
+		return 1
+	}
+
 	// Step 2: Rsync the local nixos/ and apps/ directories onto the VM,
 	// overwriting what was copied from the store. rsync only transfers diffs.
 	log("Syncing NixOS configuration...")
-	sshCmd := fmt.Sprintf("sshpass -p %s ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR", pveVMSSHPass)
 
 	for _, dir := range []struct{ local, remote string }{
 		{filepath.Join(root, "nixos") + "/", pveVMSSHUser + "@" + ip + ":" + pveSyncDir + "/nixos/"},

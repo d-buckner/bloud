@@ -1,0 +1,86 @@
+tiers:
+  fast:
+    commands:
+      - id: go-host-agent
+        cwd: services/host-agent
+        run: go test ./...
+      - id: go-host-agent-race
+        cwd: services/host-agent
+        run: go test -race ./internal/orchestrator/...
+      - id: go-apps
+        cwd: apps
+        run: go test ./...
+      - id: go-cli
+        cwd: cli
+        run: go test ./...
+      - id: go-installer
+        cwd: services/installer
+        run: go test ./...
+      - id: web-unit
+        cwd: .
+        run: npm run test --workspace=@bloud/host-agent-web
+      - id: web-check-host-agent
+        cwd: .
+        run: npm run check --workspace=@bloud/host-agent-web
+      - id: web-check-installer
+        cwd: .
+        run: npm run check --workspace=@bloud/installer-web
+
+inference:
+  paths:
+    - pattern: "services/host-agent/web/**"
+      triggers: [web-unit, web-check-host-agent]
+    - pattern: "services/host-agent/**"
+      triggers: [go-host-agent, go-host-agent-race]
+    - pattern: "apps/**"
+      triggers: [go-apps]
+      riskAreas: [app-install, embed]
+    - pattern: "cli/**"
+      triggers: [go-cli]
+    - pattern: "services/installer/**"
+      triggers: [go-installer]
+    - pattern: "nixos/**"
+      triggers: []
+      riskAreas: [nix-module]
+    - pattern: "flake.nix"
+      triggers: []
+      riskAreas: [nix-module]
+    - pattern: "smoke/**"
+      triggers: []
+      riskAreas: [playwright]
+
+apps:
+  immich:
+    auth: native-oidc
+    validation-level: embed
+    files:
+      - apps/immich/**
+    smoke-project: immich
+
+  miniflux:
+    auth: native-oidc
+    validation-level: full
+    files:
+      - apps/miniflux/**
+    smoke-project: miniflux
+
+  jellyfin:
+    auth: ldap
+    validation-level: full
+    files:
+      - apps/jellyfin/**
+    smoke-project: jellyfin
+
+  qbittorrent:
+    auth: forward-auth
+    validation-level: embed
+    files:
+      - apps/qbittorrent/**
+    smoke-project: qbittorrent
+
+  adguard-home:
+    auth: none
+    validation-level: embed
+    files:
+      - apps/adguard-home/**
+    smoke-project: adguard-home

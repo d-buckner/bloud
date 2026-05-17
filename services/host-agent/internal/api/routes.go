@@ -180,7 +180,6 @@ func (s *Server) handleRefreshCatalog(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 // installedAppResponse extends InstalledApp with catalog-derived fields
 type installedAppResponse struct {
 	*store.InstalledApp
@@ -507,6 +506,7 @@ func (s *Server) dropAppDatabase(appName string) error {
 	// TODO: Move this to catalog metadata
 	appDatabases := map[string]string{
 		"miniflux":  "miniflux",
+		"immich":    "immich",
 		"authentik": "authentik", // Uses its own postgres, but include for completeness
 	}
 
