@@ -168,6 +168,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%sError:%s 'smoke' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
 			exitCode = 1
 		}
+	case "validate":
+		exitCode = cmdValidate(args)
 	case "depgraph":
 		exitCode = cmdDepGraph()
 	case "installer":
@@ -215,6 +217,13 @@ func printUsage() {
 		fmt.Println("    --vmid <id>         Override VM ID")
 		fmt.Println()
 		fmt.Println("Change validation:")
+		fmt.Println("  validate [flags]            Run tiered validation (default: --tier changed)")
+		fmt.Println("    --tier <t>                fast | changed | vm | clean | full")
+		fmt.Println("    --app <name>              Scope to a specific app")
+		fmt.Println("    --dry-run                 Show plan without executing")
+		fmt.Println("    --explain                 Print why each command was selected")
+		fmt.Println("    --json                    Output JSON ledger only")
+		fmt.Println("    --since <ref>             Git ref for diff base (default: HEAD)")
 		fmt.Println("  smoke [flags]               Run Playwright smoke tests against existing VM")
 		fmt.Println("    --build                   Build ISO + deploy VM + run full install before tests")
 		fmt.Println("    --apps <app1> <app2>      Run only specified app tests (default: all apps)")
@@ -270,6 +279,14 @@ func printUsage() {
 	fmt.Println("  rebuild         Rebuild NixOS configuration")
 	fmt.Println("  install <app>   Install an app")
 	fmt.Println("  uninstall <app> Uninstall an app")
+	fmt.Println("  validate [flags] Run validation (default: --tier changed)")
+	fmt.Println("    --tier <t>    fast | changed | vm | clean | full")
+	fmt.Println("    --app <name>  Scope to a specific app")
+	fmt.Println("    --dry-run     Show plan without executing")
+	fmt.Println("    --explain     Print why each command was selected")
+	fmt.Println("    --json        Output JSON ledger only")
+	fmt.Println("    --since <ref> Git ref for diff base (default: HEAD)")
+	fmt.Println("    --no-vm       Disable VM tier even if PVE available")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
 	fmt.Println("  installer       Start installer UI in mock mode (http://localhost:5174)")
 	fmt.Println("  installer stop  Stop the installer dev server")

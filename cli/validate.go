@@ -1,0 +1,720 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// ValidateResult is the final ledger written after a validation run.
+type ValidateResult struct {
+	StartedAt        string           `json:"startedAt"`
+	FinishedAt       string           `json:"finishedAt"`
+	Tier             string           `json:"tier"`
+	ExitCode         int              `json:"exitCode"`
+	Apps             []string         `json:"apps"`
+	ChangedFiles     []string         `json:"changedFiles"`
+	RiskAreas        []string         `json:"riskAreas"`
+	Confidence       string           `json:"confidence"`
+	ConfidenceReason string           `json:"confidenceReason"`
+	Commands         []CommandResult  `json:"commands"`
+	Skipped          []SkippedCommand `json:"skipped"`
+	UnmappedFiles    []string         `json:"unmappedFiles"`
+	Artifacts        []string         `json:"artifacts"`
+	NextRecommended  string           `json:"nextRecommendedTier"`
+}
+
+// CommandResult records the outcome of a single validation command.
+type CommandResult struct {
+	ID         string `json:"id"`
+	Cwd        string `json:"cwd"`
+	Command    string `json:"command"`
+	Status     string `json:"status"`
+	DurationMs int64  `json:"durationMs"`
+	ExitCode   int    `json:"exitCode"`
+}
+
+// SkippedCommand records a command that was not run and why.
+type SkippedCommand struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// Manifest types for validation.yaml
+type validationManifest struct {
+	Tiers     map[string]manifestTier `yaml:"tiers"`
+	Inference manifestInference       `yaml:"inference"`
+	Apps      map[string]manifestApp  `yaml:"apps"`
+}
+
+type manifestTier struct {
+	Commands []manifestCommand `yaml:"commands"`
+}
+
+type manifestCommand struct {
+	ID  string `yaml:"id"`
+	Cwd string `yaml:"cwd"`
+	Run string `yaml:"run"`
+}
+
+type manifestInference struct {
+	Paths []manifestPath `yaml:"paths"`
+}
+
+type manifestPath struct {
+	Pattern   string   `yaml:"pattern"`
+	Triggers  []string `yaml:"triggers"`
+	RiskAreas []string `yaml:"riskAreas"`
+}
+
+type manifestApp struct {
+	Auth            string   `yaml:"auth"`
+	ValidationLevel string   `yaml:"validation-level"`
+	Files           []string `yaml:"files"`
+	SmokeProject    string   `yaml:"smoke-project"`
+}
+
+type validateFlags struct {
+	tier    string
+	app     string
+	json    bool
+	explain bool
+	dryRun  bool
+	since   string
+	noVM    bool
+}
+
+func cmdValidate(args []string) int {
+	flags := parseValidateFlags(args)
+
+	root, err := getProjectRoot()
+	if err != nil {
+		errorf("cannot find project root: %v", err)
+		return 1
+	}
+
+	manifest, err := loadManifest(root)
+	if err != nil {
+		errorf("cannot load validation.yaml: %v", err)
+		return 1
+	}
+
+	switch flags.tier {
+	case "fast":
+		return runFastTier(root, manifest, flags)
+	case "changed":
+		return runChangedTier(root, manifest, flags)
+	case "vm":
+		return runVMTier(root, manifest, flags)
+	case "clean", "full":
+		errorf("tier %q is not yet implemented (stub)", flags.tier)
+		return 1
+	default:
+		errorf("unknown tier: %s", flags.tier)
+		return 1
+	}
+}
+
+func parseValidateFlags(args []string) validateFlags {
+	f := validateFlags{tier: "changed"}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tier":
+			if i+1 < len(args) {
+				i++
+				f.tier = args[i]
+			}
+		case "--app":
+			if i+1 < len(args) {
+				i++
+				f.app = args[i]
+			}
+		case "--json":
+			f.json = true
+		case "--explain":
+			f.explain = true
+		case "--dry-run":
+			f.dryRun = true
+		case "--since":
+			if i+1 < len(args) {
+				i++
+				f.since = args[i]
+			}
+		case "--no-vm":
+			f.noVM = true
+		}
+	}
+	return f
+}
+
+func loadManifest(root string) (*validationManifest, error) {
+	data, err := os.ReadFile(filepath.Join(root, "validation.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	var m validationManifest
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// --- Fast tier ---
+
+func runFastTier(root string, manifest *validationManifest, flags validateFlags) int {
+	tier, ok := manifest.Tiers["fast"]
+	if !ok {
+		errorf("no 'fast' tier defined in validation.yaml")
+		return 1
+	}
+
+	result := &ValidateResult{
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+		Tier:      "fast",
+		Confidence: "high",
+		ConfidenceReason: "all fast-tier commands executed",
+	}
+
+	if flags.dryRun {
+		printDryRun("fast", tier.Commands, nil, nil, flags)
+		return 0
+	}
+
+	exitCode := runCommands(root, tier.Commands, result, flags)
+
+	result.ExitCode = exitCode
+	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	writeLedger(root, result, flags)
+	return exitCode
+}
+
+// --- Changed tier ---
+
+func runChangedTier(root string, manifest *validationManifest, flags validateFlags) int {
+	result := &ValidateResult{
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+		Tier:      "changed",
+	}
+
+	changedFiles, err := getChangedFiles(root, flags.since)
+	if err != nil {
+		errorf("cannot determine changed files: %v", err)
+		return 1
+	}
+	result.ChangedFiles = changedFiles
+
+	if len(changedFiles) == 0 {
+		if !flags.json {
+			fmt.Println("No changed files detected. Nothing to validate.")
+		}
+		result.Confidence = "high"
+		result.ConfidenceReason = "no changes detected"
+		result.ExitCode = 0
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 0
+	}
+
+	// Infer commands and risk areas from changed files
+	triggeredIDs := map[string]bool{}
+	riskAreas := map[string]bool{}
+	var unmapped []string
+
+	for _, f := range changedFiles {
+		matched := false
+		for _, p := range manifest.Inference.Paths {
+			if pathMatches(f, p.Pattern) {
+				matched = true
+				for _, t := range p.Triggers {
+					triggeredIDs[t] = true
+				}
+				for _, r := range p.RiskAreas {
+					riskAreas[r] = true
+				}
+			}
+		}
+		if !matched {
+			unmapped = append(unmapped, f)
+		}
+	}
+
+	result.UnmappedFiles = unmapped
+	for r := range riskAreas {
+		result.RiskAreas = append(result.RiskAreas, r)
+	}
+	sort.Strings(result.RiskAreas)
+
+	// Determine confidence
+	result.Confidence = "high"
+	result.ConfidenceReason = "all changed files mapped to commands"
+	if len(unmapped) > 0 {
+		result.Confidence = "medium"
+		result.ConfidenceReason = fmt.Sprintf("%d file(s) not mapped to any validation command", len(unmapped))
+	}
+	if riskAreas["nix-module"] {
+		if _, err := exec.LookPath("nix"); err != nil {
+			result.Confidence = "medium"
+			result.ConfidenceReason = "nix changes detected but nix not available; recommend vm tier"
+			result.NextRecommended = "vm"
+		}
+	}
+
+	// Collect commands to run
+	fastTier := manifest.Tiers["fast"]
+	var commands []manifestCommand
+	for _, cmd := range fastTier.Commands {
+		if triggeredIDs[cmd.ID] {
+			commands = append(commands, cmd)
+		}
+	}
+
+	// Detect affected apps
+	appSet := map[string]bool{}
+	for appName, appDef := range manifest.Apps {
+		for _, f := range changedFiles {
+			if appSet[appName] {
+				break
+			}
+			for _, pattern := range appDef.Files {
+				if pathMatches(f, pattern) {
+					appSet[appName] = true
+					break
+				}
+			}
+		}
+	}
+	for a := range appSet {
+		result.Apps = append(result.Apps, a)
+	}
+	sort.Strings(result.Apps)
+
+	if flags.dryRun {
+		printDryRun("changed", commands, result.RiskAreas, changedFiles, flags)
+		return 0
+	}
+
+	if !flags.json && len(commands) > 0 {
+		fmt.Printf("%s==>%s Inferred %d command(s) from %d changed file(s)\n", colorGreen, colorReset, len(commands), len(changedFiles))
+		if len(result.RiskAreas) > 0 {
+			fmt.Printf("    Risk areas: %s\n", strings.Join(result.RiskAreas, ", "))
+		}
+		if len(result.Apps) > 0 {
+			fmt.Printf("    Affected apps: %s\n", strings.Join(result.Apps, ", "))
+		}
+		fmt.Println()
+	}
+
+	if len(commands) == 0 {
+		if !flags.json {
+			fmt.Println("No testable commands triggered by changed files.")
+			if len(result.RiskAreas) > 0 {
+				fmt.Printf("Risk areas detected: %s — consider running a higher tier.\n", strings.Join(result.RiskAreas, ", "))
+			}
+		}
+		result.ExitCode = 0
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 0
+	}
+
+	exitCode := runCommands(root, commands, result, flags)
+
+	result.ExitCode = exitCode
+	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	writeLedger(root, result, flags)
+	return exitCode
+}
+
+// --- VM tier ---
+
+func runVMTier(root string, manifest *validationManifest, flags validateFlags) int {
+	if flags.noVM || !isPVEMode() {
+		errorf("vm tier requires Proxmox mode (set BLOUD_PVE_HOST)")
+		return 2
+	}
+
+	result := &ValidateResult{
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+		Tier:      "vm",
+	}
+
+	changedFiles, _ := getChangedFiles(root, flags.since)
+	result.ChangedFiles = changedFiles
+
+	// Determine push strategy
+	hasNix := false
+	hasGo := false
+	for _, f := range changedFiles {
+		if pathMatches(f, "nixos/**") || f == "flake.nix" || strings.HasSuffix(f, "module.nix") {
+			hasNix = true
+		}
+		if strings.HasSuffix(f, ".go") {
+			hasGo = true
+		}
+	}
+
+	if flags.dryRun {
+		fmt.Printf("Tier: vm\n")
+		fmt.Printf("Changed files: %d\n", len(changedFiles))
+		if hasNix {
+			fmt.Println("Action: ./bloud rebuild (nix changes detected)")
+		} else if hasGo {
+			fmt.Println("Action: ./bloud push (go changes detected)")
+		} else {
+			fmt.Println("Action: health check only (no rebuild/push needed)")
+		}
+		if flags.app != "" {
+			fmt.Printf("Smoke: npx playwright test --project=%s\n", flags.app)
+		} else {
+			fmt.Println("Smoke: npx playwright test (all projects)")
+		}
+		return 0
+	}
+
+	// Execute push/rebuild
+	if hasNix {
+		if !flags.json {
+			fmt.Printf("%s==>%s Rebuilding NixOS (nix changes detected)...\n", colorGreen, colorReset)
+		}
+		exitCode := cmdRebuildPVE()
+		if exitCode != 0 {
+			result.ExitCode = exitCode
+			result.Confidence = "low"
+			result.ConfidenceReason = "rebuild failed"
+			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			result.Commands = append(result.Commands, CommandResult{
+				ID: "rebuild", Command: "./bloud rebuild", Status: "fail", ExitCode: exitCode,
+			})
+			writeLedger(root, result, flags)
+			return exitCode
+		}
+		result.Commands = append(result.Commands, CommandResult{
+			ID: "rebuild", Command: "./bloud rebuild", Status: "pass", ExitCode: 0,
+		})
+	} else if hasGo {
+		if !flags.json {
+			fmt.Printf("%s==>%s Pushing binary (go changes detected)...\n", colorGreen, colorReset)
+		}
+		exitCode := cmdPushPVE()
+		if exitCode != 0 {
+			result.ExitCode = exitCode
+			result.Confidence = "low"
+			result.ConfidenceReason = "push failed"
+			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			result.Commands = append(result.Commands, CommandResult{
+				ID: "push", Command: "./bloud push", Status: "fail", ExitCode: exitCode,
+			})
+			writeLedger(root, result, flags)
+			return exitCode
+		}
+		result.Commands = append(result.Commands, CommandResult{
+			ID: "push", Command: "./bloud push", Status: "pass", ExitCode: 0,
+		})
+	}
+
+	// Run health checks
+	if !flags.json {
+		fmt.Printf("%s==>%s Running health checks...\n", colorGreen, colorReset)
+	}
+	healthExit := cmdChecksPVE()
+	if healthExit != 0 {
+		result.ExitCode = healthExit
+		result.Confidence = "low"
+		result.ConfidenceReason = "health checks failed"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		result.Commands = append(result.Commands, CommandResult{
+			ID: "health-checks", Command: "./bloud checks", Status: "fail", ExitCode: healthExit,
+		})
+		writeLedger(root, result, flags)
+		return healthExit
+	}
+	result.Commands = append(result.Commands, CommandResult{
+		ID: "health-checks", Command: "./bloud checks", Status: "pass", ExitCode: 0,
+	})
+
+	// Run smoke tests
+	if !flags.json {
+		fmt.Printf("%s==>%s Running smoke tests...\n", colorGreen, colorReset)
+	}
+	smokeArgs := []string{"npx", "playwright", "test"}
+	if flags.app != "" {
+		smokeArgs = append(smokeArgs, "--project="+flags.app)
+	}
+
+	smokeCmd := exec.Command(smokeArgs[0], smokeArgs[1:]...)
+	smokeCmd.Dir = filepath.Join(root, "smoke")
+	smokeCmd.Stdout = os.Stdout
+	smokeCmd.Stderr = os.Stderr
+
+	start := time.Now()
+	smokeErr := smokeCmd.Run()
+	dur := time.Since(start)
+
+	smokeExit := 0
+	if smokeErr != nil {
+		if exitErr, ok := smokeErr.(*exec.ExitError); ok {
+			smokeExit = exitErr.ExitCode()
+		} else {
+			smokeExit = 1
+		}
+	}
+
+	status := "pass"
+	if smokeExit != 0 {
+		status = "fail"
+	}
+	result.Commands = append(result.Commands, CommandResult{
+		ID:         "smoke-tests",
+		Cwd:        "smoke",
+		Command:    strings.Join(smokeArgs, " "),
+		Status:     status,
+		DurationMs: dur.Milliseconds(),
+		ExitCode:   smokeExit,
+	})
+
+	result.ExitCode = smokeExit
+	if smokeExit == 0 {
+		result.Confidence = "high"
+		result.ConfidenceReason = "vm smoke tests passed"
+	} else {
+		result.Confidence = "low"
+		result.ConfidenceReason = "smoke tests failed"
+	}
+	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	writeLedger(root, result, flags)
+	return smokeExit
+}
+
+// --- Helpers ---
+
+func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
+	exitCode := 0
+	for _, cmd := range commands {
+		if flags.explain && !flags.json {
+			fmt.Printf("    %s→%s %s: %s\n", colorCyan, colorReset, cmd.ID, cmd.Run)
+		}
+
+		cwd := root
+		if cmd.Cwd != "." {
+			cwd = filepath.Join(root, cmd.Cwd)
+		}
+
+		parts := strings.Fields(cmd.Run)
+		c := exec.Command(parts[0], parts[1:]...)
+		c.Dir = cwd
+		if !flags.json {
+			c.Stdout = os.Stdout
+			c.Stderr = os.Stderr
+		}
+
+		start := time.Now()
+		err := c.Run()
+		dur := time.Since(start)
+
+		cmdExit := 0
+		status := "pass"
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				cmdExit = exitErr.ExitCode()
+			} else {
+				cmdExit = 1
+			}
+			status = "fail"
+			exitCode = 1
+		}
+
+		result.Commands = append(result.Commands, CommandResult{
+			ID:         cmd.ID,
+			Cwd:        cmd.Cwd,
+			Command:    cmd.Run,
+			Status:     status,
+			DurationMs: dur.Milliseconds(),
+			ExitCode:   cmdExit,
+		})
+
+		if !flags.json {
+			icon := colorGreen + "✓" + colorReset
+			if status == "fail" {
+				icon = colorRed + "✗" + colorReset
+			}
+			fmt.Printf("%s %s (%dms)\n", icon, cmd.ID, dur.Milliseconds())
+		}
+	}
+	return exitCode
+}
+
+func getChangedFiles(root string, since string) ([]string, error) {
+	// Get both staged and unstaged changes
+	var args []string
+	if since != "" {
+		args = []string{"diff", "--name-only", since}
+	} else {
+		args = []string{"diff", "--name-only", "HEAD"}
+	}
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		// HEAD might not exist (initial commit), fall back to listing all tracked + untracked
+		cmd2 := exec.Command("git", "status", "--porcelain")
+		cmd2.Dir = root
+		out2, err2 := cmd2.Output()
+		if err2 != nil {
+			return nil, err2
+		}
+		return parseStatusFiles(string(out2)), nil
+	}
+
+	files := splitLines(string(out))
+
+	// Also get staged changes not yet committed
+	cmd2 := exec.Command("git", "diff", "--name-only", "--cached")
+	cmd2.Dir = root
+	out2, _ := cmd2.Output()
+	staged := splitLines(string(out2))
+
+	// Also get untracked files
+	cmd3 := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	cmd3.Dir = root
+	out3, _ := cmd3.Output()
+	untracked := splitLines(string(out3))
+
+	// Deduplicate
+	seen := map[string]bool{}
+	var result []string
+	for _, list := range [][]string{files, staged, untracked} {
+		for _, f := range list {
+			if f != "" && !seen[f] {
+				seen[f] = true
+				result = append(result, f)
+			}
+		}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func parseStatusFiles(status string) []string {
+	var files []string
+	for _, line := range strings.Split(status, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		f := strings.TrimSpace(line[3:])
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// pathMatches checks if a file path matches a glob-like pattern.
+// Supports ** for recursive directory matching and * for single segment.
+func pathMatches(file, pattern string) bool {
+	// Convert glob pattern to a simple prefix + suffix check
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := strings.TrimSuffix(pattern, "/**")
+		return strings.HasPrefix(file, prefix+"/") || file == prefix
+	}
+	if strings.Contains(pattern, "**") {
+		// pattern like "a/**/b" — split and check prefix/suffix
+		parts := strings.SplitN(pattern, "**", 2)
+		return strings.HasPrefix(file, parts[0]) && strings.HasSuffix(file, strings.TrimPrefix(parts[1], "/"))
+	}
+	// Exact match or single-level glob
+	matched, _ := filepath.Match(pattern, file)
+	return matched
+}
+
+func printDryRun(tier string, commands []manifestCommand, riskAreas []string, changedFiles []string, flags validateFlags) {
+	fmt.Printf("Tier: %s (dry-run)\n", tier)
+	if len(changedFiles) > 0 {
+		fmt.Printf("Changed files: %d\n", len(changedFiles))
+		for _, f := range changedFiles {
+			fmt.Printf("  %s\n", f)
+		}
+		fmt.Println()
+	}
+	if len(riskAreas) > 0 {
+		fmt.Printf("Risk areas: %s\n", strings.Join(riskAreas, ", "))
+	}
+	fmt.Printf("Commands (%d):\n", len(commands))
+	for _, cmd := range commands {
+		fmt.Printf("  [%s] cd %s && %s\n", cmd.ID, cmd.Cwd, cmd.Run)
+	}
+}
+
+func writeLedger(root string, result *ValidateResult, flags validateFlags) {
+	if flags.json {
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(data))
+	}
+
+	// Write to .bloud/validation/
+	dir := filepath.Join(root, ".bloud", "validation")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
+
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return
+	}
+
+	// Write timestamped file
+	ts := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+	tsPath := filepath.Join(dir, ts+".json")
+	os.WriteFile(tsPath, data, 0644)
+
+	// Write latest.json
+	latestPath := filepath.Join(dir, "latest.json")
+	os.WriteFile(latestPath, data, 0644)
+
+	// Prune old files (keep newest 20)
+	pruneOldLedgers(dir, 20)
+}
+
+func pruneOldLedgers(dir string, keep int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	var jsonFiles []string
+	for _, e := range entries {
+		name := e.Name()
+		if name == "latest.json" || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		jsonFiles = append(jsonFiles, name)
+	}
+
+	if len(jsonFiles) <= keep {
+		return
+	}
+
+	sort.Strings(jsonFiles)
+	toRemove := jsonFiles[:len(jsonFiles)-keep]
+	for _, name := range toRemove {
+		os.Remove(filepath.Join(dir, name))
+	}
+}

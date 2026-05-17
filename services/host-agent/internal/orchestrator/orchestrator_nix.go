@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 )
 
 // Orchestrator coordinates app installation via NixOS
@@ -35,8 +35,8 @@ type Orchestrator struct {
 	logger          *slog.Logger
 	queue           *OperationQueue
 	outpostMu       sync.Mutex    // serializes ensureForwardAuthOutpostAssociation calls
-	outpostSignal   chan struct{}  // debounces ensureForwardAuthOutpostAssociation calls
-	outpostDone     chan struct{}  // closed by Stop() to exit the worker goroutine
+	outpostSignal   chan struct{} // debounces ensureForwardAuthOutpostAssociation calls
+	outpostDone     chan struct{} // closed by Stop() to exit the worker goroutine
 	outpostDebounce time.Duration // debounce window; 0 uses outpostAssociationDebounce default
 }
 
@@ -53,12 +53,12 @@ type Config struct {
 	Hostname          string // NixOS hostname
 	DataDir           string // Path to bloud data directory
 	// SSO configuration
-	SSOHostSecret    string   // Master secret for deriving client secrets
-	SSOBaseURLs      []string // Base URLs for callbacks (configured host + detected IPs)
-	SSOAuthentikURL  string   // Authentik URL for discovery (e.g., "http://localhost:8080")
-	SSOBlueprintsDir string // Directory to write blueprints to
-	AuthentikToken   string // Authentik API token for SSO cleanup
-	LDAPBindPassword string // LDAP bind password for service accounts
+	SSOHostSecret    string           // Master secret for deriving client secrets
+	SSOBaseURLs      []string         // Base URLs for callbacks (configured host + detected IPs)
+	SSOAuthentikURL  string           // Authentik URL for discovery (e.g., "http://localhost:8080")
+	SSOBlueprintsDir string           // Directory to write blueprints to
+	AuthentikToken   string           // Authentik API token for SSO cleanup
+	LDAPBindPassword string           // LDAP bind password for service accounts
 	Secrets          *secrets.Manager // Secrets manager for persisting derived secrets
 
 	// Optional: inject dependencies for testing (if nil, defaults will be created)
@@ -118,11 +118,11 @@ func New(cfg Config) *Orchestrator {
 		traefikGen:      traefikGen,
 		blueprintGen:    blueprintGen,
 		authentikClient: authentikClient,
-		rebuilder:      rebuilder,
-		dataDir:        cfg.DataDir,
-		logger:         cfg.Logger,
-		outpostSignal:  make(chan struct{}, 1),
-		outpostDone:    make(chan struct{}),
+		rebuilder:       rebuilder,
+		dataDir:         cfg.DataDir,
+		logger:          cfg.Logger,
+		outpostSignal:   make(chan struct{}, 1),
+		outpostDone:     make(chan struct{}),
 	}
 
 	// Create and start the operation queue
@@ -593,6 +593,7 @@ func (o *Orchestrator) dropAppDatabase(appName string) error {
 	// TODO: Move this to catalog metadata
 	appDatabases := map[string]string{
 		"miniflux": "miniflux",
+		"immich":   "immich",
 	}
 
 	dbName, ok := appDatabases[appName]
@@ -700,7 +701,6 @@ func (o *Orchestrator) waitForHealthy(appName string) {
 		"url", url)
 	o.appStore.UpdateStatus(appName, "error")
 }
-
 
 // getAppPort returns the port for an app from the catalog
 func (o *Orchestrator) getAppPort(appName string) int {
@@ -1050,4 +1050,3 @@ func (o *Orchestrator) ReconcileState() {
 
 	o.logger.Info("state reconciliation complete")
 }
-

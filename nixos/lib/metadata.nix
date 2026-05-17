@@ -20,6 +20,11 @@ let
 in
 lib.unique (lib.flatten (
   lib.mapAttrsToList (_: int:
-    map (compat: "${compat.app}.service") (int.compatible or [])
+    # Only generate hard systemd deps for required integrations.
+    # Optional integrations (e.g. sso) are handled by the configurator at runtime.
+    if (int.required or false) then
+      map (compat: "${compat.app}.service") (int.compatible or [])
+    else
+      []
   ) (metadata.integrations or {})
 ))

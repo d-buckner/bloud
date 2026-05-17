@@ -29,6 +29,11 @@ mkNativeApp {
       unixSocketPerm = 777;
     };
 
+    # Make /run/redis-bloud directory traversable by all users so rootless podman
+    # containers (which run as UID 1000 via --userns=keep-id) can reach the socket.
+    # The socket itself is 0777, but NixOS defaults RuntimeDirectory to 0750.
+    systemd.services.redis-bloud.serviceConfig.RuntimeDirectoryMode = lib.mkForce "0755";
+
     # Canonical alias so app modules can declare `redis.service` as a dependency
     # without knowing the NixOS-generated service name (redis-bloud.service).
     # Convention: native apps expose {appName}.service for systemd dependency tracking.
