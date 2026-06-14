@@ -6,6 +6,10 @@ second implementation or an unbounded rewrite.
 
 ## Core Rule
 
+The migration targets the clean portable architecture, not backward compatibility with
+internal NixOS-era interfaces. Change callers in the same validated slice when an old
+contract does not belong in the target design.
+
 Every migration task should leave behind:
 
 1. A runtime-neutral contract.
@@ -58,12 +62,17 @@ type Operation struct { ... }
 
 Translate to API, database, and runtime-specific representations at boundaries.
 
-### 3. Evolve Configurators Through Compatibility Adapters
+### 3. Design Target Interfaces, Not Compatibility Interfaces
 
 The current configurator interface uses `PreStart`, `HealthCheck`, and `PostStart`, and
 receives integrations as `map[string][]string`.
 
-The target contract uses typed resolved integrations:
+Do not carry that shape into the target architecture merely to preserve compatibility.
+Define each target interface from its actual consumers and include only information they
+currently require. Compatibility adapters are temporary exceptions and belong outside the
+new domain boundary.
+
+The target contract evolves toward explicit capabilities and typed provider contracts:
 
 ```go
 StaticConfig(context.Context, AppState) (ConfigResult, error)
@@ -71,8 +80,8 @@ HealthCheck(context.Context, AppState) error
 DynamicConfig(context.Context, AppState) error
 ```
 
-Do not port every configurator at once. Introduce compatibility adapters so existing
-configurators continue working while apps move one at a time.
+Migrate in small validated slices, but change callers with the target interface instead of
+adding compatibility fields or adapters by default.
 
 ### 4. Make Planning Pure and Serializable
 
@@ -210,6 +219,6 @@ Before accepting a migration change:
 - Is existing behavior characterized before it changes?
 - Can its core behavior be tested without Podman, systemd, or NixOS?
 - Does it avoid new application-specific orchestration branches?
-- Does it preserve a compatibility path for current behavior?
+- Does it avoid carrying obsolete internal contracts into the target architecture?
 - Does it identify what old code becomes deletable later?
 - Are failure and retry semantics explicit?

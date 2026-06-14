@@ -107,7 +107,7 @@ func runConfigure(args []string) int {
 		return runPreStart(ctx, args[1], registry, appStore, catalogCache, cfg.DataDir, cfg, logger)
 
 	case "poststart":
-		return runPostStart(ctx, args[1], registry, appStore, catalogCache, cfg.DataDir, logger)
+		return runPostStart(ctx, args[1], registry, catalogCache, cfg.DataDir, logger)
 
 	case "reconcile":
 		return runReconcile(ctx, registry, appStore, catalogCache, cfg.DataDir, logger)
@@ -150,7 +150,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 0
 	}
 
-	state, err := buildAppState(appName, appStore, catalogCache, dataDir, logger)
+	state, err := buildAppState(appName, catalogCache, dataDir, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -165,7 +165,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 	return 0
 }
 
-func runPostStart(ctx context.Context, appName string, registry *configurator.Registry, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) int {
+func runPostStart(ctx context.Context, appName string, registry *configurator.Registry, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) int {
 	logger.Info("running poststart", "app", appName)
 
 	cfg := registry.Get(appName)
@@ -182,7 +182,7 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 		return 1
 	}
 
-	state, err := buildAppState(appName, appStore, catalogCache, dataDir, logger)
+	state, err := buildAppState(appName, catalogCache, dataDir, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -218,42 +218,25 @@ func runReconcile(ctx context.Context, registry *configurator.Registry, appStore
 	return 0
 }
 
-func buildAppState(appName string, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) (*configurator.AppState, error) {
-	app, err := appStore.GetByName(appName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get app: %w", err)
-	}
-
-	// App might not be in database yet (fresh install)
-	integrations := make(map[string][]string)
-	port := 0
-
-	if app != nil {
-		for name, source := range app.IntegrationConfig {
-			integrations[name] = []string{source}
-		}
-		port = app.Port
-	}
-
-	// Load SSO config from catalog if available
+func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) (*configurator.AppState, error) {
+	ssoEnabled := false
 	if catalogCache != nil {
-		if catalogApp, err := catalogCache.Get(appName); err == nil && catalogApp != nil {
-			if catalogApp.SSO.Strategy != "" {
-				integrations["sso"] = []string{catalogApp.SSO.Strategy}
-				logger.Debug("loaded SSO integration from catalog",
-					"app", appName,
-					"strategy", catalogApp.SSO.Strategy)
-			}
+		catalogApp, err := catalogCache.Get(appName)
+		if err != nil {
+			return nil, fmt.Errorf("load catalog app: %w", err)
+		}
+		if catalogApp != nil && catalogApp.SSO.Strategy != "" && catalogApp.SSO.Strategy != "none" {
+			ssoEnabled = true
+			logger.Debug("loaded SSO strategy from catalog",
+				"app", appName,
+				"strategy", catalogApp.SSO.Strategy)
 		}
 	}
 
 	return &configurator.AppState{
-		Name:          appName,
 		DataPath:      filepath.Join(dataDir, appName),
 		BloudDataPath: dataDir,
-		Port:          port,
-		Integrations:  integrations,
-		Options:       make(map[string]any),
+		SSOEnabled:    ssoEnabled,
 	}, nil
 }
 

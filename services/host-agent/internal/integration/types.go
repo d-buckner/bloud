@@ -6,33 +6,18 @@ type AppID string
 // Type identifies a provider-consumer relationship, such as database or cache.
 type Type string
 
-// ResolutionSource describes how an integration provider was selected.
-type ResolutionSource string
-
-const (
-	ResolutionBound    ResolutionSource = "bound"
-	ResolutionOptional ResolutionSource = "optional-installed"
-)
-
 // Requirement describes the providers that can satisfy an integration.
 type Requirement struct {
 	Required   bool
 	Compatible []AppID
 }
 
-// Instance is a resolved provider-consumer relationship.
-type Instance struct {
-	Consumer AppID
-	Provider AppID
-	Type     Type
-	Required bool
-	Source   ResolutionSource
-}
+// Bindings maps each resolved integration type to its provider.
+type Bindings map[Type]AppID
 
 // ResolutionInput contains the pure inputs needed to resolve integrations.
 type ResolutionInput struct {
-	Consumer       AppID
 	Requirements   map[Type]Requirement
 	BoundProviders map[Type]AppID
-	Installed      map[AppID]bool
+	Installed      map[AppID]struct{}
 }

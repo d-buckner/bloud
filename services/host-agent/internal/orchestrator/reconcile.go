@@ -123,7 +123,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			continue
 		}
 
-		state := r.buildAppState(app, appMap)
+		state, err := r.buildAppState(app, appMap)
+		if err != nil {
+			r.logger.Warn("failed to build app state", "app", app.Name, "error", err)
+			errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
+			continue
+		}
 		if err := cfg.PreStart(ctx, state); err != nil {
 			r.logger.Warn("PreStart failed", "app", app.Name, "error", err)
 			errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.Name, err))
@@ -159,7 +164,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			currentlyHealthy[app.Name] = true
 
 			// Run PostStart
-			state := r.buildAppState(app, appMap)
+			state, err := r.buildAppState(app, appMap)
+			if err != nil {
+				r.logger.Warn("failed to build app state", "app", app.Name, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
+				continue
+			}
 			if err := cfg.PostStart(ctx, state); err != nil {
 				r.logger.Warn("PostStart failed", "app", app.Name, "error", err)
 				errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.Name, err))
@@ -331,59 +341,44 @@ func (r *Reconciler) computeLevels(apps map[string]*store.InstalledApp) [][]stri
 // buildAppState creates an AppState from a database app record.
 // installedApps is used to resolve optional integrations — pass the full
 // installed app map from the current reconcile cycle (or nil to skip).
-func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[string]*store.InstalledApp) *configurator.AppState {
+func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[string]*store.InstalledApp) (*configurator.AppState, error) {
 	var catalogApp *catalog.App
 	if r.catalogCache != nil {
-		catalogApp, _ = r.catalogCache.Get(app.Name)
-	}
-
-	integrations, err := resolveLegacyIntegrations(app, installedApps, catalogApp)
-	if err != nil {
-		r.logger.Warn("failed to resolve typed integrations; preserving provider bindings",
-			"app", app.Name,
-			"error", err)
-		integrations = boundLegacyIntegrations(app.IntegrationConfig)
-	}
-
-	// The current configurator contract overloads the SSO integration with the
-	// strategy when no declared provider edge resolves. Preserve that behavior
-	// until SSO provider identity and strategy are modeled separately.
-	if catalogApp != nil && catalogApp.SSO.Strategy != "" {
-		if _, resolvedProvider := integrations["sso"]; !resolvedProvider {
-			integrations["sso"] = []string{catalogApp.SSO.Strategy}
-			r.logger.Debug("loaded SSO strategy from catalog",
-				"app", app.Name,
-				"strategy", catalogApp.SSO.Strategy)
+		var err error
+		catalogApp, err = r.catalogCache.Get(app.Name)
+		if err != nil {
+			return nil, fmt.Errorf("load catalog app: %w", err)
 		}
 	}
 
+	_, err := resolveIntegrationBindings(app, installedApps, catalogApp)
+	if err != nil {
+		return nil, fmt.Errorf("resolve integrations: %w", err)
+	}
+
 	return &configurator.AppState{
-		Name:          app.Name,
 		DataPath:      filepath.Join(r.dataDir, app.Name),
 		BloudDataPath: r.dataDir,
-		Port:          app.Port,
-		Integrations:  integrations,
-		Options:       make(map[string]any),
-	}
+		SSOEnabled:    shouldConfigureSSO(catalogApp),
+	}, nil
 }
 
-func resolveLegacyIntegrations(
+func resolveIntegrationBindings(
 	app *store.InstalledApp,
 	installedApps map[string]*store.InstalledApp,
 	catalogApp *catalog.App,
-) (map[string][]string, error) {
+) (integrationdomain.Bindings, error) {
 	input := integrationdomain.ResolutionInput{
-		Consumer:       integrationdomain.AppID(app.Name),
 		Requirements:   make(map[integrationdomain.Type]integrationdomain.Requirement),
 		BoundProviders: make(map[integrationdomain.Type]integrationdomain.AppID),
-		Installed:      make(map[integrationdomain.AppID]bool),
+		Installed:      make(map[integrationdomain.AppID]struct{}),
 	}
 
 	for integrationType, provider := range app.IntegrationConfig {
 		input.BoundProviders[integrationdomain.Type(integrationType)] = integrationdomain.AppID(provider)
 	}
 	for appName := range installedApps {
-		input.Installed[integrationdomain.AppID(appName)] = true
+		input.Installed[integrationdomain.AppID(appName)] = struct{}{}
 	}
 	if catalogApp != nil {
 		for integrationType, requirement := range catalogApp.Integrations {
@@ -398,17 +393,9 @@ func resolveLegacyIntegrations(
 		}
 	}
 
-	instances, err := integrationdomain.Resolve(input)
-	if err != nil {
-		return nil, err
-	}
-	return integrationdomain.LegacyMap(instances), nil
+	return integrationdomain.Resolve(input)
 }
 
-func boundLegacyIntegrations(bindings map[string]string) map[string][]string {
-	integrations := make(map[string][]string, len(bindings))
-	for integrationType, provider := range bindings {
-		integrations[integrationType] = []string{provider}
-	}
-	return integrations
+func shouldConfigureSSO(catalogApp *catalog.App) bool {
+	return catalogApp != nil && catalogApp.SSO.Strategy != "" && catalogApp.SSO.Strategy != "none"
 }

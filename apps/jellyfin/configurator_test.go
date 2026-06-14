@@ -55,7 +55,6 @@ func TestConfigurator_PreStart(t *testing.T) {
 
 	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
 	state := &configurator.AppState{
-		Name:          "jellyfin",
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
 	}
@@ -587,8 +586,7 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
-		Name:         "jellyfin",
-		Integrations: map[string][]string{}, // No SSO
+		SSOEnabled: false,
 	}
 
 	err := c.PostStart(context.Background(), state)

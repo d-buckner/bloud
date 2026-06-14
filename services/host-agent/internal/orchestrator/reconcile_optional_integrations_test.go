@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	integrationdomain "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/integration"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 )
 
@@ -127,9 +128,10 @@ func TestBuildAppState_OptionalIntegration_IncludedWhenCompatibleAppInstalled(t 
 
 	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
 
-	state := tr.reconciler.buildAppState(minifluxApp, installedApps)
+	bindings, err := resolveIntegrationBindings(minifluxApp, installedApps, minifluxCatalog)
 
-	assert.Equal(t, []string{"jellyfin"}, state.Integrations["movieManager"])
+	require.NoError(t, err)
+	assert.Equal(t, integrationBinding("movieManager", "jellyfin"), bindings)
 }
 
 func TestBuildAppState_OptionalIntegration_NotIncludedWhenCompatibleAppAbsent(t *testing.T) {
@@ -145,10 +147,10 @@ func TestBuildAppState_OptionalIntegration_NotIncludedWhenCompatibleAppAbsent(t 
 
 	tr.cache.On("Get", "miniflux").Return(minifluxCatalog, nil)
 
-	state := tr.reconciler.buildAppState(minifluxApp, installedApps)
+	bindings, err := resolveIntegrationBindings(minifluxApp, installedApps, minifluxCatalog)
 
-	_, hasMovieManager := state.Integrations["movieManager"]
-	assert.False(t, hasMovieManager, "movieManager should be absent when jellyfin is not installed")
+	require.NoError(t, err)
+	assert.Empty(t, bindings)
 }
 
 func TestBuildAppState_BoundProviderTakesPrecedenceOverOptionalDiscovery(t *testing.T) {
@@ -171,13 +173,14 @@ func TestBuildAppState_BoundProviderTakesPrecedenceOverOptionalDiscovery(t *test
 
 	tr.cache.On("Get", "app").Return(catalogApp, nil)
 
-	state := tr.reconciler.buildAppState(app, map[string]*store.InstalledApp{
+	bindings, err := resolveIntegrationBindings(app, map[string]*store.InstalledApp{
 		"app":      app,
 		"postgres": fixtureInstalledApp("postgres", "running"),
 		"mariadb":  fixtureInstalledApp("mariadb", "running"),
-	})
+	}, catalogApp)
 
-	assert.Equal(t, []string{"mariadb"}, state.Integrations["database"])
+	require.NoError(t, err)
+	assert.Equal(t, integrationBinding("database", "mariadb"), bindings)
 }
 
 func TestBuildAppState_RequiredIntegrationsUnaffected(t *testing.T) {
@@ -193,12 +196,19 @@ func TestBuildAppState_RequiredIntegrationsUnaffected(t *testing.T) {
 		"qbittorrent": fixtureInstalledApp("qbittorrent", "running"),
 	}
 
-	// jellyfin catalog has no optional integrations
-	tr.cache.On("Get", "jellyfin").Return(fixtureJellyfin(), nil)
+	catalogApp := fixtureJellyfin()
+	catalogApp.Integrations = map[string]catalog.Integration{
+		"downloadClient": {
+			Required:   true,
+			Compatible: []catalog.CompatibleApp{{App: "qbittorrent"}},
+		},
+	}
+	tr.cache.On("Get", "jellyfin").Return(catalogApp, nil)
 
-	state := tr.reconciler.buildAppState(jellyfinApp, installedApps)
+	bindings, err := resolveIntegrationBindings(jellyfinApp, installedApps, catalogApp)
 
-	assert.Equal(t, []string{"qbittorrent"}, state.Integrations["downloadClient"])
+	require.NoError(t, err)
+	assert.Equal(t, integrationBinding("downloadClient", "qbittorrent"), bindings)
 }
 
 func TestBuildAppState_JellyfinSyntheticSSOStrategyPreserved(t *testing.T) {
@@ -209,14 +219,15 @@ func TestBuildAppState_JellyfinSyntheticSSOStrategyPreserved(t *testing.T) {
 
 	tr.cache.On("Get", "jellyfin").Return(catalogApp, nil)
 
-	state := tr.reconciler.buildAppState(jellyfin, map[string]*store.InstalledApp{
+	state, err := tr.reconciler.buildAppState(jellyfin, map[string]*store.InstalledApp{
 		"jellyfin": jellyfin,
 	})
 
-	assert.Equal(t, []string{"ldap"}, state.Integrations["sso"])
+	require.NoError(t, err)
+	assert.True(t, state.SSOEnabled)
 }
 
-func TestBuildAppState_ImmichUsesInstalledDeclaredSSOProvider(t *testing.T) {
+func TestBuildAppState_ImmichDeclaredSSOStrategyEnablesSSO(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 	immich := fixtureInstalledApp("immich", "running")
 	authentik := fixtureInstalledApp("authentik", "running")
@@ -233,15 +244,38 @@ func TestBuildAppState_ImmichUsesInstalledDeclaredSSOProvider(t *testing.T) {
 
 	tr.cache.On("Get", "immich").Return(catalogApp, nil)
 
-	state := tr.reconciler.buildAppState(immich, map[string]*store.InstalledApp{
+	state, err := tr.reconciler.buildAppState(immich, map[string]*store.InstalledApp{
 		"immich":    immich,
 		"authentik": authentik,
 	})
 
-	assert.Equal(t, []string{"authentik"}, state.Integrations["sso"])
+	require.NoError(t, err)
+	assert.True(t, state.SSOEnabled)
 }
 
-func TestResolveLegacyIntegrations_IncompatibleBoundProviderReturnsError(t *testing.T) {
+func TestBuildAppState_SSOBindingWithoutStrategyDoesNotEnableSSO(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	immich := fixtureInstalledAppWithIntegrations("immich", "running", map[string]string{
+		"sso": "authentik",
+	})
+	catalogApp := &catalog.App{
+		Name: "immich",
+		Integrations: map[string]catalog.Integration{
+			"sso": {
+				Compatible: []catalog.CompatibleApp{{App: "authentik"}},
+			},
+		},
+	}
+	tr.cache.On("Get", "immich").Return(catalogApp, nil)
+
+	state, err := tr.reconciler.buildAppState(immich, nil)
+
+	require.NoError(t, err)
+	assert.False(t, state.SSOEnabled)
+}
+
+func TestBuildAppState_IncompatibleBoundProviderReturnsError(t *testing.T) {
+	tr := newTestReconcilerWithCache()
 	app := fixtureInstalledAppWithIntegrations("immich", "running", map[string]string{
 		"database": "mariadb",
 	})
@@ -254,11 +288,18 @@ func TestResolveLegacyIntegrations_IncompatibleBoundProviderReturnsError(t *test
 			},
 		},
 	}
+	tr.cache.On("Get", "immich").Return(catalogApp, nil)
 
-	_, err := resolveLegacyIntegrations(app, nil, catalogApp)
+	_, err := tr.reconciler.buildAppState(app, nil)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "incompatible provider mariadb")
+}
+
+func integrationBinding(integrationType, provider string) integrationdomain.Bindings {
+	return integrationdomain.Bindings{
+		integrationdomain.Type(integrationType): integrationdomain.AppID(provider),
+	}
 }
 
 // ============================================================================

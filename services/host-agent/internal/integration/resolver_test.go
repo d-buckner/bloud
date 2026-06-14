@@ -8,15 +8,14 @@ import (
 )
 
 func TestResolve_EmptyInput(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{Consumer: "immich"})
+	bindings, err := Resolve(ResolutionInput{})
 
 	require.NoError(t, err)
-	assert.Empty(t, instances)
+	assert.Empty(t, bindings)
 }
 
 func TestResolve_BoundRequiredProvider(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer: "immich",
+	bindings, err := Resolve(ResolutionInput{
 		Requirements: map[Type]Requirement{
 			"database": {Required: true, Compatible: []AppID{"postgres"}},
 		},
@@ -24,46 +23,35 @@ func TestResolve_BoundRequiredProvider(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, Instance{
-		Consumer: "immich",
-		Provider: "postgres",
-		Type:     "database",
-		Required: true,
-		Source:   ResolutionBound,
-	}, instances[0])
+	require.Len(t, bindings, 1)
+	assert.Equal(t, AppID("postgres"), bindings["database"])
 }
 
-func TestResolve_BoundProviderWithoutRequirementPreservesLegacyBinding(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer:       "legacy-app",
+func TestResolve_BoundProviderWithoutRequirementReturnsError(t *testing.T) {
+	_, err := Resolve(ResolutionInput{
 		BoundProviders: map[Type]AppID{"database": "postgres"},
 	})
 
-	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, AppID("postgres"), instances[0].Provider)
-	assert.Equal(t, ResolutionBound, instances[0].Source)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "binding for undeclared integration database")
 }
 
 func TestResolve_BoundCompatibleProviderNeedNotBeInstalled(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer: "immich",
+	bindings, err := Resolve(ResolutionInput{
 		Requirements: map[Type]Requirement{
 			"database": {Required: true, Compatible: []AppID{"postgres"}},
 		},
 		BoundProviders: map[Type]AppID{"database": "postgres"},
-		Installed:      map[AppID]bool{},
+		Installed:      map[AppID]struct{}{},
 	})
 
 	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, AppID("postgres"), instances[0].Provider)
+	require.Len(t, bindings, 1)
+	assert.Equal(t, AppID("postgres"), bindings["database"])
 }
 
 func TestResolve_BoundIncompatibleProviderReturnsError(t *testing.T) {
 	_, err := Resolve(ResolutionInput{
-		Consumer: "immich",
 		Requirements: map[Type]Requirement{
 			"database": {Required: true, Compatible: []AppID{"postgres"}},
 		},
@@ -75,78 +63,70 @@ func TestResolve_BoundIncompatibleProviderReturnsError(t *testing.T) {
 }
 
 func TestResolve_BoundProviderTakesPrecedenceOverOptionalDiscovery(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer: "app",
+	bindings, err := Resolve(ResolutionInput{
 		Requirements: map[Type]Requirement{
 			"database": {Compatible: []AppID{"postgres", "mariadb"}},
 		},
 		BoundProviders: map[Type]AppID{"database": "mariadb"},
-		Installed:      map[AppID]bool{"postgres": true, "mariadb": true},
+		Installed:      appSet("postgres", "mariadb"),
 	})
 
 	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, AppID("mariadb"), instances[0].Provider)
-	assert.Equal(t, ResolutionBound, instances[0].Source)
+	require.Len(t, bindings, 1)
+	assert.Equal(t, AppID("mariadb"), bindings["database"])
 }
 
 func TestResolve_OptionalInstalledProvider(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer: "immich",
+	bindings, err := Resolve(ResolutionInput{
 		Requirements: map[Type]Requirement{
 			"sso": {Compatible: []AppID{"authentik"}},
 		},
-		Installed: map[AppID]bool{"authentik": true},
+		Installed: appSet("authentik"),
 	})
 
 	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, AppID("authentik"), instances[0].Provider)
-	assert.Equal(t, ResolutionOptional, instances[0].Source)
+	require.Len(t, bindings, 1)
+	assert.Equal(t, AppID("authentik"), bindings["sso"])
 }
 
 func TestResolve_OptionalAbsentProvider(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer: "immich",
+	bindings, err := Resolve(ResolutionInput{
 		Requirements: map[Type]Requirement{
 			"sso": {Compatible: []AppID{"authentik"}},
 		},
 	})
 
 	require.NoError(t, err)
-	assert.Empty(t, instances)
+	assert.Empty(t, bindings)
 }
 
 func TestResolve_OptionalProviderUsesCatalogOrder(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer: "app",
+	bindings, err := Resolve(ResolutionInput{
 		Requirements: map[Type]Requirement{
 			"database": {Compatible: []AppID{"postgres", "mariadb"}},
 		},
-		Installed: map[AppID]bool{"postgres": true, "mariadb": true},
+		Installed: appSet("postgres", "mariadb"),
 	})
 
 	require.NoError(t, err)
-	require.Len(t, instances, 1)
-	assert.Equal(t, AppID("postgres"), instances[0].Provider)
+	require.Len(t, bindings, 1)
+	assert.Equal(t, AppID("postgres"), bindings["database"])
 }
 
-func TestResolve_RequiredProviderWithoutBindingDoesNotResolve(t *testing.T) {
-	instances, err := Resolve(ResolutionInput{
-		Consumer: "immich",
+func TestResolve_RequiredProviderWithoutBindingReturnsError(t *testing.T) {
+	_, err := Resolve(ResolutionInput{
 		Requirements: map[Type]Requirement{
 			"database": {Required: true, Compatible: []AppID{"postgres"}},
 		},
-		Installed: map[AppID]bool{"postgres": true},
+		Installed: appSet("postgres"),
 	})
 
-	require.NoError(t, err)
-	assert.Empty(t, instances)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required integration database has no binding")
 }
 
-func TestResolve_OutputOrderIsDeterministic(t *testing.T) {
+func TestResolve_AllBindings(t *testing.T) {
 	input := ResolutionInput{
-		Consumer: "immich",
 		Requirements: map[Type]Requirement{
 			"sso":      {Compatible: []AppID{"authentik"}},
 			"cache":    {Required: true, Compatible: []AppID{"redis"}},
@@ -156,30 +136,24 @@ func TestResolve_OutputOrderIsDeterministic(t *testing.T) {
 			"database": "postgres",
 			"cache":    "redis",
 		},
-		Installed: map[AppID]bool{"authentik": true},
+		Installed: appSet("authentik"),
 	}
 
-	instances, err := Resolve(input)
+	bindings, err := Resolve(input)
 
 	require.NoError(t, err)
-	require.Len(t, instances, 3)
-	assert.Equal(t, []Type{"cache", "database", "sso"}, []Type{
-		instances[0].Type,
-		instances[1].Type,
-		instances[2].Type,
-	})
+	require.Len(t, bindings, 3)
+	assert.Equal(t, Bindings{
+		"cache":    "redis",
+		"database": "postgres",
+		"sso":      "authentik",
+	}, bindings)
 }
 
-func TestLegacyMap_DeduplicatesAndSortsProviders(t *testing.T) {
-	legacy := LegacyMap([]Instance{
-		{Type: "pvr", Provider: "sonarr"},
-		{Type: "pvr", Provider: "radarr"},
-		{Type: "pvr", Provider: "sonarr"},
-		{Type: "database", Provider: "postgres"},
-	})
-
-	assert.Equal(t, map[string][]string{
-		"database": {"postgres"},
-		"pvr":      {"radarr", "sonarr"},
-	}, legacy)
+func appSet(apps ...AppID) map[AppID]struct{} {
+	set := make(map[AppID]struct{}, len(apps))
+	for _, app := range apps {
+		set[app] = struct{}{}
+	}
+	return set
 }

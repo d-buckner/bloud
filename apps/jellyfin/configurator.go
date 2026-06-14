@@ -172,7 +172,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	}
 
 	// 3. Configure LDAP if SSO integration is enabled
-	if _, hasSSO := state.Integrations["sso"]; hasSSO {
+	if state.SSOEnabled {
 		if err := c.configureLDAP(ctx); err != nil {
 			return fmt.Errorf("failed to configure LDAP: %w", err)
 		}

@@ -44,25 +44,14 @@ type Configurator interface {
 	PostStart(ctx context.Context, state *AppState) error
 }
 
-// AppState contains everything a configurator needs to configure an app.
+// AppState contains the inputs currently consumed by app configurators.
 type AppState struct {
-	// Name is the app name (e.g., "qbittorrent", "radarr")
-	Name string
-
-	// DataPath is the app's data directory (e.g., ~/.local/share/bloud/qbittorrent)
+	// DataPath is the app's data directory.
 	DataPath string
 
-	// BloudDataPath is the shared bloud data directory (e.g., ~/.local/share/bloud)
-	// Use for shared resources like downloads, movies, tv
+	// BloudDataPath is the shared Bloud data directory.
 	BloudDataPath string
 
-	// Port is the host port the app is exposed on
-	Port int
-
-	// Integrations maps integration names to source app names
-	// e.g., {"downloadClient": ["qbittorrent"], "indexer": ["prowlarr"]}
-	Integrations map[string][]string
-
-	// Options contains app-specific configuration options
-	Options map[string]any
+	// SSOEnabled indicates that the app should configure its supported SSO strategy.
+	SSOEnabled bool
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -199,7 +200,7 @@ func TestReconcile_SingleApp_WithConfigurator(t *testing.T) {
 
 	// Phase 1: PreStart
 	mockCfg.On("PreStart", mock.Anything, mock.MatchedBy(func(s *configurator.AppState) bool {
-		return s.Name == "qbittorrent" && s.Port == 8180
+		return s.DataPath == "/tmp/bloud-test/qbittorrent"
 	})).Return(nil)
 
 	// Phase 2: HealthCheck
@@ -207,7 +208,7 @@ func TestReconcile_SingleApp_WithConfigurator(t *testing.T) {
 
 	// Phase 3: PostStart
 	mockCfg.On("PostStart", mock.Anything, mock.MatchedBy(func(s *configurator.AppState) bool {
-		return s.Name == "qbittorrent"
+		return s.DataPath == "/tmp/bloud-test/qbittorrent"
 	})).Return(nil)
 
 	err := tr.reconciler.Reconcile(context.Background())
@@ -386,27 +387,50 @@ func TestBuildAppState_BasicFields(t *testing.T) {
 
 	app := fixtureInstalledAppWithPort("qbittorrent", "running", 8180)
 
-	state := tr.reconciler.buildAppState(app, nil)
+	state, err := tr.reconciler.buildAppState(app, nil)
 
-	assert.Equal(t, "qbittorrent", state.Name)
+	require.NoError(t, err)
 	assert.Equal(t, "/tmp/bloud-test/qbittorrent", state.DataPath)
 	assert.Equal(t, "/tmp/bloud-test", state.BloudDataPath)
-	assert.Equal(t, 8180, state.Port)
-	assert.NotNil(t, state.Options)
+	assert.False(t, state.SSOEnabled)
 }
 
-func TestBuildAppState_Integrations(t *testing.T) {
-	tr := newTestReconciler()
+func TestBuildAppState_NonSSOBindingsDoNotLeakIntoConfiguratorState(t *testing.T) {
+	tr := newTestReconcilerWithCache()
 
 	app := fixtureInstalledAppWithIntegrations("jellyfin", "running", map[string]string{
 		"download-client": "qbittorrent",
 		"media-server":    "miniflux",
 	})
+	tr.cache.On("Get", "jellyfin").Return(&catalog.App{
+		Name: "jellyfin",
+		Integrations: map[string]catalog.Integration{
+			"download-client": {
+				Required:   true,
+				Compatible: []catalog.CompatibleApp{{App: "qbittorrent"}},
+			},
+			"media-server": {
+				Required:   true,
+				Compatible: []catalog.CompatibleApp{{App: "miniflux"}},
+			},
+		},
+	}, nil)
 
-	state := tr.reconciler.buildAppState(app, nil)
+	state, err := tr.reconciler.buildAppState(app, nil)
 
-	assert.Equal(t, []string{"qbittorrent"}, state.Integrations["download-client"])
-	assert.Equal(t, []string{"miniflux"}, state.Integrations["media-server"])
+	require.NoError(t, err)
+	assert.False(t, state.SSOEnabled)
+}
+
+func TestBuildAppState_CatalogFailureReturnsError(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	app := fixtureInstalledApp("jellyfin", "running")
+	tr.cache.On("Get", "jellyfin").Return(nil, errors.New("catalog unavailable"))
+
+	_, err := tr.reconciler.buildAppState(app, nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "catalog unavailable")
 }
 
 // ============================================================================

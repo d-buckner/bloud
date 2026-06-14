@@ -181,4 +181,4 @@ Bloud will not permanently maintain NixOS and Debian as equal release runtimes.
 Implementation work follows
 [Portable Runtime Migration Design Rules](migration-design-rules.md) and begins with small,
 fully-validated slices such as
-[Slice 001: Typed Integration Instances](slices/001-typed-integration-instances.md).
+[Slice 001: Typed Integration Resolution](slices/001-typed-integration-instances.md).

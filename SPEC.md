@@ -218,6 +218,10 @@ Effectful operations sit behind narrow interfaces:
 Pure-core tests must not require Podman, systemd, Authentik, a database server, or network
 access.
 
+Interfaces contain only information required by their current consumers or policy. Do not
+add speculative fields, generic option maps, or compatibility representations to target
+architecture boundaries. Change internal callers together when replacing an old contract.
+
 ### 2. One Authoritative Application Model
 
 A portable application manifest is the authoritative description of:

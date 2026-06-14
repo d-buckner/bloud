@@ -85,7 +85,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("logging in: %w", err)
 	}
 
-	if _, hasSSO := state.Integrations["sso"]; !hasSSO {
+	if !state.SSOEnabled {
 		log.Println("Immich: no SSO integration, skipping OIDC configuration")
 		return nil
 	}
