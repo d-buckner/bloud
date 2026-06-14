@@ -10,8 +10,8 @@
 > **Architecture direction:** The current implementation runs as a NixOS appliance. The
 > first release target is a portable Bloud binary installed on Debian, while preserving the
 > dashboard, same-origin app experience, dependency graph, configurators, and shared login.
-> See [SPEC.md](SPEC.md), [Portable Runtime Architecture](docs/portable-runtime-architecture.md),
-> and [Integration and Reconciliation Architecture](docs/integration-reconciliation.md).
+> [SPEC.md](SPEC.md) is the authoritative first-release plan. Other architecture documents
+> provide supporting detail and defer to it.
 
 ---
 
@@ -183,7 +183,9 @@ func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
 ```
 
 Configurators always write the *desired* state — running them again produces the same result.
-See [Integration and Reconciliation Architecture](docs/integration-reconciliation.md).
+See [SPEC.md](SPEC.md) for the authoritative target and
+[Integration and Reconciliation Architecture](docs/integration-reconciliation.md) for
+supporting detail.
 
 ### 4. Container Invalidation
 

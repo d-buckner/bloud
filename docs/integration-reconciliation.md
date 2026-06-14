@@ -1,9 +1,13 @@
 # Integration and Reconciliation Architecture
 
-**Status:** Target architecture  
+**Status:** Supporting architecture detail
+**Authority:** `SPEC.md` is authoritative; this document must defer to it
 **Scope:** Application dependencies, configurators, invalidation, and recovery
 
 ## Core Principle
+
+This document expands reconciliation rationale recorded in `SPEC.md`. It does not introduce
+requirements independently; conflicts are resolved in favor of `SPEC.md`.
 
 An integration edge is active desired state.
 

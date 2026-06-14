@@ -2,9 +2,8 @@
 
 > **Status: Superseded as target architecture.** This document records the earlier NixOS
 > appliance and multi-host design. The current first-release direction is a portable Debian
-> runtime with an integration-edge reconciliation engine. See
-> [SPEC.md](../SPEC.md), [Portable Runtime Architecture](portable-runtime-architecture.md),
-> and [Integration and Reconciliation Architecture](integration-reconciliation.md).
+> runtime with an integration-edge reconciliation engine.
+> [SPEC.md](../SPEC.md) is the authoritative first-release plan.
 
 **High-Level Design Document**
 

@@ -3,7 +3,7 @@
 > **Status: Superseded by the broader integration-reconciliation target.** This document
 > contains useful early reasoning about static change detection and selective restarts, but
 > invalidation is now modeled per durable integration edge rather than only per container.
-> See [Integration and Reconciliation Architecture](../integration-reconciliation.md).
+> [SPEC.md](../../SPEC.md) is authoritative.
 
 ## Core Concept
 

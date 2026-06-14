@@ -2,7 +2,7 @@
 
 > **Status: Current NixOS implementation reference.** The portable Debian release replaces
 > NixOS deployment while preserving the dashboard, same-origin routing, and shared-login
-> behavior described here. See [Portable Runtime Architecture](../portable-runtime-architecture.md).
+> behavior described here. [SPEC.md](../../SPEC.md) is authoritative.
 
 ## Overview
 

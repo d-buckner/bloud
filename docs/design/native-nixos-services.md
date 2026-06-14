@@ -2,7 +2,7 @@
 
 > **Status: Superseded.** Native NixOS service migration is no longer the release direction.
 > NixOS remains a temporary reference implementation while Bloud moves to a portable Debian
-> runtime. See [Portable Runtime Architecture](../portable-runtime-architecture.md).
+> runtime. [SPEC.md](../../SPEC.md) is authoritative.
 
 ## Context & Motivation
 

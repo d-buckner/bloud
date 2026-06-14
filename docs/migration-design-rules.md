@@ -1,10 +1,14 @@
 # Portable Runtime Migration Design Rules
 
-**Status:** Proposed  
+**Status:** Supporting review checklist
+**Authority:** `SPEC.md` is authoritative; this document must defer to it
 **Purpose:** Use the portable-runtime migration to reduce technical debt without creating a
 second implementation or an unbounded rewrite.
 
 ## Core Rule
+
+This document expands the migration policy recorded in `SPEC.md`. It does not introduce
+requirements independently; conflicts are resolved in favor of `SPEC.md`.
 
 The migration targets the clean portable architecture, not backward compatibility with
 internal NixOS-era interfaces. Change callers in the same validated slice when an old

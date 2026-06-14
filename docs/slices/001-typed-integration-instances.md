@@ -1,11 +1,15 @@
 # Slice 001: Typed Integration Resolution
 
 **Status:** Implemented
+**Authority:** Implementation record; `SPEC.md` is authoritative
 **Timebox:** A few hours
 **Risk:** Low
 **Runtime behavior change:** Invalid desired integration state now fails explicitly
 
 ## Why This Slice
+
+This document records one completed slice. It does not define future architecture
+independently; conflicts are resolved in favor of `SPEC.md`.
 
 The portable architecture depends on integration edges being first-class domain objects.
 Currently, resolved integrations are represented in several incompatible forms:

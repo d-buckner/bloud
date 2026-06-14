@@ -1,10 +1,14 @@
 # Portable Runtime Architecture
 
-**Status:** Target architecture  
+**Status:** Supporting architecture detail
+**Authority:** `SPEC.md` is authoritative; this document must defer to it
 **Initial target:** Debian 13, `x86_64`, systemd  
 **Replaces for release:** NixOS ISO and NixOS rebuild execution
 
 ## Purpose
+
+This document expands runtime rationale recorded in `SPEC.md`. It does not introduce
+requirements independently; conflicts are resolved in favor of `SPEC.md`.
 
 Bloud is moving from a NixOS distribution to a binary installed on an existing Linux server.
 The portable runtime replaces NixOS as the mechanism that creates and manages services. It

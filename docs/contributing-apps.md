@@ -6,9 +6,8 @@ This guide walks through everything you need to add a new app to Bloud — from 
 > The first-release architecture is moving to portable application manifests and a Debian
 > runtime. Do not add a release app until its topology, provider contracts, consumed
 > integrations, static configuration, and dynamic configuration can be represented and
-> tested through the target architecture. See
-> [Portable Runtime Architecture](portable-runtime-architecture.md) and
-> [Integration and Reconciliation Architecture](integration-reconciliation.md).
+> tested through the target architecture. [SPEC.md](../SPEC.md) is the authoritative
+> first-release plan.
 
 ## Overview
 

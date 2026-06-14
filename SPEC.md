@@ -1,10 +1,71 @@
 # Bloud First Release Specification
 
-**Status:** Draft  
+**Status:** Authoritative active plan
+**Last updated:** 2026-06-13
 **Product:** Portable single-host home cloud  
 **Initial target:** Debian 13, `x86_64`, systemd  
 **Primary risk:** Unreliable implementation and architecture  
 **Release strategy:** Preserve Bloud's integration model while replacing NixOS with a small, tested host runtime
+
+## Document Authority
+
+This file is the source of truth for product scope, architecture, migration policy, delivery
+order, and release gates. When another document or the current implementation conflicts with
+this specification, update or replace the conflicting material. Do not silently change this
+specification through implementation.
+
+Supporting documents provide rationale, detail, and implementation records:
+
+- `docs/portable-runtime-architecture.md`: runtime design detail
+- `docs/integration-reconciliation.md`: reconciliation design detail
+- `docs/migration-design-rules.md`: review checklist and technical-debt inventory
+- `docs/slices/`: scoped implementation records
+
+Supporting documents must defer to this file and must not introduce new authoritative
+requirements.
+
+Any change to release scope, supported environment, architecture boundaries, migration
+policy, phase order, or release gates must update this file in the same commit. Completed
+slices update the migration checkpoint and phase-status table.
+
+## Current Migration Checkpoint
+
+Completed:
+
+- First-release product scope and Debian runtime direction are defined.
+- Typed integration resolution exists in a runtime-neutral package.
+- Resolution accepts declared requirements, planner-created bindings, and installed-app
+  membership, and returns one provider binding per integration type.
+- Undeclared bindings, incompatible providers, and missing required bindings fail explicitly.
+- Optional unbound integrations automatically resolve the first installed compatible provider
+  in manifest order.
+- The generic configurator integration map was removed. Current configurators receive only
+  the state they consume: application data paths and whether their declared SSO strategy is
+  enabled.
+- SSO strategy and SSO provider identity are separate concepts.
+- The repository fast validation tier passes, including host-agent race tests, app tests,
+  frontend tests, and frontend checks.
+
+Not yet implemented:
+
+- Durable desired and observed integration instances
+- Typed provider outputs and secret references
+- Static/dynamic configurator contracts
+- Portable application manifests
+- Runtime-neutral desired topology and planner
+- Debian/Podman/Quadlet/systemd adapters and `.deb` packaging
+- Clean Debian VM acceptance
+
+The next implementation slice must be selected from Phase 1 work and remain small enough to
+fully validate. Current preferred order:
+
+1. Define the minimal typed provider-output and secret-reference boundary required by one
+   real integration.
+2. Add a managed-file helper with atomic writes, explicit permissions, and accurate change
+   detection.
+3. Migrate one release-app configurator to the static/dynamic contract under focused tests.
+4. Add durable integration identity, desired/observed revisions, and invalidation only after
+   their concrete consumers are defined.
 
 ## Product Promise
 
@@ -138,6 +199,20 @@ status: configured
 Integration edges are active desired state. Installing, removing, reconfiguring, or
 recovering a provider must invalidate and reconcile affected consumers.
 
+#### Provider Resolution Policy
+
+- Provider bindings are created by planning and persisted as desired state.
+- There is no user-facing UI for selecting or customizing provider resolution.
+- A consumer currently resolves at most one provider for each integration type.
+- A persisted binding is authoritative and optional discovery never overrides it.
+- Required integrations must have a declared compatible binding. Missing, undeclared, or
+  incompatible required state is an error and must not be silently preserved.
+- Optional integrations without a binding automatically use the first installed compatible
+  provider in manifest order.
+- Provider health and readiness are separate from provider identity resolution.
+- Multi-provider integrations are not supported until a concrete release requirement defines
+  their semantics.
+
 ### Configuration Engine
 
 Configurators realize application and integration desired state. They are not limited to
@@ -155,6 +230,15 @@ including:
 
 Configurators receive structured state and resolved integrations. They must not discover
 dependencies implicitly.
+
+Configurator inputs are explicit capabilities and typed provider contracts, not generic
+integration or option maps. The current interim configurator state contains only data paths
+and `SSOEnabled` because those are the only inputs current configurators consume. Provider
+bindings must not be passed to configurators until a configurator requires a typed provider
+contract.
+
+An SSO strategy is not an SSO provider binding. A provider binding alone must not enable SSO
+configuration; the application manifest must explicitly declare the supported strategy.
 
 #### Static Configuration
 
@@ -185,6 +269,49 @@ DynamicConfig(ctx, state) error
 ```
 
 Dynamic configuration does not itself require a restart.
+
+### Routing and Shared Login
+
+The dashboard, authentication endpoints, and embedded application routes use one browser
+origin with path-based routing. First-release applications do not use per-application
+subdomains.
+
+This is an architectural requirement, not a presentation preference: signing into Bloud and
+then opening another supported application should not require another login prompt. Routing,
+cookies, redirects, service-worker behavior, and application SSO configuration must preserve
+that same-origin shared-login experience.
+
+Native clients may use their application's documented native authentication flow. Each
+application support contract must distinguish browser shared login from native-client login.
+
+### Reconciliation Flow
+
+The target reconciler executes this order from durable desired state:
+
+```text
+1. Load manifests and durable desired state
+2. Resolve and validate provider bindings
+3. Calculate desired topology, integration instances, and dependency levels
+4. Ensure topology for each dependency level
+5. Wait for required providers to become healthy
+6. Run static configuration with typed provider outputs
+7. Start or selectively restart changed consumers
+8. Verify consumer health
+9. Run dynamic configuration
+10. Record observed application and integration revisions
+```
+
+Independent applications within one dependency level may run concurrently. Required-provider
+health must precede consumer static or dynamic integration configuration.
+
+Events that invalidate an integration include provider install/removal, provider output or
+secret changes, consumer manifest changes, configurator version changes, an optional provider
+becoming healthy, and prior configuration failure. Invalidations are durable and remain
+pending until reconciliation succeeds or the relationship is removed.
+
+An integration is `configured` only after every required phase succeeds. Durable failure
+state identifies the application, provider, integration type, phase, retryability, and cause.
+Restarting the host agent or host must resume reconciliation rather than lose progress.
 
 ## Architecture Principles
 
@@ -305,6 +432,42 @@ automated and repeatably verified. Existing code or a successful manual test is 
 
 ## Portable Runtime
 
+### Runtime Boundary
+
+```text
+runtime-neutral core
+  catalog + planner + integration graph + state + reconciler + configurators
+                              |
+                              v
+Debian runtime adapters
+  Podman + Quadlet + systemd + filesystem + host networking
+```
+
+The core decides what should exist and how relationships should resolve. Runtime adapters
+apply that decision and report observed state. Adapters must not silently add dependencies,
+integrations, or application policy.
+
+### NixOS Responsibility Replacement
+
+| Current responsibility | Portable replacement |
+|---|---|
+| Host-agent installation | Versioned `.deb` and `bloud.service` |
+| Application enablement | Durable desired state and reconciler |
+| Container definitions | Portable manifests and generated Quadlet |
+| systemd units and ordering | Quadlet/systemd adapter |
+| Directories and permissions | Filesystem adapter |
+| Rootless Podman network | Managed rootful Podman networks |
+| Native PostgreSQL and Redis | Bloud-managed containers |
+| Native service configuration | Portable topology and configurators |
+| Firewall and privileged ports | Host-network adapter and preflight |
+| Nix activation scripts | Idempotent runtime adapters and configurators |
+| NixOS rollback | Durable desired state, recorded host changes, and reconciliation |
+| ISO installer | Debian package installation and `bloud init` |
+
+Every release-critical behavior encoded in Nix modules, helpers, activation scripts, native
+services, or systemd hooks must be inventoried and assigned to a portable replacement before
+its existing implementation is removed.
+
 ### Packaging
 
 The first release ships as a versioned Debian package containing:
@@ -344,6 +507,17 @@ PostgreSQL, Redis, Traefik, and Authentik run as Bloud-managed containers for co
 behavior across supported distributions. Inter-service communication uses a managed internal
 network rather than NixOS-native Unix sockets.
 
+### Host Changes
+
+Host-level changes must be explicit, recorded, and reversible. This especially applies to
+AdGuard Home:
+
+- Detect port 53 and resolver conflicts before applying changes.
+- Record prior host resolver configuration.
+- Apply DNS changes only after AdGuard Home is healthy.
+- Restore prior state after failed apply or removal.
+- Verify DNS behavior from a separate client.
+
 ## NixOS Transition
 
 NixOS remains a temporary reference implementation while the portable runtime is built.
@@ -356,6 +530,63 @@ NixOS remains a temporary reference implementation while the portable runtime is
 
 The transition must inventory every responsibility currently hidden in `module.nix`,
 activation scripts, native NixOS services, and systemd hooks.
+
+## Migration Engineering Policy
+
+The migration targets the clean portable architecture, not backward compatibility with
+internal NixOS-era interfaces. Change internal callers in the same validated slice when an
+old contract does not belong in the target design.
+
+Every migration slice must leave behind:
+
+1. A runtime-neutral contract or a measurable reduction in runtime-specific coupling.
+2. Characterization, unit, or contract tests at the lowest useful layer.
+3. No new application-specific branch in shared orchestration.
+4. Explicit failure and retry semantics.
+5. A clear deletion path for replaced code.
+
+### Priority Design Improvements
+
+- Decompose the existing orchestrator into planner, executor/runtime adapter, reconciler, and
+  durable operation-state responsibilities.
+- Introduce explicit domain types incrementally and translate to persistence, API, and
+  runtime representations at boundaries.
+- Design target interfaces from actual consumers. Do not add speculative fields, generic
+  option maps, or compatibility adapters by default.
+- Keep planning pure, deterministic, serializable, inspectable, and independently testable.
+- Separate durable operations from observed application status.
+- Make portable manifests authoritative and reject hidden behavior.
+- Allow application configuration and individual integration-edge configuration to reconcile
+  independently.
+- Use typed errors at domain boundaries to drive retry policy, diagnostics, and tests.
+- Centralize atomic managed-file writes, permissions, change detection, and secret redaction.
+- Prefer small contract-oriented fakes over expanding behavior-heavy mock suites.
+
+### Deletion Targets
+
+Delete these after portable parity is proven:
+
+- Nix generator and rebuilder
+- ISO installer
+- NixOS application modules and helpers
+- Rootless Podman networking workarounds
+- NixOS-native PostgreSQL and Redis assumptions
+- Proxmox/ISO-only release validation
+- NixOS-specific CLI commands
+
+Deprecated runtime paths must not remain indefinitely.
+
+### Migration Non-Goals
+
+Do not use the migration to:
+
+- Rewrite the dashboard
+- Replace the API framework
+- Replace the database without demonstrated need
+- Rename or reorganize unrelated packages
+- Support multiple distributions or container runtimes
+- Build a generic plugin ecosystem
+- Refactor code without characterization or contract tests
 
 ## Testing Strategy
 
@@ -475,6 +706,20 @@ overall release unreliable.
 ## Delivery Phases
 
 Each phase ends with an automated gate.
+
+| Phase | Current status |
+|---|---|
+| Phase 0: Freeze, Inventory, and Measure | In progress; scope frozen, full NixOS responsibility inventory incomplete |
+| Phase 1: Extract the Integration Engine | In progress; typed provider resolution slice completed |
+| Phase 2: Define Portable Manifests and Desired Topology | Not started |
+| Phase 3: Implement the Debian Runtime | Not started |
+| Phase 4: Port Jellyfin | Not started |
+| Phase 5: Port AdGuard Home | Not started |
+| Phase 6: Port Immich | Not started |
+| Phase 7: Package and Release | Not started |
+
+Phase work may overlap only when it does not bypass an earlier phase's release gate or create
+an interface whose requirements have not been established.
 
 ### Phase 0: Freeze, Inventory, and Measure
 
@@ -598,9 +843,9 @@ Before adding application-specific behavior, determine whether it represents a r
 topology or integration contract. If it does not, isolate it, document it, and test it
 directly.
 
-When architecture and working behavior disagree, preserve user data and working behavior
-first, then improve the boundary under tests.
+When architecture and current implementation disagree, preserve user data first, then move
+the implementation to this specification under tests. Do not preserve obsolete internal
+contracts solely for backward compatibility.
 
-Migration work also follows the rules in
-[Portable Runtime Migration Design Rules](docs/migration-design-rules.md). Small,
-fully-validated vertical slices are preferred over broad rewrites.
+Small, fully validated vertical slices are preferred over broad rewrites. Supporting
+documents may explain implementation detail, but this specification remains authoritative.
