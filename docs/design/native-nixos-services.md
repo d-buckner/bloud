@@ -1,5 +1,9 @@
 # Native NixOS Services Migration
 
+> **Status: Superseded.** Native NixOS service migration is no longer the release direction.
+> NixOS remains a temporary reference implementation while Bloud moves to a portable Debian
+> runtime. See [Portable Runtime Architecture](../portable-runtime-architecture.md).
+
 ## Context & Motivation
 
 All Bloud apps currently run as rootless Podman containers under the `bloud` user. This

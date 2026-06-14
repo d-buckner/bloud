@@ -1,5 +1,9 @@
 # Production Architecture
 
+> **Status: Current NixOS implementation reference.** The portable Debian release replaces
+> NixOS deployment while preserving the dashboard, same-origin routing, and shared-login
+> behavior described here. See [Portable Runtime Architecture](../portable-runtime-architecture.md).
+
 ## Overview
 
 In production, Bloud exposes a single port (80) with all traffic routed through Traefik to the host-agent. This simplifies the security model and eliminates dev-only services like Vite.

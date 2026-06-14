@@ -1,5 +1,10 @@
 # Bloud Testing Plan
 
+> **Status: Current-implementation reference.** This plan covers the existing NixOS
+> orchestrator. The portable release also requires configurator contracts, runtime-adapter
+> contracts, integration-edge reconciliation tests, and clean Debian VM acceptance tests as
+> defined in [SPEC.md](../SPEC.md).
+
 This document outlines the comprehensive testing strategy for the orchestrator and NixOS modules.
 
 ## Overview

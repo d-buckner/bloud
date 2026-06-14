@@ -2,6 +2,14 @@
 
 This guide walks through everything you need to add a new app to Bloud — from the first file to a passing test.
 
+> **Current implementation guide:** This document describes the existing NixOS app workflow.
+> The first-release architecture is moving to portable application manifests and a Debian
+> runtime. Do not add a release app until its topology, provider contracts, consumed
+> integrations, static configuration, and dynamic configuration can be represented and
+> tested through the target architecture. See
+> [Portable Runtime Architecture](portable-runtime-architecture.md) and
+> [Integration and Reconciliation Architecture](integration-reconciliation.md).
+
 ## Overview
 
 Each app lives in `apps/<name>/` and consists of six files:
@@ -16,7 +24,10 @@ apps/your-app/
   integration.md    # quirks, debugging tips, architecture notes
 ```
 
-The host-agent reads `metadata.yaml` to understand what the app needs. `module.nix` creates the systemd services. `configurator.go` handles config files, API calls, and anything that needs to happen at runtime.
+The host-agent reads `metadata.yaml` to understand what the app needs. `module.nix` currently
+creates the systemd services. `configurator.go` realizes app and integration desired state:
+it writes static startup configuration and performs dynamic API-based configuration,
+including inter-app dependencies and SSO.
 
 ---
 
@@ -71,7 +82,9 @@ healthCheck:
 
 ### Integrations
 
-Declare what your app depends on. The two types are `database` and `sso`:
+Declare the typed capabilities your app consumes. Integrations are not limited to
+`database` and `sso`; they represent any provider/consumer relationship Bloud must keep
+configured:
 
 ```yaml
 integrations:
@@ -448,7 +461,21 @@ mkPodmanService {
 
 ## Step 3: configurator.go
 
-The configurator runs as hooks around the container lifecycle. It handles setup that can't happen in Nix: writing config files, patching INI settings, making API calls, integrating with other apps.
+The configurator runs as hooks around the service lifecycle. It realizes the desired state
+of the app and its resolved integration edges. This includes writing config files, patching
+settings, provisioning provider-side resources, creating credentials and API keys, making
+API calls, configuring SSO, and integrating with other apps.
+
+The current interface calls the phases `PreStart` and `PostStart`. In the portable target
+architecture these become explicit `StaticConfig` and `DynamicConfig` contracts:
+
+- **Static configuration:** Writes managed startup inputs and reports whether they changed,
+  allowing the reconciler to restart only affected services.
+- **Dynamic configuration:** Runs after required providers and the consumer are healthy,
+  performing idempotent runtime API operations without forcing a restart.
+
+Configurators must receive resolved integrations from `AppState`; they must not discover
+dependencies or rely on undocumented provider implementation details.
 
 Every configurator implements three hooks that the host-agent calls on every service start:
 

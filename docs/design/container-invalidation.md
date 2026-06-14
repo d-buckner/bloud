@@ -1,6 +1,9 @@
 # Container Invalidation Design
 
-> **Status: Design Proposal — Not Implemented.** This document describes a planned approach to container invalidation. None of the schemas, return values, or orchestration flows described here exist in the codebase yet. See the "In Progress / Planned" section of the README for current status.
+> **Status: Superseded by the broader integration-reconciliation target.** This document
+> contains useful early reasoning about static change detection and selective restarts, but
+> invalidation is now modeled per durable integration edge rather than only per container.
+> See [Integration and Reconciliation Architecture](../integration-reconciliation.md).
 
 ## Core Concept
 

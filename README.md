@@ -1,11 +1,17 @@
 # Bloud
 
-**Home Cloud Operating System**
+**Home Cloud Integration Platform**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
 
 > **Status:** Early alpha. Core infrastructure and web UI working.
+>
+> **Architecture direction:** The current implementation runs as a NixOS appliance. The
+> first release target is a portable Bloud binary installed on Debian, while preserving the
+> dashboard, same-origin app experience, dependency graph, configurators, and shared login.
+> See [SPEC.md](SPEC.md), [Portable Runtime Architecture](docs/portable-runtime-architecture.md),
+> and [Integration and Reconciliation Architecture](docs/integration-reconciliation.md).
 
 ---
 
@@ -51,16 +57,17 @@ Every edge in this graph is a manual step on every other platform. Bloud generat
 
 ## The Vision
 
-- Flash USB drive, boot on any x86_64 hardware
-- Access web UI, install apps with one click
-- Every integration automatic: SSO, routing, credentials, app-to-app connections
-- Multi-host orchestration for scaling across machines
+- Install Bloud on a supported Linux server
+- Access the web dashboard and install supported apps with one click
+- Automatically maintain SSO, routing, credentials, databases, and app-to-app connections
+- Reconcile integrations safely after dependency changes, failures, upgrades, and reboot
 
 ---
 
-## Quick Start
+## Current Development Quick Start
 
-Bloud runs as a bootable ISO. Flash it to a USB drive or deploy it to a VM.
+The current development implementation runs as a bootable NixOS ISO. It remains the
+reference runtime while the portable Debian runtime is built.
 
 For **development**, you'll need a NixOS machine (see [Local Development](#local-development) below).
 
@@ -76,7 +83,7 @@ Access the web UI at **http://bloud.local** (port 80, through Traefik).
 
 ---
 
-## Apps
+## Current App Catalog
 
 | Category           | Apps                                  |
 | ------------------ | ------------------------------------- |
@@ -139,10 +146,19 @@ The `mkBloudApp` helper handles systemd services, podman networking, volumes, an
 
 ### 3. Idempotent Configurators
 
-SSO, routing, and credentials are wired automatically by the platform — apps don't configure those themselves. What configurators handle is app-specific setup that can't be expressed in Nix: creating directories, writing config files, setting app-specific defaults.
+Configurators turn dependency-graph edges into working integrations. They are not limited to
+SSO or app-local setup. They can provision databases and credentials, write provider
+endpoints, create API keys, register apps with each other, configure Authentik, and apply
+runtime settings.
+
+Static configuration runs before service start and reports whether managed startup inputs
+changed. Dynamic configuration runs after required services are healthy and performs
+idempotent runtime API operations. The current implementation exposes these phases as
+`PreStart` and `PostStart`; the portable architecture formalizes them as `StaticConfig` and
+`DynamicConfig`.
 
 ```go
-// PreStart: runs before the container starts
+// PreStart: current static-configuration hook, before the service starts
 func (c *Configurator) PreStart(ctx context.Context, state *AppState) error {
     // Ensure directories exist
     if err := os.MkdirAll(filepath.Join(state.DataPath, "config"), 0755); err != nil {
@@ -159,14 +175,15 @@ func (c *Configurator) PreStart(ctx context.Context, state *AppState) error {
     return ini.Save(configPath)
 }
 
-// PostStart: runs after the container is healthy
-// Used for apps that require API calls to configure (e.g. Authentik)
+// PostStart: current dynamic-configuration hook, after the service is healthy
+// Used for API calls and inter-app integration
 func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
     return nil // most apps are fully configured by PreStart
 }
 ```
 
 Configurators always write the *desired* state — running them again produces the same result.
+See [Integration and Reconciliation Architecture](docs/integration-reconciliation.md).
 
 ### 4. Container Invalidation
 
@@ -215,7 +232,7 @@ All three are configured automatically at install time.
 
 ---
 
-## Project Structure
+## Current Project Structure
 
 ```
 bloud/

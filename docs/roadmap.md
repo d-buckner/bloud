@@ -1,5 +1,9 @@
 # Bloud Roadmap
 
+> **Status: Superseded for first-release planning.** This roadmap describes the earlier NixOS
+> appliance and broad app-catalog direction. First-release scope and phases are now defined
+> by [SPEC.md](../SPEC.md).
+
 Future features and improvements planned for Bloud.
 
 ---

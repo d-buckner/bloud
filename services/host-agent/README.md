@@ -1,5 +1,10 @@
 # Bloud Host Agent
 
+> **Current implementation reference:** This README describes the existing NixOS deployment.
+> The first-release target is a portable Debian runtime. See
+> [SPEC.md](../../SPEC.md), [Portable Runtime Architecture](../../docs/portable-runtime-architecture.md),
+> and [Integration and Reconciliation Architecture](../../docs/integration-reconciliation.md).
+
 Go service that manages app installation, system monitoring, and provides a web UI for the Bloud home server platform.
 
 ## Architecture
