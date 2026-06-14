@@ -215,7 +215,7 @@ state. It must not rely on an in-memory operation having completed.
 
 The integration engine requires tests for:
 
-- Provider selection and compatibility
+- Provider resolution and compatibility
 - Required and optional integrations
 - Dependency cycles
 - Provider install/remove propagation

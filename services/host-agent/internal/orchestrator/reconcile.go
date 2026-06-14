@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	integrationdomain "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/integration"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -331,34 +332,28 @@ func (r *Reconciler) computeLevels(apps map[string]*store.InstalledApp) [][]stri
 // installedApps is used to resolve optional integrations — pass the full
 // installed app map from the current reconcile cycle (or nil to skip).
 func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[string]*store.InstalledApp) *configurator.AppState {
-	// Required integrations from the database
-	integrations := make(map[string][]string)
-	for name, source := range app.IntegrationConfig {
-		integrations[name] = []string{source}
+	var catalogApp *catalog.App
+	if r.catalogCache != nil {
+		catalogApp, _ = r.catalogCache.Get(app.Name)
 	}
 
-	if r.catalogCache != nil {
-		if catalogApp, err := r.catalogCache.Get(app.Name); err == nil && catalogApp != nil {
-			// SSO strategy
-			if catalogApp.SSO.Strategy != "" {
-				integrations["sso"] = []string{catalogApp.SSO.Strategy}
-				r.logger.Debug("loaded SSO integration from catalog",
-					"app", app.Name,
-					"strategy", catalogApp.SSO.Strategy)
-			}
+	integrations, err := resolveLegacyIntegrations(app, installedApps, catalogApp)
+	if err != nil {
+		r.logger.Warn("failed to resolve typed integrations; preserving provider bindings",
+			"app", app.Name,
+			"error", err)
+		integrations = boundLegacyIntegrations(app.IntegrationConfig)
+	}
 
-			// Non-required integrations: include those whose compatible app is installed
-			for intName, integration := range catalogApp.Integrations {
-				if integration.Required {
-					continue
-				}
-				for _, compatible := range integration.Compatible {
-					if _, installed := installedApps[compatible.App]; installed {
-						integrations[intName] = []string{compatible.App}
-						break // first installed compatible app wins
-					}
-				}
-			}
+	// The current configurator contract overloads the SSO integration with the
+	// strategy when no declared provider edge resolves. Preserve that behavior
+	// until SSO provider identity and strategy are modeled separately.
+	if catalogApp != nil && catalogApp.SSO.Strategy != "" {
+		if _, resolvedProvider := integrations["sso"]; !resolvedProvider {
+			integrations["sso"] = []string{catalogApp.SSO.Strategy}
+			r.logger.Debug("loaded SSO strategy from catalog",
+				"app", app.Name,
+				"strategy", catalogApp.SSO.Strategy)
 		}
 	}
 
@@ -372,3 +367,48 @@ func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[st
 	}
 }
 
+func resolveLegacyIntegrations(
+	app *store.InstalledApp,
+	installedApps map[string]*store.InstalledApp,
+	catalogApp *catalog.App,
+) (map[string][]string, error) {
+	input := integrationdomain.ResolutionInput{
+		Consumer:       integrationdomain.AppID(app.Name),
+		Requirements:   make(map[integrationdomain.Type]integrationdomain.Requirement),
+		BoundProviders: make(map[integrationdomain.Type]integrationdomain.AppID),
+		Installed:      make(map[integrationdomain.AppID]bool),
+	}
+
+	for integrationType, provider := range app.IntegrationConfig {
+		input.BoundProviders[integrationdomain.Type(integrationType)] = integrationdomain.AppID(provider)
+	}
+	for appName := range installedApps {
+		input.Installed[integrationdomain.AppID(appName)] = true
+	}
+	if catalogApp != nil {
+		for integrationType, requirement := range catalogApp.Integrations {
+			compatible := make([]integrationdomain.AppID, 0, len(requirement.Compatible))
+			for _, provider := range requirement.Compatible {
+				compatible = append(compatible, integrationdomain.AppID(provider.App))
+			}
+			input.Requirements[integrationdomain.Type(integrationType)] = integrationdomain.Requirement{
+				Required:   requirement.Required,
+				Compatible: compatible,
+			}
+		}
+	}
+
+	instances, err := integrationdomain.Resolve(input)
+	if err != nil {
+		return nil, err
+	}
+	return integrationdomain.LegacyMap(instances), nil
+}
+
+func boundLegacyIntegrations(bindings map[string]string) map[string][]string {
+	integrations := make(map[string][]string, len(bindings))
+	for integrationType, provider := range bindings {
+		integrations[integrationType] = []string{provider}
+	}
+	return integrations
+}

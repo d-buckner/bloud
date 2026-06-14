@@ -151,6 +151,35 @@ func TestBuildAppState_OptionalIntegration_NotIncludedWhenCompatibleAppAbsent(t 
 	assert.False(t, hasMovieManager, "movieManager should be absent when jellyfin is not installed")
 }
 
+func TestBuildAppState_BoundProviderTakesPrecedenceOverOptionalDiscovery(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	app := fixtureInstalledAppWithIntegrations("app", "running", map[string]string{
+		"database": "mariadb",
+	})
+	catalogApp := &catalog.App{
+		Name: "app",
+		Integrations: map[string]catalog.Integration{
+			"database": {
+				Required: false,
+				Compatible: []catalog.CompatibleApp{
+					{App: "postgres"},
+					{App: "mariadb"},
+				},
+			},
+		},
+	}
+
+	tr.cache.On("Get", "app").Return(catalogApp, nil)
+
+	state := tr.reconciler.buildAppState(app, map[string]*store.InstalledApp{
+		"app":      app,
+		"postgres": fixtureInstalledApp("postgres", "running"),
+		"mariadb":  fixtureInstalledApp("mariadb", "running"),
+	})
+
+	assert.Equal(t, []string{"mariadb"}, state.Integrations["database"])
+}
+
 func TestBuildAppState_RequiredIntegrationsUnaffected(t *testing.T) {
 	tr := newTestReconcilerWithCache()
 
@@ -170,6 +199,66 @@ func TestBuildAppState_RequiredIntegrationsUnaffected(t *testing.T) {
 	state := tr.reconciler.buildAppState(jellyfinApp, installedApps)
 
 	assert.Equal(t, []string{"qbittorrent"}, state.Integrations["downloadClient"])
+}
+
+func TestBuildAppState_JellyfinSyntheticSSOStrategyPreserved(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	jellyfin := fixtureInstalledApp("jellyfin", "running")
+	catalogApp := fixtureJellyfin()
+	catalogApp.SSO = catalog.SSO{Strategy: "ldap"}
+
+	tr.cache.On("Get", "jellyfin").Return(catalogApp, nil)
+
+	state := tr.reconciler.buildAppState(jellyfin, map[string]*store.InstalledApp{
+		"jellyfin": jellyfin,
+	})
+
+	assert.Equal(t, []string{"ldap"}, state.Integrations["sso"])
+}
+
+func TestBuildAppState_ImmichUsesInstalledDeclaredSSOProvider(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	immich := fixtureInstalledApp("immich", "running")
+	authentik := fixtureInstalledApp("authentik", "running")
+	catalogApp := &catalog.App{
+		Name: "immich",
+		SSO:  catalog.SSO{Strategy: "native-oidc"},
+		Integrations: map[string]catalog.Integration{
+			"sso": {
+				Required:   false,
+				Compatible: []catalog.CompatibleApp{{App: "authentik"}},
+			},
+		},
+	}
+
+	tr.cache.On("Get", "immich").Return(catalogApp, nil)
+
+	state := tr.reconciler.buildAppState(immich, map[string]*store.InstalledApp{
+		"immich":    immich,
+		"authentik": authentik,
+	})
+
+	assert.Equal(t, []string{"authentik"}, state.Integrations["sso"])
+}
+
+func TestResolveLegacyIntegrations_IncompatibleBoundProviderReturnsError(t *testing.T) {
+	app := fixtureInstalledAppWithIntegrations("immich", "running", map[string]string{
+		"database": "mariadb",
+	})
+	catalogApp := &catalog.App{
+		Name: "immich",
+		Integrations: map[string]catalog.Integration{
+			"database": {
+				Required:   true,
+				Compatible: []catalog.CompatibleApp{{App: "postgres"}},
+			},
+		},
+	}
+
+	_, err := resolveLegacyIntegrations(app, nil, catalogApp)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "incompatible provider mariadb")
 }
 
 // ============================================================================

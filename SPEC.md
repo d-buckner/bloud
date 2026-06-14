@@ -196,7 +196,7 @@ Pure core responsibilities:
 
 - Manifest and catalog validation
 - Dependency graph construction
-- Provider selection
+- Provider resolution
 - Install and removal planning
 - Desired topology calculation
 - Integration instance calculation

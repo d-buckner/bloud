@@ -1,17 +1,17 @@
 # Slice 001: Typed Integration Instances
 
-**Status:** Proposed  
-**Timebox:** A few hours  
-**Risk:** Low  
+**Status:** Implemented
+**Timebox:** A few hours
+**Risk:** Low
 **Runtime behavior change:** None intended
 
 ## Why This Slice
 
-The portable architecture depends on integration edges being explicit domain objects.
+The portable architecture depends on integration edges being first-class domain objects.
 Currently, resolved integrations are represented in several incompatible forms:
 
 - Catalog declarations in `catalog.Integration`
-- Install choices in `map[string]string`
+- Planner-created provider bindings in `map[string]string`
 - Configuration tasks in `catalog.ConfigTask`
 - Configurator inputs in `AppState.Integrations map[string][]string`
 - SSO strategy injected as a synthetic `"sso"` integration value
@@ -45,7 +45,7 @@ Initial resolution sources:
 
 ```go
 const (
-    ResolutionExplicit ResolutionSource = "explicit"
+    ResolutionBound ResolutionSource = "bound"
     ResolutionOptional ResolutionSource = "optional-installed"
 )
 ```
@@ -65,7 +65,7 @@ Existing configurators continue receiving the same values.
 
 - New runtime-neutral integration domain package
 - Pure deterministic resolution of currently declared integrations
-- Explicit required selections from `InstalledApp.IntegrationConfig`
+- Persisted provider bindings from `InstalledApp.IntegrationConfig`
 - Optional integrations when a compatible provider is installed
 - Stable sorting and duplicate elimination
 - Compatibility conversion to the current string map
@@ -82,7 +82,7 @@ Existing configurators continue receiving the same values.
 - Debian runtime adapters
 - Recursive install planning changes
 - SSO model redesign
-- Changes to current provider-selection behavior
+- Changes to current provider-resolution behavior
 
 ## Important Compatibility Decision
 
@@ -99,14 +99,14 @@ For this slice:
 
 - Typed resolution handles declared provider-consumer integrations only.
 - The existing synthetic SSO strategy injection remains as a clearly marked compatibility
-  step before resolved declared integrations are overlaid.
+  fallback when no declared provider resolves.
 - A later slice will model SSO provider and strategy separately.
 
-This ordering preserves current behavior:
+This preserves current behavior without modeling an override mechanism:
 
 - Jellyfin has no declared SSO integration and receives `sso: ["ldap"]`.
-- Immich declares `sso -> authentik`, so the resolved provider overwrites the synthetic
-  `native-oidc` strategy and it receives `sso: ["authentik"]`.
+- Immich declares `sso -> authentik`, so it receives the installed provider:
+  `sso: ["authentik"]`.
 
 The overload is technical debt, but changing it belongs in a separately tested slice.
 
@@ -132,10 +132,10 @@ type AppDefinition struct {
 }
 
 type ResolutionInput struct {
-    Consumer          AppID
-    Requirements      map[IntegrationType]Requirement
-    ExplicitProviders map[IntegrationType]AppID
-    Installed         map[AppID]bool
+    Consumer       AppID
+    Requirements   map[IntegrationType]Requirement
+    BoundProviders map[IntegrationType]AppID
+    Installed      map[AppID]bool
 }
 ```
 
@@ -145,17 +145,19 @@ Catalog/store translation happens at the reconciler boundary.
 
 For each declared integration:
 
-1. If an explicit provider is selected, resolve that provider.
+1. If a provider binding already exists, resolve that provider. Bindings are created by
+   installation planning; there is currently no UI for customizing provider resolution.
 2. Otherwise, if the integration is optional, select the first installed compatible provider
    using catalog order, matching current behavior.
-3. An explicit compatible provider resolves even if it is not currently installed, matching
+3. A compatible bound provider resolves even if it is not currently installed, matching
    the existing `IntegrationConfig` behavior. Provider health/readiness is outside this slice.
 4. Otherwise, produce no instance. Required-provider installation and blockers remain the
    install planner's responsibility in this slice.
 5. Never produce duplicate consumer/provider/type instances.
 6. Return instances in stable order by integration type, then provider.
 
-The resolver rejects an explicit provider that is not compatible.
+The resolver rejects a bound provider that is not compatible. Optional discovery never
+overrides an existing binding.
 
 ## Implementation Steps
 
@@ -164,7 +166,7 @@ The resolver rejects an explicit provider that is not compatible.
 3. Add the legacy-map compatibility adapter.
 4. Add a small translation function at the reconciler boundary.
 5. Replace the integration-building portion of `buildAppState` with the resolver.
-6. Preserve synthetic SSO strategy injection and overlay ordering as a compatibility step.
+6. Preserve the synthetic SSO strategy fallback as a compatibility step.
 7. Run focused and full host-agent tests.
 
 ## Required Tests
@@ -172,11 +174,12 @@ The resolver rejects an explicit provider that is not compatible.
 Pure resolver tests:
 
 - Empty requirements produce no instances.
-- Explicit required provider resolves.
+- Bound required provider resolves.
+- Bound provider takes precedence over optional discovery.
 - Optional installed provider resolves.
 - Optional absent provider does not resolve.
 - Multiple optional compatible providers preserve current first-match behavior.
-- Explicit incompatible provider returns an error.
+- Bound incompatible provider returns an error.
 - Duplicate inputs do not produce duplicate instances.
 - Output ordering is deterministic.
 - Legacy-map conversion is deterministic.
@@ -187,7 +190,7 @@ Reconciler characterization tests:
 - Existing optional installed integration appears unchanged.
 - Existing optional absent integration remains absent.
 - Jellyfin's synthetic SSO strategy remains unchanged.
-- Immich's declared SSO provider continues to overwrite its synthetic SSO strategy.
+- Immich continues to receive its installed declared SSO provider.
 
 ## Validation Commands
 
