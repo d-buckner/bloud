@@ -742,7 +742,7 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 	if receivedConfig.LdapBindPassword != "secret-password" {
 		t.Errorf("LdapBindPassword = %q, want %q", receivedConfig.LdapBindPassword, "secret-password")
 	}
-	expectedAdminFilter := "(memberOf=cn=jellyfin-admins,ou=groups,dc=example,dc=com)"
+	expectedAdminFilter := "(memberOf=cn=authentik Admins,ou=groups,dc=example,dc=com)"
 	if receivedConfig.LdapAdminFilter != expectedAdminFilter {
 		t.Errorf("LdapAdminFilter = %q, want %q", receivedConfig.LdapAdminFilter, expectedAdminFilter)
 	}
