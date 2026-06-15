@@ -280,7 +280,7 @@ func printUsage() {
 	fmt.Println("  install <app>   Install an app")
 	fmt.Println("  uninstall <app> Uninstall an app")
 	fmt.Println("  validate [flags] Run validation (default: --tier changed)")
-	fmt.Println("    --tier <t>    fast | changed | vm | clean | full")
+	fmt.Println("    --tier <t>    fast | changed | integration | vm | clean | full")
 	fmt.Println("    --app <name>  Scope to a specific app")
 	fmt.Println("    --dry-run     Show plan without executing")
 	fmt.Println("    --explain     Print why each command was selected")

@@ -107,14 +107,17 @@ func runConfigure(args []string) int {
 		return runPreStart(ctx, args[1], registry, appStore, catalogCache, cfg.DataDir, cfg, logger)
 
 	case "poststart":
-		return runPostStart(ctx, args[1], registry, catalogCache, cfg.DataDir, logger)
+		return runPostStart(ctx, args[1], registry, catalogCache, cfg.DataDir, cfg, logger)
 
 	case "reconcile":
-		return runReconcile(ctx, registry, appStore, catalogCache, cfg.DataDir, logger)
+		return runReconcile(ctx, registry, appStore, catalogCache, cfg.DataDir, cfg, logger)
+
+	case "catalog-refresh":
+		return runCatalogRefresh(catalogCache, cfg, logger)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown action: %s\n", action)
-		fmt.Fprintln(os.Stderr, "Usage: bloud-agent configure <prestart|poststart|reconcile> [app-name]")
+		fmt.Fprintln(os.Stderr, "Usage: bloud-agent configure <prestart|poststart|reconcile|catalog-refresh> [app-name]")
 		return 1
 	}
 }
@@ -150,7 +153,8 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 0
 	}
 
-	state, err := buildAppState(appName, catalogCache, dataDir, logger)
+	ldapOutput := buildLDAPOutput(appCfg)
+	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -165,7 +169,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 	return 0
 }
 
-func runPostStart(ctx context.Context, appName string, registry *configurator.Registry, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) int {
+func runPostStart(ctx context.Context, appName string, registry *configurator.Registry, catalogCache catalog.CacheInterface, dataDir string, appCfg *config.Config, logger *slog.Logger) int {
 	logger.Info("running poststart", "app", appName)
 
 	cfg := registry.Get(appName)
@@ -182,7 +186,8 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 		return 1
 	}
 
-	state, err := buildAppState(appName, catalogCache, dataDir, logger)
+	ldapOutput := buildLDAPOutput(appCfg)
+	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -197,8 +202,11 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 	return 0
 }
 
-func runReconcile(ctx context.Context, registry *configurator.Registry, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) int {
+func runReconcile(ctx context.Context, registry *configurator.Registry, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, appCfg *config.Config, logger *slog.Logger) int {
 	logger.Info("running full reconciliation")
+
+	rcfg := orchestrator.DefaultReconcileConfig()
+	rcfg.LDAPOutput = buildLDAPOutput(appCfg)
 
 	reconciler := orchestrator.NewReconciler(
 		registry,
@@ -206,7 +214,7 @@ func runReconcile(ctx context.Context, registry *configurator.Registry, appStore
 		catalogCache,
 		dataDir,
 		logger,
-		orchestrator.DefaultReconcileConfig(),
+		rcfg,
 	)
 
 	if err := reconciler.Reconcile(ctx); err != nil {
@@ -218,8 +226,19 @@ func runReconcile(ctx context.Context, registry *configurator.Registry, appStore
 	return 0
 }
 
-func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir string, logger *slog.Logger) (*configurator.AppState, error) {
+func runCatalogRefresh(catalogCache *catalog.Cache, cfg *config.Config, logger *slog.Logger) int {
+	loader := catalog.NewLoader(cfg.AppsDir)
+	if err := catalogCache.Refresh(loader); err != nil {
+		logger.Error("failed to refresh catalog", "error", err)
+		return 1
+	}
+	logger.Info("catalog refreshed", "appsDir", cfg.AppsDir)
+	return 0
+}
+
+func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir string, ldapOutput *configurator.LDAPOutput, logger *slog.Logger) (*configurator.AppState, error) {
 	ssoEnabled := false
+	ssoStrategy := ""
 	if catalogCache != nil {
 		catalogApp, err := catalogCache.Get(appName)
 		if err != nil {
@@ -227,17 +246,37 @@ func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir 
 		}
 		if catalogApp != nil && catalogApp.SSO.Strategy != "" && catalogApp.SSO.Strategy != "none" {
 			ssoEnabled = true
+			ssoStrategy = catalogApp.SSO.Strategy
 			logger.Debug("loaded SSO strategy from catalog",
 				"app", appName,
 				"strategy", catalogApp.SSO.Strategy)
 		}
 	}
 
-	return &configurator.AppState{
+	state := &configurator.AppState{
 		DataPath:      filepath.Join(dataDir, appName),
 		BloudDataPath: dataDir,
 		SSOEnabled:    ssoEnabled,
-	}, nil
+	}
+
+	if ssoEnabled && ssoStrategy == "ldap" && ldapOutput != nil {
+		state.LDAP = ldapOutput
+	}
+
+	return state, nil
+}
+
+func buildLDAPOutput(cfg *config.Config) *configurator.LDAPOutput {
+	if cfg.LDAPBindPassword == "" {
+		return nil
+	}
+	return &configurator.LDAPOutput{
+		Host:         cfg.LDAPHost,
+		Port:         3389,
+		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		BindPassword: cfg.LDAPBindPassword,
+	}
 }
 
 // writeSSOEnvVars appends host-dependent SSO environment variables to the app's env file.

@@ -37,6 +37,7 @@ bloud
 .env
 .env.*
 !.env.example
+dev/host-agent.env
 
 # Images
 *.img

@@ -31,6 +31,7 @@ type Config struct {
 	AuthentikAdminPassword string
 	AuthentikAdminEmail    string
 	// LDAP configuration
+	LDAPHost         string // LDAP outpost hostname (default: apps-authentik-ldap)
 	LDAPBindPassword string
 	// Secrets manager for accessing generated secrets
 	Secrets *secrets.Manager
@@ -96,6 +97,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: authentikAdminPassword,
 		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),
+		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       ldapBindPassword,
 		Secrets:                secretsMgr,
 	}

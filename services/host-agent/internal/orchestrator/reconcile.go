@@ -25,6 +25,10 @@ type ReconfigDispatcher interface {
 type ReconcileConfig struct {
 	// HealthCheckTimeout is the max time to wait for an app to become healthy
 	HealthCheckTimeout time.Duration
+
+	// LDAPOutput is the LDAP provider endpoint to pass to apps with LDAP SSO strategy.
+	// Nil when no LDAP provider is configured.
+	LDAPOutput *configurator.LDAPOutput
 }
 
 // DefaultReconcileConfig returns default reconciliation configuration
@@ -356,11 +360,19 @@ func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[st
 		return nil, fmt.Errorf("resolve integrations: %w", err)
 	}
 
-	return &configurator.AppState{
+	ssoEnabled := shouldConfigureSSO(catalogApp)
+
+	state := &configurator.AppState{
 		DataPath:      filepath.Join(r.dataDir, app.Name),
 		BloudDataPath: r.dataDir,
-		SSOEnabled:    shouldConfigureSSO(catalogApp),
-	}, nil
+		SSOEnabled:    ssoEnabled,
+	}
+
+	if ssoEnabled && catalogApp != nil && catalogApp.SSO.Strategy == "ldap" && r.config.LDAPOutput != nil {
+		state.LDAP = r.config.LDAPOutput
+	}
+
+	return state, nil
 }
 
 func resolveIntegrationBindings(

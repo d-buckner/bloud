@@ -85,8 +85,9 @@ func runServer() {
 		SSOAuthentikURL: cfg.SSOAuthentikURL,
 		AuthentikToken:  cfg.AuthentikToken,
 		AuthentikPort:   cfg.AuthentikPort,
-		RedisAddr:       cfg.RedisAddr,
-		Registry:        registry,
+		RedisAddr:        cfg.RedisAddr,
+		LDAPBindPassword: cfg.LDAPBindPassword,
+		Registry:         registry,
 	}, logger)
 
 	// Setup graceful shutdown

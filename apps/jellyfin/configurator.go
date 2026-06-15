@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"time"
 
-	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/xmlutil"
 )
@@ -26,36 +25,21 @@ const (
 	// LDAP plugin GUID - this is the standard ID for the Jellyfin LDAP-Auth plugin
 	// Note: Jellyfin uses GUIDs without dashes in the API
 	ldapPluginID = "958aad6637844d2ab89aa7b6fab6e25c"
-
-	// Default LDAP configuration for Authentik
-	// Use container name since Jellyfin and LDAP outpost are on the same network
-	defaultLDAPHost     = "apps-authentik-ldap"
-	defaultLDAPPort     = 3389
-	defaultLDAPBaseDN   = "dc=ldap,dc=goauthentik,dc=io"
-	defaultLDAPBindUser = "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io"
 )
 
 // Configurator handles Jellyfin configuration
 type Configurator struct {
-	Port           int
-	baseURL        string // Override for testing; if empty, uses localhost:Port
-	ldapHost       string
-	ldapPort       int
-	authentikURL   string // URL for Authentik API
-	authentikToken string // API token for Authentik
+	Port    int
+	baseURL string // Override for testing; if empty, uses localhost:Port
 }
 
 // NewConfigurator creates a new Jellyfin configurator
-func NewConfigurator(port int, authentikURL, authentikToken string) *Configurator {
+func NewConfigurator(port int) *Configurator {
 	if port == 0 {
 		port = 8096
 	}
 	return &Configurator{
-		Port:           port,
-		ldapHost:       defaultLDAPHost,
-		ldapPort:       defaultLDAPPort,
-		authentikURL:   authentikURL,
-		authentikToken: authentikToken,
+		Port: port,
 	}
 }
 
@@ -171,9 +155,9 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("failed to configure libraries: %w", err)
 	}
 
-	// 3. Configure LDAP if SSO integration is enabled
-	if state.SSOEnabled {
-		if err := c.configureLDAP(ctx); err != nil {
+	// 3. Configure LDAP if SSO integration is enabled and LDAP output is available
+	if state.SSOEnabled && state.LDAP != nil {
+		if err := c.configureLDAP(ctx, state); err != nil {
 			return fmt.Errorf("failed to configure LDAP: %w", err)
 		}
 	}
@@ -566,8 +550,10 @@ type LDAPConfig struct {
 	PasswordResetUrl               string   `json:"PasswordResetUrl"`
 }
 
-// configureLDAP configures the LDAP plugin to use Authentik
-func (c *Configurator) configureLDAP(ctx context.Context) error {
+// configureLDAP configures the LDAP plugin using the typed LDAP output from AppState.
+func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.AppState) error {
+	ldap := state.LDAP
+
 	// First, authenticate to get an access token
 	token, err := c.authenticate(ctx, bootstrapUsername, bootstrapPassword)
 	if err != nil {
@@ -587,32 +573,25 @@ func (c *Configurator) configureLDAP(ctx context.Context) error {
 	}
 
 	// Check if already configured for our LDAP server (idempotency)
-	if config.LdapServer == c.ldapHost && config.LdapBindUser != "" {
+	if config.LdapServer == ldap.Host && config.LdapBindUser != "" {
 		log.Println("Jellyfin: LDAP already configured")
 		return nil
 	}
 
-	// Query Authentik for the actual LDAP service token key
-	akClient := authentikClient.NewClient(c.authentikURL, c.authentikToken)
-	ldapBindPassword, err := akClient.GetLDAPServiceTokenKey()
-	if err != nil {
-		return fmt.Errorf("getting LDAP service token key from Authentik: %w", err)
-	}
-
-	// Configure LDAP for Authentik
+	// Configure LDAP using typed output
 	log.Println("Jellyfin: Configuring LDAP...")
 	newConfig := LDAPConfig{
-		LdapServer:            c.ldapHost,
-		LdapPort:              c.ldapPort,
-		UseSsl:                false, // Using plain LDAP for local dev
+		LdapServer:            ldap.Host,
+		LdapPort:              ldap.Port,
+		UseSsl:                false,
 		UseStartTls:           false,
 		SkipSslVerify:         true,
-		LdapBindUser:          defaultLDAPBindUser,
-		LdapBindPassword:      ldapBindPassword,
-		LdapBaseDn:            defaultLDAPBaseDN,
+		LdapBindUser:          ldap.BindUser,
+		LdapBindPassword:      ldap.BindPassword,
+		LdapBaseDn:            ldap.BaseDN,
 		LdapSearchFilter:      "(objectClass=user)",
 		LdapAdminBaseDn:       "",
-		LdapAdminFilter:       "(memberOf=cn=jellyfin-admins,ou=groups,dc=ldap,dc=goauthentik,dc=io)",
+		LdapAdminFilter:       fmt.Sprintf("(memberOf=cn=jellyfin-admins,ou=groups,%s)", ldap.BaseDN),
 		LdapSearchAttributes:  "uid, cn, mail, displayName",
 		LdapUidAttribute:      "uid",
 		LdapUsernameAttribute: "cn",

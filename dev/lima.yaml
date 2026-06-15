@@ -1,0 +1,45 @@
+# Lima VM for Bloud local development.
+# Creates a Debian 13 (Trixie) VM with podman for running the service stack.
+#
+# Usage:
+#   limactl create --name=bloud-dev dev/lima.yaml
+#   limactl start bloud-dev
+#   limactl shell bloud-dev bash dev/setup.sh
+
+images:
+  - location: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
+    arch: "aarch64"
+
+vmType: "vz"
+cpus: 4
+memory: "4GiB"
+disk: "30GiB"
+
+mountType: "virtiofs"
+mounts:
+  - location: "~/Projects/bloud"
+    writable: true
+
+portForwards:
+  - guestPort: 3000   # host-agent
+  - guestPort: 5432   # postgres
+  - guestPort: 8096   # jellyfin
+  - guestPort: 9000   # authentik
+
+containerd:
+  system: false
+  user: false
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # Install podman, podman-compose, and Go
+      apt-get update -qq
+      apt-get install -y -qq podman podman-compose golang-go unzip curl jq
+
+      # Enable lingering for the default user so user-level podman services
+      # persist after SSH logout
+      loginctl enable-linger "$(id -un 1000)"

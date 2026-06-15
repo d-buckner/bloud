@@ -111,6 +111,8 @@ func cmdValidate(args []string) int {
 		return runFastTier(root, manifest, flags)
 	case "changed":
 		return runChangedTier(root, manifest, flags)
+	case "integration":
+		return runIntegrationTier(root, manifest, flags)
 	case "vm":
 		return runVMTier(root, manifest, flags)
 	case "clean", "full":
@@ -330,6 +332,190 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	writeLedger(root, result, flags)
 	return exitCode
+}
+
+// --- Integration tier ---
+
+func runIntegrationTier(root string, manifest *validationManifest, flags validateFlags) int {
+	tier, ok := manifest.Tiers["integration"]
+	if !ok {
+		errorf("no 'integration' tier defined in validation.yaml")
+		return 1
+	}
+
+	result := &ValidateResult{
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+		Tier:      "integration",
+	}
+
+	if flags.dryRun {
+		printDryRun("integration", tier.Commands, nil, nil, flags)
+		return 0
+	}
+
+	// Step 1: Check Lima VM is running
+	if !flags.json {
+		fmt.Printf("%s==>%s Checking Lima VM 'bloud-dev'...\n", colorGreen, colorReset)
+	}
+	if !isLimaVMRunning("bloud-dev") {
+		if !flags.json {
+			fmt.Printf("%s==>%s Starting Lima VM 'bloud-dev'...\n", colorGreen, colorReset)
+		}
+		startCmd := exec.Command("limactl", "start", "bloud-dev")
+		startCmd.Stdout = os.Stdout
+		startCmd.Stderr = os.Stderr
+		if err := startCmd.Run(); err != nil {
+			errorf("failed to start Lima VM: %v", err)
+			result.ExitCode = 1
+			result.Confidence = "low"
+			result.ConfidenceReason = "Lima VM failed to start"
+			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			writeLedger(root, result, flags)
+			return 1
+		}
+	}
+
+	// Step 2: Ensure compose stack is running
+	if !flags.json {
+		fmt.Printf("%s==>%s Checking compose stack...\n", colorGreen, colorReset)
+	}
+	composeCheck := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
+		fmt.Sprintf("cd %s/dev && podman-compose ps --format json 2>/dev/null | head -1", root))
+	composeOut, _ := composeCheck.Output()
+	if len(composeOut) == 0 || strings.TrimSpace(string(composeOut)) == "[]" {
+		if !flags.json {
+			fmt.Printf("%s==>%s Starting compose stack...\n", colorGreen, colorReset)
+		}
+		composeUp := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
+			fmt.Sprintf("cd %s/dev && podman-compose up -d", root))
+		composeUp.Stdout = os.Stdout
+		composeUp.Stderr = os.Stderr
+		if err := composeUp.Run(); err != nil {
+			errorf("failed to start compose stack: %v", err)
+			result.ExitCode = 1
+			result.Confidence = "low"
+			result.ConfidenceReason = "compose stack failed to start"
+			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			writeLedger(root, result, flags)
+			return 1
+		}
+	}
+
+	// Step 3: Build host-agent inside VM
+	if !flags.json {
+		fmt.Printf("%s==>%s Building host-agent...\n", colorGreen, colorReset)
+	}
+	buildCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
+		fmt.Sprintf("cd %s/services/host-agent && go build -o /tmp/host-agent ./cmd/host-agent", root))
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		errorf("failed to build host-agent: %v", err)
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "host-agent build failed"
+		result.Commands = append(result.Commands, CommandResult{
+			ID: "build-host-agent", Command: "go build ./cmd/host-agent", Status: "fail", ExitCode: 1,
+		})
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
+	}
+	result.Commands = append(result.Commands, CommandResult{
+		ID: "build-host-agent", Command: "go build ./cmd/host-agent", Status: "pass", ExitCode: 0,
+	})
+
+	// Step 4: Run integration tests inside VM
+	if !flags.json {
+		fmt.Printf("%s==>%s Running integration tests...\n", colorGreen, colorReset)
+	}
+
+	for _, cmd := range tier.Commands {
+		// Source the host-agent.env file and run the test command inside the VM
+		shellCmd := fmt.Sprintf(
+			"set -a && source %s/dev/host-agent.env && set +a && cd %s/%s && %s",
+			root, root, cmd.Cwd, cmd.Run,
+		)
+		testCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", shellCmd)
+		if !flags.json {
+			testCmd.Stdout = os.Stdout
+			testCmd.Stderr = os.Stderr
+		}
+
+		start := time.Now()
+		err := testCmd.Run()
+		dur := time.Since(start)
+
+		cmdExit := 0
+		status := "pass"
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				cmdExit = exitErr.ExitCode()
+			} else {
+				cmdExit = 1
+			}
+			status = "fail"
+		}
+
+		result.Commands = append(result.Commands, CommandResult{
+			ID:         cmd.ID,
+			Cwd:        cmd.Cwd,
+			Command:    cmd.Run,
+			Status:     status,
+			DurationMs: dur.Milliseconds(),
+			ExitCode:   cmdExit,
+		})
+
+		if !flags.json {
+			icon := colorGreen + "✓" + colorReset
+			if status == "fail" {
+				icon = colorRed + "✗" + colorReset
+			}
+			fmt.Printf("%s %s (%dms)\n", icon, cmd.ID, dur.Milliseconds())
+		}
+
+		if cmdExit != 0 {
+			result.ExitCode = 1
+			result.Confidence = "low"
+			result.ConfidenceReason = fmt.Sprintf("integration test %s failed", cmd.ID)
+			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			writeLedger(root, result, flags)
+			return 1
+		}
+	}
+
+	result.ExitCode = 0
+	result.Confidence = "high"
+	result.ConfidenceReason = "integration tests passed against real services"
+	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	writeLedger(root, result, flags)
+	return 0
+}
+
+// isLimaVMRunning checks if a Lima VM is in Running status.
+func isLimaVMRunning(name string) bool {
+	cmd := exec.Command("limactl", "list", "--json")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	// limactl list --json outputs one JSON object per line
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var vm struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		}
+		if json.Unmarshal([]byte(line), &vm) == nil {
+			if vm.Name == name && vm.Status == "Running" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- VM tier ---

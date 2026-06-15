@@ -61,6 +61,8 @@ type ServerConfig struct {
 	AuthentikPort   int    // Authentik API port (default 9001)
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
+	// LDAP configuration
+	LDAPBindPassword string // LDAP bind password for configurators
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
 }
@@ -134,13 +136,23 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 
 	// Initialize reconciler if registry is provided
 	if s.cfg.Registry != nil {
+		rcfg := orchestrator.DefaultReconcileConfig()
+		if s.cfg.LDAPBindPassword != "" {
+			rcfg.LDAPOutput = &configurator.LDAPOutput{
+				Host:         "apps-authentik-ldap",
+				Port:         3389,
+				BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+				BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+				BindPassword: s.cfg.LDAPBindPassword,
+			}
+		}
 		s.reconciler = orchestrator.NewReconciler(
 			s.cfg.Registry,
 			appStore,
 			s.catalog,
 			s.cfg.DataDir,
 			logger,
-			orchestrator.DefaultReconcileConfig(),
+			rcfg,
 		)
 	}
 

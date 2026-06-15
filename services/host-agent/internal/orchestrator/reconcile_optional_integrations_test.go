@@ -10,6 +10,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	integrationdomain "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/integration"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
 
 // newTestReconcilerWithCache creates a Reconciler with a real catalog cache mock wired in.
@@ -294,6 +295,84 @@ func TestBuildAppState_IncompatibleBoundProviderReturnsError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "incompatible provider mariadb")
+}
+
+// ============================================================================
+// buildAppState — LDAPOutput population
+// ============================================================================
+
+func TestBuildAppState_LDAPOutputPopulatedWhenStrategyIsLDAP(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	tr.reconciler.config.LDAPOutput = &configurator.LDAPOutput{
+		Host:         "apps-authentik-ldap",
+		Port:         3389,
+		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		BindPassword: "test-password",
+	}
+
+	jellyfin := fixtureInstalledApp("jellyfin", "running")
+	catalogApp := fixtureJellyfin()
+	catalogApp.SSO = catalog.SSO{Strategy: "ldap"}
+
+	tr.cache.On("Get", "jellyfin").Return(catalogApp, nil)
+
+	state, err := tr.reconciler.buildAppState(jellyfin, map[string]*store.InstalledApp{
+		"jellyfin": jellyfin,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, state.SSOEnabled)
+	require.NotNil(t, state.LDAP)
+	assert.Equal(t, "apps-authentik-ldap", state.LDAP.Host)
+	assert.Equal(t, 3389, state.LDAP.Port)
+	assert.Equal(t, "test-password", state.LDAP.BindPassword)
+}
+
+func TestBuildAppState_LDAPOutputNilWhenStrategyIsOIDC(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	tr.reconciler.config.LDAPOutput = &configurator.LDAPOutput{
+		Host:         "apps-authentik-ldap",
+		Port:         3389,
+		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		BindPassword: "test-password",
+	}
+
+	immich := fixtureInstalledApp("immich", "running")
+	catalogApp := &catalog.App{
+		Name: "immich",
+		SSO:  catalog.SSO{Strategy: "native-oidc"},
+	}
+
+	tr.cache.On("Get", "immich").Return(catalogApp, nil)
+
+	state, err := tr.reconciler.buildAppState(immich, map[string]*store.InstalledApp{
+		"immich": immich,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, state.SSOEnabled)
+	assert.Nil(t, state.LDAP, "LDAP output should be nil for OIDC strategy")
+}
+
+func TestBuildAppState_LDAPOutputNilWhenNoLDAPConfigured(t *testing.T) {
+	tr := newTestReconcilerWithCache()
+	// No LDAPOutput in ReconcileConfig (default nil)
+
+	jellyfin := fixtureInstalledApp("jellyfin", "running")
+	catalogApp := fixtureJellyfin()
+	catalogApp.SSO = catalog.SSO{Strategy: "ldap"}
+
+	tr.cache.On("Get", "jellyfin").Return(catalogApp, nil)
+
+	state, err := tr.reconciler.buildAppState(jellyfin, map[string]*store.InstalledApp{
+		"jellyfin": jellyfin,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, state.SSOEnabled)
+	assert.Nil(t, state.LDAP, "LDAP output should be nil when ReconcileConfig has no LDAPOutput")
 }
 
 func integrationBinding(integrationType, provider string) integrationdomain.Bindings {

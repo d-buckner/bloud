@@ -26,6 +26,12 @@ tiers:
         cwd: .
         run: npm run check --workspace=@bloud/installer-web
 
+  integration:
+    commands:
+      - id: e2e-host-agent
+        cwd: services/host-agent
+        run: go test -tags integration -timeout 300s ./internal/e2e/...
+
 inference:
   paths:
     - pattern: "services/host-agent/web/**"

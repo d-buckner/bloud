@@ -44,6 +44,15 @@ type Configurator interface {
 	PostStart(ctx context.Context, state *AppState) error
 }
 
+// LDAPOutput describes the LDAP provider endpoint available to configurators.
+type LDAPOutput struct {
+	Host         string
+	Port         int
+	BaseDN       string
+	BindUser     string
+	BindPassword string
+}
+
 // AppState contains the inputs currently consumed by app configurators.
 type AppState struct {
 	// DataPath is the app's data directory.
@@ -54,4 +63,8 @@ type AppState struct {
 
 	// SSOEnabled indicates that the app should configure its supported SSO strategy.
 	SSOEnabled bool
+
+	// LDAP is populated when the app's SSO strategy is "ldap" and an LDAP provider
+	// is configured. Nil otherwise.
+	LDAP *LDAPOutput
 }
