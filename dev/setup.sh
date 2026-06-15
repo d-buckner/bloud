@@ -102,7 +102,7 @@ BLOUD_DATA_DIR=${DATA_DIR}
 BLOUD_APPS_DIR=${BLOUD_DIR}/apps
 DATABASE_URL=postgres://apps:${POSTGRES_PASSWORD}@localhost:5432/bloud?sslmode=disable
 BLOUD_LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD}
-BLOUD_LDAP_HOST=authentik-ldap
+BLOUD_LDAP_HOST=apps-authentik-ldap
 BLOUD_AUTHENTIK_PORT=9000
 EOF
   chmod 600 "${BLOUD_DIR}/dev/.env" "${BLOUD_DIR}/dev/host-agent.env"

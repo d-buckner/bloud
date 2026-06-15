@@ -40,6 +40,7 @@ services:
       retries: 10
 
   authentik-server:
+    container_name: apps-authentik-server
     image: ghcr.io/goauthentik/server:2025.10.3
     command: server
     environment:
@@ -102,10 +103,11 @@ services:
       - authentik-server
 
   authentik-ldap:
+    container_name: apps-authentik-ldap
     image: ghcr.io/goauthentik/ldap:2025.10.3
     restart: on-failure
     environment:
-      AUTHENTIK_HOST: http://authentik-server:9000
+      AUTHENTIK_HOST: http://apps-authentik-server:9000
       AUTHENTIK_TOKEN: ${AUTHENTIK_LDAP_TOKEN:-placeholder}
     ports:
       - "3389:3389"

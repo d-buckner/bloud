@@ -4,9 +4,12 @@
 // started by podman-compose (dev/compose.yml).
 //
 // These tests verify the complete configurator flow end-to-end:
+//   - Authentik LDAP infrastructure creation
+//   - LDAP outpost token extraction and outpost restart
 //   - Jellyfin setup wizard completion
 //   - Media library creation
 //   - LDAP plugin configuration from typed LDAPOutput
+//   - Actual LDAP authentication (behavioral verification)
 //
 // Run with:
 //
@@ -48,12 +51,12 @@ const (
 )
 
 // expectedLDAPHost returns the LDAP host that the configurator should write.
-// In compose this is "authentik-ldap"; in NixOS it's "apps-authentik-ldap".
+// Compose containers use deterministic names matching production (apps-authentik-ldap).
 func expectedLDAPHost() string {
 	if h := os.Getenv("BLOUD_LDAP_HOST"); h != "" {
 		return h
 	}
-	return "authentik-ldap"
+	return "apps-authentik-ldap"
 }
 
 // Jellyfin bootstrap admin — must match constants in apps/jellyfin/configurator.go
@@ -68,6 +71,23 @@ func hostAgentBinary() string {
 		return p
 	}
 	return "/tmp/host-agent"
+}
+
+// readSecrets reads secrets.json and returns the parsed map.
+func readSecrets() map[string]interface{} {
+	dataDir := os.Getenv("BLOUD_DATA_DIR")
+	if dataDir == "" {
+		home, _ := os.UserHomeDir()
+		dataDir = filepath.Join(home, ".local", "share", "bloud")
+	}
+	secretsFile := filepath.Join(dataDir, "secrets.json")
+	data, err := os.ReadFile(secretsFile)
+	if err != nil {
+		return nil
+	}
+	var secrets map[string]interface{}
+	json.Unmarshal(data, &secrets)
+	return secrets
 }
 
 // hostAgentEnv returns the environment variables needed to run host-agent
@@ -85,18 +105,23 @@ func hostAgentEnv() []string {
 		appsDir = filepath.Join(home, "bloud", "apps")
 	}
 
-	secretsFile := filepath.Join(dataDir, "secrets.json")
+	secrets := readSecrets()
 	pgPassword := "devpass"
 	ldapBindPassword := ""
-	if data, err := os.ReadFile(secretsFile); err == nil {
-		var secrets map[string]interface{}
-		if json.Unmarshal(data, &secrets) == nil {
-			if pw, ok := secrets["postgresPassword"].(string); ok {
-				pgPassword = pw
-			}
-			if pw, ok := secrets["ldapBindPassword"].(string); ok {
-				ldapBindPassword = pw
-			}
+	authentikBootstrapToken := ""
+	authentikBootstrapPassword := ""
+	if secrets != nil {
+		if pw, ok := secrets["postgresPassword"].(string); ok {
+			pgPassword = pw
+		}
+		if pw, ok := secrets["ldapBindPassword"].(string); ok {
+			ldapBindPassword = pw
+		}
+		if tok, ok := secrets["authentikBootstrapToken"].(string); ok {
+			authentikBootstrapToken = tok
+		}
+		if pw, ok := secrets["authentikBootstrapPassword"].(string); ok {
+			authentikBootstrapPassword = pw
 		}
 	}
 
@@ -104,7 +129,7 @@ func hostAgentEnv() []string {
 
 	ldapHost := os.Getenv("BLOUD_LDAP_HOST")
 	if ldapHost == "" {
-		ldapHost = "authentik-ldap" // compose network hostname
+		ldapHost = "apps-authentik-ldap" // deterministic container name matching production
 	}
 
 	env := append(os.Environ(),
@@ -113,7 +138,18 @@ func hostAgentEnv() []string {
 		"DATABASE_URL="+dbURL,
 		"BLOUD_LDAP_BIND_PASSWORD="+ldapBindPassword,
 		"BLOUD_LDAP_HOST="+ldapHost,
+		"BLOUD_AUTHENTIK_PORT=9000",
 	)
+
+	// Pass Authentik credentials if available from secrets.json.
+	// These are needed by the Authentik configurator.
+	if authentikBootstrapToken != "" {
+		env = append(env, "BLOUD_AUTHENTIK_TOKEN="+authentikBootstrapToken)
+	}
+	if authentikBootstrapPassword != "" {
+		env = append(env, "BLOUD_AUTHENTIK_ADMIN_PASSWORD="+authentikBootstrapPassword)
+	}
+
 	return env
 }
 
@@ -132,6 +168,207 @@ func runHostAgent(t *testing.T, args ...string) string {
 		t.Fatalf("host-agent %s failed: %v\noutput:\n%s", strings.Join(args, " "), err, string(out))
 	}
 	return string(out)
+}
+
+// --- Authentik Tests ---
+
+func TestAuthentikHealthCheck(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	for {
+		req, err := http.NewRequestWithContext(ctx, "GET", authentikURL+"/-/health/ready/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatal("Authentik health check timed out")
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func TestAuthentikPostStart_CreatesLDAPInfrastructure(t *testing.T) {
+	// Run the Authentik poststart configurator — this creates:
+	// - API service account + token
+	// - LDAP provider, application, outpost, service account
+	runHostAgent(t, "configure", "poststart", "authentik")
+
+	// Verify: LDAP outpost exists via API
+	secrets := readSecrets()
+	token, ok := secrets["authentikBootstrapToken"].(string)
+	if !ok || token == "" {
+		t.Fatal("authentikBootstrapToken not found in secrets.json")
+	}
+
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, "GET", authentikURL+"/api/v3/outposts/instances/?search=LDAP", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET outposts: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET outposts: status %d: %s", resp.StatusCode, body)
+	}
+
+	var outpostResp struct {
+		Results []struct {
+			Name string `json:"name"`
+			PK   string `json:"pk"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&outpostResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(outpostResp.Results) == 0 {
+		t.Fatal("No LDAP outpost found after poststart")
+	}
+	t.Logf("LDAP outpost created: %s (pk=%s)", outpostResp.Results[0].Name, outpostResp.Results[0].PK)
+}
+
+func TestLDAPOutpost_RestartWithToken(t *testing.T) {
+	// Extract the LDAP outpost token from Authentik and restart the
+	// outpost container with the real token so it can connect.
+	secrets := readSecrets()
+	token, ok := secrets["authentikBootstrapToken"].(string)
+	if !ok || token == "" {
+		t.Fatal("authentikBootstrapToken not found in secrets.json")
+	}
+
+	ctx := context.Background()
+
+	// Find the outpost to get its PK
+	req, _ := http.NewRequestWithContext(ctx, "GET", authentikURL+"/api/v3/outposts/instances/?search=LDAP", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET outposts: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var outpostResp struct {
+		Results []struct {
+			PK string `json:"pk"`
+		} `json:"results"`
+	}
+	json.NewDecoder(resp.Body).Decode(&outpostResp)
+	if len(outpostResp.Results) == 0 {
+		t.Fatal("No LDAP outpost found")
+	}
+	outpostPK := outpostResp.Results[0].PK
+
+	// Get the outpost token using the view_key endpoint
+	tokenID := fmt.Sprintf("ak-outpost-%s-api", outpostPK)
+	viewKeyURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", authentikURL, tokenID)
+	req2, _ := http.NewRequestWithContext(ctx, "GET", viewKeyURL, nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("GET token view_key: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("GET token view_key: status %d: %s", resp2.StatusCode, body)
+	}
+
+	var tokenResp struct {
+		Key string `json:"key"`
+	}
+	json.NewDecoder(resp2.Body).Decode(&tokenResp)
+	if tokenResp.Key == "" {
+		t.Fatal("LDAP outpost token is empty")
+	}
+	t.Logf("Extracted LDAP outpost token: %s...", tokenResp.Key[:8])
+
+	// Stop the LDAP outpost, update its token, and restart it
+	stopCmd := exec.Command("podman", "stop", "apps-authentik-ldap")
+	if out, err := stopCmd.CombinedOutput(); err != nil {
+		t.Logf("podman stop output: %s", out)
+		// Don't fatal — container might not be running
+	}
+
+	rmCmd := exec.Command("podman", "rm", "-f", "apps-authentik-ldap")
+	if out, err := rmCmd.CombinedOutput(); err != nil {
+		t.Logf("podman rm output: %s", out)
+	}
+
+	// Restart via compose with the real token
+	dataDir := os.Getenv("BLOUD_DATA_DIR")
+	if dataDir == "" {
+		home, _ := os.UserHomeDir()
+		dataDir = filepath.Join(home, ".local", "share", "bloud")
+	}
+
+	// Update the compose .env with the real token
+	appsDir := os.Getenv("BLOUD_APPS_DIR")
+	if appsDir == "" {
+		home, _ := os.UserHomeDir()
+		appsDir = filepath.Join(home, "bloud", "apps")
+	}
+	// The compose dir is two levels up from the apps dir
+	composeDir := filepath.Join(filepath.Dir(appsDir), "dev")
+	envFile := filepath.Join(composeDir, ".env")
+	envData, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("reading .env: %v", err)
+	}
+
+	// Replace the placeholder token with the real one
+	newEnv := strings.Replace(string(envData), "AUTHENTIK_LDAP_TOKEN=placeholder", "AUTHENTIK_LDAP_TOKEN="+tokenResp.Key, 1)
+	// Also handle case where token was previously set
+	lines := strings.Split(newEnv, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "AUTHENTIK_LDAP_TOKEN=") {
+			lines[i] = "AUTHENTIK_LDAP_TOKEN=" + tokenResp.Key
+		}
+	}
+	newEnv = strings.Join(lines, "\n")
+	if err := os.WriteFile(envFile, []byte(newEnv), 0600); err != nil {
+		t.Fatalf("writing .env: %v", err)
+	}
+
+	// Restart just the LDAP outpost via compose
+	composeUp := exec.Command("podman-compose", "up", "-d", "authentik-ldap")
+	composeUp.Dir = composeDir
+	if out, err := composeUp.CombinedOutput(); err != nil {
+		t.Fatalf("podman-compose up authentik-ldap failed: %v\n%s", err, out)
+	}
+
+	// Wait for the LDAP outpost to connect (check logs for successful config fetch)
+	t.Log("Waiting for LDAP outpost to connect...")
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		logsCmd := exec.Command("podman", "logs", "apps-authentik-ldap")
+		logsOut, _ := logsCmd.CombinedOutput()
+		if strings.Contains(string(logsOut), "Starting LDAP server") {
+			t.Log("LDAP outpost connected and started")
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	// If we get here, print the last logs for debugging
+	logsCmd := exec.Command("podman", "logs", "--tail", "20", "apps-authentik-ldap")
+	logsOut, _ := logsCmd.CombinedOutput()
+	t.Fatalf("LDAP outpost did not start within 60s. Last logs:\n%s", logsOut)
 }
 
 // --- Jellyfin Tests ---
@@ -231,6 +468,77 @@ func TestJellyfinPostStart_IsIdempotent(t *testing.T) {
 	if !info.StartupWizardCompleted {
 		t.Error("StartupWizardCompleted should still be true after second poststart")
 	}
+}
+
+// --- LDAP Behavioral Verification ---
+
+func TestLDAPAuth_ServiceAccountCanBind(t *testing.T) {
+	// This is the key behavioral test: verify that the LDAP outpost
+	// actually accepts connections and the service account can bind.
+	// This proves the full chain works, not just that config was written.
+	secrets := readSecrets()
+	ldapBindPassword, ok := secrets["ldapBindPassword"].(string)
+	if !ok || ldapBindPassword == "" {
+		t.Fatal("ldapBindPassword not found in secrets.json")
+	}
+
+	// Use ldapsearch to perform an actual LDAP bind
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ldapsearch",
+		"-x",
+		"-H", "ldap://localhost:3389",
+		"-D", expectedLDAPBindUser,
+		"-w", ldapBindPassword,
+		"-b", expectedLDAPBaseDN,
+		"-s", "base",
+		"(objectClass=*)",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("LDAP bind failed: %v\noutput:\n%s", err, string(out))
+	}
+
+	// Verify we got a result (the base DN entry)
+	if !strings.Contains(string(out), expectedLDAPBaseDN) {
+		t.Errorf("LDAP search result does not contain base DN %q:\n%s", expectedLDAPBaseDN, out)
+	}
+	t.Logf("LDAP bind successful, got base DN entry")
+}
+
+func TestLDAPAuth_AuthentikAdminCanBind(t *testing.T) {
+	// Verify the Authentik admin user (akadmin) can authenticate via LDAP.
+	// This proves LDAP is serving real user data, not just the base DN.
+	secrets := readSecrets()
+	adminPassword, ok := secrets["authentikBootstrapPassword"].(string)
+	if !ok || adminPassword == "" {
+		t.Fatal("authentikBootstrapPassword not found in secrets.json")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Bind as akadmin — the DN follows Authentik's LDAP schema
+	cmd := exec.CommandContext(ctx, "ldapsearch",
+		"-x",
+		"-H", "ldap://localhost:3389",
+		"-D", "cn=akadmin,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		"-w", adminPassword,
+		"-b", "ou=users,dc=ldap,dc=goauthentik,dc=io",
+		"-s", "one",
+		"(cn=akadmin)",
+		"cn",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("LDAP bind as akadmin failed: %v\noutput:\n%s", err, string(out))
+	}
+
+	if !strings.Contains(string(out), "akadmin") {
+		t.Errorf("LDAP search did not return akadmin user:\n%s", out)
+	}
+	t.Logf("akadmin LDAP authentication successful")
 }
 
 // --- Helper types and functions ---
