@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	// Bootstrap admin credentials - used to complete setup, then deleted after LDAP is configured
+	// Managed admin credentials used for setup and subsequent reconciliation.
+	// Keep this account until Jellyfin configuration has a separate durable credential.
 	bootstrapUsername = "bloud-bootstrap-admin"
 	bootstrapPassword = "bloud-bootstrap-password-change-me"
 
@@ -553,6 +554,7 @@ type LDAPConfig struct {
 // configureLDAP configures the LDAP plugin using the typed LDAP output from AppState.
 func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.AppState) error {
 	ldap := state.LDAP
+	desiredConfig := desiredLDAPConfig(ldap)
 
 	// First, authenticate to get an access token
 	token, err := c.authenticate(ctx, bootstrapUsername, bootstrapPassword)
@@ -572,15 +574,27 @@ func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.Ap
 		return fmt.Errorf("parsing LDAP config: %w", err)
 	}
 
-	// Check if already configured for our LDAP server (idempotency)
-	if config.LdapServer == ldap.Host && config.LdapBindUser != "" {
+	if ldapConfigMatchesDesired(config, desiredConfig) {
 		log.Println("Jellyfin: LDAP already configured")
 		return nil
 	}
 
 	// Configure LDAP using typed output
 	log.Println("Jellyfin: Configuring LDAP...")
-	newConfig := LDAPConfig{
+	configBytes, err := json.Marshal(desiredConfig)
+	if err != nil {
+		return fmt.Errorf("marshalling LDAP config: %w", err)
+	}
+	if err := c.setPluginConfiguration(ctx, token, ldapPluginID, configBytes); err != nil {
+		return fmt.Errorf("setting LDAP config: %w", err)
+	}
+
+	log.Println("Jellyfin: LDAP configured successfully")
+	return nil
+}
+
+func desiredLDAPConfig(ldap *configurator.LDAPOutput) LDAPConfig {
+	return LDAPConfig{
 		LdapServer:            ldap.Host,
 		LdapPort:              ldap.Port,
 		UseSsl:                false,
@@ -601,21 +615,27 @@ func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.Ap
 		EnableAllFolders:      true,
 		EnabledFolders:        []string{},
 	}
+}
 
-	configBytes, _ := json.Marshal(newConfig)
-	if err := c.setPluginConfiguration(ctx, token, ldapPluginID, configBytes); err != nil {
-		return fmt.Errorf("setting LDAP config: %w", err)
-	}
-
-	log.Println("Jellyfin: LDAP configured successfully")
-
-	// Delete bootstrap admin after LDAP is configured
-	if err := c.deleteBootstrapAdmin(ctx, token); err != nil {
-		log.Printf("Jellyfin: Warning - failed to delete bootstrap admin: %v", err)
-		// Don't fail - LDAP is working, bootstrap admin can be cleaned up later
-	}
-
-	return nil
+func ldapConfigMatchesDesired(current, desired LDAPConfig) bool {
+	return current.LdapServer == desired.LdapServer &&
+		current.LdapPort == desired.LdapPort &&
+		current.UseSsl == desired.UseSsl &&
+		current.UseStartTls == desired.UseStartTls &&
+		current.SkipSslVerify == desired.SkipSslVerify &&
+		current.LdapBindUser == desired.LdapBindUser &&
+		current.LdapBindPassword == desired.LdapBindPassword &&
+		current.LdapBaseDn == desired.LdapBaseDn &&
+		current.LdapSearchFilter == desired.LdapSearchFilter &&
+		current.LdapAdminBaseDn == desired.LdapAdminBaseDn &&
+		current.LdapAdminFilter == desired.LdapAdminFilter &&
+		current.LdapSearchAttributes == desired.LdapSearchAttributes &&
+		current.LdapUidAttribute == desired.LdapUidAttribute &&
+		current.LdapUsernameAttribute == desired.LdapUsernameAttribute &&
+		current.LdapPasswordAttribute == desired.LdapPasswordAttribute &&
+		current.CreateUsersFromLdap == desired.CreateUsersFromLdap &&
+		current.AllowPassChange == desired.AllowPassChange &&
+		current.EnableAllFolders == desired.EnableAllFolders
 }
 
 // AuthResponse represents the authentication response

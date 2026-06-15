@@ -38,7 +38,7 @@ provision:
 
       # Install podman, podman-compose, and Go
       apt-get update -qq
-      apt-get install -y -qq podman podman-compose golang-go unzip curl jq
+      apt-get install -y -qq podman podman-compose golang-go unzip curl jq ldap-utils
 
       # Enable lingering for the default user so user-level podman services
       # persist after SSH logout

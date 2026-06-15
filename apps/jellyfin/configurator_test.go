@@ -596,6 +596,13 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 }
 
 func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
+	ldap := &configurator.LDAPOutput{
+		Host:         "apps-authentik-ldap",
+		Port:         3389,
+		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		BindPassword: "test-ldap-password",
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
@@ -604,12 +611,7 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
 			if r.Method == "GET" {
-				// Return already configured LDAP
-				config := LDAPConfig{
-					LdapServer:   "apps-authentik-ldap",
-					LdapBindUser: "cn=already-configured",
-				}
-				json.NewEncoder(w).Encode(config)
+				json.NewEncoder(w).Encode(desiredLDAPConfig(ldap))
 			} else {
 				// POST should not be called
 				t.Error("SetPluginConfiguration should not be called when already configured")
@@ -627,13 +629,7 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 
 	state := &configurator.AppState{
 		SSOEnabled: true,
-		LDAP: &configurator.LDAPOutput{
-			Host:         "apps-authentik-ldap",
-			Port:         3389,
-			BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
-			BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
-			BindPassword: "test-ldap-password",
-		},
+		LDAP:       ldap,
 	}
 
 	err := c.configureLDAP(context.Background(), state)
@@ -698,10 +694,6 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			}
 
-		case "/Users":
-			// deleteBootstrapAdmin lists users
-			json.NewEncoder(w).Encode([]User{})
-
 		default:
 			t.Errorf("Unexpected endpoint: %s %s", r.Method, r.URL.Path)
 		}
@@ -745,6 +737,51 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 	expectedAdminFilter := "(memberOf=cn=authentik Admins,ou=groups,dc=example,dc=com)"
 	if receivedConfig.LdapAdminFilter != expectedAdminFilter {
 		t.Errorf("LdapAdminFilter = %q, want %q", receivedConfig.LdapAdminFilter, expectedAdminFilter)
+	}
+}
+
+func TestConfigurator_ConfigureLDAP_UpdatesRotatedPassword(t *testing.T) {
+	ldap := &configurator.LDAPOutput{
+		Host:         "apps-authentik-ldap",
+		Port:         3389,
+		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		BindPassword: "new-password",
+	}
+	current := desiredLDAPConfig(ldap)
+	current.LdapBindPassword = "old-password"
+	var receivedConfig LDAPConfig
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+		case "/Plugins/" + ldapPluginID + "/Configuration":
+			if r.Method == http.MethodGet {
+				json.NewEncoder(w).Encode(current)
+				return
+			}
+			json.NewDecoder(r.Body).Decode(&receivedConfig)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("Unexpected endpoint: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096)
+	c.baseURL = server.URL
+
+	err := c.configureLDAP(context.Background(), &configurator.AppState{
+		SSOEnabled: true,
+		LDAP:       ldap,
+	})
+
+	if err != nil {
+		t.Fatalf("configureLDAP() error = %v", err)
+	}
+	if receivedConfig.LdapBindPassword != "new-password" {
+		t.Errorf("LdapBindPassword = %q, want %q", receivedConfig.LdapBindPassword, "new-password")
 	}
 }
 

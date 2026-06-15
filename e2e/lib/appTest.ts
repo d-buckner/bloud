@@ -1,14 +1,7 @@
 import { test, expect, type Page, type FrameLocator } from '@playwright/test';
 import { LoginPage } from './login-page';
 
-// When BLOUD_VM_IP is set, use the VM IP directly for Node.js HTTP requests to
-// bypass mDNS resolution failures across network boundaries (e.g. WiFi ↔ wired).
-// The Host header ensures Traefik and Authentik forward-auth match the domain.
-const vmIP = process.env.BLOUD_VM_IP;
-const EMBED_BASE = vmIP
-  ? `http://${vmIP}`
-  : (process.env.BLOUD_URL ?? 'http://bloud.local');
-const embedHostHeader = vmIP ? { Host: 'bloud.local' } : {};
+const EMBED_BASE = process.env.BLOUD_URL ?? 'http://localhost:3000';
 
 type AppTestFixtures = {
   page: Page;
@@ -54,7 +47,6 @@ export function appTest(appName: string, displayName: string, callback: AppTestC
       // Retry on 4xx (app not configured yet) and 5xx (app still starting).
       await expect(async () => {
         const response = await page.request.get(`${EMBED_BASE}/embed/${appName}/`, {
-          headers: embedHostHeader,
           maxRedirects: 0,
         });
         const status = response.status();

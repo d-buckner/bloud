@@ -38,7 +38,7 @@ export class LoginPage {
     // Fail fast if the setup wizard is showing — the VM hasn't been configured yet.
     const isSetupWizard = await this.page.getByRole('heading', { name: 'Welcome to Bloud' }).isVisible();
     if (isSetupWizard) {
-      throw new Error('VM is unconfigured: setup wizard is showing. Run ./bloud smoke --build to initialize the VM first.');
+      throw new Error('Portable runtime is unconfigured: setup wizard is showing. Provision the E2E environment before running Playwright.');
     }
 
     if (!isAuthPage) return;

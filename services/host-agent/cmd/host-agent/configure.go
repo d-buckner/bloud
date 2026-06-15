@@ -153,7 +153,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 0
 	}
 
-	ldapOutput := buildLDAPOutput(appCfg)
+	ldapOutput := appCfg.LDAPOutput()
 	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
@@ -186,7 +186,7 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 		return 1
 	}
 
-	ldapOutput := buildLDAPOutput(appCfg)
+	ldapOutput := appCfg.LDAPOutput()
 	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
@@ -206,7 +206,7 @@ func runReconcile(ctx context.Context, registry *configurator.Registry, appStore
 	logger.Info("running full reconciliation")
 
 	rcfg := orchestrator.DefaultReconcileConfig()
-	rcfg.LDAPOutput = buildLDAPOutput(appCfg)
+	rcfg.LDAPOutput = appCfg.LDAPOutput()
 
 	reconciler := orchestrator.NewReconciler(
 		registry,
@@ -264,19 +264,6 @@ func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir 
 	}
 
 	return state, nil
-}
-
-func buildLDAPOutput(cfg *config.Config) *configurator.LDAPOutput {
-	if cfg.LDAPBindPassword == "" {
-		return nil
-	}
-	return &configurator.LDAPOutput{
-		Host:         cfg.LDAPHost,
-		Port:         3389,
-		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
-		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
-		BindPassword: cfg.LDAPBindPassword,
-	}
 }
 
 // writeSSOEnvVars appends host-dependent SSO environment variables to the app's env file.

@@ -25,34 +25,34 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	cfg                  ServerConfig
-	router               *chi.Mux
-	db                   *sql.DB
-	catalog              catalog.CacheInterface
-	graph                catalog.AppGraphInterface
-	appStore             store.AppStoreInterface
-	userStore            *store.UserStore
-	sessionStore         *store.SessionStore
-	appHub               *AppEventHub
-	orchestrator         orchestrator.AppOrchestrator
-	reconciler           *orchestrator.Reconciler
-	authentikClient      *authentik.Client
-	authConfig           *AuthConfig
-	knownRedirectURIs    sync.Map // tracks redirect URIs already registered in Authentik
-	logger               *slog.Logger
-	secrets              *secrets.Manager
+	cfg               ServerConfig
+	router            *chi.Mux
+	db                *sql.DB
+	catalog           catalog.CacheInterface
+	graph             catalog.AppGraphInterface
+	appStore          store.AppStoreInterface
+	userStore         *store.UserStore
+	sessionStore      *store.SessionStore
+	appHub            *AppEventHub
+	orchestrator      orchestrator.AppOrchestrator
+	reconciler        *orchestrator.Reconciler
+	authentikClient   *authentik.Client
+	authConfig        *AuthConfig
+	knownRedirectURIs sync.Map // tracks redirect URIs already registered in Authentik
+	logger            *slog.Logger
+	secrets           *secrets.Manager
 }
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
-	AppsDir     string
-	ConfigDir   string
+	AppsDir           string
+	ConfigDir         string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
-	FlakePath   string
-	FlakeTarget string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
-	NixosPath   string
-	Port        int
+	FlakePath         string
+	FlakeTarget       string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
+	NixosPath         string
+	Port              int
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
@@ -62,7 +62,7 @@ type ServerConfig struct {
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
 	// LDAP configuration
-	LDAPBindPassword string // LDAP bind password for configurators
+	LDAPOutput *configurator.LDAPOutput
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
 }
@@ -137,15 +137,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	// Initialize reconciler if registry is provided
 	if s.cfg.Registry != nil {
 		rcfg := orchestrator.DefaultReconcileConfig()
-		if s.cfg.LDAPBindPassword != "" {
-			rcfg.LDAPOutput = &configurator.LDAPOutput{
-				Host:         "apps-authentik-ldap",
-				Port:         3389,
-				BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
-				BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
-				BindPassword: s.cfg.LDAPBindPassword,
-			}
-		}
+		rcfg.LDAPOutput = s.cfg.LDAPOutput
 		s.reconciler = orchestrator.NewReconciler(
 			s.cfg.Registry,
 			appStore,

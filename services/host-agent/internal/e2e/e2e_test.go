@@ -468,6 +468,7 @@ func TestJellyfinPostStart_IsIdempotent(t *testing.T) {
 	if !info.StartupWizardCompleted {
 		t.Error("StartupWizardCompleted should still be true after second poststart")
 	}
+	authenticateJellyfin(t, ctx)
 }
 
 // --- LDAP Behavioral Verification ---

@@ -2,9 +2,9 @@
 
 **Status:** Authoritative active plan
 **Last updated:** 2026-06-13
-**Product:** Portable single-host home cloud  
-**Initial target:** Debian 13, `x86_64`, systemd  
-**Primary risk:** Unreliable implementation and architecture  
+**Product:** Portable single-host home cloud\
+**Initial target:** Debian 13, `x86_64`, systemd\
+**Primary risk:** Unreliable implementation and architecture\
 **Release strategy:** Preserve Bloud's integration model while replacing NixOS with a small, tested host runtime
 
 ## Document Authority
@@ -16,8 +16,8 @@ specification through implementation.
 
 Supporting documents provide rationale, detail, and implementation records:
 
-- `docs/portable-runtime-architecture.md`: runtime design detail
-- `docs/integration-reconciliation.md`: reconciliation design detail
+- `docs/portable-runtime-architecture.md`: component overview and diagram
+- `docs/contributing-apps.md`: how to add a new app
 - `docs/migration-design-rules.md`: review checklist and technical-debt inventory
 - `docs/slices/`: scoped implementation records
 

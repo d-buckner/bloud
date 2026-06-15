@@ -1,188 +1,195 @@
 # Portable Runtime Architecture
 
-**Status:** Supporting architecture detail
-**Authority:** `SPEC.md` is authoritative; this document must defer to it
-**Initial target:** Debian 13, `x86_64`, systemd  
-**Replaces for release:** NixOS ISO and NixOS rebuild execution
+Bloud is a self-hosted media server that manages apps (Jellyfin, Immich, etc.) on a single
+Linux host. The **portable runtime** is the Go binary (`host-agent`) that orchestrates app
+lifecycle, configuration, and integration — replacing the previous NixOS-based approach.
 
-## Purpose
+## Component Diagram
 
-This document expands runtime rationale recorded in `SPEC.md`. It does not introduce
-requirements independently; conflicts are resolved in favor of `SPEC.md`.
+```mermaid
+graph TD
+    CLI["./bloud CLI<br/>(macOS, validates + deploys)"]
+    API["Host-Agent API<br/>:3000"]
+    CAT["Catalog"]
+    REC["Reconciler"]
+    INT["Integration Resolver"]
+    REG["Configurator Registry"]
+    AK_CFG["Authentik Configurator"]
+    JF_CFG["Jellyfin Configurator"]
+    IM_CFG["Immich Configurator"]
+    AK_CLIENT["Authentik Client"]
+    STORE["App Store<br/>(PostgreSQL)"]
 
-Bloud is moving from a NixOS distribution to a binary installed on an existing Linux server.
-The portable runtime replaces NixOS as the mechanism that creates and manages services. It
-does not replace the dashboard, same-origin routing, dependency graph, configurators, or SSO.
+    CLI -->|validate, deploy| API
+    API -->|install, uninstall| REC
+    API --> CAT
+    REC --> REG
+    REC --> INT
+    REC --> STORE
+    REC --> CAT
+    INT --> STORE
+    INT --> CAT
+    REG --> AK_CFG
+    REG --> JF_CFG
+    REG --> IM_CFG
+    AK_CFG --> AK_CLIENT
+    JF_CFG -->|reads LDAPOutput| REC
 
-The first supported host is Debian 13. Other distributions are separate compatibility
-targets, not implied support.
+    subgraph "Infrastructure Containers"
+        PG["PostgreSQL"]
+        REDIS["Redis"]
+        AK["Authentik<br/>(SSO + LDAP)"]
+        LDAP["LDAP Outpost"]
+    end
 
-## Runtime Boundary
+    subgraph "App Containers"
+        JF["Jellyfin"]
+        IM["Immich"]
+    end
 
-```text
-runtime-neutral core
-  catalog + planner + integration graph + reconciler + configurators
-                              |
-                              v
-Debian runtime adapters
-  Podman + Quadlet + systemd + filesystem + host networking
+    AK_CLIENT --> AK
+    AK --> LDAP
+    JF -->|LDAP bind| LDAP
 ```
 
-The core calculates desired state. Runtime adapters apply it and report observed state.
-Adapters do not decide which dependencies or integrations should exist.
+## Components
 
-## NixOS Responsibility Replacement
+### Host-Agent CLI (`services/host-agent/cmd/host-agent/`)
 
-| Current NixOS responsibility | Portable replacement |
+Entry point. Runs as a systemd service (API mode) or executes one-shot configure commands.
+
+| Subcommand | Purpose |
 |---|---|
-| Host-agent installation | Versioned `.deb` and `bloud.service` |
-| App enablement | Desired-state store and reconciler |
-| Container definitions | Portable manifests and generated Quadlet |
-| systemd units and ordering | Quadlet/systemd adapter |
-| Directories and permissions | Filesystem adapter |
-| Rootless Podman network | Managed rootful Podman networks |
-| Native PostgreSQL and Redis | Bloud-managed containers |
-| Native service configuration | Portable topology plus configurators |
-| Firewall and privileged ports | Host-network adapter and preflight |
-| Nix activation scripts | Idempotent runtime adapters/configurators |
-| NixOS rollback | Durable desired state, recorded host changes, and reconciliation |
-| ISO installer | Debian package installation and `bloud init` |
+| *(none)* | Start the REST API server on `:3000` |
+| `configure prestart <app>` | Pre-start setup (dirs, env files, SSO wait) |
+| `configure poststart <app>` | Post-start config (health check, API calls, integrations) |
+| `configure reconcile` | Full reconciliation cycle for all installed apps |
+| `configure catalog-refresh` | Reload app catalog from disk into DB cache |
+| `init-secrets` | Generate and persist initial secrets |
 
-Every release-critical behavior currently encoded in `module.nix`, Nix helpers, activation
-scripts, or native services must be inventoried before its NixOS implementation is removed.
+### Catalog (`internal/catalog/`)
 
-## Privilege Model
+Discovers apps by reading `apps/*/metadata.yaml`. Each app declares its name, port,
+health check, SSO strategy, and integration requirements. The catalog is cached in
+PostgreSQL and refreshed from disk on demand.
 
-The initial portable runtime uses rootful Podman. This is a deliberate scope decision:
+### Integration Resolver (`internal/integration/`)
 
-- AdGuard Home requires port 53 and reversible host DNS changes.
-- Traefik requires privileged web ports.
-- Media apps need predictable shared-directory access.
-- system-level services must start reliably before user login.
-- Rootless host/service networking is currently a significant source of complexity.
-
-Containers should use non-root users internally when supported. Rootless Podman may become a
-future runtime profile after the rootful runtime is reliable.
-
-## Packaging and Layout
-
-```text
-/usr/bin/bloud
-/usr/lib/systemd/system/bloud.service
-
-/etc/bloud/
-  config.yaml
-
-/var/lib/bloud/
-  state/
-  secrets/
-  apps/
-  shared/
-  generated/
-    quadlet/
-    routing/
-  host-backups/
-```
-
-The `.deb` package installs the binary and service. `sudo bloud init` performs host preflight,
-records host state that may need restoration, and establishes core desired state.
-
-## Portable Application Manifest
-
-The portable manifest must represent the entire release stack without hidden runtime
-behavior:
+Deterministically resolves which provider app satisfies each consumer's requirements.
+Apps declare integrations in `metadata.yaml`:
 
 ```yaml
-name: immich
-
-services:
-  server:
-    image: ghcr.io/immich-app/immich-server:v1.130.3
-    health:
-      http: /api/server/ping
-  machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:v1.130.3
-
-consumes:
+integrations:
   database:
     required: true
-    providers: [postgres]
-    capabilities: [pgvector]
-    configure: [static, dynamic]
-  cache:
-    required: true
-    providers: [redis]
-    configure: [static]
+    compatible: [{ app: postgres, default: true }]
   sso:
     required: false
-    providers: [authentik]
-    configure: [dynamic]
-
-routing:
-  embed: true
-  port: 2283
-
-data:
-  preserveOnRemove: true
+    compatible: [{ app: authentik }]
 ```
 
-The final schema is not fixed by this example. The requirement is that topology,
-capabilities, integrations, health, routes, and persistence are explicit and testable.
+Resolution: bound providers are verified for compatibility; unbound required integrations
+error; unbound optional integrations try each compatible provider in catalog order.
 
-## Runtime Application Flow
+### Reconciler (`internal/orchestrator/reconcile.go`)
 
-```text
-desired topology
-      |
-      v
-generate Quadlet and managed files
-      |
-      v
-systemctl daemon-reload
-      |
-      v
-start/restart affected services in dependency order
-      |
-      v
-observe health and report actual state
+Three-phase, dependency-aware lifecycle loop:
+
+1. **PreStart** — all apps in parallel (directories, env files, config generation)
+2. **HealthCheck + PostStart** — apps in topological order by dependency level
+3. **Optional transition** — when an optional dependency becomes healthy, reconfig parent apps
+
+All phases are idempotent. The reconciler builds a dependency graph from resolved
+integrations and computes levels (level 0 = no deps, level N = deps in levels < N).
+
+### Configurator Framework (`pkg/configurator/`)
+
+Generic interface for app-specific runtime configuration that can't be expressed in
+static container definitions (API calls, credential rotation, plugin setup).
+
+```go
+type Configurator interface {
+    Name() string
+    PreStart(ctx context.Context, state *AppState) error
+    HealthCheck(ctx context.Context) error
+    PostStart(ctx context.Context, state *AppState) error
+}
 ```
 
-Runtime application is separate from integration configuration. Starting two healthy
-containers does not mean their relationship is configured.
+**`AppState`** carries typed integration outputs into each configurator:
 
-## Infrastructure
+```go
+type AppState struct {
+    DataPath      string
+    BloudDataPath string
+    SSOEnabled    bool
+    LDAP          *LDAPOutput  // host, port, baseDN, bindUser, bindPassword
+}
+```
 
-PostgreSQL, Redis, Traefik, and Authentik run as Bloud-managed containers. This avoids
-depending on distribution package versions and provides a consistent provider contract.
+**Implementations:**
+- **Authentik** — sets admin password, ensures API token, creates LDAP infrastructure
+- **Jellyfin** — completes setup wizard, creates libraries, configures LDAP plugin
+- **Immich** — initializes database, creates admin, configures OIDC
 
-Inter-service communication uses managed Podman networks. Consumer configurators receive
-typed provider outputs rather than container names or hard-coded addresses.
+### Authentik Client (`pkg/authentik/`)
 
-## Host Changes
+Manages the Authentik identity provider via its REST API. Key operation:
 
-Host-level changes must be explicit, recorded, and reversible. This especially applies to
-AdGuard Home:
+**`EnsureLDAPInfrastructure(ldapBindPassword)`** — idempotent setup:
+1. Create LDAP provider (direct bind + direct search mode)
+2. Create LDAP application
+3. Create service account user, add to admin group
+4. Create service account API token
+5. Set service account password (required for LDAP direct bind)
+6. Create LDAP outpost instance
 
-- Detect port 53 conflicts before apply.
-- Record prior resolver configuration.
-- Apply DNS changes only after AdGuard health is verified.
-- Restore prior state on failed apply or removal.
-- Verify DNS from a separate test client.
+### App Store (`internal/store/`)
 
-## Migration Strategy
+PostgreSQL-backed persistence for installed apps, their status, and resolved integration
+bindings. The reconciler reads desired state from here; the API writes to it on
+install/uninstall.
 
-NixOS remains a temporary reference runtime during migration:
+## Data Flow: Installing an App
 
-1. Inventory existing NixOS behavior.
-2. Add characterization tests.
-3. Define the equivalent portable manifest and integration contracts.
-4. Implement runtime adapters.
-5. Verify on a clean Debian VM.
-6. Remove the NixOS behavior only after parity is proven.
+```
+User clicks "Install Jellyfin"
+  → API records intent in App Store
+  → Integration Resolver binds Jellyfin→PostgreSQL, Jellyfin→Authentik
+  → Reconciler starts reconciliation:
+      Level 0: PostgreSQL, Redis (no deps)
+        → PreStart → HealthCheck → PostStart
+      Level 1: Authentik (depends on PostgreSQL, Redis)
+        → PreStart → HealthCheck → PostStart (creates LDAP infra)
+      Level 2: Jellyfin (depends on Authentik for SSO)
+        → PreStart → HealthCheck → PostStart (wizard, libraries, LDAP config)
+  → All apps healthy, LDAP login works
+```
 
-Bloud will not permanently maintain NixOS and Debian as equal release runtimes.
+## Validation Tiers
 
-Implementation work follows
-[Portable Runtime Migration Design Rules](migration-design-rules.md) and begins with small,
-fully-validated slices such as
-[Slice 001: Typed Integration Resolution](slices/001-typed-integration-instances.md).
+| Tier | Scope | How |
+|---|---|---|
+| `fast` | Unit tests, type checks | `go test`, `vitest` — seconds |
+| `integration` | Backend plumbing against real services | Go tests in Lima VM against Podman compose stack |
+| `vm` | Full ISO on real hardware | Deploy to Proxmox, Playwright smoke tests |
+
+Run with: `./bloud validate --tier <tier>`
+
+## Dev Environment
+
+Lima VM (Debian, Apple Virtualization) + Podman Compose mirrors production:
+
+```
+macOS host
+  └── Lima VM "bloud-dev"
+        ├── podman-compose (dev/compose.yml)
+        │   ├── PostgreSQL :5432
+        │   ├── Redis
+        │   ├── Authentik  :9000
+        │   ├── LDAP Outpost :3389
+        │   └── Jellyfin   :8096
+        └── host-agent binary (built from source)
+```
+
+Ports forward to macOS for Playwright and manual testing.

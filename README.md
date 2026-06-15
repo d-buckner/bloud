@@ -184,8 +184,8 @@ func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
 
 Configurators always write the *desired* state — running them again produces the same result.
 See [SPEC.md](SPEC.md) for the authoritative target and
-[Integration and Reconciliation Architecture](docs/integration-reconciliation.md) for
-supporting detail.
+[Portable Runtime Architecture](docs/portable-runtime-architecture.md) for
+the component overview.
 
 ### 4. Container Invalidation
 
@@ -342,9 +342,9 @@ See [docs/contributing-apps.md](docs/contributing-apps.md) for details.
 
 ## Further Reading
 
-- [docs/embedded-app-routing.md](docs/embedded-app-routing.md) — How apps are served in iframes
-- [docs/design/authentication.md](docs/design/authentication.md) — SSO and auth flows
-- [apps/adding-apps.md](apps/adding-apps.md) — Contributor guide for new apps
+- [docs/portable-runtime-architecture.md](docs/portable-runtime-architecture.md) — Component overview and diagram
+- [docs/contributing-apps.md](docs/contributing-apps.md) — How to add a new app
+- [docs/migration-design-rules.md](docs/migration-design-rules.md) — Migration review checklist
 
 ---
 

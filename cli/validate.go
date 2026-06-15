@@ -78,7 +78,7 @@ type manifestApp struct {
 	Auth            string   `yaml:"auth"`
 	ValidationLevel string   `yaml:"validation-level"`
 	Files           []string `yaml:"files"`
-	SmokeProject    string   `yaml:"smoke-project"`
+	E2EProject      string   `yaml:"e2e-project"`
 }
 
 type validateFlags struct {
@@ -178,9 +178,9 @@ func runFastTier(root string, manifest *validationManifest, flags validateFlags)
 	}
 
 	result := &ValidateResult{
-		StartedAt: time.Now().UTC().Format(time.RFC3339),
-		Tier:      "fast",
-		Confidence: "high",
+		StartedAt:        time.Now().UTC().Format(time.RFC3339),
+		Tier:             "fast",
+		Confidence:       "high",
 		ConfidenceReason: "all fast-tier commands executed",
 	}
 
@@ -375,38 +375,97 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		}
 	}
 
-	// Step 2: Ensure compose stack is running
+	quotedRoot := shellQuote(root)
+
+	// Step 2: Verify the VM has the tools and setup files required by the tests.
 	if !flags.json {
-		fmt.Printf("%s==>%s Checking compose stack...\n", colorGreen, colorReset)
+		fmt.Printf("%s==>%s Checking integration prerequisites...\n", colorGreen, colorReset)
 	}
-	composeCheck := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
-		fmt.Sprintf("cd %s/dev && podman-compose ps --format json 2>/dev/null | head -1", root))
-	composeOut, _ := composeCheck.Output()
-	if len(composeOut) == 0 || strings.TrimSpace(string(composeOut)) == "[]" {
-		if !flags.json {
-			fmt.Printf("%s==>%s Starting compose stack...\n", colorGreen, colorReset)
-		}
-		composeUp := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
-			fmt.Sprintf("cd %s/dev && podman-compose up -d", root))
-		composeUp.Stdout = os.Stdout
-		composeUp.Stderr = os.Stderr
-		if err := composeUp.Run(); err != nil {
-			errorf("failed to start compose stack: %v", err)
-			result.ExitCode = 1
-			result.Confidence = "low"
-			result.ConfidenceReason = "compose stack failed to start"
-			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			writeLedger(root, result, flags)
-			return 1
-		}
+	preflightScript := fmt.Sprintf(
+		"command -v podman >/dev/null && command -v podman-compose >/dev/null && command -v go >/dev/null && command -v ldapsearch >/dev/null && test -f %s/dev/host-agent.env",
+		quotedRoot,
+	)
+	preflight := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", preflightScript)
+	if out, err := preflight.CombinedOutput(); err != nil {
+		errorf("integration prerequisites are missing; recreate/provision the VM and run dev/setup.sh: %v: %s", err, strings.TrimSpace(string(out)))
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "integration prerequisites missing"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
 	}
 
-	// Step 3: Build host-agent inside VM
+	// Step 3: Converge the compose stack and wait for required services.
+	if !flags.json {
+		fmt.Printf("%s==>%s Starting compose stack...\n", colorGreen, colorReset)
+	}
+	composeScript := fmt.Sprintf(`cd %s/dev
+services="postgres redis authentik-server authentik-worker authentik-proxy authentik-ldap jellyfin"
+for service in $services; do
+  id=$(podman ps -aq --filter "label=com.docker.compose.project=dev" --filter "label=com.docker.compose.service=$service" | head -1)
+  if [ -n "$id" ]; then
+    podman start "$id" >/dev/null
+  else
+    podman-compose up -d --no-recreate "$service"
+  fi
+done`, quotedRoot)
+	composeUp := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", composeScript)
+	composeUp.Stdout = os.Stdout
+	composeUp.Stderr = os.Stderr
+	if err := composeUp.Run(); err != nil {
+		errorf("failed to start compose stack: %v", err)
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "compose stack failed to start"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
+	}
+
+	readinessScript := fmt.Sprintf(`cd %s/dev
+services="postgres redis authentik-server authentik-worker authentik-proxy authentik-ldap jellyfin"
+deadline=$((SECONDS + 180))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  ready=true
+  for service in $services; do
+    id=$(podman ps -q --filter "label=com.docker.compose.project=dev" --filter "label=com.docker.compose.service=$service" | head -1)
+    if [ -z "$id" ] || [ "$(podman inspect -f '{{.State.Running}}' "$id" 2>/dev/null)" != "true" ]; then
+      ready=false
+      break
+    fi
+    health=$(podman inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id" 2>/dev/null)
+    if [ -n "$health" ] && [ "$health" != "healthy" ]; then
+      ready=false
+      break
+    fi
+  done
+  if [ "$ready" = true ]; then
+    exit 0
+  fi
+  sleep 3
+done
+podman-compose ps
+exit 1`, quotedRoot)
+	readiness := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", readinessScript)
+	readiness.Stdout = os.Stdout
+	readiness.Stderr = os.Stderr
+	if err := readiness.Run(); err != nil {
+		errorf("compose stack did not become ready: %v", err)
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "compose stack did not become ready"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
+	}
+
+	// Step 4: Build host-agent inside VM
 	if !flags.json {
 		fmt.Printf("%s==>%s Building host-agent...\n", colorGreen, colorReset)
 	}
 	buildCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
-		fmt.Sprintf("cd %s/services/host-agent && go build -o /tmp/host-agent ./cmd/host-agent", root))
+		fmt.Sprintf("cd %s/services/host-agent && go build -o /tmp/host-agent ./cmd/host-agent", quotedRoot))
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -425,7 +484,7 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		ID: "build-host-agent", Command: "go build ./cmd/host-agent", Status: "pass", ExitCode: 0,
 	})
 
-	// Step 4: Run integration tests inside VM
+	// Step 5: Run integration tests inside VM
 	if !flags.json {
 		fmt.Printf("%s==>%s Running integration tests...\n", colorGreen, colorReset)
 	}
@@ -434,7 +493,7 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		// Source the host-agent.env file and run the test command inside the VM
 		shellCmd := fmt.Sprintf(
 			"set -a && source %s/dev/host-agent.env && set +a && cd %s/%s && %s",
-			root, root, cmd.Cwd, cmd.Run,
+			quotedRoot, quotedRoot, shellQuote(cmd.Cwd), cmd.Run,
 		)
 		testCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", shellCmd)
 		if !flags.json {
@@ -490,6 +549,10 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	writeLedger(root, result, flags)
 	return 0
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // isLimaVMRunning checks if a Lima VM is in Running status.
@@ -625,57 +688,57 @@ func runVMTier(root string, manifest *validationManifest, flags validateFlags) i
 		ID: "health-checks", Command: "./bloud checks", Status: "pass", ExitCode: 0,
 	})
 
-	// Run smoke tests
+	// Run end-to-end tests
 	if !flags.json {
-		fmt.Printf("%s==>%s Running smoke tests...\n", colorGreen, colorReset)
+		fmt.Printf("%s==>%s Running end-to-end tests...\n", colorGreen, colorReset)
 	}
-	smokeArgs := []string{"npx", "playwright", "test"}
+	e2eArgs := []string{"npx", "playwright", "test"}
 	if flags.app != "" {
-		smokeArgs = append(smokeArgs, "--project="+flags.app)
+		e2eArgs = append(e2eArgs, "--project="+flags.app)
 	}
 
-	smokeCmd := exec.Command(smokeArgs[0], smokeArgs[1:]...)
-	smokeCmd.Dir = filepath.Join(root, "smoke")
-	smokeCmd.Stdout = os.Stdout
-	smokeCmd.Stderr = os.Stderr
+	e2eCmd := exec.Command(e2eArgs[0], e2eArgs[1:]...)
+	e2eCmd.Dir = filepath.Join(root, "e2e")
+	e2eCmd.Stdout = os.Stdout
+	e2eCmd.Stderr = os.Stderr
 
 	start := time.Now()
-	smokeErr := smokeCmd.Run()
+	e2eErr := e2eCmd.Run()
 	dur := time.Since(start)
 
-	smokeExit := 0
-	if smokeErr != nil {
-		if exitErr, ok := smokeErr.(*exec.ExitError); ok {
-			smokeExit = exitErr.ExitCode()
+	e2eExit := 0
+	if e2eErr != nil {
+		if exitErr, ok := e2eErr.(*exec.ExitError); ok {
+			e2eExit = exitErr.ExitCode()
 		} else {
-			smokeExit = 1
+			e2eExit = 1
 		}
 	}
 
 	status := "pass"
-	if smokeExit != 0 {
+	if e2eExit != 0 {
 		status = "fail"
 	}
 	result.Commands = append(result.Commands, CommandResult{
-		ID:         "smoke-tests",
-		Cwd:        "smoke",
-		Command:    strings.Join(smokeArgs, " "),
+		ID:         "e2e-tests",
+		Cwd:        "e2e",
+		Command:    strings.Join(e2eArgs, " "),
 		Status:     status,
 		DurationMs: dur.Milliseconds(),
-		ExitCode:   smokeExit,
+		ExitCode:   e2eExit,
 	})
 
-	result.ExitCode = smokeExit
-	if smokeExit == 0 {
+	result.ExitCode = e2eExit
+	if e2eExit == 0 {
 		result.Confidence = "high"
-		result.ConfidenceReason = "vm smoke tests passed"
+		result.ConfidenceReason = "end-to-end tests passed"
 	} else {
 		result.Confidence = "low"
-		result.ConfidenceReason = "smoke tests failed"
+		result.ConfidenceReason = "end-to-end tests failed"
 	}
 	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	writeLedger(root, result, flags)
-	return smokeExit
+	return e2eExit
 }
 
 // --- Helpers ---
