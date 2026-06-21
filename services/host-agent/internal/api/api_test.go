@@ -298,10 +298,9 @@ tags:
 	// Create server with fakes
 	server := &Server{
 		cfg: ServerConfig{
-			AppsDir:   tmpDir,
-			ConfigDir: filepath.Join(tmpDir, "nix"),
-			DataDir:   tmpDir,
-			Port:      8080,
+			AppsDir: tmpDir,
+			DataDir: tmpDir,
+			Port:    8080,
 		},
 		router:   chi.NewRouter(),
 		catalog:  catalogCache,
@@ -385,10 +384,9 @@ integrations:
 	// Create server
 	server := &Server{
 		cfg: ServerConfig{
-			AppsDir:   tmpDir,
-			ConfigDir: filepath.Join(tmpDir, "nix"),
-			DataDir:   tmpDir,
-			Port:      8080,
+			AppsDir: tmpDir,
+			DataDir: tmpDir,
+			Port:    8080,
 		},
 		router:   chi.NewRouter(),
 		catalog:  catalogCache,

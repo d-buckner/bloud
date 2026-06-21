@@ -17,12 +17,8 @@ type Config struct {
 	Port              int
 	DataDir           string
 	AppsDir           string // Path to apps/ directory containing app definitions
-	NixConfigDir      string
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
-	FlakePath         string // Path to flake.nix for nixos-rebuild
-	FlakeTarget       string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
-	NixosPath         string // Path to nixos/ modules directory
-	RedisAddr string // Redis address for session storage
+	RedisAddr         string // Redis address for session storage
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
@@ -63,15 +59,6 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	dataDir := getEnv("BLOUD_DATA_DIR", getDefaultDataDir())
 	appsDir := getEnv("BLOUD_APPS_DIR", "../../apps")
 
-	// FlakePath and NixosPath are only used by the nix runtime orchestrator.
-	// Default to empty so they don't appear in portable runtime logs.
-	defaultFlakePath := ""
-	defaultNixosPath := ""
-	if getEnv("BLOUD_RUNTIME", "portable") == "nix" {
-		defaultFlakePath = filepath.Clean(filepath.Join(appsDir, ".."))
-		defaultNixosPath = filepath.Clean(filepath.Join(appsDir, "..", "nixos"))
-	}
-
 	// Initialize secrets manager
 	secretsPath := filepath.Join(dataDir, "secrets.json")
 	secretsMgr := secrets.NewManager(secretsPath)
@@ -102,11 +89,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
 		AppsDir:                appsDir,
-		NixConfigDir:           getEnv("BLOUD_NIX_CONFIG_DIR", filepath.Join(dataDir, "nix")),
 		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
-		FlakePath:              getEnv("BLOUD_FLAKE_PATH", defaultFlakePath),
-		FlakeTarget:            getEnv("BLOUD_FLAKE_TARGET", "vm-dev"),
-		NixosPath:              getEnv("BLOUD_NIXOS_PATH", defaultNixosPath),
 		RedisAddr:              getEnv("BLOUD_REDIS_ADDR", "localhost:6379"),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),

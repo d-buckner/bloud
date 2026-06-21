@@ -7,18 +7,10 @@ on:
       - main
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
-  build-iso:
+  test-go:
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          df -h
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -26,9 +18,25 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-          cache-dependency-path: |
-            services/host-agent/go.sum
-            services/installer/go.sum
+          cache-dependency-path: services/host-agent/go.sum
+
+      - name: Build host-agent
+        working-directory: services/host-agent
+        run: go build ./...
+
+      - name: Run unit tests
+        working-directory: services/host-agent
+        run: go test ./...
+
+      - name: Build CLI
+        working-directory: cli
+        run: go build ./...
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -36,179 +44,11 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Build host-agent binary
-        run: |
-          mkdir -p build
-          cd services/host-agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/host-agent ./cmd/host-agent
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Build installer binary
-        run: |
-          cd services/installer
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../build/installer ./cmd/installer
+      - name: Build frontend
+        run: npm run build --workspace=services/host-agent/web
 
-      - name: Build frontends
-        run: |
-          npm ci
-          npm run build --workspace=services/host-agent/web
-          cp -r services/host-agent/web/build build/frontend
-          npm run build --workspace=@bloud/installer-web
-          cp -r services/installer/web/build build/installer-web
-
-      - name: Stage build artifacts for Nix
-        run: git add -f build/
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@v27
-        with:
-          nix_path: nixpkgs=channel:nixos-24.11
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Build ISO
-        run: |
-          nix build .#packages.x86_64-linux.iso --out-link result-iso
-
-      - name: Prepare release
-        run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          DATE=$(date -u +%Y-%m-%d)
-          TAG="iso-$(date -u +%Y%m%d-%H%M%S)"
-          ISO_SRC=$(find result-iso/iso -name '*.iso' | head -1)
-          ISO_NAME="bloud-${TIMESTAMP}.iso"
-          ISO_SIZE=$(du -h "$ISO_SRC" | cut -f1)
-          cp "$ISO_SRC" "$ISO_NAME"
-          sha256sum "$ISO_NAME" > "$ISO_NAME.sha256"
-          RECENT_COMMITS=$(git log --oneline -10)
-          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
-          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
-          echo "DATE=$DATE" >> $GITHUB_ENV
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "ISO_NAME=$ISO_NAME" >> $GITHUB_ENV
-          echo "ISO_SIZE=$ISO_SIZE" >> $GITHUB_ENV
-          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
-          echo "RECENT_COMMITS<<$EOF" >> $GITHUB_ENV
-          echo "$RECENT_COMMITS" >> $GITHUB_ENV
-          echo "$EOF" >> $GITHUB_ENV
-          ls -lh "$ISO_NAME"
-
-      - name: Create build release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.TAG }}
-          name: "bloud ${{ env.DATE }} (${{ env.SHORT_SHA }})"
-          body: |
-            > **Pre-alpha** — This is an early development build. Expect breaking changes.
-
-            ISO built from [`${{ env.SHORT_SHA }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) at ${{ env.TIMESTAMP }}.
-
-            **Size:** ${{ env.ISO_SIZE }}
-
-            Flash to USB or boot in a VM (Proxmox, QEMU, etc).
-            Default credentials: `bloud` / `bloud`
-
-            ### Recent commits
-            ```
-            ${{ env.RECENT_COMMITS }}
-            ```
-          files: |
-            ${{ env.ISO_NAME }}
-            ${{ env.ISO_NAME }}.sha256
-          draft: false
-          prerelease: true
-
-      - name: Prepare latest release assets
-        run: |
-          cp "$ISO_NAME" bloud.iso
-          sha256sum bloud.iso > bloud.iso.sha256
-
-      - name: Clear old assets from latest release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view latest --json assets --jq '.assets[].name' 2>/dev/null \
-            | while read -r name; do
-                gh release delete-asset latest "$name" --yes
-              done || true
-
-      - name: Move latest tag to current commit
-        run: |
-          git tag -f latest
-          git push -f origin latest
-
-      - name: Update latest release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: "Bloud ISO (latest)"
-          body: |
-            > **Pre-alpha** — This is an early development build. Expect breaking changes.
-
-            The latest Bloud ISO, automatically updated on every build.
-
-            **Current build:** [`${{ env.SHORT_SHA }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) — ${{ env.TIMESTAMP }}
-            **Size:** ${{ env.ISO_SIZE }}
-
-            ## Usage
-
-            Flash to USB or boot in a VM (Proxmox, QEMU, etc).
-            Default credentials: `bloud` / `bloud`
-
-            ### Recent commits
-            ```
-            ${{ env.RECENT_COMMITS }}
-            ```
-          files: |
-            bloud.iso
-            bloud.iso.sha256
-          draft: false
-          prerelease: false
-          make_latest: true
-
-      - name: Clean up old build releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Keep the 5 most recent per-build ISO releases, delete the rest
-          gh release list --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("iso-2")) | .tagName] | sort | reverse | .[5:][]' \
-            | while read -r tag; do
-              echo "Deleting old release: $tag"
-              gh release delete "$tag" --yes --cleanup-tag
-            done
-
-  smoke:
-    needs: build-iso
-    # Only run against self-hosted infrastructure for trusted PRs from the repo owner.
-    # External contributors can open PRs but must not trigger jobs on private runners.
-    if: github.actor == 'd-buckner'
-    runs-on: [self-hosted, bloud-builder]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build CLI
-        run: npm run cli:build
-
-      - name: Get ISO URL
-        id: iso
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          url=$(gh release view latest --json assets \
-            --jq '[.assets[] | select(.name | endswith(".iso"))] | last | .url')
-          echo "url=$url" >> $GITHUB_OUTPUT
-
-      - name: Run smoke tests
-        env:
-          BLOUD_PVE_HOST: ${{ secrets.BLOUD_PVE_HOST }}
-        run: ./bloud smoke --iso-url "${{ steps.iso.outputs.url }}"
-
-      - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-report
-          path: smoke/playwright-report/
-          retention-days: 30
+      - name: Run frontend tests
+        run: npm test --workspace=services/host-agent/web --if-present

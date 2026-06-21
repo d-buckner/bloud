@@ -16,7 +16,6 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/db"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
@@ -52,26 +51,14 @@ func runServer() {
 
 	// Load configuration
 	cfg := config.Load()
-	// NixOS systemd units need these non-standard binary paths. Portable hosts
-	// retain the PATH supplied by their service manager.
-	if cfg.RuntimeMode == "nix" {
-		_ = os.Setenv("PATH", nixgen.NixosSystemPath)
-	}
-	logAttrs := []any{
+	logger.Info("loaded configuration",
 		"runtime", cfg.RuntimeMode,
 		"systemd_scope", cfg.SystemdScope,
 		"quadlet_dir", cfg.QuadletDir,
 		"port", cfg.Port,
 		"data_dir", cfg.DataDir,
 		"apps_dir", cfg.AppsDir,
-	}
-	if cfg.FlakePath != "" {
-		logAttrs = append(logAttrs, "flake_path", cfg.FlakePath)
-	}
-	if cfg.NixosPath != "" {
-		logAttrs = append(logAttrs, "nixos_path", cfg.NixosPath)
-	}
-	logger.Info("loaded configuration", logAttrs...)
+	)
 
 	// Ensure data directory exists for SQLite
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
@@ -118,13 +105,9 @@ func runServer() {
 		SystemdScope:      cfg.SystemdScope,
 		QuadletDir:        cfg.QuadletDir,
 		AppsDir:           cfg.AppsDir,
-		ConfigDir:         cfg.NixConfigDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
 		BaseDomain:        cfg.BaseDomain,
-		FlakePath:         cfg.FlakePath,
-		FlakeTarget:       cfg.FlakeTarget,
-		NixosPath:         cfg.NixosPath,
 		Port:              cfg.Port,
 		SSOHostSecret:     cfg.SSOHostSecret,
 		SSOBaseURL:        cfg.SSOBaseURL,

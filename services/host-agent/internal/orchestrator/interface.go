@@ -33,6 +33,16 @@ type UninstallRequest struct {
 	ClearData bool   `json:"clearData"` // If true, also delete data directory and database
 }
 
+// InstallResult describes the outcome of an installation
+type InstallResult struct {
+	Success        bool     `json:"success"`
+	App            string   `json:"app"`
+	Error          string   `json:"error,omitempty"`
+	AppsInstalled  []string `json:"appsInstalled,omitempty"`
+	Configured     []string `json:"configured,omitempty"`
+	GenerationInfo string   `json:"generationInfo,omitempty"`
+}
+
 // UninstallResult describes the outcome of an uninstallation
 type UninstallResult struct {
 	Success      bool     `json:"success"`

@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
@@ -174,61 +173,6 @@ func (m *MockAppGraph) GetApps() map[string]*catalog.AppDefinition {
 		return nil
 	}
 	return args.Get(0).(map[string]*catalog.AppDefinition)
-}
-
-// MockNixGenerator implements nixgen.GeneratorInterface for testing
-type MockNixGenerator struct {
-	mock.Mock
-}
-
-func (m *MockNixGenerator) LoadCurrent() (*nixgen.Transaction, error) {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*nixgen.Transaction), args.Error(1)
-}
-
-func (m *MockNixGenerator) Apply(tx *nixgen.Transaction) error {
-	args := m.Called(tx)
-	return args.Error(0)
-}
-
-func (m *MockNixGenerator) Preview(tx *nixgen.Transaction) string {
-	args := m.Called(tx)
-	return args.String(0)
-}
-
-func (m *MockNixGenerator) Diff(current, proposed *nixgen.Transaction) string {
-	args := m.Called(current, proposed)
-	return args.String(0)
-}
-
-// MockRebuilder implements nixgen.RebuilderInterface for testing
-type MockRebuilder struct {
-	mock.Mock
-}
-
-func (m *MockRebuilder) Switch(ctx context.Context) (*nixgen.RebuildResult, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*nixgen.RebuildResult), args.Error(1)
-}
-
-func (m *MockRebuilder) SwitchStream(ctx context.Context, events chan<- nixgen.RebuildEvent) {
-	m.Called(ctx, events)
-}
-
-func (m *MockRebuilder) StopUserService(ctx context.Context, appName string) error {
-	args := m.Called(ctx, appName)
-	return args.Error(0)
-}
-
-func (m *MockRebuilder) ReloadAndRestartApps(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
 }
 
 // MockTraefikGenerator implements traefikgen.GeneratorInterface for testing

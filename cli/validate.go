@@ -88,7 +88,6 @@ type validateFlags struct {
 	explain bool
 	dryRun  bool
 	since   string
-	noVM    bool
 }
 
 func cmdValidate(args []string) int {
@@ -113,13 +112,8 @@ func cmdValidate(args []string) int {
 		return runChangedTier(root, manifest, flags)
 	case "integration":
 		return runIntegrationTier(root, manifest, flags)
-	case "vm":
-		return runVMTier(root, manifest, flags)
-	case "clean", "full":
-		errorf("tier %q is not yet implemented (stub)", flags.tier)
-		return 1
 	default:
-		errorf("unknown tier: %s", flags.tier)
+		errorf("unknown tier: %s (available: fast, changed, integration)", flags.tier)
 		return 1
 	}
 }
@@ -149,8 +143,6 @@ func parseValidateFlags(args []string) validateFlags {
 				i++
 				f.since = args[i]
 			}
-		case "--no-vm":
-			f.noVM = true
 		}
 	}
 	return f
@@ -259,13 +251,6 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	if len(unmapped) > 0 {
 		result.Confidence = "medium"
 		result.ConfidenceReason = fmt.Sprintf("%d file(s) not mapped to any validation command", len(unmapped))
-	}
-	if riskAreas["nix-module"] {
-		if _, err := exec.LookPath("nix"); err != nil {
-			result.Confidence = "medium"
-			result.ConfidenceReason = "nix changes detected but nix not available; recommend vm tier"
-			result.NextRecommended = "vm"
-		}
 	}
 
 	// Collect commands to run
@@ -579,166 +564,6 @@ func isLimaVMRunning(name string) bool {
 		}
 	}
 	return false
-}
-
-// --- VM tier ---
-
-func runVMTier(root string, manifest *validationManifest, flags validateFlags) int {
-	if flags.noVM || !isPVEMode() {
-		errorf("vm tier requires Proxmox mode (set BLOUD_PVE_HOST)")
-		return 2
-	}
-
-	result := &ValidateResult{
-		StartedAt: time.Now().UTC().Format(time.RFC3339),
-		Tier:      "vm",
-	}
-
-	changedFiles, _ := getChangedFiles(root, flags.since)
-	result.ChangedFiles = changedFiles
-
-	// Determine push strategy
-	hasNix := false
-	hasGo := false
-	for _, f := range changedFiles {
-		if pathMatches(f, "nixos/**") || f == "flake.nix" || strings.HasSuffix(f, "module.nix") {
-			hasNix = true
-		}
-		if strings.HasSuffix(f, ".go") {
-			hasGo = true
-		}
-	}
-
-	if flags.dryRun {
-		fmt.Printf("Tier: vm\n")
-		fmt.Printf("Changed files: %d\n", len(changedFiles))
-		if hasNix {
-			fmt.Println("Action: ./bloud rebuild (nix changes detected)")
-		} else if hasGo {
-			fmt.Println("Action: ./bloud push (go changes detected)")
-		} else {
-			fmt.Println("Action: health check only (no rebuild/push needed)")
-		}
-		if flags.app != "" {
-			fmt.Printf("Smoke: npx playwright test --project=%s\n", flags.app)
-		} else {
-			fmt.Println("Smoke: npx playwright test (all projects)")
-		}
-		return 0
-	}
-
-	// Execute push/rebuild
-	if hasNix {
-		if !flags.json {
-			fmt.Printf("%s==>%s Rebuilding NixOS (nix changes detected)...\n", colorGreen, colorReset)
-		}
-		exitCode := cmdRebuildPVE()
-		if exitCode != 0 {
-			result.ExitCode = exitCode
-			result.Confidence = "low"
-			result.ConfidenceReason = "rebuild failed"
-			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			result.Commands = append(result.Commands, CommandResult{
-				ID: "rebuild", Command: "./bloud rebuild", Status: "fail", ExitCode: exitCode,
-			})
-			writeLedger(root, result, flags)
-			return exitCode
-		}
-		result.Commands = append(result.Commands, CommandResult{
-			ID: "rebuild", Command: "./bloud rebuild", Status: "pass", ExitCode: 0,
-		})
-	} else if hasGo {
-		if !flags.json {
-			fmt.Printf("%s==>%s Pushing binary (go changes detected)...\n", colorGreen, colorReset)
-		}
-		exitCode := cmdPushPVE()
-		if exitCode != 0 {
-			result.ExitCode = exitCode
-			result.Confidence = "low"
-			result.ConfidenceReason = "push failed"
-			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			result.Commands = append(result.Commands, CommandResult{
-				ID: "push", Command: "./bloud push", Status: "fail", ExitCode: exitCode,
-			})
-			writeLedger(root, result, flags)
-			return exitCode
-		}
-		result.Commands = append(result.Commands, CommandResult{
-			ID: "push", Command: "./bloud push", Status: "pass", ExitCode: 0,
-		})
-	}
-
-	// Run health checks
-	if !flags.json {
-		fmt.Printf("%s==>%s Running health checks...\n", colorGreen, colorReset)
-	}
-	healthExit := cmdChecksPVE()
-	if healthExit != 0 {
-		result.ExitCode = healthExit
-		result.Confidence = "low"
-		result.ConfidenceReason = "health checks failed"
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		result.Commands = append(result.Commands, CommandResult{
-			ID: "health-checks", Command: "./bloud checks", Status: "fail", ExitCode: healthExit,
-		})
-		writeLedger(root, result, flags)
-		return healthExit
-	}
-	result.Commands = append(result.Commands, CommandResult{
-		ID: "health-checks", Command: "./bloud checks", Status: "pass", ExitCode: 0,
-	})
-
-	// Run end-to-end tests
-	if !flags.json {
-		fmt.Printf("%s==>%s Running end-to-end tests...\n", colorGreen, colorReset)
-	}
-	e2eArgs := []string{"npx", "playwright", "test"}
-	if flags.app != "" {
-		e2eArgs = append(e2eArgs, "--project="+flags.app)
-	}
-
-	e2eCmd := exec.Command(e2eArgs[0], e2eArgs[1:]...)
-	e2eCmd.Dir = filepath.Join(root, "e2e")
-	e2eCmd.Stdout = os.Stdout
-	e2eCmd.Stderr = os.Stderr
-
-	start := time.Now()
-	e2eErr := e2eCmd.Run()
-	dur := time.Since(start)
-
-	e2eExit := 0
-	if e2eErr != nil {
-		if exitErr, ok := e2eErr.(*exec.ExitError); ok {
-			e2eExit = exitErr.ExitCode()
-		} else {
-			e2eExit = 1
-		}
-	}
-
-	status := "pass"
-	if e2eExit != 0 {
-		status = "fail"
-	}
-	result.Commands = append(result.Commands, CommandResult{
-		ID:         "e2e-tests",
-		Cwd:        "e2e",
-		Command:    strings.Join(e2eArgs, " "),
-		Status:     status,
-		DurationMs: dur.Milliseconds(),
-		ExitCode:   e2eExit,
-	})
-
-	result.ExitCode = e2eExit
-	if e2eExit == 0 {
-		result.Confidence = "high"
-		result.ConfidenceReason = "end-to-end tests passed"
-	} else {
-		result.Confidence = "low"
-		result.ConfidenceReason = "end-to-end tests failed"
-	}
-	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-	writeLedger(root, result, flags)
-	return e2eExit
 }
 
 // --- Helpers ---

@@ -53,13 +53,9 @@ type ServerConfig struct {
 	SystemdScope      string
 	QuadletDir        string
 	AppsDir           string
-	ConfigDir         string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	BaseDomain        string // Base domain for subdomain routing (e.g., "localhost")
-	FlakePath         string
-	FlakeTarget       string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
-	NixosPath         string
 	Port              int
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
@@ -176,26 +172,10 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	return s
 }
 
-// initOrchestrator sets up the explicitly selected runtime.
+// initOrchestrator sets up the portable runtime orchestrator.
 func (s *Server) initOrchestrator(appStore *store.AppStore) {
-	// Use configured paths (set via env vars or defaults)
-	configPath := filepath.Join(s.cfg.ConfigDir, "apps.nix")
 	traefikConfigPath := filepath.Join(s.cfg.TraefikDynamicDir, "apps-routes.yml")
-
-	orchLogAttrs := []any{"traefikConfigPath", traefikConfigPath}
-	if s.cfg.FlakePath != "" {
-		orchLogAttrs = append(orchLogAttrs, "flakePath", s.cfg.FlakePath)
-	}
-	if s.cfg.NixosPath != "" {
-		orchLogAttrs = append(orchLogAttrs, "nixosPath", s.cfg.NixosPath)
-	}
-	if s.cfg.ConfigDir != "" {
-		orchLogAttrs = append(orchLogAttrs, "configPath", configPath)
-	}
-	s.logger.Info("orchestrator paths", orchLogAttrs...)
-
-	// SSO blueprints directory
-	ssoBlueprintsDir := filepath.Join(s.cfg.DataDir, "authentik-blueprints")
+	s.logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
 
 	if s.cfg.RuntimeMode == "portable" {
 		runtime := s.cfg.ContainerRuntime
@@ -239,37 +219,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		return
 	}
 
-	// Initialize the legacy Nix-based orchestrator.
-	nixOrch := orchestrator.New(orchestrator.Config{
-		Graph:             s.graph,
-		CatalogCache:      s.catalog,
-		AppStore:          appStore,
-		Logger:            s.logger,
-		ConfigPath:        configPath,
-		TraefikConfigPath: traefikConfigPath,
-		BaseDomain:        s.cfg.BaseDomain,
-		NixosPath:         s.cfg.NixosPath,
-		FlakePath:         s.cfg.FlakePath,
-		Hostname:          s.cfg.FlakeTarget,
-		DataDir:           s.cfg.DataDir,
-		// SSO configuration
-		SSOHostSecret:    s.cfg.SSOHostSecret,
-		SSOBaseURLs:      netutil.BuildBaseURLs(s.cfg.SSOBaseURL),
-		SSOAuthentikURL:  s.cfg.SSOAuthentikURL,
-		SSOBlueprintsDir: ssoBlueprintsDir,
-		AuthentikToken:   s.cfg.AuthentikToken,
-		Secrets:          s.secrets,
-	})
-
-	s.orchestrator = nixOrch
-	s.logger.Info("Nix orchestrator initialized")
-
-	// Reconcile database state with actual system state
-	// This handles apps stuck in transitional states from server crashes
-	nixOrch.ReconcileState()
-
-	// Note: Configuration now runs via systemd hooks (ExecStartPre/ExecStartPost)
-	// rather than background watchdogs. See podman-service.nix for hook setup.
+	s.logger.Warn("unknown runtime mode, orchestrator not initialized", "mode", s.cfg.RuntimeMode)
 }
 
 // refreshCatalog loads apps from YAML files and updates the cache and graph
