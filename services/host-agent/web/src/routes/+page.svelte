@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import UnifiedGrid from '$lib/components/UnifiedGrid.svelte';
+	import GridStackGrid from '$lib/components/GridStackGrid.svelte';
 	import AppContextMenu from '$lib/components/AppContextMenu.svelte';
 	import LoadingGrid from '$lib/components/LoadingGrid.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
@@ -103,7 +103,7 @@
 	{:else if isEmpty}
 		<EmptyState />
 	{:else}
-		<UnifiedGrid
+		<GridStackGrid
 			onAppClick={handleAppClick}
 			onAppContextMenu={handleContextMenu}
 			onAddWidget={() => (showWidgetPicker = true)}

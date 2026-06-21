@@ -7,22 +7,22 @@ const STORAGE_KEY = 'bloud-layout';
 const GRID_COLS = 6;
 
 /**
- * A grid element with explicit positioning
+ * A grid element with explicit positioning (0-based, matches GridStack natively)
  */
 export interface GridElement {
 	type: 'app' | 'widget';
 	id: string; // app name or widget id
-	col: number; // 1-based column position
-	row: number; // 1-based row position
-	colspan: number; // number of columns to span
-	rowspan: number; // number of rows to span
+	x: number; // 0-based column position
+	y: number; // 0-based row position
+	w: number; // width in columns
+	h: number; // height in rows
 }
 
 /**
  * Default layout - System stats widget enabled
  */
 export const DEFAULT_LAYOUT: GridElement[] = [
-	{ type: 'widget', id: 'system-stats', col: 1, row: 1, colspan: 2, rowspan: 3 },
+	{ type: 'widget', id: 'system-stats', x: 0, y: 0, w: 2, h: 3 },
 ];
 
 /**
@@ -30,15 +30,15 @@ export const DEFAULT_LAYOUT: GridElement[] = [
  */
 function isCellOccupied(
 	elements: GridElement[],
-	col: number,
-	row: number,
+	x: number,
+	y: number,
 	excludeId?: string
 ): boolean {
 	return elements.some((el) => {
 		if (excludeId && el.id === excludeId) return false;
-		const endCol = el.col + el.colspan - 1;
-		const endRow = el.row + el.rowspan - 1;
-		return col >= el.col && col <= endCol && row >= el.row && row <= endRow;
+		const endX = el.x + el.w - 1;
+		const endY = el.y + el.h - 1;
+		return x >= el.x && x <= endX && y >= el.y && y <= endY;
 	});
 }
 
@@ -47,28 +47,28 @@ function isCellOccupied(
  */
 function findNextAvailablePosition(
 	elements: GridElement[],
-	colspan: number,
-	rowspan: number
-): { col: number; row: number } {
-	const maxRow = elements.reduce((max, el) => Math.max(max, el.row + el.rowspan - 1), 0);
+	w: number,
+	h: number
+): { x: number; y: number } {
+	const maxY = elements.reduce((max, el) => Math.max(max, el.y + el.h - 1), -1);
 
-	for (let row = 1; row <= maxRow + 10; row++) {
-		for (let col = 1; col <= GRID_COLS - colspan + 1; col++) {
+	for (let y = 0; y <= maxY + 10; y++) {
+		for (let x = 0; x <= GRID_COLS - w; x++) {
 			let canPlace = true;
-			for (let c = col; c < col + colspan && canPlace; c++) {
-				for (let r = row; r < row + rowspan && canPlace; r++) {
-					if (isCellOccupied(elements, c, r)) {
+			for (let cx = x; cx < x + w && canPlace; cx++) {
+				for (let cy = y; cy < y + h && canPlace; cy++) {
+					if (isCellOccupied(elements, cx, cy)) {
 						canPlace = false;
 					}
 				}
 			}
 			if (canPlace) {
-				return { col, row };
+				return { x, y };
 			}
 		}
 	}
 
-	return { col: 1, row: maxRow + 1 };
+	return { x: 0, y: maxY + 1 };
 }
 
 /**
@@ -83,6 +83,32 @@ function isLayoutData(data: unknown): data is Layout {
 }
 
 /**
+ * Detect and migrate old 1-based col/row/colspan/rowspan format to 0-based x/y/w/h
+ */
+function migrateElement(el: Record<string, unknown>): GridElement {
+	// Old format has col/row/colspan/rowspan (1-based)
+	if ('col' in el || 'row' in el || 'colspan' in el || 'rowspan' in el) {
+		return {
+			type: el.type as 'app' | 'widget',
+			id: el.id as string,
+			x: ((el.col as number) ?? 1) - 1,
+			y: ((el.row as number) ?? 1) - 1,
+			w: (el.colspan as number) ?? 1,
+			h: (el.rowspan as number) ?? 1,
+		};
+	}
+	// New format already has x/y/w/h
+	return {
+		type: el.type as 'app' | 'widget',
+		id: el.id as string,
+		x: (el.x as number) ?? 0,
+		y: (el.y as number) ?? 0,
+		w: (el.w as number) ?? 1,
+		h: (el.h as number) ?? 1,
+	};
+}
+
+/**
  * Normalize layout loaded from any source (localStorage or API)
  */
 function normalizeLayout(data: Layout): GridElement[] {
@@ -90,34 +116,28 @@ function normalizeLayout(data: Layout): GridElement[] {
 	const elements = Array.isArray(data) ? data : data.elements;
 
 	return elements
-		.filter((el): el is GridElement => {
+		.filter((el): el is Record<string, unknown> => {
 			if (!el || typeof el !== 'object') return false;
-			const item = el as GridElement;
+			const item = el as Record<string, unknown>;
 			if (item.type === 'widget') {
-				return isValidWidgetId(item.id);
+				return isValidWidgetId(item.id as string);
 			}
 			return item.type === 'app' && typeof item.id === 'string';
 		})
 		.map((el) => {
-			if (el.type === 'widget') {
-				const widget = getWidgetById(el.id);
+			const migrated = migrateElement(el as Record<string, unknown>);
+			// For widgets, lock w/h to the registered widget size
+			if (migrated.type === 'widget') {
+				const widget = getWidgetById(migrated.id);
 				if (widget) {
 					return {
-						...el,
-						col: el.col ?? 1,
-						row: el.row ?? 1,
-						colspan: widget.size.cols,
-						rowspan: widget.size.rows,
+						...migrated,
+						w: widget.size.cols,
+						h: widget.size.rows,
 					};
 				}
 			}
-			return {
-				...el,
-				col: el.col ?? 1,
-				row: el.row ?? 1,
-				colspan: 1,
-				rowspan: 1,
-			};
+			return migrated;
 		});
 }
 
@@ -199,15 +219,15 @@ function createLayoutStore() {
 			set(newElements);
 		},
 
-		moveElement(elementId: string, col: number, row: number): void {
+		moveElement(elementId: string, x: number, y: number): void {
 			update((elements) =>
-				elements.map((el) => (el.id === elementId ? { ...el, col, row } : el))
+				elements.map((el) => (el.id === elementId ? { ...el, x, y } : el))
 			);
 		},
 
-		resizeElement(elementId: string, colspan: number, rowspan: number): void {
+		resizeElement(elementId: string, w: number, h: number): void {
 			update((elements) =>
-				elements.map((el) => (el.id === elementId ? { ...el, colspan, rowspan } : el))
+				elements.map((el) => (el.id === elementId ? { ...el, w, h } : el))
 			);
 		},
 
@@ -220,11 +240,11 @@ function createLayoutStore() {
 				}
 
 				const widget = getWidgetById(widgetId);
-				const colspan = widget?.size.cols ?? 2;
-				const rowspan = widget?.size.rows ?? 2;
-				const { col, row } = findNextAvailablePosition(elements, colspan, rowspan);
+				const w = widget?.size.cols ?? 2;
+				const h = widget?.size.rows ?? 2;
+				const { x, y } = findNextAvailablePosition(elements, w, h);
 
-				return [...elements, { type: 'widget', id: widgetId, col, row, colspan, rowspan }];
+				return [...elements, { type: 'widget', id: widgetId, x, y, w, h }];
 			});
 		},
 
@@ -234,8 +254,8 @@ function createLayoutStore() {
 					return elements;
 				}
 
-				const { col, row } = findNextAvailablePosition(elements, 1, 1);
-				return [...elements, { type: 'app', id: appName, col, row, colspan: 1, rowspan: 1 }];
+				const { x, y } = findNextAvailablePosition(elements, 1, 1);
+				return [...elements, { type: 'app', id: appName, x, y, w: 1, h: 1 }];
 			});
 		},
 
@@ -257,11 +277,11 @@ function createLayoutStore() {
 				}
 
 				const widget = getWidgetById(widgetId);
-				const colspan = widget?.size.cols ?? 2;
-				const rowspan = widget?.size.rows ?? 2;
-				const { col, row } = findNextAvailablePosition(elements, colspan, rowspan);
+				const w = widget?.size.cols ?? 2;
+				const h = widget?.size.rows ?? 2;
+				const { x, y } = findNextAvailablePosition(elements, w, h);
 
-				return [...elements, { type: 'widget', id: widgetId, col, row, colspan, rowspan }];
+				return [...elements, { type: 'widget', id: widgetId, x, y, w, h }];
 			});
 		},
 

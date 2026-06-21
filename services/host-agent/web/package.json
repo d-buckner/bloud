@@ -25,5 +25,8 @@
 		"vite": "^6.0.0",
 		"vitest": "^3.0.0"
 	},
-	"type": "module"
+	"type": "module",
+	"dependencies": {
+		"gridstack": "^12.6.0"
+	}
 }
