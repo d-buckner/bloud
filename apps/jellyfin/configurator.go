@@ -1,8 +1,10 @@
 package jellyfin
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
@@ -25,13 +28,17 @@ const (
 
 	// LDAP plugin GUID - this is the standard ID for the Jellyfin LDAP-Auth plugin
 	// Note: Jellyfin uses GUIDs without dashes in the API
-	ldapPluginID = "958aad6637844d2ab89aa7b6fab6e25c"
+	ldapPluginID     = "958aad6637844d2ab89aa7b6fab6e25c"
+	ldapPluginURL    = "https://repo.jellyfin.org/files/plugin/ldap-authentication/ldap-authentication_22.0.0.0.zip"
+	ldapPluginSHA256 = "c2386c001be439c9946280a02d62610f29e325d4094e83bd31221de3f7aa20ae"
 )
 
 // Configurator handles Jellyfin configuration
 type Configurator struct {
-	Port    int
-	baseURL string // Override for testing; if empty, uses localhost:Port
+	Port         int
+	baseURL      string // Override for testing; if empty, uses localhost:Port
+	pluginURL    string
+	pluginSHA256 string
 }
 
 // NewConfigurator creates a new Jellyfin configurator
@@ -40,7 +47,9 @@ func NewConfigurator(port int) *Configurator {
 		port = 8096
 	}
 	return &Configurator{
-		Port: port,
+		Port:         port,
+		pluginURL:    ldapPluginURL,
+		pluginSHA256: ldapPluginSHA256,
 	}
 }
 
@@ -56,8 +65,15 @@ func (c *Configurator) Name() string {
 	return "jellyfin"
 }
 
-// PreStart ensures directories exist and configures network settings.
+// PreStart delegates to StaticConfig, discarding the change signal.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
+	_, err := c.StaticConfig(ctx, state)
+	return err
+}
+
+// StaticConfig ensures directories exist, installs the LDAP plugin, and
+// configures network settings. Returns true if any managed output changed.
+func (c *Configurator) StaticConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
@@ -67,19 +83,120 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-
-	// Configure network.xml for reverse proxy support
-	// This enables Jellyfin to use X-Forwarded-Host headers from Traefik
-	// to return the correct LocalAddress in API responses, fixing the
-	// "server mismatch" warning when embedded in an iframe
-	if err := c.configureNetwork(state.DataPath); err != nil {
-		return fmt.Errorf("failed to configure network: %w", err)
+	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
-	return nil
+	networkChanged, err := c.configureNetwork(state.DataPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to configure network: %w", err)
+	}
+
+	return pluginInstalled || networkChanged, nil
+}
+
+func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (bool, error) {
+	pluginParent := filepath.Join(dataPath, "config", "plugins")
+	pluginDir := filepath.Join(pluginParent, "LDAP-Auth")
+	pluginDLL := filepath.Join(pluginDir, "LDAP-Auth.dll")
+	if _, err := os.Stat(pluginDLL); err == nil {
+		return false, nil
+	}
+	if err := os.MkdirAll(pluginParent, 0755); err != nil {
+		return false, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.pluginURL, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	archive, err := os.CreateTemp(pluginParent, ".ldap-plugin-*.zip")
+	if err != nil {
+		return false, err
+	}
+	archivePath := archive.Name()
+	defer os.Remove(archivePath)
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
+		archive.Close()
+		return false, err
+	}
+	if err := archive.Close(); err != nil {
+		return false, err
+	}
+	if c.pluginSHA256 != "" && fmt.Sprintf("%x", hash.Sum(nil)) != c.pluginSHA256 {
+		return false, fmt.Errorf("download checksum mismatch")
+	}
+
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return false, err
+	}
+	defer reader.Close()
+
+	stagingDir, err := os.MkdirTemp(pluginParent, ".LDAP-Auth-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(stagingDir)
+	for _, file := range reader.File {
+		destination := filepath.Join(stagingDir, file.Name)
+		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
+			return false, fmt.Errorf("plugin archive contains invalid path %q", file.Name)
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(destination, 0755); err != nil {
+				return false, err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+			return false, err
+		}
+		source, err := file.Open()
+		if err != nil {
+			return false, err
+		}
+		mode := file.Mode()
+		if mode == 0 {
+			mode = 0644
+		}
+		target, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			source.Close()
+			return false, err
+		}
+		_, copyErr := io.Copy(target, source)
+		closeErr := target.Close()
+		source.Close()
+		if copyErr != nil {
+			return false, copyErr
+		}
+		if closeErr != nil {
+			return false, closeErr
+		}
+	}
+	if _, err := os.Stat(filepath.Join(stagingDir, "LDAP-Auth.dll")); err != nil {
+		return false, fmt.Errorf("plugin archive did not contain LDAP-Auth.dll")
+	}
+	if err := os.RemoveAll(pluginDir); err != nil {
+		return false, err
+	}
+	return true, os.Rename(stagingDir, pluginDir)
 }
 
 // jellyfinNetworkConfig returns the desired XML config for network.xml.
@@ -113,17 +230,18 @@ func applyNetworkConfig(cfg *xmlutil.ConfigFile) bool {
 	return true
 }
 
-// configureNetwork creates or updates network.xml with reverse proxy settings
-func (c *Configurator) configureNetwork(dataPath string) error {
+// configureNetwork creates or updates network.xml with reverse proxy settings.
+// Returns true if the file content changed.
+func (c *Configurator) configureNetwork(dataPath string) (bool, error) {
 	networkPath := filepath.Join(dataPath, "config", "network.xml")
 
 	cfg, err := xmlutil.Open(networkPath, "NetworkConfiguration")
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if !applyNetworkConfig(cfg) {
-		return nil
+		return false, nil
 	}
 
 	return cfg.Save()
@@ -135,8 +253,13 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
 	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
 }
 
-// PostStart completes the Jellyfin setup wizard and configures LDAP
+// PostStart delegates to DynamicConfig.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	return c.DynamicConfig(ctx, state)
+}
+
+// DynamicConfig completes the Jellyfin setup wizard and configures LDAP.
+func (c *Configurator) DynamicConfig(ctx context.Context, state *configurator.AppState) error {
 	// 1. Check if setup wizard is complete
 	info, err := c.getSystemInfo(ctx)
 	if err != nil {

@@ -1,7 +1,7 @@
 # Bloud Host Agent
 
 > **Current implementation reference:** This README describes the existing NixOS deployment.
-> The first-release target is a portable Debian runtime.
+> The active target is a portable binary running on a Linux host with Podman and required system services.
 > [SPEC.md](../../SPEC.md) is the authoritative first-release plan.
 
 Go service that manages app installation, system monitoring, and provides a web UI for the Bloud home server platform.
@@ -152,6 +152,24 @@ The Go binary will embed the `web/build/` directory and serve it at `/`.
 ```bash
 ./bin/host-agent
 ```
+
+The portable runtime is the default. It requires an accessible Podman API socket
+and systemd with Quadlet support:
+
+```bash
+export BLOUD_RUNTIME=portable
+export BLOUD_PODMAN_SOCKET="${XDG_RUNTIME_DIR}/podman/podman.sock"
+export BLOUD_DATA_DIR="${HOME}/.local/share/bloud"
+export BLOUD_APPS_DIR="$(pwd)/../../apps"
+./bin/host-agent
+```
+
+Rootless execution defaults to user systemd and `~/.config/containers/systemd`.
+Root execution defaults to system systemd and `/etc/containers/systemd`. Override
+these with `BLOUD_SYSTEMD_SCOPE` and `BLOUD_QUADLET_DIR`.
+
+The portable runtime owns managed application containers, Quadlet units, and networks.
+It refuses to remove or adopt containers that were not created by Bloud.
 
 ## Project Structure
 

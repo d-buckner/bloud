@@ -3,6 +3,7 @@ package podman
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -34,6 +35,24 @@ func setupMockPodman(t *testing.T, handler http.Handler) (string, func()) {
 	}
 
 	return socketPath, cleanup
+}
+
+type fakeCommandRunner struct {
+	commands   [][]string
+	failExists bool
+	failCreate bool
+}
+
+func (f *fakeCommandRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	command := append([]string{name}, args...)
+	f.commands = append(f.commands, command)
+	if len(args) >= 2 && args[0] == "network" && args[1] == "exists" && f.failExists {
+		return nil, errors.New("network missing")
+	}
+	if len(args) >= 2 && args[0] == "network" && args[1] == "create" && f.failCreate {
+		return []byte("create failed"), errors.New("create failed")
+	}
+	return nil, nil
 }
 
 func TestClient_Ping(t *testing.T) {
@@ -226,6 +245,45 @@ func TestClient_GetContainer(t *testing.T) {
 	container, err = client.GetContainer(ctx, "missing")
 	require.NoError(t, err)
 	assert.Nil(t, container)
+}
+
+func TestClient_EnsureNetworkCreatesMissingNetwork(t *testing.T) {
+	runner := &fakeCommandRunner{failExists: true}
+	client := &Client{runner: runner}
+
+	require.NoError(t, client.EnsureNetwork(context.Background(), "apps-net"))
+	assert.Equal(t, [][]string{
+		{"podman", "network", "exists", "apps-net"},
+		{"podman", "network", "create", "apps-net"},
+	}, runner.commands)
+}
+
+func TestClient_EnsureNetworkSkipsExistingNetwork(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	client := &Client{runner: runner}
+
+	require.NoError(t, client.EnsureNetwork(context.Background(), "apps-net"))
+	assert.Equal(t, [][]string{{"podman", "network", "exists", "apps-net"}}, runner.commands)
+}
+
+func TestClient_EnsureNetworkRejectsUnsafeNetworkName(t *testing.T) {
+	client := &Client{runner: &fakeCommandRunner{}}
+
+	require.ErrorContains(t, client.EnsureNetwork(context.Background(), "../apps-net"), "invalid network name")
+}
+
+func TestClient_PullImageUsesPodmanCLI(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	client := &Client{runner: runner}
+
+	require.NoError(t, client.PullImage(context.Background(), "docker.io/jellyfin/jellyfin:10.11.7"))
+	assert.Equal(t, [][]string{{"podman", "pull", "docker.io/jellyfin/jellyfin:10.11.7"}}, runner.commands)
+}
+
+func TestClient_PullImageRejectsUnsafeImageReference(t *testing.T) {
+	client := &Client{runner: &fakeCommandRunner{}}
+
+	require.ErrorContains(t, client.PullImage(context.Background(), "image\n--flag"), "invalid image reference")
 }
 
 func TestClient_DefaultSocketPath(t *testing.T) {

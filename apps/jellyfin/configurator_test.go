@@ -1,6 +1,8 @@
 package jellyfin
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -58,6 +60,13 @@ func TestConfigurator_PreStart(t *testing.T) {
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
 	}
+	pluginDir := filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "LDAP-Auth.dll"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	err := c.PreStart(ctx, state)
 	if err != nil {
@@ -100,6 +109,100 @@ func TestConfigurator_PreStart(t *testing.T) {
 	// Check KnownProxies includes localhost
 	if !strings.Contains(contentStr, "<string>127.0.0.1</string>") {
 		t.Error("network.xml should have 127.0.0.1 in KnownProxies")
+	}
+}
+
+func TestConfigurator_StaticConfig_ChangedOnFirstRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := NewConfigurator(8096)
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(tmpDir, "jellyfin"),
+		BloudDataPath: filepath.Join(tmpDir, "bloud"),
+	}
+	// Pre-create plugin so the download isn't attempted
+	pluginDir := filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "LDAP-Auth.dll"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := c.StaticConfig(context.Background(), state)
+	if err != nil {
+		t.Fatalf("StaticConfig() error = %v", err)
+	}
+	if !changed {
+		t.Error("StaticConfig() changed = false on first run (network.xml created), want true")
+	}
+}
+
+func TestConfigurator_StaticConfig_NoChangeOnSecondRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := NewConfigurator(8096)
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(tmpDir, "jellyfin"),
+		BloudDataPath: filepath.Join(tmpDir, "bloud"),
+	}
+	pluginDir := filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "LDAP-Auth.dll"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// First run creates network.xml
+	if _, err := c.StaticConfig(context.Background(), state); err != nil {
+		t.Fatalf("first StaticConfig() error = %v", err)
+	}
+
+	// Second run should detect no change
+	changed, err := c.StaticConfig(context.Background(), state)
+	if err != nil {
+		t.Fatalf("second StaticConfig() error = %v", err)
+	}
+	if changed {
+		t.Error("StaticConfig() changed = true on second run with identical config, want false")
+	}
+}
+
+func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	file, err := writer.Create("LDAP-Auth.dll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("plugin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write(archive.Bytes())
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096)
+	c.pluginURL = server.URL
+	c.pluginSHA256 = ""
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(t.TempDir(), "jellyfin"),
+		BloudDataPath: t.TempDir(),
+	}
+
+	if err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart() error = %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth", "LDAP-Auth.dll"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "plugin" {
+		t.Fatalf("plugin content = %q, want plugin", content)
 	}
 }
 

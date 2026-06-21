@@ -11,21 +11,24 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	Port         int
-	DataDir      string
-	AppsDir      string // Path to apps/ directory containing app definitions
+	RuntimeMode       string
+	SystemdScope      string
+	QuadletDir        string
+	Port              int
+	DataDir           string
+	AppsDir           string // Path to apps/ directory containing app definitions
 	NixConfigDir      string
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	FlakePath         string // Path to flake.nix for nixos-rebuild
-	FlakeTarget  string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
-	NixosPath    string // Path to nixos/ modules directory
-	DatabaseURL  string // PostgreSQL connection string
-	RedisAddr    string // Redis address for session storage
+	FlakeTarget       string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
+	NixosPath         string // Path to nixos/ modules directory
+	DatabaseURL       string // PostgreSQL connection string
+	RedisAddr         string // Redis address for session storage
 	// SSO configuration
-	SSOHostSecret    string // Master secret for deriving client secrets
-	SSOBaseURL       string // Base URL for callbacks (e.g., "http://localhost:8080")
-	SSOAuthentikURL  string // Authentik external URL for discovery (e.g., "http://localhost:8080")
-	AuthentikToken   string // Authentik API token for SSO cleanup
+	SSOHostSecret   string // Master secret for deriving client secrets
+	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
+	SSOAuthentikURL string // Authentik external URL for discovery (e.g., "http://localhost:8080")
+	AuthentikToken  string // Authentik API token for SSO cleanup
 	// Authentik bootstrap configuration
 	AuthentikPort          int
 	AuthentikAdminPassword string
@@ -33,6 +36,9 @@ type Config struct {
 	// LDAP configuration
 	LDAPHost         string // LDAP outpost hostname (default: apps-authentik-ldap)
 	LDAPBindPassword string
+	// PostgresPassword is the resolved password for the shared Postgres instance.
+	// Exposed so bootstrapInfra can template it into the container spec.
+	PostgresPassword string
 	// Secrets manager for accessing generated secrets
 	Secrets *secrets.Manager
 }
@@ -49,10 +55,14 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	dataDir := getEnv("BLOUD_DATA_DIR", getDefaultDataDir())
 	appsDir := getEnv("BLOUD_APPS_DIR", "../../apps")
 
-	// FlakePath and NixosPath default to being relative to apps dir
-	// but can be overridden for dev environments where apps is synced separately
-	defaultFlakePath := filepath.Clean(filepath.Join(appsDir, ".."))
-	defaultNixosPath := filepath.Clean(filepath.Join(appsDir, "..", "nixos"))
+	// FlakePath and NixosPath are only used by the nix runtime orchestrator.
+	// Default to empty so they don't appear in portable runtime logs.
+	defaultFlakePath := ""
+	defaultNixosPath := ""
+	if getEnv("BLOUD_RUNTIME", "portable") == "nix" {
+		defaultFlakePath = filepath.Clean(filepath.Join(appsDir, ".."))
+		defaultNixosPath = filepath.Clean(filepath.Join(appsDir, "..", "nixos"))
+	}
 
 	// Initialize secrets manager
 	secretsPath := filepath.Join(dataDir, "secrets.json")
@@ -79,7 +89,11 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	// Build database URL using postgres password
 	defaultDatabaseURL := "postgres://apps:" + postgresPassword + "@localhost:5432/bloud?sslmode=disable"
 
+	systemdScope := getEnv("BLOUD_SYSTEMD_SCOPE", defaultSystemdScope())
 	cfg := &Config{
+		RuntimeMode:            getEnv("BLOUD_RUNTIME", "portable"),
+		SystemdScope:           systemdScope,
+		QuadletDir:             getEnv("BLOUD_QUADLET_DIR", defaultQuadletDir(systemdScope)),
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
 		AppsDir:                appsDir,
@@ -99,10 +113,29 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),
 		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       ldapBindPassword,
+		PostgresPassword:       postgresPassword,
 		Secrets:                secretsMgr,
 	}
 
 	return cfg
+}
+
+func defaultSystemdScope() string {
+	if os.Getuid() == 0 {
+		return "system"
+	}
+	return "user"
+}
+
+func defaultQuadletDir(scope string) string {
+	if scope == "system" {
+		return "/etc/containers/systemd"
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(getDefaultDataDir(), "quadlet")
+	}
+	return filepath.Join(homeDir, ".config", "containers", "systemd")
 }
 
 // getDefaultDataDir returns the default data directory path

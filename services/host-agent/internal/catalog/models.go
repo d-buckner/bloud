@@ -21,23 +21,50 @@ type App struct {
 	Routing       *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
 	Bootstrap     *BootstrapConfig       `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
 	Integrations  map[string]Integration `yaml:"integrations" json:"integrations"`
+	Container     *ContainerSpec         `yaml:"container,omitempty" json:"container,omitempty"`
+}
+
+// ContainerSpec describes the portable container topology for an app.
+type ContainerSpec struct {
+	Name          string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Image         string            `yaml:"image" json:"image"`
+	Network       string            `yaml:"network,omitempty" json:"network,omitempty"`
+	RestartPolicy string            `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
+	Command       []string          `yaml:"command,omitempty" json:"command,omitempty"`
+	Environment   map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Ports         []ContainerPort   `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Volumes       []ContainerVolume `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+}
+
+// ContainerPort maps a host port to a container port.
+type ContainerPort struct {
+	Host      int    `yaml:"host" json:"host"`
+	Container int    `yaml:"container" json:"container"`
+	Protocol  string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+}
+
+// ContainerVolume mounts a host path into a container.
+type ContainerVolume struct {
+	Source      string   `yaml:"source" json:"source"`
+	Destination string   `yaml:"destination" json:"destination"`
+	Options     []string `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
 // Resources defines resource requirements for an app
 type Resources struct {
-	MinRam  int  `yaml:"minRam" json:"minRam"`    // MB
-	MinDisk int  `yaml:"minDisk" json:"minDisk"`  // GB
+	MinRam  int  `yaml:"minRam" json:"minRam"`   // MB
+	MinDisk int  `yaml:"minDisk" json:"minDisk"` // GB
 	GPU     bool `yaml:"gpu" json:"gpu"`
 }
 
 // SSO defines SSO integration configuration
 type SSO struct {
-	Strategy     string `yaml:"strategy" json:"strategy"`         // native-oidc, forward-auth, none
-	CallbackPath string `yaml:"callbackPath" json:"callbackPath"` // e.g. /oauth2/oidc/callback
-	ProviderName string `yaml:"providerName" json:"providerName"` // e.g. "Bloud SSO"
-	UserCreation bool   `yaml:"userCreation" json:"userCreation"` // Auto-create users on first login
+	Strategy     string `yaml:"strategy" json:"strategy"`               // native-oidc, forward-auth, none
+	CallbackPath string `yaml:"callbackPath" json:"callbackPath"`       // e.g. /oauth2/oidc/callback
+	ProviderName string `yaml:"providerName" json:"providerName"`       // e.g. "Bloud SSO"
+	UserCreation bool   `yaml:"userCreation" json:"userCreation"`       // Auto-create users on first login
 	LaunchPath   string `yaml:"launchPath" json:"launchPath,omitempty"` // Initial path to open when launching the app (overrides root)
-	Env          SSOEnv `yaml:"env" json:"env"`                   // Environment variable mappings
+	Env          SSOEnv `yaml:"env" json:"env"`                         // Environment variable mappings
 }
 
 // SSOEnv maps SSO config values to app-specific environment variable names
@@ -56,8 +83,8 @@ type SSOEnv struct {
 // HealthCheck defines health check configuration
 type HealthCheck struct {
 	Path     string `yaml:"path" json:"path"`
-	Interval int    `yaml:"interval" json:"interval"`  // seconds
-	Timeout  int    `yaml:"timeout" json:"timeout"`    // seconds
+	Interval int    `yaml:"interval" json:"interval"` // seconds
+	Timeout  int    `yaml:"timeout" json:"timeout"`   // seconds
 }
 
 // Docs contains documentation links
@@ -69,8 +96,8 @@ type Docs struct {
 // AbsolutePath defines a root-level route for apps that use absolute paths
 // (e.g., AdGuard Home redirects to /install.html, /login.html)
 type AbsolutePath struct {
-	Rule     string            `yaml:"rule" json:"rule"`                         // Traefik rule syntax (e.g., "Path(`/install.html`)")
-	Priority int               `yaml:"priority" json:"priority"`                 // Route priority (higher = matched first)
+	Rule     string            `yaml:"rule" json:"rule"`                           // Traefik rule syntax (e.g., "Path(`/install.html`)")
+	Priority int               `yaml:"priority" json:"priority"`                   // Route priority (higher = matched first)
 	Headers  map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom headers for this route (overrides app headers)
 }
 

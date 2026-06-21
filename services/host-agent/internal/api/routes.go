@@ -1,6 +1,7 @@
 package api
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
 	"github.com/go-chi/chi/v5"
 )
+
+//go:embed dev_dashboard.html
+var devDashboardHTML []byte
 
 // setupRoutes configures all HTTP routes
 func (s *Server) setupRoutes() {
@@ -270,29 +274,12 @@ func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, storage)
 }
 
-// handleRoot serves a simple welcome message
+// handleRoot serves the dev dashboard when no frontend build is present
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Bloud Host Agent</title>
-</head>
-<body>
-    <h1>Bloud Host Agent</h1>
-    <p>The host agent is running!</p>
-    <p>API endpoints:</p>
-    <ul>
-        <li><a href="/api/health">/api/health</a> - Health check</li>
-        <li><a href="/api/apps">/api/apps</a> - List available apps</li>
-        <li><a href="/api/apps/installed">/api/apps/installed</a> - List installed apps</li>
-        <li><a href="/api/system/status">/api/system/status</a> - System status</li>
-    </ul>
-</body>
-</html>
-	`))
+	w.Write(devDashboardHTML)
 }
 
 // handlePlanInstall returns the installation plan for an app
@@ -337,9 +324,8 @@ func (s *Server) handlePlanRemove(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
-	if !ok || nixOrch == nil {
-		respondError(w, http.StatusServiceUnavailable, "orchestrator not available (podman not running?)")
+	if s.orchestrator == nil {
+		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
@@ -355,7 +341,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use the queue to serialize concurrent install requests
-	result, err := nixOrch.EnqueueInstall(r.Context(), orchestrator.InstallRequest{
+	result, err := s.orchestrator.EnqueueInstall(r.Context(), orchestrator.InstallRequest{
 		App:     name,
 		Choices: req.Choices,
 	})
@@ -380,9 +366,8 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
-	if !ok || nixOrch == nil {
-		respondError(w, http.StatusServiceUnavailable, "orchestrator not available (podman not running?)")
+	if s.orchestrator == nil {
+		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
@@ -398,7 +383,7 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use the queue to serialize concurrent uninstall requests
-	result, err := nixOrch.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
+	result, err := s.orchestrator.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
 		App:       name,
 		ClearData: req.ClearData,
 	})
@@ -433,11 +418,10 @@ func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 
 	// Check if app is installed
 	app, _ := s.appStore.GetByName(name)
-	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
-	if app != nil && ok && nixOrch != nil {
+	if app != nil && s.orchestrator != nil {
 		// App is installed - uninstall with clearData=true using the queue
 		s.logger.Info("uninstalling app with data cleanup", "app", name)
-		result, err := nixOrch.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
+		result, err := s.orchestrator.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
 			App:       name,
 			ClearData: true,
 		})

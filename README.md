@@ -67,7 +67,7 @@ Every edge in this graph is a manual step on every other platform. Bloud generat
 ## Current Development Quick Start
 
 The current development implementation runs as a bootable NixOS ISO. It remains the
-reference runtime while the portable Debian runtime is built.
+reference runtime while the portable Linux runtime is built.
 
 For **development**, you'll need a NixOS machine (see [Local Development](#local-development) below).
 
@@ -96,6 +96,72 @@ Access the web UI at **http://bloud.local** (port 80, through Traefik).
 ---
 
 ## How It Works
+
+#### Lifecycle
+
+```mermaid
+flowchart TD
+    HA["`**host-agent**
+    *Single binary — server + orchestrator*`"]
+
+    S[Startup]
+
+    DG["`**Load / create persisted
+    app dependency graph**
+    *Target desired state only — not the whole catalog.
+    First run creates the graph of system apps
+    and stores it in a new SQLite DB.*`"]
+
+    R["`**Reconciliation**
+    *Process each level deepest → shallowest.
+    See detail diagram below.*`"]
+
+    API["`**API request**
+    *POST /api/apps/{name}/install
+    POST /api/apps/{name}/uninstall*`"]
+
+    Q["`**Operation queue**
+    *5 s batch window, dedup per app.
+    Serializes concurrent requests.*`"]
+
+    HA --> S --> DG --> R
+    API --> Q -->|graph mutated| DG
+```
+
+#### Reconciliation detail (per level)
+
+```mermaid
+flowchart TD
+    L["`**For each level** *(deepest deps → shallowest consumers)*`"]
+
+    SC["`**StaticConfig / PreStart**
+    *Runs BEFORE container starts.
+    Write config files, env, secrets.
+    Returns whether managed output changed.*`"]
+
+    CS["`**Container start**
+    *Pull image if needed, create/start container.
+    Converges to desired spec via revision hash.*`"]
+
+    HC["`**HealthCheck**
+    *Poll until ready (60 s timeout).
+    Blocks consumers from proceeding.*`"]
+
+    DC["`**DynamicConfig / PostStart**
+    *Runs AFTER container is healthy.
+    Idempotent API calls — register OAuth client,
+    create DB user, wire app-to-app integrations.*`"]
+
+    NL{More levels?}
+
+    TR["`**Regenerate Traefik routes**
+    *Update apps-routes.yml.
+    Also runs on startup and uninstall.*`"]
+
+    L --> SC --> CS --> HC --> DC --> NL
+    NL -->|yes| L
+    NL -->|no| TR
+```
 
 ### 1. The Dependency Graph
 
@@ -273,17 +339,17 @@ bloud/
 
 ## Local Development
 
-Requires a NixOS machine (physical or VM with the `dev-server` config applied).
+Development uses a Lima VM (Debian 13 with rootless Podman).
 
 ```bash
-npm run setup    # Install deps + build ./bloud CLI
-./bloud setup    # Check prerequisites, apply NixOS config
-./bloud start    # Start dev environment
+brew install lima                                    # macOS
+limactl create --name=bloud-dev dev/lima.yaml        # Create VM
+limactl start bloud-dev                              # Start VM
+limactl shell bloud-dev bash dev/setup.sh            # Provision VM
+npm run setup                                        # Install deps + build ./bloud CLI
 ```
 
 ### CLI Commands
-
-**Native NixOS mode** (development on a NixOS machine):
 
 ```bash
 ./bloud start          # Start dev environment
@@ -292,25 +358,16 @@ npm run setup    # Install deps + build ./bloud CLI
 ./bloud logs           # Show logs
 ./bloud attach         # Attach to tmux session (Ctrl-B D to detach)
 ./bloud shell [cmd]    # Run a command or open a shell
-./bloud rebuild        # Apply NixOS config changes
+./bloud install <app>  # Install app via API
+./bloud uninstall <app> # Uninstall app via API
 ```
 
-**Proxmox mode** (ISO integration testing, set `BLOUD_PVE_HOST`):
+### Integration Testing
 
 ```bash
-./bloud start [iso]          # Deploy ISO → create VM → boot → check
-./bloud start --skip-deploy  # Reuse existing VM, re-run checks
-./bloud stop                 # Stop VM
-./bloud destroy              # Destroy VM
-./bloud shell [cmd]          # SSH into VM
-./bloud checks               # Run health checks
-./bloud install <app>        # Install app via API
-```
-
-### After Changing NixOS Config
-
-```bash
-./bloud rebuild   # Apply changes to the running dev machine
+./bloud e2e lifecycle              # Full portable-runtime lifecycle E2E
+./bloud e2e lifecycle --host-only  # Skip browser tests, verify host state only
+./bloud e2e lifecycle --keep       # Leave deployment running after tests
 ```
 
 ### Debugging

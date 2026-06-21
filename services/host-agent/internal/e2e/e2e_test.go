@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -240,6 +241,92 @@ func TestAuthentikPostStart_CreatesLDAPInfrastructure(t *testing.T) {
 		t.Fatal("No LDAP outpost found after poststart")
 	}
 	t.Logf("LDAP outpost created: %s (pk=%s)", outpostResp.Results[0].Name, outpostResp.Results[0].PK)
+}
+
+func TestAuthentikAdminLogin(t *testing.T) {
+	// Verify the Authentik admin can actually log in through the authentication flow.
+	// This tests real password authentication, not just API health or token access.
+	secrets := readSecrets()
+	adminPassword, ok := secrets["authentikBootstrapPassword"].(string)
+	if !ok || adminPassword == "" {
+		t.Fatal("authentikBootstrapPassword not found in secrets.json")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Use a cookie jar to maintain the session across flow executor calls
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+
+	flowURL := authentikURL + "/api/v3/flows/executor/default-authentication-flow/"
+
+	// Step 1: GET the flow to start — returns the identification challenge
+	req, err := http.NewRequestWithContext(ctx, "GET", flowURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET flow executor: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET flow executor: status %d", resp.StatusCode)
+	}
+
+	// Step 2: Submit username (identification stage)
+	identBody := `{"uid_field":"akadmin"}`
+	req, err = http.NewRequestWithContext(ctx, "POST", flowURL, strings.NewReader(identBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("POST identification: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST identification: status %d", resp.StatusCode)
+	}
+
+	// Step 3: Submit password
+	passBody := fmt.Sprintf(`{"password":"%s"}`, adminPassword)
+	req, err = http.NewRequestWithContext(ctx, "POST", flowURL, strings.NewReader(passBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("POST password: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Authentik login as akadmin failed: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	// Parse the response — successful auth returns a redirect challenge
+	var flowResp struct {
+		Type          string `json:"type"`
+		To            string `json:"to"`
+		Component     string `json:"component"`
+		ResponseError string `json:"response_errors,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&flowResp); err != nil {
+		t.Fatal(err)
+	}
+
+	if flowResp.Type != "redirect" {
+		t.Errorf("expected redirect after successful login, got type=%q component=%q", flowResp.Type, flowResp.Component)
+	}
+
+	t.Logf("Authentik login as akadmin successful (redirect to %s)", flowResp.To)
 }
 
 func TestLDAPOutpost_RestartWithToken(t *testing.T) {
@@ -457,6 +544,23 @@ func TestJellyfinPostStart_CompletesWizardAndConfiguresLDAP(t *testing.T) {
 	if ldapConfig.LdapBindPassword == "" {
 		t.Error("LdapBindPassword should not be empty")
 	}
+
+	// Verify LDAP attribute configuration — these exact values caught real bugs:
+	// - LdapUidAttribute must be "sAMAccountName" (not "uid") for Authentik LDAP
+	// - LdapAdminFilter must use memberOf (not memberUid) for group-based admin detection
+	if ldapConfig.LdapUidAttribute != "sAMAccountName" {
+		t.Errorf("LdapUidAttribute = %q, want %q", ldapConfig.LdapUidAttribute, "sAMAccountName")
+	}
+	if ldapConfig.LdapUsernameAttribute != "cn" {
+		t.Errorf("LdapUsernameAttribute = %q, want %q", ldapConfig.LdapUsernameAttribute, "cn")
+	}
+	if ldapConfig.LdapSearchFilter != "(objectClass=user)" {
+		t.Errorf("LdapSearchFilter = %q, want %q", ldapConfig.LdapSearchFilter, "(objectClass=user)")
+	}
+	wantAdminFilter := fmt.Sprintf("(memberOf=cn=authentik Admins,ou=groups,%s)", expectedLDAPBaseDN)
+	if ldapConfig.LdapAdminFilter != wantAdminFilter {
+		t.Errorf("LdapAdminFilter = %q, want %q", ldapConfig.LdapAdminFilter, wantAdminFilter)
+	}
 }
 
 func TestJellyfinPostStart_IsIdempotent(t *testing.T) {
@@ -469,6 +573,66 @@ func TestJellyfinPostStart_IsIdempotent(t *testing.T) {
 		t.Error("StartupWizardCompleted should still be true after second poststart")
 	}
 	authenticateJellyfin(t, ctx)
+}
+
+func TestJellyfinLDAPLogin(t *testing.T) {
+	// Authenticate to Jellyfin as akadmin using the Authentik bootstrap password.
+	// This exercises the full LDAP auth chain through Jellyfin:
+	//   Jellyfin → LDAP bind (LdapUidAttribute lookup) → Authentik LDAP outpost
+	//
+	// This test would have caught both bugs found manually:
+	//   - Wrong LdapUidAttribute ("uid" vs "sAMAccountName"): Jellyfin can't find the LDAP user
+	//   - Wrong LdapAdminFilter: user authenticates but doesn't get admin role
+	secrets := readSecrets()
+	adminPassword, ok := secrets["authentikBootstrapPassword"].(string)
+	if !ok || adminPassword == "" {
+		t.Fatal("authentikBootstrapPassword not found in secrets.json")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	body := fmt.Sprintf(`{"Username":"akadmin","Pw":"%s"}`, adminPassword)
+	req, err := http.NewRequestWithContext(ctx, "POST", jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Emby-Authorization", `MediaBrowser Client="Bloud-E2E", Device="Test", DeviceId="e2e-test", Version="1.0.0"`)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /Users/AuthenticateByName as akadmin: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Jellyfin LDAP login as akadmin failed: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var authResp struct {
+		AccessToken string `json:"AccessToken"`
+		User        struct {
+			Name   string `json:"Name"`
+			Policy struct {
+				IsAdministrator bool `json:"IsAdministrator"`
+			} `json:"Policy"`
+		} `json:"User"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
+		t.Fatal(err)
+	}
+
+	if authResp.AccessToken == "" {
+		t.Error("AccessToken should not be empty after LDAP login")
+	}
+	t.Logf("Jellyfin LDAP login as akadmin successful (token=%s...)", authResp.AccessToken[:8])
+
+	// Verify admin role was applied via LdapAdminFilter
+	if !authResp.User.Policy.IsAdministrator {
+		t.Error("akadmin should have IsAdministrator=true (LdapAdminFilter may be wrong)")
+	}
 }
 
 // --- LDAP Behavioral Verification ---
@@ -557,11 +721,15 @@ type virtualFolder struct {
 }
 
 type ldapPluginConfig struct {
-	LdapServer       string `json:"LdapServer"`
-	LdapPort         int    `json:"LdapPort"`
-	LdapBaseDn       string `json:"LdapBaseDn"`
-	LdapBindUser     string `json:"LdapBindUser"`
-	LdapBindPassword string `json:"LdapBindPassword"`
+	LdapServer            string `json:"LdapServer"`
+	LdapPort              int    `json:"LdapPort"`
+	LdapBaseDn            string `json:"LdapBaseDn"`
+	LdapBindUser          string `json:"LdapBindUser"`
+	LdapBindPassword      string `json:"LdapBindPassword"`
+	LdapUidAttribute      string `json:"LdapUidAttribute"`
+	LdapUsernameAttribute string `json:"LdapUsernameAttribute"`
+	LdapSearchFilter      string `json:"LdapSearchFilter"`
+	LdapAdminFilter       string `json:"LdapAdminFilter"`
 }
 
 func jellyfinAuthHeader(token string) string {

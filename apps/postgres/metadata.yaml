@@ -2,6 +2,28 @@ name: postgres
 displayName: PostgreSQL
 description: Powerful, open-source relational database system
 category: infrastructure
+port: 5432
 isSystem: true
 
+healthCheck:
+  path: ""
+  interval: 2
+  timeout: 30
+
 integrations: {}
+
+container:
+  name: apps-postgres
+  image: docker.io/postgres:16-alpine
+  network: apps-net
+  restartPolicy: always
+  environment:
+    POSTGRES_USER: apps
+    POSTGRES_PASSWORD: "{{postgresPassword}}"
+    POSTGRES_DB: bloud
+  ports:
+    - host: 5432
+      container: 5432
+  volumes:
+    - source: "{{appDataDir}}"
+      destination: /var/lib/postgresql/data

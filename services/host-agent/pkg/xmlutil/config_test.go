@@ -17,7 +17,7 @@ func TestOpen_NewFile(t *testing.T) {
 	}
 
 	cfg.SetElement("TestKey", "TestValue")
-	if err := cfg.Save(); err != nil {
+	if _, err := cfg.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestSetStringArray(t *testing.T) {
 	// Set array values
 	cfg.SetStringArray("KnownProxies", []string{"127.0.0.1", "::1", "192.168.1.1"})
 
-	if err := cfg.Save(); err != nil {
+	if _, err := cfg.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -164,7 +164,7 @@ func TestSetStringArray_ReplacesExisting(t *testing.T) {
 	// Replace with new values
 	cfg.SetStringArray("KnownProxies", []string{"new-value-1", "new-value-2"})
 
-	if err := cfg.Save(); err != nil {
+	if _, err := cfg.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestSetStringArray_EmptyArray(t *testing.T) {
 	// Set empty array
 	cfg.SetStringArray("EmptyArray", []string{})
 
-	if err := cfg.Save(); err != nil {
+	if _, err := cfg.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 

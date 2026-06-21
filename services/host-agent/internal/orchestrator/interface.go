@@ -4,6 +4,12 @@ import "context"
 
 // AppOrchestrator defines the interface for app installation orchestrators
 type AppOrchestrator interface {
+	// EnqueueInstall serializes and installs an app.
+	EnqueueInstall(ctx context.Context, req InstallRequest) (InstallResponse, error)
+
+	// EnqueueUninstall serializes and removes an app.
+	EnqueueUninstall(ctx context.Context, req UninstallRequest) (UninstallResponse, error)
+
 	// Install installs an app with the given choices
 	Install(ctx context.Context, req InstallRequest) (InstallResponse, error)
 

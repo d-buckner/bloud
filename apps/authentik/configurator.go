@@ -2,6 +2,7 @@ package authentik
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,12 @@ import (
 	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
+
+//go:embed scripts/set_admin_password.py
+var setAdminPasswordScript string
+
+//go:embed scripts/ensure_api_token.py
+var ensureAPITokenScript string
 
 // healthCheckTimeout allows for first-boot DB migrations which can take 3-5 minutes.
 const healthCheckTimeout = 8 * time.Minute
@@ -59,29 +66,13 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
 // PostStart ensures the admin user has the correct password
 // This handles the case where Authentik creates default admin before our bootstrap config runs
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	// Use Django shell via podman exec to ensure admin password is set
-	// This is reliable because it doesn't depend on having valid API credentials
-	// Password and email are passed via environment variables to avoid shell injection
-	pythonCode := `
-import os
-from authentik.core.models import User
-try:
-    user = User.objects.get(username='akadmin')
-    user.set_password(os.environ['BLOUD_ADMIN_PASSWORD'])
-    user.email = os.environ['BLOUD_ADMIN_EMAIL']
-    user.save()
-    print('OK')
-except User.DoesNotExist:
-    print('OK')  # User will be created by bootstrap
-except Exception as e:
-    print(f'ERROR: {e}')
-`
-
-	// Run via podman exec with env vars for password/email (avoids shell injection)
+	// Use Django shell via podman exec to ensure admin password is set.
+	// This is reliable because it doesn't depend on having valid API credentials.
+	// Password and email are passed via environment variables to avoid shell injection.
 	if err := runDjangoShell(ctx, map[string]string{
 		"BLOUD_ADMIN_PASSWORD": c.bootstrapPassword,
 		"BLOUD_ADMIN_EMAIL":    c.bootstrapEmail,
-	}, pythonCode); err != nil {
+	}, setAdminPasswordScript); err != nil {
 		return fmt.Errorf("failed to set admin password: %w", err)
 	}
 
@@ -135,57 +126,9 @@ except Exception as e:
 // ensureAPIToken creates or updates the API token via Django shell.
 // Uses a dedicated bloud-api service account so the token survives akadmin deletion.
 func (c *Configurator) ensureAPIToken(ctx context.Context) error {
-	pythonCode := `
-import os
-from authentik.core.models import Token, User, Group
-try:
-    # Get or create a dedicated service account for the API token
-    user, _ = User.objects.get_or_create(
-        username='bloud-api',
-        defaults={
-            'name': 'Bloud API Service Account',
-            'type': 'internal_service_account',
-            'path': 'users',
-            'is_active': True,
-        }
-    )
-
-    # Add to authentik Admins group for API access
-    group = Group.objects.get(name='authentik Admins')
-    group.users.add(user)
-
-    # Create or update the API token
-    token, created = Token.objects.get_or_create(
-        identifier='bloud-api-token',
-        defaults={
-            'user': user,
-            'key': os.environ['BLOUD_TOKEN_KEY'],
-            'intent': 'api',
-            'expiring': False,
-            'description': 'Bloud host-agent API token',
-        }
-    )
-    if not created:
-        needs_save = False
-        if token.user != user:
-            token.user = user
-            needs_save = True
-        if token.key != os.environ['BLOUD_TOKEN_KEY']:
-            token.key = os.environ['BLOUD_TOKEN_KEY']
-            needs_save = True
-        if token.intent != 'api':
-            token.intent = 'api'
-            needs_save = True
-        if needs_save:
-            token.save()
-    print('OK')
-except Exception as e:
-    print(f'ERROR: {e}')
-`
-
 	return runDjangoShell(ctx, map[string]string{
 		"BLOUD_TOKEN_KEY": c.tokenKey,
-	}, pythonCode)
+	}, ensureAPITokenScript)
 }
 
 // runDjangoShell executes a Python script inside the Authentik container via `ak shell`.

@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,16 +20,20 @@ import (
 type Client struct {
 	httpClient *http.Client
 	socketPath string
+	runner     commandRunner
 }
 
 // ContainerConfig specifies how to create a container
 type ContainerConfig struct {
-	Name    string            `json:"name"`
-	Image   string            `json:"image"`
-	Env     map[string]string `json:"env,omitempty"`
-	Ports   []PortMapping     `json:"portmappings,omitempty"`
-	Volumes []VolumeMount     `json:"mounts,omitempty"`
-	Labels  map[string]string `json:"labels,omitempty"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Env           map[string]string `json:"env,omitempty"`
+	Ports         []PortMapping     `json:"portmappings,omitempty"`
+	Volumes       []VolumeMount     `json:"mounts,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Network       string            `json:"network,omitempty"`
+	Command       []string          `json:"command,omitempty"`
+	RestartPolicy string            `json:"restart_policy,omitempty"`
 }
 
 // PortMapping maps container port to host
@@ -53,6 +59,24 @@ type Container struct {
 	State   string   `json:"State"`
 	Status  string   `json:"Status"`
 	Created int64    `json:"Created"`
+}
+
+// ContainerDetails contains the inspect fields needed by runtime reconciliation.
+type ContainerDetails struct {
+	ID     string
+	Name   string
+	State  string
+	Labels map[string]string
+}
+
+type commandRunner interface {
+	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
+type execRunner struct{}
+
+func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 // NewClient creates a Podman client connected to the default socket
@@ -81,19 +105,65 @@ func NewClientWithSocket(socketPath string) (*Client, error) {
 	return &Client{
 		httpClient: httpClient,
 		socketPath: socketPath,
+		runner:     execRunner{},
 	}, nil
 }
 
 // defaultSocketPath returns the default Podman socket location
 func defaultSocketPath() string {
+	if socketPath := os.Getenv("BLOUD_PODMAN_SOCKET"); socketPath != "" {
+		return socketPath
+	}
+
 	// For rootless podman, the socket is in the user's runtime directory
 	if xdgRuntime := os.Getenv("XDG_RUNTIME_DIR"); xdgRuntime != "" {
 		return filepath.Join(xdgRuntime, "podman", "podman.sock")
 	}
 
+	if os.Getuid() == 0 {
+		return "/run/podman/podman.sock"
+	}
+
 	// Fallback to standard Linux location
 	uid := os.Getuid()
 	return fmt.Sprintf("/run/user/%d/podman/podman.sock", uid)
+}
+
+// EnsureNetwork creates a network if it does not already exist.
+func (c *Client) EnsureNetwork(ctx context.Context, name string) error {
+	if !validPodmanName(name) {
+		return fmt.Errorf("invalid network name %q", name)
+	}
+	if c.runner == nil {
+		c.runner = execRunner{}
+	}
+	if _, err := c.runner.Run(ctx, "podman", "network", "exists", name); err == nil {
+		return nil
+	}
+	if output, err := c.runner.Run(ctx, "podman", "network", "create", name); err != nil {
+		if _, existsErr := c.runner.Run(ctx, "podman", "network", "exists", name); existsErr == nil {
+			return nil
+		}
+		return fmt.Errorf("podman network create %s failed: %w: %s", name, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func validPodmanName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, char := range name {
+		switch {
+		case char >= 'a' && char <= 'z':
+		case char >= 'A' && char <= 'Z':
+		case char >= '0' && char <= '9':
+		case char == '-', char == '_', char == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Ping checks if Podman is running and accessible
@@ -113,22 +183,15 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // PullImage pulls an image from a registry
 func (c *Client) PullImage(ctx context.Context, image string) error {
-	params := url.Values{}
-	params.Set("reference", image)
-
-	resp, err := c.post(ctx, "/libpod/images/pull?"+params.Encode(), nil)
-	if err != nil {
-		return fmt.Errorf("failed to pull image: %w", err)
+	if image == "" || strings.ContainsAny(image, "\r\n") {
+		return fmt.Errorf("invalid image reference %q", image)
 	}
-	defer resp.Body.Close()
-
-	// Read and discard the stream response (progress output)
-	io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("image pull returned status %d", resp.StatusCode)
+	if c.runner == nil {
+		c.runner = execRunner{}
 	}
-
+	if output, err := c.runner.Run(ctx, "podman", "pull", image); err != nil {
+		return fmt.Errorf("podman pull %s failed: %w: %s", image, err, strings.TrimSpace(string(output)))
+	}
 	return nil
 }
 
@@ -168,7 +231,7 @@ func (c *Client) CreateContainer(ctx context.Context, config ContainerConfig) (s
 
 // StartContainer starts a stopped container
 func (c *Client) StartContainer(ctx context.Context, nameOrID string) error {
-	resp, err := c.post(ctx, fmt.Sprintf("/libpod/containers/%s/start", nameOrID), nil)
+	resp, err := c.post(ctx, fmt.Sprintf("/libpod/containers/%s/start", url.PathEscape(nameOrID)), nil)
 	if err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
@@ -189,7 +252,7 @@ func (c *Client) StopContainer(ctx context.Context, nameOrID string, timeout int
 		params.Set("timeout", fmt.Sprintf("%d", timeout))
 	}
 
-	path := fmt.Sprintf("/libpod/containers/%s/stop", nameOrID)
+	path := fmt.Sprintf("/libpod/containers/%s/stop", url.PathEscape(nameOrID))
 	if len(params) > 0 {
 		path += "?" + params.Encode()
 	}
@@ -215,7 +278,7 @@ func (c *Client) RemoveContainer(ctx context.Context, nameOrID string, force boo
 		params.Set("force", "true")
 	}
 
-	path := fmt.Sprintf("/libpod/containers/%s", nameOrID)
+	path := fmt.Sprintf("/libpod/containers/%s", url.PathEscape(nameOrID))
 	if len(params) > 0 {
 		path += "?" + params.Encode()
 	}
@@ -226,7 +289,7 @@ func (c *Client) RemoveContainer(ctx context.Context, nameOrID string, force boo
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("remove container returned status %d: %s", resp.StatusCode, string(respBody))
 	}
@@ -260,7 +323,7 @@ func (c *Client) ListContainers(ctx context.Context) ([]Container, error) {
 
 // GetContainer returns info about a specific container
 func (c *Client) GetContainer(ctx context.Context, nameOrID string) (*Container, error) {
-	resp, err := c.get(ctx, fmt.Sprintf("/libpod/containers/%s/json", nameOrID))
+	resp, err := c.get(ctx, fmt.Sprintf("/libpod/containers/%s/json", url.PathEscape(nameOrID)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get container: %w", err)
 	}
@@ -281,6 +344,44 @@ func (c *Client) GetContainer(ctx context.Context, nameOrID string) (*Container,
 	}
 
 	return &container, nil
+}
+
+// InspectContainer returns the desired-state fields exposed by Podman inspect.
+func (c *Client) InspectContainer(ctx context.Context, nameOrID string) (*ContainerDetails, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/libpod/containers/%s/json", url.PathEscape(nameOrID)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("inspect container returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		ID    string `json:"Id"`
+		Name  string `json:"Name"`
+		State struct {
+			Status string `json:"Status"`
+		} `json:"State"`
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"Config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode inspect response: %w", err)
+	}
+
+	return &ContainerDetails{
+		ID:     result.ID,
+		Name:   result.Name,
+		State:  result.State.Status,
+		Labels: result.Config.Labels,
+	}, nil
 }
 
 // HTTP helpers
@@ -366,6 +467,17 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 	// Labels
 	if len(config.Labels) > 0 {
 		spec["labels"] = config.Labels
+	}
+	if config.Network != "" {
+		spec["networks"] = map[string]map[string]interface{}{
+			config.Network: {},
+		}
+	}
+	if len(config.Command) > 0 {
+		spec["command"] = config.Command
+	}
+	if config.RestartPolicy != "" {
+		spec["restart_policy"] = config.RestartPolicy
 	}
 
 	return spec

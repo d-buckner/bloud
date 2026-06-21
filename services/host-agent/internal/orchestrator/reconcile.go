@@ -133,9 +133,19 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
 			continue
 		}
-		if err := cfg.PreStart(ctx, state); err != nil {
-			r.logger.Warn("PreStart failed", "app", app.Name, "error", err)
-			errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.Name, err))
+		if sc, ok := cfg.(configurator.StaticConfigurator); ok {
+			changed, err := sc.StaticConfig(ctx, state)
+			if err != nil {
+				r.logger.Warn("StaticConfig failed", "app", app.Name, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: StaticConfig failed: %v", app.Name, err))
+			} else if changed {
+				r.logger.Info("static config changed", "app", app.Name)
+			}
+		} else {
+			if err := cfg.PreStart(ctx, state); err != nil {
+				r.logger.Warn("PreStart failed", "app", app.Name, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.Name, err))
+			}
 		}
 	}
 
@@ -174,10 +184,18 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 				errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
 				continue
 			}
-			if err := cfg.PostStart(ctx, state); err != nil {
-				r.logger.Warn("PostStart failed", "app", app.Name, "error", err)
-				errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.Name, err))
-				continue
+			if dc, ok := cfg.(configurator.DynamicConfigurator); ok {
+				if err := dc.DynamicConfig(ctx, state); err != nil {
+					r.logger.Warn("DynamicConfig failed", "app", app.Name, "error", err)
+					errors = append(errors, fmt.Sprintf("%s: DynamicConfig failed: %v", app.Name, err))
+					continue
+				}
+			} else {
+				if err := cfg.PostStart(ctx, state); err != nil {
+					r.logger.Warn("PostStart failed", "app", app.Name, "error", err)
+					errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.Name, err))
+					continue
+				}
 			}
 
 			reconciled = append(reconciled, app.Name)

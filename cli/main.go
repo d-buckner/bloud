@@ -161,13 +161,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%sError:%s 'snapshot' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
 			exitCode = 1
 		}
-	case "smoke":
-		if isPVEMode() {
-			exitCode = cmdSmokePVE(args)
-		} else {
-			fmt.Fprintf(os.Stderr, "%sError:%s 'smoke' is only available in Proxmox mode (set BLOUD_PVE_HOST)\n", colorRed, colorReset)
-			exitCode = 1
-		}
+	case "dev":
+		exitCode = cmdDev()
+	case "e2e":
+		exitCode = cmdE2E(args)
 	case "validate":
 		exitCode = cmdValidate(args)
 	case "depgraph":
@@ -224,10 +221,8 @@ func printUsage() {
 		fmt.Println("    --explain                 Print why each command was selected")
 		fmt.Println("    --json                    Output JSON ledger only")
 		fmt.Println("    --since <ref>             Git ref for diff base (default: HEAD)")
-		fmt.Println("  smoke [flags]               Run Playwright smoke tests against existing VM")
-		fmt.Println("    --build                   Build ISO + deploy VM + run full install before tests")
-		fmt.Println("    --apps <app1> <app2>      Run only specified app tests (default: all apps)")
-		fmt.Println("    --update-snapshots        Refresh committed baseline screenshots")
+		fmt.Println("  e2e [playwright flags]      Run Jellyfin Playwright tests")
+		fmt.Println("  e2e lifecycle [flags]       Run full portable-runtime lifecycle E2E")
 		fmt.Println()
 		fmt.Println("VM management:")
 		fmt.Println("  stop                  Stop VM")
@@ -269,6 +264,7 @@ func printUsage() {
 	fmt.Println("  setup           Check prerequisites and apply NixOS configuration")
 	fmt.Println()
 	fmt.Println("Commands:")
+	fmt.Println("  dev             Build + run host-agent on Lima VM (Ctrl-C to stop)")
 	fmt.Println("  start           Start dev environment")
 	fmt.Println("  stop            Stop dev services")
 	fmt.Println("  status          Show dev environment status")
@@ -280,6 +276,8 @@ func printUsage() {
 	fmt.Println("  install <app>   Install an app")
 	fmt.Println("  uninstall <app> Uninstall an app")
 	fmt.Println("  validate [flags] Run validation (default: --tier changed)")
+	fmt.Println("  e2e [flags]      Run Jellyfin Playwright tests")
+	fmt.Println("  e2e lifecycle    Run full portable-runtime lifecycle E2E")
 	fmt.Println("    --tier <t>    fast | changed | integration | vm | clean | full")
 	fmt.Println("    --app <name>  Scope to a specific app")
 	fmt.Println("    --dry-run     Show plan without executing")

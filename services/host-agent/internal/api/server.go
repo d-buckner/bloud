@@ -12,10 +12,14 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/systemd"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
@@ -45,6 +49,9 @@ type Server struct {
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
+	RuntimeMode       string
+	SystemdScope      string
+	QuadletDir        string
 	AppsDir           string
 	ConfigDir         string
 	DataDir           string // Path to bloud data directory
@@ -65,6 +72,10 @@ type ServerConfig struct {
 	LDAPOutput *configurator.LDAPOutput
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
+	// ContainerRuntime optionally injects the portable container backend.
+	ContainerRuntime containerruntime.Runtime
+	// TemplateVars are extra template variables for container spec rendering (e.g. postgresPassword).
+	TemplateVars map[string]string
 }
 
 // NewServer creates a new HTTP server instance
@@ -131,7 +142,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	// Initialize catalog and graph on startup
 	s.refreshCatalog(s.cfg.AppsDir)
 
-	// Initialize orchestrator (Podman client may not be available in tests)
+	// Initialize the selected runtime orchestrator.
 	s.initOrchestrator(appStore)
 
 	// Initialize reconciler if registry is provided
@@ -164,23 +175,67 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	return s
 }
 
-// initOrchestrator sets up the orchestrator - prefers Nix, falls back to Podman
+// initOrchestrator sets up the explicitly selected runtime.
 func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	// Use configured paths (set via env vars or defaults)
 	configPath := filepath.Join(s.cfg.ConfigDir, "apps.nix")
 	traefikConfigPath := filepath.Join(s.cfg.TraefikDynamicDir, "apps-routes.yml")
 
-	s.logger.Info("orchestrator paths",
-		"flakePath", s.cfg.FlakePath,
-		"nixosPath", s.cfg.NixosPath,
-		"configPath", configPath,
-		"traefikConfigPath", traefikConfigPath,
-	)
+	orchLogAttrs := []any{"traefikConfigPath", traefikConfigPath}
+	if s.cfg.FlakePath != "" {
+		orchLogAttrs = append(orchLogAttrs, "flakePath", s.cfg.FlakePath)
+	}
+	if s.cfg.NixosPath != "" {
+		orchLogAttrs = append(orchLogAttrs, "nixosPath", s.cfg.NixosPath)
+	}
+	if s.cfg.ConfigDir != "" {
+		orchLogAttrs = append(orchLogAttrs, "configPath", configPath)
+	}
+	s.logger.Info("orchestrator paths", orchLogAttrs...)
 
 	// SSO blueprints directory
 	ssoBlueprintsDir := filepath.Join(s.cfg.DataDir, "authentik-blueprints")
 
-	// Try to initialize Nix-based orchestrator (preferred)
+	if s.cfg.RuntimeMode == "portable" {
+		runtime := s.cfg.ContainerRuntime
+		if runtime == nil {
+			client, err := podman.NewClient()
+			if err != nil {
+				s.logger.Error("portable container runtime unavailable", "error", err)
+				return
+			}
+			userScope := s.cfg.SystemdScope != "system"
+			wantedBy := "default.target"
+			if !userScope {
+				wantedBy = "multi-user.target"
+			}
+			runtime = containerruntime.NewQuadletRuntime(
+				client,
+				systemd.NewManager(userScope),
+				s.cfg.QuadletDir,
+				wantedBy,
+			)
+		}
+
+		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
+			Graph:        s.graph,
+			CatalogCache: s.catalog,
+			AppStore:     appStore,
+			Containers:   runtime,
+			Registry:     s.cfg.Registry,
+			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath),
+			LDAPOutput:   s.cfg.LDAPOutput,
+			DataDir:      s.cfg.DataDir,
+			TemplateVars: s.cfg.TemplateVars,
+			Logger:       s.logger,
+		})
+		s.orchestrator = portable
+		s.logger.Info("portable orchestrator initialized")
+		go portable.ReconcileState(context.Background())
+		return
+	}
+
+	// Initialize the legacy Nix-based orchestrator.
 	nixOrch := orchestrator.New(orchestrator.Config{
 		Graph:             s.graph,
 		CatalogCache:      s.catalog,

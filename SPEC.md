@@ -571,7 +571,7 @@ Delete these after portable parity is proven:
 - NixOS application modules and helpers
 - Rootless Podman networking workarounds
 - NixOS-native PostgreSQL and Redis assumptions
-- Proxmox/ISO-only release validation
+- ISO-only release validation
 - NixOS-specific CLI commands
 
 Deprecated runtime paths must not remain indefinitely.

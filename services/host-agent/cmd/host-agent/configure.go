@@ -160,9 +160,18 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 1
 	}
 
-	if err := cfg.PreStart(ctx, state); err != nil {
-		logger.Error("prestart failed", "app", appName, "error", err)
-		return 1
+	if sc, ok := cfg.(configurator.StaticConfigurator); ok {
+		changed, err := sc.StaticConfig(ctx, state)
+		if err != nil {
+			logger.Error("static config failed", "app", appName, "error", err)
+			return 1
+		}
+		logger.Info("static config completed", "app", appName, "changed", changed)
+	} else {
+		if err := cfg.PreStart(ctx, state); err != nil {
+			logger.Error("prestart failed", "app", appName, "error", err)
+			return 1
+		}
 	}
 
 	logger.Info("prestart completed", "app", appName)
@@ -193,9 +202,16 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 		return 1
 	}
 
-	if err := cfg.PostStart(ctx, state); err != nil {
-		logger.Error("poststart failed", "app", appName, "error", err)
-		return 1
+	if dc, ok := cfg.(configurator.DynamicConfigurator); ok {
+		if err := dc.DynamicConfig(ctx, state); err != nil {
+			logger.Error("dynamic config failed", "app", appName, "error", err)
+			return 1
+		}
+	} else {
+		if err := cfg.PostStart(ctx, state); err != nil {
+			logger.Error("poststart failed", "app", appName, "error", err)
+			return 1
+		}
 	}
 
 	logger.Info("poststart completed", "app", appName)

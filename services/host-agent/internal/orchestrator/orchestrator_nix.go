@@ -156,7 +156,7 @@ func (o *Orchestrator) EnqueueUninstall(ctx context.Context, req UninstallReques
 	return o.queue.EnqueueUninstall(ctx, req)
 }
 
-// InstallResult describes the outcome of a Nix-based installation
+// InstallResult describes the outcome of an installation.
 type InstallResult struct {
 	App            string   `json:"app"`
 	Success        bool     `json:"success"`

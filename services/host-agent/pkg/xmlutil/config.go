@@ -2,10 +2,12 @@
 package xmlutil
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/managedfile"
 	"github.com/beevik/etree"
 )
 
@@ -159,12 +161,15 @@ func (c *ConfigFile) SetStringArray(name string, values []string) {
 }
 
 // Save writes the document back to disk with proper indentation.
-func (c *ConfigFile) Save() error {
-	// Ensure parent directory exists
+// Returns true if the file content changed, false if it was already identical.
+func (c *ConfigFile) Save() (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(c.path), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+		return false, fmt.Errorf("failed to create directory: %w", err)
 	}
-
 	c.doc.Indent(2)
-	return c.doc.WriteToFile(c.path)
+	var buf bytes.Buffer
+	if _, err := c.doc.WriteTo(&buf); err != nil {
+		return false, err
+	}
+	return managedfile.Write(c.path, buf.Bytes(), 0644)
 }
