@@ -32,6 +32,7 @@ type Configurator struct {
 	ldapBindPassword  string // LDAP bind password for service account
 	dataPath          string // Path to write token file
 	brandingCSS       string // Inline CSS to push to Authentik brand API
+	baseURL           string // External base URL for embedded outpost host (e.g. http://localhost:8080)
 }
 
 // NewConfigurator creates a new Authentik configurator
@@ -45,6 +46,13 @@ func NewConfigurator(port int, bootstrapPassword, bootstrapEmail, tokenKey, ldap
 		dataPath:          dataPath,
 		brandingCSS:       brandingCSS,
 	}
+}
+
+// WithBaseURL sets the external base URL used to configure the embedded outpost host.
+// When set, PostStart will ensure the embedded outpost redirects browsers through this URL.
+func (c *Configurator) WithBaseURL(baseURL string) *Configurator {
+	c.baseURL = baseURL
+	return c
 }
 
 // Name returns the app name
@@ -118,6 +126,14 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	// Runs after EnsureLoginConfiguration so that default flows are guaranteed to exist.
 	if err := client.EnsureLDAPInfrastructure(c.ldapBindPassword); err != nil {
 		return fmt.Errorf("failed to ensure LDAP infrastructure: %w", err)
+	}
+
+	// Step 6: Set the embedded outpost's authentik_host so browsers are redirected
+	// through the external base URL (e.g. Traefik) rather than the internal bind address.
+	if c.baseURL != "" {
+		if err := client.EnsureEmbeddedOutpostHost(c.baseURL); err != nil {
+			return fmt.Errorf("failed to set embedded outpost host: %w", err)
+		}
 	}
 
 	return nil

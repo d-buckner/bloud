@@ -31,7 +31,7 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 		cfg.LDAPBindPassword,
 		cfg.DataDir,
 		static.AuthentikBrandingCSS,
-	))
+	).WithBaseURL(cfg.SSOBaseURL))
 	registry.Register(immich.NewConfigurator(2283, cfg.SSOAuthentikURL, cfg.Secrets))
 	registry.Register(miniflux.NewConfigurator(8085, traefikDynamicDir))
 	registry.Register(navidrome.NewConfigurator(4533))

@@ -120,7 +120,7 @@ func bootstrapAuthentik(cfg *config.Config, runtime containerruntime.Runtime, lo
 		cfg.LDAPBindPassword,
 		appDataPath,
 		"", // skip branding CSS in dev
-	)
+	).WithBaseURL(cfg.SSOBaseURL)
 	if err := cfgr.HealthCheck(ctx); err != nil {
 		return fmt.Errorf("authentik health check: %w", err)
 	}

@@ -290,6 +290,69 @@ func (c *Client) findEmbeddedOutpost() (*OutpostResponse, error) {
 	return nil, nil
 }
 
+// EnsureEmbeddedOutpostHost sets the authentik_host config on the embedded outpost so the
+// embedded outpost generates browser-accessible authorize redirect URLs (e.g. via Traefik)
+// rather than the server's internal bind address. Safe to call repeatedly — only patches
+// when the value differs.
+func (c *Client) EnsureEmbeddedOutpostHost(baseURL string) error {
+	outpost, err := c.findEmbeddedOutpost()
+	if err != nil {
+		return fmt.Errorf("finding embedded outpost: %w", err)
+	}
+	if outpost == nil {
+		return nil // Not set up yet; will be called again after setup
+	}
+
+	// Fetch full outpost object to get current config
+	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/%s/", c.baseURL, outpost.PK)
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fetching outpost: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var full map[string]interface{}
+	if err := json.Unmarshal(body, &full); err != nil {
+		return fmt.Errorf("parsing outpost: %w", err)
+	}
+
+	config, _ := full["config"].(map[string]interface{})
+	if config == nil {
+		config = make(map[string]interface{})
+	}
+	if config["authentik_host"] == baseURL {
+		return nil // Already set correctly
+	}
+
+	config["authentik_host"] = baseURL
+	full["config"] = config
+
+	patchBytes, _ := json.Marshal(full)
+	req2, _ := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(patchBytes))
+	req2.Header.Set("Authorization", "Bearer "+c.token)
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Accept", "application/json")
+
+	resp2, err := c.httpClient.Do(req2)
+	if err != nil {
+		return err
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		body2, _ := io.ReadAll(resp2.Body)
+		return fmt.Errorf("updating outpost host: status %d: %s", resp2.StatusCode, string(body2))
+	}
+	return nil
+}
+
 // updateOutpostProviders updates the providers list for an outpost
 func (c *Client) updateOutpostProviders(outpostPK string, providers []int) error {
 	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/%s/", c.baseURL, outpostPK)
