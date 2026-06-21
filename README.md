@@ -1,203 +1,51 @@
 # Bloud
 
-**Home Cloud Operating System**
+**Home Cloud Integration Platform**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
 
-> **Status:** Early alpha. Core infrastructure and web UI working.
-
----
-
-Self-hosting's hard part isn't installation. Every platform has solved that. The hard part is  when you add a second service and realize the first one doesn't know it exists.
+Self-hosting's hard part isn't installation. Every platform has solved that. The hard
+part is when you add a second service and realize the first one doesn't know it exists.
 
 To connect two services manually, you typically:
 
-- Generate an API key in one service
-- Open the second service's settings, paste the key
-- Create an OAuth client in your identity provider - client ID, secret, callback URL
-- Paste those back into the first service
-- Register the second service with the identity provider separately
-- Write a reverse proxy rule for each
+- Generate an API key in one service, paste it into the second
+- Create an OAuth client in your identity provider — client ID, secret, callback URL — paste those back into the first
+- Register each service with the reverse proxy separately
 - Provision and wire a database for each
 - Remember all of this when you reinstall or migrate
 
-On every other platform, *you* are the integration layer — the person who knows which credentials go where and how the pieces fit together. You don't configure services. You configure the relationships between services. That knowledge lives in your head, not in the platform.
-
-**Bloud flips this.** Apps declare what they provide and what they consume. The system holds the integration knowledge and wires everything automatically - on install, on restart, forever.
-
-```mermaid
-graph LR
-    DB[(Database)]
-    IP[Identity Provider]
-    S1[Service]
-    S2[Service]
-    RP[Reverse Proxy]
-
-    DB -->|credentials| S1
-    DB -->|credentials| S2
-    DB -->|credentials| IP
-    S1 -->|SSO client| IP
-    S2 -->|SSO client| IP
-    S1 <-->|API key| S2
-    S1 -->|route| RP
-    S2 -->|route| RP
-    IP -->|auth middleware| RP
-```
-
-Every edge in this graph is a manual step on every other platform. Bloud generates all of them and regenerates them correctly every time a service starts.
+On every other platform, *you* are the integration layer. **Bloud flips this.** Apps
+declare what they provide and what they consume. Bloud holds the integration knowledge
+and wires everything automatically — on install, on restart, forever.
 
 ---
 
-## The Vision
+## What You Get
 
-- Flash USB drive, boot on any x86_64 hardware
-- Access web UI, install apps with one click
-- Every integration automatic: SSO, routing, credentials, app-to-app connections
-- Multi-host orchestration for scaling across machines
+Install Bloud on a Debian server and get:
 
----
-
-## Quick Start
-
-Bloud runs as a bootable ISO. Flash it to a USB drive or deploy it to a VM.
-
-For **development**, you'll need a NixOS machine (see [Local Development](#local-development) below).
-
-```bash
-git clone https://codeberg.org/d-buckner/bloud.git
-cd bloud
-npm run setup    # Install deps, build CLI
-./bloud setup    # Check prerequisites, apply NixOS config
-./bloud start    # Start dev environment
-```
-
-Access the web UI at **http://bloud.local** (port 80, through Traefik).
+- One web dashboard
+- One account and shared login (SSO) across all apps
+- One-click app installation
+- Automatic dependency provisioning (PostgreSQL, Redis, Authentik)
+- Automatic inter-app configuration (API keys, OIDC clients, LDAP setup)
+- Automatic routing through Traefik
+- Reliable reconciliation after failures and reboot
 
 ---
 
-## Apps
+## App Catalog
 
-| Category           | Apps                                  |
-| ------------------ | ------------------------------------- |
+| Category | Apps |
+|---|---|
 | **Infrastructure** | PostgreSQL, Redis, Traefik, Authentik |
-| **Media**          | Jellyfin                              |
-| **Productivity**   | Miniflux (RSS)                        |
-| **Network**        | AdGuard Home                          |
-| **Utility**        | qBittorrent                           |
-
----
-
-## How It Works
-
-### 1. The Dependency Graph
-
-Every app declares its integrations in `metadata.yaml`:
-
-```yaml
-# example metadata.yaml
-integrations:
-  database:
-    required: true
-    compatible:
-      - app: postgres
-        default: true
-  sso:
-    required: false
-    compatible:
-      - app: authentik
-```
-
-When you install an app, Bloud builds a graph of everything it needs. Dependencies with only one compatible option are auto-selected. If postgres isn't installed yet, it goes in first. If it's already there, the new app just gets wired to it.
-
-The graph also determines **execution order** — infrastructure first, then dependents:
-
-```
-Level 0: postgres, redis          ← No dependencies
-Level 1: authentik                ← Needs postgres + redis
-Level 2: jellyfin, miniflux       ← Need postgres and authentik
-```
-
-### 2. Declarative Container Definitions
-
-Each app has a `module.nix` defining how to run the container:
-
-```nix
-mkBloudApp {
-  name = "miniflux";
-  image = "miniflux/miniflux:latest";
-  port = 8085;
-  database = "miniflux";  # Auto-creates postgres DB and user
-
-  environment = cfg: {
-    BASE_URL = "${cfg.externalHost}/embed/miniflux";
-  };
-}
-```
-
-The `mkBloudApp` helper handles systemd services, podman networking, volumes, and dependency wiring. When you enable an app, NixOS creates everything atomically.
-
-### 3. Idempotent Configurators
-
-SSO, routing, and credentials are wired automatically by the platform — apps don't configure those themselves. What configurators handle is app-specific setup that can't be expressed in Nix: creating directories, writing config files, setting app-specific defaults.
-
-```go
-// PreStart: runs before the container starts
-func (c *Configurator) PreStart(ctx context.Context, state *AppState) error {
-    // Ensure directories exist
-    if err := os.MkdirAll(filepath.Join(state.DataPath, "config"), 0755); err != nil {
-        return err
-    }
-
-    // Write app config with required settings for Bloud's embedding
-    ini, _ := configurator.LoadINI(configPath)
-    ini.EnsureKeys("Preferences", map[string]string{
-        "WebUI\\HostHeaderValidation": "false",
-        "WebUI\\CSRFProtection":       "false",
-        "Downloads\\SavePath":         "/downloads",
-    })
-    return ini.Save(configPath)
-}
-
-// PostStart: runs after the container is healthy
-// Used for apps that require API calls to configure (e.g. Authentik)
-func (c *Configurator) PostStart(ctx context.Context, state *AppState) error {
-    return nil // most apps are fully configured by PreStart
-}
-```
-
-Configurators always write the *desired* state — running them again produces the same result.
-
-### 4. Container Invalidation
-
-When a new integration becomes available, existing apps that can use it get automatically reconfigured:
-
-```
-Service A installed (no SSO)
-Identity provider installed
-    │
-    ▼
-Graph: "Who declared an SSO integration?"
-    → Service A
-    │
-    ▼
-Service A marked for reconfiguration
-Service A restarted in dependency order
-PreStart + PostStart wire the new integration
-```
-
-No user action needed. Apps gain integrations as you install their dependencies.
-
----
-
-## Shared Infrastructure
-
-Each Bloud host runs exactly one instance of each infrastructure service. All apps share them:
-
-- **PostgreSQL** — one instance, apps get separate databases and users
-- **Redis** — session storage and caching, shared across apps
-- **Traefik** — reverse proxy, routing, SSO middleware
-- **Authentik** — identity provider, SSO for all apps
+| **Media** | Jellyfin |
+| **Photos** | Immich |
+| **Productivity** | Miniflux (RSS) |
+| **Network** | AdGuard Home |
+| **Utility** | qBittorrent |
 
 ---
 
@@ -205,13 +53,40 @@ Each Bloud host runs exactly one instance of each infrastructure service. All ap
 
 Apps get SSO automatically. Three strategies depending on the app:
 
-| Strategy         | How It Works                                                          | Example Apps              |
-| ---------------- | --------------------------------------------------------------------- | ------------------------- |
-| **Native OIDC**  | App handles OAuth2 itself; Bloud provides credentials via env vars    | Miniflux                  |
-| **Forward Auth** | Traefik checks auth with Authentik before the request reaches the app | AdGuard Home, qBittorrent |
-| **LDAP**         | Authentik LDAP for apps that don't speak OAuth2                       | Jellyfin                  |
+| Strategy | How It Works | Example Apps |
+|---|---|---|
+| **Native OIDC** | App handles OAuth2 itself; Bloud provides credentials | Miniflux, Immich |
+| **Forward Auth** | Traefik checks auth with Authentik before reaching the app | AdGuard Home, qBittorrent |
+| **LDAP** | Authentik LDAP for apps that don't speak OAuth2 | Jellyfin |
 
-All three are configured automatically at install time.
+---
+
+## How It Works
+
+Each app declares its integrations in `metadata.yaml`:
+
+```yaml
+integrations:
+  database:
+    required: true
+    compatible: [{ app: postgres, default: true }]
+  sso:
+    required: false
+    compatible: [{ app: authentik }]
+```
+
+When you install an app, Bloud resolves its full dependency graph and starts things in
+order. If PostgreSQL isn't installed yet, it goes in first. If it's already there, the
+new app is wired to the existing instance.
+
+```
+Level 0: postgres, redis          ← No dependencies
+Level 1: authentik                ← Needs postgres + redis
+Level 2: jellyfin                 ← Needs authentik for LDAP SSO
+```
+
+Apps run as rootless Podman containers managed by Quadlet systemd units. A Go binary
+(`host-agent`) handles orchestration, configuration, and the web dashboard.
 
 ---
 
@@ -220,132 +95,99 @@ All three are configured automatically at install time.
 ```
 bloud/
 ├── apps/                          # App definitions
-│   ├── miniflux/
-│   │   ├── metadata.yaml          # Integrations, SSO, port, routing
-│   │   ├── module.nix             # Container definition
-│   │   └── configurator.go        # PreStart/PostStart hooks
+│   ├── jellyfin/
+│   │   ├── metadata.yaml          # Integrations, SSO, port, container spec
+│   │   ├── configurator.go        # PreStart/PostStart runtime hooks
+│   │   └── icon.png
 │   ├── postgres/
 │   ├── authentik/
 │   └── ...
 │
-├── services/host-agent/           # Go backend
-│   ├── cmd/host-agent/
+├── services/host-agent/           # Go backend + SvelteKit frontend
+│   ├── cmd/host-agent/            # Entry point, bootstrap
 │   ├── internal/
-│   │   ├── orchestrator/          # Install/uninstall coordination
+│   │   ├── orchestrator/          # Install/uninstall, Quadlet unit management
 │   │   ├── catalog/               # App graph and dependency resolution
-│   │   ├── nixgen/                # Generates apps.nix, Traefik config, blueprints
-│   │   ├── store/                 # Database layer
-│   │   └── api/                   # HTTP API
-│   ├── pkg/configurator/          # Configurator interface
-│   └── web/                       # Svelte frontend
+│   │   ├── integration/           # Typed integration resolver
+│   │   ├── store/                 # SQLite persistence
+│   │   └── api/                   # HTTP API (chi router)
+│   ├── pkg/
+│   │   ├── authentik/             # Authentik REST API client
+│   │   └── configurator/          # Configurator interface + helpers
+│   └── web/                       # SvelteKit frontend
 │
-├── nixos/
-│   ├── bloud.nix                  # Main NixOS module
-│   ├── lib/
-│   │   ├── bloud-app.nix          # mkBloudApp helper
-│   │   └── podman-service.nix     # Systemd service generator
-│   └── generated/
-│       └── apps.nix               # Generated by host-agent on install
-│
-└── cli/                           # ./bloud CLI (Go)
+└── dev/                           # Lima VM config + setup scripts
 ```
 
 ---
 
 ## Local Development
 
-Requires a NixOS machine (physical or VM with the `dev-server` config applied).
+Development uses a **Lima VM** (Debian 13 with rootless Podman).
+
+### Prerequisites
 
 ```bash
-npm run setup    # Install deps + build ./bloud CLI
-./bloud setup    # Check prerequisites, apply NixOS config
-./bloud start    # Start dev environment
+brew install lima
+npm run setup    # Check prerequisites + build ./bloud CLI
 ```
 
-### CLI Commands
-
-**Native NixOS mode** (development on a NixOS machine):
+### First-Time Setup
 
 ```bash
-./bloud start          # Start dev environment
-./bloud stop           # Stop dev services
-./bloud status         # Show status
-./bloud logs           # Show logs
-./bloud attach         # Attach to tmux session (Ctrl-B D to detach)
-./bloud shell [cmd]    # Run a command or open a shell
-./bloud rebuild        # Apply NixOS config changes
+limactl create --name=bloud-dev dev/lima.yaml
+limactl start bloud-dev
+limactl shell bloud-dev bash dev/setup.sh
 ```
 
-**Proxmox mode** (ISO integration testing, set `BLOUD_PVE_HOST`):
+### Daily Development
 
 ```bash
-./bloud start [iso]          # Deploy ISO → create VM → boot → check
-./bloud start --skip-deploy  # Reuse existing VM, re-run checks
-./bloud stop                 # Stop VM
-./bloud destroy              # Destroy VM
-./bloud shell [cmd]          # SSH into VM
-./bloud checks               # Run health checks
-./bloud install <app>        # Install app via API
+./bloud dev              # Build + deploy + run host-agent (Ctrl-C to stop)
+./bloud stop             # Stop host-agent
+./bloud status           # Lima VM + host-agent status
+./bloud services         # App container status
+./bloud logs             # Stream host-agent logs
+./bloud attach           # Shell into Lima VM
+./bloud install <app>    # Install an app via API
+./bloud uninstall <app>  # Uninstall an app via API
 ```
 
-### After Changing NixOS Config
+### Validation
 
 ```bash
-./bloud rebuild   # Apply changes to the running dev machine
+./bloud validate                    # Changed-file-based (default)
+./bloud validate --tier fast        # Unit tests only (~30s)
+./bloud validate --tier integration # Against real services in Lima VM
+./bloud validate --dry-run          # Show what would run
 ```
 
-### Debugging
+### E2E Lifecycle Test
 
 ```bash
-# Check host-agent logs
-journalctl --user -u bloud-host-agent -f
-
-# Check app container logs (includes PreStart/PostStart output)
-journalctl --user -u podman-miniflux -f
-
-# Restart a service to re-run configurators
-systemctl --user restart podman-miniflux
-
-# Check install plan (shows resolved dependency graph)
-curl http://localhost/api/apps/miniflux/plan-install
+./bloud e2e lifecycle              # Full: build → deploy → install → verify → uninstall
+./bloud e2e lifecycle --host-only  # Skip Playwright, verify host state only
+./bloud e2e lifecycle --keep       # Leave running after tests
 ```
-
-### Contributing a New App
-
-1. Create `apps/myapp/metadata.yaml` — integrations, SSO strategy, port
-2. Create `apps/myapp/module.nix` — container definition using `mkBloudApp`
-3. Create `apps/myapp/configurator.go` — PreStart, HealthCheck, PostStart
-4. Register in `services/host-agent/internal/appconfig/register.go`
-
-See [docs/contributing-apps.md](docs/contributing-apps.md) for details.
 
 ---
 
 ## Further Reading
 
-- [docs/embedded-app-routing.md](docs/embedded-app-routing.md) — How apps are served in iframes
-- [docs/design/authentication.md](docs/design/authentication.md) — SSO and auth flows
-- [apps/adding-apps.md](apps/adding-apps.md) — Contributor guide for new apps
+- [SPEC.md](SPEC.md) — Authoritative first-release plan
+- [docs/portable-runtime-architecture.md](docs/portable-runtime-architecture.md) — Component overview
+- [docs/contributing-apps.md](docs/contributing-apps.md) — How to add a new app
+- [docs/sharing.md](docs/sharing.md) — Federated sharing design and implementation plan
 
 ---
 
 ## Contributing
 
-Contributions welcome.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Open a Pull Request
-
-[Open an issue](https://codeberg.org/d-buckner/bloud/issues) with a clear description and steps to reproduce for bugs.
+Contributions welcome. Open an issue with a clear description before starting significant
+work.
 
 ---
 
 ## License
 
-AGPL v3 — See [LICENSE](LICENSE) for details. If you modify Bloud and offer it as a service, you must share your changes.
-
----
-
-**Built with NixOS, Podman, Systemd, Go, and Svelte.**
+AGPL v3 — See [LICENSE](LICENSE) for details.

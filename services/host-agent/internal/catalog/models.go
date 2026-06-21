@@ -18,26 +18,52 @@ type App struct {
 	HealthCheck   HealthCheck            `yaml:"healthCheck" json:"healthCheck"`
 	Docs          Docs                   `yaml:"docs" json:"docs"`
 	Tags          []string               `yaml:"tags" json:"tags"`
-	Routing       *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Bootstrap     *BootstrapConfig       `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
-	Integrations  map[string]Integration `yaml:"integrations" json:"integrations"`
+	Routing      *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Integrations map[string]Integration `yaml:"integrations" json:"integrations"`
+	Container     *ContainerSpec         `yaml:"container,omitempty" json:"container,omitempty"`
+}
+
+// ContainerSpec describes the portable container topology for an app.
+type ContainerSpec struct {
+	Name          string            `yaml:"name,omitempty" json:"name,omitempty"`
+	Image         string            `yaml:"image" json:"image"`
+	Network       string            `yaml:"network,omitempty" json:"network,omitempty"`
+	RestartPolicy string            `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
+	Command       []string          `yaml:"command,omitempty" json:"command,omitempty"`
+	Environment   map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Ports         []ContainerPort   `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Volumes       []ContainerVolume `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+}
+
+// ContainerPort maps a host port to a container port.
+type ContainerPort struct {
+	Host      int    `yaml:"host" json:"host"`
+	Container int    `yaml:"container" json:"container"`
+	Protocol  string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+}
+
+// ContainerVolume mounts a host path into a container.
+type ContainerVolume struct {
+	Source      string   `yaml:"source" json:"source"`
+	Destination string   `yaml:"destination" json:"destination"`
+	Options     []string `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
 // Resources defines resource requirements for an app
 type Resources struct {
-	MinRam  int  `yaml:"minRam" json:"minRam"`    // MB
-	MinDisk int  `yaml:"minDisk" json:"minDisk"`  // GB
+	MinRam  int  `yaml:"minRam" json:"minRam"`   // MB
+	MinDisk int  `yaml:"minDisk" json:"minDisk"` // GB
 	GPU     bool `yaml:"gpu" json:"gpu"`
 }
 
 // SSO defines SSO integration configuration
 type SSO struct {
-	Strategy     string `yaml:"strategy" json:"strategy"`         // native-oidc, forward-auth, none
-	CallbackPath string `yaml:"callbackPath" json:"callbackPath"` // e.g. /oauth2/oidc/callback
-	ProviderName string `yaml:"providerName" json:"providerName"` // e.g. "Bloud SSO"
-	UserCreation bool   `yaml:"userCreation" json:"userCreation"` // Auto-create users on first login
+	Strategy     string `yaml:"strategy" json:"strategy"`               // native-oidc, forward-auth, none
+	CallbackPath string `yaml:"callbackPath" json:"callbackPath"`       // e.g. /oauth2/oidc/callback
+	ProviderName string `yaml:"providerName" json:"providerName"`       // e.g. "Bloud SSO"
+	UserCreation bool   `yaml:"userCreation" json:"userCreation"`       // Auto-create users on first login
 	LaunchPath   string `yaml:"launchPath" json:"launchPath,omitempty"` // Initial path to open when launching the app (overrides root)
-	Env          SSOEnv `yaml:"env" json:"env"`                   // Environment variable mappings
+	Env          SSOEnv `yaml:"env" json:"env"`                         // Environment variable mappings
 }
 
 // SSOEnv maps SSO config values to app-specific environment variable names
@@ -56,8 +82,8 @@ type SSOEnv struct {
 // HealthCheck defines health check configuration
 type HealthCheck struct {
 	Path     string `yaml:"path" json:"path"`
-	Interval int    `yaml:"interval" json:"interval"`  // seconds
-	Timeout  int    `yaml:"timeout" json:"timeout"`    // seconds
+	Interval int    `yaml:"interval" json:"interval"` // seconds
+	Timeout  int    `yaml:"timeout" json:"timeout"`   // seconds
 }
 
 // Docs contains documentation links
@@ -66,49 +92,8 @@ type Docs struct {
 	Source   string `yaml:"source" json:"source"`
 }
 
-// AbsolutePath defines a root-level route for apps that use absolute paths
-// (e.g., AdGuard Home redirects to /install.html, /login.html)
-type AbsolutePath struct {
-	Rule     string            `yaml:"rule" json:"rule"`                         // Traefik rule syntax (e.g., "Path(`/install.html`)")
-	Priority int               `yaml:"priority" json:"priority"`                 // Route priority (higher = matched first)
-	Headers  map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom headers for this route (overrides app headers)
-}
-
 // Routing defines custom routing configuration for Traefik
 type Routing struct {
-	Headers       map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`             // Custom response headers
-	StripPrefix   *bool             `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`     // Strip /embed/<app> prefix (default: true)
-	AbsolutePaths []AbsolutePath    `yaml:"absolutePaths,omitempty" json:"absolutePaths,omitempty"` // Root-level routes for apps using absolute paths
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom response headers
 }
 
-// BootstrapConfig defines client-side pre-configuration for an app
-type BootstrapConfig struct {
-	IndexedDB    *IndexedDBConfig    `yaml:"indexedDB,omitempty" json:"indexedDB,omitempty"`
-	LocalStorage *LocalStorageConfig `yaml:"localStorage,omitempty" json:"localStorage,omitempty"`
-}
-
-// LocalStorageConfig defines localStorage setup requirements
-type LocalStorageConfig struct {
-	Intercepts []LocalStorageEntry `yaml:"intercepts,omitempty" json:"intercepts,omitempty"` // Values returned on read, injected via service worker
-}
-
-// LocalStorageEntry defines a localStorage intercept
-type LocalStorageEntry struct {
-	Key       string            `yaml:"key" json:"key"`
-	Value     string            `yaml:"value,omitempty" json:"value,omitempty"`         // Simple value replacement (supports {{templates}})
-	JSONPatch map[string]string `yaml:"jsonPatch,omitempty" json:"jsonPatch,omitempty"` // Patch fields in existing JSON value (supports {{templates}})
-}
-
-// IndexedDBConfig defines IndexedDB setup requirements
-type IndexedDBConfig struct {
-	Database   string           `yaml:"database" json:"database"`
-	Intercepts []IndexedDBEntry `yaml:"intercepts,omitempty" json:"intercepts,omitempty"` // Values returned on read, injected via service worker
-	Writes     []IndexedDBEntry `yaml:"writes,omitempty" json:"writes,omitempty"`         // Values written from main page before iframe loads
-}
-
-// IndexedDBEntry defines a key-value entry to write
-type IndexedDBEntry struct {
-	Store string `yaml:"store" json:"store"`
-	Key   string `yaml:"key" json:"key"`
-	Value string `yaml:"value" json:"value"` // Supports {{field}} templates for any App field plus {{origin}}, {{embedUrl}}
-}

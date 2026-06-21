@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "setup": "npm install && npm run cli:build && ./bloud setup",
-    "cli:build": "cd cli && go build -o ../bloud .",
+    "cli:build": "mkdir -p .bloud && cd cli && go build -o ../.bloud/cli .",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "frontend:dev": "npm run dev --workspace=services/host-agent/web",
@@ -27,7 +27,8 @@
     "test:unit": "npm run test:go:all && npm run test:ts",
     "test:precommit": "npm run test:go:all && npm run test:ts",
     "test:all": "npm run test:unit && npm run test:nix",
-    "show-report": "cd smoke && npx playwright show-report"
+    "test:e2e": "npm --prefix e2e test -- --project=jellyfin",
+    "show-report": "cd e2e && npx playwright show-report"
   },
   "devDependencies": {
     "husky": "^9.1.7",

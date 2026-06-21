@@ -4,6 +4,12 @@ import "context"
 
 // AppOrchestrator defines the interface for app installation orchestrators
 type AppOrchestrator interface {
+	// EnqueueInstall serializes and installs an app.
+	EnqueueInstall(ctx context.Context, req InstallRequest) (InstallResponse, error)
+
+	// EnqueueUninstall serializes and removes an app.
+	EnqueueUninstall(ctx context.Context, req UninstallRequest) (UninstallResponse, error)
+
 	// Install installs an app with the given choices
 	Install(ctx context.Context, req InstallRequest) (InstallResponse, error)
 
@@ -25,6 +31,16 @@ type InstallRequest struct {
 type UninstallRequest struct {
 	App       string `json:"app"`
 	ClearData bool   `json:"clearData"` // If true, also delete data directory and database
+}
+
+// InstallResult describes the outcome of an installation
+type InstallResult struct {
+	Success        bool     `json:"success"`
+	App            string   `json:"app"`
+	Error          string   `json:"error,omitempty"`
+	AppsInstalled  []string `json:"appsInstalled,omitempty"`
+	Configured     []string `json:"configured,omitempty"`
+	GenerationInfo string   `json:"generationInfo,omitempty"`
 }
 
 // UninstallResult describes the outcome of an uninstallation

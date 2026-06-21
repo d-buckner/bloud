@@ -38,11 +38,3 @@ sso:
   # The blueprint generator creates the Authentik OAuth2 provider automatically.
   # env is empty because the configurator reads credentials via derived secrets.
   env: {}
-
-routing:
-  # /auth/login is Immich's OAuth callback — must be routable at root level.
-  # After Authentik auth, the browser is redirected to http://bloud.local/auth/login?code=xxx.
-  # Traefik needs a root-level rule to forward this to the Immich container.
-  absolutePaths:
-    - rule: "Path(`/auth/login`)"
-      priority: 100

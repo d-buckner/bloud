@@ -298,10 +298,9 @@ tags:
 	// Create server with fakes
 	server := &Server{
 		cfg: ServerConfig{
-			AppsDir:   tmpDir,
-			ConfigDir: filepath.Join(tmpDir, "nix"),
-			DataDir:   tmpDir,
-			Port:      8080,
+			AppsDir: tmpDir,
+			DataDir: tmpDir,
+			Port:    8080,
 		},
 		router:   chi.NewRouter(),
 		catalog:  catalogCache,
@@ -385,10 +384,9 @@ integrations:
 	// Create server
 	server := &Server{
 		cfg: ServerConfig{
-			AppsDir:   tmpDir,
-			ConfigDir: filepath.Join(tmpDir, "nix"),
-			DataDir:   tmpDir,
-			Port:      8080,
+			AppsDir: tmpDir,
+			DataDir: tmpDir,
+			Port:    8080,
 		},
 		router:   chi.NewRouter(),
 		catalog:  catalogCache,
@@ -1146,7 +1144,6 @@ func TestGetUserFromContext(t *testing.T) {
 	t.Run("user in context", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test", nil)
 		expectedUser := &store.User{
-			ID:       "550e8400-e29b-41d4-a716-446655440000",
 			Username: "testuser",
 		}
 		ctx := req.Context()
@@ -1155,7 +1152,6 @@ func TestGetUserFromContext(t *testing.T) {
 
 		user := getUserFromContext(req.Context())
 		require.NotNil(t, user)
-		assert.Equal(t, "550e8400-e29b-41d4-a716-446655440000", user.ID)
 		assert.Equal(t, "testuser", user.Username)
 	})
 }

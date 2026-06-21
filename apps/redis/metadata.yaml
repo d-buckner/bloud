@@ -11,3 +11,12 @@ healthCheck:
   timeout: 30
 
 integrations: {}
+
+container:
+  name: apps-redis
+  image: docker.io/redis:7-alpine
+  network: apps-net
+  restartPolicy: always
+  ports:
+    - host: 6379
+      container: 6379

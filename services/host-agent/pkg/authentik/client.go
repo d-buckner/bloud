@@ -366,7 +366,14 @@ func (c *Client) EnsureLDAPInfrastructure(ldapBindPassword string) error {
 		return fmt.Errorf("ensuring LDAP service token: %w", err)
 	}
 
-	// 6. Create LDAP outpost (if not exists)
+	// 6. Set the service account's password for LDAP direct bind.
+	// The app_password token alone is not sufficient — Authentik's LDAP outpost
+	// in direct bind mode requires the user's actual password.
+	if err := c.setUserPassword(serviceAccountID, ldapBindPassword); err != nil {
+		return fmt.Errorf("setting service account password: %w", err)
+	}
+
+	// 7. Create LDAP outpost (if not exists)
 	if err := c.ensureLDAPOutpost(providerID); err != nil {
 		return fmt.Errorf("ensuring LDAP outpost: %w", err)
 	}

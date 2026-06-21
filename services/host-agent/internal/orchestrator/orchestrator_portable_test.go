@@ -1,0 +1,86 @@
+package orchestrator
+
+import (
+	"context"
+	"log/slog"
+	"path/filepath"
+	"testing"
+
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type fakeContainerRuntime struct {
+	ensured  []containerruntime.Spec
+	removed  []string
+	networks []string
+}
+
+func (f *fakeContainerRuntime) EnsureNetwork(_ context.Context, name string) error {
+	f.networks = append(f.networks, name)
+	return nil
+}
+
+func (f *fakeContainerRuntime) Ensure(_ context.Context, spec containerruntime.Spec) (containerruntime.EnsureResult, error) {
+	f.ensured = append(f.ensured, spec)
+	return containerruntime.EnsureResult{Created: true, Started: true}, nil
+}
+
+func (f *fakeContainerRuntime) Remove(_ context.Context, name string) error {
+	f.removed = append(f.removed, name)
+	return nil
+}
+
+func (f *fakeContainerRuntime) Inspect(_ context.Context, _ string) (containerruntime.State, error) {
+	return containerruntime.State{}, nil
+}
+
+func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T) {
+	dataDir := t.TempDir()
+	graph := NewFakeAppGraph()
+	cache := NewFakeCatalogCache()
+	appStore := NewFakeAppStore()
+	containers := &fakeContainerRuntime{}
+	cache.AddApp(&catalog.App{
+		Name:        "jellyfin",
+		DisplayName: "Jellyfin",
+		Port:        8096,
+		Container: &catalog.ContainerSpec{
+			Name:          "apps-jellyfin",
+			Image:         "docker.io/jellyfin/jellyfin:10.11.7",
+			Network:       "apps-net",
+			RestartPolicy: "always",
+			Volumes: []catalog.ContainerVolume{{
+				Source: "{{appDataDir}}/config", Destination: "/config",
+			}},
+		},
+	})
+
+	orch := NewPortable(PortableConfig{
+		Graph: graph, CatalogCache: cache, AppStore: appStore, Containers: containers,
+		DataDir: dataDir, Logger: slog.Default(),
+	})
+
+	install, err := orch.Install(context.Background(), InstallRequest{App: "jellyfin"})
+	require.NoError(t, err)
+	require.True(t, install.IsSuccess(), install.GetError())
+	require.Len(t, containers.ensured, 1)
+	assert.Equal(t, []string{"apps-net"}, containers.networks)
+	assert.Equal(t, filepath.Join(dataDir, "jellyfin", "config"), containers.ensured[0].Mounts[0].Source)
+	app, err := appStore.GetByName("jellyfin")
+	require.NoError(t, err)
+	assert.Equal(t, "running", app.Status)
+
+	orch.ReconcileState(context.Background())
+	assert.Len(t, containers.ensured, 2)
+
+	remove, err := orch.Uninstall(context.Background(), UninstallRequest{App: "jellyfin"})
+	require.NoError(t, err)
+	require.True(t, remove.IsSuccess(), remove.GetError())
+	assert.Equal(t, []string{"apps-jellyfin"}, containers.removed)
+	installed, err := appStore.IsInstalled("jellyfin")
+	require.NoError(t, err)
+	assert.False(t, installed)
+}

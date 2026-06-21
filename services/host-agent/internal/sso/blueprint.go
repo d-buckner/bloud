@@ -51,6 +51,17 @@ func (g *BlueprintGenerator) primaryBaseURL() string {
 	return ""
 }
 
+// appSubdomainURL builds a subdomain URL for an app from a base URL.
+// e.g., "http://localhost:8080" + "miniflux" → "http://miniflux.localhost:8080"
+func appSubdomainURL(baseURL, appName string) string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL // fallback
+	}
+	parsed.Host = appName + "." + parsed.Host
+	return parsed.String()
+}
+
 // GenerateForApp generates an Authentik blueprint for an app with SSO
 func (g *BlueprintGenerator) GenerateForApp(app *catalog.App) error {
 	switch app.SSO.Strategy {
@@ -71,15 +82,11 @@ func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
 	clientID := g.generateClientID(app.Name)
 	clientSecret := g.generateClientSecret(app.Name)
 
-	// Build redirect URIs for ALL base URLs
+	// Build redirect URIs for ALL base URLs using subdomain routing
 	var redirectURIs []string
 	for _, baseURL := range g.baseURLs {
-		// Embed path (for apps that use ACTUAL_OPENID_SERVER_HOSTNAME correctly)
-		redirectURIs = append(redirectURIs,
-			fmt.Sprintf("%s/embed/%s%s", baseURL, app.Name, app.SSO.CallbackPath))
-		// Root-level callback: some apps (Actual Budget) build redirect_uri from window.location.origin
-		redirectURIs = append(redirectURIs,
-			fmt.Sprintf("%s%s", baseURL, app.SSO.CallbackPath))
+		appURL := appSubdomainURL(baseURL, app.Name)
+		redirectURIs = append(redirectURIs, appURL+app.SSO.CallbackPath)
 	}
 
 	// Add direct port access for debugging (primary base URL only)
@@ -94,7 +101,7 @@ func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
 		}
 	}
 
-	launchURL := fmt.Sprintf("%s/embed/%s", g.primaryBaseURL(), app.Name)
+	launchURL := appSubdomainURL(g.primaryBaseURL(), app.Name)
 
 	blueprint, err := g.renderOIDCBlueprint(app, clientID, clientSecret, redirectURIs, launchURL)
 	if err != nil {
@@ -109,7 +116,7 @@ func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) erro
 	// external_host should be the root URL, not the app-specific path.
 	// The callback URL (/outpost.goauthentik.io/callback) is handled at root level by Traefik.
 	externalHost := g.primaryBaseURL()
-	launchURL := fmt.Sprintf("%s/embed/%s", g.primaryBaseURL(), app.Name)
+	launchURL := appSubdomainURL(g.primaryBaseURL(), app.Name)
 
 	blueprint, err := g.renderForwardAuthBlueprint(app, externalHost, launchURL)
 	if err != nil {
@@ -122,7 +129,7 @@ func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) erro
 // generateLDAPBlueprint creates app-specific groups for LDAP authentication
 // The LDAP provider and outpost are created separately via GenerateLDAPOutpostBlueprint
 func (g *BlueprintGenerator) generateLDAPBlueprint(app *catalog.App) error {
-	launchURL := fmt.Sprintf("%s/embed/%s", g.primaryBaseURL(), app.Name)
+	launchURL := appSubdomainURL(g.primaryBaseURL(), app.Name)
 
 	blueprint, err := g.renderLDAPBlueprint(app, launchURL)
 	if err != nil {
@@ -224,8 +231,9 @@ func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
 	clientID := g.generateClientID(app.Name)
 	clientSecret := g.generateClientSecret(app.Name)
 	discoveryURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.Name)
-	redirectURL := fmt.Sprintf("%s/embed/%s%s", baseURL, app.Name, app.SSO.CallbackPath)
-	serverHostname := fmt.Sprintf("%s/embed/%s", baseURL, app.Name)
+	appURL := appSubdomainURL(baseURL, app.Name)
+	redirectURL := appURL + app.SSO.CallbackPath
+	serverHostname := appURL
 	issuerURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.Name)
 
 	env := make(map[string]string)

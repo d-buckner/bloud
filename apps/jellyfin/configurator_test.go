@@ -1,6 +1,8 @@
 package jellyfin
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -34,7 +36,7 @@ func TestNewConfigurator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := NewConfigurator(tt.port, "http://localhost:9001", "test-token")
+			c := NewConfigurator(tt.port)
 			if c.Port != tt.wantPort {
 				t.Errorf("NewConfigurator(%d).Port = %d, want %d", tt.port, c.Port, tt.wantPort)
 			}
@@ -43,7 +45,7 @@ func TestNewConfigurator(t *testing.T) {
 }
 
 func TestConfigurator_Name(t *testing.T) {
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	if got := c.Name(); got != "jellyfin" {
 		t.Errorf("Name() = %q, want %q", got, "jellyfin")
 	}
@@ -53,11 +55,17 @@ func TestConfigurator_PreStart(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	state := &configurator.AppState{
-		Name:          "jellyfin",
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
+	}
+	pluginDir := filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "LDAP-Auth.dll"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
 	err := c.PreStart(ctx, state)
@@ -89,7 +97,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	contentStr := string(content)
 
 	// Check PublishedServerUri is set for reverse proxy
-	if !strings.Contains(contentStr, "<PublishedServerUri>http://bloud.local/embed/jellyfin</PublishedServerUri>") {
+	if !strings.Contains(contentStr, "<PublishedServerUri>http://jellyfin.bloud.local</PublishedServerUri>") {
 		t.Error("network.xml should have PublishedServerUri set")
 	}
 
@@ -101,6 +109,100 @@ func TestConfigurator_PreStart(t *testing.T) {
 	// Check KnownProxies includes localhost
 	if !strings.Contains(contentStr, "<string>127.0.0.1</string>") {
 		t.Error("network.xml should have 127.0.0.1 in KnownProxies")
+	}
+}
+
+func TestConfigurator_StaticConfig_ChangedOnFirstRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := NewConfigurator(8096)
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(tmpDir, "jellyfin"),
+		BloudDataPath: filepath.Join(tmpDir, "bloud"),
+	}
+	// Pre-create plugin so the download isn't attempted
+	pluginDir := filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "LDAP-Auth.dll"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := c.StaticConfig(context.Background(), state)
+	if err != nil {
+		t.Fatalf("StaticConfig() error = %v", err)
+	}
+	if !changed {
+		t.Error("StaticConfig() changed = false on first run (network.xml created), want true")
+	}
+}
+
+func TestConfigurator_StaticConfig_NoChangeOnSecondRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := NewConfigurator(8096)
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(tmpDir, "jellyfin"),
+		BloudDataPath: filepath.Join(tmpDir, "bloud"),
+	}
+	pluginDir := filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "LDAP-Auth.dll"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// First run creates network.xml
+	if _, err := c.StaticConfig(context.Background(), state); err != nil {
+		t.Fatalf("first StaticConfig() error = %v", err)
+	}
+
+	// Second run should detect no change
+	changed, err := c.StaticConfig(context.Background(), state)
+	if err != nil {
+		t.Fatalf("second StaticConfig() error = %v", err)
+	}
+	if changed {
+		t.Error("StaticConfig() changed = true on second run with identical config, want false")
+	}
+}
+
+func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	file, err := writer.Create("LDAP-Auth.dll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("plugin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write(archive.Bytes())
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096)
+	c.pluginURL = server.URL
+	c.pluginSHA256 = ""
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(t.TempDir(), "jellyfin"),
+		BloudDataPath: t.TempDir(),
+	}
+
+	if err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart() error = %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth", "LDAP-Auth.dll"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "plugin" {
+		t.Fatalf("plugin content = %q, want plugin", content)
 	}
 }
 
@@ -124,8 +226,8 @@ func TestApplyNetworkConfig_AppliesAllSettings(t *testing.T) {
 	if !cfg.HasConfig(jellyfinNetworkConfig) {
 		t.Error("HasConfig() = false after applyNetworkConfig()")
 	}
-	if got := cfg.GetElement("PublishedServerUri"); got != "http://bloud.local/embed/jellyfin" {
-		t.Errorf("PublishedServerUri = %q, want %q", got, "http://bloud.local/embed/jellyfin")
+	if got := cfg.GetElement("PublishedServerUri"); got != "http://jellyfin.bloud.local" {
+		t.Errorf("PublishedServerUri = %q, want %q", got, "http://jellyfin.bloud.local")
 	}
 }
 
@@ -208,7 +310,7 @@ func TestConfigurator_GetSystemInfo(t *testing.T) {
 			}))
 			defer server.Close()
 
-			c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+			c := NewConfigurator(8096)
 			c.baseURL = server.URL
 
 			got, err := c.getSystemInfo(context.Background())
@@ -286,7 +388,7 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	err := c.completeStartupWizard(context.Background())
@@ -341,7 +443,7 @@ func TestConfigurator_Authenticate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	token, err := c.authenticate(context.Background(), bootstrapUsername, bootstrapPassword)
@@ -380,7 +482,7 @@ func TestConfigurator_GetPluginConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	configBytes, err := c.getPluginConfiguration(context.Background(), "test-token", ldapPluginID)
@@ -411,7 +513,7 @@ func TestConfigurator_SetPluginConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	config := LDAPConfig{
@@ -447,7 +549,7 @@ func TestConfigurator_GetUsers(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	users, err := c.getUsers(context.Background(), "test-token")
@@ -480,7 +582,7 @@ func TestConfigurator_DeleteUser(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	err := c.deleteUser(context.Background(), "test-token", "user-123")
@@ -520,7 +622,7 @@ func TestConfigurator_DeleteBootstrapAdmin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	err := c.deleteBootstrapAdmin(context.Background(), "test-token")
@@ -544,7 +646,7 @@ func TestConfigurator_DeleteBootstrapAdmin_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	// Should not error even if bootstrap admin is not found
@@ -583,12 +685,11 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
-		Name:         "jellyfin",
-		Integrations: map[string][]string{}, // No SSO
+		SSOEnabled: false,
 	}
 
 	err := c.PostStart(context.Background(), state)
@@ -598,6 +699,13 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 }
 
 func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
+	ldap := &configurator.LDAPOutput{
+		Host:         "apps-authentik-ldap",
+		Port:         3389,
+		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		BindPassword: "test-ldap-password",
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
@@ -606,12 +714,7 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
 			if r.Method == "GET" {
-				// Return already configured LDAP
-				config := LDAPConfig{
-					LdapServer:   defaultLDAPHost,
-					LdapBindUser: "cn=already-configured",
-				}
-				json.NewEncoder(w).Encode(config)
+				json.NewEncoder(w).Encode(desiredLDAPConfig(ldap))
 			} else {
 				// POST should not be called
 				t.Error("SetPluginConfiguration should not be called when already configured")
@@ -624,10 +727,15 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
-	err := c.configureLDAP(context.Background())
+	state := &configurator.AppState{
+		SSOEnabled: true,
+		LDAP:       ldap,
+	}
+
+	err := c.configureLDAP(context.Background(), state)
 	if err != nil {
 		t.Fatalf("configureLDAP() error = %v", err)
 	}
@@ -650,12 +758,175 @@ func TestConfigurator_ConfigureLDAP_PluginNotInstalled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, "http://localhost:9001", "test-token")
+	c := NewConfigurator(8096)
 	c.baseURL = server.URL
 
+	state := &configurator.AppState{
+		SSOEnabled: true,
+		LDAP: &configurator.LDAPOutput{
+			Host:         "apps-authentik-ldap",
+			Port:         3389,
+			BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+			BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+			BindPassword: "test-ldap-password",
+		},
+	}
+
 	// Should not error when plugin is not installed
-	err := c.configureLDAP(context.Background())
+	err := c.configureLDAP(context.Background(), state)
 	if err != nil {
 		t.Fatalf("configureLDAP() should not error when plugin not installed: %v", err)
+	}
+}
+
+func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
+	var receivedConfig LDAPConfig
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			resp := AuthResponse{AccessToken: "test-token"}
+			json.NewEncoder(w).Encode(resp)
+
+		case "/Plugins/" + ldapPluginID + "/Configuration":
+			if r.Method == "GET" {
+				// Return unconfigured LDAP
+				json.NewEncoder(w).Encode(LDAPConfig{})
+			} else if r.Method == "POST" {
+				json.NewDecoder(r.Body).Decode(&receivedConfig)
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		default:
+			t.Errorf("Unexpected endpoint: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096)
+	c.baseURL = server.URL
+
+	state := &configurator.AppState{
+		SSOEnabled: true,
+		LDAP: &configurator.LDAPOutput{
+			Host:         "ldap.example.com",
+			Port:         636,
+			BaseDN:       "dc=example,dc=com",
+			BindUser:     "cn=service,dc=example,dc=com",
+			BindPassword: "secret-password",
+		},
+	}
+
+	err := c.configureLDAP(context.Background(), state)
+	if err != nil {
+		t.Fatalf("configureLDAP() error = %v", err)
+	}
+
+	if receivedConfig.LdapServer != "ldap.example.com" {
+		t.Errorf("LdapServer = %q, want %q", receivedConfig.LdapServer, "ldap.example.com")
+	}
+	if receivedConfig.LdapPort != 636 {
+		t.Errorf("LdapPort = %d, want %d", receivedConfig.LdapPort, 636)
+	}
+	if receivedConfig.LdapBaseDn != "dc=example,dc=com" {
+		t.Errorf("LdapBaseDn = %q, want %q", receivedConfig.LdapBaseDn, "dc=example,dc=com")
+	}
+	if receivedConfig.LdapBindUser != "cn=service,dc=example,dc=com" {
+		t.Errorf("LdapBindUser = %q, want %q", receivedConfig.LdapBindUser, "cn=service,dc=example,dc=com")
+	}
+	if receivedConfig.LdapBindPassword != "secret-password" {
+		t.Errorf("LdapBindPassword = %q, want %q", receivedConfig.LdapBindPassword, "secret-password")
+	}
+	expectedAdminFilter := "(memberOf=cn=authentik Admins,ou=groups,dc=example,dc=com)"
+	if receivedConfig.LdapAdminFilter != expectedAdminFilter {
+		t.Errorf("LdapAdminFilter = %q, want %q", receivedConfig.LdapAdminFilter, expectedAdminFilter)
+	}
+}
+
+func TestConfigurator_ConfigureLDAP_UpdatesRotatedPassword(t *testing.T) {
+	ldap := &configurator.LDAPOutput{
+		Host:         "apps-authentik-ldap",
+		Port:         3389,
+		BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+		BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		BindPassword: "new-password",
+	}
+	current := desiredLDAPConfig(ldap)
+	current.LdapBindPassword = "old-password"
+	var receivedConfig LDAPConfig
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+		case "/Plugins/" + ldapPluginID + "/Configuration":
+			if r.Method == http.MethodGet {
+				json.NewEncoder(w).Encode(current)
+				return
+			}
+			json.NewDecoder(r.Body).Decode(&receivedConfig)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("Unexpected endpoint: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096)
+	c.baseURL = server.URL
+
+	err := c.configureLDAP(context.Background(), &configurator.AppState{
+		SSOEnabled: true,
+		LDAP:       ldap,
+	})
+
+	if err != nil {
+		t.Fatalf("configureLDAP() error = %v", err)
+	}
+	if receivedConfig.LdapBindPassword != "new-password" {
+		t.Errorf("LdapBindPassword = %q, want %q", receivedConfig.LdapBindPassword, "new-password")
+	}
+}
+
+func TestConfigurator_PostStart_SkipsLDAPWhenNilDespiteSSOEnabled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/System/Info/Public":
+			resp := SystemInfo{StartupWizardCompleted: true}
+			json.NewEncoder(w).Encode(resp)
+
+		case "/Users/AuthenticateByName":
+			resp := AuthResponse{AccessToken: "test-token"}
+			json.NewEncoder(w).Encode(resp)
+
+		case "/Library/VirtualFolders":
+			if r.Method == http.MethodGet {
+				json.NewEncoder(w).Encode([]VirtualFolder{})
+			} else if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		case "/Plugins/" + ldapPluginID + "/Configuration":
+			t.Error("LDAP configuration should not be called when state.LDAP is nil")
+			w.WriteHeader(http.StatusBadRequest)
+
+		default:
+			t.Errorf("Unexpected endpoint: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096)
+	c.baseURL = server.URL
+
+	state := &configurator.AppState{
+		SSOEnabled: true,
+		LDAP:       nil, // SSO enabled but no LDAP output
+	}
+
+	err := c.PostStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("PostStart() error = %v", err)
 	}
 }

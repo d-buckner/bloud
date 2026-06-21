@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 )
 
@@ -198,60 +197,6 @@ func fixtureRemovePlanWithUnconfigure(app string, willUnconfigure []string) *cat
 		CanRemove:       true,
 		Blockers:        []string{},
 		WillUnconfigure: willUnconfigure,
-	}
-}
-
-// Test transaction fixtures
-
-func fixtureEmptyTransaction() *nixgen.Transaction {
-	return &nixgen.Transaction{
-		Apps: make(map[string]nixgen.AppConfig),
-	}
-}
-
-func fixtureTransactionWithApp(appName string) *nixgen.Transaction {
-	return &nixgen.Transaction{
-		Apps: map[string]nixgen.AppConfig{
-			appName: {
-				Name:         appName,
-				Enabled:      true,
-				Integrations: make(map[string]string),
-			},
-		},
-	}
-}
-
-func fixtureTransactionWithApps(appNames ...string) *nixgen.Transaction {
-	tx := &nixgen.Transaction{
-		Apps: make(map[string]nixgen.AppConfig),
-	}
-	for _, name := range appNames {
-		tx.Apps[name] = nixgen.AppConfig{
-			Name:         name,
-			Enabled:      true,
-			Integrations: make(map[string]string),
-		}
-	}
-	return tx
-}
-
-// Test rebuild result fixtures
-
-func fixtureRebuildSuccess() *nixgen.RebuildResult {
-	return &nixgen.RebuildResult{
-		Success:  true,
-		Output:   "rebuilding...\nactivating...\n",
-		Duration: 5 * time.Second,
-		Changes:  []string{"starting podman-qbittorrent.service"},
-	}
-}
-
-func fixtureRebuildFailure(errorMsg string) *nixgen.RebuildResult {
-	return &nixgen.RebuildResult{
-		Success:      false,
-		ErrorMessage: errorMsg,
-		Output:       "error: " + errorMsg,
-		Duration:     2 * time.Second,
 	}
 }
 

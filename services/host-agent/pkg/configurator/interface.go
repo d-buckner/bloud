@@ -44,25 +44,43 @@ type Configurator interface {
 	PostStart(ctx context.Context, state *AppState) error
 }
 
-// AppState contains everything a configurator needs to configure an app.
-type AppState struct {
-	// Name is the app name (e.g., "qbittorrent", "radarr")
-	Name string
+// StaticConfigurator runs before service start. Returns whether managed
+// output changed, signaling that the service needs a restart.
+// This is an optional interface; configurators that implement it get the new
+// flow while others keep using PreStart.
+type StaticConfigurator interface {
+	StaticConfig(ctx context.Context, state *AppState) (changed bool, err error)
+}
 
-	// DataPath is the app's data directory (e.g., ~/.local/share/bloud/qbittorrent)
+// DynamicConfigurator runs after the service is healthy. Performs idempotent
+// runtime operations (API calls, registration).
+// This is an optional interface; configurators that implement it get the new
+// flow while others keep using PostStart.
+type DynamicConfigurator interface {
+	DynamicConfig(ctx context.Context, state *AppState) error
+}
+
+// LDAPOutput describes the LDAP provider endpoint available to configurators.
+type LDAPOutput struct {
+	Host         string
+	Port         int
+	BaseDN       string
+	BindUser     string
+	BindPassword string
+}
+
+// AppState contains the inputs currently consumed by app configurators.
+type AppState struct {
+	// DataPath is the app's data directory.
 	DataPath string
 
-	// BloudDataPath is the shared bloud data directory (e.g., ~/.local/share/bloud)
-	// Use for shared resources like downloads, movies, tv
+	// BloudDataPath is the shared Bloud data directory.
 	BloudDataPath string
 
-	// Port is the host port the app is exposed on
-	Port int
+	// SSOEnabled indicates that the app should configure its supported SSO strategy.
+	SSOEnabled bool
 
-	// Integrations maps integration names to source app names
-	// e.g., {"downloadClient": ["qbittorrent"], "indexer": ["prowlarr"]}
-	Integrations map[string][]string
-
-	// Options contains app-specific configuration options
-	Options map[string]any
+	// LDAP is populated when the app's SSO strategy is "ldap" and an LDAP provider
+	// is configured. Nil otherwise.
+	LDAP *LDAPOutput
 }

@@ -2,3 +2,4 @@
 @import './lib/styles/fonts.css';
 @import './lib/styles/variables.css';
 @import './lib/styles/base.css';
+@import 'gridstack/dist/gridstack.min.css';

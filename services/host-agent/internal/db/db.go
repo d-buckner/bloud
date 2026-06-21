@@ -4,17 +4,19 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"path/filepath"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
 var schema string
 
-// InitDB initializes the PostgreSQL database connection and runs schema
-func InitDB(databaseURL string) (*sql.DB, error) {
-	// Open database connection
-	db, err := sql.Open("pgx", databaseURL)
+// InitDB initializes the SQLite database connection and runs schema
+func InitDB(dataDir string) (*sql.DB, error) {
+	dbPath := filepath.Join(dataDir, "bloud.db")
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -22,6 +24,19 @@ func InitDB(databaseURL string) (*sql.DB, error) {
 	// Test the connection
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	// Set SQLite pragmas for performance and correctness
+	pragmas := []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA foreign_keys=ON",
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to set pragma %q: %w", pragma, err)
+		}
 	}
 
 	// Run schema initialization

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bloud Dev Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0f1117; color: #e1e4e8; padding: 24px; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+  h2 { font-size: 1.1rem; margin-bottom: 12px; color: #c9d1d9; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .metrics { display: flex; gap: 24px; margin-bottom: 24px; }
+  .metric { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; flex: 1; }
+  .metric-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+  .metric-value { font-size: 1.5rem; font-weight: 600; margin-top: 2px; }
+  .bar { height: 4px; background: #21262d; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+  .bar-fill.cpu { background: #58a6ff; }
+  .bar-fill.mem { background: #bc8cff; }
+  .bar-fill.disk { background: #3fb950; }
+
+  .app-card { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 8px; }
+  .app-card img { width: 32px; height: 32px; border-radius: 4px; }
+  .app-card .no-icon { width: 32px; height: 32px; border-radius: 4px; background: #21262d; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
+  .app-info { flex: 1; min-width: 0; }
+  .app-name { font-weight: 500; font-size: 0.9rem; }
+  .app-desc { font-size: 0.75rem; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
+  .badge.running { background: #0d3321; color: #3fb950; }
+  .badge.installing, .badge.starting { background: #2a1d00; color: #d29922; }
+  .badge.error { background: #3d1117; color: #f85149; }
+  .badge.stopped { background: #21262d; color: #8b949e; }
+
+  button { padding: 5px 12px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 0.8rem; }
+  button:hover { background: #30363d; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.danger { border-color: #f85149; color: #f85149; }
+  button.danger:hover { background: #3d1117; }
+  button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+  button.primary:hover { background: #2ea043; }
+
+  .empty { color: #8b949e; font-size: 0.85rem; padding: 16px 0; text-align: center; }
+  .log-viewer { display: none; grid-column: 1 / -1; }
+  .log-viewer.active { display: block; }
+  .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .log-output { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; line-height: 1.5; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  .toast { position: fixed; bottom: 24px; right: 24px; padding: 10px 16px; border-radius: 6px; font-size: 0.85rem; z-index: 100; animation: fade-in 0.2s; }
+  .toast.success { background: #0d3321; border: 1px solid #2ea043; color: #3fb950; }
+  .toast.error { background: #3d1117; border: 1px solid #f85149; color: #f85149; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+
+<h1>Bloud Dev Dashboard</h1>
+<p class="subtitle">Portable runtime &mdash; backend testing UI</p>
+
+<div class="metrics">
+  <div class="metric">
+    <div class="metric-label">CPU</div>
+    <div class="metric-value" id="cpu">--</div>
+    <div class="bar"><div class="bar-fill cpu" id="cpu-bar" style="width:0%"></div></div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Memory</div>
+    <div class="metric-value" id="mem">--</div>
+    <div class="bar"><div class="bar-fill mem" id="mem-bar" style="width:0%"></div></div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Disk</div>
+    <div class="metric-value" id="disk">--</div>
+    <div class="bar"><div class="bar-fill disk" id="disk-bar" style="width:0%"></div></div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Catalog</h2>
+    <div id="catalog"><div class="empty">Loading...</div></div>
+  </div>
+  <div class="panel">
+    <h2>Installed Apps</h2>
+    <div id="installed"><div class="empty">No apps installed</div></div>
+  </div>
+  <div class="panel log-viewer" id="log-panel">
+    <div class="log-header">
+      <h2>Logs: <span id="log-app-name"></span></h2>
+      <button onclick="closeLogs()">Close</button>
+    </div>
+    <div class="log-output" id="log-output"></div>
+  </div>
+</div>
+
+<script>
+// --- System metrics SSE ---
+const sysES = new EventSource('/api/system/status/stream');
+sysES.onmessage = (e) => {
+  const s = JSON.parse(e.data);
+  document.getElementById('cpu').textContent = s.cpu + '%';
+  document.getElementById('cpu-bar').style.width = s.cpu + '%';
+  document.getElementById('mem').textContent = s.memory + '%';
+  document.getElementById('mem-bar').style.width = s.memory + '%';
+  document.getElementById('disk').textContent = s.disk + '%';
+  document.getElementById('disk-bar').style.width = s.disk + '%';
+};
+
+// --- Catalog ---
+async function loadCatalog() {
+  try {
+    const res = await fetch('/api/apps');
+    const data = await res.json();
+    const el = document.getElementById('catalog');
+    if (!data.apps || data.apps.length === 0) {
+      el.innerHTML = '<div class="empty">No apps in catalog</div>';
+      return;
+    }
+    el.innerHTML = data.apps.map(app => `
+      <div class="app-card">
+        <img src="/api/apps/${app.name}/icon" alt="" onerror="this.outerHTML='<div class=no-icon>${app.name[0].toUpperCase()}</div>'">
+        <div class="app-info">
+          <div class="app-name">${esc(app.displayName || app.name)}</div>
+          <div class="app-desc">${esc(app.description || '')}</div>
+        </div>
+        <button class="primary" onclick="install('${app.name}')" id="install-${app.name}">Install</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    document.getElementById('catalog').innerHTML = '<div class="empty">Failed to load catalog</div>';
+  }
+}
+
+async function install(name) {
+  const btn = document.getElementById('install-' + name);
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing...'; }
+  try {
+    const res = await fetch(`/api/apps/${name}/install`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Install failed');
+    toast('Installed ' + name, 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Install'; }
+  }
+}
+
+async function uninstall(name) {
+  if (!confirm('Uninstall ' + name + '?')) return;
+  try {
+    const res = await fetch(`/api/apps/${name}/uninstall`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"clearData":true}' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Uninstall failed');
+    toast('Uninstalled ' + name, 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// --- Installed apps SSE ---
+const appES = new EventSource('/api/apps/events');
+appES.onmessage = (e) => {
+  const apps = JSON.parse(e.data);
+  const el = document.getElementById('installed');
+  if (!apps || apps.length === 0) {
+    el.innerHTML = '<div class="empty">No apps installed</div>';
+    return;
+  }
+  el.innerHTML = apps.map(app => `
+    <div class="app-card">
+      <img src="/api/apps/${app.name}/icon" alt="" onerror="this.outerHTML='<div class=no-icon>${app.name[0].toUpperCase()}</div>'">
+      <div class="app-info">
+        <div class="app-name">${esc(app.display_name || app.name)}</div>
+        <div class="app-desc">Port ${app.port || '?'}</div>
+      </div>
+      <span class="badge ${badgeClass(app.status)}">${esc(app.status)}</span>
+      <button onclick="showLogs('${app.name}')">Logs</button>
+      <button class="danger" onclick="uninstall('${app.name}')">Uninstall</button>
+    </div>
+  `).join('');
+};
+
+// --- Log viewer ---
+let logController = null;
+
+function showLogs(name) {
+  closeLogs();
+  document.getElementById('log-app-name').textContent = name;
+  document.getElementById('log-output').textContent = '';
+  document.getElementById('log-panel').classList.add('active');
+
+  logController = new AbortController();
+  fetch(`/api/apps/${name}/logs`, { signal: logController.signal })
+    .then(res => {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      const output = document.getElementById('log-output');
+      function read() {
+        reader.read().then(({ done, value }) => {
+          if (done) return;
+          output.textContent += decoder.decode(value, { stream: true });
+          output.scrollTop = output.scrollHeight;
+          read();
+        }).catch(() => {});
+      }
+      read();
+    }).catch(() => {});
+}
+
+function closeLogs() {
+  if (logController) { logController.abort(); logController = null; }
+  document.getElementById('log-panel').classList.remove('active');
+}
+
+// --- Helpers ---
+function badgeClass(s) {
+  if (s === 'running') return 'running';
+  if (s === 'installing' || s === 'starting') return 'installing';
+  if (s === 'error') return 'error';
+  return 'stopped';
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function toast(msg, type) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+loadCatalog();
+</script>
+</body>
+</html>

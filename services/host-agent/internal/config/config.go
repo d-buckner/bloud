@@ -11,29 +11,40 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	Port         int
-	DataDir      string
-	AppsDir      string // Path to apps/ directory containing app definitions
-	NixConfigDir      string
+	RuntimeMode       string
+	SystemdScope      string
+	QuadletDir        string
+	Port              int
+	DataDir           string
+	AppsDir           string // Path to apps/ directory containing app definitions
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
-	FlakePath         string // Path to flake.nix for nixos-rebuild
-	FlakeTarget  string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
-	NixosPath    string // Path to nixos/ modules directory
-	DatabaseURL  string // PostgreSQL connection string
-	RedisAddr    string // Redis address for session storage
+	RedisAddr         string // Redis address for session storage
 	// SSO configuration
-	SSOHostSecret    string // Master secret for deriving client secrets
-	SSOBaseURL       string // Base URL for callbacks (e.g., "http://localhost:8080")
-	SSOAuthentikURL  string // Authentik external URL for discovery (e.g., "http://localhost:8080")
-	AuthentikToken   string // Authentik API token for SSO cleanup
+	SSOHostSecret   string // Master secret for deriving client secrets
+	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
+	SSOAuthentikURL string // Authentik external URL for discovery (e.g., "http://localhost:8080")
+	AuthentikToken  string // Authentik API token for SSO cleanup
+	// Traefik configuration
+	BaseDomain  string // Base domain for subdomain routing (default: "localhost")
+	TraefikPort int    // Traefik entrypoint port (default: 8080)
 	// Authentik bootstrap configuration
 	AuthentikPort          int
 	AuthentikAdminPassword string
 	AuthentikAdminEmail    string
 	// LDAP configuration
+	LDAPHost         string // LDAP outpost hostname (default: apps-authentik-ldap)
 	LDAPBindPassword string
+	// PostgresPassword is the resolved password for the shared Postgres instance.
+	// Exposed so bootstrapInfra can template it into the container spec.
+	PostgresPassword string
 	// Secrets manager for accessing generated secrets
 	Secrets *secrets.Manager
+}
+
+// PostgresURL returns a connection string for the shared Postgres instance.
+// Used by bootstrap code that creates app-specific databases (e.g. authentik).
+func (c *Config) PostgresURL() string {
+	return "postgres://apps:" + c.PostgresPassword + "@localhost:5432/bloud?sslmode=disable"
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -47,11 +58,6 @@ func Load() *Config {
 func LoadWithLogger(logger *slog.Logger) *Config {
 	dataDir := getEnv("BLOUD_DATA_DIR", getDefaultDataDir())
 	appsDir := getEnv("BLOUD_APPS_DIR", "../../apps")
-
-	// FlakePath and NixosPath default to being relative to apps dir
-	// but can be overridden for dev environments where apps is synced separately
-	defaultFlakePath := filepath.Clean(filepath.Join(appsDir, ".."))
-	defaultNixosPath := filepath.Clean(filepath.Join(appsDir, "..", "nixos"))
 
 	// Initialize secrets manager
 	secretsPath := filepath.Join(dataDir, "secrets.json")
@@ -75,32 +81,50 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	// whereas the bootstrap token in secrets.json only works on first Authentik boot.
 	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
 
-	// Build database URL using postgres password
-	defaultDatabaseURL := "postgres://apps:" + postgresPassword + "@localhost:5432/bloud?sslmode=disable"
-
+	systemdScope := getEnv("BLOUD_SYSTEMD_SCOPE", defaultSystemdScope())
 	cfg := &Config{
+		RuntimeMode:            getEnv("BLOUD_RUNTIME", "portable"),
+		SystemdScope:           systemdScope,
+		QuadletDir:             getEnv("BLOUD_QUADLET_DIR", defaultQuadletDir(systemdScope)),
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
 		AppsDir:                appsDir,
-		NixConfigDir:           getEnv("BLOUD_NIX_CONFIG_DIR", filepath.Join(dataDir, "nix")),
 		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
-		FlakePath:              getEnv("BLOUD_FLAKE_PATH", defaultFlakePath),
-		FlakeTarget:            getEnv("BLOUD_FLAKE_TARGET", "vm-dev"),
-		NixosPath:              getEnv("BLOUD_NIXOS_PATH", defaultNixosPath),
-		DatabaseURL:            getEnv("DATABASE_URL", defaultDatabaseURL),
 		RedisAddr:              getEnv("BLOUD_REDIS_ADDR", "localhost:6379"),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
 		AuthentikToken:         authentikToken,
+		BaseDomain:             getEnv("BLOUD_BASE_DOMAIN", "localhost"),
+		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 8080),
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: authentikAdminPassword,
 		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),
+		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       ldapBindPassword,
+		PostgresPassword:       postgresPassword,
 		Secrets:                secretsMgr,
 	}
 
 	return cfg
+}
+
+func defaultSystemdScope() string {
+	if os.Getuid() == 0 {
+		return "system"
+	}
+	return "user"
+}
+
+func defaultQuadletDir(scope string) string {
+	if scope == "system" {
+		return "/etc/containers/systemd"
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(getDefaultDataDir(), "quadlet")
+	}
+	return filepath.Join(homeDir, ".config", "containers", "systemd")
 }
 
 // getDefaultDataDir returns the default data directory path

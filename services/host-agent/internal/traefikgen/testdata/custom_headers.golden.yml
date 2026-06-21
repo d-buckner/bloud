@@ -4,21 +4,13 @@
 
 http:
   routers:
-    actual-budget-backend:
-      rule: "PathPrefix(`/embed/actual-budget`)"
+    actual-budget:
+      rule: "Host(`actual-budget.localhost`)"
       middlewares:
-        - actual-budget-stripprefix
-        - iframe-headers
-        - embed-forwarded-headers
         - actual-budget-headers
       service: actual-budget
-      priority: 100
 
   middlewares:
-    actual-budget-stripprefix:
-      stripPrefix:
-        prefixes:
-          - "/embed/actual-budget"
     actual-budget-headers:
       headers:
         customResponseHeaders:

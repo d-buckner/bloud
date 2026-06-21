@@ -28,7 +28,7 @@ type CreateUserResponse struct {
 
 // handleSetupStatus returns whether initial setup is required
 func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
-	hasUsers, err := s.userStore.HasUsers()
+	hasUsers, err := s.prefsStore.HasUsers()
 	if err != nil {
 		s.logger.Error("failed to check users", "error", err)
 		respondJSON(w, http.StatusInternalServerError, SetupStatusResponse{
@@ -55,7 +55,7 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 // handleCreateUser creates the first admin user
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	// Check no users exist (prevents hijacking)
-	hasUsers, err := s.userStore.HasUsers()
+	hasUsers, err := s.prefsStore.HasUsers()
 	if err != nil {
 		s.logger.Error("failed to check existing users", "error", err)
 		respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
@@ -117,7 +117,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create local user record
-	if err := s.userStore.Create(req.Username); err != nil {
+	if err := s.prefsStore.EnsureUser(req.Username); err != nil {
 		s.logger.Error("failed to create local user", "error", err)
 		respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
 			Success: false,

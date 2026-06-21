@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
 )
 
@@ -64,56 +62,9 @@ func (s *Server) handleSystemStatusStream(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// handleRebuildStream triggers a nixos-rebuild and streams output via SSE
+// handleRebuildStream is no longer supported (Nix runtime removed).
 func (s *Server) handleRebuildStream(w http.ResponseWriter, r *http.Request) {
-	// Check if we have a Nix orchestrator
-	nixOrch, ok := s.orchestrator.(*orchestrator.Orchestrator)
-	if !ok {
-		http.Error(w, "Rebuild only available with Nix orchestrator", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Set headers for SSE
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-
-	s.logger.Info("SSE client connected for rebuild stream")
-
-	// Create channel for rebuild events
-	events := make(chan nixgen.RebuildEvent, 100)
-
-	// Start rebuild in background
-	go nixOrch.RebuildStream(r.Context(), events)
-
-	// Stream events to client
-	for event := range events {
-		data, err := json.Marshal(event)
-		if err != nil {
-			s.logger.Error("failed to marshal rebuild event", "error", err)
-			continue
-		}
-
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-
-		// Check if client disconnected
-		select {
-		case <-r.Context().Done():
-			s.logger.Info("SSE client disconnected during rebuild")
-			return
-		default:
-		}
-	}
-
-	s.logger.Info("rebuild stream complete")
+	http.Error(w, "Rebuild stream not available in portable runtime", http.StatusGone)
 }
 
 // handleAppEvents streams app state updates via SSE

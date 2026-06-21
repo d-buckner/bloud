@@ -1,0 +1,134 @@
+# Podman compose for the Bloud dev stack.
+# Mirrors the NixOS production modules but uses containers for everything.
+#
+# Usage (inside Lima VM):
+#   cd ~/bloud/dev && podman-compose up -d
+
+networks:
+  bloud-dev:
+    driver: bridge
+
+services:
+  postgres:
+    image: docker.io/postgres:16-alpine
+    environment:
+      POSTGRES_USER: apps
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpass}
+    volumes:
+      - ${BLOUD_DATA:-~/.local/share/bloud}/postgres:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - bloud-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apps"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: docker.io/redis:7-alpine
+    volumes:
+      - ${BLOUD_DATA:-~/.local/share/bloud}/redis:/data
+    networks:
+      - bloud-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  authentik-server:
+    container_name: apps-authentik-server
+    image: ghcr.io/goauthentik/server:2025.10.3
+    command: server
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: apps
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD:-devpass}
+      AUTHENTIK_REDIS__HOST: redis://redis:6379
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-dev-secret-key-change-me}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-password}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:-dev-bootstrap-token}
+      AUTHENTIK_BOOTSTRAP_EMAIL: admin@localhost
+    volumes:
+      - ${BLOUD_DATA:-~/.local/share/bloud}/authentik/media:/media
+      - ${BLOUD_DATA:-~/.local/share/bloud}/authentik/templates:/templates
+      - ${BLOUD_DATA:-~/.local/share/bloud}/authentik/blueprints:/blueprints/custom:ro
+      - ${BLOUD_DATA:-~/.local/share/bloud}/authentik/branding:/web/dist/custom/images:ro
+    ports:
+      - "9000:9000"
+    networks:
+      - bloud-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2025.10.3
+    command: worker
+    restart: on-failure
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: apps
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD:-devpass}
+      AUTHENTIK_REDIS__HOST: redis://redis:6379
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-dev-secret-key-change-me}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-password}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:-dev-bootstrap-token}
+    volumes:
+      - ${BLOUD_DATA:-~/.local/share/bloud}/authentik/media:/media
+      - ${BLOUD_DATA:-~/.local/share/bloud}/authentik/templates:/templates
+      - ${BLOUD_DATA:-~/.local/share/bloud}/authentik/blueprints:/blueprints/custom:ro
+    networks:
+      - bloud-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  authentik-proxy:
+    image: docker.io/nginx:1.27-alpine
+    volumes:
+      - ./authentik-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - bloud-dev
+    depends_on:
+      - authentik-server
+
+  authentik-ldap:
+    container_name: apps-authentik-ldap
+    image: ghcr.io/goauthentik/ldap:2025.10.3
+    restart: on-failure
+    environment:
+      AUTHENTIK_HOST: http://apps-authentik-server:9000
+      AUTHENTIK_TOKEN: ${AUTHENTIK_LDAP_TOKEN:-placeholder}
+    ports:
+      - "3389:3389"
+      - "6636:6636"
+    networks:
+      - bloud-dev
+    depends_on:
+      - authentik-server
+
+  jellyfin:
+    image: docker.io/jellyfin/jellyfin:10.11.7
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "Etc/UTC"
+    volumes:
+      - ${BLOUD_DATA:-~/.local/share/bloud}/jellyfin/config:/config
+      - ${BLOUD_DATA:-~/.local/share/bloud}/jellyfin/cache:/cache
+      - ${BLOUD_DATA:-~/.local/share/bloud}/media/movies:/movies:ro
+      - ${BLOUD_DATA:-~/.local/share/bloud}/media/shows:/shows:ro
+    ports:
+      - "8096:8096"
+    networks:
+      - bloud-dev

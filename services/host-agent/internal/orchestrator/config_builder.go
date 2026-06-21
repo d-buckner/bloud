@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/nixgen"
 )
 
 // buildIntegrationConfig builds the integration configuration map from user choices,
@@ -60,64 +59,4 @@ func shouldCleanupAuthentik(catalogApp *catalog.App) bool {
 	return strategy != "" && strategy != "none"
 }
 
-// buildTransactionWithApp creates a new transaction that includes an app with integrations.
-// It copies all apps from the current transaction and adds/updates the target app.
-// Dependencies referenced in integrations are also enabled.
-func buildTransactionWithApp(
-	current *nixgen.Transaction,
-	appName string,
-	integrations map[string]string,
-) *nixgen.Transaction {
-	tx := &nixgen.Transaction{
-		Apps: make(map[string]nixgen.AppConfig),
-	}
 
-	// Copy existing apps
-	if current != nil {
-		for name, app := range current.Apps {
-			tx.Apps[name] = app
-		}
-	}
-
-	// Add/update the target app
-	tx.Apps[appName] = nixgen.AppConfig{
-		Name:         appName,
-		Enabled:      true,
-		Integrations: integrations,
-	}
-
-	// Ensure all integration sources are enabled
-	for _, source := range integrations {
-		if _, exists := tx.Apps[source]; !exists {
-			tx.Apps[source] = nixgen.AppConfig{
-				Name:    source,
-				Enabled: true,
-			}
-		}
-	}
-
-	return tx
-}
-
-// buildTransactionDisablingApp creates a new transaction with the target app disabled.
-// It copies all apps from the current transaction and sets the target app's Enabled to false.
-func buildTransactionDisablingApp(
-	current *nixgen.Transaction,
-	appName string,
-) *nixgen.Transaction {
-	tx := &nixgen.Transaction{
-		Apps: make(map[string]nixgen.AppConfig),
-	}
-
-	// Copy existing apps
-	if current != nil {
-		for name, app := range current.Apps {
-			if name == appName {
-				app.Enabled = false
-			}
-			tx.Apps[name] = app
-		}
-	}
-
-	return tx
-}

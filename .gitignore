@@ -37,6 +37,7 @@ bloud
 .env
 .env.*
 !.env.example
+dev/host-agent.env
 
 # Images
 *.img
@@ -59,7 +60,7 @@ Thumbs.db
 # Bloud local state
 .bloud/
 
-# Beads / Dolt files (added by bd init)
+# Dolt
 .dolt/
 *.db
-.beads-credential-key
+.beads/

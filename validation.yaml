@@ -26,6 +26,12 @@ tiers:
         cwd: .
         run: npm run check --workspace=@bloud/installer-web
 
+  integration:
+    commands:
+      - id: e2e-host-agent
+        cwd: services/host-agent
+        run: go test -count=1 -tags integration -timeout 300s ./internal/e2e/...
+
 inference:
   paths:
     - pattern: "services/host-agent/web/**"
@@ -45,7 +51,7 @@ inference:
     - pattern: "flake.nix"
       triggers: []
       riskAreas: [nix-module]
-    - pattern: "smoke/**"
+    - pattern: "e2e/**"
       triggers: []
       riskAreas: [playwright]
 
@@ -55,32 +61,28 @@ apps:
     validation-level: embed
     files:
       - apps/immich/**
-    smoke-project: immich
 
   miniflux:
     auth: native-oidc
     validation-level: full
     files:
       - apps/miniflux/**
-    smoke-project: miniflux
 
   jellyfin:
     auth: ldap
     validation-level: full
     files:
       - apps/jellyfin/**
-    smoke-project: jellyfin
+    e2e-project: jellyfin
 
   qbittorrent:
     auth: forward-auth
     validation-level: embed
     files:
       - apps/qbittorrent/**
-    smoke-project: qbittorrent
 
   adguard-home:
     auth: none
     validation-level: embed
     files:
       - apps/adguard-home/**
-    smoke-project: adguard-home

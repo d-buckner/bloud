@@ -12,10 +12,14 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/systemd"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
@@ -25,34 +29,34 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	cfg                  ServerConfig
-	router               *chi.Mux
-	db                   *sql.DB
-	catalog              catalog.CacheInterface
-	graph                catalog.AppGraphInterface
-	appStore             store.AppStoreInterface
-	userStore            *store.UserStore
-	sessionStore         *store.SessionStore
-	appHub               *AppEventHub
-	orchestrator         orchestrator.AppOrchestrator
-	reconciler           *orchestrator.Reconciler
-	authentikClient      *authentik.Client
-	authConfig           *AuthConfig
-	knownRedirectURIs    sync.Map // tracks redirect URIs already registered in Authentik
-	logger               *slog.Logger
-	secrets              *secrets.Manager
+	cfg               ServerConfig
+	router            *chi.Mux
+	db                *sql.DB
+	catalog           catalog.CacheInterface
+	graph             catalog.AppGraphInterface
+	appStore          store.AppStoreInterface
+	prefsStore        *store.PreferencesStore
+	sessionStore      *store.SessionStore
+	appHub            *AppEventHub
+	orchestrator      orchestrator.AppOrchestrator
+	reconciler        *orchestrator.Reconciler
+	authentikClient   *authentik.Client
+	authConfig        *AuthConfig
+	knownRedirectURIs sync.Map // tracks redirect URIs already registered in Authentik
+	logger            *slog.Logger
+	secrets           *secrets.Manager
 }
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
-	AppsDir     string
-	ConfigDir   string
+	RuntimeMode       string
+	SystemdScope      string
+	QuadletDir        string
+	AppsDir           string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
-	FlakePath   string
-	FlakeTarget string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
-	NixosPath   string
-	Port        int
+	BaseDomain        string // Base domain for subdomain routing (e.g., "localhost")
+	Port              int
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
@@ -61,14 +65,20 @@ type ServerConfig struct {
 	AuthentikPort   int    // Authentik API port (default 9001)
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
+	// LDAP configuration
+	LDAPOutput *configurator.LDAPOutput
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
+	// ContainerRuntime optionally injects the portable container backend.
+	ContainerRuntime containerruntime.Runtime
+	// TemplateVars are extra template variables for container spec rendering (e.g. postgresPassword).
+	TemplateVars map[string]string
 }
 
 // NewServer creates a new HTTP server instance
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	appStore := store.NewAppStore(db)
-	userStore := store.NewUserStore(db)
+	prefsStore := store.NewPreferencesStore(db)
 	appHub := NewAppEventHub(appStore)
 
 	// Wire up automatic broadcasts when app state changes
@@ -116,9 +126,9 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		cfg:             cfg,
 		router:          chi.NewRouter(),
 		db:              db,
-		catalog:         catalog.NewCache(db),
+		catalog:         catalog.NewMemoryCache(),
 		appStore:        appStore,
-		userStore:       userStore,
+		prefsStore:      prefsStore,
 		sessionStore:    sessionStore,
 		appHub:          appHub,
 		authentikClient: authentikClient,
@@ -129,18 +139,20 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	// Initialize catalog and graph on startup
 	s.refreshCatalog(s.cfg.AppsDir)
 
-	// Initialize orchestrator (Podman client may not be available in tests)
+	// Initialize the selected runtime orchestrator.
 	s.initOrchestrator(appStore)
 
 	// Initialize reconciler if registry is provided
 	if s.cfg.Registry != nil {
+		rcfg := orchestrator.DefaultReconcileConfig()
+		rcfg.LDAPOutput = s.cfg.LDAPOutput
 		s.reconciler = orchestrator.NewReconciler(
 			s.cfg.Registry,
 			appStore,
 			s.catalog,
 			s.cfg.DataDir,
 			logger,
-			orchestrator.DefaultReconcileConfig(),
+			rcfg,
 		)
 	}
 
@@ -160,52 +172,54 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	return s
 }
 
-// initOrchestrator sets up the orchestrator - prefers Nix, falls back to Podman
+// initOrchestrator sets up the portable runtime orchestrator.
 func (s *Server) initOrchestrator(appStore *store.AppStore) {
-	// Use configured paths (set via env vars or defaults)
-	configPath := filepath.Join(s.cfg.ConfigDir, "apps.nix")
 	traefikConfigPath := filepath.Join(s.cfg.TraefikDynamicDir, "apps-routes.yml")
+	s.logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
 
-	s.logger.Info("orchestrator paths",
-		"flakePath", s.cfg.FlakePath,
-		"nixosPath", s.cfg.NixosPath,
-		"configPath", configPath,
-		"traefikConfigPath", traefikConfigPath,
-	)
+	if s.cfg.RuntimeMode == "portable" {
+		runtime := s.cfg.ContainerRuntime
+		if runtime == nil {
+			client, err := podman.NewClient()
+			if err != nil {
+				s.logger.Error("portable container runtime unavailable", "error", err)
+				return
+			}
+			userScope := s.cfg.SystemdScope != "system"
+			wantedBy := "default.target"
+			if !userScope {
+				wantedBy = "multi-user.target"
+			}
+			runtime = containerruntime.NewQuadletRuntime(
+				client,
+				systemd.NewManager(userScope),
+				s.cfg.QuadletDir,
+				wantedBy,
+			)
+		}
 
-	// SSO blueprints directory
-	ssoBlueprintsDir := filepath.Join(s.cfg.DataDir, "authentik-blueprints")
+		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
+			Graph:        s.graph,
+			CatalogCache: s.catalog,
+			AppStore:     appStore,
+			Containers:   runtime,
+			Registry:     s.cfg.Registry,
+			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath, s.cfg.BaseDomain),
+			LDAPOutput:   s.cfg.LDAPOutput,
+			DataDir:      s.cfg.DataDir,
+			TemplateVars: s.cfg.TemplateVars,
+			Logger:       s.logger,
+		})
+		s.orchestrator = portable
+		s.logger.Info("portable orchestrator initialized")
+		go func() {
+			portable.SyncContainerState(context.Background())
+			portable.ReconcileState(context.Background())
+		}()
+		return
+	}
 
-	// Try to initialize Nix-based orchestrator (preferred)
-	nixOrch := orchestrator.New(orchestrator.Config{
-		Graph:             s.graph,
-		CatalogCache:      s.catalog,
-		AppStore:          appStore,
-		Logger:            s.logger,
-		ConfigPath:        configPath,
-		TraefikConfigPath: traefikConfigPath,
-		NixosPath:         s.cfg.NixosPath,
-		FlakePath:         s.cfg.FlakePath,
-		Hostname:          s.cfg.FlakeTarget,
-		DataDir:           s.cfg.DataDir,
-		// SSO configuration
-		SSOHostSecret:    s.cfg.SSOHostSecret,
-		SSOBaseURLs:      netutil.BuildBaseURLs(s.cfg.SSOBaseURL),
-		SSOAuthentikURL:  s.cfg.SSOAuthentikURL,
-		SSOBlueprintsDir: ssoBlueprintsDir,
-		AuthentikToken:   s.cfg.AuthentikToken,
-		Secrets:          s.secrets,
-	})
-
-	s.orchestrator = nixOrch
-	s.logger.Info("Nix orchestrator initialized")
-
-	// Reconcile database state with actual system state
-	// This handles apps stuck in transitional states from server crashes
-	nixOrch.ReconcileState()
-
-	// Note: Configuration now runs via systemd hooks (ExecStartPre/ExecStartPost)
-	// rather than background watchdogs. See podman-service.nix for hook setup.
+	s.logger.Warn("unknown runtime mode, orchestrator not initialized", "mode", s.cfg.RuntimeMode)
 }
 
 // refreshCatalog loads apps from YAML files and updates the cache and graph
@@ -214,7 +228,7 @@ func (s *Server) refreshCatalog(appsDir string) {
 
 	loader := catalog.NewLoader(appsDir)
 
-	// Refresh the legacy catalog cache
+	// Refresh the catalog cache
 	if err := s.catalog.Refresh(loader); err != nil {
 		s.logger.Error("failed to refresh catalog cache", "error", err)
 	}

@@ -2,12 +2,9 @@
 	import '../app.css';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
-	import { page } from '$app/state';
 	import Sidebar from '$lib/components/Sidebar.svelte';
-	import AppFrames from '$lib/components/AppFrames.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import { initApps, disconnectApps } from '$lib/services/appFacade';
-	import { waitForServiceWorker } from '$lib/services/bootstrap';
 
 	interface SetupStatus {
 		setupRequired: boolean;
@@ -25,8 +22,6 @@
 	let setupRequired = $state(false);
 	let loading = $state(true);
 	let user = $state<User | null>(null);
-
-	let isAppView = $derived(page.url.pathname.startsWith('/apps/'));
 
 	// Check setup status and auth, then initialize app if ready
 	onMount(() => {
@@ -68,7 +63,6 @@
 		// Only initialize app connections if setup is complete and user is authenticated
 		if (!setupRequired && user) {
 			initApps();
-			waitForServiceWorker();
 		}
 	}
 </script>
@@ -84,11 +78,7 @@
 		<Sidebar bind:collapsed={sidebarCollapsed} {user} />
 
 		<main class:collapsed={sidebarCollapsed}>
-			<!-- AppFrames manages all open iframes, preserving state across tab switches -->
-			<AppFrames visible={isAppView} />
-
-			<!-- Regular route content (hidden when viewing apps) -->
-			<div class="route-content" class:hidden={isAppView}>
+			<div class="route-content">
 				{@render children()}
 			</div>
 		</main>
@@ -139,10 +129,6 @@
 
 	.route-content {
 		flex: 1;
-	}
-
-	.route-content.hidden {
-		display: none;
 	}
 
 	@media (max-width: 768px) {

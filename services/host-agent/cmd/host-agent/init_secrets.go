@@ -10,7 +10,7 @@ import (
 
 // runInitSecrets handles the "init-secrets" subcommand
 // This generates the secrets.json file if it doesn't exist.
-// Should be called BEFORE nixos-rebuild to ensure NixOS can read the secrets.
+// Should be called before starting any app containers that need secrets.
 //
 // Usage:
 //

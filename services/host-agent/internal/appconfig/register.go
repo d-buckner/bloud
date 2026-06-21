@@ -2,7 +2,6 @@
 package appconfig
 
 import (
-	"fmt"
 	"path/filepath"
 
 	adguardhome "codeberg.org/d-buckner/bloud-v3/apps/adguard-home"
@@ -10,6 +9,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/apps/immich"
 	"codeberg.org/d-buckner/bloud-v3/apps/jellyfin"
 	"codeberg.org/d-buckner/bloud-v3/apps/miniflux"
+	"codeberg.org/d-buckner/bloud-v3/apps/navidrome"
 	"codeberg.org/d-buckner/bloud-v3/apps/qbittorrent"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
@@ -34,6 +34,7 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 	))
 	registry.Register(immich.NewConfigurator(2283, cfg.SSOAuthentikURL, cfg.Secrets))
 	registry.Register(miniflux.NewConfigurator(8085, traefikDynamicDir))
+	registry.Register(navidrome.NewConfigurator(4533))
 	registry.Register(qbittorrent.NewConfigurator(8086))
-	registry.Register(jellyfin.NewConfigurator(8096, fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort), cfg.AuthentikToken))
+	registry.Register(jellyfin.NewConfigurator(8096))
 }

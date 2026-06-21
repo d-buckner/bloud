@@ -19,7 +19,7 @@ const traefikSSOConfig = `# Auto-redirect Miniflux login to SSO
 http:
   routers:
     miniflux-login-redirect:
-      rule: "Path(` + "`" + `/embed/miniflux/` + "`" + `) && QueryRegexp(` + "`" + `redirect_url` + "`" + `, ` + "`" + `.+` + "`" + `)"
+      rule: "Path(` + "`" + `/` + "`" + `) && QueryRegexp(` + "`" + `redirect_url` + "`" + `, ` + "`" + `.+` + "`" + `)"
       middlewares:
         - miniflux-sso-redirect
       service: miniflux
@@ -29,7 +29,7 @@ http:
     miniflux-sso-redirect:
       redirectRegex:
         regex: ".*"
-        replacement: "/embed/miniflux/oauth2/oidc/redirect"
+        replacement: "/oauth2/oidc/redirect"
         permanent: false
 `
 
@@ -55,8 +55,7 @@ func (c *Configurator) Name() string {
 // PreStart creates the SSO redirect config if Authentik integration is enabled.
 // SSO wait is handled automatically by the framework.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
-	// Check if SSO integration is enabled
-	if _, hasSSO := state.Integrations["sso"]; !hasSSO {
+	if !state.SSOEnabled {
 		return nil
 	}
 
@@ -76,8 +75,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 // HealthCheck waits for Miniflux to be ready
 func (c *Configurator) HealthCheck(ctx context.Context) error {
-	// Miniflux requires the BASE_URL path prefix for all endpoints
-	url := fmt.Sprintf("http://localhost:%d/embed/miniflux/healthcheck", c.port)
+	url := fmt.Sprintf("http://localhost:%d/healthcheck", c.port)
 	return configurator.WaitForHTTP(ctx, url, configurator.DefaultHealthCheckTimeout)
 }
 

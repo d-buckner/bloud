@@ -19,8 +19,8 @@ type CacheInterface interface {
 	Refresh(loader *Loader) error
 }
 
-// Compile-time assertion that Cache implements CacheInterface
-var _ CacheInterface = (*Cache)(nil)
+// Compile-time assertion that MemoryCache implements CacheInterface
+var _ CacheInterface = (*MemoryCache)(nil)
 
 // AppGraphInterface defines the interface for app dependency graph operations.
 // This interface enables mocking for testing.

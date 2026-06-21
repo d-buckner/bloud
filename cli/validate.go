@@ -78,7 +78,7 @@ type manifestApp struct {
 	Auth            string   `yaml:"auth"`
 	ValidationLevel string   `yaml:"validation-level"`
 	Files           []string `yaml:"files"`
-	SmokeProject    string   `yaml:"smoke-project"`
+	E2EProject      string   `yaml:"e2e-project"`
 }
 
 type validateFlags struct {
@@ -88,7 +88,6 @@ type validateFlags struct {
 	explain bool
 	dryRun  bool
 	since   string
-	noVM    bool
 }
 
 func cmdValidate(args []string) int {
@@ -111,13 +110,10 @@ func cmdValidate(args []string) int {
 		return runFastTier(root, manifest, flags)
 	case "changed":
 		return runChangedTier(root, manifest, flags)
-	case "vm":
-		return runVMTier(root, manifest, flags)
-	case "clean", "full":
-		errorf("tier %q is not yet implemented (stub)", flags.tier)
-		return 1
+	case "integration":
+		return runIntegrationTier(root, manifest, flags)
 	default:
-		errorf("unknown tier: %s", flags.tier)
+		errorf("unknown tier: %s (available: fast, changed, integration)", flags.tier)
 		return 1
 	}
 }
@@ -147,8 +143,6 @@ func parseValidateFlags(args []string) validateFlags {
 				i++
 				f.since = args[i]
 			}
-		case "--no-vm":
-			f.noVM = true
 		}
 	}
 	return f
@@ -176,9 +170,9 @@ func runFastTier(root string, manifest *validationManifest, flags validateFlags)
 	}
 
 	result := &ValidateResult{
-		StartedAt: time.Now().UTC().Format(time.RFC3339),
-		Tier:      "fast",
-		Confidence: "high",
+		StartedAt:        time.Now().UTC().Format(time.RFC3339),
+		Tier:             "fast",
+		Confidence:       "high",
 		ConfidenceReason: "all fast-tier commands executed",
 	}
 
@@ -258,13 +252,6 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 		result.Confidence = "medium"
 		result.ConfidenceReason = fmt.Sprintf("%d file(s) not mapped to any validation command", len(unmapped))
 	}
-	if riskAreas["nix-module"] {
-		if _, err := exec.LookPath("nix"); err != nil {
-			result.Confidence = "medium"
-			result.ConfidenceReason = "nix changes detected but nix not available; recommend vm tier"
-			result.NextRecommended = "vm"
-		}
-	}
 
 	// Collect commands to run
 	fastTier := manifest.Tiers["fast"]
@@ -332,164 +319,251 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	return exitCode
 }
 
-// --- VM tier ---
+// --- Integration tier ---
 
-func runVMTier(root string, manifest *validationManifest, flags validateFlags) int {
-	if flags.noVM || !isPVEMode() {
-		errorf("vm tier requires Proxmox mode (set BLOUD_PVE_HOST)")
-		return 2
+func runIntegrationTier(root string, manifest *validationManifest, flags validateFlags) int {
+	tier, ok := manifest.Tiers["integration"]
+	if !ok {
+		errorf("no 'integration' tier defined in validation.yaml")
+		return 1
 	}
 
 	result := &ValidateResult{
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
-		Tier:      "vm",
-	}
-
-	changedFiles, _ := getChangedFiles(root, flags.since)
-	result.ChangedFiles = changedFiles
-
-	// Determine push strategy
-	hasNix := false
-	hasGo := false
-	for _, f := range changedFiles {
-		if pathMatches(f, "nixos/**") || f == "flake.nix" || strings.HasSuffix(f, "module.nix") {
-			hasNix = true
-		}
-		if strings.HasSuffix(f, ".go") {
-			hasGo = true
-		}
+		Tier:      "integration",
 	}
 
 	if flags.dryRun {
-		fmt.Printf("Tier: vm\n")
-		fmt.Printf("Changed files: %d\n", len(changedFiles))
-		if hasNix {
-			fmt.Println("Action: ./bloud rebuild (nix changes detected)")
-		} else if hasGo {
-			fmt.Println("Action: ./bloud push (go changes detected)")
-		} else {
-			fmt.Println("Action: health check only (no rebuild/push needed)")
-		}
-		if flags.app != "" {
-			fmt.Printf("Smoke: npx playwright test --project=%s\n", flags.app)
-		} else {
-			fmt.Println("Smoke: npx playwright test (all projects)")
-		}
+		printDryRun("integration", tier.Commands, nil, nil, flags)
 		return 0
 	}
 
-	// Execute push/rebuild
-	if hasNix {
+	// Step 1: Check Lima VM is running
+	if !flags.json {
+		fmt.Printf("%s==>%s Checking Lima VM 'bloud-dev'...\n", colorGreen, colorReset)
+	}
+	if !isLimaVMRunning("bloud-dev") {
 		if !flags.json {
-			fmt.Printf("%s==>%s Rebuilding NixOS (nix changes detected)...\n", colorGreen, colorReset)
+			fmt.Printf("%s==>%s Starting Lima VM 'bloud-dev'...\n", colorGreen, colorReset)
 		}
-		exitCode := cmdRebuildPVE()
-		if exitCode != 0 {
-			result.ExitCode = exitCode
+		startCmd := exec.Command("limactl", "start", "bloud-dev")
+		startCmd.Stdout = os.Stdout
+		startCmd.Stderr = os.Stderr
+		if err := startCmd.Run(); err != nil {
+			errorf("failed to start Lima VM: %v", err)
+			result.ExitCode = 1
 			result.Confidence = "low"
-			result.ConfidenceReason = "rebuild failed"
+			result.ConfidenceReason = "Lima VM failed to start"
 			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			result.Commands = append(result.Commands, CommandResult{
-				ID: "rebuild", Command: "./bloud rebuild", Status: "fail", ExitCode: exitCode,
-			})
 			writeLedger(root, result, flags)
-			return exitCode
+			return 1
 		}
-		result.Commands = append(result.Commands, CommandResult{
-			ID: "rebuild", Command: "./bloud rebuild", Status: "pass", ExitCode: 0,
-		})
-	} else if hasGo {
-		if !flags.json {
-			fmt.Printf("%s==>%s Pushing binary (go changes detected)...\n", colorGreen, colorReset)
-		}
-		exitCode := cmdPushPVE()
-		if exitCode != 0 {
-			result.ExitCode = exitCode
-			result.Confidence = "low"
-			result.ConfidenceReason = "push failed"
-			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			result.Commands = append(result.Commands, CommandResult{
-				ID: "push", Command: "./bloud push", Status: "fail", ExitCode: exitCode,
-			})
-			writeLedger(root, result, flags)
-			return exitCode
-		}
-		result.Commands = append(result.Commands, CommandResult{
-			ID: "push", Command: "./bloud push", Status: "pass", ExitCode: 0,
-		})
 	}
 
-	// Run health checks
+	quotedRoot := shellQuote(root)
+
+	// Step 2: Verify the VM has the tools and setup files required by the tests.
 	if !flags.json {
-		fmt.Printf("%s==>%s Running health checks...\n", colorGreen, colorReset)
+		fmt.Printf("%s==>%s Checking integration prerequisites...\n", colorGreen, colorReset)
 	}
-	healthExit := cmdChecksPVE()
-	if healthExit != 0 {
-		result.ExitCode = healthExit
+	preflightScript := fmt.Sprintf(
+		"command -v podman >/dev/null && command -v podman-compose >/dev/null && command -v go >/dev/null && command -v ldapsearch >/dev/null && test -f %s/dev/host-agent.env",
+		quotedRoot,
+	)
+	preflight := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", preflightScript)
+	if out, err := preflight.CombinedOutput(); err != nil {
+		errorf("integration prerequisites are missing; recreate/provision the VM and run dev/setup.sh: %v: %s", err, strings.TrimSpace(string(out)))
+		result.ExitCode = 1
 		result.Confidence = "low"
-		result.ConfidenceReason = "health checks failed"
+		result.ConfidenceReason = "integration prerequisites missing"
 		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		result.Commands = append(result.Commands, CommandResult{
-			ID: "health-checks", Command: "./bloud checks", Status: "fail", ExitCode: healthExit,
-		})
 		writeLedger(root, result, flags)
-		return healthExit
+		return 1
+	}
+
+	// Step 3: Converge the compose stack and wait for required services.
+	if !flags.json {
+		fmt.Printf("%s==>%s Starting compose stack...\n", colorGreen, colorReset)
+	}
+	composeScript := fmt.Sprintf(`cd %s/dev
+services="postgres redis authentik-server authentik-worker authentik-proxy authentik-ldap jellyfin"
+for service in $services; do
+  id=$(podman ps -aq --filter "label=com.docker.compose.project=dev" --filter "label=com.docker.compose.service=$service" | head -1)
+  if [ -n "$id" ]; then
+    podman start "$id" >/dev/null
+  else
+    podman-compose up -d --no-recreate "$service"
+  fi
+done`, quotedRoot)
+	composeUp := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", composeScript)
+	composeUp.Stdout = os.Stdout
+	composeUp.Stderr = os.Stderr
+	if err := composeUp.Run(); err != nil {
+		errorf("failed to start compose stack: %v", err)
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "compose stack failed to start"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
+	}
+
+	readinessScript := fmt.Sprintf(`cd %s/dev
+services="postgres redis authentik-server authentik-worker authentik-proxy authentik-ldap jellyfin"
+deadline=$((SECONDS + 180))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  ready=true
+  for service in $services; do
+    id=$(podman ps -q --filter "label=com.docker.compose.project=dev" --filter "label=com.docker.compose.service=$service" | head -1)
+    if [ -z "$id" ] || [ "$(podman inspect -f '{{.State.Running}}' "$id" 2>/dev/null)" != "true" ]; then
+      ready=false
+      break
+    fi
+    health=$(podman inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id" 2>/dev/null)
+    if [ -n "$health" ] && [ "$health" != "healthy" ]; then
+      ready=false
+      break
+    fi
+  done
+  if [ "$ready" = true ]; then
+    exit 0
+  fi
+  sleep 3
+done
+podman-compose ps
+exit 1`, quotedRoot)
+	readiness := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", readinessScript)
+	readiness.Stdout = os.Stdout
+	readiness.Stderr = os.Stderr
+	if err := readiness.Run(); err != nil {
+		errorf("compose stack did not become ready: %v", err)
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "compose stack did not become ready"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
+	}
+
+	// Step 4: Build host-agent inside VM
+	if !flags.json {
+		fmt.Printf("%s==>%s Building host-agent...\n", colorGreen, colorReset)
+	}
+	buildCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
+		fmt.Sprintf("cd %s/services/host-agent && go build -o /tmp/host-agent ./cmd/host-agent", quotedRoot))
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		errorf("failed to build host-agent: %v", err)
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "host-agent build failed"
+		result.Commands = append(result.Commands, CommandResult{
+			ID: "build-host-agent", Command: "go build ./cmd/host-agent", Status: "fail", ExitCode: 1,
+		})
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
 	}
 	result.Commands = append(result.Commands, CommandResult{
-		ID: "health-checks", Command: "./bloud checks", Status: "pass", ExitCode: 0,
+		ID: "build-host-agent", Command: "go build ./cmd/host-agent", Status: "pass", ExitCode: 0,
 	})
 
-	// Run smoke tests
+	// Step 5: Run integration tests inside VM
 	if !flags.json {
-		fmt.Printf("%s==>%s Running smoke tests...\n", colorGreen, colorReset)
-	}
-	smokeArgs := []string{"npx", "playwright", "test"}
-	if flags.app != "" {
-		smokeArgs = append(smokeArgs, "--project="+flags.app)
+		fmt.Printf("%s==>%s Running integration tests...\n", colorGreen, colorReset)
 	}
 
-	smokeCmd := exec.Command(smokeArgs[0], smokeArgs[1:]...)
-	smokeCmd.Dir = filepath.Join(root, "smoke")
-	smokeCmd.Stdout = os.Stdout
-	smokeCmd.Stderr = os.Stderr
+	for _, cmd := range tier.Commands {
+		// Source the host-agent.env file and run the test command inside the VM
+		shellCmd := fmt.Sprintf(
+			"set -a && source %s/dev/host-agent.env && set +a && cd %s/%s && %s",
+			quotedRoot, quotedRoot, shellQuote(cmd.Cwd), cmd.Run,
+		)
+		testCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", shellCmd)
+		if !flags.json {
+			testCmd.Stdout = os.Stdout
+			testCmd.Stderr = os.Stderr
+		}
 
-	start := time.Now()
-	smokeErr := smokeCmd.Run()
-	dur := time.Since(start)
+		start := time.Now()
+		err := testCmd.Run()
+		dur := time.Since(start)
 
-	smokeExit := 0
-	if smokeErr != nil {
-		if exitErr, ok := smokeErr.(*exec.ExitError); ok {
-			smokeExit = exitErr.ExitCode()
-		} else {
-			smokeExit = 1
+		cmdExit := 0
+		status := "pass"
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				cmdExit = exitErr.ExitCode()
+			} else {
+				cmdExit = 1
+			}
+			status = "fail"
+		}
+
+		result.Commands = append(result.Commands, CommandResult{
+			ID:         cmd.ID,
+			Cwd:        cmd.Cwd,
+			Command:    cmd.Run,
+			Status:     status,
+			DurationMs: dur.Milliseconds(),
+			ExitCode:   cmdExit,
+		})
+
+		if !flags.json {
+			icon := colorGreen + "✓" + colorReset
+			if status == "fail" {
+				icon = colorRed + "✗" + colorReset
+			}
+			fmt.Printf("%s %s (%dms)\n", icon, cmd.ID, dur.Milliseconds())
+		}
+
+		if cmdExit != 0 {
+			result.ExitCode = 1
+			result.Confidence = "low"
+			result.ConfidenceReason = fmt.Sprintf("integration test %s failed", cmd.ID)
+			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			writeLedger(root, result, flags)
+			return 1
 		}
 	}
 
-	status := "pass"
-	if smokeExit != 0 {
-		status = "fail"
-	}
-	result.Commands = append(result.Commands, CommandResult{
-		ID:         "smoke-tests",
-		Cwd:        "smoke",
-		Command:    strings.Join(smokeArgs, " "),
-		Status:     status,
-		DurationMs: dur.Milliseconds(),
-		ExitCode:   smokeExit,
-	})
-
-	result.ExitCode = smokeExit
-	if smokeExit == 0 {
-		result.Confidence = "high"
-		result.ConfidenceReason = "vm smoke tests passed"
-	} else {
-		result.Confidence = "low"
-		result.ConfidenceReason = "smoke tests failed"
-	}
+	result.ExitCode = 0
+	result.Confidence = "high"
+	result.ConfidenceReason = "integration tests passed against real services"
 	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	writeLedger(root, result, flags)
-	return smokeExit
+	return 0
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// isLimaVMRunning checks if a Lima VM is in Running status.
+func isLimaVMRunning(name string) bool {
+	cmd := exec.Command("limactl", "list", "--json")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	// limactl list --json outputs one JSON object per line
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var vm struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		}
+		if json.Unmarshal([]byte(line), &vm) == nil {
+			if vm.Name == name && vm.Status == "Running" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- Helpers ---

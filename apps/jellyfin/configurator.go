@@ -1,8 +1,10 @@
 package jellyfin
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,51 +13,43 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/xmlutil"
 )
 
 const (
-	// Bootstrap admin credentials - used to complete setup, then deleted after LDAP is configured
+	// Managed admin credentials used for setup and subsequent reconciliation.
+	// Keep this account until Jellyfin configuration has a separate durable credential.
 	bootstrapUsername = "bloud-bootstrap-admin"
 	bootstrapPassword = "bloud-bootstrap-password-change-me"
 
 	// LDAP plugin GUID - this is the standard ID for the Jellyfin LDAP-Auth plugin
 	// Note: Jellyfin uses GUIDs without dashes in the API
-	ldapPluginID = "958aad6637844d2ab89aa7b6fab6e25c"
-
-	// Default LDAP configuration for Authentik
-	// Use container name since Jellyfin and LDAP outpost are on the same network
-	defaultLDAPHost     = "apps-authentik-ldap"
-	defaultLDAPPort     = 3389
-	defaultLDAPBaseDN   = "dc=ldap,dc=goauthentik,dc=io"
-	defaultLDAPBindUser = "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io"
+	ldapPluginID     = "958aad6637844d2ab89aa7b6fab6e25c"
+	ldapPluginURL    = "https://repo.jellyfin.org/files/plugin/ldap-authentication/ldap-authentication_22.0.0.0.zip"
+	ldapPluginSHA256 = "c2386c001be439c9946280a02d62610f29e325d4094e83bd31221de3f7aa20ae"
 )
 
 // Configurator handles Jellyfin configuration
 type Configurator struct {
-	Port           int
-	baseURL        string // Override for testing; if empty, uses localhost:Port
-	ldapHost       string
-	ldapPort       int
-	authentikURL   string // URL for Authentik API
-	authentikToken string // API token for Authentik
+	Port         int
+	baseURL      string // Override for testing; if empty, uses localhost:Port
+	pluginURL    string
+	pluginSHA256 string
 }
 
 // NewConfigurator creates a new Jellyfin configurator
-func NewConfigurator(port int, authentikURL, authentikToken string) *Configurator {
+func NewConfigurator(port int) *Configurator {
 	if port == 0 {
 		port = 8096
 	}
 	return &Configurator{
-		Port:           port,
-		ldapHost:       defaultLDAPHost,
-		ldapPort:       defaultLDAPPort,
-		authentikURL:   authentikURL,
-		authentikToken: authentikToken,
+		Port:         port,
+		pluginURL:    ldapPluginURL,
+		pluginSHA256: ldapPluginSHA256,
 	}
 }
 
@@ -71,8 +65,15 @@ func (c *Configurator) Name() string {
 	return "jellyfin"
 }
 
-// PreStart ensures directories exist and configures network settings.
+// PreStart delegates to StaticConfig, discarding the change signal.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
+	_, err := c.StaticConfig(ctx, state)
+	return err
+}
+
+// StaticConfig ensures directories exist, installs the LDAP plugin, and
+// configures network settings. Returns true if any managed output changed.
+func (c *Configurator) StaticConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
@@ -82,24 +83,125 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-
-	// Configure network.xml for reverse proxy support
-	// This enables Jellyfin to use X-Forwarded-Host headers from Traefik
-	// to return the correct LocalAddress in API responses, fixing the
-	// "server mismatch" warning when embedded in an iframe
-	if err := c.configureNetwork(state.DataPath); err != nil {
-		return fmt.Errorf("failed to configure network: %w", err)
+	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
-	return nil
+	networkChanged, err := c.configureNetwork(state.DataPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to configure network: %w", err)
+	}
+
+	return pluginInstalled || networkChanged, nil
+}
+
+func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (bool, error) {
+	pluginParent := filepath.Join(dataPath, "config", "plugins")
+	pluginDir := filepath.Join(pluginParent, "LDAP-Auth")
+	pluginDLL := filepath.Join(pluginDir, "LDAP-Auth.dll")
+	if _, err := os.Stat(pluginDLL); err == nil {
+		return false, nil
+	}
+	if err := os.MkdirAll(pluginParent, 0755); err != nil {
+		return false, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.pluginURL, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	archive, err := os.CreateTemp(pluginParent, ".ldap-plugin-*.zip")
+	if err != nil {
+		return false, err
+	}
+	archivePath := archive.Name()
+	defer os.Remove(archivePath)
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
+		archive.Close()
+		return false, err
+	}
+	if err := archive.Close(); err != nil {
+		return false, err
+	}
+	if c.pluginSHA256 != "" && fmt.Sprintf("%x", hash.Sum(nil)) != c.pluginSHA256 {
+		return false, fmt.Errorf("download checksum mismatch")
+	}
+
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return false, err
+	}
+	defer reader.Close()
+
+	stagingDir, err := os.MkdirTemp(pluginParent, ".LDAP-Auth-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(stagingDir)
+	for _, file := range reader.File {
+		destination := filepath.Join(stagingDir, file.Name)
+		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
+			return false, fmt.Errorf("plugin archive contains invalid path %q", file.Name)
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(destination, 0755); err != nil {
+				return false, err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+			return false, err
+		}
+		source, err := file.Open()
+		if err != nil {
+			return false, err
+		}
+		mode := file.Mode()
+		if mode == 0 {
+			mode = 0644
+		}
+		target, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			source.Close()
+			return false, err
+		}
+		_, copyErr := io.Copy(target, source)
+		closeErr := target.Close()
+		source.Close()
+		if copyErr != nil {
+			return false, copyErr
+		}
+		if closeErr != nil {
+			return false, closeErr
+		}
+	}
+	if _, err := os.Stat(filepath.Join(stagingDir, "LDAP-Auth.dll")); err != nil {
+		return false, fmt.Errorf("plugin archive did not contain LDAP-Auth.dll")
+	}
+	if err := os.RemoveAll(pluginDir); err != nil {
+		return false, err
+	}
+	return true, os.Rename(stagingDir, pluginDir)
 }
 
 // jellyfinNetworkConfig returns the desired XML config for network.xml.
 var jellyfinNetworkConfig = xmlutil.ConfigValues{
-	"PublishedServerUri":                "http://bloud.local/embed/jellyfin",
+	"PublishedServerUri":                "http://jellyfin.bloud.local",
 	"EnablePublishedServerUriByRequest": "true",
 	"KnownProxies":                      []string{"127.0.0.1", "::1"},
 	"EnableHttps":                       "false",
@@ -128,17 +230,18 @@ func applyNetworkConfig(cfg *xmlutil.ConfigFile) bool {
 	return true
 }
 
-// configureNetwork creates or updates network.xml with reverse proxy settings
-func (c *Configurator) configureNetwork(dataPath string) error {
+// configureNetwork creates or updates network.xml with reverse proxy settings.
+// Returns true if the file content changed.
+func (c *Configurator) configureNetwork(dataPath string) (bool, error) {
 	networkPath := filepath.Join(dataPath, "config", "network.xml")
 
 	cfg, err := xmlutil.Open(networkPath, "NetworkConfiguration")
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if !applyNetworkConfig(cfg) {
-		return nil
+		return false, nil
 	}
 
 	return cfg.Save()
@@ -150,8 +253,13 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
 	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
 }
 
-// PostStart completes the Jellyfin setup wizard and configures LDAP
+// PostStart delegates to DynamicConfig.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	return c.DynamicConfig(ctx, state)
+}
+
+// DynamicConfig completes the Jellyfin setup wizard and configures LDAP.
+func (c *Configurator) DynamicConfig(ctx context.Context, state *configurator.AppState) error {
 	// 1. Check if setup wizard is complete
 	info, err := c.getSystemInfo(ctx)
 	if err != nil {
@@ -171,9 +279,9 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("failed to configure libraries: %w", err)
 	}
 
-	// 3. Configure LDAP if SSO integration is enabled
-	if _, hasSSO := state.Integrations["sso"]; hasSSO {
-		if err := c.configureLDAP(ctx); err != nil {
+	// 3. Configure LDAP if SSO integration is enabled and LDAP output is available
+	if state.SSOEnabled && state.LDAP != nil {
+		if err := c.configureLDAP(ctx, state); err != nil {
 			return fmt.Errorf("failed to configure LDAP: %w", err)
 		}
 	}
@@ -566,8 +674,11 @@ type LDAPConfig struct {
 	PasswordResetUrl               string   `json:"PasswordResetUrl"`
 }
 
-// configureLDAP configures the LDAP plugin to use Authentik
-func (c *Configurator) configureLDAP(ctx context.Context) error {
+// configureLDAP configures the LDAP plugin using the typed LDAP output from AppState.
+func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.AppState) error {
+	ldap := state.LDAP
+	desiredConfig := desiredLDAPConfig(ldap)
+
 	// First, authenticate to get an access token
 	token, err := c.authenticate(ctx, bootstrapUsername, bootstrapPassword)
 	if err != nil {
@@ -586,35 +697,40 @@ func (c *Configurator) configureLDAP(ctx context.Context) error {
 		return fmt.Errorf("parsing LDAP config: %w", err)
 	}
 
-	// Check if already configured for our LDAP server (idempotency)
-	if config.LdapServer == c.ldapHost && config.LdapBindUser != "" {
+	if ldapConfigMatchesDesired(config, desiredConfig) {
 		log.Println("Jellyfin: LDAP already configured")
 		return nil
 	}
 
-	// Query Authentik for the actual LDAP service token key
-	akClient := authentikClient.NewClient(c.authentikURL, c.authentikToken)
-	ldapBindPassword, err := akClient.GetLDAPServiceTokenKey()
+	// Configure LDAP using typed output
+	log.Println("Jellyfin: Configuring LDAP...")
+	configBytes, err := json.Marshal(desiredConfig)
 	if err != nil {
-		return fmt.Errorf("getting LDAP service token key from Authentik: %w", err)
+		return fmt.Errorf("marshalling LDAP config: %w", err)
+	}
+	if err := c.setPluginConfiguration(ctx, token, ldapPluginID, configBytes); err != nil {
+		return fmt.Errorf("setting LDAP config: %w", err)
 	}
 
-	// Configure LDAP for Authentik
-	log.Println("Jellyfin: Configuring LDAP...")
-	newConfig := LDAPConfig{
-		LdapServer:            c.ldapHost,
-		LdapPort:              c.ldapPort,
-		UseSsl:                false, // Using plain LDAP for local dev
+	log.Println("Jellyfin: LDAP configured successfully")
+	return nil
+}
+
+func desiredLDAPConfig(ldap *configurator.LDAPOutput) LDAPConfig {
+	return LDAPConfig{
+		LdapServer:            ldap.Host,
+		LdapPort:              ldap.Port,
+		UseSsl:                false,
 		UseStartTls:           false,
 		SkipSslVerify:         true,
-		LdapBindUser:          defaultLDAPBindUser,
-		LdapBindPassword:      ldapBindPassword,
-		LdapBaseDn:            defaultLDAPBaseDN,
+		LdapBindUser:          ldap.BindUser,
+		LdapBindPassword:      ldap.BindPassword,
+		LdapBaseDn:            ldap.BaseDN,
 		LdapSearchFilter:      "(objectClass=user)",
 		LdapAdminBaseDn:       "",
-		LdapAdminFilter:       "(memberOf=cn=jellyfin-admins,ou=groups,dc=ldap,dc=goauthentik,dc=io)",
-		LdapSearchAttributes:  "uid, cn, mail, displayName",
-		LdapUidAttribute:      "uid",
+		LdapAdminFilter:       fmt.Sprintf("(memberOf=cn=authentik Admins,ou=groups,%s)", ldap.BaseDN),
+		LdapSearchAttributes:  "uid, cn, mail, displayName, sAMAccountName",
+		LdapUidAttribute:      "sAMAccountName",
 		LdapUsernameAttribute: "cn",
 		LdapPasswordAttribute: "userPassword",
 		CreateUsersFromLdap:   true,
@@ -622,21 +738,27 @@ func (c *Configurator) configureLDAP(ctx context.Context) error {
 		EnableAllFolders:      true,
 		EnabledFolders:        []string{},
 	}
+}
 
-	configBytes, _ := json.Marshal(newConfig)
-	if err := c.setPluginConfiguration(ctx, token, ldapPluginID, configBytes); err != nil {
-		return fmt.Errorf("setting LDAP config: %w", err)
-	}
-
-	log.Println("Jellyfin: LDAP configured successfully")
-
-	// Delete bootstrap admin after LDAP is configured
-	if err := c.deleteBootstrapAdmin(ctx, token); err != nil {
-		log.Printf("Jellyfin: Warning - failed to delete bootstrap admin: %v", err)
-		// Don't fail - LDAP is working, bootstrap admin can be cleaned up later
-	}
-
-	return nil
+func ldapConfigMatchesDesired(current, desired LDAPConfig) bool {
+	return current.LdapServer == desired.LdapServer &&
+		current.LdapPort == desired.LdapPort &&
+		current.UseSsl == desired.UseSsl &&
+		current.UseStartTls == desired.UseStartTls &&
+		current.SkipSslVerify == desired.SkipSslVerify &&
+		current.LdapBindUser == desired.LdapBindUser &&
+		current.LdapBindPassword == desired.LdapBindPassword &&
+		current.LdapBaseDn == desired.LdapBaseDn &&
+		current.LdapSearchFilter == desired.LdapSearchFilter &&
+		current.LdapAdminBaseDn == desired.LdapAdminBaseDn &&
+		current.LdapAdminFilter == desired.LdapAdminFilter &&
+		current.LdapSearchAttributes == desired.LdapSearchAttributes &&
+		current.LdapUidAttribute == desired.LdapUidAttribute &&
+		current.LdapUsernameAttribute == desired.LdapUsernameAttribute &&
+		current.LdapPasswordAttribute == desired.LdapPasswordAttribute &&
+		current.CreateUsersFromLdap == desired.CreateUsersFromLdap &&
+		current.AllowPassChange == desired.AllowPassChange &&
+		current.EnableAllFolders == desired.EnableAllFolders
 }
 
 // AuthResponse represents the authentication response

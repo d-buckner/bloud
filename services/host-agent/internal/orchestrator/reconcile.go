@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	integrationdomain "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/integration"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
@@ -24,6 +25,10 @@ type ReconfigDispatcher interface {
 type ReconcileConfig struct {
 	// HealthCheckTimeout is the max time to wait for an app to become healthy
 	HealthCheckTimeout time.Duration
+
+	// LDAPOutput is the LDAP provider endpoint to pass to apps with LDAP SSO strategy.
+	// Nil when no LDAP provider is configured.
+	LDAPOutput *configurator.LDAPOutput
 }
 
 // DefaultReconcileConfig returns default reconciliation configuration
@@ -122,10 +127,25 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			continue
 		}
 
-		state := r.buildAppState(app, appMap)
-		if err := cfg.PreStart(ctx, state); err != nil {
-			r.logger.Warn("PreStart failed", "app", app.Name, "error", err)
-			errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.Name, err))
+		state, err := r.buildAppState(app, appMap)
+		if err != nil {
+			r.logger.Warn("failed to build app state", "app", app.Name, "error", err)
+			errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
+			continue
+		}
+		if sc, ok := cfg.(configurator.StaticConfigurator); ok {
+			changed, err := sc.StaticConfig(ctx, state)
+			if err != nil {
+				r.logger.Warn("StaticConfig failed", "app", app.Name, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: StaticConfig failed: %v", app.Name, err))
+			} else if changed {
+				r.logger.Info("static config changed", "app", app.Name)
+			}
+		} else {
+			if err := cfg.PreStart(ctx, state); err != nil {
+				r.logger.Warn("PreStart failed", "app", app.Name, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.Name, err))
+			}
 		}
 	}
 
@@ -158,11 +178,24 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			currentlyHealthy[app.Name] = true
 
 			// Run PostStart
-			state := r.buildAppState(app, appMap)
-			if err := cfg.PostStart(ctx, state); err != nil {
-				r.logger.Warn("PostStart failed", "app", app.Name, "error", err)
-				errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.Name, err))
+			state, err := r.buildAppState(app, appMap)
+			if err != nil {
+				r.logger.Warn("failed to build app state", "app", app.Name, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
 				continue
+			}
+			if dc, ok := cfg.(configurator.DynamicConfigurator); ok {
+				if err := dc.DynamicConfig(ctx, state); err != nil {
+					r.logger.Warn("DynamicConfig failed", "app", app.Name, "error", err)
+					errors = append(errors, fmt.Sprintf("%s: DynamicConfig failed: %v", app.Name, err))
+					continue
+				}
+			} else {
+				if err := cfg.PostStart(ctx, state); err != nil {
+					r.logger.Warn("PostStart failed", "app", app.Name, "error", err)
+					errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.Name, err))
+					continue
+				}
 			}
 
 			reconciled = append(reconciled, app.Name)
@@ -330,45 +363,69 @@ func (r *Reconciler) computeLevels(apps map[string]*store.InstalledApp) [][]stri
 // buildAppState creates an AppState from a database app record.
 // installedApps is used to resolve optional integrations — pass the full
 // installed app map from the current reconcile cycle (or nil to skip).
-func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[string]*store.InstalledApp) *configurator.AppState {
-	// Required integrations from the database
-	integrations := make(map[string][]string)
-	for name, source := range app.IntegrationConfig {
-		integrations[name] = []string{source}
+func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[string]*store.InstalledApp) (*configurator.AppState, error) {
+	var catalogApp *catalog.App
+	if r.catalogCache != nil {
+		var err error
+		catalogApp, err = r.catalogCache.Get(app.Name)
+		if err != nil {
+			return nil, fmt.Errorf("load catalog app: %w", err)
+		}
 	}
 
-	if r.catalogCache != nil {
-		if catalogApp, err := r.catalogCache.Get(app.Name); err == nil && catalogApp != nil {
-			// SSO strategy
-			if catalogApp.SSO.Strategy != "" {
-				integrations["sso"] = []string{catalogApp.SSO.Strategy}
-				r.logger.Debug("loaded SSO integration from catalog",
-					"app", app.Name,
-					"strategy", catalogApp.SSO.Strategy)
-			}
+	_, err := resolveIntegrationBindings(app, installedApps, catalogApp)
+	if err != nil {
+		return nil, fmt.Errorf("resolve integrations: %w", err)
+	}
 
-			// Non-required integrations: include those whose compatible app is installed
-			for intName, integration := range catalogApp.Integrations {
-				if integration.Required {
-					continue
-				}
-				for _, compatible := range integration.Compatible {
-					if _, installed := installedApps[compatible.App]; installed {
-						integrations[intName] = []string{compatible.App}
-						break // first installed compatible app wins
-					}
-				}
+	ssoEnabled := shouldConfigureSSO(catalogApp)
+
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(r.dataDir, app.Name),
+		BloudDataPath: r.dataDir,
+		SSOEnabled:    ssoEnabled,
+	}
+
+	if ssoEnabled && catalogApp != nil && catalogApp.SSO.Strategy == "ldap" && r.config.LDAPOutput != nil {
+		state.LDAP = r.config.LDAPOutput
+	}
+
+	return state, nil
+}
+
+func resolveIntegrationBindings(
+	app *store.InstalledApp,
+	installedApps map[string]*store.InstalledApp,
+	catalogApp *catalog.App,
+) (integrationdomain.Bindings, error) {
+	input := integrationdomain.ResolutionInput{
+		Requirements:   make(map[integrationdomain.Type]integrationdomain.Requirement),
+		BoundProviders: make(map[integrationdomain.Type]integrationdomain.AppID),
+		Installed:      make(map[integrationdomain.AppID]struct{}),
+	}
+
+	for integrationType, provider := range app.IntegrationConfig {
+		input.BoundProviders[integrationdomain.Type(integrationType)] = integrationdomain.AppID(provider)
+	}
+	for appName := range installedApps {
+		input.Installed[integrationdomain.AppID(appName)] = struct{}{}
+	}
+	if catalogApp != nil {
+		for integrationType, requirement := range catalogApp.Integrations {
+			compatible := make([]integrationdomain.AppID, 0, len(requirement.Compatible))
+			for _, provider := range requirement.Compatible {
+				compatible = append(compatible, integrationdomain.AppID(provider.App))
+			}
+			input.Requirements[integrationdomain.Type(integrationType)] = integrationdomain.Requirement{
+				Required:   requirement.Required,
+				Compatible: compatible,
 			}
 		}
 	}
 
-	return &configurator.AppState{
-		Name:          app.Name,
-		DataPath:      filepath.Join(r.dataDir, app.Name),
-		BloudDataPath: r.dataDir,
-		Port:          app.Port,
-		Integrations:  integrations,
-		Options:       make(map[string]any),
-	}
+	return integrationdomain.Resolve(input)
 }
 
+func shouldConfigureSSO(catalogApp *catalog.App) bool {
+	return catalogApp != nil && catalogApp.SSO.Strategy != "" && catalogApp.SSO.Strategy != "none"
+}
