@@ -8,7 +8,8 @@ export default defineConfig({
 	},
 	ssr: {
 		// Fix Vite 6 SSR circular dependency with Svelte 5 stores
-		noExternal: ['svelte']
+		// gridstack is in dependencies but must be bundled (adapter-static has no runtime)
+		noExternal: ['svelte', 'gridstack']
 	},
 	server: {
 		host: '0.0.0.0',
