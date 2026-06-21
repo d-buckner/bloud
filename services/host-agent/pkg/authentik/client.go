@@ -1819,3 +1819,140 @@ func (c *Client) GetUserInfo(accessToken string) (*UserInfo, error) {
 
 	return &userInfo, nil
 }
+
+// EnsureForwardAuth implements orchestrator.SSOProvisioner.
+func (c *Client) EnsureForwardAuth(appName, displayName, externalURL string) error {
+	return c.EnsureForwardAuthApplication(appName, displayName, externalURL)
+}
+
+// EnsureForwardAuthApplication creates or verifies the Authentik proxy provider and
+// application for an app using the forward-auth SSO strategy. It also adds the
+// provider to the embedded outpost so Traefik's forwardAuth middleware can reach it.
+// externalURL is the full URL users access the app on, e.g. "http://navidrome.localhost:8080".
+func (c *Client) EnsureForwardAuthApplication(appName, displayName, externalURL string) error {
+	providerName := fmt.Sprintf("%s Proxy Provider", displayName)
+
+	// Check if provider already exists
+	existingID, err := c.findProviderID("proxy", providerName)
+	if err != nil {
+		return fmt.Errorf("checking proxy provider: %w", err)
+	}
+
+	var providerID int
+	if existingID != 0 {
+		providerID = existingID
+	} else {
+		// Find required flows
+		authFlowID, err := c.findFlowID("default-authentication-flow")
+		if err != nil {
+			return fmt.Errorf("finding auth flow: %w", err)
+		}
+		invalidationFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+		if err != nil {
+			return fmt.Errorf("finding invalidation flow: %w", err)
+		}
+
+		providerID, err = c.createProxyProvider(providerName, externalURL, authFlowID, invalidationFlowID)
+		if err != nil {
+			return fmt.Errorf("creating proxy provider: %w", err)
+		}
+	}
+
+	// Ensure application exists
+	if err := c.ensureProxyApplication(appName, displayName, providerID); err != nil {
+		return fmt.Errorf("ensuring proxy application: %w", err)
+	}
+
+	// Add provider to embedded outpost
+	if err := c.AddProviderToEmbeddedOutpost(providerName); err != nil {
+		return fmt.Errorf("adding to embedded outpost: %w", err)
+	}
+
+	return nil
+}
+
+// createProxyProvider creates a new Authentik proxy provider in forward_single mode.
+func (c *Client) createProxyProvider(name, externalHost, authFlowID, invalidationFlowID string) (int, error) {
+	payload := map[string]interface{}{
+		"name":               name,
+		"authorization_flow": authFlowID,
+		"invalidation_flow":  invalidationFlowID,
+		"external_host":      externalHost,
+		"mode":               "forward_single",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/proxy/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	return result.PK, nil
+}
+
+// ensureProxyApplication creates the Authentik application for a proxy provider if it doesn't exist.
+func (c *Client) ensureProxyApplication(slug, displayName string, providerID int) error {
+	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		return nil // Already exists
+	}
+
+	// Create application
+	payload := map[string]interface{}{
+		"name":               displayName,
+		"slug":               slug,
+		"provider":           providerID,
+		"policy_engine_mode": "any",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err = c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}

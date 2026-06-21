@@ -198,6 +198,11 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			)
 		}
 
+		var ssoProvisioner orchestrator.SSOProvisioner
+		if s.authentikClient != nil {
+			ssoProvisioner = s.authentikClient
+		}
+
 		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
 			Graph:        s.graph,
 			CatalogCache: s.catalog,
@@ -206,6 +211,8 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			Registry:     s.cfg.Registry,
 			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath, s.cfg.BaseDomain),
 			LDAPOutput:   s.cfg.LDAPOutput,
+			SSO:          ssoProvisioner,
+			SSOBaseURL:   s.cfg.SSOBaseURL,
 			DataDir:      s.cfg.DataDir,
 			TemplateVars: s.cfg.TemplateVars,
 			Logger:       s.logger,

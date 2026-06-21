@@ -16,6 +16,14 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
 
+// SSOProvisioner provisions per-app SSO in the identity provider (e.g. Authentik).
+// Implementations must be idempotent — called on every ensureApp, not just first install.
+type SSOProvisioner interface {
+	// EnsureForwardAuth creates or verifies the proxy provider + application for a
+	// forward-auth app, and adds it to the embedded outpost.
+	EnsureForwardAuth(appName, displayName, externalURL string) error
+}
+
 // PortableConfig contains the runtime-neutral dependencies used by PortableOrchestrator.
 type PortableConfig struct {
 	Graph        catalog.AppGraphInterface
@@ -25,6 +33,8 @@ type PortableConfig struct {
 	Registry     configurator.RegistryInterface
 	TraefikGen   traefikgen.GeneratorInterface
 	LDAPOutput   *configurator.LDAPOutput
+	SSO          SSOProvisioner // optional; nil when Authentik is not available
+	SSOBaseURL   string         // base URL for building app external URLs (e.g. "http://localhost:8080")
 	DataDir      string
 	TemplateVars map[string]string // extra variables for container spec rendering (e.g. postgresPassword)
 	Logger       *slog.Logger
@@ -39,6 +49,8 @@ type PortableOrchestrator struct {
 	registry     configurator.RegistryInterface
 	traefikGen   traefikgen.GeneratorInterface
 	ldapOutput   *configurator.LDAPOutput
+	sso          SSOProvisioner
+	ssoBaseURL   string
 	dataDir      string
 	templateVars map[string]string
 	logger       *slog.Logger
@@ -54,6 +66,8 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		registry:     cfg.Registry,
 		traefikGen:   cfg.TraefikGen,
 		ldapOutput:   cfg.LDAPOutput,
+		sso:          cfg.SSO,
+		ssoBaseURL:   cfg.SSOBaseURL,
 		dataDir:      cfg.DataDir,
 		templateVars: cfg.TemplateVars,
 		logger:       cfg.Logger,
@@ -317,7 +331,34 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 			}
 		}
 	}
+
+	// Provision SSO in the identity provider for forward-auth apps.
+	// Non-fatal: Authentik may not be running yet (e.g. first bootstrap).
+	if app.SSO.Strategy == "forward-auth" && o.sso != nil && o.ssoBaseURL != "" {
+		externalURL := appSubdomainURL(o.ssoBaseURL, app.Name)
+		if err := o.sso.EnsureForwardAuth(app.Name, app.DisplayName, externalURL); err != nil {
+			o.logger.Warn("failed to provision forward-auth SSO (non-fatal)", "app", appName, "error", err)
+		}
+	}
+
 	return o.appStore.UpdateStatus(appName, "running")
+}
+
+// appSubdomainURL builds the external URL for an app from the base URL.
+// e.g., "http://localhost:8080" + "navidrome" → "http://navidrome.localhost:8080"
+func appSubdomainURL(baseURL, appName string) string {
+	// Simple string manipulation: insert "appName." before the host.
+	// Handles both http://localhost:8080 and http://example.com.
+	const httpScheme = "http://"
+	const httpsScheme = "https://"
+	switch {
+	case len(baseURL) > len(httpScheme) && baseURL[:len(httpScheme)] == httpScheme:
+		return httpScheme + appName + "." + baseURL[len(httpScheme):]
+	case len(baseURL) > len(httpsScheme) && baseURL[:len(httpsScheme)] == httpsScheme:
+		return httpsScheme + appName + "." + baseURL[len(httpsScheme):]
+	default:
+		return baseURL
+	}
 }
 
 func (o *PortableOrchestrator) configurator(appName string) configurator.Configurator {
