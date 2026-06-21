@@ -1,99 +1,64 @@
-// Package testdb provides test database utilities for PostgreSQL
+// Package testdb provides test database utilities for SQLite
 package testdb
 
 import (
 	"database/sql"
-	"fmt"
-	"os"
-	"sync"
 	"testing"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "modernc.org/sqlite"
 )
 
-var (
-	testDB     *sql.DB
-	setupOnce  sync.Once
-	setupErr   error
-	schemaOnce sync.Once
-)
-
-// Schema is the PostgreSQL schema for tests
+// Schema is the SQLite schema for tests
 const Schema = `
 CREATE TABLE IF NOT EXISTS apps (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
-    version TEXT,
+    version TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'stopped',
     port INTEGER,
-    is_system BOOLEAN NOT NULL DEFAULT FALSE,
-    integration_config TEXT,
-    installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS catalog_cache (
-    name TEXT PRIMARY KEY,
-    yaml_content TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    is_system INTEGER NOT NULL DEFAULT 0,
+    integration_config TEXT DEFAULT '{}',
+    installed_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_apps_status ON apps(status);
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+    username TEXT PRIMARY KEY,
+    layout TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT (datetime('now'))
+);
 `
 
-// getTestDatabaseURL returns the database URL for testing
-// Uses TEST_DATABASE_URL env var, or a default that connects to local postgres
-func getTestDatabaseURL() string {
-	if url := os.Getenv("TEST_DATABASE_URL"); url != "" {
-		return url
-	}
-	// Default matches postgres module defaults (apps/testpass123)
-	// Uses bloud_test database to isolate from production data
-	return "postgres://apps:testpass123@localhost:5432/bloud_test?sslmode=disable"
-}
-
-// SetupTestDB returns a database connection for testing
-// If no PostgreSQL is available, it skips the test
+// SetupTestDB returns an in-memory SQLite database for testing
 func SetupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
-	setupOnce.Do(func() {
-		dbURL := getTestDatabaseURL()
-		testDB, setupErr = sql.Open("pgx", dbURL)
-		if setupErr != nil {
-			return
-		}
-
-		// Test the connection
-		if err := testDB.Ping(); err != nil {
-			setupErr = err
-			testDB.Close()
-			testDB = nil
-			return
-		}
-	})
-
-	if setupErr != nil {
-		t.Skipf("Skipping test: PostgreSQL not available (%v). Set TEST_DATABASE_URL or run ./bloud start to enable database tests.", setupErr)
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
 	}
 
-	if testDB == nil {
-		t.Skip("Skipping test: PostgreSQL not available")
-	}
-
-	// Create schema (idempotent)
-	schemaOnce.Do(func() {
-		if _, err := testDB.Exec(Schema); err != nil {
-			t.Logf("Warning: failed to create schema: %v", err)
+	// Set pragmas
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA foreign_keys=ON",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			t.Fatalf("failed to set pragma: %v", err)
 		}
-	})
-
-	// Clean up existing data for test isolation
-	cleanupTables := []string{"apps", "catalog_cache"}
-	for _, table := range cleanupTables {
-		_, _ = testDB.Exec(fmt.Sprintf("DELETE FROM %s", table))
 	}
 
-	return testDB
+	// Create schema
+	if _, err := db.Exec(Schema); err != nil {
+		db.Close()
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	t.Cleanup(func() { db.Close() })
+	return db
 }

@@ -35,7 +35,7 @@ type Server struct {
 	catalog           catalog.CacheInterface
 	graph             catalog.AppGraphInterface
 	appStore          store.AppStoreInterface
-	userStore         *store.UserStore
+	prefsStore        *store.PreferencesStore
 	sessionStore      *store.SessionStore
 	appHub            *AppEventHub
 	orchestrator      orchestrator.AppOrchestrator
@@ -56,6 +56,7 @@ type ServerConfig struct {
 	ConfigDir         string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
+	BaseDomain        string // Base domain for subdomain routing (e.g., "localhost")
 	FlakePath         string
 	FlakeTarget       string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
 	NixosPath         string
@@ -81,7 +82,7 @@ type ServerConfig struct {
 // NewServer creates a new HTTP server instance
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	appStore := store.NewAppStore(db)
-	userStore := store.NewUserStore(db)
+	prefsStore := store.NewPreferencesStore(db)
 	appHub := NewAppEventHub(appStore)
 
 	// Wire up automatic broadcasts when app state changes
@@ -129,9 +130,9 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		cfg:             cfg,
 		router:          chi.NewRouter(),
 		db:              db,
-		catalog:         catalog.NewCache(db),
+		catalog:         catalog.NewMemoryCache(),
 		appStore:        appStore,
-		userStore:       userStore,
+		prefsStore:      prefsStore,
 		sessionStore:    sessionStore,
 		appHub:          appHub,
 		authentikClient: authentikClient,
@@ -223,7 +224,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			AppStore:     appStore,
 			Containers:   runtime,
 			Registry:     s.cfg.Registry,
-			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath),
+			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath, s.cfg.BaseDomain),
 			LDAPOutput:   s.cfg.LDAPOutput,
 			DataDir:      s.cfg.DataDir,
 			TemplateVars: s.cfg.TemplateVars,
@@ -231,7 +232,10 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		})
 		s.orchestrator = portable
 		s.logger.Info("portable orchestrator initialized")
-		go portable.ReconcileState(context.Background())
+		go func() {
+			portable.SyncContainerState(context.Background())
+			portable.ReconcileState(context.Background())
+		}()
 		return
 	}
 
@@ -243,6 +247,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		Logger:            s.logger,
 		ConfigPath:        configPath,
 		TraefikConfigPath: traefikConfigPath,
+		BaseDomain:        s.cfg.BaseDomain,
 		NixosPath:         s.cfg.NixosPath,
 		FlakePath:         s.cfg.FlakePath,
 		Hostname:          s.cfg.FlakeTarget,
@@ -273,7 +278,7 @@ func (s *Server) refreshCatalog(appsDir string) {
 
 	loader := catalog.NewLoader(appsDir)
 
-	// Refresh the legacy catalog cache
+	// Refresh the catalog cache
 	if err := s.catalog.Refresh(loader); err != nil {
 		s.logger.Error("failed to refresh catalog cache", "error", err)
 	}

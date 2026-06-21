@@ -170,32 +170,17 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create local user
-	user, err := s.userStore.GetByUsername(userInfo.PreferredUsername)
-	if err != nil {
-		s.logger.Error("failed to get user", "error", err)
-		http.Error(w, "Failed to get user", http.StatusInternalServerError)
+	// Ensure local user preferences exist (on-demand sync from Authentik)
+	username := userInfo.PreferredUsername
+	if err := s.prefsStore.EnsureUser(username); err != nil {
+		s.logger.Error("failed to ensure local user", "error", err)
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
 		return
-	}
-
-	// If user doesn't exist locally, create them (on-demand sync from Authentik)
-	if user == nil {
-		if err := s.userStore.Create(userInfo.PreferredUsername); err != nil {
-			s.logger.Error("failed to create local user", "error", err)
-			http.Error(w, "Failed to create user", http.StatusInternalServerError)
-			return
-		}
-		user, err = s.userStore.GetByUsername(userInfo.PreferredUsername)
-		if err != nil {
-			s.logger.Error("failed to get created user", "error", err)
-			http.Error(w, "Failed to get user", http.StatusInternalServerError)
-			return
-		}
 	}
 
 	// Create session
 	ctx := r.Context()
-	session, err := s.sessionStore.Create(ctx, user.ID, user.Username)
+	session, err := s.sessionStore.Create(ctx, username, username)
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -212,7 +197,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	s.logger.Info("user logged in", "username", user.Username)
+	s.logger.Info("user logged in", "username", username)
 
 	// Redirect to home
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -360,7 +345,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		// Create user object from session
 		user := &store.User{
-			ID:       session.UserID,
 			Username: session.Username,
 		}
 

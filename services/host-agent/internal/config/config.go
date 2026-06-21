@@ -22,13 +22,15 @@ type Config struct {
 	FlakePath         string // Path to flake.nix for nixos-rebuild
 	FlakeTarget       string // Flake target for nixos-rebuild (e.g., "vm-dev", "vm-test")
 	NixosPath         string // Path to nixos/ modules directory
-	DatabaseURL       string // PostgreSQL connection string
-	RedisAddr         string // Redis address for session storage
+	RedisAddr string // Redis address for session storage
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
 	SSOAuthentikURL string // Authentik external URL for discovery (e.g., "http://localhost:8080")
 	AuthentikToken  string // Authentik API token for SSO cleanup
+	// Traefik configuration
+	BaseDomain  string // Base domain for subdomain routing (default: "localhost")
+	TraefikPort int    // Traefik entrypoint port (default: 8080)
 	// Authentik bootstrap configuration
 	AuthentikPort          int
 	AuthentikAdminPassword string
@@ -41,6 +43,12 @@ type Config struct {
 	PostgresPassword string
 	// Secrets manager for accessing generated secrets
 	Secrets *secrets.Manager
+}
+
+// PostgresURL returns a connection string for the shared Postgres instance.
+// Used by bootstrap code that creates app-specific databases (e.g. authentik).
+func (c *Config) PostgresURL() string {
+	return "postgres://apps:" + c.PostgresPassword + "@localhost:5432/bloud?sslmode=disable"
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -86,9 +94,6 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	// whereas the bootstrap token in secrets.json only works on first Authentik boot.
 	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
 
-	// Build database URL using postgres password
-	defaultDatabaseURL := "postgres://apps:" + postgresPassword + "@localhost:5432/bloud?sslmode=disable"
-
 	systemdScope := getEnv("BLOUD_SYSTEMD_SCOPE", defaultSystemdScope())
 	cfg := &Config{
 		RuntimeMode:            getEnv("BLOUD_RUNTIME", "portable"),
@@ -102,12 +107,13 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		FlakePath:              getEnv("BLOUD_FLAKE_PATH", defaultFlakePath),
 		FlakeTarget:            getEnv("BLOUD_FLAKE_TARGET", "vm-dev"),
 		NixosPath:              getEnv("BLOUD_NIXOS_PATH", defaultNixosPath),
-		DatabaseURL:            getEnv("DATABASE_URL", defaultDatabaseURL),
 		RedisAddr:              getEnv("BLOUD_REDIS_ADDR", "localhost:6379"),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
 		AuthentikToken:         authentikToken,
+		BaseDomain:             getEnv("BLOUD_BASE_DOMAIN", "localhost"),
+		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 8080),
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: authentikAdminPassword,
 		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),

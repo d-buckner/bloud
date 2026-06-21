@@ -18,7 +18,7 @@ type AppStoreInterface interface {
 	// UpdateStatus updates the status of an installed app
 	UpdateStatus(name, status string) error
 
-	// EnsureSystemApp ensures a system app (managed by NixOS) is registered with running status
+	// EnsureSystemApp ensures a system app (managed by the host agent) is registered with running status
 	EnsureSystemApp(name, displayName string, port int) error
 
 	// UpdateIntegrationConfig updates the integration config for an app
@@ -39,3 +39,21 @@ type AppStoreInterface interface {
 
 // Compile-time assertion that AppStore implements AppStoreInterface
 var _ AppStoreInterface = (*AppStore)(nil)
+
+// PreferencesStoreInterface defines the interface for managing user preferences.
+type PreferencesStoreInterface interface {
+	// HasUsers checks if any users exist
+	HasUsers() (bool, error)
+
+	// EnsureUser creates a user preferences row if it doesn't already exist
+	EnsureUser(username string) error
+
+	// GetLayout returns the user's layout as an array of grid elements
+	GetLayout(username string) ([]GridElement, error)
+
+	// SetLayout updates the user's layout
+	SetLayout(username string, elements []GridElement) error
+}
+
+// Compile-time assertion that PreferencesStore implements PreferencesStoreInterface
+var _ PreferencesStoreInterface = (*PreferencesStore)(nil)

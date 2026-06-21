@@ -86,7 +86,7 @@ func runConfigure(args []string) int {
 	}
 
 	// Initialize database (required for apps with configurators)
-	database, err := db.InitDB(cfg.DatabaseURL)
+	database, err := db.InitDB(cfg.DataDir)
 	if err != nil {
 		logger.Error("failed to initialize database", "error", err)
 		return 1
@@ -99,8 +99,13 @@ func runConfigure(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
-	// Create catalog cache for SSO lookup
-	catalogCache := catalog.NewCache(database)
+	// Create and populate catalog cache for SSO lookup
+	catalogCache := catalog.NewMemoryCache()
+	loader := catalog.NewLoader(cfg.AppsDir)
+	if err := catalogCache.Refresh(loader); err != nil {
+		logger.Error("failed to load catalog", "error", err)
+		return 1
+	}
 
 	switch action {
 	case "prestart":
@@ -242,7 +247,7 @@ func runReconcile(ctx context.Context, registry *configurator.Registry, appStore
 	return 0
 }
 
-func runCatalogRefresh(catalogCache *catalog.Cache, cfg *config.Config, logger *slog.Logger) int {
+func runCatalogRefresh(catalogCache *catalog.MemoryCache, cfg *config.Config, logger *slog.Logger) int {
 	loader := catalog.NewLoader(cfg.AppsDir)
 	if err := catalogCache.Refresh(loader); err != nil {
 		logger.Error("failed to refresh catalog", "error", err)

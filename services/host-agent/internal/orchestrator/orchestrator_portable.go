@@ -72,6 +72,53 @@ func (o *PortableOrchestrator) EnqueueUninstall(ctx context.Context, req Uninsta
 	return o.Uninstall(ctx, req)
 }
 
+// SyncContainerState aligns DB state with actual container reality on startup.
+// If a container was killed externally while the host-agent was down, the DB
+// still shows "running". This method inspects each container and corrects the DB.
+func (o *PortableOrchestrator) SyncContainerState(ctx context.Context) {
+	o.operationMu.Lock()
+	defer o.operationMu.Unlock()
+
+	apps, err := o.appStore.GetAll()
+	if err != nil {
+		o.logger.Error("failed to load apps for container sync", "error", err)
+		return
+	}
+
+	for _, app := range apps {
+		catalogApp, err := o.catalog.Get(app.Name)
+		if err != nil || catalogApp.Container == nil {
+			continue
+		}
+
+		containerName := PortableContainerName(catalogApp)
+		state, err := o.containers.Inspect(ctx, containerName)
+		if err != nil {
+			o.logger.Warn("failed to inspect container during sync", "app", app.Name, "error", err)
+			continue
+		}
+
+		switch {
+		case app.Status == "uninstalling" && !state.Exists:
+			// Container gone + was uninstalling → clean up DB
+			o.logger.Info("cleaning up uninstalled app", "app", app.Name)
+			_ = o.appStore.Uninstall(app.Name)
+
+		case (app.Status == "installing" || app.Status == "starting") && !state.Running:
+			// Interrupted transition → mark error
+			o.logger.Info("marking interrupted app as error", "app", app.Name, "previous_status", app.Status)
+			_ = o.appStore.UpdateStatus(app.Name, "error")
+
+		case app.Status == "running" && (!state.Exists || !state.Running):
+			// DB says running but container isn't → mark stopped
+			o.logger.Info("container not running, marking as stopped", "app", app.Name, "exists", state.Exists)
+			_ = o.appStore.UpdateStatus(app.Name, "stopped")
+		}
+	}
+
+	o.logger.Info("container state sync completed")
+}
+
 // ReconcileState converges all durable installed-app state after process restart.
 func (o *PortableOrchestrator) ReconcileState(ctx context.Context) {
 	o.operationMu.Lock()

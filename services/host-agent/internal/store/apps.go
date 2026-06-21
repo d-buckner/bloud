@@ -73,7 +73,7 @@ func (s *AppStore) GetByName(name string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
 		SELECT id, name, display_name, version, status, port, is_system, integration_config, installed_at, updated_at
 		FROM apps
-		WHERE name = $1
+		WHERE name = ?
 	`, name)
 
 	app, err := s.scanAppRow(row)
@@ -131,7 +131,7 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 
 	_, err = s.db.Exec(`
 		INSERT INTO apps (name, display_name, version, status, port, is_system, integration_config)
-		VALUES ($1, $2, $3, 'installing', $4, $5, $6)
+		VALUES (?, ?, ?, 'installing', ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 			display_name = excluded.display_name,
 			version = excluded.version,
@@ -139,7 +139,7 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 			port = excluded.port,
 			is_system = excluded.is_system,
 			integration_config = excluded.integration_config,
-			updated_at = CURRENT_TIMESTAMP
+			updated_at = datetime('now')
 	`, name, displayName, version, port, isSystem, string(configJSON))
 	if err != nil {
 		return fmt.Errorf("failed to insert app: %w", err)
@@ -152,8 +152,8 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 // UpdateStatus updates the status of an installed app
 func (s *AppStore) UpdateStatus(name, status string) error {
 	result, err := s.db.Exec(`
-		UPDATE apps SET status = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE name = $2
+		UPDATE apps SET status = ?, updated_at = datetime('now')
+		WHERE name = ?
 	`, status, name)
 	if err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
@@ -168,19 +168,19 @@ func (s *AppStore) UpdateStatus(name, status string) error {
 	return nil
 }
 
-// EnsureSystemApp ensures a system app (managed by NixOS, not user-installed) is registered
+// EnsureSystemApp ensures a system app (managed by the host agent, not user-installed) is registered
 // System apps are marked with is_system=true and their status is set to "running"
 // This is idempotent - it creates or updates the app entry
 func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
 	_, err := s.db.Exec(`
 		INSERT INTO apps (name, display_name, version, status, port, is_system, integration_config)
-		VALUES ($1, $2, '', 'running', $3, true, '{}')
+		VALUES (?, ?, '', 'running', ?, 1, '{}')
 		ON CONFLICT(name) DO UPDATE SET
 			display_name = excluded.display_name,
 			status = 'running',
 			port = excluded.port,
-			is_system = true,
-			updated_at = CURRENT_TIMESTAMP
+			is_system = 1,
+			updated_at = datetime('now')
 	`, name, displayName, port)
 	if err != nil {
 		return fmt.Errorf("failed to ensure system app: %w", err)
@@ -193,8 +193,8 @@ func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
 // UpdateDisplayName updates the display name of an installed app
 func (s *AppStore) UpdateDisplayName(name, displayName string) error {
 	result, err := s.db.Exec(`
-		UPDATE apps SET display_name = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE name = $2
+		UPDATE apps SET display_name = ?, updated_at = datetime('now')
+		WHERE name = ?
 	`, displayName, name)
 	if err != nil {
 		return fmt.Errorf("failed to update display name: %w", err)
@@ -217,8 +217,8 @@ func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string
 	}
 
 	result, err := s.db.Exec(`
-		UPDATE apps SET integration_config = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE name = $2
+		UPDATE apps SET integration_config = ?, updated_at = datetime('now')
+		WHERE name = ?
 	`, string(configJSON), name)
 	if err != nil {
 		return fmt.Errorf("failed to update integration config: %w", err)
@@ -234,7 +234,7 @@ func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string
 
 // Uninstall removes an app from the database
 func (s *AppStore) Uninstall(name string) error {
-	result, err := s.db.Exec("DELETE FROM apps WHERE name = $1", name)
+	result, err := s.db.Exec("DELETE FROM apps WHERE name = ?", name)
 	if err != nil {
 		return fmt.Errorf("failed to delete app: %w", err)
 	}
@@ -251,17 +251,32 @@ func (s *AppStore) Uninstall(name string) error {
 // IsInstalled checks if an app is installed
 func (s *AppStore) IsInstalled(name string) (bool, error) {
 	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM apps WHERE name = $1", name).Scan(&count)
+	err := s.db.QueryRow("SELECT COUNT(*) FROM apps WHERE name = ?", name).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check if installed: %w", err)
 	}
 	return count > 0, nil
 }
 
+// parseSQLiteTime parses datetime strings produced by SQLite's datetime() function.
+func parseSQLiteTime(s string) time.Time {
+	for _, format := range []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05Z",
+		time.RFC3339,
+	} {
+		if t, err := time.Parse(format, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 	var app InstalledApp
 	var port sql.NullInt64
 	var configJSON sql.NullString
+	var installedAt, updatedAt string
 
 	err := rows.Scan(
 		&app.ID,
@@ -272,12 +287,15 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 		&port,
 		&app.IsSystem,
 		&configJSON,
-		&app.InstalledAt,
-		&app.UpdatedAt,
+		&installedAt,
+		&updatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan app: %w", err)
 	}
+
+	app.InstalledAt = parseSQLiteTime(installedAt)
+	app.UpdatedAt = parseSQLiteTime(updatedAt)
 
 	if port.Valid {
 		app.Port = int(port.Int64)
@@ -296,6 +314,7 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 	var app InstalledApp
 	var port sql.NullInt64
 	var configJSON sql.NullString
+	var installedAt, updatedAt string
 
 	err := row.Scan(
 		&app.ID,
@@ -306,12 +325,15 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 		&port,
 		&app.IsSystem,
 		&configJSON,
-		&app.InstalledAt,
-		&app.UpdatedAt,
+		&installedAt,
+		&updatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
+
+	app.InstalledAt = parseSQLiteTime(installedAt)
+	app.UpdatedAt = parseSQLiteTime(updatedAt)
 
 	if port.Valid {
 		app.Port = int(port.Int64)

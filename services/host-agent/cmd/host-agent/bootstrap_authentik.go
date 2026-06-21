@@ -34,7 +34,7 @@ func bootstrapAuthentik(cfg *config.Config, runtime containerruntime.Runtime, lo
 
 	// Create authentik database in the shared postgres instance.
 	logger.Info("ensuring authentik database exists")
-	if err := ensureAuthentikDB(cfg.DatabaseURL); err != nil {
+	if err := ensureAuthentikDB(cfg.PostgresURL()); err != nil {
 		return fmt.Errorf("create authentik database: %w", err)
 	}
 

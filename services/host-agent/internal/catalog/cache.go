@@ -1,121 +1,59 @@
 package catalog
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
-
-	"gopkg.in/yaml.v3"
+	"sort"
 )
 
-// Cache handles caching app catalog in the database
-type Cache struct {
-	db *sql.DB
+// MemoryCache handles caching app catalog in memory
+type MemoryCache struct {
+	apps map[string]*App
 }
 
-// NewCache creates a new catalog cache
-func NewCache(db *sql.DB) *Cache {
-	return &Cache{db: db}
+// NewMemoryCache creates a new in-memory catalog cache
+func NewMemoryCache() *MemoryCache {
+	return &MemoryCache{apps: make(map[string]*App)}
 }
 
-// Refresh loads all apps from the catalog and updates the database cache
-func (c *Cache) Refresh(loader *Loader) error {
-	// Load all apps from YAML files
+// Refresh loads all apps from the catalog and updates the in-memory cache
+func (c *MemoryCache) Refresh(loader *Loader) error {
 	apps, err := loader.LoadAll()
 	if err != nil {
 		return fmt.Errorf("failed to load apps: %w", err)
 	}
 
-	// Start transaction
-	tx, err := c.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to start transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Clear existing cache
-	if _, err := tx.Exec("DELETE FROM catalog_cache"); err != nil {
-		return fmt.Errorf("failed to clear cache: %w", err)
-	}
-
-	// Insert each app into cache
-	stmt, err := tx.Prepare(`
-		INSERT INTO catalog_cache (name, yaml_content, updated_at)
-		VALUES ($1, $2, $3)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
+	c.apps = make(map[string]*App, len(apps))
 	for name, app := range apps {
-		// Marshal app back to YAML for storage
-		yamlData, err := yaml.Marshal(app)
-		if err != nil {
-			return fmt.Errorf("failed to marshal app %s: %w", name, err)
-		}
-
-		if _, err := stmt.Exec(name, string(yamlData), time.Now()); err != nil {
-			return fmt.Errorf("failed to insert app %s: %w", name, err)
-		}
-	}
-
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		c.apps[name] = app
 	}
 
 	return nil
 }
 
-// GetAll returns all apps from the cache
-func (c *Cache) GetAll() ([]*App, error) {
-	rows, err := c.db.Query("SELECT yaml_content FROM catalog_cache ORDER BY name")
-	if err != nil {
-		return nil, fmt.Errorf("failed to query catalog: %w", err)
+// GetAll returns all apps from the cache, sorted by name
+func (c *MemoryCache) GetAll() ([]*App, error) {
+	apps := make([]*App, 0, len(c.apps))
+	for _, app := range c.apps {
+		apps = append(apps, app)
 	}
-	defer rows.Close()
-
-	var apps []*App
-	for rows.Next() {
-		var yamlContent string
-		if err := rows.Scan(&yamlContent); err != nil {
-			return nil, fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		var app App
-		if err := yaml.Unmarshal([]byte(yamlContent), &app); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal app: %w", err)
-		}
-
-		apps = append(apps, &app)
-	}
-
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].Name < apps[j].Name
+	})
 	return apps, nil
 }
 
 // Get returns a single app from the cache by name
-func (c *Cache) Get(name string) (*App, error) {
-	var yamlContent string
-	err := c.db.QueryRow("SELECT yaml_content FROM catalog_cache WHERE name = $1", name).Scan(&yamlContent)
-	if err == sql.ErrNoRows {
+func (c *MemoryCache) Get(name string) (*App, error) {
+	app, ok := c.apps[name]
+	if !ok {
 		return nil, fmt.Errorf("app not found: %s", name)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to query app: %w", err)
-	}
-
-	var app App
-	if err := yaml.Unmarshal([]byte(yamlContent), &app); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal app: %w", err)
-	}
-
-	return &app, nil
+	return app, nil
 }
 
 // GetAllAsJSON returns all apps from the cache as JSON (for API responses)
-func (c *Cache) GetAllAsJSON() ([]byte, error) {
+func (c *MemoryCache) GetAllAsJSON() ([]byte, error) {
 	apps, err := c.GetAll()
 	if err != nil {
 		return nil, err
@@ -137,7 +75,7 @@ func IsSystemApp(app *App) bool {
 }
 
 // GetUserApps returns only user-facing apps (excluding infrastructure)
-func (c *Cache) GetUserApps() ([]*App, error) {
+func (c *MemoryCache) GetUserApps() ([]*App, error) {
 	allApps, err := c.GetAll()
 	if err != nil {
 		return nil, err
@@ -154,7 +92,7 @@ func (c *Cache) GetUserApps() ([]*App, error) {
 }
 
 // IsSystemAppByName checks if an app name corresponds to a system app
-func (c *Cache) IsSystemAppByName(name string) bool {
+func (c *MemoryCache) IsSystemAppByName(name string) bool {
 	app, err := c.Get(name)
 	if err != nil {
 		return false

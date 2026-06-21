@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,94 +76,86 @@ func TestLoader_LoadAll(t *testing.T) {
 	assert.Equal(t, []string{"authentik"}, testApp.Dependencies)
 }
 
-func TestCache_Refresh(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
+func TestMemoryCache_Refresh(t *testing.T) {
 	catalogDir := setupTestCatalog(t)
 	loader := NewLoader(catalogDir)
-	cache := NewCache(db)
+	cache := NewMemoryCache()
 
-	// Expect transaction
-	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM catalog_cache`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectPrepare(`INSERT INTO catalog_cache`)
-	mock.ExpectExec(`INSERT INTO catalog_cache`).
-		WithArgs("test-app", sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
-
-	err = cache.Refresh(loader)
+	err := cache.Refresh(loader)
 	require.NoError(t, err, "Refresh should not return error")
 
-	require.NoError(t, mock.ExpectationsWereMet())
+	// Verify cache was populated
+	apps, err := cache.GetAll()
+	require.NoError(t, err)
+	assert.Len(t, apps, 1)
+	assert.Equal(t, "test-app", apps[0].Name)
 }
 
-func TestCache_GetAll(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	cache := NewCache(db)
-
-	yamlContent := `name: test-app
-displayName: Test App
-category: testing
-`
-
-	rows := sqlmock.NewRows([]string{"yaml_content"}).
-		AddRow(yamlContent)
-
-	mock.ExpectQuery(`SELECT yaml_content FROM catalog_cache ORDER BY name`).
-		WillReturnRows(rows)
+func TestMemoryCache_GetAll(t *testing.T) {
+	cache := NewMemoryCache()
+	cache.apps["test-app"] = &App{
+		Name:        "test-app",
+		DisplayName: "Test App",
+		Category:    "testing",
+	}
 
 	apps, err := cache.GetAll()
 	require.NoError(t, err, "GetAll should not return error")
 	require.Len(t, apps, 1, "should have exactly 1 app in cache")
 	assert.Equal(t, "test-app", apps[0].Name)
-
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestCache_Get(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	cache := NewCache(db)
-
-	yamlContent := `name: test-app
-displayName: Test App
-category: testing
-`
-
-	mock.ExpectQuery(`SELECT yaml_content FROM catalog_cache WHERE name = \$1`).
-		WithArgs("test-app").
-		WillReturnRows(sqlmock.NewRows([]string{"yaml_content"}).AddRow(yamlContent))
+func TestMemoryCache_Get(t *testing.T) {
+	cache := NewMemoryCache()
+	cache.apps["test-app"] = &App{
+		Name:        "test-app",
+		DisplayName: "Test App",
+		Category:    "testing",
+	}
 
 	app, err := cache.Get("test-app")
 	require.NoError(t, err, "Get should return existing app without error")
 	assert.Equal(t, "test-app", app.Name)
-
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestCache_Get_NotFound(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
+func TestMemoryCache_Get_NotFound(t *testing.T) {
+	cache := NewMemoryCache()
 
-	cache := NewCache(db)
-
-	mock.ExpectQuery(`SELECT yaml_content FROM catalog_cache WHERE name = \$1`).
-		WithArgs("non-existent").
-		WillReturnRows(sqlmock.NewRows([]string{}))
-
-	_, err = cache.Get("non-existent")
+	_, err := cache.Get("non-existent")
 	assert.Error(t, err, "Get should return error for non-existent app")
+}
 
-	require.NoError(t, mock.ExpectationsWereMet())
+func TestMemoryCache_GetUserApps(t *testing.T) {
+	cache := NewMemoryCache()
+	cache.apps["traefik"] = &App{
+		Name:     "traefik",
+		Category: "infrastructure",
+	}
+	cache.apps["jellyfin"] = &App{
+		Name:     "jellyfin",
+		Category: "media",
+	}
+
+	userApps, err := cache.GetUserApps()
+	require.NoError(t, err)
+	assert.Len(t, userApps, 1)
+	assert.Equal(t, "jellyfin", userApps[0].Name)
+}
+
+func TestMemoryCache_IsSystemAppByName(t *testing.T) {
+	cache := NewMemoryCache()
+	cache.apps["traefik"] = &App{
+		Name:     "traefik",
+		Category: "infrastructure",
+	}
+	cache.apps["jellyfin"] = &App{
+		Name:     "jellyfin",
+		Category: "media",
+	}
+
+	assert.True(t, cache.IsSystemAppByName("traefik"))
+	assert.False(t, cache.IsSystemAppByName("jellyfin"))
+	assert.False(t, cache.IsSystemAppByName("nonexistent"))
 }
 
 func TestLoader_ValidateApp(t *testing.T) {

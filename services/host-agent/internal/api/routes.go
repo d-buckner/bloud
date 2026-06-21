@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -123,13 +124,6 @@ func (s *Server) setupFrontend() {
 
 		// Check if file exists
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			// /embed/ paths are served by Traefik-routed app containers, not the
-			// SPA. Return 404 so the smoke-test embed check retries until the
-			// actual Traefik route for the app is configured and active.
-			if strings.HasPrefix(urlPath, "/embed/") {
-				http.NotFound(w, r)
-				return
-			}
 			// File doesn't exist - serve index.html for SPA routing
 			w.Header().Set("Cache-Control", "no-store")
 			http.ServeFile(w, r, filepath.Join(buildDir, "index.html"))
@@ -137,13 +131,12 @@ func (s *Server) setupFrontend() {
 		}
 
 		// Set cache headers based on path:
-		// - index.html and service-worker.js must never be cached — they are the
-		//   entry points that reference versioned assets, and stale copies cause
-		//   broken loads after updates or after the installer→installed transition.
+		// - index.html must never be cached — it references versioned assets,
+		//   and stale copies cause broken loads after updates.
 		// - Hashed immutable assets can be cached forever; the hash in the filename
 		//   guarantees a new URL on every content change.
 		switch {
-		case urlPath == "/index.html" || urlPath == "/service-worker.js":
+		case urlPath == "/index.html":
 			w.Header().Set("Cache-Control", "no-store")
 		case strings.HasPrefix(urlPath, "/_app/immutable/"):
 			w.Header().Set("Cache-Control", "public, immutable, max-age=31536000")
@@ -217,7 +210,7 @@ func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string) []ins
 
 // handleListInstalledApps returns the list of user-installed apps.
 // System apps (traefik, postgres, redis, authentik) are filtered out since
-// they are managed by NixOS, not installed by the user.
+// they are managed by the host agent, not installed by the user.
 func (s *Server) handleListInstalledApps(w http.ResponseWriter, r *http.Request) {
 	all, err := s.appStore.GetAll()
 	if err != nil {
@@ -501,9 +494,21 @@ func (s *Server) dropAppDatabase(appName string) error {
 
 	s.logger.Info("dropping app database", "app", appName, "database", dbName)
 
-	// Connect to postgres and drop the database
-	// Note: We use the bloud database connection to run the DROP command
-	_, err := s.db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+	// Connect to shared postgres to drop the app database.
+	// s.db is SQLite (bloud state), so we open a fresh postgres connection.
+	pgPassword := s.cfg.TemplateVars["postgresPassword"]
+	if pgPassword == "" {
+		return fmt.Errorf("postgres password not available for database drop")
+	}
+	pgURL := "postgres://apps:" + pgPassword + "@localhost:5432/bloud?sslmode=disable"
+
+	conn, err := sql.Open("pgx", pgURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to postgres: %w", err)
+	}
+	defer conn.Close()
+
+	_, err = conn.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
 	if err != nil {
 		return fmt.Errorf("failed to drop database %s: %w", dbName, err)
 	}
@@ -547,7 +552,7 @@ func (s *Server) handleGetLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	elements, err := s.userStore.GetLayout(user.ID)
+	elements, err := s.prefsStore.GetLayout(user.Username)
 	if err != nil {
 		s.logger.Error("failed to get layout", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to get layout")
@@ -575,7 +580,7 @@ func (s *Server) handleSetLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.userStore.SetLayout(user.ID, elements); err != nil {
+	if err := s.prefsStore.SetLayout(user.Username, elements); err != nil {
 		s.logger.Error("failed to set layout", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to save layout")
 		return

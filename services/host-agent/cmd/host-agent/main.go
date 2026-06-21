@@ -73,27 +73,33 @@ func runServer() {
 	}
 	logger.Info("loaded configuration", logAttrs...)
 
-	templateVars := map[string]string{
-		"postgresPassword": cfg.PostgresPassword,
+	// Ensure data directory exists for SQLite
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		logger.Error("failed to create data directory", "error", err)
+		os.Exit(1)
 	}
 
-	// In portable mode, ensure system infrastructure containers (postgres, redis)
-	// are running before attempting to connect to the database.
-	if cfg.RuntimeMode == "portable" {
-		if err := bootstrapInfra(cfg, templateVars, logger); err != nil {
-			logger.Error("failed to bootstrap infrastructure", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	// Initialize database
-	database, err := db.InitDB(cfg.DatabaseURL)
+	// Initialize SQLite database (instant — no postgres dependency)
+	database, err := db.InitDB(cfg.DataDir)
 	if err != nil {
 		logger.Error("failed to initialize database", "error", err)
 		os.Exit(1)
 	}
 	defer database.Close()
 	logger.Info("database initialized successfully")
+
+	templateVars := map[string]string{
+		"postgresPassword": cfg.PostgresPassword,
+	}
+
+	// In portable mode, ensure system infrastructure containers (postgres, redis)
+	// are running before apps need them.
+	if cfg.RuntimeMode == "portable" {
+		if err := bootstrapInfra(cfg, templateVars, logger); err != nil {
+			logger.Error("failed to bootstrap infrastructure", "error", err)
+			os.Exit(1)
+		}
+	}
 
 	// In portable mode, seed a dev user so the setup wizard doesn't appear.
 	// Localhost requests bypass auth, so no password/Authentik needed.
@@ -115,6 +121,7 @@ func runServer() {
 		ConfigDir:         cfg.NixConfigDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
+		BaseDomain:        cfg.BaseDomain,
 		FlakePath:         cfg.FlakePath,
 		FlakeTarget:       cfg.FlakeTarget,
 		NixosPath:         cfg.NixosPath,
@@ -214,10 +221,16 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 	}
 
 	logger.Info("waiting for postgres to accept connections")
-	if err := waitForPostgres(cfg.DatabaseURL, 30*time.Second); err != nil {
+	if err := waitForPostgres(cfg.PostgresURL(), 30*time.Second); err != nil {
 		return err
 	}
 	logger.Info("postgres is ready")
+
+	// Bootstrap Traefik reverse proxy.
+	// Non-fatal: the system can work without Traefik for API-only access.
+	if err := bootstrapTraefik(cfg, runtime, logger); err != nil {
+		logger.Error("failed to bootstrap traefik", "error", err)
+	}
 
 	// Bootstrap Authentik SSO stack (server, worker, LDAP outpost).
 	// Non-fatal: the host-agent can serve apps without Authentik, but LDAP login won't work.
@@ -232,15 +245,16 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 // wizard is skipped. Auth is bypassed for localhost in portable mode, so no
 // password or Authentik integration is needed.
 func seedDevUser(database *sql.DB, logger *slog.Logger) {
-	var exists bool
-	if err := database.QueryRow("SELECT EXISTS(SELECT 1 FROM users)").Scan(&exists); err != nil {
+	prefs := store.NewPreferencesStore(database)
+	has, err := prefs.HasUsers()
+	if err != nil {
 		logger.Warn("failed to check for existing users", "error", err)
 		return
 	}
-	if exists {
+	if has {
 		return
 	}
-	if _, err := database.Exec("INSERT INTO users (username) VALUES ($1)", "admin"); err != nil {
+	if err := prefs.EnsureUser("admin"); err != nil {
 		logger.Warn("failed to seed dev user", "error", err)
 		return
 	}

@@ -1,33 +1,22 @@
--- Bloud Host Agent Database Schema (PostgreSQL)
+-- Bloud Host Agent Database Schema (SQLite)
 
--- Users registered in Bloud (credentials stored in Authentik)
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username TEXT UNIQUE NOT NULL,
-    layout JSONB DEFAULT '[]',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Apps installed on this host
 CREATE TABLE IF NOT EXISTS apps (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
-    version TEXT,
-    status TEXT NOT NULL DEFAULT 'stopped',  -- 'running', 'stopped', 'error', 'installing'
+    version TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'stopped',
     port INTEGER,
-    is_system BOOLEAN NOT NULL DEFAULT FALSE,    -- true for system apps (postgres, traefik, etc)
-    integration_config TEXT,  -- JSON: {"downloadClient": "qbittorrent", "mediaServer": "jellyfin"}
-    installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    is_system INTEGER NOT NULL DEFAULT 0,
+    integration_config TEXT DEFAULT '{}',
+    installed_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- App catalog cache (synced from git repository)
-CREATE TABLE IF NOT EXISTS catalog_cache (
-    name TEXT PRIMARY KEY,
-    yaml_content TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Create indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_apps_status ON apps(status);
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+    username TEXT PRIMARY KEY,
+    layout TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT (datetime('now'))
+);
