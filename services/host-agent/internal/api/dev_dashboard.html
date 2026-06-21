@@ -174,7 +174,7 @@ appES.onmessage = (e) => {
       <img src="/api/apps/${app.name}/icon" alt="" onerror="this.outerHTML='<div class=no-icon>${app.name[0].toUpperCase()}</div>'">
       <div class="app-info">
         <div class="app-name">${esc(app.display_name || app.name)}</div>
-        <div class="app-desc">Port ${app.port || '?'} &middot; ${esc(app.version || 'unknown')}</div>
+        <div class="app-desc">Port ${app.port || '?'}</div>
       </div>
       <span class="badge ${badgeClass(app.status)}">${esc(app.status)}</span>
       <button onclick="showLogs('${app.name}')">Logs</button>
