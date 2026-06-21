@@ -27,8 +27,9 @@ func cmdDev() int {
 	// Stopping services before removing quadlet files avoids systemd timeouts on restart.
 	// Also remove legacy dev containers (bloud-dev-postgres, bloud-dev-redis) that
 	// predate the host-agent self-bootstrap and would hold the ports.
+	// apps-traefik is included because it uses host network and holds port 8080.
 	log("Stopping managed app containers")
-	_ = limaRun(lima, `systemctl --user stop apps-*.service 2>/dev/null; podman rm -f bloud-dev-postgres bloud-dev-redis 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; systemctl --user reset-failed 2>/dev/null; rm -f "$HOME/.config/containers/systemd"/apps-*.container 2>/dev/null; systemctl --user daemon-reload 2>/dev/null; true`)
+	_ = limaRun(lima, `systemctl --user stop apps-*.service 2>/dev/null; podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; systemctl --user reset-failed 2>/dev/null; rm -f "$HOME/.config/containers/systemd"/apps-*.container 2>/dev/null; systemctl --user daemon-reload 2>/dev/null; true`)
 
 	// Build
 	log("Building host-agent for linux/" + goarch)
@@ -51,10 +52,20 @@ func cmdDev() int {
 		return 1
 	}
 
+	// Build frontend
+	log("Building frontend")
+	webDir := filepath.Join(hostAgentDir, "web")
+	frontendBuild := exec.Command("npm", "run", "build", "--workspace=@bloud/host-agent-web")
+	frontendBuild.Dir = root
+	frontendBuild.Stdout = os.Stdout
+	frontendBuild.Stderr = os.Stderr
+	if err := frontendBuild.Run(); err != nil {
+		errorf("Frontend build failed: %v", err)
+		return 1
+	}
+
 	// Deploy
 	log("Deploying to " + lima + ":" + devRemoteDir)
-	// Remove any stale frontend build so the embedded dev dashboard is used
-	_ = limaRun(lima, "rm -rf "+devRemoteDir+"/host-agent/web")
 	if err := limaRun(lima, "mkdir -p "+devRemoteDir+"/host-agent"); err != nil {
 		errorf("Failed to create remote dir: %v", err)
 		return 1
@@ -70,6 +81,24 @@ func cmdDev() int {
 	if err := limaRun(lima, "chmod 755 "+devRemoteDir+"/host-agent/host-agent"); err != nil {
 		errorf("Failed to chmod binary: %v", err)
 		return 1
+	}
+
+	// Deploy frontend build to VM
+	webBuildDir := filepath.Join(webDir, "build")
+	if _, err := os.Stat(webBuildDir); err == nil {
+		_ = limaRun(lima, "rm -rf "+devRemoteDir+"/host-agent/web/build")
+		if err := limaRun(lima, "mkdir -p "+devRemoteDir+"/host-agent/web"); err != nil {
+			errorf("Failed to create remote web dir: %v", err)
+			return 1
+		}
+		cpCmd := exec.Command("limactl", "copy", "-r", webBuildDir, lima+":"+devRemoteDir+"/host-agent/web/build")
+		cpCmd.Stdout = os.Stdout
+		cpCmd.Stderr = os.Stderr
+		if err := cpCmd.Run(); err != nil {
+			errorf("Failed to copy frontend build: %v", err)
+			return 1
+		}
+		log("Frontend deployed")
 	}
 
 	// Kill anything on port 3000 and any previous dev host-agent

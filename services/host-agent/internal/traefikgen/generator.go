@@ -13,13 +13,15 @@ import (
 // Generator generates Traefik dynamic configuration for installed apps
 type Generator struct {
 	configPath       string // Path to apps-routes.yml
+	baseDomain       string // Base domain for subdomain routing (e.g., "localhost")
 	authentikEnabled bool   // Whether Authentik is installed (for SSO middlewares)
 }
 
 // NewGenerator creates a Traefik config generator
-func NewGenerator(configPath string) *Generator {
+func NewGenerator(configPath, baseDomain string) *Generator {
 	return &Generator{
 		configPath: configPath,
+		baseDomain: baseDomain,
 	}
 }
 
@@ -83,13 +85,21 @@ func (g *Generator) generateConfig(apps []*catalog.App) string {
 	b.WriteString("  routers:\n")
 	for _, app := range routableApps {
 		g.writeRouter(&b, app, g.authentikEnabled)
-		g.writeAbsolutePathRouters(&b, app)
 	}
 
-	// Generate middlewares section
-	b.WriteString("\n  middlewares:\n")
+	// Generate middlewares section (only if any app needs one)
+	hasMiddlewares := false
 	for _, app := range routableApps {
-		g.writeMiddleware(&b, app)
+		if g.appNeedsMiddleware(app) {
+			hasMiddlewares = true
+			break
+		}
+	}
+	if hasMiddlewares {
+		b.WriteString("\n  middlewares:\n")
+		for _, app := range routableApps {
+			g.writeMiddleware(&b, app)
+		}
 	}
 
 	// Generate services section
@@ -101,127 +111,46 @@ func (g *Generator) generateConfig(apps []*catalog.App) string {
 	return b.String()
 }
 
-// shouldStripPrefix returns true if the app should have its /embed/<app> prefix stripped.
-// Defaults to true unless explicitly disabled via routing.stripPrefix: false
-func shouldStripPrefix(app *catalog.App) bool {
-	if app.Routing != nil && app.Routing.StripPrefix != nil {
-		return *app.Routing.StripPrefix
+// appNeedsMiddleware returns true if the app requires any middleware definitions
+func (g *Generator) appNeedsMiddleware(app *catalog.App) bool {
+	if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
+		return true
 	}
-	return true // default: strip prefix
-}
-
-// hasCustomCOEP returns true if the app defines Cross-Origin-Embedder-Policy in its routing headers.
-// Apps with custom COEP should not have embed-isolation middleware applied (they manage COEP themselves).
-func hasCustomCOEP(app *catalog.App) bool {
-	if app.Routing == nil || len(app.Routing.Headers) == 0 {
-		return false
+	if app.Routing != nil && len(app.Routing.Headers) > 0 {
+		return true
 	}
-	_, hasCOEP := app.Routing.Headers["Cross-Origin-Embedder-Policy"]
-	return hasCOEP
+	return false
 }
 
-// escapeYAMLString escapes backslashes for YAML double-quoted strings
-func escapeYAMLString(s string) string {
-	return strings.ReplaceAll(s, `\`, `\\`)
-}
-
-// writeRouter writes the router configuration for an app
-// Uses path-based routing: /embed/miniflux, /embed/actual-budget, etc.
-// This keeps everything same-origin so cookies work in iframes.
+// writeRouter writes the router configuration for an app.
+// Uses Host-based subdomain routing: jellyfin.localhost, miniflux.localhost, etc.
 func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikEnabled bool) {
-	routerName := fmt.Sprintf("%s-backend", app.Name)
-	// Path-based routing for same-origin iframe embedding
-	pathRule := fmt.Sprintf("/embed/%s", app.Name)
+	hostRule := fmt.Sprintf("%s.%s", app.Name, g.baseDomain)
 
-	b.WriteString(fmt.Sprintf("    %s:\n", routerName))
-	b.WriteString(fmt.Sprintf("      rule: \"PathPrefix(`%s`)\"\n", pathRule))
+	b.WriteString(fmt.Sprintf("    %s:\n", app.Name))
+	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", hostRule))
 
 	// Build middleware list
 	var middlewares []string
 
 	// Forward auth middleware for apps using forward-auth SSO strategy
-	// Must be first so unauthenticated requests are redirected before any other processing
 	if app.SSO.Strategy == "forward-auth" && authentikEnabled {
 		middlewares = append(middlewares, fmt.Sprintf("%s-forwardauth", app.Name))
 	}
-
-	// Strip prefix first if enabled (default: true)
-	if shouldStripPrefix(app) {
-		middlewares = append(middlewares, fmt.Sprintf("%s-stripprefix", app.Name))
-	}
-
-	// iframe-headers removes X-Frame-Options
-	middlewares = append(middlewares, "iframe-headers")
-
-	// embed-isolation adds COOP/COEP headers to match parent page
-	// Skip for apps that define their own COEP (they manage headers themselves)
-	if !hasCustomCOEP(app) {
-		middlewares = append(middlewares, "embed-isolation")
-	}
-
-	// embed-forwarded-headers ensures apps receive correct X-Forwarded-Host/Proto
-	// This is critical for apps like Jellyfin that use these headers to determine
-	// their public URL and avoid "server mismatch" warnings
-	middlewares = append(middlewares, "embed-forwarded-headers")
 
 	// Add custom headers middleware if app has routing headers
 	if app.Routing != nil && len(app.Routing.Headers) > 0 {
 		middlewares = append(middlewares, fmt.Sprintf("%s-headers", app.Name))
 	}
 
-	b.WriteString(fmt.Sprintf("      middlewares:\n"))
-	for _, mw := range middlewares {
-		b.WriteString(fmt.Sprintf("        - %s\n", mw))
-	}
-
-	b.WriteString(fmt.Sprintf("      service: %s\n", app.Name))
-	b.WriteString("      priority: 100\n")
-}
-
-// writeAbsolutePathRouters writes additional routers for apps that use absolute paths
-// (e.g., AdGuard Home redirects to /install.html, /login.html at the root level)
-func (g *Generator) writeAbsolutePathRouters(b *strings.Builder, app *catalog.App) {
-	if app.Routing == nil || len(app.Routing.AbsolutePaths) == 0 {
-		return
-	}
-
-	for i, absPath := range app.Routing.AbsolutePaths {
-		routerName := fmt.Sprintf("%s-absolute-%d", app.Name, i)
-
-		b.WriteString(fmt.Sprintf("    %s:\n", routerName))
-		// Escape backslashes for YAML double-quoted strings (e.g., regex patterns)
-		b.WriteString(fmt.Sprintf("      rule: \"%s\"\n", escapeYAMLString(absPath.Rule)))
-
-		// Build middleware list - same headers as main route but no stripPrefix
-		var middlewares []string
-
-		// iframe-headers removes X-Frame-Options
-		middlewares = append(middlewares, "iframe-headers")
-
-		// Check if this absolute path has its own headers
-		hasRouteHeaders := len(absPath.Headers) > 0
-
-		// embed-isolation adds COOP/COEP headers to match parent page
-		// Skip if route has custom headers (it manages its own COEP) or app has custom COEP
-		if !hasRouteHeaders && !hasCustomCOEP(app) {
-			middlewares = append(middlewares, "embed-isolation")
-		}
-
-		// Use route-specific headers middleware if defined, otherwise fall back to app headers
-		if hasRouteHeaders {
-			middlewares = append(middlewares, fmt.Sprintf("%s-absolute-%d-headers", app.Name, i))
-		} else if app.Routing != nil && len(app.Routing.Headers) > 0 {
-			middlewares = append(middlewares, fmt.Sprintf("%s-headers", app.Name))
-		}
-
+	if len(middlewares) > 0 {
 		b.WriteString("      middlewares:\n")
 		for _, mw := range middlewares {
 			b.WriteString(fmt.Sprintf("        - %s\n", mw))
 		}
-
-		b.WriteString(fmt.Sprintf("      service: %s\n", app.Name))
-		b.WriteString(fmt.Sprintf("      priority: %d\n", absPath.Priority))
 	}
+
+	b.WriteString(fmt.Sprintf("      service: %s\n", app.Name))
 }
 
 // writeMiddleware writes the middleware configuration for an app
@@ -230,9 +159,6 @@ func (g *Generator) writeMiddleware(b *strings.Builder, app *catalog.App) {
 	if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
 		b.WriteString(fmt.Sprintf("    %s-forwardauth:\n", app.Name))
 		b.WriteString("      forwardAuth:\n")
-		// Authentik's embedded outpost serves forward auth at this path
-		// Direct to port 9001 to preserve X-Forwarded-* headers (needed for post-login redirect)
-		// OAuth redirect URLs still use port 8080 via outpost's authentik_host config
 		b.WriteString("        address: \"http://localhost:9001/outpost.goauthentik.io/auth/traefik\"\n")
 		b.WriteString("        trustForwardHeader: true\n")
 		b.WriteString("        authResponseHeaders:\n")
@@ -243,28 +169,9 @@ func (g *Generator) writeMiddleware(b *strings.Builder, app *catalog.App) {
 		b.WriteString("          - X-authentik-uid\n")
 	}
 
-	// StripPrefix middleware to remove /embed/<appname> before forwarding (if enabled)
-	if shouldStripPrefix(app) {
-		pathPrefix := fmt.Sprintf("/embed/%s", app.Name)
-		b.WriteString(fmt.Sprintf("    %s-stripprefix:\n", app.Name))
-		b.WriteString("      stripPrefix:\n")
-		b.WriteString(fmt.Sprintf("        prefixes:\n"))
-		b.WriteString(fmt.Sprintf("          - \"%s\"\n", pathPrefix))
-	}
-
 	// Custom headers middleware (only if app has routing headers)
 	if app.Routing != nil && len(app.Routing.Headers) > 0 {
 		g.writeHeadersMiddleware(b, fmt.Sprintf("%s-headers", app.Name), app.Routing.Headers)
-	}
-
-	// Route-specific headers middlewares for absolute paths
-	if app.Routing != nil {
-		for i, absPath := range app.Routing.AbsolutePaths {
-			if len(absPath.Headers) > 0 {
-				middlewareName := fmt.Sprintf("%s-absolute-%d-headers", app.Name, i)
-				g.writeHeadersMiddleware(b, middlewareName, absPath.Headers)
-			}
-		}
 	}
 }
 

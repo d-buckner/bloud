@@ -4,47 +4,15 @@
 
 http:
   routers:
-    actual-budget-backend:
-      rule: "PathPrefix(`/embed/actual-budget`)"
-      middlewares:
-        - actual-budget-stripprefix
-        - iframe-headers
-        - embed-isolation
-        - embed-forwarded-headers
+    actual-budget:
+      rule: "Host(`actual-budget.localhost`)"
       service: actual-budget
-      priority: 100
-    adguard-home-backend:
-      rule: "PathPrefix(`/embed/adguard-home`)"
-      middlewares:
-        - adguard-home-stripprefix
-        - iframe-headers
-        - embed-isolation
-        - embed-forwarded-headers
+    adguard-home:
+      rule: "Host(`adguard-home.localhost`)"
       service: adguard-home
-      priority: 100
-    miniflux-backend:
-      rule: "PathPrefix(`/embed/miniflux`)"
-      middlewares:
-        - miniflux-stripprefix
-        - iframe-headers
-        - embed-isolation
-        - embed-forwarded-headers
+    miniflux:
+      rule: "Host(`miniflux.localhost`)"
       service: miniflux
-      priority: 100
-
-  middlewares:
-    actual-budget-stripprefix:
-      stripPrefix:
-        prefixes:
-          - "/embed/actual-budget"
-    adguard-home-stripprefix:
-      stripPrefix:
-        prefixes:
-          - "/embed/adguard-home"
-    miniflux-stripprefix:
-      stripPrefix:
-        prefixes:
-          - "/embed/miniflux"
 
   services:
     actual-budget:

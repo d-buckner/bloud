@@ -23,6 +23,7 @@ mounts:
 portForwards:
   - guestPort: 3000   # host-agent
   - guestPort: 5432   # postgres
+  - guestPort: 8080   # traefik
   - guestPort: 8096   # jellyfin
   - guestPort: 9000   # authentik
 

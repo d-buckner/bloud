@@ -97,7 +97,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	contentStr := string(content)
 
 	// Check PublishedServerUri is set for reverse proxy
-	if !strings.Contains(contentStr, "<PublishedServerUri>http://bloud.local/embed/jellyfin</PublishedServerUri>") {
+	if !strings.Contains(contentStr, "<PublishedServerUri>http://jellyfin.bloud.local</PublishedServerUri>") {
 		t.Error("network.xml should have PublishedServerUri set")
 	}
 
@@ -226,8 +226,8 @@ func TestApplyNetworkConfig_AppliesAllSettings(t *testing.T) {
 	if !cfg.HasConfig(jellyfinNetworkConfig) {
 		t.Error("HasConfig() = false after applyNetworkConfig()")
 	}
-	if got := cfg.GetElement("PublishedServerUri"); got != "http://bloud.local/embed/jellyfin" {
-		t.Errorf("PublishedServerUri = %q, want %q", got, "http://bloud.local/embed/jellyfin")
+	if got := cfg.GetElement("PublishedServerUri"); got != "http://jellyfin.bloud.local" {
+		t.Errorf("PublishedServerUri = %q, want %q", got, "http://jellyfin.bloud.local")
 	}
 }
 

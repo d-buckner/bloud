@@ -201,7 +201,7 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 
 // jellyfinNetworkConfig returns the desired XML config for network.xml.
 var jellyfinNetworkConfig = xmlutil.ConfigValues{
-	"PublishedServerUri":                "http://bloud.local/embed/jellyfin",
+	"PublishedServerUri":                "http://jellyfin.bloud.local",
 	"EnablePublishedServerUriByRequest": "true",
 	"KnownProxies":                      []string{"127.0.0.1", "::1"},
 	"EnableHttps":                       "false",

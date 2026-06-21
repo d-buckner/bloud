@@ -13,7 +13,7 @@ integrations:
         default: true
 
 healthCheck:
-  path: /embed/miniflux/healthcheck
+  path: /healthcheck
   interval: 2
   timeout: 60
 
@@ -31,7 +31,3 @@ sso:
     provider: OAUTH2_PROVIDER
     providerName: OAUTH2_OIDC_PROVIDER_NAME
     userCreation: OAUTH2_USER_CREATION
-
-# Don't strip /embed/miniflux prefix - miniflux serves at this path when BASE_URL is set
-routing:
-  stripPrefix: false

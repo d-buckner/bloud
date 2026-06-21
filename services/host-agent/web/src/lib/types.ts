@@ -62,45 +62,6 @@ export interface CatalogApp {
 	healthCheck?: HealthCheck;
 	docs?: Docs;
 	tags?: string[];
-	routing?: Routing;
-	bootstrap?: BootstrapConfig;
-}
-
-export interface Routing {
-	stripPrefix?: boolean;
-}
-
-// Bootstrap configuration for client-side app pre-configuration
-export interface BootstrapConfig {
-	indexedDB?: IndexedDBConfig;
-	localStorage?: LocalStorageConfig;
-}
-
-export interface LocalStorageConfig {
-	// Values returned on read, injected via service worker
-	intercepts?: LocalStorageEntry[];
-}
-
-export interface LocalStorageEntry {
-	key: string;
-	value?: string; // Simple value replacement (supports {{templates}})
-	jsonPatch?: Record<string, string>; // Patch fields in existing JSON value (supports {{templates}})
-}
-
-export interface IndexedDBConfig {
-	database: string;
-	// Intercepts: Values returned on read, regardless of stored value
-	// Injected into iframe context via service worker
-	intercepts?: IndexedDBEntry[];
-	// Writes: Values written from main page before iframe loads
-	// Use for values that apps don't overwrite on init
-	writes?: IndexedDBEntry[];
-}
-
-export interface IndexedDBEntry {
-	store: string;
-	key: string;
-	value: string;
 }
 
 export interface Resources {

@@ -13,7 +13,7 @@
 	import { AppStatus, type App } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
 	import { uninstallApp, renameApp } from '$lib/services/appFacade';
-	import { openApp } from '$lib/services/navigation';
+	import { getAppUrl } from '$lib/utils/appUrl';
 	import { layout } from '$lib/stores/layout';
 
 	// Context menu state
@@ -44,7 +44,8 @@
 		)
 			return;
 
-		openApp(app);
+		const path = app.sso_launch_path ?? '';
+		window.open(getAppUrl(app.name, path), '_blank');
 	}
 
 	function handleContextMenu(e: MouseEvent, app: App) {

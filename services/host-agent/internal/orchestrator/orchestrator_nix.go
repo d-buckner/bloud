@@ -48,6 +48,7 @@ type Config struct {
 	Logger            *slog.Logger
 	ConfigPath        string // Path to generated apps.nix
 	TraefikConfigPath string // Path to generated apps-routes.yml
+	BaseDomain        string // Base domain for subdomain routing (e.g., "localhost")
 	NixosPath         string // Path to nixos/ directory
 	FlakePath         string // Path to flake
 	Hostname          string // NixOS hostname
@@ -88,7 +89,7 @@ func New(cfg Config) *Orchestrator {
 	// Traefik generator
 	var traefikGen traefikgen.GeneratorInterface = cfg.TraefikGen
 	if traefikGen == nil {
-		traefikGen = traefikgen.NewGenerator(cfg.TraefikConfigPath)
+		traefikGen = traefikgen.NewGenerator(cfg.TraefikConfigPath, cfg.BaseDomain)
 	}
 
 	// Blueprint generator (if SSO config is provided)

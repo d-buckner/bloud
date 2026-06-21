@@ -9,15 +9,11 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 )
 
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 func TestGenerator_Generate_EmptyApps(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
-	g := NewGenerator(configPath)
+	g := NewGenerator(configPath, "localhost")
 	err := g.Generate(nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -42,7 +38,7 @@ func TestGenerator_Generate_SystemAppsFiltered(t *testing.T) {
 		{Name: "traefik", Port: 8080, IsSystem: true},
 	}
 
-	g := NewGenerator(configPath)
+	g := NewGenerator(configPath, "localhost")
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -67,7 +63,7 @@ func TestGenerator_Generate_BasicApp(t *testing.T) {
 		{Name: "miniflux", Port: 8085, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath)
+	g := NewGenerator(configPath, "localhost")
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -80,81 +76,22 @@ func TestGenerator_Generate_BasicApp(t *testing.T) {
 
 	contentStr := string(content)
 
-	// Check router
-	if !strings.Contains(contentStr, "miniflux-backend:") {
-		t.Error("Expected miniflux-backend router")
+	// Check router uses Host rule
+	if !strings.Contains(contentStr, "miniflux:") {
+		t.Error("Expected miniflux router")
 	}
-	if !strings.Contains(contentStr, "rule: \"PathPrefix(`/embed/miniflux`)\"") {
-		t.Error("Expected PathPrefix rule for /embed/miniflux")
-	}
-
-	// Check middlewares - default should strip prefix
-	if !strings.Contains(contentStr, "- miniflux-stripprefix") {
-		t.Error("Expected stripprefix middleware")
-	}
-	if !strings.Contains(contentStr, "- iframe-headers") {
-		t.Error("Expected iframe-headers middleware")
-	}
-	if !strings.Contains(contentStr, "- embed-isolation") {
-		t.Error("Expected embed-isolation middleware")
-	}
-	if !strings.Contains(contentStr, "- embed-forwarded-headers") {
-		t.Error("Expected embed-forwarded-headers middleware for X-Forwarded-Host/Proto")
+	if !strings.Contains(contentStr, `rule: "Host(` + "`miniflux.localhost`" + `)"`) {
+		t.Error("Expected Host rule for miniflux.localhost")
 	}
 
-	// Check stripPrefix middleware definition
-	if !strings.Contains(contentStr, "miniflux-stripprefix:") {
-		t.Error("Expected miniflux-stripprefix middleware definition")
-	}
-	if !strings.Contains(contentStr, `- "/embed/miniflux"`) {
-		t.Error("Expected stripPrefix prefix")
+	// Should NOT have priority (Host rules are unambiguous)
+	if strings.Contains(contentStr, "priority:") {
+		t.Error("Should NOT have priority for Host-based routes")
 	}
 
 	// Check service
-	if !strings.Contains(contentStr, "miniflux:") {
-		t.Error("Expected miniflux service")
-	}
 	if !strings.Contains(contentStr, `url: "http://localhost:8085"`) {
 		t.Error("Expected correct service URL")
-	}
-}
-
-func TestGenerator_Generate_StripPrefixDisabled(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	apps := []*catalog.App{
-		{
-			Name:     "miniflux",
-			Port:     8085,
-			IsSystem: false,
-			Routing: &catalog.Routing{
-				StripPrefix: boolPtr(false),
-			},
-		},
-	}
-
-	g := NewGenerator(configPath)
-	err := g.Generate(apps)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	contentStr := string(content)
-
-	// Should NOT have stripprefix middleware
-	if strings.Contains(contentStr, "- miniflux-stripprefix") {
-		t.Error("Should NOT have stripprefix middleware when disabled")
-	}
-
-	// Should NOT define stripprefix middleware
-	if strings.Contains(contentStr, "miniflux-stripprefix:") {
-		t.Error("Should NOT define stripprefix middleware when disabled")
 	}
 }
 
@@ -176,7 +113,7 @@ func TestGenerator_Generate_CustomHeaders(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath)
+	g := NewGenerator(configPath, "localhost")
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -206,190 +143,6 @@ func TestGenerator_Generate_CustomHeaders(t *testing.T) {
 	}
 }
 
-func TestGenerator_Generate_CustomCOEP_SkipsEmbedIsolation(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	apps := []*catalog.App{
-		{
-			Name:     "actual-budget",
-			Port:     5006,
-			IsSystem: false,
-			Routing: &catalog.Routing{
-				Headers: map[string]string{
-					"Cross-Origin-Embedder-Policy": "require-corp",
-				},
-			},
-		},
-	}
-
-	g := NewGenerator(configPath)
-	err := g.Generate(apps)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	contentStr := string(content)
-
-	// Should NOT have embed-isolation middleware when app defines custom COEP
-	// We need to check the router middlewares section specifically
-	lines := strings.Split(contentStr, "\n")
-	inRouter := false
-	hasEmbedIsolation := false
-	for _, line := range lines {
-		if strings.Contains(line, "actual-budget-backend:") {
-			inRouter = true
-		}
-		if inRouter && strings.Contains(line, "service:") {
-			inRouter = false
-		}
-		if inRouter && strings.Contains(line, "- embed-isolation") {
-			hasEmbedIsolation = true
-		}
-	}
-
-	if hasEmbedIsolation {
-		t.Error("Should NOT have embed-isolation middleware when app defines custom COEP")
-	}
-
-	// But should still have iframe-headers
-	if !strings.Contains(contentStr, "- iframe-headers") {
-		t.Error("Should still have iframe-headers middleware")
-	}
-}
-
-func TestGenerator_Generate_AbsolutePaths(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	apps := []*catalog.App{
-		{
-			Name:     "adguard-home",
-			Port:     3080,
-			IsSystem: false,
-			Routing: &catalog.Routing{
-				AbsolutePaths: []catalog.AbsolutePath{
-					{
-						Rule:     "Path(`/install.html`) || Path(`/login.html`)",
-						Priority: 97,
-					},
-					{
-						Rule:     "PathPrefix(`/control`)",
-						Priority: 97,
-					},
-				},
-			},
-		},
-	}
-
-	g := NewGenerator(configPath)
-	err := g.Generate(apps)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	contentStr := string(content)
-
-	// Check main router exists
-	if !strings.Contains(contentStr, "adguard-home-backend:") {
-		t.Error("Expected main adguard-home-backend router")
-	}
-
-	// Check absolute path routers exist
-	if !strings.Contains(contentStr, "adguard-home-absolute-0:") {
-		t.Error("Expected adguard-home-absolute-0 router")
-	}
-	if !strings.Contains(contentStr, "adguard-home-absolute-1:") {
-		t.Error("Expected adguard-home-absolute-1 router")
-	}
-
-	// Check absolute path rules
-	if !strings.Contains(contentStr, "rule: \"Path(`/install.html`) || Path(`/login.html`)\"") {
-		t.Error("Expected install.html/login.html rule")
-	}
-	if !strings.Contains(contentStr, "rule: \"PathPrefix(`/control`)\"") {
-		t.Error("Expected /control prefix rule")
-	}
-
-	// Check priority
-	if !strings.Contains(contentStr, "priority: 97") {
-		t.Error("Expected priority 97 for absolute path routers")
-	}
-}
-
-func TestGenerator_Generate_AbsolutePathsWithCustomHeaders(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	apps := []*catalog.App{
-		{
-			Name:     "actual-budget",
-			Port:     5006,
-			IsSystem: false,
-			Routing: &catalog.Routing{
-				Headers: map[string]string{
-					"Cross-Origin-Embedder-Policy": "require-corp",
-				},
-				AbsolutePaths: []catalog.AbsolutePath{
-					{
-						Rule:     "PathPrefix(`/static`)",
-						Priority: 99,
-					},
-				},
-			},
-		},
-	}
-
-	g := NewGenerator(configPath)
-	err := g.Generate(apps)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	contentStr := string(content)
-
-	// Check absolute path router exists
-	if !strings.Contains(contentStr, "actual-budget-absolute-0:") {
-		t.Error("Expected actual-budget-absolute-0 router")
-	}
-
-	// Absolute path router should also get custom headers middleware
-	// Find the absolute router section and check for headers middleware
-	lines := strings.Split(contentStr, "\n")
-	inAbsoluteRouter := false
-	hasCustomHeaders := false
-	for _, line := range lines {
-		if strings.Contains(line, "actual-budget-absolute-0:") {
-			inAbsoluteRouter = true
-		}
-		if inAbsoluteRouter && strings.Contains(line, "service:") {
-			inAbsoluteRouter = false
-		}
-		if inAbsoluteRouter && strings.Contains(line, "- actual-budget-headers") {
-			hasCustomHeaders = true
-		}
-	}
-
-	if !hasCustomHeaders {
-		t.Error("Absolute path router should have custom headers middleware")
-	}
-}
-
 func TestGenerator_Generate_MultipleApps_Sorted(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")
@@ -400,7 +153,7 @@ func TestGenerator_Generate_MultipleApps_Sorted(t *testing.T) {
 		{Name: "adguard-home", Port: 3080, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath)
+	g := NewGenerator(configPath, "localhost")
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -413,10 +166,10 @@ func TestGenerator_Generate_MultipleApps_Sorted(t *testing.T) {
 
 	contentStr := string(content)
 
-	// Apps should be sorted alphabetically
-	actualBudgetIdx := strings.Index(contentStr, "actual-budget-backend:")
-	adguardHomeIdx := strings.Index(contentStr, "adguard-home-backend:")
-	minifluxIdx := strings.Index(contentStr, "miniflux-backend:")
+	// Apps should be sorted alphabetically (router names no longer have -backend suffix)
+	actualBudgetIdx := strings.Index(contentStr, "    actual-budget:")
+	adguardHomeIdx := strings.Index(contentStr, "    adguard-home:")
+	minifluxIdx := strings.Index(contentStr, "    miniflux:")
 
 	if actualBudgetIdx > adguardHomeIdx || adguardHomeIdx > minifluxIdx {
 		t.Error("Routers should be sorted alphabetically")
@@ -432,7 +185,7 @@ func TestGenerator_Generate_AppsWithoutPort_Filtered(t *testing.T) {
 		{Name: "no-port-app", Port: 0, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath)
+	g := NewGenerator(configPath, "localhost")
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -457,7 +210,7 @@ func TestGenerator_Generate_AppsWithoutPort_Filtered(t *testing.T) {
 }
 
 func TestGenerator_Preview(t *testing.T) {
-	g := NewGenerator("/nonexistent/path")
+	g := NewGenerator("/nonexistent/path", "localhost")
 
 	apps := []*catalog.App{
 		{Name: "miniflux", Port: 8085, IsSystem: false},
@@ -465,11 +218,37 @@ func TestGenerator_Preview(t *testing.T) {
 
 	preview := g.Preview(apps)
 
-	if !strings.Contains(preview, "miniflux-backend:") {
+	if !strings.Contains(preview, "miniflux:") {
 		t.Error("Preview should contain router config")
 	}
 	if !strings.Contains(preview, "# Generated by Bloud") {
 		t.Error("Preview should contain header comment")
+	}
+}
+
+func TestGenerator_Generate_CustomBaseDomain(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	apps := []*catalog.App{
+		{Name: "jellyfin", Port: 8096, IsSystem: false},
+	}
+
+	g := NewGenerator(configPath, "bloud.local")
+	err := g.Generate(apps)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+
+	if !strings.Contains(contentStr, `rule: "Host(`+"`jellyfin.bloud.local`"+`)"`) {
+		t.Error("Expected Host rule with custom base domain")
 	}
 }
 
@@ -486,7 +265,7 @@ func loadGoldenFile(t *testing.T, name string) string {
 }
 
 func TestGolden_EmptyApps(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml")
+	g := NewGenerator("/tmp/test.yml", "localhost")
 	got := g.Preview(nil)
 	want := loadGoldenFile(t, "empty.golden.yml")
 
@@ -496,7 +275,7 @@ func TestGolden_EmptyApps(t *testing.T) {
 }
 
 func TestGolden_BasicApp(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml")
+	g := NewGenerator("/tmp/test.yml", "localhost")
 	apps := []*catalog.App{
 		{Name: "miniflux", Port: 8085, IsSystem: false},
 	}
@@ -509,29 +288,8 @@ func TestGolden_BasicApp(t *testing.T) {
 	}
 }
 
-func TestGolden_NoStripPrefix(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml")
-	apps := []*catalog.App{
-		{
-			Name:     "miniflux",
-			Port:     8085,
-			IsSystem: false,
-			Routing: &catalog.Routing{
-				StripPrefix: boolPtr(false),
-			},
-		},
-	}
-
-	got := g.Preview(apps)
-	want := loadGoldenFile(t, "no_strip_prefix.golden.yml")
-
-	if got != want {
-		t.Errorf("Output mismatch.\nGot:\n%s\nWant:\n%s", got, want)
-	}
-}
-
 func TestGolden_CustomHeaders(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml")
+	g := NewGenerator("/tmp/test.yml", "localhost")
 	apps := []*catalog.App{
 		{
 			Name:     "actual-budget",
@@ -555,7 +313,7 @@ func TestGolden_CustomHeaders(t *testing.T) {
 }
 
 func TestGolden_MultipleApps(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml")
+	g := NewGenerator("/tmp/test.yml", "localhost")
 	apps := []*catalog.App{
 		{Name: "miniflux", Port: 8085, IsSystem: false},
 		{Name: "actual-budget", Port: 5006, IsSystem: false},
@@ -585,8 +343,8 @@ func TestGenerator_Generate_ForwardAuth(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath)
-	g.SetAuthentikEnabled(true) // Enable Authentik for forward auth
+	g := NewGenerator(configPath, "localhost")
+	g.SetAuthentikEnabled(true)
 
 	err := g.Generate(apps)
 	if err != nil {
@@ -638,7 +396,7 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath)
+	g := NewGenerator(configPath, "localhost")
 	// Don't enable Authentik - should not generate forwardauth middleware
 
 	err := g.Generate(apps)
@@ -659,3 +417,29 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 	}
 }
 
+func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	apps := []*catalog.App{
+		{Name: "miniflux", Port: 8085, IsSystem: false},
+	}
+
+	g := NewGenerator(configPath, "localhost")
+	err := g.Generate(apps)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Should NOT have middlewares section when no app needs one
+	if strings.Contains(contentStr, "middlewares:") {
+		t.Error("Should NOT have middlewares section when no app needs middleware")
+	}
+}

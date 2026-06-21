@@ -49,15 +49,10 @@ func TestGenerateOIDCBlueprint(t *testing.T) {
 	contentStr := string(content)
 	t.Logf("Generated blueprint:\n%s", contentStr)
 
-	// Verify redirect URIs - both embed path and root-level callback
-	expectedEmbedRedirectURI := "http://localhost:8080/embed/actual-budget/openid/callback"
-	if !strings.Contains(contentStr, expectedEmbedRedirectURI) {
-		t.Errorf("Expected embed redirect URI %s not found in blueprint", expectedEmbedRedirectURI)
-	}
-
-	expectedRootRedirectURI := "http://localhost:8080/openid/callback"
-	if !strings.Contains(contentStr, expectedRootRedirectURI) {
-		t.Errorf("Expected root-level redirect URI %s not found in blueprint", expectedRootRedirectURI)
+	// Verify redirect URI uses subdomain routing
+	expectedRedirectURI := "http://actual-budget.localhost:8080/openid/callback"
+	if !strings.Contains(contentStr, expectedRedirectURI) {
+		t.Errorf("Expected subdomain redirect URI %s not found in blueprint", expectedRedirectURI)
 	}
 
 	// Verify client ID
@@ -311,9 +306,9 @@ func TestGenerateLDAPBlueprint(t *testing.T) {
 		t.Error("Expected application model not found")
 	}
 
-	// Verify launch URL
-	if !strings.Contains(contentStr, "http://localhost:8080/embed/jellyfin") {
-		t.Error("Expected launch URL not found")
+	// Verify launch URL uses subdomain
+	if !strings.Contains(contentStr, "http://jellyfin.localhost:8080") {
+		t.Error("Expected subdomain launch URL not found")
 	}
 }
 

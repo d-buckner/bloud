@@ -18,9 +18,8 @@ type App struct {
 	HealthCheck   HealthCheck            `yaml:"healthCheck" json:"healthCheck"`
 	Docs          Docs                   `yaml:"docs" json:"docs"`
 	Tags          []string               `yaml:"tags" json:"tags"`
-	Routing       *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Bootstrap     *BootstrapConfig       `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
-	Integrations  map[string]Integration `yaml:"integrations" json:"integrations"`
+	Routing      *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Integrations map[string]Integration `yaml:"integrations" json:"integrations"`
 	Container     *ContainerSpec         `yaml:"container,omitempty" json:"container,omitempty"`
 }
 
@@ -93,49 +92,8 @@ type Docs struct {
 	Source   string `yaml:"source" json:"source"`
 }
 
-// AbsolutePath defines a root-level route for apps that use absolute paths
-// (e.g., AdGuard Home redirects to /install.html, /login.html)
-type AbsolutePath struct {
-	Rule     string            `yaml:"rule" json:"rule"`                           // Traefik rule syntax (e.g., "Path(`/install.html`)")
-	Priority int               `yaml:"priority" json:"priority"`                   // Route priority (higher = matched first)
-	Headers  map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom headers for this route (overrides app headers)
-}
-
 // Routing defines custom routing configuration for Traefik
 type Routing struct {
-	Headers       map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`             // Custom response headers
-	StripPrefix   *bool             `yaml:"stripPrefix,omitempty" json:"stripPrefix,omitempty"`     // Strip /embed/<app> prefix (default: true)
-	AbsolutePaths []AbsolutePath    `yaml:"absolutePaths,omitempty" json:"absolutePaths,omitempty"` // Root-level routes for apps using absolute paths
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom response headers
 }
 
-// BootstrapConfig defines client-side pre-configuration for an app
-type BootstrapConfig struct {
-	IndexedDB    *IndexedDBConfig    `yaml:"indexedDB,omitempty" json:"indexedDB,omitempty"`
-	LocalStorage *LocalStorageConfig `yaml:"localStorage,omitempty" json:"localStorage,omitempty"`
-}
-
-// LocalStorageConfig defines localStorage setup requirements
-type LocalStorageConfig struct {
-	Intercepts []LocalStorageEntry `yaml:"intercepts,omitempty" json:"intercepts,omitempty"` // Values returned on read, injected via service worker
-}
-
-// LocalStorageEntry defines a localStorage intercept
-type LocalStorageEntry struct {
-	Key       string            `yaml:"key" json:"key"`
-	Value     string            `yaml:"value,omitempty" json:"value,omitempty"`         // Simple value replacement (supports {{templates}})
-	JSONPatch map[string]string `yaml:"jsonPatch,omitempty" json:"jsonPatch,omitempty"` // Patch fields in existing JSON value (supports {{templates}})
-}
-
-// IndexedDBConfig defines IndexedDB setup requirements
-type IndexedDBConfig struct {
-	Database   string           `yaml:"database" json:"database"`
-	Intercepts []IndexedDBEntry `yaml:"intercepts,omitempty" json:"intercepts,omitempty"` // Values returned on read, injected via service worker
-	Writes     []IndexedDBEntry `yaml:"writes,omitempty" json:"writes,omitempty"`         // Values written from main page before iframe loads
-}
-
-// IndexedDBEntry defines a key-value entry to write
-type IndexedDBEntry struct {
-	Store string `yaml:"store" json:"store"`
-	Key   string `yaml:"key" json:"key"`
-	Value string `yaml:"value" json:"value"` // Supports {{field}} templates for any App field plus {{origin}}, {{embedUrl}}
-}
