@@ -1,8 +1,8 @@
 # Portable Runtime Architecture
 
-Bloud is a self-hosted media server that manages apps (Jellyfin, Immich, etc.) on a single
-Linux host. The **portable runtime** is the Go binary (`host-agent`) that orchestrates app
-lifecycle, configuration, and integration — replacing the previous NixOS-based approach.
+Bloud manages apps (Jellyfin, Immich, etc.) on a single Linux host. The **portable
+runtime** is the Go binary (`host-agent`) that orchestrates app lifecycle, configuration,
+and integration via Podman Quadlet units and systemd.
 
 ## Component Diagram
 
@@ -18,7 +18,7 @@ graph TD
     JF_CFG["Jellyfin Configurator"]
     IM_CFG["Immich Configurator"]
     AK_CLIENT["Authentik Client"]
-    STORE["App Store<br/>(PostgreSQL)"]
+    STORE["App Store<br/>(SQLite)"]
 
     CLI -->|validate, deploy| API
     API -->|install, uninstall| REC
@@ -33,13 +33,13 @@ graph TD
     REG --> JF_CFG
     REG --> IM_CFG
     AK_CFG --> AK_CLIENT
-    JF_CFG -->|reads LDAPOutput| REC
 
     subgraph "Infrastructure Containers"
         PG["PostgreSQL"]
         REDIS["Redis"]
         AK["Authentik<br/>(SSO + LDAP)"]
         LDAP["LDAP Outpost"]
+        TR["Traefik"]
     end
 
     subgraph "App Containers"
@@ -56,7 +56,8 @@ graph TD
 
 ### Host-Agent CLI (`services/host-agent/cmd/host-agent/`)
 
-Entry point. Runs as a systemd service (API mode) or executes one-shot configure commands.
+Entry point. Runs as a systemd user service (API mode) or executes one-shot configure
+commands.
 
 | Subcommand | Purpose |
 |---|---|
@@ -70,8 +71,8 @@ Entry point. Runs as a systemd service (API mode) or executes one-shot configure
 ### Catalog (`internal/catalog/`)
 
 Discovers apps by reading `apps/*/metadata.yaml`. Each app declares its name, port,
-health check, SSO strategy, and integration requirements. The catalog is cached in
-PostgreSQL and refreshed from disk on demand.
+health check, SSO strategy, integration requirements, and container spec. The catalog is
+cached in SQLite and refreshed from disk on demand.
 
 ### Integration Resolver (`internal/integration/`)
 
@@ -88,8 +89,12 @@ integrations:
     compatible: [{ app: authentik }]
 ```
 
-Resolution: bound providers are verified for compatibility; unbound required integrations
-error; unbound optional integrations try each compatible provider in catalog order.
+Resolution rules:
+1. If a provider binding already exists in `InstalledApp.IntegrationConfig`, resolve it.
+2. For optional integrations with no binding, select the first installed compatible
+   provider in catalog order.
+3. A required integration with no binding is invalid and returns an error.
+4. Unbound optional integrations with no installed compatible provider produce no binding.
 
 ### Reconciler (`internal/orchestrator/reconcile.go`)
 
@@ -146,50 +151,58 @@ Manages the Authentik identity provider via its REST API. Key operation:
 
 ### App Store (`internal/store/`)
 
-PostgreSQL-backed persistence for installed apps, their status, and resolved integration
+SQLite-backed persistence for installed apps, their status, and resolved integration
 bindings. The reconciler reads desired state from here; the API writes to it on
-install/uninstall.
+install/uninstall. Schema lives in `internal/db/schema.sql`.
+
+### Container Runtime (`internal/container/`, `internal/orchestrator/`)
+
+Apps run as Podman containers managed by Quadlet systemd units. The orchestrator writes
+`.container` unit files to `~/.config/containers/systemd/`, triggers `systemctl --user
+daemon-reload`, and starts/stops units via the systemd D-Bus API.
+
+Container specs are defined in `metadata.yaml` under the `container:` key and rendered
+with template variables (data paths, passwords, etc.) at install time.
 
 ## Data Flow: Installing an App
 
 ```
 User clicks "Install Jellyfin"
-  → API records intent in App Store
+  → API records intent in App Store (SQLite)
   → Integration Resolver binds Jellyfin→PostgreSQL, Jellyfin→Authentik
-  → Reconciler starts reconciliation:
+  → Orchestrator writes Quadlet unit files + reloads systemd
+  → Reconciler runs:
       Level 0: PostgreSQL, Redis (no deps)
-        → PreStart → HealthCheck → PostStart
+        → PreStart → start container → HealthCheck → PostStart
       Level 1: Authentik (depends on PostgreSQL, Redis)
-        → PreStart → HealthCheck → PostStart (creates LDAP infra)
+        → PreStart → start container → HealthCheck → PostStart (creates LDAP infra)
       Level 2: Jellyfin (depends on Authentik for SSO)
-        → PreStart → HealthCheck → PostStart (wizard, libraries, LDAP config)
+        → PreStart → start container → HealthCheck → PostStart (wizard, libraries, LDAP)
+  → Traefik routes regenerated
   → All apps healthy, LDAP login works
 ```
 
 ## Validation Tiers
 
-| Tier | Scope | How |
+| Tier | Scope | Command |
 |---|---|---|
-| `fast` | Unit tests, type checks | `go test`, `vitest` — seconds |
-| `integration` | Backend plumbing against real services | Go tests in Lima VM against Podman compose stack |
-| `vm` | Full ISO on real hardware | Deploy to Proxmox, Playwright smoke tests |
-
-Run with: `./bloud validate --tier <tier>`
+| `fast` | Unit tests, type checks | `./bloud validate --tier fast` |
+| `integration` | Backend against real services in Lima VM | `./bloud validate --tier integration` |
 
 ## Dev Environment
 
-Lima VM (Debian, Apple Virtualization) + Podman Compose mirrors production:
+Lima VM (Debian, Apple Virtualization) + rootless Podman:
 
 ```
 macOS host
   └── Lima VM "bloud-dev"
-        ├── podman-compose (dev/compose.yml)
-        │   ├── PostgreSQL :5432
+        ├── Podman (rootless)
+        │   ├── PostgreSQL
         │   ├── Redis
-        │   ├── Authentik  :9000
-        │   ├── LDAP Outpost :3389
-        │   └── Jellyfin   :8096
-        └── host-agent binary (built from source)
+        │   ├── Authentik + LDAP Outpost
+        │   ├── Traefik  :8080
+        │   └── App containers (Jellyfin, Immich, etc.)
+        └── host-agent binary (:3000, systemd user service)
 ```
 
-Ports forward to macOS for Playwright and manual testing.
+Ports 3000 and 8080 are forwarded to macOS localhost by `./bloud dev`.

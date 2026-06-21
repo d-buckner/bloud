@@ -10,14 +10,14 @@ Each app lives in `apps/<name>/` with these files:
 
 ```
 apps/your-app/
-  metadata.yaml     # identity, port, integrations, routing, SSO
+  metadata.yaml     # identity, port, integrations, container spec, SSO
   configurator.go   # Go hooks for runtime configuration
   icon.png          # 256x256 PNG, transparent background
 ```
 
 ## Step 1: metadata.yaml
 
-Declares what the app needs. The catalog loads this at startup.
+Declares what the app needs and how to run it. The catalog loads this at startup.
 
 ```yaml
 name: your-app
@@ -25,7 +25,6 @@ displayName: Your App
 description: What it does in one sentence
 category: media            # media, productivity, security, infrastructure
 port: 8080
-image: someorg/someimage:1.2.3   # pin the version
 
 integrations:
   database:
@@ -42,15 +41,36 @@ healthCheck:
   path: /health
   interval: 5
   timeout: 60
+
+container:
+  name: apps-your-app
+  image: someorg/someimage:1.2.3   # pin the version
+  network: apps-net
+  restartPolicy: always
+  environment:
+    TZ: Etc/UTC
+  ports:
+    - host: 8080
+      container: 8080
+  volumes:
+    - source: "{{appDataDir}}/config"
+      destination: /config
 ```
 
 If your app has no integrations: `integrations: {}`.
-System apps (postgres, redis, traefik) set `isSystem: true` to hide from the catalog.
+
+Available template variables in `container.environment` and `container.volumes`:
+- `{{appDataDir}}` — app-specific data directory
+- `{{dataDir}}` — shared Bloud data directory
+- `{{postgresPassword}}` — shared PostgreSQL password (when database integration is declared)
+
+System apps (postgres, redis, traefik, authentik) set `isSystem: true` to hide from the
+user-facing catalog.
 
 ## Step 2: configurator.go
 
-Implements runtime configuration that can't be expressed in static container definitions.
-Every configurator must be idempotent — it runs on every reconciliation cycle.
+Implements runtime configuration that can't be expressed in the static container
+definition. Every configurator must be idempotent — it runs on every reconciliation cycle.
 
 ```go
 package yourapp
@@ -71,7 +91,7 @@ func NewConfigurator(port int) *Configurator {
 
 func (c *Configurator) Name() string { return "your-app" }
 
-// PreStart: config files, directories, certificates.
+// PreStart: config files, directories. Runs before the container starts.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
     return nil
 }
@@ -83,7 +103,7 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
         configurator.DefaultHealthCheckTimeout)
 }
 
-// PostStart: API calls, integrations, runtime setup.
+// PostStart: API calls, integrations, runtime setup. Runs after the container is healthy.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
     return nil
 }
@@ -95,9 +115,9 @@ The reconciler passes resolved integration outputs to each configurator:
 
 | Field | Description |
 |---|---|
-| `state.DataPath` | App data dir (`~/.local/share/bloud/your-app`) |
-| `state.BloudDataPath` | Shared data dir (`~/.local/share/bloud`) |
-| `state.SSOEnabled` | Whether SSO integration is active |
+| `state.DataPath` | App data dir (`~/bloud-data/your-app`) |
+| `state.BloudDataPath` | Shared data dir (`~/bloud-data`) |
+| `state.SSOEnabled` | Whether SSO integration is active for this app |
 | `state.LDAP` | Typed LDAP output (host, port, baseDN, bindUser, bindPassword) |
 
 ### Register your configurator
@@ -117,14 +137,13 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 
 Add integration test assertions to `services/host-agent/internal/e2e/e2e_test.go`
 (build-tag gated with `//go:build integration`). Tests run against real services in the
-Lima VM compose stack.
+Lima VM.
 
 Test the behavioral outcome, not config values:
 
 ```go
 func TestYourApp_PostStartConfiguresCorrectly(t *testing.T) {
-    runHostAgent(t, "configure", "poststart", "your-app")
-    // Verify via the app's own API that the config took effect
+    // Install the app, then verify via its own API that integration took effect
 }
 ```
 
