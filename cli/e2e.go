@@ -23,7 +23,7 @@ func cmdE2E(args []string) int {
 		return 0
 	}
 
-	playwrightArgs := []string{"playwright", "test", "--project=jellyfin"}
+	playwrightArgs := []string{"playwright", "test"}
 	playwrightArgs = append(playwrightArgs, args...)
 
 	cmd := exec.Command("npx", playwrightArgs...)
@@ -40,14 +40,14 @@ func cmdE2E(args []string) int {
 }
 
 func runPlaywright(root string) error {
-	cmd := exec.Command("npx", "playwright", "test", "--project=jellyfin")
+	cmd := exec.Command("npx", "playwright", "test")
 	cmd.Dir = filepath.Join(root, "e2e")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("run Jellyfin Playwright tests: %w", err)
+		return fmt.Errorf("run Playwright tests: %w", err)
 	}
 	return nil
 }

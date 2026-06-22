@@ -8,12 +8,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
-  reporter: [
-    ['html', { open: 'never' }],
-    ['list'],
-  ],
+  reporter: [['html', { open: 'never' }], ['list']],
   use: {
     baseURL,
+    ...devices['Desktop Chrome'],
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -23,21 +21,6 @@ export default defineConfig({
   timeout: 10 * 60_000,
   expect: {
     timeout: 10_000,
-    toHaveScreenshot: {
-      maxDiffPixelRatio: 0.01,
-    },
   },
-  projects: [
-    {
-      name: 'jellyfin',
-      testMatch: 'tests/apps/jellyfin.spec.ts',
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'navidrome',
-      testMatch: 'tests/apps/navidrome.spec.ts',
-      use: { ...devices['Desktop Chrome'] },
-    },
-  ],
   outputDir: 'test-results',
 });
