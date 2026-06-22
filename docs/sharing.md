@@ -37,15 +37,18 @@ peer-to-peer tunnels without port forwarding or exposing services to the public 
 
 ## Network Architecture
 
-Each shared app gets a dedicated Tailscale sidecar container in the same Podman network
-as the app. This sidecar:
+Every non-system user app gets a dedicated Tailscale sidecar container that starts and
+stops with the app. The sidecar is always running whenever the app is running — it is
+not created or removed when shares are created or revoked. This sidecar:
 
-- Joins the tailnet as its own node (e.g. `navidrome-a1b2c3d4`)
+- Joins the tailnet as its own node (e.g. `ts-navidrome`)
 - Uses Tailscale Serve to proxy incoming tailnet connections to the app's container port
 - Is the only entry point into the app over the tailnet
 
-Sharing an app = starting the sidecar. Revoking = stopping and removing the sidecar
-container. No other apps on the host are reachable through this path.
+Sharing = granting a guest the sidecar's tailnet address (in the invite token) and a
+credential to use it. Revoking = marking the share revoked so the proxy returns 403.
+The sidecar itself is unaffected by share lifecycle. No other apps are reachable through
+a given app's sidecar.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -53,7 +56,7 @@ container. No other apps on the host are reachable through this path.
 │                                                  │
 │  apps-net:                                       │
 │  ┌────────────┐     ┌──────────────────────┐     │
-│  │ navidrome  │◄────│ ts-navidrome-a1b2c3d4│─────┼── tailnet
+│  │ navidrome  │◄────│    ts-navidrome       │─────┼── tailnet
 │  │   :4533    │     │  (TS Serve → :4533)  │     │
 │  └────────────┘     └──────────────────────┘     │
 └──────────────────────────────────────────────────┘
@@ -149,8 +152,8 @@ is explicitly deferred to the post-MVP roadmap.
 
 ### Revocation for Forward-Auth Apps
 
-Revocation removes the sidecar container (cutting tailnet access) and marks the share
-revoked. Because Bloud never provisioned an Authentik user for the guest, there is nothing
+Revocation marks the share revoked (the sidecar keeps running with the app). Because
+Bloud never provisioned an Authentik user for the guest, there is nothing
 else to clean up automatically. The revocation UI reminds the owner to delete the guest's
 in-app account manually: "Don't forget to remove the user from Navidrome."
 
@@ -166,13 +169,13 @@ in-app account manually: "Don't forget to remove the user from Navidrome."
 
 2. OWNER CREATES INVITE
    Owner clicks Share in Bloud UI.
-   → Bloud starts the Tailscale sidecar container for the app
-   → Sidecar joins the tailnet and Bloud retrieves its tailnet address
+   → Sidecar is already running (started with the app) — no wait
+   → Bloud reads the sidecar's tailnet address (podman exec ts-{appName} tailscale ip)
    → Bloud generates a signed invite token containing:
        - shareId
        - appId, appName, hostLabel
        - ssoStrategy, bypassPaths
-       - sidecarTailnetAddr (the address to proxy through)
+       - sidecarTailnetAddr (the app's permanent tailnet address)
        - expiry (1 hour)
    → Token displayed as a string for copy/paste
    Owner shares the token with the guest out of band (message, etc.)
@@ -225,15 +228,15 @@ is cached. The guest's Bloud UI marks the app as offline.
 ## Revocation
 
 **Owner-initiated:**
-- Bloud stops and removes the sidecar container (tailnet access immediately cut)
 - Share record marked revoked
 - For forward-auth apps: UI reminder to delete the guest's in-app account manually
 - Guest discovers revocation on next proxy request (returns 403)
+- Sidecar keeps running — it is tied to app lifecycle, not share lifecycle
 
 **Guest-initiated:**
 - Guest removes the shared app from their Bloud UI
 - RemoteApp row deleted from guest DB
-- Sidecar continues running on host until owner revokes independently
+- No notification to host; share record on host remains active until owner revokes
 
 **Node expiry:**
 If the tailnet connection drops, the proxy fails and the UI shows the app as offline.
@@ -251,7 +254,7 @@ The owner can re-invite to restore access.
 | Credentials are app-local, not tied to guest's Bloud account | Owner provisions a separate credential; guest stores it locally |
 | Invites are single-use and time-limited | HMAC-signed token, 1-hour TTL, server-side consumed flag |
 | No transitive sharing | Guest cannot produce invite tokens for apps they don't own |
-| Revocation is immediate | Sidecar container removed — tailnet node disappears |
+| Revocation is immediate | Share marked revoked — proxy returns 403 on next request |
 
 ---
 
@@ -271,8 +274,8 @@ CREATE TABLE IF NOT EXISTS shares (
 );
 ```
 
-Note: status starts as `active` (not `pending`) because the sidecar is running and the
-token is generated in a single synchronous operation.
+Note: status starts as `active` because the sidecar is always already running when the
+invite is created.
 
 ### Guest side — `remote_apps` table
 
@@ -297,13 +300,12 @@ CREATE TABLE IF NOT EXISTS remote_apps (
 
 In scope:
 
-- [ ] Per-app Tailscale sidecar container started when a share is created
-- [ ] Sidecar tailnet address retrieval (`podman exec tailscale ip`)
+- [ ] Per-app Tailscale sidecar started/stopped with every non-system app (orchestrator)
 - [ ] DB schema: `shares` and `remote_apps` tables
 - [ ] Signed invite token generation (stdlib HMAC-SHA256, no external JWT dep)
-- [ ] `POST /api/sharing/invites` — start sidecar, wait for tailnet addr, return token
+- [ ] `POST /api/sharing/invites` — read sidecar tailnet addr, generate token, create share
 - [ ] `GET /api/sharing/shares` — list active shares (owner view)
-- [ ] `DELETE /api/sharing/shares/{id}` — revoke: stop + remove sidecar, mark revoked
+- [ ] `DELETE /api/sharing/shares/{id}` — mark revoked (sidecar unaffected)
 - [ ] `POST /api/remote-apps/accept` — validate token, store credential locally
 - [ ] `GET /api/remote-apps` — list remote apps (guest dashboard)
 - [ ] `DELETE /api/remote-apps/{id}` — guest removes (local only)
@@ -345,8 +347,9 @@ Out of scope for MVP:
 2. **Sidecar auth key management** — MVP uses a single reusable `TS_AUTHKEY` for all
    sidecars. Follow-on: generate ephemeral per-sidecar keys via Headscale/Tailscale API.
 
-3. **Sidecar node naming** — `{appName}-{shareId[:8]}` is the proposed format. Needs to
-   be unique per host across all shares.
+3. **Sidecar node naming** — `ts-{appName}` is the proposed format. Unique per app on a
+   given host. If two Bloud hosts are on the same tailnet, node names will conflict.
+   Follow-on: incorporate a host identifier (e.g. `ts-{appName}-{hostId[:8]}`).
 
 ---
 
@@ -357,22 +360,23 @@ Out of scope for MVP:
 ```
 Phase 1 (sidecar spike) ─────────────────────────────────── GATE
      │
-     ├── Phase 2 (schema + store)
+     ├── Phase 2 (orchestrator: sidecar lifecycle)
+     │
+     ├── Phase 3 (schema + store)
      │        │
-     │        ├── Phase 3 (sidecar lifecycle)
-     │        │        │
-     │        │        └── Phase 4 (invite generation)
-     │        │                  │
-     │        │                  └── Phase 5 (guest accept)
-     │        │                            │
-     │        │                            └── Phase 6 (proxy)
-     │        │                                      │
-     │        │                                 Phase 7 (revocation)
-     │        │                                      │
-     └────────┴──────────────────── Phase 8 (UI) ───┘
+     │        └── Phase 4 (invite generation)
+     │                  │
+     │                  └── Phase 5 (guest accept)
+     │                            │
+     │                            └── Phase 6 (proxy)
+     │                                      │
+     │                                 Phase 7 (revocation)
+     │                                      │
+     └──────────────────────────── Phase 8 (UI) ───┘
 ```
 
-Phase 8 can be stubbed against mock API responses while backend phases are in progress.
+Phases 2 and 3 can run in parallel once Phase 1 passes. Phase 8 can be stubbed against
+mock API responses while backend phases are in progress.
 
 ---
 
@@ -419,7 +423,7 @@ curl -sf -H "Authorization: Bearer <api-key>" <headscale-url>/api/v1/node \
 podman rm -f ts-navidrome-spike
 ```
 
-**Gate criteria (all must pass before Phase 2):**
+**Gate criteria (all must pass before Phase 2/3):**
 - Sidecar container starts in `apps-net` without `NET_ADMIN`
 - `tailscale ip` returns an address within 30 seconds
 - `curl` from a tailnet peer reaches Navidrome through the sidecar
@@ -427,7 +431,103 @@ podman rm -f ts-navidrome-spike
 
 ---
 
-### Phase 2 — Schema + store
+### Phase 2 — Orchestrator: sidecar lifecycle
+
+**Files:** `internal/orchestrator/orchestrator_portable.go`,
+`internal/sharing/sidecar.go`
+
+The portable orchestrator already manages app container lifecycle. Extend it to start a
+TS sidecar alongside every non-system app when `BLOUD_TS_AUTHKEY` is configured, and
+stop it when the app stops.
+
+```go
+// internal/sharing/sidecar.go
+type SidecarManager struct {
+    podman  *podman.Client
+    authKey string
+    network string
+}
+
+// EnsureRunning starts the sidecar for appName if not already running.
+// Blocks until the tailnet address is available or ctx is cancelled.
+func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appPort int) error
+
+// GetAddr returns the current tailnet address of the sidecar, or error if not running.
+func (m *SidecarManager) GetAddr(ctx context.Context, appName string) (string, error)
+
+// Stop removes the sidecar container for appName.
+func (m *SidecarManager) Stop(ctx context.Context, appName string) error
+
+func sidecarContainerName(appName string) string {
+    return "ts-" + appName
+}
+```
+
+Sidecar container spec:
+- Image: `docker.io/tailscale/tailscale:latest`
+- Name: `ts-{appName}`
+- Network: `apps-net`
+- Env: `TS_AUTHKEY`, `TS_HOSTNAME=ts-{appName}`, `TS_USERSPACE=true`
+
+After the container starts, `EnsureRunning` polls `podman exec ts-{appName} tailscale ip --4`
+until an address is returned (30s timeout), then configures Serve:
+`podman exec ts-{appName} tailscale serve --bg http:{port} http://apps-{appName}:{port}`.
+
+If `BLOUD_TS_AUTHKEY` is not set, `SidecarManager` is nil and all sidecar calls are
+no-ops. Apps work normally; sharing is unavailable.
+
+#### Validation
+
+**Fast (using fake Podman client):**
+```
+// internal/sharing/sidecar_test.go
+// TestEnsureRunning_StartsAndConfiguresServe:
+//   fake exec: tailscale ip returns "100.1.2.3", serve returns success
+//   EnsureRunning → no error, serve configured
+// TestEnsureRunning_Timeout:
+//   fake exec always returns "" for tailscale ip
+//   EnsureRunning with 100ms ctx → context.DeadlineExceeded
+// TestEnsureRunning_AlreadyRunning:
+//   container already exists → no duplicate create
+// TestGetAddr_Success:
+//   fake exec returns "100.1.2.3" → GetAddr returns "100.1.2.3"
+// TestGetAddr_NotRunning:
+//   fake exec returns error → GetAddr returns error
+// TestStop_RemovesContainer:
+//   Stop → fake client receives Remove("ts-navidrome")
+// TestSidecarContainerName:
+//   sidecarContainerName("navidrome") → "ts-navidrome"
+// TestNilManagerIsNoop:
+//   nil SidecarManager → EnsureRunning/Stop return nil, GetAddr returns error
+
+go test ./internal/sharing/...
+```
+
+**Integration (Lima):**
+```bash
+# Install Navidrome, confirm sidecar starts automatically
+./bloud install navidrome
+sleep 10
+limactl shell bloud-dev podman ps --filter name=ts-navidrome --format '{{.Names}}' \
+  | grep -q ts-navidrome || { echo "FAIL: sidecar not running"; exit 1; }
+
+ADDR=$(limactl shell bloud-dev podman exec ts-navidrome tailscale ip --4)
+[ -n "$ADDR" ] || { echo "FAIL: no tailnet addr"; exit 1; }
+
+curl -sf "http://$ADDR:4533/ping" | grep -q "." \
+  || { echo "FAIL: not reachable via tailnet"; exit 1; }
+
+# Uninstall Navidrome, confirm sidecar stops
+./bloud uninstall navidrome
+sleep 5
+limactl shell bloud-dev podman ps --filter name=ts-navidrome --format '{{.Names}}' \
+  | grep -v ts-navidrome || { echo "FAIL: sidecar still running after uninstall"; exit 1; }
+echo "PASS"
+```
+
+---
+
+### Phase 3 — Schema + store
 
 **Files:** `internal/db/schema.sql`, `internal/testdb/testdb.go`,
 `internal/store/shares.go`, `internal/store/remote_apps.go`
@@ -480,77 +580,6 @@ go test ./internal/db/... ./internal/store/...
 
 ---
 
-### Phase 3 — Sidecar lifecycle
-
-**Files:** `internal/sharing/sidecar.go`
-
-Manages Tailscale sidecar containers. Uses the existing Podman client.
-
-```go
-type SidecarManager struct {
-    podman    *podman.Client
-    authKey   string
-    network   string
-}
-
-// Start creates and starts the sidecar for a share. Blocks until the tailnet
-// address is available or ctx is cancelled.
-func (m *SidecarManager) Start(ctx context.Context, shareID, appName string, appPort int) (tailnetAddr string, err error)
-
-// Stop removes the sidecar container for a share.
-func (m *SidecarManager) Stop(ctx context.Context, shareID string) error
-
-// containerName returns the deterministic container name for a share's sidecar.
-func containerName(shareID string, appName string) string {
-    return fmt.Sprintf("ts-%s-%s", appName, shareID[:8])
-}
-```
-
-`Start` creates a container with:
-- Image: `docker.io/tailscale/tailscale:latest`
-- Name: `ts-{appName}-{shareId[:8]}`
-- Network: `apps-net`
-- Env: `TS_AUTHKEY`, `TS_HOSTNAME={name}`, `TS_USERSPACE=true`
-
-After the container starts, `Start` polls `podman exec {name} tailscale ip --4` with
-a 30-second timeout. Once an address is returned, it runs
-`podman exec {name} tailscale serve --bg http:{appPort} http://{appContainerName}:{appPort}`
-to configure Serve, then returns the address.
-
-#### Validation
-
-**Fast (using fake Podman client):**
-```
-// internal/sharing/sidecar_test.go
-// TestSidecarManager_Start_ReturnsAddr:
-//   fake podman exec: first call returns "", second returns "100.1.2.3"
-//   Start → "100.1.2.3", no error
-// TestSidecarManager_Start_Timeout:
-//   fake podman exec always returns ""
-//   Start with 100ms ctx → context.DeadlineExceeded
-// TestSidecarManager_Stop_RemovesContainer:
-//   Stop → fake client receives Remove("ts-navidrome-a1b2c3d4")
-// TestContainerName_Format:
-//   containerName("a1b2c3d4e5f6...", "navidrome") → "ts-navidrome-a1b2c3d4"
-
-go test ./internal/sharing/...
-```
-
-**Integration (Lima):**
-```bash
-# After Phase 1 gate passes, this runs against real Podman + real tailnet
-SHARE_ID="testshare123"
-ADDR=$(go run ./cmd/sharing-spike start $SHARE_ID navidrome 4533)
-[ -n "$ADDR" ] || { echo "FAIL: no addr"; exit 1; }
-curl -sf "http://$ADDR:4533/ping" | grep -q "." || { echo "FAIL: ping"; exit 1; }
-go run ./cmd/sharing-spike stop $SHARE_ID
-curl "http://$ADDR:4533/ping" 2>&1 | grep -q "refused\|timeout" \
-  || { echo "FAIL: should be unreachable after stop"; exit 1; }
-echo "PASS"
-```
-
----
-
 ### Phase 4 — Invite generation
 
 **Files:** `internal/sharing/token.go`, `internal/api/sharing.go`,
@@ -582,7 +611,8 @@ after the token is consumed on the guest side, the share is still `active` but t
 **Endpoints:**
 ```
 POST /api/sharing/invites  { appId, guestLabel }
-  → starts sidecar (Phase 3), generates token
+  → reads sidecar tailnet addr via SidecarManager.GetAddr
+  → generates token (errors 503 if sidecar not running / TS not configured)
   → creates share row
   → returns { shareId, token }
 
@@ -607,12 +637,12 @@ DELETE /api/sharing/shares/{id}  → revoke (Phase 7)
 // internal/api/sharing_test.go
 // TestHandleCreateInvite_Success:
 //   POST /api/sharing/invites { appId: "navidrome", guestLabel: "bob" }
-//   mock SidecarManager.Start returns "100.1.2.3"
+//   mock SidecarManager.GetAddr returns "100.1.2.3"
 //   → 200, { shareId: "...", token: "eyJ..." }
 //   → share row in DB with status=active
 //   → token payload contains sidecarTailnetAddr="100.1.2.3"
 // TestHandleCreateInvite_UnknownApp: → 404
-// TestHandleCreateInvite_SidecarStartFails: mock Start returns error → 502
+// TestHandleCreateInvite_SidecarNotRunning: mock GetAddr returns error → 503
 // TestHandleListShares_Empty: → []
 // TestHandleListShares_WithData: seeded share → returned in list
 
@@ -758,14 +788,14 @@ echo "PASS"
 
 `DELETE /api/sharing/shares/{id}`:
 1. Look up share — 404 if not found
-2. Stop and remove the sidecar container (`SidecarManager.Stop`)
-3. Mark share revoked in DB
-4. Return `{ status: "revoked", requiresManualCleanup: bool, cleanupHint: string }`
+2. Mark share revoked in DB
+3. Return `{ status: "revoked", requiresManualCleanup: bool, cleanupHint: string }`
    - `requiresManualCleanup: true` and a hint for forward-auth apps
    - `requiresManualCleanup: false` for native-OIDC apps (post-MVP)
 
 Sidecar stop is best-effort: if the container is already gone, log and continue. The
-share is marked revoked regardless.
+The sidecar is not touched — it keeps running with the app. The guest's proxy returns
+403 on the next request because the share row is revoked.
 
 #### Validation
 
@@ -774,12 +804,9 @@ share is marked revoked regardless.
 // internal/api/sharing_test.go (extend)
 // TestHandleRevokeShare_ForwardAuth:
 //   DELETE /api/sharing/shares/{id} (sso_strategy=forward-auth)
-//   → mock SidecarManager.Stop called with correct shareID
 //   → share row status=revoked
 //   → response: requiresManualCleanup=true, cleanupHint contains "Navidrome"
-// TestHandleRevokeShare_SidecarAlreadyGone:
-//   SidecarManager.Stop returns "not found" error
-//   → revocation still completes, no error returned
+//   → SidecarManager NOT called (sidecar unaffected)
 // TestHandleRevokeShare_UnknownShare: → 404
 // TestProxyAfterRevocation:
 //   revoke share → GET /embed/navidrome@alice-server/rest/ping → 403
@@ -792,9 +819,9 @@ go test ./internal/api/...
 curl -sf -X DELETE http://localhost:3000/api/sharing/shares/$SHARE_ID \
   | jq -e '.status == "revoked"' || { echo "FAIL: revoke failed"; exit 1; }
 
-# Sidecar container must be gone
-limactl shell bloud-dev podman ps -a --filter name=ts-navidrome \
-  | grep -v "ts-navidrome" || { echo "FAIL: sidecar still running"; exit 1; }
+# Sidecar must still be running (tied to app, not share)
+limactl shell bloud-dev podman ps --filter name=ts-navidrome --format '{{.Names}}' \
+  | grep -q ts-navidrome || { echo "FAIL: sidecar should still be running"; exit 1; }
 
 # Proxy must 403
 curl -o /dev/null -sw "%{http_code}" \
@@ -866,7 +893,7 @@ go test ./internal/sharing/... ./internal/store/... ./internal/api/... ./interna
 ### Integration tier (Lima VM required)
 
 ```bash
-bash scripts/test-sharing-sidecar.sh   # Phase 3
+bash scripts/test-sharing-sidecar.sh   # Phase 2
 bash scripts/test-sharing-invite.sh    # Phase 4
 bash scripts/test-sharing-proxy.sh     # Phase 6
 bash scripts/test-sharing-revoke.sh    # Phase 7
