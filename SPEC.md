@@ -50,7 +50,7 @@ Not yet implemented:
 
 - Durable desired and observed integration instances
 - Typed provider outputs and secret references
-- Static/dynamic configurator contracts
+- PreStart/PostStart configurator contracts
 - Portable application manifests
 - Runtime-neutral desired topology and planner
 - Debian/Podman/Quadlet/systemd adapters and `.deb` packaging
@@ -63,7 +63,7 @@ fully validate. Current preferred order:
    real integration.
 2. Add a managed-file helper with atomic writes, explicit permissions, and accurate change
    detection.
-3. Migrate one release-app configurator to the static/dynamic contract under focused tests.
+3. Migrate one release-app configurator to the prestart/poststart contract under focused tests.
 4. Add durable integration identity, desired/observed revisions, and invalidation only after
    their concrete consumers are defined.
 
@@ -240,9 +240,9 @@ contract.
 An SSO strategy is not an SSO provider binding. A provider binding alone must not enable SSO
 configuration; the application manifest must explicitly declare the supported strategy.
 
-#### Static Configuration
+#### PreStart Configuration
 
-Static configuration runs before service start or when an integration change may affect
+PreStart configuration runs before service start or when an integration change may affect
 startup configuration.
 
 It may write files, environment, certificates, credentials, or other startup inputs.
@@ -251,24 +251,24 @@ idempotently provision provider-side resources such as a database, user, or API 
 It returns whether managed output changed:
 
 ```go
-StaticConfig(ctx, state) (changed bool, err error)
+PreStartConfig(ctx, state) (changed bool, err error)
 ```
 
-When static configuration changes, the reconciler restarts only affected services, in
+When prestart configuration changes, the reconciler restarts only affected services, in
 dependency order.
 
-#### Dynamic Configuration
+#### PostStart Configuration
 
-Dynamic configuration runs after required providers and the consumer are healthy.
+PostStart configuration runs after required providers and the consumer are healthy.
 
 It performs idempotent runtime operations such as API calls, resource registration, and
 inter-application linking:
 
 ```go
-DynamicConfig(ctx, state) error
+PostStartConfig(ctx, state) error
 ```
 
-Dynamic configuration does not itself require a restart.
+PostStart configuration does not itself require a restart.
 
 ### Routing and Shared Login
 
@@ -294,15 +294,15 @@ The target reconciler executes this order from durable desired state:
 3. Calculate desired topology, integration instances, and dependency levels
 4. Ensure topology for each dependency level
 5. Wait for required providers to become healthy
-6. Run static configuration with typed provider outputs
+6. Run prestart configuration with typed provider outputs
 7. Start or selectively restart changed consumers
 8. Verify consumer health
-9. Run dynamic configuration
+9. Run poststart configuration
 10. Record observed application and integration revisions
 ```
 
 Independent applications within one dependency level may run concurrently. Required-provider
-health must precede consumer static or dynamic integration configuration.
+health must precede consumer prestart or poststart integration configuration.
 
 Events that invalidate an integration include provider install/removal, provider output or
 secret changes, consumer manifest changes, configurator version changes, an optional provider
@@ -396,8 +396,8 @@ Reconciliation against an already-correct system must make no changes.
 Bloud persists desired and observed revisions for applications and integration instances.
 Failures identify the affected phase, application, provider, and integration.
 
-An integration is not reported as configured until required static configuration, health
-verification, and dynamic configuration have succeeded.
+An integration is not reported as configured until required prestart configuration, health
+verification, and poststart configuration have succeeded.
 
 ### 6. Narrow Modules
 
@@ -408,7 +408,7 @@ Required architectural boundaries:
 - `state`: persists desired and observed application and integration state
 - `runtime`: applies topology through host adapters
 - `reconciler`: converges topology and integration state
-- `configurator`: realizes static and dynamic application/integration configuration
+- `configurator`: realizes prestart and poststart application/integration configuration
 - `routing`: generates and verifies routes
 - `secrets`: creates and persists stable credentials
 - `health`: verifies readiness
@@ -606,10 +606,10 @@ Do not use the migration to:
 
 Every configurator tests:
 
-- Static configuration from structured integration inputs
+- PreStart configuration from structured integration inputs
 - Accurate `changed` reporting
 - Idempotent repeated execution
-- Dynamic configuration idempotency
+- PostStart configuration idempotency
 - Provider unavailability
 - Malformed provider outputs
 - Partial prior configuration
@@ -660,7 +660,7 @@ Every supported application defines and verifies:
 - Portable manifest
 - Provided and consumed capabilities
 - Service topology
-- Static and dynamic configurator behavior
+- PreStart and PostStart configurator behavior
 - Persistent data
 - Health checks
 - Routing and embedding
@@ -737,7 +737,7 @@ Gate:
 ### Phase 1: Extract the Integration Engine
 
 - Define typed provider contracts and durable integration instances.
-- Formalize static and dynamic configurator contracts.
+- Formalize prestart and poststart configurator contracts.
 - Track desired and observed integration revisions.
 - Implement invalidation and selective restart planning.
 - Make reconciliation operate from desired integration state.

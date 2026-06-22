@@ -15,8 +15,8 @@ import (
 )
 
 // ReconfigDispatcher is notified when an app's optional dependency transitions to
-// healthy. The implementation decides whether to restart the app (static config
-// change) or re-run PostStart only (dynamic config change).
+// healthy. The implementation decides whether to restart the app (prestart config
+// change) or re-run PostStart only (poststart config change).
 type ReconfigDispatcher interface {
 	DispatchReconfig(ctx context.Context, appName string, installedApps map[string]*store.InstalledApp)
 }
@@ -133,13 +133,13 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
 			continue
 		}
-		if sc, ok := cfg.(configurator.StaticConfigurator); ok {
-			changed, err := sc.StaticConfig(ctx, state)
+		if sc, ok := cfg.(configurator.PreStartConfigurator); ok {
+			changed, err := sc.PreStartConfig(ctx, state)
 			if err != nil {
-				r.logger.Warn("StaticConfig failed", "app", app.Name, "error", err)
-				errors = append(errors, fmt.Sprintf("%s: StaticConfig failed: %v", app.Name, err))
+				r.logger.Warn("PreStartConfig failed", "app", app.Name, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: PreStartConfig failed: %v", app.Name, err))
 			} else if changed {
-				r.logger.Info("static config changed", "app", app.Name)
+				r.logger.Info("prestart config changed", "app", app.Name)
 			}
 		} else {
 			if err := cfg.PreStart(ctx, state); err != nil {
@@ -184,10 +184,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 				errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
 				continue
 			}
-			if dc, ok := cfg.(configurator.DynamicConfigurator); ok {
-				if err := dc.DynamicConfig(ctx, state); err != nil {
-					r.logger.Warn("DynamicConfig failed", "app", app.Name, "error", err)
-					errors = append(errors, fmt.Sprintf("%s: DynamicConfig failed: %v", app.Name, err))
+			if dc, ok := cfg.(configurator.PostStartConfigurator); ok {
+				if err := dc.PostStartConfig(ctx, state); err != nil {
+					r.logger.Warn("PostStartConfig failed", "app", app.Name, "error", err)
+					errors = append(errors, fmt.Sprintf("%s: PostStartConfig failed: %v", app.Name, err))
 					continue
 				}
 			} else {

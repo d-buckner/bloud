@@ -283,13 +283,13 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 	}
 
 	if cfg := o.configurator(appName); cfg != nil {
-		if sc, ok := cfg.(configurator.StaticConfigurator); ok {
-			changed, err := sc.StaticConfig(ctx, state)
+		if sc, ok := cfg.(configurator.PreStartConfigurator); ok {
+			changed, err := sc.PreStartConfig(ctx, state)
 			if err != nil {
-				return fmt.Errorf("static config: %w", err)
+				return fmt.Errorf("prestart config: %w", err)
 			}
 			if changed {
-				o.logger.Info("static config changed", "app", appName)
+				o.logger.Info("prestart config changed", "app", appName)
 			}
 		} else {
 			if err := cfg.PreStart(ctx, state); err != nil {
@@ -321,9 +321,9 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 		if err := cfg.HealthCheck(ctx); err != nil {
 			return fmt.Errorf("health check: %w", err)
 		}
-		if dc, ok := cfg.(configurator.DynamicConfigurator); ok {
-			if err := dc.DynamicConfig(ctx, state); err != nil {
-				return fmt.Errorf("dynamic config: %w", err)
+		if dc, ok := cfg.(configurator.PostStartConfigurator); ok {
+			if err := dc.PostStartConfig(ctx, state); err != nil {
+				return fmt.Errorf("poststart config: %w", err)
 			}
 		} else {
 			if err := cfg.PostStart(ctx, state); err != nil {

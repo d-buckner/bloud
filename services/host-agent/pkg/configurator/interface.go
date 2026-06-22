@@ -44,20 +44,20 @@ type Configurator interface {
 	PostStart(ctx context.Context, state *AppState) error
 }
 
-// StaticConfigurator runs before service start. Returns whether managed
+// PreStartConfigurator runs before service start. Returns whether managed
 // output changed, signaling that the service needs a restart.
 // This is an optional interface; configurators that implement it get the new
 // flow while others keep using PreStart.
-type StaticConfigurator interface {
-	StaticConfig(ctx context.Context, state *AppState) (changed bool, err error)
+type PreStartConfigurator interface {
+	PreStartConfig(ctx context.Context, state *AppState) (changed bool, err error)
 }
 
-// DynamicConfigurator runs after the service is healthy. Performs idempotent
+// PostStartConfigurator runs after the service is healthy. Performs idempotent
 // runtime operations (API calls, registration).
 // This is an optional interface; configurators that implement it get the new
 // flow while others keep using PostStart.
-type DynamicConfigurator interface {
-	DynamicConfig(ctx context.Context, state *AppState) error
+type PostStartConfigurator interface {
+	PostStartConfig(ctx context.Context, state *AppState) error
 }
 
 // LDAPOutput describes the LDAP provider endpoint available to configurators.

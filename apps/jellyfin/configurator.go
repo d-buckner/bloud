@@ -65,15 +65,15 @@ func (c *Configurator) Name() string {
 	return "jellyfin"
 }
 
-// PreStart delegates to StaticConfig, discarding the change signal.
+// PreStart delegates to PreStartConfig, discarding the change signal.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
-	_, err := c.StaticConfig(ctx, state)
+	_, err := c.PreStartConfig(ctx, state)
 	return err
 }
 
-// StaticConfig ensures directories exist, installs the LDAP plugin, and
+// PreStartConfig ensures directories exist, installs the LDAP plugin, and
 // configures network settings. Returns true if any managed output changed.
-func (c *Configurator) StaticConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStartConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
@@ -253,13 +253,13 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
 	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
 }
 
-// PostStart delegates to DynamicConfig.
+// PostStart delegates to PostStartConfig.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	return c.DynamicConfig(ctx, state)
+	return c.PostStartConfig(ctx, state)
 }
 
-// DynamicConfig completes the Jellyfin setup wizard and configures LDAP.
-func (c *Configurator) DynamicConfig(ctx context.Context, state *configurator.AppState) error {
+// PostStartConfig completes the Jellyfin setup wizard and configures LDAP.
+func (c *Configurator) PostStartConfig(ctx context.Context, state *configurator.AppState) error {
 	// 1. Check if setup wizard is complete
 	info, err := c.getSystemInfo(ctx)
 	if err != nil {

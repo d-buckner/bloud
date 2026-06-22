@@ -112,7 +112,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	}
 }
 
-func TestConfigurator_StaticConfig_ChangedOnFirstRun(t *testing.T) {
+func TestConfigurator_PreStartConfig_ChangedOnFirstRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := NewConfigurator(8096)
 	state := &configurator.AppState{
@@ -128,16 +128,16 @@ func TestConfigurator_StaticConfig_ChangedOnFirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := c.StaticConfig(context.Background(), state)
+	changed, err := c.PreStartConfig(context.Background(), state)
 	if err != nil {
-		t.Fatalf("StaticConfig() error = %v", err)
+		t.Fatalf("PreStartConfig() error = %v", err)
 	}
 	if !changed {
-		t.Error("StaticConfig() changed = false on first run (network.xml created), want true")
+		t.Error("PreStartConfig() changed = false on first run (network.xml created), want true")
 	}
 }
 
-func TestConfigurator_StaticConfig_NoChangeOnSecondRun(t *testing.T) {
+func TestConfigurator_PreStartConfig_NoChangeOnSecondRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := NewConfigurator(8096)
 	state := &configurator.AppState{
@@ -153,17 +153,17 @@ func TestConfigurator_StaticConfig_NoChangeOnSecondRun(t *testing.T) {
 	}
 
 	// First run creates network.xml
-	if _, err := c.StaticConfig(context.Background(), state); err != nil {
-		t.Fatalf("first StaticConfig() error = %v", err)
+	if _, err := c.PreStartConfig(context.Background(), state); err != nil {
+		t.Fatalf("first PreStartConfig() error = %v", err)
 	}
 
 	// Second run should detect no change
-	changed, err := c.StaticConfig(context.Background(), state)
+	changed, err := c.PreStartConfig(context.Background(), state)
 	if err != nil {
-		t.Fatalf("second StaticConfig() error = %v", err)
+		t.Fatalf("second PreStartConfig() error = %v", err)
 	}
 	if changed {
-		t.Error("StaticConfig() changed = true on second run with identical config, want false")
+		t.Error("PreStartConfig() changed = true on second run with identical config, want false")
 	}
 }
 
