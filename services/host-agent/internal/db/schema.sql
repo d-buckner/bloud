@@ -20,3 +20,26 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     layout TEXT DEFAULT '[]',
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS shares (
+    id           TEXT PRIMARY KEY,
+    app_id       TEXT NOT NULL,
+    sso_strategy TEXT NOT NULL DEFAULT 'native-oidc',
+    guest_label  TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'active',
+    created_at   TEXT DEFAULT (datetime('now')),
+    revoked_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS remote_apps (
+    id                   TEXT PRIMARY KEY,
+    host_label           TEXT NOT NULL,
+    app_id               TEXT NOT NULL,
+    app_name             TEXT NOT NULL,
+    sso_strategy         TEXT NOT NULL,
+    bypass_paths         TEXT NOT NULL DEFAULT '[]',
+    sidecar_tailnet_addr TEXT NOT NULL,
+    encrypted_cred       BLOB,
+    status               TEXT NOT NULL DEFAULT 'pending_credential',
+    created_at           TEXT DEFAULT (datetime('now'))
+);

@@ -57,3 +57,27 @@ type PreferencesStoreInterface interface {
 
 // Compile-time assertion that PreferencesStore implements PreferencesStoreInterface
 var _ PreferencesStoreInterface = (*PreferencesStore)(nil)
+
+// ShareStoreInterface defines the interface for managing shares.
+type ShareStoreInterface interface {
+	Create(share Share) error
+	GetByID(id string) (*Share, error)
+	List() ([]*Share, error)
+	Revoke(id string) error
+}
+
+// Compile-time assertion that ShareStore implements ShareStoreInterface
+var _ ShareStoreInterface = (*ShareStore)(nil)
+
+// RemoteAppStoreInterface defines the interface for managing remote apps.
+type RemoteAppStoreInterface interface {
+	Create(app RemoteApp) error
+	GetByID(id string) (*RemoteApp, error)
+	List() ([]*RemoteApp, error)
+	SetCredential(id string, encryptedCred []byte) error
+	SetStatus(id, status string) error
+	Delete(id string) error
+}
+
+// Compile-time assertion that RemoteAppStore implements RemoteAppStoreInterface
+var _ RemoteAppStoreInterface = (*RemoteAppStore)(nil)
