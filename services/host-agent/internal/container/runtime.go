@@ -26,6 +26,7 @@ type Spec struct {
 	Network       string
 	Command       []string
 	RestartPolicy string
+	DependsOn     string // systemd unit to bind lifecycle to (e.g. "apps-jellyfin.service")
 }
 
 type Port struct {

@@ -11,6 +11,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
@@ -33,8 +34,9 @@ type PortableConfig struct {
 	Registry     configurator.RegistryInterface
 	TraefikGen   traefikgen.GeneratorInterface
 	LDAPOutput   *configurator.LDAPOutput
-	SSO          SSOProvisioner // optional; nil when Authentik is not available
-	SSOBaseURL   string         // base URL for building app external URLs (e.g. "http://localhost:8080")
+	SSO          SSOProvisioner                // optional; nil when Authentik is not available
+	Sidecar      sharing.SidecarManagerInterface // optional; nil when Tailscale auth key is not set
+	SSOBaseURL   string                         // base URL for building app external URLs (e.g. "http://localhost:8080")
 	DataDir      string
 	TemplateVars map[string]string // extra variables for container spec rendering (e.g. postgresPassword)
 	Logger       *slog.Logger
@@ -50,6 +52,7 @@ type PortableOrchestrator struct {
 	traefikGen   traefikgen.GeneratorInterface
 	ldapOutput   *configurator.LDAPOutput
 	sso          SSOProvisioner
+	sidecar      sharing.SidecarManagerInterface
 	ssoBaseURL   string
 	dataDir      string
 	templateVars map[string]string
@@ -67,6 +70,7 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		traefikGen:   cfg.TraefikGen,
 		ldapOutput:   cfg.LDAPOutput,
 		sso:          cfg.SSO,
+		sidecar:      cfg.Sidecar,
 		ssoBaseURL:   cfg.SSOBaseURL,
 		dataDir:      cfg.DataDir,
 		templateVars: cfg.TemplateVars,
@@ -238,6 +242,14 @@ func (o *PortableOrchestrator) Uninstall(ctx context.Context, req UninstallReque
 	}
 
 	_ = o.appStore.UpdateStatus(req.App, "uninstalling")
+
+	// Stop sidecar before removing app container (best-effort).
+	if o.sidecar != nil {
+		if err := o.sidecar.Stop(ctx, req.App); err != nil {
+			o.logger.Warn("failed to stop sidecar", "app", req.App, "error", err)
+		}
+	}
+
 	if err := o.containers.Remove(ctx, PortableContainerName(app)); err != nil {
 		result.Error = fmt.Sprintf("remove container: %v", err)
 		return result, nil
@@ -338,6 +350,14 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 		externalURL := appSubdomainURL(o.ssoBaseURL, app.Name)
 		if err := o.sso.EnsureForwardAuth(app.Name, app.DisplayName, externalURL); err != nil {
 			o.logger.Warn("failed to provision forward-auth SSO (non-fatal)", "app", appName, "error", err)
+		}
+	}
+
+	// Start Tailscale sidecar for non-system user apps (sharing support).
+	// Non-fatal: sharing is optional and shouldn't block app startup.
+	if o.sidecar != nil && !app.IsSystem {
+		if err := o.sidecar.EnsureRunning(ctx, app.Name, app.Port); err != nil {
+			o.logger.Warn("failed to start sidecar (sharing unavailable for this app)", "app", appName, "error", err)
 		}
 	}
 

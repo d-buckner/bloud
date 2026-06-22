@@ -1,0 +1,157 @@
+package sharing
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"testing"
+
+	container "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// ── Fake container.Runtime ──────────────────────────────────────────────────
+
+type FakeRuntime struct {
+	Ensured  []container.Spec
+	Removed  []string
+	Networks []string
+}
+
+func (f *FakeRuntime) EnsureNetwork(_ context.Context, name string) error {
+	f.Networks = append(f.Networks, name)
+	return nil
+}
+
+func (f *FakeRuntime) Ensure(_ context.Context, spec container.Spec) (container.EnsureResult, error) {
+	f.Ensured = append(f.Ensured, spec)
+	return container.EnsureResult{Created: true, Started: true}, nil
+}
+
+func (f *FakeRuntime) Remove(_ context.Context, name string) error {
+	f.Removed = append(f.Removed, name)
+	return nil
+}
+
+func (f *FakeRuntime) Inspect(_ context.Context, _ string) (container.State, error) {
+	return container.State{}, nil
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+func newTestManager(t *testing.T, rt *FakeRuntime) *SidecarManager {
+	t.Helper()
+	return NewSidecarManager(rt, "tskey-auth-test", "apps-net", t.TempDir(), discardLogger())
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+func TestSidecarContainerName(t *testing.T) {
+	assert.Equal(t, "ts-navidrome", SidecarContainerName("navidrome"))
+	assert.Equal(t, "ts-jellyfin", SidecarContainerName("jellyfin"))
+}
+
+func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
+	rt := &FakeRuntime{}
+	mgr := newTestManager(t, rt)
+
+	err := mgr.EnsureRunning(context.Background(), "navidrome", 4533)
+	require.NoError(t, err)
+
+	// Verify container spec
+	require.Len(t, rt.Ensured, 1)
+	spec := rt.Ensured[0]
+	assert.Equal(t, "ts-navidrome", spec.Name)
+	assert.Equal(t, "docker.io/tailscale/tailscale:latest", spec.Image)
+	assert.Equal(t, "apps-net", spec.Network)
+	assert.Equal(t, "tskey-auth-test", spec.Environment["TS_AUTHKEY"])
+	assert.Equal(t, "ts-navidrome", spec.Environment["TS_HOSTNAME"])
+	assert.Equal(t, "true", spec.Environment["TS_USERSPACE"])
+	assert.Equal(t, "/etc/ts-serve/serve.json", spec.Environment["TS_SERVE_CONFIG"])
+	assert.Equal(t, "navidrome", spec.Labels["io.bloud.app"])
+	assert.Equal(t, "true", spec.Labels["io.bloud.sidecar"])
+	assert.Equal(t, "always", spec.RestartPolicy)
+
+	// Verify systemd dependency binding
+	assert.Equal(t, "apps-navidrome.service", spec.DependsOn)
+
+	// Verify serve config mount (directory, not file — required by Tailscale)
+	require.Len(t, spec.Mounts, 1)
+	assert.Equal(t, "/etc/ts-serve", spec.Mounts[0].Destination)
+	assert.Equal(t, []string{"ro"}, spec.Mounts[0].Options)
+}
+
+func TestEnsureRunning_WritesServeConfigJSON(t *testing.T) {
+	rt := &FakeRuntime{}
+	dataDir := t.TempDir()
+	mgr := NewSidecarManager(rt, "tskey-auth-test", "apps-net", dataDir, discardLogger())
+
+	err := mgr.EnsureRunning(context.Background(), "jellyfin", 8096)
+	require.NoError(t, err)
+
+	// Read and verify the serve config file
+	configPath := filepath.Join(dataDir, "jellyfin", "ts-serve", "serve.json")
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	var cfg serveConfig
+	require.NoError(t, json.Unmarshal(data, &cfg))
+
+	assert.True(t, cfg.TCP["443"].HTTPS)
+	web, ok := cfg.Web["${TS_CERT_DOMAIN}:443"]
+	require.True(t, ok, "expected Web entry for ${TS_CERT_DOMAIN}:443")
+	assert.Equal(t, "http://apps-jellyfin:8096", web.Handlers["/"].Proxy)
+}
+
+func TestEnsureRunning_Idempotent(t *testing.T) {
+	rt := &FakeRuntime{}
+	mgr := newTestManager(t, rt)
+
+	require.NoError(t, mgr.EnsureRunning(context.Background(), "navidrome", 4533))
+	require.NoError(t, mgr.EnsureRunning(context.Background(), "navidrome", 4533))
+
+	// Ensure was called twice (idempotent, both go through)
+	assert.Len(t, rt.Ensured, 2)
+}
+
+func TestStop_RemovesContainer(t *testing.T) {
+	rt := &FakeRuntime{}
+	mgr := newTestManager(t, rt)
+
+	err := mgr.Stop(context.Background(), "navidrome")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ts-navidrome"}, rt.Removed)
+}
+
+func TestStop_IgnoresNotFound(t *testing.T) {
+	rt := &notFoundRuntime{}
+	mgr := NewSidecarManager(rt, "tskey-auth-test", "apps-net", t.TempDir(), discardLogger())
+
+	err := mgr.Stop(context.Background(), "navidrome")
+	require.NoError(t, err)
+}
+
+// notFoundRuntime returns "not found" on Remove.
+type notFoundRuntime struct{ FakeRuntime }
+
+func (r *notFoundRuntime) Remove(_ context.Context, name string) error {
+	return fmt.Errorf("container %s not found", name)
+}
+
+func TestBuildServeConfig(t *testing.T) {
+	cfg := buildServeConfig("navidrome", 4533)
+
+	assert.True(t, cfg.TCP["443"].HTTPS)
+
+	web := cfg.Web["${TS_CERT_DOMAIN}:443"]
+	assert.Equal(t, "http://apps-navidrome:4533", web.Handlers["/"].Proxy)
+}

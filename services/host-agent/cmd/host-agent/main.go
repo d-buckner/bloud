@@ -114,6 +114,7 @@ func runServer() {
 		SSOAuthentikURL:   cfg.SSOAuthentikURL,
 		AuthentikToken:    cfg.AuthentikToken,
 		AuthentikPort:     cfg.AuthentikPort,
+		TSAuthKey:         cfg.TSAuthKey,
 		RedisAddr:         cfg.RedisAddr,
 		LDAPOutput:        cfg.LDAPOutput(),
 		Registry:          registry,

@@ -121,6 +121,27 @@ func TestQuadletRuntimeRestartsChangedManagedContainerAndRemovesUnit(t *testing.
 	assert.True(t, os.IsNotExist(err))
 }
 
+func TestQuadletRendersDependsOn(t *testing.T) {
+	spec := Spec{
+		Name: "ts-jellyfin", Image: "tailscale:latest", Network: "apps-net",
+		DependsOn: "apps-jellyfin.service",
+	}
+	content, err := renderQuadlet(spec, "rev", "default.target")
+	require.NoError(t, err)
+	s := string(content)
+	assert.Contains(t, s, "After=apps-jellyfin.service")
+	assert.Contains(t, s, "BindsTo=apps-jellyfin.service")
+}
+
+func TestQuadletOmitsDependsOnWhenEmpty(t *testing.T) {
+	spec := Spec{Name: "apps-jellyfin", Image: "jellyfin:1"}
+	content, err := renderQuadlet(spec, "rev", "default.target")
+	require.NoError(t, err)
+	s := string(content)
+	assert.NotContains(t, s, "After=")
+	assert.NotContains(t, s, "BindsTo=")
+}
+
 func TestQuadletRuntimeRemovesUnloadedUnit(t *testing.T) {
 	client := &fakePodmanClient{}
 	manager := &fakeSystemdManager{}

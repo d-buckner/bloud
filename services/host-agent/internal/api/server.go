@@ -16,6 +16,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/systemd"
@@ -63,6 +64,8 @@ type ServerConfig struct {
 	SSOAuthentikURL string // Authentik external URL for browser OAuth discovery
 	AuthentikToken  string // Authentik API token for SSO cleanup
 	AuthentikPort   int    // Authentik API port (default 9001)
+	// Tailscale auth key for sharing sidecars (empty = sharing disabled)
+	TSAuthKey string
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
 	// LDAP configuration
@@ -203,6 +206,12 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			ssoProvisioner = s.authentikClient
 		}
 
+		var sidecar sharing.SidecarManagerInterface
+		if s.cfg.TSAuthKey != "" {
+			sidecar = sharing.NewSidecarManager(runtime, s.cfg.TSAuthKey, "apps-net", s.cfg.DataDir, s.logger)
+			s.logger.Info("tailscale sharing enabled")
+		}
+
 		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
 			Graph:        s.graph,
 			CatalogCache: s.catalog,
@@ -212,6 +221,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath, s.cfg.BaseDomain),
 			LDAPOutput:   s.cfg.LDAPOutput,
 			SSO:          ssoProvisioner,
+			Sidecar:      sidecar,
 			SSOBaseURL:   s.cfg.SSOBaseURL,
 			DataDir:      s.cfg.DataDir,
 			TemplateVars: s.cfg.TemplateVars,

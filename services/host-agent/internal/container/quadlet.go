@@ -145,7 +145,11 @@ func renderQuadlet(spec Spec, revision, wantedBy string) ([]byte, error) {
 		return nil, fmt.Errorf("quadlet fields may not contain newlines")
 	}
 	var out strings.Builder
-	fmt.Fprintf(&out, "[Unit]\nDescription=Bloud container %s\n\n[Container]\n", spec.Name)
+	fmt.Fprintf(&out, "[Unit]\nDescription=Bloud container %s\n", spec.Name)
+	if spec.DependsOn != "" {
+		fmt.Fprintf(&out, "After=%s\nBindsTo=%s\n", spec.DependsOn, spec.DependsOn)
+	}
+	fmt.Fprintf(&out, "\n[Container]\n")
 	fmt.Fprintf(&out, "ContainerName=%s\nImage=%s\nPull=never\nCgroupsMode=disabled\n", spec.Name, spec.Image)
 	if spec.Network != "" {
 		fmt.Fprintf(&out, "Network=%s\n", spec.Network)

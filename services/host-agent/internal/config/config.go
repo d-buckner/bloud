@@ -34,6 +34,8 @@ type Config struct {
 	// LDAP configuration
 	LDAPHost         string // LDAP outpost hostname (default: apps-authentik-ldap)
 	LDAPBindPassword string
+	// Tailscale auth key for sidecar containers (empty = sharing disabled)
+	TSAuthKey string
 	// PostgresPassword is the resolved password for the shared Postgres instance.
 	// Exposed so bootstrapInfra can template it into the container spec.
 	PostgresPassword string
@@ -102,6 +104,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),
 		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       ldapBindPassword,
+		TSAuthKey:              getEnv("BLOUD_TS_AUTHKEY", ""),
 		PostgresPassword:       postgresPassword,
 		Secrets:                secretsMgr,
 	}
