@@ -379,6 +379,20 @@ func TestGenerator_Generate_ForwardAuth(t *testing.T) {
 	if !strings.Contains(contentStr, "- X-authentik-username") {
 		t.Error("Expected X-authentik-username in authResponseHeaders")
 	}
+
+	// Check outpost router bypasses forward-auth for OAuth callback
+	if !strings.Contains(contentStr, "adguard-home-outpost:") {
+		t.Error("Expected adguard-home-outpost router for OAuth callback")
+	}
+	if !strings.Contains(contentStr, "PathPrefix(`/outpost.goauthentik.io/`)") {
+		t.Error("Expected outpost path prefix in router rule")
+	}
+	if !strings.Contains(contentStr, "service: authentik-outpost") {
+		t.Error("Expected authentik-outpost service reference")
+	}
+	if !strings.Contains(contentStr, "authentik-outpost:") {
+		t.Error("Expected authentik-outpost service definition")
+	}
 }
 
 func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {

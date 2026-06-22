@@ -85,6 +85,13 @@ func (g *Generator) generateConfig(apps []*catalog.App) string {
 	b.WriteString("  routers:\n")
 	for _, app := range routableApps {
 		g.writeRouter(&b, app, g.authentikEnabled)
+		// Forward-auth apps need a second, higher-priority router that passes
+		// /outpost.goauthentik.io/ requests directly to Authentik. Without this,
+		// the OAuth callback (code exchange) gets intercepted by the forward-auth
+		// middleware and the embedded outpost returns 400.
+		if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
+			g.writeOutpostRouter(&b, app)
+		}
 	}
 
 	// Generate middlewares section (only if any app needs one)
@@ -106,6 +113,21 @@ func (g *Generator) generateConfig(apps []*catalog.App) string {
 	b.WriteString("\n  services:\n")
 	for _, app := range routableApps {
 		g.writeService(&b, app)
+	}
+
+	// Add the shared authentik-outpost service if any forward-auth apps are installed
+	hasForwardAuth := false
+	for _, app := range routableApps {
+		if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
+			hasForwardAuth = true
+			break
+		}
+	}
+	if hasForwardAuth {
+		b.WriteString("    authentik-outpost:\n")
+		b.WriteString("      loadBalancer:\n")
+		b.WriteString("        servers:\n")
+		b.WriteString("          - url: \"http://localhost:9001\"\n")
 	}
 
 	return b.String()
@@ -191,6 +213,17 @@ func (g *Generator) writeHeadersMiddleware(b *strings.Builder, name string, head
 	for _, headerName := range headerNames {
 		b.WriteString(fmt.Sprintf("          %s: \"%s\"\n", headerName, headers[headerName]))
 	}
+}
+
+// writeOutpostRouter writes a high-priority router that passes /outpost.goauthentik.io/
+// requests for a forward-auth app directly to the Authentik embedded outpost,
+// bypassing the forward-auth middleware so the OAuth callback can complete.
+func (g *Generator) writeOutpostRouter(b *strings.Builder, app *catalog.App) {
+	hostRule := fmt.Sprintf("%s.%s", app.Name, g.baseDomain)
+	b.WriteString(fmt.Sprintf("    %s-outpost:\n", app.Name))
+	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", hostRule))
+	b.WriteString("      service: authentik-outpost\n")
+	b.WriteString("      priority: 15\n")
 }
 
 // writeService writes the service configuration for an app
