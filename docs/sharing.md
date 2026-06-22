@@ -299,6 +299,7 @@ The owner can re-invite to restore access.
 CREATE TABLE IF NOT EXISTS shares (
     id                   TEXT PRIMARY KEY,
     app_id               TEXT NOT NULL,
+    sso_strategy         TEXT NOT NULL DEFAULT 'native-oidc',  -- native-oidc | forward-auth
     guest_email          TEXT NOT NULL,
     guest_tailnet_addr   TEXT,
     tailscale_node_id    TEXT,
@@ -570,9 +571,15 @@ go test -tags integration -timeout 60s ./pkg/authentik/...
   "appName": "Jellyfin",
   "hostLabel": "Alice's Server",
   "hostTailnetURL": "http://100.x.x.x:3000",
+  "ssoStrategy": "native-oidc",
+  "bypassPaths": [],
   "exp": 1234567890
 }
 ```
+
+`ssoStrategy` and `bypassPaths` are read from the app's catalog entry at invite-creation
+time. The guest's Bloud uses them to select the correct accept flow without needing to
+query the host's catalog.
 
 Signed with HMAC-SHA256 using the host's existing `BLOUD_SECRET`. Single-use: the share
 row moves from `pending` to `active` on first accept; subsequent uses return 409.
@@ -602,6 +609,10 @@ DELETE /api/sharing/shares/{id} → revoke
 //   POST /api/sharing/invites { appId: "jellyfin" }
 //   → 200, { token: "ey...", qrDataURL: "data:image/png;base64,..." }
 //   → share row in DB with status=pending
+//   → token claims include ssoStrategy=native-oidc, bypassPaths=[]
+// TestHandleCreateInvite_ForwardAuthApp:
+//   POST /api/sharing/invites { appId: "navidrome" }
+//   → token claims include ssoStrategy=forward-auth, bypassPaths=["/rest/"]
 // TestHandleCreateInvite_UnknownApp: → 404
 // TestHandleCreateInvite_ReplayPrevented: same token accepted twice → 409 on second
 // TestHandleListShares_Empty: → []
@@ -616,19 +627,38 @@ go test ./internal/sharing/... ./internal/api/...
 
 **Files:** `internal/sharing/crypto.go`, `internal/api/sharing.go` (continued)
 
-**Guest-side endpoints:**
+The accept and credential flows branch on `ssoStrategy` from the invite blob.
+
+**Native-OIDC path** (e.g. Jellyfin, Immich — Bloud provisions the Authentik account):
 ```
-POST /api/remote-apps/accept               { token }
-POST /api/remote-apps/{shareId}/credential { username, password }
-GET  /api/remote-apps
-DELETE /api/remote-apps/{shareId}
+Guest: POST /api/remote-apps/accept { token }
+  → Host: POST /api/sharing/shares/{shareId}/accept { guestEmail, guestTailnetURL }
+       host records guest addr, share status → pending_credential
+  → remote_app row created with status=pending_credential
+
+Guest: POST /api/remote-apps/{shareId}/credential { username, password }
+  → Host: POST /api/sharing/shares/{shareId}/credential { username, password }
+       host calls Authentik.CreateUser + SetUserPassword, share status → active
+  → remote_app encrypted_cred set, status=active
 ```
 
-**Host-side endpoints (called by guest over tailnet, auth bypassed by loopback trust):**
+**Forward-auth path** (e.g. Navidrome — owner pre-creates the app account manually):
 ```
-POST /api/sharing/shares/{shareId}/accept      { guestEmail, displayName, guestTailnetURL }
-POST /api/sharing/shares/{shareId}/credential  { username, password }
-DELETE /api/sharing/shares/{shareId}/guest-remove
+Guest: POST /api/remote-apps/accept { token }
+  → Host: POST /api/sharing/shares/{shareId}/accept { guestEmail, guestTailnetURL }
+       host records guest addr, share status → active (no provisioning needed)
+  → remote_app row created with status=pending_credential
+
+Guest: POST /api/remote-apps/{shareId}/credential { username, password }
+  → no host call — credential is stored locally only
+  → remote_app encrypted_cred set, status=active
+```
+
+**Shared endpoints (both paths):**
+```
+GET  /api/remote-apps
+DELETE /api/remote-apps/{shareId}
+DELETE /api/sharing/shares/{shareId}/guest-remove   (host-side, called by guest)
 ```
 
 Both sides must already be on the same tailnet. The guest's `BLOUD_TS_AUTHKEY` is
@@ -650,24 +680,43 @@ configured independently; there is no per-guest key in the invite blob at this s
 //   → guest_tailnet_addr set in share row
 // TestHandleShareAccept_UnknownShare: → 404
 // TestHandleShareAccept_AlreadyRevoked: → 409
-// TestHandleShareCredential_Success:
+// Host-side (native-OIDC):
+// TestHandleShareCredential_NativeOIDC_Success:
 //   POST .../credential { username, password }
 //   → mock AuthentikClient.CreateUser called with correct args
 //   → share status → active
-// TestHandleShareCredential_AuthentikError: → 502
+// TestHandleShareCredential_NativeOIDC_AuthentikError: → 502
 
-// Guest-side:
-// TestHandleAcceptInvite_Success:
-//   POST /api/remote-apps/accept { token }
+// Host-side (forward-auth):
+// TestHandleShareAccept_ForwardAuth_ActiveImmediately:
+//   forward-auth app invite → POST .../accept
+//   → share status → active (no credential step required on host)
+
+// Guest-side (native-OIDC):
+// TestHandleAcceptInvite_NativeOIDC_Success:
+//   POST /api/remote-apps/accept { token (ssoStrategy=native-oidc) }
 //   → mock host receives POST .../accept
 //   → remote_app row created with status=pending_credential
 //   → response has { shareId, appId, appName }
-// TestHandleAcceptInvite_ExpiredToken: → 400
-// TestHandleAcceptInvite_HostUnreachable: → 502
-// TestHandleSetRemoteCredential_Success:
+// TestHandleSetRemoteCredential_NativeOIDC_Success:
 //   POST /api/remote-apps/{shareId}/credential { username, password }
 //   → mock host receives .../credential
 //   → remote_app encrypted_cred set, status=active
+
+// Guest-side (forward-auth):
+// TestHandleAcceptInvite_ForwardAuth_Success:
+//   POST /api/remote-apps/accept { token (ssoStrategy=forward-auth) }
+//   → mock host receives POST .../accept
+//   → remote_app row created with status=pending_credential
+//   → response has { shareId, appId, appName, bypassPaths: ["/rest/"] }
+// TestHandleSetRemoteCredential_ForwardAuth_LocalOnly:
+//   POST /api/remote-apps/{shareId}/credential { username, password }
+//   → NO call to host (forward-auth credential is local only)
+//   → remote_app encrypted_cred set, status=active
+
+// Shared:
+// TestHandleAcceptInvite_ExpiredToken: → 400
+// TestHandleAcceptInvite_HostUnreachable: → 502
 // TestHandleSetRemoteCredential_UnknownShare: → 404
 
 go test ./internal/sharing/... ./internal/api/...
@@ -690,10 +739,14 @@ curl -sf -X POST http://localhost:3001/api/remote-apps/$SHARE_ID/credential \
   -H 'Content-Type: application/json' -d '{"username":"bob","password":"hunter2"}' \
   | grep -q '"status":"active"' || { echo "FAIL: credential step failed"; exit 1; }
 
+# For native-OIDC apps (e.g. Jellyfin): verify Authentik user was provisioned
 curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
   "http://localhost:9000/api/v3/core/users/?search=bob" \
   | jq '.results | length > 0' | grep -q true \
   || { echo "FAIL: user not in Authentik"; exit 1; }
+
+# For forward-auth apps (e.g. Navidrome): no Authentik user expected — credential is local only
+# (run a separate script with a Navidrome invite to cover this path)
 
 echo "PASS"
 ```
@@ -771,30 +824,49 @@ echo "PASS"
 
 **Files:** `internal/api/sharing.go` (complete the revocation handlers)
 
-**Owner revokes:** deletes Authentik user, marks share revoked, notifies guest tailnet
-address (failure non-fatal — guest discovers on next proxy request).
+Revocation branches on `sso_strategy`, stored in the `shares` row at invite-creation time
+(add `sso_strategy TEXT NOT NULL DEFAULT 'native-oidc'` to the schema in Phase 2).
 
-**Guest removes:** notifies host, host cleans up Authentik user + share record, guest
-deletes RemoteApp row.
+**Native-OIDC — owner revokes:** deletes Authentik user, marks share revoked, notifies
+guest tailnet address (failure non-fatal).
+
+**Forward-auth — owner revokes:** marks share revoked, notifies guest tailnet address.
+No Authentik user to delete. The revocation response includes `requiresManualCleanup: true`
+and a `cleanupHint` string (e.g. `"Remove bob's account in Navidrome"`), which the UI
+surfaces as a reminder before confirming.
+
+**Guest removes (both paths):** notifies host to clean up its share record (and Authentik
+user if native-OIDC), guest deletes RemoteApp row.
 
 #### Validation
 
 **Fast:**
 ```
 // internal/api/sharing_test.go (extend)
-// TestHandleRevokeShare_OwnerRevokes:
-//   DELETE /api/sharing/shares/{shareId}
+// TestHandleRevokeShare_NativeOIDC:
+//   DELETE /api/sharing/shares/{shareId} (sso_strategy=native-oidc)
 //   → mock AuthentikClient.DeleteUser called
 //   → mock guest endpoint receives notify-revoked
 //   → share row status=revoked
+//   → response has requiresManualCleanup=false
+// TestHandleRevokeShare_ForwardAuth:
+//   DELETE /api/sharing/shares/{shareId} (sso_strategy=forward-auth)
+//   → mock AuthentikClient.DeleteUser NOT called
+//   → mock guest endpoint receives notify-revoked
+//   → share row status=revoked
+//   → response has requiresManualCleanup=true, cleanupHint contains app name
 // TestHandleRevokeShare_NotificationFails:
 //   guest endpoint returns 500
 //   → revocation still completes (notification is best-effort)
 //   → share row status=revoked
 // TestHandleRevokeShare_UnknownShare: → 404
-// TestHandleGuestRemove:
+// TestHandleGuestRemove_NativeOIDC:
 //   DELETE /api/remote-apps/{shareId}
-//   → mock host receives guest-remove
+//   → mock host receives guest-remove, host deletes Authentik user
+//   → remote_app row deleted
+// TestHandleGuestRemove_ForwardAuth:
+//   DELETE /api/remote-apps/{shareId}
+//   → mock host receives guest-remove, no Authentik call
 //   → remote_app row deleted
 // TestProxyAfterRevocation:
 //   revoke share → GET /embed/jellyfin@alice-server/ → 403
@@ -809,10 +881,16 @@ go test ./internal/api/...
 curl -sf -X DELETE http://localhost:3000/api/sharing/shares/$SHARE_ID \
   | grep -q '"status":"revoked"' || { echo "FAIL: revoke failed"; exit 1; }
 
+# For native-OIDC apps: Authentik user must be gone
 curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
   "http://localhost:9000/api/v3/core/users/?search=bob" \
   | jq '.results | length == 0' | grep -q true \
   || { echo "FAIL: user still in Authentik"; exit 1; }
+
+# For forward-auth apps: response must include the manual cleanup reminder
+curl -sf -X DELETE http://localhost:3000/api/sharing/shares/$FORWARD_AUTH_SHARE_ID \
+  | grep -q '"requiresManualCleanup":true' \
+  || { echo "FAIL: missing manual cleanup reminder for forward-auth app"; exit 1; }
 
 curl -o /dev/null -sw "%{http_code}" \
   http://localhost:8080/embed/jellyfin@alice-server/web/index.html \
