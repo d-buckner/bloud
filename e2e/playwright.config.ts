@@ -33,6 +33,11 @@ export default defineConfig({
       testMatch: 'tests/apps/jellyfin.spec.ts',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      name: 'navidrome',
+      testMatch: 'tests/apps/navidrome.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
   outputDir: 'test-results',
 });
