@@ -129,6 +129,66 @@ This is explicitly out of scope for the first release.
 
 ---
 
+## Forward-Auth Apps and Native Client Sharing
+
+Some apps use Authentik forward-auth for their web UI but also serve native protocol
+clients (mobile apps, desktop clients) through a separate API path that has its own
+credential scheme. Navidrome is the canonical example: the web UI goes through forward-auth,
+but Subsonic clients authenticate against Navidrome's `/rest/` endpoint directly using
+the Subsonic credential scheme.
+
+For these apps, Bloud emits a bypass route in Traefik for the declared API paths (e.g.
+`/rest/`) that skips forward-auth middleware. This is an accepted trade-off — the Subsonic
+protocol has no mechanism for delegating authentication to a third party.
+
+### What Gets Shared
+
+For forward-auth apps, sharing targets the **native client path**, not the web UI:
+
+- The guest's Bloud proxy exposes the bypass path (e.g. `/rest/`) via the tailnet
+- The guest configures their native client (Subsonic app, RSS reader, etc.) to point at
+  the guest's local Bloud proxy address
+- The proxy forwards requests over the tailnet to the host's bypass route, injecting the
+  guest's stored credential
+
+The web UI path (which requires an Authentik session) is **not** shared in this flow.
+Web UI sharing for forward-auth apps requires federated SSO between Bloud instances and
+is explicitly deferred to the post-MVP roadmap.
+
+### Invite Flow for Forward-Auth Apps
+
+The invite flow is simplified compared to native-OIDC apps:
+
+1. **Owner creates the guest's app account manually.** Because Bloud cannot auto-provision
+   an Authentik user and have it work for Subsonic clients, the owner creates a user
+   directly inside the app (e.g. Navidrome's user management UI) and sets a password.
+
+2. **Owner creates an invite as normal.** The invite blob encodes the app, the host's
+   tailnet address, and which paths are being shared.
+
+3. **Guest accepts and enters the credentials the owner provided.** Instead of choosing
+   their own credentials, the guest enters the username and password the owner created
+   for them. These are stored on the guest side and injected by the proxy.
+
+4. **Guest configures their native client.** The guest points their app (e.g. a Subsonic
+   client) at their local Bloud proxy. From the client's perspective it's a normal server.
+
+The metadata field `sso.bypassPaths` on the app definition tells Bloud which paths to
+share and which credential scheme is in use, so this flow is triggered automatically
+for any app that declares bypass paths.
+
+### Revocation
+
+Revocation requires the owner to delete the guest's account inside the app manually,
+in addition to Bloud revoking tailnet access. Bloud surfaces this as a reminder in the
+revocation confirmation UI: "Don't forget to remove the user from Navidrome."
+
+This is a deliberate limitation of apps that don't support centralized identity — there
+is no API for Bloud to call to delete a Navidrome user on behalf of the owner in the
+sharing context.
+
+---
+
 ## Invite Flow
 
 ```
