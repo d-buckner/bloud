@@ -79,12 +79,20 @@ func (s *Server) setupRoutes() {
 				r.Get("/status/stream", s.handleSystemStatusStream)
 				r.Get("/storage", s.handleStorage)
 				r.Get("/rebuild/stream", s.handleRebuildStream)
+				r.Get("/developer", s.handleDeveloperGraph)
 			})
 
 			// User preferences endpoints
 			r.Route("/user", func(r chi.Router) {
 				r.Get("/layout", s.handleGetLayout)
 				r.Put("/layout", s.handleSetLayout)
+			})
+
+			// Settings endpoints
+			r.Route("/settings", func(r chi.Router) {
+				r.Get("/tailnet", s.handleGetTailnet)
+				r.Post("/tailnet", s.handleSetTailnet)
+				r.Delete("/tailnet", s.handleDeleteTailnet)
 			})
 
 			// Sharing endpoints

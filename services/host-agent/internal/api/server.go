@@ -16,8 +16,8 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/systemd"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
@@ -26,6 +26,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 )
 
 // Server represents the HTTP server
@@ -43,8 +44,10 @@ type Server struct {
 	reconciler        *orchestrator.Reconciler
 	shareStore        store.ShareStoreInterface
 	remoteAppStore    store.RemoteAppStoreInterface
+	tailnetStore      store.TailnetStoreInterface
 	sidecar           sharing.SidecarManagerInterface
 	authentikClient   *authentik.Client
+	podmanClient      *podman.Client
 	authConfig        *AuthConfig
 	knownRedirectURIs sync.Map // tracks redirect URIs already registered in Authentik
 	logger            *slog.Logger
@@ -130,6 +133,8 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		}
 	}
 
+	tailnetStore := store.NewTailnetStore(db)
+
 	s := &Server{
 		cfg:            cfg,
 		router:         chi.NewRouter(),
@@ -141,6 +146,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		appHub:         appHub,
 		shareStore:     store.NewShareStore(db),
 		remoteAppStore: store.NewRemoteAppStore(db),
+		tailnetStore:   tailnetStore,
 		authentikClient: authentikClient,
 		logger:          logger,
 		secrets:         secretsMgr,
@@ -188,11 +194,18 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	s.logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
 
 	if s.cfg.RuntimeMode == "portable" {
+		// Always create a podman client for the API (developer endpoint, etc.)
+		client, err := podman.NewClient()
+		if err != nil {
+			s.logger.Warn("podman client unavailable for API", "error", err)
+		} else {
+			s.podmanClient = client
+		}
+
 		runtime := s.cfg.ContainerRuntime
 		if runtime == nil {
-			client, err := podman.NewClient()
-			if err != nil {
-				s.logger.Error("portable container runtime unavailable", "error", err)
+			if client == nil {
+				s.logger.Error("portable container runtime unavailable (no podman client)")
 				return
 			}
 			userScope := s.cfg.SystemdScope != "system"
@@ -213,20 +226,41 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			ssoProvisioner = s.authentikClient
 		}
 
-		var sidecar sharing.SidecarManagerInterface
+		// Migrate BLOUD_TS_AUTHKEY env var to tailnet_connections table.
 		if s.cfg.TSAuthKey != "" {
-			// podman.Client satisfies sharing.ContainerExec for running
-			// tailscale CLI commands inside sidecar containers.
-			var exec sharing.ContainerExec
-			if pc, err := podman.NewClient(); err == nil {
-				exec = pc
-			} else {
-				s.logger.Warn("podman client unavailable for sidecar exec", "error", err)
+			active, _ := s.tailnetStore.GetActive()
+			if active == nil {
+				s.tailnetStore.Create(store.TailnetConnection{
+					ID:      uuid.New().String(),
+					Name:    "Default",
+					Type:    "tailscale",
+					AuthKey: s.cfg.TSAuthKey,
+					Status:  "active",
+				})
+				s.logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
 			}
-			sidecar = sharing.NewSidecarManager(runtime, exec, s.cfg.TSAuthKey, "apps-net", s.cfg.DataDir, s.logger)
-			s.sidecar = sidecar
-			s.logger.Info("tailscale sharing enabled")
 		}
+
+		// Build authKeyFn that reads the active tailnet connection from the store.
+		authKeyFn := func() string {
+			conn, err := s.tailnetStore.GetActive()
+			if err != nil || conn == nil {
+				return ""
+			}
+			return conn.AuthKey
+		}
+
+		// Always create the SidecarManager — authKeyFn reads the active
+		// connection from the store at sidecar-creation time, so adding a
+		// tailnet connection via Settings takes effect without restart.
+		// EnsureRunning returns an error (non-fatal) when authKeyFn() == "".
+		var exec sharing.ContainerExec
+		if client != nil {
+			exec = client
+		}
+		sidecar := sharing.NewSidecarManager(runtime, exec, authKeyFn, "apps-net", s.cfg.DataDir, s.logger)
+		s.sidecar = sidecar
+		s.logger.Info("sidecar manager initialized")
 
 		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
 			Graph:        s.graph,

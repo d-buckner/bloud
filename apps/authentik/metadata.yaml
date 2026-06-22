@@ -6,6 +6,12 @@ port: 9001
 isSystem: true
 
 integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
   database:
     required: true
     multi: false

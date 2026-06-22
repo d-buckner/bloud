@@ -4,7 +4,19 @@ description: Feature-rich BitTorrent client with Flood web UI
 category: media
 port: 8086
 
-integrations: {}
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
 
 # SSO via Authentik forward auth (app doesn't support native OIDC)
 sso:

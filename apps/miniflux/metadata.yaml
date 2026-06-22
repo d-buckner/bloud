@@ -5,11 +5,23 @@ category: productivity
 port: 8085
 
 integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
   database:
     required: true
     multi: false
     compatible:
       - app: postgres
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
         default: true
 
 healthCheck:
