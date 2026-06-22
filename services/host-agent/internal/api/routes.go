@@ -86,6 +86,13 @@ func (s *Server) setupRoutes() {
 				r.Get("/layout", s.handleGetLayout)
 				r.Put("/layout", s.handleSetLayout)
 			})
+
+			// Sharing endpoints
+			r.Route("/sharing", func(r chi.Router) {
+				r.Post("/invites", s.handleCreateInvite)
+				r.Get("/shares", s.handleListShares)
+				r.Delete("/shares/{id}", s.handleRevokeShare)
+			})
 		})
 
 		// Any unmatched /api/** path returns JSON 404, never HTML

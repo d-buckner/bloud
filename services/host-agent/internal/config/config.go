@@ -36,6 +36,8 @@ type Config struct {
 	LDAPBindPassword string
 	// Tailscale auth key for sidecar containers (empty = sharing disabled)
 	TSAuthKey string
+	// HostLabel is the display name for this host in invite tokens (e.g. "Alice's Server")
+	HostLabel string
 	// PostgresPassword is the resolved password for the shared Postgres instance.
 	// Exposed so bootstrapInfra can template it into the container spec.
 	PostgresPassword string
@@ -105,6 +107,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       ldapBindPassword,
 		TSAuthKey:              getEnv("BLOUD_TS_AUTHKEY", ""),
+		HostLabel:              getEnv("BLOUD_HOST_LABEL", hostname()),
 		PostgresPassword:       postgresPassword,
 		Secrets:                secretsMgr,
 	}
@@ -156,6 +159,15 @@ func getEnvOrSecret(envKey, secretValue, fallback string) string {
 		return secretValue
 	}
 	return fallback
+}
+
+// hostname returns the OS hostname or "bloud" as fallback.
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "bloud"
+	}
+	return h
 }
 
 // getEnvAsInt reads an environment variable as an integer or returns a default value

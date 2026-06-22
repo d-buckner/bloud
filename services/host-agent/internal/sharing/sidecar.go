@@ -12,10 +12,16 @@ import (
 	container "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
 )
 
+// ContainerExec runs commands inside containers (satisfied by podman.Client).
+type ContainerExec interface {
+	Exec(ctx context.Context, containerName string, cmd []string) ([]byte, error)
+}
+
 // SidecarManagerInterface allows the orchestrator to optionally manage
 // Tailscale sidecar containers for app sharing.
 type SidecarManagerInterface interface {
 	EnsureRunning(ctx context.Context, appName string, appPort int) error
+	GetAddr(ctx context.Context, appName string) (string, error)
 	Stop(ctx context.Context, appName string) error
 }
 
@@ -26,6 +32,7 @@ type SidecarManagerInterface interface {
 // so systemd handles lifecycle coupling automatically.
 type SidecarManager struct {
 	containers container.Runtime
+	exec       ContainerExec
 	authKey    string
 	network    string
 	dataDir    string // root data dir — serve configs go under {dataDir}/{appName}/ts-serve/
@@ -33,12 +40,15 @@ type SidecarManager struct {
 }
 
 // NewSidecarManager creates a SidecarManager.
+//   - containers: runtime for creating/removing sidecar containers.
+//   - exec: runs commands inside running containers (for tailscale CLI calls).
 //   - authKey: Tailscale auth key for sidecar containers to join the tailnet.
 //   - network: container network sidecars join (typically "apps-net").
 //   - dataDir: root data directory for storing serve config files.
-func NewSidecarManager(containers container.Runtime, authKey, network, dataDir string, logger *slog.Logger) *SidecarManager {
+func NewSidecarManager(containers container.Runtime, exec ContainerExec, authKey, network, dataDir string, logger *slog.Logger) *SidecarManager {
 	return &SidecarManager{
 		containers: containers,
+		exec:       exec,
 		authKey:    authKey,
 		network:    network,
 		dataDir:    dataDir,
@@ -105,6 +115,20 @@ func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appP
 	}
 
 	return nil
+}
+
+// GetAddr returns the Tailscale IPv4 address of the sidecar container.
+func (m *SidecarManager) GetAddr(ctx context.Context, appName string) (string, error) {
+	name := SidecarContainerName(appName)
+	out, err := m.exec.Exec(ctx, name, []string{"tailscale", "ip", "--4"})
+	if err != nil {
+		return "", fmt.Errorf("get tailscale addr for %s: %w", name, err)
+	}
+	addr := strings.TrimSpace(string(out))
+	if addr == "" {
+		return "", fmt.Errorf("sidecar %s has no tailscale address", name)
+	}
+	return addr, nil
 }
 
 // Stop removes the sidecar container for the given app. Ignoring

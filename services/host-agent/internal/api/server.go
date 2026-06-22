@@ -41,6 +41,9 @@ type Server struct {
 	appHub            *AppEventHub
 	orchestrator      orchestrator.AppOrchestrator
 	reconciler        *orchestrator.Reconciler
+	shareStore        store.ShareStoreInterface
+	remoteAppStore    store.RemoteAppStoreInterface
+	sidecar           sharing.SidecarManagerInterface
 	authentikClient   *authentik.Client
 	authConfig        *AuthConfig
 	knownRedirectURIs sync.Map // tracks redirect URIs already registered in Authentik
@@ -66,6 +69,8 @@ type ServerConfig struct {
 	AuthentikPort   int    // Authentik API port (default 9001)
 	// Tailscale auth key for sharing sidecars (empty = sharing disabled)
 	TSAuthKey string
+	// HostLabel is the display name for this host in invite tokens
+	HostLabel string
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
 	// LDAP configuration
@@ -126,14 +131,16 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	}
 
 	s := &Server{
-		cfg:             cfg,
-		router:          chi.NewRouter(),
-		db:              db,
-		catalog:         catalog.NewMemoryCache(),
-		appStore:        appStore,
-		prefsStore:      prefsStore,
-		sessionStore:    sessionStore,
-		appHub:          appHub,
+		cfg:            cfg,
+		router:         chi.NewRouter(),
+		db:             db,
+		catalog:        catalog.NewMemoryCache(),
+		appStore:       appStore,
+		prefsStore:     prefsStore,
+		sessionStore:   sessionStore,
+		appHub:         appHub,
+		shareStore:     store.NewShareStore(db),
+		remoteAppStore: store.NewRemoteAppStore(db),
 		authentikClient: authentikClient,
 		logger:          logger,
 		secrets:         secretsMgr,
@@ -208,7 +215,16 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 
 		var sidecar sharing.SidecarManagerInterface
 		if s.cfg.TSAuthKey != "" {
-			sidecar = sharing.NewSidecarManager(runtime, s.cfg.TSAuthKey, "apps-net", s.cfg.DataDir, s.logger)
+			// podman.Client satisfies sharing.ContainerExec for running
+			// tailscale CLI commands inside sidecar containers.
+			var exec sharing.ContainerExec
+			if pc, err := podman.NewClient(); err == nil {
+				exec = pc
+			} else {
+				s.logger.Warn("podman client unavailable for sidecar exec", "error", err)
+			}
+			sidecar = sharing.NewSidecarManager(runtime, exec, s.cfg.TSAuthKey, "apps-net", s.cfg.DataDir, s.logger)
+			s.sidecar = sidecar
 			s.logger.Info("tailscale sharing enabled")
 		}
 

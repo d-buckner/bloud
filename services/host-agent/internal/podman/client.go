@@ -129,6 +129,19 @@ func defaultSocketPath() string {
 	return fmt.Sprintf("/run/user/%d/podman/podman.sock", uid)
 }
 
+// Exec runs a command inside a running container and returns the output.
+func (c *Client) Exec(ctx context.Context, containerName string, cmd []string) ([]byte, error) {
+	if c.runner == nil {
+		c.runner = execRunner{}
+	}
+	args := append([]string{"exec", containerName}, cmd...)
+	out, err := c.runner.Run(ctx, "podman", args...)
+	if err != nil {
+		return nil, fmt.Errorf("podman exec %s %v: %w: %s", containerName, cmd, err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
 // EnsureNetwork creates a network if it does not already exist.
 func (c *Client) EnsureNetwork(ctx context.Context, name string) error {
 	if !validPodmanName(name) {
