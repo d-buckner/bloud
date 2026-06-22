@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
@@ -79,9 +80,17 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		nodes = append(nodes, node)
 
-		// Derive edges: use runtime IntegrationConfig first, fall back to catalog defaults
+		// Derive edges: use runtime IntegrationConfig first, fall back to catalog defaults.
+		// Sort integration labels for deterministic edge ordering.
 		if def, ok := graphDefs[app.Name]; ok {
-			for label, integration := range def.Integrations {
+			labels := make([]string, 0, len(def.Integrations))
+			for label := range def.Integrations {
+				labels = append(labels, label)
+			}
+			sort.Strings(labels)
+
+			for _, label := range labels {
+				integration := def.Integrations[label]
 				// Check if user made a runtime choice
 				if target, chosen := app.IntegrationConfig[label]; chosen {
 					edges = append(edges, graphEdge{
@@ -105,10 +114,16 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// No catalog entry — use IntegrationConfig directly
-			for label, target := range app.IntegrationConfig {
+			labels := make([]string, 0, len(app.IntegrationConfig))
+			for label := range app.IntegrationConfig {
+				labels = append(labels, label)
+			}
+			sort.Strings(labels)
+
+			for _, label := range labels {
 				edges = append(edges, graphEdge{
 					Source: app.Name,
-					Target: target,
+					Target: app.IntegrationConfig[label],
 					Label:  label,
 				})
 			}

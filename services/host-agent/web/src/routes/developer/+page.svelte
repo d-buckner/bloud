@@ -13,7 +13,6 @@
 
 	let loading = $state(true);
 	let error = $state('');
-	let refreshing = $state(false);
 	let nodes = $state<Node[]>([]);
 	let edges = $state<Edge[]>([]);
 
@@ -92,11 +91,6 @@
 		return () => clearInterval(interval);
 	});
 
-	async function handleRefresh() {
-		refreshing = true;
-		await load();
-		refreshing = false;
-	}
 </script>
 
 <svelte:head>
@@ -110,9 +104,6 @@
 				<h1>Developer</h1>
 				<p class="subtitle">Dependency graph &amp; runtime status</p>
 			</div>
-			<button class="btn btn-secondary" onclick={handleRefresh} disabled={refreshing || loading}>
-				{refreshing ? 'Refreshing...' : 'Refresh'}
-			</button>
 		</div>
 	</header>
 
@@ -191,30 +182,4 @@
 		overflow: hidden;
 	}
 
-	/* Button */
-	.btn {
-		padding: var(--space-sm) var(--space-lg);
-		font-family: var(--font-serif);
-		font-size: 0.9375rem;
-		border: 1px solid transparent;
-		border-radius: var(--radius-md);
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.btn-secondary {
-		background: var(--color-bg-elevated);
-		border-color: var(--color-border);
-		color: var(--color-text-secondary);
-	}
-
-	.btn-secondary:hover:not(:disabled) {
-		background: var(--color-bg-subtle);
-		color: var(--color-text);
-	}
 </style>

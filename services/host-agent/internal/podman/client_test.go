@@ -25,7 +25,7 @@ func setupMockPodman(t *testing.T, handler http.Handler) (string, func()) {
 	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 
-	server := &http.Server{Handler: handler}
+	server := &http.Server{Handler: http.StripPrefix("/v5.0.0", handler)}
 	go server.Serve(listener)
 
 	cleanup := func() {

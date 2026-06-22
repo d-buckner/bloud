@@ -412,8 +412,9 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 }
 
 func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	// The host doesn't matter for Unix sockets, but we need a valid URL
-	url := "http://podman" + path
+	// The host doesn't matter for Unix sockets, but we need a valid URL.
+	// Podman 5.x requires a versioned API path prefix.
+	url := "http://podman/v5.0.0" + path
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
