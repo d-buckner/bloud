@@ -85,12 +85,17 @@ func (g *Generator) generateConfig(apps []*catalog.App) string {
 	b.WriteString("  routers:\n")
 	for _, app := range routableApps {
 		g.writeRouter(&b, app, g.authentikEnabled)
-		// Forward-auth apps need a second, higher-priority router that passes
-		// /outpost.goauthentik.io/ requests directly to Authentik. Without this,
-		// the OAuth callback (code exchange) gets intercepted by the forward-auth
-		// middleware and the embedded outpost returns 400.
 		if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
+			// Forward-auth apps need a second, higher-priority router that passes
+			// /outpost.goauthentik.io/ requests directly to Authentik. Without this,
+			// the OAuth callback (code exchange) gets intercepted by the forward-auth
+			// middleware and the embedded outpost returns 400.
 			g.writeOutpostRouter(&b, app)
+			// Native-client API paths bypass forward-auth so apps like Navidrome can
+			// serve Subsonic clients using their own credential scheme.
+			for _, path := range app.SSO.BypassPaths {
+				g.writeBypassRouter(&b, app, path)
+			}
 		}
 	}
 
@@ -213,6 +218,20 @@ func (g *Generator) writeHeadersMiddleware(b *strings.Builder, name string, head
 	for _, headerName := range headerNames {
 		b.WriteString(fmt.Sprintf("          %s: \"%s\"\n", headerName, headers[headerName]))
 	}
+}
+
+// writeBypassRouter writes a high-priority router that routes a specific path prefix
+// directly to the app service, bypassing forward-auth. Used for native-client API
+// paths (e.g. /rest/ for Subsonic clients) that carry their own credentials.
+func (g *Generator) writeBypassRouter(b *strings.Builder, app *catalog.App, path string) {
+	hostRule := fmt.Sprintf("%s.%s", app.Name, g.baseDomain)
+	// Derive a safe router name from the path: strip slashes, replace / with -.
+	sanitized := strings.Trim(path, "/")
+	sanitized = strings.ReplaceAll(sanitized, "/", "-")
+	b.WriteString(fmt.Sprintf("    %s-bypass-%s:\n", app.Name, sanitized))
+	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`) && PathPrefix(`%s`)\"\n", hostRule, path))
+	b.WriteString(fmt.Sprintf("      service: %s\n", app.Name))
+	b.WriteString("      priority: 10\n")
 }
 
 // writeOutpostRouter writes a high-priority router that passes /outpost.goauthentik.io/

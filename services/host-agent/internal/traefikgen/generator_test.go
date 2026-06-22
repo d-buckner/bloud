@@ -395,6 +395,91 @@ func TestGenerator_Generate_ForwardAuth(t *testing.T) {
 	}
 }
 
+func TestGenerator_Generate_ForwardAuth_BypassPaths(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	apps := []*catalog.App{
+		{
+			Name:     "navidrome",
+			Port:     4533,
+			IsSystem: false,
+			SSO: catalog.SSO{
+				Strategy:    "forward-auth",
+				BypassPaths: []string{"/rest/"},
+			},
+		},
+	}
+
+	g := NewGenerator(configPath, "localhost")
+	g.SetAuthentikEnabled(true)
+
+	if err := g.Generate(apps); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	contentStr := string(content)
+
+	// Bypass router must exist with the right rule and priority
+	if !strings.Contains(contentStr, "navidrome-bypass-rest:") {
+		t.Error("Expected navidrome-bypass-rest router")
+	}
+	if !strings.Contains(contentStr, "PathPrefix(`/rest/`)") {
+		t.Error("Expected PathPrefix(/rest/) in bypass router rule")
+	}
+	if !strings.Contains(contentStr, "priority: 10") {
+		t.Error("Expected priority: 10 on bypass router")
+	}
+
+	// Bypass router must route to the app service, not the outpost
+	if !strings.Contains(contentStr, "service: navidrome") {
+		t.Error("Expected bypass router to point to navidrome service")
+	}
+
+	// The main router still has forward-auth
+	if !strings.Contains(contentStr, "- navidrome-forwardauth") {
+		t.Error("Main router should still have forwardauth middleware")
+	}
+}
+
+func TestGenerator_Generate_ForwardAuth_BypassPaths_AuthentikDisabled(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	apps := []*catalog.App{
+		{
+			Name:     "navidrome",
+			Port:     4533,
+			IsSystem: false,
+			SSO: catalog.SSO{
+				Strategy:    "forward-auth",
+				BypassPaths: []string{"/rest/"},
+			},
+		},
+	}
+
+	g := NewGenerator(configPath, "localhost")
+	// Authentik disabled — no forward-auth active, so bypass routers are unnecessary
+
+	if err := g.Generate(apps); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	// No bypass routers emitted when Authentik is off
+	if strings.Contains(string(content), "bypass") {
+		t.Error("Should not emit bypass routers when Authentik is disabled")
+	}
+}
+
 func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")

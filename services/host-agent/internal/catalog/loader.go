@@ -85,6 +85,9 @@ func (l *Loader) validateApp(app *App) error {
 	if app.Category == "" {
 		return fmt.Errorf("category is required")
 	}
+	if len(app.SSO.BypassPaths) > 0 && app.SSO.Strategy != "forward-auth" {
+		return fmt.Errorf("sso.bypassPaths is only valid for strategy: forward-auth (got %q)", app.SSO.Strategy)
+	}
 	return nil
 }
 

@@ -6,9 +6,14 @@ port: 4533
 
 integrations: {}
 
-# SSO via Authentik forward auth; Subsonic API clients use their own token auth
+# SSO via Authentik forward auth; Subsonic API clients use their own token auth.
+# /rest/ bypasses forward-auth so Subsonic clients can authenticate directly
+# against Navidrome using the Subsonic credential scheme (accepted trade-off —
+# the Subsonic protocol has no mechanism for delegating auth to a third party).
 sso:
   strategy: forward-auth
+  bypassPaths:
+    - /rest/
 
 healthCheck:
   path: /ping

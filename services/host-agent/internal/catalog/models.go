@@ -58,7 +58,8 @@ type Resources struct {
 
 // SSO defines SSO integration configuration
 type SSO struct {
-	Strategy     string `yaml:"strategy" json:"strategy"`               // native-oidc, forward-auth, none
+	Strategy     string   `yaml:"strategy" json:"strategy"`                         // native-oidc, forward-auth, none
+	BypassPaths  []string `yaml:"bypassPaths,omitempty" json:"bypassPaths,omitempty"` // Paths exempt from forward-auth (forward-auth only)
 	CallbackPath string `yaml:"callbackPath" json:"callbackPath"`       // e.g. /oauth2/oidc/callback
 	ProviderName string `yaml:"providerName" json:"providerName"`       // e.g. "Bloud SSO"
 	UserCreation bool   `yaml:"userCreation" json:"userCreation"`       // Auto-create users on first login
