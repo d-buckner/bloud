@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const baseURL = process.env.BLOUD_URL ?? 'http://localhost:3000';
+const baseURL = process.env.BLOUD_URL ?? 'http://localhost:8080';
 
 export default defineConfig({
   testDir: './tests',

@@ -16,6 +16,7 @@ type InstalledApp struct {
 	Status            string            `json:"status"`
 	Port              int               `json:"port,omitempty"`
 	IsSystem          bool              `json:"is_system"`
+	TailnetID         string            `json:"tailnet_id,omitempty"`
 	IntegrationConfig map[string]string `json:"integration_config,omitempty"`
 	InstalledAt       time.Time         `json:"installed_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
@@ -47,7 +48,7 @@ func (s *AppStore) notify() {
 // GetAll returns all installed apps
 func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, display_name, version, status, port, is_system, integration_config, installed_at, updated_at
+		SELECT id, name, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
 		FROM apps
 		ORDER BY name
 	`)
@@ -71,7 +72,7 @@ func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 // GetByName returns an installed app by name
 func (s *AppStore) GetByName(name string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
-		SELECT id, name, display_name, version, status, port, is_system, integration_config, installed_at, updated_at
+		SELECT id, name, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
 		FROM apps
 		WHERE name = ?
 	`, name)
@@ -190,6 +191,15 @@ func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
 	return nil
 }
 
+// SetTailnetID updates the tailnet_id for an installed app
+func (s *AppStore) SetTailnetID(name, tailnetID string) error {
+	_, err := s.db.Exec(`UPDATE apps SET tailnet_id = ? WHERE name = ?`, tailnetID, name)
+	if err != nil {
+		return fmt.Errorf("failed to set tailnet_id: %w", err)
+	}
+	return nil
+}
+
 // UpdateDisplayName updates the display name of an installed app
 func (s *AppStore) UpdateDisplayName(name, displayName string) error {
 	result, err := s.db.Exec(`
@@ -286,6 +296,7 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 		&app.Status,
 		&port,
 		&app.IsSystem,
+		&app.TailnetID,
 		&configJSON,
 		&installedAt,
 		&updatedAt,
@@ -324,6 +335,7 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 		&app.Status,
 		&port,
 		&app.IsSystem,
+		&app.TailnetID,
 		&configJSON,
 		&installedAt,
 		&updatedAt,

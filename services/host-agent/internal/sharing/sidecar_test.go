@@ -46,7 +46,7 @@ func (f *FakeRuntime) Inspect(_ context.Context, _ string) (container.State, err
 
 func newTestManager(t *testing.T, rt *FakeRuntime) *SidecarManager {
 	t.Helper()
-	return NewSidecarManager(rt, nil, "tskey-auth-test", "apps-net", t.TempDir(), discardLogger())
+	return NewSidecarManager(rt, nil, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
 }
 
 func discardLogger() *slog.Logger {
@@ -93,7 +93,7 @@ func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 func TestEnsureRunning_WritesServeConfigJSON(t *testing.T) {
 	rt := &FakeRuntime{}
 	dataDir := t.TempDir()
-	mgr := NewSidecarManager(rt, nil, "tskey-auth-test", "apps-net", dataDir, discardLogger())
+	mgr := NewSidecarManager(rt, nil, func() string { return "tskey-auth-test" }, "apps-net", dataDir, discardLogger())
 
 	err := mgr.EnsureRunning(context.Background(), "jellyfin", 8096)
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestStop_RemovesContainer(t *testing.T) {
 
 func TestStop_IgnoresNotFound(t *testing.T) {
 	rt := &notFoundRuntime{}
-	mgr := NewSidecarManager(rt, nil, "tskey-auth-test", "apps-net", t.TempDir(), discardLogger())
+	mgr := NewSidecarManager(rt, nil, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
 
 	err := mgr.Stop(context.Background(), "navidrome")
 	require.NoError(t, err)
@@ -163,7 +163,7 @@ func (f *fakeExec) Exec(_ context.Context, _ string, _ []string) ([]byte, error)
 func TestGetAddr_Success(t *testing.T) {
 	rt := &FakeRuntime{}
 	exec := &fakeExec{output: []byte("100.64.1.2\n")}
-	mgr := NewSidecarManager(rt, exec, "tskey-auth-test", "apps-net", t.TempDir(), discardLogger())
+	mgr := NewSidecarManager(rt, exec, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
 
 	addr, err := mgr.GetAddr(context.Background(), "navidrome")
 	require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestGetAddr_Success(t *testing.T) {
 func TestGetAddr_ExecError(t *testing.T) {
 	rt := &FakeRuntime{}
 	exec := &fakeExec{err: fmt.Errorf("container not running")}
-	mgr := NewSidecarManager(rt, exec, "tskey-auth-test", "apps-net", t.TempDir(), discardLogger())
+	mgr := NewSidecarManager(rt, exec, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
 
 	_, err := mgr.GetAddr(context.Background(), "navidrome")
 	require.Error(t, err)
@@ -183,7 +183,7 @@ func TestGetAddr_ExecError(t *testing.T) {
 func TestGetAddr_EmptyOutput(t *testing.T) {
 	rt := &FakeRuntime{}
 	exec := &fakeExec{output: []byte("")}
-	mgr := NewSidecarManager(rt, exec, "tskey-auth-test", "apps-net", t.TempDir(), discardLogger())
+	mgr := NewSidecarManager(rt, exec, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
 
 	_, err := mgr.GetAddr(context.Background(), "navidrome")
 	require.Error(t, err)

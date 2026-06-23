@@ -55,6 +55,11 @@ func (m *MockAppStore) UpdateIntegrationConfig(name string, config map[string]st
 	return args.Error(0)
 }
 
+func (m *MockAppStore) SetTailnetID(name, tailnetID string) error {
+	args := m.Called(name, tailnetID)
+	return args.Error(0)
+}
+
 func (m *MockAppStore) UpdateDisplayName(name, displayName string) error {
 	args := m.Called(name, displayName)
 	return args.Error(0)

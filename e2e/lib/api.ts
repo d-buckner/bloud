@@ -1,4 +1,5 @@
-const BASE_URL = process.env.BLOUD_URL ?? 'http://localhost:3000';
+// API calls go directly to the host-agent (loopback bypass, no auth needed).
+const BASE_URL = process.env.BLOUD_API_URL ?? 'http://localhost:3000';
 
 interface InstalledApp {
   name: string;

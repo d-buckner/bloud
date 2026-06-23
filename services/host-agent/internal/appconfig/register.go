@@ -4,8 +4,7 @@ package appconfig
 import (
 	"codeberg.org/d-buckner/bloud-v3/apps/authentik"
 	"codeberg.org/d-buckner/bloud-v3/apps/jellyfin"
-	navidrome "codeberg.org/d-buckner/bloud-v3/apps/navidrome"
-	"codeberg.org/d-buckner/bloud-v3/apps/qbittorrent"
+	"codeberg.org/d-buckner/bloud-v3/apps/navidrome"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/web/static"
@@ -25,6 +24,5 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 		static.AuthentikBrandingCSS,
 	).WithBaseURL(cfg.SSOBaseURL))
 	registry.Register(navidrome.NewConfigurator(4533, cfg.SSOAuthentikURL, cfg.Secrets))
-	registry.Register(qbittorrent.NewConfigurator(8086))
 	registry.Register(jellyfin.NewConfigurator(8096))
 }

@@ -9,25 +9,27 @@ test.describe('jellyfin (LDAP)', () => {
   test('LDAP login reaches Jellyfin dashboard', async ({ authenticatedPage }) => {
     const page = authenticatedPage;
 
-    // Open Jellyfin from the Bloud home screen
+    // Open Jellyfin from the Bloud home screen — opens in a new tab
     await page.goto('/');
+    const jellyfinPagePromise = page.waitForEvent('popup');
     await page.getByText('Jellyfin').click();
-    const appFrame = page.frameLocator('iframe');
+    const jellyfinPage = await jellyfinPagePromise;
 
-    // Wait for the Jellyfin login page inside the iframe
-    await expect(appFrame.locator('#loginPage')).toBeVisible({ timeout: 60_000 });
+    // Wait for the Jellyfin login page in the new tab
+    await jellyfinPage.waitForLoadState();
+    await expect(jellyfinPage.locator('#loginPage')).toBeVisible({ timeout: 60_000 });
 
     // LDAP users don't appear in the public user list — use manual login
-    const manualLoginBtn = appFrame.locator('.btnManualLogin');
+    const manualLoginBtn = jellyfinPage.locator('.btnManualLogin');
     if (await manualLoginBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await manualLoginBtn.click();
     }
 
-    await appFrame.locator('#txtManualName').fill(TEST_CREDS.USERNAME);
-    await appFrame.locator('#txtManualPassword').fill(TEST_CREDS.PASSWORD);
-    await appFrame.getByRole('button', { name: 'Sign in' }).click();
+    await jellyfinPage.locator('#txtManualName').fill(TEST_CREDS.USERNAME);
+    await jellyfinPage.locator('#txtManualPassword').fill(TEST_CREDS.PASSWORD);
+    await jellyfinPage.getByRole('button', { name: 'Sign in' }).click();
 
     // Jellyfin dashboard should load
-    await expect(appFrame.locator('#indexPage')).toBeVisible({ timeout: 30_000 });
+    await expect(jellyfinPage.locator('#indexPage')).toBeVisible({ timeout: 30_000 });
   });
 });

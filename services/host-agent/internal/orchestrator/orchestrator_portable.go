@@ -34,9 +34,10 @@ type PortableConfig struct {
 	Registry     configurator.RegistryInterface
 	TraefikGen   traefikgen.GeneratorInterface
 	LDAPOutput   *configurator.LDAPOutput
-	SSO          SSOProvisioner                // optional; nil when Authentik is not available
-	Sidecar      sharing.SidecarManagerInterface // optional; nil when Tailscale auth key is not set
-	SSOBaseURL   string                         // base URL for building app external URLs (e.g. "http://localhost:8080")
+	SSO             SSOProvisioner                // optional; nil when Authentik is not available
+	Sidecar         sharing.SidecarManagerInterface // optional; nil when Tailscale auth key is not set
+	ActiveTailnetID func() string                  // returns the active tailnet connection ID (empty if none)
+	SSOBaseURL      string                         // base URL for building app external URLs (e.g. "http://localhost:8080")
 	DataDir      string
 	TemplateVars map[string]string // extra variables for container spec rendering (e.g. postgresPassword)
 	Logger       *slog.Logger
@@ -51,9 +52,10 @@ type PortableOrchestrator struct {
 	registry     configurator.RegistryInterface
 	traefikGen   traefikgen.GeneratorInterface
 	ldapOutput   *configurator.LDAPOutput
-	sso          SSOProvisioner
-	sidecar      sharing.SidecarManagerInterface
-	ssoBaseURL   string
+	sso             SSOProvisioner
+	sidecar         sharing.SidecarManagerInterface
+	activeTailnetID func() string
+	ssoBaseURL      string
 	dataDir      string
 	templateVars map[string]string
 	logger       *slog.Logger
@@ -69,9 +71,10 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		registry:     cfg.Registry,
 		traefikGen:   cfg.TraefikGen,
 		ldapOutput:   cfg.LDAPOutput,
-		sso:          cfg.SSO,
-		sidecar:      cfg.Sidecar,
-		ssoBaseURL:   cfg.SSOBaseURL,
+		sso:             cfg.SSO,
+		sidecar:         cfg.Sidecar,
+		activeTailnetID: cfg.ActiveTailnetID,
+		ssoBaseURL:      cfg.SSOBaseURL,
 		dataDir:      cfg.DataDir,
 		templateVars: cfg.TemplateVars,
 		logger:       cfg.Logger,
@@ -248,6 +251,7 @@ func (o *PortableOrchestrator) Uninstall(ctx context.Context, req UninstallReque
 		if err := o.sidecar.Stop(ctx, req.App); err != nil {
 			o.logger.Warn("failed to stop sidecar", "app", req.App, "error", err)
 		}
+		o.appStore.SetTailnetID(req.App, "")
 	}
 
 	if err := o.containers.Remove(ctx, PortableContainerName(app)); err != nil {
@@ -358,6 +362,10 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 	if o.sidecar != nil && !app.IsSystem {
 		if err := o.sidecar.EnsureRunning(ctx, app.Name, app.Port); err != nil {
 			o.logger.Warn("failed to start sidecar (sharing unavailable for this app)", "app", appName, "error", err)
+		} else if o.activeTailnetID != nil {
+			if tid := o.activeTailnetID(); tid != "" {
+				o.appStore.SetTailnetID(appName, tid)
+			}
 		}
 	}
 

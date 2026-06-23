@@ -33,7 +33,7 @@ type SidecarManagerInterface interface {
 type SidecarManager struct {
 	containers container.Runtime
 	exec       ContainerExec
-	authKey    string
+	authKeyFn  func() string // called at sidecar-creation time to get the current auth key
 	network    string
 	dataDir    string // root data dir — serve configs go under {dataDir}/{appName}/ts-serve/
 	logger     *slog.Logger
@@ -42,14 +42,14 @@ type SidecarManager struct {
 // NewSidecarManager creates a SidecarManager.
 //   - containers: runtime for creating/removing sidecar containers.
 //   - exec: runs commands inside running containers (for tailscale CLI calls).
-//   - authKey: Tailscale auth key for sidecar containers to join the tailnet.
+//   - authKeyFn: returns the current Tailscale auth key (called at sidecar-creation time).
 //   - network: container network sidecars join (typically "apps-net").
 //   - dataDir: root data directory for storing serve config files.
-func NewSidecarManager(containers container.Runtime, exec ContainerExec, authKey, network, dataDir string, logger *slog.Logger) *SidecarManager {
+func NewSidecarManager(containers container.Runtime, exec ContainerExec, authKeyFn func() string, network, dataDir string, logger *slog.Logger) *SidecarManager {
 	return &SidecarManager{
 		containers: containers,
 		exec:       exec,
-		authKey:    authKey,
+		authKeyFn:  authKeyFn,
 		network:    network,
 		dataDir:    dataDir,
 		logger:     logger,
@@ -66,6 +66,11 @@ func SidecarContainerName(appName string) string {
 // pre-generated JSON file, and DependsOn binds the sidecar's systemd unit
 // to the app's unit so they share lifecycle.
 func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appPort int) error {
+	authKey := m.authKeyFn()
+	if authKey == "" {
+		return fmt.Errorf("no tailnet connection configured")
+	}
+
 	name := SidecarContainerName(appName)
 	appService := fmt.Sprintf("apps-%s.service", appName)
 
@@ -89,7 +94,7 @@ func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appP
 		Image:   "docker.io/tailscale/tailscale:latest",
 		Network: m.network,
 		Environment: map[string]string{
-			"TS_AUTHKEY":      m.authKey,
+			"TS_AUTHKEY":      authKey,
 			"TS_HOSTNAME":     name,
 			"TS_USERSPACE":    "true",
 			"TS_EXTRA_ARGS":   "--accept-routes",

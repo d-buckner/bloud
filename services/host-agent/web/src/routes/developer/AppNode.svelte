@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
-	import type { SidecarStatus } from '$lib/clients/developerClient';
 
 	interface NodeData {
 		displayName: string;
 		status: string;
 		isSystem: boolean;
-		sidecar: SidecarStatus | null;
+		nodeType: string;
 		hasOutgoing: boolean;
 		hasIncoming: boolean;
 	}
@@ -16,6 +15,7 @@
 	function statusColor(status: string): string {
 		switch (status) {
 			case 'running': return '#16a34a';
+			case 'active': return '#16a34a';
 			case 'error':
 			case 'exited':
 			case 'dead': return '#dc2626';
@@ -28,28 +28,26 @@
 		}
 	}
 
-	function sidecarColor(state: string): string {
-		if (state === 'running') return '#16a34a';
-		return '#dc2626';
-	}
+	const isConnection = $derived(data.nodeType === 'connection');
+	const label = $derived(data.displayName || window.location.hostname);
 </script>
 
 {#if data.hasIncoming}
 	<Handle type="target" position={Position.Top} />
 {/if}
 
-<div class="app-node" class:system={data.isSystem}>
+<div class="app-node" class:system={data.isSystem} class:connection={isConnection}>
 	<div class="node-header">
-		<span class="node-name">{data.displayName}</span>
-		{#if data.sidecar}
-			<span class="sidecar-badge" style="background: {sidecarColor(data.sidecar.state)}" title="Tailscale sidecar: {data.sidecar.status}">TS</span>
-		{/if}
+		<span class="node-name">{label}</span>
 	</div>
 	<div class="node-footer">
 		<span class="status-dot" style="background: {statusColor(data.status)}"></span>
 		<span class="status-text">{data.status}</span>
 		{#if data.isSystem}
 			<span class="system-tag">system</span>
+		{/if}
+		{#if isConnection}
+			<span class="system-tag">connection</span>
 		{/if}
 	</div>
 </div>
@@ -72,6 +70,12 @@
 		border-style: dashed;
 	}
 
+	.app-node.connection {
+		border-color: #6366f1;
+		border-width: 2px;
+		background: #eef2ff;
+	}
+
 	.node-header {
 		display: flex;
 		align-items: center;
@@ -83,16 +87,6 @@
 		font-weight: 600;
 		font-size: 0.8125rem;
 		color: var(--color-text, #1c1917);
-	}
-
-	.sidecar-badge {
-		font-size: 0.5625rem;
-		font-weight: 700;
-		color: white;
-		padding: 1px 4px;
-		border-radius: 3px;
-		line-height: 1;
-		letter-spacing: 0.02em;
 	}
 
 	.node-footer {

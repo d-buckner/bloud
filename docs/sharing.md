@@ -338,6 +338,34 @@ Out of scope for MVP:
 
 ---
 
+## Multi-Tailnet Architecture (Future)
+
+MVP supports a single tailnet connection. The `tailnet_connections` table supports
+multiple rows, but the orchestrator uses `GetActive()` which returns the first active.
+
+Future: each app gets multiple sidecars, one per tailnet it's shared on. `shares`
+gains a `tailnet_id` FK. `SidecarManager` creates sidecars per (app, tailnet) pair.
+Node naming becomes `ts-{appName}-{tailnetId[:8]}`.
+
+The `tailnet_connections` table schema:
+
+```sql
+CREATE TABLE IF NOT EXISTS tailnet_connections (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    type        TEXT NOT NULL,           -- 'tailscale' or 'headscale'
+    auth_key    TEXT NOT NULL,
+    control_url TEXT NOT NULL DEFAULT '', -- only for headscale
+    status      TEXT NOT NULL DEFAULT 'active',
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+```
+
+Connections are managed via the Settings page (`/settings`) or auto-migrated from the
+`BLOUD_TS_AUTHKEY` environment variable on first startup.
+
+---
+
 ## Open Questions
 
 1. **Credential storage encryption** — what key protects `encrypted_cred` on the guest

@@ -284,6 +284,72 @@ that same-origin shared-login experience.
 Native clients may use their application's documented native authentication flow. Each
 application support contract must distinguish browser shared login from native-client login.
 
+### Developer Graph
+
+The developer graph is a live dependency visualization exposed at `/api/system/developer`
+and rendered in the dashboard. It shows installed applications, their integration edges,
+and external connection points.
+
+#### Node Types
+
+The graph contains two node types:
+
+- **App nodes** represent installed applications (both user-facing and system
+  infrastructure). Each carries identity, display name, runtime status, and a system flag.
+- **Connection nodes** represent ingress points through which users reach applications.
+  Connection nodes sit outside the app subgraph and have edges pointing inward to the
+  applications they serve.
+
+Current connection node types:
+
+| Connection | Node ID | Source |
+|---|---|---|
+| Local access | `conn:local` | Synthetic; present when Traefik is installed. Display name is the browser's `window.location.hostname`. Routes to Traefik. |
+| Tailnet | `conn:tailnet:<id>` | One per active tailnet connection. Display name and status from `tailnet_connections` store. Edges point to each app whose `tailnet_id` matches. |
+
+#### Edge Derivation
+
+Integration edges are derived from the app's `IntegrationConfig` (runtime bindings) with
+catalog defaults as fallback. Edge labels use the integration type name, with two
+exceptions:
+
+- **SSO edges** use the catalog SSO strategy as the label (`forward-auth`, `ldap`,
+  `native-oidc`) instead of the generic `sso`.
+- **Proxy edges** have reversed direction: the proxy (e.g., Traefik) is the source and
+  the proxied app is the target.
+
+Connection edges use the connection type as the label (`route` for local, `tailnet` for
+tailnet connections). Connection nodes are always the edge source; apps are the target.
+
+#### Subgraph Layout
+
+App nodes are grouped in a single subgraph. Connection nodes are positioned outside and
+above the subgraph. The frontend uses dagre for deterministic layout of app nodes within
+the subgraph, and manual positioning for connection nodes.
+
+#### Future Direction: Connection Subgraphs
+
+Connection nodes are designed to evolve into subgraphs. Each connection will eventually
+contain user nodes representing the individuals who access applications through that
+ingress point. This models the relationship between communities (local users, tailnet
+members, shared-link recipients) and the applications they can reach.
+
+Sharing within a community is bidirectional. The host shares apps outward to community
+members, and members may share their own apps back. A tailnet connection subgraph would
+contain user nodes with edges in both directions: outbound edges from local apps to
+remote users who can access them, and inbound edges from remote users' shared apps to
+the local host. This makes the developer graph a complete view of what is available
+across a community, not just what the host is serving.
+
+This future structure supports:
+
+- Per-connection access control and visibility
+- User-to-application permission edges
+- Community-scoped sharing policies
+- Bidirectional app sharing within a community
+
+The current flat connection-node model is forward-compatible with this expansion.
+
 ### Reconciliation Flow
 
 The target reconciler executes this order from durable desired state:

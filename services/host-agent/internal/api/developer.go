@@ -3,22 +3,16 @@ package api
 import (
 	"net/http"
 	"sort"
-	"strings"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 )
 
 type graphNode struct {
-	ID          string       `json:"id"`
-	DisplayName string       `json:"displayName"`
-	Status      string       `json:"status"`
-	IsSystem    bool         `json:"isSystem"`
-	Sidecar     *sidecarInfo `json:"sidecar"`
-}
-
-type sidecarInfo struct {
-	State  string `json:"state"`
-	Status string `json:"status"`
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Status      string `json:"status"`
+	IsSystem    bool   `json:"isSystem"`
+	NodeType    string `json:"nodeType"` // "app" or "connection"
 }
 
 type graphEdge struct {
@@ -32,33 +26,25 @@ type developerGraph struct {
 	Edges []graphEdge `json:"edges"`
 }
 
+// ssoEdgeLabel returns the SSO strategy (e.g. "forward-auth", "ldap") for an app,
+// falling back to "sso" if the catalog entry or strategy is unavailable.
+func (s *Server) ssoEdgeLabel(appName string) string {
+	if s.catalog == nil {
+		return "sso"
+	}
+	app, err := s.catalog.Get(appName)
+	if err != nil || app.SSO.Strategy == "" {
+		return "sso"
+	}
+	return app.SSO.Strategy
+}
+
 func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 	apps, err := s.appStore.GetAll()
 	if err != nil {
 		s.logger.Error("failed to get apps for developer graph", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to get apps")
 		return
-	}
-
-	// Build sidecar lookup from podman containers: name prefix "ts-" → sidecar info
-	sidecarMap := make(map[string]*sidecarInfo)
-	if s.podmanClient != nil {
-		containers, err := s.podmanClient.ListContainers(r.Context())
-		if err != nil {
-			s.logger.Warn("failed to list containers for sidecar status", "error", err)
-		} else {
-			for _, c := range containers {
-				for _, name := range c.Names {
-					if strings.HasPrefix(name, "ts-") {
-						appName := strings.TrimPrefix(name, "ts-")
-						sidecarMap[appName] = &sidecarInfo{
-							State:  c.State,
-							Status: c.Status,
-						}
-					}
-				}
-			}
-		}
 	}
 
 	// Build catalog integration lookup from the app graph
@@ -70,15 +56,33 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 	nodes := make([]graphNode, 0, len(apps))
 	edges := make([]graphEdge, 0)
 
+	// Track unique tailnet IDs to create connection nodes
+	tailnetIDs := make(map[string]bool)
+	hasTraefik := false
+
 	for _, app := range apps {
 		node := graphNode{
 			ID:          app.Name,
 			DisplayName: app.DisplayName,
 			Status:      app.Status,
 			IsSystem:    app.IsSystem,
-			Sidecar:     sidecarMap[app.Name],
+			NodeType:    "app",
 		}
 		nodes = append(nodes, node)
+
+		if app.Name == "traefik" {
+			hasTraefik = true
+		}
+
+		// Track tailnet connection for this app
+		if app.TailnetID != "" {
+			tailnetIDs[app.TailnetID] = true
+			edges = append(edges, graphEdge{
+				Source: "conn:tailnet:" + app.TailnetID,
+				Target: app.Name,
+				Label:  "tailnet",
+			})
+		}
 
 		// Derive edges: use runtime IntegrationConfig first, fall back to catalog defaults.
 		// Sort integration labels for deterministic edge ordering.
@@ -91,23 +95,28 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 
 			for _, label := range labels {
 				integration := def.Integrations[label]
+				edgeLabel := label
+				if label == "sso" {
+					edgeLabel = s.ssoEdgeLabel(app.Name)
+				}
+
 				// Check if user made a runtime choice
 				if target, chosen := app.IntegrationConfig[label]; chosen {
-					edges = append(edges, graphEdge{
-						Source: app.Name,
-						Target: target,
-						Label:  label,
-					})
+					edge := graphEdge{Source: app.Name, Target: target, Label: edgeLabel}
+					if label == "proxy" {
+						edge.Source, edge.Target = edge.Target, edge.Source
+					}
+					edges = append(edges, edge)
 					continue
 				}
 				// Fall back to default compatible app
 				for _, compat := range integration.Compatible {
 					if compat.Default {
-						edges = append(edges, graphEdge{
-							Source: app.Name,
-							Target: compat.App,
-							Label:  label,
-						})
+						edge := graphEdge{Source: app.Name, Target: compat.App, Label: edgeLabel}
+						if label == "proxy" {
+							edge.Source, edge.Target = edge.Target, edge.Source
+						}
+						edges = append(edges, edge)
 						break
 					}
 				}
@@ -121,13 +130,48 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 			sort.Strings(labels)
 
 			for _, label := range labels {
-				edges = append(edges, graphEdge{
-					Source: app.Name,
-					Target: app.IntegrationConfig[label],
-					Label:  label,
-				})
+				edgeLabel := label
+				if label == "sso" {
+					edgeLabel = s.ssoEdgeLabel(app.Name)
+				}
+				edge := graphEdge{Source: app.Name, Target: app.IntegrationConfig[label], Label: edgeLabel}
+				if label == "proxy" {
+					edge.Source, edge.Target = edge.Target, edge.Source
+				}
+				edges = append(edges, edge)
 			}
 		}
+	}
+
+	// Add tailnet connection nodes
+	for tailnetID := range tailnetIDs {
+		displayName := "Tailnet"
+		status := "unknown"
+		if conn, err := s.tailnetStore.GetByID(tailnetID); err == nil && conn != nil {
+			displayName = conn.Name
+			status = conn.Status
+		}
+		nodes = append(nodes, graphNode{
+			ID:          "conn:tailnet:" + tailnetID,
+			DisplayName: displayName,
+			Status:      status,
+			NodeType:    "connection",
+		})
+	}
+
+	// Add local connection node (routes through traefik)
+	if hasTraefik {
+		nodes = append(nodes, graphNode{
+			ID:          "conn:local",
+			DisplayName: "", // frontend fills from window.location.hostname
+			Status:      "active",
+			NodeType:    "connection",
+		})
+		edges = append(edges, graphEdge{
+			Source: "conn:local",
+			Target: "traefik",
+			Label:  "route",
+		})
 	}
 
 	respondJSON(w, http.StatusOK, developerGraph{

@@ -45,7 +45,16 @@ func InitDB(dataDir string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
+	// Run migrations for existing databases
+	runMigrations(db)
+
 	return db, nil
+}
+
+// runMigrations applies incremental schema changes for existing databases.
+func runMigrations(db *sql.DB) {
+	// v1: add tailnet_id to apps (ALTER TABLE ADD COLUMN fails if column already exists, ignore error)
+	db.Exec("ALTER TABLE apps ADD COLUMN tailnet_id TEXT DEFAULT ''")
 }
 
 // runSchema executes the embedded schema SQL

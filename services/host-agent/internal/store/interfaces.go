@@ -21,6 +21,9 @@ type AppStoreInterface interface {
 	// EnsureSystemApp ensures a system app (managed by the host agent) is registered with running status
 	EnsureSystemApp(name, displayName string, port int) error
 
+	// SetTailnetID updates the tailnet_id for an installed app
+	SetTailnetID(name, tailnetID string) error
+
 	// UpdateIntegrationConfig updates the integration config for an app
 	UpdateIntegrationConfig(name string, config map[string]string) error
 
@@ -68,6 +71,18 @@ type ShareStoreInterface interface {
 
 // Compile-time assertion that ShareStore implements ShareStoreInterface
 var _ ShareStoreInterface = (*ShareStore)(nil)
+
+// TailnetStoreInterface defines the interface for managing tailnet connections.
+type TailnetStoreInterface interface {
+	Create(conn TailnetConnection) error
+	GetByID(id string) (*TailnetConnection, error)
+	GetActive() (*TailnetConnection, error)
+	List() ([]*TailnetConnection, error)
+	Delete(id string) error
+}
+
+// Compile-time assertion that TailnetStore implements TailnetStoreInterface
+var _ TailnetStoreInterface = (*TailnetStore)(nil)
 
 // RemoteAppStoreInterface defines the interface for managing remote apps.
 type RemoteAppStoreInterface interface {

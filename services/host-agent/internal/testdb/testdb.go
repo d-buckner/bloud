@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS apps (
     status TEXT NOT NULL DEFAULT 'stopped',
     port INTEGER,
     is_system INTEGER NOT NULL DEFAULT 0,
+    tailnet_id TEXT DEFAULT '',
     integration_config TEXT DEFAULT '{}',
     installed_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
@@ -39,6 +40,16 @@ CREATE TABLE IF NOT EXISTS shares (
     status       TEXT NOT NULL DEFAULT 'active',
     created_at   TEXT DEFAULT (datetime('now')),
     revoked_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tailnet_connections (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    auth_key    TEXT NOT NULL,
+    control_url TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'active',
+    created_at  TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS remote_apps (

@@ -1,16 +1,11 @@
 import { get } from './httpClient';
 
-export interface SidecarStatus {
-	state: string;
-	status: string;
-}
-
 export interface GraphNode {
 	id: string;
 	displayName: string;
 	status: string;
 	isSystem: boolean;
-	sidecar: SidecarStatus | null;
+	nodeType: string; // "app" | "connection"
 }
 
 export interface GraphEdge {

@@ -1,39 +1,31 @@
 import { test, expect } from '../lib/fixtures';
-import { TEST_CREDS } from './constants';
-
-const TRAEFIK_BASE = 'http://navidrome.localhost:8080';
+import { LoginPage } from '../lib/loginPage';
 
 test.describe('navidrome (forward-auth)', () => {
   test.beforeEach(async ({ api }) => {
     await api.ensureInstalled('navidrome');
   });
 
-  test('SSO login reaches Navidrome UI', async ({ page }) => {
-    // Navigate to Navidrome through Traefik — forward-auth redirects to Authentik
-    await page.goto(TRAEFIK_BASE);
+  test('SSO login reaches Navidrome UI', async ({ authenticatedPage }) => {
+    const page = authenticatedPage;
 
-    // Wait for Authentik login page (forward-auth redirect)
-    const usernameField = page.locator('input[name="uidField"]');
-    await expect(usernameField).toBeVisible({ timeout: 30_000 });
+    // Open Navidrome from the Bloud home screen — opens in a new tab
+    await page.goto('/');
+    const navidromePagePromise = page.waitForEvent('popup');
+    await page.getByText('Navidrome').click();
+    const navidromePage = await navidromePagePromise;
+    await navidromePage.waitForLoadState();
 
-    // Fill in Authentik identifier-first login
-    await usernameField.click();
-    await usernameField.pressSequentially(TEST_CREDS.USERNAME);
-    await page.getByRole('button', { name: 'Log in' }).click();
+    // Forward-auth may redirect through Authentik; log in if needed
+    const loginPage = new LoginPage(navidromePage);
+    await loginPage.loginIfNeeded();
 
-    const passwordField = page.locator('input[name="password"]');
-    await expect(passwordField).toBeVisible({ timeout: 10_000 });
-    await passwordField.click();
-    await page.waitForTimeout(1_000);
-    await passwordField.pressSequentially(TEST_CREDS.PASSWORD);
-    await page.getByRole('button', { name: 'Continue' }).click();
-
-    // After OAuth callback, should land back on Navidrome
-    await expect(page).toHaveURL(/navidrome\.localhost:8080/, { timeout: 30_000 });
+    // Should land on Navidrome
+    await expect(navidromePage).toHaveURL(/navidrome\.localhost:8080/, { timeout: 30_000 });
 
     // Navidrome UI should render — look for the app shell
     await expect(
-      page.locator('#root, .MuiBox-root, nav').first(),
+      navidromePage.locator('#root, .MuiBox-root, nav').first(),
     ).toBeVisible({ timeout: 30_000 });
   });
 });

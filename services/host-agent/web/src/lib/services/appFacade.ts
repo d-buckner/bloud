@@ -47,6 +47,18 @@ export async function initApps(): Promise<void> {
 		apps.set(appList);
 		loading.set(false);
 		error.set(null);
+
+		// Reconcile layout: add any installed non-system apps that are missing
+		// from the layout (e.g. after host-agent restart syncs apps from podman
+		// without updating the layout, or after CLI-based installs).
+		const currentLayout = get(layout);
+		const layoutAppIds = new Set(
+			currentLayout.filter((el) => el.type === 'app').map((el) => el.id)
+		);
+		const missingApps = appList.filter((app) => !app.is_system && !layoutAppIds.has(app.name));
+		for (const app of missingApps) {
+			layout.addApp(app.name);
+		}
 	} catch (err) {
 		console.error('Failed to fetch initial apps:', err);
 		error.set(err instanceof Error ? err.message : 'Failed to connect to server');

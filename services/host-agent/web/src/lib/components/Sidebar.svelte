@@ -18,7 +18,9 @@
 
 	const navItems = [
 		{ href: '/', label: 'Apps', icon: 'home' },
-		{ href: '/catalog', label: 'Catalog', icon: 'store' }
+		{ href: '/catalog', label: 'Catalog', icon: 'store' },
+		{ href: '/settings', label: 'Settings', icon: 'settings' },
+		{ href: '/developer', label: 'Developer', icon: 'terminal' }
 	];
 </script>
 

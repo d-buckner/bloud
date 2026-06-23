@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { SvelteFlow, type Node, type Edge, type NodeTypes } from '@xyflow/svelte';
 	import dagre from '@dagrejs/dagre';
-	import { fetchDeveloperGraph, type DeveloperGraph } from '$lib/clients/developerClient';
+	import { fetchDeveloperGraph, type DeveloperGraph, type GraphNode } from '$lib/clients/developerClient';
 	import AppNode from './AppNode.svelte';
 	import FitView from './FitView.svelte';
 
@@ -18,55 +18,126 @@
 	let edges = $state<Edge[]>([]);
 	let graphKey = $state('');
 
+	const NODE_WIDTH = 170;
+	const NODE_HEIGHT = 60;
+	const GROUP_PADDING = 40;
+	const CONNECTION_GAP = 100;
+
 	function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge[] } {
+		const appNodes = graph.nodes.filter((n) => n.nodeType === 'app');
+		const connectionNodes = graph.nodes.filter((n) => n.nodeType === 'connection');
+
+		// Edges between app nodes only (for dagre internal layout)
+		const appNodeIds = new Set(appNodes.map((n) => n.id));
+		const appEdges = graph.edges.filter((e) => appNodeIds.has(e.source) && appNodeIds.has(e.target));
+
+		// Layout app nodes with dagre
 		const g = new dagre.graphlib.Graph();
 		g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
 		g.setDefaultEdgeLabel(() => ({}));
 
-		const nodeWidth = 170;
-		const nodeHeight = 60;
-
-		for (const n of graph.nodes) {
-			g.setNode(n.id, { width: nodeWidth, height: nodeHeight });
+		for (const n of appNodes) {
+			g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
 		}
-
-		for (const e of graph.edges) {
+		for (const e of appEdges) {
 			g.setEdge(e.source, e.target);
 		}
 
 		dagre.layout(g);
 
+		// Compute bounding box of app nodes (dagre centers)
+		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		for (const n of appNodes) {
+			const pos = g.node(n.id);
+			minX = Math.min(minX, pos.x - NODE_WIDTH / 2);
+			minY = Math.min(minY, pos.y - NODE_HEIGHT / 2);
+			maxX = Math.max(maxX, pos.x + NODE_WIDTH / 2);
+			maxY = Math.max(maxY, pos.y + NODE_HEIGHT / 2);
+		}
+
 		const sources = new Set(graph.edges.map((e) => e.source));
 		const targets = new Set(graph.edges.map((e) => e.target));
 
-		const layoutNodes: Node[] = graph.nodes.map((n) => {
-			const pos = g.node(n.id);
+		function nodeData(n: GraphNode) {
 			return {
-				id: n.id,
-				type: 'app',
-				position: { x: pos.x - nodeWidth / 2, y: pos.y - nodeHeight / 2 },
-				data: {
-					displayName: n.displayName,
-					status: n.status,
-					isSystem: n.isSystem,
-					sidecar: n.sidecar,
-					hasOutgoing: sources.has(n.id),
-					hasIncoming: targets.has(n.id)
-				}
+				displayName: n.displayName,
+				status: n.status,
+				isSystem: n.isSystem,
+				nodeType: n.nodeType,
+				hasOutgoing: sources.has(n.id),
+				hasIncoming: targets.has(n.id)
 			};
-		});
+		}
+
+		const layoutNodes: Node[] = [];
+
+		if (appNodes.length > 0) {
+			const groupWidth = maxX - minX + GROUP_PADDING * 2;
+			const groupHeight = maxY - minY + GROUP_PADDING * 2;
+			const groupX = minX - GROUP_PADDING;
+			const groupY = minY - GROUP_PADDING;
+
+			// Group node for apps
+			layoutNodes.push({
+				id: '__apps_group',
+				type: 'group',
+				position: { x: groupX, y: groupY },
+				style: `width: ${groupWidth}px; height: ${groupHeight}px;`,
+				data: {}
+			});
+
+			// App nodes inside the group (positions relative to group)
+			for (const n of appNodes) {
+				const pos = g.node(n.id);
+				layoutNodes.push({
+					id: n.id,
+					type: 'app',
+					position: { x: pos.x - NODE_WIDTH / 2 - groupX, y: pos.y - NODE_HEIGHT / 2 - groupY },
+					parentId: '__apps_group',
+					data: nodeData(n)
+				});
+			}
+
+			// Connection nodes positioned above the group, spread horizontally
+			const connY = groupY - NODE_HEIGHT - CONNECTION_GAP;
+			const totalConnWidth = connectionNodes.length * NODE_WIDTH + (connectionNodes.length - 1) * 60;
+			const connStartX = groupX + groupWidth / 2 - totalConnWidth / 2;
+
+			for (let i = 0; i < connectionNodes.length; i++) {
+				const cn = connectionNodes[i];
+				layoutNodes.push({
+					id: cn.id,
+					type: 'app',
+					position: { x: connStartX + i * (NODE_WIDTH + 60), y: connY },
+					data: nodeData(cn)
+				});
+			}
+		} else {
+			// No app nodes — just lay out connection nodes horizontally
+			for (let i = 0; i < connectionNodes.length; i++) {
+				const cn = connectionNodes[i];
+				layoutNodes.push({
+					id: cn.id,
+					type: 'app',
+					position: { x: i * (NODE_WIDTH + 60), y: 0 },
+					data: nodeData(cn)
+				});
+			}
+		}
 
 		const nodeStatusMap = new Map(graph.nodes.map((n) => [n.id, n.status]));
 
 		const layoutEdges: Edge[] = graph.edges.map((e, i) => {
-			const sourceRunning = nodeStatusMap.get(e.source) === 'running';
-			const targetRunning = nodeStatusMap.get(e.target) === 'running';
+			const sourceStatus = nodeStatusMap.get(e.source) ?? '';
+			const targetStatus = nodeStatusMap.get(e.target) ?? '';
+			const sourceActive = sourceStatus === 'running' || sourceStatus === 'active';
+			const targetActive = targetStatus === 'running' || targetStatus === 'active';
 			return {
 				id: `e-${i}`,
 				source: e.source,
 				target: e.target,
 				label: e.label,
-				animated: sourceRunning && targetRunning
+				animated: sourceActive && targetActive
 			};
 		});
 
@@ -90,7 +161,7 @@
 			const layout = layoutGraph(graph);
 			nodes = layout.nodes;
 			edges = layout.edges;
-			graphKey = nodes.map((n) => `${n.id}:${n.data.status}`).join(',');
+			graphKey = nodes.map((n) => `${n.id}:${n.data?.status ?? ''}`).join(',');
 			error = '';
 		} catch (err) {
 			error = extractErrorMessage(err);
@@ -195,6 +266,10 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		overflow: hidden;
+	}
+
+	.graph-container :global(.svelte-flow__attribution) {
+		display: none;
 	}
 
 </style>
