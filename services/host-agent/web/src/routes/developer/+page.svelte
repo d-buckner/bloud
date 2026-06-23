@@ -4,6 +4,7 @@
 	import dagre from '@dagrejs/dagre';
 	import { fetchDeveloperGraph, type DeveloperGraph } from '$lib/clients/developerClient';
 	import AppNode from './AppNode.svelte';
+	import FitView from './FitView.svelte';
 
 	import '@xyflow/svelte/dist/style.css';
 
@@ -15,6 +16,7 @@
 	let error = $state('');
 	let nodes = $state<Node[]>([]);
 	let edges = $state<Edge[]>([]);
+	let graphKey = $state('');
 
 	function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge[] } {
 		const g = new dagre.graphlib.Graph();
@@ -34,6 +36,9 @@
 
 		dagre.layout(g);
 
+		const sources = new Set(graph.edges.map((e) => e.source));
+		const targets = new Set(graph.edges.map((e) => e.target));
+
 		const layoutNodes: Node[] = graph.nodes.map((n) => {
 			const pos = g.node(n.id);
 			return {
@@ -44,7 +49,9 @@
 					displayName: n.displayName,
 					status: n.status,
 					isSystem: n.isSystem,
-					sidecar: n.sidecar
+					sidecar: n.sidecar,
+					hasOutgoing: sources.has(n.id),
+					hasIncoming: targets.has(n.id)
 				}
 			};
 		});
@@ -73,21 +80,28 @@
 		return 'Failed to load developer graph';
 	}
 
+	let inflight = false;
+
 	async function load() {
+		if (inflight) return;
+		inflight = true;
 		try {
 			const graph = await fetchDeveloperGraph();
 			const layout = layoutGraph(graph);
 			nodes = layout.nodes;
 			edges = layout.edges;
+			graphKey = nodes.map((n) => `${n.id}:${n.data.status}`).join(',');
 			error = '';
 		} catch (err) {
 			error = extractErrorMessage(err);
+		} finally {
+			inflight = false;
 		}
 	}
 
 	onMount(() => {
 		load().then(() => { loading = false; });
-		const interval = setInterval(load, 5000);
+		const interval = setInterval(load, 500);
 		return () => clearInterval(interval);
 	});
 
@@ -120,6 +134,7 @@
 	{:else}
 		<div class="graph-container">
 			<SvelteFlow {nodes} {edges} {nodeTypes} fitView colorMode="light" nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} panOnDrag={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}>
+				<FitView key={graphKey} />
 			</SvelteFlow>
 		</div>
 	{/if}
@@ -128,7 +143,7 @@
 <style>
 	.page {
 		padding: var(--space-2xl) var(--space-xl);
-		height: 100%;
+		height: 100vh;
 		display: flex;
 		flex-direction: column;
 	}

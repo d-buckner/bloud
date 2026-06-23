@@ -58,7 +58,7 @@ type Container struct {
 	Image   string   `json:"Image"`
 	State   string   `json:"State"`
 	Status  string   `json:"Status"`
-	Created int64    `json:"Created"`
+	Created string   `json:"Created"`
 }
 
 // ContainerDetails contains the inspect fields needed by runtime reconciliation.

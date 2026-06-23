@@ -7,6 +7,8 @@
 		status: string;
 		isSystem: boolean;
 		sidecar: SidecarStatus | null;
+		hasOutgoing: boolean;
+		hasIncoming: boolean;
 	}
 
 	let { data }: { data: NodeData } = $props();
@@ -32,7 +34,9 @@
 	}
 </script>
 
-<Handle type="target" position={Position.Top} />
+{#if data.hasIncoming}
+	<Handle type="target" position={Position.Top} />
+{/if}
 
 <div class="app-node" class:system={data.isSystem}>
 	<div class="node-header">
@@ -50,7 +54,9 @@
 	</div>
 </div>
 
-<Handle type="source" position={Position.Bottom} />
+{#if data.hasOutgoing}
+	<Handle type="source" position={Position.Bottom} />
+{/if}
 
 <style>
 	.app-node {
