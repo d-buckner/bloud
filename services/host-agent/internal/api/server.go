@@ -272,6 +272,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			LDAPOutput:   s.cfg.LDAPOutput,
 			SSO:          ssoProvisioner,
 			Sidecar:      sidecar,
+			RemoteAppStore: s.remoteAppStore,
 			ActiveTailnetID: func() string {
 				conn, err := s.tailnetStore.GetActive()
 				if err != nil || conn == nil {

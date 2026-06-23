@@ -2,17 +2,20 @@
 	import { onMount } from 'svelte';
 	import CatalogAppCard from '$lib/components/CatalogAppCard.svelte';
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
+	import AddSharedAppModal from '$lib/components/AddSharedAppModal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
 	import { installApp, pendingInstalls } from '$lib/services/appFacade';
 	import { fetchCatalog } from '$lib/api/catalog';
+	import { addRemoteApp } from '$lib/clients/remoteAppClient';
 
 	let catalogApps = $state<CatalogApp[]>([]);
 	let catalogLoading = $state(true);
 	let catalogError = $state('');
 
 	let selectedApp = $state<CatalogApp | null>(null);
+	let showAddShared = $state(false);
 
 	// Reactive status lookup — falls back to 'installing' for pending installs
 	function getAppStatus(name: string): AppStatus | undefined {
@@ -55,7 +58,7 @@
 		return result;
 	});
 
-	
+
 	onMount(async () => {
 		try {
 			catalogApps = await fetchCatalog();
@@ -71,6 +74,14 @@
 			await installApp(appName, choices);
 		} catch (err) {
 			console.error('Install failed:', err);
+		}
+	}
+
+	async function handleAddShared(appId: string, tailnetAddr: string, hostLabel: string) {
+		try {
+			await addRemoteApp({ appId, tailnetAddr, hostLabel });
+		} catch (err) {
+			console.error('Add shared app failed:', err);
 		}
 	}
 
@@ -90,6 +101,10 @@
 			<h1>App Catalog</h1>
 			<p class="subtitle">One-click installs with automatic integration</p>
 		</div>
+		<button class="add-shared-btn" onclick={() => (showAddShared = true)}>
+			<Icon name="plus" size={16} />
+			Add shared app
+		</button>
 	</header>
 
 	{#if catalogLoading}
@@ -167,12 +182,22 @@
 	oninstall={handleInstall}
 />
 
+<AddSharedAppModal
+	open={showAddShared}
+	{catalogApps}
+	onclose={() => (showAddShared = false)}
+	onadd={handleAddShared}
+/>
+
 <style>
 	.page {
 		padding: var(--space-2xl) var(--space-xl);
 	}
 
 	.page-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
 		margin-bottom: var(--space-2xl);
 		padding-bottom: var(--space-xl);
 		border-bottom: 1px solid var(--color-border);
@@ -182,6 +207,28 @@
 		margin: 0;
 		font-size: 1.75rem;
 		font-weight: 500;
+	}
+
+	.add-shared-btn {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		padding: var(--space-sm) var(--space-md);
+		font-family: var(--font-serif);
+		font-size: 0.875rem;
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		transition: all 0.15s ease;
+		white-space: nowrap;
+	}
+
+	.add-shared-btn:hover {
+		background: var(--color-bg-subtle);
+		color: var(--color-text);
+		border-color: var(--color-accent);
 	}
 
 	.subtitle {

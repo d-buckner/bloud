@@ -516,6 +516,142 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 	}
 }
 
+func TestGenerator_GenerateAll_RemoteApps(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	remoteApps := []RemoteAppRoute{
+		{
+			ID:         "jellyfin-johan",
+			TailnetURL: "https://ts-jellyfin.tail1275sa.ts.net",
+		},
+	}
+
+	g := NewGenerator(configPath, "bloud.local")
+	err := g.GenerateAll(nil, remoteApps)
+	if err != nil {
+		t.Fatalf("GenerateAll failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Check remote router
+	if !strings.Contains(contentStr, "shared-jellyfin-johan:") {
+		t.Error("Expected shared-jellyfin-johan router")
+	}
+	if !strings.Contains(contentStr, `rule: "Host(`+"`jellyfin-johan.bloud.local`"+`)"`) {
+		t.Error("Expected Host rule for jellyfin-johan.bloud.local")
+	}
+	if !strings.Contains(contentStr, "service: shared-jellyfin-johan") {
+		t.Error("Expected service reference to shared-jellyfin-johan")
+	}
+
+	// Check remote service
+	if !strings.Contains(contentStr, `url: "https://ts-jellyfin.tail1275sa.ts.net"`) {
+		t.Error("Expected remote service URL")
+	}
+}
+
+func TestGenerator_GenerateAll_MixedLocalAndRemote(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	apps := []*catalog.App{
+		{Name: "miniflux", Port: 8085, IsSystem: false},
+	}
+
+	remoteApps := []RemoteAppRoute{
+		{
+			ID:         "jellyfin-johan",
+			TailnetURL: "https://ts-jellyfin.tail1275sa.ts.net",
+		},
+	}
+
+	g := NewGenerator(configPath, "localhost")
+	err := g.GenerateAll(apps, remoteApps)
+	if err != nil {
+		t.Fatalf("GenerateAll failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Local app routes
+	if !strings.Contains(contentStr, "miniflux:") {
+		t.Error("Expected miniflux router")
+	}
+	if !strings.Contains(contentStr, `url: "http://localhost:8085"`) {
+		t.Error("Expected miniflux service URL")
+	}
+
+	// Remote app routes
+	if !strings.Contains(contentStr, "shared-jellyfin-johan:") {
+		t.Error("Expected shared-jellyfin-johan router")
+	}
+	if !strings.Contains(contentStr, `url: "https://ts-jellyfin.tail1275sa.ts.net"`) {
+		t.Error("Expected remote service URL")
+	}
+}
+
+func TestGenerator_GenerateAll_RemoteAppsSorted(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	remoteApps := []RemoteAppRoute{
+		{ID: "navidrome-anna", TailnetURL: "https://ts-nav.tail.net"},
+		{ID: "jellyfin-johan", TailnetURL: "https://ts-jf.tail.net"},
+	}
+
+	g := NewGenerator(configPath, "localhost")
+	err := g.GenerateAll(nil, remoteApps)
+	if err != nil {
+		t.Fatalf("GenerateAll failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	contentStr := string(content)
+
+	jellyfinIdx := strings.Index(contentStr, "shared-jellyfin-johan:")
+	navidromeIdx := strings.Index(contentStr, "shared-navidrome-anna:")
+
+	if jellyfinIdx > navidromeIdx {
+		t.Error("Remote routers should be sorted alphabetically by ID")
+	}
+}
+
+func TestGenerator_GenerateAll_EmptyRemoteApps(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps-routes.yml")
+
+	g := NewGenerator(configPath, "localhost")
+	err := g.GenerateAll(nil, nil)
+	if err != nil {
+		t.Fatalf("GenerateAll failed: %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	if !strings.Contains(string(content), "# No routable apps installed") {
+		t.Errorf("Expected 'No routable apps' message, got:\n%s", content)
+	}
+}
+
 func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")

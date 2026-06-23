@@ -173,6 +173,75 @@ func (f *FakeAppStore) AddApp(app *store.InstalledApp) {
 	f.apps[app.Name] = app
 }
 
+// FakeRemoteAppStore implements store.RemoteAppStoreInterface for testing
+type FakeRemoteAppStore struct {
+	mu   sync.RWMutex
+	apps map[string]*store.RemoteApp
+}
+
+func NewFakeRemoteAppStore() *FakeRemoteAppStore {
+	return &FakeRemoteAppStore{
+		apps: make(map[string]*store.RemoteApp),
+	}
+}
+
+func (f *FakeRemoteAppStore) Create(app store.RemoteApp) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.apps[app.ID] = &app
+	return nil
+}
+
+func (f *FakeRemoteAppStore) GetByID(id string) (*store.RemoteApp, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if app, ok := f.apps[id]; ok {
+		return app, nil
+	}
+	return nil, nil
+}
+
+func (f *FakeRemoteAppStore) List() ([]*store.RemoteApp, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var apps []*store.RemoteApp
+	for _, app := range f.apps {
+		apps = append(apps, app)
+	}
+	return apps, nil
+}
+
+func (f *FakeRemoteAppStore) SetCredential(id string, encryptedCred []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if app, ok := f.apps[id]; ok {
+		app.EncryptedCred = encryptedCred
+		app.Status = "active"
+		return nil
+	}
+	return fmt.Errorf("remote app not found: %s", id)
+}
+
+func (f *FakeRemoteAppStore) SetStatus(id, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if app, ok := f.apps[id]; ok {
+		app.Status = status
+		return nil
+	}
+	return fmt.Errorf("remote app not found: %s", id)
+}
+
+func (f *FakeRemoteAppStore) Delete(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.apps[id]; !ok {
+		return fmt.Errorf("remote app not found: %s", id)
+	}
+	delete(f.apps, id)
+	return nil
+}
+
 // FakeCatalogCache implements catalog.CacheInterface for testing
 type FakeCatalogCache struct {
 	mu   sync.RWMutex
@@ -311,12 +380,13 @@ tags:
 			DataDir: tmpDir,
 			Port:    8080,
 		},
-		router:   chi.NewRouter(),
-		catalog:  catalogCache,
-		graph:    graph,
-		appStore: appStore,
-		appHub:   appHub,
-		logger:   logger,
+		router:         chi.NewRouter(),
+		catalog:        catalogCache,
+		graph:          graph,
+		appStore:       appStore,
+		remoteAppStore: NewFakeRemoteAppStore(),
+		appHub:         appHub,
+		logger:         logger,
 	}
 
 	server.setupMiddleware()

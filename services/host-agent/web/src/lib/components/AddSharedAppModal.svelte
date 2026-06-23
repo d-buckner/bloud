@@ -1,0 +1,221 @@
+<script lang="ts">
+	import Modal from './Modal.svelte';
+	import CloseButton from './CloseButton.svelte';
+	import type { CatalogApp } from '$lib/types';
+
+	interface Props {
+		open: boolean;
+		catalogApps: CatalogApp[];
+		onclose: () => void;
+		onadd: (appId: string, tailnetAddr: string, hostLabel: string) => void;
+	}
+
+	let { open, catalogApps, onclose, onadd }: Props = $props();
+
+	let appId = $state('');
+	let tailnetAddr = $state('');
+	let hostLabel = $state('');
+	let submitting = $state(false);
+	let errorMsg = $state('');
+
+	$effect(() => {
+		if (open) {
+			appId = catalogApps.length > 0 ? catalogApps[0].name : '';
+			tailnetAddr = '';
+			hostLabel = '';
+			errorMsg = '';
+			submitting = false;
+		}
+	});
+
+	let canSubmit = $derived(
+		appId !== '' && tailnetAddr.trim() !== '' && hostLabel.trim() !== '' && !submitting
+	);
+
+	async function handleSubmit() {
+		if (!canSubmit) return;
+		submitting = true;
+		errorMsg = '';
+		try {
+			onadd(appId, tailnetAddr.trim(), hostLabel.trim());
+			onclose();
+		} catch (err) {
+			errorMsg = err instanceof Error ? err.message : 'Failed to add shared app';
+		} finally {
+			submitting = false;
+		}
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter' && canSubmit) {
+			handleSubmit();
+		}
+	}
+</script>
+
+<Modal {open} {onclose}>
+	<header class="modal-header">
+		<h2>Add Shared App</h2>
+		<CloseButton onclick={onclose} />
+	</header>
+
+	<div class="modal-body">
+		<p class="description">
+			Add an app shared from another Bloud host. It will be proxied through your local Traefik.
+		</p>
+
+		<div class="field">
+			<label for="shared-app-type">App type</label>
+			<select id="shared-app-type" bind:value={appId}>
+				{#each catalogApps as app}
+					<option value={app.name}>{app.displayName}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="field">
+			<label for="shared-tailnet-addr">Tailnet domain</label>
+			<input
+				id="shared-tailnet-addr"
+				type="text"
+				bind:value={tailnetAddr}
+				onkeydown={handleKeydown}
+				placeholder="ts-jellyfin.tail1275sa.ts.net"
+			/>
+		</div>
+
+		<div class="field">
+			<label for="shared-host-label">Label</label>
+			<input
+				id="shared-host-label"
+				type="text"
+				bind:value={hostLabel}
+				onkeydown={handleKeydown}
+				placeholder="Johan's server"
+			/>
+			<span class="hint">Used for display name and subdomain</span>
+		</div>
+
+		{#if errorMsg}
+			<p class="error">{errorMsg}</p>
+		{/if}
+	</div>
+
+	<footer class="modal-footer">
+		<button class="btn btn-secondary" onclick={onclose}>Cancel</button>
+		<button class="btn btn-primary" onclick={handleSubmit} disabled={!canSubmit}>
+			{submitting ? 'Adding...' : 'Add'}
+		</button>
+	</footer>
+</Modal>
+
+<style>
+	.modal-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: var(--space-lg);
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.modal-header h2 {
+		margin: 0;
+		font-size: 1.125rem;
+	}
+
+	.modal-body {
+		padding: var(--space-lg);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-md);
+	}
+
+	.description {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--color-text-muted);
+		line-height: 1.5;
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.field label {
+		font-size: 0.875rem;
+		color: var(--color-text-muted);
+	}
+
+	.field input,
+	.field select {
+		width: 100%;
+		padding: var(--space-sm) var(--space-md);
+		font-size: 1rem;
+		font-family: var(--font-serif);
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		color: var(--color-text);
+	}
+
+	.field input:focus,
+	.field select:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+
+	.hint {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
+	.error {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--color-error);
+	}
+
+	.modal-footer {
+		display: flex;
+		gap: var(--space-sm);
+		justify-content: flex-end;
+		padding: var(--space-lg);
+		border-top: 1px solid var(--color-border);
+	}
+
+	.btn {
+		padding: var(--space-sm) var(--space-lg);
+		border-radius: var(--radius-md);
+		font-size: 0.9375rem;
+		font-family: var(--font-serif);
+		cursor: pointer;
+		border: 1px solid transparent;
+		transition: all 0.15s ease;
+	}
+
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.btn-secondary {
+		background: var(--color-bg-subtle);
+		color: var(--color-text);
+		border-color: var(--color-border);
+	}
+
+	.btn-secondary:hover {
+		background: var(--color-bg);
+	}
+
+	.btn-primary {
+		background: var(--color-accent);
+		color: white;
+	}
+
+	.btn-primary:hover:not(:disabled) {
+		background: var(--color-accent-hover);
+	}
+</style>

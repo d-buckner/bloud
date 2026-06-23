@@ -1,0 +1,217 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestAPI_AddRemoteApp(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	body := `{"appId":"test-app","tailnetAddr":"ts-test.tail123.ts.net","hostLabel":"Johan"}`
+	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var app store.RemoteApp
+	err := json.NewDecoder(w.Body).Decode(&app)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, app.ID)
+	assert.Equal(t, "test-app", app.AppID)
+	assert.Equal(t, "Test App", app.AppName)
+	assert.Equal(t, "ts-test.tail123.ts.net", app.SidecarTailnetAddr)
+	assert.Equal(t, "Johan", app.HostLabel)
+	assert.Equal(t, "active", app.Status)
+}
+
+func TestAPI_AddRemoteApp_WithSSO(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Add a catalog app with SSO config
+	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		Name:        "navidrome",
+		DisplayName: "Navidrome",
+		SSO: catalog.SSO{
+			Strategy:    "forward-auth",
+			BypassPaths: []string{"/rest/"},
+		},
+	})
+
+	body := `{"appId":"navidrome","tailnetAddr":"ts-nav.tail123.ts.net","hostLabel":"Johan"}`
+	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var app store.RemoteApp
+	err := json.NewDecoder(w.Body).Decode(&app)
+	require.NoError(t, err)
+
+	assert.Equal(t, "forward-auth", app.SSOStrategy)
+	assert.Equal(t, []string{"/rest/"}, app.BypassPaths)
+}
+
+func TestAPI_AddRemoteApp_MissingFields(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"missing appId", `{"tailnetAddr":"ts.net","hostLabel":"X"}`, "appId is required"},
+		{"missing tailnetAddr", `{"appId":"test-app","hostLabel":"X"}`, "tailnetAddr is required"},
+		{"missing hostLabel", `{"appId":"test-app","tailnetAddr":"ts.net"}`, "hostLabel is required"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			server.router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+
+			var resp map[string]string
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal(t, tt.want, resp["error"])
+		})
+	}
+}
+
+func TestAPI_AddRemoteApp_UnknownApp(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	body := `{"appId":"nonexistent","tailnetAddr":"ts.net","hostLabel":"X"}`
+	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAPI_ListRemoteApps_Empty(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/sharing/remote-apps", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var apps []store.RemoteApp
+	err := json.NewDecoder(w.Body).Decode(&apps)
+	require.NoError(t, err)
+	assert.Empty(t, apps)
+}
+
+func TestAPI_ListRemoteApps_WithApps(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Add a remote app directly to the store
+	fakeStore := server.remoteAppStore.(*FakeRemoteAppStore)
+	fakeStore.Create(store.RemoteApp{
+		ID:                 "test-id-1",
+		HostLabel:          "Johan",
+		AppID:              "jellyfin",
+		AppName:            "Jellyfin",
+		SidecarTailnetAddr: "ts-jf.tail123.ts.net",
+		Status:             "active",
+		BypassPaths:        []string{},
+	})
+
+	req := httptest.NewRequest("GET", "/api/sharing/remote-apps", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var apps []store.RemoteApp
+	err := json.NewDecoder(w.Body).Decode(&apps)
+	require.NoError(t, err)
+	assert.Len(t, apps, 1)
+	assert.Equal(t, "Johan", apps[0].HostLabel)
+}
+
+func TestAPI_DeleteRemoteApp(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Add a remote app
+	fakeStore := server.remoteAppStore.(*FakeRemoteAppStore)
+	fakeStore.Create(store.RemoteApp{
+		ID:          "delete-me",
+		HostLabel:   "Johan",
+		AppID:       "jellyfin",
+		AppName:     "Jellyfin",
+		Status:      "active",
+		BypassPaths: []string{},
+	})
+
+	req := httptest.NewRequest("DELETE", "/api/sharing/remote-apps/delete-me", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, "deleted", resp["status"])
+
+	// Verify it's gone
+	apps, _ := fakeStore.List()
+	assert.Empty(t, apps)
+}
+
+func TestAPI_DeleteRemoteApp_NotFound(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("DELETE", "/api/sharing/remote-apps/nonexistent", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Johan", "johan"},
+		{"Johan's server", "johan-s-server"},
+		{"My Server 123", "my-server-123"},
+		{"  spaces  ", "spaces"},
+		{"UPPER-case", "upper-case"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, slugify(tt.input))
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
 
@@ -187,6 +188,11 @@ type MockTraefikGenerator struct {
 
 func (m *MockTraefikGenerator) Generate(apps []*catalog.App) error {
 	args := m.Called(apps)
+	return args.Error(0)
+}
+
+func (m *MockTraefikGenerator) GenerateAll(apps []*catalog.App, remoteApps []traefikgen.RemoteAppRoute) error {
+	args := m.Called(apps, remoteApps)
 	return args.Error(0)
 }
 

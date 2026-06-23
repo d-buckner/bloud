@@ -1,7 +1,7 @@
 # Bloud First Release Specification
 
 **Status:** Authoritative active plan
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-22
 **Product:** Portable single-host home cloud\
 **Initial target:** Debian 13, `x86_64`, systemd\
 **Primary risk:** Unreliable implementation and architecture\
@@ -349,6 +349,74 @@ This future structure supports:
 - Bidirectional app sharing within a community
 
 The current flat connection-node model is forward-compatible with this expansion.
+
+### Sharing and Federation
+
+Bloud acts as a Tailscale gateway: it proxies shared apps through Traefik so that devices
+on the local network (TVs, phones, game consoles) can access remote apps without needing
+Tailscale installed. Remote apps appear at local subdomains like
+`jellyfin-johan.bloud.local`.
+
+#### Two-Layer Tailscale Architecture
+
+Sharing uses two independent layers of Tailscale instances:
+
+| Layer | Purpose | Scope | Managed by |
+|---|---|---|---|
+| **App sidecars** | Granular per-app sharing (host publishes apps) | One per shared app | Orchestrator |
+| **Gateway instances** | Network connectivity for consuming remote apps | One per tailnet connection | Tailnet settings |
+
+App sidecars are per-app Tailscale instances that join a tailnet and serve the app via
+Tailscale Serve. They give the host granular control over which apps are shared and to
+which tailnets.
+
+Gateway instances are per-tailnet Tailscale instances that provide network connectivity
+so Traefik can reach remote sidecars. A Bloud host can have one Tailscale tailnet
+connection plus unlimited Headscale tailnet connections, each running its own gateway
+instance.
+
+The `tailnet_connections` store in Settings is the single source of truth for both layers.
+Each connection entry provides both the auth key for app sidecars (outbound sharing) and
+the gateway connectivity for remote apps (inbound consumption).
+
+#### Sharing Flow (Host Side)
+
+1. Host installs an app (e.g., Jellyfin).
+2. The orchestrator starts a Tailscale sidecar for the app, joining the configured tailnet.
+3. The sidecar serves the app via Tailscale Serve at a tailnet address
+   (e.g., `ts-jellyfin.tail1275sa.ts.net`).
+4. Host creates an invite token containing the sidecar address and app metadata.
+5. Guest receives the token.
+
+#### Remote App Flow (Guest Side)
+
+1. Guest clicks "Add shared app" in the catalog page.
+2. Guest selects app type, enters the tailnet domain, and provides a label.
+3. Bloud creates a remote app record in the `remote_apps` table.
+4. Traefik route generation includes the remote app: subdomain
+   `{appId}-{hostLabel-slug}.{baseDomain}` proxies to `https://{sidecarTailnetAddr}`.
+5. A gateway Tailscale instance (from the tailnet connection) provides network connectivity
+   so Traefik can reach the remote sidecar.
+6. The app appears on the home page with a "shared" badge.
+7. Local devices access the remote app at its local subdomain without needing Tailscale.
+
+#### Data Model
+
+- **`remote_apps`** — Stores remote app records: app identity, host label, sidecar tailnet
+  address, SSO strategy, bypass paths, status. Each record generates a Traefik route.
+- **`shares`** — Stores outbound share records: which local apps are shared and to whom.
+- **`tailnet_connections`** — Stores tailnet connection config: auth key, control URL, type
+  (Tailscale or Headscale). Used for both app sidecars and gateway instances.
+
+#### Not Yet Implemented
+
+- **Gateway Tailscale container** — The runtime component that joins a tailnet and provides
+  network connectivity for Traefik to reach remote sidecars. Without this, remote app
+  Traefik routes are written but not reachable.
+- **Multiple tailnet connections** — The data model supports multiple entries, but the UI
+  and runtime currently handle only one active connection.
+- **Invite token redemption** — The guest-side flow for automatically creating a remote app
+  from an invite token (currently manual via the catalog UI).
 
 ### Reconciliation Flow
 

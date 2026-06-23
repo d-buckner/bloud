@@ -34,10 +34,11 @@ type PortableConfig struct {
 	Registry     configurator.RegistryInterface
 	TraefikGen   traefikgen.GeneratorInterface
 	LDAPOutput   *configurator.LDAPOutput
-	SSO             SSOProvisioner                // optional; nil when Authentik is not available
-	Sidecar         sharing.SidecarManagerInterface // optional; nil when Tailscale auth key is not set
-	ActiveTailnetID func() string                  // returns the active tailnet connection ID (empty if none)
-	SSOBaseURL      string                         // base URL for building app external URLs (e.g. "http://localhost:8080")
+	SSO             SSOProvisioner                    // optional; nil when Authentik is not available
+	Sidecar         sharing.SidecarManagerInterface   // optional; nil when Tailscale auth key is not set
+	RemoteAppStore  store.RemoteAppStoreInterface     // optional; nil when remote apps are not configured
+	ActiveTailnetID func() string                     // returns the active tailnet connection ID (empty if none)
+	SSOBaseURL      string                            // base URL for building app external URLs (e.g. "http://localhost:8080")
 	DataDir      string
 	TemplateVars map[string]string // extra variables for container spec rendering (e.g. postgresPassword)
 	Logger       *slog.Logger
@@ -54,6 +55,7 @@ type PortableOrchestrator struct {
 	ldapOutput   *configurator.LDAPOutput
 	sso             SSOProvisioner
 	sidecar         sharing.SidecarManagerInterface
+	remoteAppStore  store.RemoteAppStoreInterface
 	activeTailnetID func() string
 	ssoBaseURL      string
 	dataDir      string
@@ -73,6 +75,7 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		ldapOutput:   cfg.LDAPOutput,
 		sso:             cfg.SSO,
 		sidecar:         cfg.Sidecar,
+		remoteAppStore:  cfg.RemoteAppStore,
 		activeTailnetID: cfg.ActiveTailnetID,
 		ssoBaseURL:      cfg.SSOBaseURL,
 		dataDir:      cfg.DataDir,
@@ -434,7 +437,43 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 		authentikEnabled = authentikEnabled || name == "authentik"
 	}
 	o.traefikGen.SetAuthentikEnabled(authentikEnabled)
-	return o.traefikGen.Generate(apps)
+
+	// Build remote app routes if store is available
+	var remoteRoutes []traefikgen.RemoteAppRoute
+	if o.remoteAppStore != nil {
+		remoteApps, err := o.remoteAppStore.List()
+		if err != nil {
+			o.logger.Warn("failed to list remote apps for route generation", "error", err)
+		} else {
+			for _, ra := range remoteApps {
+				remoteRoutes = append(remoteRoutes, traefikgen.RemoteAppRoute{
+					ID:         ra.AppID + "-" + slugify(ra.HostLabel),
+					TailnetURL: "https://" + ra.SidecarTailnetAddr,
+				})
+			}
+		}
+	}
+
+	return o.traefikGen.GenerateAll(apps, remoteRoutes)
+}
+
+// slugify converts a string to a URL-safe slug for subdomain routing.
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	var result []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			result = append(result, c)
+		} else if len(result) > 0 && result[len(result)-1] != '-' {
+			result = append(result, '-')
+		}
+	}
+	// Trim trailing dash
+	if len(result) > 0 && result[len(result)-1] == '-' {
+		result = result[:len(result)-1]
+	}
+	return string(result)
 }
 
 // PortableContainerName returns the container name for a catalog app.

@@ -100,6 +100,11 @@ func (s *Server) setupRoutes() {
 				r.Post("/invites", s.handleCreateInvite)
 				r.Get("/shares", s.handleListShares)
 				r.Delete("/shares/{id}", s.handleRevokeShare)
+
+				// Remote apps (shared apps from other hosts)
+				r.Get("/remote-apps", s.handleListRemoteApps)
+				r.Post("/remote-apps", s.handleAddRemoteApp)
+				r.Delete("/remote-apps/{id}", s.handleDeleteRemoteApp)
 			})
 		})
 

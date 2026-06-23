@@ -3,6 +3,7 @@
 	import { browser } from '$app/environment';
 	import GridStackGrid from '$lib/components/GridStackGrid.svelte';
 	import AppContextMenu from '$lib/components/AppContextMenu.svelte';
+	import RemoteAppCard from '$lib/components/RemoteAppCard.svelte';
 	import LoadingGrid from '$lib/components/LoadingGrid.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
@@ -10,10 +11,12 @@
 	import LogsModal from '$lib/components/LogsModal.svelte';
 	import RenameModal from '$lib/components/RenameModal.svelte';
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
-	import { AppStatus, type App } from '$lib/types';
+	import { AppStatus, type App, type RemoteApp } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
 	import { uninstallApp, renameApp } from '$lib/services/appFacade';
 	import { getAppUrl } from '$lib/utils/appUrl';
+	import { getRemoteAppUrl } from '$lib/utils/appUrl';
+	import { fetchRemoteApps } from '$lib/clients/remoteAppClient';
 	import { layout } from '$lib/stores/layout';
 
 	// Context menu state
@@ -28,10 +31,18 @@
 	let renameCurrentDisplayName = $state<string>('');
 	let showWidgetPicker = $state(false);
 
+	// Remote apps
+	let remoteApps = $state<RemoteApp[]>([]);
+
 	let mounted = $state(false);
 
-	onMount(() => {
+	onMount(async () => {
 		mounted = true;
+		try {
+			remoteApps = await fetchRemoteApps();
+		} catch {
+			// Remote apps are optional — don't block the page
+		}
 	});
 
 	function handleAppClick(app: App) {
@@ -85,9 +96,14 @@
 		}
 	}
 
+	function handleRemoteAppClick(app: RemoteApp) {
+		if (!browser) return;
+		window.open(getRemoteAppUrl(app.app_id, app.host_label), '_blank');
+	}
+
 	// Derived state for empty check
 	let isEmpty = $derived(
-		$apps.length === 0 && $layout.filter((i) => i.type === 'widget').length === 0
+		$apps.length === 0 && remoteApps.length === 0 && $layout.filter((i) => i.type === 'widget').length === 0
 	);
 </script>
 
@@ -108,6 +124,17 @@
 			onAppContextMenu={handleContextMenu}
 			onAddWidget={() => (showWidgetPicker = true)}
 		/>
+
+		{#if remoteApps.length > 0}
+			<section class="remote-apps-section">
+				<h2 class="section-title">Shared Apps</h2>
+				<div class="remote-apps-grid">
+					{#each remoteApps as app (app.id)}
+						<RemoteAppCard {app} onclick={() => handleRemoteAppClick(app)} />
+					{/each}
+				</div>
+			</section>
+		{/if}
 	{/if}
 </div>
 
@@ -145,9 +172,32 @@
 		padding: var(--space-2xl);
 	}
 
+	.remote-apps-section {
+		margin-top: var(--space-2xl);
+		padding-top: var(--space-xl);
+		border-top: 1px solid var(--color-border);
+	}
+
+	.section-title {
+		margin: 0 0 var(--space-lg) 0;
+		font-size: 1rem;
+		font-weight: 500;
+		color: var(--color-text-muted);
+	}
+
+	.remote-apps-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+		gap: var(--space-md);
+	}
+
 	@media (max-width: 768px) {
 		.launcher {
 			padding: var(--space-xl);
+		}
+
+		.remote-apps-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

@@ -44,6 +44,19 @@ export interface ApiError {
 	error: string;
 }
 
+// Remote app (shared from another host)
+export interface RemoteApp {
+	id: string;
+	host_label: string;
+	app_id: string;
+	app_name: string;
+	sso_strategy: string;
+	bypass_paths: string[];
+	sidecar_tailnet_addr: string;
+	status: string;
+	created_at: string;
+}
+
 // Catalog types (matches Go catalog.App struct)
 export interface CatalogApp {
 	name: string;
