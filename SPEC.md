@@ -5,7 +5,7 @@
 **Product:** Portable single-host home cloud\
 **Initial target:** Debian 13, `x86_64`, systemd\
 **Primary risk:** Unreliable implementation and architecture\
-**Release strategy:** Preserve Bloud's integration model while replacing NixOS with a small, tested host runtime
+**Release strategy:** Preserve Bloud's integration model on a small, tested host runtime
 
 ## Document Authority
 
@@ -104,7 +104,7 @@ what they provide and consume, and Bloud continuously keeps those relationships 
 
 ### Explicitly Deferred
 
-- NixOS ISO and operating-system installer
+- Operating-system installer
 - Additional Linux distributions
 - Multi-host orchestration and migration
 - Additional application catalog entries
@@ -357,6 +357,39 @@ on the local network (TVs, phones, game consoles) can access remote apps without
 Tailscale installed. Remote apps appear at local subdomains like
 `jellyfin-johan.bloud.local`.
 
+#### Sharing Identity Model
+
+An invite token authorizes creation of a Bloud user on the host instance. It does not carry
+or request downstream application passwords.
+
+The owner creates a short-lived, one-time invite scoped to one Bloud instance and one
+application. The guest redeems the token, creates or binds a Bloud account on the host
+instance, and receives access through Bloud's normal authentication and authorization layer.
+Bloud remains the identity source of truth for the share.
+
+Downstream applications are provisioned from that Bloud identity according to their declared
+authentication capability:
+
+| Capability | Bloud behavior |
+|---|---|
+| Native OIDC/SAML | Register the app with Authentik and use real browser SSO. |
+| Trusted header auth | Protect the app with Authentik forward auth, strip client identity headers at the proxy, inject a mapped identity header, and pre-create or auto-create the app-local user as needed. |
+| LDAP | Provision or expose the Bloud/Authentik identity through the LDAP integration contract. |
+| App admin API only | Create an app-local user with an app-specific random secret; the user never supplies or sees that secret unless the app has no better login model. |
+| No external auth or provisioning API | Gate network access through Bloud, but treat app-local login as a degraded/manual integration. |
+
+For trusted header apps, forward auth and header auth are distinct requirements. Forward auth
+only decides whether a request may pass. The application is logged in as the mapped user only
+if it explicitly supports a trusted identity header such as `Remote-User`,
+`X-WEBAUTH-USER`, or an app-configured equivalent. Manifests must declare the supported
+header name, trusted-proxy requirements, auto-user behavior, and any bypass paths for native
+client APIs.
+
+The proxy must always remove inbound identity headers from client requests, inject Bloud's
+own identity header only after successful authentication, and ensure the upstream app is
+reachable only through the trusted proxy path. Bloud must not make user-supplied downstream
+passwords the default provisioning primitive.
+
 #### Two-Layer Tailscale Architecture
 
 Sharing uses two independent layers of Tailscale instances:
@@ -435,7 +468,7 @@ Browser → Traefik (:8080)
 
 The `apps` and `remote_apps` tables remain separate. Local apps have container lifecycle,
 integration configs, dependency graph participation, and SSO provisioning. Remote apps are
-a tailnet address, a proxy port, and a credential. These are fundamentally different
+a tailnet address, a proxy port, and an access binding. These are fundamentally different
 lifecycles, and merging them would require type-discriminator guards on every query touching
 local app state. Route generation in `RegenerateRoutes()` queries both tables and derives
 routes at generation time — no separate routes table is needed.
@@ -627,27 +660,6 @@ The core decides what should exist and how relationships should resolve. Runtime
 apply that decision and report observed state. Adapters must not silently add dependencies,
 integrations, or application policy.
 
-### NixOS Responsibility Replacement
-
-| Current responsibility | Portable replacement |
-|---|---|
-| Host-agent installation | Versioned `.deb` and `bloud.service` |
-| Application enablement | Durable desired state and reconciler |
-| Container definitions | Portable manifests and generated Quadlet |
-| systemd units and ordering | Quadlet/systemd adapter |
-| Directories and permissions | Filesystem adapter |
-| Rootless Podman network | Managed rootful Podman networks |
-| Native PostgreSQL and Redis | Bloud-managed containers |
-| Native service configuration | Portable topology and configurators |
-| Firewall and privileged ports | Host-network adapter and preflight |
-| Nix activation scripts | Idempotent runtime adapters and configurators |
-| NixOS rollback | Durable desired state, recorded host changes, and reconciliation |
-| ISO installer | Debian package installation and `bloud init` |
-
-Every release-critical behavior encoded in Nix modules, helpers, activation scripts, native
-services, or systemd hooks must be inventoried and assigned to a portable replacement before
-its existing implementation is removed.
-
 ### Packaging
 
 The first release ships as a versioned Debian package containing:
@@ -685,7 +697,7 @@ format is an adapter detail; desired topology and integration state remain runti
 
 PostgreSQL, Redis, Traefik, and Authentik run as Bloud-managed containers for consistent
 behavior across supported distributions. Inter-service communication uses a managed internal
-network rather than NixOS-native Unix sockets.
+network rather than host-native service sockets.
 
 ### Host Changes
 
@@ -698,23 +710,10 @@ AdGuard Home:
 - Restore prior state after failed apply or removal.
 - Verify DNS behavior from a separate client.
 
-## NixOS Transition
-
-NixOS remains a temporary reference implementation while the portable runtime is built.
-
-- Existing NixOS behavior is inventoried before replacement.
-- Portable manifests and integration contracts become authoritative.
-- New shared behavior is implemented in runtime-neutral core code.
-- NixOS-specific modules may coexist only during migration.
-- NixOS is not a permanent second release runtime.
-
-The transition must inventory every responsibility currently hidden in `module.nix`,
-activation scripts, native NixOS services, and systemd hooks.
-
 ## Migration Engineering Policy
 
 The migration targets the clean portable architecture, not backward compatibility with
-internal NixOS-era interfaces. Change internal callers in the same validated slice when an
+legacy runtime-specific interfaces. Change internal callers in the same validated slice when an
 old contract does not belong in the target design.
 
 Every migration slice must leave behind:
@@ -746,13 +745,13 @@ Every migration slice must leave behind:
 
 Delete these after portable parity is proven:
 
-- Nix generator and rebuilder
-- ISO installer
-- NixOS application modules and helpers
+- Legacy generator and rebuilder paths
+- ISO installer paths
+- Legacy application modules and helpers
 - Rootless Podman networking workarounds
-- NixOS-native PostgreSQL and Redis assumptions
+- Host-native PostgreSQL and Redis assumptions
 - ISO-only release validation
-- NixOS-specific CLI commands
+- Legacy runtime-specific CLI commands
 
 Deprecated runtime paths must not remain indefinitely.
 
@@ -889,7 +888,7 @@ Each phase ends with an automated gate.
 
 | Phase | Current status |
 |---|---|
-| Phase 0: Freeze, Inventory, and Measure | In progress; scope frozen, full NixOS responsibility inventory incomplete |
+| Phase 0: Freeze, Inventory, and Measure | In progress; scope frozen, baseline reliability incomplete |
 | Phase 1: Extract the Integration Engine | In progress; typed provider resolution slice completed |
 | Phase 2: Define Portable Manifests and Desired Topology | Not started |
 | Phase 3: Implement the Debian Runtime | Not started |
@@ -904,14 +903,10 @@ an interface whose requirements have not been established.
 ### Phase 0: Freeze, Inventory, and Measure
 
 - Freeze this release boundary.
-- Inventory all NixOS responsibilities for release apps and infrastructure.
-- Map every `module.nix`, activation script, native service, hook, and special case to a
-  portable replacement.
 - Establish baseline tests and clean-VM reliability.
 
 Gate:
 
-- No release-critical NixOS behavior is hidden or unclassified.
 - Existing behavior has characterization tests where practical.
 
 ### Phase 1: Extract the Integration Engine

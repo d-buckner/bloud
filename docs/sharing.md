@@ -45,8 +45,8 @@ not created or removed when shares are created or revoked. This sidecar:
 - Uses Tailscale Serve to proxy incoming tailnet connections to the app's container port
 - Is the only entry point into the app over the tailnet
 
-Sharing = granting a guest the sidecar's tailnet address (in the invite token) and a
-credential to use it. Revoking = marking the share revoked so the proxy returns 403.
+Sharing = granting a guest the sidecar's tailnet address (in the invite token) and an
+authorization binding to use it. Revoking = marking the share revoked so the proxy returns 403.
 The sidecar itself is unaffected by share lifecycle. No other apps are reachable through
 a given app's sidecar.
 
@@ -94,80 +94,89 @@ operator cannot read app traffic.
 
 ---
 
-## User Identity and Credentials
+## User Identity and Downstream App Accounts
 
-For MVP, the owner creates the guest's app account manually and shares the credentials
-as part of the invite process. The guest enters those credentials when accepting the invite.
-Bloud stores them encrypted on the guest side and injects them on every proxied request.
+The invite token authorizes creation of a Bloud user on the owner's instance. It does not
+ask the guest for app-local credentials and does not carry downstream passwords.
 
-- Credentials are app-local — they are not the guest's Bloud account credentials.
-- If the owner changes the guest's password in the app, the guest must update their stored
-  credential via **Shared Apps → [App] → Update Stored Password**.
-- Bloud does not automatically sync credential changes. This is an intentional MVP
-  simplification.
+After redemption, Bloud treats the guest as a normal user on the host instance and maps that
+Bloud identity into each shared app according to the app's declared authentication
+capability:
 
-This model works for all MVP-scope apps:
-- **Forward-auth apps (Navidrome):** owner creates a Navidrome user, shares username +
-  password. The Subsonic client path (`/rest/`) bypasses forward-auth and accepts these
-  credentials directly.
-- **LDAP apps (Jellyfin):** owner creates a local Jellyfin user (not via Authentik/LDAP),
-  shares credentials. Native Jellyfin clients use these to authenticate.
+| Capability | Share behavior |
+|---|---|
+| Native OIDC/SAML | Guest authenticates with Bloud/Authentik and the app receives a normal SSO login. |
+| Trusted header auth | Authentik forward auth protects the route; the proxy injects a mapped identity header that the app explicitly trusts. |
+| LDAP | Bloud/Authentik exposes the user through the LDAP integration and provisions required groups. |
+| App admin API only | Bloud creates an app-local user using a random high-entropy secret the guest does not know. |
+| No external auth/provisioning API | Bloud can gate network access, but the app-local login remains a degraded manual integration. |
 
-### Future: Federated SSO
-
-After MVP, the intent is to replace owner-provisioned credentials with OIDC federation
-between Bloud instances. The guest's Bloud acts as an OIDC identity provider; the host's
-Authentik accepts it as a trusted external IdP. This means the guest authenticates once
-with their own credentials and the identity is accepted everywhere they've been invited.
-
-This is explicitly out of scope for the first release.
+Bloud should avoid using user-supplied app passwords as a provisioning primitive. If an app
+leaves no alternative, Bloud may generate a one-time app password, show it once, and mark
+the integration as degraded.
 
 ---
 
 ## Forward-Auth Apps and Native Client Sharing
 
-Some apps use Authentik forward-auth for their web UI but also serve native protocol
-clients (mobile apps, desktop clients) through a separate API path that has its own
-credential scheme. Navidrome is the canonical example: the web UI goes through forward-auth,
-but Subsonic clients authenticate against Navidrome's `/rest/` endpoint directly using
-the Subsonic credential scheme.
+Forward auth and header auth are separate capabilities.
 
-For these apps, Bloud emits a bypass route in Traefik for the declared API paths (e.g.
-`/rest/`) that skips forward-auth middleware. This is an accepted trade-off — the Subsonic
-protocol has no mechanism for delegating authentication to a third party.
+Forward auth means Traefik asks Authentik whether a request may pass. Header auth means the
+upstream app explicitly trusts a proxy-supplied identity header as the logged-in user. A
+forward-auth app is not automatically logged in as a mapped user unless it also supports
+trusted header authentication.
+
+Navidrome is the canonical example. Its web UI can be protected by Authentik forward auth
+and Navidrome can treat a trusted header such as `Remote-User` as the application user,
+provided the request comes from a configured trusted proxy. Bloud maps:
+
+```text
+Bloud user -> Authentik session -> proxy identity header -> Navidrome user
+```
+
+The proxy must strip inbound identity headers from the client before authentication and
+inject only Bloud-controlled values afterward. The app must be reachable only through that
+trusted proxy path.
+
+Some apps also serve native protocol clients through a separate API path with its own
+credential scheme. Navidrome's Subsonic API at `/rest/` is the common case. When a protocol
+cannot delegate authentication to Bloud/Authentik, Bloud declares that path as a bypass route
+and treats it as a separate native-client contract.
 
 ### What Gets Shared
 
-For forward-auth apps, sharing targets the **native client path**, not the web UI:
+For trusted-header forward-auth apps, sharing can target the browser web UI:
+
+- The guest signs in to the host Bloud instance through the invite-created account
+- Authentik forward auth validates the session
+- The proxy injects the app's configured identity header
+- The app uses the mapped app-local user
+
+For native client paths that cannot use SSO, sharing targets the **native client path**:
 
 - The guest's Bloud proxy exposes the bypass path (e.g. `/rest/`) via the tailnet
 - The guest configures their native client (Subsonic app, RSS reader, etc.) to point at
   the guest's local Bloud proxy address
-- The proxy forwards requests over the tailnet to the host's bypass route, injecting the
-  guest's stored credential
-
-The web UI path (which requires an Authentik session) is **not** shared in this flow.
-Web UI sharing for forward-auth apps requires federated SSO between Bloud instances and
-is explicitly deferred to the post-MVP roadmap.
+- The proxy forwards requests over the tailnet to the host's bypass route
+- If the native protocol requires app-local credentials, the app integration must define
+  how those credentials are provisioned, exposed, rotated, and revoked
 
 ### Revocation for Forward-Auth Apps
 
-Revocation marks the share revoked (the sidecar keeps running with the app). Because
-Bloud never provisioned an Authentik user for the guest, there is nothing
-else to clean up automatically. The revocation UI reminds the owner to delete the guest's
-in-app account manually: "Don't forget to remove the user from Navidrome."
+Revocation marks the share revoked and removes the guest's authorization to the shared app.
+The sidecar keeps running with the app. Bloud should also reconcile downstream state:
+
+- Remove or disable the app-local user where the app API supports it
+- Remove Authentik group membership or application authorization
+- Revoke generated native-client secrets where possible
+- Record degraded cleanup when the app has no revocation API
 
 ---
 
 ## Invite Flow
 
 ```
-1. OWNER CREATES APP ACCOUNT FOR GUEST
-   Owner creates a user in the app (e.g. Navidrome's user management UI)
-   and sets a password. This is a manual step — Bloud cannot provision
-   app-local accounts automatically for forward-auth/LDAP apps.
-
-2. OWNER CREATES INVITE
+1. OWNER CREATES INVITE
    Owner clicks Share in Bloud UI.
    → Sidecar is already running (started with the app) — no wait
    → Bloud reads the sidecar's tailnet address (podman exec ts-{appName} tailscale ip)
@@ -175,22 +184,23 @@ in-app account manually: "Don't forget to remove the user from Navidrome."
        - shareId
        - appId, appName, hostLabel
        - ssoStrategy, bypassPaths
+       - identity/provisioning strategy
        - sidecarTailnetAddr (the app's permanent tailnet address)
        - expiry (1 hour)
    → Token displayed as a string for copy/paste
    Owner shares the token with the guest out of band (message, etc.)
 
-3. GUEST ACCEPTS
+2. GUEST ACCEPTS
    Guest pastes the token into their Bloud UI.
-   Bloud validates the signature and expiry locally — no network call needed.
-   Guest is prompted: "Enter the credentials Alice created for you."
-   Guest enters username + password, clicks Accept.
-   Bloud stores the remote app entry and encrypted credential locally.
-   No call is made to the host at this point.
+   Guest follows the host Bloud redemption URL or the guest instance brokers the redemption.
+   Host Bloud validates signature, expiry, intended app, and consumed state.
+   Guest creates or binds a Bloud user on the host instance.
+   Host Bloud records the share-user binding and provisions downstream app identity.
 
-4. GUEST BLOUD UI
+3. GUEST BLOUD UI
    Dashboard shows the app with a "Hosted by Alice's Server" badge.
-   Guest configures their native client to point at the local proxy address.
+   Browser access uses the host Bloud/Authentik session and mapped downstream identity.
+   Native clients use the declared native-client contract for the app.
 ```
 
 ---
@@ -205,12 +215,13 @@ The guest's Bloud exposes the remote app at a local path:
 localhost:8080/embed/navidrome@alice-server/
 ```
 
-Requests to this path are reverse-proxied over the tailnet to the host's sidecar. The
-proxy injects the guest's stored credential so the host app authenticates the request.
+Requests to this path are reverse-proxied over the tailnet to the host's sidecar. Browser
+requests rely on Bloud/Authentik authentication at the host and app-specific identity
+mapping. Native-client requests use the app's declared native-client contract.
 This works for any client, including dumb clients that cannot join a tailnet themselves.
 
-For forward-auth apps, the proxy routes only to the declared bypass paths (e.g. `/rest/`).
-Requests to other paths return 404 — there is no web UI to proxy.
+For apps with native-client bypass paths, the proxy routes only to declared paths unless
+the app also supports browser sharing through trusted header auth or native SSO.
 
 ### Smart Clients (Direct Path)
 
@@ -229,7 +240,7 @@ is cached. The guest's Bloud UI marks the app as offline.
 
 **Owner-initiated:**
 - Share record marked revoked
-- For forward-auth apps: UI reminder to delete the guest's in-app account manually
+- Downstream authorization and app-local users/secrets are disabled where supported
 - Guest discovers revocation on next proxy request (returns 403)
 - Sidecar keeps running — it is tied to app lifecycle, not share lifecycle
 
@@ -251,7 +262,8 @@ The owner can re-invite to restore access.
 | Only invited users reach the app | Per-app sidecar — each shared app has its own tailnet node; no other apps are reachable through it |
 | Traffic is encrypted in transit | WireGuard (Tailscale/Headscale) end-to-end |
 | Control plane can't read traffic | P2P WireGuard; Headscale operator sees node list only |
-| Credentials are app-local, not tied to guest's Bloud account | Owner provisions a separate credential; guest stores it locally |
+| Invites do not expose app passwords | Token creates or binds a Bloud user; downstream users are provisioned by adapters |
+| Header auth is not forgeable by clients | Proxy strips inbound identity headers and injects trusted headers only after auth |
 | Invites are single-use and time-limited | HMAC-signed token, 1-hour TTL, server-side consumed flag |
 | No transitive sharing | Guest cannot produce invite tokens for apps they don't own |
 | Revocation is immediate | Share marked revoked — proxy returns 403 on next request |
@@ -288,8 +300,8 @@ CREATE TABLE IF NOT EXISTS remote_apps (
     sso_strategy         TEXT NOT NULL,
     bypass_paths         TEXT NOT NULL DEFAULT '[]',  -- JSON array
     sidecar_tailnet_addr TEXT NOT NULL,
-    encrypted_cred       BLOB,               -- AES-256-GCM; null until accepted
-    status               TEXT NOT NULL DEFAULT 'pending_credential',
+    remote_user_id       TEXT,
+    status               TEXT NOT NULL DEFAULT 'pending_redemption',
     created_at           TEXT DEFAULT (datetime('now'))
 );
 ```
@@ -306,11 +318,11 @@ In scope:
 - [ ] `POST /api/sharing/invites` — read sidecar tailnet addr, generate token, create share
 - [ ] `GET /api/sharing/shares` — list active shares (owner view)
 - [ ] `DELETE /api/sharing/shares/{id}` — mark revoked (sidecar unaffected)
-- [ ] `POST /api/remote-apps/accept` — validate token, store credential locally
+- [ ] `POST /api/remote-apps/accept` — redeem token and create/bind host Bloud user
 - [ ] `GET /api/remote-apps` — list remote apps (guest dashboard)
 - [ ] `DELETE /api/remote-apps/{id}` — guest removes (local only)
 - [ ] `tsnet` node in guest host-agent for outbound dialing
-- [ ] `/embed/{appId}@{hostSlug}/*` — reverse proxy via tsnet with credential injection
+- [ ] `/embed/{appId}@{hostSlug}/*` — reverse proxy via tsnet using declared app auth contract
 - [ ] UI: `ShareModal.svelte`, `AcceptInviteModal.svelte`, `RemoteAppTile.svelte`
 - [ ] UI: Share option in app context menu, "Add shared app" in sidebar
 
@@ -318,12 +330,11 @@ Out of scope for MVP:
 
 - Per-app sidecar on guest side (guest uses single tsnet outbound node)
 - Federated OIDC / SSO between Bloud instances
-- Authentik user auto-provisioning for sharing (deferred with native-OIDC sharing)
 - Real-time revocation notification to guest (guest discovers via 403)
 - Guest-remove notification to host
 - QR code generation
 - Sharing multiple apps in one invite
-- Credential sync / rotation push to host
+- Full native-client credential sync for apps that cannot delegate auth
 - Guest-visible audit log
 - Re-sharing or delegation
 
@@ -368,14 +379,10 @@ Connections are managed via the Settings page (`/settings`) or auto-migrated fro
 
 ## Open Questions
 
-1. **Credential storage encryption** — what key protects `encrypted_cred` on the guest
-   side? Deferred until the broader secrets management design is settled. For MVP, derive
-   from `BLOUD_SECRET` with a fixed salt.
-
-2. **Sidecar auth key management** — MVP uses a single reusable `TS_AUTHKEY` for all
+1. **Sidecar auth key management** — MVP uses a single reusable `TS_AUTHKEY` for all
    sidecars. Follow-on: generate ephemeral per-sidecar keys via Headscale/Tailscale API.
 
-3. **Sidecar node naming** — `ts-{appName}` is the proposed format. Unique per app on a
+2. **Sidecar node naming** — `ts-{appName}` is the proposed format. Unique per app on a
    given host. If two Bloud hosts are on the same tailnet, node names will conflict.
    Follow-on: incorporate a host identifier (e.g. `ts-{appName}-{hostId[:8]}`).
 
@@ -575,7 +582,7 @@ type RemoteAppStore interface {
     Create(app RemoteApp) error
     GetByID(id string) (*RemoteApp, error)
     List() ([]*RemoteApp, error)
-    SetCredential(id string, encryptedCred []byte) error
+    SetRemoteUser(id, remoteUserID string) error
     SetStatus(id, status string) error
     Delete(id string) error
 }
@@ -589,7 +596,7 @@ type RemoteAppStore interface {
 // TestSharesTableExists: INSERT a row, SELECT it back
 // TestRemoteAppsTableExists: INSERT a row, SELECT it back
 // TestShareStatusDefaultIsActive: INSERT share with no status → default='active'
-// TestRemoteAppStatusDefault: default='pending_credential'
+// TestRemoteAppStatusDefault: default='pending_redemption'
 
 // internal/store/shares_test.go
 // TestShareStore_Create: GetByID returns row
@@ -599,7 +606,7 @@ type RemoteAppStore interface {
 
 // internal/store/remote_apps_test.go
 // TestRemoteAppStore_Create: List returns it
-// TestRemoteAppStore_SetCredential: stores bytes, GetByID returns them
+// TestRemoteAppStore_SetRemoteUser: stores remote user id, GetByID returns it
 // TestRemoteAppStore_SetStatus: transitions work
 // TestRemoteAppStore_Delete: GetByID returns nil after Delete
 
@@ -627,6 +634,7 @@ base64url(json_payload) + "." + base64url(hmac_sha256(base64url(json_payload), s
   "hostLabel": "Alice's Server",
   "ssoStrategy": "forward-auth",
   "bypassPaths": ["/rest/"],
+  "provisioningStrategy": "trusted-header",
   "sidecarTailnetAddr": "100.1.2.3",
   "exp": 1234567890
 }
@@ -679,42 +687,43 @@ go test ./internal/sharing/... ./internal/api/...
 
 ---
 
-### Phase 5 — Guest accept
+### Phase 5 — Guest accept and identity provisioning
 
-**Files:** `internal/sharing/crypto.go`, `internal/api/remote_apps.go`
+**Files:** `internal/api/remote_apps.go`, `internal/sharing/provisioning.go`
 
-No network call to the host. The guest validates the token locally, enters credentials,
-and Bloud stores everything it needs to proxy.
+The token is redeemed against the host Bloud instance so the host can create or bind a
+Bloud user, mark the token consumed, and provision downstream app identity.
 
 **Endpoints:**
 ```
-POST /api/remote-apps/accept  { token, username, password }
-  → validate token (signature + expiry)
-  → encrypt credential
-  → insert remote_app row (status=active)
+POST /api/remote-apps/accept  { token, user_claims_or_session }
+  → validate token (signature + expiry + unconsumed share)
+  → create or bind host Bloud user
+  → provision downstream app identity according to manifest capability
+  → insert remote_app row (status=active, remote_user_id set)
   → return { shareId, appId, appName, bypassPaths }
 
 GET  /api/remote-apps          → list remote apps
 DELETE /api/remote-apps/{id}   → remove locally
 ```
 
-Credential encryption: AES-256-GCM. Key derived from `BLOUD_SECRET` with a fixed
-`sharing-cred` salt using HKDF-SHA256. IV is random and prepended to the ciphertext.
+Provisioning is adapter-specific:
+
+- Trusted header apps get a deterministic app username and any required app-local user.
+- Native OIDC/SAML apps get Authentik application/group membership.
+- LDAP apps get required Authentik group membership.
+- Degraded apps record that manual app-local login is still required.
 
 #### Validation
 
 **Fast:**
 ```
-// internal/sharing/crypto_test.go
-// TestEncryptDecryptRoundtrip: encrypt → decrypt → bytes match
-// TestDecryptWrongKey: different key → error
-// TestDecryptTamperedCiphertext: flip a byte → error
-
 // internal/api/remote_apps_test.go
 // TestHandleAcceptInvite_ForwardAuth:
-//   POST /api/remote-apps/accept { token (ssoStrategy=forward-auth), username, password }
+//   POST /api/remote-apps/accept { token (ssoStrategy=forward-auth), user session }
 //   → remote_app row created with status=active, bypassPaths=["/rest/"]
-//   → encrypted_cred stored (decrypt → original password)
+//   → remote_user_id stored
+//   → downstream provisioner called with mapped app username
 //   → response has { shareId, appId, appName, bypassPaths: ["/rest/"] }
 // TestHandleAcceptInvite_ExpiredToken: → 400
 // TestHandleAcceptInvite_BadSignature: → 400
@@ -749,12 +758,16 @@ outbound dialing — no listening ports.
 1. Parse `appId` and `hostSlug` from the path
 2. Look up `RemoteApp` by `appId` + `hostSlug` (derived from `host_label`)
 3. Return 404 if not found, 403 if revoked, 503 if tsnet unavailable
-4. Decrypt stored credential
-5. Reverse proxy to `sidecarTailnetAddr` via tsnet transport, injecting
-   `Authorization: Basic base64(username:password)`
+4. Reverse proxy to `sidecarTailnetAddr` via tsnet transport
+5. Apply the app's declared proxy auth contract:
+   - browser shared-login routes preserve the Bloud/Authentik session and allow the host
+     proxy to inject trusted identity headers
+   - native-client bypass routes pass through only declared paths and use app-specific
+     native-client provisioning when required
 
 For forward-auth apps, the proxy only accepts requests to declared `bypassPaths`. Requests
-outside those paths return 404.
+outside those paths return 404 unless the manifest explicitly supports browser sharing
+through native SSO or trusted header auth.
 
 ```go
 transport := &http.Transport{
@@ -773,11 +786,11 @@ proxy.Transport = transport
 // TestNodeDialErrorWhenNil: Dial on nil node → sentinel error
 
 // internal/api/proxy_test.go
-// TestProxy_ForwardAuth_InjectsBasicAuth:
-//   httptest.Server records Authorization header
-//   remote_app: sidecarTailnetAddr=that server, bypassPaths=["/rest/"], cred=bob:hunter2
+// TestProxy_ForwardAuth_AllowsDeclaredBypassPath:
+//   httptest.Server records request path
+//   remote_app: sidecarTailnetAddr=that server, bypassPaths=["/rest/"]
 //   GET /embed/navidrome@alice-server/rest/getAlbumList2
-//   → upstream receives Authorization: Basic <base64(bob:hunter2)>
+//   → upstream receives /rest/getAlbumList2
 // TestProxy_ForwardAuth_BlocksNonBypassPath:
 //   GET /embed/navidrome@alice-server/web/ → 404
 // TestProxy_UnknownApp: no remote_app row → 404
@@ -798,12 +811,11 @@ go test ./internal/sharing/... ./internal/api/...
 curl -sf http://localhost:8080/embed/navidrome@alice-server/rest/ping \
   | grep -q "ok" || { echo "FAIL: proxy ping"; exit 1; }
 
-# Corrupt credential → expect 401 from Navidrome (proves injection working)
-limactl shell bloud-dev sqlite3 ~/bloud-data/bloud.db \
-  "UPDATE remote_apps SET encrypted_cred=X'deadbeef' WHERE app_id='navidrome'"
+# Revoke the share → expect 403 from Bloud proxy
+curl -sf -X DELETE http://localhost:3000/api/sharing/shares/$SHARE_ID
 curl -o /dev/null -sw "%{http_code}" \
   http://localhost:8080/embed/navidrome@alice-server/rest/ping \
-  | grep -q 401 || { echo "FAIL: bad cred should 401"; exit 1; }
+  | grep -q 403 || { echo "FAIL: revoked share should 403"; exit 1; }
 
 echo "PASS"
 ```
@@ -817,11 +829,9 @@ echo "PASS"
 `DELETE /api/sharing/shares/{id}`:
 1. Look up share — 404 if not found
 2. Mark share revoked in DB
-3. Return `{ status: "revoked", requiresManualCleanup: bool, cleanupHint: string }`
-   - `requiresManualCleanup: true` and a hint for forward-auth apps
-   - `requiresManualCleanup: false` for native-OIDC apps (post-MVP)
+3. Remove or disable downstream authorization where the app adapter supports it
+4. Return `{ status: "revoked", cleanupStatus: string }`
 
-Sidecar stop is best-effort: if the container is already gone, log and continue. The
 The sidecar is not touched — it keeps running with the app. The guest's proxy returns
 403 on the next request because the share row is revoked.
 
@@ -833,7 +843,7 @@ The sidecar is not touched — it keeps running with the app. The guest's proxy 
 // TestHandleRevokeShare_ForwardAuth:
 //   DELETE /api/sharing/shares/{id} (sso_strategy=forward-auth)
 //   → share row status=revoked
-//   → response: requiresManualCleanup=true, cleanupHint contains "Navidrome"
+//   → downstream deprovisioner called when supported
 //   → SidecarManager NOT called (sidecar unaffected)
 // TestHandleRevokeShare_UnknownShare: → 404
 // TestProxyAfterRevocation:
@@ -866,9 +876,9 @@ echo "PASS"
 **New files:**
 - `web/src/lib/components/ShareModal.svelte` — owner shares an app; shows the invite
   token string (copy-to-clipboard), guest label input, list of active shares with revoke
-  buttons and manual cleanup reminder for forward-auth apps
-- `web/src/lib/components/AcceptInviteModal.svelte` — paste token, enter credentials
-  (with hint text explaining these are provided by the owner), submit
+  buttons and cleanup status
+- `web/src/lib/components/AcceptInviteModal.svelte` — paste token, create or bind the
+  host Bloud user, submit
 - `web/src/lib/components/RemoteAppTile.svelte` — extends `AppTile.svelte`; shows
   "Hosted by X" badge, offline/revoked states
 
@@ -889,15 +899,15 @@ echo "PASS"
 // TestAcceptFlow:
 //   (Invite token seeded via API before test)
 //   Sidebar → Add shared app → paste token
-//   Credential form appears with hint "Enter the credentials Alice created for you"
-//   Fill username + password → Submit
+//   Account redemption form appears
+//   Create or bind host Bloud user → Submit
 //   Dashboard shows Navidrome with "Hosted by Alice's Server" badge
 
 // TestRevokeFlow_ForwardAuth:
 //   (Share seeded via API before test)
 //   ShareModal → share list shows "bob — active"
-//   Click Revoke → confirm dialog shows manual cleanup reminder
-//   Confirm → row gone, toast "Access revoked. Don't forget to remove bob from Navidrome."
+//   Click Revoke → confirm dialog summarizes downstream cleanup
+//   Confirm → row gone, toast "Access revoked."
 
 // TestOfflineBadge:
 //   (remote_app seeded with status=offline via API before test)

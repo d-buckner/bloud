@@ -1,8 +1,7 @@
 # Bloud Host Agent
 
-> **Current implementation reference:** This README describes the existing NixOS deployment.
-> The active target is a portable binary running on a Linux host with Podman and required system services.
-> [SPEC.md](../../SPEC.md) is the authoritative first-release plan.
+> **Current implementation reference:** This README describes the host-agent development
+> workflow. [SPEC.md](../../SPEC.md) is the authoritative first-release plan.
 
 Go service that manages app installation, system monitoring, and provides a web UI for the Bloud home server platform.
 
@@ -10,7 +9,7 @@ Go service that manages app installation, system monitoring, and provides a web 
 
 - **Backend**: Go HTTP server with SQLite database
 - **Frontend**: SvelteKit with SSR/SSG (embedded in Go binary)
-- **Deployment**: Native systemd service on NixOS (production) or standalone (development)
+- **Deployment**: Portable binary managed by systemd; standalone during development
 
 ## Prerequisites
 
@@ -226,22 +225,23 @@ curl http://localhost:8080/api/apps/installed
 open http://localhost:5173
 ```
 
-## Deployment (NixOS)
+## Deployment
 
-The host agent is deployed as a Podman container via NixOS. See `apps/host-agent/module.nix` for the service definition.
+The first-release target is a Debian package that installs the host-agent binary and a
+systemd service. Local development can run the binary directly.
 
 ```bash
-# On NixOS system
-sudo nixos-rebuild switch
+# Initialize a packaged installation
+sudo bloud init
 
 # Check service status
-systemctl --user status podman-host-agent
+systemctl status bloud
 
 # View logs
-journalctl --user -u podman-host-agent -f
+journalctl -u bloud -f
 
 # Restart service
-systemctl --user restart podman-host-agent
+sudo systemctl restart bloud
 ```
 
 ## Troubleshooting
@@ -260,7 +260,6 @@ systemctl --user restart podman-host-agent
 ## Next Steps
 
 - [ ] Implement app catalog loader
-- [ ] Add NixOS config generator
 - [ ] Implement app installation/uninstall
 - [ ] Add WebSocket for real-time updates
 - [ ] Implement mDNS discovery for multi-host
