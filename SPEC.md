@@ -364,20 +364,28 @@ Sharing uses two independent layers of Tailscale instances:
 | Layer | Purpose | Scope | Managed by |
 |---|---|---|---|
 | **App sidecars** | Granular per-app sharing (host publishes apps) | One per shared app | Orchestrator |
-| **Gateway instances** | Network connectivity for consuming remote apps | One per tailnet connection | Tailnet settings |
+| **Gateway** | Network connectivity for consuming remote apps + owner remote access | One per tailnet connection | Orchestrator via `RegenerateRoutes()` |
 
 App sidecars are per-app Tailscale instances that join a tailnet and serve the app via
 Tailscale Serve. They give the host granular control over which apps are shared and to
 which tailnets.
 
-Gateway instances are per-tailnet Tailscale instances that provide network connectivity
-so Traefik can reach remote sidecars. A Bloud host can have one Tailscale tailnet
-connection plus unlimited Headscale tailnet connections, each running its own gateway
-instance.
+The gateway is a Tailscale instance that runs in userspace mode on the host network. It
+serves two purposes:
+
+1. **SOCKS5 proxy for remote app consumption.** The gateway exposes a SOCKS5 proxy at
+   `localhost:1055`. Per-remote-app reverse proxies (managed by `RemoteProxyManager`)
+   listen on localhost ports and dial through the SOCKS5 proxy to reach remote sidecars.
+   Traefik routes to `http://localhost:{proxyPort}` instead of directly to tailnet URLs.
+
+2. **Owner remote access (not yet implemented).** The gateway will also expose the local
+   Traefik frontend via Tailscale Serve, allowing the owner to access the full dashboard
+   and all app subdomains remotely through the tailnet. This is for the owner only — not
+   for sharing apps to others (that's what sidecars do).
 
 The `tailnet_connections` store in Settings is the single source of truth for both layers.
-Each connection entry provides both the auth key for app sidecars (outbound sharing) and
-the gateway connectivity for remote apps (inbound consumption).
+Each connection entry provides the auth key for app sidecars (outbound sharing), the
+gateway connectivity for remote apps (inbound consumption), and owner remote access.
 
 #### Sharing Flow (Host Side)
 
@@ -392,27 +400,65 @@ the gateway connectivity for remote apps (inbound consumption).
 
 1. Guest clicks "Add shared app" in the catalog page.
 2. Guest selects app type, enters the tailnet domain, and provides a label.
-3. Bloud creates a remote app record in the `remote_apps` table.
-4. Traefik route generation includes the remote app: subdomain
-   `{appId}-{hostLabel-slug}.{baseDomain}` proxies to `https://{sidecarTailnetAddr}`.
-5. A gateway Tailscale instance (from the tailnet connection) provides network connectivity
-   so Traefik can reach the remote sidecar.
+3. Bloud creates a remote app record in the `remote_apps` table with a monotonically
+   assigned `proxy_port` (starting from 10100, never reused).
+4. `RegenerateRoutes()` ensures the gateway container is running, then reconciles
+   reverse proxies: each remote app gets a localhost listener on its assigned port
+   that dials through the gateway's SOCKS5 proxy to reach the remote sidecar.
+5. Traefik route generation includes the remote app: subdomain
+   `{appId}-{hostLabel-slug}.{baseDomain}` proxies to `http://localhost:{proxyPort}`.
 6. The app appears on the home page with a "shared" badge.
 7. Local devices access the remote app at its local subdomain without needing Tailscale.
+
+```text
+Browser → Traefik (:8080)
+             ↓ Host(`jellyfin-johan.bloud.local`)
+         localhost:{proxyPort}          ← host-agent reverse proxy
+             ↓ SOCKS5 (localhost:1055)
+         ts-gateway container           ← userspace Tailscale
+             ↓ tailnet
+         ts-jellyfin.tail1275sa.ts.net  ← remote sidecar
+             ↓
+         Jellyfin on remote host
+```
 
 #### Data Model
 
 - **`remote_apps`** — Stores remote app records: app identity, host label, sidecar tailnet
-  address, SSO strategy, bypass paths, status. Each record generates a Traefik route.
+  address, proxy port, status. Each record generates a Traefik route. The `proxy_port` is
+  monotonically assigned at creation time (`MAX(proxy_port) + 1`, starting from 10100) and
+  never reused, ensuring stable port assignments across restarts.
 - **`shares`** — Stores outbound share records: which local apps are shared and to whom.
 - **`tailnet_connections`** — Stores tailnet connection config: auth key, control URL, type
-  (Tailscale or Headscale). Used for both app sidecars and gateway instances.
+  (Tailscale or Headscale), and gateway FQDN (discovered after gateway joins tailnet).
+  Used for app sidecars, gateway instances, and owner remote access.
+
+The `apps` and `remote_apps` tables remain separate. Local apps have container lifecycle,
+integration configs, dependency graph participation, and SSO provisioning. Remote apps are
+a tailnet address, a proxy port, and a credential. These are fundamentally different
+lifecycles, and merging them would require type-discriminator guards on every query touching
+local app state. Route generation in `RegenerateRoutes()` queries both tables and derives
+routes at generation time — no separate routes table is needed.
+
+Auth keys are never exposed through the API. The frontend receives only a boolean
+`hasAuthKey` indicating whether a key is configured.
 
 #### Not Yet Implemented
 
-- **Gateway Tailscale container** — The runtime component that joins a tailnet and provides
-  network connectivity for Traefik to reach remote sidecars. Without this, remote app
-  Traefik routes are written but not reachable.
+- **Persistent proxy port on `remote_apps`** — The `proxy_port` column needs to be added
+  to the `remote_apps` table schema. Currently, proxy ports are assigned ephemerally by
+  `RemoteProxyManager` at reconciliation time and may shift when apps are added or removed.
+- **Gateway FQDN discovery and persistence** — The gateway's tailnet FQDN (e.g.,
+  `ts-gateway.tail1275sa.ts.net`) needs to be discovered after the gateway joins the
+  tailnet and stored on the `tailnet_connections` record. This enables generating
+  Traefik routes for owner remote access.
+- **Owner remote access via gateway** — The gateway should expose the local Traefik
+  frontend via Tailscale Serve (`443 → localhost:8080`), allowing the owner to access the
+  dashboard and apps remotely. This requires the gateway FQDN, Tailscale Serve config on
+  the gateway container, and additional Traefik routes matching the gateway's tailnet
+  hostname. Route generation depends on the reconciliation cycle since app install/uninstall
+  changes the set of routable subdomains. DNS resolution for app subdomains over tailnet
+  (e.g., via sslip.io) is an open design question.
 - **Multiple tailnet connections** — The data model supports multiple entries, but the UI
   and runtime currently handle only one active connection.
 - **Invite token redemption** — The guest-side flow for automatically creating a remote app
