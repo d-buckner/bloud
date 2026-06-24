@@ -104,7 +104,7 @@
 					</div>
 					<div class="field">
 						<span class="field-label">Auth Key</span>
-						<span class="field-value mono">{connection.maskedAuthKey}</span>
+						<span class="field-value mono">{connection.hasAuthKey ? 'Configured' : 'Not set'}</span>
 					</div>
 					{#if connection.controlUrl}
 						<div class="field">

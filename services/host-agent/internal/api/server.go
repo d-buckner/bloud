@@ -46,6 +46,8 @@ type Server struct {
 	remoteAppStore    store.RemoteAppStoreInterface
 	tailnetStore      store.TailnetStoreInterface
 	sidecar           sharing.SidecarManagerInterface
+	gateway           sharing.GatewayManagerInterface
+	remoteProxy       *sharing.RemoteProxyManager
 	authentikClient   *authentik.Client
 	podmanClient      *podman.Client
 	authConfig        *AuthConfig
@@ -262,6 +264,14 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		s.sidecar = sidecar
 		s.logger.Info("sidecar manager initialized")
 
+		// Create gateway manager for remote app proxying (SOCKS5 on port 1055).
+		gateway := sharing.NewGatewayManager(runtime, authKeyFn, 1055, s.logger)
+		s.gateway = gateway
+
+		// Create remote proxy manager (allocates localhost ports starting at 10100).
+		remoteProxy := sharing.NewRemoteProxyManager("localhost:1055", 10100, s.logger)
+		s.remoteProxy = remoteProxy
+
 		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
 			Graph:        s.graph,
 			CatalogCache: s.catalog,
@@ -272,6 +282,8 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			LDAPOutput:   s.cfg.LDAPOutput,
 			SSO:          ssoProvisioner,
 			Sidecar:      sidecar,
+			Gateway:      gateway,
+			RemoteProxy:  remoteProxy,
 			RemoteAppStore: s.remoteAppStore,
 			ActiveTailnetID: func() string {
 				conn, err := s.tailnetStore.GetActive()

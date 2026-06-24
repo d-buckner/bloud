@@ -285,7 +285,7 @@ func (g *Generator) writeRemoteService(b *strings.Builder, ra RemoteAppRoute) {
 	b.WriteString(fmt.Sprintf("    %s:\n", serviceName))
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
-	b.WriteString(fmt.Sprintf("          - url: \"%s\"\n", ra.TailnetURL))
+	b.WriteString(fmt.Sprintf("          - url: \"%s\"\n", ra.ProxyURL))
 }
 
 // Preview generates a preview of what the config will look like

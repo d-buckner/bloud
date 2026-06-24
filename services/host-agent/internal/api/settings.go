@@ -10,14 +10,14 @@ import (
 )
 
 // tailnetResponse is the API response for a tailnet connection.
-// The auth key is masked for security.
+// The auth key is never exposed to the frontend.
 type tailnetResponse struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	MaskedAuthKey string `json:"maskedAuthKey"`
-	ControlURL    string `json:"controlUrl"`
-	Status        string `json:"status"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	HasAuthKey bool   `json:"hasAuthKey"`
+	ControlURL string `json:"controlUrl"`
+	Status     string `json:"status"`
 }
 
 // setTailnetRequest is the request body for POST /api/settings/tailnet.
@@ -28,21 +28,14 @@ type setTailnetRequest struct {
 	ControlURL string `json:"controlUrl"`
 }
 
-func maskAuthKey(key string) string {
-	if len(key) <= 4 {
-		return "****"
-	}
-	return "****" + key[len(key)-4:]
-}
-
 func toTailnetResponse(conn *store.TailnetConnection) tailnetResponse {
 	return tailnetResponse{
-		ID:            conn.ID,
-		Name:          conn.Name,
-		Type:          conn.Type,
-		MaskedAuthKey: maskAuthKey(conn.AuthKey),
-		ControlURL:    conn.ControlURL,
-		Status:        conn.Status,
+		ID:         conn.ID,
+		Name:       conn.Name,
+		Type:       conn.Type,
+		HasAuthKey: conn.AuthKey != "",
+		ControlURL: conn.ControlURL,
+		Status:     conn.Status,
 	}
 }
 
@@ -112,6 +105,9 @@ func (s *Server) handleSetTailnet(w http.ResponseWriter, r *http.Request) {
 	// Start sidecars for all running non-system apps in the background.
 	s.ensureSidecarsForRunningApps()
 
+	// Ensure gateway and reconcile remote app proxies in the background.
+	s.ensureGatewayAndProxies()
+
 	respondJSON(w, http.StatusOK, toTailnetResponse(&conn))
 }
 
@@ -132,6 +128,16 @@ func (s *Server) handleDeleteTailnet(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to delete tailnet connection", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to delete tailnet connection")
 		return
+	}
+
+	// Stop gateway and remote proxies — tailnet connectivity is gone.
+	if s.gateway != nil {
+		if err := s.gateway.Stop(context.Background()); err != nil {
+			s.logger.Warn("failed to stop gateway", "error", err)
+		}
+	}
+	if s.remoteProxy != nil {
+		s.remoteProxy.StopAll()
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{
@@ -171,6 +177,22 @@ func (s *Server) ensureSidecarsForRunningApps() {
 				s.appStore.SetTailnetID(app.Name, active.ID)
 			}
 			s.logger.Info("started sidecar for running app", "app", app.Name)
+		}
+	}()
+}
+
+// ensureGatewayAndProxies starts the gateway container and reconciles remote app
+// reverse proxies. Called in the background after a tailnet connection is saved.
+func (s *Server) ensureGatewayAndProxies() {
+	if s.gateway == nil || s.remoteProxy == nil || s.orchestrator == nil {
+		return
+	}
+
+	go func() {
+		// Regenerate routes — this internally calls gateway.EnsureRunning
+		// and remoteProxy.Reconcile for any configured remote apps.
+		if err := s.orchestrator.RegenerateRoutes(); err != nil {
+			s.logger.Warn("failed to regenerate routes after tailnet save", "error", err)
 		}
 	}()
 }

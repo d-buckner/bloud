@@ -36,6 +36,8 @@ type PortableConfig struct {
 	LDAPOutput   *configurator.LDAPOutput
 	SSO             SSOProvisioner                    // optional; nil when Authentik is not available
 	Sidecar         sharing.SidecarManagerInterface   // optional; nil when Tailscale auth key is not set
+	Gateway         sharing.GatewayManagerInterface   // optional; manages gateway Tailscale container for remote app proxying
+	RemoteProxy     *sharing.RemoteProxyManager       // optional; manages per-remote-app reverse proxies through SOCKS5 gateway
 	RemoteAppStore  store.RemoteAppStoreInterface     // optional; nil when remote apps are not configured
 	ActiveTailnetID func() string                     // returns the active tailnet connection ID (empty if none)
 	SSOBaseURL      string                            // base URL for building app external URLs (e.g. "http://localhost:8080")
@@ -55,6 +57,8 @@ type PortableOrchestrator struct {
 	ldapOutput   *configurator.LDAPOutput
 	sso             SSOProvisioner
 	sidecar         sharing.SidecarManagerInterface
+	gateway         sharing.GatewayManagerInterface
+	remoteProxy     *sharing.RemoteProxyManager
 	remoteAppStore  store.RemoteAppStoreInterface
 	activeTailnetID func() string
 	ssoBaseURL      string
@@ -75,6 +79,8 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		ldapOutput:   cfg.LDAPOutput,
 		sso:             cfg.SSO,
 		sidecar:         cfg.Sidecar,
+		gateway:         cfg.Gateway,
+		remoteProxy:     cfg.RemoteProxy,
 		remoteAppStore:  cfg.RemoteAppStore,
 		activeTailnetID: cfg.ActiveTailnetID,
 		ssoBaseURL:      cfg.SSOBaseURL,
@@ -445,11 +451,36 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 		if err != nil {
 			o.logger.Warn("failed to list remote apps for route generation", "error", err)
 		} else {
+			// Build proxy targets for reconciliation.
+			var targets []sharing.ProxyTarget
 			for _, ra := range remoteApps {
-				remoteRoutes = append(remoteRoutes, traefikgen.RemoteAppRoute{
+				targets = append(targets, sharing.ProxyTarget{
 					ID:         ra.AppID + "-" + slugify(ra.HostLabel),
 					TailnetURL: "https://" + ra.SidecarTailnetAddr,
 				})
+			}
+
+			// Ensure gateway is running if we have remote apps.
+			if len(targets) > 0 && o.gateway != nil {
+				if err := o.gateway.EnsureRunning(context.Background()); err != nil {
+					o.logger.Warn("gateway not available, remote apps unreachable", "error", err)
+				}
+			}
+
+			// Reconcile reverse proxies — returns port assignments.
+			if o.remoteProxy != nil && len(targets) > 0 {
+				portMap := o.remoteProxy.Reconcile(targets)
+				for _, t := range targets {
+					if port, ok := portMap[t.ID]; ok {
+						remoteRoutes = append(remoteRoutes, traefikgen.RemoteAppRoute{
+							ID:       t.ID,
+							ProxyURL: fmt.Sprintf("http://localhost:%d", port),
+						})
+					}
+				}
+			} else if o.remoteProxy != nil {
+				// No targets — stop all proxies.
+				o.remoteProxy.Reconcile(nil)
 			}
 		}
 	}

@@ -331,6 +331,26 @@ func (m *MockConfiguratorRegistry) Register(c configurator.Configurator) {
 	m.Called(c)
 }
 
+// MockGatewayManager implements sharing.GatewayManagerInterface for testing
+type MockGatewayManager struct {
+	mock.Mock
+}
+
+func (m *MockGatewayManager) EnsureRunning(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+func (m *MockGatewayManager) Stop(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+func (m *MockGatewayManager) IsRunning(ctx context.Context) bool {
+	args := m.Called(ctx)
+	return args.Bool(0)
+}
+
 // MockConfigurator implements configurator.Configurator for testing
 type MockConfigurator struct {
 	mock.Mock

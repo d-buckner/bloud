@@ -4,8 +4,8 @@ import "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 
 // RemoteAppRoute describes a remote (shared) app that should be proxied through Traefik.
 type RemoteAppRoute struct {
-	ID         string // unique slug for router/service naming (e.g. "jellyfin-johan")
-	TailnetURL string // full URL to the remote sidecar (e.g. "https://ts-jellyfin.tail1275sa.ts.net")
+	ID       string // unique slug for router/service naming (e.g. "jellyfin-johan")
+	ProxyURL string // localhost reverse proxy URL (e.g. "http://localhost:10100")
 }
 
 // GeneratorInterface defines the interface for generating Traefik configuration.

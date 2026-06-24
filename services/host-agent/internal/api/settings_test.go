@@ -130,7 +130,7 @@ func TestHandleGetTailnet_WithData(t *testing.T) {
 	assert.Equal(t, "tn-1", resp.ID)
 	assert.Equal(t, "My Tailnet", resp.Name)
 	assert.Equal(t, "tailscale", resp.Type)
-	assert.Equal(t, "****c123", resp.MaskedAuthKey)
+	assert.True(t, resp.HasAuthKey)
 	assert.Equal(t, "active", resp.Status)
 }
 
@@ -151,7 +151,7 @@ func TestHandleSetTailnet_Tailscale(t *testing.T) {
 	assert.NotEmpty(t, resp.ID)
 	assert.Equal(t, "My TS", resp.Name)
 	assert.Equal(t, "tailscale", resp.Type)
-	assert.Equal(t, "****z789", resp.MaskedAuthKey)
+	assert.True(t, resp.HasAuthKey)
 
 	// Verify stored in fake store
 	conns := server.tailnetStore.(*fakeTailnetStore).conns
@@ -280,9 +280,3 @@ func TestHandleDeleteTailnet_Empty(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestMaskAuthKey(t *testing.T) {
-	assert.Equal(t, "****c123", maskAuthKey("tskey-auth-abc123"))
-	assert.Equal(t, "****", maskAuthKey("abc"))
-	assert.Equal(t, "****", maskAuthKey("abcd"))
-	assert.Equal(t, "****", maskAuthKey(""))
-}

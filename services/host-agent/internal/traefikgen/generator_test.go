@@ -522,8 +522,8 @@ func TestGenerator_GenerateAll_RemoteApps(t *testing.T) {
 
 	remoteApps := []RemoteAppRoute{
 		{
-			ID:         "jellyfin-johan",
-			TailnetURL: "https://ts-jellyfin.tail1275sa.ts.net",
+			ID:       "jellyfin-johan",
+			ProxyURL: "http://localhost:10100",
 		},
 	}
 
@@ -551,9 +551,9 @@ func TestGenerator_GenerateAll_RemoteApps(t *testing.T) {
 		t.Error("Expected service reference to shared-jellyfin-johan")
 	}
 
-	// Check remote service
-	if !strings.Contains(contentStr, `url: "https://ts-jellyfin.tail1275sa.ts.net"`) {
-		t.Error("Expected remote service URL")
+	// Check remote service points to localhost proxy
+	if !strings.Contains(contentStr, `url: "http://localhost:10100"`) {
+		t.Error("Expected localhost proxy URL for remote service")
 	}
 }
 
@@ -567,8 +567,8 @@ func TestGenerator_GenerateAll_MixedLocalAndRemote(t *testing.T) {
 
 	remoteApps := []RemoteAppRoute{
 		{
-			ID:         "jellyfin-johan",
-			TailnetURL: "https://ts-jellyfin.tail1275sa.ts.net",
+			ID:       "jellyfin-johan",
+			ProxyURL: "http://localhost:10100",
 		},
 	}
 
@@ -597,8 +597,8 @@ func TestGenerator_GenerateAll_MixedLocalAndRemote(t *testing.T) {
 	if !strings.Contains(contentStr, "shared-jellyfin-johan:") {
 		t.Error("Expected shared-jellyfin-johan router")
 	}
-	if !strings.Contains(contentStr, `url: "https://ts-jellyfin.tail1275sa.ts.net"`) {
-		t.Error("Expected remote service URL")
+	if !strings.Contains(contentStr, `url: "http://localhost:10100"`) {
+		t.Error("Expected localhost proxy URL for remote service")
 	}
 }
 
@@ -607,8 +607,8 @@ func TestGenerator_GenerateAll_RemoteAppsSorted(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	remoteApps := []RemoteAppRoute{
-		{ID: "navidrome-anna", TailnetURL: "https://ts-nav.tail.net"},
-		{ID: "jellyfin-johan", TailnetURL: "https://ts-jf.tail.net"},
+		{ID: "navidrome-anna", ProxyURL: "http://localhost:10101"},
+		{ID: "jellyfin-johan", ProxyURL: "http://localhost:10100"},
 	}
 
 	g := NewGenerator(configPath, "localhost")

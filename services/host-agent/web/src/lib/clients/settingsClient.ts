@@ -4,7 +4,7 @@ export interface TailnetConnection {
 	id: string;
 	name: string;
 	type: string;
-	maskedAuthKey: string;
+	hasAuthKey: boolean;
 	controlUrl: string;
 	status: string;
 }
