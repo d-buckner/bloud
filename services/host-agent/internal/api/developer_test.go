@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -14,6 +15,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeGateway implements sharing.GatewayManagerInterface for testing.
+type fakeGateway struct {
+	running bool
+}
+
+func (g *fakeGateway) EnsureRunning(_ context.Context) error  { return nil }
+func (g *fakeGateway) Stop(_ context.Context) error           { return nil }
+func (g *fakeGateway) StopAndPurge(_ context.Context) error   { return nil }
+func (g *fakeGateway) IsRunning(_ context.Context) bool       { return g.running }
 
 func newDeveloperTestServer() *Server {
 	appStore := NewFakeAppStore()
@@ -281,4 +292,81 @@ func TestDeveloperGraph_SSOEdgeLabel(t *testing.T) {
 	jellyEdge := edgesBySource["jellyfin"]
 	assert.Equal(t, "authentik", jellyEdge.Target)
 	assert.Equal(t, "ldap", jellyEdge.Label)
+}
+
+func TestDeveloperGraph_Gateway(t *testing.T) {
+	server := newDeveloperTestServer()
+	server.gateway = &fakeGateway{running: true}
+
+	// Seed tailnet connection
+	fakeTailnet := server.tailnetStore.(*fakeTailnetStore)
+	fakeTailnet.conns["tn-abc"] = &store.TailnetConnection{
+		ID:     "tn-abc",
+		Name:   "My Tailnet",
+		Type:   "tailscale",
+		Status: "active",
+	}
+
+	// Seed apps — traefik (system) + jellyfin with tailnet
+	fakeStore := server.appStore.(*FakeAppStore)
+	fakeStore.AddApp(&store.InstalledApp{
+		Name:        "traefik",
+		DisplayName: "Traefik",
+		Status:      "running",
+		IsSystem:    true,
+	})
+	fakeStore.AddApp(&store.InstalledApp{
+		Name:        "jellyfin",
+		DisplayName: "Jellyfin",
+		Status:      "running",
+		TailnetID:   "tn-abc",
+	})
+
+	req := httptest.NewRequest("GET", "/api/system/developer", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var graph developerGraph
+	err := json.NewDecoder(w.Body).Decode(&graph)
+	require.NoError(t, err)
+
+	nodeMap := make(map[string]graphNode)
+	for _, n := range graph.Nodes {
+		nodeMap[n.ID] = n
+	}
+
+	// Gateway node should exist as a system app
+	gwNode, ok := nodeMap["sys:gateway"]
+	require.True(t, ok, "gateway node should exist")
+	assert.Equal(t, "TS Gateway", gwNode.DisplayName)
+	assert.Equal(t, "running", gwNode.Status)
+	assert.True(t, gwNode.IsSystem)
+	assert.Equal(t, "app", gwNode.NodeType)
+
+	// Tailnet connection node should exist
+	_, ok = nodeMap["conn:tailnet:tn-abc"]
+	assert.True(t, ok, "tailnet connection node should exist")
+
+	// Edges: tailnet→gateway, gateway→traefik, tailnet→jellyfin (sidecar), local→traefik
+	edgeSet := make(map[string]graphEdge)
+	for _, e := range graph.Edges {
+		edgeSet[e.Source+"→"+e.Target] = e
+	}
+
+	// Tailnet → gateway
+	gwEdge, ok := edgeSet["conn:tailnet:tn-abc→sys:gateway"]
+	require.True(t, ok, "should have tailnet→gateway edge")
+	assert.Equal(t, "tailnet", gwEdge.Label)
+
+	// Gateway → traefik (remote access proxy)
+	proxyEdge, ok := edgeSet["sys:gateway→traefik"]
+	require.True(t, ok, "should have gateway→traefik edge")
+	assert.Equal(t, "proxy", proxyEdge.Label)
+
+	// Tailnet → jellyfin (sidecar sharing — unchanged)
+	sidecarEdge, ok := edgeSet["conn:tailnet:tn-abc→jellyfin"]
+	require.True(t, ok, "should have tailnet→jellyfin edge for sidecar")
+	assert.Equal(t, "tailnet", sidecarEdge.Label)
 }

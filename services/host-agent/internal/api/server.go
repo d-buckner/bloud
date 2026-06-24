@@ -265,7 +265,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		s.logger.Info("sidecar manager initialized")
 
 		// Create gateway manager for remote app proxying (SOCKS5 on port 1055).
-		gateway := sharing.NewGatewayManager(runtime, authKeyFn, 1055, s.logger)
+		gateway := sharing.NewGatewayManager(runtime, authKeyFn, 1055, s.cfg.DataDir, s.logger)
 		s.gateway = gateway
 
 		// Create remote proxy manager (allocates localhost ports starting at 10100).

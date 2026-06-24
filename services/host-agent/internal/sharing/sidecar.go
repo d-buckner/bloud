@@ -23,6 +23,7 @@ type SidecarManagerInterface interface {
 	EnsureRunning(ctx context.Context, appName string, appPort int) error
 	GetAddr(ctx context.Context, appName string) (string, error)
 	Stop(ctx context.Context, appName string) error
+	StopAndPurge(ctx context.Context, appName string) error
 }
 
 // SidecarManager manages Tailscale sidecar containers alongside user apps.
@@ -89,6 +90,12 @@ func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appP
 		return fmt.Errorf("write serve config: %w", err)
 	}
 
+	// Persist Tailscale state so the sidecar keeps its node identity across restarts.
+	stateDir := filepath.Join(m.dataDir, appName, "ts-state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return fmt.Errorf("create sidecar state dir: %w", err)
+	}
+
 	spec := container.Spec{
 		Name:    name,
 		Image:   "docker.io/tailscale/tailscale:latest",
@@ -99,12 +106,18 @@ func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appP
 			"TS_USERSPACE":    "true",
 			"TS_EXTRA_ARGS":   "--accept-routes",
 			"TS_SERVE_CONFIG": "/etc/ts-serve/serve.json",
+			"TS_STATE_DIR":    "/var/lib/tailscale",
+			"TS_AUTH_ONCE":    "true",
 		},
 		Mounts: []container.Mount{
 			{
 				Source:      configDir,
 				Destination: "/etc/ts-serve",
 				Options:     []string{"ro"},
+			},
+			{
+				Source:      stateDir,
+				Destination: "/var/lib/tailscale",
 			},
 		},
 		Labels: map[string]string{
@@ -147,6 +160,17 @@ func (m *SidecarManager) Stop(ctx context.Context, appName string) error {
 			return nil
 		}
 		return fmt.Errorf("remove sidecar %s: %w", name, err)
+	}
+	return nil
+}
+
+// StopAndPurge stops the sidecar container and removes its persisted Tailscale state.
+// Call this when the tailnet connection is deleted so a future connection starts fresh.
+func (m *SidecarManager) StopAndPurge(ctx context.Context, appName string) error {
+	_ = m.Stop(ctx, appName)
+	stateDir := filepath.Join(m.dataDir, appName, "ts-state")
+	if err := os.RemoveAll(stateDir); err != nil {
+		return fmt.Errorf("purge sidecar state for %s: %w", appName, err)
 	}
 	return nil
 }

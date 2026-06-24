@@ -143,7 +143,7 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Add tailnet connection nodes
+	// Add tailnet connection nodes and gateway
 	for tailnetID := range tailnetIDs {
 		displayName := "Tailnet"
 		status := "unknown"
@@ -157,6 +157,38 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 			Status:      status,
 			NodeType:    "connection",
 		})
+	}
+
+	// Add gateway node when a tailnet connection is active.
+	// The gateway is the owner's remote access point — it joins the tailnet
+	// and proxies to local Traefik so the owner can reach their Bloud instance
+	// remotely. It is separate from sidecars, which handle app sharing.
+	if s.gateway != nil && len(tailnetIDs) > 0 {
+		gwStatus := "stopped"
+		if s.gateway.IsRunning(r.Context()) {
+			gwStatus = "running"
+		}
+		nodes = append(nodes, graphNode{
+			ID:          "sys:gateway",
+			DisplayName: "TS Gateway",
+			Status:      gwStatus,
+			IsSystem:    true,
+			NodeType:    "app",
+		})
+		for tailnetID := range tailnetIDs {
+			edges = append(edges, graphEdge{
+				Source: "conn:tailnet:" + tailnetID,
+				Target: "sys:gateway",
+				Label:  "tailnet",
+			})
+		}
+		if hasTraefik {
+			edges = append(edges, graphEdge{
+				Source: "sys:gateway",
+				Target: "traefik",
+				Label:  "proxy",
+			})
+		}
 	}
 
 	// Add local connection node (routes through traefik)

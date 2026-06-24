@@ -346,6 +346,11 @@ func (m *MockGatewayManager) Stop(ctx context.Context) error {
 	return args.Error(0)
 }
 
+func (m *MockGatewayManager) StopAndPurge(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
 func (m *MockGatewayManager) IsRunning(ctx context.Context) bool {
 	args := m.Called(ctx)
 	return args.Bool(0)

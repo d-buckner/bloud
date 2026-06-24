@@ -130,11 +130,16 @@ func (s *Server) handleDeleteTailnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop gateway and remote proxies — tailnet connectivity is gone.
+	// Stop all Tailscale containers and purge state so a future tailnet
+	// connection starts with fresh node identities.
+	ctx := context.Background()
 	if s.gateway != nil {
-		if err := s.gateway.Stop(context.Background()); err != nil {
-			s.logger.Warn("failed to stop gateway", "error", err)
+		if err := s.gateway.StopAndPurge(ctx); err != nil {
+			s.logger.Warn("failed to purge gateway state", "error", err)
 		}
+	}
+	if s.sidecar != nil {
+		s.stopAllSidecarsAndPurge(ctx)
 	}
 	if s.remoteProxy != nil {
 		s.remoteProxy.StopAll()
@@ -143,6 +148,25 @@ func (s *Server) handleDeleteTailnet(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status": "deleted",
 	})
+}
+
+// stopAllSidecarsAndPurge stops every sidecar and removes its persisted Tailscale state.
+// Called when the tailnet connection is deleted so re-adding a connection starts fresh.
+func (s *Server) stopAllSidecarsAndPurge(ctx context.Context) {
+	apps, err := s.appStore.GetAll()
+	if err != nil {
+		s.logger.Error("failed to list apps for sidecar cleanup", "error", err)
+		return
+	}
+	for _, app := range apps {
+		if app.IsSystem {
+			continue
+		}
+		if err := s.sidecar.StopAndPurge(ctx, app.Name); err != nil {
+			s.logger.Warn("failed to purge sidecar state", "app", app.Name, "error", err)
+		}
+		_ = s.appStore.SetTailnetID(app.Name, "")
+	}
 }
 
 // ensureSidecarsForRunningApps starts sidecars for all running non-system apps.

@@ -28,6 +28,7 @@ type fakeSidecar struct {
 
 func (f *fakeSidecar) EnsureRunning(_ context.Context, _ string, _ int) error { return nil }
 func (f *fakeSidecar) Stop(_ context.Context, _ string) error                 { return nil }
+func (f *fakeSidecar) StopAndPurge(_ context.Context, _ string) error         { return nil }
 func (f *fakeSidecar) GetAddr(_ context.Context, _ string) (string, error) {
 	return f.addr, f.addrErr
 }

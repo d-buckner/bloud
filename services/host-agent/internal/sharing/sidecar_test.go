@@ -84,10 +84,15 @@ func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 	// Verify systemd dependency binding
 	assert.Equal(t, "apps-navidrome.service", spec.DependsOn)
 
-	// Verify serve config mount (directory, not file — required by Tailscale)
-	require.Len(t, spec.Mounts, 1)
+	// Verify serve config mount and state volume
+	require.Len(t, spec.Mounts, 2)
 	assert.Equal(t, "/etc/ts-serve", spec.Mounts[0].Destination)
 	assert.Equal(t, []string{"ro"}, spec.Mounts[0].Options)
+	assert.Equal(t, "/var/lib/tailscale", spec.Mounts[1].Destination)
+
+	// Verify persistent state env vars
+	assert.Equal(t, "/var/lib/tailscale", spec.Environment["TS_STATE_DIR"])
+	assert.Equal(t, "true", spec.Environment["TS_AUTH_ONCE"])
 }
 
 func TestEnsureRunning_WritesServeConfigJSON(t *testing.T) {

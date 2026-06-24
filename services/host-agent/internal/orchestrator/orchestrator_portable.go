@@ -143,6 +143,11 @@ func (o *PortableOrchestrator) SyncContainerState(ctx context.Context) {
 			// DB says running but container isn't → mark stopped
 			o.logger.Info("container not running, marking as stopped", "app", app.Name, "exists", state.Exists)
 			_ = o.appStore.UpdateStatus(app.Name, "stopped")
+
+		case (app.Status == "error" || app.Status == "stopped") && state.Running:
+			// Container recovered or was started externally → mark running
+			o.logger.Info("container running, marking as running", "app", app.Name, "previous_status", app.Status)
+			_ = o.appStore.UpdateStatus(app.Name, "running")
 		}
 	}
 
@@ -444,7 +449,16 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 	}
 	o.traefikGen.SetAuthentikEnabled(authentikEnabled)
 
-	// Build remote app routes if store is available
+	// Ensure gateway is running whenever a tailnet is active. The gateway
+	// provides SOCKS5 for remote app proxying and serves as the owner's
+	// presence on the tailnet for remote access.
+	if o.gateway != nil && o.activeTailnetID != nil && o.activeTailnetID() != "" {
+		if err := o.gateway.EnsureRunning(context.Background()); err != nil {
+			o.logger.Warn("gateway not available", "error", err)
+		}
+	}
+
+	// Build remote app routes if store is available.
 	var remoteRoutes []traefikgen.RemoteAppRoute
 	if o.remoteAppStore != nil {
 		remoteApps, err := o.remoteAppStore.List()
@@ -458,13 +472,6 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 					ID:         ra.AppID + "-" + slugify(ra.HostLabel),
 					TailnetURL: "https://" + ra.SidecarTailnetAddr,
 				})
-			}
-
-			// Ensure gateway is running if we have remote apps.
-			if len(targets) > 0 && o.gateway != nil {
-				if err := o.gateway.EnsureRunning(context.Background()); err != nil {
-					o.logger.Warn("gateway not available, remote apps unreachable", "error", err)
-				}
 			}
 
 			// Reconcile reverse proxies — returns port assignments.

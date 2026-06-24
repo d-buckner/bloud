@@ -12,7 +12,7 @@ import (
 
 func TestGateway_EnsureRunning_CreatesContainerSpec(t *testing.T) {
 	rt := &FakeRuntime{}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, t.TempDir(), discardLogger())
 
 	err := mgr.EnsureRunning(context.Background())
 	require.NoError(t, err)
@@ -33,12 +33,17 @@ func TestGateway_EnsureRunning_CreatesContainerSpec(t *testing.T) {
 
 	// Gateway is host-network, no DependsOn
 	assert.Empty(t, spec.DependsOn)
-	assert.Empty(t, spec.Mounts)
+
+	// State volume for persistent node identity
+	require.Len(t, spec.Mounts, 1)
+	assert.Equal(t, "/var/lib/tailscale", spec.Mounts[0].Destination)
+	assert.Equal(t, "/var/lib/tailscale", spec.Environment["TS_STATE_DIR"])
+	assert.Equal(t, "true", spec.Environment["TS_AUTH_ONCE"])
 }
 
 func TestGateway_EnsureRunning_NoAuthKey(t *testing.T) {
 	rt := &FakeRuntime{}
-	mgr := NewGatewayManager(rt, func() string { return "" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "" }, 1055, t.TempDir(), discardLogger())
 
 	err := mgr.EnsureRunning(context.Background())
 	require.Error(t, err)
@@ -48,7 +53,7 @@ func TestGateway_EnsureRunning_NoAuthKey(t *testing.T) {
 
 func TestGateway_EnsureRunning_Idempotent(t *testing.T) {
 	rt := &FakeRuntime{}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, t.TempDir(), discardLogger())
 
 	require.NoError(t, mgr.EnsureRunning(context.Background()))
 	require.NoError(t, mgr.EnsureRunning(context.Background()))
@@ -58,7 +63,7 @@ func TestGateway_EnsureRunning_Idempotent(t *testing.T) {
 
 func TestGateway_EnsureRunning_CustomSocksPort(t *testing.T) {
 	rt := &FakeRuntime{}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 2080, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 2080, t.TempDir(), discardLogger())
 
 	require.NoError(t, mgr.EnsureRunning(context.Background()))
 
@@ -68,7 +73,7 @@ func TestGateway_EnsureRunning_CustomSocksPort(t *testing.T) {
 
 func TestGateway_Stop_RemovesContainer(t *testing.T) {
 	rt := &FakeRuntime{}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, t.TempDir(), discardLogger())
 
 	err := mgr.Stop(context.Background())
 	require.NoError(t, err)
@@ -77,7 +82,7 @@ func TestGateway_Stop_RemovesContainer(t *testing.T) {
 
 func TestGateway_Stop_IgnoresNotFound(t *testing.T) {
 	rt := &notFoundRuntime{}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, t.TempDir(), discardLogger())
 
 	err := mgr.Stop(context.Background())
 	require.NoError(t, err)
@@ -85,21 +90,21 @@ func TestGateway_Stop_IgnoresNotFound(t *testing.T) {
 
 func TestGateway_IsRunning_True(t *testing.T) {
 	rt := &inspectableRuntime{state: container.State{Exists: true, Running: true}}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, t.TempDir(), discardLogger())
 
 	assert.True(t, mgr.IsRunning(context.Background()))
 }
 
 func TestGateway_IsRunning_False_NotRunning(t *testing.T) {
 	rt := &inspectableRuntime{state: container.State{Exists: true, Running: false}}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, t.TempDir(), discardLogger())
 
 	assert.False(t, mgr.IsRunning(context.Background()))
 }
 
 func TestGateway_IsRunning_False_NotExist(t *testing.T) {
 	rt := &inspectableRuntime{err: fmt.Errorf("no such container")}
-	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, discardLogger())
+	mgr := NewGatewayManager(rt, func() string { return "tskey-auth-gw" }, 1055, t.TempDir(), discardLogger())
 
 	assert.False(t, mgr.IsRunning(context.Background()))
 }
