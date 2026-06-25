@@ -567,7 +567,12 @@ done`
 
 var remoteResetJellyfinScript = `installed="$(curl -sS http://localhost:3000/api/apps/installed || printf '[]')"
 if printf '%s' "$installed" | grep -q '"name":"jellyfin"'; then
-  curl -fsS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null || true
+  curl -sS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null || true
+  deadline=$((SECONDS + 120))
+  until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'; do
+    if ((SECONDS >= deadline)); then exit 1; fi
+    sleep 2
+  done
 fi
 systemctl --user stop apps-jellyfin.service >/dev/null 2>&1 || true
 podman rm -f apps-jellyfin >/dev/null 2>&1 || true
@@ -576,9 +581,15 @@ systemctl --user daemon-reload
 installed="$(curl -sS http://localhost:3000/api/apps/installed || printf '[]')"
 ! printf '%s' "$installed" | grep -q '"name":"jellyfin"'`
 
-var remoteInstallJellyfinScript = `response="$(curl -sS -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:3000/api/apps/jellyfin/install)"
-printf '%s\n' "$response"
-printf '%s' "$response" | grep -q '"success":true'`
+var remoteInstallJellyfinScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:3000/api/apps/jellyfin/install)"
+printf 'install response: %%s\n' "$http_code"
+test "$http_code" -ge 200 && test "$http_code" -lt 300
+deadline=$((SECONDS + 120))
+until curl -sS http://localhost:3000/api/apps/installed | grep -q '"status":"running".*"name":"jellyfin"\|"name":"jellyfin".*"status":"running"'; do
+  if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin to reach running"; exit 1; fi
+  sleep 3
+done
+printf 'jellyfin is running\n'`
 
 var remoteEnsureUserScript = `payload="$1"
 status="$(curl -fsS http://localhost:3000/api/setup/status)"
@@ -614,12 +625,16 @@ done
 systemctl --user is-active --quiet apps-jellyfin.service
 curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'`
 
-var remoteUninstallScript = `response="$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
-printf '%s\n' "$response"
-printf '%s' "$response" | grep -q '"success":true'
+var remoteUninstallScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
+printf 'uninstall response: %%s\n' "$http_code"
+test "$http_code" -ge 200 && test "$http_code" -lt 300
+deadline=$((SECONDS + 120))
+until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'; do
+  if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin removal"; exit 1; fi
+  sleep 2
+done
 ! podman container exists apps-jellyfin
 test ! -e "$1/apps-jellyfin.container"
 ! systemctl --user is-active --quiet apps-jellyfin.service
-! curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'
 test ! -e "$2/data/jellyfin"
 ! grep -q 'jellyfin-backend' "$3/apps-routes.yml"`

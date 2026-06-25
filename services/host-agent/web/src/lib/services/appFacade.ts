@@ -22,14 +22,28 @@ import {
 	fetchInstalledApps,
 	installApp as apiInstall,
 	uninstallApp as apiUninstall,
-	renameApp,
+	renameApp as apiRename,
 	type RenameResult,
 } from '$lib/clients/appClient';
 import { saveLayout } from '$lib/clients/layoutClient';
 import { connectSSE, disconnectSSE } from '$lib/api/sse';
-import { type InstallResult, type UninstallResult, AppStatus } from '$lib/types';
+import { type IntentResponse, AppStatus } from '$lib/types';
 
-export { renameApp, type RenameResult };
+export type { RenameResult };
+
+/**
+ * Rename an app's display name.
+ * Wraps the intent-based API response into the RenameResult type for UI callers.
+ */
+export async function renameApp(appName: string, newDisplayName: string): Promise<RenameResult> {
+	try {
+		await apiRename(appName, newDisplayName);
+		return { success: true };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Rename failed';
+		return { success: false, error: message };
+	}
+}
 
 let initialized = false;
 
@@ -96,15 +110,13 @@ export function disconnectApps(): void {
 }
 
 /**
- * Install an app with optional integration choices
+ * Install an app
  *
  * Adds the app to the layout immediately so it appears on the grid.
  * Marks as pending so the UI can show 'installing' before SSE arrives.
+ * Returns once the intent is accepted (202); the reconciler handles the rest.
  */
-export async function installApp(
-	name: string,
-	choices: Record<string, string> = {}
-): Promise<InstallResult> {
+export async function installApp(name: string): Promise<IntentResponse> {
 	// Add to layout so it shows on the grid immediately
 	layout.addApp(name);
 	// Persist immediately — a 500ms debounced save would lose the new app if SSE
@@ -115,7 +127,7 @@ export async function installApp(
 	// Mark as pending so the catalog can show 'installing' before SSE arrives
 	pendingInstalls.update((s) => new Set(s).add(name));
 
-	return apiInstall(name, choices);
+	return apiInstall(name);
 }
 
 /**
@@ -124,7 +136,7 @@ export async function installApp(
  * Sets status to 'uninstalling' immediately for responsive UI,
  * removes from layout on success. Reverts status on error.
  */
-export async function uninstallApp(name: string): Promise<UninstallResult> {
+export async function uninstallApp(name: string): Promise<IntentResponse> {
 	// Optimistic update: set status to 'uninstalling' immediately
 	apps.update((current) =>
 		current.map((app) => (app.name === name ? { ...app, status: AppStatus.Uninstalling } : app))

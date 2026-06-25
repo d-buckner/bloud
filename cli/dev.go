@@ -163,6 +163,61 @@ func cmdServices() int {
 	return 0
 }
 
+func cmdReset() int {
+	lima := limaInstance()
+
+	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", lima)
+	fmt.Printf("The VM itself is kept — only data, containers, and the database are removed.\n")
+	fmt.Print("Continue? [y/N] ")
+	var resp string
+	fmt.Scanln(&resp)
+	if strings.ToLower(strings.TrimSpace(resp)) != "y" {
+		fmt.Println("Aborted.")
+		return 0
+	}
+
+	// 1. Kill host-agent
+	log("Stopping host-agent")
+	cmd := exec.Command("limactl", "shell", lima, "bash", "-c",
+		`pkill -f 'host-agent$' 2>/dev/null; true`)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+
+	// 2. Stop all app services and remove containers + quadlet files
+	log("Stopping services and removing containers")
+	cmd = exec.Command("limactl", "shell", lima, "bash", "-c", `
+set -e
+systemctl --user stop apps-*.service 2>/dev/null || true
+podman rm -f $(podman ps -aq) 2>/dev/null || true
+systemctl --user reset-failed 2>/dev/null || true
+rm -f "$HOME/.config/containers/systemd"/apps-*.container 2>/dev/null || true
+systemctl --user daemon-reload 2>/dev/null || true
+`)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+
+	// 3. Wipe data directories and database
+	// Use podman unshare for dirs with container-owned files (e.g. postgres)
+	log("Wiping data")
+	cmd = exec.Command("limactl", "shell", lima, "bash", "-c", `
+set -e
+podman unshare rm -rf "$HOME/.local/share/bloud"
+podman unshare rm -rf /var/tmp/bloud-dev-runtime/data
+rm -f /var/tmp/bloud-dev-runtime/bloud.db
+`)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		errorf("Failed to wipe data: %v", err)
+		return 1
+	}
+
+	log("Reset complete — run ./bloud dev to start fresh")
+	return 0
+}
+
 func cmdDestroy() int {
 	lima := limaInstance()
 	fmt.Printf("This will stop and delete the Lima VM '%s'.\n", lima)

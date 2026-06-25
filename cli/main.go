@@ -85,6 +85,8 @@ func main() {
 		exitCode = cmdInstall(args)
 	case "uninstall":
 		exitCode = cmdUninstall(args)
+	case "reset":
+		exitCode = cmdReset()
 	case "destroy":
 		exitCode = cmdDestroy()
 	case "services":
@@ -140,6 +142,7 @@ func printUsage() {
 	fmt.Println("  shell [cmd]     Run a command on the Lima VM (or open a shell)")
 	fmt.Println("  install <app>   Install an app via API (requires running host-agent)")
 	fmt.Println("  uninstall <app> Uninstall an app via API")
+	fmt.Println("  reset           Wipe all data in Lima VM and re-run setup (keeps VM)")
 	fmt.Println("  destroy         Delete the Lima VM")
 	fmt.Println()
 	fmt.Println("Validation:")

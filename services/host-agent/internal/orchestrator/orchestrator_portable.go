@@ -7,15 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
+
+// Compile-time assertion: PortableOrchestrator implements reconciler.AppLifecycleManager.
+var _ reconciler.AppLifecycleManager = (*PortableOrchestrator)(nil)
 
 // SSOProvisioner provisions per-app SSO in the identity provider (e.g. Authentik).
 // Implementations must be idempotent — called on every ensureApp, not just first install.
@@ -65,7 +67,6 @@ type PortableOrchestrator struct {
 	dataDir      string
 	templateVars map[string]string
 	logger       *slog.Logger
-	operationMu  sync.Mutex
 }
 
 func NewPortable(cfg PortableConfig) *PortableOrchestrator {
@@ -90,25 +91,10 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 	}
 }
 
-func (o *PortableOrchestrator) EnqueueInstall(ctx context.Context, req InstallRequest) (InstallResponse, error) {
-	o.operationMu.Lock()
-	defer o.operationMu.Unlock()
-	return o.Install(ctx, req)
-}
-
-func (o *PortableOrchestrator) EnqueueUninstall(ctx context.Context, req UninstallRequest) (UninstallResponse, error) {
-	o.operationMu.Lock()
-	defer o.operationMu.Unlock()
-	return o.Uninstall(ctx, req)
-}
-
 // SyncContainerState aligns DB state with actual container reality on startup.
 // If a container was killed externally while the host-agent was down, the DB
 // still shows "running". This method inspects each container and corrects the DB.
 func (o *PortableOrchestrator) SyncContainerState(ctx context.Context) {
-	o.operationMu.Lock()
-	defer o.operationMu.Unlock()
-
 	apps, err := o.appStore.GetAll()
 	if err != nil {
 		o.logger.Error("failed to load apps for container sync", "error", err)
@@ -156,9 +142,6 @@ func (o *PortableOrchestrator) SyncContainerState(ctx context.Context) {
 
 // ReconcileState converges all durable installed-app state after process restart.
 func (o *PortableOrchestrator) ReconcileState(ctx context.Context) {
-	o.operationMu.Lock()
-	defer o.operationMu.Unlock()
-
 	apps, err := o.appStore.GetAll()
 	if err != nil {
 		o.logger.Error("failed to load portable runtime state", "error", err)
@@ -180,118 +163,44 @@ func (o *PortableOrchestrator) ReconcileState(ctx context.Context) {
 	}
 }
 
-func (o *PortableOrchestrator) Install(ctx context.Context, req InstallRequest) (InstallResponse, error) {
-	result := &InstallResult{App: req.App}
-
-	plan, err := o.graph.PlanInstall(req.App)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to plan install: %v", err)
-		return result, nil
-	}
-	if !plan.CanInstall {
-		result.Error = fmt.Sprintf("cannot install: %v", plan.Blockers)
-		return result, nil
-	}
-
-	integrations := buildIntegrationConfig(req.Choices, plan.AutoConfig, plan.Choices)
-	appNames := make([]string, 0, len(integrations)+1)
-	for _, provider := range integrations {
-		appNames = append(appNames, provider)
-	}
-	appNames = append(appNames, req.App)
-
-	for _, appName := range appNames {
-		appIntegrations := map[string]string(nil)
-		if appName == req.App {
-			appIntegrations = integrations
-		}
-		if err := o.recordIntent(appName, appIntegrations); err != nil {
-			result.Error = fmt.Sprintf("failed to record intent for %s: %v", appName, err)
-			return result, nil
-		}
-		// Skip ensureApp for apps already running (e.g. system apps from bootstrap)
-		if existing, _ := o.appStore.GetByName(appName); existing != nil && existing.Status == "running" {
-			result.AppsInstalled = append(result.AppsInstalled, appName)
-			result.Configured = append(result.Configured, appName)
-			continue
-		}
-		if err := o.ensureApp(ctx, appName); err != nil {
-			_ = o.appStore.UpdateStatus(appName, "error")
-			result.Error = fmt.Sprintf("failed to converge %s: %v", appName, err)
-			return result, nil
-		}
-		result.AppsInstalled = append(result.AppsInstalled, appName)
-		result.Configured = append(result.Configured, appName)
-	}
-
-	installed, _ := o.appStore.GetInstalledNames()
-	o.graph.SetInstalled(installed)
-	if err := o.RegenerateRoutes(); err != nil {
-		o.logger.Warn("failed to regenerate routes", "error", err)
-	}
-
-	result.Success = true
-	result.GenerationInfo = "portable container topology converged"
-	return result, nil
+// EnsureApp is the public wrapper around ensureApp for use by the reconciler.
+// It runs PreStart → container ensure → health check → PostStart → SSO → sidecar → status→running.
+func (o *PortableOrchestrator) EnsureApp(ctx context.Context, appName string) error {
+	return o.ensureApp(ctx, appName)
 }
 
-func (o *PortableOrchestrator) Uninstall(ctx context.Context, req UninstallRequest) (UninstallResponse, error) {
-	result := &UninstallResult{App: req.App}
-
-	plan, err := o.graph.PlanRemove(req.App)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to plan removal: %v", err)
-		return result, nil
-	}
-	if !plan.CanRemove {
-		result.Error = fmt.Sprintf("cannot remove: %v", plan.Blockers)
-		return result, nil
-	}
-
-	app, err := o.catalog.Get(req.App)
-	if err != nil {
-		result.Error = fmt.Sprintf("load app topology: %v", err)
-		return result, nil
-	}
-	if app.Container == nil {
-		result.Error = fmt.Sprintf("app %s has no portable container topology", req.App)
-		return result, nil
-	}
-
-	_ = o.appStore.UpdateStatus(req.App, "uninstalling")
-
+// RemoveApp removes a single app's container and store entry. It does NOT check
+// graph blockers, update the graph, or regenerate routes — the reconciler handles those.
+func (o *PortableOrchestrator) RemoveApp(ctx context.Context, appName string, clearData bool) error {
 	// Stop sidecar before removing app container (best-effort).
 	if o.sidecar != nil {
-		if err := o.sidecar.Stop(ctx, req.App); err != nil {
-			o.logger.Warn("failed to stop sidecar", "app", req.App, "error", err)
+		if err := o.sidecar.Stop(ctx, appName); err != nil {
+			o.logger.Warn("failed to stop sidecar", "app", appName, "error", err)
 		}
-		o.appStore.SetTailnetID(req.App, "")
+		o.appStore.SetTailnetID(appName, "")
 	}
 
-	if err := o.containers.Remove(ctx, PortableContainerName(app)); err != nil {
-		result.Error = fmt.Sprintf("remove container: %v", err)
-		return result, nil
+	app, err := o.catalog.Get(appName)
+	if err != nil {
+		return fmt.Errorf("load app catalog: %w", err)
 	}
-	if err := o.appStore.Uninstall(req.App); err != nil {
-		result.Error = fmt.Sprintf("remove app state: %v", err)
-		return result, nil
-	}
-	if req.ClearData {
-		if err := os.RemoveAll(filepath.Join(o.dataDir, req.App)); err != nil {
-			result.Error = fmt.Sprintf("remove app data: %v", err)
-			return result, nil
+	if app.Container != nil {
+		if err := o.containers.Remove(ctx, PortableContainerName(app)); err != nil {
+			return fmt.Errorf("remove container: %w", err)
 		}
 	}
 
-	installed, _ := o.appStore.GetInstalledNames()
-	o.graph.SetInstalled(installed)
-	if err := o.RegenerateRoutes(); err != nil {
-		o.logger.Warn("failed to regenerate routes", "error", err)
+	if err := o.appStore.Uninstall(appName); err != nil {
+		return fmt.Errorf("remove app state: %w", err)
 	}
 
-	result.Success = true
-	result.Unconfigured = plan.WillUnconfigure
-	return result, nil
+	if clearData {
+		if err := os.RemoveAll(filepath.Join(o.dataDir, appName)); err != nil {
+			return fmt.Errorf("remove app data: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) error {
@@ -408,25 +317,6 @@ func (o *PortableOrchestrator) configurator(appName string) configurator.Configu
 		return nil
 	}
 	return o.registry.Get(appName)
-}
-
-func (o *PortableOrchestrator) recordIntent(appName string, integrations map[string]string) error {
-	existing, err := o.appStore.GetByName(appName)
-	if err != nil {
-		return err
-	}
-	if existing != nil && existing.Status == "running" {
-		return nil
-	}
-
-	app, err := o.catalog.Get(appName)
-	if err != nil {
-		return err
-	}
-	return o.appStore.Install(app.Name, app.DisplayName, app.Version, integrations, &store.InstallOptions{
-		Port:     app.Port,
-		IsSystem: app.IsSystem,
-	})
 }
 
 func (o *PortableOrchestrator) RegenerateRoutes() error {

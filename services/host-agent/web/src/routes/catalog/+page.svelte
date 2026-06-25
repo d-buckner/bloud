@@ -69,9 +69,9 @@
 		}
 	});
 
-	async function handleInstall(appName: string, choices: Record<string, string>) {
+	async function handleInstall(appName: string) {
 		try {
-			await installApp(appName, choices);
+			await installApp(appName);
 		} catch (err) {
 			console.error('Install failed:', err);
 		}

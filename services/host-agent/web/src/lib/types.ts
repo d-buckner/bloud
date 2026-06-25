@@ -110,61 +110,8 @@ export interface CompatibleApp {
 	category?: string;
 }
 
-// Install plan types
-export interface InstallPlan {
-	app: string;
-	canInstall: boolean;
-	blockers: string[];
-	choices: IntegrationChoice[];
-	autoConfig: ConfigTask[];
-	dependents: ConfigTask[];
-}
-
-export interface IntegrationChoice {
-	integration: string;
-	required: boolean;
-	installed: ChoiceOption[];
-	available: ChoiceOption[];
-	recommended: string;
-}
-
-export interface ChoiceOption {
-	app: string;
-	default: boolean;
-	category?: string;
-}
-
-export interface ConfigTask {
-	target: string;
-	source: string;
-	integration: string;
-}
-
-// Install result (Nix-based)
-export interface InstallResult {
-	app: string;
-	success: boolean;
-	error?: string;
-	appsInstalled?: string[];
-	configured?: string[];
-	configErrors?: string[];
-	rebuildOutput?: string;
-	generationInfo?: string;
-}
-
-// Remove plan types
-export interface RemovePlan {
-	app: string;
-	canRemove: boolean;
-	blockers: string[];
-	willUnconfigure: string[];
-}
-
-// Uninstall result
-export interface UninstallResult {
-	app: string;
-	success: boolean;
-	error?: string;
-	unconfigured?: string[];
+// Intent response (returned by install/uninstall endpoints)
+export interface IntentResponse {
+	intentId: string;
 }
 

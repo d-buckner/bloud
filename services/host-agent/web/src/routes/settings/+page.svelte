@@ -18,6 +18,21 @@
 	let formAuthKey = $state('');
 	let formControlUrl = $state('');
 
+	const POLL_INTERVAL = 500;
+	const POLL_TIMEOUT = 10_000;
+
+	async function pollTailnet(
+		predicate: (conn: TailnetConnection | null) => boolean
+	): Promise<TailnetConnection | null> {
+		const deadline = Date.now() + POLL_TIMEOUT;
+		while (Date.now() < deadline) {
+			const result = await fetchTailnet();
+			if (predicate(result)) return result;
+			await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+		}
+		throw new Error('Timed out waiting for tailnet update');
+	}
+
 	onMount(async () => {
 		try {
 			connection = await fetchTailnet();
@@ -32,12 +47,14 @@
 		error = '';
 		saving = true;
 		try {
-			connection = await setTailnet({
+			await setTailnet({
 				name: formName,
 				type: formType,
 				authKey: formAuthKey,
 				controlUrl: formType === 'headscale' ? formControlUrl : undefined
 			});
+			// Poll until the connection appears.
+			connection = await pollTailnet((conn) => conn !== null);
 			// Clear form on success
 			formName = '';
 			formAuthKey = '';
@@ -57,7 +74,8 @@
 		saving = true;
 		try {
 			await deleteTailnet();
-			connection = null;
+			// Poll until the connection is gone.
+			connection = await pollTailnet((conn) => conn === null);
 		} catch (err: unknown) {
 			const msg = err && typeof err === 'object' && 'message' in err
 				? (err as { message: string }).message

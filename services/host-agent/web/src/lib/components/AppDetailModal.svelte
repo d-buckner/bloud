@@ -3,13 +3,13 @@
 	import AppIcon from './AppIcon.svelte';
 	import CloseButton from './CloseButton.svelte';
 	import Icon from './Icon.svelte';
-	import type { CatalogApp, InstallPlan } from '$lib/types';
+	import type { CatalogApp } from '$lib/types';
 
 	interface Props {
 		app: CatalogApp | null;
 		status?: string | null;
 		onclose: () => void;
-		oninstall: (appName: string, choices: Record<string, string>) => void;
+		oninstall: (appName: string) => void;
 	}
 
 	let { app, status = null, onclose, oninstall }: Props = $props();
@@ -18,26 +18,10 @@
 	let installing = $derived(status === 'installing' || status === 'starting');
 	let isUninstalling = $derived(status === 'uninstalling');
 
-	let installPlan = $state<InstallPlan | null>(null);
-	let loadingPlan = $state(false);
-	let planError = $state<string | null>(null);
-	let choices = $state<Record<string, string>>({});
 	let uninstallInProgress = $state(false);
 	let uninstallError = $state<string | null>(null);
 
-	$effect(() => {
-		if (app && !installed) {
-			loadInstallPlan(app.name);
-		} else {
-			resetState();
-		}
-	});
-
 	function resetState() {
-		installPlan = null;
-		loadingPlan = false;
-		planError = null;
-		choices = {};
 		uninstallInProgress = false;
 		uninstallError = null;
 	}
@@ -50,11 +34,11 @@
 
 		try {
 			const res = await fetch(`/api/apps/${app.name}/uninstall`, { method: 'POST' });
-			const result = await res.json();
 
-			if (result.success) {
+			if (res.ok) {
 				handleClose();
 			} else {
+				const result = await res.json();
 				uninstallError = result.error || 'Uninstall failed';
 			}
 		} catch (err) {
@@ -64,39 +48,9 @@
 		}
 	}
 
-	async function loadInstallPlan(appName: string) {
-		loadingPlan = true;
-		planError = null;
-		choices = {};
-
-		try {
-			const res = await fetch(`/api/apps/${appName}/plan-install`);
-			const data = await res.json();
-
-			if (!res.ok) {
-				planError = data.error || `Failed to load install plan (${res.status})`;
-				return;
-			}
-
-			installPlan = data;
-
-			if (installPlan?.choices) {
-				for (const choice of installPlan.choices) {
-					if (choice.recommended) {
-						choices[choice.integration] = choice.recommended;
-					}
-				}
-			}
-		} catch (err) {
-			planError = err instanceof Error ? err.message : 'Failed to get install plan';
-		} finally {
-			loadingPlan = false;
-		}
-	}
-
 	function doInstall() {
 		if (!app) return;
-		oninstall(app.name, choices);
+		oninstall(app.name);
 		handleClose();
 	}
 
@@ -126,69 +80,48 @@
 		</header>
 
 		<div class="modal-body">
-				{#if app.description}
-					<p class="modal-description">{app.description}</p>
-				{/if}
+			{#if app.description}
+				<p class="modal-description">{app.description}</p>
+			{/if}
 
-				{#if app.screenshots?.length}
-					<div class="screenshots">
-						{#each app.screenshots as screenshot}
-							<img src={screenshot} alt="Screenshot" class="screenshot" />
-						{/each}
-					</div>
-				{/if}
+			{#if app.screenshots?.length}
+				<div class="screenshots">
+					{#each app.screenshots as screenshot}
+						<img src={screenshot} alt="Screenshot" class="screenshot" />
+					{/each}
+				</div>
+			{/if}
 
-				{#if installed}
-					{#if uninstallError}
-						<div class="alert alert-error">
-							<p>{uninstallError}</p>
-						</div>
-					{/if}
-
-					<div class="installed-notice">
-						<Icon name="check-circle" size={20} />
-						<span>This app is installed</span>
-					</div>
-				{:else if loadingPlan}
-					<div class="loading-plan">
-						<p>Loading installation details...</p>
-					</div>
-				{:else if planError}
+			{#if installed}
+				{#if uninstallError}
 					<div class="alert alert-error">
-						<p>{planError}</p>
+						<p>{uninstallError}</p>
 					</div>
-				{:else if installPlan}
-					{#if !installPlan.canInstall}
-						<div class="alert alert-error">
-							<p><strong>Cannot install:</strong></p>
-							<ul>
-								{#each installPlan.blockers as blocker}
-									<li>{blocker}</li>
-								{/each}
-							</ul>
-						</div>
-					{/if}
 				{/if}
-			</div>
 
-			<footer class="modal-footer">
-				{#if isUninstalling}
-					<button class="btn btn-secondary" onclick={handleClose}>Close</button>
-					<span class="status-text">Uninstalling...</span>
-				{:else if installed}
-					<button class="btn btn-secondary" onclick={handleClose} disabled={uninstallInProgress}>Close</button>
-					<button class="btn btn-danger" onclick={doUninstall} disabled={uninstallInProgress}>
-						{#if uninstallInProgress}Removing...{:else}Uninstall{/if}
-					</button>
-				{:else}
-					<button class="btn btn-secondary" onclick={handleClose}>Cancel</button>
-					{#if installPlan?.canInstall}
-						<button class="btn btn-primary" onclick={doInstall} disabled={installing}>
-							{#if installing}Getting...{:else}Get{/if}
-						</button>
-					{/if}
-				{/if}
-			</footer>
+				<div class="installed-notice">
+					<Icon name="check-circle" size={20} />
+					<span>This app is installed</span>
+				</div>
+			{/if}
+		</div>
+
+		<footer class="modal-footer">
+			{#if isUninstalling}
+				<button class="btn btn-secondary" onclick={handleClose}>Close</button>
+				<span class="status-text">Uninstalling...</span>
+			{:else if installed}
+				<button class="btn btn-secondary" onclick={handleClose} disabled={uninstallInProgress}>Close</button>
+				<button class="btn btn-danger" onclick={doUninstall} disabled={uninstallInProgress}>
+					{#if uninstallInProgress}Removing...{:else}Uninstall{/if}
+				</button>
+			{:else}
+				<button class="btn btn-secondary" onclick={handleClose}>Cancel</button>
+				<button class="btn btn-primary" onclick={doInstall} disabled={installing}>
+					{#if installing}Getting...{:else}Get{/if}
+				</button>
+			{/if}
+		</footer>
 	{/if}
 </Modal>
 
@@ -266,12 +199,6 @@
 		border-radius: var(--radius-md);
 	}
 
-	.loading-plan {
-		padding: var(--space-lg);
-		text-align: center;
-		color: var(--color-text-muted);
-		font-style: italic;
-	}
 	.alert {
 		padding: var(--space-md);
 		border-radius: var(--radius-md);
@@ -282,7 +209,6 @@
 	.alert p { margin: var(--space-sm) 0; }
 	.alert p:first-child { margin-top: 0; }
 	.alert p:last-child { margin-bottom: 0; }
-	.alert ul { margin: var(--space-sm) 0 0 0; padding-left: var(--space-lg); }
 
 	.alert-error {
 		background: var(--color-error-bg);

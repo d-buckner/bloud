@@ -16,6 +16,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
@@ -40,8 +41,7 @@ type Server struct {
 	prefsStore        *store.PreferencesStore
 	sessionStore      *store.SessionStore
 	appHub            *AppEventHub
-	orchestrator      orchestrator.AppOrchestrator
-	reconciler        *orchestrator.Reconciler
+	intentReconciler  *reconciler.Reconciler
 	shareStore        store.ShareStoreInterface
 	remoteAppStore    store.RemoteAppStoreInterface
 	tailnetStore      store.TailnetStoreInterface
@@ -160,27 +160,6 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	// Initialize the selected runtime orchestrator.
 	s.initOrchestrator(appStore)
 
-	// Initialize reconciler if registry is provided
-	if s.cfg.Registry != nil {
-		rcfg := orchestrator.DefaultReconcileConfig()
-		rcfg.LDAPOutput = s.cfg.LDAPOutput
-		s.reconciler = orchestrator.NewReconciler(
-			s.cfg.Registry,
-			appStore,
-			s.catalog,
-			s.cfg.DataDir,
-			logger,
-			rcfg,
-		)
-	}
-
-	// Regenerate Traefik routes on startup to ensure they're in sync
-	if s.orchestrator != nil {
-		if err := s.orchestrator.RegenerateRoutes(); err != nil {
-			logger.Warn("failed to regenerate Traefik routes on startup", "error", err)
-		}
-	}
-
 	// Initialize authentication (OAuth2 app in Authentik)
 	s.initAuth()
 
@@ -297,14 +276,34 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			TemplateVars: s.cfg.TemplateVars,
 			Logger:       s.logger,
 		})
-		s.orchestrator = portable
 		s.logger.Info("portable orchestrator initialized")
+
+		// Wire the intent reconciler with real dependencies now that the
+		// portable orchestrator exists.
+		s.intentReconciler = reconciler.New(s.logger, &reconciler.Config{
+			Lifecycle:      portable,
+			AppStore:       appStore,
+			CatalogCache:   s.catalog,
+			Graph:          s.graph,
+			TailnetStore:   s.tailnetStore,
+			RemoteAppStore: s.remoteAppStore,
+			Sidecar:        sidecar,
+			Gateway:        gateway,
+			ProxyStopper:   remoteProxy,
+		})
+		go s.intentReconciler.Start(context.Background())
+
 		go func() {
 			portable.SyncContainerState(context.Background())
 			portable.ReconcileState(context.Background())
 		}()
 		return
 	}
+
+	// Non-portable mode: create intent reconciler with nil config (stub mode)
+	// so Enqueue still works but convergence is a no-op.
+	s.intentReconciler = reconciler.New(s.logger, nil)
+	go s.intentReconciler.Start(context.Background())
 
 	s.logger.Warn("unknown runtime mode, orchestrator not initialized", "mode", s.cfg.RuntimeMode)
 }
@@ -442,20 +441,12 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
-	return nil
-}
 
-// triggerReconcile runs reconciliation in the background.
-// Called after successful install/uninstall to reconfigure dependent apps.
-func (s *Server) triggerReconcile() {
-	if s.reconciler == nil {
-		return
+	if s.intentReconciler != nil {
+		s.intentReconciler.Stop()
 	}
-	go func() {
-		if err := s.reconciler.Reconcile(context.Background()); err != nil {
-			s.logger.Warn("background reconciliation failed", "error", err)
-		}
-	}()
+
+	return nil
 }
 
 // tryInitAuth attempts to initialize authentication, refreshing the token if needed.

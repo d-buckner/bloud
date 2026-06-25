@@ -6,9 +6,9 @@ import (
 	"regexp"
 	"strings"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 // addRemoteAppRequest is the request body for POST /api/sharing/remote-apps.
@@ -40,45 +40,22 @@ func (s *Server) handleAddRemoteApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate app exists in catalog
-	catalogApp, err := s.catalog.Get(req.AppID)
-	if err != nil {
+	if _, err := s.catalog.Get(req.AppID); err != nil {
 		respondError(w, http.StatusBadRequest, "unknown app: "+req.AppID)
 		return
 	}
 
-	id := uuid.New().String()
-
-	ssoStrategy := catalogApp.SSO.Strategy
-	bypassPaths := catalogApp.SSO.BypassPaths
-	if bypassPaths == nil {
-		bypassPaths = []string{}
-	}
-
-	app := store.RemoteApp{
-		ID:                 id,
-		HostLabel:          req.HostLabel,
-		AppID:              req.AppID,
-		AppName:            catalogApp.DisplayName,
-		SSOStrategy:        ssoStrategy,
-		BypassPaths:        bypassPaths,
-		SidecarTailnetAddr: req.TailnetAddr,
-		Status:             "active",
-	}
-
-	if err := s.remoteAppStore.Create(app); err != nil {
-		s.logger.Error("failed to create remote app", "error", err)
-		respondError(w, http.StatusInternalServerError, "failed to create remote app")
+	if s.intentReconciler == nil {
+		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	// Regenerate Traefik routes to include the new remote app
-	if s.orchestrator != nil {
-		if err := s.orchestrator.RegenerateRoutes(); err != nil {
-			s.logger.Warn("failed to regenerate routes after adding remote app", "error", err)
-		}
-	}
+	intent := reconciler.NewAddRemoteAppIntent(req.AppID, req.TailnetAddr, req.HostLabel)
+	s.intentReconciler.Enqueue(intent)
 
-	respondJSON(w, http.StatusCreated, app)
+	respondJSON(w, http.StatusAccepted, map[string]string{
+		"intentId": intent.IntentID(),
+	})
 }
 
 // handleListRemoteApps returns all remote apps.
@@ -101,21 +78,23 @@ func (s *Server) handleListRemoteApps(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteRemoteApp(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	if err := s.remoteAppStore.Delete(id); err != nil {
-		s.logger.Error("failed to delete remote app", "id", id, "error", err)
+	// Validate remote app exists.
+	app, err := s.remoteAppStore.GetByID(id)
+	if err != nil || app == nil {
 		respondError(w, http.StatusNotFound, "remote app not found")
 		return
 	}
 
-	// Regenerate Traefik routes to remove the deleted remote app
-	if s.orchestrator != nil {
-		if err := s.orchestrator.RegenerateRoutes(); err != nil {
-			s.logger.Warn("failed to regenerate routes after removing remote app", "error", err)
-		}
+	if s.intentReconciler == nil {
+		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
+		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{
-		"status": "deleted",
+	intent := reconciler.NewDeleteRemoteAppIntent(id)
+	s.intentReconciler.Enqueue(intent)
+
+	respondJSON(w, http.StatusAccepted, map[string]string{
+		"intentId": intent.IntentID(),
 	})
 }
 
