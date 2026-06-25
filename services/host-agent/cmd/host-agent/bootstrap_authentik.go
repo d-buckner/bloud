@@ -63,6 +63,13 @@ func bootstrapAuthentik(cfg *config.Config, runtime containerruntime.Runtime, lo
 		if err := os.MkdirAll(dir, 0777); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
+		// os.MkdirAll is subject to umask (e.g. 0002 → 0775), which strips
+		// the "other write" bit. Authentik runs as UID 1000 inside the
+		// container, which maps to a high host UID under rootless podman.
+		// That UID falls under "other", so we need explicit chmod.
+		if err := os.Chmod(dir, 0777); err != nil {
+			return fmt.Errorf("chmod dir %s: %w", dir, err)
+		}
 	}
 
 	if err := runtime.EnsureNetwork(ctx, "apps-net"); err != nil {

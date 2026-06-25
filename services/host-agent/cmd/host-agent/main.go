@@ -88,10 +88,8 @@ func runServer() {
 		}
 	}
 
-	// In portable mode, seed a dev user so the setup wizard doesn't appear.
-	// Localhost requests bypass auth, so no password/Authentik needed.
+	// In portable mode, register system apps so dependency resolution works.
 	if cfg.RuntimeMode == "portable" {
-		seedDevUser(database, logger)
 		registerSystemApps(database, cfg, logger)
 	}
 
@@ -224,26 +222,6 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 	}
 
 	return nil
-}
-
-// seedDevUser ensures an "admin" user exists in the database so the setup
-// wizard is skipped. Auth is bypassed for localhost in portable mode, so no
-// password or Authentik integration is needed.
-func seedDevUser(database *sql.DB, logger *slog.Logger) {
-	prefs := store.NewPreferencesStore(database)
-	has, err := prefs.HasUsers()
-	if err != nil {
-		logger.Warn("failed to check for existing users", "error", err)
-		return
-	}
-	if has {
-		return
-	}
-	if err := prefs.EnsureUser("admin"); err != nil {
-		logger.Warn("failed to seed dev user", "error", err)
-		return
-	}
-	logger.Info("seeded dev user", "username", "admin")
 }
 
 // registerSystemApps records all system apps as installed+running in the app store.
