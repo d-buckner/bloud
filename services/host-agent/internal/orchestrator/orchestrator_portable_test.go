@@ -8,6 +8,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,9 +64,11 @@ func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T)
 		DataDir: dataDir, Logger: slog.Default(),
 	})
 
-	install, err := orch.Install(context.Background(), InstallRequest{App: "jellyfin"})
+	// Record in store (as the reconciler would) then ensure.
+	require.NoError(t, appStore.Install("jellyfin", "Jellyfin", "", nil, &store.InstallOptions{Port: 8096}))
+
+	err := orch.EnsureApp(context.Background(), "jellyfin")
 	require.NoError(t, err)
-	require.True(t, install.IsSuccess(), install.GetError())
 	require.Len(t, containers.ensured, 1)
 	assert.Equal(t, []string{"apps-net"}, containers.networks)
 	assert.Equal(t, filepath.Join(dataDir, "jellyfin", "config"), containers.ensured[0].Mounts[0].Source)
@@ -73,12 +76,13 @@ func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, "running", app.Status)
 
+	// ReconcileState re-ensures the app.
 	orch.ReconcileState(context.Background())
 	assert.Len(t, containers.ensured, 2)
 
-	remove, err := orch.Uninstall(context.Background(), UninstallRequest{App: "jellyfin"})
+	// RemoveApp removes container and store entry.
+	err = orch.RemoveApp(context.Background(), "jellyfin", false)
 	require.NoError(t, err)
-	require.True(t, remove.IsSuccess(), remove.GetError())
 	assert.Equal(t, []string{"apps-jellyfin"}, containers.removed)
 	installed, err := appStore.IsInstalled("jellyfin")
 	require.NoError(t, err)

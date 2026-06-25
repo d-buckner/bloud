@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
@@ -343,8 +342,9 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleClearData removes all data for an app (data directory and database)
-// This is equivalent to calling uninstall with clearData=true
+// handleClearData removes all data for an app (data directory and database).
+// If the app is installed, it enqueues an uninstall intent with clearData=true.
+// If not installed, it directly cleans up orphaned data.
 func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
@@ -357,34 +357,32 @@ func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 
 	// Check if app is installed
 	app, _ := s.appStore.GetByName(name)
-	if app != nil && s.orchestrator != nil {
-		// App is installed - uninstall with clearData=true using the queue
-		s.logger.Info("uninstalling app with data cleanup", "app", name)
-		result, err := s.orchestrator.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
-			App:       name,
-			ClearData: true,
+	if app != nil {
+		// App is installed — enqueue uninstall with clearData=true
+		if s.intentReconciler == nil {
+			respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
+			return
+		}
+
+		intent := reconciler.NewUninstallAppIntent(name, true)
+		s.intentReconciler.Enqueue(intent)
+
+		respondJSON(w, http.StatusAccepted, map[string]string{
+			"intentId": intent.IntentID(),
 		})
-		if err != nil {
-			s.logger.Error("uninstall failed during clear-data", "app", name, "error", err)
-			respondError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if !result.IsSuccess() {
-			respondJSON(w, http.StatusBadRequest, result)
-			return
-		}
-	} else {
-		// App not installed - just clean up any orphaned data
-		s.logger.Info("cleaning up orphaned app data", "app", name)
-		appDataDir := filepath.Join(s.cfg.DataDir, name)
-		if err := os.RemoveAll(appDataDir); err != nil {
-			s.logger.Error("failed to remove app data directory", "app", name, "error", err)
-			respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to remove data directory: %v", err))
-			return
-		}
-		if err := s.dropAppDatabase(name); err != nil {
-			s.logger.Warn("failed to drop app database", "app", name, "error", err)
-		}
+		return
+	}
+
+	// App not installed — clean up orphaned data directly
+	s.logger.Info("cleaning up orphaned app data", "app", name)
+	appDataDir := filepath.Join(s.cfg.DataDir, name)
+	if err := os.RemoveAll(appDataDir); err != nil {
+		s.logger.Error("failed to remove app data directory", "app", name, "error", err)
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to remove data directory: %v", err))
+		return
+	}
+	if err := s.dropAppDatabase(name); err != nil {
+		s.logger.Warn("failed to drop app database", "app", name, "error", err)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{

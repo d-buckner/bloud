@@ -707,9 +707,30 @@ func TestAPI_ClearData_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+func TestAPI_ClearData_InstalledApp(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Install the app so handleClearData takes the "installed" branch.
+	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		Name:   "test-app",
+		Status: "running",
+	})
+
+	req := httptest.NewRequest("POST", "/api/apps/test-app/clear-data", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.NotEmpty(t, response["intentId"], "response should contain intentId")
+}
+
 func TestAPI_ClearData_OrphanedData(t *testing.T) {
 	server, appsDir := setupTestServer(t)
-	server.orchestrator = nil // No orchestrator needed for orphaned data cleanup
 
 	// Create orphaned data directory
 	dataDir := filepath.Join(appsDir, "data")
