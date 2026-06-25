@@ -3,13 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
-	_ "embed"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	authentikApp "codeberg.org/d-buckner/bloud-v3/apps/authentik"
 	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
@@ -17,9 +14,6 @@ import (
 	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
-
-//go:embed scripts/seed_dev_user.py
-var seedDevUserScript string
 
 const (
 	authentikImage     = "ghcr.io/goauthentik/server:2025.10.3"
@@ -171,11 +165,6 @@ func bootstrapAuthentik(cfg *config.Config, runtime containerruntime.Runtime, lo
 	}
 	logger.Info("authentik LDAP outpost started")
 
-	// Seed a dev "admin" user so Jellyfin LDAP login works with admin/password.
-	if err := seedAuthentikDevUser(ctx, logger); err != nil {
-		logger.Warn("failed to seed dev user in authentik", "error", err)
-	}
-
 	return nil
 }
 
@@ -243,26 +232,4 @@ func prepareAuthentikBlueprints(cfg *config.Config) error {
 	}
 
 	return os.WriteFile(dstPath, src, 0644)
-}
-
-// seedAuthentikDevUser creates an "admin" user with password "password" in Authentik
-// and adds them to the authentik Admins group. This enables Jellyfin LDAP login
-// with admin/password in dev mode.
-func seedAuthentikDevUser(ctx context.Context, logger *slog.Logger) error {
-	args := []string{
-		"exec", "-e", "BLOUD_DEV_PASSWORD=password",
-		"apps-authentik-server", "ak", "shell", "-c", seedDevUserScript,
-	}
-	output, err := exec.CommandContext(ctx, "podman", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("django shell failed: %w (output: %s)", err, string(output))
-	}
-
-	result := strings.TrimSpace(string(output))
-	if !strings.Contains(result, "OK") {
-		return fmt.Errorf("unexpected output: %s", result)
-	}
-
-	logger.Info("seeded dev user in authentik", "output", result)
-	return nil
 }
