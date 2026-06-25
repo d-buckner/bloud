@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
 	"github.com/go-chi/chi/v5"
@@ -52,10 +53,6 @@ func (s *Server) setupRoutes() {
 				r.Get("/installed", s.handleListInstalledApps)
 				r.Get("/events", s.handleAppEvents)
 				r.Post("/refresh-catalog", s.handleRefreshCatalog)
-
-				// Plan endpoints (use graph)
-				r.Get("/{name}/plan-install", s.handlePlanInstall)
-				r.Get("/{name}/plan-remove", s.handlePlanRemove)
 
 				// Metadata endpoint
 				r.Get("/{name}/metadata", s.handleAppMetadata)
@@ -295,91 +292,34 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	w.Write(devDashboardHTML)
 }
 
-// handlePlanInstall returns the installation plan for an app
-func (s *Server) handlePlanInstall(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-
-	if s.graph == nil {
-		respondError(w, http.StatusServiceUnavailable, "catalog not loaded")
-		return
-	}
-
-	plan, err := s.graph.PlanInstall(name)
-	if err != nil {
-		s.logger.Error("failed to plan install", "app", name, "error", err)
-		respondError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, plan)
-}
-
-// handlePlanRemove returns the removal plan for an app
-func (s *Server) handlePlanRemove(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-
-	if s.graph == nil {
-		respondError(w, http.StatusServiceUnavailable, "catalog not loaded")
-		return
-	}
-
-	plan, err := s.graph.PlanRemove(name)
-	if err != nil {
-		s.logger.Error("failed to plan remove", "app", name, "error", err)
-		respondError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, plan)
-}
-
-// handleInstall installs an app
+// handleInstall enqueues an install intent and returns 202 Accepted.
 func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if s.orchestrator == nil {
+	if s.intentReconciler == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	// Parse request body for choices
-	var req struct {
-		Choices map[string]string `json:"choices"`
-	}
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
+	// Validate app exists in catalog
+	if _, err := s.catalog.Get(name); err != nil {
+		respondError(w, http.StatusNotFound, "app not found in catalog")
+		return
 	}
 
-	// Use the queue to serialize concurrent install requests
-	result, err := s.orchestrator.EnqueueInstall(r.Context(), orchestrator.InstallRequest{
-		App:     name,
-		Choices: req.Choices,
+	intent := reconciler.NewInstallAppIntent(name)
+	s.intentReconciler.Enqueue(intent)
+
+	respondJSON(w, http.StatusAccepted, map[string]string{
+		"intentId": intent.IntentID(),
 	})
-	if err != nil {
-		s.logger.Error("install failed", "app", name, "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if !result.IsSuccess() {
-		respondJSON(w, http.StatusBadRequest, result)
-		return
-	}
-
-	// Trigger reconciliation to configure dependent apps
-	s.triggerReconcile()
-
-	respondJSON(w, http.StatusOK, result)
 }
 
-// handleUninstall removes an app
+// handleUninstall enqueues an uninstall intent and returns 202 Accepted.
 func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if s.orchestrator == nil {
+	if s.intentReconciler == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
@@ -395,26 +335,12 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use the queue to serialize concurrent uninstall requests
-	result, err := s.orchestrator.EnqueueUninstall(r.Context(), orchestrator.UninstallRequest{
-		App:       name,
-		ClearData: req.ClearData,
+	intent := reconciler.NewUninstallAppIntent(name, req.ClearData)
+	s.intentReconciler.Enqueue(intent)
+
+	respondJSON(w, http.StatusAccepted, map[string]string{
+		"intentId": intent.IntentID(),
 	})
-	if err != nil {
-		s.logger.Error("uninstall failed", "app", name, "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if !result.IsSuccess() {
-		respondJSON(w, http.StatusBadRequest, result)
-		return
-	}
-
-	// Trigger reconciliation to update dependent apps
-	s.triggerReconcile()
-
-	respondJSON(w, http.StatusOK, result)
 }
 
 // handleClearData removes all data for an app (data directory and database)
@@ -484,16 +410,16 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.appStore.UpdateDisplayName(name, req.DisplayName); err != nil {
-		s.logger.Error("failed to rename app", "app", name, "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+	if s.intentReconciler == nil {
+		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{
-		"status":      "renamed",
-		"app":         name,
-		"displayName": req.DisplayName,
+	intent := reconciler.NewRenameAppIntent(name, req.DisplayName)
+	s.intentReconciler.Enqueue(intent)
+
+	respondJSON(w, http.StatusAccepted, map[string]string{
+		"intentId": intent.IntentID(),
 	})
 }
 

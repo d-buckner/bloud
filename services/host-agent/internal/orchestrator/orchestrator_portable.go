@@ -11,11 +11,15 @@ import (
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )
+
+// Compile-time assertion: PortableOrchestrator implements reconciler.AppLifecycleManager.
+var _ reconciler.AppLifecycleManager = (*PortableOrchestrator)(nil)
 
 // SSOProvisioner provisions per-app SSO in the identity provider (e.g. Authentik).
 // Implementations must be idempotent — called on every ensureApp, not just first install.
@@ -292,6 +296,46 @@ func (o *PortableOrchestrator) Uninstall(ctx context.Context, req UninstallReque
 	result.Success = true
 	result.Unconfigured = plan.WillUnconfigure
 	return result, nil
+}
+
+// EnsureApp is the public wrapper around ensureApp for use by the reconciler.
+// It runs PreStart → container ensure → health check → PostStart → SSO → sidecar → status→running.
+func (o *PortableOrchestrator) EnsureApp(ctx context.Context, appName string) error {
+	return o.ensureApp(ctx, appName)
+}
+
+// RemoveApp removes a single app's container and store entry. It does NOT check
+// graph blockers, update the graph, or regenerate routes — the reconciler handles those.
+func (o *PortableOrchestrator) RemoveApp(ctx context.Context, appName string, clearData bool) error {
+	// Stop sidecar before removing app container (best-effort).
+	if o.sidecar != nil {
+		if err := o.sidecar.Stop(ctx, appName); err != nil {
+			o.logger.Warn("failed to stop sidecar", "app", appName, "error", err)
+		}
+		o.appStore.SetTailnetID(appName, "")
+	}
+
+	app, err := o.catalog.Get(appName)
+	if err != nil {
+		return fmt.Errorf("load app catalog: %w", err)
+	}
+	if app.Container != nil {
+		if err := o.containers.Remove(ctx, PortableContainerName(app)); err != nil {
+			return fmt.Errorf("remove container: %w", err)
+		}
+	}
+
+	if err := o.appStore.Uninstall(appName); err != nil {
+		return fmt.Errorf("remove app state: %w", err)
+	}
+
+	if clearData {
+		if err := os.RemoveAll(filepath.Join(o.dataDir, appName)); err != nil {
+			return fmt.Errorf("remove app data: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) error {

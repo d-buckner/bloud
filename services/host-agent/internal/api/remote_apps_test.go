@@ -23,18 +23,12 @@ func TestAPI_AddRemoteApp(t *testing.T) {
 
 	server.router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	var app store.RemoteApp
-	err := json.NewDecoder(w.Body).Decode(&app)
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
-
-	assert.NotEmpty(t, app.ID)
-	assert.Equal(t, "test-app", app.AppID)
-	assert.Equal(t, "Test App", app.AppName)
-	assert.Equal(t, "ts-test.tail123.ts.net", app.SidecarTailnetAddr)
-	assert.Equal(t, "Johan", app.HostLabel)
-	assert.Equal(t, "active", app.Status)
+	assert.NotEmpty(t, response["intentId"], "response should contain intentId")
 }
 
 func TestAPI_AddRemoteApp_WithSSO(t *testing.T) {
@@ -57,14 +51,12 @@ func TestAPI_AddRemoteApp_WithSSO(t *testing.T) {
 
 	server.router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	var app store.RemoteApp
-	err := json.NewDecoder(w.Body).Decode(&app)
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
-
-	assert.Equal(t, "forward-auth", app.SSOStrategy)
-	assert.Equal(t, []string{"/rest/"}, app.BypassPaths)
+	assert.NotEmpty(t, response["intentId"], "response should contain intentId")
 }
 
 func TestAPI_AddRemoteApp_MissingFields(t *testing.T) {
@@ -174,16 +166,12 @@ func TestAPI_DeleteRemoteApp(t *testing.T) {
 
 	server.router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	var resp map[string]string
-	err := json.NewDecoder(w.Body).Decode(&resp)
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Equal(t, "deleted", resp["status"])
-
-	// Verify it's gone
-	apps, _ := fakeStore.List()
-	assert.Empty(t, apps)
+	assert.NotEmpty(t, response["intentId"], "response should contain intentId")
 }
 
 func TestAPI_DeleteRemoteApp_NotFound(t *testing.T) {

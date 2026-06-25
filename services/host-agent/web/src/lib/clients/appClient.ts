@@ -3,7 +3,7 @@
  */
 
 import { get, post, patch } from './httpClient';
-import type { App, InstallResult, UninstallResult } from '$lib/types';
+import type { App, IntentResponse } from '$lib/types';
 
 export interface RenameResult {
 	success: boolean;
@@ -18,28 +18,22 @@ export function fetchInstalledApps(): Promise<App[]> {
 }
 
 /**
- * Install an app with optional integration choices
+ * Install an app (returns immediately with an intent ID; reconciler handles the rest)
  */
-export function installApp(name: string, choices: Record<string, string> = {}): Promise<InstallResult> {
-	return post<InstallResult>(`/api/apps/${name}/install`, { choices });
+export function installApp(name: string): Promise<IntentResponse> {
+	return post<IntentResponse>(`/api/apps/${name}/install`);
 }
 
 /**
- * Uninstall an app
+ * Uninstall an app (returns immediately with an intent ID; reconciler handles the rest)
  */
-export function uninstallApp(name: string): Promise<UninstallResult> {
-	return post<UninstallResult>(`/api/apps/${name}/uninstall`);
+export function uninstallApp(name: string): Promise<IntentResponse> {
+	return post<IntentResponse>(`/api/apps/${name}/uninstall`);
 }
 
 /**
- * Rename an app's display name
+ * Rename an app's display name (returns intent ID; reconciler handles the rest)
  */
-export async function renameApp(appName: string, newDisplayName: string): Promise<RenameResult> {
-	try {
-		await patch(`/api/apps/${appName}/rename`, { displayName: newDisplayName });
-		return { success: true };
-	} catch (err) {
-		const message = err instanceof Error ? err.message : 'Rename failed';
-		return { success: false, error: message };
-	}
+export function renameApp(appName: string, newDisplayName: string): Promise<IntentResponse> {
+	return patch<IntentResponse>(`/api/apps/${appName}/rename`, { displayName: newDisplayName });
 }

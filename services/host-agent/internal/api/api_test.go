@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -373,6 +374,11 @@ tags:
 	names, _ := appStore.GetInstalledNames()
 	graph.SetInstalled(names)
 
+	// Create intent reconciler in stub mode for test handlers
+	intentRec := reconciler.New(logger, nil)
+	go intentRec.Start(context.Background())
+	t.Cleanup(intentRec.Stop)
+
 	// Create server with fakes
 	server := &Server{
 		cfg: ServerConfig{
@@ -380,105 +386,20 @@ tags:
 			DataDir: tmpDir,
 			Port:    8080,
 		},
-		router:         chi.NewRouter(),
-		catalog:        catalogCache,
-		graph:          graph,
-		appStore:       appStore,
-		remoteAppStore: NewFakeRemoteAppStore(),
-		appHub:         appHub,
-		logger:         logger,
+		router:           chi.NewRouter(),
+		catalog:          catalogCache,
+		graph:            graph,
+		appStore:         appStore,
+		remoteAppStore:   NewFakeRemoteAppStore(),
+		intentReconciler: intentRec,
+		appHub:           appHub,
+		logger:           logger,
 	}
 
 	server.setupMiddleware()
 	server.setupRoutes()
 
 	return server, tmpDir
-}
-
-// setupTestServerWithGraph creates a server with apps that have integrations
-func setupTestServerWithGraph(t *testing.T) *Server {
-	tmpDir := t.TempDir()
-
-	// Create apps with integrations (each in its own directory)
-	apps := map[string]string{
-		"qbittorrent": `name: qbittorrent
-displayName: qBittorrent
-description: Torrent download client
-category: downloads
-image: qbittorrent:latest
-integrations: {}
-`,
-		"radarr": `name: radarr
-displayName: Radarr
-description: Movie collection manager
-category: media
-image: radarr:latest
-integrations:
-  downloadClient:
-    required: true
-    multi: false
-    compatible:
-      - app: qbittorrent
-        default: true
-`,
-		"jellyseerr": `name: jellyseerr
-displayName: Jellyseerr
-description: Request management and media discovery tool
-category: media
-image: jellyseerr:latest
-integrations:
-  pvr:
-    required: true
-    multi: true
-    compatible:
-      - app: radarr
-        category: movies
-`,
-	}
-
-	for appName, content := range apps {
-		appDir := filepath.Join(tmpDir, appName)
-		require.NoError(t, os.MkdirAll(appDir, 0755))
-		require.NoError(t, os.WriteFile(filepath.Join(appDir, "metadata.yaml"), []byte(content), 0644))
-	}
-
-	// Create fake stores
-	appStore := NewFakeAppStore()
-	catalogCache := NewFakeCatalogCache()
-
-	// Load catalog from test files
-	loader := catalog.NewLoader(tmpDir)
-	require.NoError(t, catalogCache.Refresh(loader))
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	// Create app event hub
-	appHub := NewAppEventHub(appStore)
-	appStore.SetOnChange(appHub.Broadcast)
-
-	// Load graph
-	graph, err := loader.LoadGraph()
-	require.NoError(t, err)
-
-	// Create server
-	server := &Server{
-		cfg: ServerConfig{
-			AppsDir: tmpDir,
-			DataDir: tmpDir,
-			Port:    8080,
-		},
-		router:   chi.NewRouter(),
-		catalog:  catalogCache,
-		graph:    graph,
-		appStore: appStore,
-		appHub:   appHub,
-		logger:   logger,
-	}
-
-	server.setupMiddleware()
-	server.setupRoutes()
-
-	return server
 }
 
 func TestAPI_Health(t *testing.T) {
@@ -650,152 +571,6 @@ tags:
 	assert.Len(t, apps, 2, "should have 2 apps after refresh")
 }
 
-func TestAPI_PlanInstall(t *testing.T) {
-	server := setupTestServerWithGraph(t)
-
-	req := httptest.NewRequest("GET", "/api/apps/radarr/plan-install", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var plan map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&plan)
-	require.NoError(t, err)
-
-	assert.Equal(t, "radarr", plan["app"])
-	assert.Equal(t, true, plan["canInstall"])
-
-	// Should have a choice for downloadClient (nothing installed yet)
-	choices := plan["choices"].([]interface{})
-	assert.Len(t, choices, 1)
-
-	choice := choices[0].(map[string]interface{})
-	assert.Equal(t, "downloadClient", choice["integration"])
-	assert.Equal(t, "qbittorrent", choice["recommended"])
-}
-
-func TestAPI_PlanInstall_WithDependencyInstalled(t *testing.T) {
-	server := setupTestServerWithGraph(t)
-
-	// Mark qbittorrent as installed using the fake store
-	fakeStore := server.appStore.(*FakeAppStore)
-	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "qbittorrent",
-		DisplayName: "qBittorrent",
-		Status:      "running",
-	})
-
-	// Refresh to sync installed state
-	server.syncInstalledState()
-
-	req := httptest.NewRequest("GET", "/api/apps/radarr/plan-install", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var plan map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&plan)
-	require.NoError(t, err)
-
-	// Should have no choices (qbittorrent auto-selected)
-	choices := plan["choices"].([]interface{})
-	assert.Len(t, choices, 0)
-
-	// Should have auto-config for qbittorrent
-	autoConfig := plan["autoConfig"].([]interface{})
-	assert.Len(t, autoConfig, 1)
-	assert.Equal(t, "qbittorrent", autoConfig[0].(map[string]interface{})["source"])
-}
-
-func TestAPI_PlanRemove_Blocked(t *testing.T) {
-	server := setupTestServerWithGraph(t)
-
-	// Install qbittorrent and radarr using the fake store
-	fakeStore := server.appStore.(*FakeAppStore)
-	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "qbittorrent",
-		DisplayName: "qBittorrent",
-		Status:      "running",
-	})
-	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "radarr",
-		DisplayName: "Radarr",
-		Status:      "running",
-	})
-
-	server.syncInstalledState()
-
-	// Try to remove qbittorrent (radarr depends on it)
-	req := httptest.NewRequest("GET", "/api/apps/qbittorrent/plan-remove", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var plan map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&plan)
-	require.NoError(t, err)
-
-	assert.Equal(t, false, plan["canRemove"])
-	blockers := plan["blockers"].([]interface{})
-	assert.Len(t, blockers, 1)
-}
-
-func TestAPI_PlanInstall_NotFound(t *testing.T) {
-	server := setupTestServerWithGraph(t)
-
-	req := httptest.NewRequest("GET", "/api/apps/nonexistent/plan-install", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestAPI_PlanRemove_Allowed(t *testing.T) {
-	server := setupTestServerWithGraph(t)
-
-	// Install only radarr (no dependents)
-	fakeStore := server.appStore.(*FakeAppStore)
-	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "radarr",
-		DisplayName: "Radarr",
-		Status:      "running",
-	})
-
-	server.syncInstalledState()
-
-	// Try to remove radarr (no dependents, should be allowed)
-	req := httptest.NewRequest("GET", "/api/apps/radarr/plan-remove", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var plan map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&plan)
-	require.NoError(t, err)
-
-	assert.Equal(t, true, plan["canRemove"])
-}
-
-func TestAPI_PlanRemove_NotFound(t *testing.T) {
-	server := setupTestServerWithGraph(t)
-
-	req := httptest.NewRequest("GET", "/api/apps/nonexistent/plan-remove", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 func TestAPI_AppMetadata(t *testing.T) {
 	server, _ := setupTestServer(t)
 
@@ -854,9 +629,9 @@ func TestAPI_AppIcon_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestAPI_Install_NoOrchestrator(t *testing.T) {
+func TestAPI_Install_NoReconciler(t *testing.T) {
 	server, _ := setupTestServer(t)
-	server.orchestrator = nil // Ensure no orchestrator
+	server.intentReconciler = nil // Ensure no reconciler
 
 	req := httptest.NewRequest("POST", "/api/apps/test-app/install", nil)
 	w := httptest.NewRecorder()
@@ -866,9 +641,9 @@ func TestAPI_Install_NoOrchestrator(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestAPI_Uninstall_NoOrchestrator(t *testing.T) {
+func TestAPI_Uninstall_NoReconciler(t *testing.T) {
 	server, _ := setupTestServer(t)
-	server.orchestrator = nil
+	server.intentReconciler = nil
 
 	req := httptest.NewRequest("POST", "/api/apps/test-app/uninstall", nil)
 	w := httptest.NewRecorder()
@@ -876,6 +651,49 @@ func TestAPI_Uninstall_NoOrchestrator(t *testing.T) {
 	server.router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestAPI_Install_Returns202(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("POST", "/api/apps/test-app/install", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.NotEmpty(t, response["intentId"], "response should contain intentId")
+}
+
+func TestAPI_Install_NotFound(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("POST", "/api/apps/nonexistent/install", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestAPI_Uninstall_Returns202(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("POST", "/api/apps/test-app/uninstall", nil)
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.NotEmpty(t, response["intentId"], "response should contain intentId")
 }
 
 func TestAPI_ClearData_NotFound(t *testing.T) {
@@ -1314,6 +1132,45 @@ func TestHandleAppEvents_IncludesSSOLaunchPath(t *testing.T) {
 	require.NotNil(t, miniflux, "miniflux should be in SSE app list")
 	assert.Equal(t, "oauth2/oidc/redirect", miniflux["sso_launch_path"],
 		"SSE event must include sso_launch_path so the frontend can auto-redirect to OIDC on first open")
+}
+
+// ── Rename Tests ──────────────────────────────────────────────────────────
+
+func TestAPI_Rename_Returns202(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		Name:        "test-app",
+		DisplayName: "Test App",
+		Status:      "running",
+	})
+
+	body := strings.NewReader(`{"displayName":"My Custom Name"}`)
+	req := httptest.NewRequest("PATCH", "/api/apps/test-app/rename", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	var response map[string]string
+	err := json.NewDecoder(w.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.NotEmpty(t, response["intentId"], "response should contain intentId")
+}
+
+func TestAPI_Rename_MissingDisplayName(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	body := strings.NewReader(`{"displayName":""}`)
+	req := httptest.NewRequest("PATCH", "/api/apps/test-app/rename", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // Test generateState

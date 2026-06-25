@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -75,15 +77,21 @@ func setupSettingsTestServer(t *testing.T) *Server {
 	appStore.SetOnChange(appHub.Broadcast)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
+	// Create a stub-mode intent reconciler so handlers can enqueue intents.
+	r := reconciler.New(logger, nil)
+	go r.Start(context.Background())
+	t.Cleanup(r.Stop)
+
 	server := &Server{
-		cfg:          ServerConfig{},
-		router:       chi.NewRouter(),
-		catalog:      catalogCache,
-		appStore:     appStore,
-		appHub:       appHub,
-		shareStore:   newFakeShareStore(),
-		tailnetStore: newFakeTailnetStore(),
-		logger:       logger,
+		cfg:              ServerConfig{},
+		router:           chi.NewRouter(),
+		catalog:          catalogCache,
+		appStore:         appStore,
+		appHub:           appHub,
+		shareStore:       newFakeShareStore(),
+		tailnetStore:     newFakeTailnetStore(),
+		intentReconciler: r,
+		logger:           logger,
 	}
 
 	server.setupMiddleware()
@@ -144,18 +152,11 @@ func TestHandleSetTailnet_Tailscale(t *testing.T) {
 
 	server.router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusAccepted, w.Code)
 
-	var resp tailnetResponse
+	var resp map[string]string
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotEmpty(t, resp.ID)
-	assert.Equal(t, "My TS", resp.Name)
-	assert.Equal(t, "tailscale", resp.Type)
-	assert.True(t, resp.HasAuthKey)
-
-	// Verify stored in fake store
-	conns := server.tailnetStore.(*fakeTailnetStore).conns
-	assert.Len(t, conns, 1)
+	assert.NotEmpty(t, resp["intentId"])
 }
 
 func TestHandleSetTailnet_Headscale(t *testing.T) {
@@ -168,12 +169,11 @@ func TestHandleSetTailnet_Headscale(t *testing.T) {
 
 	server.router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusAccepted, w.Code)
 
-	var resp tailnetResponse
+	var resp map[string]string
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, "headscale", resp.Type)
-	assert.Equal(t, "https://hs.example.com", resp.ControlURL)
+	assert.NotEmpty(t, resp["intentId"])
 }
 
 func TestHandleSetTailnet_HeadscaleMissingControlURL(t *testing.T) {
@@ -234,13 +234,12 @@ func TestHandleSetTailnet_ReplacesExisting(t *testing.T) {
 
 	server.router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	// Handler now returns 202; replacement happens in the reconciler drain phase.
+	require.Equal(t, http.StatusAccepted, w.Code)
 
-	// Old connection should be gone, new one present
-	conns := server.tailnetStore.(*fakeTailnetStore).conns
-	assert.Len(t, conns, 1)
-	_, hasOld := conns["tn-old"]
-	assert.False(t, hasOld)
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.NotEmpty(t, resp["intentId"])
 }
 
 func TestHandleDeleteTailnet_Success(t *testing.T) {
@@ -259,14 +258,12 @@ func TestHandleDeleteTailnet_Success(t *testing.T) {
 
 	server.router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	// Handler now returns 202; actual deletion happens in the reconciler drain phase.
+	require.Equal(t, http.StatusAccepted, w.Code)
 
 	var resp map[string]string
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, "deleted", resp["status"])
-
-	conns := server.tailnetStore.(*fakeTailnetStore).conns
-	assert.Empty(t, conns)
+	assert.NotEmpty(t, resp["intentId"])
 }
 
 func TestHandleDeleteTailnet_Empty(t *testing.T) {

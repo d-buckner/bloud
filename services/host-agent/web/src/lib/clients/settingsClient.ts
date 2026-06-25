@@ -1,4 +1,5 @@
 import { get, post, del } from './httpClient';
+import type { IntentResponse } from '$lib/types';
 
 export interface TailnetConnection {
 	id: string;
@@ -20,10 +21,10 @@ export function fetchTailnet(): Promise<TailnetConnection | null> {
 	return get<TailnetConnection | null>('/api/settings/tailnet');
 }
 
-export function setTailnet(data: SetTailnetRequest): Promise<TailnetConnection> {
-	return post<TailnetConnection>('/api/settings/tailnet', data);
+export function setTailnet(data: SetTailnetRequest): Promise<IntentResponse> {
+	return post<IntentResponse>('/api/settings/tailnet', data);
 }
 
-export function deleteTailnet(): Promise<void> {
-	return del<void>('/api/settings/tailnet');
+export function deleteTailnet(): Promise<IntentResponse> {
+	return del<IntentResponse>('/api/settings/tailnet');
 }

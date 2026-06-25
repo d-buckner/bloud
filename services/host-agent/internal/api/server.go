@@ -16,6 +16,7 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
@@ -42,6 +43,7 @@ type Server struct {
 	appHub            *AppEventHub
 	orchestrator      orchestrator.AppOrchestrator
 	reconciler        *orchestrator.Reconciler
+	intentReconciler  *reconciler.Reconciler
 	shareStore        store.ShareStoreInterface
 	remoteAppStore    store.RemoteAppStoreInterface
 	tailnetStore      store.TailnetStoreInterface
@@ -299,12 +301,33 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		})
 		s.orchestrator = portable
 		s.logger.Info("portable orchestrator initialized")
+
+		// Wire the intent reconciler with real dependencies now that the
+		// portable orchestrator exists.
+		s.intentReconciler = reconciler.New(s.logger, &reconciler.Config{
+			Lifecycle:      portable,
+			AppStore:       appStore,
+			CatalogCache:   s.catalog,
+			Graph:          s.graph,
+			TailnetStore:   s.tailnetStore,
+			RemoteAppStore: s.remoteAppStore,
+			Sidecar:        sidecar,
+			Gateway:        gateway,
+			ProxyStopper:   remoteProxy,
+		})
+		go s.intentReconciler.Start(context.Background())
+
 		go func() {
 			portable.SyncContainerState(context.Background())
 			portable.ReconcileState(context.Background())
 		}()
 		return
 	}
+
+	// Non-portable mode: create intent reconciler with nil config (stub mode)
+	// so Enqueue still works but convergence is a no-op.
+	s.intentReconciler = reconciler.New(s.logger, nil)
+	go s.intentReconciler.Start(context.Background())
 
 	s.logger.Warn("unknown runtime mode, orchestrator not initialized", "mode", s.cfg.RuntimeMode)
 }
@@ -442,6 +465,11 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
+
+	if s.intentReconciler != nil {
+		s.intentReconciler.Stop()
+	}
+
 	return nil
 }
 
