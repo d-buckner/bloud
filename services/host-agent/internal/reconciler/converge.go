@@ -355,6 +355,7 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 	duration := time.Since(start)
 	r.logger.Info("convergence pass complete", "apps", len(apps), "duration", duration)
 	r.activity.Record("converge_complete", fmt.Sprintf("%d apps, %s", len(apps), duration.Round(time.Millisecond)))
+	r.activity.Checkpoint()
 }
 
 // ensureAppPhased runs the app lifecycle sub-steps in sequence, recording

@@ -16,11 +16,14 @@ type ActivityEntry struct {
 }
 
 // ActivityLog is a thread-safe ring buffer that stores the last 50 reconciler events.
+// A watermark tracks the start of the active window so Recent() only returns
+// events from the current cycle. Checkpoint() advances the watermark to the
+// head, effectively hiding all prior events from API consumers.
 type ActivityLog struct {
-	mu      sync.RWMutex
-	entries []ActivityEntry
-	pos     int
-	full    bool
+	mu        sync.RWMutex
+	entries   []ActivityEntry
+	pos       int // next write position (head)
+	watermark int // start of active window (tail)
 }
 
 // NewActivityLog creates an empty activity log.
@@ -41,24 +44,32 @@ func (a *ActivityLog) Record(event, detail string) {
 		Detail: detail,
 	}
 	a.pos = (a.pos + 1) % maxActivityEntries
-	if a.pos == 0 {
-		a.full = true
+
+	// If head catches up to watermark, advance watermark so we never
+	// return stale entries that have been overwritten.
+	if a.pos == a.watermark {
+		a.watermark = (a.watermark + 1) % maxActivityEntries
 	}
 }
 
-// Recent returns activity entries newest-first.
+// Checkpoint advances the watermark to the current head position, hiding all
+// prior events from subsequent Recent() calls.
+func (a *ActivityLog) Checkpoint() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.watermark = a.pos
+}
+
+// Recent returns activity entries newest-first, only from the active window
+// (watermark to head).
 func (a *ActivityLog) Recent() []ActivityEntry {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	count := a.pos
-	if a.full {
-		count = maxActivityEntries
-	}
+	count := (a.pos - a.watermark + maxActivityEntries) % maxActivityEntries
 
 	result := make([]ActivityEntry, count)
 	for i := range count {
-		// Walk backwards from the most recent entry.
 		idx := (a.pos - 1 - i + maxActivityEntries) % maxActivityEntries
 		result[i] = a.entries[idx]
 	}
