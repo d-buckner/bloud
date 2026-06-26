@@ -165,11 +165,6 @@ func cmdServices() int {
 
 func cmdReset() int {
 	lima := limaInstance()
-	root, err := getProjectRoot()
-	if err != nil {
-		errorf("Could not find project root: %v", err)
-		return 1
-	}
 
 	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", lima)
 	fmt.Printf("The VM itself is kept — only data, containers, and the database are removed.\n")
@@ -205,7 +200,7 @@ systemctl --user daemon-reload 2>/dev/null || true
 
 	// 3. Wipe data directories and database
 	// Use podman unshare for dirs with container-owned files (e.g. postgres)
-	log("Wiping data directories and database")
+	log("Wiping data")
 	cmd = exec.Command("limactl", "shell", lima, "bash", "-c", `
 set -e
 podman unshare rm -rf "$HOME/.local/share/bloud"
@@ -216,17 +211,6 @@ rm -f /var/tmp/bloud-dev-runtime/bloud.db
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		errorf("Failed to wipe data: %v", err)
-		return 1
-	}
-
-	// 4. Re-run setup.sh to recreate data dirs, secrets, Jellyfin plugin, etc.
-	log("Re-running setup")
-	setupPath := filepath.Join(root, "dev", "setup.sh")
-	cmd = exec.Command("limactl", "shell", lima, "bash", setupPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		errorf("Setup failed: %v", err)
 		return 1
 	}
 
