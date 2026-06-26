@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
 )
 
 type graphNode struct {
@@ -22,8 +23,9 @@ type graphEdge struct {
 }
 
 type developerGraph struct {
-	Nodes []graphNode `json:"nodes"`
-	Edges []graphEdge `json:"edges"`
+	Nodes      []graphNode        `json:"nodes"`
+	Edges      []graphEdge        `json:"edges"`
+	Reconciler *reconciler.Status `json:"reconciler,omitempty"`
 }
 
 // ssoEdgeLabel returns the SSO strategy (e.g. "forward-auth", "ldap") for an app,
@@ -206,8 +208,15 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSON(w, http.StatusOK, developerGraph{
+	resp := developerGraph{
 		Nodes: nodes,
 		Edges: edges,
-	})
+	}
+
+	if s.intentReconciler != nil {
+		status := s.intentReconciler.Status()
+		resp.Reconciler = &status
+	}
+
+	respondJSON(w, http.StatusOK, resp)
 }

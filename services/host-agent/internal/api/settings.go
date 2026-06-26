@@ -114,4 +114,3 @@ func (s *Server) handleDeleteTailnet(w http.ResponseWriter, r *http.Request) {
 		"intentId": intent.IntentID(),
 	})
 }
-

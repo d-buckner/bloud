@@ -111,9 +111,9 @@ func TestManager_SecretsHaveCorrectLength(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		secret   string
-		minLen   int
+		name   string
+		secret string
+		minLen int
 	}{
 		{"postgresPassword", m.GetPostgresPassword(), 32},
 		{"authentikSecretKey", m.GetAuthentikSecretKey(), 64},

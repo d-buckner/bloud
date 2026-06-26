@@ -9,15 +9,15 @@ import (
 
 // RemoteApp represents an app on a remote host that this host can access
 type RemoteApp struct {
-	ID                 string   `json:"id"`
-	HostLabel          string   `json:"host_label"`
-	AppID              string   `json:"app_id"`
-	AppName            string   `json:"app_name"`
-	SSOStrategy        string   `json:"sso_strategy"`
-	BypassPaths        []string `json:"bypass_paths"`
-	SidecarTailnetAddr string   `json:"sidecar_tailnet_addr"`
-	EncryptedCred      []byte   `json:"-"`
-	Status             string   `json:"status"`
+	ID                 string    `json:"id"`
+	HostLabel          string    `json:"host_label"`
+	AppID              string    `json:"app_id"`
+	AppName            string    `json:"app_name"`
+	SSOStrategy        string    `json:"sso_strategy"`
+	BypassPaths        []string  `json:"bypass_paths"`
+	SidecarTailnetAddr string    `json:"sidecar_tailnet_addr"`
+	EncryptedCred      []byte    `json:"-"`
+	Status             string    `json:"status"`
 	CreatedAt          time.Time `json:"created_at"`
 }
 

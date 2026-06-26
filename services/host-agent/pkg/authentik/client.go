@@ -391,12 +391,12 @@ func (c *Client) updateOutpostProviders(outpostPK string, providers []int) error
 
 // LDAP Infrastructure constants
 const (
-	ldapProviderName     = "Bloud LDAP Provider"
-	ldapApplicationSlug  = "ldap"
-	ldapApplicationName  = "LDAP Authentication"
-	ldapOutpostName      = "Bloud LDAP Outpost"
-	ldapServiceUsername  = "ldap-service"
-	ldapServiceTokenID   = "ldap-service-bind-token"
+	ldapProviderName    = "Bloud LDAP Provider"
+	ldapApplicationSlug = "ldap"
+	ldapApplicationName = "LDAP Authentication"
+	ldapOutpostName     = "Bloud LDAP Outpost"
+	ldapServiceUsername = "ldap-service"
+	ldapServiceTokenID  = "ldap-service-bind-token"
 )
 
 // EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
@@ -1394,15 +1394,15 @@ func (c *Client) EnsureBranding(css string) error {
 
 // OIDC constants for Bloud's own OAuth2 application
 const (
-	bloudAppSlug         = "bloud"
-	bloudAppName         = "Bloud"
-	bloudProviderName    = "Bloud OAuth2 Provider"
-	bloudRedirectURI     = "/auth/callback"
+	bloudAppSlug      = "bloud"
+	bloudAppName      = "Bloud"
+	bloudProviderName = "Bloud OAuth2 Provider"
+	bloudRedirectURI  = "/auth/callback"
 )
 
 // OIDCConfig holds the OAuth2/OIDC configuration for Bloud
 type OIDCConfig struct {
-	ProviderID   int    // Authentik provider PK, used for lazy redirect URI registration
+	ProviderID   int // Authentik provider PK, used for lazy redirect URI registration
 	ClientID     string
 	ClientSecret string
 	AuthURL      string
@@ -1533,7 +1533,7 @@ func (c *Client) createBloudOAuth2Provider(redirectURIs []string, clientSecret s
 		"client_type":                "confidential",
 		"client_id":                  bloudAppSlug,
 		"client_secret":              clientSecret,
-		"redirect_uris":             uriEntries,
+		"redirect_uris":              uriEntries,
 		"signing_key":                certUUID,
 		"property_mappings":          scopeMappings,
 		"sub_mode":                   "user_username",

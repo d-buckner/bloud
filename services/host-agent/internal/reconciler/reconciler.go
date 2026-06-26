@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 )
@@ -17,6 +18,7 @@ type Reconciler struct {
 	started chan struct{}
 	done    chan struct{}
 	once    sync.Once
+	reconcilerStatus
 }
 
 // New creates a Reconciler with the default debounce duration.
@@ -28,15 +30,20 @@ func New(logger *slog.Logger, cfg *Config) *Reconciler {
 		config:  cfg,
 		started: make(chan struct{}),
 		done:    make(chan struct{}),
+		reconcilerStatus: reconcilerStatus{
+			activity: NewActivityLog(),
+		},
 	}
 }
 
 // Enqueue adds an intent to the reconciler's queue.
 func (r *Reconciler) Enqueue(intent Intent) {
+	typeName := intentTypeName(intent)
 	r.logger.Info("intent enqueued",
-		"type", intentTypeName(intent),
+		"type", typeName,
 		"id", intent.IntentID(),
 	)
+	r.activity.Record("intent_enqueued", fmt.Sprintf("%s:%s", typeName, intentTarget(intent)))
 	r.queue.Enqueue(intent)
 }
 
@@ -57,7 +64,9 @@ func (r *Reconciler) Start(ctx context.Context) {
 		}
 
 		r.logger.Info("drained intents", "count", len(intents))
+		r.converging.Store(true)
 		r.converge(ctx, intents)
+		r.converging.Store(false)
 
 		if ctx.Err() != nil {
 			r.logger.Info("reconciler stopped")
@@ -90,6 +99,16 @@ func (r *Reconciler) converge(ctx context.Context, intents []Intent) {
 	r.convergeFromStores(ctx, pendingClearData)
 }
 
+// Status returns a snapshot of the reconciler's current state.
+func (r *Reconciler) Status() Status {
+	return Status{
+		QueueDepth:     r.queue.PendingCount(),
+		IsConverging:   r.converging.Load(),
+		RecentActivity: r.activity.Recent(),
+		AppPhases:      r.getAppPhases(),
+	}
+}
+
 // intentTypeName returns a human-readable name for an intent type.
 func intentTypeName(intent Intent) string {
 	switch intent.(type) {
@@ -115,5 +134,33 @@ func intentTypeName(intent Intent) string {
 		return "ClearAppData"
 	default:
 		return "Unknown"
+	}
+}
+
+// intentTarget returns a human-readable target identifier for an intent.
+func intentTarget(intent Intent) string {
+	switch i := intent.(type) {
+	case InstallAppIntent:
+		return i.AppName
+	case UninstallAppIntent:
+		return i.AppName
+	case RenameAppIntent:
+		return i.AppName
+	case SetTailnetIntent:
+		return i.Name
+	case DeleteTailnetIntent:
+		return ""
+	case AddRemoteAppIntent:
+		return i.AppID
+	case DeleteRemoteAppIntent:
+		return i.RemoteAppID
+	case CreateShareIntent:
+		return i.AppName
+	case RevokeShareIntent:
+		return i.ShareID
+	case ClearAppDataIntent:
+		return i.AppName
+	default:
+		return ""
 	}
 }

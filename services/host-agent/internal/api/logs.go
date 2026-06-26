@@ -39,8 +39,8 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	serviceName := fmt.Sprintf("podman-%s.service", name)
 	cmd := exec.CommandContext(ctx, "journalctl", "--user",
 		"-u", serviceName,
-		"-f",           // follow (stream new entries)
-		"-n", "100",    // show last 100 lines initially
+		"-f",        // follow (stream new entries)
+		"-n", "100", // show last 100 lines initially
 		"--no-pager",
 		"-o", "short-iso", // timestamp format
 	)

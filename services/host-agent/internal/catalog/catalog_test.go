@@ -296,9 +296,9 @@ func TestLoader_LoadGraph_WithRealCatalog(t *testing.T) {
 	// Test with actual apps directory (integration test)
 	// Try multiple possible paths
 	possiblePaths := []string{
-		"../../../../apps",        // from internal/catalog
-		"../../apps",              // from deeper test runs
-		"apps",                    // from project root
+		"../../../../apps", // from internal/catalog
+		"../../apps",       // from deeper test runs
+		"apps",             // from project root
 	}
 
 	var appsDir string

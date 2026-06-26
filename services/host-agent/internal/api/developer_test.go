@@ -21,10 +21,10 @@ type fakeGateway struct {
 	running bool
 }
 
-func (g *fakeGateway) EnsureRunning(_ context.Context) error  { return nil }
-func (g *fakeGateway) Stop(_ context.Context) error           { return nil }
-func (g *fakeGateway) StopAndPurge(_ context.Context) error   { return nil }
-func (g *fakeGateway) IsRunning(_ context.Context) bool       { return g.running }
+func (g *fakeGateway) EnsureRunning(_ context.Context) error { return nil }
+func (g *fakeGateway) Stop(_ context.Context) error          { return nil }
+func (g *fakeGateway) StopAndPurge(_ context.Context) error  { return nil }
+func (g *fakeGateway) IsRunning(_ context.Context) bool      { return g.running }
 
 func newDeveloperTestServer() *Server {
 	appStore := NewFakeAppStore()
@@ -248,10 +248,10 @@ func TestDeveloperGraph_SSOEdgeLabel(t *testing.T) {
 	// Seed installed apps with sso integration config
 	fakeStore := server.appStore.(*FakeAppStore)
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:              "authentik",
-		DisplayName:       "Authentik",
-		Status:            "running",
-		IsSystem:          true,
+		Name:        "authentik",
+		DisplayName: "Authentik",
+		Status:      "running",
+		IsSystem:    true,
 	})
 	fakeStore.AddApp(&store.InstalledApp{
 		Name:              "navidrome",

@@ -212,4 +212,3 @@ func sortedKeys(values map[string]string) []string {
 	sort.Strings(keys)
 	return keys
 }
-

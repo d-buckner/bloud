@@ -64,17 +64,21 @@ func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T)
 		DataDir: dataDir, Logger: slog.Default(),
 	})
 
-	// Record in store (as the reconciler would) then ensure.
+	// Record in store (as the reconciler would) then run sub-step lifecycle.
 	require.NoError(t, appStore.Install("jellyfin", "Jellyfin", "", nil, &store.InstallOptions{Port: 8096}))
 
-	err := orch.EnsureApp(context.Background(), "jellyfin")
-	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, orch.PreStartApp(ctx, "jellyfin"))
+	require.NoError(t, orch.EnsureContainer(ctx, "jellyfin"))
 	require.Len(t, containers.ensured, 1)
 	assert.Equal(t, []string{"apps-net"}, containers.networks)
 	assert.Equal(t, filepath.Join(dataDir, "jellyfin", "config"), containers.ensured[0].Mounts[0].Source)
 	app, err := appStore.GetByName("jellyfin")
 	require.NoError(t, err)
-	assert.Equal(t, "running", app.Status)
+	assert.Equal(t, "starting", app.Status, "EnsureContainer sets status to starting")
+	require.NoError(t, orch.HealthCheckApp(ctx, "jellyfin"))
+	require.NoError(t, orch.PostStartApp(ctx, "jellyfin"))
+	require.NoError(t, orch.ProvisionSSO(ctx, "jellyfin"))
 
 	// ReconcileState re-ensures the app.
 	orch.ReconcileState(context.Background())

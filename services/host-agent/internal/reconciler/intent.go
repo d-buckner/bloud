@@ -93,9 +93,9 @@ func NewDeleteTailnetIntent() DeleteTailnetIntent {
 // AddRemoteAppIntent requests adding a remote app from another host.
 type AddRemoteAppIntent struct {
 	intentBase
-	AppID      string
+	AppID       string
 	TailnetAddr string
-	HostLabel  string
+	HostLabel   string
 }
 
 func (AddRemoteAppIntent) intentMarker() {}

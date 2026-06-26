@@ -18,8 +18,8 @@ type App struct {
 	HealthCheck   HealthCheck            `yaml:"healthCheck" json:"healthCheck"`
 	Docs          Docs                   `yaml:"docs" json:"docs"`
 	Tags          []string               `yaml:"tags" json:"tags"`
-	Routing      *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Integrations map[string]Integration `yaml:"integrations" json:"integrations"`
+	Routing       *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Integrations  map[string]Integration `yaml:"integrations" json:"integrations"`
 	Container     *ContainerSpec         `yaml:"container,omitempty" json:"container,omitempty"`
 }
 
@@ -58,13 +58,13 @@ type Resources struct {
 
 // SSO defines SSO integration configuration
 type SSO struct {
-	Strategy     string   `yaml:"strategy" json:"strategy"`                         // native-oidc, forward-auth, none
+	Strategy     string   `yaml:"strategy" json:"strategy"`                           // native-oidc, forward-auth, none
 	BypassPaths  []string `yaml:"bypassPaths,omitempty" json:"bypassPaths,omitempty"` // Paths exempt from forward-auth (forward-auth only)
-	CallbackPath string `yaml:"callbackPath" json:"callbackPath"`       // e.g. /oauth2/oidc/callback
-	ProviderName string `yaml:"providerName" json:"providerName"`       // e.g. "Bloud SSO"
-	UserCreation bool   `yaml:"userCreation" json:"userCreation"`       // Auto-create users on first login
-	LaunchPath   string `yaml:"launchPath" json:"launchPath,omitempty"` // Initial path to open when launching the app (overrides root)
-	Env          SSOEnv `yaml:"env" json:"env"`                         // Environment variable mappings
+	CallbackPath string   `yaml:"callbackPath" json:"callbackPath"`                   // e.g. /oauth2/oidc/callback
+	ProviderName string   `yaml:"providerName" json:"providerName"`                   // e.g. "Bloud SSO"
+	UserCreation bool     `yaml:"userCreation" json:"userCreation"`                   // Auto-create users on first login
+	LaunchPath   string   `yaml:"launchPath" json:"launchPath,omitempty"`             // Initial path to open when launching the app (overrides root)
+	Env          SSOEnv   `yaml:"env" json:"env"`                                     // Environment variable mappings
 }
 
 // SSOEnv maps SSO config values to app-specific environment variable names
@@ -97,4 +97,3 @@ type Docs struct {
 type Routing struct {
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom response headers
 }
-

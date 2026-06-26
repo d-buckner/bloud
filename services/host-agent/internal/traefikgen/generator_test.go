@@ -80,7 +80,7 @@ func TestGenerator_Generate_BasicApp(t *testing.T) {
 	if !strings.Contains(contentStr, "miniflux:") {
 		t.Error("Expected miniflux router")
 	}
-	if !strings.Contains(contentStr, `rule: "Host(` + "`miniflux.localhost`" + `)"`) {
+	if !strings.Contains(contentStr, `rule: "Host(`+"`miniflux.localhost`"+`)"`) {
 		t.Error("Expected Host rule for miniflux.localhost")
 	}
 

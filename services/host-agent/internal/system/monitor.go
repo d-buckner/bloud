@@ -21,9 +21,9 @@ type Stats struct {
 
 // statsCache holds cached system stats updated in background
 var (
-	statsCache     *Stats
-	statsCacheMu   sync.RWMutex
-	statsOnce      sync.Once
+	statsCache   *Stats
+	statsCacheMu sync.RWMutex
+	statsOnce    sync.Once
 )
 
 // StartStatsCollector starts background stats collection
@@ -126,4 +126,3 @@ func GetStorageStats() (*StorageStats, error) {
 		Path:       "/",
 	}, nil
 }
-

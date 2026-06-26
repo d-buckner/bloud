@@ -1,12 +1,6 @@
 package orchestrator
 
 import (
-	"context"
-	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
-	"strings"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
@@ -14,6 +8,12 @@ import (
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Compile-time assertion: PortableOrchestrator implements reconciler.AppLifecycleManager.
@@ -29,34 +29,34 @@ type SSOProvisioner interface {
 
 // PortableConfig contains the runtime-neutral dependencies used by PortableOrchestrator.
 type PortableConfig struct {
-	Graph        catalog.AppGraphInterface
-	CatalogCache catalog.CacheInterface
-	AppStore     store.AppStoreInterface
-	Containers   containerruntime.Runtime
-	Registry     configurator.RegistryInterface
-	TraefikGen   traefikgen.GeneratorInterface
-	LDAPOutput   *configurator.LDAPOutput
-	SSO             SSOProvisioner                    // optional; nil when Authentik is not available
-	Sidecar         sharing.SidecarManagerInterface   // optional; nil when Tailscale auth key is not set
-	Gateway         sharing.GatewayManagerInterface   // optional; manages gateway Tailscale container for remote app proxying
-	RemoteProxy     *sharing.RemoteProxyManager       // optional; manages per-remote-app reverse proxies through SOCKS5 gateway
-	RemoteAppStore  store.RemoteAppStoreInterface     // optional; nil when remote apps are not configured
-	ActiveTailnetID func() string                     // returns the active tailnet connection ID (empty if none)
-	SSOBaseURL      string                            // base URL for building app external URLs (e.g. "http://localhost:8080")
-	DataDir      string
-	TemplateVars map[string]string // extra variables for container spec rendering (e.g. postgresPassword)
-	Logger       *slog.Logger
+	Graph           catalog.AppGraphInterface
+	CatalogCache    catalog.CacheInterface
+	AppStore        store.AppStoreInterface
+	Containers      containerruntime.Runtime
+	Registry        configurator.RegistryInterface
+	TraefikGen      traefikgen.GeneratorInterface
+	LDAPOutput      *configurator.LDAPOutput
+	SSO             SSOProvisioner                  // optional; nil when Authentik is not available
+	Sidecar         sharing.SidecarManagerInterface // optional; nil when Tailscale auth key is not set
+	Gateway         sharing.GatewayManagerInterface // optional; manages gateway Tailscale container for remote app proxying
+	RemoteProxy     *sharing.RemoteProxyManager     // optional; manages per-remote-app reverse proxies through SOCKS5 gateway
+	RemoteAppStore  store.RemoteAppStoreInterface   // optional; nil when remote apps are not configured
+	ActiveTailnetID func() string                   // returns the active tailnet connection ID (empty if none)
+	SSOBaseURL      string                          // base URL for building app external URLs (e.g. "http://localhost:8080")
+	DataDir         string
+	TemplateVars    map[string]string // extra variables for container spec rendering (e.g. postgresPassword)
+	Logger          *slog.Logger
 }
 
 // PortableOrchestrator converges app lifecycle through portable runtime contracts.
 type PortableOrchestrator struct {
-	graph        catalog.AppGraphInterface
-	catalog      catalog.CacheInterface
-	appStore     store.AppStoreInterface
-	containers   containerruntime.Runtime
-	registry     configurator.RegistryInterface
-	traefikGen   traefikgen.GeneratorInterface
-	ldapOutput   *configurator.LDAPOutput
+	graph           catalog.AppGraphInterface
+	catalog         catalog.CacheInterface
+	appStore        store.AppStoreInterface
+	containers      containerruntime.Runtime
+	registry        configurator.RegistryInterface
+	traefikGen      traefikgen.GeneratorInterface
+	ldapOutput      *configurator.LDAPOutput
 	sso             SSOProvisioner
 	sidecar         sharing.SidecarManagerInterface
 	gateway         sharing.GatewayManagerInterface
@@ -64,20 +64,20 @@ type PortableOrchestrator struct {
 	remoteAppStore  store.RemoteAppStoreInterface
 	activeTailnetID func() string
 	ssoBaseURL      string
-	dataDir      string
-	templateVars map[string]string
-	logger       *slog.Logger
+	dataDir         string
+	templateVars    map[string]string
+	logger          *slog.Logger
 }
 
 func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 	return &PortableOrchestrator{
-		graph:        cfg.Graph,
-		catalog:      cfg.CatalogCache,
-		appStore:     cfg.AppStore,
-		containers:   cfg.Containers,
-		registry:     cfg.Registry,
-		traefikGen:   cfg.TraefikGen,
-		ldapOutput:   cfg.LDAPOutput,
+		graph:           cfg.Graph,
+		catalog:         cfg.CatalogCache,
+		appStore:        cfg.AppStore,
+		containers:      cfg.Containers,
+		registry:        cfg.Registry,
+		traefikGen:      cfg.TraefikGen,
+		ldapOutput:      cfg.LDAPOutput,
 		sso:             cfg.SSO,
 		sidecar:         cfg.Sidecar,
 		gateway:         cfg.Gateway,
@@ -85,9 +85,9 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		remoteAppStore:  cfg.RemoteAppStore,
 		activeTailnetID: cfg.ActiveTailnetID,
 		ssoBaseURL:      cfg.SSOBaseURL,
-		dataDir:      cfg.DataDir,
-		templateVars: cfg.TemplateVars,
-		logger:       cfg.Logger,
+		dataDir:         cfg.DataDir,
+		templateVars:    cfg.TemplateVars,
+		logger:          cfg.Logger,
 	}
 }
 
@@ -163,10 +163,133 @@ func (o *PortableOrchestrator) ReconcileState(ctx context.Context) {
 	}
 }
 
-// EnsureApp is the public wrapper around ensureApp for use by the reconciler.
-// It runs PreStart → container ensure → health check → PostStart → SSO → sidecar → status→running.
-func (o *PortableOrchestrator) EnsureApp(ctx context.Context, appName string) error {
-	return o.ensureApp(ctx, appName)
+// PreStartApp runs the pre-start configurator phase for an app.
+// No-op if the app has no configurator registered.
+func (o *PortableOrchestrator) PreStartApp(ctx context.Context, appName string) error {
+	app, err := o.catalog.Get(appName)
+	if err != nil {
+		return err
+	}
+
+	cfg := o.configurator(appName)
+	if cfg == nil {
+		return nil
+	}
+
+	state := o.buildAppState(app)
+
+	if sc, ok := cfg.(configurator.PreStartConfigurator); ok {
+		changed, err := sc.PreStartConfig(ctx, state)
+		if err != nil {
+			return fmt.Errorf("prestart config: %w", err)
+		}
+		if changed {
+			o.logger.Info("prestart config changed", "app", appName)
+		}
+		return nil
+	}
+	if err := cfg.PreStart(ctx, state); err != nil {
+		return fmt.Errorf("prestart: %w", err)
+	}
+	return nil
+}
+
+// EnsureContainer creates the network, mount directories, and container for an app.
+// Sets the app status to "starting" on success.
+func (o *PortableOrchestrator) EnsureContainer(ctx context.Context, appName string) error {
+	app, err := o.catalog.Get(appName)
+	if err != nil {
+		return err
+	}
+	if app.Container == nil {
+		return fmt.Errorf("app has no portable container topology")
+	}
+
+	spec, err := PortableContainerSpec(app, o.dataDir, o.templateVars)
+	if err != nil {
+		return err
+	}
+	if err := o.containers.EnsureNetwork(ctx, spec.Network); err != nil {
+		return fmt.Errorf("ensure network: %w", err)
+	}
+	for _, mount := range spec.Mounts {
+		if err := os.MkdirAll(mount.Source, 0755); err != nil {
+			return fmt.Errorf("create mount source %s: %w", mount.Source, err)
+		}
+	}
+	if _, err := o.containers.Ensure(ctx, spec); err != nil {
+		return fmt.Errorf("ensure container: %w", err)
+	}
+	return o.appStore.UpdateStatus(appName, "starting")
+}
+
+// HealthCheckApp runs the health check for an app's configurator.
+// No-op if the app has no configurator registered.
+func (o *PortableOrchestrator) HealthCheckApp(ctx context.Context, appName string) error {
+	cfg := o.configurator(appName)
+	if cfg == nil {
+		return nil
+	}
+	if err := cfg.HealthCheck(ctx); err != nil {
+		return fmt.Errorf("health check: %w", err)
+	}
+	return nil
+}
+
+// PostStartApp runs the post-start configurator phase for an app.
+// No-op if the app has no configurator registered.
+func (o *PortableOrchestrator) PostStartApp(ctx context.Context, appName string) error {
+	app, err := o.catalog.Get(appName)
+	if err != nil {
+		return err
+	}
+
+	cfg := o.configurator(appName)
+	if cfg == nil {
+		return nil
+	}
+
+	state := o.buildAppState(app)
+
+	if dc, ok := cfg.(configurator.PostStartConfigurator); ok {
+		if err := dc.PostStartConfig(ctx, state); err != nil {
+			return fmt.Errorf("poststart config: %w", err)
+		}
+		return nil
+	}
+	if err := cfg.PostStart(ctx, state); err != nil {
+		return fmt.Errorf("poststart: %w", err)
+	}
+	return nil
+}
+
+// ProvisionSSO provisions forward-auth SSO for an app in the identity provider.
+// No-op if the app doesn't use forward-auth or SSO is not configured.
+func (o *PortableOrchestrator) ProvisionSSO(ctx context.Context, appName string) error {
+	app, err := o.catalog.Get(appName)
+	if err != nil {
+		return err
+	}
+
+	if app.SSO.Strategy != "forward-auth" || o.sso == nil || o.ssoBaseURL == "" {
+		return nil
+	}
+
+	externalURL := appSubdomainURL(o.ssoBaseURL, app.Name)
+	return o.sso.EnsureForwardAuth(app.Name, app.DisplayName, externalURL)
+}
+
+// buildAppState constructs the configurator AppState for an app.
+func (o *PortableOrchestrator) buildAppState(app *catalog.App) *configurator.AppState {
+	state := &configurator.AppState{
+		DataPath:      filepath.Join(o.dataDir, app.Name),
+		BloudDataPath: o.dataDir,
+		SSOEnabled:    app.SSO.Strategy != "" && app.SSO.Strategy != "none",
+	}
+	if app.SSO.Strategy == "ldap" {
+		state.LDAP = o.ldapOutput
+	}
+	return state
 }
 
 // RemoveApp removes a single app's container and store entry. It does NOT check

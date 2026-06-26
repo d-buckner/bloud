@@ -58,5 +58,3 @@ func shouldCleanupAuthentik(catalogApp *catalog.App) bool {
 	strategy := catalogApp.SSO.Strategy
 	return strategy != "" && strategy != "none"
 }
-
-

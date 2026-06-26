@@ -6,7 +6,7 @@ type AppGraph struct {
 	Installed []string                  `json:"installed"`
 
 	// Reverse index: app -> who integrates with it
-	dependents  map[string][]IntegrationRef
+	dependents   map[string][]IntegrationRef
 	installedSet map[string]bool
 }
 

@@ -14,14 +14,14 @@ import (
 // ============================================================================
 
 type FakeLifecycleManager struct {
-	mu              sync.Mutex
-	ensuredApps     []string
-	removedApps     []removeCall
-	syncCalled      bool
+	mu               sync.Mutex
+	ensuredApps      []string
+	removedApps      []removeCall
+	syncCalled       bool
 	regenerateCalled bool
-	ensureError     map[string]error
-	removeError     map[string]error
-	regenerateError error
+	ensureError      map[string]error // applies to EnsureContainer phase
+	removeError      map[string]error
+	regenerateError  error
 }
 
 type removeCall struct {
@@ -36,13 +36,33 @@ func NewFakeLifecycleManager() *FakeLifecycleManager {
 	}
 }
 
-func (f *FakeLifecycleManager) EnsureApp(ctx context.Context, appName string) error {
+func (f *FakeLifecycleManager) PreStartApp(ctx context.Context, appName string) error {
+	return nil
+}
+
+func (f *FakeLifecycleManager) EnsureContainer(ctx context.Context, appName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err, ok := f.ensureError[appName]; ok {
 		return err
 	}
+	return nil
+}
+
+func (f *FakeLifecycleManager) HealthCheckApp(ctx context.Context, appName string) error {
+	return nil
+}
+
+func (f *FakeLifecycleManager) PostStartApp(ctx context.Context, appName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Record on the last fatal phase so EnsuredApps() captures all apps
+	// that completed the full lifecycle.
 	f.ensuredApps = append(f.ensuredApps, appName)
+	return nil
+}
+
+func (f *FakeLifecycleManager) ProvisionSSO(ctx context.Context, appName string) error {
 	return nil
 }
 
@@ -570,10 +590,10 @@ var _ store.RemoteAppStoreInterface = (*FakeRemoteAppStore)(nil)
 // ============================================================================
 
 type FakeSidecarManager struct {
-	mu            sync.Mutex
-	ensuredApps   []sidecarEnsureCall
-	purgedApps    []string
-	ensureError   map[string]error
+	mu          sync.Mutex
+	ensuredApps []sidecarEnsureCall
+	purgedApps  []string
+	ensureError map[string]error
 }
 
 type sidecarEnsureCall struct {

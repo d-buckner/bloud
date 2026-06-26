@@ -7,7 +7,7 @@ import (
 )
 
 // DefaultDebounce is the default debounce duration for WaitAndDrain.
-const DefaultDebounce = 200 * time.Millisecond
+const DefaultDebounce = 10 * time.Second
 
 // IntentQueue is a thread-safe FIFO queue for intents with debounce support.
 type IntentQueue struct {

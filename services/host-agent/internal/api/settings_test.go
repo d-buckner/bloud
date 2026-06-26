@@ -276,4 +276,3 @@ func TestHandleDeleteTailnet_Empty(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
-

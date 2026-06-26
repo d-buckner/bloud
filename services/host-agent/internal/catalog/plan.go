@@ -22,11 +22,11 @@ type InstallPlan struct {
 
 // IntegrationChoice presents options when multiple compatible apps exist
 type IntegrationChoice struct {
-	Integration string           `json:"integration"`
-	Required    bool             `json:"required"`
-	Installed   []ChoiceOption   `json:"installed"`
-	Available   []ChoiceOption   `json:"available"`
-	Recommended string           `json:"recommended,omitempty"`
+	Integration string         `json:"integration"`
+	Required    bool           `json:"required"`
+	Installed   []ChoiceOption `json:"installed"`
+	Available   []ChoiceOption `json:"available"`
+	Recommended string         `json:"recommended,omitempty"`
 }
 
 // ChoiceOption is a single option in an integration choice

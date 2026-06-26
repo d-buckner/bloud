@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 
 	authentikApp "codeberg.org/d-buckner/bloud-v3/apps/authentik"
-	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
+	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
 	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
 )

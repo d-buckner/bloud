@@ -2,6 +2,8 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
@@ -10,8 +12,14 @@ import (
 
 // AppLifecycleManager abstracts the container lifecycle operations needed by the
 // convergence loop. The portable orchestrator implements this interface.
+// Each sub-step method corresponds to a phase of the app startup lifecycle:
+// PreStart → EnsureContainer → HealthCheck → PostStart → SSO provisioning.
 type AppLifecycleManager interface {
-	EnsureApp(ctx context.Context, appName string) error
+	PreStartApp(ctx context.Context, appName string) error
+	EnsureContainer(ctx context.Context, appName string) error
+	HealthCheckApp(ctx context.Context, appName string) error
+	PostStartApp(ctx context.Context, appName string) error
+	ProvisionSSO(ctx context.Context, appName string) error
 	RemoveApp(ctx context.Context, appName string, clearData bool) error
 	SyncContainerState(ctx context.Context)
 	RegenerateRoutes() error
@@ -52,6 +60,7 @@ type Config struct {
 // Returns a map of app name → clearData for pending uninstalls.
 func (r *Reconciler) applyIntents(intents []Intent, pendingClearData map[string]bool) {
 	for _, intent := range intents {
+		r.logger.Info("applying intent", "type", intentTypeName(intent), "id", intent.IntentID())
 		switch i := intent.(type) {
 		case InstallAppIntent:
 			r.applyInstallIntent(i)
@@ -71,6 +80,8 @@ func (r *Reconciler) applyIntents(intents []Intent, pendingClearData map[string]
 			r.logger.Info("unhandled intent type in drain phase", "type", intentTypeName(intent))
 		}
 	}
+	r.logger.Info("drain phase complete", "applied", len(intents))
+	r.activity.Record("drain_complete", fmt.Sprintf("%d intents", len(intents)))
 }
 
 // applyInstallIntent resolves dependencies and records apps in the store.
@@ -255,8 +266,14 @@ func (r *Reconciler) recordIntent(appName string, integrations map[string]string
 // convergeFromStores reads all stores and drives the system toward the desired state.
 func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData map[string]bool) {
 	cfg := r.config
+	start := time.Now()
+
+	r.activity.Record("converge_start", "")
+	r.clearAppPhases()
 
 	// Step 1: Sync container state (align DB with reality).
+	r.logger.Info("convergence step", "step", "sync-container-state")
+	r.activity.Record("converge_step", "sync-container-state")
 	cfg.Lifecycle.SyncContainerState(ctx)
 
 	apps, err := cfg.AppStore.GetAll()
@@ -272,6 +289,14 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 	}
 
 	// Step 2: Handle uninstalls (apps with status "uninstalling").
+	uninstallCount := 0
+	for _, app := range apps {
+		if app.Status == "uninstalling" {
+			uninstallCount++
+		}
+	}
+	r.logger.Info("convergence step", "step", "handle-uninstalls", "count", uninstallCount)
+	r.activity.Record("converge_step", fmt.Sprintf("handle-uninstalls (%d)", uninstallCount))
 	for _, app := range apps {
 		if app.Status != "uninstalling" {
 			continue
@@ -284,9 +309,13 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 	}
 
 	// Step 3: Compute execution levels for remaining apps.
+	r.logger.Info("convergence step", "step", "compute-levels")
+	r.activity.Record("converge_step", "compute-levels")
 	levels := computeLevels(appMap, cfg.CatalogCache)
 
-	// Step 4: Ensure apps in level order.
+	// Step 4: Ensure apps in level order (sub-step phases per app).
+	r.logger.Info("convergence step", "step", "ensure-apps", "levels", len(levels))
+	r.activity.Record("converge_step", fmt.Sprintf("ensure-apps (%d levels)", len(levels)))
 	for _, levelApps := range levels {
 		for _, appName := range levelApps {
 			app := appMap[appName]
@@ -301,26 +330,71 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 			if catalogApp, err := cfg.CatalogCache.Get(appName); err != nil || catalogApp.Container == nil {
 				continue
 			}
-			if err := cfg.Lifecycle.EnsureApp(ctx, appName); err != nil {
-				_ = cfg.AppStore.UpdateStatus(appName, "error")
-				r.logger.Error("failed to ensure app", "app", appName, "error", err)
-			}
+			r.ensureAppPhased(ctx, cfg, appName)
 		}
 	}
 
 	// Step 5: Converge tailnet sidecars/gateway/proxies.
+	r.logger.Info("convergence step", "step", "converge-tailnet")
+	r.activity.Record("converge_step", "converge-tailnet")
 	r.convergeTailnet(ctx)
 
 	// Step 6: Update graph with current installed list.
+	r.logger.Info("convergence step", "step", "update-graph")
+	r.activity.Record("converge_step", "update-graph")
 	installed, _ := cfg.AppStore.GetInstalledNames()
 	cfg.Graph.SetInstalled(installed)
 
 	// Step 7: Regenerate routes.
+	r.logger.Info("convergence step", "step", "regenerate-routes")
+	r.activity.Record("converge_step", "regenerate-routes")
 	if err := cfg.Lifecycle.RegenerateRoutes(); err != nil {
 		r.logger.Warn("failed to regenerate routes", "error", err)
 	}
 
-	r.logger.Info("convergence pass complete", "apps", len(apps))
+	duration := time.Since(start)
+	r.logger.Info("convergence pass complete", "apps", len(apps), "duration", duration)
+	r.activity.Record("converge_complete", fmt.Sprintf("%d apps, %s", len(apps), duration.Round(time.Millisecond)))
+}
+
+// ensureAppPhased runs the app lifecycle sub-steps in sequence, recording
+// activity and phase status at each boundary.
+func (r *Reconciler) ensureAppPhased(ctx context.Context, cfg *Config, appName string) {
+	type phase struct {
+		name  string
+		fn    func() error
+		fatal bool
+	}
+
+	phases := []phase{
+		{"pre-start", func() error { return cfg.Lifecycle.PreStartApp(ctx, appName) }, true},
+		{"ensure-container", func() error { return cfg.Lifecycle.EnsureContainer(ctx, appName) }, true},
+		{"health-check", func() error { return cfg.Lifecycle.HealthCheckApp(ctx, appName) }, true},
+		{"post-start", func() error { return cfg.Lifecycle.PostStartApp(ctx, appName) }, true},
+		{"sso", func() error { return cfg.Lifecycle.ProvisionSSO(ctx, appName) }, false},
+	}
+
+	failed := false
+	for _, p := range phases {
+		r.setAppPhase(appName, p.name, "active")
+		r.activity.Record("app_phase", fmt.Sprintf("%s:%s", appName, p.name))
+		if err := p.fn(); err != nil {
+			if p.fatal {
+				r.setAppPhase(appName, p.name, "error")
+				_ = cfg.AppStore.UpdateStatus(appName, "error")
+				r.logger.Error("app phase failed", "app", appName, "phase", p.name, "error", err)
+				failed = true
+				break
+			}
+			r.setAppPhase(appName, p.name, "warning")
+			r.logger.Warn("app phase failed (non-fatal)", "app", appName, "phase", p.name, "error", err)
+			continue
+		}
+		r.setAppPhase(appName, p.name, "done")
+	}
+	if !failed {
+		_ = cfg.AppStore.UpdateStatus(appName, "running")
+	}
 }
 
 // convergeTailnet ensures sidecars/gateway/proxies match the tailnet store state.

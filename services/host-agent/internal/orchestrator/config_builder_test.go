@@ -183,5 +183,3 @@ func TestShouldCleanupAuthentik_ForwardAuth(t *testing.T) {
 	}
 	assert.True(t, shouldCleanupAuthentik(app))
 }
-
-
