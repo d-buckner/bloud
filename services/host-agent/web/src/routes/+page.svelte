@@ -10,13 +10,14 @@
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
 	import LogsModal from '$lib/components/LogsModal.svelte';
 	import RenameModal from '$lib/components/RenameModal.svelte';
+	import ShareModal from '$lib/components/ShareModal.svelte';
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
 	import { AppStatus, type App, type RemoteApp } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
 	import { uninstallApp, renameApp } from '$lib/services/appFacade';
 	import { getAppUrl } from '$lib/utils/appUrl';
 	import { getRemoteAppUrl } from '$lib/utils/appUrl';
-	import { fetchRemoteApps } from '$lib/clients/remoteAppClient';
+	import { fetchRemoteApps, removeRemoteApp } from '$lib/clients/remoteAppClient';
 	import { layout } from '$lib/stores/layout';
 
 	// Context menu state
@@ -29,6 +30,8 @@
 	let logsDisplayName = $state<string>('');
 	let renameAppName = $state<string | null>(null);
 	let renameCurrentDisplayName = $state<string>('');
+	let shareApp = $state<App | null>(null);
+	let removeRemoteAppTarget = $state<RemoteApp | null>(null);
 	let showWidgetPicker = $state(false);
 
 	// Remote apps
@@ -76,6 +79,10 @@
 		renameCurrentDisplayName = app.display_name;
 	}
 
+	function handleShareClick(app: App) {
+		shareApp = app;
+	}
+
 	function handleUninstallClick(app: App) {
 		uninstallAppName = app.name;
 	}
@@ -99,6 +106,19 @@
 	function handleRemoteAppClick(app: RemoteApp) {
 		if (!browser) return;
 		window.open(getRemoteAppUrl(app.app_id, app.host_label), '_blank');
+	}
+
+	function handleRemoveRemoteApp(app: RemoteApp) {
+		removeRemoteAppTarget = app;
+	}
+
+	async function doRemoveRemoteApp(id: string) {
+		try {
+			await removeRemoteApp(id);
+			remoteApps = remoteApps.filter((a) => a.id !== id);
+		} catch (err) {
+			console.error('Remove remote app failed:', err);
+		}
 	}
 
 	// Derived state for empty check
@@ -130,7 +150,7 @@
 				<h2 class="section-title">Shared Apps</h2>
 				<div class="remote-apps-grid">
 					{#each remoteApps as app (app.id)}
-						<RemoteAppCard {app} onclick={() => handleRemoteAppClick(app)} />
+						<RemoteAppCard {app} onclick={() => handleRemoteAppClick(app)} onremove={handleRemoveRemoteApp} />
 					{/each}
 				</div>
 			</section>
@@ -143,6 +163,7 @@
 	position={contextMenuPos}
 	onViewLogs={handleViewLogs}
 	onRename={handleRenameClick}
+	onShare={handleShareClick}
 	onUninstall={handleUninstallClick}
 	onClose={() => (contextMenuApp = null)}
 />
@@ -160,6 +181,16 @@
 	currentDisplayName={renameCurrentDisplayName}
 	onclose={() => (renameAppName = null)}
 	onrename={doRename}
+/>
+
+<ShareModal app={shareApp} onclose={() => (shareApp = null)} />
+
+<UninstallModal
+	appName={removeRemoteAppTarget ? `${removeRemoteAppTarget.app_name} (${removeRemoteAppTarget.host_label})` : null}
+	onclose={() => (removeRemoteAppTarget = null)}
+	onuninstall={() => {
+		if (removeRemoteAppTarget) doRemoveRemoteApp(removeRemoteAppTarget.id);
+	}}
 />
 
 <WidgetPicker open={showWidgetPicker} onclose={() => (showWidgetPicker = false)} />

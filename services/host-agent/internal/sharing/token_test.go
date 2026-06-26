@@ -2,110 +2,71 @@ package sharing
 
 import (
 	"encoding/base64"
-	"strings"
+	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-const testSecret = "test-secret-key-for-hmac-signing"
-
-func validPayload() InvitePayload {
-	return InvitePayload{
-		ShareID:            "share-123",
+func TestGenerateToken_ProducesValidBase64JSON(t *testing.T) {
+	payload := InvitePayload{
 		AppID:              "navidrome",
 		AppName:            "Navidrome",
 		HostLabel:          "Alice's Server",
-		SSOStrategy:        "forward-auth",
 		SidecarTailnetAddr: "100.64.1.2",
-		Exp:                time.Now().Add(TokenExpiry).Unix(),
+		NodeShareLink:      "https://login.tailscale.com/admin/invite/abc123",
 	}
+
+	token, err := GenerateToken(payload)
+	require.NoError(t, err)
+	assert.NotEmpty(t, token)
+
+	// Token should be valid base64url
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	require.NoError(t, err)
+
+	// Decoded bytes should be valid JSON with expected fields
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(decoded, &m))
+	assert.Equal(t, "navidrome", m["appId"])
+	assert.Equal(t, "Navidrome", m["appName"])
+	assert.Equal(t, "Alice's Server", m["hostLabel"])
+	assert.Equal(t, "100.64.1.2", m["sidecarTailnetAddr"])
+	assert.Equal(t, "https://login.tailscale.com/admin/invite/abc123", m["nodeShareLink"])
 }
 
-func TestGenerateAndValidateToken(t *testing.T) {
-	payload := validPayload()
+func TestDecodeToken_RoundTrips(t *testing.T) {
+	original := InvitePayload{
+		AppID:              "jellyfin",
+		AppName:            "Jellyfin",
+		HostLabel:          "Bob's NAS",
+		SidecarTailnetAddr: "ts-jellyfin.tail1275sa.ts.net",
+		NodeShareLink:      "https://login.tailscale.com/admin/invite/xyz789",
+	}
 
-	token, err := GenerateToken(payload, testSecret)
+	token, err := GenerateToken(original)
 	require.NoError(t, err)
-	assert.Contains(t, token, ".")
 
-	got, err := ValidateToken(token, testSecret)
+	decoded, err := DecodeToken(token)
 	require.NoError(t, err)
 
-	assert.Equal(t, payload.ShareID, got.ShareID)
-	assert.Equal(t, payload.AppID, got.AppID)
-	assert.Equal(t, payload.AppName, got.AppName)
-	assert.Equal(t, payload.HostLabel, got.HostLabel)
-	assert.Equal(t, payload.SSOStrategy, got.SSOStrategy)
-	assert.Equal(t, payload.SidecarTailnetAddr, got.SidecarTailnetAddr)
-	assert.Equal(t, payload.Exp, got.Exp)
+	assert.Equal(t, original.AppID, decoded.AppID)
+	assert.Equal(t, original.AppName, decoded.AppName)
+	assert.Equal(t, original.HostLabel, decoded.HostLabel)
+	assert.Equal(t, original.SidecarTailnetAddr, decoded.SidecarTailnetAddr)
+	assert.Equal(t, original.NodeShareLink, decoded.NodeShareLink)
 }
 
-func TestValidateToken_Expired(t *testing.T) {
-	payload := validPayload()
-	payload.Exp = time.Now().Add(-1 * time.Hour).Unix()
-
-	token, err := GenerateToken(payload, testSecret)
-	require.NoError(t, err)
-
-	_, err = ValidateToken(token, testSecret)
+func TestDecodeToken_InvalidBase64(t *testing.T) {
+	_, err := DecodeToken("not valid base64!!!")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expired")
+	assert.Contains(t, err.Error(), "invalid token encoding")
 }
 
-func TestValidateToken_TamperedPayload(t *testing.T) {
-	payload := validPayload()
-
-	token, err := GenerateToken(payload, testSecret)
-	require.NoError(t, err)
-
-	parts := strings.SplitN(token, ".", 2)
-	require.Len(t, parts, 2)
-
-	// Tamper with the payload by replacing with different base64 content
-	tampered := base64.RawURLEncoding.EncodeToString([]byte(`{"shareId":"hacked"}`))
-	tamperedToken := tampered + "." + parts[1]
-
-	_, err = ValidateToken(tamperedToken, testSecret)
+func TestDecodeToken_InvalidJSON(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString([]byte("not json"))
+	_, err := DecodeToken(token)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "signature")
-}
-
-func TestValidateToken_WrongSecret(t *testing.T) {
-	payload := validPayload()
-
-	token, err := GenerateToken(payload, testSecret)
-	require.NoError(t, err)
-
-	_, err = ValidateToken(token, "wrong-secret")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "signature")
-}
-
-func TestValidateToken_InvalidFormat(t *testing.T) {
-	_, err := ValidateToken("not-a-valid-token", testSecret)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid token format")
-}
-
-func TestGenerateToken_IncludesBypassPaths(t *testing.T) {
-	payload := validPayload()
-	payload.BypassPaths = []string{"/api/.*", "/health"}
-
-	token, err := GenerateToken(payload, testSecret)
-	require.NoError(t, err)
-
-	got, err := ValidateToken(token, testSecret)
-	require.NoError(t, err)
-
-	assert.Equal(t, []string{"/api/.*", "/health"}, got.BypassPaths)
-}
-
-func TestGenerateToken_EmptySecret(t *testing.T) {
-	payload := validPayload()
-	_, err := GenerateToken(payload, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "secret is empty")
+	assert.Contains(t, err.Error(), "invalid token payload")
 }

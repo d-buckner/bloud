@@ -72,6 +72,17 @@ type ShareStoreInterface interface {
 // Compile-time assertion that ShareStore implements ShareStoreInterface
 var _ ShareStoreInterface = (*ShareStore)(nil)
 
+// GuestStoreInterface defines the interface for managing guests.
+type GuestStoreInterface interface {
+	Create(guest Guest) error
+	GetByID(id string) (*Guest, error)
+	List() ([]*Guest, error)
+	Delete(id string) error
+}
+
+// Compile-time assertion that GuestStore implements GuestStoreInterface
+var _ GuestStoreInterface = (*GuestStore)(nil)
+
 // TailnetStoreInterface defines the interface for managing tailnet connections.
 type TailnetStoreInterface interface {
 	Create(conn TailnetConnection) error

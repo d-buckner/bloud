@@ -10,11 +10,12 @@
 		onOpenInNewTab?: (app: App) => void;
 		onViewLogs?: (app: App) => void;
 		onRename?: (app: App) => void;
+		onShare?: (app: App) => void;
 		onUninstall?: (app: App) => void;
 		onClose?: () => void;
 	}
 
-	let { app, position, onOpenInNewTab, onViewLogs, onRename, onUninstall, onClose }: Props = $props();
+	let { app, position, onOpenInNewTab, onViewLogs, onRename, onShare, onUninstall, onClose }: Props = $props();
 
 	function handleOpenInNewTab() {
 		if (!browser || !app?.port) return;
@@ -32,6 +33,13 @@
 	function handleRename() {
 		if (app) {
 			onRename?.(app);
+			onClose?.();
+		}
+	}
+
+	function handleShare() {
+		if (app) {
+			onShare?.(app);
 			onClose?.();
 		}
 	}
@@ -78,6 +86,10 @@
 		<button class="context-item" onclick={handleRename}>
 			<Icon name="edit" size={16} />
 			Rename
+		</button>
+		<button class="context-item" onclick={handleShare}>
+			<Icon name="share" size={16} />
+			Share
 		</button>
 		<hr class="context-divider" />
 		<button class="context-item danger" onclick={handleUninstall}>

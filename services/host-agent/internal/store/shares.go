@@ -8,13 +8,14 @@ import (
 
 // Share represents a share of a local app with a remote guest
 type Share struct {
-	ID          string     `json:"id"`
-	AppID       string     `json:"app_id"`
-	SSOStrategy string     `json:"sso_strategy"`
-	GuestLabel  string     `json:"guest_label"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	ID            string     `json:"id"`
+	AppID         string     `json:"app_id"`
+	SSOStrategy   string     `json:"sso_strategy"`
+	GuestID       string     `json:"guest_id"`
+	NodeShareLink string     `json:"node_share_link"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"created_at"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
 }
 
 // ShareStore manages shares in the database
@@ -30,9 +31,9 @@ func NewShareStore(db *sql.DB) *ShareStore {
 // Create inserts a new share
 func (s *ShareStore) Create(share Share) error {
 	_, err := s.db.Exec(`
-		INSERT INTO shares (id, app_id, sso_strategy, guest_label, status)
-		VALUES (?, ?, ?, ?, ?)
-	`, share.ID, share.AppID, share.SSOStrategy, share.GuestLabel, share.Status)
+		INSERT INTO shares (id, app_id, sso_strategy, guest_id, node_share_link, status)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, share.ID, share.AppID, share.SSOStrategy, share.GuestID, share.NodeShareLink, share.Status)
 	if err != nil {
 		return fmt.Errorf("failed to insert share: %w", err)
 	}
@@ -42,7 +43,7 @@ func (s *ShareStore) Create(share Share) error {
 // GetByID returns a share by ID, or (nil, nil) if not found
 func (s *ShareStore) GetByID(id string) (*Share, error) {
 	row := s.db.QueryRow(`
-		SELECT id, app_id, sso_strategy, guest_label, status, created_at, revoked_at
+		SELECT id, app_id, sso_strategy, guest_id, node_share_link, status, created_at, revoked_at
 		FROM shares
 		WHERE id = ?
 	`, id)
@@ -60,7 +61,7 @@ func (s *ShareStore) GetByID(id string) (*Share, error) {
 // List returns all shares
 func (s *ShareStore) List() ([]*Share, error) {
 	rows, err := s.db.Query(`
-		SELECT id, app_id, sso_strategy, guest_label, status, created_at, revoked_at
+		SELECT id, app_id, sso_strategy, guest_id, node_share_link, status, created_at, revoked_at
 		FROM shares
 		ORDER BY created_at DESC
 	`)
@@ -106,7 +107,8 @@ func (s *ShareStore) scanShare(rows *sql.Rows) (*Share, error) {
 		&share.ID,
 		&share.AppID,
 		&share.SSOStrategy,
-		&share.GuestLabel,
+		&share.GuestID,
+		&share.NodeShareLink,
 		&share.Status,
 		&createdAt,
 		&revokedAt,
@@ -133,7 +135,8 @@ func (s *ShareStore) scanShareRow(row *sql.Row) (*Share, error) {
 		&share.ID,
 		&share.AppID,
 		&share.SSOStrategy,
-		&share.GuestLabel,
+		&share.GuestID,
+		&share.NodeShareLink,
 		&share.Status,
 		&createdAt,
 		&revokedAt,

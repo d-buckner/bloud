@@ -42,6 +42,7 @@ type Server struct {
 	sessionStore      *store.SessionStore
 	appHub            *AppEventHub
 	intentReconciler  *reconciler.Reconciler
+	guestStore        store.GuestStoreInterface
 	shareStore        store.ShareStoreInterface
 	remoteAppStore    store.RemoteAppStoreInterface
 	tailnetStore      store.TailnetStoreInterface
@@ -146,6 +147,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		prefsStore:      prefsStore,
 		sessionStore:    sessionStore,
 		appHub:          appHub,
+		guestStore:      store.NewGuestStore(db),
 		shareStore:      store.NewShareStore(db),
 		remoteAppStore:  store.NewRemoteAppStore(db),
 		tailnetStore:    tailnetStore,

@@ -55,6 +55,12 @@ func InitDB(dataDir string) (*sql.DB, error) {
 func runMigrations(db *sql.DB) {
 	// v1: add tailnet_id to apps (ALTER TABLE ADD COLUMN fails if column already exists, ignore error)
 	db.Exec("ALTER TABLE apps ADD COLUMN tailnet_id TEXT DEFAULT ''")
+	// v2: add node_share_link to shares
+	db.Exec("ALTER TABLE shares ADD COLUMN node_share_link TEXT NOT NULL DEFAULT ''")
+	// v3: add guests table
+	db.Exec("CREATE TABLE IF NOT EXISTS guests (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))")
+	// v4: rename guest_label → guest_id in shares
+	db.Exec("ALTER TABLE shares RENAME COLUMN guest_label TO guest_id")
 }
 
 // runSchema executes the embedded schema SQL

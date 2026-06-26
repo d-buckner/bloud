@@ -10,7 +10,7 @@
 		type AppPhase
 	} from '$lib/clients/developerClient';
 	import AppNode from './AppNode.svelte';
-	import FitView from './FitView.svelte';
+	import FitView from '$lib/components/FitView.svelte';
 
 	import '@xyflow/svelte/dist/style.css';
 

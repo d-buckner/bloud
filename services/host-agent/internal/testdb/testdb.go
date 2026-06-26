@@ -32,14 +32,21 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS guests (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS shares (
-    id           TEXT PRIMARY KEY,
-    app_id       TEXT NOT NULL,
-    sso_strategy TEXT NOT NULL DEFAULT 'native-oidc',
-    guest_label  TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'active',
-    created_at   TEXT DEFAULT (datetime('now')),
-    revoked_at   TEXT
+    id              TEXT PRIMARY KEY,
+    app_id          TEXT NOT NULL,
+    sso_strategy    TEXT NOT NULL DEFAULT 'native-oidc',
+    guest_id        TEXT NOT NULL DEFAULT '',
+    node_share_link TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_at      TEXT DEFAULT (datetime('now')),
+    revoked_at      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tailnet_connections (

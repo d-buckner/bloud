@@ -16,7 +16,7 @@ func TestShareStore_Create_GetByID(t *testing.T) {
 		ID:          "share-001",
 		AppID:       "jellyfin",
 		SSOStrategy: "native-oidc",
-		GuestLabel:  "Alice",
+		GuestID:  "guest-001",
 		Status:      "active",
 	})
 	require.NoError(t, err)
@@ -27,7 +27,7 @@ func TestShareStore_Create_GetByID(t *testing.T) {
 	assert.Equal(t, "share-001", share.ID)
 	assert.Equal(t, "jellyfin", share.AppID)
 	assert.Equal(t, "native-oidc", share.SSOStrategy)
-	assert.Equal(t, "Alice", share.GuestLabel)
+	assert.Equal(t, "guest-001", share.GuestID)
 	assert.Equal(t, "active", share.Status)
 	assert.False(t, share.CreatedAt.IsZero())
 	assert.Nil(t, share.RevokedAt)
@@ -50,7 +50,7 @@ func TestShareStore_Revoke(t *testing.T) {
 		ID:          "share-001",
 		AppID:       "jellyfin",
 		SSOStrategy: "native-oidc",
-		GuestLabel:  "Alice",
+		GuestID:  "guest-001",
 		Status:      "active",
 	}))
 
@@ -81,14 +81,14 @@ func TestShareStore_List(t *testing.T) {
 		ID:          "share-001",
 		AppID:       "jellyfin",
 		SSOStrategy: "native-oidc",
-		GuestLabel:  "Alice",
+		GuestID:  "guest-001",
 		Status:      "active",
 	}))
 	require.NoError(t, store.Create(Share{
 		ID:          "share-002",
 		AppID:       "navidrome",
 		SSOStrategy: "native-oidc",
-		GuestLabel:  "Bob",
+		GuestID:  "guest-002",
 		Status:      "active",
 	}))
 
@@ -105,7 +105,7 @@ func TestShareStore_DuplicateID(t *testing.T) {
 		ID:          "share-001",
 		AppID:       "jellyfin",
 		SSOStrategy: "native-oidc",
-		GuestLabel:  "Alice",
+		GuestID:  "guest-001",
 		Status:      "active",
 	}))
 
@@ -113,7 +113,7 @@ func TestShareStore_DuplicateID(t *testing.T) {
 		ID:          "share-001",
 		AppID:       "navidrome",
 		SSOStrategy: "native-oidc",
-		GuestLabel:  "Bob",
+		GuestID:  "guest-002",
 		Status:      "active",
 	})
 	require.Error(t, err)

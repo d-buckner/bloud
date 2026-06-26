@@ -110,6 +110,22 @@ export interface CompatibleApp {
 	category?: string;
 }
 
+// Guest (contact book entry)
+export interface Guest {
+	id: string;
+	name: string;
+	created_at: string;
+}
+
+// Invite token payload (unsigned base64 JSON decoded on receiver side)
+export interface InvitePayload {
+	appId: string;
+	appName: string;
+	hostLabel: string;
+	sidecarTailnetAddr: string;
+	nodeShareLink: string;
+}
+
 // Intent response (returned by install/uninstall endpoints)
 export interface IntentResponse {
 	intentId: string;

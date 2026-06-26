@@ -1,15 +1,22 @@
 <script lang="ts">
 	import AppIcon from './AppIcon.svelte';
+	import Icon from './Icon.svelte';
 	import type { RemoteApp } from '$lib/types';
 
 	interface Props {
 		app: RemoteApp;
 		onclick: () => void;
+		onremove?: (app: RemoteApp) => void;
 	}
 
-	let { app, onclick }: Props = $props();
+	let { app, onclick, onremove }: Props = $props();
 
 	let displayName = $derived(`${app.app_name} (${app.host_label})`);
+
+	function handleRemove(e: MouseEvent | KeyboardEvent) {
+		e.stopPropagation();
+		onremove?.(app);
+	}
 </script>
 
 <button class="remote-app-card" {onclick}>
@@ -20,6 +27,11 @@
 		<span class="card-name">{displayName}</span>
 		<span class="card-badge">shared</span>
 	</div>
+	{#if onremove}
+		<div class="remove-btn" role="button" tabindex="0" onclick={handleRemove} onkeydown={(e) => e.key === 'Enter' && handleRemove(e)} title="Remove shared app">
+			<Icon name="trash" size={14} />
+		</div>
+	{/if}
 </button>
 
 <style>
@@ -60,6 +72,31 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.remove-btn {
+		display: none;
+		align-items: center;
+		justify-content: center;
+		margin-left: auto;
+		padding: var(--space-xs);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: all 0.15s ease;
+		flex-shrink: 0;
+	}
+
+	.remote-app-card:hover .remove-btn {
+		display: flex;
+	}
+
+	.remove-btn:hover {
+		color: var(--color-error);
+		background: rgba(185, 28, 28, 0.08);
+		border-color: var(--color-error);
 	}
 
 	.card-badge {

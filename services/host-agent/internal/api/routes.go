@@ -97,6 +97,13 @@ func (s *Server) setupRoutes() {
 				r.Get("/shares", s.handleListShares)
 				r.Delete("/shares/{id}", s.handleRevokeShare)
 
+				// Guests (contact book)
+				r.Get("/guests", s.handleListGuests)
+				r.Post("/guests", s.handleCreateGuest)
+
+				// Community graph
+				r.Get("/community", s.handleCommunityGraph)
+
 				// Remote apps (shared apps from other hosts)
 				r.Get("/remote-apps", s.handleListRemoteApps)
 				r.Post("/remote-apps", s.handleAddRemoteApp)

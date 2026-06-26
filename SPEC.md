@@ -359,14 +359,17 @@ Tailscale installed. Remote apps appear at local subdomains like
 
 #### Sharing Identity Model
 
-An invite token authorizes creation of a Bloud user on the host instance. It does not carry
-or request downstream application passwords.
+Sharing identity works in two tiers:
 
-The owner creates a short-lived, one-time invite scoped to one Bloud instance and one
-application. The guest redeems the token, creates or binds a Bloud account on the host
-instance, and receives access through Bloud's normal authentication and authorization layer.
-Bloud remains the identity source of truth for the share.
+**Current (first release):** Social trust + Tailscale node sharing. Invite tokens are
+unsigned base64 JSON containing app metadata and a Tailscale node share link. Network access
+is gated by Tailscale's own node sharing auth. A `guests` table tracks who has been shared
+what, purely for the host's reference (a contact book). No Bloud account creation on the
+remote side.
 
+**Future:** Full SSO identity model backed by Authentik. The owner creates an invite that
+authorizes creation of a Bloud user on the host instance. The guest redeems the token,
+creates or binds a Bloud account, and receives access through Bloud's authentication layer.
 Downstream applications are provisioned from that Bloud identity according to their declared
 authentication capability:
 
@@ -422,26 +425,29 @@ gateway connectivity for remote apps (inbound consumption), and owner remote acc
 
 #### Sharing Flow (Host Side)
 
-1. Host installs an app (e.g., Jellyfin).
-2. The orchestrator starts a Tailscale sidecar for the app, joining the configured tailnet.
-3. The sidecar serves the app via Tailscale Serve at a tailnet address
-   (e.g., `ts-jellyfin.tail1275sa.ts.net`).
-4. Host creates an invite token containing the sidecar address and app metadata.
-5. Guest receives the token.
+1. Host right-clicks an installed app and selects "Share".
+2. ShareModal opens: host selects an existing guest from the dropdown (or creates a new
+   one), then enters the Tailscale node share link.
+3. Host-agent creates a share record (linking guest + app) and generates an unsigned base64
+   invite token containing: appId, appName, hostLabel, sidecarTailnetAddr, nodeShareLink.
+4. Host copies the token and sends it to the guest out-of-band.
 
 #### Remote App Flow (Guest Side)
 
-1. Guest clicks "Add shared app" in the catalog page.
-2. Guest selects app type, enters the tailnet domain, and provides a label.
-3. Bloud creates a remote app record in the `remote_apps` table with a monotonically
-   assigned `proxy_port` (starting from 10100, never reused).
-4. `RegenerateRoutes()` ensures the gateway container is running, then reconciles
+1. Guest opens "Add Shared App" modal (defaults to token paste mode).
+2. Guest pastes the invite token — modal decodes it and shows confirmation:
+   "{hostLabel} wants to share {appName}".
+3. Guest clicks the Tailscale share link to accept network access.
+4. Guest clicks "Add" — Bloud creates a remote app record in the `remote_apps` table with
+   a monotonically assigned `proxy_port` (starting from 10100, never reused).
+5. `RegenerateRoutes()` ensures the gateway container is running, then reconciles
    reverse proxies: each remote app gets a localhost listener on its assigned port
    that dials through the gateway's SOCKS5 proxy to reach the remote sidecar.
-5. Traefik route generation includes the remote app: subdomain
+6. Traefik route generation includes the remote app: subdomain
    `{appId}-{hostLabel-slug}.{baseDomain}` proxies to `http://localhost:{proxyPort}`.
-6. The app appears on the home page with a "shared" badge.
-7. Local devices access the remote app at its local subdomain without needing Tailscale.
+7. The app appears on the home page in the "Shared Apps" section.
+8. Local devices access the remote app at its local subdomain without needing Tailscale.
+9. Manual entry mode is still available as a fallback.
 
 ```text
 Browser → Traefik (:8080)
@@ -461,7 +467,11 @@ Browser → Traefik (:8080)
   address, proxy port, status. Each record generates a Traefik route. The `proxy_port` is
   monotonically assigned at creation time (`MAX(proxy_port) + 1`, starting from 10100) and
   never reused, ensuring stable port assignments across restarts.
+- **`guests`** — Contact book of people the host shares apps with. Each guest has a name
+  and UUID. The `shares` table references guests by ID, enabling "who has access to what"
+  queries.
 - **`shares`** — Stores outbound share records: which local apps are shared and to whom.
+  References `guests.id` via `guest_id`.
 - **`tailnet_connections`** — Stores tailnet connection config: auth key, control URL, type
   (Tailscale or Headscale), and gateway FQDN (discovered after gateway joins tailnet).
   Used for app sidecars, gateway instances, and owner remote access.
@@ -494,8 +504,9 @@ Auth keys are never exposed through the API. The frontend receives only a boolea
   (e.g., via sslip.io) is an open design question.
 - **Multiple tailnet connections** — The data model supports multiple entries, but the UI
   and runtime currently handle only one active connection.
-- **Invite token redemption** — The guest-side flow for automatically creating a remote app
-  from an invite token (currently manual via the catalog UI).
+- **SSO identity model** — Guest Bloud accounts backed by Authentik, per-app auth
+  provisioning via OIDC/SAML/LDAP/header auth.
+- **Guest management UI** — Dedicated view showing guests and their active shares.
 
 ### Reconciliation Flow
 
