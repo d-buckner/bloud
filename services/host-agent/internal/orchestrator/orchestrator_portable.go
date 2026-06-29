@@ -102,7 +102,7 @@ func (o *PortableOrchestrator) SyncContainerState(ctx context.Context) {
 	}
 
 	for _, app := range apps {
-		catalogApp, err := o.catalog.Get(app.Name)
+		catalogApp, err := o.catalog.Get(app.CatalogID)
 		if err != nil || catalogApp.Container == nil {
 			continue
 		}
@@ -110,30 +110,30 @@ func (o *PortableOrchestrator) SyncContainerState(ctx context.Context) {
 		containerName := PortableContainerName(catalogApp)
 		state, err := o.containers.Inspect(ctx, containerName)
 		if err != nil {
-			o.logger.Warn("failed to inspect container during sync", "app", app.Name, "error", err)
+			o.logger.Warn("failed to inspect container during sync", "app", app.CatalogID, "error", err)
 			continue
 		}
 
 		switch {
 		case app.Status == "uninstalling" && !state.Exists:
 			// Container gone + was uninstalling → clean up DB
-			o.logger.Info("cleaning up uninstalled app", "app", app.Name)
-			_ = o.appStore.Uninstall(app.Name)
+			o.logger.Info("cleaning up uninstalled app", "app", app.CatalogID)
+			_ = o.appStore.Uninstall(app.CatalogID)
 
 		case (app.Status == "installing" || app.Status == "starting") && !state.Running:
 			// Interrupted transition → mark error
-			o.logger.Info("marking interrupted app as error", "app", app.Name, "previous_status", app.Status)
-			_ = o.appStore.UpdateStatus(app.Name, "error")
+			o.logger.Info("marking interrupted app as error", "app", app.CatalogID, "previous_status", app.Status)
+			_ = o.appStore.UpdateStatus(app.CatalogID, "error")
 
 		case app.Status == "running" && (!state.Exists || !state.Running):
 			// DB says running but container isn't → mark stopped
-			o.logger.Info("container not running, marking as stopped", "app", app.Name, "exists", state.Exists)
-			_ = o.appStore.UpdateStatus(app.Name, "stopped")
+			o.logger.Info("container not running, marking as stopped", "app", app.CatalogID, "exists", state.Exists)
+			_ = o.appStore.UpdateStatus(app.CatalogID, "stopped")
 
 		case (app.Status == "error" || app.Status == "stopped") && state.Running:
 			// Container recovered or was started externally → mark running
-			o.logger.Info("container running, marking as running", "app", app.Name, "previous_status", app.Status)
-			_ = o.appStore.UpdateStatus(app.Name, "running")
+			o.logger.Info("container running, marking as running", "app", app.CatalogID, "previous_status", app.Status)
+			_ = o.appStore.UpdateStatus(app.CatalogID, "running")
 		}
 	}
 
@@ -153,12 +153,12 @@ func (o *PortableOrchestrator) ReconcileState(ctx context.Context) {
 		}
 		// Skip apps without container specs (e.g. authentik, traefik) — they're
 		// managed by bootstrap or externally, not by the portable orchestrator.
-		if catalogApp, err := o.catalog.Get(app.Name); err != nil || catalogApp.Container == nil {
+		if catalogApp, err := o.catalog.Get(app.CatalogID); err != nil || catalogApp.Container == nil {
 			continue
 		}
-		if err := o.ensureApp(ctx, app.Name); err != nil {
-			_ = o.appStore.UpdateStatus(app.Name, "error")
-			o.logger.Error("failed to reconcile portable app", "app", app.Name, "error", err)
+		if err := o.ensureApp(ctx, app.CatalogID); err != nil {
+			_ = o.appStore.UpdateStatus(app.CatalogID, "error")
+			o.logger.Error("failed to reconcile portable app", "app", app.CatalogID, "error", err)
 		}
 	}
 }
@@ -275,14 +275,14 @@ func (o *PortableOrchestrator) ProvisionSSO(ctx context.Context, appName string)
 		return nil
 	}
 
-	externalURL := appSubdomainURL(o.ssoBaseURL, app.Name)
-	return o.sso.EnsureForwardAuth(app.Name, app.DisplayName, externalURL)
+	externalURL := appSubdomainURL(o.ssoBaseURL, app.CatalogID)
+	return o.sso.EnsureForwardAuth(app.CatalogID, app.DisplayName, externalURL)
 }
 
 // buildAppState constructs the configurator AppState for an app.
 func (o *PortableOrchestrator) buildAppState(app *catalog.App) *configurator.AppState {
 	state := &configurator.AppState{
-		DataPath:      filepath.Join(o.dataDir, app.Name),
+		DataPath:      filepath.Join(o.dataDir, app.CatalogID),
 		BloudDataPath: o.dataDir,
 		SSOEnabled:    app.SSO.Strategy != "" && app.SSO.Strategy != "none",
 	}
@@ -336,7 +336,7 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 	}
 
 	state := &configurator.AppState{
-		DataPath:      filepath.Join(o.dataDir, app.Name),
+		DataPath:      filepath.Join(o.dataDir, app.CatalogID),
 		BloudDataPath: o.dataDir,
 		SSOEnabled:    app.SSO.Strategy != "" && app.SSO.Strategy != "none",
 	}
@@ -397,8 +397,8 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 	// Provision SSO in the identity provider for forward-auth apps.
 	// Non-fatal: Authentik may not be running yet (e.g. first bootstrap).
 	if app.SSO.Strategy == "forward-auth" && o.sso != nil && o.ssoBaseURL != "" {
-		externalURL := appSubdomainURL(o.ssoBaseURL, app.Name)
-		if err := o.sso.EnsureForwardAuth(app.Name, app.DisplayName, externalURL); err != nil {
+		externalURL := appSubdomainURL(o.ssoBaseURL, app.CatalogID)
+		if err := o.sso.EnsureForwardAuth(app.CatalogID, app.DisplayName, externalURL); err != nil {
 			o.logger.Warn("failed to provision forward-auth SSO (non-fatal)", "app", appName, "error", err)
 		}
 	}
@@ -406,7 +406,7 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 	// Start Tailscale sidecar for non-system user apps (sharing support).
 	// Non-fatal: sharing is optional and shouldn't block app startup.
 	if o.sidecar != nil && !app.IsSystem {
-		if err := o.sidecar.EnsureRunning(ctx, app.Name, app.Port); err != nil {
+		if err := o.sidecar.EnsureRunning(ctx, app.CatalogID, app.Port); err != nil {
 			o.logger.Warn("failed to start sidecar (sharing unavailable for this app)", "app", appName, "error", err)
 		} else if o.activeTailnetID != nil {
 			if tid := o.activeTailnetID(); tid != "" {
@@ -446,7 +446,7 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 	if o.traefikGen == nil {
 		return nil
 	}
-	names, err := o.appStore.GetInstalledNames()
+	names, err := o.appStore.GetInstalledCatalogIDs()
 	if err != nil {
 		return err
 	}
@@ -532,7 +532,7 @@ func PortableContainerName(app *catalog.App) string {
 	if app.Container.Name != "" {
 		return app.Container.Name
 	}
-	return "apps-" + app.Name
+	return "apps-" + app.CatalogID
 }
 
 // PortableContainerSpec builds a runtime-neutral container spec from catalog metadata.
@@ -540,12 +540,12 @@ func PortableContainerName(app *catalog.App) string {
 // the built-in {{dataDir}} and {{appDataDir}}.
 func PortableContainerSpec(app *catalog.App, dataDir string, extraVars map[string]string) (containerruntime.Spec, error) {
 	if app.Container == nil || app.Container.Image == "" {
-		return containerruntime.Spec{}, fmt.Errorf("app %s has no portable container image", app.Name)
+		return containerruntime.Spec{}, fmt.Errorf("app %s has no portable container image", app.CatalogID)
 	}
 
 	render := func(value string) string {
 		value = strings.ReplaceAll(value, "{{dataDir}}", dataDir)
-		value = strings.ReplaceAll(value, "{{appDataDir}}", filepath.Join(dataDir, app.Name))
+		value = strings.ReplaceAll(value, "{{appDataDir}}", filepath.Join(dataDir, app.CatalogID))
 		for k, v := range extraVars {
 			value = strings.ReplaceAll(value, "{{"+k+"}}", v)
 		}
@@ -564,7 +564,7 @@ func PortableContainerSpec(app *catalog.App, dataDir string, extraVars map[strin
 		Network:       app.Container.Network,
 		Command:       app.Container.Command,
 		RestartPolicy: app.Container.RestartPolicy,
-		Labels:        map[string]string{"io.bloud.app": app.Name},
+		Labels:        map[string]string{"io.bloud.app": app.CatalogID},
 	}
 	for _, port := range app.Container.Ports {
 		spec.Ports = append(spec.Ports, containerruntime.Port{

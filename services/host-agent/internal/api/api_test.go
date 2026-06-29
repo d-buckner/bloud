@@ -45,28 +45,28 @@ func (f *FakeAppStore) GetAll() ([]*store.InstalledApp, error) {
 	return apps, nil
 }
 
-func (f *FakeAppStore) GetByName(name string) (*store.InstalledApp, error) {
+func (f *FakeAppStore) GetByCatalogID(catalogID string) (*store.InstalledApp, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	return f.apps[name], nil
+	return f.apps[catalogID], nil
 }
 
-func (f *FakeAppStore) GetInstalledNames() ([]string, error) {
+func (f *FakeAppStore) GetInstalledCatalogIDs() ([]string, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	var names []string
-	for name := range f.apps {
-		names = append(names, name)
+	var ids []string
+	for id := range f.apps {
+		ids = append(ids, id)
 	}
-	return names, nil
+	return ids, nil
 }
 
-func (f *FakeAppStore) Install(name, displayName, version string, integrationConfig map[string]string, opts *store.InstallOptions) error {
+func (f *FakeAppStore) Install(catalogID, displayName, version string, integrationConfig map[string]string, opts *store.InstallOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	app := &store.InstalledApp{
-		Name:              name,
+		CatalogID:         catalogID,
 		DisplayName:       displayName,
 		Version:           version,
 		Status:            "installing",
@@ -78,7 +78,7 @@ func (f *FakeAppStore) Install(name, displayName, version string, integrationCon
 		app.Port = opts.Port
 		app.IsSystem = opts.IsSystem
 	}
-	f.apps[name] = app
+	f.apps[catalogID] = app
 	f.notify()
 	return nil
 }
@@ -94,11 +94,11 @@ func (f *FakeAppStore) UpdateStatus(name, status string) error {
 	return nil
 }
 
-func (f *FakeAppStore) EnsureSystemApp(name, displayName string, port int) error {
+func (f *FakeAppStore) EnsureSystemApp(catalogID, displayName string, port int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.apps[name] = &store.InstalledApp{
-		Name:        name,
+	f.apps[catalogID] = &store.InstalledApp{
+		CatalogID:   catalogID,
 		DisplayName: displayName,
 		Port:        port,
 		Status:      "running",
@@ -171,7 +171,7 @@ func (f *FakeAppStore) notify() {
 func (f *FakeAppStore) AddApp(app *store.InstalledApp) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.apps[app.Name] = app
+	f.apps[app.CatalogID] = app
 }
 
 // FakeRemoteAppStore implements store.RemoteAppStoreInterface for testing
@@ -311,7 +311,7 @@ func (f *FakeCatalogCache) Refresh(loader *catalog.Loader) error {
 func (f *FakeCatalogCache) AddApp(app *catalog.App) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.apps[app.Name] = app
+	f.apps[app.CatalogID] = app
 }
 
 // setupTestServer creates a test server with fake stores and test catalog
@@ -371,7 +371,7 @@ tags:
 	require.NoError(t, err)
 
 	// Sync installed state
-	names, _ := appStore.GetInstalledNames()
+	names, _ := appStore.GetInstalledCatalogIDs()
 	graph.SetInstalled(names)
 
 	// Create intent reconciler in stub mode for test handlers
@@ -439,7 +439,7 @@ func TestAPI_ListApps(t *testing.T) {
 
 	// Check first app
 	app := apps[0].(map[string]interface{})
-	assert.Equal(t, "test-app", app["name"])
+	assert.Equal(t, "test-app", app["catalogId"])
 	assert.Equal(t, "Test App", app["displayName"])
 }
 
@@ -585,7 +585,7 @@ func TestAPI_AppMetadata(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&app)
 	require.NoError(t, err)
 
-	assert.Equal(t, "test-app", app["name"])
+	assert.Equal(t, "test-app", app["catalogId"])
 	assert.Equal(t, "Test App", app["displayName"])
 	assert.Equal(t, "A test application", app["description"])
 }
@@ -712,8 +712,8 @@ func TestAPI_ClearData_InstalledApp(t *testing.T) {
 
 	// Install the app so handleClearData takes the "installed" branch.
 	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
-		Name:   "test-app",
-		Status: "running",
+		CatalogID: "test-app",
+		Status:    "running",
 	})
 
 	req := httptest.NewRequest("POST", "/api/apps/test-app/clear-data", nil)
@@ -789,7 +789,7 @@ func TestAppEventHub_Broadcast(t *testing.T) {
 	// Add an app using the fake store
 	fakeStore := server.appStore.(*FakeAppStore)
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "broadcast-app",
+		CatalogID:   "broadcast-app",
 		DisplayName: "Broadcast App",
 		Version:     "1.0.0",
 		Status:      "running",
@@ -805,7 +805,7 @@ func TestAppEventHub_Broadcast(t *testing.T) {
 	select {
 	case apps := <-ch:
 		assert.Len(t, apps, 1)
-		assert.Equal(t, "broadcast-app", apps[0].Name)
+		assert.Equal(t, "broadcast-app", apps[0].CatalogID)
 	default:
 		t.Fatal("expected to receive broadcast")
 	}
@@ -1081,14 +1081,14 @@ func TestHandleListInstalledApps_IncludesSSOLaunchPath(t *testing.T) {
 
 	// Add catalog app with SSO launch path
 	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
-		Name: "miniflux",
-		SSO:  catalog.SSO{LaunchPath: "oauth2/oidc/redirect"},
+		CatalogID: "miniflux",
+		SSO:       catalog.SSO{LaunchPath: "oauth2/oidc/redirect"},
 	})
 
 	// Add matching installed app
 	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
-		Name:   "miniflux",
-		Status: "running",
+		CatalogID: "miniflux",
+		Status:    "running",
 	})
 
 	req := httptest.NewRequest("GET", "/api/apps/installed", nil)
@@ -1108,14 +1108,14 @@ func TestHandleAppEvents_IncludesSSOLaunchPath(t *testing.T) {
 
 	// Add catalog app with SSO launch path
 	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
-		Name: "miniflux",
-		SSO:  catalog.SSO{LaunchPath: "oauth2/oidc/redirect"},
+		CatalogID: "miniflux",
+		SSO:       catalog.SSO{LaunchPath: "oauth2/oidc/redirect"},
 	})
 
 	// Add matching installed app
 	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
-		Name:   "miniflux",
-		Status: "running",
+		CatalogID: "miniflux",
+		Status:    "running",
 	})
 
 	// Cancel the context immediately so the SSE handler writes the initial event
@@ -1145,7 +1145,7 @@ func TestHandleAppEvents_IncludesSSOLaunchPath(t *testing.T) {
 
 	var miniflux map[string]interface{}
 	for _, app := range apps {
-		if app["name"] == "miniflux" {
+		if app["catalog_id"] == "miniflux" {
 			miniflux = app
 			break
 		}
@@ -1161,7 +1161,7 @@ func TestAPI_Rename_Returns202(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
-		Name:        "test-app",
+		CatalogID:   "test-app",
 		DisplayName: "Test App",
 		Status:      "running",
 	})

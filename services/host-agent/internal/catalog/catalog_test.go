@@ -88,13 +88,13 @@ func TestMemoryCache_Refresh(t *testing.T) {
 	apps, err := cache.GetAll()
 	require.NoError(t, err)
 	assert.Len(t, apps, 1)
-	assert.Equal(t, "test-app", apps[0].Name)
+	assert.Equal(t, "test-app", apps[0].CatalogID)
 }
 
 func TestMemoryCache_GetAll(t *testing.T) {
 	cache := NewMemoryCache()
 	cache.apps["test-app"] = &App{
-		Name:        "test-app",
+		CatalogID:   "test-app",
 		DisplayName: "Test App",
 		Category:    "testing",
 	}
@@ -102,20 +102,20 @@ func TestMemoryCache_GetAll(t *testing.T) {
 	apps, err := cache.GetAll()
 	require.NoError(t, err, "GetAll should not return error")
 	require.Len(t, apps, 1, "should have exactly 1 app in cache")
-	assert.Equal(t, "test-app", apps[0].Name)
+	assert.Equal(t, "test-app", apps[0].CatalogID)
 }
 
 func TestMemoryCache_Get(t *testing.T) {
 	cache := NewMemoryCache()
 	cache.apps["test-app"] = &App{
-		Name:        "test-app",
+		CatalogID:   "test-app",
 		DisplayName: "Test App",
 		Category:    "testing",
 	}
 
 	app, err := cache.Get("test-app")
 	require.NoError(t, err, "Get should return existing app without error")
-	assert.Equal(t, "test-app", app.Name)
+	assert.Equal(t, "test-app", app.CatalogID)
 }
 
 func TestMemoryCache_Get_NotFound(t *testing.T) {
@@ -128,29 +128,29 @@ func TestMemoryCache_Get_NotFound(t *testing.T) {
 func TestMemoryCache_GetUserApps(t *testing.T) {
 	cache := NewMemoryCache()
 	cache.apps["traefik"] = &App{
-		Name:     "traefik",
-		Category: "infrastructure",
+		CatalogID: "traefik",
+		Category:  "infrastructure",
 	}
 	cache.apps["jellyfin"] = &App{
-		Name:     "jellyfin",
-		Category: "media",
+		CatalogID: "jellyfin",
+		Category:  "media",
 	}
 
 	userApps, err := cache.GetUserApps()
 	require.NoError(t, err)
 	assert.Len(t, userApps, 1)
-	assert.Equal(t, "jellyfin", userApps[0].Name)
+	assert.Equal(t, "jellyfin", userApps[0].CatalogID)
 }
 
 func TestMemoryCache_IsSystemAppByName(t *testing.T) {
 	cache := NewMemoryCache()
 	cache.apps["traefik"] = &App{
-		Name:     "traefik",
-		Category: "infrastructure",
+		CatalogID: "traefik",
+		Category:  "infrastructure",
 	}
 	cache.apps["jellyfin"] = &App{
-		Name:     "jellyfin",
-		Category: "media",
+		CatalogID: "jellyfin",
+		Category:  "media",
 	}
 
 	assert.True(t, cache.IsSystemAppByName("traefik"))
@@ -169,7 +169,7 @@ func TestLoader_ValidateApp(t *testing.T) {
 		{
 			name: "valid app",
 			app: &App{
-				Name:        "valid",
+				CatalogID:   "valid",
 				DisplayName: "Valid App",
 				Description: "A valid app",
 				Category:    "test",
@@ -188,7 +188,7 @@ func TestLoader_ValidateApp(t *testing.T) {
 		{
 			name: "missing displayName",
 			app: &App{
-				Name:        "test",
+				CatalogID:   "test",
 				Description: "Missing displayName",
 				Category:    "test",
 			},
@@ -197,7 +197,7 @@ func TestLoader_ValidateApp(t *testing.T) {
 		{
 			name: "missing category",
 			app: &App{
-				Name:        "test",
+				CatalogID:   "test",
 				DisplayName: "Test",
 				Description: "Missing category",
 			},

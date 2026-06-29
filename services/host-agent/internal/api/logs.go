@@ -14,7 +14,7 @@ func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
 	// Verify app exists
-	app, err := s.appStore.GetByName(name)
+	app, err := s.appStore.GetByCatalogID(name)
 	if err != nil || app == nil {
 		respondError(w, http.StatusNotFound, "App not found")
 		return

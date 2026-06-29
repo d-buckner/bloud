@@ -19,7 +19,7 @@
 
 	// Reactive status lookup — falls back to 'installing' for pending installs
 	function getAppStatus(name: string): AppStatus | undefined {
-		return $installedApps.find((a) => a.name === name)?.status
+		return $installedApps.find((a) => a.catalog_id === name)?.status
 			?? ($pendingInstalls.has(name) ? AppStatus.Installing : undefined);
 	}
 
@@ -49,7 +49,7 @@
 		if (searchQuery.trim()) {
 			const query = searchQuery.toLowerCase().trim();
 			result = result.filter(app =>
-				app.name.toLowerCase().includes(query) ||
+				app.catalogId.toLowerCase().includes(query) ||
 				(app.displayName?.toLowerCase().includes(query)) ||
 				(app.description?.toLowerCase().includes(query))
 			);
@@ -166,7 +166,7 @@
 				{#each filteredApps() as app}
 					<CatalogAppCard
 						{app}
-						status={getAppStatus(app.name)}
+						status={getAppStatus(app.catalogId)}
 						onclick={() => selectedApp = app}
 					/>
 				{/each}
@@ -177,7 +177,7 @@
 
 <AppDetailModal
 	app={selectedApp}
-	status={selectedApp ? getAppStatus(selectedApp.name) : null}
+	status={selectedApp ? getAppStatus(selectedApp.catalogId) : null}
 	onclose={() => selectedApp = null}
 	oninstall={handleInstall}
 />

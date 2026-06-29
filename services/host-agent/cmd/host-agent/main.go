@@ -184,22 +184,22 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 		if !app.IsSystem || app.Container == nil {
 			continue
 		}
-		logger.Info("bootstrapping system container", "app", app.Name)
+		logger.Info("bootstrapping system container", "app", app.CatalogID)
 
 		spec, err := orchestrator.PortableContainerSpec(app, cfg.DataDir, templateVars)
 		if err != nil {
-			return fmt.Errorf("build spec for %s: %w", app.Name, err)
+			return fmt.Errorf("build spec for %s: %w", app.CatalogID, err)
 		}
 		if err := runtime.EnsureNetwork(ctx, spec.Network); err != nil {
-			return fmt.Errorf("ensure network for %s: %w", app.Name, err)
+			return fmt.Errorf("ensure network for %s: %w", app.CatalogID, err)
 		}
 		for _, mount := range spec.Mounts {
 			if err := os.MkdirAll(mount.Source, 0755); err != nil {
-				return fmt.Errorf("create mount %s for %s: %w", mount.Source, app.Name, err)
+				return fmt.Errorf("create mount %s for %s: %w", mount.Source, app.CatalogID, err)
 			}
 		}
 		if _, err := runtime.Ensure(ctx, spec); err != nil {
-			return fmt.Errorf("ensure container %s: %w", app.Name, err)
+			return fmt.Errorf("ensure container %s: %w", app.CatalogID, err)
 		}
 	}
 
@@ -240,15 +240,15 @@ func registerSystemApps(database *sql.DB, cfg *config.Config, logger *slog.Logge
 		if !app.IsSystem {
 			continue
 		}
-		if err := appStore.Install(app.Name, app.DisplayName, app.Version, nil, &store.InstallOptions{
+		if err := appStore.Install(app.CatalogID, app.DisplayName, app.Version, nil, &store.InstallOptions{
 			Port:     app.Port,
 			IsSystem: true,
 		}); err != nil {
-			logger.Warn("failed to register system app", "app", app.Name, "error", err)
+			logger.Warn("failed to register system app", "app", app.CatalogID, "error", err)
 			continue
 		}
-		if err := appStore.UpdateStatus(app.Name, "running"); err != nil {
-			logger.Warn("failed to update system app status", "app", app.Name, "error", err)
+		if err := appStore.UpdateStatus(app.CatalogID, "running"); err != nil {
+			logger.Warn("failed to update system app status", "app", app.CatalogID, "error", err)
 		}
 	}
 	logger.Info("registered system apps")

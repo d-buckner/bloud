@@ -2,7 +2,7 @@
 
 CREATE TABLE IF NOT EXISTS apps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
+    catalog_id TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
     version TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'stopped',
@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS guests (
 
 CREATE TABLE IF NOT EXISTS shares (
     id              TEXT PRIMARY KEY,
-    app_id          TEXT NOT NULL,
+    app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     sso_strategy    TEXT NOT NULL DEFAULT 'native-oidc',
-    guest_id        TEXT NOT NULL DEFAULT '',
+    guest_id        TEXT NOT NULL REFERENCES guests(id) ON DELETE CASCADE,
     node_share_link TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'active',
     created_at      TEXT DEFAULT (datetime('now')),

@@ -6,35 +6,35 @@ type AppStoreInterface interface {
 	// GetAll returns all installed apps
 	GetAll() ([]*InstalledApp, error)
 
-	// GetByName returns an installed app by name
-	GetByName(name string) (*InstalledApp, error)
+	// GetByCatalogID returns an installed app by catalog ID
+	GetByCatalogID(catalogID string) (*InstalledApp, error)
 
-	// GetInstalledNames returns just the names of installed apps
-	GetInstalledNames() ([]string, error)
+	// GetInstalledCatalogIDs returns just the catalog IDs of installed apps
+	GetInstalledCatalogIDs() ([]string, error)
 
 	// Install records a new app installation (or re-install)
-	Install(name, displayName, version string, integrationConfig map[string]string, opts *InstallOptions) error
+	Install(catalogID, displayName, version string, integrationConfig map[string]string, opts *InstallOptions) error
 
 	// UpdateStatus updates the status of an installed app
-	UpdateStatus(name, status string) error
+	UpdateStatus(catalogID, status string) error
 
 	// EnsureSystemApp ensures a system app (managed by the host agent) is registered with running status
-	EnsureSystemApp(name, displayName string, port int) error
+	EnsureSystemApp(catalogID, displayName string, port int) error
 
 	// SetTailnetID updates the tailnet_id for an installed app
-	SetTailnetID(name, tailnetID string) error
+	SetTailnetID(catalogID, tailnetID string) error
 
 	// UpdateIntegrationConfig updates the integration config for an app
-	UpdateIntegrationConfig(name string, config map[string]string) error
+	UpdateIntegrationConfig(catalogID string, config map[string]string) error
 
 	// UpdateDisplayName updates the display name of an installed app
-	UpdateDisplayName(name, displayName string) error
+	UpdateDisplayName(catalogID, displayName string) error
 
 	// Uninstall removes an app from the database
-	Uninstall(name string) error
+	Uninstall(catalogID string) error
 
 	// IsInstalled checks if an app is installed
-	IsInstalled(name string) (bool, error)
+	IsInstalled(catalogID string) (bool, error)
 
 	// SetOnChange sets a callback that fires when app state changes
 	SetOnChange(fn func())

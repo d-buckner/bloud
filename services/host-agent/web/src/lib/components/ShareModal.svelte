@@ -100,7 +100,7 @@
 		submitting = true;
 		errorMsg = '';
 		try {
-			const result = await createInvite(app.name, selectedGuestId, nodeShareLink.trim());
+			const result = await createInvite(app.catalog_id, selectedGuestId, nodeShareLink.trim());
 			token = result.token;
 		} catch (err) {
 			errorMsg = err instanceof Error ? err.message : 'Failed to create invite';

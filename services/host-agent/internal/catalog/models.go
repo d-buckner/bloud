@@ -2,7 +2,7 @@ package catalog
 
 // App represents an application in the catalog
 type App struct {
-	Name          string                 `yaml:"name" json:"name"`
+	CatalogID     string                 `yaml:"name" json:"catalogId"`
 	DisplayName   string                 `yaml:"displayName" json:"displayName"`
 	Description   string                 `yaml:"description" json:"description"`
 	Category      string                 `yaml:"category" json:"category"`

@@ -89,7 +89,7 @@ func TestComputeLevels_MultipleOptionalIntegrations_AllInstalledOrderedCorrectly
 
 	// Miniflux optionally integrates with both jellyfin and qbittorrent
 	minifluxCatalog := &catalog.App{
-		Name: "miniflux",
+		CatalogID: "miniflux",
 		Integrations: map[string]catalog.Integration{
 			"movieManager": {Required: false, Compatible: []catalog.CompatibleApp{{App: "jellyfin"}}},
 			"tvManager":    {Required: false, Compatible: []catalog.CompatibleApp{{App: "qbittorrent"}}},
@@ -160,7 +160,7 @@ func TestBuildAppState_BoundProviderTakesPrecedenceOverOptionalDiscovery(t *test
 		"database": "mariadb",
 	})
 	catalogApp := &catalog.App{
-		Name: "app",
+		CatalogID: "app",
 		Integrations: map[string]catalog.Integration{
 			"database": {
 				Required: false,
@@ -233,8 +233,8 @@ func TestBuildAppState_ImmichDeclaredSSOStrategyEnablesSSO(t *testing.T) {
 	immich := fixtureInstalledApp("immich", "running")
 	authentik := fixtureInstalledApp("authentik", "running")
 	catalogApp := &catalog.App{
-		Name: "immich",
-		SSO:  catalog.SSO{Strategy: "native-oidc"},
+		CatalogID: "immich",
+		SSO:       catalog.SSO{Strategy: "native-oidc"},
 		Integrations: map[string]catalog.Integration{
 			"sso": {
 				Required:   false,
@@ -260,7 +260,7 @@ func TestBuildAppState_SSOBindingWithoutStrategyDoesNotEnableSSO(t *testing.T) {
 		"sso": "authentik",
 	})
 	catalogApp := &catalog.App{
-		Name: "immich",
+		CatalogID: "immich",
 		Integrations: map[string]catalog.Integration{
 			"sso": {
 				Compatible: []catalog.CompatibleApp{{App: "authentik"}},
@@ -281,7 +281,7 @@ func TestBuildAppState_IncompatibleBoundProviderReturnsError(t *testing.T) {
 		"database": "mariadb",
 	})
 	catalogApp := &catalog.App{
-		Name: "immich",
+		CatalogID: "immich",
 		Integrations: map[string]catalog.Integration{
 			"database": {
 				Required:   true,
@@ -341,8 +341,8 @@ func TestBuildAppState_LDAPOutputNilWhenStrategyIsOIDC(t *testing.T) {
 
 	immich := fixtureInstalledApp("immich", "running")
 	catalogApp := &catalog.App{
-		Name: "immich",
-		SSO:  catalog.SSO{Strategy: "native-oidc"},
+		CatalogID: "immich",
+		SSO:       catalog.SSO{Strategy: "native-oidc"},
 	}
 
 	tr.cache.On("Get", "immich").Return(catalogApp, nil)
@@ -387,7 +387,7 @@ func integrationBinding(integrationType, provider string) integrationdomain.Bind
 
 func fixtureCatalogAppWithOptionalIntegration(appName, integrationName, compatibleApp string) *catalog.App {
 	return &catalog.App{
-		Name: appName,
+		CatalogID: appName,
 		Integrations: map[string]catalog.Integration{
 			integrationName: {
 				Required:   false,

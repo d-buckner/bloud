@@ -10,7 +10,7 @@ import (
 // InstalledApp represents an app installed on this host
 type InstalledApp struct {
 	ID                int               `json:"id"`
-	Name              string            `json:"name"`
+	CatalogID         string            `json:"catalog_id"`
 	DisplayName       string            `json:"display_name"`
 	Version           string            `json:"version"`
 	Status            string            `json:"status"`
@@ -48,9 +48,9 @@ func (s *AppStore) notify() {
 // GetAll returns all installed apps
 func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
+		SELECT id, catalog_id, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
 		FROM apps
-		ORDER BY name
+		ORDER BY catalog_id
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query apps: %w", err)
@@ -69,13 +69,13 @@ func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	return apps, nil
 }
 
-// GetByName returns an installed app by name
-func (s *AppStore) GetByName(name string) (*InstalledApp, error) {
+// GetByCatalogID returns an installed app by catalog ID
+func (s *AppStore) GetByCatalogID(catalogID string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
-		SELECT id, name, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
+		SELECT id, catalog_id, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
 		FROM apps
-		WHERE name = ?
-	`, name)
+		WHERE catalog_id = ?
+	`, catalogID)
 
 	app, err := s.scanAppRow(row)
 	if err == sql.ErrNoRows {
@@ -88,24 +88,24 @@ func (s *AppStore) GetByName(name string) (*InstalledApp, error) {
 	return app, nil
 }
 
-// GetInstalledNames returns just the names of installed apps
-func (s *AppStore) GetInstalledNames() ([]string, error) {
-	rows, err := s.db.Query("SELECT name FROM apps ORDER BY name")
+// GetInstalledCatalogIDs returns just the catalog IDs of installed apps
+func (s *AppStore) GetInstalledCatalogIDs() ([]string, error) {
+	rows, err := s.db.Query("SELECT catalog_id FROM apps ORDER BY catalog_id")
 	if err != nil {
-		return nil, fmt.Errorf("failed to query app names: %w", err)
+		return nil, fmt.Errorf("failed to query app catalog IDs: %w", err)
 	}
 	defer rows.Close()
 
-	var names []string
+	var ids []string
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("failed to scan name: %w", err)
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan catalog_id: %w", err)
 		}
-		names = append(names, name)
+		ids = append(ids, id)
 	}
 
-	return names, nil
+	return ids, nil
 }
 
 // InstallOptions contains optional fields for app installation
@@ -115,7 +115,7 @@ type InstallOptions struct {
 }
 
 // Install records a new app installation (or re-install)
-func (s *AppStore) Install(name, displayName, version string, integrationConfig map[string]string, opts *InstallOptions) error {
+func (s *AppStore) Install(catalogID, displayName, version string, integrationConfig map[string]string, opts *InstallOptions) error {
 	configJSON, err := json.Marshal(integrationConfig)
 	if err != nil {
 		return fmt.Errorf("failed to marshal integration config: %w", err)
@@ -131,9 +131,9 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO apps (name, display_name, version, status, port, is_system, integration_config)
+		INSERT INTO apps (catalog_id, display_name, version, status, port, is_system, integration_config)
 		VALUES (?, ?, ?, 'installing', ?, ?, ?)
-		ON CONFLICT(name) DO UPDATE SET
+		ON CONFLICT(catalog_id) DO UPDATE SET
 			display_name = excluded.display_name,
 			version = excluded.version,
 			status = 'installing',
@@ -141,7 +141,7 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 			is_system = excluded.is_system,
 			integration_config = excluded.integration_config,
 			updated_at = datetime('now')
-	`, name, displayName, version, port, isSystem, string(configJSON))
+	`, catalogID, displayName, version, port, isSystem, string(configJSON))
 	if err != nil {
 		return fmt.Errorf("failed to insert app: %w", err)
 	}
@@ -151,18 +151,18 @@ func (s *AppStore) Install(name, displayName, version string, integrationConfig 
 }
 
 // UpdateStatus updates the status of an installed app
-func (s *AppStore) UpdateStatus(name, status string) error {
+func (s *AppStore) UpdateStatus(catalogID, status string) error {
 	result, err := s.db.Exec(`
 		UPDATE apps SET status = ?, updated_at = datetime('now')
-		WHERE name = ?
-	`, status, name)
+		WHERE catalog_id = ?
+	`, status, catalogID)
 	if err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("app not found: %s", name)
+		return fmt.Errorf("app not found: %s", catalogID)
 	}
 
 	s.notify()
@@ -172,17 +172,17 @@ func (s *AppStore) UpdateStatus(name, status string) error {
 // EnsureSystemApp ensures a system app (managed by the host agent, not user-installed) is registered
 // System apps are marked with is_system=true and their status is set to "running"
 // This is idempotent - it creates or updates the app entry
-func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
+func (s *AppStore) EnsureSystemApp(catalogID, displayName string, port int) error {
 	_, err := s.db.Exec(`
-		INSERT INTO apps (name, display_name, version, status, port, is_system, integration_config)
+		INSERT INTO apps (catalog_id, display_name, version, status, port, is_system, integration_config)
 		VALUES (?, ?, '', 'running', ?, 1, '{}')
-		ON CONFLICT(name) DO UPDATE SET
+		ON CONFLICT(catalog_id) DO UPDATE SET
 			display_name = excluded.display_name,
 			status = 'running',
 			port = excluded.port,
 			is_system = 1,
 			updated_at = datetime('now')
-	`, name, displayName, port)
+	`, catalogID, displayName, port)
 	if err != nil {
 		return fmt.Errorf("failed to ensure system app: %w", err)
 	}
@@ -192,8 +192,8 @@ func (s *AppStore) EnsureSystemApp(name, displayName string, port int) error {
 }
 
 // SetTailnetID updates the tailnet_id for an installed app
-func (s *AppStore) SetTailnetID(name, tailnetID string) error {
-	_, err := s.db.Exec(`UPDATE apps SET tailnet_id = ? WHERE name = ?`, tailnetID, name)
+func (s *AppStore) SetTailnetID(catalogID, tailnetID string) error {
+	_, err := s.db.Exec(`UPDATE apps SET tailnet_id = ? WHERE catalog_id = ?`, tailnetID, catalogID)
 	if err != nil {
 		return fmt.Errorf("failed to set tailnet_id: %w", err)
 	}
@@ -201,18 +201,18 @@ func (s *AppStore) SetTailnetID(name, tailnetID string) error {
 }
 
 // UpdateDisplayName updates the display name of an installed app
-func (s *AppStore) UpdateDisplayName(name, displayName string) error {
+func (s *AppStore) UpdateDisplayName(catalogID, displayName string) error {
 	result, err := s.db.Exec(`
 		UPDATE apps SET display_name = ?, updated_at = datetime('now')
-		WHERE name = ?
-	`, displayName, name)
+		WHERE catalog_id = ?
+	`, displayName, catalogID)
 	if err != nil {
 		return fmt.Errorf("failed to update display name: %w", err)
 	}
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("app not found: %s", name)
+		return fmt.Errorf("app not found: %s", catalogID)
 	}
 
 	s.notify()
@@ -220,7 +220,7 @@ func (s *AppStore) UpdateDisplayName(name, displayName string) error {
 }
 
 // UpdateIntegrationConfig updates the integration config for an app
-func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string) error {
+func (s *AppStore) UpdateIntegrationConfig(catalogID string, config map[string]string) error {
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
@@ -228,30 +228,30 @@ func (s *AppStore) UpdateIntegrationConfig(name string, config map[string]string
 
 	result, err := s.db.Exec(`
 		UPDATE apps SET integration_config = ?, updated_at = datetime('now')
-		WHERE name = ?
-	`, string(configJSON), name)
+		WHERE catalog_id = ?
+	`, string(configJSON), catalogID)
 	if err != nil {
 		return fmt.Errorf("failed to update integration config: %w", err)
 	}
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("app not found: %s", name)
+		return fmt.Errorf("app not found: %s", catalogID)
 	}
 
 	return nil
 }
 
 // Uninstall removes an app from the database
-func (s *AppStore) Uninstall(name string) error {
-	result, err := s.db.Exec("DELETE FROM apps WHERE name = ?", name)
+func (s *AppStore) Uninstall(catalogID string) error {
+	result, err := s.db.Exec("DELETE FROM apps WHERE catalog_id = ?", catalogID)
 	if err != nil {
 		return fmt.Errorf("failed to delete app: %w", err)
 	}
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("app not found: %s", name)
+		return fmt.Errorf("app not found: %s", catalogID)
 	}
 
 	s.notify()
@@ -259,9 +259,9 @@ func (s *AppStore) Uninstall(name string) error {
 }
 
 // IsInstalled checks if an app is installed
-func (s *AppStore) IsInstalled(name string) (bool, error) {
+func (s *AppStore) IsInstalled(catalogID string) (bool, error) {
 	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM apps WHERE name = ?", name).Scan(&count)
+	err := s.db.QueryRow("SELECT COUNT(*) FROM apps WHERE catalog_id = ?", catalogID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check if installed: %w", err)
 	}
@@ -290,7 +290,7 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 
 	err := rows.Scan(
 		&app.ID,
-		&app.Name,
+		&app.CatalogID,
 		&app.DisplayName,
 		&app.Version,
 		&app.Status,
@@ -329,7 +329,7 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 
 	err := row.Scan(
 		&app.ID,
-		&app.Name,
+		&app.CatalogID,
 		&app.DisplayName,
 		&app.Version,
 		&app.Status,

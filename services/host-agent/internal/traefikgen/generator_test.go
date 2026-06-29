@@ -34,8 +34,8 @@ func TestGenerator_Generate_SystemAppsFiltered(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	apps := []*catalog.App{
-		{Name: "postgres", Port: 5432, IsSystem: true},
-		{Name: "traefik", Port: 8080, IsSystem: true},
+		{CatalogID: "postgres", Port: 5432, IsSystem: true},
+		{CatalogID: "traefik", Port: 8080, IsSystem: true},
 	}
 
 	g := NewGenerator(configPath, "localhost")
@@ -60,7 +60,7 @@ func TestGenerator_Generate_BasicApp(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
 
 	g := NewGenerator(configPath, "localhost")
@@ -101,7 +101,7 @@ func TestGenerator_Generate_CustomHeaders(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			Name:     "actual-budget",
+			CatalogID:     "actual-budget",
 			Port:     5006,
 			IsSystem: false,
 			Routing: &catalog.Routing{
@@ -148,9 +148,9 @@ func TestGenerator_Generate_MultipleApps_Sorted(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
-		{Name: "actual-budget", Port: 5006, IsSystem: false},
-		{Name: "adguard-home", Port: 3080, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "actual-budget", Port: 5006, IsSystem: false},
+		{CatalogID: "adguard-home", Port: 3080, IsSystem: false},
 	}
 
 	g := NewGenerator(configPath, "localhost")
@@ -181,8 +181,8 @@ func TestGenerator_Generate_AppsWithoutPort_Filtered(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
-		{Name: "no-port-app", Port: 0, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "no-port-app", Port: 0, IsSystem: false},
 	}
 
 	g := NewGenerator(configPath, "localhost")
@@ -213,7 +213,7 @@ func TestGenerator_Preview(t *testing.T) {
 	g := NewGenerator("/nonexistent/path", "localhost")
 
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
 
 	preview := g.Preview(apps)
@@ -231,7 +231,7 @@ func TestGenerator_Generate_CustomBaseDomain(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	apps := []*catalog.App{
-		{Name: "jellyfin", Port: 8096, IsSystem: false},
+		{CatalogID: "jellyfin", Port: 8096, IsSystem: false},
 	}
 
 	g := NewGenerator(configPath, "bloud.local")
@@ -277,7 +277,7 @@ func TestGolden_EmptyApps(t *testing.T) {
 func TestGolden_BasicApp(t *testing.T) {
 	g := NewGenerator("/tmp/test.yml", "localhost")
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
 
 	got := g.Preview(apps)
@@ -292,7 +292,7 @@ func TestGolden_CustomHeaders(t *testing.T) {
 	g := NewGenerator("/tmp/test.yml", "localhost")
 	apps := []*catalog.App{
 		{
-			Name:     "actual-budget",
+			CatalogID:     "actual-budget",
 			Port:     5006,
 			IsSystem: false,
 			Routing: &catalog.Routing{
@@ -315,9 +315,9 @@ func TestGolden_CustomHeaders(t *testing.T) {
 func TestGolden_MultipleApps(t *testing.T) {
 	g := NewGenerator("/tmp/test.yml", "localhost")
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
-		{Name: "actual-budget", Port: 5006, IsSystem: false},
-		{Name: "adguard-home", Port: 3080, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "actual-budget", Port: 5006, IsSystem: false},
+		{CatalogID: "adguard-home", Port: 3080, IsSystem: false},
 	}
 
 	got := g.Preview(apps)
@@ -334,7 +334,7 @@ func TestGenerator_Generate_ForwardAuth(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			Name:     "adguard-home",
+			CatalogID:     "adguard-home",
 			Port:     3080,
 			IsSystem: false,
 			SSO: catalog.SSO{
@@ -401,7 +401,7 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			Name:     "navidrome",
+			CatalogID:     "navidrome",
 			Port:     4533,
 			IsSystem: false,
 			SSO: catalog.SSO{
@@ -452,7 +452,7 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths_AuthentikDisabled(t *testing
 
 	apps := []*catalog.App{
 		{
-			Name:     "navidrome",
+			CatalogID:     "navidrome",
 			Port:     4533,
 			IsSystem: false,
 			SSO: catalog.SSO{
@@ -486,7 +486,7 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			Name:     "adguard-home",
+			CatalogID:     "adguard-home",
 			Port:     3080,
 			IsSystem: false,
 			SSO: catalog.SSO{
@@ -562,7 +562,7 @@ func TestGenerator_GenerateAll_MixedLocalAndRemote(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
 
 	remoteApps := []RemoteAppRoute{
@@ -657,7 +657,7 @@ func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	apps := []*catalog.App{
-		{Name: "miniflux", Port: 8085, IsSystem: false},
+		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
 
 	g := NewGenerator(configPath, "localhost")

@@ -9,7 +9,7 @@ import (
 // Share represents a share of a local app with a remote guest
 type Share struct {
 	ID            string     `json:"id"`
-	AppID         string     `json:"app_id"`
+	AppID         int        `json:"app_id"`
 	SSOStrategy   string     `json:"sso_strategy"`
 	GuestID       string     `json:"guest_id"`
 	NodeShareLink string     `json:"node_share_link"`

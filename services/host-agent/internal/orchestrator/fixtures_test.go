@@ -11,7 +11,7 @@ import (
 
 func fixtureQBittorrent() *catalog.App {
 	return &catalog.App{
-		Name:        "qbittorrent",
+		CatalogID:   "qbittorrent",
 		DisplayName: "qBittorrent",
 		Port:        8180,
 		Category:    "media",
@@ -21,7 +21,7 @@ func fixtureQBittorrent() *catalog.App {
 
 func fixtureJellyfin() *catalog.App {
 	return &catalog.App{
-		Name:        "jellyfin",
+		CatalogID:   "jellyfin",
 		DisplayName: "Jellyfin",
 		Port:        8096,
 		Category:    "media",
@@ -36,7 +36,7 @@ func fixtureJellyfin() *catalog.App {
 
 func fixtureMiniflux() *catalog.App {
 	return &catalog.App{
-		Name:        "miniflux",
+		CatalogID:   "miniflux",
 		DisplayName: "Miniflux",
 		Port:        8280,
 		Category:    "productivity",
@@ -55,7 +55,7 @@ func fixtureMiniflux() *catalog.App {
 
 func fixtureAdguardHome() *catalog.App {
 	return &catalog.App{
-		Name:        "adguard-home",
+		CatalogID:   "adguard-home",
 		DisplayName: "AdGuard Home",
 		Port:        3000,
 		Category:    "network",
@@ -68,7 +68,7 @@ func fixtureAdguardHome() *catalog.App {
 
 func fixturePostgres() *catalog.App {
 	return &catalog.App{
-		Name:        "postgres",
+		CatalogID:   "postgres",
 		DisplayName: "PostgreSQL",
 		Port:        5432,
 		Category:    "infrastructure",
@@ -78,7 +78,7 @@ func fixturePostgres() *catalog.App {
 
 func fixtureRedis() *catalog.App {
 	return &catalog.App{
-		Name:        "redis",
+		CatalogID:   "redis",
 		DisplayName: "Redis",
 		Port:        6379,
 		Category:    "infrastructure",
@@ -88,7 +88,7 @@ func fixtureRedis() *catalog.App {
 
 func fixtureAuthentik() *catalog.App {
 	return &catalog.App{
-		Name:        "authentik",
+		CatalogID:   "authentik",
 		DisplayName: "Authentik",
 		Port:        9000,
 		Category:    "infrastructure",
@@ -98,11 +98,11 @@ func fixtureAuthentik() *catalog.App {
 
 // Test installed app fixtures
 
-func fixtureInstalledApp(name string, status string) *store.InstalledApp {
+func fixtureInstalledApp(catalogID string, status string) *store.InstalledApp {
 	return &store.InstalledApp{
 		ID:                1,
-		Name:              name,
-		DisplayName:       name,
+		CatalogID:         catalogID,
+		DisplayName:       catalogID,
 		Status:            status,
 		InstalledAt:       time.Now(),
 		UpdatedAt:         time.Now(),
@@ -110,14 +110,14 @@ func fixtureInstalledApp(name string, status string) *store.InstalledApp {
 	}
 }
 
-func fixtureInstalledAppWithPort(name string, status string, port int) *store.InstalledApp {
-	app := fixtureInstalledApp(name, status)
+func fixtureInstalledAppWithPort(catalogID string, status string, port int) *store.InstalledApp {
+	app := fixtureInstalledApp(catalogID, status)
 	app.Port = port
 	return app
 }
 
-func fixtureInstalledAppWithIntegrations(name string, status string, integrations map[string]string) *store.InstalledApp {
-	app := fixtureInstalledApp(name, status)
+func fixtureInstalledAppWithIntegrations(catalogID string, status string, integrations map[string]string) *store.InstalledApp {
+	app := fixtureInstalledApp(catalogID, status)
 	app.IntegrationConfig = integrations
 	return app
 }

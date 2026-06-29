@@ -36,7 +36,7 @@ func TestAPI_AddRemoteApp_WithSSO(t *testing.T) {
 
 	// Add a catalog app with SSO config
 	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
-		Name:        "navidrome",
+		CatalogID:   "navidrome",
 		DisplayName: "Navidrome",
 		SSO: catalog.SSO{
 			Strategy:    "forward-auth",

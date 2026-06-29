@@ -403,7 +403,7 @@ func TestBuildAppState_NonSSOBindingsDoNotLeakIntoConfiguratorState(t *testing.T
 		"media-server":    "miniflux",
 	})
 	tr.cache.On("Get", "jellyfin").Return(&catalog.App{
-		Name: "jellyfin",
+		CatalogID: "jellyfin",
 		Integrations: map[string]catalog.Integration{
 			"download-client": {
 				Required:   true,

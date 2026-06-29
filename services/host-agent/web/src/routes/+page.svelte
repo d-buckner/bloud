@@ -59,7 +59,7 @@
 			return;
 
 		const path = app.sso_launch_path ?? '';
-		window.open(getAppUrl(app.name, path), '_blank');
+		window.open(getAppUrl(app.catalog_id, path), '_blank');
 	}
 
 	function handleContextMenu(e: MouseEvent, app: App) {
@@ -70,12 +70,12 @@
 
 	// Context menu handlers
 	function handleViewLogs(app: App) {
-		logsAppName = app.name;
+		logsAppName = app.catalog_id;
 		logsDisplayName = app.display_name;
 	}
 
 	function handleRenameClick(app: App) {
-		renameAppName = app.name;
+		renameAppName = app.catalog_id;
 		renameCurrentDisplayName = app.display_name;
 	}
 
@@ -84,7 +84,7 @@
 	}
 
 	function handleUninstallClick(app: App) {
-		uninstallAppName = app.name;
+		uninstallAppName = app.catalog_id;
 	}
 
 	// Modal actions

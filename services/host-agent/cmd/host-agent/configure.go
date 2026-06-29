@@ -135,7 +135,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 	// This ensures the OAuth2 provider/application has been created by the blueprint.
 	// We check the database (source of truth for configured integrations) rather than
 	// probing Authentik, because Authentik may not have processed the blueprint yet.
-	app, err := appStore.GetByName(appName)
+	app, err := appStore.GetByCatalogID(appName)
 	if err != nil {
 		logger.Warn("failed to get app from database", "app", appName, "error", err)
 	}

@@ -154,32 +154,32 @@ func TestShouldCleanupAuthentik_NilApp(t *testing.T) {
 
 func TestShouldCleanupAuthentik_EmptyStrategy(t *testing.T) {
 	app := &catalog.App{
-		Name: "test",
-		SSO:  catalog.SSO{Strategy: ""},
+		CatalogID: "test",
+		SSO:       catalog.SSO{Strategy: ""},
 	}
 	assert.False(t, shouldCleanupAuthentik(app))
 }
 
 func TestShouldCleanupAuthentik_NoneStrategy(t *testing.T) {
 	app := &catalog.App{
-		Name: "test",
-		SSO:  catalog.SSO{Strategy: "none"},
+		CatalogID: "test",
+		SSO:       catalog.SSO{Strategy: "none"},
 	}
 	assert.False(t, shouldCleanupAuthentik(app))
 }
 
 func TestShouldCleanupAuthentik_NativeOIDC(t *testing.T) {
 	app := &catalog.App{
-		Name: "miniflux",
-		SSO:  catalog.SSO{Strategy: "native-oidc"},
+		CatalogID: "miniflux",
+		SSO:       catalog.SSO{Strategy: "native-oidc"},
 	}
 	assert.True(t, shouldCleanupAuthentik(app))
 }
 
 func TestShouldCleanupAuthentik_ForwardAuth(t *testing.T) {
 	app := &catalog.App{
-		Name: "adguard-home",
-		SSO:  catalog.SSO{Strategy: "forward-auth"},
+		CatalogID: "adguard-home",
+		SSO:       catalog.SSO{Strategy: "forward-auth"},
 	}
 	assert.True(t, shouldCleanupAuthentik(app))
 }

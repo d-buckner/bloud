@@ -71,13 +71,13 @@ func TestDeveloperGraph_WithApps(t *testing.T) {
 
 	fakeStore := server.appStore.(*FakeAppStore)
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "postgres",
+		CatalogID:        "postgres",
 		DisplayName: "PostgreSQL",
 		Status:      "running",
 		IsSystem:    true,
 	})
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:              "immich",
+		CatalogID:              "immich",
 		DisplayName:       "Immich",
 		Status:            "running",
 		IsSystem:          false,
@@ -135,7 +135,7 @@ func TestDeveloperGraph_WithTailnet(t *testing.T) {
 	// Seed an app with a tailnet_id
 	fakeStore := server.appStore.(*FakeAppStore)
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "jellyfin",
+		CatalogID:        "jellyfin",
 		DisplayName: "Jellyfin",
 		Status:      "running",
 		TailnetID:   "tn-abc",
@@ -182,13 +182,13 @@ func TestDeveloperGraph_LocalConnection(t *testing.T) {
 
 	fakeStore := server.appStore.(*FakeAppStore)
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "traefik",
+		CatalogID:        "traefik",
 		DisplayName: "Traefik",
 		Status:      "running",
 		IsSystem:    true,
 	})
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "jellyfin",
+		CatalogID:        "jellyfin",
 		DisplayName: "Jellyfin",
 		Status:      "running",
 	})
@@ -235,12 +235,12 @@ func TestDeveloperGraph_SSOEdgeLabel(t *testing.T) {
 	// Seed catalog entries with different SSO strategies
 	fakeCatalog := server.catalog.(*FakeCatalogCache)
 	fakeCatalog.AddApp(&catalog.App{
-		Name:        "navidrome",
+		CatalogID:        "navidrome",
 		DisplayName: "Navidrome",
 		SSO:         catalog.SSO{Strategy: "forward-auth"},
 	})
 	fakeCatalog.AddApp(&catalog.App{
-		Name:        "jellyfin",
+		CatalogID:        "jellyfin",
 		DisplayName: "Jellyfin",
 		SSO:         catalog.SSO{Strategy: "ldap"},
 	})
@@ -248,19 +248,19 @@ func TestDeveloperGraph_SSOEdgeLabel(t *testing.T) {
 	// Seed installed apps with sso integration config
 	fakeStore := server.appStore.(*FakeAppStore)
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "authentik",
+		CatalogID:        "authentik",
 		DisplayName: "Authentik",
 		Status:      "running",
 		IsSystem:    true,
 	})
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:              "navidrome",
+		CatalogID:              "navidrome",
 		DisplayName:       "Navidrome",
 		Status:            "running",
 		IntegrationConfig: map[string]string{"sso": "authentik"},
 	})
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:              "jellyfin",
+		CatalogID:              "jellyfin",
 		DisplayName:       "Jellyfin",
 		Status:            "running",
 		IntegrationConfig: map[string]string{"sso": "authentik"},
@@ -310,13 +310,13 @@ func TestDeveloperGraph_Gateway(t *testing.T) {
 	// Seed apps — traefik (system) + jellyfin with tailnet
 	fakeStore := server.appStore.(*FakeAppStore)
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "traefik",
+		CatalogID:        "traefik",
 		DisplayName: "Traefik",
 		Status:      "running",
 		IsSystem:    true,
 	})
 	fakeStore.AddApp(&store.InstalledApp{
-		Name:        "jellyfin",
+		CatalogID:        "jellyfin",
 		DisplayName: "Jellyfin",
 		Status:      "running",
 		TailnetID:   "tn-abc",

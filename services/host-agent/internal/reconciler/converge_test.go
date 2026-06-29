@@ -66,7 +66,7 @@ func newTestHarness() *testHarness {
 // addCatalogApp is a helper to register a minimal catalog app with a container spec.
 func (h *testHarness) addCatalogApp(name, displayName string, port int) {
 	h.catalog.AddApp(&catalog.App{
-		Name:        name,
+		CatalogID:   name,
 		DisplayName: displayName,
 		Version:     "1.0.0",
 		Port:        port,
@@ -83,7 +83,7 @@ func TestConverge_InstallIntent_RecordsInStoreAndCallsEnsureApp(t *testing.T) {
 	h.reconciler.converge(context.Background(), intents)
 
 	// App should have been recorded in the store.
-	app, err := h.appStore.GetByName("jellyfin")
+	app, err := h.appStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	require.NotNil(t, app, "app should exist in store after install intent")
 
@@ -98,8 +98,8 @@ func TestConverge_UninstallIntent_MarksUninstallingAndCallsRemoveApp(t *testing.
 
 	// Pre-populate: app is running.
 	h.appStore.AddApp(&store.InstalledApp{
-		Name:   "radarr",
-		Status: "running",
+		CatalogID: "radarr",
+		Status:    "running",
 	})
 
 	intents := []Intent{NewUninstallAppIntent("radarr", true)}
@@ -135,10 +135,10 @@ func TestConverge_InstallWithDeps_ResolvesDependenciesAndInstallsInOrder(t *test
 	h.reconciler.converge(context.Background(), intents)
 
 	// Both apps should be in the store.
-	dep, _ := h.appStore.GetByName("qbittorrent")
+	dep, _ := h.appStore.GetByCatalogID("qbittorrent")
 	require.NotNil(t, dep, "dependency should be recorded in store")
 
-	app, _ := h.appStore.GetByName("radarr")
+	app, _ := h.appStore.GetByCatalogID("radarr")
 	require.NotNil(t, app, "target app should be recorded in store")
 	assert.Equal(t, "qbittorrent", app.IntegrationConfig["download_client"])
 
@@ -228,8 +228,8 @@ func TestConverge_SkipsAlreadyRunningApps(t *testing.T) {
 
 	// App already running — install intent should be a no-op.
 	h.appStore.AddApp(&store.InstalledApp{
-		Name:   "jellyfin",
-		Status: "running",
+		CatalogID: "jellyfin",
+		Status:    "running",
 	})
 
 	intents := []Intent{NewInstallAppIntent("jellyfin")}
@@ -317,8 +317,8 @@ func TestConverge_ActiveTailnet_EnsuresSidecarsForRunningApps(t *testing.T) {
 	h.addCatalogApp("radarr", "Radarr", 7878)
 
 	// Two running apps.
-	h.appStore.AddApp(&store.InstalledApp{Name: "jellyfin", Status: "running", Port: 8096})
-	h.appStore.AddApp(&store.InstalledApp{Name: "radarr", Status: "running", Port: 7878})
+	h.appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", Status: "running", Port: 8096})
+	h.appStore.AddApp(&store.InstalledApp{CatalogID: "radarr", Status: "running", Port: 7878})
 
 	// Active tailnet.
 	h.tailnetStore.Create(store.TailnetConnection{
@@ -339,7 +339,7 @@ func TestConverge_ActiveTailnet_EnsuresSidecarsForRunningApps(t *testing.T) {
 	assert.Contains(t, names, "radarr")
 
 	// TailnetID should be set.
-	jf, _ := h.appStore.GetByName("jellyfin")
+	jf, _ := h.appStore.GetByCatalogID("jellyfin")
 	assert.Equal(t, "tn-1", jf.TailnetID)
 }
 
@@ -348,7 +348,7 @@ func TestConverge_NoTailnet_PurgesSidecarsAndGateway(t *testing.T) {
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
 
 	h.appStore.AddApp(&store.InstalledApp{
-		Name: "jellyfin", Status: "running", TailnetID: "old-tn",
+		CatalogID: "jellyfin", Status: "running", TailnetID: "old-tn",
 	})
 
 	// No active tailnet — convergence should purge.
@@ -359,7 +359,7 @@ func TestConverge_NoTailnet_PurgesSidecarsAndGateway(t *testing.T) {
 	assert.True(t, h.proxyStopper.WasStopCalled())
 
 	// TailnetID should be cleared.
-	jf, _ := h.appStore.GetByName("jellyfin")
+	jf, _ := h.appStore.GetByCatalogID("jellyfin")
 	assert.Empty(t, jf.TailnetID)
 }
 
@@ -368,12 +368,12 @@ func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
 
 	// System app — should NOT get a sidecar.
 	h.catalog.AddApp(&catalog.App{
-		Name: "traefik", DisplayName: "Traefik", Version: "1.0.0",
+		CatalogID: "traefik", DisplayName: "Traefik", Version: "1.0.0",
 		Port: 8080, IsSystem: true,
 		Container: &catalog.ContainerSpec{Image: "traefik:latest"},
 	})
 	h.appStore.AddApp(&store.InstalledApp{
-		Name: "traefik", Status: "running", IsSystem: true, Port: 8080,
+		CatalogID: "traefik", Status: "running", IsSystem: true, Port: 8080,
 	})
 
 	h.tailnetStore.Create(store.TailnetConnection{
@@ -392,7 +392,7 @@ func TestConverge_AddRemoteAppIntent_CreatesRemoteApp(t *testing.T) {
 
 	// Register the catalog app with SSO metadata.
 	h.catalog.AddApp(&catalog.App{
-		Name:        "jellyfin",
+		CatalogID:   "jellyfin",
 		DisplayName: "Jellyfin",
 		Version:     "1.0.0",
 		Port:        8096,
@@ -425,7 +425,7 @@ func TestConverge_AddRemoteAppIntent_NilBypassPaths(t *testing.T) {
 
 	// Catalog app without bypass paths — should default to empty slice.
 	h.catalog.AddApp(&catalog.App{
-		Name:        "radarr",
+		CatalogID:   "radarr",
 		DisplayName: "Radarr",
 		Version:     "1.0.0",
 		Port:        7878,
@@ -465,7 +465,7 @@ func TestConverge_RenameAppIntent_UpdatesDisplayName(t *testing.T) {
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
 
 	h.appStore.AddApp(&store.InstalledApp{
-		Name:        "jellyfin",
+		CatalogID:   "jellyfin",
 		DisplayName: "Jellyfin",
 		Status:      "running",
 	})
@@ -473,7 +473,7 @@ func TestConverge_RenameAppIntent_UpdatesDisplayName(t *testing.T) {
 	intents := []Intent{NewRenameAppIntent("jellyfin", "My Media Server")}
 	h.reconciler.converge(context.Background(), intents)
 
-	app, err := h.appStore.GetByName("jellyfin")
+	app, err := h.appStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	assert.Equal(t, "My Media Server", app.DisplayName)
 }

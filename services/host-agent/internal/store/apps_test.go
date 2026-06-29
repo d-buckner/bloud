@@ -17,10 +17,10 @@ func TestAppStore_Install(t *testing.T) {
 	}, &InstallOptions{Port: 7878})
 	require.NoError(t, err)
 
-	app, err := store.GetByName("radarr")
+	app, err := store.GetByCatalogID("radarr")
 	require.NoError(t, err)
 	require.NotNil(t, app)
-	assert.Equal(t, "radarr", app.Name)
+	assert.Equal(t, "radarr", app.CatalogID)
 	assert.Equal(t, "Radarr", app.DisplayName)
 	assert.Equal(t, "5.0.0", app.Version)
 	assert.Equal(t, "installing", app.Status)
@@ -39,14 +39,14 @@ func TestAppStore_Install_SystemApp(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	app, err := store.GetByName("postgres")
+	app, err := store.GetByCatalogID("postgres")
 	require.NoError(t, err)
 	require.NotNil(t, app)
 	assert.True(t, app.IsSystem)
 	assert.Equal(t, 5432, app.Port)
 }
 
-func TestAppStore_GetByName(t *testing.T) {
+func TestAppStore_GetByCatalogID(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	store := NewAppStore(db)
 
@@ -57,11 +57,11 @@ func TestAppStore_GetByName(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.UpdateStatus("radarr", "running"))
 
-	app, err := store.GetByName("radarr")
+	app, err := store.GetByCatalogID("radarr")
 	require.NoError(t, err)
 	require.NotNil(t, app)
 
-	assert.Equal(t, "radarr", app.Name)
+	assert.Equal(t, "radarr", app.CatalogID)
 	assert.Equal(t, "Radarr", app.DisplayName)
 	assert.Equal(t, "5.0.0", app.Version)
 	assert.Equal(t, "running", app.Status)
@@ -70,16 +70,16 @@ func TestAppStore_GetByName(t *testing.T) {
 	assert.Equal(t, "qbittorrent", app.IntegrationConfig["downloadClient"])
 }
 
-func TestAppStore_GetByName_NotFound(t *testing.T) {
+func TestAppStore_GetByCatalogID_NotFound(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	store := NewAppStore(db)
 
-	app, err := store.GetByName("nonexistent")
+	app, err := store.GetByCatalogID("nonexistent")
 	require.NoError(t, err)
 	assert.Nil(t, app)
 }
 
-func TestAppStore_GetInstalledNames(t *testing.T) {
+func TestAppStore_GetInstalledCatalogIDs(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	store := NewAppStore(db)
 
@@ -87,13 +87,13 @@ func TestAppStore_GetInstalledNames(t *testing.T) {
 	require.NoError(t, store.Install("sonarr", "Sonarr", "", nil, nil))
 	require.NoError(t, store.Install("qbittorrent", "qBittorrent", "", nil, nil))
 
-	names, err := store.GetInstalledNames()
+	ids, err := store.GetInstalledCatalogIDs()
 	require.NoError(t, err)
 
-	assert.Len(t, names, 3)
-	assert.Contains(t, names, "radarr")
-	assert.Contains(t, names, "sonarr")
-	assert.Contains(t, names, "qbittorrent")
+	assert.Len(t, ids, 3)
+	assert.Contains(t, ids, "radarr")
+	assert.Contains(t, ids, "sonarr")
+	assert.Contains(t, ids, "qbittorrent")
 }
 
 func TestAppStore_UpdateStatus(t *testing.T) {
@@ -103,7 +103,7 @@ func TestAppStore_UpdateStatus(t *testing.T) {
 	require.NoError(t, store.Install("radarr", "Radarr", "", nil, nil))
 	require.NoError(t, store.UpdateStatus("radarr", "running"))
 
-	app, err := store.GetByName("radarr")
+	app, err := store.GetByCatalogID("radarr")
 	require.NoError(t, err)
 	assert.Equal(t, "running", app.Status)
 }
@@ -115,7 +115,7 @@ func TestAppStore_Uninstall(t *testing.T) {
 	require.NoError(t, store.Install("radarr", "Radarr", "", nil, nil))
 	require.NoError(t, store.Uninstall("radarr"))
 
-	app, err := store.GetByName("radarr")
+	app, err := store.GetByCatalogID("radarr")
 	require.NoError(t, err)
 	assert.Nil(t, app)
 }
@@ -152,7 +152,7 @@ func TestAppStore_UpdateIntegrationConfig(t *testing.T) {
 		"downloadClient": "deluge",
 	}))
 
-	app, err := store.GetByName("radarr")
+	app, err := store.GetByCatalogID("radarr")
 	require.NoError(t, err)
 	assert.Equal(t, "deluge", app.IntegrationConfig["downloadClient"])
 }
@@ -163,7 +163,7 @@ func TestAppStore_EnsureSystemApp(t *testing.T) {
 
 	require.NoError(t, store.EnsureSystemApp("postgres", "PostgreSQL", 5432))
 
-	app, err := store.GetByName("postgres")
+	app, err := store.GetByCatalogID("postgres")
 	require.NoError(t, err)
 	require.NotNil(t, app)
 	assert.Equal(t, "running", app.Status)
@@ -184,9 +184,9 @@ func TestAppStore_GetAll(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, apps, 2)
 
-	assert.Equal(t, "postgres", apps[0].Name)
+	assert.Equal(t, "postgres", apps[0].CatalogID)
 	assert.True(t, apps[0].IsSystem)
 
-	assert.Equal(t, "radarr", apps[1].Name)
+	assert.Equal(t, "radarr", apps[1].CatalogID)
 	assert.Equal(t, "qbittorrent", apps[1].IntegrationConfig["downloadClient"])
 }

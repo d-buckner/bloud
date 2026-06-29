@@ -133,16 +133,17 @@ func setupSharingTestServer(t *testing.T) *Server {
 
 	// Add a catalog app with SSO strategy
 	catalogCache.AddApp(&catalog.App{
-		Name:        "navidrome",
+		CatalogID:   "navidrome",
 		DisplayName: "Navidrome",
 		SSO: catalog.SSO{
 			Strategy: "forward-auth",
 		},
 	})
 
-	// Add the app as installed
+	// Add the app as installed (ID=1 simulates auto-increment)
 	appStore.AddApp(&store.InstalledApp{
-		Name:        "navidrome",
+		ID:          1,
+		CatalogID:   "navidrome",
 		DisplayName: "Navidrome",
 		Status:      "running",
 	})
@@ -208,7 +209,7 @@ func TestHandleCreateInvite_Success(t *testing.T) {
 	assert.Len(t, shares, 1)
 	storedShare := shares[resp.ShareID]
 	require.NotNil(t, storedShare)
-	assert.Equal(t, "navidrome", storedShare.AppID)
+	assert.Equal(t, 1, storedShare.AppID)
 	assert.Equal(t, "forward-auth", storedShare.SSOStrategy)
 	assert.Equal(t, "guest-bob", storedShare.GuestID)
 	assert.Equal(t, "https://login.tailscale.com/admin/invite/abc123", storedShare.NodeShareLink)
@@ -306,7 +307,7 @@ func TestHandleListShares_WithData(t *testing.T) {
 	// Seed a share
 	server.shareStore.(*fakeShareStore).shares["share-1"] = &store.Share{
 		ID:          "share-1",
-		AppID:       "navidrome",
+		AppID:       1,
 		SSOStrategy: "forward-auth",
 		GuestID:     "guest-bob",
 		Status:      "active",
@@ -332,7 +333,7 @@ func TestHandleRevokeShare_Success(t *testing.T) {
 	// Seed a share
 	server.shareStore.(*fakeShareStore).shares["share-1"] = &store.Share{
 		ID:     "share-1",
-		AppID:  "navidrome",
+		AppID:  1,
 		Status: "active",
 	}
 
@@ -463,7 +464,7 @@ func TestHandleCommunityGraph_WithActiveShares(t *testing.T) {
 	// Seed active shares
 	server.shareStore.(*fakeShareStore).shares["share-1"] = &store.Share{
 		ID:      "share-1",
-		AppID:   "navidrome",
+		AppID:   1,
 		GuestID: "guest-bob",
 		Status:  "active",
 	}
@@ -504,7 +505,7 @@ func TestHandleCommunityGraph_SkipsRevokedShares(t *testing.T) {
 	now := time.Now()
 	server.shareStore.(*fakeShareStore).shares["share-1"] = &store.Share{
 		ID:        "share-1",
-		AppID:     "navidrome",
+		AppID:     1,
 		GuestID:   "guest-bob",
 		Status:    "revoked",
 		RevokedAt: &now,

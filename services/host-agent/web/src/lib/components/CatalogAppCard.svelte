@@ -27,14 +27,14 @@
 	disabled={installing}
 >
 	<div class="icon-wrapper">
-		<AppIcon appName={app.name} displayName={app.displayName} transparent={installing} />
+		<AppIcon appName={app.catalogId} displayName={app.displayName} transparent={installing} />
 		{#if installing}
 			<div class="install-spinner"></div>
 		{/if}
 	</div>
 	<div class="app-content">
 		<div class="app-header">
-			<h3 class="app-title">{app.displayName || formatAppName(app.name)}</h3>
+			<h3 class="app-title">{app.displayName || formatAppName(app.catalogId)}</h3>
 			{#if app.category}
 				<span class="app-category">{app.category}</span>
 			{/if}

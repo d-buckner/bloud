@@ -343,7 +343,7 @@ func (s *Server) syncInstalledState() error {
 		return nil
 	}
 
-	names, err := s.appStore.GetInstalledNames()
+	names, err := s.appStore.GetInstalledCatalogIDs()
 	if err != nil {
 		return err
 	}
@@ -373,13 +373,13 @@ func (s *Server) reconcileAppHealth() {
 			continue
 		}
 
-		s.logger.Info("reconciling health for app", "app", app.Name, "status", app.Status)
+		s.logger.Info("reconciling health for app", "app", app.CatalogID, "status", app.Status)
 
 		// Get health check config from catalog
-		catalogApp, err := s.catalog.Get(app.Name)
+		catalogApp, err := s.catalog.Get(app.CatalogID)
 		if err != nil || catalogApp.HealthCheck.Path == "" {
 			// No health check configured, assume running
-			s.appStore.UpdateStatus(app.Name, "running")
+			s.appStore.UpdateStatus(app.CatalogID, "running")
 			continue
 		}
 
@@ -391,15 +391,15 @@ func (s *Server) reconcileAppHealth() {
 			// Accept 2xx, 3xx, and auth errors (401/403) as healthy
 			// Auth errors mean the service is running but requires authentication
 			if resp.StatusCode < 500 {
-				s.logger.Info("app health check passed", "app", app.Name, "status", resp.StatusCode)
-				s.appStore.UpdateStatus(app.Name, "running")
+				s.logger.Info("app health check passed", "app", app.CatalogID, "status", resp.StatusCode)
+				s.appStore.UpdateStatus(app.CatalogID, "running")
 				continue
 			}
 		}
 
 		// Health check failed - service not responding or 5xx error
-		s.logger.Warn("app health check failed, marking as error", "app", app.Name, "error", err)
-		s.appStore.UpdateStatus(app.Name, "error")
+		s.logger.Warn("app health check failed, marking as error", "app", app.CatalogID, "error", err)
+		s.appStore.UpdateStatus(app.CatalogID, "error")
 	}
 }
 

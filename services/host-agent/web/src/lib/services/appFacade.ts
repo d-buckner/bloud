@@ -69,9 +69,9 @@ export async function initApps(): Promise<void> {
 		const layoutAppIds = new Set(
 			currentLayout.filter((el) => el.type === 'app').map((el) => el.id)
 		);
-		const missingApps = appList.filter((app) => !app.is_system && !layoutAppIds.has(app.name));
+		const missingApps = appList.filter((app) => !app.is_system && !layoutAppIds.has(app.catalog_id));
 		for (const app of missingApps) {
-			layout.addApp(app.name);
+			layout.addApp(app.catalog_id);
 		}
 	} catch (err) {
 		console.error('Failed to fetch initial apps:', err);
@@ -87,7 +87,7 @@ export async function initApps(): Promise<void> {
 			// Clear pending installs that now have real status from the backend
 			pendingInstalls.update((pending) => {
 				if (pending.size === 0) return pending;
-				const appNames = new Set(appList.map((a) => a.name));
+				const appNames = new Set(appList.map((a) => a.catalog_id));
 				const next = new Set([...pending].filter((n) => !appNames.has(n)));
 				return next.size === pending.size ? pending : next;
 			});
@@ -139,7 +139,7 @@ export async function installApp(name: string): Promise<IntentResponse> {
 export async function uninstallApp(name: string): Promise<IntentResponse> {
 	// Optimistic update: set status to 'uninstalling' immediately
 	apps.update((current) =>
-		current.map((app) => (app.name === name ? { ...app, status: AppStatus.Uninstalling } : app))
+		current.map((app) => (app.catalog_id === name ? { ...app, status: AppStatus.Uninstalling } : app))
 	);
 
 	try {
@@ -150,7 +150,7 @@ export async function uninstallApp(name: string): Promise<IntentResponse> {
 	} catch (err) {
 		// Revert optimistic update on error
 		apps.update((current) =>
-			current.map((app) => (app.name === name ? { ...app, status: AppStatus.Running } : app))
+			current.map((app) => (app.catalog_id === name ? { ...app, status: AppStatus.Running } : app))
 		);
 		throw err;
 	}

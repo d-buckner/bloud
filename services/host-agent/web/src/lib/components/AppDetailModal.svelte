@@ -33,7 +33,7 @@
 		uninstallError = null;
 
 		try {
-			const res = await fetch(`/api/apps/${app.name}/uninstall`, { method: 'POST' });
+			const res = await fetch(`/api/apps/${app.catalogId}/uninstall`, { method: 'POST' });
 
 			if (res.ok) {
 				handleClose();
@@ -50,7 +50,7 @@
 
 	function doInstall() {
 		if (!app) return;
-		oninstall(app.name);
+		oninstall(app.catalogId);
 		handleClose();
 	}
 
@@ -68,9 +68,9 @@
 	{#if app}
 		<header class="modal-header">
 			<div class="modal-app-header">
-				<AppIcon appName={app.name} displayName={app.displayName} size="lg" />
+				<AppIcon appName={app.catalogId} displayName={app.displayName} size="lg" />
 				<div class="modal-app-info">
-					<h2>{app.displayName || formatAppName(app.name)}</h2>
+					<h2>{app.displayName || formatAppName(app.catalogId)}</h2>
 					{#if app.category}
 						<span class="modal-app-category">{app.category}</span>
 					{/if}

@@ -104,7 +104,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	appMap := make(map[string]*store.InstalledApp)
 	for _, app := range apps {
 		if app.Status != "uninstalling" {
-			appMap[app.Name] = app
+			appMap[app.CatalogID] = app
 		}
 	}
 
@@ -122,29 +122,29 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			continue
 		}
 
-		cfg := r.registry.Get(app.Name)
+		cfg := r.registry.Get(app.CatalogID)
 		if cfg == nil {
 			continue
 		}
 
 		state, err := r.buildAppState(app, appMap)
 		if err != nil {
-			r.logger.Warn("failed to build app state", "app", app.Name, "error", err)
-			errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
+			r.logger.Warn("failed to build app state", "app", app.CatalogID, "error", err)
+			errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.CatalogID, err))
 			continue
 		}
 		if sc, ok := cfg.(configurator.PreStartConfigurator); ok {
 			changed, err := sc.PreStartConfig(ctx, state)
 			if err != nil {
-				r.logger.Warn("PreStartConfig failed", "app", app.Name, "error", err)
-				errors = append(errors, fmt.Sprintf("%s: PreStartConfig failed: %v", app.Name, err))
+				r.logger.Warn("PreStartConfig failed", "app", app.CatalogID, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: PreStartConfig failed: %v", app.CatalogID, err))
 			} else if changed {
-				r.logger.Info("prestart config changed", "app", app.Name)
+				r.logger.Info("prestart config changed", "app", app.CatalogID)
 			}
 		} else {
 			if err := cfg.PreStart(ctx, state); err != nil {
-				r.logger.Warn("PreStart failed", "app", app.Name, "error", err)
-				errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.Name, err))
+				r.logger.Warn("PreStart failed", "app", app.CatalogID, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: PreStart failed: %v", app.CatalogID, err))
 			}
 		}
 	}
@@ -161,7 +161,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 				continue
 			}
 
-			cfg := r.registry.Get(app.Name)
+			cfg := r.registry.Get(app.CatalogID)
 			if cfg == nil {
 				continue
 			}
@@ -170,35 +170,35 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			healthCtx, cancel := context.WithTimeout(ctx, r.config.HealthCheckTimeout)
 			if err := cfg.HealthCheck(healthCtx); err != nil {
 				cancel()
-				r.logger.Warn("HealthCheck failed, skipping PostStart", "app", app.Name, "error", err)
-				errors = append(errors, fmt.Sprintf("%s: HealthCheck failed: %v", app.Name, err))
+				r.logger.Warn("HealthCheck failed, skipping PostStart", "app", app.CatalogID, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: HealthCheck failed: %v", app.CatalogID, err))
 				continue
 			}
 			cancel()
-			currentlyHealthy[app.Name] = true
+			currentlyHealthy[app.CatalogID] = true
 
 			// Run PostStart
 			state, err := r.buildAppState(app, appMap)
 			if err != nil {
-				r.logger.Warn("failed to build app state", "app", app.Name, "error", err)
-				errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.Name, err))
+				r.logger.Warn("failed to build app state", "app", app.CatalogID, "error", err)
+				errors = append(errors, fmt.Sprintf("%s: app state failed: %v", app.CatalogID, err))
 				continue
 			}
 			if dc, ok := cfg.(configurator.PostStartConfigurator); ok {
 				if err := dc.PostStartConfig(ctx, state); err != nil {
-					r.logger.Warn("PostStartConfig failed", "app", app.Name, "error", err)
-					errors = append(errors, fmt.Sprintf("%s: PostStartConfig failed: %v", app.Name, err))
+					r.logger.Warn("PostStartConfig failed", "app", app.CatalogID, "error", err)
+					errors = append(errors, fmt.Sprintf("%s: PostStartConfig failed: %v", app.CatalogID, err))
 					continue
 				}
 			} else {
 				if err := cfg.PostStart(ctx, state); err != nil {
-					r.logger.Warn("PostStart failed", "app", app.Name, "error", err)
-					errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.Name, err))
+					r.logger.Warn("PostStart failed", "app", app.CatalogID, "error", err)
+					errors = append(errors, fmt.Sprintf("%s: PostStart failed: %v", app.CatalogID, err))
 					continue
 				}
 			}
 
-			reconciled = append(reconciled, app.Name)
+			reconciled = append(reconciled, app.CatalogID)
 		}
 	}
 
@@ -367,7 +367,7 @@ func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[st
 	var catalogApp *catalog.App
 	if r.catalogCache != nil {
 		var err error
-		catalogApp, err = r.catalogCache.Get(app.Name)
+		catalogApp, err = r.catalogCache.Get(app.CatalogID)
 		if err != nil {
 			return nil, fmt.Errorf("load catalog app: %w", err)
 		}
@@ -381,7 +381,7 @@ func (r *Reconciler) buildAppState(app *store.InstalledApp, installedApps map[st
 	ssoEnabled := shouldConfigureSSO(catalogApp)
 
 	state := &configurator.AppState{
-		DataPath:      filepath.Join(r.dataDir, app.Name),
+		DataPath:      filepath.Join(r.dataDir, app.CatalogID),
 		BloudDataPath: r.dataDir,
 		SSOEnabled:    ssoEnabled,
 	}

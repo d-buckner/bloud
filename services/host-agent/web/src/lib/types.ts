@@ -18,7 +18,7 @@ export const AppStatus = {
 
 export interface App {
 	id: number;
-	name: string;
+	catalog_id: string;
 	display_name: string;
 	version: string;
 	status: AppStatus;
@@ -59,7 +59,7 @@ export interface RemoteApp {
 
 // Catalog types (matches Go catalog.App struct)
 export interface CatalogApp {
-	name: string;
+	catalogId: string;
 	displayName: string;
 	description: string;
 	category: string;

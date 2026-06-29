@@ -12,10 +12,10 @@
 </script>
 
 <div class="app-row">
-	<AppIcon appName={app.name} displayName={app.display_name} size="sm" />
+	<AppIcon appName={app.catalog_id} displayName={app.display_name} size="sm" />
 	<div class="app-info">
 		<span class="app-name">{app.display_name}</span>
-		<span class="app-id">{app.name}</span>
+		<span class="app-id">{app.catalog_id}</span>
 	</div>
 	<div class="app-status">
 		<span class="status-pill" class:running={app.status === 'running'} class:error={app.status === 'stopped' || app.status === 'error' || app.status === 'failed'}>

@@ -212,7 +212,7 @@ func (s *Server) buildLaunchPaths() map[string]string {
 	if catalogApps, err := s.catalog.GetAll(); err == nil {
 		for _, ca := range catalogApps {
 			if ca.SSO.LaunchPath != "" {
-				launchPaths[ca.Name] = ca.SSO.LaunchPath
+				launchPaths[ca.CatalogID] = ca.SSO.LaunchPath
 			}
 		}
 	}
@@ -225,7 +225,7 @@ func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string) []ins
 	for _, app := range apps {
 		result = append(result, installedAppResponse{
 			InstalledApp:  app,
-			SSOLaunchPath: launchPaths[app.Name],
+			SSOLaunchPath: launchPaths[app.CatalogID],
 		})
 	}
 	return result
@@ -363,7 +363,7 @@ func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if app is installed
-	app, _ := s.appStore.GetByName(name)
+	app, _ := s.appStore.GetByCatalogID(name)
 	if app != nil {
 		// App is installed — enqueue uninstall with clearData=true
 		if s.intentReconciler == nil {

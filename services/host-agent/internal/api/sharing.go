@@ -53,6 +53,18 @@ func (s *Server) handleCommunityGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build app ID → catalog_id lookup from installed apps
+	allApps, err := s.appStore.GetAll()
+	if err != nil {
+		s.logger.Error("failed to list apps", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to list apps")
+		return
+	}
+	appByDBID := make(map[int]*store.InstalledApp, len(allApps))
+	for _, a := range allApps {
+		appByDBID[a.ID] = a
+	}
+
 	nodeMap := make(map[string]communityNode)
 	edgeSet := make(map[string]communityEdge)
 
@@ -83,18 +95,25 @@ func (s *Server) handleCommunityGraph(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Resolve integer app_id to catalog_id
+		installedApp, ok := appByDBID[share.AppID]
+		if !ok {
+			continue // orphaned share, skip
+		}
+		catalogID := installedApp.CatalogID
+
 		// App node
-		appNodeID := "app:" + share.AppID
+		appNodeID := "app:" + catalogID
 		if _, exists := nodeMap[appNodeID]; !exists {
-			displayName := share.AppID
-			if catalogApp, err := s.catalog.Get(share.AppID); err == nil {
+			displayName := catalogID
+			if catalogApp, err := s.catalog.Get(catalogID); err == nil {
 				displayName = catalogApp.DisplayName
 			}
 			nodeMap[appNodeID] = communityNode{
 				ID:       appNodeID,
 				Label:    displayName,
 				NodeType: "app",
-				AppID:    share.AppID,
+				AppID:    catalogID,
 			}
 		}
 
@@ -158,8 +177,8 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate app is installed
-	app, err := s.appStore.GetByName(req.AppID)
+	// Validate app is installed and get its integer ID
+	app, err := s.appStore.GetByCatalogID(req.AppID)
 	if err != nil || app == nil {
 		respondError(w, http.StatusNotFound, "app not installed")
 		return
@@ -196,10 +215,10 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 
 	shareID := uuid.New().String()
 
-	// Store the share record
+	// Store the share record (app_id is the integer FK)
 	share := store.Share{
 		ID:            shareID,
-		AppID:         req.AppID,
+		AppID:         app.ID,
 		SSOStrategy:   catalogApp.SSO.Strategy,
 		GuestID:       req.GuestID,
 		NodeShareLink: req.NodeShareLink,

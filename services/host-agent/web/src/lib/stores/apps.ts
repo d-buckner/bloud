@@ -30,7 +30,7 @@ export const visibleApps = derived(apps, ($apps) =>
 );
 
 // Derived store for quick lookup of installed app names (user apps only)
-export const installedNames = derived(userApps, ($apps) => new Set($apps.map((a) => a.name)));
+export const installedNames = derived(userApps, ($apps) => new Set($apps.map((a) => a.catalog_id)));
 
 // --- Helper functions for app lookup ---
 // Use these instead of duplicating app data in other stores
@@ -39,7 +39,7 @@ export const installedNames = derived(userApps, ($apps) => new Set($apps.map((a)
  * Get an app by name from the current store state
  */
 export function getApp(name: string): App | undefined {
-	return get(apps).find((a) => a.name === name);
+	return get(apps).find((a) => a.catalog_id === name);
 }
 
 /**
@@ -53,13 +53,13 @@ export function getAppStatus(name: string): AppStatus | undefined {
  * Check if an app exists (is installed)
  */
 export function appExists(name: string): boolean {
-	return get(apps).some((a) => a.name === name);
+	return get(apps).some((a) => a.catalog_id === name);
 }
 
 /**
  * Get multiple apps by name, preserving order
  */
 export function getApps(names: string[]): App[] {
-	const appMap = new Map(get(apps).map((a) => [a.name, a]));
+	const appMap = new Map(get(apps).map((a) => [a.catalog_id, a]));
 	return names.map((name) => appMap.get(name)).filter((a): a is App => a !== undefined);
 }

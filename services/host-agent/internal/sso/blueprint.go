@@ -79,13 +79,13 @@ func (g *BlueprintGenerator) GenerateForApp(app *catalog.App) error {
 // generateOIDCBlueprint creates an OAuth2 Provider blueprint for native OIDC apps.
 // Registers redirect URIs for all base URLs so OAuth works from any host/IP.
 func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
-	clientID := g.generateClientID(app.Name)
-	clientSecret := g.generateClientSecret(app.Name)
+	clientID := g.generateClientID(app.CatalogID)
+	clientSecret := g.generateClientSecret(app.CatalogID)
 
 	// Build redirect URIs for ALL base URLs using subdomain routing
 	var redirectURIs []string
 	for _, baseURL := range g.baseURLs {
-		appURL := appSubdomainURL(baseURL, app.Name)
+		appURL := appSubdomainURL(baseURL, app.CatalogID)
 		redirectURIs = append(redirectURIs, appURL+app.SSO.CallbackPath)
 	}
 
@@ -101,14 +101,14 @@ func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
 		}
 	}
 
-	launchURL := appSubdomainURL(g.primaryBaseURL(), app.Name)
+	launchURL := appSubdomainURL(g.primaryBaseURL(), app.CatalogID)
 
 	blueprint, err := g.renderOIDCBlueprint(app, clientID, clientSecret, redirectURIs, launchURL)
 	if err != nil {
 		return fmt.Errorf("rendering OIDC blueprint: %w", err)
 	}
 
-	return g.writeBlueprint(app.Name, blueprint)
+	return g.writeBlueprint(app.CatalogID, blueprint)
 }
 
 // generateForwardAuthBlueprint creates a Proxy Provider blueprint for forward auth apps
@@ -116,27 +116,27 @@ func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) erro
 	// external_host should be the root URL, not the app-specific path.
 	// The callback URL (/outpost.goauthentik.io/callback) is handled at root level by Traefik.
 	externalHost := g.primaryBaseURL()
-	launchURL := appSubdomainURL(g.primaryBaseURL(), app.Name)
+	launchURL := appSubdomainURL(g.primaryBaseURL(), app.CatalogID)
 
 	blueprint, err := g.renderForwardAuthBlueprint(app, externalHost, launchURL)
 	if err != nil {
 		return fmt.Errorf("rendering forward-auth blueprint: %w", err)
 	}
 
-	return g.writeBlueprint(app.Name, blueprint)
+	return g.writeBlueprint(app.CatalogID, blueprint)
 }
 
 // generateLDAPBlueprint creates app-specific groups for LDAP authentication
 // The LDAP provider and outpost are created separately via GenerateLDAPOutpostBlueprint
 func (g *BlueprintGenerator) generateLDAPBlueprint(app *catalog.App) error {
-	launchURL := appSubdomainURL(g.primaryBaseURL(), app.Name)
+	launchURL := appSubdomainURL(g.primaryBaseURL(), app.CatalogID)
 
 	blueprint, err := g.renderLDAPBlueprint(app, launchURL)
 	if err != nil {
 		return fmt.Errorf("rendering LDAP blueprint: %w", err)
 	}
 
-	return g.writeBlueprint(app.Name, blueprint)
+	return g.writeBlueprint(app.CatalogID, blueprint)
 }
 
 // writeBlueprint writes a blueprint file to the blueprints directory
@@ -228,13 +228,13 @@ func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
 	}
 
 	baseURL := g.primaryBaseURL()
-	clientID := g.generateClientID(app.Name)
-	clientSecret := g.generateClientSecret(app.Name)
-	discoveryURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.Name)
-	appURL := appSubdomainURL(baseURL, app.Name)
+	clientID := g.generateClientID(app.CatalogID)
+	clientSecret := g.generateClientSecret(app.CatalogID)
+	discoveryURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.CatalogID)
+	appURL := appSubdomainURL(baseURL, app.CatalogID)
 	redirectURL := appURL + app.SSO.CallbackPath
 	serverHostname := appURL
-	issuerURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.Name)
+	issuerURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.CatalogID)
 
 	env := make(map[string]string)
 
@@ -321,7 +321,7 @@ func (g *BlueprintGenerator) renderOIDCBlueprint(app *catalog.App, clientID, cli
 		RedirectURIs []string
 		LaunchURL    string
 	}{
-		AppName:      app.Name,
+		AppName:      app.CatalogID,
 		DisplayName:  app.DisplayName,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -349,7 +349,7 @@ func (g *BlueprintGenerator) renderForwardAuthBlueprint(app *catalog.App, extern
 		ExternalHost string
 		LaunchURL    string
 	}{
-		AppName:      app.Name,
+		AppName:      app.CatalogID,
 		DisplayName:  app.DisplayName,
 		ExternalHost: externalHost,
 		LaunchURL:    launchURL,
@@ -374,7 +374,7 @@ func (g *BlueprintGenerator) renderLDAPBlueprint(app *catalog.App, launchURL str
 		DisplayName string
 		LaunchURL   string
 	}{
-		AppName:     app.Name,
+		AppName:     app.CatalogID,
 		DisplayName: app.DisplayName,
 		LaunchURL:   launchURL,
 	}

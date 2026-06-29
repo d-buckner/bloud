@@ -46,7 +46,7 @@ func (l *Loader) LoadAll() (map[string]*App, error) {
 			return nil, fmt.Errorf("failed to load %s: %w", entry.Name(), err)
 		}
 
-		apps[app.Name] = app
+		apps[app.CatalogID] = app
 	}
 
 	return apps, nil
@@ -73,7 +73,7 @@ func (l *Loader) loadAppFromFile(filePath string) (*App, error) {
 
 // validateApp validates that an app definition has all required fields
 func (l *Loader) validateApp(app *App) error {
-	if app.Name == "" {
+	if app.CatalogID == "" {
 		return fmt.Errorf("app name is required")
 	}
 	if app.DisplayName == "" {

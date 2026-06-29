@@ -83,7 +83,7 @@ func (g *Generator) generateConfig(apps []*catalog.App, remoteApps []RemoteAppRo
 
 	// Sort apps for deterministic output
 	sort.Slice(routableApps, func(i, j int) bool {
-		return routableApps[i].Name < routableApps[j].Name
+		return routableApps[i].CatalogID < routableApps[j].CatalogID
 	})
 	sort.Slice(remoteApps, func(i, j int) bool {
 		return remoteApps[i].ID < remoteApps[j].ID
@@ -167,9 +167,9 @@ func (g *Generator) appNeedsMiddleware(app *catalog.App) bool {
 // writeRouter writes the router configuration for an app.
 // Uses Host-based subdomain routing: jellyfin.localhost, miniflux.localhost, etc.
 func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikEnabled bool) {
-	hostRule := fmt.Sprintf("%s.%s", app.Name, g.baseDomain)
+	hostRule := fmt.Sprintf("%s.%s", app.CatalogID, g.baseDomain)
 
-	b.WriteString(fmt.Sprintf("    %s:\n", app.Name))
+	b.WriteString(fmt.Sprintf("    %s:\n", app.CatalogID))
 	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", hostRule))
 
 	// Build middleware list
@@ -177,12 +177,12 @@ func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikE
 
 	// Forward auth middleware for apps using forward-auth SSO strategy
 	if app.SSO.Strategy == "forward-auth" && authentikEnabled {
-		middlewares = append(middlewares, fmt.Sprintf("%s-forwardauth", app.Name))
+		middlewares = append(middlewares, fmt.Sprintf("%s-forwardauth", app.CatalogID))
 	}
 
 	// Add custom headers middleware if app has routing headers
 	if app.Routing != nil && len(app.Routing.Headers) > 0 {
-		middlewares = append(middlewares, fmt.Sprintf("%s-headers", app.Name))
+		middlewares = append(middlewares, fmt.Sprintf("%s-headers", app.CatalogID))
 	}
 
 	if len(middlewares) > 0 {
@@ -192,14 +192,14 @@ func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikE
 		}
 	}
 
-	b.WriteString(fmt.Sprintf("      service: %s\n", app.Name))
+	b.WriteString(fmt.Sprintf("      service: %s\n", app.CatalogID))
 }
 
 // writeMiddleware writes the middleware configuration for an app
 func (g *Generator) writeMiddleware(b *strings.Builder, app *catalog.App) {
 	// ForwardAuth middleware for apps using forward-auth SSO strategy
 	if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
-		b.WriteString(fmt.Sprintf("    %s-forwardauth:\n", app.Name))
+		b.WriteString(fmt.Sprintf("    %s-forwardauth:\n", app.CatalogID))
 		b.WriteString("      forwardAuth:\n")
 		b.WriteString("        address: \"http://localhost:9001/outpost.goauthentik.io/auth/traefik\"\n")
 		b.WriteString("        trustForwardHeader: true\n")
@@ -213,7 +213,7 @@ func (g *Generator) writeMiddleware(b *strings.Builder, app *catalog.App) {
 
 	// Custom headers middleware (only if app has routing headers)
 	if app.Routing != nil && len(app.Routing.Headers) > 0 {
-		g.writeHeadersMiddleware(b, fmt.Sprintf("%s-headers", app.Name), app.Routing.Headers)
+		g.writeHeadersMiddleware(b, fmt.Sprintf("%s-headers", app.CatalogID), app.Routing.Headers)
 	}
 }
 
@@ -239,13 +239,13 @@ func (g *Generator) writeHeadersMiddleware(b *strings.Builder, name string, head
 // directly to the app service, bypassing forward-auth. Used for native-client API
 // paths (e.g. /rest/ for Subsonic clients) that carry their own credentials.
 func (g *Generator) writeBypassRouter(b *strings.Builder, app *catalog.App, path string) {
-	hostRule := fmt.Sprintf("%s.%s", app.Name, g.baseDomain)
+	hostRule := fmt.Sprintf("%s.%s", app.CatalogID, g.baseDomain)
 	// Derive a safe router name from the path: strip slashes, replace / with -.
 	sanitized := strings.Trim(path, "/")
 	sanitized = strings.ReplaceAll(sanitized, "/", "-")
-	b.WriteString(fmt.Sprintf("    %s-bypass-%s:\n", app.Name, sanitized))
+	b.WriteString(fmt.Sprintf("    %s-bypass-%s:\n", app.CatalogID, sanitized))
 	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`) && PathPrefix(`%s`)\"\n", hostRule, path))
-	b.WriteString(fmt.Sprintf("      service: %s\n", app.Name))
+	b.WriteString(fmt.Sprintf("      service: %s\n", app.CatalogID))
 	b.WriteString("      priority: 10\n")
 }
 
@@ -253,8 +253,8 @@ func (g *Generator) writeBypassRouter(b *strings.Builder, app *catalog.App, path
 // requests for a forward-auth app directly to the Authentik embedded outpost,
 // bypassing the forward-auth middleware so the OAuth callback can complete.
 func (g *Generator) writeOutpostRouter(b *strings.Builder, app *catalog.App) {
-	hostRule := fmt.Sprintf("%s.%s", app.Name, g.baseDomain)
-	b.WriteString(fmt.Sprintf("    %s-outpost:\n", app.Name))
+	hostRule := fmt.Sprintf("%s.%s", app.CatalogID, g.baseDomain)
+	b.WriteString(fmt.Sprintf("    %s-outpost:\n", app.CatalogID))
 	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", hostRule))
 	b.WriteString("      service: authentik-outpost\n")
 	b.WriteString("      priority: 15\n")
@@ -262,7 +262,7 @@ func (g *Generator) writeOutpostRouter(b *strings.Builder, app *catalog.App) {
 
 // writeService writes the service configuration for an app
 func (g *Generator) writeService(b *strings.Builder, app *catalog.App) {
-	b.WriteString(fmt.Sprintf("    %s:\n", app.Name))
+	b.WriteString(fmt.Sprintf("    %s:\n", app.CatalogID))
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
 	b.WriteString(fmt.Sprintf("          - url: \"http://localhost:%d\"\n", app.Port))

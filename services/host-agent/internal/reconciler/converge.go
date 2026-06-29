@@ -90,7 +90,7 @@ func (r *Reconciler) applyInstallIntent(intent InstallAppIntent) {
 	appName := intent.AppName
 
 	// Skip if already running.
-	if existing, _ := cfg.AppStore.GetByName(appName); existing != nil && existing.Status == "running" {
+	if existing, _ := cfg.AppStore.GetByCatalogID(appName); existing != nil && existing.Status == "running" {
 		r.logger.Info("app already running, skipping install intent", "app", appName)
 		return
 	}
@@ -245,7 +245,7 @@ func (r *Reconciler) applyRenameAppIntent(intent RenameAppIntent) {
 func (r *Reconciler) recordIntent(appName string, integrations map[string]string) error {
 	cfg := r.config
 
-	existing, err := cfg.AppStore.GetByName(appName)
+	existing, err := cfg.AppStore.GetByCatalogID(appName)
 	if err != nil {
 		return err
 	}
@@ -257,7 +257,7 @@ func (r *Reconciler) recordIntent(appName string, integrations map[string]string
 	if err != nil {
 		return err
 	}
-	return cfg.AppStore.Install(app.Name, app.DisplayName, app.Version, integrations, &store.InstallOptions{
+	return cfg.AppStore.Install(app.CatalogID, app.DisplayName, app.Version, integrations, &store.InstallOptions{
 		Port:     app.Port,
 		IsSystem: app.IsSystem,
 	})
@@ -285,7 +285,7 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 	// Build map for lookups.
 	appMap := make(map[string]*store.InstalledApp, len(apps))
 	for _, app := range apps {
-		appMap[app.Name] = app
+		appMap[app.CatalogID] = app
 	}
 
 	// Step 2: Handle uninstalls (apps with status "uninstalling").
@@ -301,11 +301,11 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 		if app.Status != "uninstalling" {
 			continue
 		}
-		clearData := pendingClearData[app.Name]
-		if err := cfg.Lifecycle.RemoveApp(ctx, app.Name, clearData); err != nil {
-			r.logger.Error("failed to remove app", "app", app.Name, "error", err)
+		clearData := pendingClearData[app.CatalogID]
+		if err := cfg.Lifecycle.RemoveApp(ctx, app.CatalogID, clearData); err != nil {
+			r.logger.Error("failed to remove app", "app", app.CatalogID, "error", err)
 		}
-		delete(appMap, app.Name)
+		delete(appMap, app.CatalogID)
 	}
 
 	// Step 3: Compute execution levels for remaining apps.
@@ -342,7 +342,7 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 	// Step 6: Update graph with current installed list.
 	r.logger.Info("convergence step", "step", "update-graph")
 	r.activity.Record("converge_step", "update-graph")
-	installed, _ := cfg.AppStore.GetInstalledNames()
+	installed, _ := cfg.AppStore.GetInstalledCatalogIDs()
 	cfg.Graph.SetInstalled(installed)
 
 	// Step 7: Regenerate routes.
@@ -429,15 +429,15 @@ func (r *Reconciler) convergeTailnet(ctx context.Context) {
 			if app.IsSystem || app.Status != "running" {
 				continue
 			}
-			catalogApp, err := cfg.CatalogCache.Get(app.Name)
+			catalogApp, err := cfg.CatalogCache.Get(app.CatalogID)
 			if err != nil || catalogApp.Port == 0 {
 				continue
 			}
-			if err := cfg.Sidecar.EnsureRunning(ctx, app.Name, catalogApp.Port); err != nil {
-				r.logger.Warn("failed to ensure sidecar", "app", app.Name, "error", err)
+			if err := cfg.Sidecar.EnsureRunning(ctx, app.CatalogID, catalogApp.Port); err != nil {
+				r.logger.Warn("failed to ensure sidecar", "app", app.CatalogID, "error", err)
 				continue
 			}
-			_ = cfg.AppStore.SetTailnetID(app.Name, conn.ID)
+			_ = cfg.AppStore.SetTailnetID(app.CatalogID, conn.ID)
 		}
 		return
 	}
@@ -448,10 +448,10 @@ func (r *Reconciler) convergeTailnet(ctx context.Context) {
 			if app.IsSystem {
 				continue
 			}
-			if err := cfg.Sidecar.StopAndPurge(ctx, app.Name); err != nil {
-				r.logger.Warn("failed to purge sidecar", "app", app.Name, "error", err)
+			if err := cfg.Sidecar.StopAndPurge(ctx, app.CatalogID); err != nil {
+				r.logger.Warn("failed to purge sidecar", "app", app.CatalogID, "error", err)
 			}
-			_ = cfg.AppStore.SetTailnetID(app.Name, "")
+			_ = cfg.AppStore.SetTailnetID(app.CatalogID, "")
 		}
 	}
 	if cfg.Gateway != nil {

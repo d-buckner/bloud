@@ -148,13 +148,13 @@ func (f *FakeAppStore) GetAll() ([]*store.InstalledApp, error) {
 	return apps, nil
 }
 
-func (f *FakeAppStore) GetByName(name string) (*store.InstalledApp, error) {
+func (f *FakeAppStore) GetByCatalogID(name string) (*store.InstalledApp, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return f.apps[name], nil
 }
 
-func (f *FakeAppStore) GetInstalledNames() ([]string, error) {
+func (f *FakeAppStore) GetInstalledCatalogIDs() ([]string, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	var names []string
@@ -164,12 +164,12 @@ func (f *FakeAppStore) GetInstalledNames() ([]string, error) {
 	return names, nil
 }
 
-func (f *FakeAppStore) Install(name, displayName, version string, integrationConfig map[string]string, opts *store.InstallOptions) error {
+func (f *FakeAppStore) Install(catalogID, displayName, version string, integrationConfig map[string]string, opts *store.InstallOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	app := &store.InstalledApp{
-		Name:              name,
+		CatalogID:         catalogID,
 		DisplayName:       displayName,
 		Version:           version,
 		Status:            "installing",
@@ -179,7 +179,7 @@ func (f *FakeAppStore) Install(name, displayName, version string, integrationCon
 		app.Port = opts.Port
 		app.IsSystem = opts.IsSystem
 	}
-	f.apps[name] = app
+	f.apps[catalogID] = app
 	f.notify()
 	return nil
 }
@@ -194,11 +194,11 @@ func (f *FakeAppStore) UpdateStatus(name, status string) error {
 	return nil
 }
 
-func (f *FakeAppStore) EnsureSystemApp(name, displayName string, port int) error {
+func (f *FakeAppStore) EnsureSystemApp(catalogID, displayName string, port int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.apps[name] = &store.InstalledApp{
-		Name:        name,
+	f.apps[catalogID] = &store.InstalledApp{
+		CatalogID:   catalogID,
 		DisplayName: displayName,
 		Port:        port,
 		Status:      "running",
@@ -267,7 +267,7 @@ func (f *FakeAppStore) notify() {
 func (f *FakeAppStore) AddApp(app *store.InstalledApp) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.apps[app.Name] = app
+	f.apps[app.CatalogID] = app
 }
 
 // Compile-time assertion.
@@ -328,7 +328,7 @@ func (f *FakeCatalogCache) Refresh(loader *catalog.Loader) error {
 func (f *FakeCatalogCache) AddApp(app *catalog.App) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.apps[app.Name] = app
+	f.apps[app.CatalogID] = app
 }
 
 // Compile-time assertion.

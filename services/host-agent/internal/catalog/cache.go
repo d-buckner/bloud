@@ -38,7 +38,7 @@ func (c *MemoryCache) GetAll() ([]*App, error) {
 		apps = append(apps, app)
 	}
 	sort.Slice(apps, func(i, j int) bool {
-		return apps[i].Name < apps[j].Name
+		return apps[i].CatalogID < apps[j].CatalogID
 	})
 	return apps, nil
 }

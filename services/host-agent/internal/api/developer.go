@@ -64,7 +64,7 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 
 	for _, app := range apps {
 		node := graphNode{
-			ID:          app.Name,
+			ID:          app.CatalogID,
 			DisplayName: app.DisplayName,
 			Status:      app.Status,
 			IsSystem:    app.IsSystem,
@@ -72,7 +72,7 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		nodes = append(nodes, node)
 
-		if app.Name == "traefik" {
+		if app.CatalogID == "traefik" {
 			hasTraefik = true
 		}
 
@@ -81,14 +81,14 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 			tailnetIDs[app.TailnetID] = true
 			edges = append(edges, graphEdge{
 				Source: "conn:tailnet:" + app.TailnetID,
-				Target: app.Name,
+				Target: app.CatalogID,
 				Label:  "tailnet",
 			})
 		}
 
 		// Derive edges: use runtime IntegrationConfig first, fall back to catalog defaults.
 		// Sort integration labels for deterministic edge ordering.
-		if def, ok := graphDefs[app.Name]; ok {
+		if def, ok := graphDefs[app.CatalogID]; ok {
 			labels := make([]string, 0, len(def.Integrations))
 			for label := range def.Integrations {
 				labels = append(labels, label)
@@ -99,12 +99,12 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 				integration := def.Integrations[label]
 				edgeLabel := label
 				if label == "sso" {
-					edgeLabel = s.ssoEdgeLabel(app.Name)
+					edgeLabel = s.ssoEdgeLabel(app.CatalogID)
 				}
 
 				// Check if user made a runtime choice
 				if target, chosen := app.IntegrationConfig[label]; chosen {
-					edge := graphEdge{Source: app.Name, Target: target, Label: edgeLabel}
+					edge := graphEdge{Source: app.CatalogID, Target: target, Label: edgeLabel}
 					if label == "proxy" {
 						edge.Source, edge.Target = edge.Target, edge.Source
 					}
@@ -114,7 +114,7 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 				// Fall back to default compatible app
 				for _, compat := range integration.Compatible {
 					if compat.Default {
-						edge := graphEdge{Source: app.Name, Target: compat.App, Label: edgeLabel}
+						edge := graphEdge{Source: app.CatalogID, Target: compat.App, Label: edgeLabel}
 						if label == "proxy" {
 							edge.Source, edge.Target = edge.Target, edge.Source
 						}
@@ -134,9 +134,9 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 			for _, label := range labels {
 				edgeLabel := label
 				if label == "sso" {
-					edgeLabel = s.ssoEdgeLabel(app.Name)
+					edgeLabel = s.ssoEdgeLabel(app.CatalogID)
 				}
-				edge := graphEdge{Source: app.Name, Target: app.IntegrationConfig[label], Label: edgeLabel}
+				edge := graphEdge{Source: app.CatalogID, Target: app.IntegrationConfig[label], Label: edgeLabel}
 				if label == "proxy" {
 					edge.Source, edge.Target = edge.Target, edge.Source
 				}

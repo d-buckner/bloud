@@ -25,15 +25,15 @@ func (m *MockAppStore) GetAll() ([]*store.InstalledApp, error) {
 	return args.Get(0).([]*store.InstalledApp), args.Error(1)
 }
 
-func (m *MockAppStore) GetByName(name string) (*store.InstalledApp, error) {
-	args := m.Called(name)
+func (m *MockAppStore) GetByCatalogID(catalogID string) (*store.InstalledApp, error) {
+	args := m.Called(catalogID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*store.InstalledApp), args.Error(1)
 }
 
-func (m *MockAppStore) GetInstalledNames() ([]string, error) {
+func (m *MockAppStore) GetInstalledCatalogIDs() ([]string, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

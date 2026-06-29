@@ -30,7 +30,7 @@
 	$effect(() => {
 		if (open) {
 			mode = 'token';
-			appId = catalogApps.length > 0 ? catalogApps[0].name : '';
+			appId = catalogApps.length > 0 ? catalogApps[0].catalogId : '';
 			tailnetAddr = '';
 			hostLabel = '';
 			errorMsg = '';
@@ -174,7 +174,7 @@
 				<label for="shared-app-type">App type</label>
 				<select id="shared-app-type" bind:value={appId}>
 					{#each catalogApps as app}
-						<option value={app.name}>{app.displayName}</option>
+						<option value={app.catalogId}>{app.displayName}</option>
 					{/each}
 				</select>
 			</div>

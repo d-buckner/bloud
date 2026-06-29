@@ -45,7 +45,7 @@ func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T)
 	appStore := NewFakeAppStore()
 	containers := &fakeContainerRuntime{}
 	cache.AddApp(&catalog.App{
-		Name:        "jellyfin",
+		CatalogID:   "jellyfin",
 		DisplayName: "Jellyfin",
 		Port:        8096,
 		Container: &catalog.ContainerSpec{
@@ -73,7 +73,7 @@ func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T)
 	require.Len(t, containers.ensured, 1)
 	assert.Equal(t, []string{"apps-net"}, containers.networks)
 	assert.Equal(t, filepath.Join(dataDir, "jellyfin", "config"), containers.ensured[0].Mounts[0].Source)
-	app, err := appStore.GetByName("jellyfin")
+	app, err := appStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	assert.Equal(t, "starting", app.Status, "EnsureContainer sets status to starting")
 	require.NoError(t, orch.HealthCheckApp(ctx, "jellyfin"))

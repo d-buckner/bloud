@@ -11,7 +11,7 @@
 
 	let { itemId, onAppClick, onAppContextMenu }: Props = $props();
 
-	let app = $derived($visibleApps.find((a) => a.name === itemId));
+	let app = $derived($visibleApps.find((a) => a.catalog_id === itemId));
 	let displayName = $derived(app?.display_name ?? itemId);
 	let isInstalling = $derived(!app || app.status === 'installing' || app.status === 'starting');
 </script>
