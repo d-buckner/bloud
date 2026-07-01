@@ -13,7 +13,7 @@ func TestGenerator_Generate_EmptyApps(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.Generate(nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -38,7 +38,7 @@ func TestGenerator_Generate_SystemAppsFiltered(t *testing.T) {
 		{CatalogID: "traefik", Port: 8080, IsSystem: true},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -63,7 +63,7 @@ func TestGenerator_Generate_BasicApp(t *testing.T) {
 		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -76,17 +76,17 @@ func TestGenerator_Generate_BasicApp(t *testing.T) {
 
 	contentStr := string(content)
 
-	// Check router uses Host rule
+	// Check router uses HostRegexp rule
 	if !strings.Contains(contentStr, "miniflux:") {
 		t.Error("Expected miniflux router")
 	}
-	if !strings.Contains(contentStr, `rule: "Host(`+"`miniflux.localhost`"+`)"`) {
-		t.Error("Expected Host rule for miniflux.localhost")
+	if !strings.Contains(contentStr, `rule: "HostRegexp(`+"`^miniflux\\\\.`"+`)"`) {
+		t.Error("Expected HostRegexp rule for miniflux")
 	}
 
-	// Should NOT have priority (Host rules are unambiguous)
-	if strings.Contains(contentStr, "priority:") {
-		t.Error("Should NOT have priority for Host-based routes")
+	// Should have priority 200 for app routes
+	if !strings.Contains(contentStr, "priority: 200") {
+		t.Error("Expected priority 200 for app routes")
 	}
 
 	// Check service
@@ -113,7 +113,7 @@ func TestGenerator_Generate_CustomHeaders(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -153,7 +153,7 @@ func TestGenerator_Generate_MultipleApps_Sorted(t *testing.T) {
 		{CatalogID: "adguard-home", Port: 3080, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -185,7 +185,7 @@ func TestGenerator_Generate_AppsWithoutPort_Filtered(t *testing.T) {
 		{CatalogID: "no-port-app", Port: 0, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -210,7 +210,7 @@ func TestGenerator_Generate_AppsWithoutPort_Filtered(t *testing.T) {
 }
 
 func TestGenerator_Preview(t *testing.T) {
-	g := NewGenerator("/nonexistent/path", "localhost")
+	g := NewGenerator("/nonexistent/path")
 
 	apps := []*catalog.App{
 		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
@@ -226,7 +226,7 @@ func TestGenerator_Preview(t *testing.T) {
 	}
 }
 
-func TestGenerator_Generate_CustomBaseDomain(t *testing.T) {
+func TestGenerator_Generate_DomainAgnostic(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
@@ -234,7 +234,7 @@ func TestGenerator_Generate_CustomBaseDomain(t *testing.T) {
 		{CatalogID: "jellyfin", Port: 8096, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath, "bloud.local")
+	g := NewGenerator(configPath)
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
@@ -247,8 +247,9 @@ func TestGenerator_Generate_CustomBaseDomain(t *testing.T) {
 
 	contentStr := string(content)
 
-	if !strings.Contains(contentStr, `rule: "Host(`+"`jellyfin.bloud.local`"+`)"`) {
-		t.Error("Expected Host rule with custom base domain")
+	// HostRegexp matches any domain: jellyfin.localhost, jellyfin.bloud.co, etc.
+	if !strings.Contains(contentStr, `rule: "HostRegexp(`+"`^jellyfin\\\\.`"+`)"`) {
+		t.Error("Expected HostRegexp rule for jellyfin")
 	}
 }
 
@@ -265,7 +266,7 @@ func loadGoldenFile(t *testing.T, name string) string {
 }
 
 func TestGolden_EmptyApps(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml", "localhost")
+	g := NewGenerator("/tmp/test.yml")
 	got := g.Preview(nil)
 	want := loadGoldenFile(t, "empty.golden.yml")
 
@@ -275,7 +276,7 @@ func TestGolden_EmptyApps(t *testing.T) {
 }
 
 func TestGolden_BasicApp(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml", "localhost")
+	g := NewGenerator("/tmp/test.yml")
 	apps := []*catalog.App{
 		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
@@ -289,7 +290,7 @@ func TestGolden_BasicApp(t *testing.T) {
 }
 
 func TestGolden_CustomHeaders(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml", "localhost")
+	g := NewGenerator("/tmp/test.yml")
 	apps := []*catalog.App{
 		{
 			CatalogID:     "actual-budget",
@@ -313,7 +314,7 @@ func TestGolden_CustomHeaders(t *testing.T) {
 }
 
 func TestGolden_MultipleApps(t *testing.T) {
-	g := NewGenerator("/tmp/test.yml", "localhost")
+	g := NewGenerator("/tmp/test.yml")
 	apps := []*catalog.App{
 		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 		{CatalogID: "actual-budget", Port: 5006, IsSystem: false},
@@ -343,7 +344,7 @@ func TestGenerator_Generate_ForwardAuth(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	g.SetAuthentikEnabled(true)
 
 	err := g.Generate(apps)
@@ -384,8 +385,11 @@ func TestGenerator_Generate_ForwardAuth(t *testing.T) {
 	if !strings.Contains(contentStr, "adguard-home-outpost:") {
 		t.Error("Expected adguard-home-outpost router for OAuth callback")
 	}
-	if !strings.Contains(contentStr, "PathPrefix(`/outpost.goauthentik.io/`)") {
-		t.Error("Expected outpost path prefix in router rule")
+	if !strings.Contains(contentStr, "HostRegexp(`^adguard-home\\\\.`) && PathPrefix(`/outpost.goauthentik.io/`)") {
+		t.Error("Expected HostRegexp + outpost path prefix in router rule")
+	}
+	if !strings.Contains(contentStr, "priority: 300") {
+		t.Error("Expected priority 300 on outpost router")
 	}
 	if !strings.Contains(contentStr, "service: authentik-outpost") {
 		t.Error("Expected authentik-outpost service reference")
@@ -411,7 +415,7 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	g.SetAuthentikEnabled(true)
 
 	if err := g.Generate(apps); err != nil {
@@ -428,11 +432,11 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths(t *testing.T) {
 	if !strings.Contains(contentStr, "navidrome-bypass-rest:") {
 		t.Error("Expected navidrome-bypass-rest router")
 	}
-	if !strings.Contains(contentStr, "PathPrefix(`/rest/`)") {
-		t.Error("Expected PathPrefix(/rest/) in bypass router rule")
+	if !strings.Contains(contentStr, "HostRegexp(`^navidrome\\\\.`) && PathPrefix(`/rest/`)") {
+		t.Error("Expected HostRegexp + PathPrefix(/rest/) in bypass router rule")
 	}
-	if !strings.Contains(contentStr, "priority: 10") {
-		t.Error("Expected priority: 10 on bypass router")
+	if !strings.Contains(contentStr, "priority: 300") {
+		t.Error("Expected priority: 300 on bypass router")
 	}
 
 	// Bypass router must route to the app service, not the outpost
@@ -462,7 +466,7 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths_AuthentikDisabled(t *testing
 		},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	// Authentik disabled — no forward-auth active, so bypass routers are unnecessary
 
 	if err := g.Generate(apps); err != nil {
@@ -495,7 +499,7 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	// Don't enable Authentik - should not generate forwardauth middleware
 
 	err := g.Generate(apps)
@@ -527,7 +531,7 @@ func TestGenerator_GenerateAll_RemoteApps(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath, "bloud.local")
+	g := NewGenerator(configPath)
 	err := g.GenerateAll(nil, remoteApps)
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
@@ -544,8 +548,11 @@ func TestGenerator_GenerateAll_RemoteApps(t *testing.T) {
 	if !strings.Contains(contentStr, "shared-jellyfin-johan:") {
 		t.Error("Expected shared-jellyfin-johan router")
 	}
-	if !strings.Contains(contentStr, `rule: "Host(`+"`jellyfin-johan.bloud.local`"+`)"`) {
-		t.Error("Expected Host rule for jellyfin-johan.bloud.local")
+	if !strings.Contains(contentStr, `rule: "HostRegexp(`+"`^jellyfin-johan\\\\.`"+`)"`) {
+		t.Error("Expected HostRegexp rule for jellyfin-johan")
+	}
+	if !strings.Contains(contentStr, "priority: 200") {
+		t.Error("Expected priority 200 on remote router")
 	}
 	if !strings.Contains(contentStr, "service: shared-jellyfin-johan") {
 		t.Error("Expected service reference to shared-jellyfin-johan")
@@ -572,7 +579,7 @@ func TestGenerator_GenerateAll_MixedLocalAndRemote(t *testing.T) {
 		},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.GenerateAll(apps, remoteApps)
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
@@ -611,7 +618,7 @@ func TestGenerator_GenerateAll_RemoteAppsSorted(t *testing.T) {
 		{ID: "jellyfin-johan", ProxyURL: "http://localhost:10100"},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.GenerateAll(nil, remoteApps)
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
@@ -636,7 +643,7 @@ func TestGenerator_GenerateAll_EmptyRemoteApps(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.GenerateAll(nil, nil)
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
@@ -660,7 +667,7 @@ func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
 		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
 	}
 
-	g := NewGenerator(configPath, "localhost")
+	g := NewGenerator(configPath)
 	err := g.Generate(apps)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)

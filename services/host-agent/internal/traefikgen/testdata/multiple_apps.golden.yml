@@ -5,13 +5,16 @@
 http:
   routers:
     actual-budget:
-      rule: "Host(`actual-budget.localhost`)"
+      rule: "HostRegexp(`^actual-budget\\.`)"
+      priority: 200
       service: actual-budget
     adguard-home:
-      rule: "Host(`adguard-home.localhost`)"
+      rule: "HostRegexp(`^adguard-home\\.`)"
+      priority: 200
       service: adguard-home
     miniflux:
-      rule: "Host(`miniflux.localhost`)"
+      rule: "HostRegexp(`^miniflux\\.`)"
+      priority: 200
       service: miniflux
 
   services:

@@ -5,7 +5,8 @@
 http:
   routers:
     miniflux:
-      rule: "Host(`miniflux.localhost`)"
+      rule: "HostRegexp(`^miniflux\\.`)"
+      priority: 200
       service: miniflux
 
   services:

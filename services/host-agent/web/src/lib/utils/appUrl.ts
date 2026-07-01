@@ -10,7 +10,9 @@ export function getAppUrl(appName: string, path: string = ''): string {
 	const { hostname, port, protocol } = window.location;
 	const portSuffix = port ? `:${port}` : '';
 	const pathPrefix = path && !path.startsWith('/') ? '/' : '';
-	return `${protocol}//${appName}.${hostname}${portSuffix}${pathPrefix}${path}`;
+	// fixme: this is a hack for tailnet domains
+	const normalizedHostname = hostname.replace(/^bloud\./, '');
+	return `${protocol}//${appName}.${normalizedHostname}${portSuffix}${pathPrefix}${path}`;
 }
 
 /**

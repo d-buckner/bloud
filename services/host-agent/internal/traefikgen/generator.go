@@ -13,15 +13,13 @@ import (
 // Generator generates Traefik dynamic configuration for installed apps
 type Generator struct {
 	configPath       string // Path to apps-routes.yml
-	baseDomain       string // Base domain for subdomain routing (e.g., "localhost")
 	authentikEnabled bool   // Whether Authentik is installed (for SSO middlewares)
 }
 
 // NewGenerator creates a Traefik config generator
-func NewGenerator(configPath, baseDomain string) *Generator {
+func NewGenerator(configPath string) *Generator {
 	return &Generator{
 		configPath: configPath,
-		baseDomain: baseDomain,
 	}
 }
 
@@ -165,12 +163,12 @@ func (g *Generator) appNeedsMiddleware(app *catalog.App) bool {
 }
 
 // writeRouter writes the router configuration for an app.
-// Uses Host-based subdomain routing: jellyfin.localhost, miniflux.localhost, etc.
+// Uses HostRegexp for domain-agnostic subdomain matching: matches jellyfin.localhost,
+// jellyfin.bloud.co, jellyfin.<anything> — any host starting with the app's subdomain.
 func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikEnabled bool) {
-	hostRule := fmt.Sprintf("%s.%s", app.CatalogID, g.baseDomain)
-
 	b.WriteString(fmt.Sprintf("    %s:\n", app.CatalogID))
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", hostRule))
+	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`)\"\n", app.CatalogID))
+	b.WriteString("      priority: 200\n")
 
 	// Build middleware list
 	var middlewares []string
@@ -239,25 +237,23 @@ func (g *Generator) writeHeadersMiddleware(b *strings.Builder, name string, head
 // directly to the app service, bypassing forward-auth. Used for native-client API
 // paths (e.g. /rest/ for Subsonic clients) that carry their own credentials.
 func (g *Generator) writeBypassRouter(b *strings.Builder, app *catalog.App, path string) {
-	hostRule := fmt.Sprintf("%s.%s", app.CatalogID, g.baseDomain)
 	// Derive a safe router name from the path: strip slashes, replace / with -.
 	sanitized := strings.Trim(path, "/")
 	sanitized = strings.ReplaceAll(sanitized, "/", "-")
 	b.WriteString(fmt.Sprintf("    %s-bypass-%s:\n", app.CatalogID, sanitized))
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`) && PathPrefix(`%s`)\"\n", hostRule, path))
+	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`) && PathPrefix(`%s`)\"\n", app.CatalogID, path))
 	b.WriteString(fmt.Sprintf("      service: %s\n", app.CatalogID))
-	b.WriteString("      priority: 10\n")
+	b.WriteString("      priority: 300\n")
 }
 
 // writeOutpostRouter writes a high-priority router that passes /outpost.goauthentik.io/
 // requests for a forward-auth app directly to the Authentik embedded outpost,
 // bypassing the forward-auth middleware so the OAuth callback can complete.
 func (g *Generator) writeOutpostRouter(b *strings.Builder, app *catalog.App) {
-	hostRule := fmt.Sprintf("%s.%s", app.CatalogID, g.baseDomain)
 	b.WriteString(fmt.Sprintf("    %s-outpost:\n", app.CatalogID))
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", hostRule))
+	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", app.CatalogID))
 	b.WriteString("      service: authentik-outpost\n")
-	b.WriteString("      priority: 15\n")
+	b.WriteString("      priority: 300\n")
 }
 
 // writeService writes the service configuration for an app
@@ -270,11 +266,11 @@ func (g *Generator) writeService(b *strings.Builder, app *catalog.App) {
 
 // writeRemoteRouter writes the router configuration for a remote (shared) app.
 func (g *Generator) writeRemoteRouter(b *strings.Builder, ra RemoteAppRoute) {
-	hostRule := fmt.Sprintf("%s.%s", ra.ID, g.baseDomain)
 	routerName := "shared-" + ra.ID
 
 	b.WriteString(fmt.Sprintf("    %s:\n", routerName))
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", hostRule))
+	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`)\"\n", ra.ID))
+	b.WriteString("      priority: 200\n")
 	b.WriteString(fmt.Sprintf("      service: %s\n", routerName))
 }
 

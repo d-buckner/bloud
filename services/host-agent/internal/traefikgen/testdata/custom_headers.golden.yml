@@ -5,7 +5,8 @@
 http:
   routers:
     actual-budget:
-      rule: "Host(`actual-budget.localhost`)"
+      rule: "HostRegexp(`^actual-budget\\.`)"
+      priority: 200
       middlewares:
         - actual-budget-headers
       service: actual-budget
