@@ -13,7 +13,7 @@ type InvitePayload struct {
 	AppID              string `json:"appId"`
 	AppName            string `json:"appName"`
 	HostLabel          string `json:"hostLabel"`
-	SidecarTailnetAddr string `json:"sidecarTailnetAddr"`
+	TailnetAddr string `json:"tailnetAddr"`
 	NodeShareLink      string `json:"nodeShareLink"`
 }
 

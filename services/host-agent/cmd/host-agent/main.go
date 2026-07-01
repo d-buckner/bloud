@@ -106,6 +106,7 @@ func runServer() {
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
 		BaseDomain:        cfg.BaseDomain,
+		TraefikPort:       cfg.TraefikPort,
 		Port:              cfg.Port,
 		SSOHostSecret:     cfg.SSOHostSecret,
 		SSOBaseURL:        cfg.SSOBaseURL,

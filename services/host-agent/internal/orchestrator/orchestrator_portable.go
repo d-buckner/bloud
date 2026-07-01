@@ -37,7 +37,7 @@ type PortableConfig struct {
 	TraefikGen      traefikgen.GeneratorInterface
 	LDAPOutput      *configurator.LDAPOutput
 	SSO             SSOProvisioner                  // optional; nil when Authentik is not available
-	Sidecar         sharing.SidecarManagerInterface // optional; nil when Tailscale auth key is not set
+	TailnetNode     sharing.TailnetNodeManagerInterface // optional; nil when Tailscale auth key is not set
 	Gateway         sharing.GatewayManagerInterface // optional; manages gateway Tailscale container for remote app proxying
 	RemoteProxy     *sharing.RemoteProxyManager     // optional; manages per-remote-app reverse proxies through SOCKS5 gateway
 	RemoteAppStore  store.RemoteAppStoreInterface   // optional; nil when remote apps are not configured
@@ -58,7 +58,7 @@ type PortableOrchestrator struct {
 	traefikGen      traefikgen.GeneratorInterface
 	ldapOutput      *configurator.LDAPOutput
 	sso             SSOProvisioner
-	sidecar         sharing.SidecarManagerInterface
+	tailnetNode     sharing.TailnetNodeManagerInterface
 	gateway         sharing.GatewayManagerInterface
 	remoteProxy     *sharing.RemoteProxyManager
 	remoteAppStore  store.RemoteAppStoreInterface
@@ -79,7 +79,7 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		traefikGen:      cfg.TraefikGen,
 		ldapOutput:      cfg.LDAPOutput,
 		sso:             cfg.SSO,
-		sidecar:         cfg.Sidecar,
+		tailnetNode:     cfg.TailnetNode,
 		gateway:         cfg.Gateway,
 		remoteProxy:     cfg.RemoteProxy,
 		remoteAppStore:  cfg.RemoteAppStore,
@@ -295,10 +295,10 @@ func (o *PortableOrchestrator) buildAppState(app *catalog.App) *configurator.App
 // RemoveApp removes a single app's container and store entry. It does NOT check
 // graph blockers, update the graph, or regenerate routes — the reconciler handles those.
 func (o *PortableOrchestrator) RemoveApp(ctx context.Context, appName string, clearData bool) error {
-	// Stop sidecar before removing app container (best-effort).
-	if o.sidecar != nil {
-		if err := o.sidecar.Stop(ctx, appName); err != nil {
-			o.logger.Warn("failed to stop sidecar", "app", appName, "error", err)
+	// Stop tailnet node before removing app container (best-effort).
+	if o.tailnetNode != nil {
+		if err := o.tailnetNode.Stop(ctx, appName); err != nil {
+			o.logger.Warn("failed to stop tailnet node", "app", appName, "error", err)
 		}
 		o.appStore.SetTailnetID(appName, "")
 	}
@@ -403,11 +403,11 @@ func (o *PortableOrchestrator) ensureApp(ctx context.Context, appName string) er
 		}
 	}
 
-	// Start Tailscale sidecar for non-system user apps (sharing support).
+	// Start Tailscale tailnet node for non-system user apps (sharing support).
 	// Non-fatal: sharing is optional and shouldn't block app startup.
-	if o.sidecar != nil && !app.IsSystem {
-		if err := o.sidecar.EnsureRunning(ctx, app.CatalogID, app.Port); err != nil {
-			o.logger.Warn("failed to start sidecar (sharing unavailable for this app)", "app", appName, "error", err)
+	if o.tailnetNode != nil && !app.IsSystem {
+		if err := o.tailnetNode.EnsureRunning(ctx, app.CatalogID); err != nil {
+			o.logger.Warn("failed to start tailnet node (sharing unavailable for this app)", "app", appName, "error", err)
 		} else if o.activeTailnetID != nil {
 			if tid := o.activeTailnetID(); tid != "" {
 				o.appStore.SetTailnetID(appName, tid)
@@ -463,8 +463,8 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 	o.traefikGen.SetAuthentikEnabled(authentikEnabled)
 
 	// Ensure gateway is running whenever a tailnet is active. The gateway
-	// provides SOCKS5 for remote app proxying and serves as the owner's
-	// presence on the tailnet for remote access.
+	// provides a SOCKS5 proxy so remote apps (shared from other hosts) can
+	// be proxied through Traefik to the LAN.
 	if o.gateway != nil && o.activeTailnetID != nil && o.activeTailnetID() != "" {
 		if err := o.gateway.EnsureRunning(context.Background()); err != nil {
 			o.logger.Warn("gateway not available", "error", err)
@@ -483,7 +483,7 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 			for _, ra := range remoteApps {
 				targets = append(targets, sharing.ProxyTarget{
 					ID:         ra.AppID + "-" + slugify(ra.HostLabel),
-					TailnetURL: "https://" + ra.SidecarTailnetAddr,
+					TailnetURL: "https://" + ra.TailnetAddr,
 				})
 			}
 

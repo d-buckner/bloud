@@ -19,12 +19,12 @@ import (
 // ProxyTarget describes a remote app that needs a local reverse proxy.
 type ProxyTarget struct {
 	ID         string // unique slug (e.g. "jellyfin-johan")
-	TailnetURL string // full URL to the remote sidecar (e.g. "https://ts-jellyfin.tail1275sa.ts.net")
+	TailnetURL string // full URL to the remote tailnet node (e.g. "https://ts-jellyfin.tail1275sa.ts.net")
 }
 
 // RemoteProxyManager manages lightweight HTTP reverse proxies for remote apps.
 // Each proxy listens on a localhost port and dials through the gateway's SOCKS5
-// proxy to reach the remote sidecar's tailnet address.
+// proxy to reach the remote tailnet node's tailnet address.
 type RemoteProxyManager struct {
 	socksAddr string // SOCKS5 proxy address (e.g. "localhost:1055")
 	basePort  int    // starting port for allocation (e.g. 10100)
@@ -124,7 +124,7 @@ func (m *RemoteProxyManager) startProxyLocked(target ProxyTarget, port int) erro
 			return dialer.Dial(network, addr)
 		},
 		// InsecureSkipVerify is acceptable here: traffic goes through an
-		// authenticated Tailscale tunnel, and the remote sidecar serves HTTPS
+		// authenticated Tailscale tunnel, and the remote tailnet node serves HTTPS
 		// with a Tailscale-issued cert that may not be in the system CA pool.
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}

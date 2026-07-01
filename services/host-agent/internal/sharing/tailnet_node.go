@@ -17,72 +17,74 @@ type ContainerExec interface {
 	Exec(ctx context.Context, containerName string, cmd []string) ([]byte, error)
 }
 
-// SidecarManagerInterface allows the orchestrator to optionally manage
-// Tailscale sidecar containers for app sharing.
-type SidecarManagerInterface interface {
-	EnsureRunning(ctx context.Context, appName string, appPort int) error
+// TailnetNodeManagerInterface allows the orchestrator to optionally manage
+// Tailscale tailnet node containers for app sharing.
+type TailnetNodeManagerInterface interface {
+	EnsureRunning(ctx context.Context, appName string) error
 	GetAddr(ctx context.Context, appName string) (string, error)
 	Stop(ctx context.Context, appName string) error
 	StopAndPurge(ctx context.Context, appName string) error
 }
 
-// SidecarManager manages Tailscale sidecar containers alongside user apps.
-// Each sidecar joins the tailnet via TS_AUTHKEY and exposes the app via
+// TailnetNodeManager manages Tailscale tailnet node containers for user apps.
+// Each tailnet node joins the tailnet via TS_AUTHKEY and exposes the app via
 // Tailscale Serve, configured declaratively through TS_SERVE_CONFIG.
-// The sidecar's systemd unit is bound to the app's unit via DependsOn,
-// so systemd handles lifecycle coupling automatically.
-type SidecarManager struct {
-	containers container.Runtime
-	exec       ContainerExec
-	authKeyFn  func() string // called at sidecar-creation time to get the current auth key
-	network    string
-	dataDir    string // root data dir — serve configs go under {dataDir}/{appName}/ts-serve/
-	logger     *slog.Logger
+// Tailnet nodes run on the host network and proxy to Traefik, which routes to the
+// app based on the Host header. The tailnet node's systemd unit is bound to the
+// app's unit via DependsOn, so systemd handles lifecycle coupling automatically.
+type TailnetNodeManager struct {
+	containers  container.Runtime
+	exec        ContainerExec
+	authKeyFn   func() string // called at creation time to get the current auth key
+	traefikPort int
+	dataDir     string // root data dir — serve configs go under {dataDir}/{appName}/ts-serve/
+	logger      *slog.Logger
 }
 
-// NewSidecarManager creates a SidecarManager.
-//   - containers: runtime for creating/removing sidecar containers.
+// NewTailnetNodeManager creates a TailnetNodeManager.
+//   - containers: runtime for creating/removing tailnet node containers.
 //   - exec: runs commands inside running containers (for tailscale CLI calls).
-//   - authKeyFn: returns the current Tailscale auth key (called at sidecar-creation time).
-//   - network: container network sidecars join (typically "apps-net").
+//   - authKeyFn: returns the current Tailscale auth key (called at creation time).
+//   - traefikPort: Traefik entrypoint port that tailnet nodes proxy to.
 //   - dataDir: root data directory for storing serve config files.
-func NewSidecarManager(containers container.Runtime, exec ContainerExec, authKeyFn func() string, network, dataDir string, logger *slog.Logger) *SidecarManager {
-	return &SidecarManager{
-		containers: containers,
-		exec:       exec,
-		authKeyFn:  authKeyFn,
-		network:    network,
-		dataDir:    dataDir,
-		logger:     logger,
+func NewTailnetNodeManager(containers container.Runtime, exec ContainerExec, authKeyFn func() string, traefikPort int, dataDir string, logger *slog.Logger) *TailnetNodeManager {
+	return &TailnetNodeManager{
+		containers:  containers,
+		exec:        exec,
+		authKeyFn:   authKeyFn,
+		traefikPort: traefikPort,
+		dataDir:     dataDir,
+		logger:      logger,
 	}
 }
 
-// SidecarContainerName returns the container name for an app's sidecar.
-func SidecarContainerName(appName string) string {
+// TailnetNodeContainerName returns the container name for an app's tailnet node.
+func TailnetNodeContainerName(appName string) string {
 	return "ts-" + appName
 }
 
-// EnsureRunning starts the Tailscale sidecar for the given app (idempotent).
-// The sidecar is configured declaratively: TS_SERVE_CONFIG points to a
-// pre-generated JSON file, and DependsOn binds the sidecar's systemd unit
+// EnsureRunning starts the Tailscale tailnet node for the given app (idempotent).
+// The tailnet node runs on the host network and proxies to Traefik, which routes
+// to the app based on the Host header. TS_SERVE_CONFIG points to a
+// pre-generated JSON file, and DependsOn binds the tailnet node's systemd unit
 // to the app's unit so they share lifecycle.
-func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appPort int) error {
+func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) error {
 	authKey := m.authKeyFn()
 	if authKey == "" {
 		return fmt.Errorf("no tailnet connection configured")
 	}
 
-	name := SidecarContainerName(appName)
+	name := TailnetNodeContainerName(appName)
 	appService := fmt.Sprintf("apps-%s.service", appName)
 
-	// Write serve config file for Tailscale.
+	// Write serve config file for Tailscale — proxy to Traefik.
 	configDir := filepath.Join(m.dataDir, appName, "ts-serve")
 	configFile := filepath.Join(configDir, "serve.json")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("create serve config dir: %w", err)
 	}
-	serveConfig := buildServeConfig(appName, appPort)
-	data, err := json.MarshalIndent(serveConfig, "", "  ")
+	serveCfg := buildGatewayServeConfig(m.traefikPort)
+	data, err := json.MarshalIndent(serveCfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal serve config: %w", err)
 	}
@@ -90,19 +92,19 @@ func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appP
 		return fmt.Errorf("write serve config: %w", err)
 	}
 
-	// Persist Tailscale state so the sidecar keeps its node identity across restarts.
+	// Persist Tailscale state so the tailnet node keeps its node identity across restarts.
 	stateDir := filepath.Join(m.dataDir, appName, "ts-state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		return fmt.Errorf("create sidecar state dir: %w", err)
+		return fmt.Errorf("create tailnet node state dir: %w", err)
 	}
 
 	spec := container.Spec{
 		Name:    name,
 		Image:   "docker.io/tailscale/tailscale:latest",
-		Network: m.network,
+		Network: "host",
 		Environment: map[string]string{
 			"TS_AUTHKEY":      authKey,
-			"TS_HOSTNAME":     name,
+			"TS_HOSTNAME":     appName,
 			"TS_USERSPACE":    "true",
 			"TS_EXTRA_ARGS":   "--accept-routes",
 			"TS_SERVE_CONFIG": "/etc/ts-serve/serve.json",
@@ -121,93 +123,56 @@ func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appP
 			},
 		},
 		Labels: map[string]string{
-			"io.bloud.app":     appName,
-			"io.bloud.sidecar": "true",
+			"io.bloud.app":          appName,
+			"io.bloud.tailnet-node": "true",
 		},
 		RestartPolicy: "always",
 		DependsOn:     appService,
 	}
 
 	if _, err := m.containers.Ensure(ctx, spec); err != nil {
-		return fmt.Errorf("ensure sidecar container %s: %w", name, err)
+		return fmt.Errorf("ensure tailnet node container %s: %w", name, err)
 	}
 
 	return nil
 }
 
-// GetAddr returns the Tailscale IPv4 address of the sidecar container.
-func (m *SidecarManager) GetAddr(ctx context.Context, appName string) (string, error) {
-	name := SidecarContainerName(appName)
+// GetAddr returns the Tailscale IPv4 address of the tailnet node container.
+func (m *TailnetNodeManager) GetAddr(ctx context.Context, appName string) (string, error) {
+	name := TailnetNodeContainerName(appName)
 	out, err := m.exec.Exec(ctx, name, []string{"tailscale", "ip", "--4"})
 	if err != nil {
 		return "", fmt.Errorf("get tailscale addr for %s: %w", name, err)
 	}
 	addr := strings.TrimSpace(string(out))
 	if addr == "" {
-		return "", fmt.Errorf("sidecar %s has no tailscale address", name)
+		return "", fmt.Errorf("tailnet node %s has no tailscale address", name)
 	}
 	return addr, nil
 }
 
-// Stop removes the sidecar container for the given app. Ignoring
-// "not found" errors makes this safe to call even if the sidecar
+// Stop removes the tailnet node container for the given app. Ignoring
+// "not found" errors makes this safe to call even if the tailnet node
 // was already removed.
-func (m *SidecarManager) Stop(ctx context.Context, appName string) error {
-	name := SidecarContainerName(appName)
+func (m *TailnetNodeManager) Stop(ctx context.Context, appName string) error {
+	name := TailnetNodeContainerName(appName)
 	if err := m.containers.Remove(ctx, name); err != nil {
 		// Ignore "not found" — container may already be gone.
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such") {
 			return nil
 		}
-		return fmt.Errorf("remove sidecar %s: %w", name, err)
+		return fmt.Errorf("remove tailnet node %s: %w", name, err)
 	}
 	return nil
 }
 
-// StopAndPurge stops the sidecar container and removes its persisted Tailscale state.
+// StopAndPurge stops the tailnet node container and removes its persisted Tailscale state.
 // Call this when the tailnet connection is deleted so a future connection starts fresh.
-func (m *SidecarManager) StopAndPurge(ctx context.Context, appName string) error {
+func (m *TailnetNodeManager) StopAndPurge(ctx context.Context, appName string) error {
 	_ = m.Stop(ctx, appName)
 	stateDir := filepath.Join(m.dataDir, appName, "ts-state")
 	if err := os.RemoveAll(stateDir); err != nil {
-		return fmt.Errorf("purge sidecar state for %s: %w", appName, err)
+		return fmt.Errorf("purge tailnet node state for %s: %w", appName, err)
 	}
 	return nil
-}
-
-// serveConfig is the Tailscale Serve JSON configuration structure.
-// See https://github.com/tailscale/tailscale/blob/main/ipn/serve.go
-type serveConfig struct {
-	TCP map[string]tcpConfig `json:"TCP"`
-	Web map[string]webConfig `json:"Web"`
-}
-
-type tcpConfig struct {
-	HTTPS bool `json:"HTTPS"`
-}
-
-type webConfig struct {
-	Handlers map[string]handler `json:"Handlers"`
-}
-
-type handler struct {
-	Proxy string `json:"Proxy"`
-}
-
-// buildServeConfig creates the Tailscale Serve config that proxies HTTPS
-// traffic on port 443 to the app container on the shared network.
-func buildServeConfig(appName string, appPort int) serveConfig {
-	proxyTarget := fmt.Sprintf("http://apps-%s:%d", appName, appPort)
-	return serveConfig{
-		TCP: map[string]tcpConfig{
-			"443": {HTTPS: true},
-		},
-		Web: map[string]webConfig{
-			"${TS_CERT_DOMAIN}:443": {
-				Handlers: map[string]handler{
-					"/": {Proxy: proxyTarget},
-				},
-			},
-		},
-	}
 }

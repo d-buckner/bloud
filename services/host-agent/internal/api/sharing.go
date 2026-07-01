@@ -200,16 +200,16 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get sidecar tailnet address
-	if s.sidecar == nil {
-		respondError(w, http.StatusServiceUnavailable, "sharing not available: sidecar manager not configured")
+	// Get tailnet node address
+	if s.tailnetNode == nil {
+		respondError(w, http.StatusServiceUnavailable, "sharing not available: tailnet node manager not configured")
 		return
 	}
 
-	addr, err := s.sidecar.GetAddr(r.Context(), req.AppID)
+	addr, err := s.tailnetNode.GetAddr(r.Context(), req.AppID)
 	if err != nil {
-		s.logger.Error("failed to get sidecar address", "app", req.AppID, "error", err)
-		respondError(w, http.StatusServiceUnavailable, "sidecar not ready")
+		s.logger.Error("failed to get tailnet node address", "app", req.AppID, "error", err)
+		respondError(w, http.StatusServiceUnavailable, "tailnet node not ready")
 		return
 	}
 
@@ -235,7 +235,7 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		AppID:              req.AppID,
 		AppName:            catalogApp.DisplayName,
 		HostLabel:          s.cfg.HostLabel,
-		SidecarTailnetAddr: addr,
+		TailnetAddr:        addr,
 		NodeShareLink:      req.NodeShareLink,
 	}
 

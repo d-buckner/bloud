@@ -19,7 +19,7 @@ func TestRemoteAppStore_Create_List(t *testing.T) {
 		AppName:            "Jellyfin",
 		SSOStrategy:        "native-oidc",
 		BypassPaths:        []string{"/health", "/metrics"},
-		SidecarTailnetAddr: "alice-jellyfin.tail1234.ts.net",
+		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
 		Status:             "pending_credential",
 	})
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestRemoteAppStore_Create_List(t *testing.T) {
 	assert.Equal(t, "Jellyfin", apps[0].AppName)
 	assert.Equal(t, "native-oidc", apps[0].SSOStrategy)
 	assert.Equal(t, []string{"/health", "/metrics"}, apps[0].BypassPaths)
-	assert.Equal(t, "alice-jellyfin.tail1234.ts.net", apps[0].SidecarTailnetAddr)
+	assert.Equal(t, "alice-jellyfin.tail1234.ts.net", apps[0].TailnetAddr)
 	assert.Equal(t, "pending_credential", apps[0].Status)
 	assert.False(t, apps[0].CreatedAt.IsZero())
 }
@@ -49,7 +49,7 @@ func TestRemoteAppStore_SetCredential_GetByID(t *testing.T) {
 		AppName:            "Jellyfin",
 		SSOStrategy:        "native-oidc",
 		BypassPaths:        []string{},
-		SidecarTailnetAddr: "alice-jellyfin.tail1234.ts.net",
+		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
 		Status:             "pending_credential",
 	}))
 
@@ -84,7 +84,7 @@ func TestRemoteAppStore_SetStatus(t *testing.T) {
 		AppName:            "Jellyfin",
 		SSOStrategy:        "native-oidc",
 		BypassPaths:        []string{},
-		SidecarTailnetAddr: "alice-jellyfin.tail1234.ts.net",
+		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
 		Status:             "pending_credential",
 	}))
 
@@ -107,7 +107,7 @@ func TestRemoteAppStore_Delete(t *testing.T) {
 		AppName:            "Jellyfin",
 		SSOStrategy:        "native-oidc",
 		BypassPaths:        []string{},
-		SidecarTailnetAddr: "alice-jellyfin.tail1234.ts.net",
+		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
 		Status:             "pending_credential",
 	}))
 

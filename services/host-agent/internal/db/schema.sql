@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS remote_apps (
     app_name             TEXT NOT NULL,
     sso_strategy         TEXT NOT NULL,
     bypass_paths         TEXT NOT NULL DEFAULT '[]',
-    sidecar_tailnet_addr TEXT NOT NULL,
+    tailnet_addr TEXT NOT NULL,
     encrypted_cred       BLOB,
     status               TEXT NOT NULL DEFAULT 'pending_credential',
     created_at           TEXT DEFAULT (datetime('now'))

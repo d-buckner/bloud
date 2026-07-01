@@ -20,17 +20,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── Fake Sidecar Manager ────────────────────────────────────────────────────
+// ── Fake Tailnet Node Manager ────────────────────────────────────────────────
 
-type fakeSidecar struct {
+type fakeTailnetNode struct {
 	addr    string
 	addrErr error
 }
 
-func (f *fakeSidecar) EnsureRunning(_ context.Context, _ string, _ int) error { return nil }
-func (f *fakeSidecar) Stop(_ context.Context, _ string) error                 { return nil }
-func (f *fakeSidecar) StopAndPurge(_ context.Context, _ string) error         { return nil }
-func (f *fakeSidecar) GetAddr(_ context.Context, _ string) (string, error) {
+func (f *fakeTailnetNode) EnsureRunning(_ context.Context, _ string) error { return nil }
+func (f *fakeTailnetNode) Stop(_ context.Context, _ string) error                 { return nil }
+func (f *fakeTailnetNode) StopAndPurge(_ context.Context, _ string) error         { return nil }
+func (f *fakeTailnetNode) GetAddr(_ context.Context, _ string) (string, error) {
 	return f.addr, f.addrErr
 }
 
@@ -166,7 +166,7 @@ func setupSharingTestServer(t *testing.T) *Server {
 		appHub:     appHub,
 		guestStore: guestStore,
 		shareStore: newFakeShareStore(),
-		sidecar:    &fakeSidecar{addr: "100.64.1.2"},
+		tailnetNode: &fakeTailnetNode{addr: "100.64.1.2"},
 		logger:     logger,
 	}
 
@@ -201,7 +201,7 @@ func TestHandleCreateInvite_Success(t *testing.T) {
 	assert.Equal(t, "navidrome", payload.AppID)
 	assert.Equal(t, "Navidrome", payload.AppName)
 	assert.Equal(t, "Test Host", payload.HostLabel)
-	assert.Equal(t, "100.64.1.2", payload.SidecarTailnetAddr)
+	assert.Equal(t, "100.64.1.2", payload.TailnetAddr)
 	assert.Equal(t, "https://login.tailscale.com/admin/invite/abc123", payload.NodeShareLink)
 
 	// Verify share was stored
@@ -242,9 +242,9 @@ func TestHandleCreateInvite_AppNotInstalled(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestHandleCreateInvite_SidecarNotAvailable(t *testing.T) {
+func TestHandleCreateInvite_TailnetNodeNotAvailable(t *testing.T) {
 	server := setupSharingTestServer(t)
-	server.sidecar = nil
+	server.tailnetNode = nil
 
 	body := `{"appId": "navidrome", "guestId": "guest-bob", "nodeShareLink": "https://example.com"}`
 	req := httptest.NewRequest("POST", "/api/sharing/invites", strings.NewReader(body))
@@ -256,9 +256,9 @@ func TestHandleCreateInvite_SidecarNotAvailable(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestHandleCreateInvite_SidecarAddrError(t *testing.T) {
+func TestHandleCreateInvite_TailnetNodeAddrError(t *testing.T) {
 	server := setupSharingTestServer(t)
-	server.sidecar = &fakeSidecar{addrErr: fmt.Errorf("container not running")}
+	server.tailnetNode = &fakeTailnetNode{addrErr: fmt.Errorf("container not running")}
 
 	body := `{"appId": "navidrome", "guestId": "guest-bob", "nodeShareLink": "https://example.com"}`
 	req := httptest.NewRequest("POST", "/api/sharing/invites", strings.NewReader(body))

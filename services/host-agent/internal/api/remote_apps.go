@@ -14,7 +14,7 @@ import (
 // addRemoteAppRequest is the request body for POST /api/sharing/remote-apps.
 type addRemoteAppRequest struct {
 	AppID       string `json:"appId"`       // catalog app identifier (e.g. "jellyfin")
-	TailnetAddr string `json:"tailnetAddr"` // sidecar tailnet address (e.g. "ts-jellyfin.tail1275sa.ts.net")
+	TailnetAddr string `json:"tailnetAddr"` // tailnet node address (e.g. "ts-jellyfin.tail1275sa.ts.net")
 	HostLabel   string `json:"hostLabel"`   // display label for the remote host (e.g. "Johan's server")
 }
 

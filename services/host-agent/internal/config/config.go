@@ -34,7 +34,7 @@ type Config struct {
 	// LDAP configuration
 	LDAPHost         string // LDAP outpost hostname (default: apps-authentik-ldap)
 	LDAPBindPassword string
-	// Tailscale auth key for sidecar containers (empty = sharing disabled)
+	// Tailscale auth key for tailnet node containers (empty = sharing disabled)
 	TSAuthKey string
 	// HostLabel is the display name for this host in invite tokens (e.g. "Alice's Server")
 	HostLabel string

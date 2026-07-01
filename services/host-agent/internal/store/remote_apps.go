@@ -15,7 +15,7 @@ type RemoteApp struct {
 	AppName            string    `json:"app_name"`
 	SSOStrategy        string    `json:"sso_strategy"`
 	BypassPaths        []string  `json:"bypass_paths"`
-	SidecarTailnetAddr string    `json:"sidecar_tailnet_addr"`
+	TailnetAddr        string    `json:"tailnet_addr"`
 	EncryptedCred      []byte    `json:"-"`
 	Status             string    `json:"status"`
 	CreatedAt          time.Time `json:"created_at"`
@@ -39,9 +39,9 @@ func (s *RemoteAppStore) Create(app RemoteApp) error {
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO remote_apps (id, host_label, app_id, app_name, sso_strategy, bypass_paths, sidecar_tailnet_addr, encrypted_cred, status)
+		INSERT INTO remote_apps (id, host_label, app_id, app_name, sso_strategy, bypass_paths, tailnet_addr, encrypted_cred, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, app.ID, app.HostLabel, app.AppID, app.AppName, app.SSOStrategy, string(bypassJSON), app.SidecarTailnetAddr, app.EncryptedCred, app.Status)
+	`, app.ID, app.HostLabel, app.AppID, app.AppName, app.SSOStrategy, string(bypassJSON), app.TailnetAddr, app.EncryptedCred, app.Status)
 	if err != nil {
 		return fmt.Errorf("failed to insert remote app: %w", err)
 	}
@@ -51,7 +51,7 @@ func (s *RemoteAppStore) Create(app RemoteApp) error {
 // GetByID returns a remote app by ID, or (nil, nil) if not found
 func (s *RemoteAppStore) GetByID(id string) (*RemoteApp, error) {
 	row := s.db.QueryRow(`
-		SELECT id, host_label, app_id, app_name, sso_strategy, bypass_paths, sidecar_tailnet_addr, encrypted_cred, status, created_at
+		SELECT id, host_label, app_id, app_name, sso_strategy, bypass_paths, tailnet_addr, encrypted_cred, status, created_at
 		FROM remote_apps
 		WHERE id = ?
 	`, id)
@@ -69,7 +69,7 @@ func (s *RemoteAppStore) GetByID(id string) (*RemoteApp, error) {
 // List returns all remote apps
 func (s *RemoteAppStore) List() ([]*RemoteApp, error) {
 	rows, err := s.db.Query(`
-		SELECT id, host_label, app_id, app_name, sso_strategy, bypass_paths, sidecar_tailnet_addr, encrypted_cred, status, created_at
+		SELECT id, host_label, app_id, app_name, sso_strategy, bypass_paths, tailnet_addr, encrypted_cred, status, created_at
 		FROM remote_apps
 		ORDER BY created_at DESC
 	`)
@@ -150,7 +150,7 @@ func (s *RemoteAppStore) scanRemoteApp(rows *sql.Rows) (*RemoteApp, error) {
 		&app.AppName,
 		&app.SSOStrategy,
 		&bypassJSON,
-		&app.SidecarTailnetAddr,
+		&app.TailnetAddr,
 		&encryptedCred,
 		&app.Status,
 		&createdAt,
@@ -182,7 +182,7 @@ func (s *RemoteAppStore) scanRemoteAppRow(row *sql.Row) (*RemoteApp, error) {
 		&app.AppName,
 		&app.SSOStrategy,
 		&bypassJSON,
-		&app.SidecarTailnetAddr,
+		&app.TailnetAddr,
 		&encryptedCred,
 		&app.Status,
 		&createdAt,

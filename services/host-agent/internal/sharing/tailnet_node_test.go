@@ -44,9 +44,9 @@ func (f *FakeRuntime) Inspect(_ context.Context, _ string) (container.State, err
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-func newTestManager(t *testing.T, rt *FakeRuntime) *SidecarManager {
+func newTestManager(t *testing.T, rt *FakeRuntime) *TailnetNodeManager {
 	t.Helper()
-	return NewSidecarManager(rt, nil, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
+	return NewTailnetNodeManager(rt, nil, func() string { return "tskey-auth-test" }, 8080, t.TempDir(), discardLogger())
 }
 
 func discardLogger() *slog.Logger {
@@ -55,16 +55,16 @@ func discardLogger() *slog.Logger {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-func TestSidecarContainerName(t *testing.T) {
-	assert.Equal(t, "ts-navidrome", SidecarContainerName("navidrome"))
-	assert.Equal(t, "ts-jellyfin", SidecarContainerName("jellyfin"))
+func TestTailnetNodeContainerName(t *testing.T) {
+	assert.Equal(t, "ts-navidrome", TailnetNodeContainerName("navidrome"))
+	assert.Equal(t, "ts-jellyfin", TailnetNodeContainerName("jellyfin"))
 }
 
 func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 	rt := &FakeRuntime{}
 	mgr := newTestManager(t, rt)
 
-	err := mgr.EnsureRunning(context.Background(), "navidrome", 4533)
+	err := mgr.EnsureRunning(context.Background(), "navidrome")
 	require.NoError(t, err)
 
 	// Verify container spec
@@ -72,13 +72,13 @@ func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 	spec := rt.Ensured[0]
 	assert.Equal(t, "ts-navidrome", spec.Name)
 	assert.Equal(t, "docker.io/tailscale/tailscale:latest", spec.Image)
-	assert.Equal(t, "apps-net", spec.Network)
+	assert.Equal(t, "host", spec.Network)
 	assert.Equal(t, "tskey-auth-test", spec.Environment["TS_AUTHKEY"])
-	assert.Equal(t, "ts-navidrome", spec.Environment["TS_HOSTNAME"])
+	assert.Equal(t, "navidrome", spec.Environment["TS_HOSTNAME"])
 	assert.Equal(t, "true", spec.Environment["TS_USERSPACE"])
 	assert.Equal(t, "/etc/ts-serve/serve.json", spec.Environment["TS_SERVE_CONFIG"])
 	assert.Equal(t, "navidrome", spec.Labels["io.bloud.app"])
-	assert.Equal(t, "true", spec.Labels["io.bloud.sidecar"])
+	assert.Equal(t, "true", spec.Labels["io.bloud.tailnet-node"])
 	assert.Equal(t, "always", spec.RestartPolicy)
 
 	// Verify systemd dependency binding
@@ -98,9 +98,9 @@ func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 func TestEnsureRunning_WritesServeConfigJSON(t *testing.T) {
 	rt := &FakeRuntime{}
 	dataDir := t.TempDir()
-	mgr := NewSidecarManager(rt, nil, func() string { return "tskey-auth-test" }, "apps-net", dataDir, discardLogger())
+	mgr := NewTailnetNodeManager(rt, nil, func() string { return "tskey-auth-test" }, 8080, dataDir, discardLogger())
 
-	err := mgr.EnsureRunning(context.Background(), "jellyfin", 8096)
+	err := mgr.EnsureRunning(context.Background(), "jellyfin")
 	require.NoError(t, err)
 
 	// Read and verify the serve config file
@@ -114,15 +114,15 @@ func TestEnsureRunning_WritesServeConfigJSON(t *testing.T) {
 	assert.True(t, cfg.TCP["443"].HTTPS)
 	web, ok := cfg.Web["${TS_CERT_DOMAIN}:443"]
 	require.True(t, ok, "expected Web entry for ${TS_CERT_DOMAIN}:443")
-	assert.Equal(t, "http://apps-jellyfin:8096", web.Handlers["/"].Proxy)
+	assert.Equal(t, "http://localhost:8080", web.Handlers["/"].Proxy)
 }
 
 func TestEnsureRunning_Idempotent(t *testing.T) {
 	rt := &FakeRuntime{}
 	mgr := newTestManager(t, rt)
 
-	require.NoError(t, mgr.EnsureRunning(context.Background(), "navidrome", 4533))
-	require.NoError(t, mgr.EnsureRunning(context.Background(), "navidrome", 4533))
+	require.NoError(t, mgr.EnsureRunning(context.Background(), "navidrome"))
+	require.NoError(t, mgr.EnsureRunning(context.Background(), "navidrome"))
 
 	// Ensure was called twice (idempotent, both go through)
 	assert.Len(t, rt.Ensured, 2)
@@ -139,7 +139,7 @@ func TestStop_RemovesContainer(t *testing.T) {
 
 func TestStop_IgnoresNotFound(t *testing.T) {
 	rt := &notFoundRuntime{}
-	mgr := NewSidecarManager(rt, nil, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
+	mgr := NewTailnetNodeManager(rt, nil, func() string { return "tskey-auth-test" }, 8080, t.TempDir(), discardLogger())
 
 	err := mgr.Stop(context.Background(), "navidrome")
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func (f *fakeExec) Exec(_ context.Context, _ string, _ []string) ([]byte, error)
 func TestGetAddr_Success(t *testing.T) {
 	rt := &FakeRuntime{}
 	exec := &fakeExec{output: []byte("100.64.1.2\n")}
-	mgr := NewSidecarManager(rt, exec, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
+	mgr := NewTailnetNodeManager(rt, exec, func() string { return "tskey-auth-test" }, 8080, t.TempDir(), discardLogger())
 
 	addr, err := mgr.GetAddr(context.Background(), "navidrome")
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestGetAddr_Success(t *testing.T) {
 func TestGetAddr_ExecError(t *testing.T) {
 	rt := &FakeRuntime{}
 	exec := &fakeExec{err: fmt.Errorf("container not running")}
-	mgr := NewSidecarManager(rt, exec, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
+	mgr := NewTailnetNodeManager(rt, exec, func() string { return "tskey-auth-test" }, 8080, t.TempDir(), discardLogger())
 
 	_, err := mgr.GetAddr(context.Background(), "navidrome")
 	require.Error(t, err)
@@ -188,18 +188,18 @@ func TestGetAddr_ExecError(t *testing.T) {
 func TestGetAddr_EmptyOutput(t *testing.T) {
 	rt := &FakeRuntime{}
 	exec := &fakeExec{output: []byte("")}
-	mgr := NewSidecarManager(rt, exec, func() string { return "tskey-auth-test" }, "apps-net", t.TempDir(), discardLogger())
+	mgr := NewTailnetNodeManager(rt, exec, func() string { return "tskey-auth-test" }, 8080, t.TempDir(), discardLogger())
 
 	_, err := mgr.GetAddr(context.Background(), "navidrome")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no tailscale address")
 }
 
-func TestBuildServeConfig(t *testing.T) {
-	cfg := buildServeConfig("navidrome", 4533)
+func TestBuildGatewayServeConfig(t *testing.T) {
+	cfg := buildGatewayServeConfig(8080)
 
 	assert.True(t, cfg.TCP["443"].HTTPS)
 
 	web := cfg.Web["${TS_CERT_DOMAIN}:443"]
-	assert.Equal(t, "http://apps-navidrome:4533", web.Handlers["/"].Proxy)
+	assert.Equal(t, "http://localhost:8080", web.Handlers["/"].Proxy)
 }

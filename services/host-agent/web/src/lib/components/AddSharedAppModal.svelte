@@ -51,7 +51,7 @@
 		try {
 			const json = atob(raw.replace(/-/g, '+').replace(/_/g, '/'));
 			const payload = JSON.parse(json) as InvitePayload;
-			if (!payload.appId || !payload.sidecarTailnetAddr || !payload.hostLabel) {
+			if (!payload.appId || !payload.tailnetAddr || !payload.hostLabel) {
 				decoded = null;
 				decodeError = 'Invalid token: missing required fields';
 				return;
@@ -89,7 +89,7 @@
 		submitting = true;
 		errorMsg = '';
 		try {
-			onadd(decoded.appId, decoded.sidecarTailnetAddr, decoded.hostLabel);
+			onadd(decoded.appId, decoded.tailnetAddr, decoded.hostLabel);
 			onclose();
 		} catch (err) {
 			errorMsg = err instanceof Error ? err.message : 'Failed to add shared app';
@@ -147,7 +147,7 @@
 					</p>
 					<dl class="preview-details">
 						<dt>Tailnet address</dt>
-						<dd>{decoded.sidecarTailnetAddr}</dd>
+						<dd>{decoded.tailnetAddr}</dd>
 					</dl>
 					{#if decoded.nodeShareLink}
 						<a

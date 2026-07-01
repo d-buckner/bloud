@@ -128,7 +128,7 @@ func TestAPI_ListRemoteApps_WithApps(t *testing.T) {
 		HostLabel:          "Johan",
 		AppID:              "jellyfin",
 		AppName:            "Jellyfin",
-		SidecarTailnetAddr: "ts-jf.tail123.ts.net",
+		TailnetAddr:        "ts-jf.tail123.ts.net",
 		Status:             "active",
 		BypassPaths:        []string{},
 	})

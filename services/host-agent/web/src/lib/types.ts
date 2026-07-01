@@ -52,7 +52,7 @@ export interface RemoteApp {
 	app_name: string;
 	sso_strategy: string;
 	bypass_paths: string[];
-	sidecar_tailnet_addr: string;
+	tailnet_addr: string;
 	status: string;
 	created_at: string;
 }
@@ -122,7 +122,7 @@ export interface InvitePayload {
 	appId: string;
 	appName: string;
 	hostLabel: string;
-	sidecarTailnetAddr: string;
+	tailnetAddr: string;
 	nodeShareLink: string;
 }
 

@@ -14,7 +14,7 @@ func TestGenerateToken_ProducesValidBase64JSON(t *testing.T) {
 		AppID:              "navidrome",
 		AppName:            "Navidrome",
 		HostLabel:          "Alice's Server",
-		SidecarTailnetAddr: "100.64.1.2",
+		TailnetAddr: "100.64.1.2",
 		NodeShareLink:      "https://login.tailscale.com/admin/invite/abc123",
 	}
 
@@ -32,7 +32,7 @@ func TestGenerateToken_ProducesValidBase64JSON(t *testing.T) {
 	assert.Equal(t, "navidrome", m["appId"])
 	assert.Equal(t, "Navidrome", m["appName"])
 	assert.Equal(t, "Alice's Server", m["hostLabel"])
-	assert.Equal(t, "100.64.1.2", m["sidecarTailnetAddr"])
+	assert.Equal(t, "100.64.1.2", m["tailnetAddr"])
 	assert.Equal(t, "https://login.tailscale.com/admin/invite/abc123", m["nodeShareLink"])
 }
 
@@ -41,7 +41,7 @@ func TestDecodeToken_RoundTrips(t *testing.T) {
 		AppID:              "jellyfin",
 		AppName:            "Jellyfin",
 		HostLabel:          "Bob's NAS",
-		SidecarTailnetAddr: "ts-jellyfin.tail1275sa.ts.net",
+		TailnetAddr: "ts-jellyfin.tail1275sa.ts.net",
 		NodeShareLink:      "https://login.tailscale.com/admin/invite/xyz789",
 	}
 
@@ -54,7 +54,7 @@ func TestDecodeToken_RoundTrips(t *testing.T) {
 	assert.Equal(t, original.AppID, decoded.AppID)
 	assert.Equal(t, original.AppName, decoded.AppName)
 	assert.Equal(t, original.HostLabel, decoded.HostLabel)
-	assert.Equal(t, original.SidecarTailnetAddr, decoded.SidecarTailnetAddr)
+	assert.Equal(t, original.TailnetAddr, decoded.TailnetAddr)
 	assert.Equal(t, original.NodeShareLink, decoded.NodeShareLink)
 }
 

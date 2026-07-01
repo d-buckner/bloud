@@ -162,9 +162,9 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add gateway node when a tailnet connection is active.
-	// The gateway is the owner's remote access point — it joins the tailnet
-	// and proxies to local Traefik so the owner can reach their Bloud instance
-	// remotely. It is separate from sidecars, which handle app sharing.
+	// The gateway joins the tailnet and exposes a SOCKS5 proxy so that remote
+	// apps (shared from other hosts) can be proxied through Traefik to the LAN.
+	// It is separate from tailnet nodes, which handle outbound app sharing.
 	if s.gateway != nil && len(tailnetIDs) > 0 {
 		gwStatus := "stopped"
 		if s.gateway.IsRunning(r.Context()) {
