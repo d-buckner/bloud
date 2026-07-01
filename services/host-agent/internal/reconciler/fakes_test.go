@@ -586,53 +586,48 @@ func (f *FakeRemoteAppStore) Apps() []*store.RemoteApp {
 var _ store.RemoteAppStoreInterface = (*FakeRemoteAppStore)(nil)
 
 // ============================================================================
-// FakeSidecarManager — records EnsureRunning/StopAndPurge calls
+// FakeTailnetNodeManager — records EnsureRunning/StopAndPurge calls
 // ============================================================================
 
-type FakeSidecarManager struct {
+type FakeTailnetNodeManager struct {
 	mu          sync.Mutex
-	ensuredApps []sidecarEnsureCall
+	ensuredApps []string
 	purgedApps  []string
 	ensureError map[string]error
 }
 
-type sidecarEnsureCall struct {
-	AppName string
-	AppPort int
-}
-
-func NewFakeSidecarManager() *FakeSidecarManager {
-	return &FakeSidecarManager{
+func NewFakeTailnetNodeManager() *FakeTailnetNodeManager {
+	return &FakeTailnetNodeManager{
 		ensureError: make(map[string]error),
 	}
 }
 
-func (f *FakeSidecarManager) EnsureRunning(ctx context.Context, appName string, appPort int) error {
+func (f *FakeTailnetNodeManager) EnsureRunning(ctx context.Context, appName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err, ok := f.ensureError[appName]; ok {
 		return err
 	}
-	f.ensuredApps = append(f.ensuredApps, sidecarEnsureCall{AppName: appName, AppPort: appPort})
+	f.ensuredApps = append(f.ensuredApps, appName)
 	return nil
 }
 
-func (f *FakeSidecarManager) StopAndPurge(ctx context.Context, appName string) error {
+func (f *FakeTailnetNodeManager) StopAndPurge(ctx context.Context, appName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.purgedApps = append(f.purgedApps, appName)
 	return nil
 }
 
-func (f *FakeSidecarManager) EnsuredApps() []sidecarEnsureCall {
+func (f *FakeTailnetNodeManager) EnsuredApps() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]sidecarEnsureCall, len(f.ensuredApps))
+	out := make([]string, len(f.ensuredApps))
 	copy(out, f.ensuredApps)
 	return out
 }
 
-func (f *FakeSidecarManager) PurgedApps() []string {
+func (f *FakeTailnetNodeManager) PurgedApps() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]string, len(f.purgedApps))
@@ -641,7 +636,7 @@ func (f *FakeSidecarManager) PurgedApps() []string {
 }
 
 // Compile-time assertion.
-var _ SidecarEnsurer = (*FakeSidecarManager)(nil)
+var _ TailnetNodeEnsurer = (*FakeTailnetNodeManager)(nil)
 
 // ============================================================================
 // FakeGatewayManager — records StopAndPurge calls
@@ -699,3 +694,64 @@ func (f *FakeProxyStopper) WasStopCalled() bool {
 
 // Compile-time assertion.
 var _ ProxyStopper = (*FakeProxyStopper)(nil)
+
+// ============================================================================
+// FakeTailnetDomainDiscoverer — returns a configured domain or error
+// ============================================================================
+
+type FakeTailnetDomainDiscoverer struct {
+	mu     sync.Mutex
+	domain string
+	err    error
+	called bool
+}
+
+func NewFakeTailnetDomainDiscoverer(domain string, err error) *FakeTailnetDomainDiscoverer {
+	return &FakeTailnetDomainDiscoverer{domain: domain, err: err}
+}
+
+func (f *FakeTailnetDomainDiscoverer) GetTailnetDomain(ctx context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.called = true
+	return f.domain, f.err
+}
+
+func (f *FakeTailnetDomainDiscoverer) WasCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
+}
+
+// Compile-time assertion.
+var _ TailnetDomainDiscoverer = (*FakeTailnetDomainDiscoverer)(nil)
+
+// ============================================================================
+// FakeForwardDomainProvisioner — records EnsureForwardDomainAuth calls
+// ============================================================================
+
+type FakeForwardDomainProvisioner struct {
+	mu           sync.Mutex
+	calledDomain string
+	err          error
+}
+
+func NewFakeForwardDomainProvisioner(err error) *FakeForwardDomainProvisioner {
+	return &FakeForwardDomainProvisioner{err: err}
+}
+
+func (f *FakeForwardDomainProvisioner) EnsureForwardDomainAuth(cookieDomain string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calledDomain = cookieDomain
+	return f.err
+}
+
+func (f *FakeForwardDomainProvisioner) CalledDomain() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calledDomain
+}
+
+// Compile-time assertion.
+var _ ForwardDomainProvisioner = (*FakeForwardDomainProvisioner)(nil)

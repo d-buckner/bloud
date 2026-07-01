@@ -356,6 +356,11 @@ func (m *MockGatewayManager) IsRunning(ctx context.Context) bool {
 	return args.Bool(0)
 }
 
+func (m *MockGatewayManager) GetTailnetDomain(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
+}
+
 // MockConfigurator implements configurator.Configurator for testing
 type MockConfigurator struct {
 	mock.Mock

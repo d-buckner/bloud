@@ -2,6 +2,7 @@ package sharing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,38 +14,45 @@ import (
 
 // GatewayManagerInterface manages the lifecycle of the gateway Tailscale container.
 // The gateway joins the tailnet and exposes a SOCKS5 proxy so Traefik can reach
-// remote sidecars via host-agent reverse proxies.
+// remote tailnet nodes via host-agent reverse proxies.
 type GatewayManagerInterface interface {
 	EnsureRunning(ctx context.Context) error
 	Stop(ctx context.Context) error
 	StopAndPurge(ctx context.Context) error
 	IsRunning(ctx context.Context) bool
+	GetTailnetDomain(ctx context.Context) (string, error)
 }
 
 // GatewayManager manages a Tailscale gateway container that runs in userspace mode
-// on the host network, exposing a SOCKS5 proxy for reaching remote sidecars.
+// on the host network, exposing a SOCKS5 proxy for reaching remote tailnet nodes.
 type GatewayManager struct {
-	containers container.Runtime
-	authKeyFn  func() string // called at container-creation time for the current auth key
-	socksPort  int           // SOCKS5 proxy port (default 1055)
-	dataDir    string        // root data dir — state stored under {dataDir}/ts-gateway/state/
-	logger     *slog.Logger
+	containers  container.Runtime
+	exec        ContainerExec // runs commands inside the gateway container
+	authKeyFn   func() string // called at container-creation time for the current auth key
+	socksPort   int           // SOCKS5 proxy port (default 1055)
+	traefikPort int           // Traefik entrypoint port for TS_SERVE_CONFIG proxy target
+	dataDir     string        // root data dir — state stored under {dataDir}/ts-gateway/state/
+	logger      *slog.Logger
 }
 
 const gatewayContainerName = "ts-gateway"
 
 // NewGatewayManager creates a GatewayManager.
 //   - containers: runtime for creating/removing the gateway container.
+//   - exec: runs commands inside running containers (for tailscale CLI calls).
 //   - authKeyFn: returns the current Tailscale auth key (called at creation time).
 //   - socksPort: port for the SOCKS5 proxy (typically 1055).
+//   - traefikPort: Traefik entrypoint port for TS_SERVE_CONFIG proxy target.
 //   - dataDir: root data directory for storing persistent Tailscale state.
-func NewGatewayManager(containers container.Runtime, authKeyFn func() string, socksPort int, dataDir string, logger *slog.Logger) *GatewayManager {
+func NewGatewayManager(containers container.Runtime, exec ContainerExec, authKeyFn func() string, socksPort, traefikPort int, dataDir string, logger *slog.Logger) *GatewayManager {
 	return &GatewayManager{
-		containers: containers,
-		authKeyFn:  authKeyFn,
-		socksPort:  socksPort,
-		dataDir:    dataDir,
-		logger:     logger,
+		containers:  containers,
+		exec:        exec,
+		authKeyFn:   authKeyFn,
+		socksPort:   socksPort,
+		traefikPort: traefikPort,
+		dataDir:     dataDir,
+		logger:      logger,
 	}
 }
 
@@ -62,23 +70,44 @@ func (m *GatewayManager) EnsureRunning(ctx context.Context) error {
 		return fmt.Errorf("create gateway state dir: %w", err)
 	}
 
+	// Write Tailscale Serve config so the gateway serves HTTPS on port 443,
+	// proxying to Traefik on localhost.
+	serveConfigDir := filepath.Join(m.dataDir, gatewayContainerName, "ts-serve")
+	if err := os.MkdirAll(serveConfigDir, 0755); err != nil {
+		return fmt.Errorf("create gateway serve config dir: %w", err)
+	}
+	serveCfg := buildGatewayServeConfig(m.traefikPort)
+	data, err := json.MarshalIndent(serveCfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal gateway serve config: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(serveConfigDir, "serve.json"), data, 0644); err != nil {
+		return fmt.Errorf("write gateway serve config: %w", err)
+	}
+
 	spec := container.Spec{
 		Name:    gatewayContainerName,
 		Image:   "docker.io/tailscale/tailscale:latest",
 		Network: "host",
 		Environment: map[string]string{
 			"TS_AUTHKEY":       authKey,
-			"TS_HOSTNAME":      gatewayContainerName,
+			"TS_HOSTNAME":      "bloud",
 			"TS_USERSPACE":     "true",
 			"TS_SOCKS5_SERVER": fmt.Sprintf(":%d", m.socksPort),
 			"TS_EXTRA_ARGS":    "--accept-routes",
 			"TS_STATE_DIR":     "/var/lib/tailscale",
 			"TS_AUTH_ONCE":     "true",
+			"TS_SERVE_CONFIG":  "/etc/ts-serve/serve.json",
 		},
 		Mounts: []container.Mount{
 			{
 				Source:      stateDir,
 				Destination: "/var/lib/tailscale",
+			},
+			{
+				Source:      serveConfigDir,
+				Destination: "/etc/ts-serve",
+				Options:     []string{"ro"},
 			},
 		},
 		Labels: map[string]string{
@@ -124,4 +153,32 @@ func (m *GatewayManager) IsRunning(ctx context.Context) bool {
 		return false
 	}
 	return state.Running
+}
+
+// GetTailnetDomain discovers the tailnet MagicDNS suffix from the running gateway.
+// Returns the domain (e.g. "tail12756a.ts.net") or an error if the gateway is not
+// running or Tailscale is not connected yet.
+func (m *GatewayManager) GetTailnetDomain(ctx context.Context) (string, error) {
+	if m.exec == nil {
+		return "", fmt.Errorf("container exec not available")
+	}
+
+	out, err := m.exec.Exec(ctx, gatewayContainerName, []string{"tailscale", "status", "--json"})
+	if err != nil {
+		return "", fmt.Errorf("exec tailscale status in gateway: %w", err)
+	}
+
+	var status struct {
+		MagicDNSSuffix string `json:"MagicDNSSuffix"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return "", fmt.Errorf("parse tailscale status: %w", err)
+	}
+
+	domain := strings.TrimSuffix(status.MagicDNSSuffix, ".")
+	if domain == "" {
+		return "", fmt.Errorf("tailscale MagicDNSSuffix is empty (not connected yet?)")
+	}
+
+	return domain, nil
 }

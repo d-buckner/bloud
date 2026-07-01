@@ -21,10 +21,11 @@ type fakeGateway struct {
 	running bool
 }
 
-func (g *fakeGateway) EnsureRunning(_ context.Context) error { return nil }
-func (g *fakeGateway) Stop(_ context.Context) error          { return nil }
-func (g *fakeGateway) StopAndPurge(_ context.Context) error  { return nil }
-func (g *fakeGateway) IsRunning(_ context.Context) bool      { return g.running }
+func (g *fakeGateway) EnsureRunning(_ context.Context) error             { return nil }
+func (g *fakeGateway) Stop(_ context.Context) error                      { return nil }
+func (g *fakeGateway) StopAndPurge(_ context.Context) error              { return nil }
+func (g *fakeGateway) IsRunning(_ context.Context) bool                  { return g.running }
+func (g *fakeGateway) GetTailnetDomain(_ context.Context) (string, error) { return "", nil }
 
 func newDeveloperTestServer() *Server {
 	appStore := NewFakeAppStore()
@@ -349,7 +350,7 @@ func TestDeveloperGraph_Gateway(t *testing.T) {
 	_, ok = nodeMap["conn:tailnet:tn-abc"]
 	assert.True(t, ok, "tailnet connection node should exist")
 
-	// Edges: tailnet→gateway, gateway→traefik, tailnet→jellyfin (sidecar), local→traefik
+	// Edges: tailnet→gateway, gateway→traefik, tailnet→jellyfin (tailnet node), local→traefik
 	edgeSet := make(map[string]graphEdge)
 	for _, e := range graph.Edges {
 		edgeSet[e.Source+"→"+e.Target] = e
@@ -360,13 +361,13 @@ func TestDeveloperGraph_Gateway(t *testing.T) {
 	require.True(t, ok, "should have tailnet→gateway edge")
 	assert.Equal(t, "tailnet", gwEdge.Label)
 
-	// Gateway → traefik (remote access proxy)
+	// Gateway → traefik (SOCKS5 proxy for remote app LAN access)
 	proxyEdge, ok := edgeSet["sys:gateway→traefik"]
 	require.True(t, ok, "should have gateway→traefik edge")
 	assert.Equal(t, "proxy", proxyEdge.Label)
 
-	// Tailnet → jellyfin (sidecar sharing — unchanged)
-	sidecarEdge, ok := edgeSet["conn:tailnet:tn-abc→jellyfin"]
-	require.True(t, ok, "should have tailnet→jellyfin edge for sidecar")
-	assert.Equal(t, "tailnet", sidecarEdge.Label)
+	// Tailnet → jellyfin (tailnet node sharing — unchanged)
+	tailnetNodeEdge, ok := edgeSet["conn:tailnet:tn-abc→jellyfin"]
+	require.True(t, ok, "should have tailnet→jellyfin edge for tailnet node")
+	assert.Equal(t, "tailnet", tailnetNodeEdge.Label)
 }

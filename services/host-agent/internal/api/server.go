@@ -46,7 +46,7 @@ type Server struct {
 	shareStore        store.ShareStoreInterface
 	remoteAppStore    store.RemoteAppStoreInterface
 	tailnetStore      store.TailnetStoreInterface
-	sidecar           sharing.SidecarManagerInterface
+	tailnetNode       sharing.TailnetNodeManagerInterface
 	gateway           sharing.GatewayManagerInterface
 	remoteProxy       *sharing.RemoteProxyManager
 	authentikClient   *authentik.Client
@@ -66,6 +66,7 @@ type ServerConfig struct {
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	BaseDomain        string // Base domain for subdomain routing (e.g., "localhost")
+	TraefikPort       int    // Traefik entrypoint port (default 8080)
 	Port              int
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets (required for SSO)
@@ -73,7 +74,7 @@ type ServerConfig struct {
 	SSOAuthentikURL string // Authentik external URL for browser OAuth discovery
 	AuthentikToken  string // Authentik API token for SSO cleanup
 	AuthentikPort   int    // Authentik API port (default 9001)
-	// Tailscale auth key for sharing sidecars (empty = sharing disabled)
+	// Tailscale auth key for sharing tailnet nodes (empty = sharing disabled)
 	TSAuthKey string
 	// HostLabel is the display name for this host in invite tokens
 	HostLabel string
@@ -233,20 +234,20 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			return conn.AuthKey
 		}
 
-		// Always create the SidecarManager — authKeyFn reads the active
-		// connection from the store at sidecar-creation time, so adding a
-		// tailnet connection via Settings takes effect without restart.
+		// Always create the TailnetNodeManager — authKeyFn reads the active
+		// connection from the store at creation time, so adding a tailnet
+		// connection via Settings takes effect without restart.
 		// EnsureRunning returns an error (non-fatal) when authKeyFn() == "".
 		var exec sharing.ContainerExec
 		if client != nil {
 			exec = client
 		}
-		sidecar := sharing.NewSidecarManager(runtime, exec, authKeyFn, "apps-net", s.cfg.DataDir, s.logger)
-		s.sidecar = sidecar
-		s.logger.Info("sidecar manager initialized")
+		tailnetNode := sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
+		s.tailnetNode = tailnetNode
+		s.logger.Info("tailnet node manager initialized")
 
 		// Create gateway manager for remote app proxying (SOCKS5 on port 1055).
-		gateway := sharing.NewGatewayManager(runtime, authKeyFn, 1055, s.cfg.DataDir, s.logger)
+		gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, 1055, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
 		s.gateway = gateway
 
 		// Create remote proxy manager (allocates localhost ports starting at 10100).
@@ -259,10 +260,10 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			AppStore:       appStore,
 			Containers:     runtime,
 			Registry:       s.cfg.Registry,
-			TraefikGen:     traefikgen.NewGenerator(traefikConfigPath, s.cfg.BaseDomain),
+			TraefikGen:     traefikgen.NewGenerator(traefikConfigPath),
 			LDAPOutput:     s.cfg.LDAPOutput,
 			SSO:            ssoProvisioner,
-			Sidecar:        sidecar,
+			TailnetNode:    tailnetNode,
 			Gateway:        gateway,
 			RemoteProxy:    remoteProxy,
 			RemoteAppStore: s.remoteAppStore,
@@ -280,18 +281,26 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		})
 		s.logger.Info("portable orchestrator initialized")
 
+		// Build forward-domain SSO provisioner (nil when Authentik not installed).
+		var forwardDomainSSO reconciler.ForwardDomainProvisioner
+		if s.authentikClient != nil {
+			forwardDomainSSO = s.authentikClient
+		}
+
 		// Wire the intent reconciler with real dependencies now that the
 		// portable orchestrator exists.
 		s.intentReconciler = reconciler.New(s.logger, &reconciler.Config{
-			Lifecycle:      portable,
-			AppStore:       appStore,
-			CatalogCache:   s.catalog,
-			Graph:          s.graph,
-			TailnetStore:   s.tailnetStore,
-			RemoteAppStore: s.remoteAppStore,
-			Sidecar:        sidecar,
-			Gateway:        gateway,
-			ProxyStopper:   remoteProxy,
+			Lifecycle:        portable,
+			AppStore:         appStore,
+			CatalogCache:     s.catalog,
+			Graph:            s.graph,
+			TailnetStore:     s.tailnetStore,
+			RemoteAppStore:   s.remoteAppStore,
+			TailnetNode:      tailnetNode,
+			Gateway:          gateway,
+			ProxyStopper:     remoteProxy,
+			TailnetDomain:    gateway,
+			ForwardDomainSSO: forwardDomainSSO,
 		})
 		go s.intentReconciler.Start(context.Background())
 

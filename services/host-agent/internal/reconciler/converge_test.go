@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
@@ -19,7 +20,7 @@ type testHarness struct {
 	graph          *FakeAppGraph
 	tailnetStore   *FakeTailnetStore
 	remoteAppStore *FakeRemoteAppStore
-	sidecar        *FakeSidecarManager
+	tailnetNode    *FakeTailnetNodeManager
 	gateway        *FakeGatewayManager
 	proxyStopper   *FakeProxyStopper
 }
@@ -31,7 +32,7 @@ func newTestHarness() *testHarness {
 	ag := NewFakeAppGraph()
 	ts := NewFakeTailnetStore()
 	ra := NewFakeRemoteAppStore()
-	sc := NewFakeSidecarManager()
+	sc := NewFakeTailnetNodeManager()
 	gw := NewFakeGatewayManager()
 	ps := NewFakeProxyStopper()
 
@@ -42,7 +43,7 @@ func newTestHarness() *testHarness {
 		Graph:          ag,
 		TailnetStore:   ts,
 		RemoteAppStore: ra,
-		Sidecar:        sc,
+		TailnetNode:    sc,
 		Gateway:        gw,
 		ProxyStopper:   ps,
 	}
@@ -57,7 +58,7 @@ func newTestHarness() *testHarness {
 		graph:          ag,
 		tailnetStore:   ts,
 		remoteAppStore: ra,
-		sidecar:        sc,
+		tailnetNode:    sc,
 		gateway:        gw,
 		proxyStopper:   ps,
 	}
@@ -311,7 +312,7 @@ func TestConverge_DeleteTailnetIntent_RemovesConnection(t *testing.T) {
 
 // ── Tailnet Convergence Tests ─────────────────────────────────────────────
 
-func TestConverge_ActiveTailnet_EnsuresSidecarsForRunningApps(t *testing.T) {
+func TestConverge_ActiveTailnet_EnsuresTailnetNodesForRunningApps(t *testing.T) {
 	h := newTestHarness()
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
 	h.addCatalogApp("radarr", "Radarr", 7878)
@@ -328,22 +329,17 @@ func TestConverge_ActiveTailnet_EnsuresSidecarsForRunningApps(t *testing.T) {
 	// Run convergence with no intents (just convergence phase).
 	h.reconciler.converge(context.Background(), nil)
 
-	ensured := h.sidecar.EnsuredApps()
+	ensured := h.tailnetNode.EnsuredApps()
 	assert.Len(t, ensured, 2)
-
-	names := make([]string, len(ensured))
-	for i, e := range ensured {
-		names[i] = e.AppName
-	}
-	assert.Contains(t, names, "jellyfin")
-	assert.Contains(t, names, "radarr")
+	assert.Contains(t, ensured, "jellyfin")
+	assert.Contains(t, ensured, "radarr")
 
 	// TailnetID should be set.
 	jf, _ := h.appStore.GetByCatalogID("jellyfin")
 	assert.Equal(t, "tn-1", jf.TailnetID)
 }
 
-func TestConverge_NoTailnet_PurgesSidecarsAndGateway(t *testing.T) {
+func TestConverge_NoTailnet_PurgesTailnetNodesAndGateway(t *testing.T) {
 	h := newTestHarness()
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
 
@@ -354,7 +350,7 @@ func TestConverge_NoTailnet_PurgesSidecarsAndGateway(t *testing.T) {
 	// No active tailnet — convergence should purge.
 	h.reconciler.converge(context.Background(), nil)
 
-	assert.Contains(t, h.sidecar.PurgedApps(), "jellyfin")
+	assert.Contains(t, h.tailnetNode.PurgedApps(), "jellyfin")
 	assert.True(t, h.gateway.WasPurgeCalled())
 	assert.True(t, h.proxyStopper.WasStopCalled())
 
@@ -366,7 +362,7 @@ func TestConverge_NoTailnet_PurgesSidecarsAndGateway(t *testing.T) {
 func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
 	h := newTestHarness()
 
-	// System app — should NOT get a sidecar.
+	// System app — should NOT get a tailnet node.
 	h.catalog.AddApp(&catalog.App{
 		CatalogID: "traefik", DisplayName: "Traefik", Version: "1.0.0",
 		Port: 8080, IsSystem: true,
@@ -382,7 +378,7 @@ func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
 
 	h.reconciler.converge(context.Background(), nil)
 
-	assert.Empty(t, h.sidecar.EnsuredApps(), "system apps should not get sidecars")
+	assert.Empty(t, h.tailnetNode.EnsuredApps(), "system apps should not get tailnet nodes")
 }
 
 // ── Remote App Intent Tests ───────────────────────────────────────────────
@@ -414,7 +410,7 @@ func TestConverge_AddRemoteAppIntent_CreatesRemoteApp(t *testing.T) {
 	assert.Equal(t, "jellyfin", app.AppID)
 	assert.Equal(t, "Jellyfin", app.AppName)
 	assert.Equal(t, "Johan's server", app.HostLabel)
-	assert.Equal(t, "ts-jellyfin.tail1234.ts.net", app.SidecarTailnetAddr)
+	assert.Equal(t, "ts-jellyfin.tail1234.ts.net", app.TailnetAddr)
 	assert.Equal(t, "forward-auth", app.SSOStrategy)
 	assert.Equal(t, []string{"/api/public"}, app.BypassPaths)
 	assert.Equal(t, "active", app.Status)
@@ -476,4 +472,71 @@ func TestConverge_RenameAppIntent_UpdatesDisplayName(t *testing.T) {
 	app, err := h.appStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	assert.Equal(t, "My Media Server", app.DisplayName)
+}
+
+// ── Tailnet SSO Provisioning Tests ────────────────────────────────────────
+
+func TestConverge_ProvisionTailnetSSO_CallsEnsureForwardDomainAuth(t *testing.T) {
+	h := newTestHarness()
+
+	// Active tailnet.
+	h.tailnetStore.Create(store.TailnetConnection{
+		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
+	})
+
+	// Wire up tailnet domain discoverer and forward domain provisioner.
+	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
+	fd := NewFakeForwardDomainProvisioner(nil)
+	h.reconciler.config.TailnetDomain = td
+	h.reconciler.config.ForwardDomainSSO = fd
+
+	h.reconciler.converge(context.Background(), nil)
+
+	assert.True(t, td.WasCalled(), "GetTailnetDomain should be called")
+	assert.Equal(t, "tail12756a.ts.net", fd.CalledDomain(), "EnsureForwardDomainAuth should be called with the tailnet domain")
+}
+
+func TestConverge_ProvisionTailnetSSO_SkipsWhenNoTailnet(t *testing.T) {
+	h := newTestHarness()
+
+	// No active tailnet.
+	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
+	fd := NewFakeForwardDomainProvisioner(nil)
+	h.reconciler.config.TailnetDomain = td
+	h.reconciler.config.ForwardDomainSSO = fd
+
+	h.reconciler.converge(context.Background(), nil)
+
+	assert.False(t, td.WasCalled(), "GetTailnetDomain should not be called without active tailnet")
+	assert.Empty(t, fd.CalledDomain(), "EnsureForwardDomainAuth should not be called")
+}
+
+func TestConverge_ProvisionTailnetSSO_SkipsWhenInterfacesNil(t *testing.T) {
+	h := newTestHarness()
+
+	// Active tailnet but nil interfaces (default from harness).
+	h.tailnetStore.Create(store.TailnetConnection{
+		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
+	})
+
+	// Should not panic — provisionTailnetSSO gracefully returns.
+	h.reconciler.converge(context.Background(), nil)
+}
+
+func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
+	h := newTestHarness()
+
+	h.tailnetStore.Create(store.TailnetConnection{
+		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
+	})
+
+	td := NewFakeTailnetDomainDiscoverer("", fmt.Errorf("gateway not running"))
+	fd := NewFakeForwardDomainProvisioner(nil)
+	h.reconciler.config.TailnetDomain = td
+	h.reconciler.config.ForwardDomainSSO = fd
+
+	h.reconciler.converge(context.Background(), nil)
+
+	assert.True(t, td.WasCalled())
+	assert.Empty(t, fd.CalledDomain(), "EnsureForwardDomainAuth should not be called when gateway is not ready")
 }

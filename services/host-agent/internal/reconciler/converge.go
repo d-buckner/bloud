@@ -25,9 +25,9 @@ type AppLifecycleManager interface {
 	RegenerateRoutes() error
 }
 
-// SidecarEnsurer abstracts sidecar container lifecycle for the reconciler.
-type SidecarEnsurer interface {
-	EnsureRunning(ctx context.Context, appName string, appPort int) error
+// TailnetNodeEnsurer abstracts tailnet node container lifecycle for the reconciler.
+type TailnetNodeEnsurer interface {
+	EnsureRunning(ctx context.Context, appName string) error
 	StopAndPurge(ctx context.Context, appName string) error
 }
 
@@ -42,18 +42,30 @@ type ProxyStopper interface {
 	StopAll()
 }
 
+// TailnetDomainDiscoverer discovers the tailnet MagicDNS domain from the running gateway.
+type TailnetDomainDiscoverer interface {
+	GetTailnetDomain(ctx context.Context) (string, error)
+}
+
+// ForwardDomainProvisioner provisions a forward_domain SSO provider for a tailnet domain.
+type ForwardDomainProvisioner interface {
+	EnsureForwardDomainAuth(cookieDomain string) error
+}
+
 // Config holds the dependencies the reconciler needs for convergence.
 // When nil, the reconciler runs in stub mode (Phase 2 behavior).
 type Config struct {
-	Lifecycle      AppLifecycleManager
-	AppStore       store.AppStoreInterface
-	CatalogCache   catalog.CacheInterface
-	Graph          catalog.AppGraphInterface
-	TailnetStore   store.TailnetStoreInterface
-	RemoteAppStore store.RemoteAppStoreInterface
-	Sidecar        SidecarEnsurer
-	Gateway        GatewayEnsurer
-	ProxyStopper   ProxyStopper
+	Lifecycle        AppLifecycleManager
+	AppStore         store.AppStoreInterface
+	CatalogCache     catalog.CacheInterface
+	Graph            catalog.AppGraphInterface
+	TailnetStore     store.TailnetStoreInterface
+	RemoteAppStore   store.RemoteAppStoreInterface
+	TailnetNode      TailnetNodeEnsurer
+	Gateway          GatewayEnsurer
+	ProxyStopper     ProxyStopper
+	TailnetDomain    TailnetDomainDiscoverer  // optional: discovers tailnet MagicDNS domain
+	ForwardDomainSSO ForwardDomainProvisioner // optional: provisions forward_domain SSO (nil when Authentik not installed)
 }
 
 // applyIntents processes a batch of intents, mutating stores (drain phase).
@@ -210,7 +222,7 @@ func (r *Reconciler) applyAddRemoteAppIntent(intent AddRemoteAppIntent) {
 		AppName:            catalogApp.DisplayName,
 		SSOStrategy:        catalogApp.SSO.Strategy,
 		BypassPaths:        bypassPaths,
-		SidecarTailnetAddr: intent.TailnetAddr,
+		TailnetAddr:        intent.TailnetAddr,
 		Status:             "active",
 	}
 
@@ -334,7 +346,7 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 		}
 	}
 
-	// Step 5: Converge tailnet sidecars/gateway/proxies.
+	// Step 5: Converge tailnet nodes/gateway/proxies.
 	r.logger.Info("convergence step", "step", "converge-tailnet")
 	r.activity.Record("converge_step", "converge-tailnet")
 	r.convergeTailnet(ctx)
@@ -351,6 +363,9 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 	if err := cfg.Lifecycle.RegenerateRoutes(); err != nil {
 		r.logger.Warn("failed to regenerate routes", "error", err)
 	}
+
+	// Step 8: Provision forward_domain SSO for tailnet access (best-effort).
+	r.provisionTailnetSSO(ctx)
 
 	duration := time.Since(start)
 	r.logger.Info("convergence pass complete", "apps", len(apps), "duration", duration)
@@ -398,9 +413,9 @@ func (r *Reconciler) ensureAppPhased(ctx context.Context, cfg *Config, appName s
 	}
 }
 
-// convergeTailnet ensures sidecars/gateway/proxies match the tailnet store state.
-// With an active tailnet: ensure sidecars for running non-system apps.
-// Without a tailnet: purge all sidecars, stop gateway, stop proxies.
+// convergeTailnet ensures tailnet nodes/gateway/proxies match the tailnet store state.
+// With an active tailnet: ensure tailnet nodes for running non-system apps.
+// Without a tailnet: purge all tailnet nodes, stop gateway, stop proxies.
 // All operations are idempotent — safe to run every convergence pass.
 func (r *Reconciler) convergeTailnet(ctx context.Context) {
 	cfg := r.config
@@ -421,20 +436,16 @@ func (r *Reconciler) convergeTailnet(ctx context.Context) {
 	}
 
 	if conn != nil {
-		// Active tailnet: ensure sidecars for running non-system apps.
-		if cfg.Sidecar == nil {
+		// Active tailnet: ensure tailnet nodes for running non-system apps.
+		if cfg.TailnetNode == nil {
 			return
 		}
 		for _, app := range apps {
 			if app.IsSystem || app.Status != "running" {
 				continue
 			}
-			catalogApp, err := cfg.CatalogCache.Get(app.CatalogID)
-			if err != nil || catalogApp.Port == 0 {
-				continue
-			}
-			if err := cfg.Sidecar.EnsureRunning(ctx, app.CatalogID, catalogApp.Port); err != nil {
-				r.logger.Warn("failed to ensure sidecar", "app", app.CatalogID, "error", err)
+			if err := cfg.TailnetNode.EnsureRunning(ctx, app.CatalogID); err != nil {
+				r.logger.Warn("failed to ensure tailnet node", "app", app.CatalogID, "error", err)
 				continue
 			}
 			_ = cfg.AppStore.SetTailnetID(app.CatalogID, conn.ID)
@@ -442,14 +453,14 @@ func (r *Reconciler) convergeTailnet(ctx context.Context) {
 		return
 	}
 
-	// No tailnet: purge sidecars, gateway, and proxies.
-	if cfg.Sidecar != nil {
+	// No tailnet: purge tailnet nodes, gateway, and proxies.
+	if cfg.TailnetNode != nil {
 		for _, app := range apps {
 			if app.IsSystem {
 				continue
 			}
-			if err := cfg.Sidecar.StopAndPurge(ctx, app.CatalogID); err != nil {
-				r.logger.Warn("failed to purge sidecar", "app", app.CatalogID, "error", err)
+			if err := cfg.TailnetNode.StopAndPurge(ctx, app.CatalogID); err != nil {
+				r.logger.Warn("failed to purge tailnet node", "app", app.CatalogID, "error", err)
 			}
 			_ = cfg.AppStore.SetTailnetID(app.CatalogID, "")
 		}
@@ -462,6 +473,41 @@ func (r *Reconciler) convergeTailnet(ctx context.Context) {
 	if cfg.ProxyStopper != nil {
 		cfg.ProxyStopper.StopAll()
 	}
+}
+
+// provisionTailnetSSO ensures a forward_domain Authentik proxy provider exists for the
+// tailnet MagicDNS domain. This allows all *.domain apps to be authenticated with a
+// single cookie. Best-effort: logs warnings and returns on failure (retried next pass).
+func (r *Reconciler) provisionTailnetSSO(ctx context.Context) {
+	cfg := r.config
+	if cfg.TailnetDomain == nil || cfg.ForwardDomainSSO == nil {
+		return
+	}
+
+	// Only provision when there's an active tailnet.
+	if cfg.TailnetStore == nil {
+		return
+	}
+	conn, err := cfg.TailnetStore.GetActive()
+	if err != nil || conn == nil {
+		return
+	}
+
+	r.logger.Info("convergence step", "step", "provision-tailnet-sso")
+	r.activity.Record("converge_step", "provision-tailnet-sso")
+
+	domain, err := cfg.TailnetDomain.GetTailnetDomain(ctx)
+	if err != nil {
+		r.logger.Warn("failed to discover tailnet domain (gateway not ready?)", "error", err)
+		return
+	}
+
+	if err := cfg.ForwardDomainSSO.EnsureForwardDomainAuth(domain); err != nil {
+		r.logger.Warn("failed to provision tailnet forward_domain SSO", "error", err, "domain", domain)
+		return
+	}
+
+	r.logger.Info("tailnet forward_domain SSO provisioned", "domain", domain)
 }
 
 // buildIntegrationConfig builds the integration configuration map from user choices,

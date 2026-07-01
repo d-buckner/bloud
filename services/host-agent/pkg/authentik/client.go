@@ -1888,6 +1888,96 @@ func (c *Client) EnsureForwardAuth(appName, displayName, externalURL string) err
 	return c.EnsureForwardAuthApplication(appName, displayName, externalURL)
 }
 
+// EnsureForwardDomainAuth creates a forward_domain proxy provider and application for
+// the tailnet MagicDNS domain. In forward_domain mode, a single cookie on the domain
+// (e.g. ".tail12756a.ts.net") authenticates all *.domain subdomains. This covers all
+// apps accessed via tailnet URLs without needing per-app providers.
+// cookieDomain is the MagicDNS suffix (e.g. "tail12756a.ts.net").
+func (c *Client) EnsureForwardDomainAuth(cookieDomain string) error {
+	const (
+		providerName = "Tailnet Forward Domain Provider"
+		appSlug      = "tailnet-domain"
+		appName      = "Tailnet Domain Auth"
+	)
+
+	externalHost := "https://bloud." + cookieDomain
+
+	// Check if provider already exists.
+	existingID, err := c.findProviderID("proxy", providerName)
+	if err != nil {
+		return fmt.Errorf("checking proxy provider: %w", err)
+	}
+
+	var providerID int
+	if existingID != 0 {
+		providerID = existingID
+	} else {
+		authFlowID, err := c.findFlowID("default-authentication-flow")
+		if err != nil {
+			return fmt.Errorf("finding auth flow: %w", err)
+		}
+		invalidationFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+		if err != nil {
+			return fmt.Errorf("finding invalidation flow: %w", err)
+		}
+
+		providerID, err = c.createForwardDomainProvider(providerName, externalHost, cookieDomain, authFlowID, invalidationFlowID)
+		if err != nil {
+			return fmt.Errorf("creating forward_domain provider: %w", err)
+		}
+	}
+
+	if err := c.ensureProxyApplication(appSlug, appName, providerID); err != nil {
+		return fmt.Errorf("ensuring proxy application: %w", err)
+	}
+
+	if err := c.AddProviderToEmbeddedOutpost(providerName); err != nil {
+		return fmt.Errorf("adding to embedded outpost: %w", err)
+	}
+
+	return nil
+}
+
+// createForwardDomainProvider creates a proxy provider in forward_domain mode.
+func (c *Client) createForwardDomainProvider(name, externalHost, cookieDomain, authFlowID, invalidationFlowID string) (int, error) {
+	payload := map[string]interface{}{
+		"name":               name,
+		"authorization_flow": authFlowID,
+		"invalidation_flow":  invalidationFlowID,
+		"external_host":      externalHost,
+		"mode":               "forward_domain",
+		"cookie_domain":      cookieDomain,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/proxy/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	return result.PK, nil
+}
+
 // EnsureForwardAuthApplication creates or verifies the Authentik proxy provider and
 // application for an app using the forward-auth SSO strategy. It also adds the
 // provider to the embedded outpost so Traefik's forwardAuth middleware can reach it.
