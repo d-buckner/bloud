@@ -91,8 +91,6 @@ export async function initApps(): Promise<void> {
 				const next = new Set([...pending].filter((n) => !appNames.has(n)));
 				return next.size === pending.size ? pending : next;
 			});
-			// Refresh layout for cross-device sync
-			layout.refresh();
 		},
 		onError: () => {
 			// SSE handles reconnection internally

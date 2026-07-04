@@ -1,6 +1,6 @@
 <script lang="ts">
 	import AppIcon from './AppIcon.svelte';
-	import { visibleApps } from '$lib/stores/apps';
+	import { visibleApps, loading } from '$lib/stores/apps';
 	import { type App } from '$lib/types';
 
 	interface Props {
@@ -13,7 +13,9 @@
 
 	let app = $derived($visibleApps.find((a) => a.catalog_id === itemId));
 	let displayName = $derived(app?.display_name ?? itemId);
-	let isInstalling = $derived(!app || app.status === 'installing' || app.status === 'starting');
+	let isInstalling = $derived(
+		app ? app.status === 'installing' || app.status === 'starting' : !$loading
+	);
 </script>
 
 <button
