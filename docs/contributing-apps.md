@@ -78,7 +78,7 @@ package yourapp
 import (
     "context"
     "fmt"
-    "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+    "codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 type Configurator struct {
@@ -125,7 +125,7 @@ The reconciler passes resolved integration outputs to each configurator:
 In `services/host-agent/internal/appconfig/register.go`:
 
 ```go
-import yourapp "codeberg.org/d-buckner/bloud-v3/apps/your-app"
+import yourapp "codeberg.org/d-buckner/bloud/apps/your-app"
 
 func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
     // ... existing ...

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	container "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	container "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 )
 
 // GatewayManagerInterface manages the lifecycle of the gateway Tailscale container.
@@ -36,6 +36,14 @@ type GatewayManager struct {
 }
 
 const gatewayContainerName = "ts-gateway"
+
+// DefaultGatewaySOCKSPort is the SOCKS5 proxy port exposed by the gateway container.
+// The RemoteProxyManager connects through this port to reach remote tailnet nodes.
+const DefaultGatewaySOCKSPort = 1055
+
+// DefaultRemoteProxyBasePort is the starting port for localhost reverse proxies
+// that front remote apps. Ports are assigned sequentially from this base.
+const DefaultRemoteProxyBasePort = 10100
 
 // NewGatewayManager creates a GatewayManager.
 //   - containers: runtime for creating/removing the gateway container.
@@ -87,7 +95,7 @@ func (m *GatewayManager) EnsureRunning(ctx context.Context) error {
 
 	spec := container.Spec{
 		Name:    gatewayContainerName,
-		Image:   "docker.io/tailscale/tailscale:latest",
+		Image:   TailscaleImage,
 		Network: "host",
 		Environment: map[string]string{
 			"TS_AUTHKEY":       authKey,

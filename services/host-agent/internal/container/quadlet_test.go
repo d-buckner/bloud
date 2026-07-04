@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

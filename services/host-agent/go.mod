@@ -1,9 +1,9 @@
-module codeberg.org/d-buckner/bloud-v3/services/host-agent
+module codeberg.org/d-buckner/bloud/services/host-agent
 
 go 1.25.0
 
 require (
-	codeberg.org/d-buckner/bloud-v3/apps v0.0.0
+	codeberg.org/d-buckner/bloud/apps v0.0.0
 	github.com/beevik/etree v1.6.0
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-chi/cors v1.2.2
@@ -18,7 +18,7 @@ require (
 	modernc.org/sqlite v1.52.0
 )
 
-replace codeberg.org/d-buckner/bloud-v3/apps => ../../apps
+replace codeberg.org/d-buckner/bloud/apps => ../../apps
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

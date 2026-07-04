@@ -157,6 +157,19 @@ func NewClearAppDataIntent(appName string) ClearAppDataIntent {
 	return ClearAppDataIntent{intentBase: newIntentBase(), AppName: appName}
 }
 
+// ConvergeIntent triggers a full convergence pass with no state changes.
+// Used at startup to ensure tailnet SSO provisioning and route generation
+// run after the initial container sync completes.
+type ConvergeIntent struct {
+	intentBase
+}
+
+func (ConvergeIntent) intentMarker() {}
+
+func NewConvergeIntent() ConvergeIntent {
+	return ConvergeIntent{intentBase: newIntentBase()}
+}
+
 // Compile-time assertions that all types implement Intent.
 var (
 	_ Intent = InstallAppIntent{}
@@ -169,4 +182,5 @@ var (
 	_ Intent = CreateShareIntent{}
 	_ Intent = RevokeShareIntent{}
 	_ Intent = ClearAppDataIntent{}
+	_ Intent = ConvergeIntent{}
 )

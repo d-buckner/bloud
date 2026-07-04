@@ -11,19 +11,19 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/systemd"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/systemd"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -246,12 +246,13 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		s.tailnetNode = tailnetNode
 		s.logger.Info("tailnet node manager initialized")
 
-		// Create gateway manager for remote app proxying (SOCKS5 on port 1055).
-		gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, 1055, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
+		// Create gateway manager for remote app proxying.
+		gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
 		s.gateway = gateway
 
-		// Create remote proxy manager (allocates localhost ports starting at 10100).
-		remoteProxy := sharing.NewRemoteProxyManager("localhost:1055", 10100, s.logger)
+		// Create remote proxy manager.
+		socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
+		remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, s.logger)
 		s.remoteProxy = remoteProxy
 
 		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
@@ -287,6 +288,9 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			forwardDomainSSO = s.authentikClient
 		}
 
+		// Create proxy outpost manager for tailnet forward-auth.
+		proxyOutpost := sharing.NewProxyOutpostManager(runtime, s.logger)
+
 		// Wire the intent reconciler with real dependencies now that the
 		// portable orchestrator exists.
 		s.intentReconciler = reconciler.New(s.logger, &reconciler.Config{
@@ -299,6 +303,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			TailnetNode:      tailnetNode,
 			Gateway:          gateway,
 			ProxyStopper:     remoteProxy,
+			ProxyOutpost:     proxyOutpost,
 			TailnetDomain:    gateway,
 			ForwardDomainSSO: forwardDomainSSO,
 		})
@@ -307,6 +312,10 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		go func() {
 			portable.SyncContainerState(context.Background())
 			portable.ReconcileState(context.Background())
+			// Trigger a full convergence pass to handle tailnet SSO provisioning
+			// and other post-startup tasks that the orchestrator's ReconcileState
+			// doesn't cover.
+			s.intentReconciler.Enqueue(reconciler.NewConvergeIntent())
 		}()
 		return
 	}

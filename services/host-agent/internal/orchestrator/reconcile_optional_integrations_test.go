@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	integrationdomain "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/integration"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	integrationdomain "codeberg.org/d-buckner/bloud/services/host-agent/internal/integration"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // newTestReconcilerWithCache creates a Reconciler with a real catalog cache mock wired in.

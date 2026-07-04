@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -486,7 +486,7 @@ func TestConverge_ProvisionTailnetSSO_CallsEnsureForwardDomainAuth(t *testing.T)
 
 	// Wire up tailnet domain discoverer and forward domain provisioner.
 	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
-	fd := NewFakeForwardDomainProvisioner(nil)
+	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
 	h.reconciler.config.TailnetDomain = td
 	h.reconciler.config.ForwardDomainSSO = fd
 
@@ -501,7 +501,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenNoTailnet(t *testing.T) {
 
 	// No active tailnet.
 	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
-	fd := NewFakeForwardDomainProvisioner(nil)
+	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
 	h.reconciler.config.TailnetDomain = td
 	h.reconciler.config.ForwardDomainSSO = fd
 
@@ -531,7 +531,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
 	})
 
 	td := NewFakeTailnetDomainDiscoverer("", fmt.Errorf("gateway not running"))
-	fd := NewFakeForwardDomainProvisioner(nil)
+	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
 	h.reconciler.config.TailnetDomain = td
 	h.reconciler.config.ForwardDomainSSO = fd
 

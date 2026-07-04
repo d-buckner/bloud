@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -48,8 +48,17 @@ type TailnetDomainDiscoverer interface {
 }
 
 // ForwardDomainProvisioner provisions a forward_domain SSO provider for a tailnet domain.
+// Returns the outpost API token needed to start the standalone proxy outpost container.
 type ForwardDomainProvisioner interface {
-	EnsureForwardDomainAuth(cookieDomain string) error
+	EnsureForwardDomainAuth(cookieDomain string) (token string, err error)
+}
+
+// ProxyOutpostEnsurer abstracts the standalone proxy outpost container lifecycle.
+// The proxy outpost handles forward-auth for tailnet access, running separately from
+// the embedded outpost so it can redirect to the tailnet URL for login.
+type ProxyOutpostEnsurer interface {
+	EnsureRunning(ctx context.Context, token, tailnetDomain string) error
+	Stop(ctx context.Context) error
 }
 
 // Config holds the dependencies the reconciler needs for convergence.
@@ -64,6 +73,7 @@ type Config struct {
 	TailnetNode      TailnetNodeEnsurer
 	Gateway          GatewayEnsurer
 	ProxyStopper     ProxyStopper
+	ProxyOutpost     ProxyOutpostEnsurer     // optional: manages standalone proxy outpost for tailnet auth
 	TailnetDomain    TailnetDomainDiscoverer  // optional: discovers tailnet MagicDNS domain
 	ForwardDomainSSO ForwardDomainProvisioner // optional: provisions forward_domain SSO (nil when Authentik not installed)
 }
@@ -365,7 +375,16 @@ func (r *Reconciler) convergeFromStores(ctx context.Context, pendingClearData ma
 	}
 
 	// Step 8: Provision forward_domain SSO for tailnet access (best-effort).
-	r.provisionTailnetSSO(ctx)
+	// If successful, regenerate routes again — the gateway may not have been
+	// connected to tailscale when step 7 ran (race on first convergence), but
+	// provisionTailnetSSO exercises the gateway connection, so by this point
+	// the tailnet domain is available for route generation.
+	if r.provisionTailnetSSO(ctx) {
+		r.logger.Info("convergence step", "step", "regenerate-routes-tailnet")
+		if err := cfg.Lifecycle.RegenerateRoutes(); err != nil {
+			r.logger.Warn("failed to regenerate routes after tailnet SSO", "error", err)
+		}
+	}
 
 	duration := time.Since(start)
 	r.logger.Info("convergence pass complete", "apps", len(apps), "duration", duration)
@@ -453,7 +472,7 @@ func (r *Reconciler) convergeTailnet(ctx context.Context) {
 		return
 	}
 
-	// No tailnet: purge tailnet nodes, gateway, and proxies.
+	// No tailnet: purge tailnet nodes, gateway, proxy outpost, and proxies.
 	if cfg.TailnetNode != nil {
 		for _, app := range apps {
 			if app.IsSystem {
@@ -470,27 +489,34 @@ func (r *Reconciler) convergeTailnet(ctx context.Context) {
 			r.logger.Warn("failed to purge gateway", "error", err)
 		}
 	}
+	if cfg.ProxyOutpost != nil {
+		if err := cfg.ProxyOutpost.Stop(ctx); err != nil {
+			r.logger.Warn("failed to stop proxy outpost", "error", err)
+		}
+	}
 	if cfg.ProxyStopper != nil {
 		cfg.ProxyStopper.StopAll()
 	}
 }
 
-// provisionTailnetSSO ensures a forward_domain Authentik proxy provider exists for the
-// tailnet MagicDNS domain. This allows all *.domain apps to be authenticated with a
-// single cookie. Best-effort: logs warnings and returns on failure (retried next pass).
-func (r *Reconciler) provisionTailnetSSO(ctx context.Context) {
+// provisionTailnetSSO ensures a forward_domain Authentik proxy provider and standalone
+// outpost exist for the tailnet MagicDNS domain. The standalone outpost runs separately
+// from the embedded outpost so it can use AUTHENTIK_HOST_BROWSER pointing to the tailnet
+// URL, while the embedded outpost continues serving local auth on localhost.
+// Best-effort: logs warnings and returns on failure (retried next pass).
+func (r *Reconciler) provisionTailnetSSO(ctx context.Context) bool {
 	cfg := r.config
 	if cfg.TailnetDomain == nil || cfg.ForwardDomainSSO == nil {
-		return
+		return false
 	}
 
 	// Only provision when there's an active tailnet.
 	if cfg.TailnetStore == nil {
-		return
+		return false
 	}
 	conn, err := cfg.TailnetStore.GetActive()
 	if err != nil || conn == nil {
-		return
+		return false
 	}
 
 	r.logger.Info("convergence step", "step", "provision-tailnet-sso")
@@ -499,15 +525,25 @@ func (r *Reconciler) provisionTailnetSSO(ctx context.Context) {
 	domain, err := cfg.TailnetDomain.GetTailnetDomain(ctx)
 	if err != nil {
 		r.logger.Warn("failed to discover tailnet domain (gateway not ready?)", "error", err)
-		return
+		return false
 	}
 
-	if err := cfg.ForwardDomainSSO.EnsureForwardDomainAuth(domain); err != nil {
+	token, err := cfg.ForwardDomainSSO.EnsureForwardDomainAuth(domain)
+	if err != nil {
 		r.logger.Warn("failed to provision tailnet forward_domain SSO", "error", err, "domain", domain)
-		return
+		return false
+	}
+
+	// Start the standalone proxy outpost container with the tailnet domain.
+	if cfg.ProxyOutpost != nil {
+		if err := cfg.ProxyOutpost.EnsureRunning(ctx, token, domain); err != nil {
+			r.logger.Warn("failed to start proxy outpost", "error", err, "domain", domain)
+			return false
+		}
 	}
 
 	r.logger.Info("tailnet forward_domain SSO provisioned", "domain", domain)
+	return true
 }
 
 // buildIntegrationConfig builds the integration configuration map from user choices,

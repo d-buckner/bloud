@@ -2,12 +2,12 @@
 package appconfig
 
 import (
-	"codeberg.org/d-buckner/bloud-v3/apps/authentik"
-	"codeberg.org/d-buckner/bloud-v3/apps/jellyfin"
-	"codeberg.org/d-buckner/bloud-v3/apps/navidrome"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/web/static"
+	"codeberg.org/d-buckner/bloud/apps/authentik"
+	"codeberg.org/d-buckner/bloud/apps/jellyfin"
+	"codeberg.org/d-buckner/bloud/apps/navidrome"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/web/static"
 )
 
 // RegisterAll registers all available configurators with the registry.

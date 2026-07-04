@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -172,6 +172,11 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.GuestID == "" {
+		respondError(w, http.StatusBadRequest, "guestId is required")
+		return
+	}
+
 	if req.NodeShareLink == "" {
 		respondError(w, http.StatusBadRequest, "nodeShareLink is required")
 		return
@@ -191,13 +196,11 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate guest exists (if provided)
-	if req.GuestID != "" {
-		guest, err := s.guestStore.GetByID(req.GuestID)
-		if err != nil || guest == nil {
-			respondError(w, http.StatusBadRequest, "guest not found")
-			return
-		}
+	// Validate guest exists
+	guest, err := s.guestStore.GetByID(req.GuestID)
+	if err != nil || guest == nil {
+		respondError(w, http.StatusBadRequest, "guest not found")
+		return
 	}
 
 	// Get tailnet node address
@@ -230,16 +233,16 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate unsigned invite token
+	// Generate signed invite token (HMAC-SHA256, 1-hour expiry)
 	payload := sharing.InvitePayload{
-		AppID:              req.AppID,
-		AppName:            catalogApp.DisplayName,
-		HostLabel:          s.cfg.HostLabel,
-		TailnetAddr:        addr,
-		NodeShareLink:      req.NodeShareLink,
+		AppID:         req.AppID,
+		AppName:       catalogApp.DisplayName,
+		HostLabel:     s.cfg.HostLabel,
+		TailnetAddr:   addr,
+		NodeShareLink: req.NodeShareLink,
 	}
 
-	token, err := sharing.GenerateToken(payload)
+	token, err := sharing.GenerateToken(payload, s.cfg.SSOHostSecret)
 	if err != nil {
 		s.logger.Error("failed to generate invite token", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to generate token")

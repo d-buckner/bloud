@@ -49,7 +49,11 @@
 			return;
 		}
 		try {
-			const json = atob(raw.replace(/-/g, '+').replace(/_/g, '/'));
+			// Signed tokens have format: base64url(payload).base64url(signature)
+			// Extract the payload portion for client-side preview.
+			// Signature verification happens server-side.
+			const payloadPart = raw.includes('.') ? raw.split('.')[0] : raw;
+			const json = atob(payloadPart.replace(/-/g, '+').replace(/_/g, '/'));
 			const payload = JSON.parse(json) as InvitePayload;
 			if (!payload.appId || !payload.tailnetAddr || !payload.hostLabel) {
 				decoded = null;

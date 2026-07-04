@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
 // tailnetResponse is the API response for a tailnet connection.

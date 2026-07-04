@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 )
 
 // Config holds the application configuration

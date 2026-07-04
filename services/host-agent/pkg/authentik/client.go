@@ -399,6 +399,11 @@ const (
 	ldapServiceTokenID  = "ldap-service-bind-token"
 )
 
+// Proxy outpost constants for tailnet forward_domain auth
+const (
+	proxyOutpostName = "Bloud Tailnet Proxy Outpost"
+)
+
 // EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
 // if they don't already exist. This is idempotent - safe to call multiple times.
 func (c *Client) EnsureLDAPInfrastructure(ldapBindPassword string) error {
@@ -1888,12 +1893,15 @@ func (c *Client) EnsureForwardAuth(appName, displayName, externalURL string) err
 	return c.EnsureForwardAuthApplication(appName, displayName, externalURL)
 }
 
-// EnsureForwardDomainAuth creates a forward_domain proxy provider and application for
-// the tailnet MagicDNS domain. In forward_domain mode, a single cookie on the domain
-// (e.g. ".tail12756a.ts.net") authenticates all *.domain subdomains. This covers all
-// apps accessed via tailnet URLs without needing per-app providers.
+// EnsureForwardDomainAuth creates a forward_domain proxy provider, application, and
+// standalone proxy outpost for the tailnet MagicDNS domain. In forward_domain mode,
+// a single cookie on the domain (e.g. ".tail12756a.ts.net") authenticates all *.domain
+// subdomains. A standalone outpost is used (instead of the embedded outpost) so that
+// AUTHENTIK_HOST_BROWSER can point to the tailnet URL while the embedded outpost
+// continues using localhost for local access.
+// Returns the outpost API token needed to start the standalone outpost container.
 // cookieDomain is the MagicDNS suffix (e.g. "tail12756a.ts.net").
-func (c *Client) EnsureForwardDomainAuth(cookieDomain string) error {
+func (c *Client) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
 	const (
 		providerName = "Tailnet Forward Domain Provider"
 		appSlug      = "tailnet-domain"
@@ -1905,7 +1913,7 @@ func (c *Client) EnsureForwardDomainAuth(cookieDomain string) error {
 	// Check if provider already exists.
 	existingID, err := c.findProviderID("proxy", providerName)
 	if err != nil {
-		return fmt.Errorf("checking proxy provider: %w", err)
+		return "", fmt.Errorf("checking proxy provider: %w", err)
 	}
 
 	var providerID int
@@ -1914,28 +1922,130 @@ func (c *Client) EnsureForwardDomainAuth(cookieDomain string) error {
 	} else {
 		authFlowID, err := c.findFlowID("default-authentication-flow")
 		if err != nil {
-			return fmt.Errorf("finding auth flow: %w", err)
+			return "", fmt.Errorf("finding auth flow: %w", err)
 		}
 		invalidationFlowID, err := c.findFlowID("default-provider-invalidation-flow")
 		if err != nil {
-			return fmt.Errorf("finding invalidation flow: %w", err)
+			return "", fmt.Errorf("finding invalidation flow: %w", err)
 		}
 
 		providerID, err = c.createForwardDomainProvider(providerName, externalHost, cookieDomain, authFlowID, invalidationFlowID)
 		if err != nil {
-			return fmt.Errorf("creating forward_domain provider: %w", err)
+			return "", fmt.Errorf("creating forward_domain provider: %w", err)
 		}
 	}
 
 	if err := c.ensureProxyApplication(appSlug, appName, providerID); err != nil {
-		return fmt.Errorf("ensuring proxy application: %w", err)
+		return "", fmt.Errorf("ensuring proxy application: %w", err)
 	}
 
-	if err := c.AddProviderToEmbeddedOutpost(providerName); err != nil {
-		return fmt.Errorf("adding to embedded outpost: %w", err)
+	// Use a standalone proxy outpost (not the embedded outpost) so the browser-facing
+	// URL can be the tailnet domain while local auth stays on localhost.
+	if err := c.ensureProxyOutpost(providerID); err != nil {
+		return "", fmt.Errorf("ensuring proxy outpost: %w", err)
+	}
+
+	token, err := c.GetProxyOutpostToken()
+	if err != nil {
+		return "", fmt.Errorf("getting proxy outpost token: %w", err)
+	}
+
+	return token, nil
+}
+
+// ensureProxyOutpost creates the standalone proxy outpost if it doesn't exist.
+// This outpost runs as a separate container with AUTHENTIK_HOST_BROWSER set to the
+// tailnet URL, allowing remote users to authenticate via tailnet while the embedded
+// outpost continues serving local auth on localhost.
+func (c *Client) ensureProxyOutpost(providerID int) error {
+	outpost, err := c.findOutpostByName(proxyOutpostName)
+	if err != nil {
+		return err
+	}
+	if outpost != nil {
+		// Outpost exists — ensure the provider is attached.
+		for _, pid := range outpost.Providers {
+			if pid == providerID {
+				return nil
+			}
+		}
+		outpost.Providers = append(outpost.Providers, providerID)
+		return c.updateOutpostProviders(outpost.PK, outpost.Providers)
+	}
+
+	payload := map[string]interface{}{
+		"name":      proxyOutpostName,
+		"type":      "proxy",
+		"providers": []int{providerID},
+		"config": map[string]interface{}{
+			"authentik_host": c.baseURL,
+			"log_level":      "info",
+		},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/outposts/instances/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("creating proxy outpost: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil
+}
+
+// GetProxyOutpostToken returns the auto-generated token for the standalone proxy outpost.
+// Authentik creates a token with identifier "ak-outpost-{uuid}-api" when an outpost is created.
+func (c *Client) GetProxyOutpostToken() (string, error) {
+	outpost, err := c.findOutpostByName(proxyOutpostName)
+	if err != nil {
+		return "", fmt.Errorf("finding outpost: %w", err)
+	}
+	if outpost == nil {
+		return "", fmt.Errorf("proxy outpost not found")
+	}
+
+	tokenIdentifier := fmt.Sprintf("ak-outpost-%s-api", outpost.PK)
+
+	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", c.baseURL, url.PathEscape(tokenIdentifier))
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("getting token key: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.Key, nil
 }
 
 // createForwardDomainProvider creates a proxy provider in forward_domain mode.

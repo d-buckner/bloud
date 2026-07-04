@@ -1,13 +1,14 @@
 package orchestrator
 
 import (
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/traefikgen"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/slug"
 	"context"
 	"fmt"
 	"log/slog"
@@ -160,6 +161,12 @@ func (o *PortableOrchestrator) ReconcileState(ctx context.Context) {
 			_ = o.appStore.UpdateStatus(app.CatalogID, "error")
 			o.logger.Error("failed to reconcile portable app", "app", app.CatalogID, "error", err)
 		}
+	}
+
+	// Regenerate routes after ensuring all apps — covers tailnet routes
+	// that depend on the gateway being connected (which may have just started).
+	if err := o.RegenerateRoutes(); err != nil {
+		o.logger.Warn("failed to regenerate routes during reconcile", "error", err)
 	}
 }
 
@@ -482,7 +489,7 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 			var targets []sharing.ProxyTarget
 			for _, ra := range remoteApps {
 				targets = append(targets, sharing.ProxyTarget{
-					ID:         ra.AppID + "-" + slugify(ra.HostLabel),
+					ID:         ra.AppID + "-" + slug.Slugify(ra.HostLabel),
 					TailnetURL: "https://" + ra.TailnetAddr,
 				})
 			}
@@ -505,27 +512,18 @@ func (o *PortableOrchestrator) RegenerateRoutes() error {
 		}
 	}
 
-	return o.traefikGen.GenerateAll(apps, remoteRoutes)
-}
-
-// slugify converts a string to a URL-safe slug for subdomain routing.
-func slugify(s string) string {
-	s = strings.ToLower(s)
-	var result []byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
-			result = append(result, c)
-		} else if len(result) > 0 && result[len(result)-1] != '-' {
-			result = append(result, '-')
+	// Discover tailnet domain for tailnet-specific routes (forward-auth via
+	// the standalone proxy outpost). Only available when the gateway is running.
+	var tailnetDomain string
+	if o.gateway != nil && o.activeTailnetID != nil && o.activeTailnetID() != "" {
+		if domain, err := o.gateway.GetTailnetDomain(context.Background()); err == nil {
+			tailnetDomain = domain
 		}
 	}
-	// Trim trailing dash
-	if len(result) > 0 && result[len(result)-1] == '-' {
-		result = result[:len(result)-1]
-	}
-	return string(result)
+
+	return o.traefikGen.GenerateAll(apps, remoteRoutes, tailnetDomain)
 }
+
 
 // PortableContainerName returns the container name for a catalog app.
 func PortableContainerName(app *catalog.App) string {

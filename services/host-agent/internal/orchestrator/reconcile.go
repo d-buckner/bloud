@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	integrationdomain "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/integration"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	integrationdomain "codeberg.org/d-buckner/bloud/services/host-agent/internal/integration"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // ReconfigDispatcher is notified when an app's optional dependency transitions to

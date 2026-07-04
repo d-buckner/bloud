@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/slug"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -199,7 +200,7 @@ func TestSlugify(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			assert.Equal(t, tt.want, slugify(tt.input))
+			assert.Equal(t, tt.want, slug.Slugify(tt.input))
 		})
 	}
 }

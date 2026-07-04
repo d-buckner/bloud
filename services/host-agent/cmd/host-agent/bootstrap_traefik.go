@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
-	containerruntime "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
+	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 )
 
 const traefikImage = "docker.io/traefik:v3.4"

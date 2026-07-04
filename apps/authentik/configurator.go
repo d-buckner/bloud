@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	authentikClient "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	authentikClient "codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 //go:embed scripts/set_admin_password.py

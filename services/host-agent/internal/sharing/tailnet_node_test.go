@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	container "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	container "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,7 +71,7 @@ func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 	require.Len(t, rt.Ensured, 1)
 	spec := rt.Ensured[0]
 	assert.Equal(t, "ts-navidrome", spec.Name)
-	assert.Equal(t, "docker.io/tailscale/tailscale:latest", spec.Image)
+	assert.Equal(t, TailscaleImage, spec.Image)
 	assert.Equal(t, "host", spec.Network)
 	assert.Equal(t, "tskey-auth-test", spec.Environment["TS_AUTHKEY"])
 	assert.Equal(t, "navidrome", spec.Environment["TS_HOSTNAME"])

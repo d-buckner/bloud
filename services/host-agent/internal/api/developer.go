@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"sort"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
 )
 
 type graphNode struct {

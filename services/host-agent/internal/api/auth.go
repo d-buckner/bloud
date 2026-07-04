@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
 const (

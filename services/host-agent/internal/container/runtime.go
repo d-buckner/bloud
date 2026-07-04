@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 )
 
 const (

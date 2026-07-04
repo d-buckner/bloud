@@ -8,15 +8,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/appconfig"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/config"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/db"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/netutil"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/orchestrator"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/appconfig"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // runConfigure handles the "configure" subcommand

@@ -117,13 +117,14 @@ export interface Guest {
 	created_at: string;
 }
 
-// Invite token payload (unsigned base64 JSON decoded on receiver side)
+// Invite token payload (HMAC-SHA256 signed, base64url-encoded JSON)
 export interface InvitePayload {
 	appId: string;
 	appName: string;
 	hostLabel: string;
 	tailnetAddr: string;
 	nodeShareLink: string;
+	exp: number;
 }
 
 // Intent response (returned by install/uninstall endpoints)

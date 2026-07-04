@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sharing"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -195,14 +195,15 @@ func TestHandleCreateInvite_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.ShareID)
 	assert.NotEmpty(t, resp.Token)
 
-	// Token should be decodable as unsigned base64 JSON
-	payload, err := sharing.DecodeToken(resp.Token)
+	// Token should be decodable with the signing secret
+	payload, err := sharing.DecodeToken(resp.Token, "test-secret-key-for-hmac-signing-at-least-32-chars")
 	require.NoError(t, err)
 	assert.Equal(t, "navidrome", payload.AppID)
 	assert.Equal(t, "Navidrome", payload.AppName)
 	assert.Equal(t, "Test Host", payload.HostLabel)
 	assert.Equal(t, "100.64.1.2", payload.TailnetAddr)
 	assert.Equal(t, "https://login.tailscale.com/admin/invite/abc123", payload.NodeShareLink)
+	assert.True(t, payload.ExpiresAt > 0, "token should have an expiry")
 
 	// Verify share was stored
 	shares := server.shareStore.(*fakeShareStore).shares
@@ -281,6 +282,23 @@ func TestHandleCreateInvite_MissingAppId(t *testing.T) {
 	server.router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleCreateInvite_MissingGuestId(t *testing.T) {
+	server := setupSharingTestServer(t)
+
+	body := `{"appId": "navidrome", "nodeShareLink": "https://example.com"}`
+	req := httptest.NewRequest("POST", "/api/sharing/invites", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "guestId is required", resp["error"])
 }
 
 func TestHandleListShares_Empty(t *testing.T) {

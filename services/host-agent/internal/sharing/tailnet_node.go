@@ -9,8 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	container "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	container "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 )
+
+// TailscaleImage is the pinned Tailscale container image used for tailnet nodes
+// and the gateway. Using the "stable" tag provides a defined stability contract
+// (tracks the latest stable release) without the unpredictability of "latest".
+const TailscaleImage = "docker.io/tailscale/tailscale:stable"
 
 // ContainerExec runs commands inside containers (satisfied by podman.Client).
 type ContainerExec interface {
@@ -100,7 +105,7 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 
 	spec := container.Spec{
 		Name:    name,
-		Image:   "docker.io/tailscale/tailscale:latest",
+		Image:   TailscaleImage,
 		Network: "host",
 		Environment: map[string]string{
 			"TS_AUTHKEY":      authKey,

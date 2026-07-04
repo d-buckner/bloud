@@ -1,6 +1,6 @@
 package config
 
-import "codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
+import "codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 
 const (
 	defaultLDAPPort     = 3389

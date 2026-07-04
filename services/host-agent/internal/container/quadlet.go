@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/systemd"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/managedfile"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/systemd"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
 // QuadletRuntime persists desired container state as Quadlet units supervised by systemd.

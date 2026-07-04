@@ -4,9 +4,10 @@ import (
 	"context"
 	"sync"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/sso"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 )
 
 // Fakes are test doubles that capture calls for later inspection.
@@ -49,6 +50,10 @@ func (f *FakeTraefikGenerator) SetAuthentikEnabled(enabled bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.authentikEnabled = enabled
+}
+
+func (f *FakeTraefikGenerator) GenerateAll(apps []*catalog.App, remoteApps []traefikgen.RemoteAppRoute, tailnetDomain string) error {
+	return f.Generate(apps)
 }
 
 func (f *FakeTraefikGenerator) Preview(apps []*catalog.App) string {

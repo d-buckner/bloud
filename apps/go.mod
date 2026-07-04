@@ -1,8 +1,8 @@
-module codeberg.org/d-buckner/bloud-v3/apps
+module codeberg.org/d-buckner/bloud/apps
 
 go 1.25.0
 
-require codeberg.org/d-buckner/bloud-v3/services/host-agent v0.0.0
+require codeberg.org/d-buckner/bloud/services/host-agent v0.0.0
 
 require (
 	github.com/beevik/etree v1.6.0 // indirect
@@ -13,4 +13,4 @@ require (
 	golang.org/x/text v0.38.0 // indirect
 )
 
-replace codeberg.org/d-buckner/bloud-v3/services/host-agent => ../services/host-agent
+replace codeberg.org/d-buckner/bloud/services/host-agent => ../services/host-agent

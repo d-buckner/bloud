@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"github.com/go-chi/chi/v5"
 )
 

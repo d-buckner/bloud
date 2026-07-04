@@ -3,11 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
-	"strings"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/reconciler"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -98,12 +96,3 @@ func (s *Server) handleDeleteRemoteApp(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-var slugRegex = regexp.MustCompile(`[^a-z0-9]+`)
-
-// slugify converts a string to a URL-safe slug.
-func slugify(s string) string {
-	s = strings.ToLower(s)
-	s = slugRegex.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	return s
-}

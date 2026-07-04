@@ -3,7 +3,7 @@ package api
 import (
 	"sync"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
 // AppEventHub manages SSE subscribers for app state updates

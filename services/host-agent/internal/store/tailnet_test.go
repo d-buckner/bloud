@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/testdb"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/system"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 )
 
 // handleSystemStatusStream streams system stats via SSE

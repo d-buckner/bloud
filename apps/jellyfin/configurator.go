@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/pkg/xmlutil"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
 )
 
 const (

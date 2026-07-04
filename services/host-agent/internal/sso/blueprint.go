@@ -15,8 +15,8 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/secrets"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"golang.org/x/crypto/hkdf"
 )
 

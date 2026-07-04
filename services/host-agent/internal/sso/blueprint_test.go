@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 )
 
 // testBlueprintGenerator creates a BlueprintGenerator for testing

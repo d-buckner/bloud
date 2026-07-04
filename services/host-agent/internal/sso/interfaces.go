@@ -3,7 +3,7 @@ package sso
 import (
 	"context"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 )
 
 // BlueprintGeneratorInterface defines the interface for generating Authentik blueprints.

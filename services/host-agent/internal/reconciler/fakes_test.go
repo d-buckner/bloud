@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
 // ============================================================================
@@ -733,18 +733,19 @@ var _ TailnetDomainDiscoverer = (*FakeTailnetDomainDiscoverer)(nil)
 type FakeForwardDomainProvisioner struct {
 	mu           sync.Mutex
 	calledDomain string
+	token        string
 	err          error
 }
 
-func NewFakeForwardDomainProvisioner(err error) *FakeForwardDomainProvisioner {
-	return &FakeForwardDomainProvisioner{err: err}
+func NewFakeForwardDomainProvisioner(token string, err error) *FakeForwardDomainProvisioner {
+	return &FakeForwardDomainProvisioner{token: token, err: err}
 }
 
-func (f *FakeForwardDomainProvisioner) EnsureForwardDomainAuth(cookieDomain string) error {
+func (f *FakeForwardDomainProvisioner) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calledDomain = cookieDomain
-	return f.err
+	return f.token, f.err
 }
 
 func (f *FakeForwardDomainProvisioner) CalledDomain() string {
@@ -755,3 +756,67 @@ func (f *FakeForwardDomainProvisioner) CalledDomain() string {
 
 // Compile-time assertion.
 var _ ForwardDomainProvisioner = (*FakeForwardDomainProvisioner)(nil)
+
+// ============================================================================
+// FakeProxyOutpost — records EnsureRunning/Stop calls
+// ============================================================================
+
+type FakeProxyOutpost struct {
+	mu          sync.Mutex
+	running     bool
+	token       string
+	domain      string
+	stopCalled  bool
+	ensureError error
+}
+
+func NewFakeProxyOutpost() *FakeProxyOutpost {
+	return &FakeProxyOutpost{}
+}
+
+func (f *FakeProxyOutpost) EnsureRunning(ctx context.Context, token, tailnetDomain string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ensureError != nil {
+		return f.ensureError
+	}
+	f.running = true
+	f.token = token
+	f.domain = tailnetDomain
+	return nil
+}
+
+func (f *FakeProxyOutpost) Stop(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.running = false
+	f.stopCalled = true
+	return nil
+}
+
+func (f *FakeProxyOutpost) IsRunning() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.running
+}
+
+func (f *FakeProxyOutpost) WasStopCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stopCalled
+}
+
+func (f *FakeProxyOutpost) RecordedToken() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.token
+}
+
+func (f *FakeProxyOutpost) RecordedDomain() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.domain
+}
+
+// Compile-time assertion.
+var _ ProxyOutpostEnsurer = (*FakeProxyOutpost)(nil)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 )
 
 func TestGenerator_Generate_EmptyApps(t *testing.T) {
@@ -532,7 +532,7 @@ func TestGenerator_GenerateAll_RemoteApps(t *testing.T) {
 	}
 
 	g := NewGenerator(configPath)
-	err := g.GenerateAll(nil, remoteApps)
+	err := g.GenerateAll(nil, remoteApps, "")
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
 	}
@@ -580,7 +580,7 @@ func TestGenerator_GenerateAll_MixedLocalAndRemote(t *testing.T) {
 	}
 
 	g := NewGenerator(configPath)
-	err := g.GenerateAll(apps, remoteApps)
+	err := g.GenerateAll(apps, remoteApps, "")
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestGenerator_GenerateAll_RemoteAppsSorted(t *testing.T) {
 	}
 
 	g := NewGenerator(configPath)
-	err := g.GenerateAll(nil, remoteApps)
+	err := g.GenerateAll(nil, remoteApps, "")
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestGenerator_GenerateAll_EmptyRemoteApps(t *testing.T) {
 	configPath := filepath.Join(dir, "apps-routes.yml")
 
 	g := NewGenerator(configPath)
-	err := g.GenerateAll(nil, nil)
+	err := g.GenerateAll(nil, nil, "")
 	if err != nil {
 		t.Fatalf("GenerateAll failed: %v", err)
 	}

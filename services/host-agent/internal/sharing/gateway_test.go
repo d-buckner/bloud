@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	container "codeberg.org/d-buckner/bloud-v3/services/host-agent/internal/container"
+	container "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +21,7 @@ func TestGateway_EnsureRunning_CreatesContainerSpec(t *testing.T) {
 	spec := rt.Ensured[0]
 
 	assert.Equal(t, "ts-gateway", spec.Name)
-	assert.Equal(t, "docker.io/tailscale/tailscale:latest", spec.Image)
+	assert.Equal(t, TailscaleImage, spec.Image)
 	assert.Equal(t, "host", spec.Network)
 	assert.Equal(t, "tskey-auth-gw", spec.Environment["TS_AUTHKEY"])
 	assert.Equal(t, "bloud", spec.Environment["TS_HOSTNAME"])
