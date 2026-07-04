@@ -332,8 +332,8 @@ func (g *Generator) writeTailnetOutpostRouter(b *strings.Builder, app *catalog.A
 }
 
 // writeTailnetGatewayRouters writes routers for the gateway domain (bloud.{tailnetDomain}).
-// Two routers: one for the outpost callback (priority 300) and one for the Authentik
-// login page (priority 200).
+// Routes Authentik-specific paths needed for the OAuth login flow; all other paths
+// on the gateway domain fall through to lower-priority routers (e.g. the dashboard).
 func (g *Generator) writeTailnetGatewayRouters(b *strings.Builder, tailnetDomain string) {
 	// Outpost callback router — must be higher priority to intercept /outpost.goauthentik.io/
 	b.WriteString("    tailnet-gateway-outpost:\n")
@@ -341,11 +341,20 @@ func (g *Generator) writeTailnetGatewayRouters(b *strings.Builder, tailnetDomain
 	b.WriteString("      priority: 300\n")
 	b.WriteString("      service: tailnet-outpost\n")
 
-	// Authentik login page — serves the OAuth authorization + login UI
+	// Authentik UI/API — only match paths Authentik needs for the OAuth flow:
+	// /if/ (frontend), /api/v3/ (Authentik API), /static/ (assets), /-/ (internal)
+	// Uses /api/v3/ (not /api/) to avoid conflicting with the Bloud API at /api/.
 	b.WriteString("    tailnet-gateway-authentik:\n")
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`bloud.%s`)\"\n", tailnetDomain))
-	b.WriteString("      priority: 200\n")
+	b.WriteString(fmt.Sprintf("      rule: \"Host(`bloud.%s`) && (PathPrefix(`/if/`) || PathPrefix(`/application/`) || PathPrefix(`/api/v3/`) || PathPrefix(`/static/`) || PathPrefix(`/-/`))\"\n", tailnetDomain))
+	b.WriteString("      priority: 250\n")
 	b.WriteString("      service: authentik-web\n")
+
+	// Dashboard catch-all — proxies everything else on the gateway domain to
+	// the host-agent (Bloud dashboard + API).
+	b.WriteString("    tailnet-gateway-dashboard:\n")
+	b.WriteString(fmt.Sprintf("      rule: \"Host(`bloud.%s`)\"\n", tailnetDomain))
+	b.WriteString("      priority: 100\n")
+	b.WriteString("      service: bloud-dashboard\n")
 }
 
 // writeTailnetMiddleware writes the forward-auth middleware for tailnet access.
@@ -375,6 +384,10 @@ func (g *Generator) writeTailnetServices(b *strings.Builder) {
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
 	b.WriteString("          - url: \"http://localhost:9001\"\n")
+	b.WriteString("    bloud-dashboard:\n")
+	b.WriteString("      loadBalancer:\n")
+	b.WriteString("        servers:\n")
+	b.WriteString("          - url: \"http://localhost:3000\"\n")
 }
 
 // Preview generates a preview of what the config will look like
