@@ -10,12 +10,14 @@
 		type AppPhase
 	} from '$lib/clients/developerClient';
 	import AppNode from './AppNode.svelte';
+	import UserNode from './UserNode.svelte';
 	import FitView from '$lib/components/FitView.svelte';
 
 	import '@xyflow/svelte/dist/style.css';
 
 	const nodeTypes: NodeTypes = {
-		app: AppNode as any
+		app: AppNode as any,
+		user: UserNode as any
 	};
 
 	let loading = $state(true);
@@ -27,8 +29,10 @@
 
 	const NODE_WIDTH = 170;
 	const NODE_HEIGHT = 60;
+	const USER_NODE_SIZE = 64;
 	const GROUP_PADDING = 40;
 	const CONNECTION_GAP = 100;
+	const USER_GAP = 60;
 
 	const APP_PHASES = ['pre-start', 'ensure-container', 'health-check', 'post-start', 'sso'];
 
@@ -163,6 +167,23 @@
 		return `${hours}h ago`;
 	}
 
+	function detectUserConnection(graph: DeveloperGraph): string | null {
+		const hostname = window.location.hostname;
+		const tailnetDomain = graph.tailnetDomain;
+
+		// If the hostname matches the tailnet domain, user is on the tailnet
+		if (tailnetDomain && hostname.endsWith(tailnetDomain)) {
+			const tailnetConn = graph.nodes.find((n) => n.id.startsWith('conn:tailnet:'));
+			if (tailnetConn) return tailnetConn.id;
+		}
+
+		// Otherwise user is on LAN
+		const localConn = graph.nodes.find((n) => n.id === 'conn:local');
+		if (localConn) return localConn.id;
+
+		return null;
+	}
+
 	function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge[] } {
 		const appNodes = graph.nodes.filter((n) => n.nodeType === 'app');
 		const connectionNodes = graph.nodes.filter((n) => n.nodeType === 'connection');
@@ -194,6 +215,15 @@
 
 		const sources = new Set(graph.edges.map((e) => e.source));
 		const targets = new Set(graph.edges.map((e) => e.target));
+
+		// Detect which connection the current user is reaching through
+		const userConnectionId = detectUserConnection(graph);
+
+		// Include the "You" node in source/target tracking so handles render
+		if (userConnectionId) {
+			sources.add('__you__');
+			targets.add(userConnectionId);
+		}
 
 		function nodeData(n: GraphNode) {
 			const phaseData = buildPhaseData(n.id, graph.reconciler?.appPhases);
@@ -248,6 +278,22 @@
 					data: nodeData(cn)
 				});
 			}
+
+			// Add "You" node above the connection the user is accessing through
+			if (userConnectionId && connectionNodes.length > 0) {
+				const connIndex = connectionNodes.findIndex((cn) => cn.id === userConnectionId);
+				const idx = connIndex >= 0 ? connIndex : 0;
+				const connX = connStartX + idx * (NODE_WIDTH + 60);
+				const userX = connX + NODE_WIDTH / 2 - USER_NODE_SIZE / 2;
+				const userY = connY - USER_NODE_SIZE - USER_GAP;
+
+				layoutNodes.push({
+					id: '__you__',
+					type: 'user',
+					position: { x: userX, y: userY },
+					data: { label: 'You', hasOutgoing: true }
+				});
+			}
 		} else {
 			for (let i = 0; i < connectionNodes.length; i++) {
 				const cn = connectionNodes[i];
@@ -258,9 +304,26 @@
 					data: nodeData(cn)
 				});
 			}
+
+			// Add "You" node when only connections exist
+			if (userConnectionId && connectionNodes.length > 0) {
+				const connIndex = connectionNodes.findIndex((cn) => cn.id === userConnectionId);
+				const idx = connIndex >= 0 ? connIndex : 0;
+				const connX = idx * (NODE_WIDTH + 60);
+				const userX = connX + NODE_WIDTH / 2 - USER_NODE_SIZE / 2;
+
+				layoutNodes.push({
+					id: '__you__',
+					type: 'user',
+					position: { x: userX, y: -(USER_NODE_SIZE + USER_GAP) },
+					data: { label: 'You', hasOutgoing: true }
+				});
+			}
 		}
 
 		const nodeStatusMap = new Map(graph.nodes.map((n) => [n.id, n.status]));
+		// Add "You" as always active for edge animation
+		nodeStatusMap.set('__you__', 'active');
 
 		const layoutEdges: Edge[] = graph.edges.map((e, i) => {
 			const sourceStatus = nodeStatusMap.get(e.source) ?? '';
@@ -275,6 +338,18 @@
 				animated: sourceActive && targetActive
 			};
 		});
+
+		// Add edge from "You" to the active connection
+		if (userConnectionId) {
+			const connStatus = nodeStatusMap.get(userConnectionId) ?? '';
+			const connActive = connStatus === 'running' || connStatus === 'active';
+			layoutEdges.push({
+				id: 'e-you',
+				source: '__you__',
+				target: userConnectionId,
+				animated: connActive
+			});
+		}
 
 		return { nodes: layoutNodes, edges: layoutEdges };
 	}

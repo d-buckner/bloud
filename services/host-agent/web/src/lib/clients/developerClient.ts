@@ -36,6 +36,7 @@ export interface ReconcilerStatus {
 export interface DeveloperGraph {
 	nodes: GraphNode[];
 	edges: GraphEdge[];
+	tailnetDomain?: string;
 	reconciler?: ReconcilerStatus;
 }
 

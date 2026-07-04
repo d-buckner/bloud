@@ -23,9 +23,10 @@ type graphEdge struct {
 }
 
 type developerGraph struct {
-	Nodes      []graphNode        `json:"nodes"`
-	Edges      []graphEdge        `json:"edges"`
-	Reconciler *reconciler.Status `json:"reconciler,omitempty"`
+	Nodes          []graphNode        `json:"nodes"`
+	Edges          []graphEdge        `json:"edges"`
+	TailnetDomain  string             `json:"tailnetDomain,omitempty"`
+	Reconciler     *reconciler.Status `json:"reconciler,omitempty"`
 }
 
 // ssoEdgeLabel returns the SSO strategy (e.g. "forward-auth", "ldap") for an app,
@@ -62,6 +63,15 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 	tailnetIDs := make(map[string]bool)
 	hasTraefik := false
 
+	// Track apps with tailnet nodes for post-loop edge generation
+	type tailnetNodeInfo struct {
+		appName     string
+		displayName string
+		tailnetID   string
+		status      string
+	}
+	var tailnetNodeApps []tailnetNodeInfo
+
 	for _, app := range apps {
 		node := graphNode{
 			ID:          app.CatalogID,
@@ -76,13 +86,15 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 			hasTraefik = true
 		}
 
-		// Track tailnet connection for this app
+		// Track tailnet connection and tailnet node for this app.
+		// Edges are generated after the loop so we know whether Traefik exists.
 		if app.TailnetID != "" {
 			tailnetIDs[app.TailnetID] = true
-			edges = append(edges, graphEdge{
-				Source: "conn:tailnet:" + app.TailnetID,
-				Target: app.CatalogID,
-				Label:  "tailnet",
+			tailnetNodeApps = append(tailnetNodeApps, tailnetNodeInfo{
+				appName:     app.CatalogID,
+				displayName: app.DisplayName,
+				tailnetID:   app.TailnetID,
+				status:      app.Status,
 			})
 		}
 
@@ -145,6 +157,40 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Add tailnet node containers (ts-{appName}) that sit between the tailnet
+	// connection and Traefik. Each shared app gets its own Tailscale container
+	// that joins the tailnet and proxies to Traefik via TS_SERVE_CONFIG.
+	for _, tn := range tailnetNodeApps {
+		tsNodeID := "ts:" + tn.appName
+		nodes = append(nodes, graphNode{
+			ID:          tsNodeID,
+			DisplayName: tn.displayName + " Tunnel",
+			Status:      tn.status, // mirrors the app — systemd lifecycle is coupled
+			IsSystem:    true,
+			NodeType:    "app",
+		})
+		edges = append(edges, graphEdge{
+			Source: "conn:tailnet:" + tn.tailnetID,
+			Target: tsNodeID,
+			Label:  "tailnet",
+		})
+		if hasTraefik {
+			edges = append(edges, graphEdge{
+				Source: tsNodeID,
+				Target: "traefik",
+				Label:  "route",
+			})
+		}
+	}
+
+	// Discover tailnet domain from the gateway (best-effort).
+	var tailnetDomain string
+	if s.gateway != nil && len(tailnetIDs) > 0 {
+		if domain, err := s.gateway.GetTailnetDomain(r.Context()); err == nil {
+			tailnetDomain = domain
+		}
+	}
+
 	// Add tailnet connection nodes and gateway
 	for tailnetID := range tailnetIDs {
 		displayName := "Tailnet"
@@ -152,6 +198,9 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		if conn, err := s.tailnetStore.GetByID(tailnetID); err == nil && conn != nil {
 			displayName = conn.Name
 			status = conn.Status
+		}
+		if tailnetDomain != "" {
+			displayName = "bloud." + tailnetDomain
 		}
 		nodes = append(nodes, graphNode{
 			ID:          "conn:tailnet:" + tailnetID,
@@ -172,7 +221,7 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		nodes = append(nodes, graphNode{
 			ID:          "sys:gateway",
-			DisplayName: "TS Gateway",
+			DisplayName: "Tailnet Gateway",
 			Status:      gwStatus,
 			IsSystem:    true,
 			NodeType:    "app",
@@ -197,7 +246,7 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 	if hasTraefik {
 		nodes = append(nodes, graphNode{
 			ID:          "conn:local",
-			DisplayName: "", // frontend fills from window.location.hostname
+			DisplayName: "LAN",
 			Status:      "active",
 			NodeType:    "connection",
 		})
@@ -209,8 +258,9 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := developerGraph{
-		Nodes: nodes,
-		Edges: edges,
+		Nodes:         nodes,
+		Edges:         edges,
+		TailnetDomain: tailnetDomain,
 	}
 
 	if s.intentReconciler != nil {
