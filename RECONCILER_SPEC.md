@@ -1,7 +1,7 @@
 # Reconciler-Owned Architecture Specification
 
-**Status:** Approved design, not yet implemented
-**Last updated:** 2026-06-23
+**Status:** Implemented and merged (PR #2, `reconciler-architecture` branch)
+**Last updated:** 2026-07-03
 
 ## Motivation
 

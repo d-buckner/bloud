@@ -1,7 +1,7 @@
 # Bloud First Release Specification
 
 **Status:** Authoritative active plan
-**Last updated:** 2026-06-22
+**Last updated:** 2026-07-03
 **Product:** Portable single-host home cloud\
 **Initial target:** Debian 13, `x86_64`, systemd\
 **Primary risk:** Unreliable implementation and architecture\
@@ -18,8 +18,8 @@ Supporting documents provide rationale, detail, and implementation records:
 
 - `docs/portable-runtime-architecture.md`: component overview and diagram
 - `docs/contributing-apps.md`: how to add a new app
-- `docs/migration-design-rules.md`: review checklist and technical-debt inventory
-- `docs/slices/`: scoped implementation records
+- `docs/sharing.md`: sharing architecture and federation design
+- `RECONCILER_SPEC.md`: intent-driven reconciler architecture (implemented)
 
 Supporting documents must defer to this file and must not introduce new authoritative
 requirements.
@@ -33,9 +33,9 @@ slices update the migration checkpoint and phase-status table.
 Completed:
 
 - First-release product scope and Debian runtime direction are defined.
-- Typed integration resolution exists in a runtime-neutral package.
-- Resolution accepts declared requirements, planner-created bindings, and installed-app
-  membership, and returns one provider binding per integration type.
+- Typed integration resolution exists in a runtime-neutral package. Resolution accepts
+  declared requirements, planner-created bindings, and installed-app membership, and returns
+  one provider binding per integration type.
 - Undeclared bindings, incompatible providers, and missing required bindings fail explicitly.
 - Optional unbound integrations automatically resolve the first installed compatible provider
   in manifest order.
@@ -45,27 +45,37 @@ Completed:
 - SSO strategy and SSO provider identity are separate concepts.
 - The repository fast validation tier passes, including host-agent race tests, app tests,
   frontend tests, and frontend checks.
+- Intent-driven reconciler architecture is implemented and merged. All mutations flow through
+  a typed intent queue with debounce. The reconciler is the single writer to all stores and
+  the single executor of all side effects. Intent types cover install, uninstall, rename,
+  tailnet, remote apps, shares, and clear-data.
+- PreStart/PostStart configurator contracts exist as optional interfaces. Jellyfin and
+  Navidrome configurators implement them.
+- Portable application manifests exist as `metadata.yaml` per app with container specs,
+  integrations, health checks, and routing configuration.
+- Podman Quadlet and user-scope systemd adapters are working. The portable orchestrator
+  generates Quadlet units and manages container lifecycle through systemd.
+- Domain-agnostic Traefik routing with HostRegexp patterns is implemented. Apps are
+  accessible via any origin (localhost, tailnet FQDN, custom domain).
+- Developer graph API and frontend visualization are implemented with app nodes, connection
+  nodes, and integration edges.
+- Two-layer Tailscale sharing architecture is implemented: per-app tailnet nodes for
+  outbound sharing, gateway with SOCKS5 proxy for inbound remote app consumption on LAN.
+- Sharing data model is implemented: remote_apps, guests, shares, tailnet_connections
+  tables in SQLite.
+- E2E lifecycle testing framework works against Lima VM with Playwright browser tests.
 
 Not yet implemented:
 
-- Durable desired and observed integration instances
-- Typed provider outputs and secret references
-- PreStart/PostStart configurator contracts
-- Portable application manifests
-- Runtime-neutral desired topology and planner
-- Debian/Podman/Quadlet/systemd adapters and `.deb` packaging
-- Clean Debian VM acceptance
-
-The next implementation slice must be selected from Phase 1 work and remain small enough to
-fully validate. Current preferred order:
-
-1. Define the minimal typed provider-output and secret-reference boundary required by one
-   real integration.
-2. Add a managed-file helper with atomic writes, explicit permissions, and accurate change
-   detection.
-3. Migrate one release-app configurator to the prestart/poststart contract under focused tests.
-4. Add durable integration identity, desired/observed revisions, and invalidation only after
-   their concrete consumers are defined.
+- Durable desired and observed integration revisions with invalidation tracking
+- Typed provider outputs and secret references passed to configurators
+- Configurator `changed` return value for selective restart
+- Persistent proxy port assignment on `remote_apps` table (currently ephemeral)
+- Standalone proxy outpost for tailnet forward-auth (in development)
+- Multiple tailnet connections (data model supports it, UI/runtime handle only one)
+- `.deb` packaging and `bloud init` with preflight checks
+- Clean Debian VM acceptance testing
+- SSO identity model for guests (Authentik-backed accounts, per-app auth provisioning)
 
 ## Product Promise
 
@@ -89,8 +99,7 @@ what they provide and consume, and Bloud continuously keeps those relationships 
 | Application | Primary value | Architecture exercised |
 |---|---|---|
 | Jellyfin | Stream personal media | LDAP integration, persistent media, native clients |
-| AdGuard Home | Network-wide DNS filtering | Host networking, protected dashboard, reversible host changes |
-| Immich | Back up and browse photos | Native OIDC, PostgreSQL, Redis, multiple containers |
+| Navidrome | Stream personal music | Forward-auth SSO, Subsonic API bypass, trusted header auth |
 
 ### Required Infrastructure
 
@@ -107,7 +116,7 @@ what they provide and consume, and Bloud continuously keeps those relationships 
 - Operating-system installer
 - Additional Linux distributions
 - Multi-host orchestration and migration
-- Additional application catalog entries
+- Additional application catalog entries (AdGuard Home, Immich, etc.)
 - Community application submissions
 - Dashboard widgets and customization
 - Mobile application
@@ -122,15 +131,17 @@ separate targets only after they pass the complete release acceptance contract.
 - Clean Debian 13 installation
 - `x86_64`
 - systemd
-- Rootful Podman
+- Rootless Podman (user-scope systemd units)
 - One physical or virtual host
 - Ethernet networking
 - Local-network access
 - One documented storage layout
 
-Rootful Podman is an intentional first-release choice. It reduces complexity around
-privileged ports, DNS, media directories, startup ordering, and host networking. Containers
-should still run as non-root users internally where supported.
+Rootless Podman is an intentional first-release choice. It avoids requiring root access for
+container management, isolates the Bloud runtime to a dedicated user, and aligns with
+Podman's default security model. User-scope systemd units with `loginctl enable-linger`
+ensure containers survive logout. Traefik binds to unprivileged ports (8080/8443) behind a
+host firewall or reverse proxy for port 80/443 access.
 
 Unsupported environments must fail during preflight with actionable diagnostics.
 
@@ -140,7 +151,7 @@ Unsupported environments must fail during preflight with actionable diagnostics.
 2. Run `sudo bloud init`.
 3. Open the web dashboard.
 4. Create the first account and sign in once.
-5. Install Jellyfin, AdGuard Home, or Immich.
+5. Install Jellyfin or Navidrome.
 6. Let Bloud install providers and configure all required relationships.
 7. Open installed applications from the dashboard without another password prompt.
 8. Reboot without losing application state, configuration, or integrations.
@@ -179,18 +190,18 @@ host-network adapters.
 Applications declare typed capabilities they provide and consume:
 
 ```text
-Immich   -> PostgreSQL  database
-Immich   -> Redis       cache
-Immich   -> Authentik   sso
-Jellyfin -> Authentik   ldap
+Jellyfin  -> Traefik    proxy
+Jellyfin  -> Authentik  sso (ldap)
+Navidrome -> Traefik    proxy
+Navidrome -> Authentik  sso (forward-auth)
 ```
 
 A resolved relationship is a durable integration instance:
 
 ```text
-consumer: immich
-provider: postgres
-type: database
+consumer: jellyfin
+provider: authentik
+type: sso
 desired revision: 4
 observed revision: 4
 status: configured
@@ -538,6 +549,10 @@ Auth keys are never exposed through the API. The frontend receives only a boolea
 - **Persistent proxy port on `remote_apps`** — The `proxy_port` column needs to be added
   to the `remote_apps` table schema. Currently, proxy ports are assigned ephemerally by
   `RemoteProxyManager` at reconciliation time and may shift when apps are added or removed.
+- **Standalone proxy outpost for tailnet forward-auth** — A dedicated Authentik outpost
+  container for tailnet auth, separate from the embedded outpost that handles local auth.
+  This enables remote users to log in via `bloud.{tailnet_domain}` instead of being
+  redirected to unreachable `localhost:8080`. In active development.
 - **Multiple tailnet connections** — The data model supports multiple entries, but the UI
   and runtime currently handle only one active connection.
 - **SSO identity model** — Guest Bloud accounts backed by Authentik, per-app auth
@@ -546,20 +561,37 @@ Auth keys are never exposed through the API. The frontend receives only a boolea
 
 ### Reconciliation Flow
 
-The target reconciler executes this order from durable desired state:
+The reconciler uses an intent-driven architecture. All mutations flow through a typed intent
+queue. The reconciler is the single writer to all stores and the single executor of all side
+effects. API handlers are thin intent submitters that return 202 Accepted.
+
+Each reconciler cycle has two phases:
+
+**Phase 1: Drain Queue (Apply Intents to Stores)**
+
+Pull all pending intents from the FIFO queue. For each intent, apply the corresponding
+store mutations. No side effects — just store writes that represent desired state.
+
+**Phase 2: Converge (Make Actual Match Desired)**
 
 ```text
-1. Load manifests and durable desired state
-2. Resolve and validate provider bindings
-3. Calculate desired topology, integration instances, and dependency levels
-4. Ensure topology for each dependency level
-5. Wait for required providers to become healthy
-6. Run prestart configuration with typed provider outputs
-7. Start or selectively restart changed consumers
-8. Verify consumer health
-9. Run poststart configuration
-10. Record observed application and integration revisions
+1. Sync container state — reconcile DB status with actual container reality
+2. Resolve dependencies — auto-install required providers for installing apps
+3. Ensure apps in dependency order:
+   a. PreStart configuration (dirs, config files, credentials)
+   b. Ensure container (Quadlet unit + systemd)
+   c. Health check
+   d. PostStart configuration (API calls, integration setup)
+   e. SSO provisioning
+   f. Tailnet node management (if tailnet active)
+4. Handle uninstalls — stop tailnet node, remove container, delete from store
+5. Routing convergence — ensure gateway, reconcile remote proxies, regenerate Traefik routes
+6. Optional dependency dispatch — reconfigure apps when optional providers become healthy
+7. Tailnet teardown — if tailnet deleted, stop and purge all nodes and gateway
 ```
+
+Intents are debounced (~5 seconds) so rapid mutations coalesce into a single convergence
+pass. Multiple installs that share a dependency produce one install of the shared provider.
 
 Independent applications within one dependency level may run concurrently. Required-provider
 health must precede consumer prestart or poststart integration configuration.
@@ -748,14 +780,14 @@ network rather than host-native service sockets.
 
 ### Host Changes
 
-Host-level changes must be explicit, recorded, and reversible. This especially applies to
-AdGuard Home:
+Host-level changes must be explicit, recorded, and reversible. Any future application that
+modifies host state (DNS, firewall, networking) must:
 
-- Detect port 53 and resolver conflicts before applying changes.
-- Record prior host resolver configuration.
-- Apply DNS changes only after AdGuard Home is healthy.
+- Detect conflicts before applying changes.
+- Record prior host configuration.
+- Apply changes only after the application is healthy.
 - Restore prior state after failed apply or removal.
-- Verify DNS behavior from a separate client.
+- Verify behavior from a separate client.
 
 ## Migration Engineering Policy
 
@@ -790,15 +822,11 @@ Every migration slice must leave behind:
 
 ### Deletion Targets
 
-Delete these after portable parity is proven:
+Most legacy paths have been removed. Remaining cleanup targets:
 
-- Legacy generator and rebuilder paths
-- ISO installer paths
-- Legacy application modules and helpers
-- Rootless Podman networking workarounds
-- Host-native PostgreSQL and Redis assumptions
-- ISO-only release validation
-- Legacy runtime-specific CLI commands
+- Any remaining host-native PostgreSQL or Redis assumptions in test fixtures
+- Legacy runtime-specific CLI commands if any survive
+- Stale documentation references
 
 Deprecated runtime paths must not remain indefinitely.
 
@@ -864,10 +892,16 @@ Using fake adapters and configurators:
 - Removal blockers
 - Concurrent requests
 
-### Layer 5: Clean Debian VM Acceptance Tests
+### Layer 5: E2E Lifecycle Tests
 
-The release gate runs the real Debian package, Podman, dashboard, SSO, routing, providers,
-configurators, and user-facing applications.
+The `./bloud e2e lifecycle` command builds the host-agent, deploys it to a Lima VM, and runs
+the full install/uninstall lifecycle with Playwright browser tests for SSO verification.
+
+Current coverage:
+- Jellyfin: install, Bloud login, LDAP SSO login in embedded iframe, uninstall
+- Navidrome: install, forward-auth login via Traefik, uninstall
+
+The release gate will run on a clean Debian VM with the real `.deb` package.
 
 Tests verify behavior, not screenshots alone.
 
@@ -905,29 +939,17 @@ Every supported application defines and verifies:
 - Preserves media and configuration across reboot and upgrade
 - Preserves data by default during uninstall
 
-### AdGuard Home
+### Navidrome
 
 - Installs from the dashboard
-- Completes initial configuration automatically
-- Protects its web interface through Bloud authentication
-- Answers DNS requests from a separate client
-- Detects port and DNS conflicts before applying changes
-- Records and restores previous host DNS state
-- Preserves configuration across reboot and upgrade
-
-### Immich
-
-- Installs PostgreSQL and Redis providers automatically
-- Provisions its database and required extensions through integration configuration
-- Starts all required services in dependency order
-- Configures native OIDC idempotently
+- Creates required persistent directories (data, music)
+- Configures forward-auth SSO through Authentik
 - Opens from the authenticated dashboard without another password prompt
-- Supports photo upload, thumbnail generation, and retrieval
-- Preserves photos and configuration across reboot and upgrade
-- Does not damage shared providers during removal
-
-Immich remains in the first-release set only while it meets this contract without making the
-overall release unreliable.
+- Bypasses forward-auth for `/rest/` paths so Subsonic API clients can authenticate directly
+- Accepts trusted `X-authentik-username` header for browser SSO identity
+- Supports documented Subsonic-compatible client login
+- Preserves music library and configuration across reboot and upgrade
+- Preserves data by default during uninstall
 
 ## Delivery Phases
 
@@ -935,13 +957,13 @@ Each phase ends with an automated gate.
 
 | Phase | Current status |
 |---|---|
-| Phase 0: Freeze, Inventory, and Measure | In progress; scope frozen, baseline reliability incomplete |
-| Phase 1: Extract the Integration Engine | In progress; typed provider resolution slice completed |
-| Phase 2: Define Portable Manifests and Desired Topology | Not started |
-| Phase 3: Implement the Debian Runtime | Not started |
-| Phase 4: Port Jellyfin | Not started |
-| Phase 5: Port AdGuard Home | Not started |
-| Phase 6: Port Immich | Not started |
+| Phase 0: Freeze, Inventory, and Measure | Complete |
+| Phase 1: Extract the Integration Engine | Complete |
+| Phase 2: Implement Reconciler Architecture | Complete |
+| Phase 3: Implement the Portable Runtime | Complete; Quadlet/systemd/Podman working on Lima VM |
+| Phase 4: Port Jellyfin | Complete; LDAP SSO, E2E lifecycle tests passing |
+| Phase 5: Port Navidrome | Complete; forward-auth SSO, E2E tests passing |
+| Phase 6: Implement Sharing and Federation | In progress; core sharing works, tailnet outpost auth in development |
 | Phase 7: Package and Release | Not started |
 
 Phase work may overlap only when it does not bypass an earlier phase's release gate or create
@@ -956,41 +978,50 @@ Gate:
 
 - Existing behavior has characterization tests where practical.
 
+**Status:** Complete. Scope frozen, fast validation tier passing.
+
 ### Phase 1: Extract the Integration Engine
 
-- Define typed provider contracts and durable integration instances.
+- Define typed provider contracts.
 - Formalize prestart and poststart configurator contracts.
-- Track desired and observed integration revisions.
-- Implement invalidation and selective restart planning.
-- Make reconciliation operate from desired integration state.
+- Make resolution operate from declared integration state.
 
 Gate:
 
-- Provider changes, optional provider installation, failed configuration, retry, and selective
-  restart are comprehensively tested without a real runtime.
+- Provider changes, optional provider installation, and missing required bindings are
+  comprehensively tested without a real runtime.
 
-### Phase 2: Define Portable Manifests and Desired Topology
+**Status:** Complete. Typed integration resolver with required/optional/compatibility
+semantics implemented and tested. PreStart/PostStart configurator interfaces defined.
 
-- Define manifests capable of representing the complete release stack.
-- Represent services, networks, volumes, ports, routes, health, providers, consumers, and
-  configurator triggers.
-- Produce deterministic install and removal plans.
+### Phase 2: Implement Reconciler Architecture
 
-Gate:
-
-- Golden plans represent Jellyfin, AdGuard Home, Immich, PostgreSQL, Redis, Traefik, and
-  Authentik without undocumented behavior.
-
-### Phase 3: Implement the Debian Runtime
-
-- Build Debian preflight checks.
-- Implement filesystem, Podman, Quadlet, systemd, and networking adapters.
-- Package and run the host agent as a systemd service.
-- Prove create, health, reboot, reconcile, and remove with a trivial service.
+- Collapse all mutation paths into an intent-driven reconciler.
+- Make the reconciler the single writer to all stores and single executor of side effects.
+- Implement intent queue with debounce, convergence loop, and dependency-ordered execution.
+- Cover all operations: install, uninstall, rename, tailnet, remote apps, shares, clear-data.
 
 Gate:
 
-- A clean Debian VM reaches the dashboard and reconciles core infrastructure without drift.
+- All mutations flow through the intent queue. No API handler writes to stores or executes
+  side effects directly. E2E lifecycle tests pass through the new architecture.
+
+**Status:** Complete. Merged in PR #2 (`reconciler-architecture`). All intent types
+implemented. Old `EnqueueInstall`/`EnqueueUninstall` paths removed.
+
+### Phase 3: Implement the Portable Runtime
+
+- Implement filesystem, Podman, Quadlet, and systemd adapters.
+- Run the host agent as a systemd user service.
+- Prove create, health, reboot, reconcile, and remove with real services.
+
+Gate:
+
+- A Lima VM reaches the dashboard and reconciles core infrastructure without drift.
+
+**Status:** Complete for development. Quadlet unit generation, user-scope systemd,
+rootless Podman, and container lifecycle all working on Lima VM. Not yet validated on a
+clean Debian VM without Lima.
 
 ### Phase 4: Port Jellyfin
 
@@ -999,28 +1030,41 @@ Gate:
 
 Gate:
 
-- Jellyfin passes its full support contract repeatedly on a clean Debian VM.
+- Jellyfin passes its full support contract repeatedly on the Lima VM.
 
-### Phase 5: Port AdGuard Home
+**Status:** Complete. Jellyfin configurator implements PreStart (dirs, LDAP plugin, network
+config, setup wizard) and PostStart (LDAP integration via API). E2E lifecycle test covers
+install, Bloud login, LDAP SSO login, and uninstall.
 
-- Implement reversible host DNS changes and conflict detection.
-- Verify protected dashboard, DNS from a separate client, reboot, failure recovery, and removal.
+### Phase 5: Port Navidrome
 
-Gate:
-
-- AdGuard Home and Jellyfin both pass repeatedly.
-
-### Phase 6: Port Immich
-
-- Port multi-service topology, database/cache integrations, extensions, and OIDC.
-- Verify upload, retrieval, reboot, reconciliation, and safe removal.
+- Port topology and forward-auth SSO to portable contracts.
+- Verify dashboard access, Subsonic API bypass, persistence, reboot, and removal.
 
 Gate:
 
-- All release apps pass repeatedly, and Immich does not introduce runtime-specific branches in
-  the integration engine.
+- Navidrome and Jellyfin both pass repeatedly.
 
-If this gate cannot be met reliably, Immich is marked experimental and does not block release.
+**Status:** Complete. Navidrome uses forward-auth via Authentik with `/rest/` bypass for
+Subsonic clients. E2E test covers install and forward-auth login flow.
+
+### Phase 6: Implement Sharing and Federation
+
+- Implement per-app tailnet nodes for outbound sharing.
+- Implement gateway with SOCKS5 proxy for inbound remote app consumption.
+- Implement domain-agnostic routing so apps work from any origin.
+- Add sharing UI (invite tokens, guest management, remote app addition).
+- Implement standalone proxy outpost for tailnet forward-auth.
+
+Gate:
+
+- A shared app is accessible from a remote tailnet peer. Remote apps are accessible from
+  local network devices through the gateway proxy. Forward-auth apps authenticate correctly
+  over tailnet.
+
+**Status:** In progress. Core sharing infrastructure implemented: tailnet nodes, gateway,
+SOCKS5 reverse proxies, remote app management, invite tokens, domain-agnostic routing.
+Standalone proxy outpost for tailnet forward-auth is in active development.
 
 ### Phase 7: Package and Release
 
@@ -1040,6 +1084,9 @@ Required acceptance flow:
 Gate:
 
 - The exact package later published passes repeatedly without manual intervention.
+
+**Status:** Not started. Requires `.deb` packaging, `bloud init`, and clean Debian VM
+validation.
 
 ## Release Criteria
 
