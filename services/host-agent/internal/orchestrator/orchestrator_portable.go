@@ -126,9 +126,9 @@ func (o *PortableOrchestrator) SyncContainerState(ctx context.Context) {
 			o.logger.Info("marking interrupted app as error", "app", app.CatalogID, "previous_status", app.Status)
 			_ = o.appStore.UpdateStatus(app.CatalogID, "error")
 
-		case app.Status == "running" && (!state.Exists || !state.Running):
-			// DB says running but container isn't → mark stopped
-			o.logger.Info("container not running, marking as stopped", "app", app.CatalogID, "exists", state.Exists)
+		case app.Status == "running" && !state.Exists:
+			// Container gone entirely → mark stopped so reconciler re-creates it
+			o.logger.Info("container gone, marking as stopped", "app", app.CatalogID)
 			_ = o.appStore.UpdateStatus(app.CatalogID, "stopped")
 
 		case (app.Status == "error" || app.Status == "stopped") && state.Running:
