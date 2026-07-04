@@ -3,6 +3,7 @@
 	import { browser } from '$app/environment';
 	import Icon from './Icon.svelte';
 	import type { App } from '$lib/types';
+	import { isAdmin } from '$lib/stores/user';
 
 	interface Props {
 		app: App | null;
@@ -83,19 +84,21 @@
 			<Icon name="terminal" size={16} />
 			View Logs
 		</button>
-		<button class="context-item" onclick={handleRename}>
-			<Icon name="edit" size={16} />
-			Rename
-		</button>
-		<button class="context-item" onclick={handleShare}>
-			<Icon name="share" size={16} />
-			Share
-		</button>
-		<hr class="context-divider" />
-		<button class="context-item danger" onclick={handleUninstall}>
-			<Icon name="trash" size={16} />
-			Remove App
-		</button>
+		{#if $isAdmin}
+			<button class="context-item" onclick={handleRename}>
+				<Icon name="edit" size={16} />
+				Rename
+			</button>
+			<button class="context-item" onclick={handleShare}>
+				<Icon name="share" size={16} />
+				Share
+			</button>
+			<hr class="context-divider" />
+			<button class="context-item danger" onclick={handleUninstall}>
+				<Icon name="trash" size={16} />
+				Remove App
+			</button>
+		{/if}
 	</div>
 {/if}
 

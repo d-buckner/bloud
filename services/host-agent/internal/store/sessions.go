@@ -22,6 +22,7 @@ type Session struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
 	Username  string    `json:"username"`
+	Role      Role      `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -53,7 +54,7 @@ func NewSessionStore(redisAddr string) (*SessionStore, error) {
 }
 
 // Create creates a new session for a user
-func (s *SessionStore) Create(ctx context.Context, userID string, username string) (*Session, error) {
+func (s *SessionStore) Create(ctx context.Context, userID string, username string, role Role) (*Session, error) {
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
@@ -64,6 +65,7 @@ func (s *SessionStore) Create(ctx context.Context, userID string, username strin
 		ID:        sessionID,
 		UserID:    userID,
 		Username:  username,
+		Role:      role,
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.ttl),
 	}
@@ -132,6 +134,40 @@ func (s *SessionStore) DeleteByUserID(ctx context.Context, userID string) error 
 			}
 
 			if session.UserID == userID {
+				s.client.Del(ctx, key)
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return nil
+}
+
+// DeleteByUsername removes all sessions for a user by username
+func (s *SessionStore) DeleteByUsername(ctx context.Context, username string) error {
+	var cursor uint64
+	for {
+		keys, nextCursor, err := s.client.Scan(ctx, cursor, sessionPrefix+"*", 100).Result()
+		if err != nil {
+			return fmt.Errorf("failed to scan sessions: %w", err)
+		}
+
+		for _, key := range keys {
+			data, err := s.client.Get(ctx, key).Bytes()
+			if err != nil {
+				continue
+			}
+
+			var session Session
+			if err := json.Unmarshal(data, &session); err != nil {
+				continue
+			}
+
+			if session.Username == username {
 				s.client.Del(ctx, key)
 			}
 		}

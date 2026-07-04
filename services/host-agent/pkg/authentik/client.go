@@ -1059,6 +1059,168 @@ func (c *Client) AddUserToGroup(userID int, groupName string) error {
 	return c.addUserToGroup(userID, groupName)
 }
 
+// RemoveUserFromGroup removes a user from a group by name
+func (c *Client) RemoveUserFromGroup(userID int, groupName string) error {
+	groupID, err := c.findGroupID(groupName)
+	if err != nil {
+		return err
+	}
+
+	reqURL := fmt.Sprintf("%s/api/v3/core/groups/%s/remove_user/", c.baseURL, groupID)
+	payload := map[string]int{"pk": userID}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("removing user from group: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// FindUserID finds a user ID by username (public wrapper)
+func (c *Client) FindUserID(username string) (int, error) {
+	return c.findUserID(username)
+}
+
+// ManagedUserInfo represents a user returned by ListUsers
+type ManagedUserInfo struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	IsAdmin  bool   `json:"is_admin"`
+	IsActive bool   `json:"is_active"`
+}
+
+// ListUsers fetches internal (non-service) users from Authentik and determines their roles
+func (c *Client) ListUsers() ([]ManagedUserInfo, error) {
+	// Fetch users of type "internal"
+	reqURL := fmt.Sprintf("%s/api/v3/core/users/?type=internal&page_size=200", c.baseURL)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("listing users: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	var rawResult struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(body, &rawResult); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	// Get the admin group members to cross-reference
+	adminGroupMembers, err := c.getAdminGroupMembers()
+	if err != nil {
+		return nil, fmt.Errorf("getting admin group members: %w", err)
+	}
+
+	var users []ManagedUserInfo
+	for _, raw := range rawResult.Results {
+		var user struct {
+			PK       int    `json:"pk"`
+			Username string `json:"username"`
+			Name     string `json:"name"`
+			IsActive bool   `json:"is_active"`
+			Type     string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &user); err != nil {
+			continue
+		}
+
+		// Skip service accounts
+		if user.Type == "service_account" {
+			continue
+		}
+
+		// Skip the akadmin user (Authentik's built-in admin)
+		if user.Username == "akadmin" {
+			continue
+		}
+
+		users = append(users, ManagedUserInfo{
+			ID:       user.PK,
+			Username: user.Username,
+			Name:     user.Name,
+			IsAdmin:  adminGroupMembers[user.PK],
+			IsActive: user.IsActive,
+		})
+	}
+
+	return users, nil
+}
+
+// getAdminGroupMembers returns a set of user IDs that are in the "authentik Admins" group
+func (c *Client) getAdminGroupMembers() (map[int]bool, error) {
+	groupID, err := c.findGroupID("authentik Admins")
+	if err != nil {
+		return nil, err
+	}
+
+	reqURL := fmt.Sprintf("%s/api/v3/core/groups/%s/", c.baseURL, groupID)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetching group: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var group struct {
+		Users []int `json:"users"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&group); err != nil {
+		return nil, fmt.Errorf("decoding group: %w", err)
+	}
+
+	members := make(map[int]bool)
+	for _, uid := range group.Users {
+		members[uid] = true
+	}
+	return members, nil
+}
+
 // DeleteUser deletes a user by username
 func (c *Client) DeleteUser(username string) error {
 	// Find the user ID first

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import Icon from './Icon.svelte';
+	import { isAdmin } from '$lib/stores/user';
 
 	interface User {
 		id: number;
@@ -16,13 +17,17 @@
 
 	let currentPath = $derived(page.url.pathname);
 
-	const navItems = [
-		{ href: '/', label: 'Apps', icon: 'home' },
-		{ href: '/catalog', label: 'Catalog', icon: 'store' },
-		{ href: '/settings', label: 'Settings', icon: 'settings' },
-		{ href: '/community', label: 'Community', icon: 'users' },
-		{ href: '/developer', label: 'Developer', icon: 'terminal' }
+	const allNavItems = [
+		{ href: '/', label: 'Apps', icon: 'home', adminOnly: false },
+		{ href: '/catalog', label: 'Catalog', icon: 'store', adminOnly: false },
+		{ href: '/settings', label: 'Settings', icon: 'settings', adminOnly: true },
+		{ href: '/community', label: 'Community', icon: 'users', adminOnly: true },
+		{ href: '/developer', label: 'Developer', icon: 'terminal', adminOnly: true }
 	];
+
+	let navItems = $derived(
+		$isAdmin ? allNavItems : allNavItems.filter((item) => !item.adminOnly)
+	);
 </script>
 
 <nav class="sidebar" class:collapsed>
@@ -56,7 +61,7 @@
 					<Icon name="user" size={16} />
 					<span class="username-text">{user.username}</span>
 				</span>
-				<form action="/auth/logout" method="POST" class="logout-form">
+				<form action="/auth/logout" method="POST" class="logout-form" data-sveltekit-reload>
 					<button type="submit" class="logout-btn" title="Sign out">
 						<Icon name="logout" size={16} />
 					</button>

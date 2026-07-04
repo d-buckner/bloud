@@ -5,15 +5,17 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import { initApps, disconnectApps } from '$lib/services/appFacade';
+	import { currentUser, type CurrentUser } from '$lib/stores/user';
 
 	interface SetupStatus {
 		setupRequired: boolean;
 		authentikReady: boolean;
 	}
 
-	interface User {
+	interface AuthMeResponse {
 		id: number;
 		username: string;
+		role: 'admin' | 'member';
 	}
 
 	let { children }: { children: Snippet } = $props();
@@ -21,7 +23,7 @@
 	let sidebarCollapsed = $state(false);
 	let setupRequired = $state(false);
 	let loading = $state(true);
-	let user = $state<User | null>(null);
+	let user = $state<AuthMeResponse | null>(null);
 
 	// Check setup status and auth, then initialize app if ready
 	onMount(() => {
@@ -49,6 +51,13 @@
 			const authRes = await fetch('/api/auth/me');
 			if (authRes.ok) {
 				user = await authRes.json();
+				// Populate the global user store with role information
+				if (user) {
+					currentUser.set({
+						username: user.username,
+						role: user.role ?? 'admin'
+					} as CurrentUser);
+				}
 			} else {
 				// Not authenticated - redirect to login
 				window.location.href = '/auth/login';

@@ -178,9 +178,18 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine role from Authentik groups
+	role := store.RoleMember
+	for _, group := range userInfo.Groups {
+		if group == "authentik Admins" {
+			role = store.RoleAdmin
+			break
+		}
+	}
+
 	// Create session
 	ctx := r.Context()
-	session, err := s.sessionStore.Create(ctx, username, username)
+	session, err := s.sessionStore.Create(ctx, username, username, role)
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -223,19 +232,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 	})
 
-	// Redirect to Authentik end_session endpoint to also clear the SSO session.
-	// Without this, the user would be silently re-authenticated on the next visit
-	// because Authentik still considers them logged in.
+	// Redirect to Authentik's native invalidation flow to end the SSO session.
+	// The OIDC end-session endpoint requires id_token_hint or a registered
+	// post_logout_redirect_uri which we don't have. The native flow works
+	// unconditionally because the browser sends Authentik's session cookie directly.
 	if s.authConfig != nil && s.authConfig.OIDCConfig != nil {
 		baseURL := requestBaseURL(r)
-		endSessionURL, urlErr := url.Parse(baseURL + s.authConfig.OIDCConfig.Issuer + "end-session/")
-		if urlErr == nil {
-			q := endSessionURL.Query()
-			q.Set("post_logout_redirect_uri", baseURL+"/")
-			endSessionURL.RawQuery = q.Encode()
-			http.Redirect(w, r, endSessionURL.String(), http.StatusFound)
-			return
-		}
+		logoutURL := baseURL + "/if/flow/default-invalidation-flow/?redirect=" + url.QueryEscape(baseURL+"/")
+		http.Redirect(w, r, logoutURL, http.StatusFound)
+		return
 	}
 
 	// Fallback when auth is not configured (e.g. dev mode without Authentik)
@@ -274,6 +279,7 @@ func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"id":       session.UserID,
 		"username": session.Username,
+		"role":     session.Role,
 	})
 }
 
@@ -292,9 +298,15 @@ func isLocalRequest(r *http.Request) bool {
 // authMiddleware checks for a valid session and adds user to context
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Requests from localhost bypass session auth — shell access implies CLI trust
+		// Requests from localhost bypass session auth — shell access implies CLI trust.
+		// Inject an admin pseudo-user so downstream adminMiddleware passes.
 		if isLocalRequest(r) {
-			next.ServeHTTP(w, r)
+			user := &store.User{
+				Username: "_cli",
+				Role:     store.RoleAdmin,
+			}
+			ctx := context.WithValue(r.Context(), userContextKey, user)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
@@ -343,14 +355,45 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Reject old sessions without a role (created before role support) to force re-login
+		if session.Role == "" {
+			s.sessionStore.Delete(ctx, session.ID)
+			http.SetCookie(w, &http.Cookie{
+				Name:     sessionCookieName,
+				Value:    "",
+				Path:     "/",
+				MaxAge:   -1,
+				HttpOnly: true,
+			})
+			respondJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "Session expired",
+			})
+			return
+		}
+
 		// Create user object from session
 		user := &store.User{
 			Username: session.Username,
+			Role:     session.Role,
 		}
 
 		// Add user to context
 		ctx = context.WithValue(ctx, userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// adminMiddleware checks that the authenticated user has admin role
+func (s *Server) adminMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := getUserFromContext(r.Context())
+		if user == nil || !user.IsAdmin() {
+			respondJSON(w, http.StatusForbidden, map[string]string{
+				"error": "Admin access required",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

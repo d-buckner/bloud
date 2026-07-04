@@ -46,68 +46,57 @@ func (s *Server) setupRoutes() {
 				r.Use(s.authMiddleware)
 			}
 
-			// Apps endpoints
-			r.Route("/apps", func(r chi.Router) {
-				r.Get("/", s.handleListApps)
-				r.Get("/installed", s.handleListInstalledApps)
-				r.Get("/events", s.handleAppEvents)
-				r.Post("/refresh-catalog", s.handleRefreshCatalog)
+			// Member-accessible routes (any authenticated user)
+			r.Get("/apps", s.handleListApps)
+			r.Get("/apps/installed", s.handleListInstalledApps)
+			r.Get("/apps/events", s.handleAppEvents)
+			r.Get("/apps/{name}/metadata", s.handleAppMetadata)
+			r.Get("/apps/{name}/icon", s.handleAppIcon)
+			r.Get("/apps/{name}/logs", s.handleAppLogs)
+			r.Get("/system/status", s.handleSystemStatus)
+			r.Get("/system/status/stream", s.handleSystemStatusStream)
+			r.Get("/system/storage", s.handleStorage)
+			r.Get("/system/developer", s.handleDeveloperGraph)
+			r.Get("/user/layout", s.handleGetLayout)
+			r.Put("/user/layout", s.handleSetLayout)
 
-				// Metadata endpoint
-				r.Get("/{name}/metadata", s.handleAppMetadata)
+			// Admin-only routes
+			r.Group(func(r chi.Router) {
+				if s.sessionStore != nil {
+					r.Use(s.adminMiddleware)
+				}
 
-				// Action endpoints (use orchestrator)
-				r.Post("/{name}/install", s.handleInstall)
-				r.Post("/{name}/uninstall", s.handleUninstall)
-				r.Post("/{name}/clear-data", s.handleClearData)
-				r.Patch("/{name}/rename", s.handleRename)
+				// App management
+				r.Post("/apps/refresh-catalog", s.handleRefreshCatalog)
+				r.Post("/apps/{name}/install", s.handleInstall)
+				r.Post("/apps/{name}/uninstall", s.handleUninstall)
+				r.Post("/apps/{name}/clear-data", s.handleClearData)
+				r.Patch("/apps/{name}/rename", s.handleRename)
 
-				// Logs streaming
-				r.Get("/{name}/logs", s.handleAppLogs)
+				// System admin
+				r.Get("/system/rebuild/stream", s.handleRebuildStream)
 
-				// Static assets
-				r.Get("/{name}/icon", s.handleAppIcon)
-			})
+				// Settings
+				r.Get("/settings/tailnet", s.handleGetTailnet)
+				r.Post("/settings/tailnet", s.handleSetTailnet)
+				r.Delete("/settings/tailnet", s.handleDeleteTailnet)
 
-			// System endpoints
-			r.Route("/system", func(r chi.Router) {
-				r.Get("/status", s.handleSystemStatus)
-				r.Get("/status/stream", s.handleSystemStatusStream)
-				r.Get("/storage", s.handleStorage)
-				r.Get("/rebuild/stream", s.handleRebuildStream)
-				r.Get("/developer", s.handleDeveloperGraph)
-			})
+				// Sharing
+				r.Post("/sharing/invites", s.handleCreateInvite)
+				r.Get("/sharing/shares", s.handleListShares)
+				r.Delete("/sharing/shares/{id}", s.handleRevokeShare)
+				r.Get("/sharing/guests", s.handleListGuests)
+				r.Post("/sharing/guests", s.handleCreateGuest)
+				r.Get("/sharing/community", s.handleCommunityGraph)
+				r.Get("/sharing/remote-apps", s.handleListRemoteApps)
+				r.Post("/sharing/remote-apps", s.handleAddRemoteApp)
+				r.Delete("/sharing/remote-apps/{id}", s.handleDeleteRemoteApp)
 
-			// User preferences endpoints
-			r.Route("/user", func(r chi.Router) {
-				r.Get("/layout", s.handleGetLayout)
-				r.Put("/layout", s.handleSetLayout)
-			})
-
-			// Settings endpoints
-			r.Route("/settings", func(r chi.Router) {
-				r.Get("/tailnet", s.handleGetTailnet)
-				r.Post("/tailnet", s.handleSetTailnet)
-				r.Delete("/tailnet", s.handleDeleteTailnet)
-			})
-
-			// Sharing endpoints
-			r.Route("/sharing", func(r chi.Router) {
-				r.Post("/invites", s.handleCreateInvite)
-				r.Get("/shares", s.handleListShares)
-				r.Delete("/shares/{id}", s.handleRevokeShare)
-
-				// Guests (contact book)
-				r.Get("/guests", s.handleListGuests)
-				r.Post("/guests", s.handleCreateGuest)
-
-				// Community graph
-				r.Get("/community", s.handleCommunityGraph)
-
-				// Remote apps (shared apps from other hosts)
-				r.Get("/remote-apps", s.handleListRemoteApps)
-				r.Post("/remote-apps", s.handleAddRemoteApp)
-				r.Delete("/remote-apps/{id}", s.handleDeleteRemoteApp)
+				// User management
+				r.Get("/users", s.handleListUsers)
+				r.Post("/users", s.handleCreateManagedUser)
+				r.Delete("/users/{username}", s.handleDeleteManagedUser)
+				r.Put("/users/{username}/role", s.handleSetUserRole)
 			})
 		})
 

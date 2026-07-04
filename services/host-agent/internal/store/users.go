@@ -6,9 +6,23 @@ import (
 	"fmt"
 )
 
+// Role represents a user's permission level
+type Role string
+
+const (
+	RoleAdmin  Role = "admin"
+	RoleMember Role = "member"
+)
+
 // User represents a Bloud user
 type User struct {
 	Username string `json:"username"`
+	Role     Role   `json:"role"`
+}
+
+// IsAdmin returns true if the user has admin privileges
+func (u *User) IsAdmin() bool {
+	return u.Role == RoleAdmin
 }
 
 // GridElement represents an element (app or widget) in the layout grid
@@ -72,6 +86,15 @@ func (s *PreferencesStore) GetLayout(username string) ([]GridElement, error) {
 		return nil, fmt.Errorf("failed to parse layout: %w", err)
 	}
 	return elements, nil
+}
+
+// DeleteUser removes a user's preferences row
+func (s *PreferencesStore) DeleteUser(username string) error {
+	_, err := s.db.Exec("DELETE FROM user_preferences WHERE username = ?", username)
+	if err != nil {
+		return fmt.Errorf("failed to delete user preferences: %w", err)
+	}
+	return nil
 }
 
 // SetLayout updates the user's layout
