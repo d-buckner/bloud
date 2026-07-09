@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"github.com/go-chi/chi/v5"
@@ -291,7 +291,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if s.intentReconciler == nil {
+	if s.orch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
@@ -302,8 +302,8 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	intent := reconciler.NewInstallAppIntent(name)
-	s.intentReconciler.Enqueue(intent)
+	intent := orchestrator.NewInstallAppIntent(name)
+	s.orch.Enqueue(intent)
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"intentId": intent.IntentID(),
@@ -314,7 +314,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if s.intentReconciler == nil {
+	if s.orch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
@@ -330,8 +330,8 @@ func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	intent := reconciler.NewUninstallAppIntent(name, req.ClearData)
-	s.intentReconciler.Enqueue(intent)
+	intent := orchestrator.NewUninstallAppIntent(name, req.ClearData)
+	s.orch.Enqueue(intent)
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"intentId": intent.IntentID(),
@@ -355,13 +355,13 @@ func (s *Server) handleClearData(w http.ResponseWriter, r *http.Request) {
 	app, _ := s.appStore.GetByCatalogID(name)
 	if app != nil {
 		// App is installed — enqueue uninstall with clearData=true
-		if s.intentReconciler == nil {
+		if s.orch == nil {
 			respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 			return
 		}
 
-		intent := reconciler.NewUninstallAppIntent(name, true)
-		s.intentReconciler.Enqueue(intent)
+		intent := orchestrator.NewUninstallAppIntent(name, true)
+		s.orch.Enqueue(intent)
 
 		respondJSON(w, http.StatusAccepted, map[string]string{
 			"intentId": intent.IntentID(),
@@ -404,13 +404,13 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.intentReconciler == nil {
+	if s.orch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	intent := reconciler.NewRenameAppIntent(name, req.DisplayName)
-	s.intentReconciler.Enqueue(intent)
+	intent := orchestrator.NewRenameAppIntent(name, req.DisplayName)
+	s.orch.Enqueue(intent)
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"intentId": intent.IntentID(),

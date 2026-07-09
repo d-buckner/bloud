@@ -11,3 +11,13 @@ func newTestLogger() *slog.Logger {
 		Level: slog.LevelError,
 	}))
 }
+
+// indexOf returns the index of target in slice, or -1 if not found.
+func indexOf(slice []string, target string) int {
+	for i, v := range slice {
+		if v == target {
+			return i
+		}
+	}
+	return -1
+}

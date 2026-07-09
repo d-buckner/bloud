@@ -13,10 +13,10 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -41,7 +41,7 @@ type Server struct {
 	prefsStore        *store.PreferencesStore
 	sessionStore      *store.SessionStore
 	appHub            *AppEventHub
-	intentReconciler  *reconciler.Reconciler
+	orch              *orchestrator.Orchestrator
 	guestStore        store.GuestStoreInterface
 	shareStore        store.ShareStoreInterface
 	remoteAppStore    store.RemoteAppStoreInterface
@@ -177,6 +177,20 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	traefikConfigPath := filepath.Join(s.cfg.TraefikDynamicDir, "apps-routes.yml")
 	s.logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
 
+	// Create the lifecycle graph and the Orchestrator that drives it.
+	// MapRepository is used so the graph is rebuilt fresh on every startup —
+	// convergeFromStores always populates nodes and targets from the app store,
+	// so persistence across restarts is not needed and avoids stale-state issues.
+	lifecycleGraph := graph.New(graph.NewMapRepository())
+	orch := orchestrator.NewOrchestrator(
+		lifecycleGraph,
+		s.cfg.Registry,
+		s.catalog,
+		s.cfg.DataDir,
+		s.logger,
+		orchestrator.OrchestratorConfig{LDAPOutput: s.cfg.LDAPOutput},
+	)
+
 	if s.cfg.RuntimeMode == "portable" {
 		// Always create a podman client for the API (developer endpoint, etc.)
 		client, err := podman.NewClient()
@@ -282,8 +296,27 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		})
 		s.logger.Info("portable orchestrator initialized")
 
+		// Coalescing signal channel: multiple rapid EventTargetUpdated events collapse
+		// into a single Reconcile pass. The channel is buffered to avoid blocking the
+		// event emitter.
+		orchSignal := make(chan struct{}, 1)
+		lifecycleGraph.On(graph.EventTargetUpdated, func(_ graph.Node) {
+			select {
+			case orchSignal <- struct{}{}:
+			default:
+			}
+		})
+		go func() {
+			for range orchSignal {
+				if err := orch.Reconcile(context.Background()); err != nil {
+					s.logger.Error("orchestrator reconcile failed", "error", err)
+				}
+			}
+		}()
+		s.logger.Info("lifecycle orchestrator initialized")
+
 		// Build forward-domain SSO provisioner (nil when Authentik not installed).
-		var forwardDomainSSO reconciler.ForwardDomainProvisioner
+		var forwardDomainSSO orchestrator.ForwardDomainProvisioner
 		if s.authentikClient != nil {
 			forwardDomainSSO = s.authentikClient
 		}
@@ -291,13 +324,10 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		// Create proxy outpost manager for tailnet forward-auth.
 		proxyOutpost := sharing.NewProxyOutpostManager(runtime, s.logger)
 
-		// Wire the intent reconciler with real dependencies now that the
-		// portable orchestrator exists.
-		s.intentReconciler = reconciler.New(s.logger, &reconciler.Config{
-			Lifecycle:        portable,
+		// Wire converge dependencies into the orchestrator.
+		orch.WithConvergeConfig(orchestrator.ConvergeConfig{
 			AppStore:         appStore,
-			CatalogCache:     s.catalog,
-			Graph:            s.graph,
+			CatalogGraph:     s.graph,
 			TailnetStore:     s.tailnetStore,
 			RemoteAppStore:   s.remoteAppStore,
 			TailnetNode:      tailnetNode,
@@ -307,23 +337,23 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			TailnetDomain:    gateway,
 			ForwardDomainSSO: forwardDomainSSO,
 		})
-		go s.intentReconciler.Start(context.Background())
+		orch.WithRouteGenerator(portable)
+		orch.WithStateSyncer(portable)
 
-		go func() {
-			portable.SyncContainerState(context.Background())
-			portable.ReconcileState(context.Background())
-			// Trigger a full convergence pass to handle tailnet SSO provisioning
-			// and other post-startup tasks that the orchestrator's ReconcileState
-			// doesn't cover.
-			s.intentReconciler.Enqueue(reconciler.NewConvergeIntent())
-		}()
+		s.orch = orch
+		go orch.Start(context.Background())
+
+		// Trigger an initial convergence pass once everything is wired up.
+		// convergeFromStores will sync container state, set graph targets,
+		// converge tailnet, and regenerate routes.
+		go s.orch.Enqueue(orchestrator.NewConvergeIntent())
 		return
 	}
 
-	// Non-portable mode: create intent reconciler with nil config (stub mode)
-	// so Enqueue still works but convergence is a no-op.
-	s.intentReconciler = reconciler.New(s.logger, nil)
-	go s.intentReconciler.Start(context.Background())
+	// Non-portable mode: start the orchestrator in stub mode (no appStore →
+	// converge is a no-op) so Enqueue calls still work without panicking.
+	s.orch = orch
+	go orch.Start(context.Background())
 
 	s.logger.Warn("unknown runtime mode, orchestrator not initialized", "mode", s.cfg.RuntimeMode)
 }
@@ -462,8 +492,8 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
 
-	if s.intentReconciler != nil {
-		s.intentReconciler.Stop()
+	if s.orch != nil {
+		s.orch.Stop()
 	}
 
 	return nil

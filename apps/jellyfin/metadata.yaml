@@ -31,7 +31,7 @@ healthCheck:
 
 container:
   name: apps-jellyfin
-  image: docker.io/jellyfin/jellyfin:10.11.7
+  image: docker.io/jellyfin/jellyfin:10.11.11
   network: apps-net
   restartPolicy: always
   environment:

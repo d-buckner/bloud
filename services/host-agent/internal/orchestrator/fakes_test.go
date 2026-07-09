@@ -544,3 +544,386 @@ func (f *FakeAppStore) AddApp(app *store.InstalledApp) {
 	defer f.mu.Unlock()
 	f.apps[app.CatalogID] = app
 }
+
+// Compile-time assertions.
+var _ store.AppStoreInterface = (*FakeAppStore)(nil)
+var _ catalog.AppGraphInterface = (*FakeAppGraph)(nil)
+var _ catalog.CacheInterface = (*FakeCatalogCache)(nil)
+
+// ============================================================================
+// FakeTailnetStore — in-memory implementation of store.TailnetStoreInterface
+// ============================================================================
+
+type FakeTailnetStore struct {
+	mu    sync.RWMutex
+	conns map[string]*store.TailnetConnection
+}
+
+func NewFakeTailnetStore() *FakeTailnetStore {
+	return &FakeTailnetStore{
+		conns: make(map[string]*store.TailnetConnection),
+	}
+}
+
+func (f *FakeTailnetStore) Create(conn store.TailnetConnection) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conns[conn.ID] = &conn
+	return nil
+}
+
+func (f *FakeTailnetStore) GetByID(id string) (*store.TailnetConnection, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.conns[id], nil
+}
+
+func (f *FakeTailnetStore) GetActive() (*store.TailnetConnection, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	for _, c := range f.conns {
+		if c.Status == "active" {
+			return c, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *FakeTailnetStore) List() ([]*store.TailnetConnection, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var result []*store.TailnetConnection
+	for _, c := range f.conns {
+		result = append(result, c)
+	}
+	return result, nil
+}
+
+func (f *FakeTailnetStore) Delete(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.conns, id)
+	return nil
+}
+
+// ActiveConnection returns the active connection for test assertions.
+func (f *FakeTailnetStore) ActiveConnection() *store.TailnetConnection {
+	c, _ := f.GetActive()
+	return c
+}
+
+// Compile-time assertion.
+var _ store.TailnetStoreInterface = (*FakeTailnetStore)(nil)
+
+// ============================================================================
+// FakeRemoteAppStore — in-memory implementation of store.RemoteAppStoreInterface
+// ============================================================================
+
+type FakeRemoteAppStore struct {
+	mu   sync.RWMutex
+	apps map[string]*store.RemoteApp
+}
+
+func NewFakeRemoteAppStore() *FakeRemoteAppStore {
+	return &FakeRemoteAppStore{
+		apps: make(map[string]*store.RemoteApp),
+	}
+}
+
+func (f *FakeRemoteAppStore) Create(app store.RemoteApp) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.apps[app.ID] = &app
+	return nil
+}
+
+func (f *FakeRemoteAppStore) GetByID(id string) (*store.RemoteApp, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if app, ok := f.apps[id]; ok {
+		return app, nil
+	}
+	return nil, nil
+}
+
+func (f *FakeRemoteAppStore) List() ([]*store.RemoteApp, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var apps []*store.RemoteApp
+	for _, app := range f.apps {
+		apps = append(apps, app)
+	}
+	return apps, nil
+}
+
+func (f *FakeRemoteAppStore) SetCredential(id string, encryptedCred []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if app, ok := f.apps[id]; ok {
+		app.EncryptedCred = encryptedCred
+		app.Status = "active"
+		return nil
+	}
+	return nil
+}
+
+func (f *FakeRemoteAppStore) SetStatus(id, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if app, ok := f.apps[id]; ok {
+		app.Status = status
+		return nil
+	}
+	return nil
+}
+
+func (f *FakeRemoteAppStore) Delete(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.apps, id)
+	return nil
+}
+
+// Apps returns all remote apps for test assertions.
+func (f *FakeRemoteAppStore) Apps() []*store.RemoteApp {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var apps []*store.RemoteApp
+	for _, app := range f.apps {
+		apps = append(apps, app)
+	}
+	return apps
+}
+
+// Compile-time assertion.
+var _ store.RemoteAppStoreInterface = (*FakeRemoteAppStore)(nil)
+
+// ============================================================================
+// FakeTailnetNodeManager — records EnsureRunning/StopAndPurge calls
+// ============================================================================
+
+type FakeTailnetNodeManager struct {
+	mu          sync.Mutex
+	ensuredApps []string
+	purgedApps  []string
+}
+
+func NewFakeTailnetNodeManager() *FakeTailnetNodeManager {
+	return &FakeTailnetNodeManager{}
+}
+
+func (f *FakeTailnetNodeManager) EnsureRunning(ctx context.Context, appName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensuredApps = append(f.ensuredApps, appName)
+	return nil
+}
+
+func (f *FakeTailnetNodeManager) StopAndPurge(ctx context.Context, appName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.purgedApps = append(f.purgedApps, appName)
+	return nil
+}
+
+func (f *FakeTailnetNodeManager) EnsuredApps() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.ensuredApps))
+	copy(out, f.ensuredApps)
+	return out
+}
+
+func (f *FakeTailnetNodeManager) PurgedApps() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.purgedApps))
+	copy(out, f.purgedApps)
+	return out
+}
+
+// Compile-time assertion.
+var _ TailnetNodeEnsurer = (*FakeTailnetNodeManager)(nil)
+
+// ============================================================================
+// FakeGatewayManager — records StopAndPurge calls
+// ============================================================================
+
+type FakeGatewayManager struct {
+	mu          sync.Mutex
+	purgeCalled bool
+}
+
+func NewFakeGatewayManager() *FakeGatewayManager {
+	return &FakeGatewayManager{}
+}
+
+func (f *FakeGatewayManager) StopAndPurge(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.purgeCalled = true
+	return nil
+}
+
+func (f *FakeGatewayManager) WasPurgeCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.purgeCalled
+}
+
+// Compile-time assertion.
+var _ GatewayEnsurer = (*FakeGatewayManager)(nil)
+
+// ============================================================================
+// FakeProxyStopper — records StopAll calls
+// ============================================================================
+
+type FakeProxyStopper struct {
+	mu         sync.Mutex
+	stopCalled bool
+}
+
+func NewFakeProxyStopper() *FakeProxyStopper {
+	return &FakeProxyStopper{}
+}
+
+func (f *FakeProxyStopper) StopAll() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopCalled = true
+}
+
+func (f *FakeProxyStopper) WasStopCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stopCalled
+}
+
+// Compile-time assertion.
+var _ ProxyStopper = (*FakeProxyStopper)(nil)
+
+// ============================================================================
+// FakeTailnetDomainDiscoverer — returns a configured domain or error
+// ============================================================================
+
+type FakeTailnetDomainDiscoverer struct {
+	mu     sync.Mutex
+	domain string
+	err    error
+	called bool
+}
+
+func NewFakeTailnetDomainDiscoverer(domain string, err error) *FakeTailnetDomainDiscoverer {
+	return &FakeTailnetDomainDiscoverer{domain: domain, err: err}
+}
+
+func (f *FakeTailnetDomainDiscoverer) GetTailnetDomain(ctx context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.called = true
+	return f.domain, f.err
+}
+
+func (f *FakeTailnetDomainDiscoverer) WasCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
+}
+
+// Compile-time assertion.
+var _ TailnetDomainDiscoverer = (*FakeTailnetDomainDiscoverer)(nil)
+
+// ============================================================================
+// FakeForwardDomainProvisioner — records EnsureForwardDomainAuth calls
+// ============================================================================
+
+type FakeForwardDomainProvisioner struct {
+	mu           sync.Mutex
+	calledDomain string
+	token        string
+	err          error
+}
+
+func NewFakeForwardDomainProvisioner(token string, err error) *FakeForwardDomainProvisioner {
+	return &FakeForwardDomainProvisioner{token: token, err: err}
+}
+
+func (f *FakeForwardDomainProvisioner) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calledDomain = cookieDomain
+	return f.token, f.err
+}
+
+func (f *FakeForwardDomainProvisioner) CalledDomain() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calledDomain
+}
+
+// Compile-time assertion.
+var _ ForwardDomainProvisioner = (*FakeForwardDomainProvisioner)(nil)
+
+// ============================================================================
+// FakeProxyOutpost — records EnsureRunning/Stop calls
+// ============================================================================
+
+type FakeProxyOutpost struct {
+	mu          sync.Mutex
+	running     bool
+	token       string
+	domain      string
+	stopCalled  bool
+	ensureError error
+}
+
+func NewFakeProxyOutpost() *FakeProxyOutpost {
+	return &FakeProxyOutpost{}
+}
+
+func (f *FakeProxyOutpost) EnsureRunning(ctx context.Context, token, tailnetDomain string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ensureError != nil {
+		return f.ensureError
+	}
+	f.running = true
+	f.token = token
+	f.domain = tailnetDomain
+	return nil
+}
+
+func (f *FakeProxyOutpost) Stop(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.running = false
+	f.stopCalled = true
+	return nil
+}
+
+func (f *FakeProxyOutpost) IsRunning() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.running
+}
+
+func (f *FakeProxyOutpost) WasStopCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stopCalled
+}
+
+func (f *FakeProxyOutpost) RecordedToken() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.token
+}
+
+func (f *FakeProxyOutpost) RecordedDomain() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.domain
+}
+
+// Compile-time assertion.
+var _ ProxyOutpostEnsurer = (*FakeProxyOutpost)(nil)

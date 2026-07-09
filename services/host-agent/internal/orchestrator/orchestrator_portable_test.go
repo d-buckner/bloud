@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
@@ -38,7 +37,7 @@ func (f *fakeContainerRuntime) Inspect(_ context.Context, _ string) (containerru
 	return containerruntime.State{}, nil
 }
 
-func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T) {
+func TestPortableOrchestrator_ReconcileState(t *testing.T) {
 	dataDir := t.TempDir()
 	graph := NewFakeAppGraph()
 	cache := NewFakeCatalogCache()
@@ -50,7 +49,7 @@ func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T)
 		Port:        8096,
 		Container: &catalog.ContainerSpec{
 			Name:          "apps-jellyfin",
-			Image:         "docker.io/jellyfin/jellyfin:10.11.7",
+			Image:         "docker.io/jellyfin/jellyfin:10.11.11",
 			Network:       "apps-net",
 			RestartPolicy: "always",
 			Volumes: []catalog.ContainerVolume{{
@@ -64,31 +63,11 @@ func TestPortableOrchestratorInstallsAndRemovesFromCatalogTopology(t *testing.T)
 		DataDir: dataDir, Logger: slog.Default(),
 	})
 
-	// Record in store (as the reconciler would) then run sub-step lifecycle.
 	require.NoError(t, appStore.Install("jellyfin", "Jellyfin", "", nil, &store.InstallOptions{Port: 8096}))
 
 	ctx := context.Background()
-	require.NoError(t, orch.PreStartApp(ctx, "jellyfin"))
-	require.NoError(t, orch.EnsureContainer(ctx, "jellyfin"))
-	require.Len(t, containers.ensured, 1)
-	assert.Equal(t, []string{"apps-net"}, containers.networks)
-	assert.Equal(t, filepath.Join(dataDir, "jellyfin", "config"), containers.ensured[0].Mounts[0].Source)
-	app, err := appStore.GetByCatalogID("jellyfin")
-	require.NoError(t, err)
-	assert.Equal(t, "starting", app.Status, "EnsureContainer sets status to starting")
-	require.NoError(t, orch.HealthCheckApp(ctx, "jellyfin"))
-	require.NoError(t, orch.PostStartApp(ctx, "jellyfin"))
-	require.NoError(t, orch.ProvisionSSO(ctx, "jellyfin"))
 
-	// ReconcileState re-ensures the app.
-	orch.ReconcileState(context.Background())
-	assert.Len(t, containers.ensured, 2)
-
-	// RemoveApp removes container and store entry.
-	err = orch.RemoveApp(context.Background(), "jellyfin", false)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"apps-jellyfin"}, containers.removed)
-	installed, err := appStore.IsInstalled("jellyfin")
-	require.NoError(t, err)
-	assert.False(t, installed)
+	// ReconcileState just regenerates routes; lifecycle is driven by the Orchestrator.
+	orch.ReconcileState(ctx)
+	assert.Empty(t, containers.ensured, "ReconcileState no longer re-ensures containers")
 }

@@ -598,7 +598,7 @@ func TestJellyfinLDAPLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Emby-Authorization", `MediaBrowser Client="Bloud-E2E", Device="Test", DeviceId="e2e-test", Version="1.0.0"`)
+	req.Header.Set("Authorization", `MediaBrowser Client="Bloud-E2E", Device="Test", DeviceId="e2e-test", Version="1.0.0"`)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -769,7 +769,7 @@ func authenticateJellyfin(t *testing.T, ctx context.Context) string {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Emby-Authorization", `MediaBrowser Client="Bloud-E2E", Device="Test", DeviceId="e2e-test", Version="1.0.0"`)
+	req.Header.Set("Authorization", `MediaBrowser Client="Bloud-E2E", Device="Test", DeviceId="e2e-test", Version="1.0.0"`)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -798,7 +798,7 @@ func getVirtualFolders(t *testing.T, ctx context.Context, token string) []virtua
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Emby-Authorization", jellyfinAuthHeader(token))
+	req.Header.Set("Authorization", jellyfinAuthHeader(token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -826,7 +826,7 @@ func getLDAPPluginConfig(t *testing.T, ctx context.Context, token string) ldapPl
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Emby-Authorization", jellyfinAuthHeader(token))
+	req.Header.Set("Authorization", jellyfinAuthHeader(token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

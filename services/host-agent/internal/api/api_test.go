@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -374,8 +374,8 @@ tags:
 	names, _ := appStore.GetInstalledCatalogIDs()
 	graph.SetInstalled(names)
 
-	// Create intent reconciler in stub mode for test handlers
-	intentRec := reconciler.New(logger, nil)
+	// Create orchestrator in stub mode for test handlers
+	intentRec := orchestrator.NewOrchestrator(nil, nil, nil, "", logger, orchestrator.OrchestratorConfig{})
 	go intentRec.Start(context.Background())
 	t.Cleanup(intentRec.Stop)
 
@@ -386,14 +386,14 @@ tags:
 			DataDir: tmpDir,
 			Port:    8080,
 		},
-		router:           chi.NewRouter(),
-		catalog:          catalogCache,
-		graph:            graph,
-		appStore:         appStore,
-		remoteAppStore:   NewFakeRemoteAppStore(),
-		intentReconciler: intentRec,
-		appHub:           appHub,
-		logger:           logger,
+		router:         chi.NewRouter(),
+		catalog:        catalogCache,
+		graph:          graph,
+		appStore:       appStore,
+		remoteAppStore: NewFakeRemoteAppStore(),
+		orch:           intentRec,
+		appHub:         appHub,
+		logger:         logger,
 	}
 
 	server.setupMiddleware()
@@ -631,7 +631,7 @@ func TestAPI_AppIcon_NotFound(t *testing.T) {
 
 func TestAPI_Install_NoReconciler(t *testing.T) {
 	server, _ := setupTestServer(t)
-	server.intentReconciler = nil // Ensure no reconciler
+	server.orch = nil // Ensure no reconciler
 
 	req := httptest.NewRequest("POST", "/api/apps/test-app/install", nil)
 	w := httptest.NewRecorder()
@@ -643,7 +643,7 @@ func TestAPI_Install_NoReconciler(t *testing.T) {
 
 func TestAPI_Uninstall_NoReconciler(t *testing.T) {
 	server, _ := setupTestServer(t)
-	server.intentReconciler = nil
+	server.orch = nil
 
 	req := httptest.NewRequest("POST", "/api/apps/test-app/uninstall", nil)
 	w := httptest.NewRecorder()

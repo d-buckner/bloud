@@ -68,7 +68,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := c.PreStart(ctx, state)
+	_, err := c.PreStart(ctx, state)
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
@@ -112,7 +112,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	}
 }
 
-func TestConfigurator_PreStartConfig_ChangedOnFirstRun(t *testing.T) {
+func TestConfigurator_PreStart_ChangedOnFirstRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := NewConfigurator(8096)
 	state := &configurator.AppState{
@@ -128,16 +128,16 @@ func TestConfigurator_PreStartConfig_ChangedOnFirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := c.PreStartConfig(context.Background(), state)
+	changed, err := c.PreStart(context.Background(), state)
 	if err != nil {
-		t.Fatalf("PreStartConfig() error = %v", err)
+		t.Fatalf("PreStart() error = %v", err)
 	}
 	if !changed {
-		t.Error("PreStartConfig() changed = false on first run (network.xml created), want true")
+		t.Error("PreStart() changed = false on first run (network.xml created), want true")
 	}
 }
 
-func TestConfigurator_PreStartConfig_NoChangeOnSecondRun(t *testing.T) {
+func TestConfigurator_PreStart_NoChangeOnSecondRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := NewConfigurator(8096)
 	state := &configurator.AppState{
@@ -153,17 +153,17 @@ func TestConfigurator_PreStartConfig_NoChangeOnSecondRun(t *testing.T) {
 	}
 
 	// First run creates network.xml
-	if _, err := c.PreStartConfig(context.Background(), state); err != nil {
-		t.Fatalf("first PreStartConfig() error = %v", err)
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("first PreStart() error = %v", err)
 	}
 
 	// Second run should detect no change
-	changed, err := c.PreStartConfig(context.Background(), state)
+	changed, err := c.PreStart(context.Background(), state)
 	if err != nil {
-		t.Fatalf("second PreStartConfig() error = %v", err)
+		t.Fatalf("second PreStart() error = %v", err)
 	}
 	if changed {
-		t.Error("PreStartConfig() changed = true on second run with identical config, want false")
+		t.Error("PreStart() changed = true on second run with identical config, want false")
 	}
 }
 
@@ -194,7 +194,7 @@ func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
 		BloudDataPath: t.TempDir(),
 	}
 
-	if err := c.PreStart(context.Background(), state); err != nil {
+	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
 	content, err := os.ReadFile(filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth", "LDAP-Auth.dll"))
@@ -428,8 +428,8 @@ func TestConfigurator_Authenticate(t *testing.T) {
 			return
 		}
 
-		// Verify X-Emby-Authorization header
-		authHeader := r.Header.Get("X-Emby-Authorization")
+		// Verify Authorization header (Jellyfin 10.11+ requires this, not X-Emby-Authorization)
+		authHeader := r.Header.Get("Authorization")
 		if !strings.Contains(authHeader, "MediaBrowser") {
 			t.Error("Missing MediaBrowser in Authorization header")
 		}
@@ -473,7 +473,7 @@ func TestConfigurator_GetPluginConfiguration(t *testing.T) {
 		}
 
 		// Verify token in header
-		authHeader := r.Header.Get("X-Emby-Authorization")
+		authHeader := r.Header.Get("Authorization")
 		if !strings.Contains(authHeader, "test-token") {
 			t.Error("Missing token in Authorization header")
 		}

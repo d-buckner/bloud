@@ -29,8 +29,8 @@ const (
 	// LDAP plugin GUID - this is the standard ID for the Jellyfin LDAP-Auth plugin
 	// Note: Jellyfin uses GUIDs without dashes in the API
 	ldapPluginID     = "958aad6637844d2ab89aa7b6fab6e25c"
-	ldapPluginURL    = "https://repo.jellyfin.org/files/plugin/ldap-authentication/ldap-authentication_22.0.0.0.zip"
-	ldapPluginSHA256 = "c2386c001be439c9946280a02d62610f29e325d4094e83bd31221de3f7aa20ae"
+	ldapPluginURL    = "https://repo.jellyfin.org/files/plugin/ldap-authentication/ldap-authentication_23.0.0.0.zip"
+	ldapPluginSHA256 = "952e33fa8d3ac512ccb5c1e2e1c655cbb1957e41fa1f00bd6ccf3076e0467446"
 )
 
 // Configurator handles Jellyfin configuration
@@ -65,15 +65,9 @@ func (c *Configurator) Name() string {
 	return "jellyfin"
 }
 
-// PreStart delegates to PreStartConfig, discarding the change signal.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
-	_, err := c.PreStartConfig(ctx, state)
-	return err
-}
-
-// PreStartConfig ensures directories exist, installs the LDAP plugin, and
+// PreStart ensures directories exist, installs the LDAP plugin, and
 // configures network settings. Returns true if any managed output changed.
-func (c *Configurator) PreStartConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
@@ -253,17 +247,39 @@ func (c *Configurator) HealthCheck(ctx context.Context) error {
 	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
 }
 
-// PostStart delegates to PostStartConfig.
-func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	return c.PostStartConfig(ctx, state)
+// EnsureContainer is a no-op for the Jellyfin configurator when used outside the
+// event-driven Orchestrator (e.g. CLI mode). The Orchestrator supplies a real
+// BaseNodeLifecycle at runtime once the container runtime is available.
+func (c *Configurator) EnsureContainer(_ context.Context, _ bool) error { return nil }
+
+// Remove is a no-op for the Jellyfin configurator; container and data removal
+// are handled at a higher level by the orchestrator.
+func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
+	return nil
 }
 
-// PostStartConfig completes the Jellyfin setup wizard and configures LDAP.
-func (c *Configurator) PostStartConfig(ctx context.Context, state *configurator.AppState) error {
-	// 1. Check if setup wizard is complete
+// PostStart completes the Jellyfin setup wizard and configures LDAP.
+func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	// 1. Check if setup wizard is complete.
+	// Jellyfin may briefly report StartupWizardCompleted=false during initialization
+	// (race between /health becoming available and database fully loading), so retry.
 	info, err := c.getSystemInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
+	}
+
+	if !info.StartupWizardCompleted {
+		// Retry a few times — Jellyfin 10.11.9+ may report false during early init
+		for i := 0; i < 5; i++ {
+			time.Sleep(2 * time.Second)
+			info, err = c.getSystemInfo(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to get system info: %w", err)
+			}
+			if info.StartupWizardCompleted {
+				break
+			}
+		}
 	}
 
 	if !info.StartupWizardCompleted {
@@ -325,8 +341,9 @@ func (c *Configurator) getSystemInfo(ctx context.Context) (*SystemInfo, error) {
 	return &info, nil
 }
 
-// waitForStartupWizardReady waits for Jellyfin's startup wizard API to be ready
-// Even after /health returns OK, Jellyfin may still return 503 with HTML during initialization
+// waitForStartupWizardReady waits for Jellyfin's startup wizard API to be ready.
+// Even after /health returns OK, Jellyfin may still return 503 with HTML during initialization.
+// In Jellyfin 10.11.9+, /Startup/Configuration returns 401 when the wizard is already complete.
 func (c *Configurator) waitForStartupWizardReady(ctx context.Context) error {
 	url := c.getBaseURL() + "/Startup/Configuration"
 
@@ -342,12 +359,18 @@ func (c *Configurator) waitForStartupWizardReady(ctx context.Context) error {
 			continue
 		}
 
-		// Check if we got a JSON response (API ready) vs HTML (still initializing)
 		contentType := resp.Header.Get("Content-Type")
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK && (contentType == "application/json" || contentType == "application/json; charset=utf-8") {
 			log.Println("Jellyfin: Startup wizard API is ready")
+			return nil
+		}
+
+		// Jellyfin 10.11.9+ returns 401 when the wizard is already complete
+		// (the endpoint moves behind auth). Treat this as "already done".
+		if resp.StatusCode == http.StatusUnauthorized {
+			log.Println("Jellyfin: Startup wizard already complete (API returned 401)")
 			return nil
 		}
 
@@ -596,7 +619,7 @@ func (c *Configurator) getVirtualFolders(ctx context.Context, token string) ([]V
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -627,7 +650,7 @@ func (c *Configurator) addVirtualFolder(ctx context.Context, token, name, collec
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -785,8 +808,9 @@ func (c *Configurator) authenticate(ctx context.Context, username, password stri
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Jellyfin requires this header for authentication
-	req.Header.Set("X-Emby-Authorization", `MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0"`)
+	// Jellyfin 10.11+ only parses Client/Device from the Authorization header,
+	// not X-Emby-Authorization. Using the wrong header causes request.App=null crashes.
+	req.Header.Set("Authorization", `MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0"`)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -815,7 +839,7 @@ func (c *Configurator) getPluginConfiguration(ctx context.Context, token, plugin
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -840,7 +864,7 @@ func (c *Configurator) setPluginConfiguration(ctx context.Context, token, plugin
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -870,7 +894,7 @@ func (c *Configurator) getUsers(ctx context.Context, token string) ([]User, erro
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -899,7 +923,7 @@ func (c *Configurator) deleteUser(ctx context.Context, token, userID string) err
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"`, token))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

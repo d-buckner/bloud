@@ -19,19 +19,21 @@ type AppSecretsProvider interface {
 	GetAppSecret(appName, key string) string
 }
 
-// Configurator handles app-specific configuration.
+// NodeLifecycle handles the full lifecycle of a single app node.
 // All methods must be idempotent - safe to call repeatedly.
-// Configurators run as systemd hooks on every service start:
-// - PreStart runs as ExecStartPre (before container)
-// - PostStart runs as ExecStartPost (after container healthy)
-type Configurator interface {
-	// Name returns the app name this configurator handles
+type NodeLifecycle interface {
+	// Name returns the app name this configurator handles.
 	Name() string
 
 	// PreStart runs before the container starts.
 	// Use for: config files, directories, certificates, initial setup.
-	// Called every reconciliation - must be idempotent.
-	PreStart(ctx context.Context, state *AppState) error
+	// Returns true if any managed output changed, signaling the container
+	// should be restarted (EnsureContainer will be called with forceRestart=true).
+	PreStart(ctx context.Context, state *AppState) (changed bool, err error)
+
+	// EnsureContainer creates or recreates the app container.
+	// forceRestart removes any existing container before re-creating.
+	EnsureContainer(ctx context.Context, forceRestart bool) error
 
 	// HealthCheck waits for the app to be ready for configuration.
 	// Use for: waiting for web UI, API, database to accept connections.
@@ -42,23 +44,15 @@ type Configurator interface {
 	// Use for: API calls, integrations, runtime configuration.
 	// Called every reconciliation - must be idempotent.
 	PostStart(ctx context.Context, state *AppState) error
+
+	// Remove tears down the app: stops the container and optionally removes
+	// all persistent data. Must be idempotent.
+	Remove(ctx context.Context, state *AppState, clearData bool) error
 }
 
-// PreStartConfigurator runs before service start. Returns whether managed
-// output changed, signaling that the service needs a restart.
-// This is an optional interface; configurators that implement it get the new
-// flow while others keep using PreStart.
-type PreStartConfigurator interface {
-	PreStartConfig(ctx context.Context, state *AppState) (changed bool, err error)
-}
-
-// PostStartConfigurator runs after the service is healthy. Performs idempotent
-// runtime operations (API calls, registration).
-// This is an optional interface; configurators that implement it get the new
-// flow while others keep using PostStart.
-type PostStartConfigurator interface {
-	PostStartConfig(ctx context.Context, state *AppState) error
-}
+// Configurator is an alias for NodeLifecycle for backward compatibility.
+// Deprecated: use NodeLifecycle directly.
+type Configurator = NodeLifecycle
 
 // LDAPOutput describes the LDAP provider endpoint available to configurators.
 type LDAPOutput struct {

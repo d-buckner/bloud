@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -43,13 +43,13 @@ func (s *Server) handleAddRemoteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.intentReconciler == nil {
+	if s.orch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	intent := reconciler.NewAddRemoteAppIntent(req.AppID, req.TailnetAddr, req.HostLabel)
-	s.intentReconciler.Enqueue(intent)
+	intent := orchestrator.NewAddRemoteAppIntent(req.AppID, req.TailnetAddr, req.HostLabel)
+	s.orch.Enqueue(intent)
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"intentId": intent.IntentID(),
@@ -83,13 +83,13 @@ func (s *Server) handleDeleteRemoteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.intentReconciler == nil {
+	if s.orch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	intent := reconciler.NewDeleteRemoteAppIntent(id)
-	s.intentReconciler.Enqueue(intent)
+	intent := orchestrator.NewDeleteRemoteAppIntent(id)
+	s.orch.Enqueue(intent)
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"intentId": intent.IntentID(),

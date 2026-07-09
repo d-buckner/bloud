@@ -1,72 +1,107 @@
-package reconciler
+package orchestrator
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
-// helper: builds a reconciler wired to fakes.
-type testHarness struct {
-	reconciler     *Reconciler
-	lifecycle      *FakeLifecycleManager
+// convergeHarness wires an Orchestrator to all fakes for converge-phase tests.
+type convergeHarness struct {
+	orch           *Orchestrator
+	g              *graph.Graph
+	registry       *MockConfiguratorRegistry
 	appStore       *FakeAppStore
-	catalog        *FakeCatalogCache
-	graph          *FakeAppGraph
+	catalogCache   *FakeCatalogCache
+	catalogGraph   *FakeAppGraph
 	tailnetStore   *FakeTailnetStore
 	remoteAppStore *FakeRemoteAppStore
 	tailnetNode    *FakeTailnetNodeManager
 	gateway        *FakeGatewayManager
 	proxyStopper   *FakeProxyStopper
+	routeGenerator *MockRouteGenerator
+	stateSyncer    *MockContainerStateSyncer
 }
 
-func newTestHarness() *testHarness {
-	lm := NewFakeLifecycleManager()
-	as := NewFakeAppStore()
-	cc := NewFakeCatalogCache()
-	ag := NewFakeAppGraph()
-	ts := NewFakeTailnetStore()
-	ra := NewFakeRemoteAppStore()
-	sc := NewFakeTailnetNodeManager()
-	gw := NewFakeGatewayManager()
-	ps := NewFakeProxyStopper()
+func newConvergeHarness(t *testing.T) *convergeHarness {
+	t.Helper()
 
-	cfg := &Config{
-		Lifecycle:      lm,
-		AppStore:       as,
-		CatalogCache:   cc,
-		Graph:          ag,
-		TailnetStore:   ts,
-		RemoteAppStore: ra,
-		TailnetNode:    sc,
-		Gateway:        gw,
-		ProxyStopper:   ps,
-	}
+	g := graph.New(graph.NewMapRepository())
 
-	r := New(testLogger(), cfg)
+	// Registry always returns nil (no configurators needed for converge tests).
+	registry := new(MockConfiguratorRegistry)
+	registry.On("Get", mock.Anything).Return(nil).Maybe()
 
-	return &testHarness{
-		reconciler:     r,
-		lifecycle:      lm,
-		appStore:       as,
-		catalog:        cc,
-		graph:          ag,
-		tailnetStore:   ts,
-		remoteAppStore: ra,
-		tailnetNode:    sc,
-		gateway:        gw,
-		proxyStopper:   ps,
+	appStore := NewFakeAppStore()
+	catalogCache := NewFakeCatalogCache()
+	catalogGraph := NewFakeAppGraph()
+	tailnetStore := NewFakeTailnetStore()
+	remoteAppStore := NewFakeRemoteAppStore()
+	tailnetNode := NewFakeTailnetNodeManager()
+	gateway := NewFakeGatewayManager()
+	proxyStopper := NewFakeProxyStopper()
+	routeGenerator := new(MockRouteGenerator)
+	routeGenerator.On("RegenerateRoutes").Return(nil).Maybe()
+	stateSyncer := new(MockContainerStateSyncer)
+	stateSyncer.On("SyncContainerState", mock.Anything).Return().Maybe()
+
+	orch := NewOrchestrator(
+		g,
+		registry,
+		catalogCache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{},
+	)
+	orch.WithConvergeConfig(ConvergeConfig{
+		AppStore:       appStore,
+		CatalogGraph:   catalogGraph,
+		TailnetStore:   tailnetStore,
+		RemoteAppStore: remoteAppStore,
+		TailnetNode:    tailnetNode,
+		Gateway:        gateway,
+		ProxyStopper:   proxyStopper,
+	})
+	orch.WithRouteGenerator(routeGenerator)
+	orch.WithStateSyncer(stateSyncer)
+
+	return &convergeHarness{
+		orch:           orch,
+		g:              g,
+		registry:       registry,
+		appStore:       appStore,
+		catalogCache:   catalogCache,
+		catalogGraph:   catalogGraph,
+		tailnetStore:   tailnetStore,
+		remoteAppStore: remoteAppStore,
+		tailnetNode:    tailnetNode,
+		gateway:        gateway,
+		proxyStopper:   proxyStopper,
+		routeGenerator: routeGenerator,
+		stateSyncer:    stateSyncer,
 	}
 }
 
-// addCatalogApp is a helper to register a minimal catalog app with a container spec.
-func (h *testHarness) addCatalogApp(name, displayName string, port int) {
-	h.catalog.AddApp(&catalog.App{
+// graphTarget returns the TargetStatus for the named node, or "" if absent.
+func (h *convergeHarness) graphTarget(appName string) graph.NodeStatus {
+	node, _ := h.g.GetNode(appName)
+	if node == nil {
+		return ""
+	}
+	return node.TargetStatus
+}
+
+// addCatalogApp registers a minimal catalog app.
+func (h *convergeHarness) addCatalogApp(name, displayName string, port int) {
+	h.catalogCache.AddApp(&catalog.App{
 		CatalogID:   name,
 		DisplayName: displayName,
 		Version:     "1.0.0",
@@ -75,55 +110,27 @@ func (h *testHarness) addCatalogApp(name, displayName string, port int) {
 	})
 }
 
-func TestConverge_InstallIntent_RecordsInStoreAndCallsEnsureApp(t *testing.T) {
-	h := newTestHarness()
+// ── Install Intent Tests ───────────────────────────────────────────────────
+
+func TestConverge_InstallIntent_RecordsInStoreAndSetsGraphTarget(t *testing.T) {
+	h := newConvergeHarness(t)
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
 
-	intents := []Intent{NewInstallAppIntent("jellyfin")}
+	h.orch.converge(context.Background(), []Intent{NewInstallAppIntent("jellyfin")})
 
-	h.reconciler.converge(context.Background(), intents)
-
-	// App should have been recorded in the store.
 	app, err := h.appStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	require.NotNil(t, app, "app should exist in store after install intent")
 
-	// EnsureApp should have been called.
-	ensured := h.lifecycle.EnsuredApps()
-	assert.Contains(t, ensured, "jellyfin")
-}
-
-func TestConverge_UninstallIntent_MarksUninstallingAndCallsRemoveApp(t *testing.T) {
-	h := newTestHarness()
-	h.addCatalogApp("radarr", "Radarr", 7878)
-
-	// Pre-populate: app is running.
-	h.appStore.AddApp(&store.InstalledApp{
-		CatalogID: "radarr",
-		Status:    "running",
-	})
-
-	intents := []Intent{NewUninstallAppIntent("radarr", true)}
-
-	h.reconciler.converge(context.Background(), intents)
-
-	// RemoveApp should have been called with clearData=true.
-	removed := h.lifecycle.RemovedApps()
-	require.Len(t, removed, 1)
-	assert.Equal(t, "radarr", removed[0].AppName)
-	assert.True(t, removed[0].ClearData)
-
-	// App should no longer exist in store (RemoveApp fake doesn't remove from store,
-	// but the real RemoveApp does — here we just verify the call was made).
+	assert.Equal(t, graph.StatusRunning, h.graphTarget("jellyfin"))
 }
 
 func TestConverge_InstallWithDeps_ResolvesDependenciesAndInstallsInOrder(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 	h.addCatalogApp("radarr", "Radarr", 7878)
 	h.addCatalogApp("qbittorrent", "qBittorrent", 8080)
 
-	// Configure graph: radarr depends on qbittorrent via auto-config.
-	h.graph.SetInstallPlan("radarr", &catalog.InstallPlan{
+	h.catalogGraph.SetInstallPlan("radarr", &catalog.InstallPlan{
 		App:        "radarr",
 		CanInstall: true,
 		AutoConfig: []catalog.ConfigTask{
@@ -131,11 +138,8 @@ func TestConverge_InstallWithDeps_ResolvesDependenciesAndInstallsInOrder(t *test
 		},
 	})
 
-	intents := []Intent{NewInstallAppIntent("radarr")}
+	h.orch.converge(context.Background(), []Intent{NewInstallAppIntent("radarr")})
 
-	h.reconciler.converge(context.Background(), intents)
-
-	// Both apps should be in the store.
 	dep, _ := h.appStore.GetByCatalogID("qbittorrent")
 	require.NotNil(t, dep, "dependency should be recorded in store")
 
@@ -143,39 +147,24 @@ func TestConverge_InstallWithDeps_ResolvesDependenciesAndInstallsInOrder(t *test
 	require.NotNil(t, app, "target app should be recorded in store")
 	assert.Equal(t, "qbittorrent", app.IntegrationConfig["download_client"])
 
-	// Both should have been ensured. qbittorrent should come before radarr
-	// (lower level = no deps, higher level = has deps).
-	ensured := h.lifecycle.EnsuredApps()
-	require.Len(t, ensured, 2)
-
-	qbtIdx := -1
-	radarrIdx := -1
-	for i, name := range ensured {
-		switch name {
-		case "qbittorrent":
-			qbtIdx = i
-		case "radarr":
-			radarrIdx = i
-		}
-	}
-	assert.True(t, qbtIdx < radarrIdx, "dependency should be ensured before dependent: qbittorrent@%d radarr@%d", qbtIdx, radarrIdx)
+	assert.Equal(t, graph.StatusRunning, h.graphTarget("qbittorrent"), "qbittorrent target should be RUNNING")
+	assert.Equal(t, graph.StatusRunning, h.graphTarget("radarr"), "radarr target should be RUNNING")
 }
 
 func TestConverge_TwoInstallsShareDep_DepInstalledOnce(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 	h.addCatalogApp("radarr", "Radarr", 7878)
 	h.addCatalogApp("sonarr", "Sonarr", 8989)
 	h.addCatalogApp("qbittorrent", "qBittorrent", 8080)
 
-	// Both radarr and sonarr depend on qbittorrent.
-	h.graph.SetInstallPlan("radarr", &catalog.InstallPlan{
+	h.catalogGraph.SetInstallPlan("radarr", &catalog.InstallPlan{
 		App:        "radarr",
 		CanInstall: true,
 		AutoConfig: []catalog.ConfigTask{
 			{Target: "radarr", Source: "qbittorrent", Integration: "download_client"},
 		},
 	})
-	h.graph.SetInstallPlan("sonarr", &catalog.InstallPlan{
+	h.catalogGraph.SetInstallPlan("sonarr", &catalog.InstallPlan{
 		App:        "sonarr",
 		CanInstall: true,
 		AutoConfig: []catalog.ConfigTask{
@@ -183,79 +172,72 @@ func TestConverge_TwoInstallsShareDep_DepInstalledOnce(t *testing.T) {
 		},
 	})
 
-	intents := []Intent{
+	h.orch.converge(context.Background(), []Intent{
 		NewInstallAppIntent("radarr"),
 		NewInstallAppIntent("sonarr"),
-	}
+	})
 
-	h.reconciler.converge(context.Background(), intents)
-
-	// qbittorrent should be ensured exactly once.
-	ensured := h.lifecycle.EnsuredApps()
-	qbtCount := 0
-	for _, name := range ensured {
-		if name == "qbittorrent" {
-			qbtCount++
-		}
-	}
-	assert.Equal(t, 1, qbtCount, "shared dependency should be ensured exactly once")
-
-	// All three apps should be ensured.
-	assert.Len(t, ensured, 3, "all three apps should be ensured")
+	assert.Equal(t, graph.StatusRunning, h.graphTarget("qbittorrent"))
+	assert.Equal(t, graph.StatusRunning, h.graphTarget("radarr"))
+	assert.Equal(t, graph.StatusRunning, h.graphTarget("sonarr"))
 }
 
-func TestConverge_SyncsContainerState(t *testing.T) {
-	h := newTestHarness()
-
-	h.reconciler.converge(context.Background(), nil)
-
-	assert.True(t, h.lifecycle.WasSyncCalled(), "SyncContainerState should be called during convergence")
-}
-
-func TestConverge_RegeneratesRoutesAfterConvergence(t *testing.T) {
-	h := newTestHarness()
+func TestConverge_AlreadyRunningApp_StillSetsGraphTarget(t *testing.T) {
+	h := newConvergeHarness(t)
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
-
-	intents := []Intent{NewInstallAppIntent("jellyfin")}
-
-	h.reconciler.converge(context.Background(), intents)
-
-	assert.True(t, h.lifecycle.WasRegenerateCalled(), "RegenerateRoutes should be called after convergence")
-}
-
-func TestConverge_SkipsAlreadyRunningApps(t *testing.T) {
-	h := newTestHarness()
-	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
-
-	// App already running — install intent should be a no-op.
 	h.appStore.AddApp(&store.InstalledApp{
 		CatalogID: "jellyfin",
 		Status:    "running",
 	})
 
-	intents := []Intent{NewInstallAppIntent("jellyfin")}
+	h.orch.converge(context.Background(), []Intent{NewInstallAppIntent("jellyfin")})
 
-	h.reconciler.converge(context.Background(), intents)
-
-	// EnsureApp should NOT have been called.
-	assert.Empty(t, h.lifecycle.EnsuredApps(), "EnsureApp should not be called for already-running apps")
+	assert.Equal(t, graph.StatusRunning, h.graphTarget("jellyfin"))
 }
 
-func TestConverge_NilConfig_StubBehavior(t *testing.T) {
-	// Reconciler with nil config should just log (backward compatible with Phase 2).
-	r := New(testLogger(), nil)
+// ── Uninstall Intent Tests ─────────────────────────────────────────────────
 
-	// Should not panic.
-	r.converge(context.Background(), []Intent{NewInstallAppIntent("jellyfin")})
+func TestConverge_UninstallIntent_RemovesFromStoreAndGraph(t *testing.T) {
+	h := newConvergeHarness(t)
+	h.addCatalogApp("radarr", "Radarr", 7878)
+	h.appStore.AddApp(&store.InstalledApp{
+		CatalogID: "radarr",
+		Status:    "running",
+	})
+
+	h.orch.converge(context.Background(), []Intent{NewUninstallAppIntent("radarr", true)})
+
+	// App should be removed from the store.
+	app, err := h.appStore.GetByCatalogID("radarr")
+	require.NoError(t, err)
+	assert.Nil(t, app, "app should be removed from store after uninstall")
+}
+
+// ── Sync / Route Tests ─────────────────────────────────────────────────────
+
+func TestConverge_SyncsContainerState(t *testing.T) {
+	h := newConvergeHarness(t)
+
+	h.orch.converge(context.Background(), nil)
+
+	h.stateSyncer.AssertCalled(t, "SyncContainerState", mock.Anything)
+}
+
+func TestConverge_RegeneratesRoutesAfterConvergence(t *testing.T) {
+	h := newConvergeHarness(t)
+	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
+
+	h.orch.converge(context.Background(), []Intent{NewInstallAppIntent("jellyfin")})
+
+	h.routeGenerator.AssertCalled(t, "RegenerateRoutes")
 }
 
 // ── Tailnet Intent Tests ──────────────────────────────────────────────────
 
 func TestConverge_SetTailnetIntent_CreatesConnection(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	intents := []Intent{NewSetTailnetIntent("My TS", "tailscale", "tskey-auth-xyz", "")}
-	h.reconciler.converge(context.Background(), intents)
+	h.orch.converge(context.Background(), []Intent{NewSetTailnetIntent("My TS", "tailscale", "tskey-auth-xyz", "")})
 
 	conn := h.tailnetStore.ActiveConnection()
 	require.NotNil(t, conn, "tailnet connection should exist after SetTailnet intent")
@@ -266,45 +248,33 @@ func TestConverge_SetTailnetIntent_CreatesConnection(t *testing.T) {
 }
 
 func TestConverge_SetTailnetIntent_ReplacesExisting(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// Seed an existing connection.
 	h.tailnetStore.Create(store.TailnetConnection{
-		ID:      "old-id",
-		Name:    "Old",
-		Type:    "tailscale",
-		AuthKey: "old-key",
-		Status:  "active",
+		ID: "old-id", Name: "Old", Type: "tailscale", AuthKey: "old-key", Status: "active",
 	})
 
-	intents := []Intent{NewSetTailnetIntent("New", "headscale", "new-key", "https://hs.example.com")}
-	h.reconciler.converge(context.Background(), intents)
+	h.orch.converge(context.Background(), []Intent{NewSetTailnetIntent("New", "headscale", "new-key", "https://hs.example.com")})
 
 	conn := h.tailnetStore.ActiveConnection()
 	require.NotNil(t, conn)
-	assert.NotEqual(t, "old-id", conn.ID, "should have a new ID")
+	assert.NotEqual(t, "old-id", conn.ID)
 	assert.Equal(t, "New", conn.Name)
 	assert.Equal(t, "headscale", conn.Type)
 	assert.Equal(t, "https://hs.example.com", conn.ControlURL)
 
-	// Old connection should be gone.
 	old, _ := h.tailnetStore.GetByID("old-id")
 	assert.Nil(t, old)
 }
 
 func TestConverge_DeleteTailnetIntent_RemovesConnection(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
 	h.tailnetStore.Create(store.TailnetConnection{
-		ID:      "tn-1",
-		Name:    "My Tailnet",
-		Type:    "tailscale",
-		AuthKey: "key",
-		Status:  "active",
+		ID: "tn-1", Name: "My Tailnet", Type: "tailscale", AuthKey: "key", Status: "active",
 	})
 
-	intents := []Intent{NewDeleteTailnetIntent()}
-	h.reconciler.converge(context.Background(), intents)
+	h.orch.converge(context.Background(), []Intent{NewDeleteTailnetIntent()})
 
 	conn := h.tailnetStore.ActiveConnection()
 	assert.Nil(t, conn, "tailnet connection should be nil after DeleteTailnet intent")
@@ -313,57 +283,50 @@ func TestConverge_DeleteTailnetIntent_RemovesConnection(t *testing.T) {
 // ── Tailnet Convergence Tests ─────────────────────────────────────────────
 
 func TestConverge_ActiveTailnet_EnsuresTailnetNodesForRunningApps(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
 	h.addCatalogApp("radarr", "Radarr", 7878)
 
-	// Two running apps.
 	h.appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", Status: "running", Port: 8096})
 	h.appStore.AddApp(&store.InstalledApp{CatalogID: "radarr", Status: "running", Port: 7878})
 
-	// Active tailnet.
 	h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	// Run convergence with no intents (just convergence phase).
-	h.reconciler.converge(context.Background(), nil)
+	h.orch.converge(context.Background(), nil)
 
 	ensured := h.tailnetNode.EnsuredApps()
 	assert.Len(t, ensured, 2)
 	assert.Contains(t, ensured, "jellyfin")
 	assert.Contains(t, ensured, "radarr")
 
-	// TailnetID should be set.
 	jf, _ := h.appStore.GetByCatalogID("jellyfin")
 	assert.Equal(t, "tn-1", jf.TailnetID)
 }
 
 func TestConverge_NoTailnet_PurgesTailnetNodesAndGateway(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
 
 	h.appStore.AddApp(&store.InstalledApp{
 		CatalogID: "jellyfin", Status: "running", TailnetID: "old-tn",
 	})
 
-	// No active tailnet — convergence should purge.
-	h.reconciler.converge(context.Background(), nil)
+	h.orch.converge(context.Background(), nil)
 
 	assert.Contains(t, h.tailnetNode.PurgedApps(), "jellyfin")
 	assert.True(t, h.gateway.WasPurgeCalled())
 	assert.True(t, h.proxyStopper.WasStopCalled())
 
-	// TailnetID should be cleared.
 	jf, _ := h.appStore.GetByCatalogID("jellyfin")
 	assert.Empty(t, jf.TailnetID)
 }
 
 func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// System app — should NOT get a tailnet node.
-	h.catalog.AddApp(&catalog.App{
+	h.catalogCache.AddApp(&catalog.App{
 		CatalogID: "traefik", DisplayName: "Traefik", Version: "1.0.0",
 		Port: 8080, IsSystem: true,
 		Container: &catalog.ContainerSpec{Image: "traefik:latest"},
@@ -376,7 +339,7 @@ func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	h.reconciler.converge(context.Background(), nil)
+	h.orch.converge(context.Background(), nil)
 
 	assert.Empty(t, h.tailnetNode.EnsuredApps(), "system apps should not get tailnet nodes")
 }
@@ -384,10 +347,9 @@ func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
 // ── Remote App Intent Tests ───────────────────────────────────────────────
 
 func TestConverge_AddRemoteAppIntent_CreatesRemoteApp(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// Register the catalog app with SSO metadata.
-	h.catalog.AddApp(&catalog.App{
+	h.catalogCache.AddApp(&catalog.App{
 		CatalogID:   "jellyfin",
 		DisplayName: "Jellyfin",
 		Version:     "1.0.0",
@@ -399,8 +361,9 @@ func TestConverge_AddRemoteAppIntent_CreatesRemoteApp(t *testing.T) {
 		Container: &catalog.ContainerSpec{Image: "jellyfin:latest"},
 	})
 
-	intents := []Intent{NewAddRemoteAppIntent("jellyfin", "ts-jellyfin.tail1234.ts.net", "Johan's server")}
-	h.reconciler.converge(context.Background(), intents)
+	h.orch.converge(context.Background(), []Intent{
+		NewAddRemoteAppIntent("jellyfin", "ts-jellyfin.tail1234.ts.net", "Johan's server"),
+	})
 
 	apps := h.remoteAppStore.Apps()
 	require.Len(t, apps, 1)
@@ -417,10 +380,9 @@ func TestConverge_AddRemoteAppIntent_CreatesRemoteApp(t *testing.T) {
 }
 
 func TestConverge_AddRemoteAppIntent_NilBypassPaths(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// Catalog app without bypass paths — should default to empty slice.
-	h.catalog.AddApp(&catalog.App{
+	h.catalogCache.AddApp(&catalog.App{
 		CatalogID:   "radarr",
 		DisplayName: "Radarr",
 		Version:     "1.0.0",
@@ -429,8 +391,9 @@ func TestConverge_AddRemoteAppIntent_NilBypassPaths(t *testing.T) {
 		Container:   &catalog.ContainerSpec{Image: "radarr:latest"},
 	})
 
-	intents := []Intent{NewAddRemoteAppIntent("radarr", "ts-radarr.tail1234.ts.net", "Remote Host")}
-	h.reconciler.converge(context.Background(), intents)
+	h.orch.converge(context.Background(), []Intent{
+		NewAddRemoteAppIntent("radarr", "ts-radarr.tail1234.ts.net", "Remote Host"),
+	})
 
 	apps := h.remoteAppStore.Apps()
 	require.Len(t, apps, 1)
@@ -438,17 +401,13 @@ func TestConverge_AddRemoteAppIntent_NilBypassPaths(t *testing.T) {
 }
 
 func TestConverge_DeleteRemoteAppIntent_RemovesFromStore(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// Seed a remote app.
 	h.remoteAppStore.Create(store.RemoteApp{
-		ID:     "ra-1",
-		AppID:  "jellyfin",
-		Status: "active",
+		ID: "ra-1", AppID: "jellyfin", Status: "active",
 	})
 
-	intents := []Intent{NewDeleteRemoteAppIntent("ra-1")}
-	h.reconciler.converge(context.Background(), intents)
+	h.orch.converge(context.Background(), []Intent{NewDeleteRemoteAppIntent("ra-1")})
 
 	apps := h.remoteAppStore.Apps()
 	assert.Empty(t, apps, "remote app should be deleted after DeleteRemoteApp intent")
@@ -457,17 +416,15 @@ func TestConverge_DeleteRemoteAppIntent_RemovesFromStore(t *testing.T) {
 // ── Rename App Intent Tests ───────────────────────────────────────────────
 
 func TestConverge_RenameAppIntent_UpdatesDisplayName(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
-
 	h.appStore.AddApp(&store.InstalledApp{
 		CatalogID:   "jellyfin",
 		DisplayName: "Jellyfin",
 		Status:      "running",
 	})
 
-	intents := []Intent{NewRenameAppIntent("jellyfin", "My Media Server")}
-	h.reconciler.converge(context.Background(), intents)
+	h.orch.converge(context.Background(), []Intent{NewRenameAppIntent("jellyfin", "My Media Server")})
 
 	app, err := h.appStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
@@ -477,54 +434,50 @@ func TestConverge_RenameAppIntent_UpdatesDisplayName(t *testing.T) {
 // ── Tailnet SSO Provisioning Tests ────────────────────────────────────────
 
 func TestConverge_ProvisionTailnetSSO_CallsEnsureForwardDomainAuth(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// Active tailnet.
 	h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	// Wire up tailnet domain discoverer and forward domain provisioner.
 	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
 	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
-	h.reconciler.config.TailnetDomain = td
-	h.reconciler.config.ForwardDomainSSO = fd
+	h.orch.tailnetDomain = td
+	h.orch.forwardDomainSSO = fd
 
-	h.reconciler.converge(context.Background(), nil)
+	h.orch.converge(context.Background(), nil)
 
 	assert.True(t, td.WasCalled(), "GetTailnetDomain should be called")
-	assert.Equal(t, "tail12756a.ts.net", fd.CalledDomain(), "EnsureForwardDomainAuth should be called with the tailnet domain")
+	assert.Equal(t, "tail12756a.ts.net", fd.CalledDomain())
 }
 
 func TestConverge_ProvisionTailnetSSO_SkipsWhenNoTailnet(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// No active tailnet.
 	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
 	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
-	h.reconciler.config.TailnetDomain = td
-	h.reconciler.config.ForwardDomainSSO = fd
+	h.orch.tailnetDomain = td
+	h.orch.forwardDomainSSO = fd
 
-	h.reconciler.converge(context.Background(), nil)
+	h.orch.converge(context.Background(), nil)
 
 	assert.False(t, td.WasCalled(), "GetTailnetDomain should not be called without active tailnet")
-	assert.Empty(t, fd.CalledDomain(), "EnsureForwardDomainAuth should not be called")
+	assert.Empty(t, fd.CalledDomain())
 }
 
 func TestConverge_ProvisionTailnetSSO_SkipsWhenInterfacesNil(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
-	// Active tailnet but nil interfaces (default from harness).
 	h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	// Should not panic — provisionTailnetSSO gracefully returns.
-	h.reconciler.converge(context.Background(), nil)
+	// tailnetDomain and forwardDomainSSO are nil (default) — should not panic.
+	h.orch.converge(context.Background(), nil)
 }
 
 func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
-	h := newTestHarness()
+	h := newConvergeHarness(t)
 
 	h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
@@ -532,11 +485,23 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
 
 	td := NewFakeTailnetDomainDiscoverer("", fmt.Errorf("gateway not running"))
 	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
-	h.reconciler.config.TailnetDomain = td
-	h.reconciler.config.ForwardDomainSSO = fd
+	h.orch.tailnetDomain = td
+	h.orch.forwardDomainSSO = fd
 
-	h.reconciler.converge(context.Background(), nil)
+	h.orch.converge(context.Background(), nil)
 
 	assert.True(t, td.WasCalled())
 	assert.Empty(t, fd.CalledDomain(), "EnsureForwardDomainAuth should not be called when gateway is not ready")
+}
+
+// ── Stub behaviour when appStore is nil ───────────────────────────────────
+
+func TestConverge_NilAppStore_StubBehavior(t *testing.T) {
+	// Orchestrator with no converge config — converge should be a no-op.
+	g := graph.New(graph.NewMapRepository())
+	registry := new(MockConfiguratorRegistry)
+	orch := NewOrchestrator(g, registry, nil, "/tmp/bloud-test", newTestLogger(), OrchestratorConfig{})
+
+	// Should not panic.
+	orch.converge(context.Background(), []Intent{NewInstallAppIntent("jellyfin")})
 }

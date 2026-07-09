@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
@@ -76,13 +76,13 @@ func (s *Server) handleSetTailnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.intentReconciler == nil {
+	if s.orch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	intent := reconciler.NewSetTailnetIntent(req.Name, req.Type, req.AuthKey, req.ControlURL)
-	s.intentReconciler.Enqueue(intent)
+	intent := orchestrator.NewSetTailnetIntent(req.Name, req.Type, req.AuthKey, req.ControlURL)
+	s.orch.Enqueue(intent)
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"intentId": intent.IntentID(),
@@ -102,13 +102,13 @@ func (s *Server) handleDeleteTailnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.intentReconciler == nil {
+	if s.orch == nil {
 		respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 		return
 	}
 
-	intent := reconciler.NewDeleteTailnetIntent()
-	s.intentReconciler.Enqueue(intent)
+	intent := orchestrator.NewDeleteTailnetIntent()
+	s.orch.Enqueue(intent)
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"intentId": intent.IntentID(),
