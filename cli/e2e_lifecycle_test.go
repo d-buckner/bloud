@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestParsePortableLifecycleConfig(t *testing.T) {
+func TestParseLifecycleConfig(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "host-agent.env")
 	if err := os.WriteFile(envFile, []byte("DATABASE_URL=test\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -19,7 +19,7 @@ func TestParsePortableLifecycleConfig(t *testing.T) {
 		"BLOUD_E2E_ENV_FILE":   envFile,
 	}
 
-	cfg, help, err := parsePortableLifecycleConfig("/repo", []string{"--host-only", "--keep"}, func(key string) string {
+	cfg, help, err := parseLifecycleConfig("/repo", []string{"--host-only", "--keep"}, func(key string) string {
 		return values[key]
 	})
 	if err != nil {
@@ -39,13 +39,13 @@ func TestParsePortableLifecycleConfig(t *testing.T) {
 	}
 }
 
-func TestParsePortableLifecycleConfigRequiresBrowserURL(t *testing.T) {
+func TestParseLifecycleConfigRequiresBrowserURL(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "host-agent.env")
 	if err := os.WriteFile(envFile, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, err := parsePortableLifecycleConfig("/repo", nil, func(key string) string {
+	_, _, err := parseLifecycleConfig("/repo", nil, func(key string) string {
 		switch key {
 		case "BLOUD_E2E_SSH_TARGET":
 			return "test-host"
@@ -60,13 +60,13 @@ func TestParsePortableLifecycleConfigRequiresBrowserURL(t *testing.T) {
 	}
 }
 
-func TestParsePortableLifecycleConfigRejectsRootRuntimeDirectory(t *testing.T) {
+func TestParseLifecycleConfigRejectsRootRuntimeDirectory(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "host-agent.env")
 	if err := os.WriteFile(envFile, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, err := parsePortableLifecycleConfig("/repo", []string{"--host-only"}, func(key string) string {
+	_, _, err := parseLifecycleConfig("/repo", []string{"--host-only"}, func(key string) string {
 		switch key {
 		case "BLOUD_E2E_SSH_TARGET":
 			return "test-host"
@@ -83,13 +83,13 @@ func TestParsePortableLifecycleConfigRejectsRootRuntimeDirectory(t *testing.T) {
 	}
 }
 
-func TestParsePortableLifecycleConfigRejectsBroadRuntimeDirectory(t *testing.T) {
+func TestParseLifecycleConfigRejectsBroadRuntimeDirectory(t *testing.T) {
 	envFile := filepath.Join(t.TempDir(), "host-agent.env")
 	if err := os.WriteFile(envFile, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, err := parsePortableLifecycleConfig("/repo", []string{"--host-only"}, func(key string) string {
+	_, _, err := parseLifecycleConfig("/repo", []string{"--host-only"}, func(key string) string {
 		switch key {
 		case "BLOUD_E2E_SSH_TARGET":
 			return "test-host"
@@ -107,7 +107,7 @@ func TestParsePortableLifecycleConfigRejectsBroadRuntimeDirectory(t *testing.T) 
 }
 
 func TestRenderLifecycleHostAgentUnit(t *testing.T) {
-	unit := renderLifecycleHostAgentUnit(portableLifecycleConfig{
+	unit := renderLifecycleHostAgentUnit(lifecycleConfig{
 		remoteDir:  "/tmp/bloud-e2e",
 		quadletDir: "/home/bloud/.config/containers/systemd",
 		traefikDir: "/srv/traefik/dynamic",
@@ -115,7 +115,6 @@ func TestRenderLifecycleHostAgentUnit(t *testing.T) {
 	})
 
 	for _, expected := range []string{
-		"Environment=BLOUD_RUNTIME=portable",
 		"Environment=BLOUD_SYSTEMD_SCOPE=user",
 		"Environment=BLOUD_QUADLET_DIR=/home/bloud/.config/containers/systemd",
 		"Environment=BLOUD_DATA_DIR=/tmp/bloud-e2e/data",
@@ -136,7 +135,6 @@ func TestWriteSanitizedLifecycleEnvFileRemovesRunnerOwnedSettings(t *testing.T) 
 	err := os.WriteFile(source, []byte(strings.Join([]string{
 		"BLOUD_DATA_DIR=/home/daniel.guest/.local/share/bloud",
 		"BLOUD_APPS_DIR=/Users/daniel/Projects/bloud/apps",
-		"BLOUD_RUNTIME=nix",
 		"DATABASE_URL=postgres://apps:test@localhost/bloud",
 		"BLOUD_LDAP_HOST=apps-authentik-ldap",
 		"",
@@ -154,7 +152,7 @@ func TestWriteSanitizedLifecycleEnvFileRemovesRunnerOwnedSettings(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(content)
-	for _, removed := range []string{"BLOUD_DATA_DIR", "BLOUD_APPS_DIR", "BLOUD_RUNTIME"} {
+	for _, removed := range []string{"BLOUD_DATA_DIR", "BLOUD_APPS_DIR"} {
 		if strings.Contains(text, removed) {
 			t.Fatalf("expected %s to be removed from sanitized env:\n%s", removed, text)
 		}
@@ -186,7 +184,7 @@ func TestLifecycleRemoteScriptsAreValidBash(t *testing.T) {
 }
 
 func TestRemoteCommandQuotesArguments(t *testing.T) {
-	runner := &portableLifecycle{cfg: portableLifecycleConfig{sshTarget: "test-host"}}
+	runner := &lifecycle{cfg: lifecycleConfig{sshTarget: "test-host"}}
 	cmd := runner.remoteCommand("ignored", `{"username":"test user"}`)
 	got := strings.Join(cmd.Args, " ")
 	if !strings.Contains(got, `'{"username":"test user"}'`) {
@@ -194,7 +192,7 @@ func TestRemoteCommandQuotesArguments(t *testing.T) {
 	}
 }
 
-func TestPortableLifecycleDefaultsToLima(t *testing.T) {
+func TestLifecycleDefaultsToLima(t *testing.T) {
 	root := t.TempDir()
 	devDir := filepath.Join(root, "dev")
 	if err := os.MkdirAll(devDir, 0755); err != nil {
@@ -204,7 +202,7 @@ func TestPortableLifecycleDefaultsToLima(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, _, err := parsePortableLifecycleConfig(root, []string{"--host-only"}, func(string) string { return "" })
+	cfg, _, err := parseLifecycleConfig(root, []string{"--host-only"}, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
 	}

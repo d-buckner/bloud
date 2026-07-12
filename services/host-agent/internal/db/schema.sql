@@ -74,3 +74,14 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     dependency_id TEXT NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE,
     PRIMARY KEY (dependent_id, dependency_id)
 );
+
+CREATE TABLE IF NOT EXISTS user_app_positions (
+    username     TEXT    NOT NULL REFERENCES user_preferences(username) ON DELETE CASCADE,
+    element_id   TEXT    NOT NULL,
+    element_type TEXT    NOT NULL,
+    x            INTEGER,
+    y            INTEGER,
+    w            INTEGER NOT NULL DEFAULT 1,
+    h            INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (username, element_id)
+);

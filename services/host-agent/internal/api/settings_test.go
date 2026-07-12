@@ -73,8 +73,6 @@ func setupSettingsTestServer(t *testing.T) *Server {
 
 	appStore := NewFakeAppStore()
 	catalogCache := NewFakeCatalogCache()
-	appHub := NewAppEventHub(appStore)
-	appStore.SetOnChange(appHub.Broadcast)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Create a stub-mode orchestrator so handlers can enqueue intents.
@@ -87,7 +85,7 @@ func setupSettingsTestServer(t *testing.T) *Server {
 		router:       chi.NewRouter(),
 		catalog:      catalogCache,
 		appStore:     appStore,
-		appHub:       appHub,
+		positionStore: NewFakePositionStore(),
 		shareStore:   newFakeShareStore(),
 		tailnetStore: newFakeTailnetStore(),
 		orch:         r,

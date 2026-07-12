@@ -166,7 +166,7 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 		}
 		logger.Info("bootstrapping system container", "app", app.CatalogID)
 
-		spec, err := orchestrator.PortableContainerSpec(app, cfg.DataDir, templateVars)
+		spec, err := orchestrator.ContainerSpec(app, cfg.DataDir, templateVars)
 		if err != nil {
 			return fmt.Errorf("build spec for %s: %w", app.CatalogID, err)
 		}

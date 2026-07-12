@@ -59,7 +59,7 @@ type OrchestratorConfig struct {
 	Containers containerruntime.Runtime
 
 	// TemplateVars are extra variables for container spec template rendering
-	// (e.g. "postgresPassword"). Passed to PortableContainerSpec.
+	// (e.g. "postgresPassword"). Passed to ContainerSpec.
 	TemplateVars map[string]string
 
 	// ── Converge dependencies (nil = subsystem disabled) ─────────────────
@@ -490,7 +490,7 @@ func (o *Orchestrator) ensureAppContainer(ctx context.Context, id string, forceR
 		return nil
 	}
 	o.logger.Info("ensuring app container", "app", id, "force_restart", forceRestart)
-	spec, err := PortableContainerSpec(catalogApp, o.dataDir, o.config.TemplateVars)
+	spec, err := ContainerSpec(catalogApp, o.dataDir, o.config.TemplateVars)
 	if err != nil {
 		return fmt.Errorf("build container spec: %w", err)
 	}

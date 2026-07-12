@@ -153,7 +153,7 @@ func printUsage() {
 	fmt.Println("    --explain          Print why each command was selected")
 	fmt.Println("    --json             Output JSON ledger only")
 	fmt.Println("    --since <ref>      Git ref for diff base (default: HEAD)")
-	fmt.Println("  e2e lifecycle [flags] Run full portable-runtime lifecycle E2E")
+	fmt.Println("  e2e lifecycle [flags] Run full lifecycle E2E")
 	fmt.Println()
 	fmt.Println("Other:")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")

@@ -39,7 +39,7 @@ type Server struct {
 	appStore          store.AppStoreInterface
 	prefsStore        *store.PreferencesStore
 	sessionStore      *store.SessionStore
-	appHub            *AppEventHub
+	positionStore      store.PositionStoreInterface
 	orch              *orchestrator.Orchestrator
 	guestStore        store.GuestStoreInterface
 	shareStore        store.ShareStoreInterface
@@ -83,7 +83,7 @@ type ServerConfig struct {
 	LDAPOutput *configurator.LDAPOutput
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
-	// ContainerRuntime optionally injects the portable container backend.
+	// ContainerRuntime optionally injects the container backend.
 	ContainerRuntime containerruntime.Runtime
 	// TemplateVars are extra template variables for container spec rendering (e.g. postgresPassword).
 	TemplateVars map[string]string
@@ -92,12 +92,8 @@ type ServerConfig struct {
 // NewServer creates a new HTTP server instance
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	appStore := store.NewAppStore(db)
+	positionStore := store.NewPositionStore(db)
 	prefsStore := store.NewPreferencesStore(db)
-	appHub := NewAppEventHub(appStore)
-
-	// Wire up automatic broadcasts when app state changes
-	appStore.SetOnChange(appHub.Broadcast)
-
 	// Initialize secrets manager
 	secretsPath := filepath.Join(cfg.DataDir, "secrets.json")
 	secretsMgr := secrets.NewManager(secretsPath)
@@ -146,7 +142,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		appStore:        appStore,
 		prefsStore:      prefsStore,
 		sessionStore:    sessionStore,
-		appHub:          appHub,
+		positionStore:   positionStore,
 		guestStore:      store.NewGuestStore(db),
 		shareStore:      store.NewShareStore(db),
 		remoteAppStore:  store.NewRemoteAppStore(db),
@@ -171,7 +167,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	return s
 }
 
-// initOrchestrator sets up the portable runtime orchestrator.
+// initOrchestrator sets up the orchestrator.
 func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	traefikConfigPath := filepath.Join(s.cfg.TraefikDynamicDir, "apps-routes.yml")
 	s.logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
@@ -193,7 +189,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	runtime := s.cfg.ContainerRuntime
 	if runtime == nil {
 		if client == nil {
-			s.logger.Error("portable container runtime unavailable (no podman client)")
+			s.logger.Error("container runtime unavailable (no podman client)")
 			return
 		}
 		runtime = containerruntime.NewPodmanRuntime(client)

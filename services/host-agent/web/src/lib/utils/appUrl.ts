@@ -10,9 +10,15 @@ export function getAppUrl(appName: string, path: string = ''): string {
 	const { hostname, port, protocol } = window.location;
 	const portSuffix = port ? `:${port}` : '';
 	const pathPrefix = path && !path.startsWith('/') ? '/' : '';
-	// fixme: this is a hack for tailnet domains
-	const normalizedHostname = hostname.replace(/^bloud\./, '');
-	return `${protocol}//${appName}.${normalizedHostname}${portSuffix}${pathPrefix}${path}`;
+	// For tailnet domains (bloud.foo.ts.net with 3+ labels), strip the "bloud."
+	// prefix so apps use the tailnet domain (e.g., navidrome.foo.ts.net).
+	// For everything else (localhost, bloud.local), use the hostname as-is.
+	const labels = hostname.split('.');
+	const baseDomain =
+		hostname.startsWith('bloud.') && labels.length >= 3
+			? labels.slice(1).join('.')
+			: hostname;
+	return `${protocol}//${appName}.${baseDomain}${portSuffix}${pathPrefix}${path}`;
 }
 
 /**

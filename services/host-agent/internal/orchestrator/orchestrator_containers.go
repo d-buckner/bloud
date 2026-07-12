@@ -1,9 +1,7 @@
 package orchestrator
 
-// Portable runtime utilities: container-state sync, route regeneration, and
-// catalog-to-spec helpers. All methods are on *Orchestrator — there is only
-// one runtime (portable), so the PortableOrchestrator wrapper has been
-// removed.
+// Container runtime utilities: container-state sync, route regeneration, and
+// catalog-to-spec helpers. All methods are on *Orchestrator.
 
 import (
 	"context"
@@ -39,7 +37,7 @@ func (o *Orchestrator) SyncContainerState(ctx context.Context) {
 			continue
 		}
 
-		containerName := PortableContainerName(catalogApp)
+		containerName := ContainerName(catalogApp)
 		state, err := o.config.Containers.Inspect(ctx, containerName)
 		if err != nil {
 			o.logger.Warn("failed to inspect container during sync", "app", app.CatalogID, "error", err)
@@ -150,20 +148,20 @@ func (o *Orchestrator) RegenerateRoutes() error {
 	return o.traefikGen.GenerateAll(apps, remoteRoutes, tailnetDomain)
 }
 
-// PortableContainerName returns the container name for a catalog app.
-func PortableContainerName(app *catalog.App) string {
+// ContainerName returns the container name for a catalog app.
+func ContainerName(app *catalog.App) string {
 	if app.Container.Name != "" {
 		return app.Container.Name
 	}
 	return "apps-" + app.CatalogID
 }
 
-// PortableContainerSpec builds a runtime-neutral container spec from catalog metadata.
+// ContainerSpec builds a container spec from catalog metadata.
 // extraVars supplies additional template variables (e.g. "postgresPassword") beyond
 // the built-in {{dataDir}} and {{appDataDir}}.
-func PortableContainerSpec(app *catalog.App, dataDir string, extraVars map[string]string) (containerruntime.Spec, error) {
+func ContainerSpec(app *catalog.App, dataDir string, extraVars map[string]string) (containerruntime.Spec, error) {
 	if app.Container == nil || app.Container.Image == "" {
-		return containerruntime.Spec{}, fmt.Errorf("app %s has no portable container image", app.CatalogID)
+		return containerruntime.Spec{}, fmt.Errorf("app %s has no container image", app.CatalogID)
 	}
 
 	render := func(value string) string {
@@ -181,7 +179,7 @@ func PortableContainerSpec(app *catalog.App, dataDir string, extraVars map[strin
 	}
 
 	spec := containerruntime.Spec{
-		Name:          PortableContainerName(app),
+		Name:          ContainerName(app),
 		Image:         app.Container.Image,
 		Environment:   env,
 		Network:       app.Container.Network,

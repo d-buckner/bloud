@@ -23,7 +23,7 @@ type App struct {
 	Container     *ContainerSpec         `yaml:"container,omitempty" json:"container,omitempty"`
 }
 
-// ContainerSpec describes the portable container topology for an app.
+// ContainerSpec describes the container topology for an app.
 type ContainerSpec struct {
 	Name          string            `yaml:"name,omitempty" json:"name,omitempty"`
 	Image         string            `yaml:"image" json:"image"`

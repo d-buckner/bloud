@@ -243,6 +243,25 @@ func (f *FakeRemoteAppStore) Delete(id string) error {
 	return nil
 }
 
+// FakePositionStore implements store.PositionStoreInterface for testing
+type FakePositionStore struct {
+	positions map[string][]store.Position
+}
+
+func NewFakePositionStore() *FakePositionStore {
+	return &FakePositionStore{positions: make(map[string][]store.Position)}
+}
+
+func (f *FakePositionStore) GetForUser(username string) ([]store.Position, error) {
+	return f.positions[username], nil
+}
+
+func (f *FakePositionStore) SetForUser(username string, positions []store.Position) error {
+	f.positions[username] = positions
+	return nil
+}
+
+
 // FakeCatalogCache implements catalog.CacheInterface for testing
 type FakeCatalogCache struct {
 	mu   sync.RWMutex
@@ -362,10 +381,6 @@ tags:
 		Level: slog.LevelError,
 	}))
 
-	// Create app event hub
-	appHub := NewAppEventHub(appStore)
-	appStore.SetOnChange(appHub.Broadcast)
-
 	// Load graph for integration planning
 	graph, err := loader.LoadGraph()
 	require.NoError(t, err)
@@ -392,7 +407,7 @@ tags:
 		appStore:       appStore,
 		remoteAppStore: NewFakeRemoteAppStore(),
 		orch:           intentRec,
-		appHub:         appHub,
+		positionStore:  NewFakePositionStore(),
 		logger:         logger,
 	}
 
@@ -753,78 +768,6 @@ func TestAPI_ClearData_OrphanedData(t *testing.T) {
 	assert.Equal(t, "data cleared", response["status"])
 }
 
-// AppEventHub tests
-
-func TestAppEventHub_Subscribe(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	ch := server.appHub.Subscribe()
-	assert.NotNil(t, ch)
-	assert.Equal(t, 1, server.appHub.SubscriberCount())
-
-	server.appHub.Unsubscribe(ch)
-	assert.Equal(t, 0, server.appHub.SubscriberCount())
-}
-
-func TestAppEventHub_MultipleSubscribers(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	ch1 := server.appHub.Subscribe()
-	ch2 := server.appHub.Subscribe()
-	ch3 := server.appHub.Subscribe()
-
-	assert.Equal(t, 3, server.appHub.SubscriberCount())
-
-	server.appHub.Unsubscribe(ch1)
-	assert.Equal(t, 2, server.appHub.SubscriberCount())
-
-	server.appHub.Unsubscribe(ch2)
-	server.appHub.Unsubscribe(ch3)
-	assert.Equal(t, 0, server.appHub.SubscriberCount())
-}
-
-func TestAppEventHub_Broadcast(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	// Add an app using the fake store
-	fakeStore := server.appStore.(*FakeAppStore)
-	fakeStore.AddApp(&store.InstalledApp{
-		CatalogID:   "broadcast-app",
-		DisplayName: "Broadcast App",
-		Version:     "1.0.0",
-		Status:      "running",
-	})
-
-	ch := server.appHub.Subscribe()
-	defer server.appHub.Unsubscribe(ch)
-
-	// Broadcast
-	server.appHub.Broadcast()
-
-	// Should receive the app list
-	select {
-	case apps := <-ch:
-		assert.Len(t, apps, 1)
-		assert.Equal(t, "broadcast-app", apps[0].CatalogID)
-	default:
-		t.Fatal("expected to receive broadcast")
-	}
-}
-
-func TestAppEventHub_BroadcastChannelFull(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	ch := server.appHub.Subscribe()
-	defer server.appHub.Unsubscribe(ch)
-
-	// Fill the channel (buffer size is 10)
-	for i := 0; i < 15; i++ {
-		server.appHub.Broadcast()
-	}
-
-	// Should not panic - channel full is handled gracefully
-	assert.Equal(t, 1, server.appHub.SubscriberCount())
-}
 
 // Utility function tests
 
@@ -1103,57 +1046,6 @@ func TestHandleListInstalledApps_IncludesSSOLaunchPath(t *testing.T) {
 	assert.Equal(t, "oauth2/oidc/redirect", apps[0]["sso_launch_path"])
 }
 
-func TestHandleAppEvents_IncludesSSOLaunchPath(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	// Add catalog app with SSO launch path
-	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
-		CatalogID: "miniflux",
-		SSO:       catalog.SSO{LaunchPath: "oauth2/oidc/redirect"},
-	})
-
-	// Add matching installed app
-	server.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
-		CatalogID: "miniflux",
-		Status:    "running",
-	})
-
-	// Cancel the context immediately so the SSE handler writes the initial event
-	// and exits on the first select iteration
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	req := httptest.NewRequest("GET", "/api/apps/events", nil).WithContext(ctx)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	body := w.Body.String()
-	require.Contains(t, body, "data:", "SSE response should contain at least one event")
-
-	// Extract JSON from the first "data: ..." line
-	var jsonLine string
-	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "data: ") {
-			jsonLine = strings.TrimPrefix(line, "data: ")
-			break
-		}
-	}
-	require.NotEmpty(t, jsonLine, "SSE event should have a data line")
-
-	var apps []map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(jsonLine), &apps))
-
-	var miniflux map[string]interface{}
-	for _, app := range apps {
-		if app["catalog_id"] == "miniflux" {
-			miniflux = app
-			break
-		}
-	}
-	require.NotNil(t, miniflux, "miniflux should be in SSE app list")
-	assert.Equal(t, "oauth2/oidc/redirect", miniflux["sso_launch_path"],
-		"SSE event must include sso_launch_path so the frontend can auto-redirect to OIDC on first open")
-}
 
 // ── Rename Tests ──────────────────────────────────────────────────────────
 
