@@ -23,6 +23,7 @@ var _ AppStoreInterface = (*AppStore)(nil)
 type PreferencesStoreInterface interface {
 	HasUsers() (bool, error)
 	EnsureUser(username string) error
+	DeleteUser(username string) error
 }
 
 // Compile-time assertion that PreferencesStore implements PreferencesStoreInterface

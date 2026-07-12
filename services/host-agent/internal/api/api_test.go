@@ -243,6 +243,29 @@ func (f *FakeRemoteAppStore) Delete(id string) error {
 	return nil
 }
 
+// FakePreferencesStore implements store.PreferencesStoreInterface for testing
+type FakePreferencesStore struct {
+	users map[string]bool
+}
+
+func NewFakePreferencesStore() *FakePreferencesStore {
+	return &FakePreferencesStore{users: make(map[string]bool)}
+}
+
+func (f *FakePreferencesStore) HasUsers() (bool, error) {
+	return len(f.users) > 0, nil
+}
+
+func (f *FakePreferencesStore) EnsureUser(username string) error {
+	f.users[username] = true
+	return nil
+}
+
+func (f *FakePreferencesStore) DeleteUser(username string) error {
+	delete(f.users, username)
+	return nil
+}
+
 // FakePositionStore implements store.PositionStoreInterface for testing
 type FakePositionStore struct {
 	positions map[string][]store.Position
@@ -407,6 +430,7 @@ tags:
 		appStore:       appStore,
 		remoteAppStore: NewFakeRemoteAppStore(),
 		orch:           intentRec,
+		prefsStore:     NewFakePreferencesStore(),
 		positionStore:  NewFakePositionStore(),
 		logger:         logger,
 	}

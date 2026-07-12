@@ -1,36 +1,26 @@
 /**
- * Layout Client - HTTP transport layer for layout operations
+ * Layout Client - HTTP transport layer for layout save operations.
+ *
+ * PUT /api/user/layout is called by GridStackGrid after every drag/resize
+ * settle and after widget add/remove. The full settled layout is always sent.
  */
 
-import { get, put, isUnauthorized } from './httpClient';
-import type { GridElement } from '$lib/stores/layout';
-
-
-export type Layout = { elements: GridElement[] };
+import type { GridElement } from '$lib/types';
 
 /**
- * Fetch layout from backend API
- * Returns null if unauthorized (401) or on error
- */
-export async function fetchLayout(): Promise<Layout | null> {
-	try {
-		return await get<Layout>('/api/user/layout');
-	} catch (err) {
-		if (isUnauthorized(err)) return null;
-		console.error('Failed to fetch layout from API:', err);
-		return null;
-	}
-}
-
-/**
- * Save layout to backend API
+ * Save the full settled layout to the backend.
+ * Errors are swallowed — layout saves are best-effort; the next user interaction
+ * will retry. Unauthorized responses are silently ignored (login redirect
+ * is handled at the app level).
  */
 export async function saveLayout(elements: GridElement[]): Promise<void> {
 	try {
-		await put('/api/user/layout', elements);
-	} catch (err) {
-		if (!isUnauthorized(err)) {
-			console.error('Failed to save layout to API:', err);
-		}
+		await fetch('/api/user/layout', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(elements),
+		});
+	} catch {
+		// Silently ignore — transient network error
 	}
 }

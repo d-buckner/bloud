@@ -17,7 +17,7 @@
 	import { getAppUrl } from '$lib/utils/appUrl';
 	import { getRemoteAppUrl } from '$lib/utils/appUrl';
 	import { fetchRemoteApps, removeRemoteApp } from '$lib/clients/remoteAppClient';
-	import { layout } from '$lib/stores/layout';
+	import { gridElements } from '$lib/stores/grid';
 
 	// Context menu state
 	let contextMenuApp = $state<App | null>(null);
@@ -114,7 +114,7 @@
 
 	// Derived state for empty check
 	let isEmpty = $derived(
-		$apps.length === 0 && remoteApps.length === 0 && $layout.filter((i) => i.type === 'widget').length === 0
+		$apps.length === 0 && remoteApps.length === 0 && $gridElements.filter((i) => i.type === 'widget').length === 0
 	);
 </script>
 

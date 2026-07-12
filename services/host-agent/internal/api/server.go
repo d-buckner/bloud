@@ -37,7 +37,7 @@ type Server struct {
 	catalog           catalog.CacheInterface
 	graph             catalog.AppGraphInterface
 	appStore          store.AppStoreInterface
-	prefsStore        *store.PreferencesStore
+	prefsStore        store.PreferencesStoreInterface
 	sessionStore      *store.SessionStore
 	positionStore      store.PositionStoreInterface
 	orch              *orchestrator.Orchestrator
