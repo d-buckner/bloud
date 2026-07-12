@@ -261,15 +261,33 @@ func (c *Configurator) configureNetwork(dataPath string) (bool, error) {
 	return changed, err
 }
 
-// HealthCheck waits for Jellyfin's API to be ready
+// HealthCheck waits for Jellyfin's API to be fully ready.
+// /health becomes healthy before the full API is initialised; we poll
+// /System/Info/Public (which returns 503 during initialisation and 200
+// once the server is ready) so that PostStart can proceed immediately.
 func (c *Configurator) HealthCheck(ctx context.Context) error {
-	url := c.getBaseURL() + "/health"
-	c.logger.Info("waiting for Jellyfin health endpoint", "url", url)
-	if err := configurator.WaitForHTTP(ctx, url, 60*time.Second); err != nil {
-		return err
+	url := c.getBaseURL() + "/System/Info/Public"
+	c.logger.Info("waiting for Jellyfin API to be ready", "url", url)
+
+	hctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-hctx.Done():
+			return fmt.Errorf("Jellyfin API not ready within 2 minutes: %w", hctx.Err())
+		case <-ticker.C:
+			if _, err := c.getSystemInfo(hctx); err != nil {
+				c.logger.Info("Jellyfin not yet ready", "error", err)
+				continue
+			}
+			c.logger.Info("Jellyfin API ready")
+			return nil
+		}
 	}
-	c.logger.Info("Jellyfin health check passed")
-	return nil
 }
 
 // EnsureContainer is a no-op for the Jellyfin configurator when used outside the
@@ -288,20 +306,9 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	c.logger.Info("PostStart: checking setup wizard status")
 
 	// 1. Check if setup wizard is complete.
-	// Jellyfin's /health passes before the API is fully ready; retry getSystemInfo
-	// to handle both transient errors (503) and StartupWizardCompleted=false races.
-	var info *SystemInfo
-	var err error
-	for i := 0; i < 10; i++ {
-		if i > 0 {
-			time.Sleep(2 * time.Second)
-		}
-		info, err = c.getSystemInfo(ctx)
-		if err == nil {
-			break
-		}
-		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
-	}
+	// HealthCheck already waited for /System/Info/Public to be ready,
+	// so this call should succeed immediately.
+	info, err := c.getSystemInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
 	}
