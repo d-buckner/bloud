@@ -160,6 +160,14 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return value
 }
 
+// ReadAuthentikToken returns the best available Authentik API token.
+// It checks the same sources as the initial load (see getAuthentikToken),
+// so callers can use this to pick up a token written by the Authentik
+// configurator after the server first started.
+func (c *Config) ReadAuthentikToken(logger *slog.Logger) string {
+	return getAuthentikToken(c.DataDir, c.Secrets, logger)
+}
+
 // getAuthentikToken returns the Authentik API token with the following priority:
 // 1. BLOUD_AUTHENTIK_TOKEN env var
 // 2. api-token file created by Authentik configurator (always valid)

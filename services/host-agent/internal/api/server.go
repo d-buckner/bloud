@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -76,6 +76,9 @@ type ServerConfig struct {
 	HostLabel string
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
+	// RefreshAuthentikToken, if set, is called by tryInitAuth to pick up a
+	// fresh API token written by the Authentik configurator after server startup.
+	RefreshAuthentikToken func() string
 	// LDAP configuration
 	LDAPOutput *configurator.LDAPOutput
 	// Registry holds app configurators for reconciliation
@@ -388,29 +391,24 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // tryInitAuth attempts to initialize authentication, refreshing the token if needed.
 // This is called lazily on first auth request to handle the case where the Authentik
-// configurator runs after server start and creates the api-token file.
+// configurator runs after server start and produces a fresh API token.
 func (s *Server) tryInitAuth() {
-	// Already initialized
 	if s.authConfig != nil {
 		return
 	}
 
-	// Try to read fresh token from api-token file (created by Authentik configurator)
-	tokenPath := filepath.Join(s.cfg.DataDir, "authentik", "api-token")
-	if data, err := os.ReadFile(tokenPath); err == nil {
-		token := string(data)
-		if token != "" && token != s.cfg.AuthentikToken {
-			s.logger.Info("found new Authentik API token from configurator", "path", tokenPath)
-			s.cfg.AuthentikToken = token
-			// Create new client with fresh token (internal URL for server-side API calls)
+	// Pick up a fresh token if the Authentik configurator has run since startup.
+	if s.cfg.RefreshAuthentikToken != nil {
+		if freshToken := s.cfg.RefreshAuthentikToken(); freshToken != "" && freshToken != s.cfg.AuthentikToken {
+			s.logger.Info("using refreshed Authentik API token")
+			s.cfg.AuthentikToken = freshToken
 			if s.cfg.AuthentikPort > 0 {
 				internalURL := fmt.Sprintf("http://localhost:%d", s.cfg.AuthentikPort)
-				s.authentikClient = authentik.NewClient(internalURL, token)
+				s.authentikClient = authentik.NewClient(internalURL, freshToken)
 			}
 		}
 	}
 
-	// Now try to initialize
 	s.initAuth()
 }
 
@@ -457,21 +455,16 @@ func (s *Server) initAuth() {
 	s.logger.Info("authentication initialized", "clientID", oidcConfig.ClientID)
 }
 
-// deriveClientSecret generates a deterministic client secret from the host secret
+// deriveClientSecret derives a deterministic OAuth2 client secret using HKDF-SHA256.
+// If a secret was previously stored in the secrets manager it is returned as-is
+// (backward compatibility). New secrets are derived and persisted.
 func (s *Server) deriveClientSecret(appName string) string {
-	// Use the secrets manager if available
 	if s.secrets != nil {
-		// Check if we already have a secret stored
-		secret := s.secrets.GetAppSecret(appName, "oauthClientSecret")
-		if secret != "" {
-			return secret
+		if stored := s.secrets.GetAppSecret(appName, "oauthClientSecret"); stored != "" {
+			return stored
 		}
-
-		// Generate a new secret based on the host secret
 		if s.cfg.SSOHostSecret != "" {
-			// Use HMAC-like derivation: hostSecret + appName
-			// In production, consider using proper HKDF
-			secret = s.cfg.SSOHostSecret[:32] + "-" + appName
+			secret := sso.DeriveSecret(s.cfg.SSOHostSecret, "oauth-client-secret:"+appName, 32)
 			if err := s.secrets.SetAppSecret(appName, "oauthClientSecret", secret); err != nil {
 				s.logger.Warn("failed to save client secret", "error", err)
 			}
@@ -479,9 +472,8 @@ func (s *Server) deriveClientSecret(appName string) string {
 		}
 	}
 
-	// Fallback: derive from host secret using simple concatenation
 	if s.cfg.SSOHostSecret != "" {
-		return s.cfg.SSOHostSecret[:32] + "-" + appName
+		return sso.DeriveSecret(s.cfg.SSOHostSecret, "oauth-client-secret:"+appName, 32)
 	}
 
 	return ""

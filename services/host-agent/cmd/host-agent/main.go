@@ -90,7 +90,8 @@ func runServer() {
 
 	// Create HTTP server
 	server := api.NewServer(database, api.ServerConfig{
-		AppsDir:           cfg.AppsDir,
+		RefreshAuthentikToken: func() string { return cfg.ReadAuthentikToken(logger) },
+		AppsDir:               cfg.AppsDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
 		BaseDomain:        cfg.BaseDomain,

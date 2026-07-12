@@ -283,7 +283,7 @@ func (g *BlueprintGenerator) generateClientSecret(appName string) string {
 	// 1. Same secret is generated for the same app + hostSecret
 	// 2. Different apps get different secrets
 	// 3. Secrets are cryptographically strong
-	secret := deriveSecret(g.hostSecret, "oauth-client-secret:"+appName, 32)
+	secret := DeriveSecret(g.hostSecret, "oauth-client-secret:"+appName, 32)
 
 	// Persist the derived secret so NixOS modules can read it
 	if g.secrets != nil {
@@ -293,8 +293,8 @@ func (g *BlueprintGenerator) generateClientSecret(appName string) string {
 	return secret
 }
 
-// deriveSecret uses HKDF-SHA256 to derive a deterministic secret from a master secret.
-func deriveSecret(masterSecret, context string, length int) string {
+// DeriveSecret uses HKDF-SHA256 to derive a deterministic secret from a master secret.
+func DeriveSecret(masterSecret, context string, length int) string {
 	if masterSecret == "" {
 		// Fallback to old behavior if no master secret configured
 		return context + "-fallback-secret"
