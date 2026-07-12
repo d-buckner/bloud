@@ -58,7 +58,6 @@ type Server struct {
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
-	RuntimeMode string
 	AppsDir     string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
@@ -180,137 +179,119 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	// so persistence across restarts is not needed and avoids stale-state issues.
 	lifecycleGraph := graph.New(graph.NewMapRepository())
 
-	if s.cfg.RuntimeMode == "portable" {
-		// Always create a podman client for the API (developer endpoint, etc.)
-		client, err := podman.NewClient()
-		if err != nil {
-			s.logger.Warn("podman client unavailable for API", "error", err)
-		} else {
-			s.podmanClient = client
-		}
-
-		runtime := s.cfg.ContainerRuntime
-		if runtime == nil {
-			if client == nil {
-				s.logger.Error("portable container runtime unavailable (no podman client)")
-				return
-			}
-			runtime = containerruntime.NewPodmanRuntime(client)
-		}
-
-		var ssoProvisioner orchestrator.SSOProvisioner
-		if s.authentikClient != nil {
-			ssoProvisioner = s.authentikClient
-		}
-
-		// Migrate BLOUD_TS_AUTHKEY env var to tailnet_connections table.
-		if s.cfg.TSAuthKey != "" {
-			active, _ := s.tailnetStore.GetActive()
-			if active == nil {
-				s.tailnetStore.Create(store.TailnetConnection{
-					ID:      uuid.New().String(),
-					Name:    "Default",
-					Type:    "tailscale",
-					AuthKey: s.cfg.TSAuthKey,
-					Status:  "active",
-				})
-				s.logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
-			}
-		}
-
-		// Build authKeyFn that reads the active tailnet connection from the store.
-		authKeyFn := func() string {
-			conn, err := s.tailnetStore.GetActive()
-			if err != nil || conn == nil {
-				return ""
-			}
-			return conn.AuthKey
-		}
-
-		// Always create the TailnetNodeManager — authKeyFn reads the active
-		// connection from the store at creation time, so adding a tailnet
-		// connection via Settings takes effect without restart.
-		// EnsureRunning returns an error (non-fatal) when authKeyFn() == "".
-		var exec sharing.ContainerExec
-		if client != nil {
-			exec = client
-		}
-		tailnetNode := sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
-		s.tailnetNode = tailnetNode
-		s.logger.Info("tailnet node manager initialized")
-
-		// Create gateway manager for remote app proxying.
-		gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
-		s.gateway = gateway
-
-		// Create remote proxy manager.
-		socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
-		remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, s.logger)
-		s.remoteProxy = remoteProxy
-
-		// Build forward-domain SSO provisioner (nil when Authentik not installed).
-		var forwardDomainSSO orchestrator.ForwardDomainProvisioner
-		if s.authentikClient != nil {
-			forwardDomainSSO = s.authentikClient
-		}
-
-		orch := orchestrator.NewOrchestrator(
-			lifecycleGraph,
-			s.cfg.Registry,
-			s.catalog,
-			s.cfg.DataDir,
-			s.logger,
-			orchestrator.OrchestratorConfig{
-				LDAPOutput:       s.cfg.LDAPOutput,
-				Containers:       runtime,
-				TemplateVars:     s.cfg.TemplateVars,
-				AppStore:         appStore,
-				CatalogGraph:     s.graph,
-				TailnetStore:     s.tailnetStore,
-				RemoteAppStore:   s.remoteAppStore,
-				TailnetNode:      tailnetNode,
-				Gateway:          gateway,
-				RemoteProxy:      remoteProxy,
-				ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, s.logger),
-				ForwardDomainSSO: forwardDomainSSO,
-				SSO:              ssoProvisioner,
-				SSOBaseURL:       s.cfg.SSOBaseURL,
-				TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
-				ActiveTailnetID: func() string {
-					conn, err := s.tailnetStore.GetActive()
-					if err != nil || conn == nil {
-						return ""
-					}
-					return conn.ID
-				},
-			},
-		)
-		s.logger.Info("lifecycle orchestrator initialized")
-
-		s.orch = orch
-		go orch.Start(context.Background())
-
-		// Trigger an initial convergence pass once everything is wired up.
-		// convergeFromStores will sync container state, set graph targets,
-		// converge tailnet, and regenerate routes.
-		go s.orch.Enqueue(orchestrator.NewConvergeIntent())
-		return
+	// Always create a podman client for the API (developer endpoint, etc.)
+	client, err := podman.NewClient()
+	if err != nil {
+		s.logger.Warn("podman client unavailable for API", "error", err)
+	} else {
+		s.podmanClient = client
 	}
 
-	// Non-portable mode: start the orchestrator in stub mode (no AppStore →
-	// converge is a no-op) so Enqueue calls still work without panicking.
+	runtime := s.cfg.ContainerRuntime
+	if runtime == nil {
+		if client == nil {
+			s.logger.Error("portable container runtime unavailable (no podman client)")
+			return
+		}
+		runtime = containerruntime.NewPodmanRuntime(client)
+	}
+
+	var ssoProvisioner orchestrator.SSOProvisioner
+	if s.authentikClient != nil {
+		ssoProvisioner = s.authentikClient
+	}
+
+	// Migrate BLOUD_TS_AUTHKEY env var to tailnet_connections table.
+	if s.cfg.TSAuthKey != "" {
+		active, _ := s.tailnetStore.GetActive()
+		if active == nil {
+			s.tailnetStore.Create(store.TailnetConnection{
+				ID:      uuid.New().String(),
+				Name:    "Default",
+				Type:    "tailscale",
+				AuthKey: s.cfg.TSAuthKey,
+				Status:  "active",
+			})
+			s.logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
+		}
+	}
+
+	// Build authKeyFn that reads the active tailnet connection from the store.
+	authKeyFn := func() string {
+		conn, err := s.tailnetStore.GetActive()
+		if err != nil || conn == nil {
+			return ""
+		}
+		return conn.AuthKey
+	}
+
+	// Always create the TailnetNodeManager — authKeyFn reads the active
+	// connection from the store at creation time, so adding a tailnet
+	// connection via Settings takes effect without restart.
+	// EnsureRunning returns an error (non-fatal) when authKeyFn() == "".
+	var exec sharing.ContainerExec
+	if client != nil {
+		exec = client
+	}
+	tailnetNode := sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
+	s.tailnetNode = tailnetNode
+	s.logger.Info("tailnet node manager initialized")
+
+	// Create gateway manager for remote app proxying.
+	gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
+	s.gateway = gateway
+
+	// Create remote proxy manager.
+	socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
+	remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, s.logger)
+	s.remoteProxy = remoteProxy
+
+	// Build forward-domain SSO provisioner (nil when Authentik not installed).
+	var forwardDomainSSO orchestrator.ForwardDomainProvisioner
+	if s.authentikClient != nil {
+		forwardDomainSSO = s.authentikClient
+	}
+
 	orch := orchestrator.NewOrchestrator(
 		lifecycleGraph,
 		s.cfg.Registry,
 		s.catalog,
 		s.cfg.DataDir,
 		s.logger,
-		orchestrator.OrchestratorConfig{LDAPOutput: s.cfg.LDAPOutput},
+		orchestrator.OrchestratorConfig{
+			LDAPOutput:       s.cfg.LDAPOutput,
+			Containers:       runtime,
+			TemplateVars:     s.cfg.TemplateVars,
+			AppStore:         appStore,
+			CatalogGraph:     s.graph,
+			TailnetStore:     s.tailnetStore,
+			RemoteAppStore:   s.remoteAppStore,
+			TailnetNode:      tailnetNode,
+			Gateway:          gateway,
+			RemoteProxy:      remoteProxy,
+			ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, s.logger),
+			ForwardDomainSSO: forwardDomainSSO,
+			SSO:              ssoProvisioner,
+			SSOBaseURL:       s.cfg.SSOBaseURL,
+			TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
+			ActiveTailnetID: func() string {
+				conn, err := s.tailnetStore.GetActive()
+				if err != nil || conn == nil {
+					return ""
+				}
+				return conn.ID
+			},
+		},
 	)
+	s.logger.Info("lifecycle orchestrator initialized")
+
 	s.orch = orch
 	go orch.Start(context.Background())
 
-	s.logger.Warn("unknown runtime mode, orchestrator not initialized", "mode", s.cfg.RuntimeMode)
+	// Trigger an initial convergence pass once everything is wired up.
+	// convergeFromStores will sync container state, set graph targets,
+	// converge tailnet, and regenerate routes.
+	go s.orch.Enqueue(orchestrator.NewConvergeIntent())
 }
 
 // refreshCatalog loads apps from YAML files and updates the cache and graph

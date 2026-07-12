@@ -11,7 +11,6 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	RuntimeMode string
 	Port        int
 	DataDir     string
 	AppsDir           string // Path to apps/ directory containing app definitions
@@ -84,7 +83,6 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
 
 	cfg := &Config{
-		RuntimeMode:            getEnv("BLOUD_RUNTIME", "portable"),
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
 		AppsDir:                appsDir,

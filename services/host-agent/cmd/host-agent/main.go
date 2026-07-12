@@ -51,7 +51,6 @@ func runServer() {
 	// Load configuration
 	cfg := config.Load()
 	logger.Info("loaded configuration",
-		"runtime", cfg.RuntimeMode,
 		"port", cfg.Port,
 		"data_dir", cfg.DataDir,
 		"apps_dir", cfg.AppsDir,
@@ -76,19 +75,14 @@ func runServer() {
 		"postgresPassword": cfg.PostgresPassword,
 	}
 
-	// In portable mode, ensure system infrastructure containers (postgres, redis)
-	// are running before apps need them.
-	if cfg.RuntimeMode == "portable" {
-		if err := bootstrapInfra(cfg, templateVars, logger); err != nil {
-			logger.Error("failed to bootstrap infrastructure", "error", err)
-			os.Exit(1)
-		}
+	// Ensure system infrastructure containers (postgres, redis) are running before apps need them.
+	if err := bootstrapInfra(cfg, templateVars, logger); err != nil {
+		logger.Error("failed to bootstrap infrastructure", "error", err)
+		os.Exit(1)
 	}
 
-	// In portable mode, register system apps so dependency resolution works.
-	if cfg.RuntimeMode == "portable" {
-		registerSystemApps(database, cfg, logger)
-	}
+	// Register system apps so dependency resolution works.
+	registerSystemApps(database, cfg, logger)
 
 	// Create configurator registry
 	registry := configurator.NewRegistry(logger)
@@ -96,7 +90,6 @@ func runServer() {
 
 	// Create HTTP server
 	server := api.NewServer(database, api.ServerConfig{
-		RuntimeMode:       cfg.RuntimeMode,
 		AppsDir:           cfg.AppsDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
