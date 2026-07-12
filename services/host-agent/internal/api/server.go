@@ -258,26 +258,6 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 
 		orch.WithContainerRuntime(runtime, s.cfg.TemplateVars)
 
-		// Coalescing signal channel: multiple rapid EventTargetUpdated events collapse
-		// into a single Reconcile pass. The channel is buffered to avoid blocking the
-		// event emitter.
-		orchSignal := make(chan struct{}, 1)
-		lifecycleGraph.On(graph.EventTargetUpdated, func(node graph.Node) {
-			s.logger.Info("graph target updated, signalling reconcile", "app", node.ID, "target", node.TargetStatus)
-			select {
-			case orchSignal <- struct{}{}:
-			default:
-				s.logger.Info("reconcile signal coalesced (pass already pending)", "app", node.ID)
-			}
-		})
-		go func() {
-			for range orchSignal {
-				s.logger.Info("reconcile triggered by graph target update")
-				if err := orch.Reconcile(context.Background()); err != nil {
-					s.logger.Error("orchestrator reconcile failed", "error", err)
-				}
-			}
-		}()
 		s.logger.Info("lifecycle orchestrator initialized")
 
 		// Build forward-domain SSO provisioner (nil when Authentik not installed).

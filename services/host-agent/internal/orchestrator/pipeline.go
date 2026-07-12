@@ -312,11 +312,11 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 		o.catalogGraph.SetInstalled(installed)
 	}
 
-	// Step 6: Regenerate routes.
-	o.logger.Info("convergence step", "step", "regenerate-routes")
-	o.recordActivity("converge_step", "regenerate-routes")
-	if err := o.RegenerateRoutes(); err != nil {
-		o.logger.Warn("failed to regenerate routes", "error", err)
+	// Step 6: Run reconcile pass — drives per-app lifecycle phases and regenerates routes.
+	o.logger.Info("convergence step", "step", "reconcile")
+	o.recordActivity("converge_step", "reconcile")
+	if err := o.Reconcile(ctx); err != nil {
+		o.logger.Warn("reconcile failed", "error", err)
 	}
 
 	// Step 7: Provision forward_domain SSO for tailnet access (best-effort).

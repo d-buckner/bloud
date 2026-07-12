@@ -26,7 +26,6 @@ type EventType string
 
 const (
 	// EventTargetUpdated fires when a node's target status changes.
-	// The Orchestrator listens for this to trigger a reconcile pass.
 	EventTargetUpdated EventType = "TARGET_UPDATED"
 
 	// EventNodeUpdated fires when a node's actual status changes.
