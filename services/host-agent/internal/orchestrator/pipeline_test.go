@@ -26,9 +26,7 @@ type convergeHarness struct {
 	remoteAppStore *FakeRemoteAppStore
 	tailnetNode    *FakeTailnetNodeManager
 	gateway        *FakeGatewayManager
-	proxyStopper   *FakeProxyStopper
-	routeGenerator *MockRouteGenerator
-	stateSyncer    *MockContainerStateSyncer
+	remoteProxy    *FakeRemoteProxy
 }
 
 func newConvergeHarness(t *testing.T) *convergeHarness {
@@ -47,11 +45,7 @@ func newConvergeHarness(t *testing.T) *convergeHarness {
 	remoteAppStore := NewFakeRemoteAppStore()
 	tailnetNode := NewFakeTailnetNodeManager()
 	gateway := NewFakeGatewayManager()
-	proxyStopper := NewFakeProxyStopper()
-	routeGenerator := new(MockRouteGenerator)
-	routeGenerator.On("RegenerateRoutes").Return(nil).Maybe()
-	stateSyncer := new(MockContainerStateSyncer)
-	stateSyncer.On("SyncContainerState", mock.Anything).Return().Maybe()
+	remoteProxy := NewFakeRemoteProxy()
 
 	orch := NewOrchestrator(
 		g,
@@ -68,10 +62,8 @@ func newConvergeHarness(t *testing.T) *convergeHarness {
 		RemoteAppStore: remoteAppStore,
 		TailnetNode:    tailnetNode,
 		Gateway:        gateway,
-		ProxyStopper:   proxyStopper,
+		RemoteProxy:    remoteProxy,
 	})
-	orch.WithRouteGenerator(routeGenerator)
-	orch.WithStateSyncer(stateSyncer)
 
 	return &convergeHarness{
 		orch:           orch,
@@ -84,9 +76,7 @@ func newConvergeHarness(t *testing.T) *convergeHarness {
 		remoteAppStore: remoteAppStore,
 		tailnetNode:    tailnetNode,
 		gateway:        gateway,
-		proxyStopper:   proxyStopper,
-		routeGenerator: routeGenerator,
-		stateSyncer:    stateSyncer,
+		remoteProxy:    remoteProxy,
 	}
 }
 
@@ -213,25 +203,6 @@ func TestConverge_UninstallIntent_RemovesFromStoreAndGraph(t *testing.T) {
 	assert.Nil(t, app, "app should be removed from store after uninstall")
 }
 
-// ── Sync / Route Tests ─────────────────────────────────────────────────────
-
-func TestConverge_SyncsContainerState(t *testing.T) {
-	h := newConvergeHarness(t)
-
-	h.orch.converge(context.Background(), nil)
-
-	h.stateSyncer.AssertCalled(t, "SyncContainerState", mock.Anything)
-}
-
-func TestConverge_RegeneratesRoutesAfterConvergence(t *testing.T) {
-	h := newConvergeHarness(t)
-	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
-
-	h.orch.converge(context.Background(), []Intent{NewInstallAppIntent("jellyfin")})
-
-	h.routeGenerator.AssertCalled(t, "RegenerateRoutes")
-}
-
 // ── Tailnet Intent Tests ──────────────────────────────────────────────────
 
 func TestConverge_SetTailnetIntent_CreatesConnection(t *testing.T) {
@@ -317,7 +288,7 @@ func TestConverge_NoTailnet_PurgesTailnetNodesAndGateway(t *testing.T) {
 
 	assert.Contains(t, h.tailnetNode.PurgedApps(), "jellyfin")
 	assert.True(t, h.gateway.WasPurgeCalled())
-	assert.True(t, h.proxyStopper.WasStopCalled())
+	assert.True(t, h.remoteProxy.WasStopCalled())
 
 	jf, _ := h.appStore.GetByCatalogID("jellyfin")
 	assert.Empty(t, jf.TailnetID)
@@ -440,28 +411,26 @@ func TestConverge_ProvisionTailnetSSO_CallsEnsureForwardDomainAuth(t *testing.T)
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
+	h.gateway.SetDomain("tail12756a.ts.net", nil)
 	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
-	h.orch.tailnetDomain = td
 	h.orch.forwardDomainSSO = fd
 
 	h.orch.converge(context.Background(), nil)
 
-	assert.True(t, td.WasCalled(), "GetTailnetDomain should be called")
+	assert.True(t, h.gateway.WasDomainCalled(), "GetTailnetDomain should be called")
 	assert.Equal(t, "tail12756a.ts.net", fd.CalledDomain())
 }
 
 func TestConverge_ProvisionTailnetSSO_SkipsWhenNoTailnet(t *testing.T) {
 	h := newConvergeHarness(t)
 
-	td := NewFakeTailnetDomainDiscoverer("tail12756a.ts.net", nil)
+	h.gateway.SetDomain("tail12756a.ts.net", nil)
 	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
-	h.orch.tailnetDomain = td
 	h.orch.forwardDomainSSO = fd
 
 	h.orch.converge(context.Background(), nil)
 
-	assert.False(t, td.WasCalled(), "GetTailnetDomain should not be called without active tailnet")
+	assert.False(t, h.gateway.WasDomainCalled(), "GetTailnetDomain should not be called without active tailnet")
 	assert.Empty(t, fd.CalledDomain())
 }
 
@@ -472,7 +441,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenInterfacesNil(t *testing.T) {
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	// tailnetDomain and forwardDomainSSO are nil (default) — should not panic.
+	// forwardDomainSSO is nil (default) — should not panic.
 	h.orch.converge(context.Background(), nil)
 }
 
@@ -483,14 +452,13 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	td := NewFakeTailnetDomainDiscoverer("", fmt.Errorf("gateway not running"))
+	h.gateway.SetDomain("", fmt.Errorf("gateway not running"))
 	fd := NewFakeForwardDomainProvisioner("fake-token", nil)
-	h.orch.tailnetDomain = td
 	h.orch.forwardDomainSSO = fd
 
 	h.orch.converge(context.Background(), nil)
 
-	assert.True(t, td.WasCalled())
+	assert.True(t, h.gateway.WasDomainCalled())
 	assert.Empty(t, fd.CalledDomain(), "EnsureForwardDomainAuth should not be called when gateway is not ready")
 }
 

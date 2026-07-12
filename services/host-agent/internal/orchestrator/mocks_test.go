@@ -396,21 +396,3 @@ func (m *MockConfigurator) Remove(ctx context.Context, state *configurator.AppSt
 	return args.Error(0)
 }
 
-// MockRouteGenerator implements RouteRegenerator for testing (Cycle 2)
-type MockRouteGenerator struct {
-	mock.Mock
-}
-
-func (m *MockRouteGenerator) RegenerateRoutes() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-// MockContainerStateSyncer implements ContainerStateSyncer for testing (Cycle 3)
-type MockContainerStateSyncer struct {
-	mock.Mock
-}
-
-func (m *MockContainerStateSyncer) SyncContainerState(ctx context.Context) {
-	m.Called(ctx)
-}

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
@@ -746,23 +747,49 @@ func (f *FakeTailnetNodeManager) PurgedApps() []string {
 var _ TailnetNodeEnsurer = (*FakeTailnetNodeManager)(nil)
 
 // ============================================================================
-// FakeGatewayManager — records StopAndPurge calls
+// FakeGatewayManager — records StopAndPurge/EnsureRunning/GetTailnetDomain calls
 // ============================================================================
 
 type FakeGatewayManager struct {
-	mu          sync.Mutex
-	purgeCalled bool
+	mu           sync.Mutex
+	purgeCalled  bool
+	ensureCalled bool
+	domain       string
+	domainErr    error
+	domainCalled bool
 }
 
 func NewFakeGatewayManager() *FakeGatewayManager {
 	return &FakeGatewayManager{}
 }
 
-func (f *FakeGatewayManager) StopAndPurge(ctx context.Context) error {
+func (f *FakeGatewayManager) EnsureRunning(_ context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensureCalled = true
+	return nil
+}
+
+func (f *FakeGatewayManager) StopAndPurge(_ context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.purgeCalled = true
 	return nil
+}
+
+func (f *FakeGatewayManager) GetTailnetDomain(_ context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.domainCalled = true
+	return f.domain, f.domainErr
+}
+
+// SetDomain configures the domain and error returned by GetTailnetDomain.
+func (f *FakeGatewayManager) SetDomain(domain string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.domain = domain
+	f.domainErr = err
 }
 
 func (f *FakeGatewayManager) WasPurgeCalled() bool {
@@ -771,67 +798,49 @@ func (f *FakeGatewayManager) WasPurgeCalled() bool {
 	return f.purgeCalled
 }
 
+func (f *FakeGatewayManager) WasDomainCalled() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.domainCalled
+}
+
 // Compile-time assertion.
-var _ GatewayEnsurer = (*FakeGatewayManager)(nil)
+var _ GatewayManager = (*FakeGatewayManager)(nil)
 
 // ============================================================================
-// FakeProxyStopper — records StopAll calls
+// FakeRemoteProxy — records StopAll and Reconcile calls
 // ============================================================================
 
-type FakeProxyStopper struct {
+type FakeRemoteProxy struct {
 	mu         sync.Mutex
 	stopCalled bool
+	portMap    map[string]int
 }
 
-func NewFakeProxyStopper() *FakeProxyStopper {
-	return &FakeProxyStopper{}
+func NewFakeRemoteProxy() *FakeRemoteProxy {
+	return &FakeRemoteProxy{portMap: make(map[string]int)}
 }
 
-func (f *FakeProxyStopper) StopAll() {
+func (f *FakeRemoteProxy) StopAll() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.stopCalled = true
 }
 
-func (f *FakeProxyStopper) WasStopCalled() bool {
+func (f *FakeRemoteProxy) Reconcile(targets []sharing.ProxyTarget) map[string]int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.portMap
+}
+
+func (f *FakeRemoteProxy) WasStopCalled() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.stopCalled
 }
 
 // Compile-time assertion.
-var _ ProxyStopper = (*FakeProxyStopper)(nil)
-
-// ============================================================================
-// FakeTailnetDomainDiscoverer — returns a configured domain or error
-// ============================================================================
-
-type FakeTailnetDomainDiscoverer struct {
-	mu     sync.Mutex
-	domain string
-	err    error
-	called bool
-}
-
-func NewFakeTailnetDomainDiscoverer(domain string, err error) *FakeTailnetDomainDiscoverer {
-	return &FakeTailnetDomainDiscoverer{domain: domain, err: err}
-}
-
-func (f *FakeTailnetDomainDiscoverer) GetTailnetDomain(ctx context.Context) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.called = true
-	return f.domain, f.err
-}
-
-func (f *FakeTailnetDomainDiscoverer) WasCalled() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.called
-}
-
-// Compile-time assertion.
-var _ TailnetDomainDiscoverer = (*FakeTailnetDomainDiscoverer)(nil)
+var _ RemoteProxyManager = (*FakeRemoteProxy)(nil)
 
 // ============================================================================
 // FakeForwardDomainProvisioner — records EnsureForwardDomainAuth calls

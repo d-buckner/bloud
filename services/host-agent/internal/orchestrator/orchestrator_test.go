@@ -86,43 +86,22 @@ func TestOrchestrator_RemoveApp_ClearData_PassedToRemove(t *testing.T) {
 }
 
 // ============================================================================
-// Refactor Cycle 2: Reconcile calls RouteRegenerator at completion
+// Reconcile is a no-op without a route generator (traefikGen nil → no-op)
 // ============================================================================
-
-func TestOrchestrator_Reconcile_CallsRouteGeneratorOnce(t *testing.T) {
-	to := newTestOrchestrator()
-	mockRG := new(MockRouteGenerator)
-	to.orch.WithRouteGenerator(mockRG)
-	mockRG.On("RegenerateRoutes").Return(nil)
-
-	require.NoError(t, to.orch.Reconcile(context.Background()))
-
-	mockRG.AssertNumberOfCalls(t, "RegenerateRoutes", 1)
-}
 
 func TestOrchestrator_Reconcile_NoRouteGenerator_NoError(t *testing.T) {
 	to := newTestOrchestrator()
-	// No route generator set — should not panic or error.
+	// No traefikGen set — RegenerateRoutes is a no-op, should not error.
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 }
 
 // ============================================================================
-// Refactor Cycle 3: Startup calls ContainerStateSyncer
+// Startup is safe even when container runtime is not configured
 // ============================================================================
 
-func TestOrchestrator_Startup_CallsStateSyncer(t *testing.T) {
+func TestOrchestrator_Startup_NoContainerRuntime_NoError(t *testing.T) {
 	to := newTestOrchestrator()
-	mockSS := new(MockContainerStateSyncer)
-	to.orch.WithStateSyncer(mockSS)
-	mockSS.On("SyncContainerState", mock.Anything).Return()
-
-	require.NoError(t, to.orch.Startup(context.Background()))
-
-	mockSS.AssertCalled(t, "SyncContainerState", mock.Anything)
-}
-
-func TestOrchestrator_Startup_NoStateSyncer_NoError(t *testing.T) {
-	to := newTestOrchestrator()
+	// No container runtime — SyncContainerState is a no-op.
 	require.NoError(t, to.orch.Startup(context.Background()))
 }
 

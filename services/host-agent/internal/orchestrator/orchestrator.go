@@ -17,6 +17,7 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -35,18 +36,6 @@ type ActivityEvent struct {
 	Time   time.Time `json:"time"`
 	Event  string    `json:"event"`  // "intent_enqueued", "drain_complete", "converge_start", "converge_step", "converge_complete"
 	Detail string    `json:"detail"`
-}
-
-// RouteRegenerator regenerates routing rules (e.g. Traefik config) after a
-// convergence pass completes.
-type RouteRegenerator interface {
-	RegenerateRoutes() error
-}
-
-// ContainerStateSyncer syncs the actual container state into the lifecycle graph
-// at startup, before intent processing begins.
-type ContainerStateSyncer interface {
-	SyncContainerState(ctx context.Context)
 }
 
 // OrchestratorConfig holds tunable parameters for the Orchestrator.
@@ -86,29 +75,28 @@ type OrchestratorConfig struct {
 // any new configuration exposed by that dependency.
 type Orchestrator struct {
 	// Core lifecycle fields
-	graph          *graph.Graph
-	registry       configurator.RegistryInterface
-	catalog        catalog.CacheInterface
-	dataDir        string
-	logger         *slog.Logger
-	config         OrchestratorConfig
-	routeGenerator RouteRegenerator     // optional; called at end of Reconcile
-	stateSyncer    ContainerStateSyncer // optional; called by Startup
+	graph    *graph.Graph
+	registry configurator.RegistryInterface
+	catalog  catalog.CacheInterface
+	dataDir  string
+	logger   *slog.Logger
+	config   OrchestratorConfig
 
-	// Intent processing fields (Cycle 4)
+	// Intent processing fields
 	queue          *IntentQueue
 	appStore       store.AppStoreInterface
 	catalogGraph   catalog.AppGraphInterface
 	tailnetStore   store.TailnetStoreInterface
 	remoteAppStore store.RemoteAppStoreInterface
 	tailnetNode    TailnetNodeEnsurer
-	gateway        GatewayEnsurer
-	proxyStopper   ProxyStopper
+	gateway        GatewayManager
+	remoteProxy    RemoteProxyManager
 	proxyOutpost   ProxyOutpostEnsurer
-	tailnetDomain  TailnetDomainDiscoverer
 	forwardDomainSSO ForwardDomainProvisioner
 	sso              SSOProvisioner
 	ssoBaseURL       string
+	traefikGen       traefikgen.GeneratorInterface
+	activeTailnetID  func() string
 
 	// Start/Stop lifecycle
 	cancel  context.CancelFunc
@@ -248,20 +236,6 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 	o.recordActivity("converge_complete", fmt.Sprintf("%d intents, %s", len(intents), time.Since(start).Round(time.Millisecond)))
 }
 
-// WithRouteGenerator sets the RouteRegenerator called at the end of each
-// Reconcile pass. Returns the receiver for chaining.
-func (o *Orchestrator) WithRouteGenerator(rg RouteRegenerator) *Orchestrator {
-	o.routeGenerator = rg
-	return o
-}
-
-// WithStateSyncer sets the ContainerStateSyncer called by Startup.
-// Returns the receiver for chaining.
-func (o *Orchestrator) WithStateSyncer(ss ContainerStateSyncer) *Orchestrator {
-	o.stateSyncer = ss
-	return o
-}
-
 // WithContainerRuntime sets the container runtime used to create app containers
 // from catalog specs during the EnsureContainer lifecycle phase.
 // Returns the receiver for chaining.
@@ -275,9 +249,7 @@ func (o *Orchestrator) WithContainerRuntime(runtime containerruntime.Runtime, te
 // the graph so the first Reconcile pass has accurate information.
 func (o *Orchestrator) Startup(ctx context.Context) error {
 	o.logger.Info("startup: syncing container state")
-	if o.stateSyncer != nil {
-		o.stateSyncer.SyncContainerState(ctx)
-	}
+	o.SyncContainerState(ctx)
 	o.logger.Info("startup complete")
 	return nil
 }
@@ -320,10 +292,8 @@ func (o *Orchestrator) Reconcile(ctx context.Context) error {
 		}
 	}
 
-	if o.routeGenerator != nil {
-		if err := o.routeGenerator.RegenerateRoutes(); err != nil {
-			o.logger.Warn("route regeneration failed", "error", err)
-		}
+	if err := o.RegenerateRoutes(); err != nil {
+		o.logger.Warn("route regeneration failed", "error", err)
 	}
 
 	return nil

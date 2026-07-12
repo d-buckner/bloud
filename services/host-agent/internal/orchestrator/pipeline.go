@@ -10,74 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// TailnetNodeEnsurer abstracts tailnet node container lifecycle.
-type TailnetNodeEnsurer interface {
-	EnsureRunning(ctx context.Context, appName string) error
-	StopAndPurge(ctx context.Context, appName string) error
-}
-
-// GatewayEnsurer abstracts gateway container teardown.
-type GatewayEnsurer interface {
-	StopAndPurge(ctx context.Context) error
-}
-
-// ProxyStopper abstracts remote proxy teardown.
-type ProxyStopper interface {
-	StopAll()
-}
-
-// TailnetDomainDiscoverer discovers the tailnet MagicDNS domain from the running gateway.
-type TailnetDomainDiscoverer interface {
-	GetTailnetDomain(ctx context.Context) (string, error)
-}
-
-// ForwardDomainProvisioner provisions a forward_domain SSO provider for a tailnet domain.
-// Returns the outpost API token needed to start the standalone proxy outpost container.
-type ForwardDomainProvisioner interface {
-	EnsureForwardDomainAuth(cookieDomain string) (token string, err error)
-}
-
-// ProxyOutpostEnsurer abstracts the standalone proxy outpost container lifecycle.
-type ProxyOutpostEnsurer interface {
-	EnsureRunning(ctx context.Context, token, tailnetDomain string) error
-	Stop(ctx context.Context) error
-}
-
-// ConvergeConfig holds the optional convergence dependencies.
-// When nil/zero, the convergence phase is a no-op.
-type ConvergeConfig struct {
-	AppStore         store.AppStoreInterface
-	CatalogGraph     catalog.AppGraphInterface
-	TailnetStore     store.TailnetStoreInterface
-	RemoteAppStore   store.RemoteAppStoreInterface
-	TailnetNode      TailnetNodeEnsurer
-	Gateway          GatewayEnsurer
-	ProxyStopper     ProxyStopper
-	ProxyOutpost     ProxyOutpostEnsurer
-	TailnetDomain    TailnetDomainDiscoverer
-	ForwardDomainSSO ForwardDomainProvisioner
-	SSO              SSOProvisioner // optional; provisions per-app forward-auth in Authentik
-	SSOBaseURL       string         // base URL for building app subdomain URLs (e.g. "http://localhost:8080")
-}
-
-// WithConvergeConfig wires the convergence dependencies into the orchestrator.
-// Returns the receiver for chaining.
-func (o *Orchestrator) WithConvergeConfig(cfg ConvergeConfig) *Orchestrator {
-	o.appStore = cfg.AppStore
-	o.catalogGraph = cfg.CatalogGraph
-	o.tailnetStore = cfg.TailnetStore
-	o.remoteAppStore = cfg.RemoteAppStore
-	o.tailnetNode = cfg.TailnetNode
-	o.gateway = cfg.Gateway
-	o.proxyStopper = cfg.ProxyStopper
-	o.proxyOutpost = cfg.ProxyOutpost
-	o.tailnetDomain = cfg.TailnetDomain
-	o.forwardDomainSSO = cfg.ForwardDomainSSO
-	o.sso = cfg.SSO
-	o.ssoBaseURL = cfg.SSOBaseURL
-	return o
-}
-
 // applyIntents processes a batch of intents, mutating stores (drain phase).
 // pendingClearData accumulates the clearData flags for pending uninstalls.
 func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[string]bool) {
@@ -309,9 +241,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	// Step 1: Sync container state (align DB with reality).
 	o.logger.Info("convergence step", "step", "sync-container-state")
 	o.recordActivity("converge_step", "sync-container-state")
-	if o.stateSyncer != nil {
-		o.stateSyncer.SyncContainerState(ctx)
-	}
+	o.SyncContainerState(ctx)
 
 	apps, err := o.appStore.GetAll()
 	if err != nil {
@@ -385,19 +315,15 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	// Step 6: Regenerate routes.
 	o.logger.Info("convergence step", "step", "regenerate-routes")
 	o.recordActivity("converge_step", "regenerate-routes")
-	if o.routeGenerator != nil {
-		if err := o.routeGenerator.RegenerateRoutes(); err != nil {
-			o.logger.Warn("failed to regenerate routes", "error", err)
-		}
+	if err := o.RegenerateRoutes(); err != nil {
+		o.logger.Warn("failed to regenerate routes", "error", err)
 	}
 
 	// Step 7: Provision forward_domain SSO for tailnet access (best-effort).
 	if o.provisionTailnetSSO(ctx) {
 		o.logger.Info("convergence step", "step", "regenerate-routes-tailnet")
-		if o.routeGenerator != nil {
-			if err := o.routeGenerator.RegenerateRoutes(); err != nil {
-				o.logger.Warn("failed to regenerate routes after tailnet SSO", "error", err)
-			}
+		if err := o.RegenerateRoutes(); err != nil {
+			o.logger.Warn("failed to regenerate routes after tailnet SSO", "error", err)
 		}
 	}
 
@@ -467,15 +393,15 @@ func (o *Orchestrator) convergeTailnet(ctx context.Context) {
 			o.logger.Warn("failed to stop proxy outpost", "error", err)
 		}
 	}
-	if o.proxyStopper != nil {
-		o.proxyStopper.StopAll()
+	if o.remoteProxy != nil {
+		o.remoteProxy.StopAll()
 	}
 }
 
 // provisionTailnetSSO ensures a forward_domain Authentik proxy provider and standalone
 // outpost exist for the tailnet MagicDNS domain. Best-effort: logs warnings on failure.
 func (o *Orchestrator) provisionTailnetSSO(ctx context.Context) bool {
-	if o.tailnetDomain == nil || o.forwardDomainSSO == nil {
+	if o.gateway == nil || o.forwardDomainSSO == nil {
 		return false
 	}
 
@@ -489,7 +415,7 @@ func (o *Orchestrator) provisionTailnetSSO(ctx context.Context) bool {
 
 	o.logger.Info("convergence step", "step", "provision-tailnet-sso")
 
-	domain, err := o.tailnetDomain.GetTailnetDomain(ctx)
+	domain, err := o.gateway.GetTailnetDomain(ctx)
 	if err != nil {
 		o.logger.Warn("failed to discover tailnet domain (gateway not ready?)", "error", err)
 		return false

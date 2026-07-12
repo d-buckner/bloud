@@ -258,31 +258,6 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 
 		orch.WithContainerRuntime(runtime, s.cfg.TemplateVars)
 
-		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
-			Graph:          s.graph,
-			CatalogCache:   s.catalog,
-			AppStore:       appStore,
-			Containers:     runtime,
-			Registry:       s.cfg.Registry,
-			TraefikGen:     traefikgen.NewGenerator(traefikConfigPath),
-			LDAPOutput:     s.cfg.LDAPOutput,
-			TailnetNode:    tailnetNode,
-			Gateway:        gateway,
-			RemoteProxy:    remoteProxy,
-			RemoteAppStore: s.remoteAppStore,
-			ActiveTailnetID: func() string {
-				conn, err := s.tailnetStore.GetActive()
-				if err != nil || conn == nil {
-					return ""
-				}
-				return conn.ID
-			},
-			DataDir:      s.cfg.DataDir,
-			TemplateVars: s.cfg.TemplateVars,
-			Logger:       s.logger,
-		})
-		s.logger.Info("portable orchestrator initialized")
-
 		// Coalescing signal channel: multiple rapid EventTargetUpdated events collapse
 		// into a single Reconcile pass. The channel is buffered to avoid blocking the
 		// event emitter.
@@ -322,15 +297,20 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			RemoteAppStore:   s.remoteAppStore,
 			TailnetNode:      tailnetNode,
 			Gateway:          gateway,
-			ProxyStopper:     remoteProxy,
+			RemoteProxy:      remoteProxy,
 			ProxyOutpost:     proxyOutpost,
-			TailnetDomain:    gateway,
 			ForwardDomainSSO: forwardDomainSSO,
 			SSO:              ssoProvisioner,
 			SSOBaseURL:       s.cfg.SSOBaseURL,
+			TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
+			ActiveTailnetID: func() string {
+				conn, err := s.tailnetStore.GetActive()
+				if err != nil || conn == nil {
+					return ""
+				}
+				return conn.ID
+			},
 		})
-		orch.WithRouteGenerator(portable)
-		orch.WithStateSyncer(portable)
 
 		s.orch = orch
 		go orch.Start(context.Background())
