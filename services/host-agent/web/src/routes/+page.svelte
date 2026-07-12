@@ -8,7 +8,6 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
-	import LogsModal from '$lib/components/LogsModal.svelte';
 	import RenameModal from '$lib/components/RenameModal.svelte';
 	import ShareModal from '$lib/components/ShareModal.svelte';
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
@@ -26,8 +25,6 @@
 
 	// Modal state
 	let uninstallAppName = $state<string | null>(null);
-	let logsAppName = $state<string | null>(null);
-	let logsDisplayName = $state<string>('');
 	let renameAppName = $state<string | null>(null);
 	let renameCurrentDisplayName = $state<string>('');
 	let shareApp = $state<App | null>(null);
@@ -58,8 +55,7 @@
 		)
 			return;
 
-		const path = app.sso_launch_path ?? '';
-		window.open(getAppUrl(app.catalog_id, path), '_blank');
+		window.open(getAppUrl(app.catalog_id), '_blank');
 	}
 
 	function handleContextMenu(e: MouseEvent, app: App) {
@@ -69,11 +65,6 @@
 	}
 
 	// Context menu handlers
-	function handleViewLogs(app: App) {
-		logsAppName = app.catalog_id;
-		logsDisplayName = app.display_name;
-	}
-
 	function handleRenameClick(app: App) {
 		renameAppName = app.catalog_id;
 		renameCurrentDisplayName = app.display_name;
@@ -161,7 +152,6 @@
 <AppContextMenu
 	app={contextMenuApp}
 	position={contextMenuPos}
-	onViewLogs={handleViewLogs}
 	onRename={handleRenameClick}
 	onShare={handleShareClick}
 	onUninstall={handleUninstallClick}
@@ -173,8 +163,6 @@
 	onclose={() => (uninstallAppName = null)}
 	onuninstall={doUninstall}
 />
-
-<LogsModal appName={logsAppName} displayName={logsDisplayName} onclose={() => (logsAppName = null)} />
 
 <RenameModal
 	appName={renameAppName}
