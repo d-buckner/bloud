@@ -53,17 +53,16 @@ func newConvergeHarness(t *testing.T) *convergeHarness {
 		catalogCache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{},
+		OrchestratorConfig{
+			AppStore:       appStore,
+			CatalogGraph:   catalogGraph,
+			TailnetStore:   tailnetStore,
+			RemoteAppStore: remoteAppStore,
+			TailnetNode:    tailnetNode,
+			Gateway:        gateway,
+			RemoteProxy:    remoteProxy,
+		},
 	)
-	orch.WithConvergeConfig(ConvergeConfig{
-		AppStore:       appStore,
-		CatalogGraph:   catalogGraph,
-		TailnetStore:   tailnetStore,
-		RemoteAppStore: remoteAppStore,
-		TailnetNode:    tailnetNode,
-		Gateway:        gateway,
-		RemoteProxy:    remoteProxy,
-	})
 
 	return &convergeHarness{
 		orch:           orch,

@@ -179,14 +179,6 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	// convergeFromStores always populates nodes and targets from the app store,
 	// so persistence across restarts is not needed and avoids stale-state issues.
 	lifecycleGraph := graph.New(graph.NewMapRepository())
-	orch := orchestrator.NewOrchestrator(
-		lifecycleGraph,
-		s.cfg.Registry,
-		s.catalog,
-		s.cfg.DataDir,
-		s.logger,
-		orchestrator.OrchestratorConfig{LDAPOutput: s.cfg.LDAPOutput},
-	)
 
 	if s.cfg.RuntimeMode == "portable" {
 		// Always create a podman client for the API (developer endpoint, etc.)
@@ -256,41 +248,44 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, s.logger)
 		s.remoteProxy = remoteProxy
 
-		orch.WithContainerRuntime(runtime, s.cfg.TemplateVars)
-
-		s.logger.Info("lifecycle orchestrator initialized")
-
 		// Build forward-domain SSO provisioner (nil when Authentik not installed).
 		var forwardDomainSSO orchestrator.ForwardDomainProvisioner
 		if s.authentikClient != nil {
 			forwardDomainSSO = s.authentikClient
 		}
 
-		// Create proxy outpost manager for tailnet forward-auth.
-		proxyOutpost := sharing.NewProxyOutpostManager(runtime, s.logger)
-
-		// Wire converge dependencies into the orchestrator.
-		orch.WithConvergeConfig(orchestrator.ConvergeConfig{
-			AppStore:         appStore,
-			CatalogGraph:     s.graph,
-			TailnetStore:     s.tailnetStore,
-			RemoteAppStore:   s.remoteAppStore,
-			TailnetNode:      tailnetNode,
-			Gateway:          gateway,
-			RemoteProxy:      remoteProxy,
-			ProxyOutpost:     proxyOutpost,
-			ForwardDomainSSO: forwardDomainSSO,
-			SSO:              ssoProvisioner,
-			SSOBaseURL:       s.cfg.SSOBaseURL,
-			TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
-			ActiveTailnetID: func() string {
-				conn, err := s.tailnetStore.GetActive()
-				if err != nil || conn == nil {
-					return ""
-				}
-				return conn.ID
+		orch := orchestrator.NewOrchestrator(
+			lifecycleGraph,
+			s.cfg.Registry,
+			s.catalog,
+			s.cfg.DataDir,
+			s.logger,
+			orchestrator.OrchestratorConfig{
+				LDAPOutput:       s.cfg.LDAPOutput,
+				Containers:       runtime,
+				TemplateVars:     s.cfg.TemplateVars,
+				AppStore:         appStore,
+				CatalogGraph:     s.graph,
+				TailnetStore:     s.tailnetStore,
+				RemoteAppStore:   s.remoteAppStore,
+				TailnetNode:      tailnetNode,
+				Gateway:          gateway,
+				RemoteProxy:      remoteProxy,
+				ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, s.logger),
+				ForwardDomainSSO: forwardDomainSSO,
+				SSO:              ssoProvisioner,
+				SSOBaseURL:       s.cfg.SSOBaseURL,
+				TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
+				ActiveTailnetID: func() string {
+					conn, err := s.tailnetStore.GetActive()
+					if err != nil || conn == nil {
+						return ""
+					}
+					return conn.ID
+				},
 			},
-		})
+		)
+		s.logger.Info("lifecycle orchestrator initialized")
 
 		s.orch = orch
 		go orch.Start(context.Background())
@@ -302,8 +297,16 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		return
 	}
 
-	// Non-portable mode: start the orchestrator in stub mode (no appStore →
+	// Non-portable mode: start the orchestrator in stub mode (no AppStore →
 	// converge is a no-op) so Enqueue calls still work without panicking.
+	orch := orchestrator.NewOrchestrator(
+		lifecycleGraph,
+		s.cfg.Registry,
+		s.catalog,
+		s.cfg.DataDir,
+		s.logger,
+		orchestrator.OrchestratorConfig{LDAPOutput: s.cfg.LDAPOutput},
+	)
 	s.orch = orch
 	go orch.Start(context.Background())
 

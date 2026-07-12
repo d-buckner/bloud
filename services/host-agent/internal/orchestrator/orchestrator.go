@@ -38,8 +38,12 @@ type ActivityEvent struct {
 	Detail string    `json:"detail"`
 }
 
-// OrchestratorConfig holds tunable parameters for the Orchestrator.
+// OrchestratorConfig is the complete set of tunable parameters and optional
+// dependencies for the Orchestrator. Nil/zero fields disable the corresponding
+// subsystem. All fields are set at construction time via NewOrchestrator.
 type OrchestratorConfig struct {
+	// ── Tunable parameters ───────────────────────────────────────────────
+
 	// HealthCheckTimeout limits how long each app's HealthCheck can run.
 	// Zero means no timeout (the caller's context deadline applies).
 	HealthCheckTimeout time.Duration
@@ -48,6 +52,8 @@ type OrchestratorConfig struct {
 	// LDAP SSO strategy. Nil when no LDAP provider is configured.
 	LDAPOutput *configurator.LDAPOutput
 
+	// ── Container runtime ────────────────────────────────────────────────
+
 	// Containers is the container runtime used to create app containers from
 	// catalog specs. Nil disables catalog-driven container creation.
 	Containers containerruntime.Runtime
@@ -55,6 +61,22 @@ type OrchestratorConfig struct {
 	// TemplateVars are extra variables for container spec template rendering
 	// (e.g. "postgresPassword"). Passed to PortableContainerSpec.
 	TemplateVars map[string]string
+
+	// ── Converge dependencies (nil = subsystem disabled) ─────────────────
+
+	AppStore         store.AppStoreInterface
+	CatalogGraph     catalog.AppGraphInterface
+	TailnetStore     store.TailnetStoreInterface
+	RemoteAppStore   store.RemoteAppStoreInterface
+	TailnetNode      TailnetNodeEnsurer
+	Gateway          GatewayManager
+	RemoteProxy      RemoteProxyManager
+	ProxyOutpost     ProxyOutpostEnsurer
+	ForwardDomainSSO ForwardDomainProvisioner
+	SSO              SSOProvisioner
+	SSOBaseURL       string // base URL for building app subdomain URLs (e.g. "http://localhost:8080")
+	TraefikGen       traefikgen.GeneratorInterface
+	ActiveTailnetID  func() string // returns the active tailnet connection ID (empty if none)
 }
 
 // Orchestrator drives app nodes through their lifecycle phases in dependency
@@ -111,7 +133,9 @@ type Orchestrator struct {
 	converging  atomic.Bool
 }
 
-// NewOrchestrator creates an Orchestrator backed by the provided graph.
+// NewOrchestrator creates a fully-configured Orchestrator backed by the
+// provided graph. All subsystem dependencies are supplied up-front via config;
+// nil/zero fields disable the corresponding subsystem.
 // catalogCache may be nil; when nil, SSO detection is disabled.
 func NewOrchestrator(
 	g *graph.Graph,
@@ -122,15 +146,28 @@ func NewOrchestrator(
 	config OrchestratorConfig,
 ) *Orchestrator {
 	return &Orchestrator{
-		graph:    g,
-		registry: registry,
-		catalog:  catalogCache,
-		dataDir:  dataDir,
-		logger:   logger,
-		config:   config,
-		queue:    NewIntentQueue(DefaultDebounce),
-		started:  make(chan struct{}),
-		done:     make(chan struct{}),
+		graph:            g,
+		registry:         registry,
+		catalog:          catalogCache,
+		dataDir:          dataDir,
+		logger:           logger,
+		config:           config,
+		appStore:         config.AppStore,
+		catalogGraph:     config.CatalogGraph,
+		tailnetStore:     config.TailnetStore,
+		remoteAppStore:   config.RemoteAppStore,
+		tailnetNode:      config.TailnetNode,
+		gateway:          config.Gateway,
+		remoteProxy:      config.RemoteProxy,
+		proxyOutpost:     config.ProxyOutpost,
+		forwardDomainSSO: config.ForwardDomainSSO,
+		sso:              config.SSO,
+		ssoBaseURL:       config.SSOBaseURL,
+		traefikGen:       config.TraefikGen,
+		activeTailnetID:  config.ActiveTailnetID,
+		queue:            NewIntentQueue(DefaultDebounce),
+		started:          make(chan struct{}),
+		done:             make(chan struct{}),
 	}
 }
 
@@ -234,15 +271,6 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 
 	o.convergeFromStores(ctx, pendingClearData)
 	o.recordActivity("converge_complete", fmt.Sprintf("%d intents, %s", len(intents), time.Since(start).Round(time.Millisecond)))
-}
-
-// WithContainerRuntime sets the container runtime used to create app containers
-// from catalog specs during the EnsureContainer lifecycle phase.
-// Returns the receiver for chaining.
-func (o *Orchestrator) WithContainerRuntime(runtime containerruntime.Runtime, templateVars map[string]string) *Orchestrator {
-	o.config.Containers = runtime
-	o.config.TemplateVars = templateVars
-	return o
 }
 
 // Startup runs pre-reconcile initialisation: syncs actual container state into

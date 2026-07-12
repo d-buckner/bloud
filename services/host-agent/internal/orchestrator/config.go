@@ -1,20 +1,14 @@
 package orchestrator
 
-// config.go is the wiring contract for the orchestrator convergence pipeline.
-// It declares every outbound port (dependency interface) the package needs from
-// the outside world, the ConvergeConfig struct that groups them, and the
-// WithConvergeConfig setter that wires them into the Orchestrator.
-//
-// Reading this file answers the question: "what must a caller supply to run
-// a full convergence pass?"
+// config.go declares the outbound dependency interfaces the orchestrator
+// package requires from the outside world. All of these are fields of
+// OrchestratorConfig (defined in orchestrator.go) and are set once at
+// construction time via NewOrchestrator.
 
 import (
 	"context"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 )
 
 // ── Dependency interfaces ─────────────────────────────────────────────────
@@ -59,43 +53,4 @@ type SSOProvisioner interface {
 	// EnsureForwardAuth creates or verifies the proxy provider + application for a
 	// forward-auth app, and adds it to the embedded outpost.
 	EnsureForwardAuth(appName, displayName, externalURL string) error
-}
-
-// ── Wiring contract ───────────────────────────────────────────────────────
-
-// ConvergeConfig holds the complete set of dependencies required for a
-// convergence pass. Nil/zero fields disable the corresponding subsystem.
-type ConvergeConfig struct {
-	AppStore         store.AppStoreInterface
-	CatalogGraph     catalog.AppGraphInterface
-	TailnetStore     store.TailnetStoreInterface
-	RemoteAppStore   store.RemoteAppStoreInterface
-	TailnetNode      TailnetNodeEnsurer
-	Gateway          GatewayManager
-	RemoteProxy      RemoteProxyManager
-	ProxyOutpost     ProxyOutpostEnsurer
-	ForwardDomainSSO ForwardDomainProvisioner
-	SSO              SSOProvisioner
-	SSOBaseURL       string // base URL for building app subdomain URLs (e.g. "http://localhost:8080")
-	TraefikGen       traefikgen.GeneratorInterface
-	ActiveTailnetID  func() string // returns the active tailnet connection ID (empty if none)
-}
-
-// WithConvergeConfig wires the convergence dependencies into the orchestrator.
-// Returns the receiver for chaining.
-func (o *Orchestrator) WithConvergeConfig(cfg ConvergeConfig) *Orchestrator {
-	o.appStore = cfg.AppStore
-	o.catalogGraph = cfg.CatalogGraph
-	o.tailnetStore = cfg.TailnetStore
-	o.remoteAppStore = cfg.RemoteAppStore
-	o.tailnetNode = cfg.TailnetNode
-	o.gateway = cfg.Gateway
-	o.remoteProxy = cfg.RemoteProxy
-	o.proxyOutpost = cfg.ProxyOutpost
-	o.forwardDomainSSO = cfg.ForwardDomainSSO
-	o.sso = cfg.SSO
-	o.ssoBaseURL = cfg.SSOBaseURL
-	o.traefikGen = cfg.TraefikGen
-	o.activeTailnetID = cfg.ActiveTailnetID
-	return o
 }
