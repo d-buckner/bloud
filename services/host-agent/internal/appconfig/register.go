@@ -2,6 +2,8 @@
 package appconfig
 
 import (
+	"log/slog"
+
 	"codeberg.org/d-buckner/bloud/apps/authentik"
 	"codeberg.org/d-buckner/bloud/apps/jellyfin"
 	"codeberg.org/d-buckner/bloud/apps/navidrome"
@@ -12,7 +14,7 @@ import (
 
 // RegisterAll registers all available configurators with the registry.
 // This should be called during host-agent startup.
-func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
+func RegisterAll(registry *configurator.Registry, cfg *config.Config, logger *slog.Logger) {
 	// Register configurators from apps/ directory
 	registry.Register(authentik.NewConfigurator(
 		cfg.AuthentikPort,
@@ -23,6 +25,6 @@ func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
 		cfg.DataDir,
 		static.AuthentikBrandingCSS,
 	).WithBaseURL(cfg.SSOBaseURL))
-	registry.Register(navidrome.NewConfigurator(4533, cfg.SSOAuthentikURL, cfg.Secrets))
-	registry.Register(jellyfin.NewConfigurator(8096))
+	registry.Register(navidrome.NewConfigurator(4533, cfg.SSOAuthentikURL, cfg.Secrets, logger))
+	registry.Register(jellyfin.NewConfigurator(8096, logger))
 }

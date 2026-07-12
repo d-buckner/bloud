@@ -218,10 +218,7 @@ func (c *Client) CreateContainer(ctx context.Context, config ContainerConfig) (s
 		return "", fmt.Errorf("failed to marshal container spec: %w", err)
 	}
 
-	params := url.Values{}
-	params.Set("name", config.Name)
-
-	resp, err := c.post(ctx, "/libpod/containers/create?"+params.Encode(), bytes.NewReader(body))
+	resp, err := c.post(ctx, "/libpod/containers/create", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create container: %w", err)
 	}
@@ -431,16 +428,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 // buildContainerSpec converts our simple config to Podman's container spec
 func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 	spec := map[string]interface{}{
-		"image": config.Image,
+		"image":        config.Image,
+		"name":         config.Name,
+		"cgroups_mode": "disabled",
 	}
 
 	// Environment variables
 	if len(config.Env) > 0 {
-		var envList []string
-		for k, v := range config.Env {
-			envList = append(envList, fmt.Sprintf("%s=%s", k, v))
-		}
-		spec["env"] = envList
+		spec["env"] = config.Env
 	}
 
 	// Port mappings
@@ -482,7 +477,13 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 	if len(config.Labels) > 0 {
 		spec["labels"] = config.Labels
 	}
-	if config.Network != "" {
+	switch config.Network {
+	case "host":
+		spec["netns"] = map[string]interface{}{"nsmode": "host"}
+	case "":
+		// default networking
+	default:
+		spec["netns"] = map[string]interface{}{"nsmode": "bridge"}
 		spec["networks"] = map[string]map[string]interface{}{
 			config.Network: {},
 		}

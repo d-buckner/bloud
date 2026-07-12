@@ -20,7 +20,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/systemd"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -59,10 +58,8 @@ type Server struct {
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
-	RuntimeMode       string
-	SystemdScope      string
-	QuadletDir        string
-	AppsDir           string
+	RuntimeMode string
+	AppsDir     string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	BaseDomain        string // Base domain for subdomain routing (e.g., "localhost")
@@ -206,17 +203,7 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 				s.logger.Error("portable container runtime unavailable (no podman client)")
 				return
 			}
-			userScope := s.cfg.SystemdScope != "system"
-			wantedBy := "default.target"
-			if !userScope {
-				wantedBy = "multi-user.target"
-			}
-			runtime = containerruntime.NewQuadletRuntime(
-				client,
-				systemd.NewManager(userScope),
-				s.cfg.QuadletDir,
-				wantedBy,
-			)
+			runtime = containerruntime.NewPodmanRuntime(client)
 		}
 
 		var ssoProvisioner orchestrator.SSOProvisioner
@@ -269,6 +256,8 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, s.logger)
 		s.remoteProxy = remoteProxy
 
+		orch.WithContainerRuntime(runtime, s.cfg.TemplateVars)
+
 		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
 			Graph:          s.graph,
 			CatalogCache:   s.catalog,
@@ -277,7 +266,6 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			Registry:       s.cfg.Registry,
 			TraefikGen:     traefikgen.NewGenerator(traefikConfigPath),
 			LDAPOutput:     s.cfg.LDAPOutput,
-			SSO:            ssoProvisioner,
 			TailnetNode:    tailnetNode,
 			Gateway:        gateway,
 			RemoteProxy:    remoteProxy,
@@ -289,7 +277,6 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 				}
 				return conn.ID
 			},
-			SSOBaseURL:   s.cfg.SSOBaseURL,
 			DataDir:      s.cfg.DataDir,
 			TemplateVars: s.cfg.TemplateVars,
 			Logger:       s.logger,
@@ -300,14 +287,17 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 		// into a single Reconcile pass. The channel is buffered to avoid blocking the
 		// event emitter.
 		orchSignal := make(chan struct{}, 1)
-		lifecycleGraph.On(graph.EventTargetUpdated, func(_ graph.Node) {
+		lifecycleGraph.On(graph.EventTargetUpdated, func(node graph.Node) {
+			s.logger.Info("graph target updated, signalling reconcile", "app", node.ID, "target", node.TargetStatus)
 			select {
 			case orchSignal <- struct{}{}:
 			default:
+				s.logger.Info("reconcile signal coalesced (pass already pending)", "app", node.ID)
 			}
 		})
 		go func() {
 			for range orchSignal {
+				s.logger.Info("reconcile triggered by graph target update")
 				if err := orch.Reconcile(context.Background()); err != nil {
 					s.logger.Error("orchestrator reconcile failed", "error", err)
 				}
@@ -336,6 +326,8 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 			ProxyOutpost:     proxyOutpost,
 			TailnetDomain:    gateway,
 			ForwardDomainSSO: forwardDomainSSO,
+			SSO:              ssoProvisioner,
+			SSOBaseURL:       s.cfg.SSOBaseURL,
 		})
 		orch.WithRouteGenerator(portable)
 		orch.WithStateSyncer(portable)

@@ -6,7 +6,7 @@
 		fetchDeveloperGraph,
 		type DeveloperGraph,
 		type GraphNode,
-		type ReconcilerStatus,
+		type OrchestratorStatus,
 		type AppPhase
 	} from '$lib/clients/developerClient';
 	import AppNode from './AppNode.svelte';
@@ -25,7 +25,7 @@
 	let nodes = $state<Node[]>([]);
 	let edges = $state<Edge[]>([]);
 	let graphKey = $state('');
-	let reconciler = $state<ReconcilerStatus | undefined>(undefined);
+	let orchestrator = $state<OrchestratorStatus | undefined>(undefined);
 
 	const NODE_WIDTH = 170;
 	const NODE_HEIGHT = 60;
@@ -39,8 +39,7 @@
 	const CONVERGE_STEPS = [
 		'sync-container-state',
 		'handle-uninstalls',
-		'compute-levels',
-		'ensure-apps',
+		'set-graph-targets',
 		'converge-tailnet',
 		'update-graph',
 		'regenerate-routes'
@@ -61,7 +60,7 @@
 		hasCycle: boolean;
 	}
 
-	function parseTimeline(status: ReconcilerStatus): Timeline {
+	function parseTimeline(status: OrchestratorStatus): Timeline {
 		const activity = status.recentActivity;
 
 		const recentIntents = activity
@@ -226,7 +225,7 @@
 		}
 
 		function nodeData(n: GraphNode) {
-			const phaseData = buildPhaseData(n.id, graph.reconciler?.appPhases);
+			const phaseData = buildPhaseData(n.id, undefined);
 			return {
 				displayName: n.displayName,
 				status: n.status,
@@ -372,7 +371,7 @@
 			nodes = layout.nodes;
 			edges = layout.edges;
 			graphKey = nodes.map((n) => `${n.id}:${n.data?.status ?? ''}`).join(',');
-			reconciler = graph.reconciler;
+			orchestrator = graph.orchestrator;
 			error = '';
 		} catch (err) {
 			error = extractErrorMessage(err);
@@ -410,13 +409,13 @@
 				<FitView key={graphKey} />
 			</SvelteFlow>
 
-			{#if reconciler}
-				{@const tl = parseTimeline(reconciler)}
+			{#if orchestrator}
+				{@const tl = parseTimeline(orchestrator)}
 				<div class="overlay-panel">
 					<div class="overlay-header">
-						<span class="overlay-title">Reconciler</span>
+						<span class="overlay-title">Orchestrator</span>
 						<div class="overlay-status">
-							{#if reconciler.isConverging}
+							{#if orchestrator.isConverging}
 								<span class="status-dot converging"></span>
 								<span class="status-label">Converging</span>
 							{:else}
@@ -430,13 +429,13 @@
 						<!-- Queue -->
 						<div class="tl-section">
 							<div class="tl-rail">
-								<span class="tl-dot" class:tl-dot-active={reconciler.queueDepth > 0}></span>
+								<span class="tl-dot" class:tl-dot-active={orchestrator.queueDepth > 0}></span>
 								<span class="tl-line"></span>
 							</div>
 							<div class="tl-content">
 								<div class="tl-section-header">
 									<span class="tl-label">Queue</span>
-									<span class="tl-meta">{reconciler.queueDepth} pending</span>
+									<span class="tl-meta">{orchestrator.queueDepth} pending</span>
 								</div>
 								{#if tl.recentIntents.length > 0}
 									<div class="tl-items">
@@ -478,14 +477,14 @@
 						<!-- Converge -->
 						<div class="tl-section tl-section-last">
 							<div class="tl-rail">
-								<span class="tl-dot" class:tl-dot-done={tl.hasCycle && !reconciler.isConverging} class:tl-dot-active={reconciler.isConverging}></span>
+								<span class="tl-dot" class:tl-dot-done={tl.hasCycle && !orchestrator.isConverging} class:tl-dot-active={orchestrator.isConverging}></span>
 							</div>
 							<div class="tl-content">
 								<div class="tl-section-header">
 									<span class="tl-label">Converge</span>
 									{#if tl.convergeDuration}
 										<span class="tl-meta">{tl.convergeDuration}</span>
-									{:else if reconciler.isConverging}
+									{:else if orchestrator.isConverging}
 										<span class="tl-meta tl-meta-active">running...</span>
 									{/if}
 								</div>

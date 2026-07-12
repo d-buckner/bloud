@@ -32,13 +32,11 @@ type PortableConfig struct {
 	Registry        configurator.RegistryInterface
 	TraefikGen      traefikgen.GeneratorInterface
 	LDAPOutput      *configurator.LDAPOutput
-	SSO             SSOProvisioner                  // optional; nil when Authentik is not available
 	TailnetNode     sharing.TailnetNodeManagerInterface // optional; nil when Tailscale auth key is not set
 	Gateway         sharing.GatewayManagerInterface // optional; manages gateway Tailscale container for remote app proxying
 	RemoteProxy     *sharing.RemoteProxyManager     // optional; manages per-remote-app reverse proxies through SOCKS5 gateway
 	RemoteAppStore  store.RemoteAppStoreInterface   // optional; nil when remote apps are not configured
 	ActiveTailnetID func() string                   // returns the active tailnet connection ID (empty if none)
-	SSOBaseURL      string                          // base URL for building app external URLs (e.g. "http://localhost:8080")
 	DataDir         string
 	TemplateVars    map[string]string // extra variables for container spec rendering (e.g. postgresPassword)
 	Logger          *slog.Logger
@@ -53,13 +51,11 @@ type PortableOrchestrator struct {
 	registry        configurator.RegistryInterface
 	traefikGen      traefikgen.GeneratorInterface
 	ldapOutput      *configurator.LDAPOutput
-	sso             SSOProvisioner
 	tailnetNode     sharing.TailnetNodeManagerInterface
 	gateway         sharing.GatewayManagerInterface
 	remoteProxy     *sharing.RemoteProxyManager
 	remoteAppStore  store.RemoteAppStoreInterface
 	activeTailnetID func() string
-	ssoBaseURL      string
 	dataDir         string
 	templateVars    map[string]string
 	logger          *slog.Logger
@@ -74,13 +70,11 @@ func NewPortable(cfg PortableConfig) *PortableOrchestrator {
 		registry:        cfg.Registry,
 		traefikGen:      cfg.TraefikGen,
 		ldapOutput:      cfg.LDAPOutput,
-		sso:             cfg.SSO,
 		tailnetNode:     cfg.TailnetNode,
 		gateway:         cfg.Gateway,
 		remoteProxy:     cfg.RemoteProxy,
 		remoteAppStore:  cfg.RemoteAppStore,
 		activeTailnetID: cfg.ActiveTailnetID,
-		ssoBaseURL:      cfg.SSOBaseURL,
 		dataDir:         cfg.DataDir,
 		templateVars:    cfg.TemplateVars,
 		logger:          cfg.Logger,

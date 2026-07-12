@@ -20,7 +20,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/systemd"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -53,8 +52,6 @@ func runServer() {
 	cfg := config.Load()
 	logger.Info("loaded configuration",
 		"runtime", cfg.RuntimeMode,
-		"systemd_scope", cfg.SystemdScope,
-		"quadlet_dir", cfg.QuadletDir,
 		"port", cfg.Port,
 		"data_dir", cfg.DataDir,
 		"apps_dir", cfg.AppsDir,
@@ -95,13 +92,11 @@ func runServer() {
 
 	// Create configurator registry
 	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg)
+	appconfig.RegisterAll(registry, cfg, logger)
 
 	// Create HTTP server
 	server := api.NewServer(database, api.ServerConfig{
 		RuntimeMode:       cfg.RuntimeMode,
-		SystemdScope:      cfg.SystemdScope,
-		QuadletDir:        cfg.QuadletDir,
 		AppsDir:           cfg.AppsDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
@@ -164,17 +159,7 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 		return fmt.Errorf("podman client: %w", err)
 	}
 
-	userScope := cfg.SystemdScope != "system"
-	wantedBy := "default.target"
-	if !userScope {
-		wantedBy = "multi-user.target"
-	}
-	runtime := containerruntime.NewQuadletRuntime(
-		client,
-		systemd.NewManager(userScope),
-		cfg.QuadletDir,
-		wantedBy,
-	)
+	runtime := containerruntime.NewPodmanRuntime(client)
 
 	apps, err := catalog.NewLoader(cfg.AppsDir).LoadAll()
 	if err != nil {

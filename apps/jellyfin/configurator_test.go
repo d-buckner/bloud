@@ -36,7 +36,7 @@ func TestNewConfigurator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := NewConfigurator(tt.port)
+			c := NewConfigurator(tt.port, nil)
 			if c.Port != tt.wantPort {
 				t.Errorf("NewConfigurator(%d).Port = %d, want %d", tt.port, c.Port, tt.wantPort)
 			}
@@ -45,7 +45,7 @@ func TestNewConfigurator(t *testing.T) {
 }
 
 func TestConfigurator_Name(t *testing.T) {
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	if got := c.Name(); got != "jellyfin" {
 		t.Errorf("Name() = %q, want %q", got, "jellyfin")
 	}
@@ -55,7 +55,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	state := &configurator.AppState{
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
@@ -114,7 +114,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 
 func TestConfigurator_PreStart_ChangedOnFirstRun(t *testing.T) {
 	tmpDir := t.TempDir()
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	state := &configurator.AppState{
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
@@ -139,7 +139,7 @@ func TestConfigurator_PreStart_ChangedOnFirstRun(t *testing.T) {
 
 func TestConfigurator_PreStart_NoChangeOnSecondRun(t *testing.T) {
 	tmpDir := t.TempDir()
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	state := &configurator.AppState{
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
@@ -186,7 +186,7 @@ func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.pluginURL = server.URL
 	c.pluginSHA256 = ""
 	state := &configurator.AppState{
@@ -310,7 +310,7 @@ func TestConfigurator_GetSystemInfo(t *testing.T) {
 			}))
 			defer server.Close()
 
-			c := NewConfigurator(8096)
+			c := NewConfigurator(8096, nil)
 			c.baseURL = server.URL
 
 			got, err := c.getSystemInfo(context.Background())
@@ -388,7 +388,7 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	err := c.completeStartupWizard(context.Background())
@@ -443,7 +443,7 @@ func TestConfigurator_Authenticate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	token, err := c.authenticate(context.Background(), bootstrapUsername, bootstrapPassword)
@@ -482,7 +482,7 @@ func TestConfigurator_GetPluginConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	configBytes, err := c.getPluginConfiguration(context.Background(), "test-token", ldapPluginID)
@@ -513,7 +513,7 @@ func TestConfigurator_SetPluginConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	config := LDAPConfig{
@@ -549,7 +549,7 @@ func TestConfigurator_GetUsers(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	users, err := c.getUsers(context.Background(), "test-token")
@@ -582,7 +582,7 @@ func TestConfigurator_DeleteUser(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	err := c.deleteUser(context.Background(), "test-token", "user-123")
@@ -622,7 +622,7 @@ func TestConfigurator_DeleteBootstrapAdmin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	err := c.deleteBootstrapAdmin(context.Background(), "test-token")
@@ -646,7 +646,7 @@ func TestConfigurator_DeleteBootstrapAdmin_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	// Should not error even if bootstrap admin is not found
@@ -685,7 +685,7 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -727,7 +727,7 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -758,7 +758,7 @@ func TestConfigurator_ConfigureLDAP_PluginNotInstalled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -803,7 +803,7 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -872,7 +872,7 @@ func TestConfigurator_ConfigureLDAP_UpdatesRotatedPassword(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	err := c.configureLDAP(context.Background(), &configurator.AppState{
@@ -917,7 +917,7 @@ func TestConfigurator_PostStart_SkipsLDAPWhenNilDespiteSSOEnabled(t *testing.T) 
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096)
+	c := NewConfigurator(8096, nil)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{

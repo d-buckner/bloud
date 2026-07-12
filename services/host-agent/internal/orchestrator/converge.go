@@ -56,6 +56,8 @@ type ConvergeConfig struct {
 	ProxyOutpost     ProxyOutpostEnsurer
 	TailnetDomain    TailnetDomainDiscoverer
 	ForwardDomainSSO ForwardDomainProvisioner
+	SSO              SSOProvisioner // optional; provisions per-app forward-auth in Authentik
+	SSOBaseURL       string         // base URL for building app subdomain URLs (e.g. "http://localhost:8080")
 }
 
 // WithConvergeConfig wires the convergence dependencies into the orchestrator.
@@ -71,6 +73,8 @@ func (o *Orchestrator) WithConvergeConfig(cfg ConvergeConfig) *Orchestrator {
 	o.proxyOutpost = cfg.ProxyOutpost
 	o.tailnetDomain = cfg.TailnetDomain
 	o.forwardDomainSSO = cfg.ForwardDomainSSO
+	o.sso = cfg.SSO
+	o.ssoBaseURL = cfg.SSOBaseURL
 	return o
 }
 
@@ -95,7 +99,7 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 		case RenameAppIntent:
 			o.applyRenameAppIntent(i)
 		default:
-			o.logger.Info("unhandled intent type in drain phase", "type", intentTypeName(intent))
+			o.logger.Warn("unhandled intent type in drain phase", "type", intentTypeName(intent))
 		}
 	}
 	o.logger.Info("drain phase complete", "applied", len(intents))
@@ -129,9 +133,11 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 	}
 
 	integrations := buildIntegrationConfig(nil, plan.AutoConfig, plan.Choices)
+	o.logger.Info("install plan resolved", "app", appName, "deps", len(integrations), "integrations", integrations)
 
 	// Record dependency providers first.
 	for _, provider := range integrations {
+		o.logger.Info("recording dependency provider", "app", appName, "provider", provider)
 		if err := o.recordIntent(provider, nil); err != nil {
 			o.logger.Error("failed to record dependency", "app", provider, "error", err)
 			return
@@ -278,6 +284,7 @@ func (o *Orchestrator) recordIntent(appName string, integrations map[string]stri
 		return err
 	}
 	if existing != nil && existing.Status == "running" {
+		o.logger.Info("skipping record: app already running", "app", appName)
 		return nil
 	}
 
@@ -285,6 +292,7 @@ func (o *Orchestrator) recordIntent(appName string, integrations map[string]stri
 	if err != nil {
 		return err
 	}
+	o.logger.Info("recording app in store", "app", appName, "integrations", len(integrations))
 	return o.appStore.Install(app.CatalogID, app.DisplayName, app.Version, integrations, &store.InstallOptions{
 		Port:     app.Port,
 		IsSystem: app.IsSystem,
@@ -300,6 +308,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 
 	// Step 1: Sync container state (align DB with reality).
 	o.logger.Info("convergence step", "step", "sync-container-state")
+	o.recordActivity("converge_step", "sync-container-state")
 	if o.stateSyncer != nil {
 		o.stateSyncer.SyncContainerState(ctx)
 	}
@@ -309,6 +318,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 		o.logger.Error("failed to load apps for convergence", "error", err)
 		return
 	}
+	o.logger.Info("loaded apps for convergence", "total", len(apps))
 
 	// Build map for lookups.
 	appMap := make(map[string]*store.InstalledApp, len(apps))
@@ -318,6 +328,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 
 	// Step 2: Handle uninstalls (apps with status "uninstalling").
 	o.logger.Info("convergence step", "step", "handle-uninstalls")
+	o.recordActivity("converge_step", "handle-uninstalls")
 	for _, app := range apps {
 		if app.Status != "uninstalling" {
 			continue
@@ -336,6 +347,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	// Step 3: Set graph targets to RUNNING so the Orchestrator drives app lifecycle.
 	// Nodes and edges are populated here so the Orchestrator enforces dependency ordering.
 	o.logger.Info("convergence step", "step", "set-graph-targets")
+	o.recordActivity("converge_step", "set-graph-targets")
 	appDeps := computeAppDeps(appMap, o.catalog)
 
 	// Ensure all nodes exist before adding edges.
@@ -359,10 +371,12 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 
 	// Step 4: Converge tailnet nodes/gateway/proxies.
 	o.logger.Info("convergence step", "step", "converge-tailnet")
+	o.recordActivity("converge_step", "converge-tailnet")
 	o.convergeTailnet(ctx)
 
 	// Step 5: Update catalog graph with current installed list.
 	o.logger.Info("convergence step", "step", "update-graph")
+	o.recordActivity("converge_step", "update-graph")
 	if o.catalogGraph != nil {
 		installed, _ := o.appStore.GetInstalledCatalogIDs()
 		o.catalogGraph.SetInstalled(installed)
@@ -370,6 +384,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 
 	// Step 6: Regenerate routes.
 	o.logger.Info("convergence step", "step", "regenerate-routes")
+	o.recordActivity("converge_step", "regenerate-routes")
 	if o.routeGenerator != nil {
 		if err := o.routeGenerator.RegenerateRoutes(); err != nil {
 			o.logger.Warn("failed to regenerate routes", "error", err)
@@ -387,7 +402,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	}
 
 	duration := time.Since(start)
-	o.logger.Info("convergence pass complete", "apps", len(apps), "duration", duration)
+	o.logger.Info("convergence pass complete", "apps", len(apps), "duration", duration.String())
 }
 
 // convergeTailnet ensures tailnet nodes/gateway/proxies match the tailnet store state.
@@ -410,6 +425,7 @@ func (o *Orchestrator) convergeTailnet(ctx context.Context) {
 
 	if conn != nil {
 		// Active tailnet: ensure tailnet nodes for running non-system apps.
+		o.logger.Info("tailnet active, ensuring nodes for running apps", "conn_id", conn.ID, "app_count", len(apps))
 		if o.tailnetNode == nil {
 			return
 		}
@@ -417,6 +433,7 @@ func (o *Orchestrator) convergeTailnet(ctx context.Context) {
 			if app.IsSystem || app.Status != "running" {
 				continue
 			}
+			o.logger.Info("ensuring tailnet node", "app", app.CatalogID)
 			if err := o.tailnetNode.EnsureRunning(ctx, app.CatalogID); err != nil {
 				o.logger.Warn("failed to ensure tailnet node", "app", app.CatalogID, "error", err)
 				continue
@@ -427,11 +444,13 @@ func (o *Orchestrator) convergeTailnet(ctx context.Context) {
 	}
 
 	// No tailnet: purge tailnet nodes, gateway, proxy outpost, and proxies.
+	o.logger.Info("no active tailnet, purging nodes and gateway", "app_count", len(apps))
 	if o.tailnetNode != nil {
 		for _, app := range apps {
 			if app.IsSystem {
 				continue
 			}
+			o.logger.Info("purging tailnet node", "app", app.CatalogID)
 			if err := o.tailnetNode.StopAndPurge(ctx, app.CatalogID); err != nil {
 				o.logger.Warn("failed to purge tailnet node", "app", app.CatalogID, "error", err)
 			}

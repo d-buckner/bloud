@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,17 +39,22 @@ type Configurator struct {
 	baseURL      string // Override for testing; if empty, uses localhost:Port
 	pluginURL    string
 	pluginSHA256 string
+	logger       *slog.Logger
 }
 
 // NewConfigurator creates a new Jellyfin configurator
-func NewConfigurator(port int) *Configurator {
+func NewConfigurator(port int, logger *slog.Logger) *Configurator {
 	if port == 0 {
 		port = 8096
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return &Configurator{
 		Port:         port,
 		pluginURL:    ldapPluginURL,
 		pluginSHA256: ldapPluginSHA256,
+		logger:       logger.With("app", "jellyfin"),
 	}
 }
 
@@ -68,6 +73,7 @@ func (c *Configurator) Name() string {
 // PreStart ensures directories exist, installs the LDAP plugin, and
 // configures network settings. Returns true if any managed output changed.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
+	c.logger.Info("PreStart: creating data directories")
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
@@ -80,17 +86,22 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
+
+	c.logger.Info("PreStart: ensuring LDAP plugin")
 	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
+	c.logger.Info("PreStart: configuring network")
 	networkChanged, err := c.configureNetwork(state.DataPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to configure network: %w", err)
 	}
 
-	return pluginInstalled || networkChanged, nil
+	changed := pluginInstalled || networkChanged
+	c.logger.Info("PreStart complete", "plugin_installed", pluginInstalled, "network_changed", networkChanged, "force_restart", changed)
+	return changed, nil
 }
 
 func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (bool, error) {
@@ -98,8 +109,10 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 	pluginDir := filepath.Join(pluginParent, "LDAP-Auth")
 	pluginDLL := filepath.Join(pluginDir, "LDAP-Auth.dll")
 	if _, err := os.Stat(pluginDLL); err == nil {
+		c.logger.Info("LDAP plugin already installed", "path", pluginDLL)
 		return false, nil
 	}
+	c.logger.Info("downloading LDAP plugin", "url", c.pluginURL)
 	if err := os.MkdirAll(pluginParent, 0755); err != nil {
 		return false, err
 	}
@@ -190,7 +203,11 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 	if err := os.RemoveAll(pluginDir); err != nil {
 		return false, err
 	}
-	return true, os.Rename(stagingDir, pluginDir)
+	if err := os.Rename(stagingDir, pluginDir); err != nil {
+		return false, err
+	}
+	c.logger.Info("LDAP plugin installed", "path", pluginDir)
+	return true, nil
 }
 
 // jellyfinNetworkConfig returns the desired XML config for network.xml.
@@ -216,11 +233,9 @@ var jellyfinNetworkConfig = xmlutil.ConfigValues{
 // Returns true if changes were made.
 func applyNetworkConfig(cfg *xmlutil.ConfigFile) bool {
 	if cfg.HasConfig(jellyfinNetworkConfig) {
-		log.Println("Jellyfin: network.xml already configured for reverse proxy")
 		return false
 	}
 	cfg.ApplyConfig(jellyfinNetworkConfig)
-	log.Println("Jellyfin: Configured network.xml for reverse proxy support")
 	return true
 }
 
@@ -235,16 +250,26 @@ func (c *Configurator) configureNetwork(dataPath string) (bool, error) {
 	}
 
 	if !applyNetworkConfig(cfg) {
+		c.logger.Info("network.xml already configured for reverse proxy")
 		return false, nil
 	}
 
-	return cfg.Save()
+	changed, err := cfg.Save()
+	if changed {
+		c.logger.Info("network.xml configured for reverse proxy support")
+	}
+	return changed, err
 }
 
 // HealthCheck waits for Jellyfin's API to be ready
 func (c *Configurator) HealthCheck(ctx context.Context) error {
 	url := c.getBaseURL() + "/health"
-	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
+	c.logger.Info("waiting for Jellyfin health endpoint", "url", url)
+	if err := configurator.WaitForHTTP(ctx, url, 60*time.Second); err != nil {
+		return err
+	}
+	c.logger.Info("Jellyfin health check passed")
+	return nil
 }
 
 // EnsureContainer is a no-op for the Jellyfin configurator when used outside the
@@ -260,10 +285,23 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	c.logger.Info("PostStart: checking setup wizard status")
+
 	// 1. Check if setup wizard is complete.
-	// Jellyfin may briefly report StartupWizardCompleted=false during initialization
-	// (race between /health becoming available and database fully loading), so retry.
-	info, err := c.getSystemInfo(ctx)
+	// Jellyfin's /health passes before the API is fully ready; retry getSystemInfo
+	// to handle both transient errors (503) and StartupWizardCompleted=false races.
+	var info *SystemInfo
+	var err error
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		info, err = c.getSystemInfo(ctx)
+		if err == nil {
+			break
+		}
+		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
 	}
@@ -283,25 +321,32 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	}
 
 	if !info.StartupWizardCompleted {
-		log.Println("Jellyfin: Completing setup wizard...")
+		c.logger.Info("completing setup wizard")
 		if err := c.completeStartupWizard(ctx); err != nil {
 			return fmt.Errorf("failed to complete startup wizard: %w", err)
 		}
-		log.Println("Jellyfin: Setup wizard completed")
+		c.logger.Info("setup wizard completed")
+	} else {
+		c.logger.Info("setup wizard already complete")
 	}
 
 	// 2. Configure media libraries
+	c.logger.Info("PostStart: configuring media libraries")
 	if err := c.configureLibraries(ctx); err != nil {
 		return fmt.Errorf("failed to configure libraries: %w", err)
 	}
 
 	// 3. Configure LDAP if SSO integration is enabled and LDAP output is available
 	if state.SSOEnabled && state.LDAP != nil {
+		c.logger.Info("PostStart: configuring LDAP", "ldap_host", state.LDAP.Host, "ldap_port", state.LDAP.Port)
 		if err := c.configureLDAP(ctx, state); err != nil {
 			return fmt.Errorf("failed to configure LDAP: %w", err)
 		}
+	} else {
+		c.logger.Info("PostStart: skipping LDAP config", "sso_enabled", state.SSOEnabled, "ldap_configured", state.LDAP != nil)
 	}
 
+	c.logger.Info("PostStart complete")
 	return nil
 }
 
@@ -363,18 +408,18 @@ func (c *Configurator) waitForStartupWizardReady(ctx context.Context) error {
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK && (contentType == "application/json" || contentType == "application/json; charset=utf-8") {
-			log.Println("Jellyfin: Startup wizard API is ready")
+			c.logger.Info("startup wizard API ready")
 			return nil
 		}
 
 		// Jellyfin 10.11.9+ returns 401 when the wizard is already complete
 		// (the endpoint moves behind auth). Treat this as "already done".
 		if resp.StatusCode == http.StatusUnauthorized {
-			log.Println("Jellyfin: Startup wizard already complete (API returned 401)")
+			c.logger.Info("startup wizard already complete (API returned 401)")
 			return nil
 		}
 
-		log.Printf("Jellyfin: Waiting for startup wizard API (status=%d, content-type=%s)", resp.StatusCode, contentType)
+		c.logger.Info("waiting for startup wizard API", "status", resp.StatusCode, "content_type", contentType)
 		time.Sleep(time.Second)
 	}
 
@@ -475,7 +520,7 @@ func (c *Configurator) setStartupUser(ctx context.Context, username, password st
 	}
 
 	if lastErr != nil {
-		log.Printf("Jellyfin: Warning - initial user not ready after retries: %v", lastErr)
+		c.logger.Warn("initial user not ready after retries", "error", lastErr)
 	}
 
 	// Now update the user with our credentials
@@ -598,11 +643,11 @@ func (c *Configurator) configureLibraries(ctx context.Context) error {
 
 	for _, lib := range libraries {
 		if existingNames[lib.name] {
-			log.Printf("Jellyfin: Library '%s' already exists", lib.name)
+			c.logger.Info("media library already exists", "library", lib.name)
 			continue
 		}
 
-		log.Printf("Jellyfin: Creating library '%s' at %s", lib.name, lib.path)
+		c.logger.Info("creating media library", "library", lib.name, "path", lib.path)
 		if err := c.addVirtualFolder(ctx, token, lib.name, lib.collectionType, lib.path); err != nil {
 			return fmt.Errorf("creating library %s: %w", lib.name, err)
 		}
@@ -711,7 +756,7 @@ func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.Ap
 	// Get current LDAP config to check if already configured
 	currentConfig, err := c.getPluginConfiguration(ctx, token, ldapPluginID)
 	if err != nil {
-		log.Printf("Jellyfin: Could not get LDAP config (plugin may not be installed): %v", err)
+		c.logger.Warn("could not get LDAP plugin config (plugin may not be installed)", "error", err)
 		return nil // Plugin not installed, skip LDAP configuration
 	}
 
@@ -721,12 +766,11 @@ func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.Ap
 	}
 
 	if ldapConfigMatchesDesired(config, desiredConfig) {
-		log.Println("Jellyfin: LDAP already configured")
+		c.logger.Info("LDAP already configured")
 		return nil
 	}
 
-	// Configure LDAP using typed output
-	log.Println("Jellyfin: Configuring LDAP...")
+	c.logger.Info("applying LDAP configuration", "ldap_host", ldap.Host, "ldap_port", ldap.Port, "base_dn", ldap.BaseDN)
 	configBytes, err := json.Marshal(desiredConfig)
 	if err != nil {
 		return fmt.Errorf("marshalling LDAP config: %w", err)
@@ -735,7 +779,7 @@ func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.Ap
 		return fmt.Errorf("setting LDAP config: %w", err)
 	}
 
-	log.Println("Jellyfin: LDAP configured successfully")
+	c.logger.Info("LDAP configured successfully")
 	return nil
 }
 
@@ -948,15 +992,15 @@ func (c *Configurator) deleteBootstrapAdmin(ctx context.Context, token string) e
 
 	for _, user := range users {
 		if user.Name == bootstrapUsername {
-			log.Println("Jellyfin: Deleting bootstrap admin user...")
+			c.logger.Info("deleting bootstrap admin user")
 			if err := c.deleteUser(ctx, token, user.ID); err != nil {
 				return fmt.Errorf("deleting user: %w", err)
 			}
-			log.Println("Jellyfin: Bootstrap admin deleted")
+			c.logger.Info("bootstrap admin deleted")
 			return nil
 		}
 	}
 
-	log.Println("Jellyfin: Bootstrap admin not found (may already be deleted)")
+	c.logger.Info("bootstrap admin not found (may already be deleted)")
 	return nil
 }

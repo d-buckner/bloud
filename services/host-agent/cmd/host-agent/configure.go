@@ -41,7 +41,7 @@ func runConfigure(args []string) int {
 
 	// Create and populate registry first to check if app has a configurator
 	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg)
+	appconfig.RegisterAll(registry, cfg, logger)
 
 	// For prestart, always regenerate env files from secrets.json before starting any app
 	// This ensures secrets.json is always the source of truth

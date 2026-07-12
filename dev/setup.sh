@@ -58,7 +58,7 @@ if [ -f "${LDAP_PLUGIN_DIR}/LDAP-Auth.dll" ]; then
 else
   LDAP_ZIP="/tmp/ldap-auth-plugin.zip"
   curl -sSL -o "${LDAP_ZIP}" \
-    "https://repo.jellyfin.org/files/plugin/ldap-authentication/ldap-authentication_22.0.0.0.zip"
+    "https://repo.jellyfin.org/files/plugin/ldap-authentication/ldap-authentication_23.0.0.0.zip"
   unzip -o "${LDAP_ZIP}" -d "${LDAP_PLUGIN_DIR}"
   rm -f "${LDAP_ZIP}"
   echo "    LDAP plugin installed"

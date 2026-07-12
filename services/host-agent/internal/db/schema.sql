@@ -61,3 +61,16 @@ CREATE TABLE IF NOT EXISTS remote_apps (
     status               TEXT NOT NULL DEFAULT 'pending_credential',
     created_at           TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    id            TEXT PRIMARY KEY,
+    target_status TEXT NOT NULL DEFAULT 'INITIALIZING',
+    actual_status TEXT NOT NULL DEFAULT 'INITIALIZING',
+    error         TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS graph_edges (
+    dependent_id  TEXT NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE,
+    dependency_id TEXT NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE,
+    PRIMARY KEY (dependent_id, dependency_id)
+);

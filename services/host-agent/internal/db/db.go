@@ -61,6 +61,9 @@ func runMigrations(db *sql.DB) {
 	db.Exec("CREATE TABLE IF NOT EXISTS guests (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))")
 	// v4: rename guest_label → guest_id in shares
 	db.Exec("ALTER TABLE shares RENAME COLUMN guest_label TO guest_id")
+	// v5: add lifecycle graph tables
+	db.Exec("CREATE TABLE IF NOT EXISTS graph_nodes (id TEXT PRIMARY KEY, target_status TEXT NOT NULL DEFAULT 'INITIALIZING', actual_status TEXT NOT NULL DEFAULT 'INITIALIZING', error TEXT NOT NULL DEFAULT '')")
+	db.Exec("CREATE TABLE IF NOT EXISTS graph_edges (dependent_id TEXT NOT NULL, dependency_id TEXT NOT NULL, PRIMARY KEY (dependent_id, dependency_id))")
 }
 
 // runSchema executes the embedded schema SQL

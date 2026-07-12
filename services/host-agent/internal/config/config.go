@@ -11,11 +11,9 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	RuntimeMode       string
-	SystemdScope      string
-	QuadletDir        string
-	Port              int
-	DataDir           string
+	RuntimeMode string
+	Port        int
+	DataDir     string
 	AppsDir           string // Path to apps/ directory containing app definitions
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	RedisAddr         string // Redis address for session storage
@@ -85,11 +83,8 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	// whereas the bootstrap token in secrets.json only works on first Authentik boot.
 	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
 
-	systemdScope := getEnv("BLOUD_SYSTEMD_SCOPE", defaultSystemdScope())
 	cfg := &Config{
 		RuntimeMode:            getEnv("BLOUD_RUNTIME", "portable"),
-		SystemdScope:           systemdScope,
-		QuadletDir:             getEnv("BLOUD_QUADLET_DIR", defaultQuadletDir(systemdScope)),
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
 		AppsDir:                appsDir,
@@ -113,24 +108,6 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	}
 
 	return cfg
-}
-
-func defaultSystemdScope() string {
-	if os.Getuid() == 0 {
-		return "system"
-	}
-	return "user"
-}
-
-func defaultQuadletDir(scope string) string {
-	if scope == "system" {
-		return "/etc/containers/systemd"
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(getDefaultDataDir(), "quadlet")
-	}
-	return filepath.Join(homeDir, ".config", "containers", "systemd")
 }
 
 // getDefaultDataDir returns the default data directory path
