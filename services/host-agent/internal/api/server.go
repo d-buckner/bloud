@@ -456,25 +456,10 @@ func (s *Server) initAuth() {
 }
 
 // deriveClientSecret derives a deterministic OAuth2 client secret using HKDF-SHA256.
-// If a secret was previously stored in the secrets manager it is returned as-is
-// (backward compatibility). New secrets are derived and persisted.
+// The derivation is stable across restarts — no caching needed.
 func (s *Server) deriveClientSecret(appName string) string {
-	if s.secrets != nil {
-		if stored := s.secrets.GetAppSecret(appName, "oauthClientSecret"); stored != "" {
-			return stored
-		}
-		if s.cfg.SSOHostSecret != "" {
-			secret := sso.DeriveSecret(s.cfg.SSOHostSecret, "oauth-client-secret:"+appName, 32)
-			if err := s.secrets.SetAppSecret(appName, "oauthClientSecret", secret); err != nil {
-				s.logger.Warn("failed to save client secret", "error", err)
-			}
-			return secret
-		}
+	if s.cfg.SSOHostSecret == "" {
+		return ""
 	}
-
-	if s.cfg.SSOHostSecret != "" {
-		return sso.DeriveSecret(s.cfg.SSOHostSecret, "oauth-client-secret:"+appName, 32)
-	}
-
-	return ""
+	return sso.DeriveSecret(s.cfg.SSOHostSecret, "oauth-client-secret:"+appName, 32)
 }
