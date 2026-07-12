@@ -351,56 +351,7 @@ func (s *Server) syncInstalledState() error {
 	s.graph.SetInstalled(names)
 	s.logger.Info("synced installed state", "installed_count", len(names))
 
-	// Reconcile health status for apps stuck in "starting"
-	go s.reconcileAppHealth()
-
 	return nil
-}
-
-// reconcileAppHealth checks apps stuck in "starting" status and updates based on actual health
-func (s *Server) reconcileAppHealth() {
-	apps, err := s.appStore.GetAll()
-	if err != nil {
-		s.logger.Error("failed to get apps for health reconciliation", "error", err)
-		return
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	for _, app := range apps {
-		// Re-check apps that are starting or in error state (they may have recovered)
-		if app.Status != "starting" && app.Status != "error" {
-			continue
-		}
-
-		s.logger.Info("reconciling health for app", "app", app.CatalogID, "status", app.Status)
-
-		// Get health check config from catalog
-		catalogApp, err := s.catalog.Get(app.CatalogID)
-		if err != nil || catalogApp.HealthCheck.Path == "" {
-			// No health check configured, assume running
-			s.appStore.UpdateStatus(app.CatalogID, "running")
-			continue
-		}
-
-		// Check health endpoint
-		url := fmt.Sprintf("http://localhost:%d%s", catalogApp.Port, catalogApp.HealthCheck.Path)
-		resp, err := client.Get(url)
-		if err == nil {
-			resp.Body.Close()
-			// Accept 2xx, 3xx, and auth errors (401/403) as healthy
-			// Auth errors mean the service is running but requires authentication
-			if resp.StatusCode < 500 {
-				s.logger.Info("app health check passed", "app", app.CatalogID, "status", resp.StatusCode)
-				s.appStore.UpdateStatus(app.CatalogID, "running")
-				continue
-			}
-		}
-
-		// Health check failed - service not responding or 5xx error
-		s.logger.Warn("app health check failed, marking as error", "app", app.CatalogID, "error", err)
-		s.appStore.UpdateStatus(app.CatalogID, "error")
-	}
 }
 
 // setupMiddleware configures the middleware stack
