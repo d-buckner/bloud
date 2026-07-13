@@ -145,7 +145,7 @@ func NewOrchestrator(
 	logger *slog.Logger,
 	config OrchestratorConfig,
 ) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		graph:            g,
 		registry:         registry,
 		catalog:          catalogCache,
@@ -169,6 +169,26 @@ func NewOrchestrator(
 		started:          make(chan struct{}),
 		done:             make(chan struct{}),
 	}
+	o.setupStatusSync()
+	return o
+}
+
+// setupStatusSync registers a graph event handler that keeps the app store's
+// status field in sync with lifecycle graph transitions. This is the single
+// authoritative path from graph state → DB status; no caller needs to call
+// appStore.UpdateStatus for lifecycle-driven transitions.
+func (o *Orchestrator) setupStatusSync() {
+	if o.appStore == nil {
+		return
+	}
+	o.graph.On(graph.EventNodeUpdated, func(node graph.Node) {
+		switch node.ActualStatus {
+		case graph.StatusRunning:
+			_ = o.appStore.UpdateStatus(node.ID, "running")
+		case graph.StatusError:
+			_ = o.appStore.UpdateStatus(node.ID, "error")
+		}
+	})
 }
 
 // recordActivity appends an event to the ring buffer.
