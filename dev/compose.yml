@@ -118,7 +118,7 @@ services:
       - authentik-server
 
   jellyfin:
-    image: docker.io/jellyfin/jellyfin:10.11.7
+    image: docker.io/jellyfin/jellyfin:10.11.11
     environment:
       PUID: "1000"
       PGID: "1000"

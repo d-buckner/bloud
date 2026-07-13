@@ -402,8 +402,8 @@ func TestGetLDAPBindPassword(t *testing.T) {
 
 func TestDeriveSecret_Deterministic(t *testing.T) {
 	// Same inputs should produce same output
-	secret1 := deriveSecret("master-secret", "app-name", 32)
-	secret2 := deriveSecret("master-secret", "app-name", 32)
+	secret1 := DeriveSecret("master-secret", "app-name", 32)
+	secret2 := DeriveSecret("master-secret", "app-name", 32)
 
 	if secret1 != secret2 {
 		t.Error("deriveSecret should be deterministic")
@@ -412,8 +412,8 @@ func TestDeriveSecret_Deterministic(t *testing.T) {
 
 func TestDeriveSecret_UniquePerApp(t *testing.T) {
 	// Different app names should produce different secrets
-	secretA := deriveSecret("master-secret", "app-a", 32)
-	secretB := deriveSecret("master-secret", "app-b", 32)
+	secretA := DeriveSecret("master-secret", "app-a", 32)
+	secretB := DeriveSecret("master-secret", "app-b", 32)
 
 	if secretA == secretB {
 		t.Error("Different apps should have different secrets")
@@ -422,8 +422,8 @@ func TestDeriveSecret_UniquePerApp(t *testing.T) {
 
 func TestDeriveSecret_UniquePerHost(t *testing.T) {
 	// Different host secrets should produce different secrets
-	secret1 := deriveSecret("host-secret-1", "app-name", 32)
-	secret2 := deriveSecret("host-secret-2", "app-name", 32)
+	secret1 := DeriveSecret("host-secret-1", "app-name", 32)
+	secret2 := DeriveSecret("host-secret-2", "app-name", 32)
 
 	if secret1 == secret2 {
 		t.Error("Different host secrets should produce different app secrets")
@@ -432,7 +432,7 @@ func TestDeriveSecret_UniquePerHost(t *testing.T) {
 
 func TestDeriveSecret_EmptyMaster(t *testing.T) {
 	// Empty master should use fallback
-	secret := deriveSecret("", "app-name", 32)
+	secret := DeriveSecret("", "app-name", 32)
 
 	if secret == "" {
 		t.Error("Should return fallback for empty master")
@@ -447,7 +447,7 @@ func TestDeriveSecret_NoPadding(t *testing.T) {
 	// The '=' character causes issues with openid-client which URL-encodes
 	// credentials per RFC 6749 before base64 encoding for Basic auth.
 	// Authentik doesn't URL-decode after base64 decoding, causing auth failures.
-	secret := deriveSecret("test-master-secret", "oauth-client-secret:actual-budget", 32)
+	secret := DeriveSecret("test-master-secret", "oauth-client-secret:actual-budget", 32)
 
 	if strings.Contains(secret, "=") {
 		t.Errorf("Derived secret should not contain '=' padding, got: %s", secret)

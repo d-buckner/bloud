@@ -6,7 +6,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
-	import { installApp, pendingInstalls } from '$lib/services/appFacade';
+	import { installApp } from '$lib/services/appFacade';
 	import { fetchCatalog } from '$lib/api/catalog';
 	import { addRemoteApp } from '$lib/clients/remoteAppClient';
 
@@ -17,10 +17,8 @@
 	let selectedApp = $state<CatalogApp | null>(null);
 	let showAddShared = $state(false);
 
-	// Reactive status lookup — falls back to 'installing' for pending installs
 	function getAppStatus(name: string): AppStatus | undefined {
-		return $installedApps.find((a) => a.catalog_id === name)?.status
-			?? ($pendingInstalls.has(name) ? AppStatus.Installing : undefined);
+		return $installedApps.find((a) => a.catalog_id === name)?.status;
 	}
 
 	// Search and filtering

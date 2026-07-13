@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 )
 
@@ -23,16 +22,6 @@ type User struct {
 // IsAdmin returns true if the user has admin privileges
 func (u *User) IsAdmin() bool {
 	return u.Role == RoleAdmin
-}
-
-// GridElement represents an element (app or widget) in the layout grid
-type GridElement struct {
-	Type    string `json:"type"`    // "app" or "widget"
-	ID      string `json:"id"`      // app name or widget id
-	Col     int    `json:"col"`     // 1-based column position
-	Row     int    `json:"row"`     // 1-based row position
-	Colspan int    `json:"colspan"` // number of columns to span
-	Rowspan int    `json:"rowspan"` // number of rows to span
 }
 
 // PreferencesStore manages user preferences in the database
@@ -67,49 +56,11 @@ func (s *PreferencesStore) EnsureUser(username string) error {
 	return nil
 }
 
-// GetLayout returns the user's layout as an array of grid elements
-func (s *PreferencesStore) GetLayout(username string) ([]GridElement, error) {
-	var layoutJSON []byte
-	err := s.db.QueryRow(
-		"SELECT COALESCE(layout, '[]') FROM user_preferences WHERE username = ?",
-		username,
-	).Scan(&layoutJSON)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get layout: %w", err)
-	}
-
-	var elements []GridElement
-	if err := json.Unmarshal(layoutJSON, &elements); err != nil {
-		return nil, fmt.Errorf("failed to parse layout: %w", err)
-	}
-	return elements, nil
-}
-
-// DeleteUser removes a user's preferences row
+// DeleteUser removes a user's preferences row (cascades to user_app_positions)
 func (s *PreferencesStore) DeleteUser(username string) error {
 	_, err := s.db.Exec("DELETE FROM user_preferences WHERE username = ?", username)
 	if err != nil {
 		return fmt.Errorf("failed to delete user preferences: %w", err)
-	}
-	return nil
-}
-
-// SetLayout updates the user's layout
-func (s *PreferencesStore) SetLayout(username string, elements []GridElement) error {
-	layoutJSON, err := json.Marshal(elements)
-	if err != nil {
-		return fmt.Errorf("failed to marshal layout: %w", err)
-	}
-
-	_, err = s.db.Exec(
-		"UPDATE user_preferences SET layout = ? WHERE username = ?",
-		layoutJSON, username,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update layout: %w", err)
 	}
 	return nil
 }

@@ -37,8 +37,6 @@ func (g *fakeGateway) GetTailnetDomain(_ context.Context) (string, error) {
 func newDeveloperTestServer() *Server {
 	appStore := NewFakeAppStore()
 	catalogCache := NewFakeCatalogCache()
-	appHub := NewAppEventHub(appStore)
-	appStore.SetOnChange(appHub.Broadcast)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	server := &Server{
@@ -46,7 +44,7 @@ func newDeveloperTestServer() *Server {
 		router:       chi.NewRouter(),
 		catalog:      catalogCache,
 		appStore:     appStore,
-		appHub:       appHub,
+		positionStore: NewFakePositionStore(),
 		shareStore:   newFakeShareStore(),
 		tailnetStore: newFakeTailnetStore(),
 		logger:       logger,

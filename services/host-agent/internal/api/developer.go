@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 )
 
 type graphNode struct {
@@ -23,10 +23,10 @@ type graphEdge struct {
 }
 
 type developerGraph struct {
-	Nodes          []graphNode        `json:"nodes"`
-	Edges          []graphEdge        `json:"edges"`
-	TailnetDomain  string             `json:"tailnetDomain,omitempty"`
-	Reconciler     *reconciler.Status `json:"reconciler,omitempty"`
+	Nodes         []graphNode                   `json:"nodes"`
+	Edges         []graphEdge                   `json:"edges"`
+	TailnetDomain string                        `json:"tailnetDomain,omitempty"`
+	Orchestrator  *orchestrator.OrchestratorStatus `json:"orchestrator,omitempty"`
 }
 
 // ssoEdgeLabel returns the SSO strategy (e.g. "forward-auth", "ldap") for an app,
@@ -257,15 +257,17 @@ func (s *Server) handleDeveloperGraph(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	var orchStatus *orchestrator.OrchestratorStatus
+	if s.orch != nil {
+		status := s.orch.Status()
+		orchStatus = &status
+	}
+
 	resp := developerGraph{
 		Nodes:         nodes,
 		Edges:         edges,
 		TailnetDomain: tailnetDomain,
-	}
-
-	if s.intentReconciler != nil {
-		status := s.intentReconciler.Status()
-		resp.Reconciler = &status
+		Orchestrator:  orchStatus,
 	}
 
 	respondJSON(w, http.StatusOK, resp)

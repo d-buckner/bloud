@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -73,25 +73,23 @@ func setupSettingsTestServer(t *testing.T) *Server {
 
 	appStore := NewFakeAppStore()
 	catalogCache := NewFakeCatalogCache()
-	appHub := NewAppEventHub(appStore)
-	appStore.SetOnChange(appHub.Broadcast)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	// Create a stub-mode intent reconciler so handlers can enqueue intents.
-	r := reconciler.New(logger, nil)
+	// Create a stub-mode orchestrator so handlers can enqueue intents.
+	r := orchestrator.NewOrchestrator(nil, nil, nil, "", logger, orchestrator.OrchestratorConfig{})
 	go r.Start(context.Background())
 	t.Cleanup(r.Stop)
 
 	server := &Server{
-		cfg:              ServerConfig{},
-		router:           chi.NewRouter(),
-		catalog:          catalogCache,
-		appStore:         appStore,
-		appHub:           appHub,
-		shareStore:       newFakeShareStore(),
-		tailnetStore:     newFakeTailnetStore(),
-		intentReconciler: r,
-		logger:           logger,
+		cfg:          ServerConfig{},
+		router:       chi.NewRouter(),
+		catalog:      catalogCache,
+		appStore:     appStore,
+		positionStore: NewFakePositionStore(),
+		shareStore:   newFakeShareStore(),
+		tailnetStore: newFakeTailnetStore(),
+		orch:         r,
+		logger:       logger,
 	}
 
 	server.setupMiddleware()

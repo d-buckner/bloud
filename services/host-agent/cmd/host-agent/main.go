@@ -20,7 +20,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/systemd"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -52,9 +51,6 @@ func runServer() {
 	// Load configuration
 	cfg := config.Load()
 	logger.Info("loaded configuration",
-		"runtime", cfg.RuntimeMode,
-		"systemd_scope", cfg.SystemdScope,
-		"quadlet_dir", cfg.QuadletDir,
 		"port", cfg.Port,
 		"data_dir", cfg.DataDir,
 		"apps_dir", cfg.AppsDir,
@@ -79,30 +75,23 @@ func runServer() {
 		"postgresPassword": cfg.PostgresPassword,
 	}
 
-	// In portable mode, ensure system infrastructure containers (postgres, redis)
-	// are running before apps need them.
-	if cfg.RuntimeMode == "portable" {
-		if err := bootstrapInfra(cfg, templateVars, logger); err != nil {
-			logger.Error("failed to bootstrap infrastructure", "error", err)
-			os.Exit(1)
-		}
+	// Ensure system infrastructure containers (postgres, redis) are running before apps need them.
+	if err := bootstrapInfra(cfg, templateVars, logger); err != nil {
+		logger.Error("failed to bootstrap infrastructure", "error", err)
+		os.Exit(1)
 	}
 
-	// In portable mode, register system apps so dependency resolution works.
-	if cfg.RuntimeMode == "portable" {
-		registerSystemApps(database, cfg, logger)
-	}
+	// Register system apps so dependency resolution works.
+	registerSystemApps(database, cfg, logger)
 
 	// Create configurator registry
 	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg)
+	appconfig.RegisterAll(registry, cfg, logger)
 
 	// Create HTTP server
 	server := api.NewServer(database, api.ServerConfig{
-		RuntimeMode:       cfg.RuntimeMode,
-		SystemdScope:      cfg.SystemdScope,
-		QuadletDir:        cfg.QuadletDir,
-		AppsDir:           cfg.AppsDir,
+		RefreshAuthentikToken: func() string { return cfg.ReadAuthentikToken(logger) },
+		AppsDir:               cfg.AppsDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
 		BaseDomain:        cfg.BaseDomain,
@@ -164,17 +153,7 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 		return fmt.Errorf("podman client: %w", err)
 	}
 
-	userScope := cfg.SystemdScope != "system"
-	wantedBy := "default.target"
-	if !userScope {
-		wantedBy = "multi-user.target"
-	}
-	runtime := containerruntime.NewQuadletRuntime(
-		client,
-		systemd.NewManager(userScope),
-		cfg.QuadletDir,
-		wantedBy,
-	)
+	runtime := containerruntime.NewPodmanRuntime(client)
 
 	apps, err := catalog.NewLoader(cfg.AppsDir).LoadAll()
 	if err != nil {
@@ -187,7 +166,7 @@ func bootstrapInfra(cfg *config.Config, templateVars map[string]string, logger *
 		}
 		logger.Info("bootstrapping system container", "app", app.CatalogID)
 
-		spec, err := orchestrator.PortableContainerSpec(app, cfg.DataDir, templateVars)
+		spec, err := orchestrator.ContainerSpec(app, cfg.DataDir, templateVars)
 		if err != nil {
 			return fmt.Errorf("build spec for %s: %w", app.CatalogID, err)
 		}

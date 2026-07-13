@@ -5,10 +5,10 @@ import (
 	"sync"
 )
 
-// Registry manages configurators for all apps.
-// Configurators register themselves and can be looked up by app name.
+// Registry manages NodeLifecycle implementations for all apps.
+// Implementations register themselves and can be looked up by app name.
 type Registry struct {
-	configurators map[string]Configurator
+	configurators map[string]NodeLifecycle
 	mu            sync.RWMutex
 	logger        *slog.Logger
 }
@@ -16,14 +16,14 @@ type Registry struct {
 // NewRegistry creates a new configurator registry.
 func NewRegistry(logger *slog.Logger) *Registry {
 	return &Registry{
-		configurators: make(map[string]Configurator),
+		configurators: make(map[string]NodeLifecycle),
 		logger:        logger,
 	}
 }
 
-// Register adds a configurator to the registry.
-// If a configurator for the same app already exists, it will be replaced.
-func (r *Registry) Register(c Configurator) {
+// Register adds a NodeLifecycle to the registry.
+// If an implementation for the same app already exists, it will be replaced.
+func (r *Registry) Register(c NodeLifecycle) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -32,15 +32,15 @@ func (r *Registry) Register(c Configurator) {
 	r.logger.Debug("registered configurator", "app", name)
 }
 
-// Get returns the configurator for an app, or nil if none exists.
-func (r *Registry) Get(appName string) Configurator {
+// Get returns the NodeLifecycle for an app, or nil if none exists.
+func (r *Registry) Get(appName string) NodeLifecycle {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	return r.configurators[appName]
 }
 
-// Has returns true if a configurator exists for the given app.
+// Has returns true if a NodeLifecycle exists for the given app.
 func (r *Registry) Has(appName string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -49,19 +49,19 @@ func (r *Registry) Has(appName string) bool {
 	return ok
 }
 
-// All returns all registered configurators.
-func (r *Registry) All() []Configurator {
+// All returns all registered NodeLifecycle implementations.
+func (r *Registry) All() []NodeLifecycle {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	result := make([]Configurator, 0, len(r.configurators))
+	result := make([]NodeLifecycle, 0, len(r.configurators))
 	for _, c := range r.configurators {
 		result = append(result, c)
 	}
 	return result
 }
 
-// Names returns the names of all registered configurators.
+// Names returns the names of all registered implementations.
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

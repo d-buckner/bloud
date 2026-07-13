@@ -12,6 +12,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
@@ -40,7 +41,7 @@ func runConfigure(args []string) int {
 
 	// Create and populate registry first to check if app has a configurator
 	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg)
+	appconfig.RegisterAll(registry, cfg, logger)
 
 	// For prestart, always regenerate env files from secrets.json before starting any app
 	// This ensures secrets.json is always the source of truth
@@ -165,19 +166,12 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 1
 	}
 
-	if sc, ok := cfg.(configurator.PreStartConfigurator); ok {
-		changed, err := sc.PreStartConfig(ctx, state)
-		if err != nil {
-			logger.Error("prestart config failed", "app", appName, "error", err)
-			return 1
-		}
-		logger.Info("prestart config completed", "app", appName, "changed", changed)
-	} else {
-		if err := cfg.PreStart(ctx, state); err != nil {
-			logger.Error("prestart failed", "app", appName, "error", err)
-			return 1
-		}
+	changed, err := cfg.PreStart(ctx, state)
+	if err != nil {
+		logger.Error("prestart failed", "app", appName, "error", err)
+		return 1
 	}
+	logger.Info("prestart completed", "app", appName, "changed", changed)
 
 	logger.Info("prestart completed", "app", appName)
 	return 0
@@ -207,16 +201,9 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 		return 1
 	}
 
-	if dc, ok := cfg.(configurator.PostStartConfigurator); ok {
-		if err := dc.PostStartConfig(ctx, state); err != nil {
-			logger.Error("poststart config failed", "app", appName, "error", err)
-			return 1
-		}
-	} else {
-		if err := cfg.PostStart(ctx, state); err != nil {
-			logger.Error("poststart failed", "app", appName, "error", err)
-			return 1
-		}
+	if err := cfg.PostStart(ctx, state); err != nil {
+		logger.Error("poststart failed", "app", appName, "error", err)
+		return 1
 	}
 
 	logger.Info("poststart completed", "app", appName)
@@ -226,19 +213,46 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 func runReconcile(ctx context.Context, registry *configurator.Registry, appStore *store.AppStore, catalogCache catalog.CacheInterface, dataDir string, appCfg *config.Config, logger *slog.Logger) int {
 	logger.Info("running full reconciliation")
 
-	rcfg := orchestrator.DefaultReconcileConfig()
-	rcfg.LDAPOutput = appCfg.LDAPOutput()
+	// Build an in-memory lifecycle graph from installed apps.
+	g := graph.New(graph.NewMapRepository())
 
-	reconciler := orchestrator.NewReconciler(
+	apps, err := appStore.GetAll()
+	if err != nil {
+		logger.Error("failed to load apps", "error", err)
+		return 1
+	}
+
+	// Add nodes and dependency edges from integration configs.
+	appMap := make(map[string]bool, len(apps))
+	for _, app := range apps {
+		appMap[app.CatalogID] = true
+		_ = g.AddNode(app.CatalogID)
+	}
+	for _, app := range apps {
+		for _, source := range app.IntegrationConfig {
+			if appMap[source] {
+				_ = g.AddEdge(app.CatalogID, source)
+			}
+		}
+	}
+
+	// Set all apps' target to RUNNING.
+	for _, app := range apps {
+		_ = g.SetTargetStatus(app.CatalogID, graph.StatusRunning)
+	}
+
+	orch := orchestrator.NewOrchestrator(
+		g,
 		registry,
-		appStore,
 		catalogCache,
 		dataDir,
 		logger,
-		rcfg,
+		orchestrator.OrchestratorConfig{
+			LDAPOutput: appCfg.LDAPOutput(),
+		},
 	)
 
-	if err := reconciler.Reconcile(ctx); err != nil {
+	if err := orch.Reconcile(ctx); err != nil {
 		logger.Error("reconciliation failed", "error", err)
 		return 1
 	}

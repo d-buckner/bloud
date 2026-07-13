@@ -6,21 +6,20 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/reconciler"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/systemd"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -38,10 +37,10 @@ type Server struct {
 	catalog           catalog.CacheInterface
 	graph             catalog.AppGraphInterface
 	appStore          store.AppStoreInterface
-	prefsStore        *store.PreferencesStore
+	prefsStore        store.PreferencesStoreInterface
 	sessionStore      *store.SessionStore
-	appHub            *AppEventHub
-	intentReconciler  *reconciler.Reconciler
+	positionStore      store.PositionStoreInterface
+	orch              *orchestrator.Orchestrator
 	guestStore        store.GuestStoreInterface
 	shareStore        store.ShareStoreInterface
 	remoteAppStore    store.RemoteAppStoreInterface
@@ -59,10 +58,7 @@ type Server struct {
 
 // ServerConfig holds paths for server initialization
 type ServerConfig struct {
-	RuntimeMode       string
-	SystemdScope      string
-	QuadletDir        string
-	AppsDir           string
+	AppsDir     string
 	DataDir           string // Path to bloud data directory
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	BaseDomain        string // Base domain for subdomain routing (e.g., "localhost")
@@ -80,11 +76,14 @@ type ServerConfig struct {
 	HostLabel string
 	// Redis for session storage
 	RedisAddr string // Redis address (e.g., "localhost:6379")
+	// RefreshAuthentikToken, if set, is called by tryInitAuth to pick up a
+	// fresh API token written by the Authentik configurator after server startup.
+	RefreshAuthentikToken func() string
 	// LDAP configuration
 	LDAPOutput *configurator.LDAPOutput
 	// Registry holds app configurators for reconciliation
 	Registry configurator.RegistryInterface
-	// ContainerRuntime optionally injects the portable container backend.
+	// ContainerRuntime optionally injects the container backend.
 	ContainerRuntime containerruntime.Runtime
 	// TemplateVars are extra template variables for container spec rendering (e.g. postgresPassword).
 	TemplateVars map[string]string
@@ -93,12 +92,8 @@ type ServerConfig struct {
 // NewServer creates a new HTTP server instance
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	appStore := store.NewAppStore(db)
+	positionStore := store.NewPositionStore(db)
 	prefsStore := store.NewPreferencesStore(db)
-	appHub := NewAppEventHub(appStore)
-
-	// Wire up automatic broadcasts when app state changes
-	appStore.SetOnChange(appHub.Broadcast)
-
 	// Initialize secrets manager
 	secretsPath := filepath.Join(cfg.DataDir, "secrets.json")
 	secretsMgr := secrets.NewManager(secretsPath)
@@ -147,7 +142,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		appStore:        appStore,
 		prefsStore:      prefsStore,
 		sessionStore:    sessionStore,
-		appHub:          appHub,
+		positionStore:   positionStore,
 		guestStore:      store.NewGuestStore(db),
 		shareStore:      store.NewShareStore(db),
 		remoteAppStore:  store.NewRemoteAppStore(db),
@@ -172,102 +167,112 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	return s
 }
 
-// initOrchestrator sets up the portable runtime orchestrator.
+// initOrchestrator sets up the orchestrator.
 func (s *Server) initOrchestrator(appStore *store.AppStore) {
 	traefikConfigPath := filepath.Join(s.cfg.TraefikDynamicDir, "apps-routes.yml")
 	s.logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
 
-	if s.cfg.RuntimeMode == "portable" {
-		// Always create a podman client for the API (developer endpoint, etc.)
-		client, err := podman.NewClient()
-		if err != nil {
-			s.logger.Warn("podman client unavailable for API", "error", err)
-		} else {
-			s.podmanClient = client
+	// Create the lifecycle graph and the Orchestrator that drives it.
+	// MapRepository is used so the graph is rebuilt fresh on every startup —
+	// convergeFromStores always populates nodes and targets from the app store,
+	// so persistence across restarts is not needed and avoids stale-state issues.
+	lifecycleGraph := graph.New(graph.NewMapRepository())
+
+	// Always create a podman client for the API (developer endpoint, etc.)
+	client, err := podman.NewClient()
+	if err != nil {
+		s.logger.Warn("podman client unavailable for API", "error", err)
+	} else {
+		s.podmanClient = client
+	}
+
+	runtime := s.cfg.ContainerRuntime
+	if runtime == nil {
+		if client == nil {
+			s.logger.Error("container runtime unavailable (no podman client)")
+			return
 		}
+		runtime = containerruntime.NewPodmanRuntime(client)
+	}
 
-		runtime := s.cfg.ContainerRuntime
-		if runtime == nil {
-			if client == nil {
-				s.logger.Error("portable container runtime unavailable (no podman client)")
-				return
-			}
-			userScope := s.cfg.SystemdScope != "system"
-			wantedBy := "default.target"
-			if !userScope {
-				wantedBy = "multi-user.target"
-			}
-			runtime = containerruntime.NewQuadletRuntime(
-				client,
-				systemd.NewManager(userScope),
-				s.cfg.QuadletDir,
-				wantedBy,
-			)
+	var ssoProvisioner orchestrator.SSOProvisioner
+	if s.authentikClient != nil {
+		ssoProvisioner = s.authentikClient
+	}
+
+	// Migrate BLOUD_TS_AUTHKEY env var to tailnet_connections table.
+	if s.cfg.TSAuthKey != "" {
+		active, _ := s.tailnetStore.GetActive()
+		if active == nil {
+			s.tailnetStore.Create(store.TailnetConnection{
+				ID:      uuid.New().String(),
+				Name:    "Default",
+				Type:    "tailscale",
+				AuthKey: s.cfg.TSAuthKey,
+				Status:  "active",
+			})
+			s.logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
 		}
+	}
 
-		var ssoProvisioner orchestrator.SSOProvisioner
-		if s.authentikClient != nil {
-			ssoProvisioner = s.authentikClient
+	// Build authKeyFn that reads the active tailnet connection from the store.
+	authKeyFn := func() string {
+		conn, err := s.tailnetStore.GetActive()
+		if err != nil || conn == nil {
+			return ""
 		}
+		return conn.AuthKey
+	}
 
-		// Migrate BLOUD_TS_AUTHKEY env var to tailnet_connections table.
-		if s.cfg.TSAuthKey != "" {
-			active, _ := s.tailnetStore.GetActive()
-			if active == nil {
-				s.tailnetStore.Create(store.TailnetConnection{
-					ID:      uuid.New().String(),
-					Name:    "Default",
-					Type:    "tailscale",
-					AuthKey: s.cfg.TSAuthKey,
-					Status:  "active",
-				})
-				s.logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
-			}
-		}
+	// Always create the TailnetNodeManager — authKeyFn reads the active
+	// connection from the store at creation time, so adding a tailnet
+	// connection via Settings takes effect without restart.
+	// EnsureRunning returns an error (non-fatal) when authKeyFn() == "".
+	var exec sharing.ContainerExec
+	if client != nil {
+		exec = client
+	}
+	tailnetNode := sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
+	s.tailnetNode = tailnetNode
+	s.logger.Info("tailnet node manager initialized")
 
-		// Build authKeyFn that reads the active tailnet connection from the store.
-		authKeyFn := func() string {
-			conn, err := s.tailnetStore.GetActive()
-			if err != nil || conn == nil {
-				return ""
-			}
-			return conn.AuthKey
-		}
+	// Create gateway manager for remote app proxying.
+	gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
+	s.gateway = gateway
 
-		// Always create the TailnetNodeManager — authKeyFn reads the active
-		// connection from the store at creation time, so adding a tailnet
-		// connection via Settings takes effect without restart.
-		// EnsureRunning returns an error (non-fatal) when authKeyFn() == "".
-		var exec sharing.ContainerExec
-		if client != nil {
-			exec = client
-		}
-		tailnetNode := sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
-		s.tailnetNode = tailnetNode
-		s.logger.Info("tailnet node manager initialized")
+	// Create remote proxy manager.
+	socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
+	remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, s.logger)
+	s.remoteProxy = remoteProxy
 
-		// Create gateway manager for remote app proxying.
-		gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, s.cfg.TraefikPort, s.cfg.DataDir, s.logger)
-		s.gateway = gateway
+	// Build forward-domain SSO provisioner (nil when Authentik not installed).
+	var forwardDomainSSO orchestrator.ForwardDomainProvisioner
+	if s.authentikClient != nil {
+		forwardDomainSSO = s.authentikClient
+	}
 
-		// Create remote proxy manager.
-		socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
-		remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, s.logger)
-		s.remoteProxy = remoteProxy
-
-		portable := orchestrator.NewPortable(orchestrator.PortableConfig{
-			Graph:          s.graph,
-			CatalogCache:   s.catalog,
-			AppStore:       appStore,
-			Containers:     runtime,
-			Registry:       s.cfg.Registry,
-			TraefikGen:     traefikgen.NewGenerator(traefikConfigPath),
-			LDAPOutput:     s.cfg.LDAPOutput,
-			SSO:            ssoProvisioner,
-			TailnetNode:    tailnetNode,
-			Gateway:        gateway,
-			RemoteProxy:    remoteProxy,
-			RemoteAppStore: s.remoteAppStore,
+	orch := orchestrator.NewOrchestrator(
+		lifecycleGraph,
+		s.cfg.Registry,
+		s.catalog,
+		s.cfg.DataDir,
+		s.logger,
+		orchestrator.OrchestratorConfig{
+			LDAPOutput:       s.cfg.LDAPOutput,
+			Containers:       runtime,
+			TemplateVars:     s.cfg.TemplateVars,
+			AppStore:         appStore,
+			CatalogGraph:     s.graph,
+			TailnetStore:     s.tailnetStore,
+			RemoteAppStore:   s.remoteAppStore,
+			TailnetNode:      tailnetNode,
+			Gateway:          gateway,
+			RemoteProxy:      remoteProxy,
+			ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, s.logger),
+			ForwardDomainSSO: forwardDomainSSO,
+			SSO:              ssoProvisioner,
+			SSOBaseURL:       s.cfg.SSOBaseURL,
+			TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
 			ActiveTailnetID: func() string {
 				conn, err := s.tailnetStore.GetActive()
 				if err != nil || conn == nil {
@@ -275,57 +280,17 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 				}
 				return conn.ID
 			},
-			SSOBaseURL:   s.cfg.SSOBaseURL,
-			DataDir:      s.cfg.DataDir,
-			TemplateVars: s.cfg.TemplateVars,
-			Logger:       s.logger,
-		})
-		s.logger.Info("portable orchestrator initialized")
+		},
+	)
+	s.logger.Info("lifecycle orchestrator initialized")
 
-		// Build forward-domain SSO provisioner (nil when Authentik not installed).
-		var forwardDomainSSO reconciler.ForwardDomainProvisioner
-		if s.authentikClient != nil {
-			forwardDomainSSO = s.authentikClient
-		}
+	s.orch = orch
+	go orch.Start(context.Background())
 
-		// Create proxy outpost manager for tailnet forward-auth.
-		proxyOutpost := sharing.NewProxyOutpostManager(runtime, s.logger)
-
-		// Wire the intent reconciler with real dependencies now that the
-		// portable orchestrator exists.
-		s.intentReconciler = reconciler.New(s.logger, &reconciler.Config{
-			Lifecycle:        portable,
-			AppStore:         appStore,
-			CatalogCache:     s.catalog,
-			Graph:            s.graph,
-			TailnetStore:     s.tailnetStore,
-			RemoteAppStore:   s.remoteAppStore,
-			TailnetNode:      tailnetNode,
-			Gateway:          gateway,
-			ProxyStopper:     remoteProxy,
-			ProxyOutpost:     proxyOutpost,
-			TailnetDomain:    gateway,
-			ForwardDomainSSO: forwardDomainSSO,
-		})
-		go s.intentReconciler.Start(context.Background())
-
-		go func() {
-			portable.SyncContainerState(context.Background())
-			portable.ReconcileState(context.Background())
-			// Trigger a full convergence pass to handle tailnet SSO provisioning
-			// and other post-startup tasks that the orchestrator's ReconcileState
-			// doesn't cover.
-			s.intentReconciler.Enqueue(reconciler.NewConvergeIntent())
-		}()
-		return
-	}
-
-	// Non-portable mode: create intent reconciler with nil config (stub mode)
-	// so Enqueue still works but convergence is a no-op.
-	s.intentReconciler = reconciler.New(s.logger, nil)
-	go s.intentReconciler.Start(context.Background())
-
-	s.logger.Warn("unknown runtime mode, orchestrator not initialized", "mode", s.cfg.RuntimeMode)
+	// Trigger an initial convergence pass once everything is wired up.
+	// convergeFromStores will sync container state, set graph targets,
+	// converge tailnet, and regenerate routes.
+	go s.orch.Enqueue(orchestrator.NewConvergeIntent())
 }
 
 // refreshCatalog loads apps from YAML files and updates the cache and graph
@@ -369,56 +334,7 @@ func (s *Server) syncInstalledState() error {
 	s.graph.SetInstalled(names)
 	s.logger.Info("synced installed state", "installed_count", len(names))
 
-	// Reconcile health status for apps stuck in "starting"
-	go s.reconcileAppHealth()
-
 	return nil
-}
-
-// reconcileAppHealth checks apps stuck in "starting" status and updates based on actual health
-func (s *Server) reconcileAppHealth() {
-	apps, err := s.appStore.GetAll()
-	if err != nil {
-		s.logger.Error("failed to get apps for health reconciliation", "error", err)
-		return
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	for _, app := range apps {
-		// Re-check apps that are starting or in error state (they may have recovered)
-		if app.Status != "starting" && app.Status != "error" {
-			continue
-		}
-
-		s.logger.Info("reconciling health for app", "app", app.CatalogID, "status", app.Status)
-
-		// Get health check config from catalog
-		catalogApp, err := s.catalog.Get(app.CatalogID)
-		if err != nil || catalogApp.HealthCheck.Path == "" {
-			// No health check configured, assume running
-			s.appStore.UpdateStatus(app.CatalogID, "running")
-			continue
-		}
-
-		// Check health endpoint
-		url := fmt.Sprintf("http://localhost:%d%s", catalogApp.Port, catalogApp.HealthCheck.Path)
-		resp, err := client.Get(url)
-		if err == nil {
-			resp.Body.Close()
-			// Accept 2xx, 3xx, and auth errors (401/403) as healthy
-			// Auth errors mean the service is running but requires authentication
-			if resp.StatusCode < 500 {
-				s.logger.Info("app health check passed", "app", app.CatalogID, "status", resp.StatusCode)
-				s.appStore.UpdateStatus(app.CatalogID, "running")
-				continue
-			}
-		}
-
-		// Health check failed - service not responding or 5xx error
-		s.logger.Warn("app health check failed, marking as error", "app", app.CatalogID, "error", err)
-		s.appStore.UpdateStatus(app.CatalogID, "error")
-	}
 }
 
 // setupMiddleware configures the middleware stack
@@ -462,8 +378,8 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
 
-	if s.intentReconciler != nil {
-		s.intentReconciler.Stop()
+	if s.orch != nil {
+		s.orch.Stop()
 	}
 
 	return nil
@@ -471,29 +387,24 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // tryInitAuth attempts to initialize authentication, refreshing the token if needed.
 // This is called lazily on first auth request to handle the case where the Authentik
-// configurator runs after server start and creates the api-token file.
+// configurator runs after server start and produces a fresh API token.
 func (s *Server) tryInitAuth() {
-	// Already initialized
 	if s.authConfig != nil {
 		return
 	}
 
-	// Try to read fresh token from api-token file (created by Authentik configurator)
-	tokenPath := filepath.Join(s.cfg.DataDir, "authentik", "api-token")
-	if data, err := os.ReadFile(tokenPath); err == nil {
-		token := string(data)
-		if token != "" && token != s.cfg.AuthentikToken {
-			s.logger.Info("found new Authentik API token from configurator", "path", tokenPath)
-			s.cfg.AuthentikToken = token
-			// Create new client with fresh token (internal URL for server-side API calls)
+	// Pick up a fresh token if the Authentik configurator has run since startup.
+	if s.cfg.RefreshAuthentikToken != nil {
+		if freshToken := s.cfg.RefreshAuthentikToken(); freshToken != "" && freshToken != s.cfg.AuthentikToken {
+			s.logger.Info("using refreshed Authentik API token")
+			s.cfg.AuthentikToken = freshToken
 			if s.cfg.AuthentikPort > 0 {
 				internalURL := fmt.Sprintf("http://localhost:%d", s.cfg.AuthentikPort)
-				s.authentikClient = authentik.NewClient(internalURL, token)
+				s.authentikClient = authentik.NewClient(internalURL, freshToken)
 			}
 		}
 	}
 
-	// Now try to initialize
 	s.initAuth()
 }
 
@@ -540,32 +451,11 @@ func (s *Server) initAuth() {
 	s.logger.Info("authentication initialized", "clientID", oidcConfig.ClientID)
 }
 
-// deriveClientSecret generates a deterministic client secret from the host secret
+// deriveClientSecret derives a deterministic OAuth2 client secret using HKDF-SHA256.
+// The derivation is stable across restarts — no caching needed.
 func (s *Server) deriveClientSecret(appName string) string {
-	// Use the secrets manager if available
-	if s.secrets != nil {
-		// Check if we already have a secret stored
-		secret := s.secrets.GetAppSecret(appName, "oauthClientSecret")
-		if secret != "" {
-			return secret
-		}
-
-		// Generate a new secret based on the host secret
-		if s.cfg.SSOHostSecret != "" {
-			// Use HMAC-like derivation: hostSecret + appName
-			// In production, consider using proper HKDF
-			secret = s.cfg.SSOHostSecret[:32] + "-" + appName
-			if err := s.secrets.SetAppSecret(appName, "oauthClientSecret", secret); err != nil {
-				s.logger.Warn("failed to save client secret", "error", err)
-			}
-			return secret
-		}
+	if s.cfg.SSOHostSecret == "" {
+		return ""
 	}
-
-	// Fallback: derive from host secret using simple concatenation
-	if s.cfg.SSOHostSecret != "" {
-		return s.cfg.SSOHostSecret[:32] + "-" + appName
-	}
-
-	return ""
+	return sso.DeriveSecret(s.cfg.SSOHostSecret, "oauth-client-secret:"+appName, 32)
 }

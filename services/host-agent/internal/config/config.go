@@ -11,11 +11,8 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	RuntimeMode       string
-	SystemdScope      string
-	QuadletDir        string
-	Port              int
-	DataDir           string
+	Port        int
+	DataDir     string
 	AppsDir           string // Path to apps/ directory containing app definitions
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	RedisAddr         string // Redis address for session storage
@@ -85,11 +82,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	// whereas the bootstrap token in secrets.json only works on first Authentik boot.
 	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
 
-	systemdScope := getEnv("BLOUD_SYSTEMD_SCOPE", defaultSystemdScope())
 	cfg := &Config{
-		RuntimeMode:            getEnv("BLOUD_RUNTIME", "portable"),
-		SystemdScope:           systemdScope,
-		QuadletDir:             getEnv("BLOUD_QUADLET_DIR", defaultQuadletDir(systemdScope)),
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
 		AppsDir:                appsDir,
@@ -113,24 +106,6 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	}
 
 	return cfg
-}
-
-func defaultSystemdScope() string {
-	if os.Getuid() == 0 {
-		return "system"
-	}
-	return "user"
-}
-
-func defaultQuadletDir(scope string) string {
-	if scope == "system" {
-		return "/etc/containers/systemd"
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(getDefaultDataDir(), "quadlet")
-	}
-	return filepath.Join(homeDir, ".config", "containers", "systemd")
 }
 
 // getDefaultDataDir returns the default data directory path
@@ -183,6 +158,14 @@ func getEnvAsInt(key string, defaultValue int) int {
 	}
 
 	return value
+}
+
+// ReadAuthentikToken returns the best available Authentik API token.
+// It checks the same sources as the initial load (see getAuthentikToken),
+// so callers can use this to pick up a token written by the Authentik
+// configurator after the server first started.
+func (c *Config) ReadAuthentikToken(logger *slog.Logger) string {
+	return getAuthentikToken(c.DataDir, c.Secrets, logger)
 }
 
 // getAuthentikToken returns the Authentik API token with the following priority:

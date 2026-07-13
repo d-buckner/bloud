@@ -60,8 +60,18 @@ func (c *Configurator) Name() string {
 	return "authentik"
 }
 
-// PreStart is a no-op for Authentik
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
+// PreStart is a no-op for Authentik; returns false (no container restart needed).
+func (c *Configurator) PreStart(_ context.Context, _ *configurator.AppState) (bool, error) {
+	return false, nil
+}
+
+// EnsureContainer is a no-op for the Authentik configurator when used outside the
+// event-driven Orchestrator (e.g. CLI mode).
+func (c *Configurator) EnsureContainer(_ context.Context, _ bool) error { return nil }
+
+// Remove is a no-op for the Authentik configurator; container and data removal
+// are handled at a higher level by the orchestrator.
+func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
 	return nil
 }
 

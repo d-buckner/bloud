@@ -132,3 +132,34 @@ export interface IntentResponse {
 	intentId: string;
 }
 
+// Grid element — null x/y means autoPosition (GridStack picks the cell)
+export interface GridElement {
+	type: 'app' | 'widget';
+	id: string;
+	x: number | null;
+	y: number | null;
+	w: number;
+	h: number;
+}
+
+// Home endpoint response shapes
+export interface HomeApp extends App {
+	x: number | null;
+	y: number | null;
+	w: number;
+	h: number;
+}
+
+export interface HomeWidget {
+	id: string;
+	x: number | null;
+	y: number | null;
+	w: number;
+	h: number;
+}
+
+export interface HomeData {
+	apps: HomeApp[];
+	widgets: HomeWidget[];
+}
+

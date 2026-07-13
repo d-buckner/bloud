@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-// cmdE2E runs either Playwright alone or the complete portable runtime lifecycle.
+// cmdE2E runs either Playwright alone or the complete lifecycle E2E.
 func cmdE2E(args []string) int {
 	root, err := getProjectRoot()
 	if err != nil {
@@ -16,8 +16,8 @@ func cmdE2E(args []string) int {
 	}
 
 	if len(args) > 0 && args[0] == "lifecycle" {
-		if err := runPortableLifecycle(root, args[1:]); err != nil {
-			errorf("Portable runtime lifecycle E2E failed: %v", err)
+		if err := runLifecycle(root, args[1:]); err != nil {
+			errorf("Lifecycle E2E failed: %v", err)
 			return 1
 		}
 		return 0

@@ -14,30 +14,23 @@ export interface GraphEdge {
 	label: string;
 }
 
-export interface ReconcilerActivity {
+export interface OrchestratorActivity {
 	time: string;
 	event: string;
 	detail: string;
 }
 
-export interface AppPhase {
-	appName: string;
-	phase: string;
-	status: 'active' | 'done' | 'error' | 'warning';
-}
-
-export interface ReconcilerStatus {
+export interface OrchestratorStatus {
 	queueDepth: number;
 	isConverging: boolean;
-	recentActivity: ReconcilerActivity[];
-	appPhases?: AppPhase[];
+	recentActivity: OrchestratorActivity[];
 }
 
 export interface DeveloperGraph {
 	nodes: GraphNode[];
 	edges: GraphEdge[];
 	tailnetDomain?: string;
-	reconciler?: ReconcilerStatus;
+	orchestrator?: OrchestratorStatus;
 }
 
 export function fetchDeveloperGraph(): Promise<DeveloperGraph> {

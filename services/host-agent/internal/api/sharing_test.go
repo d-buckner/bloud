@@ -126,9 +126,6 @@ func setupSharingTestServer(t *testing.T) *Server {
 
 	appStore := NewFakeAppStore()
 	catalogCache := NewFakeCatalogCache()
-	appHub := NewAppEventHub(appStore)
-	appStore.SetOnChange(appHub.Broadcast)
-
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Add a catalog app with SSO strategy
@@ -163,7 +160,7 @@ func setupSharingTestServer(t *testing.T) *Server {
 		router:     chi.NewRouter(),
 		catalog:    catalogCache,
 		appStore:   appStore,
-		appHub:     appHub,
+		positionStore: NewFakePositionStore(),
 		guestStore: guestStore,
 		shareStore: newFakeShareStore(),
 		tailnetNode: &fakeTailnetNode{addr: "100.64.1.2"},

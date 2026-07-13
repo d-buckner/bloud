@@ -29,7 +29,7 @@ export async function ensureSignedIn(page: Page): Promise<void> {
     .isVisible();
   if (isSetupWizard) {
     throw new Error(
-      'Portable runtime is unconfigured: setup wizard is showing. ' +
+      'Bloud is unconfigured: setup wizard is showing. ' +
         'Provision the E2E environment before running Playwright.',
     );
   }

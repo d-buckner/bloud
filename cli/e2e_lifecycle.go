@@ -18,7 +18,7 @@ const (
 	lifecycleHostAgentUnit = "bloud-e2e-host-agent.service"
 )
 
-type portableLifecycleConfig struct {
+type lifecycleConfig struct {
 	root       string
 	lima       string
 	sshTarget  string
@@ -36,31 +36,31 @@ type portableLifecycleConfig struct {
 	quadletDir string
 }
 
-type portableLifecycle struct {
-	cfg                    portableLifecycleConfig
+type lifecycle struct {
+	cfg                    lifecycleConfig
 	buildDir               string
 	failed                 bool
 	stoppedComposeJellyfin string
 }
 
-var portableLifecycleRemotePath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
+var lifecycleRemotePath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 
-func runPortableLifecycle(root string, args []string) error {
-	cfg, help, err := parsePortableLifecycleConfig(root, args, os.Getenv)
+func runLifecycle(root string, args []string) error {
+	cfg, help, err := parseLifecycleConfig(root, args, os.Getenv)
 	if err != nil {
 		return err
 	}
 	if help {
-		printPortableLifecycleUsage(os.Stdout)
+		printLifecycleUsage(os.Stdout)
 		return nil
 	}
 
-	runner := &portableLifecycle{cfg: cfg, failed: true}
+	runner := &lifecycle{cfg: cfg, failed: true}
 	return runner.run()
 }
 
-func parsePortableLifecycleConfig(root string, args []string, getenv func(string) string) (portableLifecycleConfig, bool, error) {
-	cfg := portableLifecycleConfig{
+func parseLifecycleConfig(root string, args []string, getenv func(string) string) (lifecycleConfig, bool, error) {
+	cfg := lifecycleConfig{
 		root:       root,
 		lima:       getenv("BLOUD_E2E_LIMA_INSTANCE"),
 		sshTarget:  getenv("BLOUD_E2E_SSH_TARGET"),
@@ -123,14 +123,14 @@ func parsePortableLifecycleConfig(root string, args []string, getenv func(string
 	if !cfg.hostOnly && cfg.baseURL == "" {
 		return cfg, false, fmt.Errorf("BLOUD_URL is required unless --host-only is used")
 	}
-	if !filepath.IsAbs(cfg.remoteDir) || filepath.Clean(cfg.remoteDir) == "/" || !portableLifecycleRemotePath.MatchString(cfg.remoteDir) {
+	if !filepath.IsAbs(cfg.remoteDir) || filepath.Clean(cfg.remoteDir) == "/" || !lifecycleRemotePath.MatchString(cfg.remoteDir) {
 		return cfg, false, fmt.Errorf("BLOUD_E2E_RUNTIME_DIR must be a non-root absolute path")
 	}
 	switch filepath.Clean(cfg.remoteDir) {
 	case "/bin", "/boot", "/dev", "/etc", "/home", "/opt", "/run", "/srv", "/tmp", "/usr", "/var":
 		return cfg, false, fmt.Errorf("BLOUD_E2E_RUNTIME_DIR must identify a dedicated child directory")
 	}
-	if !filepath.IsAbs(cfg.traefikDir) || !portableLifecycleRemotePath.MatchString(cfg.traefikDir) {
+	if !filepath.IsAbs(cfg.traefikDir) || !lifecycleRemotePath.MatchString(cfg.traefikDir) {
 		return cfg, false, fmt.Errorf("BLOUD_E2E_TRAEFIK_DYNAMIC_DIR must be an absolute path containing only letters, numbers, '.', '_', '-', and '/'")
 	}
 	switch cfg.goarch {
@@ -141,7 +141,7 @@ func parsePortableLifecycleConfig(root string, args []string, getenv func(string
 	return cfg, false, nil
 }
 
-func printPortableLifecycleUsage(w io.Writer) {
+func printLifecycleUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
 
 Required environment:
@@ -166,7 +166,7 @@ Flags:
   --keep                 Leave the host-agent deployment running after the test`)
 }
 
-func (r *portableLifecycle) run() (runErr error) {
+func (r *lifecycle) run() (runErr error) {
 	buildDir, err := os.MkdirTemp("", "bloud-e2e-build-*")
 	if err != nil {
 		return err
@@ -186,7 +186,7 @@ func (r *portableLifecycle) run() (runErr error) {
 		os.RemoveAll(r.buildDir)
 	}()
 
-	r.step("Checking portable runtime host prerequisites")
+	r.step("Checking host prerequisites")
 	home, err := r.remoteOutput("printf %s \"$HOME\"")
 	if err != nil {
 		return err
@@ -197,13 +197,13 @@ func (r *portableLifecycle) run() (runErr error) {
 	}
 	r.cfg.quadletDir = filepath.Join(r.cfg.remoteHome, ".config", "containers", "systemd")
 	if err := r.remoteRun(remotePreflightScript, r.cfg.remoteDir); err != nil {
-		return fmt.Errorf("portable runtime preflight: %w", err)
+		return fmt.Errorf("host preflight: %w", err)
 	}
 	if err := r.prepareLimaTarget(); err != nil {
 		return err
 	}
 
-	r.step("Building portable host-agent artifacts")
+	r.step("Building host-agent artifacts")
 	if err := r.localRun(r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
 		return err
 	}
@@ -237,7 +237,7 @@ func (r *portableLifecycle) run() (runErr error) {
 		return err
 	}
 
-	r.step("Installing portable host-agent systemd service")
+	r.step("Installing host-agent systemd service")
 	unit := renderLifecycleHostAgentUnit(r.cfg)
 	unitPath := filepath.Join(r.buildDir, lifecycleHostAgentUnit)
 	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
@@ -303,17 +303,17 @@ func (r *portableLifecycle) run() (runErr error) {
 	}
 
 	r.failed = false
-	r.step("Portable Jellyfin lifecycle passed")
+	r.step("Jellyfin lifecycle passed")
 	return nil
 }
 
-func renderLifecycleHostAgentUnit(cfg portableLifecycleConfig) string {
+func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
 	var extraEnv strings.Builder
 	if cfg.redisAddr != "" {
 		fmt.Fprintf(&extraEnv, "Environment=BLOUD_REDIS_ADDR=%s\n", cfg.redisAddr)
 	}
 	return fmt.Sprintf(`[Unit]
-Description=Bloud portable runtime E2E host agent
+Description=Bloud E2E host agent
 After=network-online.target podman.socket
 Wants=network-online.target podman.socket
 
@@ -321,7 +321,6 @@ Wants=network-online.target podman.socket
 Type=simple
 WorkingDirectory=%s/host-agent
 EnvironmentFile=%s/host-agent.env
-Environment=BLOUD_RUNTIME=portable
 Environment=BLOUD_SYSTEMD_SCOPE=user
 Environment=BLOUD_QUADLET_DIR=%s
 Environment=BLOUD_DATA_DIR=%s/data
@@ -355,7 +354,6 @@ func writeSanitizedLifecycleEnvFile(source, destination string) error {
 		"BLOUD_DATA_DIR":                {},
 		"BLOUD_PODMAN_SOCKET":           {},
 		"BLOUD_QUADLET_DIR":             {},
-		"BLOUD_RUNTIME":                 {},
 		"BLOUD_SYSTEMD_SCOPE":           {},
 		"BLOUD_TRAEFIK_DYNAMIC_DIR":     {},
 		"BLOUD_E2E_LIMA_INSTANCE":       {},
@@ -383,11 +381,11 @@ func writeSanitizedLifecycleEnvFile(source, destination string) error {
 	return scanner.Err()
 }
 
-func (r *portableLifecycle) step(message string) {
+func (r *lifecycle) step(message string) {
 	fmt.Printf("\n%s==>%s %s\n", colorGreen, colorReset, message)
 }
 
-func (r *portableLifecycle) localRun(dir string, env []string, name string, args ...string) error {
+func (r *lifecycle) localRun(dir string, env []string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = env
@@ -400,7 +398,7 @@ func (r *portableLifecycle) localRun(dir string, env []string, name string, args
 	return nil
 }
 
-func (r *portableLifecycle) remoteRun(script string, args ...string) error {
+func (r *lifecycle) remoteRun(script string, args ...string) error {
 	cmd := r.remoteCommand(script, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -411,7 +409,7 @@ func (r *portableLifecycle) remoteRun(script string, args ...string) error {
 	return nil
 }
 
-func (r *portableLifecycle) remoteOutput(script string, args ...string) (string, error) {
+func (r *lifecycle) remoteOutput(script string, args ...string) (string, error) {
 	cmd := r.remoteCommand(script, args...)
 	cmd.Stdin = strings.NewReader("set -euo pipefail\n" + script)
 	output, err := cmd.CombinedOutput()
@@ -421,7 +419,7 @@ func (r *portableLifecycle) remoteOutput(script string, args ...string) (string,
 	return string(output), nil
 }
 
-func (r *portableLifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
+func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 	commandArgs := []string{}
 	name := "ssh"
 	if r.cfg.lima != "" {
@@ -440,7 +438,7 @@ func (r *portableLifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 	return exec.Command(name, commandArgs...)
 }
 
-func (r *portableLifecycle) copyDirectory(source, destination string) error {
+func (r *lifecycle) copyDirectory(source, destination string) error {
 	if r.cfg.lima != "" {
 		return r.remoteRun(`rm -rf "$2"
 mkdir -p "$2"
@@ -450,22 +448,22 @@ cp -a "$1/." "$2/"`, source, destination)
 	return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
 }
 
-func (r *portableLifecycle) copyFile(source, destination string) error {
+func (r *lifecycle) copyFile(source, destination string) error {
 	if r.cfg.lima != "" {
 		return r.localRun(r.cfg.root, os.Environ(), "limactl", "copy", source, r.cfg.lima+":"+destination)
 	}
 	return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", source, r.cfg.sshTarget+":"+shellQuote(destination))
 }
 
-func (r *portableLifecycle) remotePath(relative string) string {
+func (r *lifecycle) remotePath(relative string) string {
 	return filepath.Join(r.cfg.remoteDir, relative)
 }
 
-func (r *portableLifecycle) artifactDir() string {
+func (r *lifecycle) artifactDir() string {
 	return filepath.Join(r.cfg.root, "e2e", "test-results", "runtime-lifecycle")
 }
 
-func (r *portableLifecycle) collectLogs() {
+func (r *lifecycle) collectLogs() {
 	if r.cfg.remoteHome == "" {
 		return
 	}
@@ -492,7 +490,7 @@ func (r *portableLifecycle) collectLogs() {
 	}
 }
 
-func (r *portableLifecycle) cleanupRemoteDeployment() {
+func (r *lifecycle) cleanupRemoteDeployment() {
 	script := `curl -fsS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null 2>&1 || true
 systemctl --user stop apps-jellyfin.service >/dev/null 2>&1 || true
 podman rm -f apps-jellyfin >/dev/null 2>&1 || true
@@ -507,7 +505,7 @@ systemctl --user daemon-reload >/dev/null 2>&1 || true`
 	_ = r.remoteRun(script, lifecycleHostAgentUnit, r.cfg.remoteHome, r.cfg.quadletDir, r.cfg.remoteDir)
 }
 
-func (r *portableLifecycle) prepareLimaTarget() error {
+func (r *lifecycle) prepareLimaTarget() error {
 	if r.cfg.lima == "" {
 		return nil
 	}
@@ -528,11 +526,11 @@ fi`, r.cfg.root); err != nil {
 	if r.stoppedComposeJellyfin == "" {
 		return nil
 	}
-	r.step("Stopping legacy compose-managed Jellyfin during portable lifecycle")
+	r.step("Stopping legacy compose-managed Jellyfin")
 	return r.remoteRun(`podman stop "$1" >/dev/null`, r.stoppedComposeJellyfin)
 }
 
-func (r *portableLifecycle) restoreLimaComposeJellyfin() {
+func (r *lifecycle) restoreLimaComposeJellyfin() {
 	if r.stoppedComposeJellyfin == "" {
 		return
 	}

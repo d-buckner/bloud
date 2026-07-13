@@ -1,42 +1,18 @@
 package store
 
 // AppStoreInterface defines the interface for managing installed apps.
-// This interface enables mocking for testing.
 type AppStoreInterface interface {
-	// GetAll returns all installed apps
 	GetAll() ([]*InstalledApp, error)
-
-	// GetByCatalogID returns an installed app by catalog ID
 	GetByCatalogID(catalogID string) (*InstalledApp, error)
-
-	// GetInstalledCatalogIDs returns just the catalog IDs of installed apps
 	GetInstalledCatalogIDs() ([]string, error)
-
-	// Install records a new app installation (or re-install)
 	Install(catalogID, displayName, version string, integrationConfig map[string]string, opts *InstallOptions) error
-
-	// UpdateStatus updates the status of an installed app
 	UpdateStatus(catalogID, status string) error
-
-	// EnsureSystemApp ensures a system app (managed by the host agent) is registered with running status
 	EnsureSystemApp(catalogID, displayName string, port int) error
-
-	// SetTailnetID updates the tailnet_id for an installed app
 	SetTailnetID(catalogID, tailnetID string) error
-
-	// UpdateIntegrationConfig updates the integration config for an app
 	UpdateIntegrationConfig(catalogID string, config map[string]string) error
-
-	// UpdateDisplayName updates the display name of an installed app
 	UpdateDisplayName(catalogID, displayName string) error
-
-	// Uninstall removes an app from the database
 	Uninstall(catalogID string) error
-
-	// IsInstalled checks if an app is installed
 	IsInstalled(catalogID string) (bool, error)
-
-	// SetOnChange sets a callback that fires when app state changes
 	SetOnChange(fn func())
 }
 
@@ -45,21 +21,22 @@ var _ AppStoreInterface = (*AppStore)(nil)
 
 // PreferencesStoreInterface defines the interface for managing user preferences.
 type PreferencesStoreInterface interface {
-	// HasUsers checks if any users exist
 	HasUsers() (bool, error)
-
-	// EnsureUser creates a user preferences row if it doesn't already exist
 	EnsureUser(username string) error
-
-	// GetLayout returns the user's layout as an array of grid elements
-	GetLayout(username string) ([]GridElement, error)
-
-	// SetLayout updates the user's layout
-	SetLayout(username string, elements []GridElement) error
+	DeleteUser(username string) error
 }
 
 // Compile-time assertion that PreferencesStore implements PreferencesStoreInterface
 var _ PreferencesStoreInterface = (*PreferencesStore)(nil)
+
+// PositionStoreInterface defines the interface for managing user grid positions.
+type PositionStoreInterface interface {
+	GetForUser(username string) ([]Position, error)
+	SetForUser(username string, positions []Position) error
+}
+
+// Compile-time assertion that PositionStore implements PositionStoreInterface
+var _ PositionStoreInterface = (*PositionStore)(nil)
 
 // ShareStoreInterface defines the interface for managing shares.
 type ShareStoreInterface interface {

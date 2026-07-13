@@ -2,7 +2,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { widgetRegistry } from './registry';
-	import { layout, enabledWidgetIds } from '$lib/stores/layout';
+	import { gridElements, enabledWidgetIds } from '$lib/stores/grid';
 
 	interface Props {
 		open: boolean;
@@ -16,7 +16,7 @@
 	}
 
 	function handleToggle(widgetId: string): void {
-		layout.toggleWidget(widgetId);
+		gridElements.toggleWidget(widgetId);
 	}
 </script>
 

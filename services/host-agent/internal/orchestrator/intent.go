@@ -1,8 +1,8 @@
-package reconciler
+package orchestrator
 
 import "github.com/google/uuid"
 
-// Intent represents a mutation request to be processed by the reconciler.
+// Intent represents a mutation request to be processed by the orchestrator.
 // The interface is sealed via the unexported intentMarker() method.
 type Intent interface {
 	intentMarker()

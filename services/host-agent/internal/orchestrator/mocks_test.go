@@ -371,8 +371,13 @@ func (m *MockConfigurator) Name() string {
 	return args.String(0)
 }
 
-func (m *MockConfigurator) PreStart(ctx context.Context, state *configurator.AppState) error {
+func (m *MockConfigurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
 	args := m.Called(ctx, state)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockConfigurator) EnsureContainer(ctx context.Context, forceRestart bool) error {
+	args := m.Called(ctx, forceRestart)
 	return args.Error(0)
 }
 
@@ -385,3 +390,9 @@ func (m *MockConfigurator) PostStart(ctx context.Context, state *configurator.Ap
 	args := m.Called(ctx, state)
 	return args.Error(0)
 }
+
+func (m *MockConfigurator) Remove(ctx context.Context, state *configurator.AppState, clearData bool) error {
+	args := m.Called(ctx, state, clearData)
+	return args.Error(0)
+}
+

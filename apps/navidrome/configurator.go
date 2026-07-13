@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,17 +26,22 @@ type Configurator struct {
 	port         int
 	authentikURL string
 	secrets      configurator.AppSecretsProvider
+	logger       *slog.Logger
 }
 
 // NewConfigurator creates a new Navidrome configurator.
-func NewConfigurator(port int, authentikURL string, secrets configurator.AppSecretsProvider) *Configurator {
+func NewConfigurator(port int, authentikURL string, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
 	if port == 0 {
 		port = 4533
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return &Configurator{
 		port:         port,
 		authentikURL: authentikURL,
 		secrets:      secrets,
+		logger:       logger.With("app", "navidrome"),
 	}
 }
 
@@ -45,23 +50,39 @@ func (c *Configurator) Name() string {
 }
 
 // PreStart creates the required data and music directories before the container starts.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
+// Returns false (no container restart needed).
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "data"),
 		filepath.Join(state.BloudDataPath, "media", "music"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
+	return false, nil
+}
+
+// EnsureContainer is a no-op for the Navidrome configurator when used outside the
+// event-driven Orchestrator (e.g. CLI mode).
+func (c *Configurator) EnsureContainer(_ context.Context, _ bool) error { return nil }
+
+// Remove is a no-op for the Navidrome configurator; container and data removal
+// are handled at a higher level by the orchestrator.
+func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
 	return nil
 }
 
 // HealthCheck waits for Navidrome to be ready
 func (c *Configurator) HealthCheck(ctx context.Context) error {
 	url := fmt.Sprintf("http://localhost:%d/ping", c.port)
-	return configurator.WaitForHTTP(ctx, url, 60*time.Second)
+	c.logger.Info("waiting for Navidrome health endpoint", "url", url)
+	if err := configurator.WaitForHTTP(ctx, url, 60*time.Second); err != nil {
+		return err
+	}
+	c.logger.Info("Navidrome health check passed")
+	return nil
 }
 
 // PostStart syncs Authentik users into Navidrome so that forward-auth logins work.
@@ -78,7 +99,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	// Read the Authentik API token from disk (written by the Authentik configurator).
 	authentikToken, err := c.readAuthentikToken(state)
 	if err != nil {
-		log.Printf("Navidrome: cannot read Authentik token, skipping user sync: %v", err)
+		c.logger.Warn("cannot read Authentik token, skipping user sync", "error", err)
 		return nil
 	}
 
@@ -106,12 +127,12 @@ func (c *Configurator) ensureAdminAndLogin(ctx context.Context) (string, error) 
 	}
 
 	// No admin yet — bootstrap the first admin user.
-	log.Println("Navidrome: bootstrapping admin user")
+	c.logger.Info("bootstrapping admin user")
 	token, err := c.createAdmin(ctx, bootstrapAdminUsername, password)
 	if err != nil {
 		return "", fmt.Errorf("creating admin: %w", err)
 	}
-	log.Println("Navidrome: admin user created")
+	c.logger.Info("admin user created")
 	return token, nil
 }
 
@@ -339,18 +360,18 @@ func (c *Configurator) syncUsersFromAuthentik(ctx context.Context, naviToken, au
 		if displayName == "" {
 			displayName = u.Username
 		}
-		log.Printf("Navidrome: creating user %q (%s)", u.Username, displayName)
+		c.logger.Info("creating user", "username", u.Username, "display_name", displayName)
 		if err := c.createNavidromeUser(ctx, naviToken, u.Username, displayName, u.Email); err != nil {
-			log.Printf("Navidrome: failed to create user %q: %v", u.Username, err)
+			c.logger.Warn("failed to create user", "username", u.Username, "error", err)
 			continue
 		}
 		created++
 	}
 
 	if created > 0 {
-		log.Printf("Navidrome: synced %d user(s) from Authentik", created)
+		c.logger.Info("synced users from Authentik", "count", created)
 	} else {
-		log.Println("Navidrome: all Authentik users already present")
+		c.logger.Info("all Authentik users already present")
 	}
 	return nil
 }

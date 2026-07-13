@@ -8,28 +8,13 @@
 	interface Props {
 		app: App | null;
 		position: { x: number; y: number };
-		onOpenInNewTab?: (app: App) => void;
-		onViewLogs?: (app: App) => void;
 		onRename?: (app: App) => void;
 		onShare?: (app: App) => void;
 		onUninstall?: (app: App) => void;
 		onClose?: () => void;
 	}
 
-	let { app, position, onOpenInNewTab, onViewLogs, onRename, onShare, onUninstall, onClose }: Props = $props();
-
-	function handleOpenInNewTab() {
-		if (!browser || !app?.port) return;
-		window.open(`http://${window.location.hostname}:${app.port}`, '_blank');
-		onClose?.();
-	}
-
-	function handleViewLogs() {
-		if (app) {
-			onViewLogs?.(app);
-			onClose?.();
-		}
-	}
+	let { app, position, onRename, onShare, onUninstall, onClose }: Props = $props();
 
 	function handleRename() {
 		if (app) {
@@ -67,7 +52,7 @@
 	});
 </script>
 
-{#if app}
+{#if app && $isAdmin}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		class="context-menu"
@@ -76,29 +61,19 @@
 		role="menu"
 		tabindex="-1"
 	>
-		<button class="context-item" onclick={handleOpenInNewTab}>
-			<Icon name="external-link" size={16} />
-			Open in New Tab
+		<button class="context-item" onclick={handleRename}>
+			<Icon name="edit" size={16} />
+			Rename
 		</button>
-		<button class="context-item" onclick={handleViewLogs}>
-			<Icon name="terminal" size={16} />
-			View Logs
+		<button class="context-item" onclick={handleShare}>
+			<Icon name="share" size={16} />
+			Share
 		</button>
-		{#if $isAdmin}
-			<button class="context-item" onclick={handleRename}>
-				<Icon name="edit" size={16} />
-				Rename
-			</button>
-			<button class="context-item" onclick={handleShare}>
-				<Icon name="share" size={16} />
-				Share
-			</button>
-			<hr class="context-divider" />
-			<button class="context-item danger" onclick={handleUninstall}>
-				<Icon name="trash" size={16} />
-				Remove App
-			</button>
-		{/if}
+		<hr class="context-divider" />
+		<button class="context-item danger" onclick={handleUninstall}>
+			<Icon name="trash" size={16} />
+			Uninstall
+		</button>
 	</div>
 {/if}
 

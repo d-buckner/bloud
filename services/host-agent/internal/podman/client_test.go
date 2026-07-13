@@ -276,8 +276,8 @@ func TestClient_PullImageUsesPodmanCLI(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	client := &Client{runner: runner}
 
-	require.NoError(t, client.PullImage(context.Background(), "docker.io/jellyfin/jellyfin:10.11.7"))
-	assert.Equal(t, [][]string{{"podman", "pull", "docker.io/jellyfin/jellyfin:10.11.7"}}, runner.commands)
+	require.NoError(t, client.PullImage(context.Background(), "docker.io/jellyfin/jellyfin:10.11.11"))
+	assert.Equal(t, [][]string{{"podman", "pull", "docker.io/jellyfin/jellyfin:10.11.11"}}, runner.commands)
 }
 
 func TestClient_PullImageRejectsUnsafeImageReference(t *testing.T) {
