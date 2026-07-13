@@ -96,16 +96,6 @@ func TestOrchestrator_Reconcile_NoRouteGenerator_NoError(t *testing.T) {
 }
 
 // ============================================================================
-// Startup is safe even when container runtime is not configured
-// ============================================================================
-
-func TestOrchestrator_Startup_NoContainerRuntime_NoError(t *testing.T) {
-	to := newTestOrchestrator()
-	// No container runtime — SyncContainerState is a no-op.
-	require.NoError(t, to.orch.Startup(context.Background()))
-}
-
-// ============================================================================
 // Cycle 4: Basic lifecycle
 // ============================================================================
 
@@ -262,7 +252,7 @@ func TestOrchestrator_HealthCheckError_ErrorStatus_PostStartSkipped(t *testing.T
 func TestOrchestrator_LevelOrdering_DependencyRunsFirst(t *testing.T) {
 	to := newTestOrchestrator()
 
-	// B depends on A; A must reach RUNNING before B's PreStart is called.
+	// B depends on A; A must complete its lifecycle before B's PreStart is called.
 	require.NoError(t, to.g.AddNode("a"))
 	require.NoError(t, to.g.AddNode("b"))
 	require.NoError(t, to.g.AddEdge("b", "a")) // b depends on a
@@ -492,4 +482,100 @@ func TestOrchestrator_ErrorIsTerminal_DependentAlsoSkipped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, graph.StatusInitializing, nodeB.ActualStatus, "b should stay INITIALIZING — dep is in ERROR")
 	to.registry.AssertNotCalled(t, "Get", "b")
+}
+
+// ============================================================================
+// Cycle 9: RUNNING deferred until after route generation
+// ============================================================================
+
+// TestOrchestrator_RunningDeferredUntilAfterReconcile verifies that a node is
+// not promoted to RUNNING during its lifecycle phases — only after Reconcile
+// has finished (i.e. after route generation). The UI must not show "installed"
+// prematurely.
+func TestOrchestrator_RunningDeferredUntilAfterReconcile(t *testing.T) {
+	to := newTestOrchestrator()
+
+	require.NoError(t, to.g.AddNode("app"))
+	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
+
+	mockCfg := new(MockConfigurator)
+	to.registry.On("Get", "app").Return(mockCfg)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("EnsureContainer", mock.Anything, false).Return(nil)
+	mockCfg.On("HealthCheck", mock.Anything).Return(nil)
+
+	// Capture the node's actual status at the moment PostStart runs — this is
+	// the last lifecycle phase, so if RUNNING were set eagerly it would already
+	// be visible here.
+	var statusDuringPostStart graph.NodeStatus
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).
+		Run(func(_ mock.Arguments) {
+			node, _ := to.g.GetNode("app")
+			statusDuringPostStart = node.ActualStatus
+		}).
+		Return(nil)
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	assert.Equal(t, graph.StatusPostStartConfig, statusDuringPostStart,
+		"node must not be RUNNING during lifecycle — RUNNING is deferred until after route generation")
+
+	node, err := to.g.GetNode("app")
+	require.NoError(t, err)
+	assert.Equal(t, graph.StatusRunning, node.ActualStatus,
+		"node must be RUNNING once Reconcile (including route generation) is complete")
+}
+
+// TestOrchestrator_DepUnblockedByChangedIDsNotRunning verifies that a dependent
+// node can proceed when its dependency completed its lifecycle phases this pass,
+// even though the dependency has not yet been promoted to RUNNING (RUNNING is
+// deferred until after route generation). Without this, multi-level installs
+// would block level N+1 waiting for level N to reach RUNNING.
+func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
+	to := newTestOrchestrator()
+
+	// B depends on A; both are being installed in the same reconcile pass.
+	require.NoError(t, to.g.AddNode("a"))
+	require.NoError(t, to.g.AddNode("b"))
+	require.NoError(t, to.g.AddEdge("b", "a"))
+	require.NoError(t, to.g.SetTargetStatus("a", graph.StatusRunning))
+	require.NoError(t, to.g.SetTargetStatus("b", graph.StatusRunning))
+
+	mockA := new(MockConfigurator)
+	mockB := new(MockConfigurator)
+	to.registry.On("Get", "a").Return(mockA)
+	to.registry.On("Get", "b").Return(mockB)
+
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockA.On("EnsureContainer", mock.Anything, false).Return(nil)
+	mockA.On("HealthCheck", mock.Anything).Return(nil)
+	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
+	// When B's PreStart runs, A has completed its lifecycle phases but has NOT
+	// yet been promoted to RUNNING (that happens after route generation).
+	var aStatusWhenBStarted graph.NodeStatus
+	mockB.On("PreStart", mock.Anything, mock.Anything).
+		Run(func(_ mock.Arguments) {
+			nodeA, _ := to.g.GetNode("a")
+			aStatusWhenBStarted = nodeA.ActualStatus
+		}).
+		Return(false, nil)
+	mockB.On("EnsureContainer", mock.Anything, false).Return(nil)
+	mockB.On("HealthCheck", mock.Anything).Return(nil)
+	mockB.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	assert.Equal(t, graph.StatusPostStartConfig, aStatusWhenBStarted,
+		"A must not be at RUNNING when B starts — RUNNING is deferred until after route generation")
+
+	mockB.AssertCalled(t, "PreStart", mock.Anything, mock.Anything)
+
+	nodeA, err := to.g.GetNode("a")
+	require.NoError(t, err)
+	assert.Equal(t, graph.StatusRunning, nodeA.ActualStatus, "A must be RUNNING after Reconcile completes")
+
+	nodeB, err := to.g.GetNode("b")
+	require.NoError(t, err)
+	assert.Equal(t, graph.StatusRunning, nodeB.ActualStatus, "B must be RUNNING after Reconcile completes")
 }

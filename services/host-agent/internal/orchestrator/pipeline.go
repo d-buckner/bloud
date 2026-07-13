@@ -492,8 +492,6 @@ func intentTypeName(intent Intent) string {
 		return "RevokeShare"
 	case ClearAppDataIntent:
 		return "ClearAppData"
-	case ConvergeIntent:
-		return "Converge"
 	default:
 		return "Unknown"
 	}

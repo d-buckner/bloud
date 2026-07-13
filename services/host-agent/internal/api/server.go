@@ -286,11 +286,6 @@ func (s *Server) initOrchestrator(appStore *store.AppStore) {
 
 	s.orch = orch
 	go orch.Start(context.Background())
-
-	// Trigger an initial convergence pass once everything is wired up.
-	// convergeFromStores will sync container state, set graph targets,
-	// converge tailnet, and regenerate routes.
-	go s.orch.Enqueue(orchestrator.NewConvergeIntent())
 }
 
 // refreshCatalog loads apps from YAML files and updates the cache and graph

@@ -84,7 +84,12 @@ type OrchestratorConfig struct {
 //
 // Lifecycle phases per node:
 //
-//	INITIALIZING → PRESTART_CONFIG → STARTING → POSTSTART_CONFIG → RUNNING
+//	INITIALIZING → PRESTART_CONFIG → STARTING → POSTSTART_CONFIG
+//
+// After all nodes in a reconcile pass complete their phases, routes are
+// regenerated and then nodes are promoted to RUNNING. This ensures the UI
+// shows an app as "installed" only once external access (Traefik routes) is
+// live.
 //
 // Error handling:
 //   - Individual app errors set the node to ERROR and are not propagated.
@@ -226,27 +231,22 @@ func (o *Orchestrator) Enqueue(intent Intent) {
 	o.queue.Enqueue(intent)
 }
 
-// Start runs the intent processing loop. It blocks until the context is cancelled
-// or Stop is called. Must be called exactly once (typically via goroutine).
+// Start runs an initial convergence pass and then processes intents as they
+// arrive. It blocks until the context is cancelled or Stop is called. Must be
+// called exactly once (typically via goroutine).
 func (o *Orchestrator) Start(ctx context.Context) {
 	ctx, o.cancel = context.WithCancel(ctx)
 	close(o.started)
 	defer close(o.done)
 
-	o.logger.Info("orchestrator intent loop started")
+	o.logger.Info("orchestrator started")
 
+	var intents []Intent // nil on the startup pass; populated from the queue thereafter
 	for {
-		intents := o.queue.WaitAndDrain(ctx)
-		if intents == nil {
-			o.logger.Info("orchestrator intent loop stopped")
-			return
-		}
-
-		o.logger.Info("processing intents", "count", len(intents))
 		o.converge(ctx, intents)
-
-		if ctx.Err() != nil {
-			o.logger.Info("orchestrator intent loop stopped")
+		intents = o.queue.WaitAndDrain(ctx)
+		if intents == nil {
+			o.logger.Info("orchestrator stopped")
 			return
 		}
 	}
@@ -277,29 +277,13 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 	start := time.Now()
 	pendingClearData := make(map[string]bool)
 
-	// ConvergeIntent is a trigger-only intent: it carries no store mutations and
-	// exists solely to wake the convergence loop. Filter it out before the drain
-	// phase so applyIntents only sees intents that actually mutate state.
-	var drainIntents []Intent
-	for _, intent := range intents {
-		if _, ok := intent.(ConvergeIntent); !ok {
-			drainIntents = append(drainIntents, intent)
-		}
+	if len(intents) > 0 {
+		o.applyIntents(intents, pendingClearData)
+		o.recordActivity("drain_complete", fmt.Sprintf("%d", len(intents)))
 	}
-	o.applyIntents(drainIntents, pendingClearData)
-	o.recordActivity("drain_complete", fmt.Sprintf("%d", len(intents)))
 
 	o.convergeFromStores(ctx, pendingClearData)
 	o.recordActivity("converge_complete", fmt.Sprintf("%d intents, %s", len(intents), time.Since(start).Round(time.Millisecond)))
-}
-
-// Startup runs pre-reconcile initialisation: syncs actual container state into
-// the graph so the first Reconcile pass has accurate information.
-func (o *Orchestrator) Startup(ctx context.Context) error {
-	o.logger.Info("startup: syncing container state")
-	o.SyncContainerState(ctx)
-	o.logger.Info("startup complete")
-	return nil
 }
 
 // RemoveApp calls NodeLifecycle.Remove for the named app (if a configurator is
@@ -340,8 +324,16 @@ func (o *Orchestrator) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	// Regenerate routes now that all lifecycle phases are complete. Deferring
+	// this — and the RUNNING promotion below — ensures the UI never shows an
+	// app as "installed" before its Traefik routes are live.
 	if err := o.RegenerateRoutes(); err != nil {
 		o.logger.Warn("route regeneration failed", "error", err)
+	}
+
+	for id := range changedIDs {
+		o.logger.Info("marking node RUNNING after route generation", "app", id)
+		_ = o.graph.SetActualStatus(id, graph.StatusRunning, "")
 	}
 
 	return nil
@@ -389,7 +381,8 @@ func (o *Orchestrator) processLevel(ctx context.Context, nodeIDs []string, chang
 
 // collectWorkForLevel returns the subset of nodeIDs that need action this pass:
 //  1. Nodes whose actual status hasn't reached their target (excluding ERROR nodes
-//     and nodes whose dependencies are not yet RUNNING).
+//     and nodes whose dependencies have not yet completed: neither RUNNING from a
+//     prior pass nor present in changedIDs from this pass).
 //  2. Nodes already at RUNNING whose dependency appeared in changedIDs (staleness).
 func (o *Orchestrator) collectWorkForLevel(nodeIDs []string, changedIDs map[string]bool) ([]string, error) {
 	var work []string
@@ -409,9 +402,10 @@ func (o *Orchestrator) collectWorkForLevel(nodeIDs []string, changedIDs map[stri
 		}
 
 		if node.TargetStatus != node.ActualStatus {
-			// Node needs to progress. Only proceed if all deps are RUNNING
-			// (they are resolved in the level before this one — if any dep
-			// ended up in ERROR, block this node as well).
+			// Node needs to progress. Only proceed if all deps are ready:
+			// either RUNNING from a prior pass, or having completed their
+			// lifecycle phases this pass (present in changedIDs). A dep in
+			// ERROR blocks this node regardless.
 			deps, err := o.graph.GetDependencies(id)
 			if err != nil {
 				return nil, fmt.Errorf("get dependencies for %q: %w", id, err)
@@ -423,7 +417,7 @@ func (o *Orchestrator) collectWorkForLevel(nodeIDs []string, changedIDs map[stri
 				if err != nil || depNode == nil {
 					continue
 				}
-				if depNode.ActualStatus != graph.StatusRunning {
+				if depNode.ActualStatus != graph.StatusRunning && !changedIDs[dep] {
 					blocked = true
 					blockingDep = dep
 					break
@@ -546,10 +540,10 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 
 	cfg := o.registry.Get(id)
 
-	// No configurator: nothing to configure; mark RUNNING directly.
+	// No configurator: nothing to configure; report success so Reconcile
+	// promotes this node to RUNNING after route generation.
 	if cfg == nil {
-		o.logger.Info("no configurator registered, marking RUNNING", "app", id)
-		_ = o.graph.SetActualStatus(id, graph.StatusRunning, "")
+		o.logger.Info("no configurator registered, will mark RUNNING after route generation", "app", id)
 		return true
 	}
 
@@ -619,8 +613,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	}
 	o.logger.Info("lifecycle phase: PostStart complete", "app", id)
 
-	o.logger.Info("node reached RUNNING", "app", id)
-	_ = o.graph.SetActualStatus(id, graph.StatusRunning, "")
+	o.logger.Info("lifecycle phases complete, will mark RUNNING after route generation", "app", id)
 	return true
 }
 
