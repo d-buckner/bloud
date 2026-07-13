@@ -6,8 +6,7 @@
 		fetchDeveloperGraph,
 		type DeveloperGraph,
 		type GraphNode,
-		type OrchestratorStatus,
-		type AppPhase
+		type OrchestratorStatus
 	} from '$lib/clients/developerClient';
 	import AppNode from './AppNode.svelte';
 	import UserNode from './UserNode.svelte';
@@ -34,15 +33,13 @@
 	const CONNECTION_GAP = 100;
 	const USER_GAP = 60;
 
-	const APP_PHASES = ['pre-start', 'ensure-container', 'health-check', 'post-start', 'sso'];
-
 	const CONVERGE_STEPS = [
 		'sync-container-state',
 		'handle-uninstalls',
 		'set-graph-targets',
 		'converge-tailnet',
 		'update-graph',
-		'regenerate-routes'
+		'reconcile'
 	];
 
 	interface TimelineStep {
@@ -121,40 +118,6 @@
 		return { recentIntents, drain, steps, convergeDuration, convergeTime, hasCycle };
 	}
 
-	function buildPhaseData(appName: string, appPhases: AppPhase[] | undefined) {
-		if (!appPhases || appPhases.length === 0) return undefined;
-
-		const phaseMap = new Map<string, AppPhase['status']>();
-		for (const ap of appPhases) {
-			if (ap.appName === appName) {
-				phaseMap.set(ap.phase, ap.status);
-			}
-		}
-
-		if (phaseMap.size === 0) return undefined;
-
-		const phases = APP_PHASES.map((name) => ({
-			name,
-			status: (phaseMap.get(name) ?? 'pending') as 'active' | 'done' | 'error' | 'warning' | 'pending'
-		}));
-
-		// All phases done — convergence complete, hide the bar.
-		if (phases.every((p) => p.status === 'done')) return undefined;
-
-		const activePhase = phases.find((p) => p.status === 'active');
-		const errorPhase = phases.find((p) => p.status === 'error' || p.status === 'warning');
-		const currentPhase = activePhase ?? errorPhase;
-		const doneCount = phases.filter((p) => p.status === 'done').length;
-
-		return {
-			phase: currentPhase?.name ?? APP_PHASES[doneCount] ?? 'done',
-			status: currentPhase?.status ?? 'done',
-			progress: doneCount,
-			total: APP_PHASES.length,
-			phases
-		};
-	}
-
 	function timeAgo(isoTime: string): string {
 		const diff = Date.now() - new Date(isoTime).getTime();
 		if (diff < 1000) return 'just now';
@@ -225,15 +188,13 @@
 		}
 
 		function nodeData(n: GraphNode) {
-			const phaseData = buildPhaseData(n.id, undefined);
 			return {
 				displayName: n.displayName,
 				status: n.status,
 				isSystem: n.isSystem,
 				nodeType: n.nodeType,
 				hasOutgoing: sources.has(n.id),
-				hasIncoming: targets.has(n.id),
-				currentPhase: phaseData
+				hasIncoming: targets.has(n.id)
 			};
 		}
 

@@ -26,13 +26,6 @@ export interface OrchestratorStatus {
 	recentActivity: OrchestratorActivity[];
 }
 
-// AppPhase is reserved for future use when per-node phase tracking is added.
-export interface AppPhase {
-	appName: string;
-	phase: string;
-	status: 'active' | 'done' | 'error' | 'warning';
-}
-
 export interface DeveloperGraph {
 	nodes: GraphNode[];
 	edges: GraphEdge[];

@@ -50,19 +50,16 @@ func (o *Orchestrator) SyncContainerState(ctx context.Context) {
 			o.logger.Info("cleaning up uninstalled app", "app", app.CatalogID)
 			_ = o.appStore.Uninstall(app.CatalogID)
 
-		case (app.Status == "installing" || app.Status == "starting") && !state.Running:
-			// Interrupted transition → mark error
-			o.logger.Info("marking interrupted app as error", "app", app.CatalogID, "previous_status", app.Status)
-			_ = o.appStore.UpdateStatus(app.CatalogID, "error")
-
 		case app.Status == "running" && !state.Exists:
-			// Container gone entirely → mark stopped so reconciler re-creates it
+			// Container gone entirely → mark stopped so it can be re-created.
 			o.logger.Info("container gone, marking as stopped", "app", app.CatalogID)
 			_ = o.appStore.UpdateStatus(app.CatalogID, "stopped")
 
-		case (app.Status == "error" || app.Status == "stopped") && state.Running:
-			// Container recovered or was started externally → mark running
-			o.logger.Info("container running, marking as running", "app", app.CatalogID, "previous_status", app.Status)
+		case app.Status == "stopped" && state.Running:
+			// Container recovered externally after a clean stop → mark running.
+			// "stopped" only applies to apps that previously completed full lifecycle,
+			// so no lifecycle re-run is needed.
+			o.logger.Info("container recovered, marking as running", "app", app.CatalogID)
 			_ = o.appStore.UpdateStatus(app.CatalogID, "running")
 		}
 	}
