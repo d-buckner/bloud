@@ -32,12 +32,18 @@ func (o *Orchestrator) SyncContainerState(ctx context.Context) {
 	}
 
 	for _, app := range apps {
+		if app.IsSystem {
+			continue
+		}
 		catalogApp, err := o.catalog.Get(app.CatalogID)
-		if err != nil || catalogApp.Container == nil {
+		defs := catalogApp.ContainerDefs()
+		// Skip apps with no container definitions or multi-container apps
+		// (multi-container lifecycle is tracked via graph events, not this path).
+		if err != nil || len(defs) != 1 {
 			continue
 		}
 
-		containerName := ContainerName(catalogApp)
+		containerName := defs[0].Name
 		state, err := o.config.Containers.Inspect(ctx, containerName)
 		if err != nil {
 			o.logger.Warn("failed to inspect container during sync", "app", app.CatalogID, "error", err)
@@ -145,51 +151,50 @@ func (o *Orchestrator) RegenerateRoutes() error {
 	return o.traefikGen.GenerateAll(apps, remoteRoutes, tailnetDomain)
 }
 
-// ContainerName returns the container name for a catalog app.
-func ContainerName(app *catalog.App) string {
-	if app.Container.Name != "" {
-		return app.Container.Name
-	}
-	return "apps-" + app.CatalogID
-}
-
-// ContainerSpec builds a container spec from catalog metadata.
-// extraVars supplies additional template variables (e.g. "postgresPassword") beyond
-// the built-in {{dataDir}} and {{appDataDir}}.
-func ContainerSpec(app *catalog.App, dataDir string, extraVars map[string]string) (containerruntime.Spec, error) {
-	if app.Container == nil || app.Container.Image == "" {
-		return containerruntime.Spec{}, fmt.Errorf("app %s has no container image", app.CatalogID)
+// ContainerSpecFromDef builds a container spec from a ContainerDef.
+// appCatalogID is the owning app's catalog ID, used for the io.bloud.app label
+// and for resolving {{appDataDir}}.
+// extraVars supplies additional template variables beyond {{dataDir}} and {{appDataDir}}.
+func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir string, extraVars map[string]string) (containerruntime.Spec, error) {
+	if def.Image == "" {
+		return containerruntime.Spec{}, fmt.Errorf("container %q has no image", def.Name)
 	}
 
 	render := func(value string) string {
 		value = strings.ReplaceAll(value, "{{dataDir}}", dataDir)
-		value = strings.ReplaceAll(value, "{{appDataDir}}", filepath.Join(dataDir, app.CatalogID))
+		value = strings.ReplaceAll(value, "{{appDataDir}}", filepath.Join(dataDir, appCatalogID))
 		for k, v := range extraVars {
 			value = strings.ReplaceAll(value, "{{"+k+"}}", v)
 		}
 		return value
 	}
 
-	env := make(map[string]string, len(app.Container.Environment))
-	for k, v := range app.Container.Environment {
+	// Use Network (singular) if set; fall back to first entry of Networks (plural).
+	network := def.Network
+	if network == "" && len(def.Networks) > 0 {
+		network = def.Networks[0]
+	}
+
+	env := make(map[string]string, len(def.Environment))
+	for k, v := range def.Environment {
 		env[k] = render(v)
 	}
 
 	spec := containerruntime.Spec{
-		Name:          ContainerName(app),
-		Image:         app.Container.Image,
+		Name:          def.Name,
+		Image:         def.Image,
 		Environment:   env,
-		Network:       app.Container.Network,
-		Command:       app.Container.Command,
-		RestartPolicy: app.Container.RestartPolicy,
-		Labels:        map[string]string{"io.bloud.app": app.CatalogID},
+		Network:       network,
+		Command:       def.Command,
+		RestartPolicy: def.RestartPolicy,
+		Labels:        map[string]string{"io.bloud.app": appCatalogID},
 	}
-	for _, port := range app.Container.Ports {
+	for _, port := range def.Ports {
 		spec.Ports = append(spec.Ports, containerruntime.Port{
 			Host: port.Host, Container: port.Container, Protocol: port.Protocol,
 		})
 	}
-	for _, volume := range app.Container.Volumes {
+	for _, volume := range def.Volumes {
 		spec.Mounts = append(spec.Mounts, containerruntime.Mount{
 			Source: render(volume.Source), Destination: volume.Destination, Options: volume.Options,
 		})

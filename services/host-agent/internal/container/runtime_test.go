@@ -52,6 +52,10 @@ func (f *fakePodmanClient) EnsureNetwork(_ context.Context, name string) error {
 	return nil
 }
 
+func (f *fakePodmanClient) Exec(_ context.Context, _ string, _ []string) ([]byte, error) {
+	return nil, nil
+}
+
 func TestPodmanRuntimeEnsureIsIdempotentAndRecreatesChangedSpec(t *testing.T) {
 	client := &fakePodmanClient{}
 	runtime := newPodmanRuntime(client)

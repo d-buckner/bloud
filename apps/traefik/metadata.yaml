@@ -7,7 +7,20 @@ isSystem: true
 
 integrations: {}
 
-healthCheck:
-  path: /ping
-  interval: 2
-  timeout: 30
+containers:
+  - name: apps-traefik
+    image: docker.io/traefik:v3.4
+    network: host
+    restartPolicy: always
+    volumes:
+      - source: "{{dataDir}}/traefik/traefik.yml"
+        destination: /etc/traefik/traefik.yml
+        options: [ro]
+      - source: "{{dataDir}}/traefik/dynamic"
+        destination: /dynamic
+        options: [ro]
+    healthCheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ping | grep -q ok"]
+      interval: 1
+      timeout: 5
+      retries: 30

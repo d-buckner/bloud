@@ -95,7 +95,6 @@ func (h *convergeHarness) addCatalogApp(name, displayName string, port int) {
 		DisplayName: displayName,
 		Version:     "1.0.0",
 		Port:        port,
-		Container:   &catalog.ContainerSpec{Image: name + ":latest"},
 	})
 }
 
@@ -299,7 +298,6 @@ func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
 	h.catalogCache.AddApp(&catalog.App{
 		CatalogID: "traefik", DisplayName: "Traefik", Version: "1.0.0",
 		Port: 8080, IsSystem: true,
-		Container: &catalog.ContainerSpec{Image: "traefik:latest"},
 	})
 	h.appStore.AddApp(&store.InstalledApp{
 		CatalogID: "traefik", Status: "running", IsSystem: true, Port: 8080,
@@ -328,7 +326,6 @@ func TestConverge_AddRemoteAppIntent_CreatesRemoteApp(t *testing.T) {
 			Strategy:    "forward-auth",
 			BypassPaths: []string{"/api/public"},
 		},
-		Container: &catalog.ContainerSpec{Image: "jellyfin:latest"},
 	})
 
 	h.orch.converge(context.Background(), []Intent{
@@ -358,7 +355,6 @@ func TestConverge_AddRemoteAppIntent_NilBypassPaths(t *testing.T) {
 		Version:     "1.0.0",
 		Port:        7878,
 		SSO:         catalog.SSO{Strategy: "native-oidc"},
-		Container:   &catalog.ContainerSpec{Image: "radarr:latest"},
 	})
 
 	h.orch.converge(context.Background(), []Intent{

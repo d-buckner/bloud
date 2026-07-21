@@ -27,30 +27,30 @@ sso:
   bypassPaths:
     - /rest/
 
-healthCheck:
-  path: /ping
-  interval: 5
-  timeout: 60
-
-container:
-  name: apps-navidrome
-  image: docker.io/deluan/navidrome:latest
-  network: apps-net
-  restartPolicy: always
-  environment:
-    ND_MUSICFOLDER: /music
-    ND_DATAFOLDER: /data
-    ND_PORT: "4533"
-    ND_LOGLEVEL: info
-    ND_ENABLETRANSCODINGCONFIG: "false"
-    ND_EXTAUTH_USERHEADER: X-authentik-username
-    ND_EXTAUTH_TRUSTEDSOURCES: 0.0.0.0/0
-  ports:
-    - host: 4533
-      container: 4533
-  volumes:
-    - source: "{{appDataDir}}/data"
-      destination: /data
-    - source: "{{dataDir}}/media/music"
-      destination: /music
-      options: [ro]
+containers:
+  - name: apps-navidrome
+    image: docker.io/deluan/navidrome:latest
+    network: apps-net
+    restartPolicy: always
+    environment:
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data
+      ND_PORT: "4533"
+      ND_LOGLEVEL: info
+      ND_ENABLETRANSCODINGCONFIG: "false"
+      ND_EXTAUTH_USERHEADER: X-authentik-username
+      ND_EXTAUTH_TRUSTEDSOURCES: 0.0.0.0/0
+    ports:
+      - host: 4533
+        container: 4533
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
+      - source: "{{dataDir}}/media/music"
+        destination: /music
+        options: [ro]
+    healthCheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4533/ping || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 12

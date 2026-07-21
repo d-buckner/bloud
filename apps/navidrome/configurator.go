@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -46,42 +45,26 @@ func NewConfigurator(port int, authentikURL string, secrets configurator.AppSecr
 }
 
 func (c *Configurator) Name() string {
-	return appName
+	return "apps-navidrome"
 }
 
 // PreStart creates the required data and music directories before the container starts.
-// Returns false (no container restart needed).
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) error {
 	dirs := []string{
 		filepath.Join(state.DataPath, "data"),
 		filepath.Join(state.BloudDataPath, "media", "music"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-	return false, nil
+	return nil
 }
-
-// EnsureContainer is a no-op for the Navidrome configurator when used outside the
-// event-driven Orchestrator (e.g. CLI mode).
-func (c *Configurator) EnsureContainer(_ context.Context, _ bool) error { return nil }
 
 // Remove is a no-op for the Navidrome configurator; container and data removal
 // are handled at a higher level by the orchestrator.
 func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
-// HealthCheck waits for Navidrome to be ready
-func (c *Configurator) HealthCheck(ctx context.Context) error {
-	url := fmt.Sprintf("http://localhost:%d/ping", c.port)
-	c.logger.Info("waiting for Navidrome health endpoint", "url", url)
-	if err := configurator.WaitForHTTP(ctx, url, 60*time.Second); err != nil {
-		return err
-	}
-	c.logger.Info("Navidrome health check passed")
 	return nil
 }
 

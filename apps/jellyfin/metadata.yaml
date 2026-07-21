@@ -24,31 +24,31 @@ integrations:
 sso:
   strategy: ldap
 
-healthCheck:
-  path: /health
-  interval: 5
-  timeout: 60
-
-container:
-  name: apps-jellyfin
-  image: docker.io/jellyfin/jellyfin:10.11.11
-  network: apps-net
-  restartPolicy: always
-  environment:
-    PUID: "1000"
-    PGID: "1000"
-    TZ: Etc/UTC
-  ports:
-    - host: 8096
-      container: 8096
-  volumes:
-    - source: "{{appDataDir}}/config"
-      destination: /config
-    - source: "{{appDataDir}}/cache"
-      destination: /cache
-    - source: "{{dataDir}}/media/movies"
-      destination: /movies
-      options: [ro]
-    - source: "{{dataDir}}/media/shows"
-      destination: /shows
-      options: [ro]
+containers:
+  - name: apps-jellyfin
+    image: docker.io/jellyfin/jellyfin:10.11.11
+    network: apps-net
+    restartPolicy: always
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+    ports:
+      - host: 8096
+        container: 8096
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /config
+      - source: "{{appDataDir}}/cache"
+        destination: /cache
+      - source: "{{dataDir}}/media/movies"
+        destination: /movies
+        options: [ro]
+      - source: "{{dataDir}}/media/shows"
+        destination: /shows
+        options: [ro]
+    healthCheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8096/System/Info/Public"]
+      interval: 2
+      timeout: 10
+      retries: 60

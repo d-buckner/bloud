@@ -27,31 +27,19 @@ type NodeLifecycle interface {
 
 	// PreStart runs before the container starts.
 	// Use for: config files, directories, certificates, initial setup.
-	// Returns true if any managed output changed, signaling the container
-	// should be restarted (EnsureContainer will be called with forceRestart=true).
-	PreStart(ctx context.Context, state *AppState) (changed bool, err error)
-
-	// EnsureContainer creates or recreates the app container.
-	// forceRestart removes any existing container before re-creating.
-	EnsureContainer(ctx context.Context, forceRestart bool) error
-
-	// HealthCheck waits for the app to be ready for configuration.
-	// Use for: waiting for web UI, API, database to accept connections.
-	// Returns nil when ready, error on timeout.
-	HealthCheck(ctx context.Context) error
+	PreStart(ctx context.Context, state *AppState) error
 
 	// PostStart runs after container is healthy.
 	// Use for: API calls, integrations, runtime configuration.
 	// Called every reconciliation - must be idempotent.
 	PostStart(ctx context.Context, state *AppState) error
 
-	// Remove tears down the app: stops the container and optionally removes
-	// all persistent data. Must be idempotent.
+	// Remove tears down the app and optionally removes all persistent data.
+	// Must be idempotent.
 	Remove(ctx context.Context, state *AppState, clearData bool) error
 }
 
 // Configurator is an alias for NodeLifecycle for backward compatibility.
-// Deprecated: use NodeLifecycle directly.
 type Configurator = NodeLifecycle
 
 // LDAPOutput describes the LDAP provider endpoint available to configurators.

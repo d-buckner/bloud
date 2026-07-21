@@ -26,11 +26,6 @@ func fixtureJellyfin() *catalog.App {
 		Port:        8096,
 		Category:    "media",
 		IsSystem:    false,
-		HealthCheck: catalog.HealthCheck{
-			Path:     "/health",
-			Interval: 2,
-			Timeout:  30,
-		},
 	}
 }
 
@@ -44,11 +39,6 @@ func fixtureMiniflux() *catalog.App {
 		SSO: catalog.SSO{
 			Strategy:     "native-oidc",
 			CallbackPath: "/oauth2/oidc/callback",
-		},
-		HealthCheck: catalog.HealthCheck{
-			Path:     "/healthcheck",
-			Interval: 2,
-			Timeout:  30,
 		},
 	}
 }

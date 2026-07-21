@@ -380,6 +380,33 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// OrchestratorReady returns a channel that is closed after the orchestrator's
+// first convergence pass completes (system apps are up).
+func (s *Server) OrchestratorReady() <-chan struct{} {
+	return s.orch.Ready()
+}
+
+// CheckSystemHealth inspects the lifecycle graph for system apps in ERROR status.
+// Returns an error describing which system apps failed.
+func (s *Server) CheckSystemHealth() error {
+	if s.appStore == nil {
+		return nil
+	}
+	apps, err := s.appStore.GetAll()
+	if err != nil {
+		return fmt.Errorf("load apps: %w", err)
+	}
+	for _, app := range apps {
+		if !app.IsSystem {
+			continue
+		}
+		if app.Status == "error" {
+			return fmt.Errorf("system app %q is in error state", app.CatalogID)
+		}
+	}
+	return nil
+}
+
 // tryInitAuth attempts to initialize authentication, refreshing the token if needed.
 // This is called lazily on first auth request to handle the case where the Authentik
 // configurator runs after server start and produces a fresh API token.

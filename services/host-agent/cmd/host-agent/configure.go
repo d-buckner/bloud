@@ -39,9 +39,11 @@ func runConfigure(args []string) int {
 
 	cfg := config.Load()
 
-	// Create and populate registry first to check if app has a configurator
+	// Create and populate registry first to check if app has a configurator.
+	// In CLI mode, system configurators are not needed (system apps are managed
+	// by the orchestrator in server mode). Pass nil runtime and empty catalog.
 	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg, logger)
+	appconfig.RegisterAll(registry, cfg, nil, nil, logger, nil)
 
 	// For prestart, always regenerate env files from secrets.json before starting any app
 	// This ensures secrets.json is always the source of truth
@@ -166,13 +168,10 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 1
 	}
 
-	changed, err := cfg.PreStart(ctx, state)
-	if err != nil {
+	if err = cfg.PreStart(ctx, state); err != nil {
 		logger.Error("prestart failed", "app", appName, "error", err)
 		return 1
 	}
-	logger.Info("prestart completed", "app", appName, "changed", changed)
-
 	logger.Info("prestart completed", "app", appName)
 	return 0
 }
@@ -185,13 +184,6 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 		// No configurator for this app - that's OK, just succeed
 		logger.Debug("no configurator registered", "app", appName)
 		return 0
-	}
-
-	// HealthCheck first
-	logger.Debug("waiting for app to be healthy", "app", appName)
-	if err := cfg.HealthCheck(ctx); err != nil {
-		logger.Error("healthcheck failed", "app", appName, "error", err)
-		return 1
 	}
 
 	ldapOutput := appCfg.LDAPOutput()

@@ -116,12 +116,6 @@ func TestOrchestrator_FullLifecycle_OrderedPhases(t *testing.T) {
 	var callOrder []string
 	mockCfg.On("PreStart", mock.Anything, mock.Anything).
 		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "prestart") }).
-		Return(false, nil)
-	mockCfg.On("EnsureContainer", mock.Anything, false).
-		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "ensure-container") }).
-		Return(nil)
-	mockCfg.On("HealthCheck", mock.Anything).
-		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "health-check") }).
 		Return(nil)
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).
 		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "poststart") }).
@@ -129,7 +123,7 @@ func TestOrchestrator_FullLifecycle_OrderedPhases(t *testing.T) {
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
-	assert.Equal(t, []string{"prestart", "ensure-container", "health-check", "poststart"}, callOrder)
+	assert.Equal(t, []string{"prestart", "poststart"}, callOrder)
 
 	node, err := to.g.GetNode("qbittorrent")
 	require.NoError(t, err)
@@ -144,9 +138,7 @@ func TestOrchestrator_PhaseStatusUpdates(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
-	mockCfg.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// Capture actual status transitions via event listener.
@@ -164,30 +156,13 @@ func TestOrchestrator_PhaseStatusUpdates(t *testing.T) {
 	got := statuses
 	mu.Unlock()
 
+	// Without a container def (no catalog in unit tests), EnsureContainer and
+	// HealthCheck are skipped. Status transitions: PreStartConfig → PostStartConfig → Running.
 	assert.Equal(t, []graph.NodeStatus{
 		graph.StatusPreStartConfig,
-		graph.StatusStarting,
 		graph.StatusPostStartConfig,
 		graph.StatusRunning,
 	}, got)
-}
-
-func TestOrchestrator_PreStartChanged_EnsureContainerForceRestart(t *testing.T) {
-	to := newTestOrchestrator()
-
-	require.NoError(t, to.g.AddNode("qbittorrent"))
-	require.NoError(t, to.g.SetTargetStatus("qbittorrent", graph.StatusRunning))
-
-	mockCfg := new(MockConfigurator)
-	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(true, nil) // changed!
-	mockCfg.On("EnsureContainer", mock.Anything, true).Return(nil)         // forceRestart=true
-	mockCfg.On("HealthCheck", mock.Anything).Return(nil)
-	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
-
-	require.NoError(t, to.orch.Reconcile(context.Background()))
-
-	mockCfg.AssertCalled(t, "EnsureContainer", mock.Anything, true)
 }
 
 func TestOrchestrator_NoConfigurator_MarkedRunning(t *testing.T) {
@@ -213,31 +188,9 @@ func TestOrchestrator_PreStartError_ErrorStatus_LaterPhasesSkipped(t *testing.T)
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("config error"))
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(errors.New("config error"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background())) // reconcile itself doesn't fail
-
-	node, err := to.g.GetNode("qbittorrent")
-	require.NoError(t, err)
-	assert.Equal(t, graph.StatusError, node.ActualStatus)
-	mockCfg.AssertNotCalled(t, "EnsureContainer", mock.Anything, mock.Anything)
-	mockCfg.AssertNotCalled(t, "HealthCheck", mock.Anything)
-	mockCfg.AssertNotCalled(t, "PostStart", mock.Anything, mock.Anything)
-}
-
-func TestOrchestrator_HealthCheckError_ErrorStatus_PostStartSkipped(t *testing.T) {
-	to := newTestOrchestrator()
-
-	require.NoError(t, to.g.AddNode("qbittorrent"))
-	require.NoError(t, to.g.SetTargetStatus("qbittorrent", graph.StatusRunning))
-
-	mockCfg := new(MockConfigurator)
-	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
-	mockCfg.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockCfg.On("HealthCheck", mock.Anything).Return(errors.New("not healthy"))
-
-	require.NoError(t, to.orch.Reconcile(context.Background()))
 
 	node, err := to.g.GetNode("qbittorrent")
 	require.NoError(t, err)
@@ -274,14 +227,10 @@ func TestOrchestrator_LevelOrdering_DependencyRunsFirst(t *testing.T) {
 		}
 	}
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Run(record("a-prestart")).Return(false, nil)
-	mockA.On("EnsureContainer", mock.Anything, false).Run(record("a-ensure")).Return(nil)
-	mockA.On("HealthCheck", mock.Anything).Run(record("a-health")).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Run(record("a-prestart")).Return(nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Run(record("a-poststart")).Return(nil)
 
-	mockB.On("PreStart", mock.Anything, mock.Anything).Run(record("b-prestart")).Return(false, nil)
-	mockB.On("EnsureContainer", mock.Anything, false).Run(record("b-ensure")).Return(nil)
-	mockB.On("HealthCheck", mock.Anything).Run(record("b-health")).Return(nil)
+	mockB.On("PreStart", mock.Anything, mock.Anything).Run(record("b-prestart")).Return(nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Run(record("b-poststart")).Return(nil)
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
@@ -309,7 +258,7 @@ func TestOrchestrator_LevelOrdering_DepErrorPreventsDependent(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("a failed"))
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(errors.New("a failed"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
@@ -338,26 +287,22 @@ func TestOrchestrator_WithinLevel_ConcurrentExecution(t *testing.T) {
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
 
-	// Barrier: both HealthChecks must run before either can complete.
+	// Barrier: both PostStarts must run before either can complete.
 	// If execution is sequential this deadlocks, proving concurrency is required.
 	var reached int32
 	ready := make(chan struct{})
-	healthCheckFn := func(_ mock.Arguments) {
+	postStartFn := func(_ mock.Arguments) {
 		if atomic.AddInt32(&reached, 1) == 2 {
 			close(ready)
 		}
 		<-ready
 	}
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
-	mockA.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockA.On("HealthCheck", mock.Anything).Run(healthCheckFn).Return(nil)
-	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockA.On("PostStart", mock.Anything, mock.Anything).Run(postStartFn).Return(nil)
 
-	mockB.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
-	mockB.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockB.On("HealthCheck", mock.Anything).Run(healthCheckFn).Return(nil)
-	mockB.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockB.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockB.On("PostStart", mock.Anything, mock.Anything).Run(postStartFn).Return(nil)
 
 	// If not concurrent this deadlocks; use a timeout via context.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -389,9 +334,7 @@ func TestOrchestrator_Staleness_AlreadyRunning_RerunPostStartWhenDepChanges(t *t
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
-	mockA.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockA.On("HealthCheck", mock.Anything).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// B should only re-run PostStart; no other phases.
@@ -402,8 +345,6 @@ func TestOrchestrator_Staleness_AlreadyRunning_RerunPostStartWhenDepChanges(t *t
 	mockA.AssertExpectations(t)
 	mockB.AssertExpectations(t)
 	mockB.AssertNotCalled(t, "PreStart", mock.Anything, mock.Anything)
-	mockB.AssertNotCalled(t, "EnsureContainer", mock.Anything, mock.Anything)
-	mockB.AssertNotCalled(t, "HealthCheck", mock.Anything)
 }
 
 func TestOrchestrator_Staleness_NoRerun_WhenDepErrors(t *testing.T) {
@@ -419,7 +360,7 @@ func TestOrchestrator_Staleness_NoRerun_WhenDepErrors(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("a failed"))
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(errors.New("a failed"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
@@ -500,9 +441,7 @@ func TestOrchestrator_RunningDeferredUntilAfterReconcile(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "app").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
-	mockCfg.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockCfg.On("HealthCheck", mock.Anything).Return(nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
 
 	// Capture the node's actual status at the moment PostStart runs — this is
 	// the last lifecycle phase, so if RUNNING were set eagerly it would already
@@ -546,9 +485,7 @@ func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
-	mockA.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockA.On("HealthCheck", mock.Anything).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// When B's PreStart runs, A has completed its lifecycle phases but has NOT
@@ -559,9 +496,7 @@ func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
 			nodeA, _ := to.g.GetNode("a")
 			aStatusWhenBStarted = nodeA.ActualStatus
 		}).
-		Return(false, nil)
-	mockB.On("EnsureContainer", mock.Anything, false).Return(nil)
-	mockB.On("HealthCheck", mock.Anything).Return(nil)
+		Return(nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))

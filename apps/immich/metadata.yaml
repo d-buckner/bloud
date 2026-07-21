@@ -1,0 +1,75 @@
+name: immich
+displayName: Immich
+description: Self-hosted photo and video management
+category: media
+isSystem: false
+port: 2283
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+
+containers:
+  - name: apps-immich-postgres
+    image: docker.io/pgvector/pgvector:pg16
+    network: immich-internal
+    restartPolicy: always
+    environment:
+      POSTGRES_PASSWORD: "{{postgresPassword}}"
+      POSTGRES_DB: immich
+      POSTGRES_USER: immich
+    volumes:
+      - source: "{{appDataDir}}/postgres"
+        destination: /var/lib/postgresql/data
+    healthCheck:
+      test: ["CMD-SHELL", "pg_isready -U immich"]
+      interval: 5
+      timeout: 5
+      retries: 10
+
+  - name: apps-immich-redis
+    image: docker.io/redis:7-alpine
+    network: immich-internal
+    restartPolicy: always
+    healthCheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5
+      timeout: 5
+      retries: 5
+
+  - name: apps-immich-server
+    image: ghcr.io/immich-app/immich-server:release
+    networks:
+      - immich-internal
+      - apps-net
+    restartPolicy: always
+    ports:
+      - host: 2283
+        container: 2283
+    environment:
+      DB_URL: "postgres://immich:{{postgresPassword}}@apps-immich-postgres:5432/immich"
+      REDIS_URL: "redis://apps-immich-redis:6379"
+      IMMICH_LOG_LEVEL: log
+    volumes:
+      - source: "{{appDataDir}}/upload"
+        destination: /usr/src/app/upload
+      - source: "{{appDataDir}}/external"
+        destination: /usr/src/app/external
+        options: [ro]
+    dependsOn:
+      - apps-immich-postgres
+      - apps-immich-redis
+
+  - name: apps-immich-ml
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    network: immich-internal
+    restartPolicy: always
+    environment:
+      IMMICH_LOG_LEVEL: log
+    volumes:
+      - source: "{{appDataDir}}/model-cache"
+        destination: /cache

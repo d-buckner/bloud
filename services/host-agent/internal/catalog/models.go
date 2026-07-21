@@ -15,24 +15,40 @@ type App struct {
 	Resources     Resources              `yaml:"resources" json:"resources"`
 	SSO           SSO                    `yaml:"sso" json:"sso"`
 	DefaultConfig map[string]interface{} `yaml:"defaultConfig" json:"defaultConfig"`
-	HealthCheck   HealthCheck            `yaml:"healthCheck" json:"healthCheck"`
-	Docs          Docs                   `yaml:"docs" json:"docs"`
-	Tags          []string               `yaml:"tags" json:"tags"`
-	Routing       *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Integrations  map[string]Integration `yaml:"integrations" json:"integrations"`
-	Container     *ContainerSpec         `yaml:"container,omitempty" json:"container,omitempty"`
+	Docs         Docs                   `yaml:"docs" json:"docs"`
+	Tags         []string               `yaml:"tags" json:"tags"`
+	Routing      *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Integrations map[string]Integration `yaml:"integrations" json:"integrations"`
+	Containers   []ContainerDef         `yaml:"containers,omitempty" json:"containers,omitempty"`
 }
 
-// ContainerSpec describes the container topology for an app.
-type ContainerSpec struct {
-	Name          string            `yaml:"name,omitempty" json:"name,omitempty"`
-	Image         string            `yaml:"image" json:"image"`
-	Network       string            `yaml:"network,omitempty" json:"network,omitempty"`
-	RestartPolicy string            `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
-	Command       []string          `yaml:"command,omitempty" json:"command,omitempty"`
-	Environment   map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
-	Ports         []ContainerPort   `yaml:"ports,omitempty" json:"ports,omitempty"`
-	Volumes       []ContainerVolume `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+// ContainerDef describes one container in a multi-container app.
+type ContainerDef struct {
+	Name          string                `yaml:"name" json:"name"`
+	Image         string                `yaml:"image" json:"image"`
+	Command       []string              `yaml:"command,omitempty" json:"command,omitempty"`
+	Network       string                `yaml:"network,omitempty" json:"network,omitempty"`
+	Networks      []string              `yaml:"networks,omitempty" json:"networks,omitempty"`
+	RestartPolicy string                `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
+	Environment   map[string]string     `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Ports         []ContainerPort       `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Volumes       []ContainerVolume     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	DependsOn     []string              `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	HealthCheck   *ContainerHealthCheck `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+}
+
+// ContainerHealthCheck defines a container-level health check command.
+type ContainerHealthCheck struct {
+	Test     []string `yaml:"test" json:"test"`
+	Interval int      `yaml:"interval" json:"interval"` // seconds between checks
+	Timeout  int      `yaml:"timeout" json:"timeout"`   // seconds before check is considered failed
+	Retries  int      `yaml:"retries" json:"retries"`   // consecutive failures before marking unhealthy
+}
+
+// ContainerDefs returns the app's container definitions.
+// Returns nil if no containers are defined.
+func (a *App) ContainerDefs() []ContainerDef {
+	return a.Containers
 }
 
 // ContainerPort maps a host port to a container port.
@@ -78,13 +94,6 @@ type SSOEnv struct {
 	Provider       string `yaml:"provider" json:"provider"`
 	ProviderName   string `yaml:"providerName" json:"providerName"`
 	UserCreation   string `yaml:"userCreation" json:"userCreation"`
-}
-
-// HealthCheck defines health check configuration
-type HealthCheck struct {
-	Path     string `yaml:"path" json:"path"`
-	Interval int    `yaml:"interval" json:"interval"` // seconds
-	Timeout  int    `yaml:"timeout" json:"timeout"`   // seconds
 }
 
 // Docs contains documentation links

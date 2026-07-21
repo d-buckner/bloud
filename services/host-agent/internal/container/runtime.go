@@ -58,6 +58,10 @@ type Runtime interface {
 	Ensure(ctx context.Context, spec Spec) (EnsureResult, error)
 	Remove(ctx context.Context, name string) error
 	Inspect(ctx context.Context, name string) (State, error)
+	// Exec runs a command inside a running container. Returns an error if the
+	// command exits with a non-zero status, the container is not running, or
+	// the context is cancelled.
+	Exec(ctx context.Context, name string, cmd []string) error
 }
 
 type podmanClient interface {
@@ -67,6 +71,7 @@ type podmanClient interface {
 	RemoveContainer(ctx context.Context, nameOrID string, force bool) error
 	InspectContainer(ctx context.Context, nameOrID string) (*podman.ContainerDetails, error)
 	EnsureNetwork(ctx context.Context, name string) error
+	Exec(ctx context.Context, containerName string, cmd []string) ([]byte, error)
 }
 
 // PodmanRuntime implements Runtime using the Podman API.
@@ -172,6 +177,11 @@ func validContainerName(name string) bool {
 		}
 	}
 	return true
+}
+
+func (r *PodmanRuntime) Exec(ctx context.Context, name string, cmd []string) error {
+	_, err := r.client.Exec(ctx, name, cmd)
+	return err
 }
 
 func (r *PodmanRuntime) Inspect(ctx context.Context, name string) (State, error) {

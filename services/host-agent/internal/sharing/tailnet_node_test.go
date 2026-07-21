@@ -42,6 +42,10 @@ func (f *FakeRuntime) Inspect(_ context.Context, _ string) (container.State, err
 	return container.State{}, nil
 }
 
+func (f *FakeRuntime) Exec(_ context.Context, _ string, _ []string) error {
+	return nil
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 func newTestManager(t *testing.T, rt *FakeRuntime) *TailnetNodeManager {

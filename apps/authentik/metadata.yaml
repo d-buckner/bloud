@@ -12,20 +12,110 @@ integrations:
     compatible:
       - app: traefik
         default: true
-  database:
-    required: true
-    multi: false
-    compatible:
-      - app: postgres
-        default: true
-  cache:
-    required: true
-    multi: false
-    compatible:
-      - app: redis
-        default: true
 
-healthCheck:
-  path: /-/health/live/
-  interval: 2
-  timeout: 90
+containers:
+  - name: apps-authentik-postgres
+    image: docker.io/postgres:16-alpine
+    network: authentik-internal
+    restartPolicy: always
+    environment:
+      POSTGRES_PASSWORD: "{{postgresPassword}}"
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+    volumes:
+      - source: "{{appDataDir}}/postgres"
+        destination: /var/lib/postgresql/data
+    healthCheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik"]
+      interval: 5
+      timeout: 5
+      retries: 10
+
+  - name: apps-authentik-redis
+    image: docker.io/redis:7-alpine
+    network: authentik-internal
+    restartPolicy: always
+    healthCheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5
+      timeout: 5
+      retries: 5
+
+  - name: apps-authentik-server
+    image: ghcr.io/goauthentik/server:2025.10.3
+    command: [server]
+    networks:
+      - authentik-internal
+      - apps-net
+    restartPolicy: always
+    ports:
+      - host: 9001
+        container: 9000
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: apps-authentik-postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: "{{postgresPassword}}"
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_REDIS__HOST: apps-authentik-redis
+      AUTHENTIK_SECRET_KEY: "{{authentikSecretKey}}"
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "{{authentikAdminPassword}}"
+      AUTHENTIK_BOOTSTRAP_EMAIL: "{{authentikAdminEmail}}"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "{{authentikBootstrapToken}}"
+    volumes:
+      - source: "{{appDataDir}}/media"
+        destination: /media
+      - source: "{{appDataDir}}/templates"
+        destination: /templates
+      - source: "{{appDataDir}}/authentik-auth-flow.yaml"
+        destination: /blueprints/default/flow-default-authentication-flow.yaml
+        options: [ro]
+    healthCheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/-/health/ready/ 2>/dev/null || exit 1"]
+      interval: 10
+      timeout: 10
+      retries: 60
+    dependsOn:
+      - apps-authentik-postgres
+      - apps-authentik-redis
+
+  - name: apps-authentik-worker
+    image: ghcr.io/goauthentik/server:2025.10.3
+    command: [worker]
+    network: authentik-internal
+    restartPolicy: always
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: apps-authentik-postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: "{{postgresPassword}}"
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_REDIS__HOST: apps-authentik-redis
+      AUTHENTIK_SECRET_KEY: "{{authentikSecretKey}}"
+    volumes:
+      - source: "{{appDataDir}}/media"
+        destination: /media
+      - source: "{{appDataDir}}/templates"
+        destination: /templates
+      - source: "{{appDataDir}}/authentik-auth-flow.yaml"
+        destination: /blueprints/default/flow-default-authentication-flow.yaml
+        options: [ro]
+    dependsOn:
+      - apps-authentik-postgres
+      - apps-authentik-redis
+
+  - name: apps-authentik-ldap
+    image: ghcr.io/goauthentik/ldap:2025.10.3
+    networks:
+      - authentik-internal
+      - apps-net
+    restartPolicy: always
+    ports:
+      - host: 3389
+        container: 3389
+      - host: 6636
+        container: 6636
+    environment:
+      AUTHENTIK_HOST: "http://apps-authentik-server:9000"
+      AUTHENTIK_INSECURE: "true"
+      AUTHENTIK_TOKEN: "{{authentikLdapToken}}"
+    dependsOn:
+      - apps-authentik-server

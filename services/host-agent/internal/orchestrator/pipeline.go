@@ -231,12 +231,44 @@ func (o *Orchestrator) recordIntent(appName string, integrations map[string]stri
 	})
 }
 
+// ensureSystemAppsInstalled records all system apps in the store if not already present.
+// On first boot this inserts them; on subsequent boots it's a no-op.
+func (o *Orchestrator) ensureSystemAppsInstalled() {
+	if o.appStore == nil || o.catalog == nil {
+		return
+	}
+	allApps, err := o.catalog.GetAll()
+	if err != nil {
+		o.logger.Warn("failed to load catalog for system app install", "error", err)
+		return
+	}
+	for _, app := range allApps {
+		if !app.IsSystem {
+			continue
+		}
+		existing, _ := o.appStore.GetByCatalogID(app.CatalogID)
+		if existing != nil {
+			continue
+		}
+		o.logger.Info("auto-installing system app", "app", app.CatalogID)
+		if err := o.appStore.Install(app.CatalogID, app.DisplayName, app.Version, nil, &store.InstallOptions{
+			Port:     app.Port,
+			IsSystem: true,
+		}); err != nil {
+			o.logger.Warn("failed to auto-install system app", "app", app.CatalogID, "error", err)
+		}
+	}
+}
+
 // convergeFromStores reads all stores and drives the system toward the desired state.
 func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData map[string]bool) {
 	if o.appStore == nil {
 		return
 	}
 	start := time.Now()
+
+	// Step 0: Ensure system apps are installed in the store.
+	o.ensureSystemAppsInstalled()
 
 	// Step 1: Sync container state (align DB with reality).
 	o.logger.Info("convergence step", "step", "sync-container-state")
@@ -278,26 +310,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	// Nodes and edges are populated here so the Orchestrator enforces dependency ordering.
 	o.logger.Info("convergence step", "step", "set-graph-targets")
 	o.recordActivity("converge_step", "set-graph-targets")
-	appDeps := computeAppDeps(appMap, o.catalog)
-
-	// Ensure all nodes exist before adding edges.
-	for appName := range appMap {
-		if existing, _ := o.graph.GetNode(appName); existing == nil {
-			_ = o.graph.AddNode(appName)
-		}
-	}
-
-	// Register dependency edges.
-	for appName, deps := range appDeps {
-		for _, dep := range deps {
-			_ = o.graph.AddEdge(appName, dep)
-		}
-	}
-
-	// Set all targets to RUNNING.
-	for appName := range appMap {
-		_ = o.graph.SetTargetStatus(appName, graph.StatusRunning)
-	}
+	o.populateGraphNodes(appMap)
 
 	// Step 4: Converge tailnet nodes/gateway/proxies.
 	o.logger.Info("convergence step", "step", "converge-tailnet")
@@ -436,6 +449,107 @@ func (o *Orchestrator) provisionTailnetSSO(ctx context.Context) bool {
 
 	o.logger.Info("tailnet forward_domain SSO provisioned", "domain", domain)
 	return true
+}
+
+// populateGraphNodes creates graph nodes and edges for all installed apps.
+// Apps with multiple containers (containers: list in metadata) are expanded into
+// one node per container. Single-container apps retain a single node per app.
+// Within-app dependsOn edges are wired from each container's DependsOn list.
+// Inter-app edges connect from each app's primary container to the provider's
+// primary container.
+func (o *Orchestrator) populateGraphNodes(appMap map[string]*store.InstalledApp) {
+	// Pass 1: create nodes.
+	for appName := range appMap {
+		var defs []catalog.ContainerDef
+		var hasCatalogContainers bool
+		if o.catalog != nil {
+			if catalogApp, err := o.catalog.Get(appName); err == nil && catalogApp != nil {
+				if len(catalogApp.Containers) > 0 {
+					defs = catalogApp.ContainerDefs()
+					hasCatalogContainers = true
+				}
+			}
+		}
+
+		if hasCatalogContainers {
+			// Multi-container app: create one node per container def.
+			for _, def := range defs {
+				if existing, _ := o.graph.GetNode(def.Name); existing == nil {
+					_ = o.graph.AddNode(def.Name)
+				}
+				o.registerContainerOwner(def.Name, appName)
+			}
+		} else {
+			// Legacy or no-container app: one node with the catalog ID.
+			if existing, _ := o.graph.GetNode(appName); existing == nil {
+				_ = o.graph.AddNode(appName)
+			}
+		}
+	}
+
+	// Pass 2: wire within-app dependsOn edges for multi-container apps.
+	for appName := range appMap {
+		if o.catalog == nil {
+			continue
+		}
+		catalogApp, err := o.catalog.Get(appName)
+		if err != nil || catalogApp == nil {
+			continue
+		}
+		if len(catalogApp.Containers) == 0 {
+			continue
+		}
+		defs := catalogApp.ContainerDefs()
+		for _, def := range defs {
+			for _, dep := range def.DependsOn {
+				_ = o.graph.AddEdge(def.Name, dep)
+			}
+		}
+	}
+
+	// Pass 3: wire inter-app dependency edges.
+	appDeps := computeAppDeps(appMap, o.catalog)
+	for appName, deps := range appDeps {
+		fromNode := o.primaryContainerNode(appName)
+		for _, dep := range deps {
+			toNode := o.primaryContainerNode(dep)
+			_ = o.graph.AddEdge(fromNode, toNode)
+		}
+	}
+
+	// Pass 4: set all targets to RUNNING.
+	for appName := range appMap {
+		if o.catalog != nil {
+			if catalogApp, err := o.catalog.Get(appName); err == nil && catalogApp != nil {
+				if defs := catalogApp.ContainerDefs(); len(defs) > 0 {
+					for _, def := range defs {
+						_ = o.graph.SetTargetStatus(def.Name, graph.StatusRunning)
+					}
+					continue
+				}
+			}
+		}
+		_ = o.graph.SetTargetStatus(appName, graph.StatusRunning)
+	}
+}
+
+// primaryContainerNode returns the graph node ID that represents the "entry point"
+// for an app in inter-app dependency edges. For multi-container apps, returns the
+// last container's name (the main service container). For single-container apps,
+// returns the catalog ID itself.
+func (o *Orchestrator) primaryContainerNode(appName string) string {
+	if o.catalog == nil {
+		return appName
+	}
+	catalogApp, err := o.catalog.Get(appName)
+	if err != nil || catalogApp == nil {
+		return appName
+	}
+	if len(catalogApp.Containers) == 0 {
+		return appName
+	}
+	defs := catalogApp.ContainerDefs()
+	return defs[len(defs)-1].Name
 }
 
 // computeAppDeps builds a map of app name → list of installed dependency names.

@@ -67,12 +67,12 @@ func (c *Configurator) getBaseURL() string {
 }
 
 func (c *Configurator) Name() string {
-	return "jellyfin"
+	return "apps-jellyfin"
 }
 
 // PreStart ensures directories exist, installs the LDAP plugin, and
-// configures network settings. Returns true if any managed output changed.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
+// configures network settings.
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
 	c.logger.Info("PreStart: creating data directories")
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
@@ -83,25 +83,24 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	c.logger.Info("PreStart: ensuring LDAP plugin")
 	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
 	if err != nil {
-		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
+		return fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
 	c.logger.Info("PreStart: configuring network")
 	networkChanged, err := c.configureNetwork(state.DataPath)
 	if err != nil {
-		return false, fmt.Errorf("failed to configure network: %w", err)
+		return fmt.Errorf("failed to configure network: %w", err)
 	}
 
-	changed := pluginInstalled || networkChanged
-	c.logger.Info("PreStart complete", "plugin_installed", pluginInstalled, "network_changed", networkChanged, "force_restart", changed)
-	return changed, nil
+	c.logger.Info("PreStart complete", "plugin_installed", pluginInstalled, "network_changed", networkChanged)
+	return nil
 }
 
 func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (bool, error) {
@@ -260,40 +259,6 @@ func (c *Configurator) configureNetwork(dataPath string) (bool, error) {
 	}
 	return changed, err
 }
-
-// HealthCheck waits for Jellyfin's API to be fully ready.
-// /health becomes healthy before the full API is initialised; we poll
-// /System/Info/Public (which returns 503 during initialisation and 200
-// once the server is ready) so that PostStart can proceed immediately.
-func (c *Configurator) HealthCheck(ctx context.Context) error {
-	url := c.getBaseURL() + "/System/Info/Public"
-	c.logger.Info("waiting for Jellyfin API to be ready", "url", url)
-
-	hctx, cancel := context.WithTimeout(ctx, 120*time.Second)
-	defer cancel()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-hctx.Done():
-			return fmt.Errorf("Jellyfin API not ready within 2 minutes: %w", hctx.Err())
-		case <-ticker.C:
-			if _, err := c.getSystemInfo(hctx); err != nil {
-				c.logger.Info("Jellyfin not yet ready", "error", err)
-				continue
-			}
-			c.logger.Info("Jellyfin API ready")
-			return nil
-		}
-	}
-}
-
-// EnsureContainer is a no-op for the Jellyfin configurator when used outside the
-// event-driven Orchestrator (e.g. CLI mode). The Orchestrator supplies a real
-// BaseNodeLifecycle at runtime once the container runtime is available.
-func (c *Configurator) EnsureContainer(_ context.Context, _ bool) error { return nil }
 
 // Remove is a no-op for the Jellyfin configurator; container and data removal
 // are handled at a higher level by the orchestrator.

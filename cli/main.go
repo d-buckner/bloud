@@ -103,13 +103,6 @@ func main() {
 		exitCode = cmdValidate(args)
 	case "depgraph":
 		exitCode = cmdDepGraph()
-	case "installer":
-		if len(args) > 0 && args[0] == "stop" {
-			exitCode = cmdInstallerStop()
-		} else {
-			exitCode = cmdInstaller()
-		}
-
 	case "help", "--help", "-h":
 		printUsage()
 		exitCode = 0
@@ -157,8 +150,6 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Other:")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
-	fmt.Println("  installer       Start installer UI in mock mode (http://localhost:5174)")
-	fmt.Println("  installer stop  Stop the installer dev server")
 	fmt.Println()
 	fmt.Println("Lima VM quick-start:")
 	fmt.Println("  limactl create --name=bloud-dev dev/lima.yaml")

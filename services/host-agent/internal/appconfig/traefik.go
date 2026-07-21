@@ -1,79 +1,82 @@
-package main
+package appconfig
 
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
-const traefikImage = "docker.io/traefik:v3.4"
+// TraefikConfigurator manages the Traefik reverse proxy lifecycle.
+type TraefikConfigurator struct {
+	runtime       containerruntime.Runtime
+	traefikPort   int
+	hostAgentPort int
+	authentikPort int
+	dataDir       string
+}
 
-// bootstrapTraefik ensures the Traefik reverse proxy is running with proper
-// static and dynamic configuration. It runs Traefik on the host network so
-// it can reach the host-agent process at localhost:3000.
-func bootstrapTraefik(cfg *config.Config, runtime containerruntime.Runtime, logger *slog.Logger) error {
-	ctx := context.Background()
+// NewTraefikConfigurator creates a new Traefik configurator.
+func NewTraefikConfigurator(
+	runtime containerruntime.Runtime,
+	traefikPort int,
+	hostAgentPort int,
+	authentikPort int,
+	dataDir string,
+) *TraefikConfigurator {
+	return &TraefikConfigurator{
+		runtime:       runtime,
+		traefikPort:   traefikPort,
+		hostAgentPort: hostAgentPort,
+		authentikPort: authentikPort,
+		dataDir:       dataDir,
+	}
+}
 
-	traefikDir := filepath.Join(cfg.DataDir, "traefik")
+func (c *TraefikConfigurator) Name() string { return "traefik" }
+
+func (c *TraefikConfigurator) PreStart(_ context.Context, _ *configurator.AppState) error {
+	traefikDir := filepath.Join(c.dataDir, "traefik")
 	dynamicDir := filepath.Join(traefikDir, "dynamic")
 	staticConfigPath := filepath.Join(traefikDir, "traefik.yml")
 
-	// Create config directories.
 	for _, dir := range []string{traefikDir, dynamicDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
 	}
 
-	// Write Traefik static config.
-	staticConfig := traefikStaticConfig(cfg.TraefikPort)
-	if err := writeFileAtomic(staticConfigPath, []byte(staticConfig)); err != nil {
+	if err := writeFileAtomic(staticConfigPath, []byte(c.staticConfig())); err != nil {
 		return fmt.Errorf("write traefik static config: %w", err)
 	}
 
-	// Write base dynamic config (host-agent routes).
-	baseConfig := traefikBaseDynamicConfig(cfg.Port)
-	if err := writeFileAtomic(filepath.Join(dynamicDir, "base.yml"), []byte(baseConfig)); err != nil {
+	if err := writeFileAtomic(filepath.Join(dynamicDir, "base.yml"), []byte(c.baseDynamicConfig())); err != nil {
 		return fmt.Errorf("write traefik base config: %w", err)
 	}
 
-	// Write Authentik routes dynamic config.
-	authentikConfig := traefikAuthentikRoutes(cfg.AuthentikPort)
-	if err := writeFileAtomic(filepath.Join(dynamicDir, "authentik-routes.yml"), []byte(authentikConfig)); err != nil {
+	if err := writeFileAtomic(filepath.Join(dynamicDir, "authentik-routes.yml"), []byte(c.authentikRoutes())); err != nil {
 		return fmt.Errorf("write traefik authentik routes: %w", err)
 	}
 
-	// Start Traefik container on host network.
-	logger.Info("bootstrapping traefik")
-	if _, err := runtime.Ensure(ctx, containerruntime.Spec{
-		Name:          "apps-traefik",
-		Image:         traefikImage,
-		Network:       "host",
-		RestartPolicy: "always",
-		Mounts: []containerruntime.Mount{
-			{Source: staticConfigPath, Destination: "/etc/traefik/traefik.yml", Options: []string{"ro"}},
-			{Source: dynamicDir, Destination: "/dynamic", Options: []string{"ro"}},
-		},
-		Labels: map[string]string{"io.bloud.app": "traefik"},
-	}); err != nil {
-		return fmt.Errorf("ensure traefik container: %w", err)
-	}
-
-	logger.Info("traefik started", "port", cfg.TraefikPort)
 	return nil
 }
 
-// traefikStaticConfig generates the Traefik static configuration YAML.
-func traefikStaticConfig(port int) string {
+func (c *TraefikConfigurator) PostStart(_ context.Context, _ *configurator.AppState) error {
+	return nil
+}
+
+func (c *TraefikConfigurator) Remove(ctx context.Context, _ *configurator.AppState, _ bool) error {
+	return c.runtime.Remove(ctx, "apps-traefik")
+}
+
+func (c *TraefikConfigurator) staticConfig() string {
 	return `entryPoints:
   web:
-    address: ":` + strconv.Itoa(port) + `"
+    address: ":` + strconv.Itoa(c.traefikPort) + `"
     forwardedHeaders:
       insecure: true
 providers:
@@ -89,12 +92,8 @@ log:
 `
 }
 
-// traefikBaseDynamicConfig generates the base dynamic config with host-agent
-// routes. Base routes use PathPrefix only (no Host constraint) so they work
-// from any origin. App subdomain routes have higher priority (200+) and win
-// when a subdomain prefix matches.
-func traefikBaseDynamicConfig(hostAgentPort int) string {
-	agentURL := "http://localhost:" + strconv.Itoa(hostAgentPort)
+func (c *TraefikConfigurator) baseDynamicConfig() string {
+	agentURL := "http://localhost:" + strconv.Itoa(c.hostAgentPort)
 	return `http:
   routers:
     # Traefik dashboard (access via /dashboard/)
@@ -129,11 +128,8 @@ func traefikBaseDynamicConfig(hostAgentPort int) string {
 `
 }
 
-// traefikAuthentikRoutes generates Traefik dynamic config for routing
-// Authentik OAuth/OIDC/API paths to the Authentik server.
-// Routes use PathPrefix only (no Host constraint) so they work from any origin.
-func traefikAuthentikRoutes(authentikPort int) string {
-	authentikURL := "http://localhost:" + strconv.Itoa(authentikPort)
+func (c *TraefikConfigurator) authentikRoutes() string {
+	authentikURL := "http://localhost:" + strconv.Itoa(c.authentikPort)
 	return `http:
   routers:
     # Authentik embedded outpost for forward auth
@@ -192,8 +188,6 @@ func traefikAuthentikRoutes(authentikPort int) string {
 `
 }
 
-// writeFileAtomic writes data to a file atomically by writing to a temp file
-// and renaming it into place.
 func writeFileAtomic(path string, data []byte) error {
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {

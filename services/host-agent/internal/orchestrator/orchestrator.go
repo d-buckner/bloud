@@ -128,8 +128,14 @@ type Orchestrator struct {
 	// Start/Stop lifecycle
 	cancel  context.CancelFunc
 	started chan struct{}
+	ready   chan struct{}
 	done    chan struct{}
 	once    sync.Once
+
+	// containerOwner maps container node names to their owning app catalog ID.
+	// Used for multi-container apps where node names differ from app catalog IDs.
+	// e.g. "apps-authentik-server" → "authentik"
+	containerOwner map[string]string
 
 	// Activity log for the developer API
 	activityMu  sync.Mutex
@@ -172,7 +178,9 @@ func NewOrchestrator(
 		activeTailnetID:  config.ActiveTailnetID,
 		queue:            NewIntentQueue(DefaultDebounce),
 		started:          make(chan struct{}),
+		ready:            make(chan struct{}),
 		done:             make(chan struct{}),
+		containerOwner:   make(map[string]string),
 	}
 	o.setupStatusSync()
 	return o
@@ -187,13 +195,51 @@ func (o *Orchestrator) setupStatusSync() {
 		return
 	}
 	o.graph.On(graph.EventNodeUpdated, func(node graph.Node) {
+		appID := o.ownerApp(node.ID)
+		if appID == node.ID {
+			// Single-container node: direct status mapping.
+			switch node.ActualStatus {
+			case graph.StatusRunning:
+				_ = o.appStore.UpdateStatus(appID, "running")
+			case graph.StatusError:
+				_ = o.appStore.UpdateStatus(appID, "error")
+			}
+			return
+		}
+		// Multi-container node: aggregate across all containers.
+		// Error fires immediately on any container; running only when all are up.
 		switch node.ActualStatus {
-		case graph.StatusRunning:
-			_ = o.appStore.UpdateStatus(node.ID, "running")
 		case graph.StatusError:
-			_ = o.appStore.UpdateStatus(node.ID, "error")
+			_ = o.appStore.UpdateStatus(appID, "error")
+		case graph.StatusRunning:
+			if o.allContainersRunning(appID) {
+				_ = o.appStore.UpdateStatus(appID, "running")
+			}
 		}
 	})
+}
+
+// allContainersRunning returns true when every container node for appID has
+// reached StatusRunning. Returns true for single-container apps (no rollup needed).
+func (o *Orchestrator) allContainersRunning(appID string) bool {
+	if o.catalog == nil {
+		return true
+	}
+	catalogApp, err := o.catalog.Get(appID)
+	if err != nil || catalogApp == nil {
+		return true
+	}
+	defs := catalogApp.ContainerDefs()
+	if len(catalogApp.Containers) == 0 {
+		return true
+	}
+	for _, def := range defs {
+		node, err := o.graph.GetNode(def.Name)
+		if err != nil || node == nil || node.ActualStatus != graph.StatusRunning {
+			return false
+		}
+	}
+	return true
 }
 
 // recordActivity appends an event to the ring buffer.
@@ -241,15 +287,23 @@ func (o *Orchestrator) Start(ctx context.Context) {
 
 	o.logger.Info("orchestrator started")
 
-	var intents []Intent // nil on the startup pass; populated from the queue thereafter
+	// Initial convergence (blocks until system apps are up).
+	o.converge(ctx, nil)
+	close(o.ready)
+
 	for {
-		o.converge(ctx, intents)
-		intents = o.queue.WaitAndDrain(ctx)
+		intents := o.queue.WaitAndDrain(ctx)
 		if intents == nil {
 			o.logger.Info("orchestrator stopped")
 			return
 		}
+		o.converge(ctx, intents)
 	}
+}
+
+// Ready returns a channel that is closed after the first convergence pass completes.
+func (o *Orchestrator) Ready() <-chan struct{} {
+	return o.ready
 }
 
 // Stop cancels the intent processing loop and waits for it to finish.
@@ -287,9 +341,21 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 }
 
 // RemoveApp calls NodeLifecycle.Remove for the named app (if a configurator is
-// registered), then deletes the graph node.
+// registered), removes containers, then deletes graph node(s).
+// For multi-container apps, all container nodes are removed.
 func (o *Orchestrator) RemoveApp(ctx context.Context, appName string, clearData bool) error {
 	o.logger.Info("removing app", "app", appName, "clear_data", clearData)
+
+	// Multi-container apps: remove each container node individually.
+	if o.catalog != nil {
+		if catalogApp, err := o.catalog.Get(appName); err == nil && catalogApp != nil {
+			if len(catalogApp.Containers) > 0 {
+				return o.removeMultiContainerApp(ctx, appName, catalogApp.ContainerDefs(), clearData)
+			}
+		}
+	}
+
+	// Single-container (or system) app: existing behavior.
 	nl := o.registry.Get(appName)
 	if nl != nil {
 		state, err := o.buildAppState(appName)
@@ -301,6 +367,38 @@ func (o *Orchestrator) RemoveApp(ctx context.Context, appName string, clearData 
 		}
 	}
 	return o.graph.DeleteNode(appName)
+}
+
+// removeMultiContainerApp removes all container nodes for a multi-container app,
+// running per-node configurator Remove() and container runtime Remove() for each.
+func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName string, defs []catalog.ContainerDef, clearData bool) error {
+	for _, def := range defs {
+		nl := o.registry.Get(def.Name)
+		if nl != nil {
+			state, err := o.buildAppState(def.Name)
+			if err != nil {
+				o.logger.Warn("failed to build state for container removal", "container", def.Name, "error", err)
+			} else if err := nl.Remove(ctx, state, clearData); err != nil {
+				o.logger.Warn("configurator remove failed", "container", def.Name, "error", err)
+			}
+		}
+		if o.config.Containers != nil {
+			if err := o.config.Containers.Remove(ctx, def.Name); err != nil {
+				o.logger.Warn("failed to remove container", "container", def.Name, "error", err)
+			}
+		}
+		if err := o.graph.DeleteNode(def.Name); err != nil {
+			o.logger.Warn("failed to delete graph node", "container", def.Name, "error", err)
+		}
+		delete(o.containerOwner, def.Name)
+	}
+	if clearData {
+		dataDir := filepath.Join(o.dataDir, appName)
+		if err := os.RemoveAll(dataDir); err != nil {
+			o.logger.Warn("failed to remove data directory", "app", appName, "path", dataDir, "error", err)
+		}
+	}
+	return nil
 }
 
 // Reconcile runs one full reconciliation pass over all graph nodes.
@@ -492,37 +590,40 @@ func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 	o.logger.Info("staleness re-run: PostStart complete", "app", id)
 }
 
-// ensureAppContainer creates the container for an app using its catalog spec.
-// If forceRestart is true, any existing container is removed first.
-// A nil containers runtime or missing catalog spec is a no-op.
-func (o *Orchestrator) ensureAppContainer(ctx context.Context, id string, forceRestart bool) error {
-	if o.config.Containers == nil || o.catalog == nil {
+// ensureContainerFromDef ensures a container exists and is running from a ContainerDef,
+// creating required networks and mount directories first.
+func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.ContainerDef, appCatalogID string) error {
+	if o.config.Containers == nil {
 		return nil
 	}
-	catalogApp, err := o.catalog.Get(id)
-	if err != nil || catalogApp == nil || catalogApp.Container == nil {
-		return nil
+
+	// Collect all networks referenced by this container.
+	var networks []string
+	if def.Network != "" {
+		networks = append(networks, def.Network)
 	}
-	o.logger.Info("ensuring app container", "app", id, "force_restart", forceRestart)
-	spec, err := ContainerSpec(catalogApp, o.dataDir, o.config.TemplateVars)
+	for _, n := range def.Networks {
+		if n != def.Network {
+			networks = append(networks, n)
+		}
+	}
+	for _, network := range networks {
+		if err := o.config.Containers.EnsureNetwork(ctx, network); err != nil {
+			o.logger.Warn("failed to ensure network", "container", def.Name, "network", network, "error", err)
+		}
+	}
+
+	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.TemplateVars)
 	if err != nil {
 		return fmt.Errorf("build container spec: %w", err)
 	}
-	if forceRestart {
-		if err := o.config.Containers.Remove(ctx, spec.Name); err != nil {
-			return fmt.Errorf("remove container: %w", err)
-		}
-	}
-	if spec.Network != "" {
-		if err := o.config.Containers.EnsureNetwork(ctx, spec.Network); err != nil {
-			o.logger.Warn("failed to ensure network", "app", id, "network", spec.Network, "error", err)
-		}
-	}
+
 	for _, mount := range spec.Mounts {
 		if err := os.MkdirAll(mount.Source, 0755); err != nil {
-			o.logger.Warn("failed to create mount directory", "app", id, "path", mount.Source, "error", err)
+			o.logger.Warn("failed to create mount directory", "container", def.Name, "path", mount.Source, "error", err)
 		}
 	}
+
 	if _, err := o.config.Containers.Ensure(ctx, spec); err != nil {
 		return fmt.Errorf("ensure container: %w", err)
 	}
@@ -538,11 +639,10 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 		return false
 	}
 
+	def, appCatalogID := o.containerDefForNode(id)
 	cfg := o.registry.Get(id)
 
-	// No configurator: nothing to configure; report success so Reconcile
-	// promotes this node to RUNNING after route generation.
-	if cfg == nil {
+	if cfg == nil && def == nil {
 		o.logger.Info("no configurator registered, will mark RUNNING after route generation", "app", id)
 		return true
 	}
@@ -555,15 +655,16 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	}
 
 	// Phase 1: PreStart
-	o.logger.Info("lifecycle phase: PreStart", "app", id)
-	_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
-	changed, err := cfg.PreStart(ctx, state)
-	if err != nil {
-		o.logger.Warn("PreStart failed", "app", id, "error", err)
-		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-		return false
+	if cfg != nil {
+		o.logger.Info("lifecycle phase: PreStart", "app", id)
+		_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
+		if err := cfg.PreStart(ctx, state); err != nil {
+			o.logger.Warn("PreStart failed", "app", id, "error", err)
+			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+			return false
+		}
+		o.logger.Info("lifecycle phase: PreStart complete", "app", id)
 	}
-	o.logger.Info("lifecycle phase: PreStart complete", "app", id, "config_changed", changed)
 
 	// SSO provisioning: ensure the forward-auth provider exists in Authentik before the
 	// container starts, so requests can be authenticated immediately on first boot.
@@ -573,55 +674,133 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 		return false
 	}
 
-	// Phase 2: EnsureContainer (forceRestart if PreStart produced a config change)
-	o.logger.Info("lifecycle phase: EnsureContainer", "app", id, "force_restart", changed)
-	_ = o.graph.SetActualStatus(id, graph.StatusStarting, "")
-	if err := o.ensureAppContainer(ctx, id, changed); err != nil {
-		o.logger.Warn("EnsureContainer (catalog spec) failed", "app", id, "error", err)
-		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-		return false
-	}
-	if err := cfg.EnsureContainer(ctx, changed); err != nil {
-		o.logger.Warn("EnsureContainer failed", "app", id, "error", err)
-		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-		return false
-	}
-	o.logger.Info("lifecycle phase: EnsureContainer complete", "app", id)
+	// Phase 2: EnsureContainer
+	if def != nil {
+		o.logger.Info("lifecycle phase: EnsureContainer", "app", id)
+		_ = o.graph.SetActualStatus(id, graph.StatusStarting, "")
+		if err := o.ensureContainerFromDef(ctx, def, appCatalogID); err != nil {
+			o.logger.Warn("EnsureContainer failed", "app", id, "error", err)
+			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+			return false
+		}
+		o.logger.Info("lifecycle phase: EnsureContainer complete", "app", id)
 
-	// Phase 3: HealthCheck
-	o.logger.Info("lifecycle phase: HealthCheck", "app", id)
-	healthCtx := ctx
-	if o.config.HealthCheckTimeout > 0 {
-		var cancel context.CancelFunc
-		healthCtx, cancel = context.WithTimeout(ctx, o.config.HealthCheckTimeout)
-		defer cancel()
+		// Phase 3: HealthCheck
+		o.logger.Info("lifecycle phase: HealthCheck", "app", id)
+		healthCtx := ctx
+		if o.config.HealthCheckTimeout > 0 {
+			var cancel context.CancelFunc
+			healthCtx, cancel = context.WithTimeout(ctx, o.config.HealthCheckTimeout)
+			defer cancel()
+		}
+		if def.HealthCheck != nil {
+			if err := o.runContainerHealthCheck(healthCtx, def.Name, def.HealthCheck); err != nil {
+				o.logger.Warn("HealthCheck failed", "app", id, "error", err)
+				_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+				return false
+			}
+		}
+		o.logger.Info("lifecycle phase: HealthCheck complete", "app", id)
 	}
-	if err := cfg.HealthCheck(healthCtx); err != nil {
-		o.logger.Warn("HealthCheck failed", "app", id, "error", err)
-		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-		return false
-	}
-	o.logger.Info("lifecycle phase: HealthCheck complete", "app", id)
 
 	// Phase 4: PostStart
-	o.logger.Info("lifecycle phase: PostStart", "app", id)
-	_ = o.graph.SetActualStatus(id, graph.StatusPostStartConfig, "")
-	if err := cfg.PostStart(ctx, state); err != nil {
-		o.logger.Warn("PostStart failed", "app", id, "error", err)
-		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-		return false
+	if cfg != nil {
+		o.logger.Info("lifecycle phase: PostStart", "app", id)
+		_ = o.graph.SetActualStatus(id, graph.StatusPostStartConfig, "")
+		if err := cfg.PostStart(ctx, state); err != nil {
+			o.logger.Warn("PostStart failed", "app", id, "error", err)
+			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+			return false
+		}
+		o.logger.Info("lifecycle phase: PostStart complete", "app", id)
 	}
-	o.logger.Info("lifecycle phase: PostStart complete", "app", id)
 
 	o.logger.Info("lifecycle phases complete, will mark RUNNING after route generation", "app", id)
 	return true
+}
+
+// registerContainerOwner records that containerName belongs to appCatalogID.
+// Called during convergence when multi-container nodes are created.
+func (o *Orchestrator) registerContainerOwner(containerName, appCatalogID string) {
+	o.containerOwner[containerName] = appCatalogID
+}
+
+// ownerApp returns the app catalog ID that owns the given node ID.
+// For multi-container nodes, returns the owning app's catalog ID.
+// For single-container nodes (or unregistered nodes), returns nodeID itself.
+func (o *Orchestrator) ownerApp(nodeID string) string {
+	if appID, ok := o.containerOwner[nodeID]; ok {
+		return appID
+	}
+	return nodeID
+}
+
+// containerDefForNode returns the ContainerDef for a multi-container node,
+// along with the owning app's catalog ID. Returns nil, "" for single-container nodes.
+func (o *Orchestrator) containerDefForNode(nodeID string) (*catalog.ContainerDef, string) {
+	appID := o.ownerApp(nodeID)
+	if appID == nodeID {
+		return nil, "" // not a registered multi-container node
+	}
+	if o.catalog == nil {
+		return nil, appID
+	}
+	catalogApp, err := o.catalog.Get(appID)
+	if err != nil || catalogApp == nil {
+		return nil, appID
+	}
+	for _, def := range catalogApp.ContainerDefs() {
+		if def.Name == nodeID {
+			d := def
+			return &d, appID
+		}
+	}
+	return nil, appID
+}
+
+// runContainerHealthCheck polls the health check command inside the named container
+// until it passes or retries are exhausted, respecting context cancellation.
+func (o *Orchestrator) runContainerHealthCheck(ctx context.Context, containerName string, hc *catalog.ContainerHealthCheck) error {
+	if o.config.Containers == nil {
+		return nil
+	}
+	interval := time.Duration(hc.Interval) * time.Second
+	if interval == 0 {
+		interval = 5 * time.Second
+	}
+	timeout := time.Duration(hc.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	retries := hc.Retries
+	if retries == 0 {
+		retries = 3
+	}
+
+	for attempt := 0; attempt < retries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(interval):
+			}
+		}
+		execCtx, cancel := context.WithTimeout(ctx, timeout)
+		err := o.config.Containers.Exec(execCtx, containerName, hc.Test)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		o.logger.Info("container health check attempt failed", "container", containerName, "attempt", attempt+1, "retries", retries, "error", err)
+	}
+	return fmt.Errorf("container health check failed after %d attempts for %q", retries, containerName)
 }
 
 // buildAppState constructs a configurator.AppState for the given app ID
 // using catalog metadata when available.
 func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) {
 	state := &configurator.AppState{
-		DataPath:      filepath.Join(o.dataDir, id),
+		DataPath:      filepath.Join(o.dataDir, o.ownerApp(id)),
 		BloudDataPath: o.dataDir,
 	}
 
@@ -630,10 +809,10 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 	}
 
 	catalogApp, err := o.catalog.Get(id)
-	if err != nil {
-		return nil, fmt.Errorf("get catalog app: %w", err)
+	if (err != nil || catalogApp == nil) && o.ownerApp(id) != id {
+		catalogApp, err = o.catalog.Get(o.ownerApp(id))
 	}
-	if catalogApp == nil {
+	if err != nil || catalogApp == nil {
 		return state, nil
 	}
 
@@ -657,6 +836,9 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 		return nil
 	}
 	catalogApp, err := o.catalog.Get(id)
+	if (err != nil || catalogApp == nil) && o.ownerApp(id) != id {
+		catalogApp, err = o.catalog.Get(o.ownerApp(id))
+	}
 	if err != nil || catalogApp == nil {
 		return nil
 	}
@@ -678,3 +860,4 @@ func buildAppSubdomainURL(baseURL, appName string) string {
 	parsed.Host = appName + "." + parsed.Host
 	return parsed.String()
 }
+

@@ -46,8 +46,8 @@ func TestNewConfigurator(t *testing.T) {
 
 func TestConfigurator_Name(t *testing.T) {
 	c := NewConfigurator(8096, nil)
-	if got := c.Name(); got != "jellyfin" {
-		t.Errorf("Name() = %q, want %q", got, "jellyfin")
+	if got := c.Name(); got != "apps-jellyfin" {
+		t.Errorf("Name() = %q, want %q", got, "apps-jellyfin")
 	}
 }
 
@@ -68,8 +68,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := c.PreStart(ctx, state)
-	if err != nil {
+	if err := c.PreStart(ctx, state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
 
@@ -112,7 +111,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	}
 }
 
-func TestConfigurator_PreStart_ChangedOnFirstRun(t *testing.T) {
+func TestConfigurator_PreStart_FirstRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := NewConfigurator(8096, nil)
 	state := &configurator.AppState{
@@ -128,16 +127,18 @@ func TestConfigurator_PreStart_ChangedOnFirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := c.PreStart(context.Background(), state)
-	if err != nil {
+	if err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if !changed {
-		t.Error("PreStart() changed = false on first run (network.xml created), want true")
+
+	// Verify network.xml was created
+	networkPath := filepath.Join(state.DataPath, "config", "network.xml")
+	if _, err := os.Stat(networkPath); os.IsNotExist(err) {
+		t.Error("PreStart() did not create network.xml on first run")
 	}
 }
 
-func TestConfigurator_PreStart_NoChangeOnSecondRun(t *testing.T) {
+func TestConfigurator_PreStart_SecondRunSucceeds(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := NewConfigurator(8096, nil)
 	state := &configurator.AppState{
@@ -153,17 +154,13 @@ func TestConfigurator_PreStart_NoChangeOnSecondRun(t *testing.T) {
 	}
 
 	// First run creates network.xml
-	if _, err := c.PreStart(context.Background(), state); err != nil {
+	if err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("first PreStart() error = %v", err)
 	}
 
-	// Second run should detect no change
-	changed, err := c.PreStart(context.Background(), state)
-	if err != nil {
+	// Second run should also succeed (idempotent)
+	if err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("second PreStart() error = %v", err)
-	}
-	if changed {
-		t.Error("PreStart() changed = true on second run with identical config, want false")
 	}
 }
 
@@ -194,7 +191,7 @@ func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
 		BloudDataPath: t.TempDir(),
 	}
 
-	if _, err := c.PreStart(context.Background(), state); err != nil {
+	if err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
 	content, err := os.ReadFile(filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth", "LDAP-Auth.dll"))

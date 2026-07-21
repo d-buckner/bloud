@@ -13,18 +13,12 @@ tiers:
       - id: go-cli
         cwd: cli
         run: go test ./...
-      - id: go-installer
-        cwd: services/installer
-        run: go test ./...
       - id: web-unit
         cwd: .
         run: npm run test --workspace=@bloud/host-agent-web
       - id: web-check-host-agent
         cwd: .
         run: npm run check --workspace=@bloud/host-agent-web
-      - id: web-check-installer
-        cwd: .
-        run: npm run check --workspace=@bloud/installer-web
 
   integration:
     commands:
@@ -43,8 +37,6 @@ inference:
       riskAreas: [app-install, embed]
     - pattern: "cli/**"
       triggers: [go-cli]
-    - pattern: "services/installer/**"
-      triggers: [go-installer]
     - pattern: "nixos/**"
       triggers: []
       riskAreas: [nix-module]
