@@ -168,11 +168,12 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 		return 1
 	}
 
-	if err = cfg.PreStart(ctx, state); err != nil {
+	changed, err := cfg.PreStart(ctx, state)
+	if err != nil {
 		logger.Error("prestart failed", "app", appName, "error", err)
 		return 1
 	}
-	logger.Info("prestart completed", "app", appName)
+	logger.Info("prestart completed", "app", appName, "config_changed", changed)
 	return 0
 }
 

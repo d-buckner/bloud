@@ -49,17 +49,17 @@ func (c *Configurator) Name() string {
 }
 
 // PreStart creates the required data and music directories before the container starts.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) error {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "data"),
 		filepath.Join(state.BloudDataPath, "media", "music"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // Remove is a no-op for the Navidrome configurator; container and data removal

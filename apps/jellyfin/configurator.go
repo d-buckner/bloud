@@ -72,7 +72,7 @@ func (c *Configurator) Name() string {
 
 // PreStart ensures directories exist, installs the LDAP plugin, and
 // configures network settings.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
 	c.logger.Info("PreStart: creating data directories")
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
@@ -83,24 +83,24 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	c.logger.Info("PreStart: ensuring LDAP plugin")
 	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
 	if err != nil {
-		return fmt.Errorf("failed to install LDAP plugin: %w", err)
+		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
 	c.logger.Info("PreStart: configuring network")
 	networkChanged, err := c.configureNetwork(state.DataPath)
 	if err != nil {
-		return fmt.Errorf("failed to configure network: %w", err)
+		return false, fmt.Errorf("failed to configure network: %w", err)
 	}
 
 	c.logger.Info("PreStart complete", "plugin_installed", pluginInstalled, "network_changed", networkChanged)
-	return nil
+	return pluginInstalled || networkChanged, nil
 }
 
 func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (bool, error) {

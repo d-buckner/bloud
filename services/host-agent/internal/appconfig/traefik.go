@@ -1,6 +1,7 @@
 package appconfig
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -37,32 +38,41 @@ func NewTraefikConfigurator(
 	}
 }
 
-func (c *TraefikConfigurator) Name() string { return "traefik" }
+func (c *TraefikConfigurator) Name() string { return "apps-traefik" }
 
-func (c *TraefikConfigurator) PreStart(_ context.Context, _ *configurator.AppState) error {
+func (c *TraefikConfigurator) PreStart(_ context.Context, _ *configurator.AppState) (bool, error) {
 	traefikDir := filepath.Join(c.dataDir, "traefik")
 	dynamicDir := filepath.Join(traefikDir, "dynamic")
 	staticConfigPath := filepath.Join(traefikDir, "traefik.yml")
 
 	for _, dir := range []string{traefikDir, dynamicDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("create dir %s: %w", dir, err)
+			return false, fmt.Errorf("create dir %s: %w", dir, err)
 		}
 	}
 
-	if err := writeFileAtomic(staticConfigPath, []byte(c.staticConfig())); err != nil {
-		return fmt.Errorf("write traefik static config: %w", err)
+	changed := false
+
+	files := []struct {
+		path    string
+		content []byte
+	}{
+		{staticConfigPath, []byte(c.staticConfig())},
+		{filepath.Join(dynamicDir, "base.yml"), []byte(c.baseDynamicConfig())},
+		{filepath.Join(dynamicDir, "authentik-routes.yml"), []byte(c.authentikRoutes())},
 	}
 
-	if err := writeFileAtomic(filepath.Join(dynamicDir, "base.yml"), []byte(c.baseDynamicConfig())); err != nil {
-		return fmt.Errorf("write traefik base config: %w", err)
+	for _, f := range files {
+		existing, err := os.ReadFile(f.path)
+		if err != nil || !bytes.Equal(existing, f.content) {
+			changed = true
+		}
+		if err := writeFileAtomic(f.path, f.content); err != nil {
+			return false, fmt.Errorf("write %s: %w", f.path, err)
+		}
 	}
 
-	if err := writeFileAtomic(filepath.Join(dynamicDir, "authentik-routes.yml"), []byte(c.authentikRoutes())); err != nil {
-		return fmt.Errorf("write traefik authentik routes: %w", err)
-	}
-
-	return nil
+	return changed, nil
 }
 
 func (c *TraefikConfigurator) PostStart(_ context.Context, _ *configurator.AppState) error {

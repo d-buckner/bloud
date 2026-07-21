@@ -68,8 +68,14 @@ func TestConfigurator_PreStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.PreStart(ctx, state); err != nil {
+	changed, err := c.PreStart(ctx, state)
+	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
+	}
+
+	// Plugin already existed, but network.xml is new → changed should be true
+	if !changed {
+		t.Error("PreStart() changed = false, want true (network.xml was created)")
 	}
 
 	// Verify directories were created
@@ -127,8 +133,12 @@ func TestConfigurator_PreStart_FirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.PreStart(context.Background(), state); err != nil {
+	changed, err := c.PreStart(context.Background(), state)
+	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
+	}
+	if !changed {
+		t.Error("PreStart() changed = false on first run, want true")
 	}
 
 	// Verify network.xml was created
@@ -154,13 +164,21 @@ func TestConfigurator_PreStart_SecondRunSucceeds(t *testing.T) {
 	}
 
 	// First run creates network.xml
-	if err := c.PreStart(context.Background(), state); err != nil {
+	changed, err := c.PreStart(context.Background(), state)
+	if err != nil {
 		t.Fatalf("first PreStart() error = %v", err)
 	}
+	if !changed {
+		t.Error("first PreStart() changed = false, want true")
+	}
 
-	// Second run should also succeed (idempotent)
-	if err := c.PreStart(context.Background(), state); err != nil {
+	// Second run should also succeed (idempotent) and report no changes
+	changed, err = c.PreStart(context.Background(), state)
+	if err != nil {
 		t.Fatalf("second PreStart() error = %v", err)
+	}
+	if changed {
+		t.Error("second PreStart() changed = true, want false (idempotent)")
 	}
 }
 
@@ -191,8 +209,12 @@ func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
 		BloudDataPath: t.TempDir(),
 	}
 
-	if err := c.PreStart(context.Background(), state); err != nil {
+	changed, err := c.PreStart(context.Background(), state)
+	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
+	}
+	if !changed {
+		t.Error("PreStart() changed = false, want true (plugin was installed)")
 	}
 	content, err := os.ReadFile(filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth", "LDAP-Auth.dll"))
 	if err != nil {

@@ -655,15 +655,18 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	}
 
 	// Phase 1: PreStart
+	var configChanged bool
 	if cfg != nil {
 		o.logger.Info("lifecycle phase: PreStart", "app", id)
 		_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
-		if err := cfg.PreStart(ctx, state); err != nil {
+		var err error
+		configChanged, err = cfg.PreStart(ctx, state)
+		if err != nil {
 			o.logger.Warn("PreStart failed", "app", id, "error", err)
 			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
 			return false
 		}
-		o.logger.Info("lifecycle phase: PreStart complete", "app", id)
+		o.logger.Info("lifecycle phase: PreStart complete", "app", id, "config_changed", configChanged)
 	}
 
 	// SSO provisioning: ensure the forward-auth provider exists in Authentik before the
@@ -675,7 +678,13 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	}
 
 	// Phase 2: EnsureContainer
+	// If PreStart reported config changes to mounted files, remove the existing
+	// container first so Ensure() creates a fresh one that picks up the changes.
 	if def != nil {
+		if configChanged {
+			o.logger.Info("config changed, removing container before re-create", "app", id)
+			_ = o.config.Containers.Remove(ctx, def.Name)
+		}
 		o.logger.Info("lifecycle phase: EnsureContainer", "app", id)
 		_ = o.graph.SetActualStatus(id, graph.StatusStarting, "")
 		if err := o.ensureContainerFromDef(ctx, def, appCatalogID); err != nil {

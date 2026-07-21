@@ -35,7 +35,7 @@ func NewBaseConfigurator(containers container.Runtime, spec container.Spec) *Bas
 
 func (b *BaseNodeLifecycle) Name() string { return "" }
 
-func (b *BaseNodeLifecycle) PreStart(_ context.Context, _ *AppState) error { return nil }
+func (b *BaseNodeLifecycle) PreStart(_ context.Context, _ *AppState) (bool, error) { return false, nil }
 
 func (b *BaseNodeLifecycle) PostStart(_ context.Context, _ *AppState) error { return nil }
 

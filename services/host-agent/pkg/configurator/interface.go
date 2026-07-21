@@ -27,7 +27,9 @@ type NodeLifecycle interface {
 
 	// PreStart runs before the container starts.
 	// Use for: config files, directories, certificates, initial setup.
-	PreStart(ctx context.Context, state *AppState) error
+	// Returns changed=true when mounted file contents were modified, signalling
+	// that the container must be restarted to pick up the new configuration.
+	PreStart(ctx context.Context, state *AppState) (changed bool, err error)
 
 	// PostStart runs after container is healthy.
 	// Use for: API calls, integrations, runtime configuration.

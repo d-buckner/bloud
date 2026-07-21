@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
@@ -371,9 +372,9 @@ func (m *MockConfigurator) Name() string {
 	return args.String(0)
 }
 
-func (m *MockConfigurator) PreStart(ctx context.Context, state *configurator.AppState) error {
+func (m *MockConfigurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
 	args := m.Called(ctx, state)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockConfigurator) PostStart(ctx context.Context, state *configurator.AppState) error {
@@ -383,6 +384,36 @@ func (m *MockConfigurator) PostStart(ctx context.Context, state *configurator.Ap
 
 func (m *MockConfigurator) Remove(ctx context.Context, state *configurator.AppState, clearData bool) error {
 	args := m.Called(ctx, state, clearData)
+	return args.Error(0)
+}
+
+// MockContainerRuntime implements container.Runtime for testing
+type MockContainerRuntime struct {
+	mock.Mock
+}
+
+func (m *MockContainerRuntime) EnsureNetwork(ctx context.Context, name string) error {
+	args := m.Called(ctx, name)
+	return args.Error(0)
+}
+
+func (m *MockContainerRuntime) Ensure(ctx context.Context, spec containerruntime.Spec) (containerruntime.EnsureResult, error) {
+	args := m.Called(ctx, spec)
+	return args.Get(0).(containerruntime.EnsureResult), args.Error(1)
+}
+
+func (m *MockContainerRuntime) Remove(ctx context.Context, name string) error {
+	args := m.Called(ctx, name)
+	return args.Error(0)
+}
+
+func (m *MockContainerRuntime) Inspect(ctx context.Context, name string) (containerruntime.State, error) {
+	args := m.Called(ctx, name)
+	return args.Get(0).(containerruntime.State), args.Error(1)
+}
+
+func (m *MockContainerRuntime) Exec(ctx context.Context, name string, cmd []string) error {
+	args := m.Called(ctx, name, cmd)
 	return args.Error(0)
 }
 

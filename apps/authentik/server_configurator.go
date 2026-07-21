@@ -1,6 +1,7 @@
 package authentik
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -57,17 +58,26 @@ func (c *ServerConfigurator) Name() string {
 // PreStart prepares the Authentik server environment:
 // - Copies the custom auth flow blueprint to the data directory
 // - Creates media and templates directories with correct permissions
-func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.AppState) error {
+func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
 	// Copy auth flow blueprint from apps dir to data dir.
 	// The server container mounts this file read-only at /blueprints/default/...
 	srcPath := filepath.Join(c.appsDir, "authentik", "auth.yaml")
 	dstPath := filepath.Join(state.DataPath, "authentik-auth-flow.yaml")
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
-		return fmt.Errorf("read auth.yaml: %w", err)
+		return false, fmt.Errorf("read auth.yaml: %w", err)
 	}
-	if err := os.WriteFile(dstPath, src, 0644); err != nil {
-		return fmt.Errorf("write auth flow blueprint: %w", err)
+
+	// Detect whether the blueprint content actually changed.
+	blueprintChanged := true
+	if existing, err := os.ReadFile(dstPath); err == nil {
+		blueprintChanged = !bytes.Equal(existing, src)
+	}
+
+	if blueprintChanged {
+		if err := os.WriteFile(dstPath, src, 0644); err != nil {
+			return false, fmt.Errorf("write auth flow blueprint: %w", err)
+		}
 	}
 
 	// Create media and templates dirs with world-writable permissions.
@@ -77,14 +87,14 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 		filepath.Join(state.DataPath, "templates"),
 	} {
 		if err := os.MkdirAll(dir, 0777); err != nil {
-			return fmt.Errorf("create dir %s: %w", dir, err)
+			return false, fmt.Errorf("create dir %s: %w", dir, err)
 		}
 		if err := os.Chmod(dir, 0777); err != nil {
-			return fmt.Errorf("chmod dir %s: %w", dir, err)
+			return false, fmt.Errorf("chmod dir %s: %w", dir, err)
 		}
 	}
 
-	return nil
+	return blueprintChanged, nil
 }
 
 // PostStart configures Authentik after it is healthy:

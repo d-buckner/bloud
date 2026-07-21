@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 )
 
@@ -116,7 +118,7 @@ func TestOrchestrator_FullLifecycle_OrderedPhases(t *testing.T) {
 	var callOrder []string
 	mockCfg.On("PreStart", mock.Anything, mock.Anything).
 		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "prestart") }).
-		Return(nil)
+		Return(false, nil)
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).
 		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "poststart") }).
 		Return(nil)
@@ -138,7 +140,7 @@ func TestOrchestrator_PhaseStatusUpdates(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// Capture actual status transitions via event listener.
@@ -188,7 +190,7 @@ func TestOrchestrator_PreStartError_ErrorStatus_LaterPhasesSkipped(t *testing.T)
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(errors.New("config error"))
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("config error"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background())) // reconcile itself doesn't fail
 
@@ -227,10 +229,10 @@ func TestOrchestrator_LevelOrdering_DependencyRunsFirst(t *testing.T) {
 		}
 	}
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Run(record("a-prestart")).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Run(record("a-prestart")).Return(false, nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Run(record("a-poststart")).Return(nil)
 
-	mockB.On("PreStart", mock.Anything, mock.Anything).Run(record("b-prestart")).Return(nil)
+	mockB.On("PreStart", mock.Anything, mock.Anything).Run(record("b-prestart")).Return(false, nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Run(record("b-poststart")).Return(nil)
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
@@ -258,7 +260,7 @@ func TestOrchestrator_LevelOrdering_DepErrorPreventsDependent(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(errors.New("a failed"))
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("a failed"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
@@ -298,10 +300,10 @@ func TestOrchestrator_WithinLevel_ConcurrentExecution(t *testing.T) {
 		<-ready
 	}
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Run(postStartFn).Return(nil)
 
-	mockB.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockB.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Run(postStartFn).Return(nil)
 
 	// If not concurrent this deadlocks; use a timeout via context.
@@ -334,7 +336,7 @@ func TestOrchestrator_Staleness_AlreadyRunning_RerunPostStartWhenDepChanges(t *t
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// B should only re-run PostStart; no other phases.
@@ -360,7 +362,7 @@ func TestOrchestrator_Staleness_NoRerun_WhenDepErrors(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(errors.New("a failed"))
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("a failed"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
@@ -441,7 +443,7 @@ func TestOrchestrator_RunningDeferredUntilAfterReconcile(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "app").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
 
 	// Capture the node's actual status at the moment PostStart runs — this is
 	// the last lifecycle phase, so if RUNNING were set eagerly it would already
@@ -485,7 +487,7 @@ func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// When B's PreStart runs, A has completed its lifecycle phases but has NOT
@@ -496,7 +498,7 @@ func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
 			nodeA, _ := to.g.GetNode("a")
 			aStatusWhenBStarted = nodeA.ActualStatus
 		}).
-		Return(nil)
+		Return(false, nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
@@ -513,4 +515,118 @@ func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
 	nodeB, err := to.g.GetNode("b")
 	require.NoError(t, err)
 	assert.Equal(t, graph.StatusRunning, nodeB.ActualStatus, "B must be RUNNING after Reconcile completes")
+}
+
+// ============================================================================
+// Config-change-driven container restart
+// ============================================================================
+
+func TestOrchestrator_PreStartChanged_TriggersContainerRemoveBeforeEnsure(t *testing.T) {
+	g := graph.New(graph.NewMapRepository())
+	registry := new(MockConfiguratorRegistry)
+	mockRuntime := new(MockContainerRuntime)
+	catalogCache := new(MockCatalogCache)
+
+	orch := NewOrchestrator(
+		g,
+		registry,
+		catalogCache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{
+			HealthCheckTimeout: 100 * time.Millisecond,
+			Containers:         mockRuntime,
+		},
+	)
+
+	// Set up a multi-container app: "myapp" owns container "apps-myapp-server".
+	containerName := "apps-myapp-server"
+	require.NoError(t, g.AddNode(containerName))
+	require.NoError(t, g.SetTargetStatus(containerName, graph.StatusRunning))
+	orch.registerContainerOwner(containerName, "myapp")
+
+	// Catalog returns the app with a container def.
+	appDef := &catalog.App{
+		CatalogID: "myapp",
+		Containers: []catalog.ContainerDef{
+			{Name: containerName, Image: "myapp:latest"},
+		},
+	}
+	catalogCache.On("Get", "myapp").Return(appDef, nil)
+	catalogCache.On("Get", containerName).Return(nil, nil)
+
+	// Configurator: PreStart returns changed=true.
+	mockCfg := new(MockConfigurator)
+	registry.On("Get", containerName).Return(mockCfg)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(true, nil)
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
+	// Container runtime: expect Remove (config changed) then Ensure.
+	var callOrder []string
+	mockRuntime.On("Remove", mock.Anything, containerName).
+		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "remove") }).
+		Return(nil)
+	mockRuntime.On("Ensure", mock.Anything, mock.Anything).
+		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "ensure") }).
+		Return(containerruntime.EnsureResult{}, nil)
+
+	require.NoError(t, orch.Reconcile(context.Background()))
+
+	// Verify Remove was called before Ensure.
+	assert.Equal(t, []string{"remove", "ensure"}, callOrder,
+		"config change should trigger Remove before Ensure")
+
+	node, err := g.GetNode(containerName)
+	require.NoError(t, err)
+	assert.Equal(t, graph.StatusRunning, node.ActualStatus)
+}
+
+func TestOrchestrator_PreStartNotChanged_NoContainerRemove(t *testing.T) {
+	g := graph.New(graph.NewMapRepository())
+	registry := new(MockConfiguratorRegistry)
+	mockRuntime := new(MockContainerRuntime)
+	catalogCache := new(MockCatalogCache)
+
+	orch := NewOrchestrator(
+		g,
+		registry,
+		catalogCache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{
+			HealthCheckTimeout: 100 * time.Millisecond,
+			Containers:         mockRuntime,
+		},
+	)
+
+	containerName := "apps-myapp-server"
+	require.NoError(t, g.AddNode(containerName))
+	require.NoError(t, g.SetTargetStatus(containerName, graph.StatusRunning))
+	orch.registerContainerOwner(containerName, "myapp")
+
+	appDef := &catalog.App{
+		CatalogID: "myapp",
+		Containers: []catalog.ContainerDef{
+			{Name: containerName, Image: "myapp:latest"},
+		},
+	}
+	catalogCache.On("Get", "myapp").Return(appDef, nil)
+	catalogCache.On("Get", containerName).Return(nil, nil)
+
+	mockCfg := new(MockConfigurator)
+	registry.On("Get", containerName).Return(mockCfg)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
+	// Only Ensure should be called, not Remove.
+	mockRuntime.On("Ensure", mock.Anything, mock.Anything).
+		Return(containerruntime.EnsureResult{}, nil)
+
+	require.NoError(t, orch.Reconcile(context.Background()))
+
+	mockRuntime.AssertNotCalled(t, "Remove", mock.Anything, mock.Anything)
+
+	node, err := g.GetNode(containerName)
+	require.NoError(t, err)
+	assert.Equal(t, graph.StatusRunning, node.ActualStatus)
 }
