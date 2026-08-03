@@ -13,7 +13,7 @@ jobs:
       image: golang:1.24.2-alpine
     steps:
       - name: Install Node.js 22
-        run: apk add --no-cache nodejs@22 npm
+        run: apk add --no-cache nodejs npm
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
       image: golang:1.24.2-alpine
     steps:
       - name: Install Node.js 22
-        run: apk add --no-cache nodejs@22 npm
+        run: apk add --no-cache nodejs npm
 
       - name: Checkout
         uses: actions/checkout@v4
