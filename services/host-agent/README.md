@@ -32,37 +32,36 @@ go mod download
 
 ### 2. Run Development Servers
 
-**Option A: Run both frontend and backend together (recommended)**
+**Option A: Run them separately (recommended for active development)**
 
-From the project root:
-
-```bash
-# This runs frontend dev server on :5173 and you run Go separately
-npm run frontend:dev
-```
-
-Then in another terminal:
-
-```bash
-# Run Go backend on :8080
-npm run backend:dev
-```
-
-The frontend dev server (port 5173) will proxy API requests to the Go backend (port 8080).
-
-**Option B: Run them separately**
-
-Terminal 1 - Go Backend:
+Terminal 1 — Go Backend:
 ```bash
 cd services/host-agent
-go run ./cmd/host-agent
+npm run dev
 ```
 
-Terminal 2 - Frontend:
+Terminal 2 — Frontend:
 ```bash
 cd services/host-agent/web
 npm run dev
 ```
+
+The frontend dev server (port 5173) proxies API requests to the Go backend (port 8080).
+
+**Option B: Run Go with embedded frontend**
+
+```bash
+cd services/host-agent/web
+npm run build
+```
+
+Then:
+```bash
+cd services/host-agent
+npm run dev
+```
+
+This builds the SvelteKit app into `web/build/` and the Go binary serves it at `/`.
 
 ### 3. Access the Application
 
@@ -72,57 +71,47 @@ npm run dev
 
 ## Development Workflow
 
-### Frontend Development
+### Frontend
 
-The frontend is a SvelteKit app with:
-- **SSG** - Static site generation for fast loading
-- **API Proxy** - Dev server proxies `/api/*` to Go backend
-- **Hot Reload** - Instant updates on file changes
+The SvelteKit app supports SSR/SSG and hot reload during development. Build output
+lands in `web/build/` for embedding into the Go binary.
 
 ```bash
 cd services/host-agent/web
-
-# Start dev server
-npm run dev
-
-# Build for production (creates web/build/)
-npm run build
+npm run dev    # Dev server with hot reload
+npm run build  # Production build → web/build/
 ```
 
-### Backend Development
+### Backend
 
-The Go backend serves:
-- REST API endpoints
-- Embedded frontend (when built)
-- WebSocket for real-time updates
+The Go binary serves the REST API and optionally embeds the built frontend at `/`.
 
 ```bash
 cd services/host-agent
 
-# Run with auto-reload (requires air)
-go install github.com/cosmtrek/air@latest
+# Run with hot reload (requires air: go install github.com/cosmtrek/air@latest)
 air
 
-# Or run directly
-go run ./cmd/host-agent
+# Run directly
+npm run dev
 
-# Build binary
+# Build production binary (embeds web/build/ if present)
 go build -o bin/host-agent ./cmd/host-agent
 ```
 
 ### Environment Variables
 
 ```bash
-# Optional configuration
 export BLOUD_PORT=8080                          # HTTP port (default: 8080)
 export BLOUD_DATA_DIR=$HOME/.local/share/bloud  # Data directory
+export BLOUD_RUNTIME=portable                   # Only supported value
 ```
 
 ### Database
 
 SQLite database is automatically created at:
 ```
-$HOME/.local/share/bloud/state/bloud.db
+$BLOUD_DATA_DIR/state/bloud.db
 ```
 
 Schema is initialized on first run from `internal/db/schema.sql`.
@@ -174,55 +163,96 @@ It refuses to remove or adopt containers that were not created by Bloud.
 
 ```
 services/host-agent/
-├── cmd/
-│   └── host-agent/
-│       └── main.go              # Entry point
+├── cmd/host-agent/            # Entry point, bootstrap
 ├── internal/
-│   ├── api/                     # HTTP server & routes
-│   │   ├── server.go
-│   │   └── routes.go
-│   ├── db/                      # SQLite database
-│   │   ├── db.go
-│   │   └── schema.sql
-│   └── config/                  # Configuration
-│       └── config.go
-├── web/                         # SvelteKit frontend
-│   ├── src/
-│   │   └── routes/
-│   │       └── +page.svelte     # Dashboard
-│   ├── package.json
-│   └── svelte.config.js
-├── go.mod
-└── README.md
+│   ├── api/                   # HTTP server & routes (chi router)
+│   ├── appconfig/             # Configurator registration
+│   ├── catalog/               # App discovery from metadata.yaml
+│   ├── config/                # Runtime configuration
+│   ├── container/             # Container runtime abstraction
+│   ├── db/                    # SQLite database + schema
+│   ├── e2e/                   # Integration test helpers
+│   ├── graph/                 # Dependency graph
+│   ├── integration/           # Typed integration resolver
+│   ├── logbuffer/             # Log buffering
+│   ├── logfile/               # Log file management
+│   ├── netutil/               # Network utilities
+│   ├── orchestrator/          # Install/uninstall, intent queue, Quadlet units
+│   ├── podman/                # Podman client
+│   ├── secrets/               # Secrets manager
+│   ├── sharing/               # Sharing & remote apps
+│   ├── sso/                   # SSO/Authentik integration
+│   ├── store/                 # SQLite persistence
+│   ├── system/                # System state
+│   ├── systemd/               # Systemd interaction
+│   ├── testdb/                # Test database helpers
+│   └── traefikgen/            # Traefik route generation
+├── pkg/
+│   ├── authentik/             # Authentik REST API client
+│   ├── configurator/          # Configurator interface + helpers
+│   ├── managedfile/           # Managed file abstraction
+│   ├── slug/                  # URL-safe slugs
+│   └── xmlutil/               # XML utilities
+└── web/                       # SvelteKit frontend
 ```
+
+Key runtime concepts:
+- **Catalog** reads `apps/*/metadata.yaml` at startup, caches in SQLite
+- **Integration Resolver** binds provider apps to consumer requirements (database, SSO, proxy)
+- **Intent queue** — all mutations flow through typed intents with debounce; the orchestrator is the single writer
+- **Configurators** implement `PreStart`/`PostStart`/`Remove` per container node; container lifecycle is metadata-driven
+- **App Store** (`internal/store/`) — SQLite persistence for installed apps, status, integration bindings
+- **Container Runtime** — Podman containers managed by Quadlet systemd units
 
 ## API Endpoints
 
-### Health & Status
+### Health & System
 
-- `GET /api/health` - Health check
-- `GET /api/system/status` - System metrics (CPU, memory, disk)
+- `GET /api/health` — Health check
+- `GET /api/system/status` — System metrics (CPU, memory, disk)
 
 ### Apps
 
-- `GET /api/apps` - List available apps from catalog
-- `GET /api/apps/installed` - List installed apps
+- `GET /api/apps` — List available apps from catalog
+- `GET /api/apps/installed` — List installed apps with status
+- `POST /api/apps/:name/install` — Install an app
+- `POST /api/apps/:name/uninstall` — Uninstall an app (with optional `clearData`)
+- `PUT /api/apps/:name/rename` — Rename an app
 
-### Future Endpoints
+### Sharing
 
-- `POST /api/apps/:name/install` - Install an app
-- `POST /api/apps/:name/uninstall` - Uninstall an app
-- `GET /api/hosts` - List discovered hosts (multi-host)
+- `GET /sharing/shares` — List active shares
+- `DELETE /sharing/shares/:id` — Revoke a share
+- `GET /sharing/remote-apps` — List remote apps (from sharing guests)
+- `POST /sharing/remote-apps` — Add a remote app
+- `DELETE /sharing/remote-apps/:id` — Remove a remote app
+
+### Integration Graph
+
+- `GET /api/graph` — Developer graph visualization (app nodes, connection nodes, edges)
+
+### Configuration
+
+- `GET /api/settings` — Host settings
+- `PUT /api/settings` — Update settings
 
 ## Testing
 
 ```bash
-# Test API endpoints
-curl http://localhost:8080/api/health
-curl http://localhost:8080/api/apps/installed
+# Unit tests only
+./bloud validate --tier fast
 
-# Test frontend
-open http://localhost:5173
+# Integration tests (requires Lima VM)
+./bloud validate --tier integration
+
+# E2E lifecycle (deploy + test + uninstall)
+./bloud e2e lifecycle
+```
+
+```bash
+# Smoke test API endpoints
+curl http://localhost:3000/api/health
+curl http://localhost:3000/api/apps/installed
 ```
 
 ## Deployment
@@ -257,10 +287,4 @@ sudo systemctl restart bloud
 **Port already in use?**
 - Change the port: `export BLOUD_PORT=3000`
 
-## Next Steps
 
-- [ ] Implement app catalog loader
-- [ ] Implement app installation/uninstall
-- [ ] Add WebSocket for real-time updates
-- [ ] Implement mDNS discovery for multi-host
-- [ ] Add system monitoring (CPU, memory, disk)

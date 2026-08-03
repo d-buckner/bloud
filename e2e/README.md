@@ -22,8 +22,13 @@ cd e2e && npx playwright test
 Or via the CLI:
 
 ```bash
-./bloud e2e
+./bloud e2e              # Run Playwright tests against existing runtime
+./bloud e2e lifecycle    # Deploy host-agent + catalog, then run full install/verify/uninstall cycle
 ```
+
+`./bloud e2e` runs Playwright tests against the already-running host-agent on
+the Lima VM. `./bloud e2e lifecycle` is a self-contained deploy→test→uninstall
+flow that doesn't require `./bloud dev` to be running first.
 
 ## Full Portable Lifecycle
 

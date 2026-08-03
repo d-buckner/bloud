@@ -64,8 +64,9 @@ Available template variables in `container.environment` and `container.volumes`:
 - `{{dataDir}}` — shared Bloud data directory
 - `{{postgresPassword}}` — shared PostgreSQL password (when database integration is declared)
 
-System apps (postgres, redis, traefik, authentik) set `isSystem: true` to hide from the
-user-facing catalog.
+System apps (traefik, authentik) set `isSystem: true` to hide from the
+user-facing catalog. Infrastructure containers (postgres, redis) can be
+bundled per-app in `containers:` or declared as shared integrations.
 
 ## Step 2: configurator.go
 

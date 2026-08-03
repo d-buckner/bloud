@@ -989,7 +989,7 @@ Gate:
 Gate:
 
 - Provider changes, optional provider installation, and missing required bindings are
-  comprehensively tested without a real runtime.
+  thoroughly tested without a real runtime.
 
 **Status:** Complete. Typed integration resolver with required/optional/compatibility
 semantics implemented and tested. PreStart/PostStart configurator interfaces defined.
