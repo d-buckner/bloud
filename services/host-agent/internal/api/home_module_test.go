@@ -13,6 +13,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestHomeModule_GetLayout(t *testing.T) {
@@ -88,10 +89,10 @@ func TestHomeHTTP_GetLayout(t *testing.T) {
 
 	getLaunchPaths := func() map[string]string { return nil }
 	mod := NewHomeModule(posStore, appStore, getLaunchPaths, logger)
-	r := NewHomeRouter(mod.(*homeModuleSimple))
+	r := chi.NewRouter(); NewHomeRouter(mod.(*homeModuleSimple), r)
 
 	// Add a fake user to context
-	req := httptest.NewRequest("GET", "/api/user/home", nil)
+	req := httptest.NewRequest("GET", "/user/home", nil)
 	user := &store.User{Username: "alice", Role: store.RoleMember}
 	ctx := context.WithValue(req.Context(), userContextKey, user)
 	req = req.WithContext(ctx)
@@ -113,10 +114,10 @@ func TestHomeHTTP_SetLayout(t *testing.T) {
 
 	getLaunchPaths := func() map[string]string { return nil }
 	mod := NewHomeModule(posStore, appStore, getLaunchPaths, logger)
-	r := NewHomeRouter(mod.(*homeModuleSimple))
+	r := chi.NewRouter(); NewHomeRouter(mod.(*homeModuleSimple), r)
 
 	body := `[]`
-	req := httptest.NewRequest("PUT", "/api/user/layout", strings.NewReader(body))
+	req := httptest.NewRequest("PUT", "/user/layout", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -131,10 +132,10 @@ func TestHomeHTTP_SetLayout_InvalidBody(t *testing.T) {
 
 	getLaunchPaths := func() map[string]string { return nil }
 	mod := NewHomeModule(posStore, appStore, getLaunchPaths, logger)
-	r := NewHomeRouter(mod.(*homeModuleSimple))
+	r := chi.NewRouter(); NewHomeRouter(mod.(*homeModuleSimple), r)
 
 	body := `not-json`
-	req := httptest.NewRequest("PUT", "/api/user/layout", strings.NewReader(body))
+	req := httptest.NewRequest("PUT", "/user/layout", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

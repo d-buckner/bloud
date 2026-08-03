@@ -9,6 +9,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestLogsModule_CanStream_ExistingApp(t *testing.T) {
@@ -36,9 +37,9 @@ func TestLogsHTTP_StreamLogs_NotFound(t *testing.T) {
 
 	mod := NewLogsModule(appStore, logger)
 	logsMod := mod.(*logsModule)
-	r := NewLogsRouter(logsMod)
+	r := chi.NewRouter(); NewLogsRouter(logsMod, r)
 
-	req := httptest.NewRequest("GET", "/api/apps/nonexistent/logs", nil)
+	req := httptest.NewRequest("GET", "/apps/nonexistent/logs", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

@@ -99,9 +99,31 @@ func (m *systemModule) StorageHandler() http.HandlerFunc {
 	}
 }
 
-// ---- Developer Graph ----
+// ---- Types ----
 
-// ssoEdgeLabel returns the SSO strategy for an app, falling back to "sso".
+type graphNode struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Status      string `json:"status"`
+	IsSystem    bool   `json:"isSystem"`
+	NodeType    string `json:"nodeType"` // "app" or "connection"
+}
+
+type graphEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Label  string `json:"label"`
+}
+
+type developerGraph struct {
+	Nodes         []graphNode                    `json:"nodes"`
+	Edges         []graphEdge                    `json:"edges"`
+	TailnetDomain string                         `json:"tailnetDomain,omitempty"`
+	Orchestrator  *orchestrator.OrchestratorStatus `json:"orchestrator,omitempty"`
+}
+
+// ssoEdgeLabel returns the SSO strategy (e.g. "forward-auth", "ldap") for an app,
+// falling back to "sso" if the catalog entry or strategy is unavailable.
 func (m *systemModule) ssoEdgeLabel(appName string) string {
 	if m.catalog == nil {
 		return "sso"
@@ -335,14 +357,10 @@ func (m *systemModule) DeveloperGraphHandler() http.HandlerFunc {
 
 // ---- Router ----
 
-// NewSystemRouter returns a chi.Router with all system-related routes.
-func NewSystemRouter(mod *systemModule) *chi.Mux {
-	r := chi.NewRouter()
-
+// NewSystemRouter registers all system-related routes on the given router.
+func NewSystemRouter(mod *systemModule, r chi.Router) {
 	r.Get("/health", mod.HealthHandler())
-	r.Get("/api/system/status", mod.SystemStatusHandler())
-	r.Get("/api/system/storage", mod.StorageHandler())
-	r.Get("/api/system/developer", mod.DeveloperGraphHandler())
-
-	return r
+	r.Get("/system/status", mod.SystemStatusHandler())
+	r.Get("/system/storage", mod.StorageHandler())
+	r.Get("/system/developer", mod.DeveloperGraphHandler())
 }

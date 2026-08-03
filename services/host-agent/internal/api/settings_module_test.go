@@ -14,9 +14,9 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/go-chi/chi/v5"
 )
 
 func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
@@ -84,9 +84,9 @@ var _ store.TailnetStoreInterface = (*FakeTailnetStore)(nil)
 
 func TestSettingsHTTP_GetTailnet_None(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/settings/tailnet", nil)
+	req := httptest.NewRequest("GET", "/settings/tailnet", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -107,9 +107,9 @@ func TestSettingsHTTP_GetTailnet_WithData(t *testing.T) {
 		Status:  "active",
 	}
 
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/settings/tailnet", nil)
+	req := httptest.NewRequest("GET", "/settings/tailnet", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -124,10 +124,10 @@ func TestSettingsHTTP_GetTailnet_WithData(t *testing.T) {
 
 func TestSettingsHTTP_SetTailnet_InvalidType(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"name":"test","type":"vpn","authKey":"key"}`
-	req := httptest.NewRequest("POST", "/api/settings/tailnet", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -137,10 +137,10 @@ func TestSettingsHTTP_SetTailnet_InvalidType(t *testing.T) {
 
 func TestSettingsHTTP_SetTailnet_MissingAuthKey(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"name":"test","type":"tailscale"}`
-	req := httptest.NewRequest("POST", "/api/settings/tailnet", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -150,10 +150,10 @@ func TestSettingsHTTP_SetTailnet_MissingAuthKey(t *testing.T) {
 
 func TestSettingsHTTP_SetTailnet_HeadscaleMissingControlURL(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"name":"test","type":"headscale","authKey":"key"}`
-	req := httptest.NewRequest("POST", "/api/settings/tailnet", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -164,10 +164,10 @@ func TestSettingsHTTP_SetTailnet_HeadscaleMissingControlURL(t *testing.T) {
 func TestSettingsHTTP_SetTailnet_NoOrchestrator(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.orch = nil
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"name":"test","type":"tailscale","authKey":"key"}`
-	req := httptest.NewRequest("POST", "/api/settings/tailnet", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -177,10 +177,10 @@ func TestSettingsHTTP_SetTailnet_NoOrchestrator(t *testing.T) {
 
 func TestSettingsHTTP_SetTailnet_Valid(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"name":"My TS","type":"tailscale","authKey":"tskey-auth-xyz"}`
-	req := httptest.NewRequest("POST", "/api/settings/tailnet", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -194,9 +194,9 @@ func TestSettingsHTTP_SetTailnet_Valid(t *testing.T) {
 
 func TestSettingsHTTP_DeleteTailnet_None(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/api/settings/tailnet", nil)
+	req := httptest.NewRequest("DELETE", "/settings/tailnet", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -213,9 +213,9 @@ func TestSettingsHTTP_DeleteTailnet_Valid(t *testing.T) {
 		Status:  "active",
 	}
 
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/api/settings/tailnet", nil)
+	req := httptest.NewRequest("DELETE", "/settings/tailnet", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -226,9 +226,9 @@ func TestSettingsHTTP_DeleteTailnet_Valid(t *testing.T) {
 
 func TestSettingsHTTP_SetupStatus_NoUsers(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/setup/status", nil)
+	req := httptest.NewRequest("GET", "/setup/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -242,9 +242,9 @@ func TestSettingsHTTP_SetupStatus_NoUsers(t *testing.T) {
 func TestSettingsHTTP_SetupStatus_WithUsers(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/setup/status", nil)
+	req := httptest.NewRequest("GET", "/setup/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -258,10 +258,10 @@ func TestSettingsHTTP_SetupStatus_WithUsers(t *testing.T) {
 func TestSettingsHTTP_CreateFirstUser_AlreadySetup(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/api/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -272,10 +272,10 @@ func TestSettingsHTTP_CreateFirstUser_AlreadySetup(t *testing.T) {
 func TestSettingsHTTP_CreateFirstUser_NoAuthentik(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.authentikClient = nil
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/api/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -285,10 +285,10 @@ func TestSettingsHTTP_CreateFirstUser_NoAuthentik(t *testing.T) {
 
 func TestSettingsHTTP_CreateFirstUser_InvalidUsername(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"ab","password":"password123"}`
-	req := httptest.NewRequest("POST", "/api/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -298,10 +298,10 @@ func TestSettingsHTTP_CreateFirstUser_InvalidUsername(t *testing.T) {
 
 func TestSettingsHTTP_CreateFirstUser_ShortPassword(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"short"}`
-	req := httptest.NewRequest("POST", "/api/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -311,10 +311,10 @@ func TestSettingsHTTP_CreateFirstUser_ShortPassword(t *testing.T) {
 
 func TestSettingsHTTP_CreateFirstUser_Success(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"admin","password":"securepass123"}`
-	req := httptest.NewRequest("POST", "/api/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -331,9 +331,9 @@ func TestSettingsHTTP_CreateFirstUser_Success(t *testing.T) {
 func TestSettingsHTTP_ListUsers_NoAuthentik(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.authentikClient = nil
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/admin/users", nil)
+	req := httptest.NewRequest("GET", "/admin/users", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -342,9 +342,9 @@ func TestSettingsHTTP_ListUsers_NoAuthentik(t *testing.T) {
 
 func TestSettingsHTTP_ListUsers_Empty(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/admin/users", nil)
+	req := httptest.NewRequest("GET", "/admin/users", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -356,9 +356,9 @@ func TestSettingsHTTP_ListUsers_WithUsers(t *testing.T) {
 	client := mod.authentikClient.(*FakeSettingsAuthentikClient)
 	client.users["alice"] = &authentik.ManagedUserInfo{ID: 1, Username: "alice", IsAdmin: true}
 
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/admin/users", nil)
+	req := httptest.NewRequest("GET", "/admin/users", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -368,10 +368,10 @@ func TestSettingsHTTP_ListUsers_WithUsers(t *testing.T) {
 func TestSettingsHTTP_CreateManagedUser_NoAuthentik(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.authentikClient = nil
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -381,10 +381,10 @@ func TestSettingsHTTP_CreateManagedUser_NoAuthentik(t *testing.T) {
 
 func TestSettingsHTTP_CreateManagedUser_MissingFields(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob"}`
-	req := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -394,10 +394,10 @@ func TestSettingsHTTP_CreateManagedUser_MissingFields(t *testing.T) {
 
 func TestSettingsHTTP_CreateManagedUser_InvalidRole(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123","role":"superadmin"}`
-	req := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -407,10 +407,10 @@ func TestSettingsHTTP_CreateManagedUser_InvalidRole(t *testing.T) {
 
 func TestSettingsHTTP_CreateManagedUser_DefaultRole(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -420,13 +420,13 @@ func TestSettingsHTTP_CreateManagedUser_DefaultRole(t *testing.T) {
 
 func TestSettingsHTTP_DeleteManagedUser_SelfDelete(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	ctx := context.WithValue(context.Background(), userContextKey, &store.User{
 		Username: "alice",
 		Role:     store.RoleAdmin,
 	})
-	req := httptest.NewRequest("DELETE", "/api/admin/users/alice", nil).WithContext(ctx)
+	req := httptest.NewRequest("DELETE", "/admin/users/alice", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -436,9 +436,9 @@ func TestSettingsHTTP_DeleteManagedUser_SelfDelete(t *testing.T) {
 func TestSettingsHTTP_DeleteManagedUser_NoAuthentik(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.authentikClient = nil
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/api/admin/users/alice", nil)
+	req := httptest.NewRequest("DELETE", "/admin/users/alice", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -447,9 +447,9 @@ func TestSettingsHTTP_DeleteManagedUser_NoAuthentik(t *testing.T) {
 
 func TestSettingsHTTP_DeleteManagedUser_Success(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/api/admin/users/alice", nil)
+	req := httptest.NewRequest("DELETE", "/admin/users/alice", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -459,10 +459,10 @@ func TestSettingsHTTP_DeleteManagedUser_Success(t *testing.T) {
 func TestSettingsHTTP_SetUserRole_NoAuthentik(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.authentikClient = nil
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"role":"admin"}`
-	req := httptest.NewRequest("PUT", "/api/admin/users/alice/role", strings.NewReader(body))
+	req := httptest.NewRequest("PUT", "/admin/users/alice/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -472,10 +472,10 @@ func TestSettingsHTTP_SetUserRole_NoAuthentik(t *testing.T) {
 
 func TestSettingsHTTP_SetUserRole_InvalidRole(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"role":"superadmin"}`
-	req := httptest.NewRequest("PUT", "/api/admin/users/alice/role", strings.NewReader(body))
+	req := httptest.NewRequest("PUT", "/admin/users/alice/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -485,10 +485,10 @@ func TestSettingsHTTP_SetUserRole_InvalidRole(t *testing.T) {
 
 func TestSettingsHTTP_SetUserRole_NotFound(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"role":"admin"}`
-	req := httptest.NewRequest("PUT", "/api/admin/users/nonexistent/role", strings.NewReader(body))
+	req := httptest.NewRequest("PUT", "/admin/users/nonexistent/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -499,14 +499,14 @@ func TestSettingsHTTP_SetUserRole_NotFound(t *testing.T) {
 
 func TestSettingsHTTP_SetUserRole_Success(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	mod.authentikClient.(*FakeSettingsAuthentikClient).users["bob"] = &authentik.ManagedUserInfo{
 		ID: 1, Username: "bob", IsAdmin: false,
 	}
 
 	body := `{"role":"admin"}`
-	req := httptest.NewRequest("PUT", "/api/admin/users/bob/role", strings.NewReader(body))
+	req := httptest.NewRequest("PUT", "/admin/users/bob/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -518,21 +518,21 @@ func TestSettingsHTTP_SetUserRole_Success(t *testing.T) {
 
 func TestSettingsRouter_RegistersRoutes(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	r := NewSettingsRouter(mod)
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	routes := []struct {
 		method string
 		path   string
 	}{
-		{"GET", "/api/settings/tailnet"},
-		{"POST", "/api/settings/tailnet"},
-		{"DELETE", "/api/settings/tailnet"},
-		{"GET", "/api/setup/status"},
-		{"POST", "/api/setup/create-user"},
-		{"GET", "/api/admin/users"},
-		{"POST", "/api/admin/users"},
-		{"DELETE", "/api/admin/users/alice"},
-		{"PUT", "/api/admin/users/bob/role"},
+		{"GET", "/settings/tailnet"},
+		{"POST", "/settings/tailnet"},
+		{"DELETE", "/settings/tailnet"},
+		{"GET", "/setup/status"},
+		{"POST", "/setup/create-user"},
+		{"GET", "/admin/users"},
+		{"POST", "/admin/users"},
+		{"DELETE", "/admin/users/alice"},
+		{"PUT", "/admin/users/bob/role"},
 	}
 
 	for _, route := range routes {

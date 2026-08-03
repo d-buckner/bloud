@@ -210,23 +210,15 @@ func (m *appsModule) buildLaunchPaths() map[string]string {
 
 // ---- HTTP handler methods (on concrete type, not interface) ----
 
-// NewAppsRouter returns a chi.Router with all app-related routes under /api.
-// It requires the concrete *appsModule because handler methods live on the
-// concrete type, not on the AppsModule interface.
-func NewAppsRouter(mod *appsModule) *chi.Mux {
-	r := chi.NewRouter()
-
-	r.Route("/api", func(api chi.Router) {
-		api.Get("/apps", mod.GetCatalogHandler())
-		api.Get("/apps/installed", mod.GetInstalledHandler())
-		api.Get("/apps/{name}/metadata", mod.AppMetadataHandler())
-		api.Post("/apps/{name}/install", mod.InstallHandler())
-		api.Post("/apps/{name}/uninstall", mod.UninstallHandler())
-		api.Patch("/apps/{name}/rename", mod.RenameHandler())
-		api.Post("/apps/refresh-catalog", mod.RefreshCatalogHandler())
-	})
-
-	return r
+// NewAppsRouter registers all app-related routes on the given router.
+func NewAppsRouter(mod *appsModule, r chi.Router) {
+	r.Get("/apps", mod.GetCatalogHandler())
+	r.Get("/apps/installed", mod.GetInstalledHandler())
+	r.Get("/apps/{name}/metadata", mod.AppMetadataHandler())
+	r.Post("/apps/{name}/install", mod.InstallHandler())
+	r.Post("/apps/{name}/uninstall", mod.UninstallHandler())
+	r.Patch("/apps/{name}/rename", mod.RenameHandler())
+	r.Post("/apps/refresh-catalog", mod.RefreshCatalogHandler())
 }
 
 // GetCatalogHandler returns all user-facing apps from the catalog.
@@ -355,4 +347,22 @@ func errContains(err error, substr string) bool {
 		}
 	}
 	return false
+}
+
+// installedAppResponse extends InstalledApp with catalog-derived fields.
+type installedAppResponse struct {
+	*store.InstalledApp
+	SSOLaunchPath string `json:"sso_launch_path,omitempty"`
+}
+
+// enrichApps enriches installed apps with SSO launch paths from the catalog.
+func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string) []installedAppResponse {
+	result := make([]installedAppResponse, 0, len(apps))
+	for _, app := range apps {
+		result = append(result, installedAppResponse{
+			InstalledApp:  app,
+			SSOLaunchPath: launchPaths[app.CatalogID],
+		})
+	}
+	return result
 }

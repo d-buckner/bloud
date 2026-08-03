@@ -14,9 +14,9 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/go-chi/chi/v5"
 )
 
 func newSharingModule(t *testing.T) (*sharingModule, *FakeShareStore, *FakeGuestStore, *FakeAppStore, *FakeCatalogCache) {
@@ -152,9 +152,9 @@ func (f *FakeTailnetNode) StopAndPurge(_ context.Context, appName string) error 
 
 func TestSharingHTTP_CommunityGraph_Empty(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/sharing/community", nil)
+	req := httptest.NewRequest("GET", "/sharing/community", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -189,9 +189,9 @@ func TestSharingHTTP_CommunityGraph_WithShares(t *testing.T) {
 		Status:  "active",
 	})
 
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/sharing/community", nil)
+	req := httptest.NewRequest("GET", "/sharing/community", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -202,10 +202,10 @@ func TestSharingHTTP_CommunityGraph_WithShares(t *testing.T) {
 
 func TestSharingHTTP_CreateInvite_MissingFields(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
 	body := `{}`
-	req := httptest.NewRequest("POST", "/api/sharing/invites", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/invites", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -215,10 +215,10 @@ func TestSharingHTTP_CreateInvite_MissingFields(t *testing.T) {
 
 func TestSharingHTTP_CreateInvite_NoApp(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
 	body := `{"appId":"","guestId":"g1","nodeShareLink":"link"}`
-	req := httptest.NewRequest("POST", "/api/sharing/invites", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/invites", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -228,10 +228,10 @@ func TestSharingHTTP_CreateInvite_NoApp(t *testing.T) {
 
 func TestSharingHTTP_CreateInvite_NotInstalled(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
 	body := `{"appId":"jellyfin","guestId":"g1","nodeShareLink":"link"}`
-	req := httptest.NewRequest("POST", "/api/sharing/invites", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/invites", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -256,10 +256,10 @@ func TestSharingHTTP_CreateInvite_Success(t *testing.T) {
 	// Ensure tailnet node has an address
 	mod.tailnetNode.EnsureRunning(context.Background(), "jellyfin")
 
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
 	body := `{"appId":"jellyfin","guestId":"g1","nodeShareLink":"https://tailnet.ts.net/share/abc"}`
-	req := httptest.NewRequest("POST", "/api/sharing/invites", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/invites", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -276,9 +276,9 @@ func TestSharingHTTP_CreateInvite_Success(t *testing.T) {
 
 func TestSharingHTTP_ListShares_Empty(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/sharing/shares", nil)
+	req := httptest.NewRequest("GET", "/sharing/shares", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -291,9 +291,9 @@ func TestSharingHTTP_RevokeShare_Success(t *testing.T) {
 		ID: "s1", AppID: 1, GuestID: "g1", Status: "active",
 	})
 
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/api/sharing/shares/s1", nil)
+	req := httptest.NewRequest("DELETE", "/sharing/shares/s1", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -303,9 +303,9 @@ func TestSharingHTTP_RevokeShare_Success(t *testing.T) {
 
 func TestSharingHTTP_RevokeShare_NotFound(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/api/sharing/shares/nonexistent", nil)
+	req := httptest.NewRequest("DELETE", "/sharing/shares/nonexistent", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -316,9 +316,9 @@ func TestSharingHTTP_RevokeShare_NotFound(t *testing.T) {
 
 func TestSharingHTTP_ListGuests_Empty(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/sharing/guests", nil)
+	req := httptest.NewRequest("GET", "/sharing/guests", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -327,10 +327,10 @@ func TestSharingHTTP_ListGuests_Empty(t *testing.T) {
 
 func TestSharingHTTP_CreateGuest_MissingName(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
 	body := `{}`
-	req := httptest.NewRequest("POST", "/api/sharing/guests", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/guests", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -340,10 +340,10 @@ func TestSharingHTTP_CreateGuest_MissingName(t *testing.T) {
 
 func TestSharingHTTP_CreateGuest_Success(t *testing.T) {
 	mod, _, guestStore, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
 	body := `{"name":"Alice"}`
-	req := httptest.NewRequest("POST", "/api/sharing/guests", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/guests", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -357,18 +357,18 @@ func TestSharingHTTP_CreateGuest_Success(t *testing.T) {
 
 func TestSharingRouter_RegistersRoutes(t *testing.T) {
 	mod, _, _, _, _ := newSharingModule(t)
-	r := NewSharingRouter(mod)
+	r := chi.NewRouter(); NewSharingRouter(mod, r)
 
 	routes := []struct {
 		method string
 		path   string
 	}{
-		{"GET", "/api/sharing/community"},
-		{"POST", "/api/sharing/invites"},
-		{"GET", "/api/sharing/shares"},
-		{"DELETE", "/api/sharing/shares/abc"},
-		{"GET", "/api/sharing/guests"},
-		{"POST", "/api/sharing/guests"},
+		{"GET", "/sharing/community"},
+		{"POST", "/sharing/invites"},
+		{"GET", "/sharing/shares"},
+		{"DELETE", "/sharing/shares/abc"},
+		{"GET", "/sharing/guests"},
+		{"POST", "/sharing/guests"},
 	}
 
 	for _, route := range routes {

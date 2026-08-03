@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"unicode/utf8"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -483,26 +485,19 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 
 // ---- Router ----
 
-// NewSettingsRouter returns a chi.Router with all settings-related routes.
-func NewSettingsRouter(mod *settingsModule) *chi.Mux {
-	r := chi.NewRouter()
+// NewSettingsRouter registers all settings-related routes on the given router.
+func NewSettingsRouter(mod *settingsModule, r chi.Router) {
+	r.Get("/settings/tailnet", mod.GetTailnetHandler())
+	r.Post("/settings/tailnet", mod.SetTailnetHandler())
+	r.Delete("/settings/tailnet", mod.DeleteTailnetHandler())
 
-	// Tailnet
-	r.Get("/api/settings/tailnet", mod.GetTailnetHandler())
-	r.Post("/api/settings/tailnet", mod.SetTailnetHandler())
-	r.Delete("/api/settings/tailnet", mod.DeleteTailnetHandler())
+	r.Get("/setup/status", mod.SetupStatusHandler())
+	r.Post("/setup/create-user", mod.CreateFirstUserHandler())
 
-	// Setup wizard
-	r.Get("/api/setup/status", mod.SetupStatusHandler())
-	r.Post("/api/setup/create-user", mod.CreateFirstUserHandler())
-
-	// User management
-	r.Get("/api/admin/users", mod.ListUsersHandler())
-	r.Post("/api/admin/users", mod.CreateManagedUserHandler())
-	r.Delete("/api/admin/users/{username}", mod.DeleteManagedUserHandler())
-	r.Put("/api/admin/users/{username}/role", mod.SetUserRoleHandler())
-
-	return r
+	r.Get("/admin/users", mod.ListUsersHandler())
+	r.Post("/admin/users", mod.CreateManagedUserHandler())
+	r.Delete("/admin/users/{username}", mod.DeleteManagedUserHandler())
+	r.Put("/admin/users/{username}/role", mod.SetUserRoleHandler())
 }
 
 // FakeSettingsAuthentikClient implements AuthentikUserManagerInterface for testing.
@@ -582,3 +577,92 @@ func (f *FakeSettingsAuthentikClient) FindUserID(username string) (int, error) {
 
 // Ensure interface compliance
 var _ AuthentikUserManagerInterface = (*FakeSettingsAuthentikClient)(nil)
+
+// ---- Types ----
+
+// tailnetResponse is the API response for a tailnet connection.
+// The auth key is never exposed to the frontend.
+type tailnetResponse struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	HasAuthKey bool   `json:"hasAuthKey"`
+	ControlURL string `json:"controlUrl"`
+	Status     string `json:"status"`
+}
+
+// toTailnetResponse converts a store.TailnetConnection to tailnetResponse.
+func toTailnetResponse(conn *store.TailnetConnection) tailnetResponse {
+	return tailnetResponse{
+		ID:         conn.ID,
+		Name:       conn.Name,
+		Type:       conn.Type,
+		HasAuthKey: conn.AuthKey != "",
+		ControlURL: conn.ControlURL,
+		Status:     conn.Status,
+	}
+}
+
+// setTailnetRequest is the request body for POST /api/settings/tailnet.
+type setTailnetRequest struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	AuthKey    string `json:"authKey"`
+	ControlURL string `json:"controlUrl"`
+}
+
+// SetupStatusResponse represents the response for GET /api/setup/status.
+type SetupStatusResponse struct {
+	SetupRequired  bool `json:"setupRequired"`
+	AuthentikReady bool `json:"authentikReady"`
+	AuthReady      bool `json:"authReady"`
+}
+
+// CreateUserRequest represents the request body for POST /api/setup/create-user.
+type CreateUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// CreateUserResponse represents the response for POST /api/setup/create-user.
+type CreateUserResponse struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// createUserRequest is the request body for POST /api/admin/users.
+type createUserRequest struct {
+	Username string     `json:"username"`
+	Password string     `json:"password"`
+	Role     store.Role `json:"role"`
+}
+
+// setUserRoleRequest is the request body for PUT /api/admin/users/{username}/role.
+type setUserRoleRequest struct {
+	Role store.Role `json:"role"`
+}
+
+// validateCreateUserRequest validates the create user request.
+func validateCreateUserRequest(req CreateUserRequest) error {
+	usernameLen := utf8.RuneCountInString(req.Username)
+	if usernameLen < 3 || usernameLen > 30 {
+		return &validationError{"Username must be between 3 and 30 characters"}
+	}
+	usernameRegex := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	if !usernameRegex.MatchString(req.Username) {
+		return &validationError{"Username can only contain letters, numbers, and underscores"}
+	}
+	passwordLen := utf8.RuneCountInString(req.Password)
+	if passwordLen < 8 {
+		return &validationError{"Password must be at least 8 characters"}
+	}
+	return nil
+}
+
+type validationError struct {
+	message string
+}
+
+func (e *validationError) Error() string {
+	return e.message
+}

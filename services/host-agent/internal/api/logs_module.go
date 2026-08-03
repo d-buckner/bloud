@@ -39,16 +39,10 @@ func (m *logsModule) CanStream(name string) error {
 	return nil
 }
 
-// NewLogsRouter returns a chi.Router with log-related routes.
-func NewLogsRouter(mod *logsModule) *chi.Mux {
-	r := chi.NewRouter()
-
-	r.Route("/api", func(api chi.Router) {
-		api.Get("/apps/{name}/logs", mod.StreamLogsHandler())
-		api.Get("/system/status/stream", mod.SystemStatusStreamHandler())
-	})
-
-	return r
+// NewLogsRouter registers log-related routes on the given router.
+func NewLogsRouter(mod *logsModule, r chi.Router) {
+	r.Get("/apps/{name}/logs", mod.StreamLogsHandler())
+	r.Get("/system/status/stream", mod.SystemStatusStreamHandler())
 }
 
 // StreamLogsHandler streams app logs via SSE using journalctl.

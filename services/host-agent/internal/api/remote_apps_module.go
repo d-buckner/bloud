@@ -91,17 +91,11 @@ func (m *remoteAppsModule) Delete(id string) (*IntentRef, error) {
 	return &IntentRef{ID: intent.IntentID()}, nil
 }
 
-// NewRemoteAppsRouter returns a chi.Router with remote app routes.
-func NewRemoteAppsRouter(mod *remoteAppsModule) *chi.Mux {
-	r := chi.NewRouter()
-
-	r.Route("/api", func(api chi.Router) {
-		api.Get("/sharing/remote-apps", mod.ListHandler())
-		api.Post("/sharing/remote-apps", mod.AddHandler())
-		api.Delete("/sharing/remote-apps/{id}", mod.DeleteHandler())
-	})
-
-	return r
+// NewRemoteAppsRouter registers remote app routes on the given router.
+func NewRemoteAppsRouter(mod *remoteAppsModule, r chi.Router) {
+	r.Get("/sharing/remote-apps", mod.ListHandler())
+	r.Post("/sharing/remote-apps", mod.AddHandler())
+	r.Delete("/sharing/remote-apps/{id}", mod.DeleteHandler())
 }
 
 // ListHandler returns all remote apps.

@@ -408,17 +408,10 @@ func (m *authModule) GetCurrentUserHandler() http.HandlerFunc {
 	}
 }
 
-// NewAuthRouter returns a chi.Router with all auth-related routes.
-func NewAuthRouter(mod *authModule) *chi.Mux {
-	r := chi.NewRouter()
-
-	r.Route("/api", func(api chi.Router) {
-		api.Get("/auth/me", mod.GetCurrentUserHandler())
-	})
-
+// NewAuthRouter registers all auth-related routes on the given router.
+func NewAuthRouter(mod *authModule, r chi.Router) {
+	r.Get("/auth/me", mod.GetCurrentUserHandler())
 	r.Get("/auth/login", mod.LoginHandler())
 	r.Get("/auth/callback", mod.CallbackHandler())
 	r.Post("/auth/logout", mod.LogoutHandler())
-
-	return r
 }

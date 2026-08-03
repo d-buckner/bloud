@@ -16,9 +16,9 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/go-chi/chi/v5"
 )
 
 // ---- Test helpers ----
@@ -110,7 +110,7 @@ func (f *FakeAppGraph) GetApps() map[string]*catalog.AppDefinition {
 
 func TestSystemHTTP_Health(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
-	r := NewSystemRouter(mod)
+	r := chi.NewRouter(); NewSystemRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -127,9 +127,9 @@ func TestSystemHTTP_Health(t *testing.T) {
 
 func TestSystemHTTP_Status(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
-	r := NewSystemRouter(mod)
+	r := chi.NewRouter(); NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/system/status", nil)
+	req := httptest.NewRequest("GET", "/system/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -140,9 +140,9 @@ func TestSystemHTTP_Status(t *testing.T) {
 
 func TestSystemHTTP_Storage(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
-	r := NewSystemRouter(mod)
+	r := chi.NewRouter(); NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/system/storage", nil)
+	req := httptest.NewRequest("GET", "/system/storage", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -153,9 +153,9 @@ func TestSystemHTTP_Storage(t *testing.T) {
 
 func TestSystemHTTP_DeveloperGraph_Empty(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
-	r := NewSystemRouter(mod)
+	r := chi.NewRouter(); NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/system/developer", nil)
+	req := httptest.NewRequest("GET", "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -180,9 +180,9 @@ func TestSystemHTTP_DeveloperGraph_WithApps(t *testing.T) {
 		ID: "ts-1", Name: "My Tailscale", Type: "tailscale", Status: "active",
 	}
 
-	r := NewSystemRouter(mod)
+	r := chi.NewRouter(); NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/system/developer", nil)
+	req := httptest.NewRequest("GET", "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -207,9 +207,9 @@ func TestSystemHTTP_DeveloperGraph_WithTailnetNodes(t *testing.T) {
 		TailnetID: "tn-1",
 	})
 
-	r := NewSystemRouter(mod)
+	r := chi.NewRouter(); NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/api/system/developer", nil)
+	req := httptest.NewRequest("GET", "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -233,16 +233,16 @@ func TestSystemHTTP_DeveloperGraph_WithTailnetNodes(t *testing.T) {
 
 func TestSystemRouter_RegistersRoutes(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
-	r := NewSystemRouter(mod)
+	r := chi.NewRouter(); NewSystemRouter(mod, r)
 
 	routes := []struct {
 		method string
 		path   string
 	}{
 		{"GET", "/health"},
-		{"GET", "/api/system/status"},
-		{"GET", "/api/system/storage"},
-		{"GET", "/api/system/developer"},
+		{"GET", "/system/status"},
+		{"GET", "/system/storage"},
+		{"GET", "/system/developer"},
 	}
 
 	for _, route := range routes {

@@ -18,6 +18,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/go-chi/chi/v5"
 )
 
 // ---- Test helpers ----
@@ -251,9 +252,9 @@ func TestAppsHTTP_ListInstalledApps(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("GET", "/api/apps/installed", nil)
+	req := httptest.NewRequest("GET", "/apps/installed", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -275,9 +276,9 @@ func TestAppsHTTP_Install_Returns202(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/api/apps/jellyfin/install", nil)
+	req := httptest.NewRequest("POST", "/apps/jellyfin/install", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -296,9 +297,9 @@ func TestAppsHTTP_Install_NotFound(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/api/apps/nonexistent/install", nil)
+	req := httptest.NewRequest("POST", "/apps/nonexistent/install", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -313,9 +314,9 @@ func TestAppsHTTP_Uninstall_Returns202(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/api/apps/jellyfin/uninstall", strings.NewReader(`{"clearData":true}`))
+	req := httptest.NewRequest("POST", "/apps/jellyfin/uninstall", strings.NewReader(`{"clearData":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -331,10 +332,10 @@ func TestAppsHTTP_Rename_Returns202(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	body := `{"displayName":"My Jellyfin"}`
-	req := httptest.NewRequest("PATCH", "/api/apps/jellyfin/rename", strings.NewReader(body))
+	req := httptest.NewRequest("PATCH", "/apps/jellyfin/rename", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -350,10 +351,10 @@ func TestAppsHTTP_Rename_MissingDisplayName(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	body := `{"displayName":""}`
-	req := httptest.NewRequest("PATCH", "/api/apps/jellyfin/rename", strings.NewReader(body))
+	req := httptest.NewRequest("PATCH", "/apps/jellyfin/rename", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -370,9 +371,9 @@ func TestAppsHTTP_AppMetadata(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("GET", "/api/apps/jellyfin/metadata", nil)
+	req := httptest.NewRequest("GET", "/apps/jellyfin/metadata", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -393,9 +394,9 @@ func TestAppsHTTP_RefreshCatalog(t *testing.T) {
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod.(*appsModule)
 	appMod.SetAppsDir(tmpDir)
-	r := NewAppsRouter(appMod)
+	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/api/apps/refresh-catalog", nil)
+	req := httptest.NewRequest("POST", "/apps/refresh-catalog", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

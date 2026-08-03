@@ -370,16 +370,52 @@ func (m *sharingModule) CreateGuestHandler() http.HandlerFunc {
 
 // ---- Router ----
 
-// NewSharingRouter returns a chi.Router with all sharing-related routes.
-func NewSharingRouter(mod *sharingModule) *chi.Mux {
-	r := chi.NewRouter()
+// NewSharingRouter registers all sharing-related routes on the given router.
+func NewSharingRouter(mod *sharingModule, r chi.Router) {
+	r.Get("/sharing/community", mod.CommunityGraphHandler())
+	r.Post("/sharing/invites", mod.CreateInviteHandler())
+	r.Get("/sharing/shares", mod.ListSharesHandler())
+	r.Delete("/sharing/shares/{id}", mod.RevokeShareHandler())
+	r.Get("/sharing/guests", mod.ListGuestsHandler())
+	r.Post("/sharing/guests", mod.CreateGuestHandler())
+}
 
-	r.Get("/api/sharing/community", mod.CommunityGraphHandler())
-	r.Post("/api/sharing/invites", mod.CreateInviteHandler())
-	r.Get("/api/sharing/shares", mod.ListSharesHandler())
-	r.Delete("/api/sharing/shares/{id}", mod.RevokeShareHandler())
-	r.Get("/api/sharing/guests", mod.ListGuestsHandler())
-	r.Post("/api/sharing/guests", mod.CreateGuestHandler())
+// ---- Types ----
 
-	return r
+// createInviteRequest is the request body for POST /api/sharing/invites.
+type createInviteRequest struct {
+	AppID         string `json:"appId"`
+	GuestID       string `json:"guestId"`
+	NodeShareLink string `json:"nodeShareLink"`
+}
+
+// createInviteResponse is the response for POST /api/sharing/invites.
+type createInviteResponse struct {
+	ShareID string `json:"shareId"`
+	Token   string `json:"token"`
+}
+
+// communityGraphResponse is the response for GET /api/sharing/community.
+type communityGraphResponse struct {
+	Nodes []communityNode `json:"nodes"`
+	Edges []communityEdge `json:"edges"`
+}
+
+// communityNode represents a node in the community sharing graph.
+type communityNode struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	NodeType string `json:"nodeType"`          // "person" | "app"
+	AppID    string `json:"appId,omitempty"`    // for app nodes: catalog app name (icon lookup)
+}
+
+// communityEdge represents a directional edge in the community graph.
+type communityEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+}
+
+// createGuestRequest is the request body for POST /api/sharing/guests.
+type createGuestRequest struct {
+	Name string `json:"name"`
 }

@@ -116,16 +116,10 @@ func (m *homeModuleSimple) SetLayout(username string, positions []store.Position
 	return nil
 }
 
-// NewHomeRouter returns a chi.Router with home layout routes.
-func NewHomeRouter(mod *homeModuleSimple) *chi.Mux {
-	r := chi.NewRouter()
-
-	r.Route("/api", func(api chi.Router) {
-		api.Get("/user/home", mod.GetLayoutHandler())
-		api.Put("/user/layout", mod.SetLayoutHandler())
-	})
-
-	return r
+// NewHomeRouter registers home layout routes on the given router.
+func NewHomeRouter(mod *homeModuleSimple, r chi.Router) {
+	r.Get("/user/home", mod.GetLayoutHandler())
+	r.Put("/user/layout", mod.SetLayoutHandler())
 }
 
 // GetLayoutHandler returns the user's home layout.
@@ -167,4 +161,28 @@ func (m *homeModuleSimple) SetLayoutHandler() http.HandlerFunc {
 		}
 		respondJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 	}
+}
+
+// ---- Shared types ----
+
+type appWithPosition struct {
+	*store.InstalledApp
+	SSOLaunchPath string `json:"sso_launch_path,omitempty"`
+	X             *int   `json:"x"`
+	Y             *int   `json:"y"`
+	W             int    `json:"w"`
+	H             int    `json:"h"`
+}
+
+type widgetPosition struct {
+	ID string `json:"id"`
+	X  *int   `json:"x"`
+	Y  *int   `json:"y"`
+	W  int    `json:"w"`
+	H  int    `json:"h"`
+}
+
+type homeResponse struct {
+	Apps    []appWithPosition `json:"apps"`
+	Widgets []widgetPosition  `json:"widgets"`
 }

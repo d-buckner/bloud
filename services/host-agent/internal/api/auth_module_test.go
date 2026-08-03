@@ -13,9 +13,9 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
-	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/go-chi/chi/v5"
 )
 
 func newAuthModule(t *testing.T, cfg *AuthConfig) (AuthModule, *authModule, *FakeAuthentikClient, *fakeSessionStore) {
@@ -105,9 +105,9 @@ func TestAuthHTTP_GetCurrentUser_NoSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
-	req := httptest.NewRequest("GET", "/api/auth/me", nil)
+	req := httptest.NewRequest("GET", "/auth/me", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -127,9 +127,9 @@ func TestAuthHTTP_GetCurrentUser_NoSessionStore(t *testing.T) {
 		sessionStore:    nil,
 		logger:          logger,
 	}
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
-	req := httptest.NewRequest("GET", "/api/auth/me", nil)
+	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "some-session"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -145,9 +145,9 @@ func TestAuthHTTP_GetCurrentUser_ValidSession(t *testing.T) {
 	sessStore.Create(ctx, "user1", "bob", store.RoleAdmin)
 
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
-	req := httptest.NewRequest("GET", "/api/auth/me", nil)
+	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "fake-session-bob"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -165,9 +165,9 @@ func TestAuthHTTP_GetCurrentUser_InvalidSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
-	req := httptest.NewRequest("GET", "/api/auth/me", nil)
+	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "nonexistent-session"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -178,7 +178,7 @@ func TestAuthHTTP_GetCurrentUser_InvalidSession(t *testing.T) {
 func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 	mod, _, _, _ := newAuthModule(t, nil)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("GET", "/auth/login", nil)
 	w := httptest.NewRecorder()
@@ -191,7 +191,7 @@ func TestAuthHTTP_Logout_ClearsCookie(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "some-session-id"})
@@ -217,7 +217,7 @@ func TestAuthHTTP_Logout_DefaultRedirect(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	w := httptest.NewRecorder()
@@ -236,7 +236,7 @@ func TestAuthHTTP_Callback_MissingState(t *testing.T) {
 	}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=abc123&state=xyz", nil)
 	w := httptest.NewRecorder()
@@ -254,7 +254,7 @@ func TestAuthHTTP_Callback_StateMismatch(t *testing.T) {
 	}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=abc123&state=wrong-state", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "expected-state"})
@@ -273,7 +273,7 @@ func TestAuthHTTP_Callback_NoCode(t *testing.T) {
 	}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?state=correct-state", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "correct-state"})
@@ -292,7 +292,7 @@ func TestAuthHTTP_Callback_WithOAuthError(t *testing.T) {
 	}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=User+denied+access&state=s", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "s"})
@@ -313,7 +313,7 @@ func TestAuthHTTP_Callback_FullFlow(t *testing.T) {
 	}
 	mod, authMod, client, sessStore := newAuthModule(t, cfg)
 	_ = mod
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	state := "test-state-123"
 	req := httptest.NewRequest("GET", "/auth/callback?code=auth-code-xyz&state="+state, nil)
@@ -363,13 +363,13 @@ func TestAuthRouter_RegistersRoutes(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _, _ := newAuthModule(t, cfg)
 	authMod := mod.(*authModule)
-	r := NewAuthRouter(authMod)
+	r := chi.NewRouter(); NewAuthRouter(authMod, r)
 
 	routes := []struct {
 		method string
 		path   string
 	}{
-		{"GET", "/api/auth/me"},
+		{"GET", "/auth/me"},
 		{"GET", "/auth/login"},
 		{"GET", "/auth/callback"},
 		{"POST", "/auth/logout"},

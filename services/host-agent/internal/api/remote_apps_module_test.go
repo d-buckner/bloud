@@ -12,6 +12,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestRemoteAppsModule_List_Empty(t *testing.T) {
@@ -118,9 +119,9 @@ func TestRemoteAppsHTTP_List(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := NewRemoteAppsRouter(mod.(*remoteAppsModule))
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
 
-	req := httptest.NewRequest("GET", "/api/sharing/remote-apps", nil)
+	req := httptest.NewRequest("GET", "/sharing/remote-apps", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -135,10 +136,10 @@ func TestRemoteAppsHTTP_Add(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := NewRemoteAppsRouter(mod.(*remoteAppsModule))
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
 
 	body := `{"appId":"jellyfin","tailnetAddr":"ts-jellyfin.ts.net","hostLabel":"John's"}`
-	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/remote-apps", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -153,10 +154,10 @@ func TestRemoteAppsHTTP_Add_UnknownApp(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := NewRemoteAppsRouter(mod.(*remoteAppsModule))
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
 
 	body := `{"appId":"unknown","tailnetAddr":"addr","hostLabel":"label"}`
-	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/sharing/remote-apps", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -171,9 +172,9 @@ func TestRemoteAppsHTTP_Delete_NotFound(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := NewRemoteAppsRouter(mod.(*remoteAppsModule))
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
 
-	req := httptest.NewRequest("DELETE", "/api/sharing/remote-apps/nonexistent", nil)
+	req := httptest.NewRequest("DELETE", "/sharing/remote-apps/nonexistent", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
