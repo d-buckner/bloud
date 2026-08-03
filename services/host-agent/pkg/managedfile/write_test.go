@@ -2,6 +2,7 @@ package managedfile
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -105,13 +106,20 @@ func TestWrite_AtomicNoCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Make directory read-only so rename will fail after temp file is written.
-	// This verifies the original file is not corrupted on failure.
-	readOnlyDir := filepath.Join(dir, "readonly")
-	if err := os.Mkdir(readOnlyDir, 0555); err != nil {
+	// Mount a read-only tmpfs so write fails even when running as root.
+	// File permission checks are bypassed by root, so we need a truly
+	// read-only filesystem to verify the atomic-write failure path.
+	roDir := filepath.Join(dir, "readonly")
+	if err := os.Mkdir(roDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	targetInReadOnly := filepath.Join(readOnlyDir, "subdir", "file.txt")
+	mountErr := exec.Command("mount", "-t", "tmpfs", "-o", "ro", "tmpfs", roDir).Run()
+	if mountErr != nil {
+		t.Skipf("mount unavailable (%v), skipping atomic-corruption test", mountErr)
+	}
+	defer exec.Command("umount", roDir).Run()
+
+	targetInReadOnly := filepath.Join(roDir, "subdir", "file.txt")
 
 	_, err := Write(targetInReadOnly, []byte("new"), 0644)
 	if err == nil {
