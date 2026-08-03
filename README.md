@@ -29,10 +29,10 @@ Install Bloud on a Debian server and get:
 - One web dashboard
 - One account and shared login (SSO) across all apps
 - One-click app installation
-- Automatic dependency provisioning (PostgreSQL, Redis, Authentik)
 - Automatic inter-app configuration (API keys, OIDC clients, LDAP setup)
 - Automatic routing through Traefik
 - Reliable reconciliation after failures and reboot
+- Per-app databases when needed (each app provisions its own PostgreSQL/Redis)
 
 ---
 
@@ -40,8 +40,8 @@ Install Bloud on a Debian server and get:
 
 | Category | Apps |
 |---|---|
-| **Infrastructure** | PostgreSQL, Redis, Traefik, Authentik |
-| **Media** | Jellyfin |
+| **Infrastructure** | Traefik, Authentik |
+| **Media** | Jellyfin, Navidrome |
 | **Photos** | Immich |
 | **Productivity** | Miniflux (RSS) |
 | **Network** | AdGuard Home |
@@ -76,13 +76,14 @@ integrations:
 ```
 
 When you install an app, Bloud resolves its full dependency graph and starts things in
-order. If PostgreSQL isn't installed yet, it goes in first. If it's already there, the
-new app is wired to the existing instance.
+order. Apps that need a database (like Immich or Authentik) declare their own
+PostgreSQL and Redis containers in `containers:` — each app gets its own isolated
+database. Apps that don't need one (like Jellyfin) just declare the integrations they do.
 
 ```
-Level 0: postgres, redis          ← No dependencies
-Level 1: authentik                ← Needs postgres + redis
-Level 2: jellyfin                 ← Needs authentik for LDAP SSO
+Level 0: traefik              ← System infra, starts first
+Level 1: jellyfin              ← Proxy + SSO; no database of its own
+Level 1: immich                 ← Self-contained: postgres + redis + server + ML
 ```
 
 Apps run as rootless Podman containers managed by Quadlet systemd units. A Go binary
@@ -99,15 +100,16 @@ bloud/
 │   │   ├── metadata.yaml          # Integrations, SSO, port, container spec
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
-│   ├── postgres/
 │   ├── authentik/
-│   └── ...
+│   ├── immich/
+│   ├── navidrome/
+│   └── traefik/
 │
 ├── services/host-agent/           # Go backend + SvelteKit frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap
 │   ├── internal/
-│   │   ├── orchestrator/          # Install/uninstall, Quadlet unit management
-│   │   ├── catalog/               # App graph and dependency resolution
+│   │   ├── orchestrator/          # Install/uninstall, intent queue, Quadlet units
+│   │   ├── catalog/               # App discovery from metadata.yaml
 │   │   ├── integration/           # Typed integration resolver
 │   │   ├── store/                 # SQLite persistence
 │   │   └── api/                   # HTTP API (chi router)

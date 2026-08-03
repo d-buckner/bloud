@@ -35,8 +35,6 @@ graph TD
     AK_CFG --> AK_CLIENT
 
     subgraph "Infrastructure Containers"
-        PG["PostgreSQL"]
-        REDIS["Redis"]
         AK["Authentik<br/>(SSO + LDAP)"]
         LDAP["LDAP Outpost"]
         TR["Traefik"]
@@ -44,7 +42,7 @@ graph TD
 
     subgraph "App Containers"
         JF["Jellyfin"]
-        IM["Immich"]
+        IM["Immich<br/>(postgres + redis + server + ML)"]
     end
 
     AK_CLIENT --> AK
@@ -81,9 +79,9 @@ Apps declare integrations in `metadata.yaml`:
 
 ```yaml
 integrations:
-  database:
+  proxy:
     required: true
-    compatible: [{ app: postgres, default: true }]
+    compatible: [{ app: traefik, default: true }]
   sso:
     required: false
     compatible: [{ app: authentik }]
@@ -95,6 +93,9 @@ Resolution rules:
    provider in catalog order.
 3. A required integration with no binding is invalid and returns an error.
 4. Unbound optional integrations with no installed compatible provider produce no binding.
+
+Note: Apps that need databases (Immich, Authentik) declare their own postgres and
+redis containers in `containers:`. They don't use the integration resolver for this.
 
 ### Reconciler (`internal/orchestrator/intent.go`)
 
@@ -182,7 +183,7 @@ with template variables (data paths, passwords, etc.) at install time.
 ```
 User clicks "Install Jellyfin"
   → API submits InstallAppIntent to the intent queue
-  → Integration Resolver binds Jellyfin→PostgreSQL, Jellyfin→Authentik
+  → Integration Resolver binds Jellyfin→Traefik (proxy), Jellyfin→Authentik (LDAP)
   → Orchestrator drains intent queue:
       1. Build dependency graph from resolved integrations + metadata dependsOn
       2. For each container node (topological order):
@@ -195,6 +196,9 @@ User clicks "Install Jellyfin"
       3. Traefik routes regenerated
   → All apps healthy, LDAP login works
 ```
+
+For apps with databases (e.g. Immich), the dependency graph includes their
+per-app postgres and redis containers declared in `containers:` metadata.
 
 ## Validation Tiers
 
@@ -211,11 +215,9 @@ Lima VM (Debian, Apple Virtualization) + rootless Podman:
 macOS host
   └── Lima VM "bloud-dev"
         ├── Podman (rootless)
-        │   ├── PostgreSQL
-        │   ├── Redis
         │   ├── Authentik + LDAP Outpost
         │   ├── Traefik  :8080
-        │   └── App containers (Jellyfin, Immich, etc.)
+        │   └── App containers (Jellyfin, Immich w/ its own postgres+redis, etc.)
         └── host-agent binary (:3000, systemd user service)
 ```
 
