@@ -62,11 +62,11 @@ If your app has no integrations: `integrations: {}`.
 Available template variables in `container.environment` and `container.volumes`:
 - `{{appDataDir}}` — app-specific data directory
 - `{{dataDir}}` — shared Bloud data directory
-- `{{postgresPassword}}` — shared PostgreSQL password (when database integration is declared)
+- `{{postgresPassword}}` — per-app PostgreSQL password (for apps that bundle their own postgres container)
 
 System apps (traefik, authentik) set `isSystem: true` to hide from the
-user-facing catalog. Infrastructure containers (postgres, redis) can be
-bundled per-app in `containers:` or declared as shared integrations.
+user-facing catalog. Apps that need databases declare their own postgres and
+redis containers in `containers:` — each app gets its own isolated database.
 
 ## Step 2: configurator.go
 
