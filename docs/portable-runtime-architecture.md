@@ -96,16 +96,29 @@ Resolution rules:
 3. A required integration with no binding is invalid and returns an error.
 4. Unbound optional integrations with no installed compatible provider produce no binding.
 
-### Reconciler (`internal/orchestrator/reconcile.go`)
+### Reconciler (`internal/orchestrator/intent.go`)
 
-Three-phase, dependency-aware lifecycle loop:
+All mutations flow through a typed intent queue with debounce. The orchestrator
+is the single writer to all stores and the single executor of all side effects.
 
-1. **PreStart** — all apps in parallel (directories, env files, config generation)
-2. **HealthCheck + PostStart** — apps in topological order by dependency level
-3. **Optional transition** — when an optional dependency becomes healthy, reconfig parent apps
+Intent types:
+- **InstallAppIntent** — install an app by name
+- **UninstallAppIntent** — remove an app (with optional `clearData`)
+- **RenameAppIntent** — change an app's display name
+- **TailnetIntent** — tailnet configuration changes
+- **RemoteAppsIntent** — remote app management
+- **SharesIntent** — sharing lifecycle
+- **ClearDataIntent** — wipe app data
 
-All phases are idempotent. The reconciler builds a dependency graph from resolved
-integrations and computes levels (level 0 = no deps, level N = deps in levels < N).
+The orchestrator drains the intent queue, processes intents in dependency order,
+and converges the actual state to match desired state. All phases are idempotent.
+
+```go
+type Intent interface {
+    intentMarker()  // sealed interface
+    IntentID() string
+}
+```
 
 ### Configurator Framework (`pkg/configurator/`)
 
@@ -168,17 +181,18 @@ with template variables (data paths, passwords, etc.) at install time.
 
 ```
 User clicks "Install Jellyfin"
-  → API records intent in App Store (SQLite)
+  → API submits InstallAppIntent to the intent queue
   → Integration Resolver binds Jellyfin→PostgreSQL, Jellyfin→Authentik
-  → Orchestrator writes Quadlet unit files + reloads systemd
-  → Reconciler runs:
-      Level 0: PostgreSQL, Redis (no deps)
-        → PreStart → start container → HealthCheck → PostStart
-      Level 1: Authentik (depends on PostgreSQL, Redis)
-        → PreStart → start container → HealthCheck → PostStart (creates LDAP infra)
-      Level 2: Jellyfin (depends on Authentik for SSO)
-        → PreStart → start container → HealthCheck → PostStart (wizard, libraries, LDAP)
-  → Traefik routes regenerated
+  → Orchestrator drains intent queue:
+      1. Build dependency graph from resolved integrations + metadata dependsOn
+      2. For each container node (topological order):
+         a. PreStart (configurator, if registered)
+         b. Resolve template variables → build container spec
+         c. Ensure container (create/start, idempotent via spec hash)
+         d. Wait for health check (from container metadata)
+         e. PostStart (configurator, if registered)
+         f. Mark node RUNNING
+      3. Traefik routes regenerated
   → All apps healthy, LDAP login works
 ```
 

@@ -11,7 +11,7 @@ This integration automatically configures Jellyfin with LDAP authentication via 
 Authentik's [embedded outpost](https://version-2024-8.goauthentik.io/docs/outposts/embedded/) only supports HTTP/Proxy protocols. LDAP requires a separate container because:
 
 1. **Protocol Mismatch**: LDAP is not an HTTP protocol, so it can't run inside Django
-2. **Language Choice**: The [LDAP outpost is written in Go](https://goauthentik.io/blog/2024-04-04-why-we-built-authentik-outposts-as-microservices/) to leverage existing LDAP libraries
+2. **Language Choice**: The [LDAP outpost is written in Go](https://goauthentik.io/blog/2024-04-04-why-we-built-authentik-outposts-as-microservices/) to use existing LDAP libraries
 3. **Port Binding**: LDAP needs its own ports (389/636) separate from HTTP
 
 ### Token Retrieval Strategy

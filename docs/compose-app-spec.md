@@ -2,6 +2,14 @@
 
 **Status:** Complete — All phases done; legacy interface removed; all apps on `containers:` format
 
+## Implementation Status
+
+- **Phase 1-2:** Multi-container metadata parsing and orchestrator lifecycle — implemented
+- **Phase 3:** New `NodeLifecycle` interface — implemented (legacy removed in Phase 6)
+- **Phase 4:** Immich multi-container — metadata.yaml written, container lifecycle working, E2E validation pending
+- **Phase 5:** Authentik migration — metadata.yaml and per-container configurators done, E2E validation pending
+- **Phase 6:** Jellyfin/Navidrome migration + legacy cleanup — complete
+
 ## Core Idea
 
 An app can declare multiple containers in its `metadata.yaml`. Each container
