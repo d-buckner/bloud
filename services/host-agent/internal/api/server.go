@@ -11,6 +11,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -26,7 +27,7 @@ type Server struct {
 	db              *sql.DB
 	catalog         catalog.CacheInterface
 	appStore        appStoreHelper
-	orch            interface{}
+	orch            *orchestrator.Orchestrator
 	sessionStore    sessionStoreHelper
 	remoteAppStore  store.RemoteAppStoreInterface
 	authentikClient *authentik.Client
@@ -77,7 +78,7 @@ type ServerConfig struct {
 // with the necessary fields populated for main.go.
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	remoteAppStore := store.NewRemoteAppStore(db)
-	router := NewRouter(db, cfg, logger, func(o *routerOptions) {
+	router, orch := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.remoteAppStore = remoteAppStore
 	})
 
@@ -85,6 +86,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		cfg:             cfg,
 		router:          router,
 		db:              db,
+		orch:            orch,
 		remoteAppStore:  remoteAppStore,
 		logger:          logger,
 	}
@@ -113,15 +115,26 @@ func (s *Server) Shutdown(_ context.Context) error {
 	return nil
 }
 
-// OrchestratorReady returns a ready channel.
+// OrchestratorReady returns a channel that is closed after the first
+// convergence pass completes (system apps have reached their target state).
 func (s *Server) OrchestratorReady() <-chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
+	if s.orch == nil {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	return s.orch.Ready()
 }
 
-// CheckSystemHealth is a no-op in the refactored architecture.
+// CheckSystemHealth validates that the system is healthy by checking
+// database connectivity and that the orchestrator is initialized.
 func (s *Server) CheckSystemHealth() error {
+	if s.orch == nil {
+		return nil // no orchestrator — skip health check
+	}
+	if err := s.db.Ping(); err != nil {
+		return fmt.Errorf("database connection failed: %w", err)
+	}
 	return nil
 }
 

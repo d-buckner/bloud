@@ -450,14 +450,15 @@ tags:
 	fRemoteStore := NewFakeRemoteAppStore()
 
 	// Create a fake orchestrator (no-op, returns nil orchestrator for modules)
+	router, _ := NewRouter(db, cfg, logger, func(o *routerOptions) {
+		o.catalog = fCatalog
+		o.appStore = fAppStore
+		o.remoteAppStore = fRemoteStore
+		o.noOrchestrator = true // modules get nil orchestrator
+	})
 	server := &Server{
 		cfg:              cfg,
-		router:           NewRouter(db, cfg, logger, func(o *routerOptions) {
-			o.catalog = fCatalog
-			o.appStore = fAppStore
-			o.remoteAppStore = fRemoteStore
-			o.noOrchestrator = true // modules get nil orchestrator
-		}),
+		router:           router,
 		db:               db,
 		catalog:          fCatalog,
 		appStore:         fAppStore,
@@ -570,13 +571,14 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 	fAppStore := NewFakeAppStore()
 	fRemoteStore := NewFakeRemoteAppStore()
 
+	router, _ := NewRouter(db, cfg, logger, func(o *routerOptions) {
+		o.catalog = fCatalog
+		o.appStore = fAppStore
+		o.remoteAppStore = fRemoteStore
+	})
 	server := &Server{
 		cfg:              cfg,
-		router:           NewRouter(db, cfg, logger, func(o *routerOptions) {
-			o.catalog = fCatalog
-			o.appStore = fAppStore
-			o.remoteAppStore = fRemoteStore
-		}),
+		router:           router,
 		db:               db,
 		catalog:          fCatalog,
 		appStore:         fAppStore,
@@ -650,18 +652,19 @@ tags:
 	fAppStore := NewFakeAppStore()
 	fRemoteStore := NewFakeRemoteAppStore()
 
+	router, _ := NewRouter(db, cfg, logger, func(o *routerOptions) {
+		o.catalog = fCatalog
+		o.appStore = fAppStore
+		o.remoteAppStore = fRemoteStore
+		o.orch = &fakeOrchestratorForTest{}
+	})
 	server := &Server{
 		cfg:              cfg,
-		router:           NewRouter(db, cfg, logger, func(o *routerOptions) {
-			o.catalog = fCatalog
-			o.appStore = fAppStore
-			o.remoteAppStore = fRemoteStore
-			o.orch = &fakeOrchestratorForTest{}
-		}),
+		router:           router,
 		db:               db,
 		catalog:          fCatalog,
 		appStore:         fAppStore,
-		orch:             &fakeOrchestratorForTest{},
+		orch:             nil,
 		remoteAppStore:   fRemoteStore,
 		logger:           logger,
 	}

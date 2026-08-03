@@ -54,7 +54,7 @@ func NewRouter(
 	cfg ServerConfig,
 	logger *slog.Logger,
 	opts ...func(*routerOptions),
-) *chi.Mux {
+) (*chi.Mux, *orchestrator.Orchestrator) {
 	// ---- Defaults ----
 	options := &routerOptions{}
 	for _, opt := range opts {
@@ -115,11 +115,17 @@ func NewRouter(
 	}
 
 	// Orchestrator: use provided one if set, else create real (unless noOrchestrator is true).
-	var orchCaller orchestratorCaller
+	var ( 
+		orchCaller  orchestratorCaller
+		realOrch    *orchestrator.Orchestrator
+	)
 	if o, ok := options.orch.(orchestratorCaller); ok && o != nil {
 		orchCaller = o
+		if ro, isReal := o.(*orchestrator.Orchestrator); isReal {
+			realOrch = ro
+		}
 	} else if !options.noOrchestrator {
-		realOrch := initOrchestratorHelper(appStore, cfg, logger, tailnetStore, authentikClient)
+		realOrch = initOrchestratorHelper(appStore, cfg, logger, tailnetStore, authentikClient)
 		if realOrch != nil {
 			orchCaller = realOrch
 		}
@@ -226,7 +232,7 @@ func NewRouter(
 	})
 
 	setupFrontendHelper(r, logger)
-	return r
+	return r, realOrch
 }
 
 // ---- Frontend ----
