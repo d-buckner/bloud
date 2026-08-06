@@ -125,7 +125,7 @@ func NewRouter(
 			realOrch = ro
 		}
 	} else if !options.noOrchestrator {
-		realOrch = initOrchestratorHelper(appStore, cfg, logger, tailnetStore, authentikClient)
+		realOrch = initOrchestratorHelper(db, appStore, catalogCache, cfg, logger, tailnetStore, authentikClient)
 		if realOrch != nil {
 			orchCaller = realOrch
 		}
@@ -279,7 +279,9 @@ func setupFrontendHelper(r *chi.Mux, logger *slog.Logger) {
 // ---- Orchestrator initialization ----
 
 func initOrchestratorHelper(
+	db *sql.DB,
 	appStore store.AppStoreInterface,
+	catalogCache catalog.CacheInterface,
 	cfg ServerConfig,
 	logger *slog.Logger,
 	tailnetStore *store.TailnetStore,
@@ -350,7 +352,7 @@ func initOrchestratorHelper(
 	orch := orchestrator.NewOrchestrator(
 		lifecycleGraph,
 		cfg.Registry,
-		nil,
+		catalogCache,
 		cfg.DataDir,
 		logger,
 		orchestrator.OrchestratorConfig{
@@ -360,7 +362,7 @@ func initOrchestratorHelper(
 			AppStore:         appStore,
 			CatalogGraph:     nil,
 			TailnetStore:     tailnetStore,
-			RemoteAppStore:   store.NewRemoteAppStore(nil),
+			RemoteAppStore:   store.NewRemoteAppStore(db),
 			TailnetNode:      tailnetNode,
 			Gateway:          gateway,
 			RemoteProxy:      remoteProxy,
@@ -379,7 +381,7 @@ func initOrchestratorHelper(
 		},
 	)
 	logger.Info("lifecycle orchestrator initialized")
-	go orch.Start(nil)
+	go orch.Start(context.Background())
 	return orch
 }
 

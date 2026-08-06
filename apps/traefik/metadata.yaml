@@ -20,7 +20,7 @@ containers:
         destination: /dynamic
         options: [ro]
     healthCheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ping | grep -q ok"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ping | grep -qi ok"]
       interval: 1
       timeout: 5
       retries: 30
