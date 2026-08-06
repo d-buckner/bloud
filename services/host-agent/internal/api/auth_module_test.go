@@ -25,7 +25,7 @@ func newAuthModule(t *testing.T, cfg *AuthConfig) (AuthModule, *authModule, *Fak
 	prefsStore := NewFakePreferencesStore()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	mod := NewAuthModule(client, cfg, prefsStore, sessStore, logger)
+	mod := NewAuthModule(client, newAuthConfigRef(cfg), prefsStore, sessStore, logger)
 	return mod, mod.(*authModule), client, sessStore
 }
 
@@ -122,7 +122,7 @@ func TestAuthHTTP_GetCurrentUser_NoSessionStore(t *testing.T) {
 
 	authMod := &authModule{
 		authentikClient: client,
-		authConfig:      cfg,
+		authConfig:      newAuthConfigRef(cfg),
 		prefsStore:      prefsStore,
 		sessionStore:    nil,
 		logger:          logger,
@@ -355,6 +355,75 @@ func TestAuthHTTP_Callback_FullFlow(t *testing.T) {
 	}
 	require.NotNil(t, sessionCookie)
 	assert.NotEmpty(t, sessionCookie.Value)
+}
+
+// ---- authConfigRef shared holder ----
+
+func TestAuthConfigRef_GetReturnsSetValue(t *testing.T) {
+	cfg := &AuthConfig{}
+	ref := newAuthConfigRef(cfg)
+	assert.Same(t, cfg, ref.Get())
+
+	updated := &AuthConfig{OIDCConfig: &authentik.OIDCConfig{ClientID: "new-id"}}
+	ref.Set(updated)
+	assert.Same(t, updated, ref.Get())
+}
+
+func TestAuthConfigRef_GetNilWhenUnset(t *testing.T) {
+	ref := newAuthConfigRef(nil)
+	assert.Nil(t, ref.Get())
+
+	var nilRef *authConfigRef
+	assert.Nil(t, nilRef.Get())
+}
+
+func TestAuthConfigRef_EnsureRunsFactory(t *testing.T) {
+	ref := newAuthConfigRef(nil)
+
+	var calls int
+	cfg := &AuthConfig{OIDCConfig: &authentik.OIDCConfig{ClientID: "bootstrapped"}}
+	ref.SetEnsure(func() *AuthConfig {
+		calls++
+		return cfg
+	})
+
+	ref.Ensure()
+	assert.Equal(t, 1, calls)
+	assert.Same(t, cfg, ref.Get())
+}
+
+func TestAuthConfigRef_EnsureFactoryReturningNilKeepsDisabled(t *testing.T) {
+	ref := newAuthConfigRef(nil)
+	ref.SetEnsure(func() *AuthConfig {
+		return nil
+	})
+
+	ref.Ensure()
+	assert.Nil(t, ref.Get())
+}
+
+func TestAuthConfigRef_EnsureWithoutFactoryIsNoop(t *testing.T) {
+	ref := newAuthConfigRef(&AuthConfig{})
+	ref.Ensure()
+	assert.NotNil(t, ref.Get())
+}
+
+func TestServer_InitAuth_ReEnablesAuth(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	ref := newAuthConfigRef(nil)
+
+	cfg := &AuthConfig{OIDCConfig: &authentik.OIDCConfig{ClientID: "bootstrapped"}}
+	ref.SetEnsure(func() *AuthConfig { return cfg })
+
+	server := &Server{authConfig: ref, logger: logger}
+	server.InitAuth()
+	assert.Same(t, cfg, ref.Get())
+}
+
+func TestServer_InitAuth_NilRefIsNoop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	server := &Server{authConfig: nil, logger: logger}
+	server.InitAuth()
 }
 
 // ---- Router registration ----

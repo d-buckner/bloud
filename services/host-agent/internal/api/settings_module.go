@@ -48,7 +48,7 @@ type settingsModule struct {
 	sessionStore    *store.SessionStore
 	authentikClient AuthentikUserManagerInterface
 	orch            orchestratorCaller
-	authConfig      *AuthConfig
+	authConfig      *authConfigRef
 	logger          *slog.Logger
 }
 
@@ -59,7 +59,7 @@ func NewSettingsModule(
 	sessionStore *store.SessionStore,
 	authClient AuthentikUserManagerInterface,
 	orch orchestratorCaller,
-	authConfig *AuthConfig,
+	authConfig *authConfigRef,
 	logger *slog.Logger,
 ) SettingsModule {
 	return &settingsModule{
@@ -178,7 +178,7 @@ func (m *settingsModule) SetupStatusHandler() http.HandlerFunc {
 		respondJSON(w, http.StatusOK, SetupStatusResponse{
 			SetupRequired:  !hasUsers,
 			AuthentikReady: authentikReady,
-			AuthReady:      m.authConfig != nil,
+			AuthReady:      m.authConfig.Get() != nil,
 		})
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -27,6 +28,55 @@ const userContextKey contextKey = "user"
 // from the incoming request's Host header so OAuth works via any hostname/IP.
 type AuthConfig struct {
 	OIDCConfig *authentik.OIDCConfig
+}
+
+// authConfigRef is a shared, thread-safe reference to the AuthConfig.
+// It is shared between the auth and settings modules (and the Server) so a
+// post-convergence re-initialization is visible to all consumers without
+// mutating module internals. The atomic pointer guards against concurrent
+// reads while InitAuth swaps in a fresh config.
+type authConfigRef struct {
+	p      atomic.Pointer[AuthConfig]
+	ensure func() *AuthConfig // re-init factory; nil for static refs (tests)
+}
+
+// newAuthConfigRef creates a reference wrapping the given config.
+func newAuthConfigRef(cfg *AuthConfig) *authConfigRef {
+	ref := &authConfigRef{}
+	ref.p.Store(cfg)
+	return ref
+}
+
+// Get returns the current auth config, or nil if auth is not initialized.
+func (r *authConfigRef) Get() *AuthConfig {
+	if r == nil {
+		return nil
+	}
+	return r.p.Load()
+}
+
+// Set swaps in a fresh auth config. Safe to call concurrently with Get.
+func (r *authConfigRef) Set(cfg *AuthConfig) {
+	r.p.Store(cfg)
+}
+
+// SetEnsure attaches the re-init factory used by Ensure. It captures the
+// dependencies (Authentik client, session store, server config) in the scope
+// where they are available, so the Server can re-initialize without holding
+// them itself.
+func (r *authConfigRef) SetEnsure(fn func() *AuthConfig) {
+	r.ensure = fn
+}
+
+// Ensure re-runs the init factory and swaps in a fresh config if it succeeds.
+// Safe to call after system convergence (EnsureBloudOAuthApp is idempotent).
+func (r *authConfigRef) Ensure() {
+	if r == nil || r.ensure == nil {
+		return
+	}
+	if cfg := r.ensure(); cfg != nil {
+		r.Set(cfg)
+	}
 }
 
 // isLocalRequest returns true if the request originates from localhost.

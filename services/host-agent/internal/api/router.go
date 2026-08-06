@@ -44,6 +44,7 @@ type routerOptions struct {
 	remoteAppStore   store.RemoteAppStoreInterface
 	orch             interface{} // any orchestratorCaller implementation
 	noOrchestrator   bool        // if true, skip creating a real orchestrator
+	authConfig       *authConfigRef
 }
 
 // NewRouter builds a fully wired *chi.Mux with all domain modules and
@@ -131,7 +132,14 @@ func NewRouter(
 		}
 	}
 
-	authConfig := initAuthHelper(authentikClient, sessionStore, cfg, logger)
+	authRef := options.authConfig
+	if authRef == nil {
+		authRef = newAuthConfigRef(nil)
+	}
+	authRef.SetEnsure(func() *AuthConfig {
+		return initAuthHelper(authentikClient, sessionStore, cfg, logger)
+	})
+	authRef.Set(initAuthHelper(authentikClient, sessionStore, cfg, logger))
 
 	launchPathsFn := func() map[string]string {
 		paths := make(map[string]string)
@@ -150,7 +158,7 @@ func NewRouter(
 	appsMod := NewAppsModule(catalogCache, appStore, orchCaller, logger)
 	appsMod.(*appsModule).SetAppsDir(cfg.AppsDir)
 
-	authMod := NewAuthModule(authentikClient, authConfig, prefsStore, sessionStore, logger)
+	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger)
 
 	homeMod := NewHomeModule(positionStore, appStore, launchPathsFn, logger)
 
@@ -162,7 +170,7 @@ func NewRouter(
 	}
 	remoteAppsMod := NewRemoteAppsModule(remoteAppStore, catalogCache, orchCaller, logger)
 
-	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authConfig, logger)
+	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, logger)
 
 	gateway := sharing.NewGatewayManager(nil, nil, func() string { return "" }, sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
 	sharingMod := NewSharingModule(

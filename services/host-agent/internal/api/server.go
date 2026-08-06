@@ -31,7 +31,7 @@ type Server struct {
 	sessionStore    sessionStoreHelper
 	remoteAppStore  store.RemoteAppStoreInterface
 	authentikClient *authentik.Client
-	authConfig      *AuthConfig
+	authConfig      *authConfigRef
 	knownRedirectURIs sync.Map
 	logger          *slog.Logger
 }
@@ -78,8 +78,10 @@ type ServerConfig struct {
 // with the necessary fields populated for main.go.
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	remoteAppStore := store.NewRemoteAppStore(db)
+	authRef := newAuthConfigRef(nil)
 	router, orch := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.remoteAppStore = remoteAppStore
+		o.authConfig = authRef
 	})
 
 	s := &Server{
@@ -88,6 +90,7 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 		db:              db,
 		orch:            orch,
 		remoteAppStore:  remoteAppStore,
+		authConfig:      authRef,
 		logger:          logger,
 	}
 
@@ -138,7 +141,14 @@ func (s *Server) CheckSystemHealth() error {
 	return nil
 }
 
-// tryInitAuth, initAuth, refreshCatalog are kept as no-ops.
-func (s *Server) tryInitAuth() {}
-func (s *Server) initAuth()    {}
-func (s *Server) refreshCatalog(_ string) {}
+// InitAuth re-attempts auth initialization once system apps have converged.
+// At construction time Authentik is usually still booting, so initAuthHelper
+// returns nil and auth stays disabled; this method lets main.go re-run the
+// OIDC bootstrap after OrchestratorReady so AuthReady becomes true. Safe to
+// call multiple times — EnsureBloudOAuthApp is idempotent.
+func (s *Server) InitAuth() {
+	if s.authConfig == nil {
+		return
+	}
+	s.authConfig.Ensure()
+}

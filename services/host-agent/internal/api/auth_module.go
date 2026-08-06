@@ -138,7 +138,7 @@ func (f *fakeSessionStore) Delete(_ context.Context, sessionID string) error {
 
 type authModule struct {
 	authentikClient   AuthentikClientInterface
-	authConfig        *AuthConfig
+	authConfig        *authConfigRef
 	prefsStore        store.PreferencesStoreInterface
 	sessionStore      sessionStoreInterface
 	logger            *slog.Logger
@@ -148,7 +148,7 @@ type authModule struct {
 // NewAuthModule creates a new AuthModule.
 func NewAuthModule(
 	client AuthentikClientInterface,
-	cfg *AuthConfig,
+	cfg *authConfigRef,
 	prefsStore store.PreferencesStoreInterface,
 	sessStore sessionStoreInterface,
 	logger *slog.Logger,
@@ -164,11 +164,19 @@ func NewAuthModule(
 
 // ---- Login ----
 
+// getAuthConfig returns the current auth config, or nil if not initialized.
+func (m *authModule) getAuthConfig() *AuthConfig {
+	if m.authConfig == nil {
+		return nil
+	}
+	return m.authConfig.Get()
+}
+
 // LoginHandler initiates the OIDC login flow.
 func (m *authModule) LoginHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Try lazy initialization if auth isn't configured yet.
-		if m.authConfig == nil || m.authConfig.OIDCConfig == nil {
+		cfg := m.getAuthConfig()
+		if cfg == nil || cfg.OIDCConfig == nil {
 			m.logger.Error("auth not configured")
 			http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
 			return
@@ -195,8 +203,8 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 
 		// Lazily register this redirect URI in Authentik if we haven't seen this host before.
 		if _, known := m.knownRedirectURIs.Load(redirectURI); !known {
-			if m.authentikClient != nil && m.authConfig.OIDCConfig.ProviderID > 0 {
-				if err := m.authentikClient.AddRedirectURI(m.authConfig.OIDCConfig.ProviderID, redirectURI); err != nil {
+			if m.authentikClient != nil && cfg.OIDCConfig.ProviderID > 0 {
+				if err := m.authentikClient.AddRedirectURI(cfg.OIDCConfig.ProviderID, redirectURI); err != nil {
 					m.logger.Warn("failed to register redirect URI lazily", "uri", redirectURI, "error", err)
 				} else {
 					m.logger.Info("lazily registered redirect URI", "uri", redirectURI)
@@ -205,7 +213,7 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 			}
 		}
 
-		authURL, err := url.Parse(baseURL + m.authConfig.OIDCConfig.AuthURL)
+		authURL, err := url.Parse(baseURL + cfg.OIDCConfig.AuthURL)
 		if err != nil {
 			m.logger.Error("failed to parse auth URL", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -213,7 +221,7 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 		}
 
 		q := authURL.Query()
-		q.Set("client_id", m.authConfig.OIDCConfig.ClientID)
+		q.Set("client_id", cfg.OIDCConfig.ClientID)
 		q.Set("redirect_uri", redirectURI)
 		q.Set("response_type", "code")
 		q.Set("scope", "openid profile email")
@@ -229,7 +237,8 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 // CallbackHandler handles the OAuth2 callback.
 func (m *authModule) CallbackHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if m.authConfig == nil || m.authConfig.OIDCConfig == nil {
+		cfg := m.getAuthConfig()
+		if cfg == nil || cfg.OIDCConfig == nil {
 			m.logger.Error("auth not configured")
 			http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
 			return
@@ -279,8 +288,8 @@ func (m *authModule) CallbackHandler() http.HandlerFunc {
 		tokenResp, err := m.authentikClient.ExchangeCode(
 			code,
 			redirectURI,
-			m.authConfig.OIDCConfig.ClientID,
-			m.authConfig.OIDCConfig.ClientSecret,
+			cfg.OIDCConfig.ClientID,
+			cfg.OIDCConfig.ClientSecret,
 		)
 		if err != nil {
 			m.logger.Error("failed to exchange code", "error", err)
@@ -359,7 +368,8 @@ func (m *authModule) LogoutHandler() http.HandlerFunc {
 		})
 
 		// Redirect to Authentik's native invalidation flow to end the SSO session.
-		if m.authConfig != nil && m.authConfig.OIDCConfig != nil {
+		cfg := m.getAuthConfig()
+		if cfg != nil && cfg.OIDCConfig != nil {
 			baseURL := requestBaseURL(r)
 			logoutURL := baseURL + "/if/flow/default-invalidation-flow/?redirect=" + url.QueryEscape(baseURL+"/")
 			http.Redirect(w, r, logoutURL, http.StatusFound)

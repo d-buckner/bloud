@@ -38,7 +38,7 @@ func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
 		sessionStore:    sessionStore,
 		authentikClient: authClient,
 		orch:            orch,
-		authConfig:      authConfig,
+		authConfig:      newAuthConfigRef(authConfig),
 		logger:          logger,
 	}
 }
@@ -237,6 +237,33 @@ func TestSettingsHTTP_SetupStatus_NoUsers(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.True(t, resp.SetupRequired)
+}
+
+func TestSettingsHTTP_SetupStatus_AuthReadyReflectsSharedRef(t *testing.T) {
+	// A shared ref (as wired by NewRouter) starts disabled and flips to ready
+	// once Server.InitAuth runs post-convergence.
+	ref := newAuthConfigRef(nil)
+	mod := newSettingsModule(t, &AuthConfig{})
+	mod.authConfig = ref
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
+
+	getAuthReady := func() bool {
+		req := httptest.NewRequest("GET", "/setup/status", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var resp SetupStatusResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		return resp.AuthReady
+	}
+
+	assert.False(t, getAuthReady())
+
+	ref.SetEnsure(func() *AuthConfig {
+		return &AuthConfig{OIDCConfig: &authentik.OIDCConfig{ClientID: "bootstrapped"}}
+	})
+	ref.Ensure()
+
+	assert.True(t, getAuthReady())
 }
 
 func TestSettingsHTTP_SetupStatus_WithUsers(t *testing.T) {
