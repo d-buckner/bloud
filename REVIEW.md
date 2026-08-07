@@ -363,12 +363,16 @@ actual system dependencies.
 
 ### M2 — Documentation/architecture drift (the "two systems" problem)
 
-The docs describe the **reconciler** as a distinct component with phases; the code is an
-**orchestrator** that owns both intent-draining and convergence. Several docs still
-reference shared system Postgres/Redis, the removed `handlePlanInstall`/`handlePlanRemove`
-endpoints, and the old `EnqueueInstall`/`EnqueueUninstall` interface. The running system
-and the documented system are different enough that a new contributor reading the docs
-will be misled. (This is the "docs are stale" report.)
+The docs described the **reconciler** as a distinct component with phases; the code is an
+**orchestrator** that owns both intent-draining and convergence. Several docs referenced
+shared system Postgres/Redis, the removed `handlePlanInstall`/`handlePlanRemove`
+endpoints, and the old `EnqueueInstall`/`EnqueueUninstall` interface, plus dead files
+(`orchestrator_portable.go`, `sharing/sidecar.go`). The running system and the documented
+system differed enough that a new contributor reading the docs would be misled.
+
+> **Resolved (2026):** the accompanying doc-update commit refreshes
+> `portable-runtime-architecture.md`, `contributing-apps.md`, `backend-tech-debt.md`,
+> `RECONCILER_SPEC.md`, and `SPEC.md` to the orchestrator model and flags the dead code.
 
 ### M3 — Sharing API layer is wired with nil dependencies
 
@@ -424,7 +428,9 @@ single ownership diagram and a clear "enabled only when tailnet is configured" c
 7. **P2 — Degrade gracefully at startup** instead of exiting on system-convergence
    failure; deepen the health gate.
 8. **Docs** — update the reconciler/orchestrator naming, remove dead shared-postgres and
-   removed-endpoint references (see the doc-update commit accompanying this review).
+   removed-endpoint references. **Done** in the accompanying doc-update commit
+   (`portable-runtime-architecture.md`, `contributing-apps.md`, `backend-tech-debt.md`,
+   `RECONCILER_SPEC.md`, `SPEC.md`).
 
 ---
 
