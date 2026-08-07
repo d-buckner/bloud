@@ -302,22 +302,23 @@ orchestrator writes it).
 
 **Priority: P2.**
 
-### H3 — Installs are choice-less: integration choices are dropped
+### H3 — Installs are choice-less: user integration choices are dropped
 
 **Where:** `pipeline.go:67` — `buildIntegrationConfig(nil, plan.AutoConfig, plan.Choices)`
 always passes `nil` user choices.
 
 **Mechanism:** `PlanInstall` returns `Choices` when a required integration has multiple
 compatible providers or none installed. `applyInstallIntent` passes `nil` for user
-choices, so `buildIntegrationConfig` ignores `plan.Choices` entirely (choices are only
-consumed when a non-nil user map is present). A required integration with multiple
-providers therefore produces **no binding** and the app records without its dependency.
-The API surface has no "choose provider" path at all — installs are forced through the
-auto-config path.
+choices, so `buildIntegrationConfig` can only honor auto-config bindings (exactly one
+installed provider) and the `Recommended` default of a required choice. Any required
+integration whose choice has **no `Recommended` default** (e.g. multiple installed
+providers, none marked default) produces **no binding**, and the app records without its
+dependency. There is no API path for the user to select a provider — installs are forced
+through the auto-config/recommended-default path.
 
 **Impact:** Dependency resolution is incomplete by design. The "one-click install"
-promise holds only when exactly one compatible provider is installed; the multi-option
-case silently under-wires the app.
+promise holds only when exactly one compatible provider is installed, or when a required
+integration has a declared default. The multi-option case silently under-wires the app.
 
 **Fix:** either (a) implement choice resolution in the API/intent path (the frontend
 already has catalog UI), or (b) define a deterministic default-selection policy so
