@@ -3,6 +3,14 @@
 **Status:** Implemented and merged (PR #2, `reconciler-architecture` branch)
 **Last updated:** 2026-07-03
 
+> **Naming note (2026):** the *reconciler* described here was folded into the
+> **orchestrator** (`internal/orchestrator/`). The intent queue, single-writer model, and
+> convergence loop described below are exactly what the orchestrator implements today.
+> Read this as the architecture-as-built, with the component name updated to *orchestrator*.
+> Two deviations from this spec are now permanent and documented in REVIEW.md: share/guest
+> writes stay direct in the API (the intent types remain as dead code), and the lifecycle
+> graph uses an in-memory repository rather than its SQLite backing.
+
 ## Motivation
 
 The host-agent currently has three inconsistent patterns for mutations and side effects:
@@ -581,5 +589,9 @@ Then cleanup:
    in the response. If it becomes an intent with a 202, the caller doesn't get the token
    back synchronously. Since this is a store write with no side effects (no containers, no
    routing, no reconciliation needed), it may be better to keep share creation as a direct
-   operation outside the reconciler. Same for `handleRevokeShare`. These are excluded from
-   the implementation phases pending a decision.
+   operation outside the reconciler. Same for `handleRevokeShare`.
+
+   **Resolved (2026):** the implementation kept share/guest writes direct in the API
+   module (defensible — no side effects), but the `CreateShareIntent`/`RevokeShareIntent`
+   types remain in `intent.go` as dead code. Clean this up: either route through the queue
+   or delete the dead types and document the boundary. See REVIEW.md §C3.

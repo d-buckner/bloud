@@ -70,7 +70,7 @@ containers:
         destination: /blueprints/default/flow-default-authentication-flow.yaml
         options: [ro]
     healthCheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/-/health/ready/ 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/-/health/ready/ >/dev/null"]
       interval: 10
       timeout: 10
       retries: 60

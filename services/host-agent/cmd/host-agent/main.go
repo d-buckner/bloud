@@ -130,6 +130,7 @@ func runServer() {
 			os.Exit(1)
 		}
 		logger.Info("system apps converged successfully")
+		server.InitAuth()
 	case <-readyCtx.Done():
 		logger.Error("system startup timed out")
 		os.Exit(1)

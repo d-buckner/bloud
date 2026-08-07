@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -608,6 +609,9 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 		}
 	}
 	for _, network := range networks {
+		if network == "host" {
+			continue // host network mode doesn't need to be created
+		}
 		if err := o.config.Containers.EnsureNetwork(ctx, network); err != nil {
 			o.logger.Warn("failed to ensure network", "container", def.Name, "network", network, "error", err)
 		}
@@ -619,8 +623,11 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 	}
 
 	for _, mount := range spec.Mounts {
-		if err := os.MkdirAll(mount.Source, 0755); err != nil {
-			o.logger.Warn("failed to create mount directory", "container", def.Name, "path", mount.Source, "error", err)
+		// Skip file mounts - only create directories for directory mounts
+		if !strings.HasSuffix(mount.Source, ".yml") && !strings.HasSuffix(mount.Source, ".yaml") && !strings.HasSuffix(mount.Source, ".json") && !strings.HasSuffix(mount.Source, ".conf") {
+			if err := os.MkdirAll(mount.Source, 0755); err != nil {
+				o.logger.Warn("failed to create mount directory", "container", def.Name, "path", mount.Source, "error", err)
+			}
 		}
 	}
 
@@ -767,6 +774,29 @@ func (o *Orchestrator) containerDefForNode(nodeID string) (*catalog.ContainerDef
 	return nil, appID
 }
 
+// convertHealthCheckTest converts Docker-style health check test format to podman exec args.
+// CMD-SHELL: ["CMD-SHELL", "cmd"] → ["/bin/sh", "-c", "cmd"]
+// CMD:       ["CMD", "exec", "arg1"] → ["exec", "arg1"]
+func convertHealthCheckTest(test []string) []string {
+	if len(test) == 0 {
+		return test
+	}
+	switch test[0] {
+	case "CMD-SHELL":
+		if len(test) == 1 {
+			return []string{"/bin/sh", "-c", ""}
+		}
+		return []string{"/bin/sh", "-c", test[1]}
+	case "CMD":
+		if len(test) <= 1 {
+			return test
+		}
+		return test[1:]
+	default:
+		return test
+	}
+}
+
 // runContainerHealthCheck polls the health check command inside the named container
 // until it passes or retries are exhausted, respecting context cancellation.
 func (o *Orchestrator) runContainerHealthCheck(ctx context.Context, containerName string, hc *catalog.ContainerHealthCheck) error {
@@ -795,7 +825,8 @@ func (o *Orchestrator) runContainerHealthCheck(ctx context.Context, containerNam
 			}
 		}
 		execCtx, cancel := context.WithTimeout(ctx, timeout)
-		err := o.config.Containers.Exec(execCtx, containerName, hc.Test)
+		execCmd := convertHealthCheckTest(hc.Test)
+		err := o.config.Containers.Exec(execCtx, containerName, execCmd)
 		cancel()
 		if err == nil {
 			return nil

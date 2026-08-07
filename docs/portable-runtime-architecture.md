@@ -4,6 +4,11 @@ Bloud manages apps (Jellyfin, Immich, etc.) on a single Linux host. The **portab
 runtime** is the Go binary (`host-agent`) that orchestrates app lifecycle, configuration,
 and integration via Podman Quadlet units and systemd.
 
+> **Naming note:** earlier docs called this component the *reconciler*. It was refactored
+> into the **orchestrator** (`internal/orchestrator/`), which owns both intent draining
+> and the convergence loop. `RECONCILER_SPEC.md` describes that target architecture as
+> implemented.
+
 ## Component Diagram
 
 ```mermaid
@@ -11,27 +16,28 @@ graph TD
     CLI["./bloud CLI<br/>(macOS, validates + deploys)"]
     API["Host-Agent API<br/>:3000"]
     CAT["Catalog"]
-    REC["Reconciler"]
-    INT["Integration Resolver"]
+    ORC["Orchestrator"]
+    PLAN["Catalog AppGraph / Planner"]
     REG["Configurator Registry"]
     AK_CFG["Authentik Configurator"]
     JF_CFG["Jellyfin Configurator"]
-    IM_CFG["Immich Configurator"]
+    NM_CFG["Navidrome Configurator"]
     AK_CLIENT["Authentik Client"]
     STORE["App Store<br/>(SQLite)"]
+    GRAPH["Lifecycle Graph<br/>(target/actual status)"]
 
     CLI -->|validate, deploy| API
-    API -->|install, uninstall| REC
+    API -->|install, uninstall| ORC
     API --> CAT
-    REC --> REG
-    REC --> INT
-    REC --> STORE
-    REC --> CAT
-    INT --> STORE
-    INT --> CAT
+    ORC --> REG
+    ORC --> PLAN
+    ORC --> STORE
+    ORC --> CAT
+    ORC --> GRAPH
+    PLAN --> CAT
     REG --> AK_CFG
     REG --> JF_CFG
-    REG --> IM_CFG
+    REG --> NM_CFG
     AK_CFG --> AK_CLIENT
 
     subgraph "Infrastructure Containers"
@@ -54,65 +60,67 @@ graph TD
 
 ### Host-Agent CLI (`services/host-agent/cmd/host-agent/`)
 
-Entry point. Runs as a systemd user service (API mode) or executes one-shot configure
-commands.
+Entry point. Runs as a systemd user service (API mode) or executes one-shot commands.
 
 | Subcommand | Purpose |
 |---|---|
 | *(none)* | Start the REST API server on `:3000` |
-| `configure prestart <app>` | Pre-start setup (dirs, env files, SSO wait) |
-| `configure poststart <app>` | Post-start config (health check, API calls, integrations) |
-| `configure reconcile` | Full reconciliation cycle for all installed apps |
-| `configure catalog-refresh` | Reload app catalog from disk into DB cache |
+| `configure` | One-shot configure commands (prestart/poststart/etc.) |
 | `init-secrets` | Generate and persist initial secrets |
 
 ### Catalog (`internal/catalog/`)
 
 Discovers apps by reading `apps/*/metadata.yaml`. Each app declares its name, port,
-health check, SSO strategy, integration requirements, and container spec. The catalog is
-cached in SQLite and refreshed from disk on demand.
+SSO strategy, integration requirements, and container spec. The catalog is held in an
+in-memory `MemoryCache` and refreshed from disk on demand. The `catalog.AppGraph` (a.k.a.
+the planner) resolves dependency plans via `PlanInstall`/`PlanRemove`.
 
-### Integration Resolver (`internal/integration/`)
+### Dependency Resolution (planner)
 
-Deterministically resolves which provider app satisfies each consumer's requirements.
 Apps declare integrations in `metadata.yaml`:
 
 ```yaml
 integrations:
-  proxy:
+  database:
     required: true
-    compatible: [{ app: traefik, default: true }]
+    compatible: [{ app: postgres, default: true }]
   sso:
     required: false
     compatible: [{ app: authentik }]
 ```
 
-Resolution rules:
-1. If a provider binding already exists in `InstalledApp.IntegrationConfig`, resolve it.
-2. For optional integrations with no binding, select the first installed compatible
-   provider in catalog order.
-3. A required integration with no binding is invalid and returns an error.
-4. Unbound optional integrations with no installed compatible provider produce no binding.
+Resolution happens through `catalog.AppGraph.PlanInstall` during the install intent:
+- Exactly one installed compatible provider → auto-config binding.
+- Multiple / none for a required integration → produces an integration *choice*.
+- Optional integrations with no compatible provider → no binding.
 
-Note: Apps that need databases (Immich, Authentik) declare their own postgres and
-redis containers in `containers:`. They don't use the integration resolver for this.
+> Note: `internal/integration/` (resolver.go) is a leftover from an earlier design and is
+> not wired into the running system — dependency resolution is owned by the planner +
+> orchestrator. Apps that need databases (Immich, Authentik) declare their own postgres
+> and redis containers in `containers:`; they do not use the integration resolver.
 
-### Reconciler (`internal/orchestrator/intent.go`)
+### Orchestrator (`internal/orchestrator/`)
 
-All mutations flow through a typed intent queue with debounce. The orchestrator
-is the single writer to all stores and the single executor of all side effects.
+All mutations flow through a typed intent queue with debounce. The orchestrator is the
+single writer to all stores and the single executor of all side effects. It is also the
+owner of the lifecycle graph (`graph.Graph`) that tracks desired (`targetStatus`) vs
+observed (`actualStatus`) per node.
 
-Intent types:
+Intent types (`intent.go`):
 - **InstallAppIntent** — install an app by name
 - **UninstallAppIntent** — remove an app (with optional `clearData`)
 - **RenameAppIntent** — change an app's display name
-- **TailnetIntent** — tailnet configuration changes
-- **RemoteAppsIntent** — remote app management
-- **SharesIntent** — sharing lifecycle
-- **ClearDataIntent** — wipe app data
+- **SetTailnetIntent / DeleteTailnetIntent** — tailnet configuration changes
+- **AddRemoteAppIntent / DeleteRemoteAppIntent** — remote app management
+- **ClearAppDataIntent** — wipe app data
+- *(CreateShareIntent / RevokeShareIntent are defined but shares are currently written
+  directly by the sharing API module)*
 
-The orchestrator drains the intent queue, processes intents in dependency order,
-and converges the actual state to match desired state. All phases are idempotent.
+The orchestrator drains the intent queue, applies intents to stores (desired state), then
+converges actual state toward desired: sync container state, handle uninstalls, populate
+the graph, converge tailnet, run a topological reconcile pass (per-level concurrent,
+phases `INITIALIZING→PRESTART→STARTING→POSTSTART→RUNNING`), and finally regenerate
+Traefik routes before promoting nodes to RUNNING.
 
 ```go
 type Intent interface {
@@ -127,11 +135,11 @@ Generic interface for app-specific runtime configuration that can't be expressed
 static container definitions (API calls, credential rotation, plugin setup).
 
 ```go
-type Configurator interface {
+type NodeLifecycle interface {
     Name() string
-    PreStart(ctx context.Context, state *AppState) error
-    HealthCheck(ctx context.Context) error
+    PreStart(ctx context.Context, state *AppState) (changed bool, err error)
     PostStart(ctx context.Context, state *AppState) error
+    Remove(ctx context.Context, state *AppState, clearData bool) error
 }
 ```
 
@@ -149,25 +157,21 @@ type AppState struct {
 **Implementations:**
 - **Authentik** — sets admin password, ensures API token, creates LDAP infrastructure
 - **Jellyfin** — completes setup wizard, creates libraries, configures LDAP plugin
-- **Immich** — initializes database, creates admin, configures OIDC
+- **Navidrome** — SSO/config wiring
 
 ### Authentik Client (`pkg/authentik/`)
 
-Manages the Authentik identity provider via its REST API. Key operation:
-
-**`EnsureLDAPInfrastructure(ldapBindPassword)`** — idempotent setup:
-1. Create LDAP provider (direct bind + direct search mode)
-2. Create LDAP application
-3. Create service account user, add to admin group
-4. Create service account API token
-5. Set service account password (required for LDAP direct bind)
-6. Create LDAP outpost instance
+Manages the Authentik identity provider via its REST API. Key operations:
+`EnsureLDAPInfrastructure`, `EnsureBloudOAuthApp` (idempotent OIDC bootstrap), SSO
+provisioning, and forward-auth provider creation for tailnet access.
 
 ### App Store (`internal/store/`)
 
 SQLite-backed persistence for installed apps, their status, and resolved integration
-bindings. The reconciler reads desired state from here; the API writes to it on
-install/uninstall. Schema lives in `internal/db/schema.sql`.
+bindings. The orchestrator reads desired state from here and (as single writer) is the
+only author of lifecycle status. Schema lives in `internal/db/schema.sql`. The lifecycle
+graph has SQLite backing tables (`graph_nodes`, `graph_edges`) but the running
+orchestrator currently uses an in-memory repository (see REVIEW.md §C2).
 
 ### Container Runtime (`internal/container/`, `internal/orchestrator/`)
 
@@ -175,30 +179,36 @@ Apps run as Podman containers managed by Quadlet systemd units. The orchestrator
 `.container` unit files to `~/.config/containers/systemd/`, triggers `systemctl --user
 daemon-reload`, and starts/stops units via the systemd D-Bus API.
 
-Container specs are defined in `metadata.yaml` under the `container:` key and rendered
-with template variables (data paths, passwords, etc.) at install time.
+Container specs are defined in `metadata.yaml` under the `containers:` key (one def per
+container, multi-container apps expand to one graph node each) and rendered with template
+variables (data paths, passwords, etc.) at install time.
 
 ## Data Flow: Installing an App
 
 ```
 User clicks "Install Jellyfin"
-  → API submits InstallAppIntent to the intent queue
-  → Integration Resolver binds Jellyfin→Traefik (proxy), Jellyfin→Authentik (LDAP)
-  → Orchestrator drains intent queue:
-      1. Build dependency graph from resolved integrations + metadata dependsOn
-      2. For each container node (topological order):
+  → API submits InstallAppIntent to the intent queue (202 accepted)
+  → Orchestrator drains intent → applyInstallIntent
+      → catalogGraph.PlanInstall(app) resolves dependencies
+      → records dependency providers + target app in the store
+  → Convergence pass:
+      1. SyncContainerState (align DB with reality)
+      2. populateGraphNodes — build DAG from installed store records
+      3. Reconcile — for each container node (topological order):
          a. PreStart (configurator, if registered)
-         b. Resolve template variables → build container spec
-         c. Ensure container (create/start, idempotent via spec hash)
-         d. Wait for health check (from container metadata)
-         e. PostStart (configurator, if registered)
-         f. Mark node RUNNING
-      3. Traefik routes regenerated
-  → All apps healthy, LDAP login works
+         b. Ensure container (create/start, idempotent)
+         c. Health check (from container metadata)
+         d. PostStart (configurator, if registered)
+      4. RegenerateRoutes (Traefik dynamic config) — then promote nodes to RUNNING
+  → All apps healthy, SSO/LDAP/login works
 ```
 
-For apps with databases (e.g. Immich), the dependency graph includes their
-per-app postgres and redis containers declared in `containers:` metadata.
+For apps with databases (e.g. Immich), the dependency graph includes their per-app
+postgres and redis containers declared in `containers:` metadata.
+
+> ⚠️ **Known wiring gap:** the production router currently constructs the orchestrator
+> with `CatalogGraph: nil`, which short-circuits `applyInstallIntent` before recording
+> the app — installs no-op until this is wired. See REVIEW.md §C1.
 
 ## Validation Tiers
 
