@@ -357,6 +357,16 @@ func initOrchestratorHelper(
 		forwardDomainSSO = authentikClient
 	}
 
+	// Build the catalog dependency graph (planner) used by install/uninstall
+	// intents to resolve integrations and auto-install required providers.
+	// This is the missing wiring that made installs no-op in production.
+	catalogGraph, err := catalog.NewLoader(cfg.AppsDir).LoadGraph()
+	if err != nil {
+		logger.Error("failed to build catalog graph", "error", err)
+	} else {
+		logger.Info("catalog dependency graph built", "apps", len(catalogGraph.GetApps()))
+	}
+
 	orch := orchestrator.NewOrchestrator(
 		lifecycleGraph,
 		cfg.Registry,
@@ -368,7 +378,7 @@ func initOrchestratorHelper(
 			Containers:       runtime,
 			TemplateVars:     cfg.TemplateVars,
 			AppStore:         appStore,
-			CatalogGraph:     nil,
+			CatalogGraph:     catalogGraph,
 			TailnetStore:     tailnetStore,
 			RemoteAppStore:   store.NewRemoteAppStore(db),
 			TailnetNode:      tailnetNode,
