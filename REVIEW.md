@@ -1,6 +1,6 @@
-# Bloud — Principal Engineer Architectural Design Review
+# Bloud — Architectural Design Review
 
-**Reviewer:** Principal Engineer (deep design review, FAANG-style)
+**Reviewer:** Architecture review
 **Scope:** High-level design & architecture of the Bloud home-cloud integration platform
 **Date:** (current)
 **Code under review:** `refactor/server-deep-modules` — `go build ./...` green in `services/host-agent`; unit tests green
@@ -10,8 +10,8 @@
 ## 0. How to Read This
 
 This is a **design review**, not a bug audit. It evaluates the architecture against the
-problem Bloud is trying to solve, the way a principal engineer would defend or attack the
-design in a large design-review meeting. Where the architecture and the implementation
+problem Bloud is trying to solve, the way a deep architecture review would defend or attack
+the design. Where the architecture and the implementation
 have drifted, that drift is called out explicitly — and it is often more important than
 the code itself, because it means the *documented* system and the *running* system are
 two different things.
