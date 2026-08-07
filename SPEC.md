@@ -265,7 +265,7 @@ It returns whether managed output changed:
 PreStartConfig(ctx, state) (changed bool, err error)
 ```
 
-When prestart configuration changes, the reconciler restarts only affected services, in
+When prestart configuration changes, the orchestrator restarts only affected services, in
 dependency order.
 
 #### PostStart Configuration
@@ -561,11 +561,11 @@ Auth keys are never exposed through the API. The frontend receives only a boolea
 
 ### Reconciliation Flow
 
-The reconciler uses an intent-driven architecture. All mutations flow through a typed intent
-queue. The reconciler is the single writer to all stores and the single executor of all side
+The orchestrator uses an intent-driven architecture. All mutations flow through a typed intent
+queue. The orchestrator is the single writer to all stores and the single executor of all side
 effects. API handlers are thin intent submitters that return 202 Accepted.
 
-Each reconciler cycle has two phases:
+Each orchestrator cycle has two phases:
 
 **Phase 1: Drain Queue (Apply Intents to Stores)**
 
@@ -699,7 +699,7 @@ Required architectural boundaries:
 - `planner`: calculates topology, integration, install, removal, and reconfiguration plans
 - `state`: persists desired and observed application and integration state
 - `runtime`: applies topology through host adapters
-- `reconciler`: converges topology and integration state
+- `orchestrator`: drains intents and converges topology and integration state
 - `configurator`: realizes prestart and poststart application/integration configuration
 - `routing`: generates and verifies routes
 - `secrets`: creates and persists stable credentials

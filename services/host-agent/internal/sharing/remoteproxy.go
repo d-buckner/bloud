@@ -171,8 +171,10 @@ func (m *RemoteProxyManager) stopProxyLocked(id string) {
 
 	if err := rp.server.Shutdown(ctx); err != nil {
 		m.logger.Warn("failed to gracefully shut down reverse proxy", "target", id, "error", err)
-		rp.listener.Close()
 	}
+
+	// Close the listener to ensure the port is released immediately.
+	rp.listener.Close()
 
 	delete(m.proxies, id)
 	m.logger.Info("stopped reverse proxy", "target", id, "port", rp.port)

@@ -1,0 +1,164 @@
+package api
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os/exec"
+	"time"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
+	"github.com/go-chi/chi/v5"
+)
+
+// LogsModule encapsulates log streaming operations.
+type LogsModule interface {
+	// CanStream checks if an app exists and can have its logs streamed.
+	CanStream(name string) error
+}
+
+type logsModule struct {
+	appStore store.AppStoreInterface
+	logger   *slog.Logger
+}
+
+// NewLogsModule creates a new LogsModule.
+func NewLogsModule(appStore store.AppStoreInterface, logger *slog.Logger) LogsModule {
+	return &logsModule{appStore: appStore, logger: logger}
+}
+
+// CanStream checks if the named app exists in the store.
+func (m *logsModule) CanStream(name string) error {
+	app, err := m.appStore.GetByCatalogID(name)
+	if err != nil || app == nil {
+		return fmt.Errorf("app not found: %s", name)
+	}
+	return nil
+}
+
+// NewLogsRouter registers log-related routes on the given router.
+func NewLogsRouter(mod *logsModule, r chi.Router) {
+	r.Get("/apps/{name}/logs", mod.StreamLogsHandler())
+	r.Get("/system/status/stream", mod.SystemStatusStreamHandler())
+}
+
+// StreamLogsHandler streams app logs via SSE using journalctl.
+func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+
+		if err := m.CanStream(name); err != nil {
+			respondError(w, http.StatusNotFound, "App not found")
+			return
+		}
+
+		// Set headers for SSE
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		m.logger.Info("SSE client connected for app logs", "app", name)
+
+		ctx := r.Context()
+		serviceName := fmt.Sprintf("podman-%s.service", name)
+		cmd := exec.CommandContext(ctx, "journalctl", "--user",
+			"-u", serviceName,
+			"-f",
+			"-n", "100",
+			"--no-pager",
+			"-o", "short-iso",
+		)
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			m.logger.Error("failed to create stdout pipe", "error", err)
+			respondError(w, http.StatusInternalServerError, "Failed to start log stream")
+			return
+		}
+
+		if err := cmd.Start(); err != nil {
+			m.logger.Error("failed to start journalctl", "error", err)
+			respondError(w, http.StatusInternalServerError, "Failed to start log stream")
+			return
+		}
+
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Fprintf(w, "data: %s\n\n", line)
+			flusher.Flush()
+
+			select {
+			case <-ctx.Done():
+				m.logger.Info("SSE client disconnected from app logs", "app", name)
+				return
+			default:
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			m.logger.Error("scanner error reading logs", "error", err)
+		}
+
+		cmd.Wait()
+		m.logger.Info("log stream ended", "app", name)
+	}
+}
+
+// SystemStatusStreamHandler streams system stats via SSE.
+func (m *logsModule) SystemStatusStreamHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		ctx := r.Context()
+		m.logger.Info("SSE client connected for system stats")
+
+		for {
+			select {
+			case <-ctx.Done():
+				m.logger.Info("SSE client disconnected")
+				return
+			case <-ticker.C:
+				stats, err := system.GetStats()
+				if err != nil {
+					m.logger.Error("failed to get system stats for SSE", "error", err)
+					continue
+				}
+				data, err := jsonMarshal(stats)
+				if err != nil {
+					m.logger.Error("failed to marshal stats for SSE", "error", err)
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+// jsonMarshal marshals v to JSON bytes. Kept as a function for testability.
+func jsonMarshal(v interface{}) ([]byte, error) {
+	return json.Marshal(v)
+}

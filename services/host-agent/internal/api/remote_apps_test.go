@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -15,14 +14,10 @@ import (
 )
 
 func TestAPI_AddRemoteApp(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, _ := setupTestServerWithWorkingOrchestrator(t)
 
-	body := `{"appId":"test-app","tailnetAddr":"ts-test.tail123.ts.net","hostLabel":"Johan"}`
-	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
+	body := strings.NewReader(`{"appId":"test-app","tailnetAddr":"ts-test.tail123.ts.net","hostLabel":"Johan"}`)
+	w := serverRequest(t, server, "POST", "/api/sharing/remote-apps", body)
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
@@ -33,7 +28,7 @@ func TestAPI_AddRemoteApp(t *testing.T) {
 }
 
 func TestAPI_AddRemoteApp_WithSSO(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, _ := setupTestServerWithWorkingOrchestrator(t)
 
 	// Add a catalog app with SSO config
 	server.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
@@ -45,12 +40,8 @@ func TestAPI_AddRemoteApp_WithSSO(t *testing.T) {
 		},
 	})
 
-	body := `{"appId":"navidrome","tailnetAddr":"ts-nav.tail123.ts.net","hostLabel":"Johan"}`
-	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
+	body := strings.NewReader(`{"appId":"navidrome","tailnetAddr":"ts-nav.tail123.ts.net","hostLabel":"Johan"}`)
+	w := serverRequest(t, server, "POST", "/api/sharing/remote-apps", body)
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
@@ -75,11 +66,8 @@ func TestAPI_AddRemoteApp_MissingFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-
-			server.router.ServeHTTP(w, req)
+			body := strings.NewReader(tt.body)
+			w := serverRequest(t, server, "POST", "/api/sharing/remote-apps", body)
 
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 
@@ -93,23 +81,16 @@ func TestAPI_AddRemoteApp_MissingFields(t *testing.T) {
 func TestAPI_AddRemoteApp_UnknownApp(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	body := `{"appId":"nonexistent","tailnetAddr":"ts.net","hostLabel":"X"}`
-	req := httptest.NewRequest("POST", "/api/sharing/remote-apps", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
+	body := strings.NewReader(`{"appId":"nonexistent","tailnetAddr":"ts.net","hostLabel":"X"}`)
+	w := serverRequest(t, server, "POST", "/api/sharing/remote-apps", body)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestAPI_ListRemoteApps_Empty(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, _ := setupTestServerWithWorkingOrchestrator(t)
 
-	req := httptest.NewRequest("GET", "/api/sharing/remote-apps", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
+	w := serverRequest(t, server, "GET", "/api/sharing/remote-apps", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -120,7 +101,7 @@ func TestAPI_ListRemoteApps_Empty(t *testing.T) {
 }
 
 func TestAPI_ListRemoteApps_WithApps(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, _ := setupTestServerWithWorkingOrchestrator(t)
 
 	// Add a remote app directly to the store
 	fakeStore := server.remoteAppStore.(*FakeRemoteAppStore)
@@ -134,10 +115,7 @@ func TestAPI_ListRemoteApps_WithApps(t *testing.T) {
 		BypassPaths:        []string{},
 	})
 
-	req := httptest.NewRequest("GET", "/api/sharing/remote-apps", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
+	w := serverRequest(t, server, "GET", "/api/sharing/remote-apps", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -149,7 +127,7 @@ func TestAPI_ListRemoteApps_WithApps(t *testing.T) {
 }
 
 func TestAPI_DeleteRemoteApp(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, _ := setupTestServerWithWorkingOrchestrator(t)
 
 	// Add a remote app
 	fakeStore := server.remoteAppStore.(*FakeRemoteAppStore)
@@ -162,10 +140,7 @@ func TestAPI_DeleteRemoteApp(t *testing.T) {
 		BypassPaths: []string{},
 	})
 
-	req := httptest.NewRequest("DELETE", "/api/sharing/remote-apps/delete-me", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
+	w := serverRequest(t, server, "DELETE", "/api/sharing/remote-apps/delete-me", nil)
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
@@ -176,12 +151,9 @@ func TestAPI_DeleteRemoteApp(t *testing.T) {
 }
 
 func TestAPI_DeleteRemoteApp_NotFound(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, _ := setupTestServerWithWorkingOrchestrator(t)
 
-	req := httptest.NewRequest("DELETE", "/api/sharing/remote-apps/nonexistent", nil)
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
+	w := serverRequest(t, server, "DELETE", "/api/sharing/remote-apps/nonexistent", nil)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }

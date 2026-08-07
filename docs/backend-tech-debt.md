@@ -17,23 +17,26 @@ invalidation, phase-specific failure records, and resume-after-restart semantics
 
 ## Evidence
 
-- `internal/orchestrator/orchestrator_portable.go`
-  - `Install` records install intent, ensures containers, runs configuration, updates
-    status, updates the graph, and regenerates routes in one path.
-  - `ensureApp` interleaves prestart config, container/network creation, health checks,
-    poststart config, SSO provisioning, sidecar startup, tailnet state, and final status.
+- `internal/orchestrator/orchestrator.go` + `orchestrator_containers.go`
+  - `Reconcile` runs topological levels concurrently; `runFullLifecycle` interleaves
+    prestart config, container/network creation, health checks, poststart config, and SSO
+    provisioning.
   - `RegenerateRoutes` also starts the gateway and reconciles remote app proxies, so
     route generation has runtime side effects.
-- `internal/api/server.go`
-  - Startup calls `RegenerateRoutes` synchronously in `NewServer`, triggering gateway
-    and proxy side effects during server construction. It then launches background
-    container sync and state reconciliation in a goroutine.
-  - Catalog sync launches health reconciliation that mutates app status independently.
-  - API install/uninstall handlers trigger background reconciliation after orchestrator
-    operations.
+- `internal/orchestrator/pipeline.go`
+  - `applyInstallIntent` resolves dependencies via `catalogGraph` and records apps; the
+    lifecycle graph itself is in-memory (`MapRepository`) — the durable SQLite backing is
+    dead code, so ERROR-terminal state does not survive restart.
+- `internal/api/router.go`
+  - Constructs the orchestrator with `CatalogGraph: nil`, making the install path inert
+    in production. Grants admin to any loopback request without a credential.
+  - Share/guest handlers write to stores directly, bypassing the intent queue.
 - `internal/store/apps.go`
   - The `apps.status` field is doing too much work. It represents install operation
     progress, observed runtime health, and user-visible application state.
+- `internal/config/config.go`
+  - Hardcoded fallback secrets (`password`, `dev-secret-change-in-production`, etc.) ship
+    in the production config path when `secrets.json`/env are unset.
 - `internal/db/db.go`
   - Schema migration is ad hoc and ignores errors. This increases risk as state tables
     become more important.
@@ -57,8 +60,8 @@ The current shape creates recurring risks:
 Move toward this ownership model:
 
 1. API writes desired intent only.
-2. Planner calculates deterministic topology and integration changes.
-3. Reconciler exclusively advances observed state and operation state.
+2. Planner (catalog.AppGraph) calculates deterministic topology and integration changes.
+3. Orchestrator exclusively advances observed state and operation state.
 4. Runtime, routing, sharing, health, and configurators are effect adapters.
 5. Store persists separate desired state, observed state, operation state, and integration
    state.
@@ -96,10 +99,10 @@ Track:
 
 Keep `apps.status` as user-facing observed state until it can be narrowed.
 
-### 2. Make Reconciler the Only Lifecycle Mutator
+### 2. Make the Orchestrator the Only Lifecycle Mutator
 
 Move status progression and phase handling out of API background helpers and into the
-reconciler. API handlers should request work and return the current operation/result.
+orchestrator. API handlers should request work and return the current operation/result.
 
 First candidates:
 

@@ -112,7 +112,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 
 ### AppState
 
-The reconciler passes resolved integration outputs to each configurator:
+The orchestrator passes resolved integration outputs to each configurator:
 
 | Field | Description |
 |---|---|
@@ -128,7 +128,14 @@ In `services/host-agent/internal/appconfig/register.go`:
 ```go
 import yourapp "codeberg.org/d-buckner/bloud/apps/your-app"
 
-func RegisterAll(registry *configurator.Registry, cfg *config.Config) {
+func RegisterAll(
+    registry *configurator.Registry,
+    cfg *config.Config,
+    runtime containerruntime.Runtime,
+    catalogApps map[string]*catalog.App,
+    logger *slog.Logger,
+    templateVars map[string]string,
+) {
     // ... existing ...
     registry.Register(yourapp.NewConfigurator(8080))
 }
