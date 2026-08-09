@@ -294,6 +294,16 @@ func (m *MockAuthentikClient) GetLDAPOutpostToken() (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+// MockSSOProvisioner implements orchestrator.SSOProvisioner for testing
+type MockSSOProvisioner struct {
+	mock.Mock
+}
+
+func (m *MockSSOProvisioner) EnsureForwardAuth(appName, displayName, externalURL string) error {
+	args := m.Called(appName, displayName, externalURL)
+	return args.Error(0)
+}
+
 // MockConfiguratorRegistry implements configurator.RegistryInterface for testing
 type MockConfiguratorRegistry struct {
 	mock.Mock
@@ -416,4 +426,3 @@ func (m *MockContainerRuntime) Exec(ctx context.Context, name string, cmd []stri
 	args := m.Called(ctx, name, cmd)
 	return args.Error(0)
 }
-
