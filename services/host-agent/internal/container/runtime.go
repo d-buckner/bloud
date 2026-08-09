@@ -23,7 +23,7 @@ type Spec struct {
 	Ports         []Port
 	Mounts        []Mount
 	Labels        map[string]string
-	Network       string
+	Networks      []string
 	Command       []string
 	RestartPolicy string
 	DependsOn     string // systemd unit to bind lifecycle to (e.g. "apps-jellyfin.service")
@@ -214,7 +214,7 @@ func toPodmanConfig(spec Spec, revision string) podman.ContainerConfig {
 		Image:         spec.Image,
 		Env:           spec.Environment,
 		Labels:        labels,
-		Network:       spec.Network,
+		Networks:      spec.Networks,
 		Command:       spec.Command,
 		RestartPolicy: spec.RestartPolicy,
 	}

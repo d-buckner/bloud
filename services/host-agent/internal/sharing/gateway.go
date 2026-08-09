@@ -94,9 +94,9 @@ func (m *GatewayManager) EnsureRunning(ctx context.Context) error {
 	}
 
 	spec := container.Spec{
-		Name:    gatewayContainerName,
-		Image:   TailscaleImage,
-		Network: "host",
+		Name:     gatewayContainerName,
+		Image:    TailscaleImage,
+		Networks: []string{"host"},
 		Environment: map[string]string{
 			"TS_AUTHKEY":       authKey,
 			"TS_HOSTNAME":      "bloud",

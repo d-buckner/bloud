@@ -327,3 +327,48 @@ func TestBuildContainerSpec(t *testing.T) {
 	labels := spec["labels"].(map[string]string)
 	assert.Equal(t, "test", labels["app"])
 }
+
+func TestBuildContainerSpec_MultipleNetworks(t *testing.T) {
+	config := ContainerConfig{
+		Name:     "test-app",
+		Image:    "nginx:latest",
+		Networks: []string{"authentik-internal", "apps-net"},
+	}
+
+	spec := buildContainerSpec(config)
+
+	netns, ok := spec["netns"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "bridge", netns["nsmode"])
+	networks, ok := spec["networks"].(map[string]map[string]interface{})
+	require.True(t, ok)
+	assert.Contains(t, networks, "authentik-internal")
+	assert.Contains(t, networks, "apps-net")
+}
+
+func TestBuildContainerSpec_HostNetwork(t *testing.T) {
+	config := ContainerConfig{
+		Name:     "test-app",
+		Image:    "tailscale:latest",
+		Networks: []string{"host"},
+	}
+
+	spec := buildContainerSpec(config)
+
+	netns, ok := spec["netns"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "host", netns["nsmode"])
+	assert.NotContains(t, spec, "networks")
+}
+
+func TestBuildContainerSpec_DefaultNetwork(t *testing.T) {
+	config := ContainerConfig{
+		Name:  "test-app",
+		Image: "nginx:latest",
+	}
+
+	spec := buildContainerSpec(config)
+
+	assert.NotContains(t, spec, "netns")
+	assert.NotContains(t, spec, "networks")
+}

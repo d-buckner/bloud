@@ -141,8 +141,13 @@ func (r *QuadletRuntime) unitName(name string) string {
 }
 
 func renderQuadlet(spec Spec, revision, wantedBy string) ([]byte, error) {
-	if strings.ContainsAny(spec.Name+spec.Image+spec.Network+wantedBy, "\r\n") {
+	if strings.ContainsAny(spec.Name+spec.Image+wantedBy, "\r\n") {
 		return nil, fmt.Errorf("quadlet fields may not contain newlines")
+	}
+	for _, network := range spec.Networks {
+		if strings.ContainsAny(network, "\r\n") {
+			return nil, fmt.Errorf("quadlet network may not contain newlines")
+		}
 	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "[Unit]\nDescription=Bloud container %s\n", spec.Name)
@@ -151,8 +156,8 @@ func renderQuadlet(spec Spec, revision, wantedBy string) ([]byte, error) {
 	}
 	fmt.Fprintf(&out, "\n[Container]\n")
 	fmt.Fprintf(&out, "ContainerName=%s\nImage=%s\nPull=never\nCgroupsMode=disabled\n", spec.Name, spec.Image)
-	if spec.Network != "" {
-		fmt.Fprintf(&out, "Network=%s\n", spec.Network)
+	for _, network := range spec.Networks {
+		fmt.Fprintf(&out, "Network=%s\n", network)
 	}
 	for _, port := range spec.Ports {
 		protocol := port.Protocol

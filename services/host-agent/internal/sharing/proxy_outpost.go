@@ -54,9 +54,9 @@ func (m *ProxyOutpostManager) EnsureRunning(ctx context.Context, token, tailnetD
 	}
 
 	spec := container.Spec{
-		Name:    proxyOutpostContainerName,
-		Image:   ProxyOutpostImage,
-		Network: "apps-net",
+		Name:     proxyOutpostContainerName,
+		Image:    ProxyOutpostImage,
+		Networks: []string{"apps-net"},
 		Environment: map[string]string{
 			"AUTHENTIK_HOST":         "http://apps-authentik-server:9000",
 			"AUTHENTIK_HOST_BROWSER": "https://bloud." + tailnetDomain,

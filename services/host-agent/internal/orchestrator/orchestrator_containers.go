@@ -169,10 +169,16 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 		return value
 	}
 
-	// Use Network (singular) if set; fall back to first entry of Networks (plural).
-	network := def.Network
-	if network == "" && len(def.Networks) > 0 {
-		network = def.Networks[0]
+	// Collect all networks the container should attach to, preserving the
+	// singular Network (if set) before the plural Networks list.
+	var networks []string
+	if def.Network != "" {
+		networks = append(networks, def.Network)
+	}
+	for _, n := range def.Networks {
+		if n != def.Network {
+			networks = append(networks, n)
+		}
 	}
 
 	env := make(map[string]string, len(def.Environment))
@@ -184,7 +190,7 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 		Name:          def.Name,
 		Image:         def.Image,
 		Environment:   env,
-		Network:       network,
+		Networks:      networks,
 		Command:       def.Command,
 		RestartPolicy: def.RestartPolicy,
 		Labels:        map[string]string{"io.bloud.app": appCatalogID},

@@ -22,7 +22,7 @@ func TestGateway_EnsureRunning_CreatesContainerSpec(t *testing.T) {
 
 	assert.Equal(t, "ts-gateway", spec.Name)
 	assert.Equal(t, TailscaleImage, spec.Image)
-	assert.Equal(t, "host", spec.Network)
+	assert.Equal(t, []string{"host"}, spec.Networks)
 	assert.Equal(t, "tskey-auth-gw", spec.Environment["TS_AUTHKEY"])
 	assert.Equal(t, "bloud", spec.Environment["TS_HOSTNAME"])
 	assert.Equal(t, "true", spec.Environment["TS_USERSPACE"])
