@@ -258,7 +258,6 @@ func TestSystemRouter_RegistersRoutes(t *testing.T) {
 
 // ---- Interface contract ----
 
-var _ SystemModule = (*systemModule)(nil)
 
 var _ = io.EOF
 var _ = chi.NewRouter

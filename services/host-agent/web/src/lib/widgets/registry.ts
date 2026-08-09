@@ -65,13 +65,6 @@ export function getWidgetById(id: string): WidgetDefinition | undefined {
 }
 
 /**
- * Get all widget IDs
- */
-export function getAllWidgetIds(): string[] {
-	return widgetRegistry.map((w) => w.id);
-}
-
-/**
  * Check if a widget ID is valid
  */
 export function isValidWidgetId(id: string): boolean {

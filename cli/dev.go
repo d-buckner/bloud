@@ -16,6 +16,19 @@ func localExec(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
 }
 
+// runForeground runs an interactive command, treating a signal-based exit
+// (e.g. Ctrl-C) as a clean stop rather than a failure.
+func runForeground(cmd *exec.Cmd) error {
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == -1 {
+		return nil
+	}
+	return err
+}
+
 func getProjectRoot() (string, error) {
 	// Find project root by looking for cli/main.go relative to executable or cwd
 	cwd, err := os.Getwd()
@@ -70,7 +83,10 @@ func cmdStop() int {
 		`pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop apps-*.service 2>/dev/null; true`)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		errorf("Failed to stop host-agent: %v", err)
+		return 1
+	}
 	log("Stopped")
 	return 0
 }
@@ -115,7 +131,10 @@ func cmdLogs() int {
 		"journalctl --user -u host-agent -f 2>/dev/null || journalctl -f 2>/dev/null")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
+	if err := runForeground(cmd); err != nil {
+		errorf("Failed to stream logs: %v", err)
+		return 1
+	}
 	return 0
 }
 
@@ -126,7 +145,10 @@ func cmdAttach() int {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	_ = cmd.Run()
+	if err := runForeground(cmd); err != nil {
+		errorf("Failed to open shell on "+lima+": %v", err)
+		return 1
+	}
 	return 0
 }
 
@@ -160,7 +182,10 @@ func cmdServices() int {
 		"systemctl --user list-units 'apps-*' --all --no-pager")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		errorf("Failed to list services: %v", err)
+		return 1
+	}
 	return 0
 }
 
@@ -183,7 +208,10 @@ func cmdReset() int {
 		`pkill -f 'host-agent$' 2>/dev/null; true`)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		errorf("Failed to stop host-agent: %v", err)
+		return 1
+	}
 
 	// 2. Stop all app services and remove containers + quadlet files
 	log("Stopping services and removing containers")
@@ -197,7 +225,10 @@ systemctl --user daemon-reload 2>/dev/null || true
 `)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		errorf("Failed to stop services: %v", err)
+		return 1
+	}
 
 	// 3. Wipe data directories and database
 	// Use podman unshare for dirs with container-owned files (e.g. postgres)
@@ -313,14 +344,20 @@ func cmdDev() int {
 	// orchestrator from recreating authentik (podman refuses to remove a container
 	// that still has dependent containers).
 	log("Stopping managed app containers")
-	_ = limaRun(lima, `systemctl --user stop apps-*.service 2>/dev/null; podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; systemctl --user reset-failed 2>/dev/null; rm -f "$HOME/.config/containers/systemd"/apps-*.container 2>/dev/null; systemctl --user daemon-reload 2>/dev/null; true`)
+	if err := limaRun(lima, `systemctl --user stop apps-*.service 2>/dev/null; podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; systemctl --user reset-failed 2>/dev/null; rm -f "$HOME/.config/containers/systemd"/apps-*.container 2>/dev/null; systemctl --user daemon-reload 2>/dev/null; true`); err != nil {
+		errorf("Failed to stop managed app containers: %v", err)
+		return 1
+	}
 
 	// Ensure shared infra (postgres, redis) is running via the compose stack.
 	// The host-agent expects Postgres on localhost:5432 (app databases) and
 	// Redis on localhost:6379 (sessions). Compose recreates containers whose
 	// config changed (e.g. redis gaining the published 6379 port).
 	log("Ensuring shared infra (postgres, redis)")
-	_ = limaRun(lima, fmt.Sprintf("cd %s/dev && podman-compose up -d postgres redis 2>&1", root))
+	if err := limaRun(lima, fmt.Sprintf("cd %s/dev && podman-compose up -d postgres redis 2>&1", root)); err != nil {
+		errorf("Failed to start shared infra: %v", err)
+		return 1
+	}
 
 	// Build
 	log("Building host-agent for linux/" + goarch)
@@ -377,7 +414,10 @@ func cmdDev() int {
 	// Deploy frontend build to VM
 	webBuildDir := filepath.Join(webDir, "build")
 	if _, err := os.Stat(webBuildDir); err == nil {
-		_ = limaRun(lima, "rm -rf "+devRemoteDir+"/host-agent/web/build")
+		if err := limaRun(lima, "rm -rf "+devRemoteDir+"/host-agent/web/build"); err != nil {
+			errorf("Failed to clean remote web dir: %v", err)
+			return 1
+		}
 		if err := limaRun(lima, "mkdir -p "+devRemoteDir+"/host-agent/web"); err != nil {
 			errorf("Failed to create remote web dir: %v", err)
 			return 1
@@ -393,7 +433,10 @@ func cmdDev() int {
 	}
 
 	// Kill anything on port 3000 and any previous dev host-agent
-	_ = limaRun(lima, `fuser -k 3000/tcp 2>/dev/null || true; pkill -f '`+devRemoteDir+`/host-agent/host-agent' 2>/dev/null || true; sleep 0.5`)
+	if err := limaRun(lima, `fuser -k 3000/tcp 2>/dev/null || true; pkill -f '`+devRemoteDir+`/host-agent/host-a[g]ent' 2>/dev/null || true; sleep 0.5`); err != nil {
+		errorf("Failed to stop previous host-agent: %v", err)
+		return 1
+	}
 
 	// Build the env and exec command
 	appsDir := filepath.Join(root, "apps")
@@ -415,12 +458,7 @@ func cmdDev() int {
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
 	runCmd.Stdin = os.Stdin
-	if err := runCmd.Run(); err != nil {
-		// Don't report error on signal-based exit (Ctrl-C)
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == -1 {
-			fmt.Println()
-			return 0
-		}
+	if err := runForeground(runCmd); err != nil {
 		errorf("host-agent exited: %v", err)
 		return 1
 	}

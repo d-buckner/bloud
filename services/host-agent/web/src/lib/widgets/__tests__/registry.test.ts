@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-	widgetRegistry,
-	getWidgetById,
-	getAllWidgetIds,
-	isValidWidgetId,
-} from '../registry';
+import { widgetRegistry, getWidgetById, isValidWidgetId } from '../registry';
 
 describe('widget registry', () => {
 	describe('widgetRegistry', () => {
@@ -64,29 +59,6 @@ describe('widget registry', () => {
 		it('returns undefined for empty string', () => {
 			const widget = getWidgetById('');
 			expect(widget).toBeUndefined();
-		});
-	});
-
-	describe('getAllWidgetIds', () => {
-		it('returns array of widget IDs', () => {
-			const ids = getAllWidgetIds();
-			expect(Array.isArray(ids)).toBe(true);
-			expect(ids.length).toBeGreaterThan(0);
-		});
-
-		it('includes system-stats', () => {
-			const ids = getAllWidgetIds();
-			expect(ids).toContain('system-stats');
-		});
-
-		it('includes storage', () => {
-			const ids = getAllWidgetIds();
-			expect(ids).toContain('storage');
-		});
-
-		it('includes quick-notes', () => {
-			const ids = getAllWidgetIds();
-			expect(ids).toContain('quick-notes');
 		});
 	});
 

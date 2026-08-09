@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,12 +14,6 @@ import (
 )
 
 // RemoteAppsModule encapsulates remote app management.
-type RemoteAppsModule interface {
-	List() ([]*store.RemoteApp, error)
-	Add(appID, tailnetAddr, hostLabel string) (*IntentRef, error)
-	Delete(id string) (*IntentRef, error)
-}
-
 type remoteAppsModule struct {
 	remoteAppStore store.RemoteAppStoreInterface
 	catalog        catalog.CacheInterface
@@ -32,7 +27,7 @@ func NewRemoteAppsModule(
 	catalog catalog.CacheInterface,
 	orch orchestratorCaller,
 	logger *slog.Logger,
-) RemoteAppsModule {
+) *remoteAppsModule {
 	return &remoteAppsModule{
 		remoteAppStore: remoteAppStore,
 		catalog:        catalog,
@@ -80,7 +75,7 @@ func (m *remoteAppsModule) Add(appID, tailnetAddr, hostLabel string) (*IntentRef
 func (m *remoteAppsModule) Delete(id string) (*IntentRef, error) {
 	app, err := m.remoteAppStore.GetByID(id)
 	if err != nil || app == nil {
-		return nil, fmt.Errorf("remote app not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", errRemoteAppNotFound, id)
 	}
 	if m.orch == nil {
 		return nil, fmt.Errorf("orchestrator not available")
@@ -138,7 +133,7 @@ func (m *remoteAppsModule) DeleteHandler() http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		ref, err := m.Delete(id)
 		if err != nil {
-			if errContains(err, "not found") {
+			if errors.Is(err, errRemoteAppNotFound) {
 				respondError(w, http.StatusNotFound, "remote app not found")
 				return
 			}

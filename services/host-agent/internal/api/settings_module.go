@@ -27,21 +27,6 @@ type AuthentikUserManagerInterface interface {
 
 // SettingsModule encapsulates all settings operations: tailnet management,
 // initial setup wizard, and user administration.
-type SettingsModule interface {
-	// Tailnet
-	GetTailnetHandler() http.HandlerFunc
-	SetTailnetHandler() http.HandlerFunc
-	DeleteTailnetHandler() http.HandlerFunc
-	// Setup wizard
-	SetupStatusHandler() http.HandlerFunc
-	CreateFirstUserHandler() http.HandlerFunc
-	// User management
-	ListUsersHandler() http.HandlerFunc
-	CreateManagedUserHandler() http.HandlerFunc
-	DeleteManagedUserHandler() http.HandlerFunc
-	SetUserRoleHandler() http.HandlerFunc
-}
-
 type settingsModule struct {
 	tailnetStore    store.TailnetStoreInterface
 	prefsStore      store.PreferencesStoreInterface
@@ -61,7 +46,7 @@ func NewSettingsModule(
 	orch orchestratorCaller,
 	authConfig *authConfigRef,
 	logger *slog.Logger,
-) SettingsModule {
+) *settingsModule {
 	return &settingsModule{
 		tailnetStore:    tailnetStore,
 		prefsStore:      prefsStore,

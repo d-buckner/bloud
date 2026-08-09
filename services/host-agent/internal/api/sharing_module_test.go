@@ -387,7 +387,6 @@ func TestSharingRouter_RegistersRoutes(t *testing.T) {
 
 // ---- Interface contract ----
 
-var _ SharingModule = (*sharingModule)(nil)
 
 var _ = io.EOF
 var _ = chi.NewRouter

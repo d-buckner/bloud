@@ -11,11 +11,6 @@ import (
 )
 
 // HomeModule encapsulates user home screen layout management.
-type HomeModule interface {
-	GetLayout(username string) (*homeResponse, error)
-	SetLayout(username string, positions []store.Position) error
-}
-
 type homeModuleSimple struct {
 	positionStore  store.PositionStoreInterface
 	appStore       store.AppStoreInterface
@@ -30,7 +25,7 @@ func NewHomeModule(
 	appStore store.AppStoreInterface,
 	getLaunchPaths func() map[string]string,
 	logger *slog.Logger,
-) HomeModule {
+) *homeModuleSimple {
 	return &homeModuleSimple{
 		positionStore:  positionStore,
 		appStore:       appStore,

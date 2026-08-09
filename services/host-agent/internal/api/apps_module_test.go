@@ -3,8 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -251,7 +249,7 @@ func TestAppsHTTP_ListInstalledApps(t *testing.T) {
 	})
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("GET", "/apps/installed", nil)
@@ -275,7 +273,7 @@ func TestAppsHTTP_Install_Returns202(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("POST", "/apps/jellyfin/install", nil)
@@ -296,7 +294,7 @@ func TestAppsHTTP_Install_NotFound(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("POST", "/apps/nonexistent/install", nil)
@@ -313,7 +311,7 @@ func TestAppsHTTP_Uninstall_Returns202(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("POST", "/apps/jellyfin/uninstall", strings.NewReader(`{"clearData":true}`))
@@ -331,7 +329,7 @@ func TestAppsHTTP_Rename_Returns202(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	body := `{"displayName":"My Jellyfin"}`
@@ -350,7 +348,7 @@ func TestAppsHTTP_Rename_MissingDisplayName(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	body := `{"displayName":""}`
@@ -370,7 +368,7 @@ func TestAppsHTTP_AppMetadata(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("GET", "/apps/jellyfin/metadata", nil)
@@ -392,7 +390,7 @@ func TestAppsHTTP_RefreshCatalog(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	mod := NewAppsModule(cache, appStore, orch, logger)
-	appMod := mod.(*appsModule)
+	appMod := mod
 	appMod.SetAppsDir(tmpDir)
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
@@ -402,12 +400,3 @@ func TestAppsHTTP_RefreshCatalog(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
-
-// Ensure the interface contract
-var _ AppsModule = (*appsModule)(nil)
-
-// Suppress unused import
-var _ = io.EOF
-
-// catalog error helper for test assertions
-var _ = fmt.Errorf

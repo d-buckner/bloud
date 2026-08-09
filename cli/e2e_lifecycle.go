@@ -467,7 +467,10 @@ func (r *lifecycle) collectLogs() {
 	if r.cfg.remoteHome == "" {
 		return
 	}
-	_ = os.MkdirAll(r.artifactDir(), 0755)
+	if err := os.MkdirAll(r.artifactDir(), 0755); err != nil {
+		errorf("failed to create artifact dir: %v", err)
+		return
+	}
 	logs := map[string]string{
 		"journal.log": `journalctl --user -u bloud-e2e-host-agent.service -u apps-jellyfin.service --no-pager -n 500 || true`,
 		"podman.log":  `podman ps -a; podman inspect apps-jellyfin 2>&1 || true`,
@@ -486,7 +489,9 @@ func (r *lifecycle) collectLogs() {
 		if err != nil {
 			output += "\n" + err.Error()
 		}
-		_ = os.WriteFile(filepath.Join(r.artifactDir(), name), []byte(output), 0644)
+		if err := os.WriteFile(filepath.Join(r.artifactDir(), name), []byte(output), 0644); err != nil {
+			errorf("failed to write %s artifact: %v", name, err)
+		}
 	}
 }
 
@@ -502,7 +507,9 @@ if test -f "$4/.bloud-e2e-runtime"; then
   rm -rf "$4"
 fi
 systemctl --user daemon-reload >/dev/null 2>&1 || true`
-	_ = r.remoteRun(script, lifecycleHostAgentUnit, r.cfg.remoteHome, r.cfg.quadletDir, r.cfg.remoteDir)
+	if err := r.remoteRun(script, lifecycleHostAgentUnit, r.cfg.remoteHome, r.cfg.quadletDir, r.cfg.remoteDir); err != nil {
+		errorf("failed to clean up remote deployment: %v", err)
+	}
 }
 
 func (r *lifecycle) prepareLimaTarget() error {
@@ -535,7 +542,9 @@ func (r *lifecycle) restoreLimaComposeJellyfin() {
 		return
 	}
 	fmt.Printf("\n%s==>%s Restoring legacy compose-managed Jellyfin\n", colorGreen, colorReset)
-	_ = r.remoteRun(`podman start "$1" >/dev/null`, r.stoppedComposeJellyfin)
+	if err := r.remoteRun(`podman start "$1" >/dev/null`, r.stoppedComposeJellyfin); err != nil {
+		errorf("failed to restore compose-managed Jellyfin: %v", err)
+	}
 }
 
 var remotePreflightScript = `command -v systemctl >/dev/null

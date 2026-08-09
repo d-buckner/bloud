@@ -20,6 +20,11 @@
 	// Debounced save
 	let saveTimeout: ReturnType<typeof setTimeout>;
 
+	// Clear any pending save on unmount so we never write to localStorage after teardown
+	$effect(() => {
+		return () => clearTimeout(saveTimeout);
+	});
+
 	function handleInput(e: Event) {
 		const target = e.target as HTMLTextAreaElement;
 		notes = target.value;

@@ -1,9 +1,5 @@
 // API Response Types
 
-export interface HealthResponse {
-	status: string;
-}
-
 export type AppStatus = 'running' | 'starting' | 'installing' | 'uninstalling' | 'stopped' | 'error' | 'failed';
 
 export const AppStatus = {
@@ -28,20 +24,6 @@ export interface App {
 	installed_at: string;
 	updated_at: string;
 	sso_launch_path?: string;
-}
-
-export interface AppsResponse {
-	apps: App[];
-}
-
-export interface SystemStatus {
-	cpu: number;
-	memory: number;
-	disk: number;
-}
-
-export interface ApiError {
-	error: string;
 }
 
 // Remote app (shared from another host)
@@ -96,18 +78,6 @@ export interface HealthCheck {
 export interface Docs {
 	url?: string;
 	setup?: string;
-}
-
-export interface Integration {
-	required: boolean;
-	multi: boolean;
-	compatible: CompatibleApp[];
-}
-
-export interface CompatibleApp {
-	app: string;
-	default?: boolean;
-	category?: string;
 }
 
 // Guest (contact book entry)
