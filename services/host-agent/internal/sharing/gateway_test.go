@@ -31,9 +31,6 @@ func TestGateway_EnsureRunning_CreatesContainerSpec(t *testing.T) {
 	assert.Equal(t, "true", spec.Labels["io.bloud.gateway"])
 	assert.Equal(t, "always", spec.RestartPolicy)
 
-	// Gateway is host-network, no DependsOn
-	assert.Empty(t, spec.DependsOn)
-
 	// TS_SERVE_CONFIG for Tailscale Serve (HTTPS on 443 → Traefik)
 	assert.Equal(t, "/etc/ts-serve/serve.json", spec.Environment["TS_SERVE_CONFIG"])
 

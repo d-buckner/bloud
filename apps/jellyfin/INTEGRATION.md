@@ -131,10 +131,10 @@ Before users can log in via LDAP, they must be added to the appropriate Authenti
 # via UI or API
 
 # Check logs
-./bloud shell "journalctl --user -u podman-jellyfin -f"
+./bloud shell "podman logs -f apps-jellyfin"
 
 # Verify LDAP outpost is running
-./bloud shell "systemctl --user status podman-apps-authentik-ldap"
+./bloud shell "podman ps --filter name=apps-authentik-ldap"
 
 # Check LDAP outpost logs for token errors
 ./bloud shell "podman logs apps-authentik-ldap"

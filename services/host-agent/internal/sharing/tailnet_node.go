@@ -35,8 +35,7 @@ type TailnetNodeManagerInterface interface {
 // Each tailnet node joins the tailnet via TS_AUTHKEY and exposes the app via
 // Tailscale Serve, configured declaratively through TS_SERVE_CONFIG.
 // Tailnet nodes run on the host network and proxy to Traefik, which routes to the
-// app based on the Host header. The tailnet node's systemd unit is bound to the
-// app's unit via DependsOn, so systemd handles lifecycle coupling automatically.
+// app based on the Host header.
 type TailnetNodeManager struct {
 	containers  container.Runtime
 	exec        ContainerExec
@@ -71,8 +70,7 @@ func TailnetNodeContainerName(appName string) string {
 // EnsureRunning starts the Tailscale tailnet node for the given app (idempotent).
 // The tailnet node runs on the host network and proxies to Traefik, which routes
 // to the app based on the Host header. TS_SERVE_CONFIG points to a
-// pre-generated JSON file, and DependsOn binds the tailnet node's systemd unit
-// to the app's unit so they share lifecycle.
+// pre-generated JSON file with the serve configuration.
 func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) error {
 	authKey := m.authKeyFn()
 	if authKey == "" {
@@ -80,7 +78,6 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 	}
 
 	name := TailnetNodeContainerName(appName)
-	appService := fmt.Sprintf("apps-%s.service", appName)
 
 	// Write serve config file for Tailscale — proxy to Traefik.
 	configDir := filepath.Join(m.dataDir, appName, "ts-serve")
@@ -132,7 +129,6 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 			"io.bloud.tailnet-node": "true",
 		},
 		RestartPolicy: "always",
-		DependsOn:     appService,
 	}
 
 	if _, err := m.containers.Ensure(ctx, spec); err != nil {

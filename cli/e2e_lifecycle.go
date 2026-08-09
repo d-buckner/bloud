@@ -33,7 +33,6 @@ type lifecycleConfig struct {
 	hostOnly   bool
 	keep       bool
 	remoteHome string
-	quadletDir string
 }
 
 type lifecycle struct {
@@ -195,7 +194,6 @@ func (r *lifecycle) run() (runErr error) {
 	if r.cfg.remoteHome == "" {
 		return fmt.Errorf("remote HOME is empty")
 	}
-	r.cfg.quadletDir = filepath.Join(r.cfg.remoteHome, ".config", "containers", "systemd")
 	if err := r.remoteRun(remotePreflightScript, r.cfg.remoteDir); err != nil {
 		return fmt.Errorf("host preflight: %w", err)
 	}
@@ -257,7 +255,7 @@ func (r *lifecycle) run() (runErr error) {
 	}
 
 	r.step("Resetting prior managed Jellyfin state")
-	if err := r.remoteRun(remoteResetJellyfinScript, r.cfg.quadletDir); err != nil {
+	if err := r.remoteRun(remoteResetJellyfinScript); err != nil {
 		return err
 	}
 
@@ -282,7 +280,7 @@ func (r *lifecycle) run() (runErr error) {
 	}
 
 	r.step("Asserting installed Jellyfin host state")
-	if err := r.remoteRun(remoteAssertInstalledScript, r.cfg.quadletDir, r.cfg.traefikDir); err != nil {
+	if err := r.remoteRun(remoteAssertInstalledScript, r.cfg.traefikDir); err != nil {
 		return err
 	}
 
@@ -298,7 +296,7 @@ func (r *lifecycle) run() (runErr error) {
 	}
 
 	r.step("Uninstalling Jellyfin and asserting cleanup")
-	if err := r.remoteRun(remoteUninstallScript, r.cfg.quadletDir, r.cfg.remoteDir, r.cfg.traefikDir); err != nil {
+	if err := r.remoteRun(remoteUninstallScript, r.cfg.remoteDir, r.cfg.traefikDir); err != nil {
 		return err
 	}
 
@@ -321,8 +319,6 @@ Wants=network-online.target podman.socket
 Type=simple
 WorkingDirectory=%s/host-agent
 EnvironmentFile=%s/host-agent.env
-Environment=BLOUD_SYSTEMD_SCOPE=user
-Environment=BLOUD_QUADLET_DIR=%s
 Environment=BLOUD_DATA_DIR=%s/data
 Environment=BLOUD_APPS_DIR=%s/apps
 Environment=BLOUD_TRAEFIK_DYNAMIC_DIR=%s
@@ -333,7 +329,7 @@ RestartSec=2
 
 [Install]
 WantedBy=default.target
-`, cfg.remoteDir, cfg.remoteDir, cfg.quadletDir, cfg.remoteDir, cfg.remoteDir, cfg.traefikDir, extraEnv.String(), cfg.remoteDir)
+`, cfg.remoteDir, cfg.remoteDir, cfg.remoteDir, cfg.remoteDir, cfg.traefikDir, extraEnv.String(), cfg.remoteDir)
 }
 
 func writeSanitizedLifecycleEnvFile(source, destination string) error {
@@ -353,8 +349,6 @@ func writeSanitizedLifecycleEnvFile(source, destination string) error {
 		"BLOUD_APPS_DIR":                {},
 		"BLOUD_DATA_DIR":                {},
 		"BLOUD_PODMAN_SOCKET":           {},
-		"BLOUD_QUADLET_DIR":             {},
-		"BLOUD_SYSTEMD_SCOPE":           {},
 		"BLOUD_TRAEFIK_DYNAMIC_DIR":     {},
 		"BLOUD_E2E_LIMA_INSTANCE":       {},
 		"BLOUD_E2E_RUNTIME_DIR":         {},
@@ -472,16 +466,12 @@ func (r *lifecycle) collectLogs() {
 		return
 	}
 	logs := map[string]string{
-		"journal.log": `journalctl --user -u bloud-e2e-host-agent.service -u apps-jellyfin.service --no-pager -n 500 || true`,
+		"journal.log": `journalctl --user -u bloud-e2e-host-agent.service --no-pager -n 500 || true`,
 		"podman.log":  `podman ps -a; podman inspect apps-jellyfin 2>&1 || true`,
-		"quadlet.log": `test -f "$1/apps-jellyfin.container" && cat "$1/apps-jellyfin.container"; true`,
 		"routes.log":  `test -f "$1/apps-routes.yml" && cat "$1/apps-routes.yml"; true`,
 	}
 	for name, script := range logs {
 		args := []string{}
-		if name == "quadlet.log" {
-			args = append(args, r.cfg.quadletDir)
-		}
 		if name == "routes.log" {
 			args = append(args, r.cfg.traefikDir)
 		}
@@ -497,17 +487,15 @@ func (r *lifecycle) collectLogs() {
 
 func (r *lifecycle) cleanupRemoteDeployment() {
 	script := `curl -fsS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null 2>&1 || true
-systemctl --user stop apps-jellyfin.service >/dev/null 2>&1 || true
 podman rm -f apps-jellyfin >/dev/null 2>&1 || true
 podman rm -f bloud-e2e-redis >/dev/null 2>&1 || true
-rm -f "$3/apps-jellyfin.container"
 systemctl --user disable --now "$1" >/dev/null 2>&1 || true
 rm -f "$2/.config/systemd/user/$1"
-if test -f "$4/.bloud-e2e-runtime"; then
-  rm -rf "$4"
+if test -f "$3/.bloud-e2e-runtime"; then
+  rm -rf "$3"
 fi
 systemctl --user daemon-reload >/dev/null 2>&1 || true`
-	if err := r.remoteRun(script, lifecycleHostAgentUnit, r.cfg.remoteHome, r.cfg.quadletDir, r.cfg.remoteDir); err != nil {
+	if err := r.remoteRun(script, lifecycleHostAgentUnit, r.cfg.remoteHome, r.cfg.remoteDir); err != nil {
 		errorf("failed to clean up remote deployment: %v", err)
 	}
 }
@@ -581,10 +569,7 @@ if printf '%s' "$installed" | grep -q '"name":"jellyfin"'; then
     sleep 2
   done
 fi
-systemctl --user stop apps-jellyfin.service >/dev/null 2>&1 || true
 podman rm -f apps-jellyfin >/dev/null 2>&1 || true
-rm -f "$1/apps-jellyfin.container"
-systemctl --user daemon-reload
 installed="$(curl -sS http://localhost:3000/api/apps/installed || printf '[]')"
 ! printf '%s' "$installed" | grep -q '"name":"jellyfin"'`
 
@@ -611,13 +596,12 @@ fi`
 
 var remoteAssertInstalledScript = `test "$(podman inspect -f '{{ index .Config.Labels "io.bloud.managed" }}' apps-jellyfin)" = true
 test "$(podman inspect -f '{{ index .Config.Labels "io.bloud.app" }}' apps-jellyfin)" = jellyfin
-test -f "$1/apps-jellyfin.container"
-systemctl --user is-active --quiet apps-jellyfin.service
+test "$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)" = true
 curl -fsS http://localhost:8096/health >/dev/null
 curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'
-grep -q 'jellyfin-backend' "$2/apps-routes.yml"`
+grep -q 'jellyfin-backend' "$1/apps-routes.yml"`
 
-var remoteRestartScript = `systemctl --user restart apps-jellyfin.service
+var remoteRestartScript = `podman restart apps-jellyfin
 deadline=$((SECONDS + 120))
 until curl -fsS http://localhost:8096/health >/dev/null; do
   if ((SECONDS >= deadline)); then exit 1; fi
@@ -629,7 +613,7 @@ until curl -fsS http://localhost:3000/api/health >/dev/null; do
   if ((SECONDS >= deadline)); then exit 1; fi
   sleep 2
 done
-systemctl --user is-active --quiet apps-jellyfin.service
+test "$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)" = true
 curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'`
 
 var remoteUninstallScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
@@ -641,7 +625,5 @@ until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"name":"jel
   sleep 2
 done
 ! podman container exists apps-jellyfin
-test ! -e "$1/apps-jellyfin.container"
-! systemctl --user is-active --quiet apps-jellyfin.service
-test ! -e "$2/data/jellyfin"
-! grep -q 'jellyfin-backend' "$3/apps-routes.yml"`
+test ! -e "$1/data/jellyfin"
+! grep -q 'jellyfin-backend' "$2/apps-routes.yml"`
