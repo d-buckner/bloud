@@ -73,7 +73,7 @@ outposts). The `CatalogGraph: nil` is a one-line fix with outsized impact.
   inter-app integrations.
 - Go backend (`services/host-agent`, ~16k LOC), SvelteKit frontend (`web`), Go CLI
   (`cli`), app catalog in YAML (`apps/`).
-- Runtime: rootless Podman containers via Quadlet systemd units; Traefik reverse proxy;
+- Runtime: rootless Podman containers managed directly by the host-agent via the Podman API; Traefik reverse proxy;
   Authentik identity/SSO; per-app PostgreSQL/Redis containers declared in `containers:`.
 - Novel/advanced: federated sharing across hosts via Tailscale (gateway container +
   SOCKS5 + remote proxies + invite tokens), remote apps, forward-auth / native-OIDC /

@@ -12,7 +12,7 @@ import (
 // privileges to owner, and enables any requested extensions.
 // socketDir is the unix socket directory (e.g. "/run/postgresql").
 // By the time configurator PreStart runs, postgres is already available via
-// systemd ordering, so no polling is needed.
+// the orchestrator's dependency ordering, so no polling is needed.
 func EnsureDatabase(ctx context.Context, socketDir, owner, dbName string, extensions []string) error {
 	connStr := fmt.Sprintf("user=%s host=%s dbname=postgres sslmode=disable", owner, socketDir)
 	conn, err := pgx.Connect(ctx, connStr)

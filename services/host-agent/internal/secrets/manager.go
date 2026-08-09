@@ -161,7 +161,7 @@ func (m *Manager) saveLocked() error {
 		return fmt.Errorf("writing secrets file: %w", err)
 	}
 
-	// Write environment files for systemd services
+	// Write environment files consumed by app containers
 	if err := m.writeEnvFiles(dir); err != nil {
 		return fmt.Errorf("writing env files: %w", err)
 	}
@@ -169,7 +169,7 @@ func (m *Manager) saveLocked() error {
 	return nil
 }
 
-// writeEnvFiles writes .env files for systemd services to load via EnvironmentFile=
+// writeEnvFiles writes .env files that are mounted into app containers.
 func (m *Manager) writeEnvFiles(dir string) error {
 	// PostgreSQL environment
 	postgresEnv := fmt.Sprintf("POSTGRES_PASSWORD=%s\n", m.secrets.PostgresPassword)

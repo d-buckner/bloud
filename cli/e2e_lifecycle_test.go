@@ -109,14 +109,11 @@ func TestParseLifecycleConfigRejectsBroadRuntimeDirectory(t *testing.T) {
 func TestRenderLifecycleHostAgentUnit(t *testing.T) {
 	unit := renderLifecycleHostAgentUnit(lifecycleConfig{
 		remoteDir:  "/tmp/bloud-e2e",
-		quadletDir: "/home/bloud/.config/containers/systemd",
 		traefikDir: "/srv/traefik/dynamic",
 		redisAddr:  "10.89.0.2:6379",
 	})
 
 	for _, expected := range []string{
-		"Environment=BLOUD_SYSTEMD_SCOPE=user",
-		"Environment=BLOUD_QUADLET_DIR=/home/bloud/.config/containers/systemd",
 		"Environment=BLOUD_DATA_DIR=/tmp/bloud-e2e/data",
 		"Environment=BLOUD_TRAEFIK_DYNAMIC_DIR=/srv/traefik/dynamic",
 		"Environment=BLOUD_REDIS_ADDR=10.89.0.2:6379",
@@ -124,6 +121,11 @@ func TestRenderLifecycleHostAgentUnit(t *testing.T) {
 	} {
 		if !strings.Contains(unit, expected) {
 			t.Fatalf("unit missing %q:\n%s", expected, unit)
+		}
+	}
+	for _, removed := range []string{"BLOUD_SYSTEMD_SCOPE", "BLOUD_QUADLET_DIR"} {
+		if strings.Contains(unit, removed) {
+			t.Fatalf("unit unexpectedly contains %q:\n%s", removed, unit)
 		}
 	}
 }

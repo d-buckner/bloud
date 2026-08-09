@@ -213,15 +213,12 @@ func cmdReset() int {
 		return 1
 	}
 
-	// 2. Stop all app services and remove containers + quadlet files
-	log("Stopping services and removing containers")
+	// 2. Remove all containers
+	log("Removing containers")
 	cmd = exec.Command("limactl", "shell", lima, "bash", "-c", `
 set -e
-systemctl --user stop apps-*.service 2>/dev/null || true
 podman rm -f $(podman ps -aq) 2>/dev/null || true
-systemctl --user reset-failed 2>/dev/null || true
-rm -f "$HOME/.config/containers/systemd"/apps-*.container 2>/dev/null || true
-systemctl --user daemon-reload 2>/dev/null || true
+podman system prune -f 2>/dev/null || true
 `)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -333,8 +330,7 @@ func cmdDev() int {
 	}
 	goarch := runtime.GOARCH
 
-	// Clean slate: stop systemd-managed services first, then remove containers and quadlet files.
-	// Stopping services before removing quadlet files avoids systemd timeouts on restart.
+	// Clean slate: remove managed containers before the host-agent takes over.
 	// Also remove legacy dev containers (bloud-dev-postgres, bloud-dev-redis) that
 	// predate the host-agent self-bootstrap and would hold the ports.
 	// apps-traefik is included because it uses host network and holds port 8080.
@@ -344,7 +340,7 @@ func cmdDev() int {
 	// orchestrator from recreating authentik (podman refuses to remove a container
 	// that still has dependent containers).
 	log("Stopping managed app containers")
-	if err := limaRun(lima, `systemctl --user stop apps-*.service 2>/dev/null; podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; systemctl --user reset-failed 2>/dev/null; rm -f "$HOME/.config/containers/systemd"/apps-*.container 2>/dev/null; systemctl --user daemon-reload 2>/dev/null; true`); err != nil {
+	if err := limaRun(lima, `podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; true`); err != nil {
 		errorf("Failed to stop managed app containers: %v", err)
 		return 1
 	}
@@ -443,10 +439,8 @@ func cmdDev() int {
 
 	remoteScript := fmt.Sprintf(
 		`unset DATABASE_URL BLOUD_REDIS_ADDR; `+
-			`export BLOUD_SYSTEMD_SCOPE=user `+
-			`BLOUD_DATA_DIR=%s/data `+
+			`export BLOUD_DATA_DIR=%s/data `+
 			`BLOUD_APPS_DIR=%s `+
-			`BLOUD_QUADLET_DIR=$HOME/.config/containers/systemd `+
 			`BLOUD_TRAEFIK_DYNAMIC_DIR=%s/data/traefik/dynamic; `+
 			`cd %s/host-agent && exec ./host-agent`,
 		devRemoteDir, appsDir, devRemoteDir, devRemoteDir,

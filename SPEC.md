@@ -53,8 +53,8 @@ Completed:
   Navidrome configurators implement them.
 - Portable application manifests exist as `metadata.yaml` per app with container specs,
   integrations, health checks, and routing configuration.
-- Podman Quadlet and user-scope systemd adapters are working. The portable orchestrator
-  generates Quadlet units and manages container lifecycle through systemd.
+- The Podman API adapter is working. The portable orchestrator creates containers and
+  manages the container lifecycle directly through Podman.
 - Domain-agnostic Traefik routing with HostRegexp patterns is implemented. Apps are
   accessible via any origin (localhost, tailnet FQDN, custom domain).
 - Developer graph API and frontend visualization are implemented with app nodes, connection
@@ -109,7 +109,6 @@ what they provide and consume, and Bloud continuously keeps those relationships 
 - PostgreSQL
 - Redis
 - Podman
-- systemd and Quadlet
 
 ### Explicitly Deferred
 
@@ -131,7 +130,7 @@ separate targets only after they pass the complete release acceptance contract.
 - Clean Debian 13 installation
 - `x86_64`
 - systemd
-- Rootless Podman (user-scope systemd units)
+- Rootless Podman (host-agent manages containers via the Podman socket)
 - One physical or virtual host
 - Ethernet networking
 - Local-network access
@@ -139,8 +138,9 @@ separate targets only after they pass the complete release acceptance contract.
 
 Rootless Podman is an intentional first-release choice. It avoids requiring root access for
 container management, isolates the Bloud runtime to a dedicated user, and aligns with
-Podman's default security model. User-scope systemd units with `loginctl enable-linger`
-ensure containers survive logout. Traefik binds to unprivileged ports (8080/8443) behind a
+Podman's default security model. `loginctl enable-linger` keeps the user's systemd
+instance (and the Podman socket the host-agent talks to) alive across logout.
+Traefik binds to unprivileged ports (8080/8443) behind a
 host firewall or reverse proxy for port 80/443 access.
 
 Unsupported environments must fail during preflight with actionable diagnostics.
@@ -182,7 +182,7 @@ The desired topology describes runtime resources:
 - Health checks
 - Process-level startup dependencies
 
-The portable runtime applies topology through Podman Quadlet, systemd, filesystem, and
+The portable runtime applies topology through the Podman API, filesystem, and
 host-network adapters.
 
 ### Integration Graph
@@ -579,7 +579,7 @@ store mutations. No side effects — just store writes that represent desired st
 2. Resolve dependencies — auto-install required providers for installing apps
 3. Ensure apps in dependency order:
    a. PreStart configuration (dirs, config files, credentials)
-   b. Ensure container (Quadlet unit + systemd)
+   b. Ensure container (via Podman API)
    c. Health check
    d. PostStart configuration (API calls, integration setup)
    e. SSO provisioning
@@ -625,8 +625,7 @@ Pure core responsibilities:
 
 Effectful operations sit behind narrow interfaces:
 
-- Podman and Quadlet
-- systemd
+- Podman
 - Filesystem and permissions
 - Host networking and firewall
 - Secret persistence
@@ -732,7 +731,7 @@ runtime-neutral core
                               |
                               v
 Debian runtime adapters
-  Podman + Quadlet + systemd + filesystem + host networking
+  Podman + filesystem + host networking
 ```
 
 The core decides what should exist and how relationships should resolve. Runtime adapters
@@ -769,8 +768,8 @@ The first release ships as a versioned Debian package containing:
 
 ### Runtime Application
 
-Bloud generates Podman Quadlet units and related systemd configuration. The exact generated
-format is an adapter detail; desired topology and integration state remain runtime-neutral.
+Bloud creates and manages containers through the Podman API. The exact container format
+is an adapter detail; desired topology and integration state remain runtime-neutral.
 
 ### Infrastructure
 
@@ -871,9 +870,7 @@ Every configurator tests:
 
 ### Layer 3: Runtime Adapter Contract Tests
 
-- Quadlet generation
-- systemd operations
-- Podman inspection
+- Podman create/inspect lifecycle
 - Filesystem permissions
 - Port conflict detection
 - Host-network changes and rollback
@@ -960,7 +957,7 @@ Each phase ends with an automated gate.
 | Phase 0: Freeze, Inventory, and Measure | Complete |
 | Phase 1: Extract the Integration Engine | Complete |
 | Phase 2: Implement Reconciler Architecture | Complete |
-| Phase 3: Implement the Portable Runtime | Complete; Quadlet/systemd/Podman working on Lima VM |
+| Phase 3: Implement the Portable Runtime | Complete; Podman management working on Lima VM |
 | Phase 4: Port Jellyfin | Complete; LDAP SSO, E2E lifecycle tests passing |
 | Phase 5: Port Navidrome | Complete; forward-auth SSO, E2E tests passing |
 | Phase 6: Implement Sharing and Federation | In progress; core sharing works, tailnet outpost auth in development |
@@ -1011,7 +1008,7 @@ implemented. Old `EnqueueInstall`/`EnqueueUninstall` paths removed.
 
 ### Phase 3: Implement the Portable Runtime
 
-- Implement filesystem, Podman, Quadlet, and systemd adapters.
+- Implement filesystem and Podman adapters.
 - Run the host agent as a systemd user service.
 - Prove create, health, reboot, reconcile, and remove with real services.
 
@@ -1019,9 +1016,8 @@ Gate:
 
 - A Lima VM reaches the dashboard and reconciles core infrastructure without drift.
 
-**Status:** Complete for development. Quadlet unit generation, user-scope systemd,
-rootless Podman, and container lifecycle all working on Lima VM. Not yet validated on a
-clean Debian VM without Lima.
+**Status:** Complete for development. Rootless Podman and container lifecycle all working
+on Lima VM. Not yet validated on a clean Debian VM without Lima.
 
 ### Phase 4: Port Jellyfin
 

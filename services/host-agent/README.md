@@ -141,8 +141,7 @@ The Go binary will embed the `web/build/` directory and serve it at `/`.
 ./bin/host-agent
 ```
 
-The portable runtime is the default. It requires an accessible Podman API socket
-and systemd with Quadlet support:
+The portable runtime is the default. It requires an accessible Podman API socket:
 
 ```bash
 export BLOUD_RUNTIME=portable
@@ -152,12 +151,9 @@ export BLOUD_APPS_DIR="$(pwd)/../../apps"
 ./bin/host-agent
 ```
 
-Rootless execution defaults to user systemd and `~/.config/containers/systemd`.
-Root execution defaults to system systemd and `/etc/containers/systemd`. Override
-these with `BLOUD_SYSTEMD_SCOPE` and `BLOUD_QUADLET_DIR`.
-
-The portable runtime owns managed application containers, Quadlet units, and networks.
-It refuses to remove or adopt containers that were not created by Bloud.
+The portable runtime owns managed application containers and networks, creating
+and starting them directly through the Podman API. It refuses to remove or adopt
+containers that were not created by Bloud.
 
 ## Project Structure
 
@@ -177,14 +173,13 @@ services/host-agent/
 │   ├── logbuffer/             # Log buffering
 │   ├── logfile/               # Log file management
 │   ├── netutil/               # Network utilities
-│   ├── orchestrator/          # Install/uninstall, intent queue, Quadlet units
+│   ├── orchestrator/          # Install/uninstall, intent queue, container management
 │   ├── podman/                # Podman client
 │   ├── secrets/               # Secrets manager
 │   ├── sharing/               # Sharing & remote apps
 │   ├── sso/                   # SSO/Authentik integration
 │   ├── store/                 # SQLite persistence
 │   ├── system/                # System state
-│   ├── systemd/               # Systemd interaction
 │   ├── testdb/                # Test database helpers
 │   └── traefikgen/            # Traefik route generation
 ├── pkg/
@@ -202,7 +197,7 @@ Key runtime concepts:
 - **Intent queue** — all mutations flow through typed intents with debounce; the orchestrator is the single writer
 - **Configurators** implement `PreStart`/`PostStart`/`Remove` per container node; container lifecycle is metadata-driven
 - **App Store** (`internal/store/`) — SQLite persistence for installed apps, status, integration bindings
-- **Container Runtime** — Podman containers managed by Quadlet systemd units
+- **Container Runtime** — Podman containers created and managed directly by the orchestrator
 
 ## API Endpoints
 
