@@ -31,7 +31,7 @@ type ContainerConfig struct {
 	Ports         []PortMapping     `json:"portmappings,omitempty"`
 	Volumes       []VolumeMount     `json:"mounts,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
-	Network       string            `json:"network,omitempty"`
+	Networks      []string          `json:"networks,omitempty"`
 	Command       []string          `json:"command,omitempty"`
 	RestartPolicy string            `json:"restart_policy,omitempty"`
 }
@@ -477,16 +477,19 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 	if len(config.Labels) > 0 {
 		spec["labels"] = config.Labels
 	}
-	switch config.Network {
-	case "host":
-		spec["netns"] = map[string]interface{}{"nsmode": "host"}
-	case "":
+	// Networks
+	switch {
+	case len(config.Networks) == 0:
 		// default networking
+	case len(config.Networks) == 1 && config.Networks[0] == "host":
+		spec["netns"] = map[string]interface{}{"nsmode": "host"}
 	default:
 		spec["netns"] = map[string]interface{}{"nsmode": "bridge"}
-		spec["networks"] = map[string]map[string]interface{}{
-			config.Network: {},
+		networks := make(map[string]map[string]interface{}, len(config.Networks))
+		for _, network := range config.Networks {
+			networks[network] = map[string]interface{}{}
 		}
+		spec["networks"] = networks
 	}
 	if len(config.Command) > 0 {
 		spec["command"] = config.Command

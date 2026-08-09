@@ -104,9 +104,9 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 	}
 
 	spec := container.Spec{
-		Name:    name,
-		Image:   TailscaleImage,
-		Network: "host",
+		Name:     name,
+		Image:    TailscaleImage,
+		Networks: []string{"host"},
 		Environment: map[string]string{
 			"TS_AUTHKEY":      authKey,
 			"TS_HOSTNAME":     appName,
