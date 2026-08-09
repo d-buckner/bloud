@@ -40,7 +40,7 @@ func TestQuadletRuntimeWritesAndConvergesManagedUnit(t *testing.T) {
 	unitDir := t.TempDir()
 	runtime := newQuadletRuntime(client, manager, unitDir, "default.target")
 	spec := Spec{
-		Name: "apps-jellyfin", Image: "jellyfin:1", Network: "apps-net", RestartPolicy: "always",
+		Name: "apps-jellyfin", Image: "jellyfin:1", Networks: []string{"apps-net"}, RestartPolicy: "always",
 		Environment: map[string]string{"TZ": "Etc/UTC"},
 		Ports:       []Port{{Host: 8096, Container: 8096}},
 		Mounts:      []Mount{{Source: "/data/jellyfin/config", Destination: "/config"}},
@@ -123,7 +123,7 @@ func TestQuadletRuntimeRestartsChangedManagedContainerAndRemovesUnit(t *testing.
 
 func TestQuadletRendersDependsOn(t *testing.T) {
 	spec := Spec{
-		Name: "ts-jellyfin", Image: "tailscale:latest", Network: "apps-net",
+		Name: "ts-jellyfin", Image: "tailscale:latest", Networks: []string{"apps-net"},
 		DependsOn: "apps-jellyfin.service",
 	}
 	content, err := renderQuadlet(spec, "rev", "default.target")
@@ -140,6 +140,29 @@ func TestQuadletOmitsDependsOnWhenEmpty(t *testing.T) {
 	s := string(content)
 	assert.NotContains(t, s, "After=")
 	assert.NotContains(t, s, "BindsTo=")
+}
+
+func TestQuadletRendersMultipleNetworks(t *testing.T) {
+	spec := Spec{
+		Name:     "apps-authentik-ldap",
+		Image:    "ghcr.io/goauthentik/ldap:2025.10.3",
+		Networks: []string{"authentik-internal", "apps-net"},
+	}
+	content, err := renderQuadlet(spec, "rev", "default.target")
+	require.NoError(t, err)
+	s := string(content)
+	assert.Contains(t, s, "Network=authentik-internal\n")
+	assert.Contains(t, s, "Network=apps-net\n")
+}
+
+func TestQuadletRejectsNewlineInNetworkName(t *testing.T) {
+	spec := Spec{
+		Name:     "apps-authentik-ldap",
+		Image:    "ghcr.io/goauthentik/ldap:2025.10.3",
+		Networks: []string{"apps-net\nNetwork=evil-net"},
+	}
+	_, err := renderQuadlet(spec, "rev", "default.target")
+	require.ErrorContains(t, err, "newline")
 }
 
 func TestQuadletRuntimeRemovesUnloadedUnit(t *testing.T) {

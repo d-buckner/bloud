@@ -674,3 +674,49 @@ func TestOrchestrator_EnsureSSO_UsesCatalogIDForContainerNode(t *testing.T) {
 	ssoMock.AssertExpectations(t)
 	ssoMock.AssertCalled(t, "EnsureForwardAuth", "navidrome", "Navidrome", "http://navidrome.localhost:8080")
 }
+
+func TestContainerSpecFromDef_CollectsAllNetworks(t *testing.T) {
+	def := catalog.ContainerDef{
+		Name:    "apps-authentik-ldap",
+		Image:   "ghcr.io/goauthentik/ldap:2025.10.3",
+		Network: "authentik-internal",
+		Networks: []string{
+			"authentik-internal",
+			"apps-net",
+		},
+		Environment: map[string]string{"AUTHENTIK_HOST": "http://apps-authentik-server:9000"},
+	}
+
+	spec, err := ContainerSpecFromDef(def, "authentik", "/var/tmp/bloud", nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "apps-authentik-ldap", spec.Name)
+	assert.Equal(t, []string{"authentik-internal", "apps-net"}, spec.Networks)
+	assert.Equal(t, map[string]string{"io.bloud.app": "authentik"}, spec.Labels)
+	assert.Equal(t, "http://apps-authentik-server:9000", spec.Environment["AUTHENTIK_HOST"])
+}
+
+func TestContainerSpecFromDef_SingularNetworkOnly(t *testing.T) {
+	def := catalog.ContainerDef{
+		Name:    "apps-jellyfin",
+		Image:   "jellyfin:latest",
+		Network: "apps-net",
+	}
+
+	spec, err := ContainerSpecFromDef(def, "jellyfin", "/var/tmp/bloud", nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"apps-net"}, spec.Networks)
+}
+
+func TestContainerSpecFromDef_NoNetwork(t *testing.T) {
+	def := catalog.ContainerDef{
+		Name:  "apps-worker",
+		Image: "worker:latest",
+	}
+
+	spec, err := ContainerSpecFromDef(def, "myapp", "/var/tmp/bloud", nil)
+	require.NoError(t, err)
+
+	assert.Empty(t, spec.Networks)
+}

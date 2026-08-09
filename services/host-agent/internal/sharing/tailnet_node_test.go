@@ -76,7 +76,7 @@ func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 	spec := rt.Ensured[0]
 	assert.Equal(t, "ts-navidrome", spec.Name)
 	assert.Equal(t, TailscaleImage, spec.Image)
-	assert.Equal(t, "host", spec.Network)
+	assert.Equal(t, []string{"host"}, spec.Networks)
 	assert.Equal(t, "tskey-auth-test", spec.Environment["TS_AUTHKEY"])
 	assert.Equal(t, "navidrome", spec.Environment["TS_HOSTNAME"])
 	assert.Equal(t, "true", spec.Environment["TS_USERSPACE"])
