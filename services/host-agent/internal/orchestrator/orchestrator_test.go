@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 )
 
@@ -629,4 +629,48 @@ func TestOrchestrator_PreStartNotChanged_NoContainerRemove(t *testing.T) {
 	node, err := g.GetNode(containerName)
 	require.NoError(t, err)
 	assert.Equal(t, graph.StatusRunning, node.ActualStatus)
+}
+
+// TestOrchestrator_EnsureSSO_UsesCatalogIDForContainerNode verifies that forward-auth
+// SSO provisioning uses the owning app's catalog ID rather than the container node
+// name when building the external URL and provider name. Regression test: navidrome's
+// graph node is "apps-navidrome" but Authentik must be configured for "navidrome.localhost".
+func TestOrchestrator_EnsureSSO_UsesCatalogIDForContainerNode(t *testing.T) {
+	g := graph.New(graph.NewMapRepository())
+	registry := new(MockConfiguratorRegistry)
+	catalogCache := new(MockCatalogCache)
+	ssoMock := new(MockSSOProvisioner)
+
+	orch := NewOrchestrator(
+		g,
+		registry,
+		catalogCache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{
+			SSO:                ssoMock,
+			SSOBaseURL:         "http://localhost:8080",
+			HealthCheckTimeout: 100 * time.Millisecond,
+		},
+	)
+
+	// navidrome is defined with a containers list, so its graph node is the
+	// container name "apps-navidrome", owned by catalog ID "navidrome".
+	containerName := "apps-navidrome"
+	orch.registerContainerOwner(containerName, "navidrome")
+
+	catalogCache.On("Get", "navidrome").Return(&catalog.App{
+		CatalogID:   "navidrome",
+		DisplayName: "Navidrome",
+		Port:        4533,
+		SSO:         catalog.SSO{Strategy: "forward-auth"},
+	}, nil)
+
+	ssoMock.On("EnsureForwardAuth", "navidrome", "Navidrome", "http://navidrome.localhost:8080").
+		Return(nil)
+
+	require.NoError(t, orch.ensureSSO(context.Background(), containerName))
+
+	ssoMock.AssertExpectations(t)
+	ssoMock.AssertCalled(t, "EnsureForwardAuth", "navidrome", "Navidrome", "http://navidrome.localhost:8080")
 }

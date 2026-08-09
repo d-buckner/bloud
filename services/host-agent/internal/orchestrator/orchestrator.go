@@ -35,7 +35,7 @@ type OrchestratorStatus struct {
 // ActivityEvent records a single orchestrator lifecycle event.
 type ActivityEvent struct {
 	Time   time.Time `json:"time"`
-	Event  string    `json:"event"`  // "intent_enqueued", "drain_complete", "converge_start", "converge_step", "converge_complete"
+	Event  string    `json:"event"` // "intent_enqueued", "drain_complete", "converge_start", "converge_step", "converge_complete"
 	Detail string    `json:"detail"`
 }
 
@@ -111,15 +111,15 @@ type Orchestrator struct {
 	config   OrchestratorConfig
 
 	// Intent processing fields
-	queue          *IntentQueue
-	appStore       store.AppStoreInterface
-	catalogGraph   catalog.AppGraphInterface
-	tailnetStore   store.TailnetStoreInterface
-	remoteAppStore store.RemoteAppStoreInterface
-	tailnetNode    TailnetNodeEnsurer
-	gateway        GatewayManager
-	remoteProxy    RemoteProxyManager
-	proxyOutpost   ProxyOutpostEnsurer
+	queue            *IntentQueue
+	appStore         store.AppStoreInterface
+	catalogGraph     catalog.AppGraphInterface
+	tailnetStore     store.TailnetStoreInterface
+	remoteAppStore   store.RemoteAppStoreInterface
+	tailnetNode      TailnetNodeEnsurer
+	gateway          GatewayManager
+	remoteProxy      RemoteProxyManager
+	proxyOutpost     ProxyOutpostEnsurer
 	forwardDomainSSO ForwardDomainProvisioner
 	sso              SSOProvisioner
 	ssoBaseURL       string
@@ -875,19 +875,21 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 	if o.sso == nil || o.ssoBaseURL == "" || o.catalog == nil {
 		return nil
 	}
-	catalogApp, err := o.catalog.Get(id)
-	if (err != nil || catalogApp == nil) && o.ownerApp(id) != id {
-		catalogApp, err = o.catalog.Get(o.ownerApp(id))
-	}
+	// Use the owning app's catalog ID for subdomain and provider name. Graph
+	// nodes are container names (e.g. "apps-navidrome") for apps defined with a
+	// containers list, while routing and Authentik must use the catalog ID
+	// ("navidrome") so forward-auth matches the app's real subdomain.
+	appID := o.ownerApp(id)
+	catalogApp, err := o.catalog.Get(appID)
 	if err != nil || catalogApp == nil {
 		return nil
 	}
 	if catalogApp.SSO.Strategy != "forward-auth" {
 		return nil
 	}
-	o.logger.Info("provisioning forward-auth SSO", "app", id)
-	externalURL := buildAppSubdomainURL(o.ssoBaseURL, id)
-	return o.sso.EnsureForwardAuth(id, catalogApp.DisplayName, externalURL)
+	o.logger.Info("provisioning forward-auth SSO", "app", appID)
+	externalURL := buildAppSubdomainURL(o.ssoBaseURL, appID)
+	return o.sso.EnsureForwardAuth(appID, catalogApp.DisplayName, externalURL)
 }
 
 // buildAppSubdomainURL constructs the app's subdomain URL from a base URL.
@@ -900,4 +902,3 @@ func buildAppSubdomainURL(baseURL, appName string) string {
 	parsed.Host = appName + "." + parsed.Host
 	return parsed.String()
 }
-
