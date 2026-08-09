@@ -471,19 +471,20 @@ func (o *Orchestrator) populateGraphNodes(appMap map[string]*store.InstalledApp)
 			}
 		}
 
-		if hasCatalogContainers {
-			// Multi-container app: create one node per container def.
-			for _, def := range defs {
-				if existing, _ := o.graph.GetNode(def.Name); existing == nil {
-					_ = o.graph.AddNode(def.Name)
-				}
-				o.registerContainerOwner(def.Name, appName)
-			}
-		} else {
+		if !hasCatalogContainers {
 			// Legacy or no-container app: one node with the catalog ID.
 			if existing, _ := o.graph.GetNode(appName); existing == nil {
 				_ = o.graph.AddNode(appName)
 			}
+			continue
+		}
+
+		// Multi-container app: create one node per container def.
+		for _, def := range defs {
+			if existing, _ := o.graph.GetNode(def.Name); existing == nil {
+				_ = o.graph.AddNode(def.Name)
+			}
+			o.registerContainerOwner(def.Name, appName)
 		}
 	}
 

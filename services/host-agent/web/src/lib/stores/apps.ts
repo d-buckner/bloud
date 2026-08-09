@@ -9,8 +9,8 @@
  * rather than duplicating app objects in their own state.
  */
 
-import { writable, derived, get } from 'svelte/store';
-import type { App, AppStatus } from '$lib/types';
+import { writable, derived } from 'svelte/store';
+import type { App } from '$lib/types';
 
 // Core store - mirrors the apps table from the backend (includes system apps)
 export const apps = writable<App[]>([]);
@@ -21,45 +21,7 @@ export const loading = writable(true);
 // Error state
 export const error = writable<string | null>(null);
 
-// Derived store - only user-facing apps (excludes system apps like postgres, traefik)
-export const userApps = derived(apps, ($apps) => $apps.filter((a) => !a.is_system));
-
 // Derived store - apps visible on home screen (excludes system apps and uninstalling)
 export const visibleApps = derived(apps, ($apps) =>
 	$apps.filter((a) => !a.is_system && a.status !== 'uninstalling')
 );
-
-// Derived store for quick lookup of installed app names (user apps only)
-export const installedNames = derived(userApps, ($apps) => new Set($apps.map((a) => a.catalog_id)));
-
-// --- Helper functions for app lookup ---
-// Use these instead of duplicating app data in other stores
-
-/**
- * Get an app by name from the current store state
- */
-export function getApp(name: string): App | undefined {
-	return get(apps).find((a) => a.catalog_id === name);
-}
-
-/**
- * Get the status of an app by name
- */
-export function getAppStatus(name: string): AppStatus | undefined {
-	return getApp(name)?.status;
-}
-
-/**
- * Check if an app exists (is installed)
- */
-export function appExists(name: string): boolean {
-	return get(apps).some((a) => a.catalog_id === name);
-}
-
-/**
- * Get multiple apps by name, preserving order
- */
-export function getApps(names: string[]): App[] {
-	const appMap = new Map(get(apps).map((a) => [a.catalog_id, a]));
-	return names.map((name) => appMap.get(name)).filter((a): a is App => a !== undefined);
-}

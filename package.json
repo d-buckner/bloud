@@ -6,8 +6,7 @@
   "workspaces": [
     "services/host-agent",
     "services/host-agent/web",
-    "services/installer/web",
-    "packages/ui"
+    "services/installer/web"
   ],
   "scripts": {
     "setup": "npm install && npm run cli:build && ./bloud setup",

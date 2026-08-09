@@ -36,7 +36,7 @@ func TestLogsHTTP_StreamLogs_NotFound(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewLogsModule(appStore, logger)
-	logsMod := mod.(*logsModule)
+	logsMod := mod
 	r := chi.NewRouter(); NewLogsRouter(logsMod, r)
 
 	req := httptest.NewRequest("GET", "/apps/nonexistent/logs", nil)

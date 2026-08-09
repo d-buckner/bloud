@@ -26,7 +26,7 @@
 	let selectedCategory = $state<string | null>(null);
 
 	// Derived: unique categories from catalog apps
-	let categories = $derived(() => {
+	let categories = $derived.by(() => {
 		const cats = new Set<string>();
 		for (const app of catalogApps) {
 			if (app.category) cats.add(app.category);
@@ -35,7 +35,7 @@
 	});
 
 	// Derived: filtered apps based on search and category
-	let filteredApps = $derived(() => {
+	let filteredApps = $derived.by(() => {
 		let result = catalogApps;
 
 		// Filter by category
@@ -132,7 +132,7 @@
 				{/if}
 			</div>
 
-			{#if categories().length > 0}
+			{#if categories.length > 0}
 				<div class="category-pills">
 					<button
 						class="pill"
@@ -141,7 +141,7 @@
 					>
 						all
 					</button>
-					{#each categories() as category}
+					{#each categories as category}
 						<button
 							class="pill"
 							class:active={selectedCategory === category}
@@ -154,14 +154,14 @@
 			{/if}
 		</div>
 
-		{#if filteredApps().length === 0}
+		{#if filteredApps.length === 0}
 			<div class="empty-state">
 				<p>No apps match your search.</p>
 				<button class="clear-filters-btn" onclick={clearFilters}>Clear filters</button>
 			</div>
 		{:else}
 			<div class="apps-grid">
-				{#each filteredApps() as app}
+				{#each filteredApps as app}
 					<CatalogAppCard
 						{app}
 						status={getAppStatus(app.catalogId)}

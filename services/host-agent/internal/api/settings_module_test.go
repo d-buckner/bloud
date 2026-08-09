@@ -580,7 +580,6 @@ func TestSettingsRouter_RegistersRoutes(t *testing.T) {
 
 // ---- Interface contract ----
 
-var _ SettingsModule = (*settingsModule)(nil)
 
 var _ = io.EOF
 var _ = orchestrator.NewSetTailnetIntent

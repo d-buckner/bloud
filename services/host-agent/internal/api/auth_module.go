@@ -32,18 +32,8 @@ type AuthentikClientInterface interface {
 }
 
 // AuthModule encapsulates all authentication operations (login, callback,
-// logout, current user). It is a deep module: the interface is stable; the
-// implementation hides OIDC flow, cookie management, and session persistence.
-type AuthModule interface {
-	// LoginHandler initiates the OIDC login flow.
-	LoginHandler() http.HandlerFunc
-	// CallbackHandler handles the OAuth2 callback.
-	CallbackHandler() http.HandlerFunc
-	// LogoutHandler clears the session and redirects to Authentik.
-	LogoutHandler() http.HandlerFunc
-	// GetCurrentUserHandler returns the current authenticated user.
-	GetCurrentUserHandler() http.HandlerFunc
-}
+// logout, current user). It is a deep module: the implementation hides OIDC
+// flow, cookie management, and session persistence.
 
 // FakeAuthentikClient is a fake Authentik client for testing.
 type FakeAuthentikClient struct {
@@ -152,7 +142,7 @@ func NewAuthModule(
 	prefsStore store.PreferencesStoreInterface,
 	sessStore sessionStoreInterface,
 	logger *slog.Logger,
-) AuthModule {
+) *authModule {
 	return &authModule{
 		authentikClient: client,
 		authConfig:      cfg,

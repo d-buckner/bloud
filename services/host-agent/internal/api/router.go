@@ -156,7 +156,7 @@ func NewRouter(
 	// ---- Create domain modules ----
 
 	appsMod := NewAppsModule(catalogCache, appStore, orchCaller, logger)
-	appsMod.(*appsModule).SetAppsDir(cfg.AppsDir)
+	appsMod.SetAppsDir(cfg.AppsDir)
 
 	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger)
 
@@ -210,27 +210,27 @@ func NewRouter(
 		api.Get("/auth/me", authMod.GetCurrentUserHandler())
 
 		// System info (public, no auth required)
-		NewSystemRouter(systemMod.(*systemModule), api)
+		NewSystemRouter(systemMod, api)
 
 		// Authenticated routes
 		api.Group(func(auth chi.Router) {
 			auth.Use(authMiddlewareFn(sessionStore, logger))
 
 			// User-accessible routes (registered directly)
-			NewAppsRouter(appsMod.(*appsModule), auth)
-			NewHomeRouter(homeMod.(*homeModuleSimple), auth)
-			NewLogsRouter(logsMod.(*logsModule), auth)
+			NewAppsRouter(appsMod, auth)
+			NewHomeRouter(homeMod, auth)
+			NewLogsRouter(logsMod, auth)
 
 			// Admin-only routes
 			auth.Group(func(admin chi.Router) {
 				admin.Use(adminMiddlewareFn)
 
 				// Admin routes (registered directly)
-				admin.Post("/apps/refresh-catalog", appsMod.(*appsModule).RefreshCatalogHandler())
+				admin.Post("/apps/refresh-catalog", appsMod.RefreshCatalogHandler())
 				admin.Get("/system/rebuild/stream", rebuildStreamHandler())
-				NewSettingsRouter(settingsMod.(*settingsModule), admin)
-				NewSharingRouter(sharingMod.(*sharingModule), admin)
-				NewRemoteAppsRouter(remoteAppsMod.(*remoteAppsModule), admin)
+				NewSettingsRouter(settingsMod, admin)
+				NewSharingRouter(sharingMod, admin)
+				NewRemoteAppsRouter(remoteAppsMod, admin)
 			})
 		})
 	})

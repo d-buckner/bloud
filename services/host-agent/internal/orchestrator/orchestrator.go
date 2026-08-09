@@ -522,12 +522,12 @@ func (o *Orchestrator) collectWorkForLevel(nodeIDs []string, changedIDs map[stri
 					break
 				}
 			}
-			if blocked {
-				o.logger.Info("skipping blocked node", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus, "blocking_dep", blockingDep)
-			} else {
+			if !blocked {
 				o.logger.Info("queuing node for lifecycle", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus)
 				work = append(work, id)
+				continue
 			}
+			o.logger.Info("skipping blocked node", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus, "blocking_dep", blockingDep)
 			continue
 		}
 

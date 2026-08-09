@@ -119,7 +119,7 @@ func TestRemoteAppsHTTP_List(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/sharing/remote-apps", nil)
 	w := httptest.NewRecorder()
@@ -136,7 +136,7 @@ func TestRemoteAppsHTTP_Add(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
 
 	body := `{"appId":"jellyfin","tailnetAddr":"ts-jellyfin.ts.net","hostLabel":"John's"}`
 	req := httptest.NewRequest("POST", "/sharing/remote-apps", strings.NewReader(body))
@@ -154,7 +154,7 @@ func TestRemoteAppsHTTP_Add_UnknownApp(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
 
 	body := `{"appId":"unknown","tailnetAddr":"addr","hostLabel":"label"}`
 	req := httptest.NewRequest("POST", "/sharing/remote-apps", strings.NewReader(body))
@@ -172,7 +172,7 @@ func TestRemoteAppsHTTP_Delete_NotFound(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod.(*remoteAppsModule), r)
+	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
 
 	req := httptest.NewRequest("DELETE", "/sharing/remote-apps/nonexistent", nil)
 	w := httptest.NewRecorder()

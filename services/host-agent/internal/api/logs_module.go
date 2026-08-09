@@ -15,18 +15,13 @@ import (
 )
 
 // LogsModule encapsulates log streaming operations.
-type LogsModule interface {
-	// CanStream checks if an app exists and can have its logs streamed.
-	CanStream(name string) error
-}
-
 type logsModule struct {
 	appStore store.AppStoreInterface
 	logger   *slog.Logger
 }
 
 // NewLogsModule creates a new LogsModule.
-func NewLogsModule(appStore store.AppStoreInterface, logger *slog.Logger) LogsModule {
+func NewLogsModule(appStore store.AppStoreInterface, logger *slog.Logger) *logsModule {
 	return &logsModule{appStore: appStore, logger: logger}
 }
 

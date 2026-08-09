@@ -22,13 +22,6 @@ type orchestratorStatusCaller interface {
 
 // SystemModule encapsulates system-level operations: health check, system
 // status, storage stats, and the developer lifecycle graph.
-type SystemModule interface {
-	HealthHandler() http.HandlerFunc
-	SystemStatusHandler() http.HandlerFunc
-	StorageHandler() http.HandlerFunc
-	DeveloperGraphHandler() http.HandlerFunc
-}
-
 type systemModule struct {
 	appStore     store.AppStoreInterface
 	catalog      catalog.CacheInterface
@@ -48,7 +41,7 @@ func NewSystemModule(
 	tailnetStore store.TailnetStoreInterface,
 	orch orchestratorStatusCaller,
 	logger *slog.Logger,
-) SystemModule {
+) *systemModule {
 	return &systemModule{
 		appStore:     appStore,
 		catalog:      catalog,
@@ -135,6 +128,52 @@ func (m *systemModule) ssoEdgeLabel(appName string) string {
 	return app.SSO.Strategy
 }
 
+// buildGraphEdges derives the integration edges for a single app. It prefers
+// the runtime integration config for each catalog-defined integration, falling
+// back to the integration's default compatible app. When no catalog definition
+// is available, it emits edges directly from the runtime integration config.
+func (m *systemModule) buildGraphEdges(app *store.InstalledApp, def *catalog.AppDefinition) []graphEdge {
+	targets := make(map[string]string)
+	if def != nil {
+		for label, integration := range def.Integrations {
+			if target, chosen := app.IntegrationConfig[label]; chosen {
+				targets[label] = target
+				continue
+			}
+			for _, compat := range integration.Compatible {
+				if compat.Default {
+					targets[label] = compat.App
+					break
+				}
+			}
+		}
+	} else {
+		for label, target := range app.IntegrationConfig {
+			targets[label] = target
+		}
+	}
+
+	labels := make([]string, 0, len(targets))
+	for label := range targets {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+
+	edges := make([]graphEdge, 0, len(labels))
+	for _, label := range labels {
+		edgeLabel := label
+		if label == "sso" {
+			edgeLabel = m.ssoEdgeLabel(app.CatalogID)
+		}
+		edge := graphEdge{Source: app.CatalogID, Target: targets[label], Label: edgeLabel}
+		if label == "proxy" {
+			edge.Source, edge.Target = edge.Target, edge.Source
+		}
+		edges = append(edges, edge)
+	}
+	return edges
+}
+
 // DeveloperGraphHandler returns the lifecycle graph for the developer dashboard.
 func (m *systemModule) DeveloperGraphHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -190,59 +229,11 @@ func (m *systemModule) DeveloperGraphHandler() http.HandlerFunc {
 				})
 			}
 
-			// Derive edges: use runtime IntegrationConfig first, fall back to catalog defaults.
-			if def, ok := graphDefs[app.CatalogID]; ok {
-				labels := make([]string, 0, len(def.Integrations))
-				for label := range def.Integrations {
-					labels = append(labels, label)
-				}
-				sort.Strings(labels)
-
-				for _, label := range labels {
-					integration := def.Integrations[label]
-					edgeLabel := label
-					if label == "sso" {
-						edgeLabel = m.ssoEdgeLabel(app.CatalogID)
-					}
-
-					if target, chosen := app.IntegrationConfig[label]; chosen {
-						edge := graphEdge{Source: app.CatalogID, Target: target, Label: edgeLabel}
-						if label == "proxy" {
-							edge.Source, edge.Target = edge.Target, edge.Source
-						}
-						edges = append(edges, edge)
-						continue
-					}
-					for _, compat := range integration.Compatible {
-						if compat.Default {
-							edge := graphEdge{Source: app.CatalogID, Target: compat.App, Label: edgeLabel}
-							if label == "proxy" {
-								edge.Source, edge.Target = edge.Target, edge.Source
-							}
-							edges = append(edges, edge)
-							break
-						}
-					}
-				}
-			} else {
-				labels := make([]string, 0, len(app.IntegrationConfig))
-				for label := range app.IntegrationConfig {
-					labels = append(labels, label)
-				}
-				sort.Strings(labels)
-
-				for _, label := range labels {
-					edgeLabel := label
-					if label == "sso" {
-						edgeLabel = m.ssoEdgeLabel(app.CatalogID)
-					}
-					edge := graphEdge{Source: app.CatalogID, Target: app.IntegrationConfig[label], Label: edgeLabel}
-					if label == "proxy" {
-						edge.Source, edge.Target = edge.Target, edge.Source
-					}
-					edges = append(edges, edge)
-				}
+			var def *catalog.AppDefinition
+			if graphDefs != nil {
+				def = graphDefs[app.CatalogID]
 			}
+			edges = append(edges, m.buildGraphEdges(app, def)...)
 		}
 
 		// Add tailnet node containers
