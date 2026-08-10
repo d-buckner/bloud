@@ -568,6 +568,68 @@ func isLimaVMRunning(name string) bool {
 
 // --- Helpers ---
 
+// splitShellWords splits a command string into arguments, respecting single
+// quotes, double quotes, and backslash escapes. It is a minimal shell-like
+// tokenizer used to turn manifest command strings into exec.Command args so
+// that quoted arguments containing spaces survive intact.
+func splitShellWords(s string) []string {
+	runes := []rune(s)
+	var words []string
+	var word []rune
+	i := 0
+	flush := func() {
+		if len(word) > 0 {
+			words = append(words, string(word))
+			word = word[:0]
+		}
+	}
+	for i < len(runes) {
+		r := runes[i]
+		switch r {
+		case ' ', '\t', '\n', '\r':
+			flush()
+			i++
+		case '\'':
+			i++
+			for i < len(runes) && runes[i] != '\'' {
+				word = append(word, runes[i])
+				i++
+			}
+			i++
+		case '"':
+			i++
+			for i < len(runes) && runes[i] != '"' {
+				if runes[i] == '\\' && i+1 < len(runes) {
+					next := runes[i+1]
+					switch next {
+					case '"', '\\', '$', '`':
+						word = append(word, next)
+					default:
+						word = append(word, runes[i], runes[i+1])
+					}
+					i += 2
+				} else {
+					word = append(word, runes[i])
+					i++
+				}
+			}
+			i++
+		case '\\':
+			if i+1 < len(runes) {
+				word = append(word, runes[i+1])
+				i += 2
+			} else {
+				i++
+			}
+		default:
+			word = append(word, r)
+			i++
+		}
+	}
+	flush()
+	return words
+}
+
 func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
 	exitCode := 0
 	for _, cmd := range commands {
@@ -580,7 +642,22 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 			cwd = filepath.Join(root, cmd.Cwd)
 		}
 
-		parts := strings.Fields(cmd.Run)
+		parts := splitShellWords(cmd.Run)
+		if len(parts) == 0 {
+			result.Commands = append(result.Commands, CommandResult{
+				ID:         cmd.ID,
+				Cwd:        cmd.Cwd,
+				Command:    cmd.Run,
+				Status:     "fail",
+				DurationMs: 0,
+				ExitCode:   1,
+			})
+			if !flags.json {
+				fmt.Printf("%s✗%s %s (empty command)\n", colorRed, colorReset, cmd.ID)
+			}
+			exitCode = 1
+			continue
+		}
 		c := exec.Command(parts[0], parts[1:]...)
 		c.Dir = cwd
 		if !flags.json {
@@ -652,13 +729,19 @@ func getChangedFiles(root string, since string) ([]string, error) {
 	// Also get staged changes not yet committed
 	cmd2 := exec.Command("git", "diff", "--name-only", "--cached")
 	cmd2.Dir = root
-	out2, _ := cmd2.Output()
+	out2, err := cmd2.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --cached failed: %w", err)
+	}
 	staged := splitLines(string(out2))
 
 	// Also get untracked files
 	cmd3 := exec.Command("git", "ls-files", "--others", "--exclude-standard")
 	cmd3.Dir = root
-	out3, _ := cmd3.Output()
+	out3, err := cmd3.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files --others failed: %w", err)
+	}
 	untracked := splitLines(string(out3))
 
 	// Deduplicate

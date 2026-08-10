@@ -5,6 +5,7 @@
  * Positions are server-owned; the frontend does not manage them directly.
  */
 
+import { get } from 'svelte/store';
 import { apps, loading, error } from '$lib/stores/apps';
 import { gridElements } from '$lib/stores/grid';
 import { startPolling, stopPolling } from '$lib/api/poller';
@@ -63,6 +64,8 @@ export async function installApp(name: string): Promise<IntentResponse> {
  * reverts on error. The next poll removes the app from the grid.
  */
 export async function uninstallApp(name: string): Promise<IntentResponse> {
+	const previousStatus = get(apps).find((a) => a.catalog_id === name)?.status;
+
 	apps.update((current) =>
 		current.map((app) => (app.catalog_id === name ? { ...app, status: AppStatus.Uninstalling } : app))
 	);
@@ -72,7 +75,7 @@ export async function uninstallApp(name: string): Promise<IntentResponse> {
 	} catch (err) {
 		apps.update((current) =>
 			current.map((app) =>
-				app.catalog_id === name ? { ...app, status: AppStatus.Running } : app
+				app.catalog_id === name ? { ...app, status: previousStatus ?? app.status } : app
 			)
 		);
 		throw err;

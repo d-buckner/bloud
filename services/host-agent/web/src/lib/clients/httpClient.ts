@@ -89,21 +89,3 @@ export function patch<T>(url: string, body?: Record<string, any>, options?: Omit
 export function del<T>(url: string, options?: Omit<RequestOptions, 'method'>): Promise<T> {
 	return request<T>(url, { ...options, method: 'DELETE' });
 }
-
-/**
- * Check if an error is an HttpError with a specific status
- */
-export function isHttpError(error: unknown, status?: number): error is HttpError {
-	if (!error || typeof error !== 'object') return false;
-	const httpError = error as HttpError;
-	if (typeof httpError.status !== 'number') return false;
-	if (status !== undefined && httpError.status !== status) return false;
-	return true;
-}
-
-/**
- * Check if error is unauthorized (401)
- */
-export function isUnauthorized(error: unknown): boolean {
-	return isHttpError(error, 401);
-}

@@ -22,13 +22,6 @@ type orchestratorStatusCaller interface {
 
 // SystemModule encapsulates system-level operations: health check, system
 // status, storage stats, and the developer lifecycle graph.
-type SystemModule interface {
-	HealthHandler() http.HandlerFunc
-	SystemStatusHandler() http.HandlerFunc
-	StorageHandler() http.HandlerFunc
-	DeveloperGraphHandler() http.HandlerFunc
-}
-
 type systemModule struct {
 	appStore     store.AppStoreInterface
 	catalog      catalog.CacheInterface
@@ -48,7 +41,7 @@ func NewSystemModule(
 	tailnetStore store.TailnetStoreInterface,
 	orch orchestratorStatusCaller,
 	logger *slog.Logger,
-) SystemModule {
+) *systemModule {
 	return &systemModule{
 		appStore:     appStore,
 		catalog:      catalog,

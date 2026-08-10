@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,33 +15,17 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// Sentinel errors for app lifecycle operations.
+var (
+	// errAppNotFound is returned when an app is missing from the catalog.
+	errAppNotFound = errors.New("app not found in catalog")
+	// errRemoteAppNotFound is returned when a remote app is missing from the store.
+	errRemoteAppNotFound = errors.New("remote app not found")
+)
+
 // IntentRef is a lightweight reference to an enqueued orchestrator intent.
 type IntentRef struct {
 	ID string
-}
-
-// AppsModule encapsulates all app catalog and lifecycle operations.
-// It is a deep module: the interface is small and stable; the implementation
-// hides catalog lookups, store queries, orchestrator interactions, and
-// filesystem operations for orphaned data cleanup.
-type AppsModule interface {
-	// RefreshCatalog reloads the app catalog from disk.
-	RefreshCatalog() error
-	// GetCatalog returns all user-facing apps from the catalog.
-	GetCatalog() ([]*catalog.App, error)
-	// GetInstalled returns installed user apps (excludes system apps).
-	GetInstalled() ([]installedAppResponse, error)
-	// AppMetadata returns the catalog definition for an app by name.
-	AppMetadata(name string) (*catalog.App, error)
-	// Install enqueues an install intent. Returns an error if the app is
-	// not found in the catalog.
-	Install(name string) (*IntentRef, error)
-	// Uninstall enqueues an uninstall intent.
-	Uninstall(name string, clearData bool) (*IntentRef, error)
-	// Rename enqueues a rename intent.
-	Rename(name, displayName string) (*IntentRef, error)
-	// ClearData clears an app's data directory.
-	ClearData(name string) (*IntentRef, error)
 }
 
 // orchestratorCaller is a minimal interface for the orchestrator dependency,
@@ -49,6 +34,10 @@ type orchestratorCaller interface {
 	Enqueue(intent orchestrator.Intent)
 }
 
+// AppsModule encapsulates all app catalog and lifecycle operations.
+// It is a deep module: the implementation hides catalog lookups, store
+// queries, orchestrator interactions, and filesystem operations for orphaned
+// data cleanup.
 type appsModule struct {
 	catalog  catalog.CacheInterface
 	appStore store.AppStoreInterface
@@ -63,7 +52,7 @@ func NewAppsModule(
 	appStore store.AppStoreInterface,
 	orch orchestratorCaller,
 	logger *slog.Logger,
-) AppsModule {
+) *appsModule {
 	return &appsModule{
 		catalog:  catalog,
 		appStore: appStore,
@@ -120,7 +109,7 @@ func (m *appsModule) AppMetadata(name string) (*catalog.App, error) {
 // Install enqueues an install intent for the named app.
 func (m *appsModule) Install(name string) (*IntentRef, error) {
 	if _, err := m.catalog.Get(name); err != nil {
-		return nil, fmt.Errorf("app not found in catalog: %s", name)
+		return nil, fmt.Errorf("%w: %s", errAppNotFound, name)
 	}
 	if m.orch == nil {
 		return nil, fmt.Errorf("orchestrator not available")
@@ -162,7 +151,7 @@ func (m *appsModule) Rename(name, displayName string) (*IntentRef, error) {
 func (m *appsModule) ClearData(name string) (*IntentRef, error) {
 	// First check if it exists in the catalog
 	if _, err := m.catalog.Get(name); err != nil {
-		return nil, fmt.Errorf("app not found in catalog: %s", name)
+		return nil, fmt.Errorf("%w: %s", errAppNotFound, name)
 	}
 
 	app, _ := m.appStore.GetByCatalogID(name)
@@ -267,7 +256,7 @@ func (m *appsModule) InstallHandler() http.HandlerFunc {
 		name := chi.URLParam(r, "name")
 		ref, err := m.Install(name)
 		if err != nil {
-			if errContains(err, "not found") {
+			if errors.Is(err, errAppNotFound) {
 				respondError(w, http.StatusNotFound, "app not found in catalog")
 				return
 			}
@@ -333,20 +322,6 @@ func (m *appsModule) RefreshCatalogHandler() http.HandlerFunc {
 		}
 		respondJSON(w, http.StatusOK, map[string]string{"status": "catalog refreshed"})
 	}
-}
-
-// errContains checks if an error message contains a substring.
-func errContains(err error, substr string) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // installedAppResponse extends InstalledApp with catalog-derived fields.

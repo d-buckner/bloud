@@ -18,7 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func newAuthModule(t *testing.T, cfg *AuthConfig) (AuthModule, *authModule, *FakeAuthentikClient, *fakeSessionStore) {
+func newAuthModule(t *testing.T, cfg *AuthConfig) (*authModule, *FakeAuthentikClient, *fakeSessionStore) {
 	t.Helper()
 	client := NewFakeAuthentikClient()
 	sessStore := newFakeSessionStore()
@@ -26,19 +26,19 @@ func newAuthModule(t *testing.T, cfg *AuthConfig) (AuthModule, *authModule, *Fak
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAuthModule(client, newAuthConfigRef(cfg), prefsStore, sessStore, logger)
-	return mod, mod.(*authModule), client, sessStore
+	return mod, client, sessStore
 }
 
 // ---- Unit tests (no HTTP) ----
 
 func TestAuthModule_Login_NoConfig(t *testing.T) {
-	mod, _, _, _ := newAuthModule(t, nil)
+	mod, _, _ := newAuthModule(t, nil)
 	handler := mod.LoginHandler()
 	assert.NotNil(t, handler)
 }
 
 func TestAuthModule_Callback_NoConfig(t *testing.T) {
-	mod, _, _, _ := newAuthModule(t, nil)
+	mod, _, _ := newAuthModule(t, nil)
 	handler := mod.CallbackHandler()
 	assert.NotNil(t, handler)
 }
@@ -49,21 +49,21 @@ func TestAuthModule_Logout_WithAuthentikConfig(t *testing.T) {
 			ProviderID: 1,
 		},
 	}
-	mod, _, _, _ := newAuthModule(t, cfg)
+	mod, _, _ := newAuthModule(t, cfg)
 	handler := mod.LogoutHandler()
 	assert.NotNil(t, handler)
 }
 
 func TestAuthModule_GetCurrentUserHandler_WithConfig(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, _ := newAuthModule(t, cfg)
+	mod, _, _ := newAuthModule(t, cfg)
 	handler := mod.GetCurrentUserHandler()
 	assert.NotNil(t, handler)
 }
 
 func TestAuthModule_Logout_ClearsSession(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, sessStore := newAuthModule(t, cfg)
+	mod, _, sessStore := newAuthModule(t, cfg)
 
 	ctx := context.Background()
 	sessStore.Create(ctx, "user1", "alice", store.RoleMember)
@@ -87,7 +87,7 @@ func TestAuthModule_Logout_ReducesToAuthentik(t *testing.T) {
 			ProviderID: 1,
 		},
 	}
-	mod, _, _, _ := newAuthModule(t, cfg)
+	mod, _, _ := newAuthModule(t, cfg)
 
 	handler := mod.LogoutHandler()
 
@@ -103,9 +103,8 @@ func TestAuthModule_Logout_ReducesToAuthentik(t *testing.T) {
 
 func TestAuthHTTP_GetCurrentUser_NoSession(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	w := httptest.NewRecorder()
@@ -139,13 +138,12 @@ func TestAuthHTTP_GetCurrentUser_NoSessionStore(t *testing.T) {
 
 func TestAuthHTTP_GetCurrentUser_ValidSession(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, sessStore := newAuthModule(t, cfg)
+	mod, _, sessStore := newAuthModule(t, cfg)
 
 	ctx := context.Background()
 	sessStore.Create(ctx, "user1", "bob", store.RoleAdmin)
 
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "fake-session-bob"})
@@ -163,9 +161,8 @@ func TestAuthHTTP_GetCurrentUser_ValidSession(t *testing.T) {
 
 func TestAuthHTTP_GetCurrentUser_InvalidSession(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "nonexistent-session"})
@@ -176,9 +173,8 @@ func TestAuthHTTP_GetCurrentUser_InvalidSession(t *testing.T) {
 }
 
 func TestAuthHTTP_Login_NoConfig(t *testing.T) {
-	mod, _, _, _ := newAuthModule(t, nil)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, nil)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/login", nil)
 	w := httptest.NewRecorder()
@@ -189,9 +185,8 @@ func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 
 func TestAuthHTTP_Logout_ClearsCookie(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "some-session-id"})
@@ -215,9 +210,8 @@ func TestAuthHTTP_Logout_ClearsCookie(t *testing.T) {
 
 func TestAuthHTTP_Logout_DefaultRedirect(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	w := httptest.NewRecorder()
@@ -234,9 +228,8 @@ func TestAuthHTTP_Callback_MissingState(t *testing.T) {
 			ClientID:   "test-client",
 		},
 	}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=abc123&state=xyz", nil)
 	w := httptest.NewRecorder()
@@ -252,9 +245,8 @@ func TestAuthHTTP_Callback_StateMismatch(t *testing.T) {
 			ClientID:   "test-client",
 		},
 	}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=abc123&state=wrong-state", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "expected-state"})
@@ -271,9 +263,8 @@ func TestAuthHTTP_Callback_NoCode(t *testing.T) {
 			ClientID:   "test-client",
 		},
 	}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?state=correct-state", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "correct-state"})
@@ -290,9 +281,8 @@ func TestAuthHTTP_Callback_WithOAuthError(t *testing.T) {
 			ClientID:   "test-client",
 		},
 	}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=User+denied+access&state=s", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "s"})
@@ -311,9 +301,8 @@ func TestAuthHTTP_Callback_FullFlow(t *testing.T) {
 			ClientSecret: "test-secret",
 		},
 	}
-	mod, authMod, client, sessStore := newAuthModule(t, cfg)
-	_ = mod
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, client, sessStore := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	state := "test-state-123"
 	req := httptest.NewRequest("GET", "/auth/callback?code=auth-code-xyz&state="+state, nil)
@@ -430,9 +419,8 @@ func TestServer_InitAuth_NilRefIsNoop(t *testing.T) {
 
 func TestAuthRouter_RegistersRoutes(t *testing.T) {
 	cfg := &AuthConfig{}
-	mod, _, _, _ := newAuthModule(t, cfg)
-	authMod := mod.(*authModule)
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	mod, _, _ := newAuthModule(t, cfg)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
 	routes := []struct {
 		method string
@@ -455,7 +443,6 @@ func TestAuthRouter_RegistersRoutes(t *testing.T) {
 
 // ---- Interface contract ----
 
-var _ AuthModule = (*authModule)(nil)
 var _ AuthentikClientInterface = (*FakeAuthentikClient)(nil)
 var _ = io.EOF
 var _ store.PreferencesStoreInterface = (*FakePreferencesStore)(nil)

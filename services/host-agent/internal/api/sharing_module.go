@@ -15,15 +15,6 @@ import (
 
 // SharingModule encapsulates all sharing operations: community graph, shares,
 // invites, and guests management.
-type SharingModule interface {
-	CommunityGraphHandler() http.HandlerFunc
-	CreateInviteHandler() http.HandlerFunc
-	ListSharesHandler() http.HandlerFunc
-	RevokeShareHandler() http.HandlerFunc
-	ListGuestsHandler() http.HandlerFunc
-	CreateGuestHandler() http.HandlerFunc
-}
-
 type sharingModule struct {
 	shareStore    store.ShareStoreInterface
 	guestStore    store.GuestStoreInterface
@@ -45,7 +36,7 @@ func NewSharingModule(
 	hostLabel string,
 	ssoHostSecret string,
 	logger *slog.Logger,
-) SharingModule {
+) *sharingModule {
 	return &sharingModule{
 		shareStore:    shareStore,
 		guestStore:    guestStore,
