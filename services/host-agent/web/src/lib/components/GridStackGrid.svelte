@@ -117,26 +117,29 @@
 		);
 
 		for (const element of elements) {
+			// New item — add it (autoPosition when x/y null)
 			if (!currentIds.has(element.id)) {
-				// New item — add it (autoPosition when x/y null)
 				addGridStackItem(element);
 				hasStructuralChange = true;
-			} else if (!isDragging && element.x !== null && element.y !== null) {
-				// Update position/size for existing items when not dragging
-				const node = grid
-					.getGridItems()
-					.find((n) => (n.gridstackNode?.id as string) === element.id);
-				if (node?.gridstackNode) {
-					const gsn = node.gridstackNode;
-					if (
-						gsn.x !== element.x ||
-						gsn.y !== element.y ||
-						gsn.w !== element.w ||
-						gsn.h !== element.h
-					) {
-						grid.update(node, { x: element.x, y: element.y, w: element.w, h: element.h });
-					}
-				}
+				continue;
+			}
+
+			// Update position/size for existing items when not dragging
+			if (isDragging || element.x === null || element.y === null) continue;
+
+			const node = grid
+				.getGridItems()
+				.find((n) => (n.gridstackNode?.id as string) === element.id);
+			const gsn = node?.gridstackNode;
+			if (!node || !gsn) continue;
+
+			if (
+				gsn.x !== element.x ||
+				gsn.y !== element.y ||
+				gsn.w !== element.w ||
+				gsn.h !== element.h
+			) {
+				grid.update(node, { x: element.x, y: element.y, w: element.w, h: element.h });
 			}
 		}
 
