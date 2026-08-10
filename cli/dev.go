@@ -433,7 +433,7 @@ func cmdDev() int {
 	}
 
 	// Kill anything on port 3000 and any previous dev host-agent
-	if err := limaRun(lima, `fuser -k 3000/tcp 2>/dev/null || true; pkill -f '`+devRemoteDir+`/host-agent/host-agent' 2>/dev/null || true; sleep 0.5`); err != nil {
+	if err := limaRun(lima, `fuser -k 3000/tcp 2>/dev/null || true; pkill -f '`+devRemoteDir+`/host-agent/host-a[g]ent' 2>/dev/null || true; sleep 0.5`); err != nil {
 		errorf("Failed to stop previous host-agent: %v", err)
 		return 1
 	}
