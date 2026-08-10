@@ -64,7 +64,7 @@ func TestTailnetNodeContainerName(t *testing.T) {
 	assert.Equal(t, "ts-jellyfin", TailnetNodeContainerName("jellyfin"))
 }
 
-func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
+func TestEnsureRunning_CreatesSpecWithServeConfig(t *testing.T) {
 	rt := &FakeRuntime{}
 	mgr := newTestManager(t, rt)
 
@@ -84,9 +84,6 @@ func TestEnsureRunning_CreatesSpecWithServeConfigAndDependsOn(t *testing.T) {
 	assert.Equal(t, "navidrome", spec.Labels["io.bloud.app"])
 	assert.Equal(t, "true", spec.Labels["io.bloud.tailnet-node"])
 	assert.Equal(t, "always", spec.RestartPolicy)
-
-	// Verify systemd dependency binding
-	assert.Equal(t, "apps-navidrome.service", spec.DependsOn)
 
 	// Verify serve config mount and state volume
 	require.Len(t, spec.Mounts, 2)

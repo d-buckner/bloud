@@ -2,7 +2,7 @@
 
 Bloud manages apps (Jellyfin, Immich, etc.) on a single Linux host. The **portable
 runtime** is the Go binary (`host-agent`) that orchestrates app lifecycle, configuration,
-and integration via Podman Quadlet units and systemd.
+and integration via the Podman API.
 
 > **Naming note:** earlier docs called this component the *reconciler*. It was refactored
 > into the **orchestrator** (`internal/orchestrator/`), which owns both intent draining
@@ -175,9 +175,9 @@ orchestrator currently uses an in-memory repository (see REVIEW.md §C2).
 
 ### Container Runtime (`internal/container/`, `internal/orchestrator/`)
 
-Apps run as Podman containers managed by Quadlet systemd units. The orchestrator writes
-`.container` unit files to `~/.config/containers/systemd/`, triggers `systemctl --user
-daemon-reload`, and starts/stops units via the systemd D-Bus API.
+Apps run as Podman containers created and managed directly by the orchestrator through
+the Podman API (`internal/podman/`). The orchestrator builds a container spec from
+`metadata.yaml`, creates/starts containers, and removes them on uninstall.
 
 Container specs are defined in `metadata.yaml` under the `containers:` key (one def per
 container, multi-container apps expand to one graph node each) and rendered with template

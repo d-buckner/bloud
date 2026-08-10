@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -40,13 +41,33 @@ func NewLogsRouter(mod *logsModule, r chi.Router) {
 	r.Get("/system/status/stream", mod.SystemStatusStreamHandler())
 }
 
-// StreamLogsHandler streams app logs via SSE using journalctl.
+// StreamLogsHandler streams app logs via SSE using podman logs.
 func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
 
 		if err := m.CanStream(name); err != nil {
 			respondError(w, http.StatusNotFound, "App not found")
+			return
+		}
+
+		ctx := r.Context()
+
+		// Resolve the primary container for the app. The host-agent owns
+		// containers directly (no systemd units), so we look them up by the
+		// io.bloud.app label rather than a fixed name.
+		lookup := exec.CommandContext(ctx, "podman", "ps", "-a",
+			"--filter", "label=io.bloud.app="+name,
+			"--format", "{{.Names}}")
+		lookupOut, err := lookup.Output()
+		if err != nil {
+			m.logger.Error("failed to resolve app container", "app", name, "error", err)
+			respondError(w, http.StatusInternalServerError, "Failed to resolve app container")
+			return
+		}
+		containerName := strings.TrimSpace(string(lookupOut))
+		if containerName == "" {
+			respondError(w, http.StatusNotFound, "App has no managed containers")
 			return
 		}
 
@@ -64,14 +85,11 @@ func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
 
 		m.logger.Info("SSE client connected for app logs", "app", name)
 
-		ctx := r.Context()
-		serviceName := fmt.Sprintf("podman-%s.service", name)
-		cmd := exec.CommandContext(ctx, "journalctl", "--user",
-			"-u", serviceName,
+		cmd := exec.CommandContext(ctx, "podman", "logs",
 			"-f",
 			"-n", "100",
-			"--no-pager",
-			"-o", "short-iso",
+			"--timestamps",
+			containerName,
 		)
 
 		stdout, err := cmd.StdoutPipe()
@@ -82,7 +100,7 @@ func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
 		}
 
 		if err := cmd.Start(); err != nil {
-			m.logger.Error("failed to start journalctl", "error", err)
+			m.logger.Error("failed to start podman logs", "error", err)
 			respondError(w, http.StatusInternalServerError, "Failed to start log stream")
 			return
 		}

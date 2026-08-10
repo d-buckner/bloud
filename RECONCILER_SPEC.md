@@ -161,7 +161,7 @@ Read all stores. Read runtime state. Diff. Execute idempotent steps:
 3. **Ensure apps (dependency-ordered).** Compute execution levels (leaf nodes first). For
    each app at each level:
    - PreStart: write config files and directories
-   - Ensure container exists (Quadlet + systemd)
+   - Ensure container exists (Podman API)
    - HealthCheck: wait for app to be healthy
    - PostStart: configure via APIs
    - SSO provisioning (if applicable)
@@ -355,7 +355,7 @@ Reconciler wakes up
         |   |
         |   +-- Level 0: qbittorrent
         |   |   | PreStart -> write config files
-        |   |   | containers.Ensure() -> create Quadlet + systemd unit
+        |   |   | containers.Ensure() -> create/start container via Podman API
         |   |   | appStore.UpdateStatus("starting") -> SSE broadcast
         |   |   | HealthCheck -> wait for ready
         |   |   | PostStart -> configure via API
