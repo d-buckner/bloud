@@ -73,9 +73,9 @@ Level 1: jellyfin          ← Proxy + SSO; no database of its own
 Level 1: immich             ← Self-contained: postgres + redis + server + ML
 ```
 
-Apps run as rootless Podman containers managed by Quadlet systemd units. A small Go
-service (`host-agent`) handles orchestration, configuration, and the web dashboard. It
-uses an intent-driven reconciler: all changes flow through a queue, and the reconciler
+Apps run as rootless Podman containers. A small Go service (`host-agent`) manages them
+directly, and handles orchestration, configuration, and the web dashboard. It uses an
+intent-driven reconciler: all changes flow through a queue, and the reconciler
 continuously makes reality match what you asked for. It's safe to retry after crashes,
 failures, and reboots, and it makes no changes when the system already matches.
 
@@ -183,7 +183,7 @@ bloud/
 ├── services/host-agent/           # Go backend + Svelte frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap
 │   ├── internal/
-│   │   ├── orchestrator/          # Intent queue, reconciler, Quadlet units
+│   │   ├── orchestrator/          # Intent queue, reconciler, container runtime
 │   │   ├── catalog/               # App discovery from metadata.yaml
 │   │   ├── integration/           # Typed integration resolver
 │   │   ├── store/                 # SQLite persistence
