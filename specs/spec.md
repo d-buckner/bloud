@@ -16,10 +16,10 @@ specification through implementation.
 
 Supporting documents provide rationale, detail, and implementation records:
 
-- `docs/portable-runtime-architecture.md`: component overview and diagram
-- `docs/contributing-apps.md`: how to add a new app
-- `docs/sharing.md`: sharing architecture and federation design
-- `RECONCILER_SPEC.md`: intent-driven reconciler architecture (implemented)
+- `docs/architecture/overview.md`: component overview and diagram
+- `docs/guides/contributing-apps.md`: how to add a new app
+- `docs/features/sharing.md`: sharing architecture and federation design
+- `specs/reconciler-spec.md`: intent-driven reconciler architecture (implemented)
 
 Supporting documents must defer to this file and must not introduce new authoritative
 requirements.

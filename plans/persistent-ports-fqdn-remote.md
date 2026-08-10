@@ -16,8 +16,7 @@ previous:
    its FQDN (e.g. `ts-gateway.tail1275sa.ts.net`) on the `tailnet_connections` record.
 3. **Owner remote access** — The gateway exposes local Traefik via Tailscale Serve so the
    owner can access the full dashboard and app subdomains remotely.
-
-These are the "Not Yet Implemented" items from SPEC.md §Sharing.
+These are the "Not Yet Implemented" items from specs/spec.md §Sharing.
 
 ---
 

@@ -119,7 +119,7 @@ other person stays a guest, not a sysadmin.
   app locally, so even a TV or game console can use it. Smart clients can connect
   directly for lower latency.
 
-Sharing work is in progress (Phase 6 of the [release plan](SPEC.md)).
+Sharing work is in progress (Phase 6 of the [release plan](specs/spec.md)).
 
 ## Status
 
@@ -200,10 +200,11 @@ bloud/
 
 ## Further reading
 
-- [SPEC.md](SPEC.md): Authoritative first-release plan
-- [docs/portable-runtime-architecture.md](docs/portable-runtime-architecture.md): Component overview
-- [docs/contributing-apps.md](docs/contributing-apps.md): How to add a new app
-- [docs/sharing.md](docs/sharing.md): Federated sharing design and implementation plan
+- [specs/spec.md](specs/spec.md): Authoritative first-release plan
+- [specs/reconciler-spec.md](specs/reconciler-spec.md): Reconciler subsystem design
+- [docs/architecture/overview.md](docs/architecture/overview.md): Component overview
+- [docs/guides/contributing-apps.md](docs/guides/contributing-apps.md): How to add a new app
+- [docs/features/sharing.md](docs/features/sharing.md): Federated sharing design and implementation plan
 
 ## Contributing
 

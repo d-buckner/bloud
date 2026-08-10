@@ -11,7 +11,7 @@ spread across the API server, portable orchestrator, reconciler, stores, route g
 and sharing managers.
 
 This makes Bloud behave more like a sequence of assumed-success commands than a durable
-reconciliation system. That conflicts with the release architecture in `SPEC.md`, which
+reconciliation system. That conflicts with the release architecture in `specs/spec.md`, which
 requires durable desired and observed application and integration state, explicit
 invalidation, phase-specific failure records, and resume-after-restart semantics.
 

@@ -294,7 +294,7 @@ progress" from "container crashed, needs restart" from "installed and healthy."
 **Impact:** Idempotency bugs and restart behavior are hard to reason about; a crashed
 container marked `stopped` will be re-created, but a user uninstall is also `uninstalling`
 on the same axis. The design intent (a separate operation state) is documented in
-`backend-tech-debt.md` but not implemented.
+[docs/operations/tech-debt.md](docs/operations/tech-debt.md) but not implemented.
 
 **Fix:** introduce a separate operation/lifecycle state distinct from the observed
 status, or at minimum make the status transitions explicit and single-authored (only the
@@ -358,7 +358,7 @@ actual system dependencies.
 - `CreateShareIntent` / `RevokeShareIntent` — never enqueued (see C3). Dead.
 - `apps/authentik/server_configurator.go`, `configurator.go` — check whether the
   "shared postgres" bootstrap references remain after the per-app refactor.
-- `RECONCILER_SPEC.md`, `docs/portable-runtime-architecture.md`, `docs/backend-tech-debt.md`
+- `specs/reconciler-spec.md`, `docs/architecture/overview.md`, `docs/operations/tech-debt.md`
   describe a "reconciler" component and phases that no longer exist; the code now uses
   an `orchestrator` with the intent pattern folded in. Docs are stale (see M2).
 

@@ -6,7 +6,7 @@ and integration via the Podman API.
 
 > **Naming note:** earlier docs called this component the *reconciler*. It was refactored
 > into the **orchestrator** (`internal/orchestrator/`), which owns both intent draining
-> and the convergence loop. `RECONCILER_SPEC.md` describes that target architecture as
+> `specs/reconciler-spec.md` describes that target architecture as
 > implemented.
 
 ## Component Diagram
@@ -170,8 +170,7 @@ provisioning, and forward-auth provider creation for tailnet access.
 SQLite-backed persistence for installed apps, their status, and resolved integration
 bindings. The orchestrator reads desired state from here and (as single writer) is the
 only author of lifecycle status. Schema lives in `internal/db/schema.sql`. The lifecycle
-graph has SQLite backing tables (`graph_nodes`, `graph_edges`) but the running
-orchestrator currently uses an in-memory repository (see REVIEW.md §C2).
+orchestrator currently uses an in-memory repository (see specs/review.md §C2).
 
 ### Container Runtime (`internal/container/`, `internal/orchestrator/`)
 
@@ -207,8 +206,7 @@ For apps with databases (e.g. Immich), the dependency graph includes their per-a
 postgres and redis containers declared in `containers:` metadata.
 
 > ⚠️ **Known wiring gap:** the production router currently constructs the orchestrator
-> with `CatalogGraph: nil`, which short-circuits `applyInstallIntent` before recording
-> the app — installs no-op until this is wired. See REVIEW.md §C1.
+> app — installs no-op until this is wired. See specs/review.md §C1.
 
 ## Validation Tiers
 
