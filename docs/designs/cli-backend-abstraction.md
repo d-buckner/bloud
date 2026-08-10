@@ -10,7 +10,7 @@ The `./bloud` CLI is tightly coupled to Lima as the only supported runtime envir
 - Linux users (no Lima on Linux by default)
 - macOS users without Virtualization framework access
 - Developers who prefer native Debian/Ubuntu boxes
-- Future backends (Docker, WSL, Kubernetes)
+- Future backends
 
 Every dev command in `cli/dev.go` hardcodes Lima operations: `limactl shell`, `limactl copy`, port forwarding assumptions, and VM lifecycle management.
 
