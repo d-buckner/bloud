@@ -18,17 +18,10 @@ import (
 //
 // If data-dir is not provided, defaults to ~/.local/share/bloud
 func runInitSecrets(args []string) int {
-	// Determine data directory
-	dataDir := ""
-	if len(args) > 0 {
-		dataDir = args[0]
-	} else {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
-			return 1
-		}
-		dataDir = filepath.Join(homeDir, ".local", "share", "bloud")
+	dataDir, err := resolveDataDir(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
+		return 1
 	}
 
 	// Ensure data directory exists
@@ -54,4 +47,17 @@ func runInitSecrets(args []string) int {
 
 	fmt.Printf("Generated secrets at %s\n", secretsPath)
 	return 0
+}
+
+// resolveDataDir returns the data directory, defaulting to ~/.local/share/bloud
+// when no explicit path is provided.
+func resolveDataDir(args []string) (string, error) {
+	if len(args) > 0 {
+		return args[0], nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(homeDir, ".local", "share", "bloud"), nil
 }

@@ -19,6 +19,14 @@
 	import { fetchRemoteApps, removeRemoteApp } from '$lib/clients/remoteAppClient';
 	import { gridElements } from '$lib/stores/grid';
 
+	// Statuses for which clicking a card should not open the app.
+	const BLOCKED_OPEN_STATUSES = new Set<string>([
+		AppStatus.Error,
+		AppStatus.Installing,
+		AppStatus.Starting,
+		AppStatus.Uninstalling
+	]);
+
 	// Context menu state
 	let contextMenuApp = $state<App | null>(null);
 	let contextMenuPos = $state({ x: 0, y: 0 });
@@ -47,13 +55,7 @@
 
 	function handleAppClick(app: App) {
 		if (!browser) return;
-		if (app.status === AppStatus.Error) return;
-		if (
-			app.status === AppStatus.Installing ||
-			app.status === AppStatus.Starting ||
-			app.status === AppStatus.Uninstalling
-		)
-			return;
+		if (BLOCKED_OPEN_STATUSES.has(app.status)) return;
 
 		window.open(getAppUrl(app.catalog_id), '_blank');
 	}
