@@ -282,8 +282,7 @@ reach Host A cannot be replayed against Host B.
 ---
 
 ## Guest / Sharing Auth
-
-Remote users accessing shared apps via tailnet. Integrates with PLAN-tailnet-outpost.md.
+Remote users accessing shared apps via tailnet. Integrates with [plans/tailnet-outpost.md](plans/tailnet-outpost.md).
 The standalone proxy outpost is the auth boundary; host Authentik is the identity provider.
 
 ```mermaid
@@ -387,8 +386,7 @@ the same trade-off as for regular users.
 - **Validates**: single password works across control plane UI and host (when online); falls back cleanly to local when offline
 
 ### Phase 6: Guest sharing auth
-
-- Standalone proxy outpost running on host (PLAN-tailnet-outpost.md)
+- Standalone proxy outpost running on host ([plans/tailnet-outpost.md](plans/tailnet-outpost.md))
 - Guest login through host Authentik; SSO path available via control plane
 - Cookie scoped to tailnet domain
 - **Validates**: remote guests can access shared apps with proper auth; local auth fallback works for guests with host accounts

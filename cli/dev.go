@@ -46,14 +46,14 @@ func getProjectRoot() (string, error) {
 		return filepath.Dir(cwd), nil
 	}
 
-	// Walk up looking for SPEC.md (project root marker)
+	// Walk up looking for specs/spec.md (project root marker)
 	for dir := cwd; dir != "/"; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, "SPEC.md")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "specs", "spec.md")); err == nil {
 			return dir, nil
 		}
 	}
 
-	return "", fmt.Errorf("could not find project root (looking for SPEC.md)")
+	return "", fmt.Errorf("could not find project root (looking for specs/spec.md)")
 }
 
 func limaInstance() string {

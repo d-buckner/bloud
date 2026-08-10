@@ -1,7 +1,7 @@
 # Bloud Host Agent
 
 > **Current implementation reference:** This README describes the host-agent development
-> workflow. [SPEC.md](../../SPEC.md) is the authoritative first-release plan.
+> workflow. [specs/spec.md](../../specs/spec.md) is the authoritative first-release plan.
 
 Go service that manages app installation, system monitoring, and provides a web UI for the Bloud home server platform.
 

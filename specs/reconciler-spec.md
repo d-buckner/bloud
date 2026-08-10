@@ -7,7 +7,7 @@
 > **orchestrator** (`internal/orchestrator/`). The intent queue, single-writer model, and
 > convergence loop described below are exactly what the orchestrator implements today.
 > Read this as the architecture-as-built, with the component name updated to *orchestrator*.
-> Two deviations from this spec are now permanent and documented in REVIEW.md: share/guest
+> Two deviations from this spec are now permanent and documented in [specs/review.md](specs/review.md): share/guest
 > writes stay direct in the API (the intent types remain as dead code), and the lifecycle
 > graph uses an in-memory repository rather than its SQLite backing.
 
@@ -592,6 +592,5 @@ Then cleanup:
    operation outside the reconciler. Same for `handleRevokeShare`.
 
    **Resolved (2026):** the implementation kept share/guest writes direct in the API
-   module (defensible — no side effects), but the `CreateShareIntent`/`RevokeShareIntent`
    types remain in `intent.go` as dead code. Clean this up: either route through the queue
-   or delete the dead types and document the boundary. See REVIEW.md §C3.
+   or delete the dead types and document the boundary. See specs/review.md §C3.
