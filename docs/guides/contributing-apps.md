@@ -1,7 +1,6 @@
 # Contributing Apps to Bloud
 
-How to add a new app to Bloud. Read
-[portable-runtime-architecture.md](portable-runtime-architecture.md) first for the
+How to add a new app to Bloud. Read [architecture/architecture.md](../architecture/architecture.md) first for the
 component overview.
 
 ## App Structure

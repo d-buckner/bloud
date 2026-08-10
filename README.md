@@ -201,9 +201,9 @@ bloud/
 ## Further reading
 
 - [SPEC.md](SPEC.md): Authoritative first-release plan
-- [docs/portable-runtime-architecture.md](docs/portable-runtime-architecture.md): Component overview
-- [docs/contributing-apps.md](docs/contributing-apps.md): How to add a new app
-- [docs/sharing.md](docs/sharing.md): Federated sharing design and implementation plan
+- [docs/architecture/architecture.md](docs/architecture/architecture.md): Component overview
+- [docs/guides/contributing-apps.md](docs/guides/contributing-apps.md): How to add a new app
+- [docs/designs/sharing.md](docs/designs/sharing.md): Federated sharing design and implementation plan
 
 ## Contributing
 
