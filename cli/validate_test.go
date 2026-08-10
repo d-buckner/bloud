@@ -46,6 +46,26 @@ func TestSplitShellWords(t *testing.T) {
 			in:   "  \t  ",
 			want: nil,
 		},
+		{
+			name: "mixed quotes and escapes",
+			in:   `echo 'a b' "c \"quoted\" d" "e\\f" single\ token`,
+			want: []string{"echo", "a b", `c "quoted" d`, `e\f`, "single token"},
+		},
+		{
+			name: "adjacent quoted segments form one word",
+			in:   `foo"bar baz"'qux'`,
+			want: []string{`foobar bazqux`},
+		},
+		{
+			name: "unterminated single quote consumes rest",
+			in:   `test 'still one`,
+			want: []string{"test", "still one"},
+		},
+		{
+			name: "unterminated double quote consumes rest",
+			in:   `test "still one`,
+			want: []string{"test", "still one"},
+		},
 	}
 
 	for _, tt := range tests {
