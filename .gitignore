@@ -68,3 +68,6 @@ Thumbs.db
 # AI agent data
 .claude/
 .playwright-mcp/
+
+
+# Agent-specific docs — excluded via ~/.gitignore (never in repo)
