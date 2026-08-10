@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 
+	"codeberg.org/d-buckner/bloud/cli/backend"
+	"codeberg.org/d-buckner/bloud/cli/executor"
 	"codeberg.org/d-buckner/bloud/cli/vm"
 )
 
@@ -16,17 +19,13 @@ func localExec(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
 }
 
-// runForeground runs an interactive command, treating a signal-based exit
-// (e.g. Ctrl-C) as a clean stop rather than a failure.
-func runForeground(cmd *exec.Cmd) error {
-	err := cmd.Run()
-	if err == nil {
-		return nil
-	}
+// isSignalExit reports whether err came from a process killed by a signal
+// (e.g. Ctrl-C), which interactive commands treat as a clean stop.
+func isSignalExit(err error) bool {
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == -1 {
-		return nil
+		return true
 	}
-	return err
+	return false
 }
 
 func getProjectRoot() (string, error) {
@@ -78,12 +77,16 @@ func cmdStart() int {
 
 func cmdStop() int {
 	lima := limaInstance()
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
 	log("Stopping host-agent on " + lima)
-	cmd := exec.Command("limactl", "shell", lima, "bash", "-c",
-		`pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop apps-*.service 2>/dev/null; true`)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
+		Command: `pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop apps-*.service 2>/dev/null; true`,
+	}, os.Stdout, os.Stderr)
+	if err != nil && !isSignalExit(err) {
 		errorf("Failed to stop host-agent: %v", err)
 		return 1
 	}
@@ -96,23 +99,28 @@ func cmdStatus() int {
 	fmt.Println()
 	fmt.Printf("  Lima VM:  %s\n", lima)
 
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
+	host := bk.Host()
+
 	// Check if VM is running
-	out, err := exec.Command("limactl", "list", "--json").Output()
-	if err == nil {
-		if strings.Contains(string(out), `"name":"`+lima+`"`) && strings.Contains(string(out), `"status":"Running"`) {
-			fmt.Printf("  VM status: %sRunning%s\n", colorGreen, colorReset)
-		} else {
-			fmt.Printf("  VM status: %sStopped%s\n", colorRed, colorReset)
-			fmt.Println()
-			fmt.Println("  Start the VM with: limactl start " + lima)
-			return 0
-		}
+	if host.Ready() {
+		fmt.Printf("  VM status: %sRunning%s\n", colorGreen, colorReset)
+	} else {
+		fmt.Printf("  VM status: %sStopped%s\n", colorRed, colorReset)
+		fmt.Println()
+		fmt.Println("  Start the VM with: limactl start " + lima)
+		return 0
 	}
 
 	// Check host-agent
-	curl := exec.Command("limactl", "shell", lima, "bash", "-c",
-		"curl -sf http://localhost:3000/api/health 2>/dev/null && echo ok || echo down")
-	if o, err := curl.Output(); err == nil && strings.TrimSpace(string(o)) == "ok" {
+	res, err := host.Executor().Run(context.Background(), executor.RunSpec{
+		Command: `curl -sf http://localhost:3000/api/health 2>/dev/null && echo ok || echo down`,
+	})
+	if err == nil && strings.Contains(res.Stdout, "ok") {
 		fmt.Printf("  Host agent: %sRunning%s (localhost:3000)\n", colorGreen, colorReset)
 	} else {
 		fmt.Printf("  Host agent: %sNot running%s\n", colorRed, colorReset)
@@ -126,12 +134,16 @@ func cmdStatus() int {
 
 func cmdLogs() int {
 	lima := limaInstance()
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
 	log("Streaming host-agent logs from " + lima + " (Ctrl-C to stop)...")
-	cmd := exec.Command("limactl", "shell", lima, "bash", "-c",
-		"journalctl --user -u host-agent -f 2>/dev/null || journalctl -f 2>/dev/null")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := runForeground(cmd); err != nil {
+	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
+		Command: `journalctl --user -u host-agent -f 2>/dev/null || journalctl -f 2>/dev/null`,
+	}, os.Stdout, os.Stderr)
+	if err != nil && !isSignalExit(err) {
 		errorf("Failed to stream logs: %v", err)
 		return 1
 	}
@@ -140,12 +152,18 @@ func cmdLogs() int {
 
 func cmdAttach() int {
 	lima := limaInstance()
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
+	sshex, ok := bk.Host().Executor().(*executor.SSHExecutor)
+	if !ok {
+		errorf("Backend host does not support interactive shells")
+		return 1
+	}
 	log("Opening shell on " + lima + " (type 'exit' to leave)...")
-	cmd := exec.Command("limactl", "shell", lima)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	if err := runForeground(cmd); err != nil {
+	if err := sshex.InteractiveShell(context.Background(), os.Stdout, os.Stderr, os.Stdin); err != nil && !isSignalExit(err) {
 		errorf("Failed to open shell on "+lima+": %v", err)
 		return 1
 	}
@@ -153,20 +171,22 @@ func cmdAttach() int {
 }
 
 func cmdShell(args []string) int {
-	lima := limaInstance()
 	if len(args) == 0 {
 		return cmdAttach()
 	}
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
 	command := strings.Join(args, " ")
-	if err := vm.LocalInteractive(fmt.Sprintf("limactl shell %s bash -c %s", lima, shellQuoteArg(command))); err != nil {
+	if err := bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
+		Command: command,
+	}, os.Stdout, os.Stderr); err != nil && !isSignalExit(err) {
 		errorf("Command failed: %v", err)
 		return 1
 	}
 	return 0
-}
-
-func shellQuoteArg(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 func cmdRebuild() int {
@@ -177,12 +197,15 @@ func cmdRebuild() int {
 }
 
 func cmdServices() int {
-	lima := limaInstance()
-	cmd := exec.Command("limactl", "shell", lima, "bash", "-c",
-		"systemctl --user list-units 'apps-*' --all --no-pager")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
+	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
+		Command: `systemctl --user list-units 'apps-*' --all --no-pager`,
+	}, os.Stdout, os.Stderr)
+	if err != nil && !isSignalExit(err) {
 		errorf("Failed to list services: %v", err)
 		return 1
 	}
@@ -191,6 +214,13 @@ func cmdServices() int {
 
 func cmdReset() int {
 	lima := limaInstance()
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
+	host := bk.Host()
+	ex := host.Executor()
 
 	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", lima)
 	fmt.Printf("The VM itself is kept — only data, containers, and the database are removed.\n")
@@ -204,25 +234,22 @@ func cmdReset() int {
 
 	// 1. Kill host-agent
 	log("Stopping host-agent")
-	cmd := exec.Command("limactl", "shell", lima, "bash", "-c",
-		`pkill -f 'host-agent$' 2>/dev/null; true`)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: `pkill -f 'host-agent$' 2>/dev/null; true`,
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to stop host-agent: %v", err)
 		return 1
 	}
 
 	// 2. Remove all containers
 	log("Removing containers")
-	cmd = exec.Command("limactl", "shell", lima, "bash", "-c", `
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: `
 set -e
 podman rm -f $(podman ps -aq) 2>/dev/null || true
 podman system prune -f 2>/dev/null || true
-`)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+`,
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to stop services: %v", err)
 		return 1
 	}
@@ -230,15 +257,14 @@ podman system prune -f 2>/dev/null || true
 	// 3. Wipe data directories and database
 	// Use podman unshare for dirs with container-owned files (e.g. postgres)
 	log("Wiping data")
-	cmd = exec.Command("limactl", "shell", lima, "bash", "-c", `
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: `
 set -e
 podman unshare rm -rf "$HOME/.local/share/bloud"
 podman unshare rm -rf /var/tmp/bloud-dev-runtime/data
 rm -f /var/tmp/bloud-dev-runtime/bloud.db
-`)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+`,
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to wipe data: %v", err)
 		return 1
 	}
@@ -257,11 +283,13 @@ func cmdDestroy() int {
 		fmt.Println("Aborted.")
 		return 0
 	}
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
 	log("Deleting " + lima + "...")
-	cmd := exec.Command("limactl", "delete", "--force", lima)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := bk.Destroy(context.Background()); err != nil {
 		errorf("Failed to delete VM: %v", err)
 		return 1
 	}
@@ -315,7 +343,14 @@ func installApp(apiPort int, appName string) int {
 	return 0
 }
 
-const devRemoteDir = "/var/tmp/bloud-dev-runtime"
+// devBackend builds the Lima backend for the current project.
+func devBackend() (*backend.LimaBackend, error) {
+	root, err := getProjectRoot()
+	if err != nil {
+		return nil, err
+	}
+	return backend.NewLimaBackend(limaInstance(), root), nil
+}
 
 func cmdDev() int {
 	root, err := getProjectRoot()
@@ -324,10 +359,10 @@ func cmdDev() int {
 		return 1
 	}
 
-	lima := os.Getenv("BLOUD_E2E_LIMA_INSTANCE")
-	if lima == "" {
-		lima = "bloud-dev"
-	}
+	bk := backend.NewLimaBackend(limaInstance(), root)
+	host := bk.Host()
+	ex := host.Executor()
+	dirs := host.DataDirs()
 	goarch := runtime.GOARCH
 
 	// Clean slate: remove managed containers before the host-agent takes over.
@@ -340,7 +375,9 @@ func cmdDev() int {
 	// orchestrator from recreating authentik (podman refuses to remove a container
 	// that still has dependent containers).
 	log("Stopping managed app containers")
-	if err := limaRun(lima, `podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; true`); err != nil {
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: `podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; true`,
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to stop managed app containers: %v", err)
 		return 1
 	}
@@ -350,7 +387,9 @@ func cmdDev() int {
 	// Redis on localhost:6379 (sessions). Compose recreates containers whose
 	// config changed (e.g. redis gaining the published 6379 port).
 	log("Ensuring shared infra (postgres, redis)")
-	if err := limaRun(lima, fmt.Sprintf("cd %s/dev && podman-compose up -d postgres redis 2>&1", root)); err != nil {
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: fmt.Sprintf("cd %s/dev && podman-compose up -d postgres redis 2>&1", root),
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to start shared infra: %v", err)
 		return 1
 	}
@@ -389,20 +428,21 @@ func cmdDev() int {
 	}
 
 	// Deploy
-	log("Deploying to " + lima + ":" + devRemoteDir)
-	if err := limaRun(lima, "mkdir -p "+devRemoteDir+"/host-agent"); err != nil {
+	log("Deploying to " + dirs.HostAgentDir)
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: "mkdir -p " + dirs.HostAgentDir,
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to create remote dir: %v", err)
 		return 1
 	}
-	copyCmd := exec.Command("limactl", "copy", binaryPath, lima+":"+devRemoteDir+"/host-agent/host-agent")
-	copyCmd.Stdout = os.Stdout
-	copyCmd.Stderr = os.Stderr
-	if err := copyCmd.Run(); err != nil {
+	if err := ex.CopyTo(context.Background(), binaryPath, dirs.HostAgentDir+"/host-agent"); err != nil {
 		errorf("Failed to copy binary: %v", err)
 		return 1
 	}
 
-	if err := limaRun(lima, "chmod 755 "+devRemoteDir+"/host-agent/host-agent"); err != nil {
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: "chmod 755 " + dirs.HostAgentDir + "/host-agent",
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to chmod binary: %v", err)
 		return 1
 	}
@@ -410,18 +450,19 @@ func cmdDev() int {
 	// Deploy frontend build to VM
 	webBuildDir := filepath.Join(webDir, "build")
 	if _, err := os.Stat(webBuildDir); err == nil {
-		if err := limaRun(lima, "rm -rf "+devRemoteDir+"/host-agent/web/build"); err != nil {
+		if err := ex.RunStream(context.Background(), executor.RunSpec{
+			Command: "rm -rf " + dirs.HostAgentDir + "/web/build",
+		}, os.Stdout, os.Stderr); err != nil {
 			errorf("Failed to clean remote web dir: %v", err)
 			return 1
 		}
-		if err := limaRun(lima, "mkdir -p "+devRemoteDir+"/host-agent/web"); err != nil {
+		if err := ex.RunStream(context.Background(), executor.RunSpec{
+			Command: "mkdir -p " + dirs.HostAgentDir + "/web",
+		}, os.Stdout, os.Stderr); err != nil {
 			errorf("Failed to create remote web dir: %v", err)
 			return 1
 		}
-		cpCmd := exec.Command("limactl", "copy", "-r", webBuildDir, lima+":"+devRemoteDir+"/host-agent/web/build")
-		cpCmd.Stdout = os.Stdout
-		cpCmd.Stderr = os.Stderr
-		if err := cpCmd.Run(); err != nil {
+		if err := ex.CopyTo(context.Background(), webBuildDir, dirs.HostAgentDir+"/web/build"); err != nil {
 			errorf("Failed to copy frontend build: %v", err)
 			return 1
 		}
@@ -429,41 +470,29 @@ func cmdDev() int {
 	}
 
 	// Kill anything on port 3000 and any previous dev host-agent
-	if err := limaRun(lima, `fuser -k 3000/tcp 2>/dev/null || true; pkill -f '`+devRemoteDir+`/host-agent/host-a[g]ent' 2>/dev/null || true; sleep 0.5`); err != nil {
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: `fuser -k 3000/tcp 2>/dev/null || true; pkill -f '` + dirs.HostAgentDir + `/host-agent/host-a[g]ent' 2>/dev/null || true; sleep 0.5`,
+	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to stop previous host-agent: %v", err)
 		return 1
 	}
 
-	// Build the env and exec command
-	appsDir := filepath.Join(root, "apps")
-
-	remoteScript := fmt.Sprintf(
-		`unset DATABASE_URL BLOUD_REDIS_ADDR; `+
-			`export BLOUD_DATA_DIR=%s/data `+
-			`BLOUD_APPS_DIR=%s `+
-			`BLOUD_TRAEFIK_DYNAMIC_DIR=%s/data/traefik/dynamic; `+
-			`cd %s/host-agent && exec ./host-agent`,
-		devRemoteDir, appsDir, devRemoteDir, devRemoteDir,
-	)
-
 	// Run foreground
 	log("Starting host-agent (Ctrl-C to stop)")
-	runCmd := exec.Command("limactl", "shell", "--start", lima, "bash", "-c", remoteScript)
-	runCmd.Stdout = os.Stdout
-	runCmd.Stderr = os.Stderr
-	runCmd.Stdin = os.Stdin
-	if err := runForeground(runCmd); err != nil {
-		errorf("host-agent exited: %v", err)
+	runErr := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: "unset DATABASE_URL BLOUD_REDIS_ADDR; exec ./host-agent",
+		Dir:     dirs.HostAgentDir,
+		Env: map[string]string{
+			"BLOUD_DATA_DIR":           dirs.DataDir,
+			"BLOUD_APPS_DIR":           dirs.AppsDir,
+			"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
+		},
+	}, os.Stdout, os.Stderr)
+	if runErr != nil && !isSignalExit(runErr) {
+		errorf("host-agent exited: %v", runErr)
 		return 1
 	}
 	return 0
-}
-
-func limaRun(instance, script string) error {
-	cmd := exec.Command("limactl", "shell", "--start", instance, "bash", "-c", script)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 // uninstallApp calls the host-agent API to uninstall an app
