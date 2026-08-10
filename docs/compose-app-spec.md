@@ -264,7 +264,7 @@ containers:
         container: 2283
     environment:
       DB_URL: "postgres://postgres:{{postgresPassword}}@apps-immich-postgres:5432/immich"
-      REDIS_URL: "redis://apps-immich-redis:6379"
+      REDIS_HOSTNAME: apps-immich-redis
     volumes:
       - source: "{{appDataDir}}/upload"
         destination: /usr/src/app/upload
