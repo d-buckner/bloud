@@ -20,13 +20,13 @@ func fakeExec(recorded *[]string, script string) func(context.Context, string, .
 // fakeLimactlExecutor builds a limactl-backed SSHExecutor with a faked command factory.
 func fakeLimactlExecutor(recorded *[]string, script string) *SSHExecutor {
 	nc := fakeExec(recorded, script)
-	return newExecutor(nc, limactlStrategies(nc, "bloud-dev"))
+	return newExecutor(limactlStrategies(nc, "bloud-dev"))
 }
 
 // fakeSSHExecutor builds an ssh-backed SSHExecutor with a faked command factory.
 func fakeSSHExecutor(recorded *[]string, script string, conn SSHConn) *SSHExecutor {
 	nc := fakeExec(recorded, script)
-	return newExecutor(nc, sshStrategies(nc, conn))
+	return newExecutor(sshStrategies(nc, conn))
 }
 
 func TestBuildRemoteScript(t *testing.T) {

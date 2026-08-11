@@ -36,7 +36,6 @@ type SSHConn struct {
 // SSHExecutor runs commands and transfers files to a runtime host over a
 // Transport: either a Lima VM (via `limactl`) or a QEMU/SSH guest (via ssh+rsync).
 type SSHExecutor struct {
-	newCmd   cmdFn
 	runCmd   func(ctx context.Context, spec RunSpec) *exec.Cmd
 	copyTo   func(ctx context.Context, from, to string, recursive bool) *exec.Cmd
 	copyFrom func(ctx context.Context, from, to string) *exec.Cmd
@@ -46,17 +45,16 @@ type SSHExecutor struct {
 
 // NewLimactlExecutor returns an executor that targets the given Lima instance.
 func NewLimactlExecutor(instance string) *SSHExecutor {
-	return newExecutor(exec.CommandContext, limactlStrategies(exec.CommandContext, instance))
+	return newExecutor(limactlStrategies(exec.CommandContext, instance))
 }
 
 // NewSSHExecutor returns an executor that targets a guest over real SSH.
 func NewSSHExecutor(conn SSHConn) *SSHExecutor {
-	return newExecutor(exec.CommandContext, sshStrategies(exec.CommandContext, conn))
+	return newExecutor(sshStrategies(exec.CommandContext, conn))
 }
 
-func newExecutor(newCmd cmdFn, s strategySet) *SSHExecutor {
+func newExecutor(s strategySet) *SSHExecutor {
 	return &SSHExecutor{
-		newCmd:   newCmd,
 		runCmd:   s.run,
 		copyTo:   s.copyTo,
 		copyFrom: s.copyFrom,
