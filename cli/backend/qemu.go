@@ -153,7 +153,7 @@ func (b *QEMUBackend) ensureSeed(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read public key: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(b.dir, "user-data"), []byte(buildUserData(b.instance, strings.TrimSpace(string(pub)))), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(b.dir, "user-data"), []byte(buildUserData(b.instance, b.projectDir, strings.TrimSpace(string(pub)))), 0o644); err != nil {
 		return fmt.Errorf("write user-data: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(b.dir, "meta-data"), []byte("instance-id: "+b.instance+"\nlocal-hostname: "+b.instance+"\n"), 0o644); err != nil {
@@ -195,6 +195,7 @@ func (b *QEMUBackend) launch(ctx context.Context) error {
 		"-smp", strconv.Itoa(qemuCPUs),
 		"-drive", "file=" + disk + ",if=virtio",
 		"-drive", "file=" + seed + ",media=cdrom,readonly=on",
+		"-virtfs", fmt.Sprintf("local,path=%s,mount_tag=host0,security_mode=native,mode=0777", b.projectDir),
 		"-netdev", netdev,
 		"-device", "virtio-net-pci,netdev=net0",
 		"-display", "none",
@@ -258,8 +259,10 @@ func (b *QEMUBackend) sshBase() []string {
 func (b *QEMUBackend) sshTarget() string { return qemuSSHUser + "@127.0.0.1" }
 
 // buildUserData renders the cloud-init cloud-config that provisions the guest:
-// the bloud user with our SSH key, the podman toolchain, and a ready marker.
-func buildUserData(instance, pubKey string) string {
+// the bloud user with our SSH key, the podman toolchain, the virtio-9p project
+// mount (mirroring Lima's virtiofs mount), and a ready marker. Mount failures are
+// non-fatal so the VM always comes up; the dev loop surfaces mount issues later.
+func buildUserData(instance, projectDir, pubKey string) string {
 	return fmt.Sprintf(`#cloud-config
 disable_root: true
 ssh_pwauth: false
@@ -277,10 +280,14 @@ packages:
   - jq
   - ldap-utils
 runcmd:
+  - modprobe virtio-9p || true
+  - mkdir -p %s
+  - sh -c 'echo "host0 %s 9p trans=virtio,version=9p2000.L,msize=131072 0 0" >> /etc/fstab' || true
+  - mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072 host0 %s || true
   - loginctl enable-linger bloud
   - mkdir -p %s
   - touch %s
-`, pubKey, qemuRemoteDir, qemuReadyMark)
+`, pubKey, projectDir, projectDir, projectDir, qemuRemoteDir, qemuReadyMark)
 }
 
 func (b *QEMUBackend) run(ctx context.Context, name string, args ...string) (string, error) {

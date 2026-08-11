@@ -141,6 +141,9 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 	if !strings.Contains(string(userData), "ssh_authorized_keys") {
 		t.Errorf("user-data missing ssh_authorized_keys")
 	}
+	if !strings.Contains(string(userData), "mount -t 9p") || !strings.Contains(string(userData), "host0 ") {
+		t.Errorf("user-data missing virtio-9p project mount")
+	}
 }
 
 func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
@@ -162,7 +165,7 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4GiB", "-smp 4",
 		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
 		"hostfwd=tcp::5432-:5432", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
-		"hostfwd=tcp::9000-:9000", "seed.iso", "virtio-net-pci"} {
+		"hostfwd=tcp::9000-:9000", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
 		if !strings.Contains(joined, wantArg) {
 			t.Errorf("launch args missing %q: %s", wantArg, joined)
 		}

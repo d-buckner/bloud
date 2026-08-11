@@ -17,12 +17,16 @@ func cmdSetup() int {
 	allGood := true
 
 	// Check prerequisites
-	for _, tool := range []struct{ name, label string }{
+	prereqs := []struct{ name, label string }{
 		{"go", "Go"},
 		{"node", "Node.js"},
 		{"limactl", "Lima"},
 		{"podman", "Podman"},
-	} {
+	}
+	if backendName() == "qemu" {
+		prereqs = append(prereqs, struct{ name, label string }{"qemu-system-x86_64", "QEMU"})
+	}
+	for _, tool := range prereqs {
 		fmt.Printf("  Checking %s...%s", tool.label, strings.Repeat(" ", 22-len(tool.label)))
 		if checkCommand(tool.name) {
 			fmt.Printf("%s✓ installed%s\n", colorGreen, colorReset)
@@ -64,9 +68,13 @@ func cmdSetup() int {
 	fmt.Printf("%s✓ Setup complete!%s\n", colorGreen, colorReset)
 	fmt.Println()
 	fmt.Println("  Next steps:")
-	fmt.Println("    limactl create --name=bloud-dev dev/lima.yaml")
-	fmt.Println("    limactl start bloud-dev")
-	fmt.Println("    limactl shell bloud-dev bash dev/setup.sh")
+	if backendName() == "qemu" {
+		fmt.Println("    BLOUD_BACKEND=qemu ./bloud dev")
+	} else {
+		fmt.Println("    limactl create --name=bloud-dev dev/lima.yaml")
+		fmt.Println("    limactl start bloud-dev")
+		fmt.Println("    limactl shell bloud-dev bash dev/setup.sh")
+	}
 	fmt.Println("    ./bloud dev")
 	fmt.Println()
 	return 0
