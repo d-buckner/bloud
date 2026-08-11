@@ -17,6 +17,18 @@ func fakeExec(recorded *[]string, script string) func(context.Context, string, .
 	}
 }
 
+// fakeLimactlExecutor builds a limactl-backed SSHExecutor with a faked command factory.
+func fakeLimactlExecutor(recorded *[]string, script string) *SSHExecutor {
+	nc := fakeExec(recorded, script)
+	return newExecutor(nc, limactlStrategies(nc, "bloud-dev"))
+}
+
+// fakeSSHExecutor builds an ssh-backed SSHExecutor with a faked command factory.
+func fakeSSHExecutor(recorded *[]string, script string, conn SSHConn) *SSHExecutor {
+	nc := fakeExec(recorded, script)
+	return newExecutor(nc, sshStrategies(nc, conn))
+}
+
 func TestBuildRemoteScript(t *testing.T) {
 	tests := []struct {
 		name string
@@ -82,9 +94,9 @@ func TestBuildRemoteScript(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorRunInvocation(t *testing.T) {
+func TestLimactlExecutorRunInvocation(t *testing.T) {
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "echo fake-out")}
+	ex := fakeLimactlExecutor(&recorded, "echo fake-out")
 	res, err := ex.Run(context.Background(), RunSpec{Command: "echo", Args: []string{"hi"}})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -101,9 +113,9 @@ func TestSSHExecutorRunInvocation(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorRunScriptReflectsSpec(t *testing.T) {
+func TestLimactlExecutorRunScriptReflectsSpec(t *testing.T) {
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "echo ok")}
+	ex := fakeLimactlExecutor(&recorded, "echo ok")
 	if _, err := ex.Run(context.Background(), RunSpec{
 		Command: "./host-agent",
 		Dir:     "/runtime",
@@ -120,9 +132,9 @@ func TestSSHExecutorRunScriptReflectsSpec(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorRunFailure(t *testing.T) {
+func TestLimactlExecutorRunFailure(t *testing.T) {
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "echo fake-err >&2; exit 3")}
+	ex := fakeLimactlExecutor(&recorded, "echo fake-err >&2; exit 3")
 	res, err := ex.Run(context.Background(), RunSpec{Command: "false"})
 	if err == nil {
 		t.Fatal("Run() error = nil, want non-nil")
@@ -135,13 +147,13 @@ func TestSSHExecutorRunFailure(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorCopyToFile(t *testing.T) {
+func TestLimactlExecutorCopyToFile(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "bin")
 	if err := os.WriteFile(src, []byte("x"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "true")}
+	ex := fakeLimactlExecutor(&recorded, "true")
 	if err := ex.CopyTo(context.Background(), src, "/runtime/host-agent/host-agent"); err != nil {
 		t.Fatalf("CopyTo() error = %v", err)
 	}
@@ -151,10 +163,10 @@ func TestSSHExecutorCopyToFile(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorCopyToDirIsRecursive(t *testing.T) {
+func TestLimactlExecutorCopyToDirIsRecursive(t *testing.T) {
 	dir := t.TempDir()
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "true")}
+	ex := fakeLimactlExecutor(&recorded, "true")
 	if err := ex.CopyTo(context.Background(), dir, "/runtime/web/build"); err != nil {
 		t.Fatalf("CopyTo() error = %v", err)
 	}
@@ -164,9 +176,9 @@ func TestSSHExecutorCopyToDirIsRecursive(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorCopyFrom(t *testing.T) {
+func TestLimactlExecutorCopyFrom(t *testing.T) {
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "true")}
+	ex := fakeLimactlExecutor(&recorded, "true")
 	if err := ex.CopyFrom(context.Background(), "/runtime/logs.txt", "/tmp/logs.txt"); err != nil {
 		t.Fatalf("CopyFrom() error = %v", err)
 	}
@@ -176,9 +188,9 @@ func TestSSHExecutorCopyFrom(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorRunStream(t *testing.T) {
+func TestLimactlExecutorRunStream(t *testing.T) {
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "echo streamed")}
+	ex := fakeLimactlExecutor(&recorded, "echo streamed")
 	var stdout, stderr strings.Builder
 	if err := ex.RunStream(context.Background(),
 		RunSpec{Command: "hostname"}, &stdout, &stderr); err != nil {
@@ -193,9 +205,9 @@ func TestSSHExecutorRunStream(t *testing.T) {
 	}
 }
 
-func TestSSHExecutorInteractiveShell(t *testing.T) {
+func TestLimactlExecutorInteractiveShell(t *testing.T) {
 	var recorded []string
-	ex := &SSHExecutor{instance: "bloud-dev", newCmd: fakeExec(&recorded, "exit")}
+	ex := fakeLimactlExecutor(&recorded, "exit")
 	var stdout, stderr strings.Builder
 	if err := ex.InteractiveShell(context.Background(), &stdout, &stderr, strings.NewReader("")); err != nil {
 		t.Fatalf("InteractiveShell() error = %v", err)
@@ -203,5 +215,122 @@ func TestSSHExecutorInteractiveShell(t *testing.T) {
 	want := []string{"limactl", "shell", "bloud-dev"}
 	if !slices.Equal(recorded, want) {
 		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+}
+
+func TestLimactlExecutorReady(t *testing.T) {
+	var recorded []string
+	ex := fakeLimactlExecutor(&recorded, `echo '{"name":"bloud-dev","status":"Running"}'`)
+	if !ex.Ready() {
+		t.Error("Ready() = false, want true")
+	}
+	want := []string{"limactl", "list", "--json"}
+	if !slices.Equal(recorded, want) {
+		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+}
+
+func TestLimactlExecutorReadyNotRunning(t *testing.T) {
+	var recorded []string
+	ex := fakeLimactlExecutor(&recorded, `echo '{"name":"bloud-dev","status":"Stopped"}'`)
+	if ex.Ready() {
+		t.Error("Ready() = true, want false")
+	}
+}
+
+func TestSSHExecutorRunInvocation(t *testing.T) {
+	conn := SSHConn{Host: "127.0.0.1", Port: 2222, User: "bloud", KeyFile: "/key"}
+	var recorded []string
+	ex := fakeSSHExecutor(&recorded, "echo fake-out", conn)
+	res, err := ex.Run(context.Background(), RunSpec{Command: "echo", Args: []string{"hi"}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"ssh", "-p", "2222", "-i", "/key", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "bloud@127.0.0.1", "bash", "-c", "echo hi"}
+	if !slices.Equal(recorded, want) {
+		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+	if res.Stdout != "fake-out\n" {
+		t.Fatalf("Stdout = %q, want %q", res.Stdout, "fake-out\n")
+	}
+}
+
+func TestSSHExecutorRunScriptReflectsSpec(t *testing.T) {
+	conn := SSHConn{Host: "127.0.0.1", Port: 2222, User: "bloud", KeyFile: "/key"}
+	var recorded []string
+	ex := fakeSSHExecutor(&recorded, "echo ok", conn)
+	if _, err := ex.Run(context.Background(), RunSpec{
+		Command: "./host-agent",
+		Dir:     "/runtime",
+		Env:     map[string]string{"BLOUD_DATA_DIR": "/runtime/data"},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"ssh", "-p", "2222", "-i", "/key", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "bloud@127.0.0.1", "bash", "-c", "export BLOUD_DATA_DIR='/runtime/data'; cd '/runtime'; ./host-agent"}
+	if !slices.Equal(recorded, want) {
+		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+}
+
+func TestSSHExecutorCopyToDirIsRecursive(t *testing.T) {
+	conn := SSHConn{Host: "127.0.0.1", Port: 2222, User: "bloud", KeyFile: "/key"}
+	dir := t.TempDir()
+	var recorded []string
+	ex := fakeSSHExecutor(&recorded, "true", conn)
+	if err := ex.CopyTo(context.Background(), dir, "/runtime/web/build"); err != nil {
+		t.Fatalf("CopyTo() error = %v", err)
+	}
+	want := []string{"rsync", "-a", "-r", "-e", "ssh -p 2222 -i /key", dir, "bloud@127.0.0.1:/runtime/web/build"}
+	if !slices.Equal(recorded, want) {
+		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+}
+
+func TestSSHExecutorCopyFrom(t *testing.T) {
+	conn := SSHConn{Host: "127.0.0.1", Port: 2222, User: "bloud", KeyFile: "/key"}
+	var recorded []string
+	ex := fakeSSHExecutor(&recorded, "true", conn)
+	if err := ex.CopyFrom(context.Background(), "/runtime/logs.txt", "/tmp/logs.txt"); err != nil {
+		t.Fatalf("CopyFrom() error = %v", err)
+	}
+	want := []string{"rsync", "-a", "-e", "ssh -p 2222 -i /key", "bloud@127.0.0.1:/runtime/logs.txt", "/tmp/logs.txt"}
+	if !slices.Equal(recorded, want) {
+		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+}
+
+func TestSSHExecutorInteractiveShell(t *testing.T) {
+	conn := SSHConn{Host: "127.0.0.1", Port: 2222, User: "bloud", KeyFile: "/key"}
+	var recorded []string
+	ex := fakeSSHExecutor(&recorded, "exit", conn)
+	var stdout, stderr strings.Builder
+	if err := ex.InteractiveShell(context.Background(), &stdout, &stderr, strings.NewReader("")); err != nil {
+		t.Fatalf("InteractiveShell() error = %v", err)
+	}
+	want := []string{"ssh", "-p", "2222", "-i", "/key", "-t", "bloud@127.0.0.1"}
+	if !slices.Equal(recorded, want) {
+		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+}
+
+func TestSSHExecutorReady(t *testing.T) {
+	conn := SSHConn{Host: "127.0.0.1", Port: 2222, User: "bloud", KeyFile: "/key"}
+	var recorded []string
+	ex := fakeSSHExecutor(&recorded, "true", conn)
+	if !ex.Ready() {
+		t.Error("Ready() = false, want true")
+	}
+	want := []string{"ssh", "-p", "2222", "-i", "/key", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5", "bloud@127.0.0.1", "true"}
+	if !slices.Equal(recorded, want) {
+		t.Fatalf("invocation = %q, want %q", recorded, want)
+	}
+}
+
+func TestSSHExecutorReadyFails(t *testing.T) {
+	conn := SSHConn{Host: "127.0.0.1", Port: 2222, User: "bloud", KeyFile: "/key"}
+	var recorded []string
+	ex := fakeSSHExecutor(&recorded, "exit 1", conn)
+	if ex.Ready() {
+		t.Error("Ready() = true, want false")
 	}
 }

@@ -67,9 +67,7 @@ func (b *LimaBackend) Destroy(ctx context.Context) error {
 // Host returns the runtime host backed by the Lima VM.
 func (b *LimaBackend) Host() executor.Host {
 	return executor.NewSSHHost(
-		b.instance,
-		executor.NewSSHExecutor(b.instance),
-		&executor.LocalExecutor{},
+		executor.NewLimactlExecutor(b.instance),
 		map[string]string{
 			"host-agent": "3000",
 			"postgres":   "5432",

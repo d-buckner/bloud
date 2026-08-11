@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 )
@@ -25,41 +24,31 @@ type DataDirs struct {
 	AppsDir      string // mounted apps directory
 }
 
-// SSHHost is a Host running on a Lima VM, reached through an SSHExecutor.
+// SSHHost is a Host reached through a Transport (Lima VM via limactl, QEMU
+// guest via ssh). The transport owns remote execution and readiness checks.
 type SSHHost struct {
-	instance string
-	remote   Executor
-	local    Executor
+	remote   Transport
 	ports    map[string]string
 	dataDirs DataDirs
 }
 
-// NewSSHHost returns a Host backed by a Lima VM. remote executes inside the
-// VM; local executes on the machine running the CLI (used for VM status checks).
-func NewSSHHost(instance string, remote, local Executor, ports map[string]string, dataDirs DataDirs) *SSHHost {
-	return &SSHHost{instance: instance, remote: remote, local: local, ports: ports, dataDirs: dataDirs}
+// NewSSHHost returns a Host backed by a Transport. remote executes on the guest
+// and answers readiness checks.
+func NewSSHHost(remote Transport, ports map[string]string, dataDirs DataDirs) *SSHHost {
+	return &SSHHost{remote: remote, ports: ports, dataDirs: dataDirs}
 }
 
-// Executor returns the executor that runs commands inside the VM.
+// Executor returns the executor that runs commands on the guest.
 func (h *SSHHost) Executor() Executor { return h.remote }
 
 // Ports returns the host-agent service port map.
 func (h *SSHHost) Ports() map[string]string { return h.ports }
 
-// DataDirs returns the runtime directory layout inside the VM.
+// DataDirs returns the runtime directory layout on the guest.
 func (h *SSHHost) DataDirs() DataDirs { return h.dataDirs }
 
-// Ready reports whether the Lima VM is running.
-func (h *SSHHost) Ready() bool {
-	res, err := h.local.Run(context.Background(), RunSpec{
-		Command: "limactl",
-		Args:    []string{"list", "--json"},
-	})
-	if err != nil {
-		return false
-	}
-	return IsVMNameRunning(res.Stdout, h.instance)
-}
+// Ready reports whether the guest is running and reachable.
+func (h *SSHHost) Ready() bool { return h.remote.Ready() }
 
 // IsVMNameRunning reports whether limactl list --json output shows name Running.
 func IsVMNameRunning(out, name string) bool {
