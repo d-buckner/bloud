@@ -246,7 +246,7 @@ func TestSSHExecutorRunInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"ssh", "-p", "2222", "-i", "/key", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "bloud@127.0.0.1", "bash", "-c", "echo hi"}
+	want := []string{"ssh", "-p", "2222", "-i", "/key", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "bloud@127.0.0.1", "bash", "-c", "'echo hi'"}
 	if !slices.Equal(recorded, want) {
 		t.Fatalf("invocation = %q, want %q", recorded, want)
 	}
@@ -266,7 +266,7 @@ func TestSSHExecutorRunScriptReflectsSpec(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"ssh", "-p", "2222", "-i", "/key", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "bloud@127.0.0.1", "bash", "-c", "export BLOUD_DATA_DIR='/runtime/data'; cd '/runtime'; ./host-agent"}
+	want := []string{"ssh", "-p", "2222", "-i", "/key", "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "bloud@127.0.0.1", "bash", "-c", "'export BLOUD_DATA_DIR='\"'\"'/runtime/data'\"'\"'; cd '\"'\"'/runtime'\"'\"'; ./host-agent'"}
 	if !slices.Equal(recorded, want) {
 		t.Fatalf("invocation = %q, want %q", recorded, want)
 	}

@@ -163,7 +163,12 @@ func sshStrategies(newCmd cmdFn, conn SSHConn) strategySet {
 
 	return strategySet{
 		run: func(ctx context.Context, spec RunSpec) *exec.Cmd {
-			args := append(base, "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", target, "bash", "-c", BuildRemoteScript(spec))
+			// OpenSSH joins every argv after the host with spaces and does NOT
+			// re-quote them, so passing the script as a bare argv element would
+			// split `bash -c <script>` on whitespace and bash -c would only see
+			// the script's first word. Single-quote the whole script so the
+			// joined remote command is `bash -c '<script>'`.
+			args := append(base, "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", target, "bash", "-c", shellQuote(BuildRemoteScript(spec)))
 			return newCmd(ctx, "ssh", args...)
 		},
 		copyTo: func(ctx context.Context, from, to string, recursive bool) *exec.Cmd {
