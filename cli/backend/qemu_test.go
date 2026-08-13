@@ -113,7 +113,7 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 	}
 	want := []string{
 		"curl", "qemu-img", "qemu-img", "ssh-keygen", "mkisofs",
-		"ssh", "qemu-system-x86_64", "ssh", "ssh",
+		"ssh", "qemu-system-x86_64", "ssh", "ssh", "rsync",
 	}
 	if !slicesEqual(names, want) {
 		t.Fatalf("command sequence = %v, want %v", names, want)
@@ -141,8 +141,8 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 	if !strings.Contains(string(userData), "ssh_authorized_keys") {
 		t.Errorf("user-data missing ssh_authorized_keys")
 	}
-	if !strings.Contains(string(userData), "mount -t 9p") || !strings.Contains(string(userData), "host0 ") {
-		t.Errorf("user-data missing virtio-9p project mount")
+	if !strings.Contains(string(userData), "chown bloud:bloud") {
+		t.Errorf("user-data missing project dir ownership")
 	}
 }
 
@@ -162,7 +162,7 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 		t.Fatal("no qemu-system-x86_64 launch recorded")
 	}
 	joined := strings.Join(launch, " ")
-	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4GiB", "-smp 4",
+	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4G", "-smp 4",
 		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
 		"hostfwd=tcp::5432-:5432", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
 		"hostfwd=tcp::9000-:9000", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {

@@ -415,37 +415,33 @@ func cmdDev() int {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
+
+	// Provision the VM if it is not already running. This is a no-op when the
+	// guest is already up (Lima: already created+started; QEMU: image+seed
+	// present and guest reachable), so it is safe for both backends.
+	log("Provisioning " + vmLabel())
+	if err := bk.Create(context.Background()); err != nil {
+		errorf("Failed to provision VM: %v", err)
+		return 1
+	}
+
 	host := bk.Host()
 	ex := host.Executor()
 	dirs := host.DataDirs()
 	goarch := runtime.GOARCH
 
 	// Clean slate: remove managed containers before the host-agent takes over.
-	// Also remove legacy dev containers (bloud-dev-postgres, bloud-dev-redis) that
-	// predate the host-agent self-bootstrap and would hold the ports.
+	// Also remove any stale legacy dev containers (bloud-dev-postgres,
+	// bloud-dev-redis, dev_* compose names) that predate the host-agent
+	// self-bootstrap. There is no shared postgres/redis compose stack anymore —
+	// apps own their infra containers (e.g. apps-authentik-postgres) via
+	// metadata.yaml containers blocks, so the host-agent is the single manager.
 	// apps-traefik is included because it uses host network and holds port 8080.
-	// Stale compose-created authentik containers (apps-authentik-server, apps-authentik-ldap
-	// and their dev_* dependents) are removed too — they are no longer part of the
-	// shared infra compose stack (postgres/redis only) and would otherwise block the
-	// orchestrator from recreating authentik (podman refuses to remove a container
-	// that still has dependent containers).
 	log("Stopping managed app containers")
 	if err := ex.RunStream(context.Background(), executor.RunSpec{
 		Command: `podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; true`,
 	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to stop managed app containers: %v", err)
-		return 1
-	}
-
-	// Ensure shared infra (postgres, redis) is running via the compose stack.
-	// The host-agent expects Postgres on localhost:5432 (app databases) and
-	// Redis on localhost:6379 (sessions). Compose recreates containers whose
-	// config changed (e.g. redis gaining the published 6379 port).
-	log("Ensuring shared infra (postgres, redis)")
-	if err := ex.RunStream(context.Background(), executor.RunSpec{
-		Command: fmt.Sprintf("cd %s/dev && podman-compose up -d postgres redis 2>&1", root),
-	}, os.Stdout, os.Stderr); err != nil {
-		errorf("Failed to start shared infra: %v", err)
 		return 1
 	}
 

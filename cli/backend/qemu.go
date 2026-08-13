@@ -22,9 +22,10 @@ const (
 	// qemuImageBase is the downloaded base image filename.
 	qemuImageBase = "debian-13-genericcloud-amd64.qcow2"
 	// qemuCPUs / qemuMemory / qemuDisk mirror the Lima dev VM (4 vCPU / 4GiB / 30GiB).
+	// qemu-img resize and QEMU -m accept the short suffixes (G), not GiB.
 	qemuCPUs   = 4
-	qemuMemory = "4GiB"
-	qemuDisk   = "30GiB"
+	qemuMemory = "4G"
+	qemuDisk   = "30G"
 	// qemuSSHUser is the guest user provisioned by cloud-init.
 	qemuSSHUser = "bloud"
 	// qemuSSHPort is the host port forwarded to guest :22 (hostfwd).
@@ -55,7 +56,7 @@ func NewQEMUBackend(instance, projectDir string) *QEMUBackend {
 		dir:          filepath.Join(projectDir, ".bloud", "qemu", instance),
 		newCmd:       exec.CommandContext,
 		pollInterval: 2 * time.Second,
-		pollTimeout:  3 * time.Minute,
+		pollTimeout:  10 * time.Minute,
 	}
 }
 
@@ -73,7 +74,27 @@ func (b *QEMUBackend) Create(ctx context.Context) error {
 	if err := b.ensureRunning(ctx); err != nil {
 		return err
 	}
+	// Debian cloud images ship no 9p/virtiofs kernel modules, so a live host
+	// mount is unavailable; instead rsync the project into the guest so the
+	// dev loop (compose.yml, apps/, services/) sees a working copy.
+	if err := b.syncProject(ctx); err != nil {
+		return fmt.Errorf("sync project into guest: %w", err)
+	}
 	return nil
+}
+
+// syncProject copies the host project dir into the guest (incremental via
+// rsync), skipping heavy/irrelevant dirs. The guest path equals the host path.
+func (b *QEMUBackend) syncProject(ctx context.Context) error {
+	args := []string{
+		"-a", "-e", "ssh -p " + strconv.Itoa(qemuSSHPort) + " -i " + filepath.Join(b.dir, "id_ed25519"),
+		"--exclude=.git", "--exclude=.forgejo", "--exclude=.bloud",
+		"--exclude=node_modules", "--exclude=build", "--exclude=dist",
+		"--exclude=coverage", "--exclude=bloud",
+	}
+	args = append(args, b.projectDir+"/", qemuSSHUser+"@127.0.0.1:"+b.projectDir+"/")
+	_, err := b.run(ctx, "rsync", args...)
+	return err
 }
 
 // Destroy deletes the QEMU VM and its runtime artifacts.
@@ -153,7 +174,7 @@ func (b *QEMUBackend) ensureSeed(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read public key: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(b.dir, "user-data"), []byte(buildUserData(b.instance, b.projectDir, strings.TrimSpace(string(pub)))), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(b.dir, "user-data"), []byte(buildUserData(b.instance, b.projectDir, strings.TrimSpace(string(pub)), os.Geteuid())), 0o644); err != nil {
 		return fmt.Errorf("write user-data: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(b.dir, "meta-data"), []byte("instance-id: "+b.instance+"\nlocal-hostname: "+b.instance+"\n"), 0o644); err != nil {
@@ -171,6 +192,15 @@ func (b *QEMUBackend) ensureRunning(ctx context.Context) error {
 	if b.guestReady(ctx) {
 		return nil
 	}
+	// If a qemu process for this VM is already alive, do not spawn a duplicate
+	// (it would collide on the pidfile lock). Just keep waiting for the guest
+	// to come back up (e.g. mid-reboot or mid-provisioning SSH is briefly down).
+	if b.vmAlive() {
+		if err := b.waitReady(ctx); err != nil {
+			return fmt.Errorf("QEMU guest %q did not become ready: %w", b.instance, err)
+		}
+		return nil
+	}
 	if err := b.launch(ctx); err != nil {
 		return err
 	}
@@ -180,14 +210,36 @@ func (b *QEMUBackend) ensureRunning(ctx context.Context) error {
 	return nil
 }
 
+// vmAlive reports whether a qemu process for this VM is currently running,
+// using the pidfile written at launch.
+func (b *QEMUBackend) vmAlive() bool {
+	data, err := os.ReadFile(filepath.Join(b.dir, b.instance+".pid"))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join("/proc", strconv.Itoa(pid)))
+	return err == nil
+}
+
 // launch starts the headless QEMU VM in the background (daemonized).
 func (b *QEMUBackend) launch(ctx context.Context) error {
 	disk := filepath.Join(b.dir, b.instance+".qcow2")
 	seed := filepath.Join(b.dir, "seed.iso")
 	pid := filepath.Join(b.dir, b.instance+".pid")
-	netdev := fmt.Sprintf(
-		"user,id=net0,hostfwd=tcp::%d-:22,hostfwd=tcp::3000-:3000,hostfwd=tcp::5432-:5432,hostfwd=tcp::8080-:8080,hostfwd=tcp::8096-:8096,hostfwd=tcp::9000-:9000",
-		qemuSSHPort)
+	// Host-side forward ports. Each guest port can be remapped to a different
+	// host port via BLOUD_QEMU_FWD_<guestport> (e.g. BLOUD_QEMU_FWD_9000=9100)
+	// so the VM can run on hosts that already occupy a default port. The guest
+	// ports themselves never change; only the host port QEMU binds changes.
+	fwds := make([]string, 0, 6)
+	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort(strconv.Itoa(qemuSSHPort))))
+	for _, gp := range []string{"3000", "5432", "8080", "8096", "9000"} {
+		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hostForwardPort(gp), gp))
+	}
+	netdev := "user,id=net0," + strings.Join(fwds, ",")
 	args := []string{
 		"-machine", "q35,accel=kvm",
 		"-cpu", "max",
@@ -195,7 +247,7 @@ func (b *QEMUBackend) launch(ctx context.Context) error {
 		"-smp", strconv.Itoa(qemuCPUs),
 		"-drive", "file=" + disk + ",if=virtio",
 		"-drive", "file=" + seed + ",media=cdrom,readonly=on",
-		"-virtfs", fmt.Sprintf("local,path=%s,mount_tag=host0,security_mode=native,mode=0777", b.projectDir),
+		"-virtfs", fmt.Sprintf("local,path=%s,mount_tag=host0,id=host0,security_model=passthrough", b.projectDir),
 		"-netdev", netdev,
 		"-device", "virtio-net-pci,netdev=net0",
 		"-display", "none",
@@ -230,7 +282,10 @@ func (b *QEMUBackend) guestReady(ctx context.Context) bool {
 	if !b.sshReady(ctx) {
 		return false
 	}
-	_, err := b.runSSH(ctx, "bash", "-c", "test -f "+qemuReadyMark)
+	// Pass the marker check as separate ssh args so they join into a single
+	// remote command (`test -f <marker>`), rather than `bash -c test ...` which
+	// would only run the bare `test` builtin and always fail.
+	_, err := b.runSSH(ctx, "test", "-f", qemuReadyMark)
 	return err == nil
 }
 
@@ -259,15 +314,18 @@ func (b *QEMUBackend) sshBase() []string {
 func (b *QEMUBackend) sshTarget() string { return qemuSSHUser + "@127.0.0.1" }
 
 // buildUserData renders the cloud-init cloud-config that provisions the guest:
-// the bloud user with our SSH key, the podman toolchain, the virtio-9p project
-// mount (mirroring Lima's virtiofs mount), and a ready marker. Mount failures are
-// non-fatal so the VM always comes up; the dev loop surfaces mount issues later.
-func buildUserData(instance, projectDir, pubKey string) string {
+// the bloud user with our SSH key (uid pinned to the host uid so rsync/podman
+// ownership maps cleanly), the podman toolchain, the podman API socket (the
+// host-agent's podman client needs /run/user/1000/podman/podman.sock), and a
+// ready marker. The project is copied in later via rsync (syncProject), not a
+// live mount.
+func buildUserData(instance, projectDir, pubKey string, hostUID int) string {
 	return fmt.Sprintf(`#cloud-config
 disable_root: true
 ssh_pwauth: false
 users:
   - name: bloud
+    uid: %d
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - %s
@@ -278,16 +336,24 @@ packages:
   - unzip
   - curl
   - jq
+  - rsync
   - ldap-utils
 runcmd:
-  - modprobe virtio-9p || true
-  - mkdir -p %s
-  - sh -c 'echo "host0 %s 9p trans=virtio,version=9p2000.L,msize=131072 0 0" >> /etc/fstab' || true
-  - mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072 host0 %s || true
+  - mkdir -p %s && chown bloud:bloud %s
   - loginctl enable-linger bloud
-  - mkdir -p %s
+  - systemctl --user enable --now podman.socket
+  - mkdir -p %s && chown bloud:bloud %s
   - touch %s
-`, pubKey, projectDir, projectDir, projectDir, qemuRemoteDir, qemuReadyMark)
+`, hostUID, pubKey, projectDir, projectDir, qemuRemoteDir, qemuRemoteDir, qemuReadyMark)
+}
+
+// hostForwardPort returns the host-side port for a guest port, defaulting to the
+// guest port itself. BLOUD_QEMU_FWD_<guestport> overrides it for busy hosts.
+func hostForwardPort(guestPort string) string {
+	if v := os.Getenv("BLOUD_QEMU_FWD_" + guestPort); v != "" {
+		return v
+	}
+	return guestPort
 }
 
 func (b *QEMUBackend) run(ctx context.Context, name string, args ...string) (string, error) {
