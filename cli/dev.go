@@ -62,27 +62,73 @@ func limaInstance() string {
 	return "bloud-dev"
 }
 
+func qemuInstance() string {
+	if v := os.Getenv("BLOUD_QEMU_INSTANCE"); v != "" {
+		return v
+	}
+	return "bloud-qemu"
+}
+
+// backendName returns the selected runtime backend: "lima" (macOS, default) or
+// "qemu" (Linux), from BLOUD_BACKEND.
+func backendName() string {
+	if v := os.Getenv("BLOUD_BACKEND"); v != "" {
+		return v
+	}
+	return "lima"
+}
+
+// vmInstance returns the current backend's instance name.
+func vmInstance() string {
+	if backendName() == "qemu" {
+		return qemuInstance()
+	}
+	return limaInstance()
+}
+
+// vmLabel is the human-readable VM name for the selected backend.
+func vmLabel() string {
+	if backendName() == "qemu" {
+		return "QEMU VM"
+	}
+	return "Lima VM"
+}
+
+// vmStartHint is the command shown to start the selected backend's VM.
+func vmStartHint() string {
+	if backendName() == "qemu" {
+		return "BLOUD_BACKEND=qemu ./bloud dev"
+	}
+	return "limactl start " + limaInstance()
+}
+
 // cmdStart prints usage guidance — the real dev loop is ./bloud dev.
 func cmdStart() int {
 	fmt.Println("Start the dev environment:")
 	fmt.Println()
-	fmt.Println("  ./bloud dev          Build, deploy to Lima VM, and run host-agent (Ctrl-C to stop)")
+	fmt.Println("  ./bloud dev          Build, deploy to runtime VM, and run host-agent (Ctrl-C to stop)")
 	fmt.Println()
-	fmt.Println("Prerequisites:")
-	fmt.Println("  limactl create --name=bloud-dev dev/lima.yaml")
-	fmt.Println("  limactl start bloud-dev")
-	fmt.Println("  limactl shell bloud-dev bash dev/setup.sh")
+	if backendName() == "qemu" {
+		fmt.Println("Prerequisites (QEMU backend):")
+		fmt.Println("  BLOUD_BACKEND=qemu ./bloud dev   # provisions .bloud/qemu/bloud-qemu, boots VM")
+		fmt.Println("  ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1 bash dev/setup.sh")
+	} else {
+		fmt.Println("Prerequisites:")
+		fmt.Println("  limactl create --name=bloud-dev dev/lima.yaml")
+		fmt.Println("  limactl start bloud-dev")
+		fmt.Println("  limactl shell bloud-dev bash dev/setup.sh")
+	}
 	return 0
 }
 
 func cmdStop() int {
-	lima := limaInstance()
+	inst := vmInstance()
 	bk, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
-	log("Stopping host-agent on " + lima)
+	log("Stopping host-agent on " + inst)
 	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
 		Command: `pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop apps-*.service 2>/dev/null; true`,
 	}, os.Stdout, os.Stderr)
@@ -95,9 +141,9 @@ func cmdStop() int {
 }
 
 func cmdStatus() int {
-	lima := limaInstance()
+	inst := vmInstance()
 	fmt.Println()
-	fmt.Printf("  Lima VM:  %s\n", lima)
+	fmt.Printf("  %s:  %s\n", vmLabel(), inst)
 
 	bk, err := devBackend()
 	if err != nil {
@@ -112,7 +158,7 @@ func cmdStatus() int {
 	} else {
 		fmt.Printf("  VM status: %sStopped%s\n", colorRed, colorReset)
 		fmt.Println()
-		fmt.Println("  Start the VM with: limactl start " + lima)
+		fmt.Println("  Start the VM with: " + vmStartHint())
 		return 0
 	}
 
@@ -133,13 +179,13 @@ func cmdStatus() int {
 }
 
 func cmdLogs() int {
-	lima := limaInstance()
+	inst := vmInstance()
 	bk, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
-	log("Streaming host-agent logs from " + lima + " (Ctrl-C to stop)...")
+	log("Streaming host-agent logs from " + inst + " (Ctrl-C to stop)...")
 	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
 		Command: `journalctl --user -u host-agent -f 2>/dev/null || journalctl -f 2>/dev/null`,
 	}, os.Stdout, os.Stderr)
@@ -151,7 +197,7 @@ func cmdLogs() int {
 }
 
 func cmdAttach() int {
-	lima := limaInstance()
+	inst := vmInstance()
 	bk, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
@@ -162,9 +208,9 @@ func cmdAttach() int {
 		errorf("Backend host does not support interactive shells")
 		return 1
 	}
-	log("Opening shell on " + lima + " (type 'exit' to leave)...")
+	log("Opening shell on " + inst + " (type 'exit' to leave)...")
 	if err := sshex.InteractiveShell(context.Background(), os.Stdout, os.Stderr, os.Stdin); err != nil && !isSignalExit(err) {
-		errorf("Failed to open shell on "+lima+": %v", err)
+		errorf("Failed to open shell on "+inst+": %v", err)
 		return 1
 	}
 	return 0
@@ -213,7 +259,7 @@ func cmdServices() int {
 }
 
 func cmdReset() int {
-	lima := limaInstance()
+	inst := vmInstance()
 	bk, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
@@ -222,7 +268,7 @@ func cmdReset() int {
 	host := bk.Host()
 	ex := host.Executor()
 
-	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", lima)
+	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", inst)
 	fmt.Printf("The VM itself is kept — only data, containers, and the database are removed.\n")
 	fmt.Print("Continue? [y/N] ")
 	var resp string
@@ -274,8 +320,8 @@ rm -f /var/tmp/bloud-dev-runtime/bloud.db
 }
 
 func cmdDestroy() int {
-	lima := limaInstance()
-	fmt.Printf("This will stop and delete the Lima VM '%s'.\n", lima)
+	inst := vmInstance()
+	fmt.Printf("This will stop and delete the %s '%s'.\n", vmLabel(), inst)
 	fmt.Print("Continue? [y/N] ")
 	var resp string
 	fmt.Scanln(&resp)
@@ -288,7 +334,7 @@ func cmdDestroy() int {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
-	log("Deleting " + lima + "...")
+	log("Deleting " + inst + "...")
 	if err := bk.Destroy(context.Background()); err != nil {
 		errorf("Failed to delete VM: %v", err)
 		return 1
@@ -343,13 +389,18 @@ func installApp(apiPort int, appName string) int {
 	return 0
 }
 
-// devBackend builds the Lima backend for the current project.
-func devBackend() (*backend.LimaBackend, error) {
+// devBackend builds the selected backend for the current project.
+func devBackend() (backend.Backend, error) {
 	root, err := getProjectRoot()
 	if err != nil {
 		return nil, err
 	}
-	return backend.NewLimaBackend(limaInstance(), root), nil
+	switch backendName() {
+	case "qemu":
+		return backend.NewQEMUBackend(qemuInstance(), root), nil
+	default:
+		return backend.NewLimaBackend(limaInstance(), root), nil
+	}
 }
 
 func cmdDev() int {
@@ -359,38 +410,38 @@ func cmdDev() int {
 		return 1
 	}
 
-	bk := backend.NewLimaBackend(limaInstance(), root)
+	bk, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
+
+	// Provision the VM if it is not already running. This is a no-op when the
+	// guest is already up (Lima: already created+started; QEMU: image+seed
+	// present and guest reachable), so it is safe for both backends.
+	log("Provisioning " + vmLabel())
+	if err := bk.Create(context.Background()); err != nil {
+		errorf("Failed to provision VM: %v", err)
+		return 1
+	}
+
 	host := bk.Host()
 	ex := host.Executor()
 	dirs := host.DataDirs()
 	goarch := runtime.GOARCH
 
 	// Clean slate: remove managed containers before the host-agent takes over.
-	// Also remove legacy dev containers (bloud-dev-postgres, bloud-dev-redis) that
-	// predate the host-agent self-bootstrap and would hold the ports.
+	// Also remove any stale legacy dev containers (bloud-dev-postgres,
+	// bloud-dev-redis, dev_* compose names) that predate the host-agent
+	// self-bootstrap. There is no shared postgres/redis compose stack anymore —
+	// apps own their infra containers (e.g. apps-authentik-postgres) via
+	// metadata.yaml containers blocks, so the host-agent is the single manager.
 	// apps-traefik is included because it uses host network and holds port 8080.
-	// Stale compose-created authentik containers (apps-authentik-server, apps-authentik-ldap
-	// and their dev_* dependents) are removed too — they are no longer part of the
-	// shared infra compose stack (postgres/redis only) and would otherwise block the
-	// orchestrator from recreating authentik (podman refuses to remove a container
-	// that still has dependent containers).
 	log("Stopping managed app containers")
 	if err := ex.RunStream(context.Background(), executor.RunSpec{
 		Command: `podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; true`,
 	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to stop managed app containers: %v", err)
-		return 1
-	}
-
-	// Ensure shared infra (postgres, redis) is running via the compose stack.
-	// The host-agent expects Postgres on localhost:5432 (app databases) and
-	// Redis on localhost:6379 (sessions). Compose recreates containers whose
-	// config changed (e.g. redis gaining the published 6379 port).
-	log("Ensuring shared infra (postgres, redis)")
-	if err := ex.RunStream(context.Background(), executor.RunSpec{
-		Command: fmt.Sprintf("cd %s/dev && podman-compose up -d postgres redis 2>&1", root),
-	}, os.Stdout, os.Stderr); err != nil {
-		errorf("Failed to start shared infra: %v", err)
 		return 1
 	}
 

@@ -37,5 +37,8 @@
   "packageManager": "npm@10.0.0",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
   }
 }

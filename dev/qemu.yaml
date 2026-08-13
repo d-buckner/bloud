@@ -1,0 +1,34 @@
+# QEMU VM for Bloud local development (x86_64 via KVM on Linux).
+#
+# This file documents the QEMU backend's spec; the backend hardcodes it (same
+# convention as dev/lima.yaml for Lima). Select with:
+#
+#   BLOUD_BACKEND=qemu ./bloud dev
+#
+# Runtime artifacts live under .bloud/qemu/<instance>/ (gitignored).
+instance: bloud-qemu
+arch: x86_64
+accel: kvm
+machine: q35
+cpus: 4
+memory: 4GiB
+disk: 30GiB
+image:
+  url: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
+ssh:
+  host: 127.0.0.1
+  port: 2222      # hostfwd from guest :22
+  user: bloud
+mount:
+  type: virtio-9p
+  tag: host0
+  path: "~/Projects/bloud"   # host project dir, mounted at the same path in guest
+portForwards:
+  - guestPort: 22     # ssh -> host 2222
+  - guestPort: 3000   # host-agent
+  - guestPort: 5432   # postgres
+  - guestPort: 8080   # traefik
+  - guestPort: 8096   # jellyfin
+  - guestPort: 9000   # authentik
+provision:
+  - mode: cloud-init  # NoCloud seed: packages + bloud user + lingering + 9p mount

@@ -217,7 +217,10 @@ postgres and redis containers declared in `containers:` metadata.
 
 ## Dev Environment
 
-Lima VM (Debian, Apple Virtualization) + rootless Podman:
+Two interchangeable VM backends, selected via `BLOUD_BACKEND` (`lima` default on
+macOS, `qemu` for Linux):
+
+Lima VM (Debian, Apple Virtualization) — macOS:
 
 ```
 macOS host
@@ -229,4 +232,14 @@ macOS host
         └── host-agent binary (:3000, systemd user service)
 ```
 
-Ports 3000 and 8080 are forwarded to macOS localhost by `./bloud dev`.
+QEMU VM (Debian, KVM) — Linux (`BLOUD_BACKEND=qemu ./bloud dev`):
+
+```
+Linux host
+  └── QEMU VM "bloud-qemu" (qemu-system-x86_64, KVM, hostfwd SSH :2222)
+        ├── Podman (rootless, provisioned via cloud-init NoCloud seed)
+        │   └── same service stack as Lima
+        └── host-agent binary (:3000)
+```
+
+Ports 3000 and 8080 are forwarded to the host localhost by `./bloud dev`.

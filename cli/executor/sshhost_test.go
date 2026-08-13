@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"io"
 	"testing"
 )
@@ -23,6 +22,17 @@ func (s *stubExecutor) Run(_ context.Context, spec RunSpec) (ExecResult, error) 
 func (s *stubExecutor) RunStream(_ context.Context, _ RunSpec, _, _ io.Writer) error { return nil }
 func (s *stubExecutor) CopyTo(_ context.Context, _, _ string) error                  { return nil }
 func (s *stubExecutor) CopyFrom(_ context.Context, _, _ string) error                { return nil }
+
+// stubTransport implements the Transport interface for host-level tests.
+type stubTransport struct {
+	stubExecutor
+	ready bool
+}
+
+func (s *stubTransport) InteractiveShell(_ context.Context, _, _ io.Writer, _ io.Reader) error {
+	return nil
+}
+func (s *stubTransport) Ready() bool { return s.ready }
 
 func TestIsVMNameRunning(t *testing.T) {
 	tests := []struct {
@@ -56,40 +66,26 @@ func TestIsVMNamePresent(t *testing.T) {
 }
 
 func TestSSHHostReadyRunning(t *testing.T) {
-	local := &stubExecutor{runResult: ExecResult{Stdout: `{"name":"bloud-dev","status":"Running"}` + "\n"}}
-	host := NewSSHHost("bloud-dev", &stubExecutor{}, local, nil, DataDirs{})
+	remote := &stubTransport{ready: true}
+	host := NewSSHHost(remote, nil, DataDirs{})
 	if !host.Ready() {
 		t.Error("Ready() = false, want true")
-	}
-	if !local.runCalled {
-		t.Fatal("local executor was not invoked")
-	}
-	if local.runSpec.Command != "limactl" || len(local.runSpec.Args) != 2 || local.runSpec.Args[0] != "list" || local.runSpec.Args[1] != "--json" {
-		t.Fatalf("ready check invoked %q %q, want limactl list --json", local.runSpec.Command, local.runSpec.Args)
 	}
 }
 
 func TestSSHHostReadyStopped(t *testing.T) {
-	local := &stubExecutor{runResult: ExecResult{Stdout: `{"name":"bloud-dev","status":"Stopped"}` + "\n"}}
-	host := NewSSHHost("bloud-dev", &stubExecutor{}, local, nil, DataDirs{})
-	if host.Ready() {
-		t.Error("Ready() = true, want false")
-	}
-}
-
-func TestSSHHostReadyError(t *testing.T) {
-	local := &stubExecutor{runErr: errors.New("limactl not found")}
-	host := NewSSHHost("bloud-dev", &stubExecutor{}, local, nil, DataDirs{})
+	remote := &stubTransport{ready: false}
+	host := NewSSHHost(remote, nil, DataDirs{})
 	if host.Ready() {
 		t.Error("Ready() = true, want false")
 	}
 }
 
 func TestSSHHostDescription(t *testing.T) {
-	remote := &stubExecutor{}
+	remote := &stubTransport{}
 	ports := map[string]string{"host-agent": "3000", "traefik": "8080"}
 	dirs := DataDirs{HostAgentDir: "/runtime/host-agent", DataDir: "/runtime/data", AppsDir: "/repo/apps"}
-	host := NewSSHHost("bloud-dev", remote, &stubExecutor{}, ports, dirs)
+	host := NewSSHHost(remote, ports, dirs)
 
 	if host.Executor() != remote {
 		t.Error("Executor() did not return the remote executor")
