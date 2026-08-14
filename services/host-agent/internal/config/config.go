@@ -2,9 +2,11 @@ package config
 
 import (
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 )
@@ -16,6 +18,10 @@ type Config struct {
 	AppsDir           string // Path to apps/ directory containing app definitions
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	RedisAddr         string // Redis address for session storage
+	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
+	// for host-agent API requests. Used by dev VMs (e.g. QEMU slirp NAT where
+	// host-forwarded connections arrive from the gateway, not loopback).
+	TrustedLocalNets []string
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
@@ -87,7 +93,8 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		DataDir:                dataDir,
 		AppsDir:                appsDir,
 		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
-		RedisAddr:              getEnv("BLOUD_REDIS_ADDR", "localhost:6379"),
+		RedisAddr:              getEnv("BLOUD_REDIS_ADDR", "127.0.0.1:6379"),
+		TrustedLocalNets:       splitNets(getEnv("BLOUD_TRUSTED_LOCAL_NETS", "")),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
@@ -118,6 +125,26 @@ func getDefaultDataDir() string {
 }
 
 // getEnv reads an environment variable or returns a default value
+// splitNets parses a comma-separated list of IPs/CIDRs into a slice.
+// Invalid entries are dropped; an empty value yields no trusted nets.
+func splitNets(raw string) []string {
+	var nets []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		_, _, err := net.ParseCIDR(part)
+		if err != nil {
+			if ip := net.ParseIP(part); ip == nil {
+				continue // neither CIDR nor bare IP — drop
+			}
+		}
+		nets = append(nets, part)
+	}
+	return nets
+}
+
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value

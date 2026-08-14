@@ -86,6 +86,18 @@ func vmInstance() string {
 	return limaInstance()
 }
 
+// trustedLocalNetsEnv returns the BLOUD_TRUSTED_LOCAL_NETS value for the
+// host-agent. QEMU slirp NAT presents host-forwarded connections from the
+// gateway (10.0.2.2), not loopback, so the host-agent must trust that subnet
+// for host-side API calls (e.g. ./bloud install, e2e). Lima forwards to
+// loopback, so no trusted nets are needed.
+func trustedLocalNetsEnv() string {
+	if backendName() == "qemu" {
+		return "10.0.2.0/24"
+	}
+	return ""
+}
+
 // vmLabel is the human-readable VM name for the selected backend.
 func vmLabel() string {
 	if backendName() == "qemu" {
@@ -537,6 +549,7 @@ func cmdDev() int {
 			"BLOUD_DATA_DIR":           dirs.DataDir,
 			"BLOUD_APPS_DIR":           dirs.AppsDir,
 			"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
+			"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(),
 		},
 	}, os.Stdout, os.Stderr)
 	if runErr != nil && !isSignalExit(runErr) {

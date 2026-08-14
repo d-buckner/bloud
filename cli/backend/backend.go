@@ -16,4 +16,6 @@ type Backend interface {
 	Destroy(ctx context.Context) error
 	// Host returns the runtime host for executing commands.
 	Host() executor.Host
+	// SyncProject copies the host project into the guest.
+	SyncProject(ctx context.Context) error
 }

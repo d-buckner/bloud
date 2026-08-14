@@ -63,6 +63,8 @@ func (b *LimaBackend) Destroy(ctx context.Context) error {
 	}
 	return nil
 }
+// SyncProject is a no-op for Lima — the project is mounted via 9p.
+func (b *LimaBackend) SyncProject(ctx context.Context) error { return nil }
 
 // Host returns the runtime host backed by the Lima VM.
 func (b *LimaBackend) Host() executor.Host {

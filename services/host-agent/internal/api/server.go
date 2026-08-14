@@ -66,6 +66,9 @@ type ServerConfig struct {
 	TSAuthKey         string
 	HostLabel         string
 	RedisAddr         string
+	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
+	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
+	TrustedLocalNets []string
 	RefreshAuthentikToken func() string
 	LDAPOutput       *configurator.LDAPOutput
 	Registry         configurator.RegistryInterface
