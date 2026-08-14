@@ -214,7 +214,7 @@ func NewRouter(
 
 		// Authenticated routes
 		api.Group(func(auth chi.Router) {
-			auth.Use(authMiddlewareFn(sessionStore, logger))
+			auth.Use(authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets))
 
 			// User-accessible routes (registered directly)
 			NewAppsRouter(appsMod, auth)
@@ -459,10 +459,10 @@ func rebuildStreamHandler() http.HandlerFunc {
 
 // ---- Middleware ----
 
-func authMiddlewareFn(sessionStore *store.SessionStore, logger *slog.Logger) func(http.Handler) http.Handler {
+func authMiddlewareFn(sessionStore *store.SessionStore, logger *slog.Logger, trustedNets []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isLocalRequest(r) {
+			if isLocalRequest(r, trustedNets) {
 				user := &store.User{Username: "_cli", Role: store.RoleAdmin}
 				ctx := context.WithValue(r.Context(), userContextKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))

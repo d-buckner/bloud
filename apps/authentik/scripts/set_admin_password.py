@@ -1,13 +1,30 @@
 import os
-from authentik.core.models import User
+from authentik.core.models import User, Group
+
+username = 'admin'
+password = os.environ.get('BLOUD_ADMIN_PASSWORD', 'password')
+email = os.environ.get('BLOUD_ADMIN_EMAIL', 'admin@localhost')
+
+user, created = User.objects.get_or_create(
+    username=username,
+    defaults={
+        'name': 'Admin',
+        'email': email,
+        'is_active': True,
+        'path': 'users',
+    },
+)
+user.set_password(password)
+user.email = email
+user.save()
 
 try:
-    user = User.objects.get(username='akadmin')
-    user.set_password(os.environ['BLOUD_ADMIN_PASSWORD'])
-    user.email = os.environ['BLOUD_ADMIN_EMAIL']
-    user.save()
-    print('OK')
-except User.DoesNotExist:
-    print('OK')  # User will be created by bootstrap
-except Exception as e:
-    print(f'ERROR: {e}')
+    group = Group.objects.get(name='authentik Admins')
+    group.users.add(user)
+except Group.DoesNotExist:
+    pass
+
+if created:
+    print(f'OK: created admin user {username}')
+else:
+    print(f'OK: admin user {username} exists')

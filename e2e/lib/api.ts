@@ -2,7 +2,7 @@
 const BASE_URL = process.env.BLOUD_API_URL ?? 'http://localhost:3000';
 
 interface InstalledApp {
-  name: string;
+  catalog_id: string;
   status: string;
   display_name: string;
   is_system: boolean;
@@ -20,8 +20,8 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function getAppStatus(name: string): Promise<string | null> {
-  const apps = await fetchJSON<InstalledApp[]>('/api/apps/installed');
-  const app = apps.find((a) => a.name === name);
+  const body = await fetchJSON<{ apps: InstalledApp[] }>('/api/apps/installed');
+  const app = body.apps.find((a) => a.catalog_id === name);
   return app?.status ?? null;
 }
 

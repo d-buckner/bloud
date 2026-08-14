@@ -80,14 +80,33 @@ func (r *authConfigRef) Ensure() {
 }
 
 // isLocalRequest returns true if the request originates from localhost.
-// Requests from localhost have implicit CLI-level trust.
-func isLocalRequest(r *http.Request) bool {
+// Requests from localhost have implicit CLI-level trust. trustedNets lists
+// additional CIDRs/IPs treated as local (e.g. a dev VM's slirp NAT gateway,
+// where host-forwarded connections arrive from a non-loopback source).
+func isLocalRequest(r *http.Request, trustedNets []string) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, netStr := range trustedNets {
+		if _, cidr, err := net.ParseCIDR(netStr); err == nil {
+			if cidr.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if net.ParseIP(netStr).Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // getUserFromContext retrieves the user from the request context.

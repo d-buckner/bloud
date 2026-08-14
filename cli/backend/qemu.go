@@ -77,15 +77,15 @@ func (b *QEMUBackend) Create(ctx context.Context) error {
 	// Debian cloud images ship no 9p/virtiofs kernel modules, so a live host
 	// mount is unavailable; instead rsync the project into the guest so the
 	// dev loop (compose.yml, apps/, services/) sees a working copy.
-	if err := b.syncProject(ctx); err != nil {
+	if err := b.SyncProject(ctx); err != nil {
 		return fmt.Errorf("sync project into guest: %w", err)
 	}
 	return nil
 }
 
-// syncProject copies the host project dir into the guest (incremental via
+// SyncProject copies the host project dir into the guest (incremental via
 // rsync), skipping heavy/irrelevant dirs. The guest path equals the host path.
-func (b *QEMUBackend) syncProject(ctx context.Context) error {
+func (b *QEMUBackend) SyncProject(ctx context.Context) error {
 	args := []string{
 		"-a", "-e", "ssh -p " + strconv.Itoa(qemuSSHPort) + " -i " + filepath.Join(b.dir, "id_ed25519"),
 		"--exclude=.git", "--exclude=.forgejo", "--exclude=.bloud",

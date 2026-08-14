@@ -114,6 +114,7 @@ func runServer() {
 		TSAuthKey:         cfg.TSAuthKey,
 		HostLabel:         cfg.HostLabel,
 		RedisAddr:         cfg.RedisAddr,
+		TrustedLocalNets:  cfg.TrustedLocalNets,
 		LDAPOutput:        cfg.LDAPOutput(),
 		Registry:          registry,
 		TemplateVars:      templateVars,

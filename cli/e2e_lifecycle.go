@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"codeberg.org/d-buckner/bloud/cli/backend"
 )
 
 const (
@@ -21,7 +24,9 @@ const (
 type lifecycleConfig struct {
 	root       string
 	lima       string
+	qemu       string       // QEMU instance name (auto-provisioned)
 	sshTarget  string
+	sshKeyFile string       // SSH key file for QEMU (auto-derived)
 	envFile    string
 	baseURL    string
 	remoteDir  string
@@ -62,6 +67,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	cfg := lifecycleConfig{
 		root:       root,
 		lima:       getenv("BLOUD_E2E_LIMA_INSTANCE"),
+		qemu:       getenv("BLOUD_E2E_QEMU_INSTANCE"),
 		sshTarget:  getenv("BLOUD_E2E_SSH_TARGET"),
 		envFile:    getenv("BLOUD_E2E_ENV_FILE"),
 		baseURL:    getenv("BLOUD_URL"),
@@ -75,8 +81,13 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if cfg.remoteDir == "" {
 		cfg.remoteDir = "/var/tmp/bloud-e2e-runtime"
 	}
-	if cfg.lima == "" && cfg.sshTarget == "" {
+	if cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "" {
 		cfg.lima = "bloud-dev"
+	}
+	if cfg.qemu != "" && cfg.sshTarget == "" {
+		// Derive SSH target and key from QEMU instance
+		cfg.sshTarget = "bloud@127.0.0.1"
+		cfg.sshKeyFile = filepath.Join(root, ".bloud", "qemu", cfg.qemu, "id_ed25519")
 	}
 	if cfg.envFile == "" && cfg.lima != "" {
 		cfg.envFile = filepath.Join(root, "dev", "host-agent.env")
@@ -96,6 +107,9 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if cfg.traefikDir == "" {
 		cfg.traefikDir = filepath.Join(cfg.remoteDir, "data", "traefik", "dynamic")
 	}
+	if cfg.redisAddr == "" && cfg.qemu != "" {
+		cfg.redisAddr = "127.0.0.1:6379"
+	}
 
 	flags := flag.NewFlagSet("e2e lifecycle", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -110,8 +124,12 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if flags.NArg() != 0 {
 		return cfg, false, fmt.Errorf("unexpected lifecycle arguments: %s", strings.Join(flags.Args(), " "))
 	}
-	if cfg.lima != "" && cfg.sshTarget != "" {
-		return cfg, false, fmt.Errorf("set only one of BLOUD_E2E_LIMA_INSTANCE or BLOUD_E2E_SSH_TARGET")
+	if cfg.lima != "" && (cfg.qemu != "" || cfg.sshTarget != "") {
+		return cfg, false, fmt.Errorf("set only one of BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
+	}
+	if cfg.qemu != "" && cfg.sshTarget != "" && cfg.sshKeyFile == "" {
+		// sshTarget was set manually, not derived from QEMU
+		return cfg, false, fmt.Errorf("BLOUD_E2E_QEMU_INSTANCE and BLOUD_E2E_SSH_TARGET cannot be used together")
 	}
 	if cfg.envFile == "" {
 		return cfg, false, fmt.Errorf("BLOUD_E2E_ENV_FILE is required")
@@ -198,6 +216,9 @@ func (r *lifecycle) run() (runErr error) {
 		return fmt.Errorf("host preflight: %w", err)
 	}
 	if err := r.prepareLimaTarget(); err != nil {
+		return err
+	}
+	if err := r.prepareQEMUTarget(); err != nil {
 		return err
 	}
 
@@ -310,6 +331,9 @@ func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
 	if cfg.redisAddr != "" {
 		fmt.Fprintf(&extraEnv, "Environment=BLOUD_REDIS_ADDR=%s\n", cfg.redisAddr)
 	}
+	if cfg.qemu != "" {
+		fmt.Fprintf(&extraEnv, "Environment=BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24\n")
+	}
 	return fmt.Sprintf(`[Unit]
 Description=Bloud E2E host agent
 After=network-online.target podman.socket
@@ -415,21 +439,33 @@ func (r *lifecycle) remoteOutput(script string, args ...string) (string, error) 
 
 func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 	commandArgs := []string{}
-	name := "ssh"
 	if r.cfg.lima != "" {
-		name = "limactl"
+		name := "limactl"
 		commandArgs = append(commandArgs, "shell", "--start", r.cfg.lima, "bash", "-se", "--")
-	} else {
-		commandArgs = append(commandArgs, r.cfg.sshTarget, "bash", "-se", "--")
-	}
-	for _, arg := range args {
-		if r.cfg.lima != "" {
+		for _, arg := range args {
 			commandArgs = append(commandArgs, arg)
-		} else {
+		}
+		return exec.Command(name, commandArgs...)
+	} else if r.cfg.qemu != "" {
+		name := "ssh"
+		commandArgs = append(commandArgs,
+			"-i", r.cfg.sshKeyFile,
+			"-p", "2222",
+			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "ConnectTimeout=5",
+			r.cfg.sshTarget, "bash", "-se", "--")
+		for _, arg := range args {
 			commandArgs = append(commandArgs, shellQuote(arg))
 		}
+		return exec.Command(name, commandArgs...)
+	} else {
+		name := "ssh"
+		commandArgs = append(commandArgs, r.cfg.sshTarget, "bash", "-se", "--")
+		for _, arg := range args {
+			commandArgs = append(commandArgs, shellQuote(arg))
+		}
+		return exec.Command(name, commandArgs...)
 	}
-	return exec.Command(name, commandArgs...)
 }
 
 func (r *lifecycle) copyDirectory(source, destination string) error {
@@ -437,16 +473,25 @@ func (r *lifecycle) copyDirectory(source, destination string) error {
 		return r.remoteRun(`rm -rf "$2"
 mkdir -p "$2"
 cp -a "$1/." "$2/"`, source, destination)
+	} else if r.cfg.qemu != "" {
+		sshCmd := fmt.Sprintf("ssh -i %s -p 2222 -o StrictHostKeyChecking=accept-new", shellQuote(r.cfg.sshKeyFile))
+		args := []string{"-a", "--delete", "-e", sshCmd, source + string(os.PathSeparator), r.cfg.sshTarget + ":" + shellQuote(destination) + "/"}
+		return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
+	} else {
+		args := []string{"-a", "--delete", source + string(os.PathSeparator), r.cfg.sshTarget + ":" + shellQuote(destination) + "/"}
+		return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
 	}
-	args := []string{"-a", "--delete", source + string(os.PathSeparator), r.cfg.sshTarget + ":" + shellQuote(destination) + "/"}
-	return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
 }
 
 func (r *lifecycle) copyFile(source, destination string) error {
 	if r.cfg.lima != "" {
 		return r.localRun(r.cfg.root, os.Environ(), "limactl", "copy", source, r.cfg.lima+":"+destination)
+	} else if r.cfg.qemu != "" {
+		sshCmd := fmt.Sprintf("ssh -i %s -p 2222 -o StrictHostKeyChecking=accept-new", shellQuote(r.cfg.sshKeyFile))
+		return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", "-e", sshCmd, source, r.cfg.sshTarget+":"+shellQuote(destination))
+	} else {
+		return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", source, r.cfg.sshTarget+":"+shellQuote(destination))
 	}
-	return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", source, r.cfg.sshTarget+":"+shellQuote(destination))
 }
 
 func (r *lifecycle) remotePath(relative string) string {
@@ -498,6 +543,30 @@ systemctl --user daemon-reload >/dev/null 2>&1 || true`
 	if err := r.remoteRun(script, lifecycleHostAgentUnit, r.cfg.remoteHome, r.cfg.remoteDir); err != nil {
 		errorf("failed to clean up remote deployment: %v", err)
 	}
+}
+
+func (r *lifecycle) prepareQEMUTarget() error {
+	if r.cfg.qemu == "" {
+		return nil
+	}
+	r.step("Provisioning QEMU VM")
+	bk := backend.NewQEMUBackend(r.cfg.qemu, r.cfg.root)
+	if err := bk.Create(context.Background()); err != nil {
+		return fmt.Errorf("QEMU VM provisioning failed: %w", err)
+	}
+	if err := bk.SyncProject(context.Background()); err != nil {
+		return fmt.Errorf("QEMU project sync failed: %w", err)
+	}
+	if r.cfg.redisAddr == "" {
+		if err := r.remoteRun(`if ! timeout 2 bash -c '</dev/tcp/127.0.0.1/6379' 2>/dev/null; then
+  podman rm -f bloud-e2e-redis >/dev/null 2>&1 || true
+  podman run -d --name bloud-e2e-redis -p 127.0.0.1:6379:6379 docker.io/redis:7-alpine >/dev/null
+fi`); err != nil {
+			return fmt.Errorf("prepare QEMU Redis port: %w", err)
+		}
+		r.cfg.redisAddr = "127.0.0.1:6379"
+	}
+	return nil
 }
 
 func (r *lifecycle) prepareLimaTarget() error {
