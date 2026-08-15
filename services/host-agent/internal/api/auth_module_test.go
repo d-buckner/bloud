@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -65,8 +64,7 @@ func TestAuthModule_Logout_ClearsSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, sessStore := newAuthModule(t, cfg)
 
-	ctx := context.Background()
-	sessStore.Create(ctx, "user1", "alice", store.RoleMember)
+	sessStore.Create("user1", "alice", store.RoleMember)
 
 	handler := mod.LogoutHandler()
 
@@ -77,7 +75,7 @@ func TestAuthModule_Logout_ClearsSession(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, w.Code)
 
-	s, _ := sessStore.Get(ctx, "fake-session-alice")
+	s, _ := sessStore.Get("fake-session-alice")
 	assert.Nil(t, s, "session should have been deleted")
 }
 
@@ -140,8 +138,7 @@ func TestAuthHTTP_GetCurrentUser_ValidSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, sessStore := newAuthModule(t, cfg)
 
-	ctx := context.Background()
-	sessStore.Create(ctx, "user1", "bob", store.RoleAdmin)
+	sessStore.Create("user1", "bob", store.RoleAdmin)
 
 	r := chi.NewRouter(); NewAuthRouter(mod, r)
 
@@ -316,8 +313,7 @@ func TestAuthHTTP_Callback_FullFlow(t *testing.T) {
 	assert.True(t, client.exchangeCodeCalled, "ExchangeCode should have been called")
 	assert.True(t, client.getUserInfoCalled, "GetUserInfo should have been called")
 
-	ctx := context.Background()
-	sess, err := sessStore.Get(ctx, "fake-session-testuser")
+	sess, err := sessStore.Get("fake-session-testuser")
 	require.NoError(t, err)
 	require.NotNil(t, sess, "session should have been created")
 	assert.Equal(t, "testuser", sess.Username)

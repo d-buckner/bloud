@@ -84,3 +84,17 @@ type RemoteAppStoreInterface interface {
 
 // Compile-time assertion that RemoteAppStore implements RemoteAppStoreInterface
 var _ RemoteAppStoreInterface = (*RemoteAppStore)(nil)
+
+// SessionStoreInterface defines the interface for managing user sessions.
+type SessionStoreInterface interface {
+	Create(userID, username string, role Role) (*Session, error)
+	Get(sessionID string) (*Session, error)
+	Delete(sessionID string) error
+	DeleteByUserID(userID string) error
+	DeleteByUsername(username string) error
+	Refresh(sessionID string) error
+	PurgeExpired() (int64, error)
+}
+
+// Compile-time assertion that SessionStore implements SessionStoreInterface
+var _ SessionStoreInterface = (*SessionStore)(nil)

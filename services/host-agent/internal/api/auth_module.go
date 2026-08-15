@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -14,11 +13,11 @@ import (
 )
 
 // sessionStoreInterface abstracts session persistence, allowing in-memory
-// fakes for unit tests without needing a live Redis.
+// fakes for unit tests without needing a live session store.
 type sessionStoreInterface interface {
-	Create(ctx context.Context, userID string, username string, role store.Role) (*store.Session, error)
-	Get(ctx context.Context, sessionID string) (*store.Session, error)
-	Delete(ctx context.Context, sessionID string) error
+	Create(userID, username string, role store.Role) (*store.Session, error)
+	Get(sessionID string) (*store.Session, error)
+	Delete(sessionID string) error
 }
 
 // AuthentikClientInterface abstracts the Authentik OIDC client so we can
@@ -101,7 +100,7 @@ func newFakeSessionStore() *fakeSessionStore {
 	return &fakeSessionStore{sessions: make(map[string]*store.Session)}
 }
 
-func (f *fakeSessionStore) Create(_ context.Context, userID string, username string, role store.Role) (*store.Session, error) {
+func (f *fakeSessionStore) Create(userID string, username string, role store.Role) (*store.Session, error) {
 	s := &store.Session{
 		ID:        "fake-session-" + username,
 		UserID:    userID,
@@ -113,7 +112,7 @@ func (f *fakeSessionStore) Create(_ context.Context, userID string, username str
 	return s, nil
 }
 
-func (f *fakeSessionStore) Get(_ context.Context, sessionID string) (*store.Session, error) {
+func (f *fakeSessionStore) Get(sessionID string) (*store.Session, error) {
 	s, ok := f.sessions[sessionID]
 	if !ok {
 		return nil, nil
@@ -121,7 +120,7 @@ func (f *fakeSessionStore) Get(_ context.Context, sessionID string) (*store.Sess
 	return s, nil
 }
 
-func (f *fakeSessionStore) Delete(_ context.Context, sessionID string) error {
+func (f *fakeSessionStore) Delete(sessionID string) error {
 	delete(f.sessions, sessionID)
 	return nil
 }
@@ -310,8 +309,7 @@ func (m *authModule) CallbackHandler() http.HandlerFunc {
 			}
 		}
 
-		ctx := r.Context()
-		session, err := m.sessionStore.Create(ctx, username, username, role)
+		session, err := m.sessionStore.Create(username, username, role)
 		if err != nil {
 			m.logger.Error("failed to create session", "error", err)
 			http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -342,8 +340,7 @@ func (m *authModule) LogoutHandler() http.HandlerFunc {
 		// Get session from cookie and delete from store if available
 		cookie, err := r.Cookie(sessionCookieName)
 		if err == nil && cookie.Value != "" && m.sessionStore != nil {
-			ctx := r.Context()
-			if err := m.sessionStore.Delete(ctx, cookie.Value); err != nil {
+			if err := m.sessionStore.Delete(cookie.Value); err != nil {
 				m.logger.Warn("failed to delete session", "error", err)
 			}
 		}
@@ -391,8 +388,7 @@ func (m *authModule) GetCurrentUserHandler() http.HandlerFunc {
 			return
 		}
 
-		ctx := r.Context()
-		session, err := m.sessionStore.Get(ctx, cookie.Value)
+		session, err := m.sessionStore.Get(cookie.Value)
 		if err != nil || session == nil {
 			respondJSON(w, http.StatusUnauthorized, map[string]string{
 				"error": "Not authenticated",

@@ -3,21 +3,29 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 const (
-	// Session configuration
-	sessionPrefix     = "bloud:session:"
 	defaultSessionTTL = 7 * 24 * time.Hour // 7 days
+
+	// sessionPurgeInterval is how often the background purger removes
+	// expired sessions. SQLite has no TTL, so without this, sessions of
+	// users who never return would accumulate forever.
+	sessionPurgeInterval = 1 * time.Hour
 )
 
-// Session represents an authenticated user session
+// formatSessionTime renders a time as RFC3339 in UTC so stored values
+// sort correctly as strings and compare consistently in SQL.
+func formatSessionTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
+// Session represents an authenticated user session.
 type Session struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
@@ -27,34 +35,22 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// SessionStore manages sessions in Redis
+// SessionStore manages sessions in SQLite.
 type SessionStore struct {
-	client *redis.Client
-	ttl    time.Duration
+	db  *sql.DB
+	ttl time.Duration
 }
 
-// NewSessionStore creates a new Redis-backed session store
-func NewSessionStore(redisAddr string) (*SessionStore, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr: redisAddr,
-	})
-
-	// Test connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
-	}
-
+// NewSessionStore creates a new SQLite-backed session store.
+func NewSessionStore(db *sql.DB) *SessionStore {
 	return &SessionStore{
-		client: client,
-		ttl:    defaultSessionTTL,
-	}, nil
+		db:  db,
+		ttl: defaultSessionTTL,
+	}
 }
 
-// Create creates a new session for a user
-func (s *SessionStore) Create(ctx context.Context, userID string, username string, role Role) (*Session, error) {
+// Create creates a new session for a user.
+func (s *SessionStore) Create(userID, username string, role Role) (*Session, error) {
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
@@ -70,155 +66,156 @@ func (s *SessionStore) Create(ctx context.Context, userID string, username strin
 		ExpiresAt: now.Add(s.ttl),
 	}
 
-	data, err := json.Marshal(session)
+	_, err = s.db.Exec(
+		"INSERT INTO sessions (id, user_id, username, role, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+		session.ID, session.UserID, session.Username, string(session.Role),
+		formatSessionTime(session.CreatedAt), formatSessionTime(session.ExpiresAt),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal session: %w", err)
-	}
-
-	key := sessionPrefix + sessionID
-	if err := s.client.Set(ctx, key, data, s.ttl).Err(); err != nil {
 		return nil, fmt.Errorf("failed to store session: %w", err)
 	}
 
 	return session, nil
 }
 
-// Get retrieves a session by ID
-func (s *SessionStore) Get(ctx context.Context, sessionID string) (*Session, error) {
-	key := sessionPrefix + sessionID
-	data, err := s.client.Get(ctx, key).Bytes()
-	if err == redis.Nil {
+// Get retrieves a session by ID.
+func (s *SessionStore) Get(sessionID string) (*Session, error) {
+	var createdAt, expiresAt string
+	var userID, username, role string
+
+	err := s.db.QueryRow(
+		"SELECT user_id, username, role, created_at, expires_at FROM sessions WHERE id = ?",
+		sessionID,
+	).Scan(&userID, &username, &role, &createdAt, &expiresAt)
+	if err == sql.ErrNoRows {
 		return nil, nil // Session not found
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
-	var session Session
-	if err := json.Unmarshal(data, &session); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
+	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse created_at: %w", err)
+	}
+	parsedExpiresAt, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse expires_at: %w", err)
 	}
 
-	return &session, nil
+	return &Session{
+		ID:        sessionID,
+		UserID:    userID,
+		Username:  username,
+		Role:      Role(role),
+		CreatedAt: parsedCreatedAt,
+		ExpiresAt: parsedExpiresAt,
+	}, nil
 }
 
-// Delete removes a session
-func (s *SessionStore) Delete(ctx context.Context, sessionID string) error {
-	key := sessionPrefix + sessionID
-	if err := s.client.Del(ctx, key).Err(); err != nil {
+// Delete removes a session.
+func (s *SessionStore) Delete(sessionID string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
+	if err != nil {
 		return fmt.Errorf("failed to delete session: %w", err)
 	}
 	return nil
 }
 
-// DeleteByUserID removes all sessions for a user
-func (s *SessionStore) DeleteByUserID(ctx context.Context, userID string) error {
-	// Scan for all sessions and delete those belonging to this user
-	// This is O(n) but acceptable for session counts we expect
-	var cursor uint64
-	for {
-		keys, nextCursor, err := s.client.Scan(ctx, cursor, sessionPrefix+"*", 100).Result()
-		if err != nil {
-			return fmt.Errorf("failed to scan sessions: %w", err)
-		}
-
-		for _, key := range keys {
-			data, err := s.client.Get(ctx, key).Bytes()
-			if err != nil {
-				continue
-			}
-
-			var session Session
-			if err := json.Unmarshal(data, &session); err != nil {
-				continue
-			}
-
-			if session.UserID == userID {
-				s.client.Del(ctx, key)
-			}
-		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
+// DeleteByUserID removes all sessions for a user.
+func (s *SessionStore) DeleteByUserID(userID string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete sessions by user ID: %w", err)
 	}
-
 	return nil
 }
 
-// DeleteByUsername removes all sessions for a user by username
-func (s *SessionStore) DeleteByUsername(ctx context.Context, username string) error {
-	var cursor uint64
-	for {
-		keys, nextCursor, err := s.client.Scan(ctx, cursor, sessionPrefix+"*", 100).Result()
-		if err != nil {
-			return fmt.Errorf("failed to scan sessions: %w", err)
-		}
-
-		for _, key := range keys {
-			data, err := s.client.Get(ctx, key).Bytes()
-			if err != nil {
-				continue
-			}
-
-			var session Session
-			if err := json.Unmarshal(data, &session); err != nil {
-				continue
-			}
-
-			if session.Username == username {
-				s.client.Del(ctx, key)
-			}
-		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
+// DeleteByUsername removes all sessions for a user by username.
+func (s *SessionStore) DeleteByUsername(username string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE username = ?", username)
+	if err != nil {
+		return fmt.Errorf("failed to delete sessions by username: %w", err)
 	}
-
 	return nil
 }
 
-// Refresh extends a session's TTL
-func (s *SessionStore) Refresh(ctx context.Context, sessionID string) error {
-	key := sessionPrefix + sessionID
-
+// Refresh extends a session's TTL.
+func (s *SessionStore) Refresh(sessionID string) error {
 	// Get current session
-	data, err := s.client.Get(ctx, key).Bytes()
-	if err == redis.Nil {
-		return fmt.Errorf("session not found")
-	}
+	session, err := s.Get(sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
-
-	var session Session
-	if err := json.Unmarshal(data, &session); err != nil {
-		return fmt.Errorf("failed to unmarshal session: %w", err)
+	if session == nil {
+		return fmt.Errorf("session not found")
 	}
 
 	// Update expiry
-	session.ExpiresAt = time.Now().Add(s.ttl)
-	newData, err := json.Marshal(session)
+	newExpiresAt := time.Now().Add(s.ttl)
+	_, err = s.db.Exec(
+		"UPDATE sessions SET expires_at = ? WHERE id = ?",
+		formatSessionTime(newExpiresAt), sessionID,
+	)
 	if err != nil {
-		return fmt.Errorf("failed to marshal session: %w", err)
-	}
-
-	if err := s.client.Set(ctx, key, newData, s.ttl).Err(); err != nil {
 		return fmt.Errorf("failed to update session: %w", err)
 	}
-
 	return nil
 }
 
-// Close closes the Redis connection
-func (s *SessionStore) Close() error {
-	return s.client.Close()
+// PurgeExpired removes all sessions whose expiry has passed and returns
+// the number of rows removed.
+func (s *SessionStore) PurgeExpired() (int64, error) {
+	res, err := s.db.Exec(
+		"DELETE FROM sessions WHERE expires_at <= ?",
+		formatSessionTime(time.Now()),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to purge expired sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count purged sessions: %w", err)
+	}
+	return n, nil
 }
 
-// generateSessionID creates a cryptographically secure random session ID
+// StartSessionPurger removes expired sessions immediately and then
+// periodically until ctx is cancelled. Intended to be called once at
+// startup; the goroutine exits when the context is done.
+func StartSessionPurger(ctx context.Context, s *SessionStore, logger *slog.Logger) {
+	go func() {
+		purgeExpiredSessions(ctx, s, logger)
+		ticker := time.NewTicker(sessionPurgeInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				purgeExpiredSessions(ctx, s, logger)
+			}
+		}
+	}()
+}
+
+func purgeExpiredSessions(ctx context.Context, s *SessionStore, logger *slog.Logger) {
+	n, err := s.PurgeExpired()
+	if err != nil {
+		logger.Error("session purge failed", "error", err)
+		return
+	}
+	if n > 0 {
+		logger.Info("purged expired sessions", "count", n)
+	}
+}
+
+// Close is a no-op for SQLite session store (no connection to close).
+func (s *SessionStore) Close() error {
+	return nil
+}
+
+// generateSessionID creates a cryptographically secure random session ID.
 func generateSessionID() (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {

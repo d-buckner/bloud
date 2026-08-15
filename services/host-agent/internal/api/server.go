@@ -65,7 +65,6 @@ type ServerConfig struct {
 	AuthentikPort     int
 	TSAuthKey         string
 	HostLabel         string
-	RedisAddr         string
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
 	TrustedLocalNets []string

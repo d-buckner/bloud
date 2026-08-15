@@ -23,7 +23,7 @@ func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
 	t.Helper()
 	tailnetStore := &FakeTailnetStore{}
 	prefsStore := NewFakePreferencesStore()
-	sessionStore := (*store.SessionStore)(nil) // nil for tests — session invalidation tested via direct fakes
+	var sessionStore store.SessionStoreInterface = nil // nil for tests — session invalidation tested via direct fakes
 	authClient := NewFakeSettingsAuthentikClient()
 	orch := newFakeOrchestrator()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

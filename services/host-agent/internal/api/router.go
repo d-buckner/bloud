@@ -40,7 +40,7 @@ type routerOptions struct {
 	appStore         store.AppStoreInterface
 	positionStore    store.PositionStoreInterface
 	prefsStore       store.PreferencesStoreInterface
-	sessionStore     *store.SessionStore
+	sessionStore     store.SessionStoreInterface
 	remoteAppStore   store.RemoteAppStoreInterface
 	orch             interface{} // any orchestratorCaller implementation
 	noOrchestrator   bool        // if true, skip creating a real orchestrator
@@ -90,21 +90,8 @@ func NewRouter(
 	}
 
 	var sessionStore = options.sessionStore
-	if sessionStore == nil && cfg.RedisAddr != "" {
-		maxRetries := 10
-		for i := 0; i < maxRetries; i++ {
-			var err error
-			sessionStore, err = store.NewSessionStore(cfg.RedisAddr)
-			if err == nil {
-				break
-			}
-			if i < maxRetries-1 {
-				logger.Info("waiting for Redis...", "attempt", i+1, "error", err)
-				time.Sleep(time.Duration(i+1) * time.Second)
-				continue
-			}
-			logger.Warn("failed to connect to Redis after retries", "error", err)
-		}
+	if sessionStore == nil {
+		sessionStore = store.NewSessionStore(db)
 	}
 
 	tailnetStore := store.NewTailnetStore(db)
@@ -407,12 +394,12 @@ func initOrchestratorHelper(
 
 func initAuthHelper(
 	authentikClient *authentik.Client,
-	sessionStore *store.SessionStore,
+	sessionStore store.SessionStoreInterface,
 	cfg ServerConfig,
 	logger *slog.Logger,
 ) *AuthConfig {
 	if authentikClient == nil || sessionStore == nil || cfg.SSOBaseURL == "" {
-		logger.Info("authentication disabled (missing Authentik client, Redis, or base URL)")
+		logger.Info("authentication disabled (missing Authentik client, session store, or base URL)")
 		return nil
 	}
 	if !authentikClient.IsAvailable() {
@@ -459,7 +446,7 @@ func rebuildStreamHandler() http.HandlerFunc {
 
 // ---- Middleware ----
 
-func authMiddlewareFn(sessionStore *store.SessionStore, logger *slog.Logger, trustedNets []string) func(http.Handler) http.Handler {
+func authMiddlewareFn(sessionStore store.SessionStoreInterface, logger *slog.Logger, trustedNets []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isLocalRequest(r, trustedNets) {
@@ -475,8 +462,7 @@ func authMiddlewareFn(sessionStore *store.SessionStore, logger *slog.Logger, tru
 				return
 			}
 
-			ctx := r.Context()
-			session, err := sessionStore.Get(ctx, cookie.Value)
+			session, err := sessionStore.Get(cookie.Value)
 			if err != nil {
 				logger.Error("failed to get session", "error", err)
 				respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to validate session"})
@@ -490,20 +476,20 @@ func authMiddlewareFn(sessionStore *store.SessionStore, logger *slog.Logger, tru
 			}
 
 			if time.Now().After(session.ExpiresAt) {
-				sessionStore.Delete(ctx, session.ID)
+				sessionStore.Delete(session.ID)
 				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "Session expired"})
 				return
 			}
 
 			if session.Role == "" {
-				sessionStore.Delete(ctx, session.ID)
+				sessionStore.Delete(session.ID)
 				http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "Session expired"})
 				return
 			}
 
 			user := &store.User{Username: session.Username, Role: session.Role}
-			ctx = context.WithValue(ctx, userContextKey, user)
+			ctx := context.WithValue(r.Context(), userContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -2,16 +2,13 @@ package db
 
 import (
 	"database/sql"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/schema"
 	_ "modernc.org/sqlite"
 )
-
-//go:embed schema.sql
-var schema string
 
 // InitDB initializes the SQLite database connection and runs schema
 func InitDB(dataDir string) (*sql.DB, error) {
@@ -38,7 +35,7 @@ func InitDB(dataDir string) (*sql.DB, error) {
 		}
 	}
 
-	if err := runSchema(db); err != nil {
+	if err := schema.Run(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
@@ -132,13 +129,4 @@ func migrateLayoutToPositions(db *sql.DB) {
 				username, el.ID, el.Type, x, y, w, h)
 		}
 	}
-}
-
-// runSchema executes the embedded schema SQL
-func runSchema(db *sql.DB) error {
-	_, err := db.Exec(schema)
-	if err != nil {
-		return fmt.Errorf("failed to execute schema: %w", err)
-	}
-	return nil
 }

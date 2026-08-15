@@ -30,7 +30,7 @@ type AuthentikUserManagerInterface interface {
 type settingsModule struct {
 	tailnetStore    store.TailnetStoreInterface
 	prefsStore      store.PreferencesStoreInterface
-	sessionStore    *store.SessionStore
+	sessionStore    store.SessionStoreInterface
 	authentikClient AuthentikUserManagerInterface
 	orch            orchestratorCaller
 	authConfig      *authConfigRef
@@ -41,7 +41,7 @@ type settingsModule struct {
 func NewSettingsModule(
 	tailnetStore store.TailnetStoreInterface,
 	prefsStore store.PreferencesStoreInterface,
-	sessionStore *store.SessionStore,
+	sessionStore store.SessionStoreInterface,
 	authClient AuthentikUserManagerInterface,
 	orch orchestratorCaller,
 	authConfig *authConfigRef,
@@ -363,7 +363,7 @@ func (m *settingsModule) DeleteManagedUserHandler() http.HandlerFunc {
 		}
 
 		if m.sessionStore != nil {
-			if err := m.sessionStore.DeleteByUsername(r.Context(), username); err != nil {
+			if err := m.sessionStore.DeleteByUsername(username); err != nil {
 				m.logger.Warn("failed to invalidate user sessions", "username", username, "error", err)
 			}
 		}
@@ -456,7 +456,7 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 		}
 
 		if m.sessionStore != nil {
-			if err := m.sessionStore.DeleteByUsername(r.Context(), username); err != nil {
+			if err := m.sessionStore.DeleteByUsername(username); err != nil {
 				m.logger.Warn("failed to invalidate user sessions", "username", username, "error", err)
 			}
 		}

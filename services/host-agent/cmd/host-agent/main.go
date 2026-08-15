@@ -15,6 +15,7 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -112,9 +113,8 @@ func runServer() {
 		AuthentikToken:    cfg.AuthentikToken,
 		AuthentikPort:     cfg.AuthentikPort,
 		TSAuthKey:         cfg.TSAuthKey,
-		HostLabel:         cfg.HostLabel,
-		RedisAddr:         cfg.RedisAddr,
-		TrustedLocalNets:  cfg.TrustedLocalNets,
+		HostLabel:        cfg.HostLabel,
+		TrustedLocalNets: cfg.TrustedLocalNets,
 		LDAPOutput:        cfg.LDAPOutput(),
 		Registry:          registry,
 		TemplateVars:      templateVars,
@@ -143,6 +143,9 @@ func runServer() {
 
 	// Start background system stats collector
 	system.StartStatsCollector(ctx)
+
+	// Start background purge of expired sessions (SQLite has no TTL)
+	store.StartSessionPurger(ctx, store.NewSessionStore(database), logger)
 
 	// Start server in a goroutine
 	go func() {

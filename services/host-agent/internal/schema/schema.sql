@@ -85,3 +85,16 @@ CREATE TABLE IF NOT EXISTS user_app_positions (
     h            INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (username, element_id)
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    username   TEXT NOT NULL,
+    role       TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);

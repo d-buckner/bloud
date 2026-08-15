@@ -17,7 +17,6 @@ type Config struct {
 	DataDir     string
 	AppsDir           string // Path to apps/ directory containing app definitions
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
-	RedisAddr         string // Redis address for session storage
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests. Used by dev VMs (e.g. QEMU slirp NAT where
 	// host-forwarded connections arrive from the gateway, not loopback).
@@ -93,7 +92,6 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		DataDir:                dataDir,
 		AppsDir:                appsDir,
 		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
-		RedisAddr:              getEnv("BLOUD_REDIS_ADDR", "127.0.0.1:6379"),
 		TrustedLocalNets:       splitNets(getEnv("BLOUD_TRUSTED_LOCAL_NETS", "")),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
