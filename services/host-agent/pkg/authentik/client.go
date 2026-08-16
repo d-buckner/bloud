@@ -2386,3 +2386,161 @@ func (c *Client) ensureProxyApplication(slug, displayName string, providerID int
 	}
 	return nil
 }
+
+// EnsureNativeOIDC creates or verifies the Authentik OAuth2 provider and
+// application for an app using the native-oidc SSO strategy. The provider uses
+// a confidential client with the exact client ID/secret derived by the
+// host-agent (so the app and the identity provider agree without a shared
+// store). redirectURIs must cover every URL the app may use as its callback.
+// launchURL, when non-empty, is set as the application's meta launch URL.
+func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
+	providerName := fmt.Sprintf("%s OAuth2 Provider", displayName)
+
+	// Check if provider already exists
+	existingID, err := c.findProviderID("oauth2", providerName)
+	if err != nil {
+		return fmt.Errorf("checking OAuth2 provider: %w", err)
+	}
+
+	var providerID int
+	if existingID != 0 {
+		providerID = existingID
+		// Refresh redirect URIs so newly detected hosts/IPs work
+		if err := c.updateBloudOAuth2ProviderRedirectURIs(providerID, redirectURIs); err != nil {
+			return fmt.Errorf("updating redirect URIs: %w", err)
+		}
+	} else {
+		// Find required flows
+		authFlowID, err := c.findFlowID("default-provider-authorization-implicit-consent")
+		if err != nil {
+			authFlowID, err = c.findFlowID("default-provider-authorization-explicit-consent")
+			if err != nil {
+				return fmt.Errorf("finding authorization flow: %w", err)
+			}
+		}
+		invalidationFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+		if err != nil {
+			return fmt.Errorf("finding invalidation flow: %w", err)
+		}
+
+		certUUID, err := c.getFirstCertificateUUID()
+		if err != nil {
+			return fmt.Errorf("getting signing certificate: %w", err)
+		}
+		scopeMappings, err := c.getScopePropertyMappings([]string{"openid", "profile", "email"})
+		if err != nil {
+			return fmt.Errorf("getting scope mappings: %w", err)
+		}
+
+		var uriEntries []map[string]string
+		for _, uri := range redirectURIs {
+			uriEntries = append(uriEntries, map[string]string{
+				"matching_mode": "strict",
+				"url":           uri,
+			})
+		}
+
+		payload := map[string]interface{}{
+			"name":                       providerName,
+			"authorization_flow":         authFlowID,
+			"invalidation_flow":          invalidationFlowID,
+			"client_type":                "confidential",
+			"client_id":                  clientID,
+			"client_secret":              clientSecret,
+			"redirect_uris":              uriEntries,
+			"signing_key":                certUUID,
+			"property_mappings":          scopeMappings,
+			"sub_mode":                   "hashed_user_id",
+			"include_claims_in_id_token": true,
+			"access_code_validity":       "minutes=1",
+			"access_token_validity":      "minutes=5",
+			"refresh_token_validity":     "days=30",
+		}
+		payloadBytes, _ := json.Marshal(payload)
+
+		req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/oauth2/", bytes.NewReader(payloadBytes))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("creating OAuth2 provider: status %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result struct {
+			PK int `json:"pk"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return err
+		}
+		providerID = result.PK
+	}
+
+	// Ensure the application exists (and points at this provider)
+	if err := c.ensureOIDCApplication(appName, displayName, providerID, launchURL); err != nil {
+		return fmt.Errorf("ensuring OAuth2 application: %w", err)
+	}
+
+	return nil
+}
+
+// ensureOIDCApplication creates the Authentik application for an OIDC provider
+// if it doesn't exist. An existing application is left untouched (provider
+// drift is not reconciled — the provider is the source of auth behavior).
+func (c *Client) ensureOIDCApplication(slug, displayName string, providerID int, launchURL string) error {
+	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
+	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		return nil // Already exists
+	}
+
+	payload := map[string]interface{}{
+		"name":               displayName,
+		"slug":               slug,
+		"provider":           providerID,
+		"policy_engine_mode": "any",
+	}
+	if launchURL != "" {
+		payload["meta_launch_url"] = launchURL
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err = c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}

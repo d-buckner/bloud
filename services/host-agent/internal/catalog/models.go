@@ -31,6 +31,7 @@ type ContainerDef struct {
 	Networks      []string              `yaml:"networks,omitempty" json:"networks,omitempty"`
 	RestartPolicy string                `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
 	Environment   map[string]string     `yaml:"environment,omitempty" json:"environment,omitempty"`
+	ExtraHosts    []string              `yaml:"extraHosts,omitempty" json:"extraHosts,omitempty"` // host:ip entries (e.g. "sso.localhost:host-gateway")
 	Ports         []ContainerPort       `yaml:"ports,omitempty" json:"ports,omitempty"`
 	Volumes       []ContainerVolume     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	DependsOn     []string              `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`

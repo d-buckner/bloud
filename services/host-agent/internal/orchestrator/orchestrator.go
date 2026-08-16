@@ -17,6 +17,8 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -76,6 +78,9 @@ type OrchestratorConfig struct {
 	ForwardDomainSSO ForwardDomainProvisioner
 	SSO              SSOProvisioner
 	SSOBaseURL       string // base URL for building app subdomain URLs (e.g. "http://localhost:8080")
+	SSOHostSecret    string // master secret for deriving deterministic per-app OIDC client secrets
+	SSOAuthentikURL  string // browser-accessible Authentik URL for OIDC issuer/discovery
+	SSOIssuerURL     string // OIDC issuer base URL reachable from app containers (empty = SSOAuthentikURL)
 	TraefikGen       traefikgen.GeneratorInterface
 	ActiveTailnetID  func() string // returns the active tailnet connection ID (empty if none)
 }
@@ -123,6 +128,9 @@ type Orchestrator struct {
 	forwardDomainSSO ForwardDomainProvisioner
 	sso              SSOProvisioner
 	ssoBaseURL       string
+	ssoHostSecret    string
+	ssoAuthentikURL  string
+	ssoIssuerURL     string
 	traefikGen       traefikgen.GeneratorInterface
 	activeTailnetID  func() string
 
@@ -175,6 +183,9 @@ func NewOrchestrator(
 		forwardDomainSSO: config.ForwardDomainSSO,
 		sso:              config.SSO,
 		ssoBaseURL:       config.SSOBaseURL,
+		ssoHostSecret:    config.SSOHostSecret,
+		ssoAuthentikURL:  config.SSOAuthentikURL,
+		ssoIssuerURL:     config.SSOIssuerURL,
 		traefikGen:       config.TraefikGen,
 		activeTailnetID:  config.ActiveTailnetID,
 		queue:            NewIntentQueue(DefaultDebounce),
@@ -857,20 +868,33 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 	}
 
 	ssoEnabled := catalogApp.SSO.Strategy != "" && catalogApp.SSO.Strategy != "none"
-	state.SSOEnabled = ssoEnabled
 	if ssoEnabled {
 		o.logger.Info("SSO enabled for app", "app", id, "strategy", catalogApp.SSO.Strategy)
-		if catalogApp.SSO.Strategy == "ldap" && o.config.LDAPOutput != nil {
-			state.LDAP = o.config.LDAPOutput
+		switch catalogApp.SSO.Strategy {
+		case "ldap":
+			if o.config.LDAPOutput != nil {
+				state.LDAP = o.config.LDAPOutput
+			}
+		case "native-oidc":
+			if inputs := o.oidcInputsForApp(catalogApp); inputs != nil && len(inputs.RedirectURIs) > 0 {
+				state.OIDC = &configurator.OIDCOutput{
+					ClientID:     inputs.ClientID,
+					ClientSecret: inputs.ClientSecret,
+					IssuerURL:    inputs.IssuerURL,
+					RedirectURI:  inputs.RedirectURIs[0],
+				}
+			}
 		}
 	}
 
 	return state, nil
 }
 
-// ensureSSO provisions the forward-auth provider in Authentik for apps that use
-// forward-auth SSO. It is a no-op when SSO is not configured or the app does not
-// use forward-auth. Safe to call on every lifecycle pass (idempotent).
+// ensureSSO provisions the per-app SSO provider in the identity provider for
+// apps that use forward-auth or native-oidc SSO. It is a no-op when SSO is not
+// configured or the app's strategy is not provisioned in the identity provider
+// (e.g. "ldap", which is provisioned by the LDAP outpost). Safe to call on
+// every lifecycle pass (idempotent).
 func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 	if o.sso == nil || o.ssoBaseURL == "" || o.catalog == nil {
 		return nil
@@ -884,12 +908,53 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 	if err != nil || catalogApp == nil {
 		return nil
 	}
-	if catalogApp.SSO.Strategy != "forward-auth" {
+	// SSO is an app-level concern: provision it exactly once, on the app's
+	// primary container node. The inter-app dependency edges are attached to
+	// the same node, so it runs after SSO dependencies (e.g. Authentik) are
+	// ready. Non-primary nodes (postgres, redis, ...) skip it.
+	if o.primaryContainerNode(appID) != id {
 		return nil
 	}
-	o.logger.Info("provisioning forward-auth SSO", "app", appID)
-	externalURL := buildAppSubdomainURL(o.ssoBaseURL, appID)
-	return o.sso.EnsureForwardAuth(appID, catalogApp.DisplayName, externalURL)
+
+	switch catalogApp.SSO.Strategy {
+	case "forward-auth":
+		o.logger.Info("provisioning forward-auth SSO", "app", appID)
+		externalURL := buildAppSubdomainURL(o.ssoBaseURL, appID)
+		return o.sso.EnsureForwardAuth(appID, catalogApp.DisplayName, externalURL)
+
+	case "native-oidc":
+		if o.ssoHostSecret == "" || o.ssoAuthentikURL == "" {
+			o.logger.Warn("native-oidc SSO skipped: missing SSO host secret or Authentik URL", "app", appID)
+			return nil
+		}
+		inputs := o.oidcInputsForApp(catalogApp)
+		if inputs == nil || len(inputs.RedirectURIs) == 0 {
+			return fmt.Errorf("building OIDC inputs for %q", appID)
+		}
+		o.logger.Info("provisioning native-oidc SSO", "app", appID)
+		return o.sso.EnsureNativeOIDC(appID, catalogApp.DisplayName, inputs.ClientID, inputs.ClientSecret, inputs.RedirectURIs, inputs.LaunchURL)
+	}
+
+	return nil
+}
+
+// oidcInputsForApp computes the deterministic OIDC inputs for a native-oidc
+// app from the configured base URL and host secret. Returns nil when the SSO
+// base URL or host secret is not configured.
+func (o *Orchestrator) oidcInputsForApp(catalogApp *catalog.App) *sso.OIDCInputs {
+	if o.ssoBaseURL == "" || o.ssoHostSecret == "" {
+		return nil
+	}
+	gen := sso.NewBlueprintGenerator(
+		o.ssoHostSecret,
+		"",
+		netutil.BuildBaseURLs(o.ssoBaseURL),
+		o.ssoAuthentikURL,
+		o.ssoIssuerURL,
+		"", // no blueprints dir: provisioning goes through the identity provider API
+		nil,
+	)
+	return gen.OIDCInputsForApp(catalogApp)
 }
 
 // buildAppSubdomainURL constructs the app's subdomain URL from a base URL.

@@ -655,7 +655,8 @@ func TestOrchestrator_EnsureSSO_UsesCatalogIDForContainerNode(t *testing.T) {
 	)
 
 	// navidrome is defined with a containers list, so its graph node is the
-	// container name "apps-navidrome", owned by catalog ID "navidrome".
+	// container name "apps-navidrome", owned by catalog ID "navidrome". The
+	// single container is the app's primary node, so ensureSSO runs for it.
 	containerName := "apps-navidrome"
 	orch.registerContainerOwner(containerName, "navidrome")
 
@@ -664,6 +665,7 @@ func TestOrchestrator_EnsureSSO_UsesCatalogIDForContainerNode(t *testing.T) {
 		DisplayName: "Navidrome",
 		Port:        4533,
 		SSO:         catalog.SSO{Strategy: "forward-auth"},
+		Containers:  []catalog.ContainerDef{{Name: "apps-navidrome"}},
 	}, nil)
 
 	ssoMock.On("EnsureForwardAuth", "navidrome", "Navidrome", "http://navidrome.localhost:8080").
@@ -675,6 +677,52 @@ func TestOrchestrator_EnsureSSO_UsesCatalogIDForContainerNode(t *testing.T) {
 	ssoMock.AssertCalled(t, "EnsureForwardAuth", "navidrome", "Navidrome", "http://navidrome.localhost:8080")
 }
 
+func TestOrchestrator_EnsureSSO_SkipsNonPrimaryContainerNodes(t *testing.T) {
+	g := graph.New(graph.NewMapRepository())
+	registry := new(MockConfiguratorRegistry)
+	catalogCache := new(MockCatalogCache)
+	ssoMock := new(MockSSOProvisioner)
+
+	orch := NewOrchestrator(
+		g,
+		registry,
+		catalogCache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{
+			SSO:             ssoMock,
+			SSOBaseURL:      "http://localhost:8080",
+			SSOHostSecret:   "test-secret",
+			SSOAuthentikURL: "http://localhost:9001",
+		},
+	)
+
+	// Multi-container app: SSO must be provisioned exactly once, on the
+	// primary node (last container). Non-primary nodes (postgres) skip it so
+	// they never fail on a not-yet-ready SSO dependency.
+	catalogCache.On("Get", "immich").Return(&catalog.App{
+		CatalogID:   "immich",
+		DisplayName: "Immich",
+		Port:        2283,
+		SSO:         catalog.SSO{Strategy: "native-oidc", CallbackPath: "/auth/login"},
+		Containers: []catalog.ContainerDef{
+			{Name: "apps-immich-postgres"},
+			{Name: "apps-immich-server"},
+		},
+	}, nil)
+	orch.registerContainerOwner("apps-immich-postgres", "immich")
+	orch.registerContainerOwner("apps-immich-server", "immich")
+
+	// No provisioner expectation: the non-primary node must be a no-op.
+	require.NoError(t, orch.ensureSSO(context.Background(), "apps-immich-postgres"))
+	ssoMock.AssertExpectations(t)
+
+	// The primary node provisions exactly once.
+	ssoMock.On("EnsureNativeOIDC", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	require.NoError(t, orch.ensureSSO(context.Background(), "apps-immich-server"))
+	ssoMock.AssertExpectations(t)
+}
 func TestContainerSpecFromDef_CollectsAllNetworks(t *testing.T) {
 	def := catalog.ContainerDef{
 		Name:    "apps-authentik-ldap",

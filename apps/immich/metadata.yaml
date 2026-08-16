@@ -5,12 +5,23 @@ category: media
 isSystem: false
 port: 2283
 
+sso:
+  strategy: native-oidc
+  callbackPath: /auth/login
+  userCreation: true
+
 integrations:
   proxy:
     required: true
     multi: false
     compatible:
       - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
         default: true
 
 containers:
@@ -41,6 +52,16 @@ containers:
       timeout: 5
       retries: 5
 
+  - name: apps-immich-ml
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    network: immich-internal
+    restartPolicy: always
+    environment:
+      IMMICH_LOG_LEVEL: log
+    volumes:
+      - source: "{{appDataDir}}/model-cache"
+        destination: /cache
+
   - name: apps-immich-server
     image: ghcr.io/immich-app/immich-server:release
     networks:
@@ -54,22 +75,26 @@ containers:
       DB_URL: "postgres://immich:{{postgresPassword}}@apps-immich-postgres:5432/immich"
       REDIS_HOSTNAME: apps-immich-redis
       IMMICH_LOG_LEVEL: log
+      IMMICH_CONFIG_FILE: /config/immich/immich-config.yaml
+    # sso.localhost resolves to the host gateway inside the VM, letting the
+    # server reach the OIDC provider (traefik) by the same name browsers use
+    # (any *.localhost resolves to 127.0.0.1 on the host, port-forwarded).
+    extraHosts:
+      - sso.localhost:host-gateway
     volumes:
       - source: "{{appDataDir}}/upload"
         destination: /usr/src/app/upload
       - source: "{{appDataDir}}/external"
         destination: /usr/src/app/external
         options: [ro]
+      - source: "{{appDataDir}}/config"
+        destination: /config/immich
+        options: [ro]
+    healthCheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:2283/api/server/ping"]
+      interval: 5
+      timeout: 5
+      retries: 60
     dependsOn:
       - apps-immich-postgres
       - apps-immich-redis
-
-  - name: apps-immich-ml
-    image: ghcr.io/immich-app/immich-machine-learning:release
-    network: immich-internal
-    restartPolicy: always
-    environment:
-      IMMICH_LOG_LEVEL: log
-    volumes:
-      - source: "{{appDataDir}}/model-cache"
-        destination: /cache

@@ -28,6 +28,7 @@ type ContainerConfig struct {
 	Name          string            `json:"name"`
 	Image         string            `json:"image"`
 	Env           map[string]string `json:"env,omitempty"`
+	ExtraHosts    []string          `json:"add_hosts,omitempty"`
 	Ports         []PortMapping     `json:"portmappings,omitempty"`
 	Volumes       []VolumeMount     `json:"mounts,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
@@ -432,10 +433,15 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 		"name":         config.Name,
 		"cgroups_mode": "disabled",
 	}
-
 	// Environment variables
 	if len(config.Env) > 0 {
 		spec["env"] = config.Env
+	}
+
+	// Extra hosts (e.g. "sso.localhost:host-gateway"). The libpod create API
+	// expects the specgen field name "hostadd"; "add_hosts" is silently ignored.
+	if len(config.ExtraHosts) > 0 {
+		spec["hostadd"] = config.ExtraHosts
 	}
 
 	// Port mappings

@@ -10,6 +10,10 @@ already-provisioned portable runtime host.
 - **Navidrome** — Installs Navidrome via host-agent API, navigates to
   `navidrome.localhost:8080` through Traefik, completes Authentik forward-auth
   login, and verifies the Navidrome UI renders.
+- **Immich** — Installs Immich via host-agent API, opens Immich in a new tab,
+  completes the native-oidc SSO round-trip through Authentik (auto-launched
+  from the login page), walks the first-login onboarding wizard, and verifies
+  the photos page renders.
 
 ## Running
 

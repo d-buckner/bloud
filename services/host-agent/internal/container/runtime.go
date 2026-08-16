@@ -20,6 +20,7 @@ type Spec struct {
 	Name          string
 	Image         string
 	Environment   map[string]string
+	ExtraHosts    []string
 	Ports         []Port
 	Mounts        []Mount
 	Labels        map[string]string
@@ -207,11 +208,11 @@ func toPodmanConfig(spec Spec, revision string) podman.ContainerConfig {
 	}
 	labels[managedLabel] = "true"
 	labels[revisionLabel] = revision
-
 	config := podman.ContainerConfig{
 		Name:          spec.Name,
 		Image:         spec.Image,
 		Env:           spec.Environment,
+		ExtraHosts:    spec.ExtraHosts,
 		Labels:        labels,
 		Networks:      spec.Networks,
 		Command:       spec.Command,

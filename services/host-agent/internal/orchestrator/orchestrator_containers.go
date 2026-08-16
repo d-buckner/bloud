@@ -190,6 +190,7 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 		Name:          def.Name,
 		Image:         def.Image,
 		Environment:   env,
+		ExtraHosts:    def.ExtraHosts,
 		Networks:      networks,
 		Command:       def.Command,
 		RestartPolicy: def.RestartPolicy,

@@ -53,6 +53,7 @@ apps:
     validation-level: embed
     files:
       - apps/immich/**
+    e2e-project: immich
 
   miniflux:
     auth: native-oidc

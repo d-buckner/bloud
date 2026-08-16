@@ -375,6 +375,9 @@ func initOrchestratorHelper(
 			ForwardDomainSSO: forwardDomainSSO,
 			SSO:              ssoProvisioner,
 			SSOBaseURL:       cfg.SSOBaseURL,
+			SSOHostSecret:    cfg.SSOHostSecret,
+			SSOAuthentikURL:  cfg.SSOAuthentikURL,
+			SSOIssuerURL:     cfg.SSOIssuerURL,
 			TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
 			ActiveTailnetID: func() string {
 				conn, err := tailnetStore.GetActive()
