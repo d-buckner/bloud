@@ -26,7 +26,7 @@
     "test:unit": "npm run test:go:all && npm run test:ts",
     "test:precommit": "npm run test:go:all && npm run test:ts",
     "test:all": "npm run test:unit && npm run test:nix",
-    "test:e2e": "npm --prefix e2e test -- --project=jellyfin",
+    "test:e2e": "npm --prefix e2e test",
     "show-report": "cd e2e && npx playwright show-report"
   },
   "devDependencies": {

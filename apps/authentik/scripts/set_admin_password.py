@@ -14,9 +14,12 @@ user, created = User.objects.get_or_create(
         'path': 'users',
     },
 )
-user.set_password(password)
-user.email = email
-user.save()
+if created:
+    # Only set the password when the user is created. Re-applying the
+    # bootstrap password on every start would overwrite the password the
+    # operator chose in Bloud's setup wizard and lock them out on restart.
+    user.set_password(password)
+    user.save()
 
 try:
     group = Group.objects.get(name='authentik Admins')

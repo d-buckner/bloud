@@ -1054,6 +1054,11 @@ func (c *Client) setUserPassword(userID int, password string) error {
 	return nil
 }
 
+// SetUserPassword sets a user's password via the Authentik API (public wrapper)
+func (c *Client) SetUserPassword(userID int, password string) error {
+	return c.setUserPassword(userID, password)
+}
+
 // AddUserToGroup adds a user to a group by name (public wrapper around internal method)
 func (c *Client) AddUserToGroup(userID int, groupName string) error {
 	return c.addUserToGroup(userID, groupName)

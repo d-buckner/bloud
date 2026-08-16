@@ -280,7 +280,9 @@ func TestSSHExecutorCopyToDirIsRecursive(t *testing.T) {
 	if err := ex.CopyTo(context.Background(), dir, "/runtime/web/build"); err != nil {
 		t.Fatalf("CopyTo() error = %v", err)
 	}
-	want := []string{"rsync", "-a", "-r", "-e", "ssh -p 2222 -i /key", dir, "bloud@127.0.0.1:/runtime/web/build"}
+	// Directory sources get a trailing slash so rsync copies the contents to
+	// the destination instead of nesting the source basename inside it.
+	want := []string{"rsync", "-a", "-r", "-e", "ssh -p 2222 -i /key", dir + "/", "bloud@127.0.0.1:/runtime/web/build"}
 	if !slices.Equal(recorded, want) {
 		t.Fatalf("invocation = %q, want %q", recorded, want)
 	}

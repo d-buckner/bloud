@@ -279,6 +279,7 @@ func cmdReset() int {
 	}
 	host := bk.Host()
 	ex := host.Executor()
+	dirs := host.DataDirs()
 
 	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", inst)
 	fmt.Printf("The VM itself is kept — only data, containers, and the database are removed.\n")
@@ -290,10 +291,10 @@ func cmdReset() int {
 		return 0
 	}
 
-	// 1. Kill host-agent
+	// 1. Kill host-agent and any app systemd units
 	log("Stopping host-agent")
 	if err := ex.RunStream(context.Background(), executor.RunSpec{
-		Command: `pkill -f 'host-agent$' 2>/dev/null; true`,
+		Command: `pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop 'apps-*.service' 'bloud-e2e-host-agent.service' 2>/dev/null; true`,
 	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to stop host-agent: %v", err)
 		return 1
@@ -312,16 +313,19 @@ podman system prune -f 2>/dev/null || true
 		return 1
 	}
 
-	// 3. Wipe data directories and database
-	// Use podman unshare for dirs with container-owned files (e.g. postgres)
+	// 3. Wipe data directories and database. The runtime data dir is
+	// backend-specific (Lima: /var/tmp/bloud-dev-runtime/data, QEMU:
+	// /var/tmp/bloud-qemu-runtime/data); the bloud.db database lives inside
+	// it (BLOUD_DATA_DIR). Use podman unshare for dirs with container-owned
+	// files (e.g. postgres).
 	log("Wiping data")
 	if err := ex.RunStream(context.Background(), executor.RunSpec{
-		Command: `
+		Command: fmt.Sprintf(`
 set -e
 podman unshare rm -rf "$HOME/.local/share/bloud"
-podman unshare rm -rf /var/tmp/bloud-dev-runtime/data
-rm -f /var/tmp/bloud-dev-runtime/bloud.db
-`,
+podman unshare rm -rf %s
+rm -f %s/bloud.db
+`, dirs.DataDir, dirs.DataDir),
 	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to wipe data: %v", err)
 		return 1

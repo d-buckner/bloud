@@ -175,6 +175,13 @@ func sshStrategies(newCmd cmdFn, conn SSHConn) strategySet {
 			args := []string{"-a"}
 			if recursive {
 				args = append(args, "-r")
+				// Trailing slash makes rsync copy the directory's CONTENTS to
+				// `to` (creating `to` if missing), matching `limactl copy -r`
+				// semantics. Without it, rsync nests the source basename inside
+				// the destination (web/build -> web/build/build).
+				if !strings.HasSuffix(from, "/") {
+					from += "/"
+				}
 			}
 			args = append(args, "-e", "ssh -p "+port+" -i "+conn.KeyFile, from, target+":"+to)
 			return newCmd(ctx, "rsync", args...)

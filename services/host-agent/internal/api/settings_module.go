@@ -18,6 +18,7 @@ import (
 // methods needed for user management (separate from OIDC client methods).
 type AuthentikUserManagerInterface interface {
 	CreateUser(username, password string) (int, error)
+	SetUserPassword(userID int, password string) error
 	ListUsers() ([]authentik.ManagedUserInfo, error)
 	DeleteUser(username string) error
 	AddUserToGroup(userID int, groupName string) error
@@ -223,12 +224,29 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 
 		authentikUserID, err := m.authentikClient.CreateUser(req.Username, req.Password)
 		if err != nil {
-			m.logger.Error("failed to create user in Authentik", "error", err)
-			respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
-				Success: false,
-				Error:   "Failed to create user in Authentik",
-			})
-			return
+			// A fresh install already has an "admin" user in Authentik: the
+			// bootstrap script creates it before Bloud's setup completes. Adopt
+			// it (reset its password) so the first-user flow works out of the
+			// box instead of failing on the duplicate username.
+			existingID, findErr := m.authentikClient.FindUserID(req.Username)
+			if findErr != nil || existingID == 0 {
+				m.logger.Error("failed to create user in Authentik", "error", err)
+				respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
+					Success: false,
+					Error:   "Failed to create user in Authentik",
+				})
+				return
+			}
+			if setErr := m.authentikClient.SetUserPassword(existingID, req.Password); setErr != nil {
+				m.logger.Error("failed to set password for existing Authentik user", "error", setErr)
+				respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
+					Success: false,
+					Error:   "Failed to update the user in Authentik",
+				})
+				return
+			}
+			m.logger.Info("adopted existing Authentik user for initial setup", "username", req.Username)
+			authentikUserID = existingID
 		}
 
 		if err := m.authentikClient.AddUserToGroup(authentikUserID, "authentik Admins"); err != nil {
@@ -493,6 +511,10 @@ type FakeSettingsAuthentikClient struct {
 	lastRemovedGroup string
 	lastCreatedUser string
 	listCalled     bool
+	// failCreateUsername, when set, makes CreateUser fail with a duplicate
+	// error for that username (simulates a user that already exists).
+	failCreateUsername string
+	lastSetPasswords   map[int]string
 }
 
 // NewFakeSettingsAuthentikClient creates a fake Authentik client for testing.
@@ -506,6 +528,9 @@ func NewFakeSettingsAuthentikClient() *FakeSettingsAuthentikClient {
 func (f *FakeSettingsAuthentikClient) IsAvailable() bool { return true }
 
 func (f *FakeSettingsAuthentikClient) CreateUser(username, password string) (int, error) {
+	if username == f.failCreateUsername {
+		return 0, fmt.Errorf("creating user: status 400: {\"username\":[\"This field must be unique.\"]}")
+	}
 	id := f.userIDCounter
 	f.userIDCounter++
 	f.users[username] = &authentik.ManagedUserInfo{
@@ -515,6 +540,14 @@ func (f *FakeSettingsAuthentikClient) CreateUser(username, password string) (int
 	}
 	f.lastCreatedUser = username
 	return id, nil
+}
+
+func (f *FakeSettingsAuthentikClient) SetUserPassword(userID int, password string) error {
+	if f.lastSetPasswords == nil {
+		f.lastSetPasswords = make(map[int]string)
+	}
+	f.lastSetPasswords[userID] = password
+	return nil
 }
 
 func (f *FakeSettingsAuthentikClient) ListUsers() ([]authentik.ManagedUserInfo, error) {

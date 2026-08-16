@@ -353,6 +353,35 @@ func TestSettingsHTTP_CreateFirstUser_Success(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+func TestSettingsHTTP_CreateFirstUser_AdoptsExistingUser(t *testing.T) {
+	mod := newSettingsModule(t, nil)
+	fake := mod.authentikClient.(*FakeSettingsAuthentikClient)
+	// Simulate a fresh install: the bootstrap already created "admin" in
+	// Authentik, so creating it again fails with a duplicate error.
+	adminID := fake.userIDCounter
+	fake.users["admin"] = &authentik.ManagedUserInfo{ID: adminID, Username: "admin"}
+	fake.userIDCounter++
+	fake.failCreateUsername = "admin"
+	r := chi.NewRouter(); NewSettingsRouter(mod, r)
+
+	body := `{"username":"admin","password":"password"}`
+	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp CreateUserResponse
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.True(t, resp.Success)
+	// The existing user was adopted: password updated and local record created.
+	assert.Equal(t, "password", fake.lastSetPasswords[adminID])
+	hasUsers, err := mod.prefsStore.HasUsers()
+	require.NoError(t, err)
+	assert.True(t, hasUsers)
+}
+
 // ---- User management tests ----
 
 func TestSettingsHTTP_ListUsers_NoAuthentik(t *testing.T) {
