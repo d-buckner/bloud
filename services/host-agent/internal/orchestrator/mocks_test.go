@@ -304,6 +304,11 @@ func (m *MockSSOProvisioner) EnsureForwardAuth(appName, displayName, externalURL
 	return args.Error(0)
 }
 
+func (m *MockSSOProvisioner) EnsureNativeOIDC(appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
+	args := m.Called(appName, displayName, clientID, clientSecret, redirectURIs, launchURL)
+	return args.Error(0)
+}
+
 // MockConfiguratorRegistry implements configurator.RegistryInterface for testing
 type MockConfiguratorRegistry struct {
 	mock.Mock

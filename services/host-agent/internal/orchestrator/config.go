@@ -53,4 +53,9 @@ type SSOProvisioner interface {
 	// EnsureForwardAuth creates or verifies the proxy provider + application for a
 	// forward-auth app, and adds it to the embedded outpost.
 	EnsureForwardAuth(appName, displayName, externalURL string) error
+
+	// EnsureNativeOIDC creates or verifies the OAuth2 provider + application for a
+	// native-oidc app. redirectURIs must cover every URL the app may use as its
+	// callback (all base URLs plus the direct-port debug URL).
+	EnsureNativeOIDC(appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error
 }

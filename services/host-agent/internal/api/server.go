@@ -61,6 +61,7 @@ type ServerConfig struct {
 	SSOHostSecret     string
 	SSOBaseURL        string
 	SSOAuthentikURL   string
+	SSOIssuerURL      string
 	AuthentikToken    string
 	AuthentikPort     int
 	TSAuthKey         string

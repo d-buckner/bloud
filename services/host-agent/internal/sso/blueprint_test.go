@@ -16,6 +16,7 @@ func testBlueprintGenerator(t *testing.T, dir string) *BlueprintGenerator {
 		"test-ldap-password",
 		[]string{"http://localhost:8080"},
 		"http://localhost:8080",
+		"", // issuer URL falls back to authentikURL
 		dir,
 		nil, // No secrets manager for tests
 	)

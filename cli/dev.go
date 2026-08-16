@@ -544,23 +544,45 @@ func cmdDev() int {
 		return 1
 	}
 
-	// Run foreground
+	// Run foreground. Load dev/host-agent.env (the SSO/podman environment
+	// shared with the e2e lifecycle deployment); the explicit BLOUD_* values
+	// below take precedence over the file.
 	log("Starting host-agent (Ctrl-C to stop)")
+	runEnv := loadEnvFile(filepath.Join(root, "dev", "host-agent.env"))
+	runEnv["BLOUD_DATA_DIR"] = dirs.DataDir
+	runEnv["BLOUD_APPS_DIR"] = dirs.AppsDir
+	runEnv["BLOUD_TRAEFIK_DYNAMIC_DIR"] = dirs.DataDir + "/traefik/dynamic"
+	runEnv["BLOUD_TRUSTED_LOCAL_NETS"] = trustedLocalNetsEnv()
 	runErr := ex.RunStream(context.Background(), executor.RunSpec{
 		Command: "unset DATABASE_URL BLOUD_REDIS_ADDR; exec ./host-agent",
 		Dir:     dirs.HostAgentDir,
-		Env: map[string]string{
-			"BLOUD_DATA_DIR":           dirs.DataDir,
-			"BLOUD_APPS_DIR":           dirs.AppsDir,
-			"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
-			"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(),
-		},
+		Env:     runEnv,
 	}, os.Stdout, os.Stderr)
 	if runErr != nil && !isSignalExit(runErr) {
 		errorf("host-agent exited: %v", runErr)
 		return 1
 	}
 	return 0
+}
+
+// loadEnvFile parses a KEY=VALUE env file, ignoring comments and blank
+// lines. A missing or unreadable file yields an empty map.
+func loadEnvFile(path string) map[string]string {
+	env := map[string]string{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return env
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if key, value, ok := strings.Cut(line, "="); ok {
+			env[strings.TrimSpace(key)] = value
+		}
+	}
+	return env
 }
 
 // uninstallApp calls the host-agent API to uninstall an app

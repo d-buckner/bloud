@@ -15,10 +15,23 @@ test.describe('navidrome (forward-auth)', () => {
     await page.getByText('Navidrome').click();
     const navidromePage = await navidromePagePromise;
     await navidromePage.waitForLoadState();
-
-    // Forward-auth may redirect through Authentik; log in if needed
+    // Forward-auth may redirect through Authentik; log in if needed. The
+    // flow page is a React app that renders its form after document load,
+    // so poll for the form within a deadline instead of checking once.
     const loginPage = new LoginPage(navidromePage);
-    await loginPage.loginIfNeeded();
+    const deadline = Date.now() + 120_000;
+    for (;;) {
+      const url = navidromePage.url();
+      if (url.includes('navidrome.localhost:8080') && !url.includes('/if/flow')) break;
+      if (Date.now() > deadline) break;
+
+      if (await loginPage.isVisible()) {
+        await loginPage.login();
+        continue;
+      }
+
+      await navidromePage.waitForTimeout(500);
+    }
 
     // Should land on Navidrome
     await expect(navidromePage).toHaveURL(/navidrome\.localhost:8080/, { timeout: 30_000 });

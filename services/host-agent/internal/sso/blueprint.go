@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,22 +24,35 @@ type BlueprintGenerator struct {
 	hostSecret       string
 	ldapBindPassword string
 	baseURLs         []string // All base URLs (configured host + detected IPs)
-	authentikURL     string
+	authentikURL     string   // browser-facing Authentik base URL
+	issuerURL        string   // OIDC issuer base URL reachable from app containers (falls back to authentikURL)
 	blueprintsDir    string
 	secrets          *secrets.Manager
 }
 
 // NewBlueprintGenerator creates a new blueprint generator.
 // baseURLs should contain the configured host URL first, followed by IP-based URLs.
-func NewBlueprintGenerator(hostSecret, ldapBindPassword string, baseURLs []string, authentikURL, blueprintsDir string, secretsMgr *secrets.Manager) *BlueprintGenerator {
+// issuerURL is the base URL app containers use to reach the OIDC provider
+// (discovery/token endpoints); when empty, authentikURL is used.
+func NewBlueprintGenerator(hostSecret, ldapBindPassword string, baseURLs []string, authentikURL, issuerURL, blueprintsDir string, secretsMgr *secrets.Manager) *BlueprintGenerator {
 	return &BlueprintGenerator{
 		hostSecret:       hostSecret,
 		ldapBindPassword: ldapBindPassword,
 		baseURLs:         baseURLs,
 		authentikURL:     authentikURL,
+		issuerURL:        issuerURL,
 		blueprintsDir:    blueprintsDir,
 		secrets:          secretsMgr,
 	}
+}
+
+// issuerBaseURL returns the OIDC issuer base URL for app containers,
+// falling back to the browser-facing Authentik URL when not configured.
+func (g *BlueprintGenerator) issuerBaseURL() string {
+	if g.issuerURL != "" {
+		return g.issuerURL
+	}
+	return g.authentikURL
 }
 
 // primaryBaseURL returns the first (configured) base URL.
@@ -79,31 +91,12 @@ func (g *BlueprintGenerator) GenerateForApp(app *catalog.App) error {
 // generateOIDCBlueprint creates an OAuth2 Provider blueprint for native OIDC apps.
 // Registers redirect URIs for all base URLs so OAuth works from any host/IP.
 func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
-	clientID := g.generateClientID(app.CatalogID)
-	clientSecret := g.generateClientSecret(app.CatalogID)
-
-	// Build redirect URIs for ALL base URLs using subdomain routing
-	var redirectURIs []string
-	for _, baseURL := range g.baseURLs {
-		appURL := appSubdomainURL(baseURL, app.CatalogID)
-		redirectURIs = append(redirectURIs, appURL+app.SSO.CallbackPath)
+	inputs := g.OIDCInputsForApp(app)
+	if inputs == nil {
+		return fmt.Errorf("app %q does not use the native-oidc strategy", app.CatalogID)
 	}
 
-	// Add direct port access for debugging (primary base URL only)
-	if app.Port > 0 {
-		parsed, err := url.Parse(g.primaryBaseURL())
-		if err == nil {
-			debugURL := &url.URL{
-				Scheme: parsed.Scheme,
-				Host:   net.JoinHostPort(parsed.Hostname(), fmt.Sprintf("%d", app.Port)),
-			}
-			redirectURIs = append(redirectURIs, debugURL.String()+app.SSO.CallbackPath)
-		}
-	}
-
-	launchURL := appSubdomainURL(g.primaryBaseURL(), app.CatalogID)
-
-	blueprint, err := g.renderOIDCBlueprint(app, clientID, clientSecret, redirectURIs, launchURL)
+	blueprint, err := g.renderOIDCBlueprint(app, inputs.ClientID, inputs.ClientSecret, inputs.RedirectURIs, inputs.LaunchURL)
 	if err != nil {
 		return fmt.Errorf("rendering OIDC blueprint: %w", err)
 	}

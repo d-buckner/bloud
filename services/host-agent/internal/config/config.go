@@ -25,6 +25,7 @@ type Config struct {
 	SSOHostSecret   string // Master secret for deriving client secrets
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
 	SSOAuthentikURL string // Authentik external URL for discovery (e.g., "http://localhost:8080")
+	SSOIssuerURL    string // OIDC issuer base URL reachable from app containers (e.g., "http://sso.localhost:8080"); empty falls back to SSOAuthentikURL
 	AuthentikToken  string // Authentik API token for SSO cleanup
 	// Traefik configuration
 	BaseDomain  string // Base domain for subdomain routing (default: "localhost")
@@ -96,6 +97,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
+		SSOIssuerURL:           getEnv("BLOUD_SSO_ISSUER_URL", ""),
 		AuthentikToken:         authentikToken,
 		BaseDomain:             getEnv("BLOUD_BASE_DOMAIN", "localhost"),
 		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 8080),

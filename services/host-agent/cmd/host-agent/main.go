@@ -110,6 +110,7 @@ func runServer() {
 		SSOHostSecret:     cfg.SSOHostSecret,
 		SSOBaseURL:        cfg.SSOBaseURL,
 		SSOAuthentikURL:   cfg.SSOAuthentikURL,
+		SSOIssuerURL:      cfg.SSOIssuerURL,
 		AuthentikToken:    cfg.AuthentikToken,
 		AuthentikPort:     cfg.AuthentikPort,
 		TSAuthKey:         cfg.TSAuthKey,

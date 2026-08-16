@@ -53,6 +53,16 @@ type LDAPOutput struct {
 	BindPassword string
 }
 
+// OIDCOutput describes the native OIDC provider the host-agent provisions in
+// the identity provider for an app. Populated when the app's SSO strategy is
+// "native-oidc"; nil otherwise.
+type OIDCOutput struct {
+	ClientID     string
+	ClientSecret string
+	IssuerURL    string // Discovery endpoint, e.g. http://localhost:8080/application/o/immich/
+	RedirectURI  string // Primary redirect URI registered with the provider
+}
+
 // AppState contains the inputs currently consumed by app configurators.
 type AppState struct {
 	// DataPath is the app's data directory.
@@ -67,4 +77,8 @@ type AppState struct {
 	// LDAP is populated when the app's SSO strategy is "ldap" and an LDAP provider
 	// is configured. Nil otherwise.
 	LDAP *LDAPOutput
+
+	// OIDC is populated when the app's SSO strategy is "native-oidc" and an OIDC
+	// provider is configured. Nil otherwise.
+	OIDC *OIDCOutput
 }

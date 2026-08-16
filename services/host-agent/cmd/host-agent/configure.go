@@ -162,7 +162,7 @@ func runPreStart(ctx context.Context, appName string, registry *configurator.Reg
 	}
 
 	ldapOutput := appCfg.LDAPOutput()
-	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, logger)
+	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, appCfg, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -188,7 +188,7 @@ func runPostStart(ctx context.Context, appName string, registry *configurator.Re
 	}
 
 	ldapOutput := appCfg.LDAPOutput()
-	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, logger)
+	state, err := buildAppState(appName, catalogCache, dataDir, ldapOutput, appCfg, logger)
 	if err != nil {
 		logger.Error("failed to build app state", "app", appName, "error", err)
 		return 1
@@ -264,11 +264,13 @@ func runCatalogRefresh(catalogCache *catalog.MemoryCache, cfg *config.Config, lo
 	return 0
 }
 
-func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir string, ldapOutput *configurator.LDAPOutput, logger *slog.Logger) (*configurator.AppState, error) {
+func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir string, ldapOutput *configurator.LDAPOutput, appCfg *config.Config, logger *slog.Logger) (*configurator.AppState, error) {
 	ssoEnabled := false
 	ssoStrategy := ""
+	var catalogApp *catalog.App
 	if catalogCache != nil {
-		catalogApp, err := catalogCache.Get(appName)
+		var err error
+		catalogApp, err = catalogCache.Get(appName)
 		if err != nil {
 			return nil, fmt.Errorf("load catalog app: %w", err)
 		}
@@ -287,8 +289,33 @@ func buildAppState(appName string, catalogCache catalog.CacheInterface, dataDir 
 		SSOEnabled:    ssoEnabled,
 	}
 
-	if ssoEnabled && ssoStrategy == "ldap" && ldapOutput != nil {
-		state.LDAP = ldapOutput
+	if ssoEnabled {
+		switch ssoStrategy {
+		case "ldap":
+			if ldapOutput != nil {
+				state.LDAP = ldapOutput
+			}
+		case "native-oidc":
+			if appCfg != nil && appCfg.SSOBaseURL != "" && appCfg.SSOHostSecret != "" {
+				gen := sso.NewBlueprintGenerator(
+					appCfg.SSOHostSecret,
+					appCfg.LDAPBindPassword,
+					netutil.BuildBaseURLs(appCfg.SSOBaseURL),
+					appCfg.SSOAuthentikURL,
+					appCfg.SSOIssuerURL,
+					"",
+					appCfg.Secrets,
+				)
+				if inputs := gen.OIDCInputsForApp(catalogApp); inputs != nil && len(inputs.RedirectURIs) > 0 {
+					state.OIDC = &configurator.OIDCOutput{
+						ClientID:     inputs.ClientID,
+						ClientSecret: inputs.ClientSecret,
+						IssuerURL:    inputs.IssuerURL,
+						RedirectURI:  inputs.RedirectURIs[0],
+					}
+				}
+			}
+		}
 	}
 
 	return state, nil
@@ -323,6 +350,7 @@ func writeSSOEnvVars(appName string, cfg *config.Config, logger *slog.Logger) {
 		cfg.LDAPBindPassword,
 		baseURLs,
 		cfg.SSOAuthentikURL,
+		cfg.SSOIssuerURL,
 		"", // blueprintsDir not needed for env vars
 		cfg.Secrets,
 	)

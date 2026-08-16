@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"codeberg.org/d-buckner/bloud/apps/authentik"
+	"codeberg.org/d-buckner/bloud/apps/immich"
 	"codeberg.org/d-buckner/bloud/apps/jellyfin"
 	"codeberg.org/d-buckner/bloud/apps/navidrome"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
@@ -61,4 +62,5 @@ func RegisterAll(
 	// User app configurators (always registered)
 	registry.Register(navidrome.NewConfigurator(4533, cfg.SSOAuthentikURL, cfg.Secrets, logger))
 	registry.Register(jellyfin.NewConfigurator(8096, logger))
+	registry.Register(immich.NewConfigurator(2283, cfg.Secrets, logger))
 }
