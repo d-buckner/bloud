@@ -37,29 +37,29 @@ integrations:
 sso:
   strategy: native-oidc    # native-oidc, ldap, forward-auth, none
 
-healthCheck:
-  path: /health
-  interval: 5
-  timeout: 60
-
-container:
-  name: apps-your-app
-  image: someorg/someimage:1.2.3   # pin the version
-  network: apps-net
-  restartPolicy: always
-  environment:
-    TZ: Etc/UTC
-  ports:
-    - host: 8080
-      container: 8080
-  volumes:
-    - source: "{{appDataDir}}/config"
-      destination: /config
+containers:
+  - name: apps-your-app
+    image: someorg/someimage:1.2.3   # pin the version
+    network: apps-net
+    restartPolicy: always
+    environment:
+      TZ: Etc/UTC
+    ports:
+      - host: 8080
+        container: 8080
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /config
+    healthCheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
+      interval: 5
+      timeout: 10
+      retries: 12
 ```
 
 If your app has no integrations: `integrations: {}`.
 
-Available template variables in `container.environment` and `container.volumes`:
+Available template variables in `containers[].environment` and `containers[].volumes`:
 - `{{appDataDir}}` — app-specific data directory
 - `{{dataDir}}` — shared Bloud data directory
 - `{{postgresPassword}}` — per-app PostgreSQL password (for apps that bundle their own postgres container)
@@ -164,4 +164,4 @@ Run with: `./bloud validate --tier integration`
 | `apps/jellyfin` | LDAP SSO, setup wizard, plugin config, media libraries |
 | `apps/authentik` | Multi-container, LDAP infrastructure, API token management |
 | `apps/immich` | Database integration, OIDC SSO |
-| `apps/qbittorrent` | Simple app, INI config patching |
+| `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app |
