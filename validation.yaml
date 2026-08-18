@@ -37,12 +37,6 @@ inference:
       riskAreas: [app-install, embed]
     - pattern: "cli/**"
       triggers: [go-cli]
-    - pattern: "nixos/**"
-      triggers: []
-      riskAreas: [nix-module]
-    - pattern: "flake.nix"
-      triggers: []
-      riskAreas: [nix-module]
     - pattern: "e2e/**"
       triggers: []
       riskAreas: [playwright]
@@ -55,12 +49,6 @@ apps:
       - apps/immich/**
     e2e-project: immich
 
-  miniflux:
-    auth: native-oidc
-    validation-level: full
-    files:
-      - apps/miniflux/**
-
   jellyfin:
     auth: ldap
     validation-level: full
@@ -68,14 +56,9 @@ apps:
       - apps/jellyfin/**
     e2e-project: jellyfin
 
-  qbittorrent:
+  navidrome:
     auth: forward-auth
-    validation-level: embed
+    validation-level: full
     files:
-      - apps/qbittorrent/**
-
-  adguard-home:
-    auth: none
-    validation-level: embed
-    files:
-      - apps/adguard-home/**
+      - apps/navidrome/**
+    e2e-project: navidrome

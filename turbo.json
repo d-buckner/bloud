@@ -18,13 +18,7 @@
     "test:go": {
       "cache": false
     },
-    "test:nix": {
-      "cache": false
-    },
     "//#test:go": {
-      "cache": false
-    },
-    "//#test:nix": {
       "cache": false
     }
   }

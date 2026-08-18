@@ -93,11 +93,10 @@ Resolution happens through `catalog.AppGraph.PlanInstall` during the install int
 - Exactly one installed compatible provider → auto-config binding.
 - Multiple / none for a required integration → produces an integration *choice*.
 - Optional integrations with no compatible provider → no binding.
-
-> Note: `internal/integration/` (resolver.go) is a leftover from an earlier design and is
-> not wired into the running system — dependency resolution is owned by the planner +
-> orchestrator. Apps that need databases (Immich, Authentik) declare their own postgres
-> and redis containers in `containers:`; they do not use the integration resolver.
+> Note: an earlier standalone integration resolver (`internal/integration/`) was
+> removed — dependency resolution is owned by the planner + orchestrator. Apps that
+> need databases (Immich, Authentik) declare their own postgres and redis containers
+> in `containers:`; each app gets its own isolated database.
 
 ### Orchestrator (`internal/orchestrator/`)
 

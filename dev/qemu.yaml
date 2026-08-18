@@ -22,7 +22,7 @@ ssh:
 mount:
   type: virtio-9p
   tag: host0
-  path: "~/Projects/bloud"   # host project dir, mounted at the same path in guest
+  path: "<repo root>"        # auto-detected: the backend mounts the actual checkout at the same path in guest
 portForwards:
   - guestPort: 22     # ssh -> host 2222
   - guestPort: 3000   # host-agent

@@ -5,8 +5,7 @@
   "license": "AGPL-3.0-only",
   "workspaces": [
     "services/host-agent",
-    "services/host-agent/web",
-    "services/installer/web"
+    "services/host-agent/web"
   ],
   "scripts": {
     "setup": "npm install && npm run cli:build && ./bloud setup",
@@ -22,10 +21,8 @@
     "test:go:all": "npm run test:go && npm run test:go:apps",
     "test:ts": "npm run test --workspace=@bloud/host-agent-web",
     "test:go:coverage": "cd services/host-agent && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1",
-    "test:nix": "nix flake check",
     "test:unit": "npm run test:go:all && npm run test:ts",
     "test:precommit": "npm run test:go:all && npm run test:ts",
-    "test:all": "npm run test:unit && npm run test:nix",
     "test:e2e": "npm --prefix e2e test",
     "show-report": "cd e2e && npx playwright show-report"
   },

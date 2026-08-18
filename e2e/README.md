@@ -50,7 +50,8 @@ install/verify/uninstall cycle.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BLOUD_URL` | `http://localhost:3000` | Host-agent base URL |
+| `BLOUD_URL` | `http://localhost:8080` | Public ingress (Traefik) — browser tests go through this port |
+| `BLOUD_API_URL` | `http://localhost:3000` | Internal host-agent API used by the test helpers |
 | `BLOUD_E2E_USERNAME` | `e2etest` | Authentik test user |
 | `BLOUD_E2E_PASSWORD` | `e2etest123` | Authentik test password |
 | `BLOUD_E2E_LIMA_INSTANCE` | `bloud-dev` | Lima instance name |
