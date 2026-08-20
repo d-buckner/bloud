@@ -103,7 +103,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, web vitest + svelte-check |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, web vitest + svelte-check, license header check |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
@@ -122,8 +122,15 @@ npm run check --workspace=@bloud/host-agent-web   # svelte-check (typecheck)
 cd e2e && npx playwright test                     # browser e2e (see below)
 ```
 
-**Pre-commit hook (husky) runs `npm run test:precommit`** = host-agent + apps Go
-tests + web TS tests. Don't commit without it passing; don't disable the hook.
+**Pre-commit hook (husky) runs `npm run test:precommit`** = license header check
++ host-agent + apps Go tests + web TS tests. Don't commit without it passing;
+don't disable the hook.
+
+License headers: every source file starts with `// SPDX-License-Identifier: AGPL-3.0-only`
++ copyright line (syntax per language; `.svelte` files carry it inside `<script>`).
+`npm run license:check` verifies, `npm run license:fix` stamps. Excluded: JSON,
+go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
+`apps-routes.yml` (see `scripts/license-header.mjs`).
 
 ### Playwright e2e (`e2e/`)
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 import { get, post, put, del } from './httpClient';
 import type { Role } from '$lib/stores/user';
 

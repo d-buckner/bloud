@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 //go:build integration
 
 // Package e2e contains integration tests that run against a host-agent

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 /**
  * Build a subdomain URL for an app based on the current window location.
  * Automatically works for dev (localhost:8080) and prod (bloud.local).

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
 # QEMU VM for Bloud local development (x86_64 via KVM on Linux).
 #
 # This file documents the QEMU backend's spec; the backend hardcodes it (same

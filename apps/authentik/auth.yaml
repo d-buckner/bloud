@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
 # Bloud override for Authentik's default authentication flow blueprint.
 # Replaces /blueprints/default/flow-default-authentication-flow.yaml inside the container
 # so username-only identification is set at the source rather than fighting ordering.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 // API calls go directly to the host-agent (loopback bypass, no auth needed).
 const BASE_URL = process.env.BLOUD_API_URL ?? 'http://localhost:3000';
 

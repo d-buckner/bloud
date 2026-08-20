@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 // Package schema holds the single source of truth for the host-agent
 // SQLite schema. Both the production database (db.InitDB) and the test
 // database (testdb) apply the same embedded schema.sql, so the two can

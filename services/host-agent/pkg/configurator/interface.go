@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 // Package configurator provides the interface and utilities for app configuration.
 // Configurators handle app-specific setup that can't be expressed purely in Nix,
 // such as config file generation and API-based configuration.

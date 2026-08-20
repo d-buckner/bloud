@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 import { describe, it, expect } from 'vitest';
 import { widgetRegistry, getWidgetById, isValidWidgetId } from '../registry';
 

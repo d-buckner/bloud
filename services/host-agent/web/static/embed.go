@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 // Package static exposes embedded static assets for use by Go code.
 package static
 

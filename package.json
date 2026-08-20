@@ -21,8 +21,10 @@
     "test:go:all": "npm run test:go && npm run test:go:apps",
     "test:ts": "npm run test --workspace=@bloud/host-agent-web",
     "test:go:coverage": "cd services/host-agent && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1",
+    "license:check": "node scripts/license-header.mjs check",
+    "license:fix": "node scripts/license-header.mjs fix",
     "test:unit": "npm run test:go:all && npm run test:ts",
-    "test:precommit": "npm run test:go:all && npm run test:ts",
+    "test:precommit": "npm run license:check && npm run test:go:all && npm run test:ts",
     "test:e2e": "npm --prefix e2e test",
     "show-report": "cd e2e && npx playwright show-report"
   },

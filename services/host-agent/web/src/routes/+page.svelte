@@ -1,4 +1,6 @@
 <script lang="ts">
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import GridStackGrid from '$lib/components/GridStackGrid.svelte';

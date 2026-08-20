@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 import { test, expect } from '../lib/fixtures';
 import { LoginPage } from '../lib/loginPage';
 
