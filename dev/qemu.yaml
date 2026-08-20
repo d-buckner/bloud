@@ -26,9 +26,11 @@ mount:
 portForwards:
   - guestPort: 22     # ssh -> host 2222
   - guestPort: 3000   # host-agent
-  - guestPort: 5432   # postgres
+  - guestPort: 3389   # LDAP outpost (authentik)
   - guestPort: 8080   # traefik
   - guestPort: 8096   # jellyfin
-  - guestPort: 9000   # authentik
+  - guestPort: 9001   # authentik server
+  - guestPort: 2283   # immich
+  - guestPort: 4533   # navidrome
 provision:
   - mode: cloud-init  # NoCloud seed: packages + bloud user + lingering + 9p mount

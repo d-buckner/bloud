@@ -37,13 +37,9 @@ bloud
 .env
 .env.*
 !.env.example
-dev/host-agent.env
 
 # Images
 *.img
-
-# Generated Lima config (from template)
-lima/test-nixos.yaml
 
 # OS
 .DS_Store

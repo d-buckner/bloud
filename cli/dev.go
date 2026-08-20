@@ -98,6 +98,20 @@ func trustedLocalNetsEnv() string {
 	return ""
 }
 
+// ssoIssuerURL is the OIDC issuer base URL reachable from inside app
+// containers: the SSO subdomain of the base domain, mapped to the host
+// gateway via per-app extraHosts. An explicit BLOUD_SSO_ISSUER_URL wins.
+func ssoIssuerURL() string {
+	if v := os.Getenv("BLOUD_SSO_ISSUER_URL"); v != "" {
+		return v
+	}
+	baseDomain := os.Getenv("BLOUD_BASE_DOMAIN")
+	if baseDomain == "" {
+		baseDomain = "localhost"
+	}
+	return fmt.Sprintf("http://sso.%s:8080", baseDomain)
+}
+
 // vmLabel is the human-readable VM name for the selected backend.
 func vmLabel() string {
 	if backendName() == "qemu" {
@@ -123,12 +137,10 @@ func cmdStart() int {
 	if backendName() == "qemu" {
 		fmt.Println("Prerequisites (QEMU backend):")
 		fmt.Println("  BLOUD_BACKEND=qemu ./bloud dev   # provisions .bloud/qemu/bloud-qemu, boots VM")
-		fmt.Println("  ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1 bash dev/setup.sh")
 	} else {
-		fmt.Println("Prerequisites:")
+		fmt.Println("Prerequisites (Lima backend):")
 		fmt.Println("  limactl create --name=bloud-dev dev/lima.yaml")
 		fmt.Println("  limactl start bloud-dev")
-		fmt.Println("  limactl shell bloud-dev bash dev/setup.sh")
 	}
 	return 0
 }
@@ -544,17 +556,19 @@ func cmdDev() int {
 		return 1
 	}
 
-	// Run foreground. Load dev/host-agent.env (the SSO/podman environment
-	// shared with the e2e lifecycle deployment); the explicit BLOUD_* values
-	// below take precedence over the file.
+	// Run foreground. The SSO issuer URL is derived (see ssoIssuerURL); all
+	// other configuration resolves through env vars, secrets.json, and the
+	// host-agent's dev fallbacks.
 	log("Starting host-agent (Ctrl-C to stop)")
-	runEnv := loadEnvFile(filepath.Join(root, "dev", "host-agent.env"))
-	runEnv["BLOUD_DATA_DIR"] = dirs.DataDir
-	runEnv["BLOUD_APPS_DIR"] = dirs.AppsDir
-	runEnv["BLOUD_TRAEFIK_DYNAMIC_DIR"] = dirs.DataDir + "/traefik/dynamic"
-	runEnv["BLOUD_TRUSTED_LOCAL_NETS"] = trustedLocalNetsEnv()
+	runEnv := map[string]string{
+		"BLOUD_DATA_DIR":            dirs.DataDir,
+		"BLOUD_APPS_DIR":            dirs.AppsDir,
+		"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
+		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(),
+		"BLOUD_SSO_ISSUER_URL":      ssoIssuerURL(),
+	}
 	runErr := ex.RunStream(context.Background(), executor.RunSpec{
-		Command: "unset DATABASE_URL BLOUD_REDIS_ADDR; exec ./host-agent",
+		Command: "unset DATABASE_URL; exec ./host-agent",
 		Dir:     dirs.HostAgentDir,
 		Env:     runEnv,
 	}, os.Stdout, os.Stderr)
@@ -563,26 +577,6 @@ func cmdDev() int {
 		return 1
 	}
 	return 0
-}
-
-// loadEnvFile parses a KEY=VALUE env file, ignoring comments and blank
-// lines. A missing or unreadable file yields an empty map.
-func loadEnvFile(path string) map[string]string {
-	env := map[string]string{}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return env
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if key, value, ok := strings.Cut(line, "="); ok {
-			env[strings.TrimSpace(key)] = value
-		}
-	}
-	return env
 }
 
 // uninstallApp calls the host-agent API to uninstall an app

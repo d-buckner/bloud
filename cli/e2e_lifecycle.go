@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -24,27 +23,24 @@ const (
 type lifecycleConfig struct {
 	root       string
 	lima       string
-	qemu       string       // QEMU instance name (auto-provisioned)
+	qemu       string // QEMU instance name (auto-provisioned)
 	sshTarget  string
-	sshKeyFile string       // SSH key file for QEMU (auto-derived)
-	envFile    string
+	sshKeyFile string // SSH key file for QEMU (auto-derived)
 	baseURL    string
 	remoteDir  string
 	goarch     string
 	username   string
 	password   string
 	traefikDir string
-	redisAddr  string
 	hostOnly   bool
 	keep       bool
 	remoteHome string
 }
 
 type lifecycle struct {
-	cfg                    lifecycleConfig
-	buildDir               string
-	failed                 bool
-	stoppedComposeJellyfin string
+	cfg      lifecycleConfig
+	buildDir string
+	failed   bool
 }
 
 var lifecycleRemotePath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
@@ -69,14 +65,12 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 		lima:       getenv("BLOUD_E2E_LIMA_INSTANCE"),
 		qemu:       getenv("BLOUD_E2E_QEMU_INSTANCE"),
 		sshTarget:  getenv("BLOUD_E2E_SSH_TARGET"),
-		envFile:    getenv("BLOUD_E2E_ENV_FILE"),
 		baseURL:    getenv("BLOUD_URL"),
 		remoteDir:  getenv("BLOUD_E2E_RUNTIME_DIR"),
 		goarch:     getenv("BLOUD_E2E_GOARCH"),
 		username:   getenv("BLOUD_E2E_USERNAME"),
 		password:   getenv("BLOUD_E2E_PASSWORD"),
 		traefikDir: getenv("BLOUD_E2E_TRAEFIK_DYNAMIC_DIR"),
-		redisAddr:  getenv("BLOUD_E2E_REDIS_ADDR"),
 	}
 	if cfg.remoteDir == "" {
 		cfg.remoteDir = "/var/tmp/bloud-e2e-runtime"
@@ -88,9 +82,6 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 		// Derive SSH target and key from QEMU instance
 		cfg.sshTarget = "bloud@127.0.0.1"
 		cfg.sshKeyFile = filepath.Join(root, ".bloud", "qemu", cfg.qemu, "id_ed25519")
-	}
-	if cfg.envFile == "" && cfg.lima != "" {
-		cfg.envFile = filepath.Join(root, "dev", "host-agent.env")
 	}
 	if cfg.baseURL == "" && cfg.lima != "" {
 		cfg.baseURL = "http://localhost:3000"
@@ -106,9 +97,6 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	}
 	if cfg.traefikDir == "" {
 		cfg.traefikDir = filepath.Join(cfg.remoteDir, "data", "traefik", "dynamic")
-	}
-	if cfg.redisAddr == "" && cfg.qemu != "" {
-		cfg.redisAddr = "127.0.0.1:6379"
 	}
 
 	flags := flag.NewFlagSet("e2e lifecycle", flag.ContinueOnError)
@@ -130,12 +118,6 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if cfg.qemu != "" && cfg.sshTarget != "" && cfg.sshKeyFile == "" {
 		// sshTarget was set manually, not derived from QEMU
 		return cfg, false, fmt.Errorf("BLOUD_E2E_QEMU_INSTANCE and BLOUD_E2E_SSH_TARGET cannot be used together")
-	}
-	if cfg.envFile == "" {
-		return cfg, false, fmt.Errorf("BLOUD_E2E_ENV_FILE is required")
-	}
-	if info, err := os.Stat(cfg.envFile); err != nil || info.IsDir() {
-		return cfg, false, fmt.Errorf("BLOUD_E2E_ENV_FILE must point to a readable file")
 	}
 	if !cfg.hostOnly && cfg.baseURL == "" {
 		return cfg, false, fmt.Errorf("BLOUD_URL is required unless --host-only is used")
@@ -162,19 +144,17 @@ func printLifecycleUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
 
 Required environment:
-  None for the default Lima target. It uses bloud-dev and dev/host-agent.env.
+  None for the default Lima target. It uses bloud-dev.
 
 Optional environment:
   BLOUD_E2E_LIMA_INSTANCE
                          Lima instance name (default: bloud-dev)
   BLOUD_E2E_SSH_TARGET   Use a generic SSH target instead of Lima
-  BLOUD_E2E_ENV_FILE     Host-agent environment file for provisioned core services
   BLOUD_URL              Browser-accessible ingress URL
   BLOUD_E2E_RUNTIME_DIR  Remote deployment/data directory (default: /var/tmp/bloud-e2e-runtime)
   BLOUD_E2E_GOARCH       Linux target architecture: amd64 or arm64
   BLOUD_E2E_USERNAME     Browser test user (default: e2etest)
   BLOUD_E2E_PASSWORD     Browser test password (default: e2etest123)
-  BLOUD_E2E_REDIS_ADDR   Redis address for host-agent; auto-discovered on Lima
   BLOUD_E2E_TRAEFIK_DYNAMIC_DIR
                          Directory watched by the target ingress
 
@@ -197,9 +177,6 @@ func (r *lifecycle) run() (runErr error) {
 		if !r.cfg.keep && r.cfg.remoteHome != "" {
 			r.cleanupRemoteDeployment()
 		}
-		if !r.cfg.keep {
-			r.restoreLimaComposeJellyfin()
-		}
 		os.RemoveAll(r.buildDir)
 	}()
 
@@ -214,9 +191,6 @@ func (r *lifecycle) run() (runErr error) {
 	}
 	if err := r.remoteRun(remotePreflightScript, r.cfg.remoteDir); err != nil {
 		return fmt.Errorf("host preflight: %w", err)
-	}
-	if err := r.prepareLimaTarget(); err != nil {
-		return err
 	}
 	if err := r.prepareQEMUTarget(); err != nil {
 		return err
@@ -245,14 +219,7 @@ func (r *lifecycle) run() (runErr error) {
 	if err := r.copyFile(filepath.Join(r.buildDir, "host-agent"), r.remotePath("host-agent/host-agent")); err != nil {
 		return err
 	}
-	sanitizedEnv := filepath.Join(r.buildDir, "host-agent.env")
-	if err := writeSanitizedLifecycleEnvFile(r.cfg.envFile, sanitizedEnv); err != nil {
-		return err
-	}
-	if err := r.copyFile(sanitizedEnv, r.remotePath("host-agent.env")); err != nil {
-		return err
-	}
-	if err := r.remoteRun("chmod 600 \"$1/host-agent.env\"; chmod 755 \"$1/host-agent/host-agent\"", r.cfg.remoteDir); err != nil {
+	if err := r.remoteRun("chmod 755 \"$1/host-agent/host-agent\"", r.cfg.remoteDir); err != nil {
 		return err
 	}
 
@@ -328,9 +295,6 @@ func (r *lifecycle) run() (runErr error) {
 
 func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
 	var extraEnv strings.Builder
-	if cfg.redisAddr != "" {
-		fmt.Fprintf(&extraEnv, "Environment=BLOUD_REDIS_ADDR=%s\n", cfg.redisAddr)
-	}
 	if cfg.qemu != "" {
 		fmt.Fprintf(&extraEnv, "Environment=BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24\n")
 	}
@@ -342,61 +306,17 @@ Wants=network-online.target podman.socket
 [Service]
 Type=simple
 WorkingDirectory=%s/host-agent
-EnvironmentFile=%s/host-agent.env
 Environment=BLOUD_DATA_DIR=%s/data
 Environment=BLOUD_APPS_DIR=%s/apps
 Environment=BLOUD_TRAEFIK_DYNAMIC_DIR=%s
+Environment=BLOUD_SSO_ISSUER_URL=%s
 %s
 ExecStart=%s/host-agent/host-agent
 Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=default.target
-`, cfg.remoteDir, cfg.remoteDir, cfg.remoteDir, cfg.remoteDir, cfg.traefikDir, extraEnv.String(), cfg.remoteDir)
-}
-
-func writeSanitizedLifecycleEnvFile(source, destination string) error {
-	input, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-
-	owned := map[string]struct{}{
-		"BLOUD_APPS_DIR":                {},
-		"BLOUD_DATA_DIR":                {},
-		"BLOUD_PODMAN_SOCKET":           {},
-		"BLOUD_TRAEFIK_DYNAMIC_DIR":     {},
-		"BLOUD_E2E_LIMA_INSTANCE":       {},
-		"BLOUD_E2E_RUNTIME_DIR":         {},
-		"BLOUD_E2E_SSH_TARGET":          {},
-		"BLOUD_E2E_TRAEFIK_DYNAMIC_DIR": {},
-	}
-	scanner := bufio.NewScanner(input)
-	for scanner.Scan() {
-		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			fmt.Fprintln(output, line)
-			continue
-		}
-		key, _, ok := strings.Cut(trimmed, "=")
-		if ok {
-			key = strings.TrimSpace(key)
-			if _, skip := owned[key]; skip {
-				continue
-			}
-		}
-		fmt.Fprintln(output, line)
-	}
-	return scanner.Err()
+`, cfg.remoteDir, cfg.remoteDir, cfg.remoteDir, cfg.traefikDir, ssoIssuerURL(), extraEnv.String(), cfg.remoteDir)
 }
 
 func (r *lifecycle) step(message string) {
@@ -533,7 +453,6 @@ func (r *lifecycle) collectLogs() {
 func (r *lifecycle) cleanupRemoteDeployment() {
 	script := `curl -fsS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null 2>&1 || true
 podman rm -f apps-jellyfin >/dev/null 2>&1 || true
-podman rm -f bloud-e2e-redis >/dev/null 2>&1 || true
 systemctl --user disable --now "$1" >/dev/null 2>&1 || true
 rm -f "$2/.config/systemd/user/$1"
 if test -f "$3/.bloud-e2e-runtime"; then
@@ -557,51 +476,7 @@ func (r *lifecycle) prepareQEMUTarget() error {
 	if err := bk.SyncProject(context.Background()); err != nil {
 		return fmt.Errorf("QEMU project sync failed: %w", err)
 	}
-	if r.cfg.redisAddr == "" {
-		if err := r.remoteRun(`if ! timeout 2 bash -c '</dev/tcp/127.0.0.1/6379' 2>/dev/null; then
-  podman rm -f bloud-e2e-redis >/dev/null 2>&1 || true
-  podman run -d --name bloud-e2e-redis -p 127.0.0.1:6379:6379 docker.io/redis:7-alpine >/dev/null
-fi`); err != nil {
-			return fmt.Errorf("prepare QEMU Redis port: %w", err)
-		}
-		r.cfg.redisAddr = "127.0.0.1:6379"
-	}
 	return nil
-}
-
-func (r *lifecycle) prepareLimaTarget() error {
-	if r.cfg.lima == "" {
-		return nil
-	}
-	name, err := r.remoteOutput(`podman ps --filter label=com.docker.compose.service=jellyfin --format '{{.Names}}' | head -1`)
-	if err != nil {
-		return err
-	}
-	r.stoppedComposeJellyfin = strings.TrimSpace(name)
-	if r.cfg.redisAddr == "" {
-		if err := r.remoteRun(`if ! timeout 2 bash -c '</dev/tcp/127.0.0.1/6379' 2>/dev/null; then
-  podman rm -f bloud-e2e-redis >/dev/null 2>&1 || true
-  podman run -d --name bloud-e2e-redis -p 127.0.0.1:6379:6379 docker.io/redis:7-alpine >/dev/null
-fi`, r.cfg.root); err != nil {
-			return fmt.Errorf("prepare Lima Redis port: %w", err)
-		}
-		r.cfg.redisAddr = "127.0.0.1:6379"
-	}
-	if r.stoppedComposeJellyfin == "" {
-		return nil
-	}
-	r.step("Stopping legacy compose-managed Jellyfin")
-	return r.remoteRun(`podman stop "$1" >/dev/null`, r.stoppedComposeJellyfin)
-}
-
-func (r *lifecycle) restoreLimaComposeJellyfin() {
-	if r.stoppedComposeJellyfin == "" {
-		return
-	}
-	fmt.Printf("\n%s==>%s Restoring legacy compose-managed Jellyfin\n", colorGreen, colorReset)
-	if err := r.remoteRun(`podman start "$1" >/dev/null`, r.stoppedComposeJellyfin); err != nil {
-		errorf("failed to restore compose-managed Jellyfin: %v", err)
-	}
 }
 
 var remotePreflightScript = `command -v systemctl >/dev/null

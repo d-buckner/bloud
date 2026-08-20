@@ -39,12 +39,12 @@ const (
 // QEMUBackend provisions and manages a QEMU VM via qemu-img and qemu-system-x86_64.
 // It is the Linux dev backend; Lima (limactl/vz) remains the macOS backend.
 type QEMUBackend struct {
-	instance   string
-	projectDir string
-	dir        string            // runtime dir: <root>/.bloud/qemu/<instance>
-	newCmd     func(ctx context.Context, name string, args ...string) *exec.Cmd
-	pollInterval time.Duration   // readiness poll cadence (tests set to 0)
-	pollTimeout  time.Duration   // readiness poll deadline (tests shrink)
+	instance     string
+	projectDir   string
+	dir          string // runtime dir: <root>/.bloud/qemu/<instance>
+	newCmd       func(ctx context.Context, name string, args ...string) *exec.Cmd
+	pollInterval time.Duration // readiness poll cadence (tests set to 0)
+	pollTimeout  time.Duration // readiness poll deadline (tests shrink)
 }
 
 // NewQEMUBackend returns a backend that manages the named QEMU VM. projectDir is
@@ -76,7 +76,7 @@ func (b *QEMUBackend) Create(ctx context.Context) error {
 	}
 	// Debian cloud images ship no 9p/virtiofs kernel modules, so a live host
 	// mount is unavailable; instead rsync the project into the guest so the
-	// dev loop (compose.yml, apps/, services/) sees a working copy.
+	// dev loop (apps/, services/) sees a working copy.
 	if err := b.SyncProject(ctx); err != nil {
 		return fmt.Errorf("sync project into guest: %w", err)
 	}
@@ -122,10 +122,12 @@ func (b *QEMUBackend) Host() executor.Host {
 		}),
 		map[string]string{
 			"host-agent": "3000",
-			"postgres":   "5432",
 			"traefik":    "8080",
+			"ldap":       "3389",
 			"jellyfin":   "8096",
-			"authentik":  "9000",
+			"authentik":  "9001",
+			"immich":     "2283",
+			"navidrome":  "4533",
 		},
 		executor.DataDirs{
 			HostAgentDir: qemuRemoteDir + "/host-agent",
@@ -231,12 +233,12 @@ func (b *QEMUBackend) launch(ctx context.Context) error {
 	seed := filepath.Join(b.dir, "seed.iso")
 	pid := filepath.Join(b.dir, b.instance+".pid")
 	// Host-side forward ports. Each guest port can be remapped to a different
-	// host port via BLOUD_QEMU_FWD_<guestport> (e.g. BLOUD_QEMU_FWD_9000=9100)
+	// host port via BLOUD_QEMU_FWD_<guestport> (e.g. BLOUD_QEMU_FWD_9001=9101)
 	// so the VM can run on hosts that already occupy a default port. The guest
 	// ports themselves never change; only the host port QEMU binds changes.
-	fwds := make([]string, 0, 6)
+	fwds := make([]string, 0, 8)
 	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort(strconv.Itoa(qemuSSHPort))))
-	for _, gp := range []string{"3000", "5432", "8080", "8096", "9000"} {
+	for _, gp := range []string{"3000", "3389", "8080", "8096", "9001", "2283", "4533"} {
 		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hostForwardPort(gp), gp))
 	}
 	netdev := "user,id=net0," + strings.Join(fwds, ",")
@@ -331,7 +333,6 @@ users:
       - %s
 packages:
   - podman
-  - podman-compose
   - golang-go
   - unzip
   - curl

@@ -73,7 +73,6 @@ func cmdSetup() int {
 	} else {
 		fmt.Println("    limactl create --name=bloud-dev dev/lima.yaml")
 		fmt.Println("    limactl start bloud-dev")
-		fmt.Println("    limactl shell bloud-dev bash dev/setup.sh")
 	}
 	fmt.Println("    ./bloud dev")
 	fmt.Println()

@@ -142,7 +142,6 @@ npm run setup    # Check prerequisites + build ./bloud CLI
 ```bash
 limactl create --name=bloud-dev dev/lima.yaml
 limactl start bloud-dev
-limactl shell bloud-dev bash dev/setup.sh
 ```
 
 ### Daily development

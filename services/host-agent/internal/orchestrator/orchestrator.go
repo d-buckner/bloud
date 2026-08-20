@@ -868,6 +868,7 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 	}
 
 	ssoEnabled := catalogApp.SSO.Strategy != "" && catalogApp.SSO.Strategy != "none"
+	state.SSOEnabled = ssoEnabled
 	if ssoEnabled {
 		o.logger.Info("SSO enabled for app", "app", id, "strategy", catalogApp.SSO.Strategy)
 		switch catalogApp.SSO.Strategy {

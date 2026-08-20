@@ -164,8 +164,9 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 	joined := strings.Join(launch, " ")
 	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4G", "-smp 4",
 		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
-		"hostfwd=tcp::5432-:5432", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
-		"hostfwd=tcp::9000-:9000", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
+		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
+		"hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283", "hostfwd=tcp::4533-:4533",
+		"seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
 		if !strings.Contains(joined, wantArg) {
 			t.Errorf("launch args missing %q: %s", wantArg, joined)
 		}
@@ -206,11 +207,10 @@ func TestQEMUBackendHost(t *testing.T) {
 	if h.Executor() == nil {
 		t.Error("Host().Executor() = nil")
 	}
-	if got := h.Ports()["traefik"]; got != "8080" {
-		t.Errorf("Ports()[traefik] = %q, want 8080", got)
-	}
-	if got := h.Ports()["host-agent"]; got != "3000" {
-		t.Errorf("Ports()[host-agent] = %q, want 3000", got)
+	for name, want := range map[string]string{"traefik": "8080", "host-agent": "3000", "ldap": "3389", "jellyfin": "8096", "authentik": "9001", "immich": "2283", "navidrome": "4533"} {
+		if got := h.Ports()[name]; got != want {
+			t.Errorf("Ports()[%s] = %q, want %s", name, got, want)
+		}
 	}
 	dirs := h.DataDirs()
 	if dirs.HostAgentDir != "/var/tmp/bloud-qemu-runtime/host-agent" {
