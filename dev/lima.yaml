@@ -4,7 +4,7 @@
 # Usage:
 #   limactl create --name=bloud-dev dev/lima.yaml
 #   limactl start bloud-dev
-#   limactl shell bloud-dev bash dev/setup.sh
+#   ./bloud dev
 
 images:
   - location: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
@@ -22,10 +22,12 @@ mounts:
 
 portForwards:
   - guestPort: 3000   # host-agent
-  - guestPort: 5432   # postgres
+  - guestPort: 3389   # LDAP outpost (authentik)
   - guestPort: 8080   # traefik
   - guestPort: 8096   # jellyfin
-  - guestPort: 9000   # authentik
+  - guestPort: 9001   # authentik server
+  - guestPort: 2283   # immich
+  - guestPort: 4533   # navidrome
 
 containerd:
   system: false
@@ -37,10 +39,24 @@ provision:
       #!/bin/bash
       set -eux
 
-      # Install podman, podman-compose, and Go
+      # Install podman and Go
       apt-get update -qq
-      apt-get install -y -qq podman podman-compose golang-go unzip curl jq ldap-utils
+      apt-get install -y -qq podman golang-go unzip curl jq ldap-utils
 
       # Enable lingering for the default user so user-level podman services
       # persist after SSH logout
       loginctl enable-linger "$(id -un 1000)"
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # Rootless podman on Lima: cgroupfs manager + k8s-file logging
+      mkdir -p ~/.config/containers
+      cat > ~/.config/containers/containers.conf << 'CONF'
+      [engine]
+      cgroup_manager = "cgroupfs"
+
+      [containers]
+      log_driver = "k8s-file"
+      CONF

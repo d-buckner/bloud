@@ -25,7 +25,7 @@ relationships working.
 | `services/host-agent/web/` | SvelteKit 2 + Svelte 5 frontend (npm workspace `@bloud/host-agent-web`), static build served by host-agent. |
 | `apps/` | Go module — the app catalog. One dir per app: `metadata.yaml` + `configurator.go` (+ assets). |
 | `e2e/` | Playwright (TS) browser tests of the user-visible lifecycle. |
-| `dev/` | VM configs (`lima.yaml`, `qemu.yaml`), `setup.sh` (one-time VM bootstrap), `compose.yml` (see URGENT debt), `host-agent.env` (generated, gitignored). |
+| `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
 | `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference + app registry. |
 | `specs/` | `spec.md` (authoritative release plan), `reconciler-spec.md`, `review.md`. |
 | `plans/` | Design plans (qemu-backend, tailnet-outpost, control-plane-auth, persistent-ports-fqdn-remote, layout-refactor). |
@@ -49,7 +49,6 @@ Development runs **inside a VM** — macOS uses Lima (default), Linux uses QEMU
 # Lima (macOS)
 limactl create --name=bloud-dev dev/lima.yaml
 limactl start bloud-dev
-limactl shell bloud-dev bash dev/setup.sh   # one-time: dirs, secrets, LDAP plugin, blueprints
 
 # QEMU (Linux) — self-provisioning
 BLOUD_BACKEND=qemu ./bloud dev              # creates .bloud/qemu/bloud-qemu (gitignored)
@@ -73,8 +72,9 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | **8080** | **Traefik — the public-facing port.** Users hit apps here (`jellyfin.localhost:8080`, `immich.localhost:8080`, …). Browser/e2e user journeys must go through this. | end users |
 | **3000** | **host-agent internal API** (install/uninstall/status, session auth with loopback/trusted-net bypass). Operator/automation surface, not the user surface. | ops, CLI, e2e API helpers |
 | 8096 | Jellyfin container (direct) | debugging |
-| 9000 | Authentik server (direct) | debugging |
-| 5432 / 3389 | Postgres / LDAP outpost (direct) | debugging |
+| 9001 | Authentik server (direct) | debugging |
+| 3389 | LDAP outpost (direct) | debugging |
+| 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
 (10.0.2.2), so `./bloud dev` sets `BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24` for the
@@ -105,7 +105,7 @@ pruned to the newest 20).
 |---|---|---|
 | `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, web vitest + svelte-check |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
-| `integration` | `./bloud validate --tier integration` | Requires the VM: checks prereqs, brings up the **compose stack** (⚠️ see URGENT debt), builds host-agent to `/tmp/host-agent` in the VM, sources `dev/host-agent.env`, runs `go test -count=1 -tags integration -timeout 300s ./internal/e2e/...` inside the VM |
+| `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
 Flags: `--tier fast|changed|integration`, `--app <name>`, `--dry-run`, `--explain`,
 `--json`, `--since <ref>`.
@@ -143,10 +143,9 @@ tests + web TS tests. Don't commit without it passing; don't disable the hook.
   Jellyfin through the real host-agent API (the dependency-graph path)**, runs
   Playwright, restarts services, re-runs Playwright, uninstalls and asserts
   cleanup. Key env: `BLOUD_E2E_LIMA_INSTANCE` (default `bloud-dev`),
-  `BLOUD_E2E_QEMU_INSTANCE`, `BLOUD_E2E_SSH_TARGET`, `BLOUD_E2E_ENV_FILE`
-  (default `dev/host-agent.env`), `BLOUD_E2E_RUNTIME_DIR`, `BLOUD_E2E_GOARCH`
-  (amd64|arm64), `BLOUD_E2E_USERNAME`/`BLOUD_E2E_PASSWORD` (defaults
-  `e2etest`/`e2etest123`), `BLOUD_E2E_REDIS_ADDR`, `BLOUD_E2E_TRAEFIK_DYNAMIC_DIR`.
+  `BLOUD_E2E_QEMU_INSTANCE`, `BLOUD_E2E_SSH_TARGET`, `BLOUD_E2E_RUNTIME_DIR`,
+  `BLOUD_E2E_GOARCH` (amd64|arm64), `BLOUD_E2E_USERNAME`/`BLOUD_E2E_PASSWORD`
+  (defaults `e2etest`/`e2etest123`), `BLOUD_E2E_TRAEFIK_DYNAMIC_DIR`.
 
 ## `./bloud` CLI reference
 
@@ -254,41 +253,25 @@ The CLI resolves the project root by walking up from cwd looking for
    `apps/authentik` (multi-container, LDAP infra), `apps/immich` (own
    postgres+redis, native-oidc), `apps/navidrome` (forward-auth).
 
-## URGENT tech debt: `dev/compose.yml` bypasses the real dependency graph
+## Integration validation runs the real dependency-graph path
 
-**This is the priority cleanup for the validation stack.** The integration
-validation path — `./bloud validate --tier integration` (the compose up +
-readiness loop in `cli/validate.go`) and the Go tests in
-`services/host-agent/internal/e2e/` — provisions its test stack with
-**podman-compose from `dev/compose.yml`**: a static stack of shared postgres
-(:5432), redis, authentik server/worker/proxy/ldap, and jellyfin.
+The integration tier (`./bloud validate --tier integration`) and the Go tests
+in `services/host-agent/internal/e2e/` provision their runtime the same way a
+real install works: deploy host-agent + catalog into the VM as a systemd user
+service, install Jellyfin through `POST /api/apps/jellyfin/install`, let the
+orchestrator converge, then run the behavioral tests inside the VM.
 
-That is **not how the product works.** Real installs go through the catalog
-planner (`catalog.AppGraph.PlanInstall`) → orchestrator intent queue → rootless
-Podman, with per-app containers declared in each app's `metadata.yaml`
-(per-app databases, `io.bloud.managed` labels, graph ordering, SSO
-provisioning). Consequences of the compose path:
+The old `dev/compose.yml` static stack (shared postgres/redis/authentik/jellyfin)
+was retired in 2026-08: it bypassed the catalog planner, the orchestrator
+intent queue, and the `io.bloud.managed` container labels, so integration
+tests could pass while the real install/reconcile flow was broken — and fail
+for reasons the product path never hits (shared postgres vs per-app
+postgres, compose service naming, no graph ordering).
 
-- Integration tests can pass while the real install/reconcile flow is broken,
-  and fail for reasons the product path never hits (shared postgres vs
-  per-app postgres, compose service naming, no managed labels, no intent
-  queue involvement).
-- `dev/compose.yml`, the compose readiness loop, and compose-shaped
-  expectations in `internal/e2e` are all extra surface that must be deleted,
-  not maintained.
-
-**Migration goal:** provision the integration/e2e runtime through the real
-dependency-graph path — deploy host-agent + catalog, install apps via
-`POST /api/apps/{name}/install`, let the orchestrator converge — then retire
-`dev/compose.yml` and its dependents. `./bloud e2e lifecycle` **already does
-this** (it installs Jellyfin through the API and asserts the
-`io.bloud.managed`/`io.bloud.app` labels); use it as the model.
-
-**Mandatory regression gate:** the Playwright suite (`e2e/tests/*.spec.ts`)
-must pass **before and after** the migration. Capture a green run before
-touching anything, keep it green through every migration step (run
-`./bloud e2e` / `./bloud e2e lifecycle` after each), and only land the
-migration with both sides green.
+`./bloud e2e lifecycle` is the full user-visible version of the same path
+(install → browser journeys → service restart → reinstall → uninstall and
+cleanup assertions). The Playwright suite (`e2e/tests/*.spec.ts`) remains the
+mandatory regression gate for changes to install/reconcile behavior.
 
 ## Known debt (verified 2026-08-17)
 
@@ -309,8 +292,6 @@ graph, route-generation side effects, ad hoc migrations). Review findings:
 - `dev/lima.yaml` hardcodes the repo mount at `~/Projects/bloud` (Lima reads
   the yaml verbatim) — adjust if the checkout lives elsewhere. The QEMU backend
   auto-detects the checkout dir; `dev/qemu.yaml` documents the spec only.
-- `dev/host-agent.env` is gitignored, generated in-VM by `dev/setup.sh` from
-  `secrets.json`; integration preflight fails without it.
 - The CLI loads a gitignored root `.env` before dispatching commands (existing
   env vars win).
 

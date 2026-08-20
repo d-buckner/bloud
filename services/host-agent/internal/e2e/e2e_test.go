@@ -1,24 +1,38 @@
 //go:build integration
 
-// Package e2e contains integration tests that run against real services
-// started by podman-compose (dev/compose.yml).
+// Package e2e contains integration tests that run against a host-agent
+// deployment exercising the real product path: the catalog planner, the
+// intent queue, and the orchestrator's dependency-graph reconciliation.
 //
-// These tests verify the complete configurator flow end-to-end:
-//   - Authentik LDAP infrastructure creation
-//   - LDAP outpost token extraction and outpost restart
-//   - Jellyfin setup wizard completion
-//   - Media library creation
-//   - LDAP plugin configuration from typed LDAPOutput
-//   - Actual LDAP authentication (behavioral verification)
+// The test binary runs inside the VM next to the deployed host-agent. It
+// drives every mutation through the host-agent HTTP API (install, uninstall);
+// the only direct container interactions are read-only inspection and one
+// fault injection (podman stop) that simulates a container crash. Recovery
+// from that crash is performed by the host-agent's startup convergence, not
+// by the test harness.
+//
+// Contract under test:
+//   - System apps (traefik, authentik) auto-install and converge on boot
+//   - Authentik LDAP infrastructure is created by the server PostStart during
+//     convergence; the LDAP outpost gets its real token via the shared
+//     template-var flow (no manual restart, no env file rewriting)
+//   - Installing Jellyfin through the API runs the full graph: containers,
+//     PreStart (LDAP plugin), PostStart (wizard, libraries, LDAP config)
+//   - A crashed container is recovered when the host-agent restarts
+//   - Uninstalling through the API removes containers, data, and routes
 //
 // Run with:
 //
-//	go test -tags integration -timeout 300s ./internal/e2e/...
+//	go test -tags integration -c -o bloud-integration.test ./internal/e2e/...
+//	./bloud-integration.test -test.v
 //
-// Prerequisites:
-//   - Lima VM "bloud-dev" running with compose stack up
-//   - host-agent built at /tmp/host-agent
-//   - dev/setup.sh has been executed
+// Prerequisites (provided by `./bloud validate --tier integration`):
+//   - host-agent deployed and running, API on localhost:3000
+//   - BLOUD_DATA_DIR points at the runtime data dir (secrets.json, api-token)
+//   - BLOUD_E2E_HOST_AGENT_UNIT names the unit supervising the host-agent
+//     process (crash-recovery test)
+//   - BLOUD_TRAEFIK_DYNAMIC_DIR points at the Traefik dynamic config dir
+//   - ldapsearch available (ldap-utils)
 package e2e
 
 import (
@@ -36,29 +50,31 @@ import (
 	"time"
 )
 
-// Service endpoints — accessible from inside the Lima VM via localhost
-// because compose publishes ports to the host.
-const (
-	jellyfinURL  = "http://localhost:8096"
-	authentikURL = "http://localhost:9000"
-	postgresPort = "5432"
+// Service endpoints — published by the catalog to localhost inside the VM.
+var (
+	hostAgentURL = getEnvDefault("BLOUD_E2E_HOST_AGENT_URL", "http://localhost:3000")
+	jellyfinURL  = getEnvDefault("BLOUD_E2E_JELLYFIN_URL", "http://localhost:8096")
+	authentikURL = getEnvDefault("BLOUD_E2E_AUTHENTIK_URL", "http://localhost:9001")
+	ldapURL      = getEnvDefault("BLOUD_E2E_LDAP_URL", "ldap://localhost:3389")
 )
 
-// LDAP expected values — must match buildLDAPOutput in configure.go.
+// expectedLDAPHost is the LDAP host the Jellyfin configurator must be given.
+// It matches config.Load's BLOUD_LDAP_HOST default (the catalog container
+// name), overridable for exotic deployments.
+func expectedLDAPHost() string {
+	if h := os.Getenv("BLOUD_E2E_LDAP_HOST"); h != "" {
+		return h
+	}
+	return "apps-authentik-ldap"
+}
+
+// LDAP expected values — must match config.Load defaults and
+// apps/jellyfin/configurator.go desiredLDAPConfig.
 const (
 	expectedLDAPPort     = 3389
 	expectedLDAPBaseDN   = "dc=ldap,dc=goauthentik,dc=io"
 	expectedLDAPBindUser = "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io"
 )
-
-// expectedLDAPHost returns the LDAP host that the configurator should write.
-// Compose containers use deterministic names matching production (apps-authentik-ldap).
-func expectedLDAPHost() string {
-	if h := os.Getenv("BLOUD_LDAP_HOST"); h != "" {
-		return h
-	}
-	return "apps-authentik-ldap"
-}
 
 // Jellyfin bootstrap admin — must match constants in apps/jellyfin/configurator.go
 const (
@@ -67,152 +83,287 @@ const (
 	ldapPluginID      = "958aad6637844d2ab89aa7b6fab6e25c"
 )
 
-func hostAgentBinary() string {
-	if p := os.Getenv("HOST_AGENT_BIN"); p != "" {
-		return p
-	}
-	return "/tmp/host-agent"
+type secretsFile struct {
+	AuthentikBootstrapPassword string `json:"authentikBootstrapPassword"`
+	AuthentikBootstrapToken    string `json:"authentikBootstrapToken"`
+	LdapBindPassword           string `json:"ldapBindPassword"`
 }
 
-// readSecrets reads secrets.json and returns the parsed map.
-func readSecrets() map[string]interface{} {
-	dataDir := os.Getenv("BLOUD_DATA_DIR")
-	if dataDir == "" {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".local", "share", "bloud")
+// dataDir returns the runtime data directory (secrets.json, api-token, app
+// data). The deployer sets BLOUD_DATA_DIR; the standard default is the
+// fallback for direct runs.
+func dataDir() string {
+	if d := os.Getenv("BLOUD_DATA_DIR"); d != "" {
+		return d
 	}
-	secretsFile := filepath.Join(dataDir, "secrets.json")
-	data, err := os.ReadFile(secretsFile)
-	if err != nil {
-		return nil
-	}
-	var secrets map[string]interface{}
-	json.Unmarshal(data, &secrets)
-	return secrets
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "bloud")
 }
 
-// hostAgentEnv returns the environment variables needed to run host-agent
-// configure commands against the compose stack.
-func hostAgentEnv() []string {
-	dataDir := os.Getenv("BLOUD_DATA_DIR")
-	if dataDir == "" {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".local", "share", "bloud")
-	}
-
-	appsDir := os.Getenv("BLOUD_APPS_DIR")
-	if appsDir == "" {
-		home, _ := os.UserHomeDir()
-		appsDir = filepath.Join(home, "bloud", "apps")
-	}
-
-	secrets := readSecrets()
-	pgPassword := "devpass"
-	ldapBindPassword := ""
-	authentikBootstrapToken := ""
-	authentikBootstrapPassword := ""
-	if secrets != nil {
-		if pw, ok := secrets["postgresPassword"].(string); ok {
-			pgPassword = pw
-		}
-		if pw, ok := secrets["ldapBindPassword"].(string); ok {
-			ldapBindPassword = pw
-		}
-		if tok, ok := secrets["authentikBootstrapToken"].(string); ok {
-			authentikBootstrapToken = tok
-		}
-		if pw, ok := secrets["authentikBootstrapPassword"].(string); ok {
-			authentikBootstrapPassword = pw
-		}
-	}
-
-	dbURL := fmt.Sprintf("postgres://apps:%s@localhost:%s/bloud?sslmode=disable", pgPassword, postgresPort)
-
-	ldapHost := os.Getenv("BLOUD_LDAP_HOST")
-	if ldapHost == "" {
-		ldapHost = "apps-authentik-ldap" // deterministic container name matching production
-	}
-
-	env := append(os.Environ(),
-		"BLOUD_DATA_DIR="+dataDir,
-		"BLOUD_APPS_DIR="+appsDir,
-		"DATABASE_URL="+dbURL,
-		"BLOUD_LDAP_BIND_PASSWORD="+ldapBindPassword,
-		"BLOUD_LDAP_HOST="+ldapHost,
-		"BLOUD_AUTHENTIK_PORT=9000",
-	)
-
-	// Pass Authentik credentials if available from secrets.json.
-	// These are needed by the Authentik configurator.
-	if authentikBootstrapToken != "" {
-		env = append(env, "BLOUD_AUTHENTIK_TOKEN="+authentikBootstrapToken)
-	}
-	if authentikBootstrapPassword != "" {
-		env = append(env, "BLOUD_AUTHENTIK_ADMIN_PASSWORD="+authentikBootstrapPassword)
-	}
-
-	return env
-}
-
-// runHostAgent executes a host-agent configure command and returns its output.
-func runHostAgent(t *testing.T, args ...string) string {
+func readSecrets(t *testing.T) secretsFile {
 	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, hostAgentBinary(), args...)
-	cmd.Env = hostAgentEnv()
-
-	out, err := cmd.CombinedOutput()
+	path := filepath.Join(dataDir(), "secrets.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("host-agent %s failed: %v\noutput:\n%s", strings.Join(args, " "), err, string(out))
+		t.Fatalf("reading %s: %v", path, err)
 	}
-	return string(out)
+	var s secretsFile
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
+	return s
 }
 
-// --- Authentik Tests ---
+// authentikToken returns the host-agent's long-lived Authentik API token,
+// using the same priority as config.getAuthentikToken: the api-token file
+// written by the Authentik server PostStart (always valid), then the
+// one-shot bootstrap token from secrets.json (first boot only).
+func authentikToken(t *testing.T) string {
+	t.Helper()
+	if data, err := os.ReadFile(filepath.Join(dataDir(), "authentik", "api-token")); err == nil {
+		if token := strings.TrimSpace(string(data)); token != "" {
+			return token
+		}
+	}
+	if token := readSecrets(t).AuthentikBootstrapToken; token != "" {
+		return token
+	}
+	t.Fatal("no Authentik API token available (api-token file or bootstrap token)")
+	return ""
+}
 
-func TestAuthentikHealthCheck(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+func getEnvDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
 
-	for {
-		req, err := http.NewRequestWithContext(ctx, "GET", authentikURL+"/-/health/ready/", nil)
+// runCmd executes a local command and returns its combined output.
+func runCmd(t *testing.T, name string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s: %v\noutput:\n%s", name, strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// waitHTTP polls url until it returns 200 or the deadline passes.
+func waitHTTP(timeout time.Duration, url string) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				return
+				return nil
 			}
 		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out after %s waiting for %s", timeout, url)
+}
 
-		select {
-		case <-ctx.Done():
-			t.Fatal("Authentik health check timed out")
-		case <-time.After(3 * time.Second):
+func waitHTTPOrFatal(t *testing.T, timeout time.Duration, url string) {
+	t.Helper()
+	if err := waitHTTP(timeout, url); err != nil {
+		t.Fatalf("host not ready: %v", err)
+	}
+}
+
+// installedApp is one entry of GET /api/apps/installed.
+type installedApp struct {
+	CatalogID string `json:"catalog_id"`
+	Status    string `json:"status"`
+	IsSystem  bool   `json:"is_system"`
+}
+
+func getInstalledApps(t *testing.T) []installedApp {
+	t.Helper()
+	resp, err := http.Get(hostAgentURL + "/api/apps/installed")
+	if err != nil {
+		t.Fatalf("GET /api/apps/installed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET /api/apps/installed: status %d: %s", resp.StatusCode, body)
+	}
+	var payload struct {
+		Apps []installedApp `json:"apps"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Apps
+}
+
+func appStatus(t *testing.T, catalogID string) string {
+	t.Helper()
+	for _, app := range getInstalledApps(t) {
+		if app.CatalogID == catalogID {
+			return app.Status
+		}
+	}
+	return ""
+}
+
+// waitAppRunning polls until the app reaches "running" status.
+func waitAppRunning(t *testing.T, catalogID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if appStatus(t, catalogID) == "running" {
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
+	t.Fatalf("timed out after %s waiting for %s to reach running (last status %q)",
+		timeout, catalogID, appStatus(t, catalogID))
+}
+
+// resetUserApps uninstalls every installed user app through the API so the
+// suite always starts from a clean slate, regardless of prior state.
+func resetUserApps() error {
+	apps, err := fetchInstalled()
+	if err != nil {
+		return err
+	}
+	for _, app := range apps {
+		if err := postUninstall(app.CatalogID); err != nil {
+			return err
+		}
+	}
+	deadline := time.Now().Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		apps, err := fetchInstalled()
+		if err != nil {
+			return err
+		}
+		remaining := 0
+		for _, app := range apps {
+			if !app.IsSystem {
+				remaining++
+			}
+		}
+		if remaining == 0 {
+			return nil
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for uninstall reset to complete")
+}
+
+func TestMain(m *testing.M) {
+	if err := waitHTTP(120*time.Second, hostAgentURL+"/api/health"); err != nil {
+		fmt.Fprintln(os.Stderr, "e2e: host-agent API not reachable:", err)
+		os.Exit(1)
+	}
+	// Clean slate before the suite: uninstall whatever user apps a previous
+	// run (or dev session) left behind.
+	if err := resetUserApps(); err != nil {
+		fmt.Fprintln(os.Stderr, "e2e: reset failed:", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+func fetchInstalled() ([]installedApp, error) {
+	resp, err := http.Get(hostAgentURL + "/api/apps/installed")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET /api/apps/installed: status %d", resp.StatusCode)
+	}
+	var payload struct {
+		Apps []installedApp `json:"apps"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload.Apps, nil
+}
+
+func postUninstall(catalogID string) error {
+	resp, err := http.Post(fmt.Sprintf("%s/api/apps/%s/uninstall", hostAgentURL, catalogID),
+		"application/json", strings.NewReader(`{"clearData":true}`))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("uninstall %s: status %d: %s", catalogID, resp.StatusCode, body)
+	}
+	return nil
+}
+
+// postJSON POSTs a JSON body and asserts the expected status code.
+func postJSON(t *testing.T, url string, body string, wantStatus int) {
+	t.Helper()
+	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != wantStatus {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST %s: status %d (want %d): %s", url, resp.StatusCode, wantStatus, data)
+	}
+}
+
+// --- System apps (auto-installed and converged on boot) ---
+
+// TestSystemAppsConverged verifies the bootstrap contract: system apps are
+// auto-installed by the orchestrator and their containers are up, running,
+// and carry the managed labels (architecture invariant 10).
+func TestSystemAppsConverged(t *testing.T) {
+	want := map[string]string{
+		"apps-traefik":            "traefik",
+		"apps-authentik-postgres": "authentik",
+		"apps-authentik-redis":    "authentik",
+		"apps-authentik-server":   "authentik",
+		"apps-authentik-worker":   "authentik",
+		"apps-authentik-ldap":     "authentik",
+	}
+	for name, app := range want {
+		out := runCmd(t, "podman", "inspect", "-f",
+			`{{.State.Running}}|{{ index .Config.Labels "io.bloud.managed" }}|{{ index .Config.Labels "io.bloud.app" }}`, name)
+		parts := strings.Split(out, "|")
+		if len(parts) != 3 {
+			t.Fatalf("%s: unexpected inspect output %q", name, out)
+		}
+		running, managed, gotApp := parts[0], parts[1], parts[2]
+		if running != "true" {
+			t.Errorf("%s: not running (State.Running=%s)", name, running)
+		}
+		if managed != "true" {
+			t.Errorf("%s: missing io.bloud.managed=true label", name)
+		}
+		if gotApp != app {
+			t.Errorf("%s: io.bloud.app = %q, want %q", name, gotApp, app)
 		}
 	}
 }
 
-func TestAuthentikPostStart_CreatesLDAPInfrastructure(t *testing.T) {
-	// Run the Authentik poststart configurator — this creates:
-	// - API service account + token
-	// - LDAP provider, application, outpost, service account
-	runHostAgent(t, "configure", "poststart", "authentik")
+func TestAuthentikHealthCheck(t *testing.T) {
+	waitHTTPOrFatal(t, 120*time.Second, authentikURL+"/-/health/ready/")
+}
 
-	// Verify: LDAP outpost exists via API
-	secrets := readSecrets()
-	token, ok := secrets["authentikBootstrapToken"].(string)
-	if !ok || token == "" {
-		t.Fatal("authentikBootstrapToken not found in secrets.json")
-	}
+// TestAuthentikLDAPOutpostCreated verifies that the LDAP outpost exists after
+// convergence — created by the authentik server PostStart as part of the
+// normal lifecycle, with no manual configurator invocation.
+func TestAuthentikLDAPOutpostCreated(t *testing.T) {
+	token := authentikToken(t)
 
-	ctx := context.Background()
-	req, err := http.NewRequestWithContext(ctx, "GET", authentikURL+"/api/v3/outposts/instances/?search=LDAP", nil)
+	req, err := http.NewRequestWithContext(context.Background(), "GET",
+		authentikURL+"/api/v3/outposts/instances/?search=LDAP", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,283 +389,149 @@ func TestAuthentikPostStart_CreatesLDAPInfrastructure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(outpostResp.Results) == 0 {
-		t.Fatal("No LDAP outpost found after poststart")
+		t.Fatal("no LDAP outpost found after convergence")
 	}
-	t.Logf("LDAP outpost created: %s (pk=%s)", outpostResp.Results[0].Name, outpostResp.Results[0].PK)
+	t.Logf("LDAP outpost present: %s (pk=%s)", outpostResp.Results[0].Name, outpostResp.Results[0].PK)
 }
 
+// TestAuthentikAdminLogin verifies real password authentication through the
+// Authentik flow executor (not just API health or token access).
 func TestAuthentikAdminLogin(t *testing.T) {
-	// Verify the Authentik admin can actually log in through the authentication flow.
-	// This tests real password authentication, not just API health or token access.
-	secrets := readSecrets()
-	adminPassword, ok := secrets["authentikBootstrapPassword"].(string)
-	if !ok || adminPassword == "" {
+	adminPassword := readSecrets(t).AuthentikBootstrapPassword
+	if adminPassword == "" {
 		t.Fatal("authentikBootstrapPassword not found in secrets.json")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Use a cookie jar to maintain the session across flow executor calls
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar}
+	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 
 	flowURL := authentikURL + "/api/v3/flows/executor/default-authentication-flow/"
 
-	// Step 1: GET the flow to start — returns the identification challenge
-	req, err := http.NewRequestWithContext(ctx, "GET", flowURL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := client.Do(req)
+	resp, err := client.Get(flowURL)
 	if err != nil {
 		t.Fatalf("GET flow executor: %v", err)
 	}
 	resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET flow executor: status %d", resp.StatusCode)
 	}
 
-	// Step 2: Submit username (identification stage)
-	identBody := `{"uid_field":"akadmin"}`
-	req, err = http.NewRequestWithContext(ctx, "POST", flowURL, strings.NewReader(identBody))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = client.Do(req)
+	resp, err = client.Post(flowURL, "application/json", strings.NewReader(`{"uid_field":"akadmin"}`))
 	if err != nil {
 		t.Fatalf("POST identification: %v", err)
 	}
 	resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST identification: status %d", resp.StatusCode)
 	}
 
-	// Step 3: Submit password
-	passBody := fmt.Sprintf(`{"password":"%s"}`, adminPassword)
-	req, err = http.NewRequestWithContext(ctx, "POST", flowURL, strings.NewReader(passBody))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = client.Do(req)
+	resp, err = client.Post(flowURL, "application/json",
+		strings.NewReader(fmt.Sprintf(`{"password":%q}`, adminPassword)))
 	if err != nil {
 		t.Fatalf("POST password: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Authentik login as akadmin failed: status %d: %s", resp.StatusCode, respBody)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Authentik login as akadmin failed: status %d: %s", resp.StatusCode, body)
 	}
 
-	// Parse the response — successful auth returns a redirect challenge
 	var flowResp struct {
-		Type          string `json:"type"`
-		To            string `json:"to"`
-		Component     string `json:"component"`
-		ResponseError string `json:"response_errors,omitempty"`
+		Type      string `json:"type"`
+		To        string `json:"to"`
+		Component string `json:"component"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&flowResp); err != nil {
 		t.Fatal(err)
 	}
-
 	if flowResp.Type != "redirect" {
 		t.Errorf("expected redirect after successful login, got type=%q component=%q", flowResp.Type, flowResp.Component)
 	}
-
 	t.Logf("Authentik login as akadmin successful (redirect to %s)", flowResp.To)
 }
 
-func TestLDAPOutpost_RestartWithToken(t *testing.T) {
-	// Extract the LDAP outpost token from Authentik and restart the
-	// outpost container with the real token so it can connect.
-	secrets := readSecrets()
-	token, ok := secrets["authentikBootstrapToken"].(string)
-	if !ok || token == "" {
-		t.Fatal("authentikBootstrapToken not found in secrets.json")
+// TestLDAPAuth_ServiceAccountCanBind is the key behavioral test for the LDAP
+// token flow: the outpost accepts connections and the service account binds.
+// In the product path the outpost container gets its real token via the
+// shared template-var map during graph reconciliation — no container restart
+// or env rewriting.
+func TestLDAPAuth_ServiceAccountCanBind(t *testing.T) {
+	ldapBindPassword := readSecrets(t).LdapBindPassword
+	if ldapBindPassword == "" {
+		t.Fatal("ldapBindPassword not found in secrets.json")
 	}
 
-	ctx := context.Background()
-
-	// Find the outpost to get its PK
-	req, _ := http.NewRequestWithContext(ctx, "GET", authentikURL+"/api/v3/outposts/instances/?search=LDAP", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET outposts: %v", err)
+	out := runCmd(t, "ldapsearch",
+		"-x",
+		"-H", ldapURL,
+		"-D", expectedLDAPBindUser,
+		"-w", ldapBindPassword,
+		"-b", expectedLDAPBaseDN,
+		"-s", "base",
+		"(objectClass=*)",
+	)
+	if !strings.Contains(out, expectedLDAPBaseDN) {
+		t.Errorf("LDAP search result does not contain base DN %q:\n%s", expectedLDAPBaseDN, out)
 	}
-	defer resp.Body.Close()
-
-	var outpostResp struct {
-		Results []struct {
-			PK string `json:"pk"`
-		} `json:"results"`
-	}
-	json.NewDecoder(resp.Body).Decode(&outpostResp)
-	if len(outpostResp.Results) == 0 {
-		t.Fatal("No LDAP outpost found")
-	}
-	outpostPK := outpostResp.Results[0].PK
-
-	// Get the outpost token using the view_key endpoint
-	tokenID := fmt.Sprintf("ak-outpost-%s-api", outpostPK)
-	viewKeyURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", authentikURL, tokenID)
-	req2, _ := http.NewRequestWithContext(ctx, "GET", viewKeyURL, nil)
-	req2.Header.Set("Authorization", "Bearer "+token)
-	resp2, err := http.DefaultClient.Do(req2)
-	if err != nil {
-		t.Fatalf("GET token view_key: %v", err)
-	}
-	defer resp2.Body.Close()
-
-	if resp2.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp2.Body)
-		t.Fatalf("GET token view_key: status %d: %s", resp2.StatusCode, body)
-	}
-
-	var tokenResp struct {
-		Key string `json:"key"`
-	}
-	json.NewDecoder(resp2.Body).Decode(&tokenResp)
-	if tokenResp.Key == "" {
-		t.Fatal("LDAP outpost token is empty")
-	}
-	t.Logf("Extracted LDAP outpost token: %s...", tokenResp.Key[:8])
-
-	// Stop the LDAP outpost, update its token, and restart it
-	stopCmd := exec.Command("podman", "stop", "apps-authentik-ldap")
-	if out, err := stopCmd.CombinedOutput(); err != nil {
-		t.Logf("podman stop output: %s", out)
-		// Don't fatal — container might not be running
-	}
-
-	rmCmd := exec.Command("podman", "rm", "-f", "apps-authentik-ldap")
-	if out, err := rmCmd.CombinedOutput(); err != nil {
-		t.Logf("podman rm output: %s", out)
-	}
-
-	// Restart via compose with the real token
-	dataDir := os.Getenv("BLOUD_DATA_DIR")
-	if dataDir == "" {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".local", "share", "bloud")
-	}
-
-	// Update the compose .env with the real token
-	appsDir := os.Getenv("BLOUD_APPS_DIR")
-	if appsDir == "" {
-		home, _ := os.UserHomeDir()
-		appsDir = filepath.Join(home, "bloud", "apps")
-	}
-	// The compose dir is two levels up from the apps dir
-	composeDir := filepath.Join(filepath.Dir(appsDir), "dev")
-	envFile := filepath.Join(composeDir, ".env")
-	envData, err := os.ReadFile(envFile)
-	if err != nil {
-		t.Fatalf("reading .env: %v", err)
-	}
-
-	// Replace the placeholder token with the real one
-	newEnv := strings.Replace(string(envData), "AUTHENTIK_LDAP_TOKEN=placeholder", "AUTHENTIK_LDAP_TOKEN="+tokenResp.Key, 1)
-	// Also handle case where token was previously set
-	lines := strings.Split(newEnv, "\n")
-	for i, line := range lines {
-		if strings.HasPrefix(line, "AUTHENTIK_LDAP_TOKEN=") {
-			lines[i] = "AUTHENTIK_LDAP_TOKEN=" + tokenResp.Key
-		}
-	}
-	newEnv = strings.Join(lines, "\n")
-	if err := os.WriteFile(envFile, []byte(newEnv), 0600); err != nil {
-		t.Fatalf("writing .env: %v", err)
-	}
-
-	// Restart just the LDAP outpost via compose
-	composeUp := exec.Command("podman-compose", "up", "-d", "authentik-ldap")
-	composeUp.Dir = composeDir
-	if out, err := composeUp.CombinedOutput(); err != nil {
-		t.Fatalf("podman-compose up authentik-ldap failed: %v\n%s", err, out)
-	}
-
-	// Wait for the LDAP outpost to connect (check logs for successful config fetch)
-	t.Log("Waiting for LDAP outpost to connect...")
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		logsCmd := exec.Command("podman", "logs", "apps-authentik-ldap")
-		logsOut, _ := logsCmd.CombinedOutput()
-		if strings.Contains(string(logsOut), "Starting LDAP server") {
-			t.Log("LDAP outpost connected and started")
-			return
-		}
-		time.Sleep(3 * time.Second)
-	}
-
-	// If we get here, print the last logs for debugging
-	logsCmd := exec.Command("podman", "logs", "--tail", "20", "apps-authentik-ldap")
-	logsOut, _ := logsCmd.CombinedOutput()
-	t.Fatalf("LDAP outpost did not start within 60s. Last logs:\n%s", logsOut)
+	t.Log("LDAP service account bind successful")
 }
 
-// --- Jellyfin Tests ---
-
-func TestJellyfinHealthCheck(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// Poll /health until it responds 200
-	for {
-		req, err := http.NewRequestWithContext(ctx, "GET", jellyfinURL+"/health", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			t.Fatal("Jellyfin health check timed out")
-		case <-time.After(2 * time.Second):
-		}
+// TestLDAPAuth_AuthentikAdminCanBind verifies the LDAP outpost serves real
+// user data by binding as the authentik admin user.
+func TestLDAPAuth_AuthentikAdminCanBind(t *testing.T) {
+	adminPassword := readSecrets(t).AuthentikBootstrapPassword
+	if adminPassword == "" {
+		t.Fatal("authentikBootstrapPassword not found in secrets.json")
 	}
+
+	out := runCmd(t, "ldapsearch",
+		"-x",
+		"-H", ldapURL,
+		"-D", "cn=akadmin,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		"-w", adminPassword,
+		"-b", "ou=users,dc=ldap,dc=goauthentik,dc=io",
+		"-s", "one",
+		"(cn=akadmin)",
+		"cn",
+	)
+	if !strings.Contains(out, "akadmin") {
+		t.Errorf("LDAP search did not return akadmin user:\n%s", out)
+	}
+	t.Log("akadmin LDAP authentication successful")
 }
 
-func TestCatalogRefresh(t *testing.T) {
-	// Seed the catalog database with app metadata from YAML files.
-	// Must run before any configurator that depends on catalog lookups.
-	runHostAgent(t, "configure", "catalog-refresh")
+// --- Jellyfin through the real install path ---
+
+// TestJellyfinInstallViaAPI installs Jellyfin through the host-agent API and
+// waits for the orchestrator to converge it to running: intent queue,
+// dependency graph, container creation, PreStart (LDAP plugin), PostStart
+// (wizard, libraries, LDAP config), route generation.
+func TestJellyfinInstallViaAPI(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/jellyfin/install", `{}`, http.StatusAccepted)
+	// Fresh VMs may need to pull the Jellyfin image; allow generous time.
+	waitAppRunning(t, "jellyfin", 10*time.Minute)
+	waitHTTPOrFatal(t, 60*time.Second, jellyfinURL+"/health")
 }
 
-func TestJellyfinPostStart_CompletesWizardAndConfiguresLDAP(t *testing.T) {
-	// Run the Jellyfin poststart configurator
-	runHostAgent(t, "configure", "poststart", "jellyfin")
+// TestJellyfinConfiguredByConfigurator verifies the PostStart outcomes
+// behaviorally through the Jellyfin API: wizard completed, libraries created,
+// LDAP plugin configured with the typed LDAPOutput values.
+func TestJellyfinConfiguredByConfigurator(t *testing.T) {
+	waitAppRunning(t, "jellyfin", 2*time.Minute)
 
-	ctx := context.Background()
-
-	// Verify: Setup wizard completed
-	info := getJellyfinPublicInfo(t, ctx)
+	info := getJellyfinSystemInfo(t)
 	if !info.StartupWizardCompleted {
-		t.Error("StartupWizardCompleted should be true after poststart")
+		t.Error("StartupWizardCompleted should be true after install")
 	}
 
-	// Verify: Libraries created
-	token := authenticateJellyfin(t, ctx)
-	folders := getVirtualFolders(t, ctx, token)
-
-	foundMovies := false
-	foundShows := false
+	token := authenticateJellyfin(t)
+	folders := getVirtualFolders(t, token)
+	foundMovies, foundShows := false, false
 	for _, f := range folders {
-		if f.Name == "Movies" {
+		switch f.Name {
+		case "Movies":
 			foundMovies = true
-		}
-		if f.Name == "Shows" {
+		case "Shows":
 			foundShows = true
 		}
 	}
@@ -525,9 +542,7 @@ func TestJellyfinPostStart_CompletesWizardAndConfiguresLDAP(t *testing.T) {
 		t.Error("Shows library not found")
 	}
 
-	// Verify: LDAP plugin configured with typed output values
-	ldapConfig := getLDAPPluginConfig(t, ctx, token)
-
+	ldapConfig := getLDAPPluginConfig(t, token)
 	wantHost := expectedLDAPHost()
 	if ldapConfig.LdapServer != wantHost {
 		t.Errorf("LdapServer = %q, want %q", ldapConfig.LdapServer, wantHost)
@@ -544,10 +559,9 @@ func TestJellyfinPostStart_CompletesWizardAndConfiguresLDAP(t *testing.T) {
 	if ldapConfig.LdapBindPassword == "" {
 		t.Error("LdapBindPassword should not be empty")
 	}
-
-	// Verify LDAP attribute configuration — these exact values caught real bugs:
+	// These exact values caught real bugs:
 	// - LdapUidAttribute must be "sAMAccountName" (not "uid") for Authentik LDAP
-	// - LdapAdminFilter must use memberOf (not memberUid) for group-based admin detection
+	// - LdapAdminFilter must use memberOf (not memberUid) for admin detection
 	if ldapConfig.LdapUidAttribute != "sAMAccountName" {
 		t.Errorf("LdapUidAttribute = %q, want %q", ldapConfig.LdapUidAttribute, "sAMAccountName")
 	}
@@ -563,37 +577,24 @@ func TestJellyfinPostStart_CompletesWizardAndConfiguresLDAP(t *testing.T) {
 	}
 }
 
-func TestJellyfinPostStart_IsIdempotent(t *testing.T) {
-	// Run poststart a second time — should succeed without errors
-	runHostAgent(t, "configure", "poststart", "jellyfin")
-
-	ctx := context.Background()
-	info := getJellyfinPublicInfo(t, ctx)
-	if !info.StartupWizardCompleted {
-		t.Error("StartupWizardCompleted should still be true after second poststart")
-	}
-	authenticateJellyfin(t, ctx)
+// TestJellyfinLDAPLogin exercises the full LDAP auth chain:
+// Jellyfin → LDAP bind (sAMAccountName lookup) → Authentik LDAP outpost.
+func TestJellyfinLDAPLogin(t *testing.T) {
+	waitAppRunning(t, "jellyfin", 2*time.Minute)
+	jellyfinLDAPLoginAs(t, "akadmin", readSecrets(t).AuthentikBootstrapPassword)
 }
 
-func TestJellyfinLDAPLogin(t *testing.T) {
-	// Authenticate to Jellyfin as akadmin using the Authentik bootstrap password.
-	// This exercises the full LDAP auth chain through Jellyfin:
-	//   Jellyfin → LDAP bind (LdapUidAttribute lookup) → Authentik LDAP outpost
-	//
-	// This test would have caught both bugs found manually:
-	//   - Wrong LdapUidAttribute ("uid" vs "sAMAccountName"): Jellyfin can't find the LDAP user
-	//   - Wrong LdapAdminFilter: user authenticates but doesn't get admin role
-	secrets := readSecrets()
-	adminPassword, ok := secrets["authentikBootstrapPassword"].(string)
-	if !ok || adminPassword == "" {
-		t.Fatal("authentikBootstrapPassword not found in secrets.json")
+// jellyfinLDAPLoginAs authenticates to Jellyfin over LDAP and asserts the
+// admin role is applied via LdapAdminFilter.
+func jellyfinLDAPLoginAs(t *testing.T, username, password string) {
+	t.Helper()
+	if password == "" {
+		t.Fatalf("no password available for LDAP login as %s", username)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	body := fmt.Sprintf(`{"Username":"akadmin","Pw":"%s"}`, adminPassword)
-	req, err := http.NewRequestWithContext(ctx, "POST", jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
+	body := fmt.Sprintf(`{"Username":%q,"Pw":%q}`, username, password)
+	req, err := http.NewRequestWithContext(context.Background(), "POST",
+		jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,19 +603,17 @@ func TestJellyfinLDAPLogin(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("POST /Users/AuthenticateByName as akadmin: %v", err)
+		t.Fatalf("POST /Users/AuthenticateByName as %s: %v", username, err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Jellyfin LDAP login as akadmin failed: status %d: %s", resp.StatusCode, respBody)
+		t.Fatalf("Jellyfin LDAP login as %s failed: status %d: %s", username, resp.StatusCode, respBody)
 	}
 
 	var authResp struct {
 		AccessToken string `json:"AccessToken"`
 		User        struct {
-			Name   string `json:"Name"`
 			Policy struct {
 				IsAdministrator bool `json:"IsAdministrator"`
 			} `json:"Policy"`
@@ -623,90 +622,110 @@ func TestJellyfinLDAPLogin(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
 		t.Fatal(err)
 	}
-
 	if authResp.AccessToken == "" {
 		t.Error("AccessToken should not be empty after LDAP login")
 	}
-	t.Logf("Jellyfin LDAP login as akadmin successful (token=%s...)", authResp.AccessToken[:8])
-
-	// Verify admin role was applied via LdapAdminFilter
 	if !authResp.User.Policy.IsAdministrator {
-		t.Error("akadmin should have IsAdministrator=true (LdapAdminFilter may be wrong)")
+		t.Errorf("%s should have IsAdministrator=true (LdapAdminFilter may be wrong)", username)
 	}
+	t.Logf("Jellyfin LDAP login as %s successful", username)
 }
 
-// --- LDAP Behavioral Verification ---
+// --- Crash recovery through startup convergence ---
 
-func TestLDAPAuth_ServiceAccountCanBind(t *testing.T) {
-	// This is the key behavioral test: verify that the LDAP outpost
-	// actually accepts connections and the service account can bind.
-	// This proves the full chain works, not just that config was written.
-	secrets := readSecrets()
-	ldapBindPassword, ok := secrets["ldapBindPassword"].(string)
-	if !ok || ldapBindPassword == "" {
-		t.Fatal("ldapBindPassword not found in secrets.json")
+// TestCrashRecoveryViaReconcile simulates a container crash, then restarts
+// only the host-agent process. Recovery must come from the host-agent's
+// startup convergence (graph reconciliation + idempotent PreStart/PostStart),
+// not from the supervisor or any direct container manipulation.
+func TestCrashRecoveryViaReconcile(t *testing.T) {
+	unit := os.Getenv("BLOUD_E2E_HOST_AGENT_UNIT")
+	if unit == "" {
+		t.Skip("BLOUD_E2E_HOST_AGENT_UNIT not set; skipping crash recovery test")
 	}
+	waitAppRunning(t, "jellyfin", 2*time.Minute)
 
-	// Use ldapsearch to perform an actual LDAP bind
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "ldapsearch",
-		"-x",
-		"-H", "ldap://localhost:3389",
-		"-D", expectedLDAPBindUser,
-		"-w", ldapBindPassword,
-		"-b", expectedLDAPBaseDN,
-		"-s", "base",
-		"(objectClass=*)",
-	)
-	out, err := cmd.CombinedOutput()
+	// Fault injection: simulate the Jellyfin container crashing.
+	out, err := exec.Command("podman", "stop", "apps-jellyfin").CombinedOutput()
 	if err != nil {
-		t.Fatalf("LDAP bind failed: %v\noutput:\n%s", err, string(out))
+		t.Fatalf("podman stop apps-jellyfin (fault injection): %v\n%s", err, out)
 	}
+	t.Log("fault injected: apps-jellyfin stopped")
 
-	// Verify we got a result (the base DN entry)
-	if !strings.Contains(string(out), expectedLDAPBaseDN) {
-		t.Errorf("LDAP search result does not contain base DN %q:\n%s", expectedLDAPBaseDN, out)
-	}
-	t.Logf("LDAP bind successful, got base DN entry")
-}
-
-func TestLDAPAuth_AuthentikAdminCanBind(t *testing.T) {
-	// Verify the Authentik admin user (akadmin) can authenticate via LDAP.
-	// This proves LDAP is serving real user data, not just the base DN.
-	secrets := readSecrets()
-	adminPassword, ok := secrets["authentikBootstrapPassword"].(string)
-	if !ok || adminPassword == "" {
-		t.Fatal("authentikBootstrapPassword not found in secrets.json")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Bind as akadmin — the DN follows Authentik's LDAP schema
-	cmd := exec.CommandContext(ctx, "ldapsearch",
-		"-x",
-		"-H", "ldap://localhost:3389",
-		"-D", "cn=akadmin,ou=users,dc=ldap,dc=goauthentik,dc=io",
-		"-w", adminPassword,
-		"-b", "ou=users,dc=ldap,dc=goauthentik,dc=io",
-		"-s", "one",
-		"(cn=akadmin)",
-		"cn",
-	)
-	out, err := cmd.CombinedOutput()
+	// Restart only the host-agent process. The supervisor brings the process
+	// back; the host-agent's startup convergence brings the container back.
+	out, err = exec.Command("systemctl", "--user", "restart", unit).CombinedOutput()
 	if err != nil {
-		t.Fatalf("LDAP bind as akadmin failed: %v\noutput:\n%s", err, string(out))
+		t.Fatalf("systemctl --user restart %s: %v\n%s", unit, err, out)
 	}
+	waitHTTPOrFatal(t, 120*time.Second, hostAgentURL+"/api/health")
 
-	if !strings.Contains(string(out), "akadmin") {
-		t.Errorf("LDAP search did not return akadmin user:\n%s", out)
+	// The host-agent must recover the container through the graph.
+	waitAppRunning(t, "jellyfin", 5*time.Minute)
+	running := runCmd(t, "podman", "inspect", "-f", `{{.State.Running}}`, "apps-jellyfin")
+	if running != "true" {
+		t.Fatalf("apps-jellyfin not running after recovery (State.Running=%s)", running)
 	}
-	t.Logf("akadmin LDAP authentication successful")
+	waitHTTPOrFatal(t, 60*time.Second, jellyfinURL+"/health")
+
+	// PostStart re-ran during recovery and must have been idempotent:
+	// wizard still complete, SSO chain still intact.
+	info := getJellyfinSystemInfo(t)
+	if !info.StartupWizardCompleted {
+		t.Error("StartupWizardCompleted should still be true after recovery")
+	}
+	jellyfinLDAPLoginAs(t, "akadmin", readSecrets(t).AuthentikBootstrapPassword)
+	t.Log("crash recovery complete: host-agent reconciled the container back")
 }
 
-// --- Helper types and functions ---
+// --- Uninstall through the real path ---
+
+// TestJellyfinUninstallCleanup uninstalls Jellyfin through the API and asserts
+// the full cleanup: store entry, container, data directory, and routes.
+func TestJellyfinUninstallCleanup(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/jellyfin/uninstall",
+		`{"clearData":true}`, http.StatusAccepted)
+
+	deadline := time.Now().Add(3 * time.Minute)
+	for time.Now().Before(deadline) {
+		if appStatus(t, "jellyfin") == "" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if status := appStatus(t, "jellyfin"); status != "" {
+		t.Fatalf("jellyfin still listed as installed (status %q)", status)
+	}
+
+	// Container must be gone (the orchestrator removes it, not the harness).
+	if _, err := exec.Command("podman", "container", "exists", "apps-jellyfin").CombinedOutput(); err == nil {
+		t.Fatal("apps-jellyfin container still exists after uninstall")
+	}
+
+	// clearData must remove the app's data directory (asserted when the
+	// deployer provides the data directory location).
+	if os.Getenv("BLOUD_DATA_DIR") != "" {
+		dataPath := filepath.Join(dataDir(), "jellyfin")
+		if _, err := os.Stat(dataPath); err == nil {
+			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
+		}
+	}
+
+	// Routes must be regenerated without Jellyfin.
+	traefikDir := os.Getenv("BLOUD_TRAEFIK_DYNAMIC_DIR")
+	if traefikDir != "" {
+		routesPath := filepath.Join(traefikDir, "apps-routes.yml")
+		routes, err := os.ReadFile(routesPath)
+		if err != nil {
+			t.Fatalf("reading %s: %v", routesPath, err)
+		}
+		if strings.Contains(string(routes), "jellyfin") {
+			t.Errorf("apps-routes.yml still references jellyfin after uninstall")
+		}
+	}
+	t.Log("jellyfin fully uninstalled: store, container, data, and routes cleaned up")
+}
+
+// --- Jellyfin API helpers ---
 
 type jellyfinPublicInfo struct {
 	StartupWizardCompleted bool   `json:"StartupWizardCompleted"`
@@ -736,23 +755,17 @@ func jellyfinAuthHeader(token string) string {
 	return fmt.Sprintf(`MediaBrowser Client="Bloud-E2E", Device="Test", DeviceId="e2e-test", Version="1.0.0", Token="%s"`, token)
 }
 
-func getJellyfinPublicInfo(t *testing.T, ctx context.Context) jellyfinPublicInfo {
+func getJellyfinSystemInfo(t *testing.T) jellyfinPublicInfo {
 	t.Helper()
-	req, err := http.NewRequestWithContext(ctx, "GET", jellyfinURL+"/System/Info/Public", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.Get(jellyfinURL + "/System/Info/Public")
 	if err != nil {
 		t.Fatalf("GET /System/Info/Public: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET /System/Info/Public: status %d: %s", resp.StatusCode, body)
 	}
-
 	var info jellyfinPublicInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		t.Fatal(err)
@@ -760,11 +773,13 @@ func getJellyfinPublicInfo(t *testing.T, ctx context.Context) jellyfinPublicInfo
 	return info
 }
 
-func authenticateJellyfin(t *testing.T, ctx context.Context) string {
+// authenticateJellyfin logs in as the managed bootstrap admin and returns an
+// access token.
+func authenticateJellyfin(t *testing.T) string {
 	t.Helper()
-
-	body := fmt.Sprintf(`{"Username":"%s","Pw":"%s"}`, bootstrapUsername, bootstrapPassword)
-	req, err := http.NewRequestWithContext(ctx, "POST", jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
+	body := fmt.Sprintf(`{"Username":%q,"Pw":%q}`, bootstrapUsername, bootstrapPassword)
+	req, err := http.NewRequestWithContext(context.Background(), "POST",
+		jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,25 +791,25 @@ func authenticateJellyfin(t *testing.T, ctx context.Context) string {
 		t.Fatalf("POST /Users/AuthenticateByName: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Authentication failed: status %d: %s", resp.StatusCode, respBody)
+		t.Fatalf("Jellyfin authentication failed: status %d: %s", resp.StatusCode, respBody)
 	}
-
 	var authResp struct {
 		AccessToken string `json:"AccessToken"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
 		t.Fatal(err)
 	}
+	if authResp.AccessToken == "" {
+		t.Fatal("empty access token from Jellyfin authentication")
+	}
 	return authResp.AccessToken
 }
 
-func getVirtualFolders(t *testing.T, ctx context.Context, token string) []virtualFolder {
+func getVirtualFolders(t *testing.T, token string) []virtualFolder {
 	t.Helper()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", jellyfinURL+"/Library/VirtualFolders", nil)
+	req, err := http.NewRequestWithContext(context.Background(), "GET", jellyfinURL+"/Library/VirtualFolders", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -805,12 +820,10 @@ func getVirtualFolders(t *testing.T, ctx context.Context, token string) []virtua
 		t.Fatalf("GET /Library/VirtualFolders: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET /Library/VirtualFolders: status %d: %s", resp.StatusCode, body)
 	}
-
 	var folders []virtualFolder
 	if err := json.NewDecoder(resp.Body).Decode(&folders); err != nil {
 		t.Fatal(err)
@@ -818,11 +831,10 @@ func getVirtualFolders(t *testing.T, ctx context.Context, token string) []virtua
 	return folders
 }
 
-func getLDAPPluginConfig(t *testing.T, ctx context.Context, token string) ldapPluginConfig {
+func getLDAPPluginConfig(t *testing.T, token string) ldapPluginConfig {
 	t.Helper()
-
 	url := fmt.Sprintf("%s/Plugins/%s/Configuration", jellyfinURL, ldapPluginID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -833,12 +845,10 @@ func getLDAPPluginConfig(t *testing.T, ctx context.Context, token string) ldapPl
 		t.Fatalf("GET LDAP plugin config: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET LDAP plugin config: status %d: %s", resp.StatusCode, body)
 	}
-
 	var config ldapPluginConfig
 	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
 		t.Fatal(err)

@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
+
+	"codeberg.org/d-buckner/bloud/cli/executor"
 
 	"gopkg.in/yaml.v3"
 )
@@ -321,6 +325,79 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 
 // --- Integration tier ---
 
+// integrationRuntimeDir is the guest-side home of the validation runtime: a
+// self-contained host-agent deployment (binary, web build, app catalog,
+// data) separate from the dev runtime. The tier deploys the current code
+// here through the real product path (host-agent + orchestrator + catalog)
+// and runs the tier's commands against it, so integration validation
+// exercises the same install/reconcile flow as production.
+const integrationRuntimeDir = "/var/tmp/bloud-validate-runtime"
+
+// integrationHostAgentUnit supervises the validation runtime's host-agent.
+const integrationHostAgentUnit = "bloud-validate-host-agent.service"
+
+// integrationPreflightScript verifies the guest has everything the
+// validation runtime needs. Go is not required in the guest: artifacts are
+// built locally and copied in.
+var integrationPreflightScript = `set -euo pipefail
+command -v podman >/dev/null
+command -v curl >/dev/null
+command -v ldapsearch >/dev/null
+test "$(uname -s)" = Linux
+systemctl --user show-environment >/dev/null
+systemctl --user enable --now podman.socket
+podman info >/dev/null`
+
+// integrationStopAgentScript stops whatever holds port 3000 so the
+// validation unit can bind: the dev host-agent (foreground under ./bloud
+// dev, or the legacy bloud-host-agent.service unit on VMs provisioned by
+// older CLI versions) and any prior lifecycle or validation unit. The
+// units are disabled so a Restart=on-failure cannot resurrect an agent
+// that races the validation unit for the port after the fuser kill.
+var integrationStopAgentScript = `for unit in bloud-host-agent.service bloud-e2e-host-agent.service bloud-validate-host-agent.service; do
+  systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+done
+fuser -k 3000/tcp 2>/dev/null || true
+sleep 1`
+
+// integrationWaitAgentScript waits for the validation host-agent API. First
+// boot pulls images and converges the system apps before the listener opens,
+// so this doubles as the bootstrap convergence gate.
+var integrationWaitAgentScript = `deadline=$((SECONDS + 1200))
+until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do
+  if ((SECONDS >= deadline)); then
+    journalctl --user -u bloud-validate-host-agent.service --no-pager -n 80 || true
+    exit 1
+  fi
+  sleep 5
+done`
+
+func renderIntegrationHostAgentUnit(rt string, qemu bool) string {
+	var extraEnv string
+	if qemu {
+		extraEnv = "Environment=BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24\n"
+	}
+	return fmt.Sprintf(`[Unit]
+Description=Bloud integration validation host agent
+After=network-online.target podman.socket
+Wants=network-online.target podman.socket
+
+[Service]
+Type=simple
+WorkingDirectory=%s/host-agent
+Environment=BLOUD_DATA_DIR=%s/data
+Environment=BLOUD_APPS_DIR=%s/apps
+Environment=BLOUD_TRAEFIK_DYNAMIC_DIR=%s/data/traefik/dynamic
+Environment=BLOUD_SSO_ISSUER_URL=%s
+%sExecStart=%s/host-agent/host-agent
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+`, rt, rt, rt, rt, ssoIssuerURL(), extraEnv, rt)
+}
+
 func runIntegrationTier(root string, manifest *validationManifest, flags validateFlags) int {
 	tier, ok := manifest.Tiers["integration"]
 	if !ok {
@@ -338,169 +415,217 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		return 0
 	}
 
-	// Step 1: Check Lima VM is running
-	if !flags.json {
-		fmt.Printf("%s==>%s Checking Lima VM 'bloud-dev'...\n", colorGreen, colorReset)
+	ctx := context.Background()
+	fail := func(reason string) int {
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = reason
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
 	}
-	if !isLimaVMRunning("bloud-dev") {
+	step := func(msg string) {
 		if !flags.json {
-			fmt.Printf("%s==>%s Starting Lima VM 'bloud-dev'...\n", colorGreen, colorReset)
-		}
-		startCmd := exec.Command("limactl", "start", "bloud-dev")
-		startCmd.Stdout = os.Stdout
-		startCmd.Stderr = os.Stderr
-		if err := startCmd.Run(); err != nil {
-			errorf("failed to start Lima VM: %v", err)
-			result.ExitCode = 1
-			result.Confidence = "low"
-			result.ConfidenceReason = "Lima VM failed to start"
-			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			writeLedger(root, result, flags)
-			return 1
+			fmt.Printf("%s==>%s %s\n", colorGreen, colorReset, msg)
 		}
 	}
 
-	quotedRoot := shellQuote(root)
+	// Step 1: Provision the VM (no-op if it is already running).
+	step("Provisioning " + vmLabel())
+	bk, err := devBackend()
+	if err != nil {
+		errorf("could not set up backend: %v", err)
+		return fail("backend setup failed")
+	}
+	if err := bk.Create(ctx); err != nil {
+		errorf("failed to provision VM: %v", err)
+		return fail("VM provisioning failed")
+	}
+	host := bk.Host()
+	if !host.Ready() {
+		errorf("VM is not reachable after provisioning")
+		return fail("VM not reachable")
+	}
+	ex := host.Executor()
+	qemu := backendName() == "qemu"
+	rt := integrationRuntimeDir
 
-	// Step 2: Verify the VM has the tools and setup files required by the tests.
-	if !flags.json {
-		fmt.Printf("%s==>%s Checking integration prerequisites...\n", colorGreen, colorReset)
-	}
-	preflightScript := fmt.Sprintf(
-		"command -v podman >/dev/null && command -v podman-compose >/dev/null && command -v go >/dev/null && command -v ldapsearch >/dev/null && test -f %s/dev/host-agent.env",
-		quotedRoot,
-	)
-	preflight := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", preflightScript)
-	if out, err := preflight.CombinedOutput(); err != nil {
-		errorf("integration prerequisites are missing; recreate/provision the VM and run dev/setup.sh: %v: %s", err, strings.TrimSpace(string(out)))
-		result.ExitCode = 1
-		result.Confidence = "low"
-		result.ConfidenceReason = "integration prerequisites missing"
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 1
-	}
-
-	// Step 3: Converge the compose stack and wait for required services.
-	if !flags.json {
-		fmt.Printf("%s==>%s Starting compose stack...\n", colorGreen, colorReset)
-	}
-	composeScript := fmt.Sprintf(`cd %s/dev
-services="postgres redis authentik-server authentik-worker authentik-proxy authentik-ldap jellyfin"
-for service in $services; do
-  id=$(podman ps -aq --filter "label=com.docker.compose.project=dev" --filter "label=com.docker.compose.service=$service" | head -1)
-  if [ -n "$id" ]; then
-    podman start "$id" >/dev/null
-  else
-    podman-compose up -d --no-recreate "$service"
-  fi
-done`, quotedRoot)
-	composeUp := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", composeScript)
-	composeUp.Stdout = os.Stdout
-	composeUp.Stderr = os.Stderr
-	if err := composeUp.Run(); err != nil {
-		errorf("failed to start compose stack: %v", err)
-		result.ExitCode = 1
-		result.Confidence = "low"
-		result.ConfidenceReason = "compose stack failed to start"
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 1
+	// Step 2: Guest preflight.
+	step("Checking integration prerequisites")
+	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationPreflightScript}); err != nil || res.ExitCode != 0 {
+		detail := strings.TrimSpace(res.Stderr)
+		if detail == "" && err != nil {
+			detail = err.Error()
+		}
+		errorf("integration prerequisites missing (recreate the VM): %s", detail)
+		return fail("integration prerequisites missing")
 	}
 
-	readinessScript := fmt.Sprintf(`cd %s/dev
-services="postgres redis authentik-server authentik-worker authentik-proxy authentik-ldap jellyfin"
-deadline=$((SECONDS + 180))
-while [ "$SECONDS" -lt "$deadline" ]; do
-  ready=true
-  for service in $services; do
-    id=$(podman ps -q --filter "label=com.docker.compose.project=dev" --filter "label=com.docker.compose.service=$service" | head -1)
-    if [ -z "$id" ] || [ "$(podman inspect -f '{{.State.Running}}' "$id" 2>/dev/null)" != "true" ]; then
-      ready=false
-      break
-    fi
-    health=$(podman inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id" 2>/dev/null)
-    if [ -n "$health" ] && [ "$health" != "healthy" ]; then
-      ready=false
-      break
-    fi
-  done
-  if [ "$ready" = true ]; then
-    exit 0
-  fi
-  sleep 3
-done
-podman-compose ps
-exit 1`, quotedRoot)
-	readiness := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", readinessScript)
-	readiness.Stdout = os.Stdout
-	readiness.Stderr = os.Stderr
-	if err := readiness.Run(); err != nil {
-		errorf("compose stack did not become ready: %v", err)
-		result.ExitCode = 1
-		result.Confidence = "low"
-		result.ConfidenceReason = "compose stack did not become ready"
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 1
+	// Step 3: Stop any host-agent holding port 3000. The validation runtime
+	// takes the port over for the duration of the tier; the dev runtime
+	// state (data, containers) is untouched and ./bloud dev converges it
+	// back afterwards.
+	step("Stopping any running host-agent (validation runtime takes over port 3000)")
+	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationStopAgentScript}); err != nil || res.ExitCode != 0 {
+		errorf("failed to stop running host-agent: %v", err)
+		return fail("failed to stop running host-agent")
 	}
 
-	// Step 4: Build host-agent inside VM
-	if !flags.json {
-		fmt.Printf("%s==>%s Building host-agent...\n", colorGreen, colorReset)
+	// Step 4: Build artifacts locally.
+	step("Building host-agent for linux/" + runtime.GOARCH)
+	tmpDir, err := os.MkdirTemp("", "bloud-validate-build-*")
+	if err != nil {
+		errorf("failed to create build dir: %v", err)
+		return fail("could not create build dir")
 	}
-	buildCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c",
-		fmt.Sprintf("cd %s/services/host-agent && go build -o /tmp/host-agent ./cmd/host-agent", quotedRoot))
+	defer os.RemoveAll(tmpDir)
+
+	hostAgentSrc := filepath.Join(root, "services", "host-agent")
+	binaryPath := filepath.Join(tmpDir, "host-agent")
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/host-agent")
+	buildCmd.Dir = hostAgentSrc
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
-		errorf("failed to build host-agent: %v", err)
-		result.ExitCode = 1
-		result.Confidence = "low"
-		result.ConfidenceReason = "host-agent build failed"
-		result.Commands = append(result.Commands, CommandResult{
-			ID: "build-host-agent", Command: "go build ./cmd/host-agent", Status: "fail", ExitCode: 1,
-		})
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 1
-	}
-	result.Commands = append(result.Commands, CommandResult{
-		ID: "build-host-agent", Command: "go build ./cmd/host-agent", Status: "pass", ExitCode: 0,
-	})
-
-	// Step 5: Run integration tests inside VM
-	if !flags.json {
-		fmt.Printf("%s==>%s Running integration tests...\n", colorGreen, colorReset)
+		errorf("host-agent build failed: %v", err)
+		return fail("host-agent build failed")
 	}
 
-	for _, cmd := range tier.Commands {
-		// Source the host-agent.env file and run the test command inside the VM
-		shellCmd := fmt.Sprintf(
-			"set -a && source %s/dev/host-agent.env && set +a && cd %s/%s && %s",
-			quotedRoot, quotedRoot, shellQuote(cmd.Cwd), cmd.Run,
-		)
-		testCmd := exec.Command("limactl", "shell", "bloud-dev", "bash", "-c", shellCmd)
-		if !flags.json {
-			testCmd.Stdout = os.Stdout
-			testCmd.Stderr = os.Stderr
+	step("Building frontend")
+	webCmd := exec.Command("npm", "run", "build", "--workspace=@bloud/host-agent-web")
+	webCmd.Dir = root
+	webCmd.Stdout = os.Stdout
+	webCmd.Stderr = os.Stderr
+	if err := webCmd.Run(); err != nil {
+		errorf("frontend build failed: %v", err)
+		return fail("frontend build failed")
+	}
+
+	step("Building integration test binary")
+	testBinary := filepath.Join(tmpDir, "bloud-integration.test")
+	testBuild := exec.Command("go", "test", "-tags", "integration", "-c", "-o", testBinary, "./internal/e2e")
+	testBuild.Dir = hostAgentSrc
+	testBuild.Stdout = os.Stdout
+	testBuild.Stderr = os.Stderr
+	if err := testBuild.Run(); err != nil {
+		errorf("integration test build failed: %v", err)
+		return fail("integration test build failed")
+	}
+
+	// Step 5: Deploy to the validation runtime.
+	step("Deploying to " + rt)
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf("rm -rf %s/host-agent %s/apps && mkdir -p %s/host-agent/web/build %s/apps %s/data %s/bin", rt, rt, rt, rt, rt, rt),
+	}); err != nil {
+		errorf("failed to prepare runtime dir: %v", err)
+		return fail("failed to prepare runtime dir")
+	}
+	deployments := []struct {
+		from string
+		to   string
+	}{
+		{binaryPath, rt + "/host-agent/host-agent"},
+		{filepath.Join(hostAgentSrc, "web", "build"), rt + "/host-agent/web/build"},
+		{filepath.Join(root, "apps"), rt + "/apps"},
+		{testBinary, rt + "/bin/bloud-integration.test"},
+	}
+	for _, d := range deployments {
+		if err := ex.CopyTo(ctx, d.from, d.to); err != nil {
+			errorf("failed to copy %s into guest: %v", d.from, err)
+			return fail("deployment failed")
 		}
+	}
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf("chmod 755 %s/host-agent/host-agent %s/bin/bloud-integration.test", rt, rt),
+	}); err != nil {
+		errorf("failed to chmod deployed binaries: %v", err)
+		return fail("deployment failed")
+	}
 
+	// Generate runtime secrets on first use (product command; idempotent).
+	// The integration tests read the real values from secrets.json.
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf("%s/host-agent/host-agent init-secrets %s/data", rt, rt),
+	}); err != nil {
+		errorf("failed to initialize runtime secrets: %v", err)
+		return fail("secret initialization failed")
+	}
+
+	// Step 6: Install and start the host-agent systemd service.
+	step("Installing and starting " + integrationHostAgentUnit)
+	unit := renderIntegrationHostAgentUnit(rt, qemu)
+	unitPath := filepath.Join(tmpDir, integrationHostAgentUnit)
+	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+		errorf("failed to write unit file: %v", err)
+		return fail("failed to write unit file")
+	}
+	if err := ex.CopyTo(ctx, unitPath, "/tmp/"+integrationHostAgentUnit); err != nil {
+		errorf("failed to copy unit file into guest: %v", err)
+		return fail("failed to deploy unit file")
+	}
+	if res, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf(`install -d "$HOME/.config/systemd/user"
+install -m 644 /tmp/%[1]s "$HOME/.config/systemd/user/%[1]s"
+rm -f /tmp/%[1]s
+systemctl --user daemon-reload
+systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
+	}); err != nil || res.ExitCode != 0 {
+		errorf("failed to install host-agent service: %v", err)
+		return fail("failed to install host-agent service")
+	}
+
+	// Step 7: Wait for the API (first boot converges the system apps).
+	step("Waiting for host-agent (first boot pulls images and converges system apps; may take a while)")
+	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationWaitAgentScript}); err != nil || res.ExitCode != 0 {
+		if detail := strings.TrimSpace(res.Stderr); detail != "" {
+			fmt.Fprintln(os.Stderr, detail)
+		}
+		errorf("validation host-agent did not become healthy")
+		return fail("host-agent did not become healthy")
+	}
+
+	// Step 8: Run the tier's commands against the deployed runtime.
+	step("Running integration tests")
+	testEnv := map[string]string{
+		"BLOUD_DATA_DIR":            rt + "/data",
+		"BLOUD_TRAEFIK_DYNAMIC_DIR": rt + "/data/traefik/dynamic",
+		"BLOUD_E2E_HOST_AGENT_UNIT": integrationHostAgentUnit,
+	}
+	exitCode := 0
+	for _, cmd := range tier.Commands {
+		if flags.explain && !flags.json {
+			fmt.Printf("    %s->%s %s: %s (cwd %s)\n", colorCyan, colorReset, cmd.ID, cmd.Run, cmd.Cwd)
+		}
+		spec := executor.RunSpec{
+			Command: cmd.Run,
+			Dir:     cmd.Cwd,
+			Env:     testEnv,
+		}
 		start := time.Now()
-		err := testCmd.Run()
-		dur := time.Since(start)
-
-		cmdExit := 0
-		status := "pass"
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
+		var (
+			cmdExit int
+			runErr  error
+		)
+		if flags.json {
+			res, err := ex.Run(ctx, spec)
+			cmdExit = res.ExitCode
+			runErr = err
+		} else {
+			runErr = ex.RunStream(ctx, spec, os.Stdout, os.Stderr)
+			if exitErr, ok := runErr.(*exec.ExitError); ok {
 				cmdExit = exitErr.ExitCode()
-			} else {
+			} else if runErr != nil {
 				cmdExit = 1
 			}
-			status = "fail"
 		}
+		dur := time.Since(start)
 
+		status := "pass"
+		if runErr != nil {
+			status = "fail"
+			exitCode = 1
+		}
 		result.Commands = append(result.Commands, CommandResult{
 			ID:         cmd.ID,
 			Cwd:        cmd.Cwd,
@@ -518,52 +643,42 @@ exit 1`, quotedRoot)
 			fmt.Printf("%s %s (%dms)\n", icon, cmd.ID, dur.Milliseconds())
 		}
 
-		if cmdExit != 0 {
-			result.ExitCode = 1
-			result.Confidence = "low"
-			result.ConfidenceReason = fmt.Sprintf("integration test %s failed", cmd.ID)
-			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			writeLedger(root, result, flags)
-			return 1
+		if runErr != nil {
+			break
 		}
+	}
+
+	// Stop the validation unit. The runtime dir and containers are left in
+	// place for inspection; ./bloud dev re-converges the dev state.
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: "systemctl --user disable --now " + integrationHostAgentUnit + " >/dev/null 2>&1 || true",
+	}); err != nil {
+		errorf("failed to stop validation host-agent: %v", err)
+	}
+
+	if exitCode != 0 {
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "integration tests failed"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
 	}
 
 	result.ExitCode = 0
 	result.Confidence = "high"
-	result.ConfidenceReason = "integration tests passed against real services"
+	result.ConfidenceReason = "integration tests passed against the real dependency-graph path"
 	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	if !flags.json {
+		fmt.Printf("\n%s==>%s Validation runtime remains at %s (guest). Re-run %s%s%s to restore the dev runtime state.\n",
+			colorGreen, colorReset, rt, colorCyan, "./bloud dev", colorReset)
+	}
 	writeLedger(root, result, flags)
 	return 0
 }
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-}
-
-// isLimaVMRunning checks if a Lima VM is in Running status.
-func isLimaVMRunning(name string) bool {
-	cmd := exec.Command("limactl", "list", "--json")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	// limactl list --json outputs one JSON object per line
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var vm struct {
-			Name   string `json:"name"`
-			Status string `json:"status"`
-		}
-		if json.Unmarshal([]byte(line), &vm) == nil {
-			if vm.Name == name && vm.Status == "Running" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // --- Helpers ---

@@ -63,6 +63,7 @@ func (b *LimaBackend) Destroy(ctx context.Context) error {
 	}
 	return nil
 }
+
 // SyncProject is a no-op for Lima — the project is mounted via 9p.
 func (b *LimaBackend) SyncProject(ctx context.Context) error { return nil }
 
@@ -72,10 +73,12 @@ func (b *LimaBackend) Host() executor.Host {
 		executor.NewLimactlExecutor(b.instance),
 		map[string]string{
 			"host-agent": "3000",
-			"postgres":   "5432",
 			"traefik":    "8080",
+			"ldap":       "3389",
 			"jellyfin":   "8096",
-			"authentik":  "9000",
+			"authentik":  "9001",
+			"immich":     "2283",
+			"navidrome":  "4533",
 		},
 		executor.DataDirs{
 			HostAgentDir: devRemoteDir + "/host-agent",

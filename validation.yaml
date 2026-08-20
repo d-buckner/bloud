@@ -21,10 +21,14 @@ tiers:
         run: npm run check --workspace=@bloud/host-agent-web
 
   integration:
+    # Commands run inside the guest against the validation runtime deployed
+    # by the tier (see cli/validate.go, runIntegrationTier). cwd is a guest
+    # absolute path; BLOUD_DATA_DIR, BLOUD_TRAEFIK_DYNAMIC_DIR, and
+    # BLOUD_E2E_HOST_AGENT_UNIT are injected by the tier.
     commands:
       - id: e2e-host-agent
-        cwd: services/host-agent
-        run: go test -count=1 -tags integration -timeout 300s ./internal/e2e/...
+        cwd: /var/tmp/bloud-validate-runtime/bin
+        run: ./bloud-integration.test -test.v -test.timeout 30m
 
 inference:
   paths:
