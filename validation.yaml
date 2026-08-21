@@ -80,3 +80,10 @@ apps:
     files:
       - apps/navidrome/**
     e2e-project: navidrome
+
+  homeassistant:
+    auth: native-oidc
+    validation-level: embed
+    files:
+      - apps/homeassistant/**
+    e2e-project: homeassistant
