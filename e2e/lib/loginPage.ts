@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 import type { Page } from '@playwright/test';
 import { TEST_CREDS } from '../tests/constants';
 

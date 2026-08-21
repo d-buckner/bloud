@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 package authentik
 
 // ClientInterface defines the interface for Authentik API operations.

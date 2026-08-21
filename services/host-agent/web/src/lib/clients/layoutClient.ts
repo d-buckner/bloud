@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 /**
  * Layout Client - HTTP transport layer for layout save operations.
  *

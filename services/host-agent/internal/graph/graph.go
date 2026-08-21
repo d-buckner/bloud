@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 // Package graph manages the lifecycle state graph for installed apps.
 // Each node tracks a targetStatus (desired) and actualStatus (current),
 // and fires events when either changes. Topological ordering ensures

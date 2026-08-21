@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 // Package backend abstracts provisioning and lifecycle management of runtime
 // environments (Lima VM, native box, etc.).
 package backend

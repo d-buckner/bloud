@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
 # Air configuration for Go hot reload in Lima VM
 # https://github.com/air-verse/air
 

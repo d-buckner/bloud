@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
 tiers:
   fast:
     commands:
@@ -19,6 +21,9 @@ tiers:
       - id: web-check-host-agent
         cwd: .
         run: npm run check --workspace=@bloud/host-agent-web
+      - id: license-headers
+        cwd: .
+        run: npm run license:check
 
   integration:
     # Commands run inside the guest against the validation runtime deployed
@@ -44,6 +49,8 @@ inference:
     - pattern: "e2e/**"
       triggers: []
       riskAreas: [playwright]
+    - pattern: "**"
+      triggers: [license-headers]
 
 apps:
   immich:

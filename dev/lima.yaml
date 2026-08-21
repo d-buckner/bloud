@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
 # Lima VM for Bloud local development.
 # Creates a Debian 13 (Trixie) VM with podman for running the service stack.
 #

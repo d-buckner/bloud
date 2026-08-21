@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
 package store
 
 // AppStoreInterface defines the interface for managing installed apps.

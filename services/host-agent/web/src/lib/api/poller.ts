@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
 /**
  * Home Poller - Replaces SSE with adaptive polling of GET /api/user/home
  *
