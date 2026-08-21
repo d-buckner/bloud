@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS apps (
     display_name TEXT NOT NULL,
     version TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'stopped',
+    last_error TEXT NOT NULL DEFAULT '',
     port INTEGER,
     is_system INTEGER NOT NULL DEFAULT 0,
     tailnet_id TEXT DEFAULT '',

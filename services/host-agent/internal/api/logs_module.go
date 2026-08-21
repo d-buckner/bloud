@@ -38,13 +38,9 @@ func (m *logsModule) CanStream(name string) error {
 	return nil
 }
 
-// NewLogsRouter registers log-related routes on the given router.
-func NewLogsRouter(mod *logsModule, r chi.Router) {
-	r.Get("/apps/{name}/logs", mod.StreamLogsHandler())
-	r.Get("/system/status/stream", mod.SystemStatusStreamHandler())
-}
-
 // StreamLogsHandler streams app logs via SSE using podman logs.
+// Both SSE routes are registered in the router's streaming group (no request
+// timeout); see NewRouter.
 func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")

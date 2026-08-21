@@ -17,6 +17,7 @@ type InstalledApp struct {
 	DisplayName       string            `json:"display_name"`
 	Version           string            `json:"version"`
 	Status            string            `json:"status"`
+	LastError         string            `json:"last_error,omitempty"`
 	Port              int               `json:"port,omitempty"`
 	IsSystem          bool              `json:"is_system"`
 	TailnetID         string            `json:"tailnet_id,omitempty"`
@@ -51,7 +52,7 @@ func (s *AppStore) notify() {
 // GetAll returns all installed apps
 func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	rows, err := s.db.Query(`
-		SELECT id, catalog_id, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
+		SELECT id, catalog_id, display_name, version, status, last_error, port, is_system, tailnet_id, integration_config, installed_at, updated_at
 		FROM apps
 		ORDER BY catalog_id
 	`)
@@ -75,7 +76,7 @@ func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 // GetByCatalogID returns an installed app by catalog ID
 func (s *AppStore) GetByCatalogID(catalogID string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
-		SELECT id, catalog_id, display_name, version, status, port, is_system, tailnet_id, integration_config, installed_at, updated_at
+		SELECT id, catalog_id, display_name, version, status, last_error, port, is_system, tailnet_id, integration_config, installed_at, updated_at
 		FROM apps
 		WHERE catalog_id = ?
 	`, catalogID)
@@ -140,6 +141,7 @@ func (s *AppStore) Install(catalogID, displayName, version string, integrationCo
 			display_name = excluded.display_name,
 			version = excluded.version,
 			status = 'installing',
+			last_error = '',
 			port = excluded.port,
 			is_system = excluded.is_system,
 			integration_config = excluded.integration_config,
@@ -147,6 +149,26 @@ func (s *AppStore) Install(catalogID, displayName, version string, integrationCo
 	`, catalogID, displayName, version, port, isSystem, string(configJSON))
 	if err != nil {
 		return fmt.Errorf("failed to insert app: %w", err)
+	}
+
+	s.notify()
+	return nil
+}
+
+// SetLastError records (or clears, with an empty string) the most recent
+// lifecycle failure reason for an app. Only the orchestrator writes this.
+func (s *AppStore) SetLastError(catalogID, lastError string) error {
+	result, err := s.db.Exec(`
+		UPDATE apps SET last_error = ?, updated_at = datetime('now')
+		WHERE catalog_id = ?
+	`, lastError, catalogID)
+	if err != nil {
+		return fmt.Errorf("failed to set app last_error: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("app not found: %s", catalogID)
 	}
 
 	s.notify()
@@ -297,6 +319,7 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 		&app.DisplayName,
 		&app.Version,
 		&app.Status,
+		&app.LastError,
 		&port,
 		&app.IsSystem,
 		&app.TailnetID,
@@ -336,6 +359,7 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 		&app.DisplayName,
 		&app.Version,
 		&app.Status,
+		&app.LastError,
 		&port,
 		&app.IsSystem,
 		&app.TailnetID,

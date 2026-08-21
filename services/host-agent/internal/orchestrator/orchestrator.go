@@ -19,6 +19,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
@@ -70,6 +71,10 @@ type OrchestratorConfig struct {
 
 	// ── Converge dependencies (nil = subsystem disabled) ─────────────────
 
+	// Events is the bus used to broadcast lifecycle transitions and activity
+	// to API subscribers (SSE). Nil disables event publishing.
+	Events *eventbus.Bus
+
 	AppStore         store.AppStoreInterface
 	CatalogGraph     catalog.AppGraphInterface
 	TailnetStore     store.TailnetStoreInterface
@@ -120,6 +125,7 @@ type Orchestrator struct {
 
 	// Intent processing fields
 	queue            *IntentQueue
+	events           *eventbus.Bus
 	appStore         store.AppStoreInterface
 	catalogGraph     catalog.AppGraphInterface
 	tailnetStore     store.TailnetStoreInterface
@@ -192,12 +198,14 @@ func NewOrchestrator(
 		traefikGen:       config.TraefikGen,
 		activeTailnetID:  config.ActiveTailnetID,
 		queue:            NewIntentQueue(DefaultDebounce),
+		events:           config.Events,
 		started:          make(chan struct{}),
 		ready:            make(chan struct{}),
 		done:             make(chan struct{}),
 		containerOwner:   make(map[string]string),
 	}
 	o.setupStatusSync()
+	o.setupNodeEvents()
 	return o
 }
 
@@ -216,8 +224,10 @@ func (o *Orchestrator) setupStatusSync() {
 			switch node.ActualStatus {
 			case graph.StatusRunning:
 				_ = o.appStore.UpdateStatus(appID, "running")
+				_ = o.appStore.SetLastError(appID, "")
 			case graph.StatusError:
 				_ = o.appStore.UpdateStatus(appID, "error")
+				_ = o.appStore.SetLastError(appID, node.Error)
 			}
 			return
 		}
@@ -226,12 +236,55 @@ func (o *Orchestrator) setupStatusSync() {
 		switch node.ActualStatus {
 		case graph.StatusError:
 			_ = o.appStore.UpdateStatus(appID, "error")
+			_ = o.appStore.SetLastError(appID, node.Error)
 		case graph.StatusRunning:
 			if o.allContainersRunning(appID) {
 				_ = o.appStore.UpdateStatus(appID, "running")
+				_ = o.appStore.SetLastError(appID, "")
 			}
 		}
 	})
+}
+
+// setupNodeEvents broadcasts lifecycle node transitions on the event bus so
+// API subscribers (the SSE stream) can surface per-container progress and
+// errors without polling.
+func (o *Orchestrator) setupNodeEvents() {
+	if o.events == nil {
+		return
+	}
+	o.graph.On(graph.EventNodeUpdated, func(node graph.Node) {
+		o.events.Publish(eventbus.Event{
+			Type: eventbus.TypeNode,
+			Node: &eventbus.NodeInfo{
+				App:       o.ownerApp(node.ID),
+				Container: node.ID,
+				Phase:     phaseForStatus(node.ActualStatus),
+				Error:     node.Error,
+			},
+		})
+	})
+}
+
+// phaseForStatus maps a lifecycle graph state to the user-facing phase name
+// shown in the dashboard.
+func phaseForStatus(s graph.NodeStatus) string {
+	switch s {
+	case graph.StatusInitializing:
+		return "queued"
+	case graph.StatusPreStartConfig:
+		return "configuring"
+	case graph.StatusStarting:
+		return "starting"
+	case graph.StatusPostStartConfig:
+		return "finalizing"
+	case graph.StatusRunning:
+		return "running"
+	case graph.StatusError:
+		return "failed"
+	default:
+		return string(s)
+	}
 }
 
 // allContainersRunning returns true when every container node for appID has
@@ -257,12 +310,20 @@ func (o *Orchestrator) allContainersRunning(appID string) bool {
 	return true
 }
 
-// recordActivity appends an event to the ring buffer.
+// recordActivity appends an event to the ring buffer and, when an event bus
+// is configured, publishes it to live API subscribers.
 func (o *Orchestrator) recordActivity(event, detail string) {
+	now := time.Now()
 	o.activityMu.Lock()
-	o.activityBuf[o.activityPos] = ActivityEvent{Time: time.Now(), Event: event, Detail: detail}
+	o.activityBuf[o.activityPos] = ActivityEvent{Time: now, Event: event, Detail: detail}
 	o.activityPos = (o.activityPos + 1) % maxOrchestratorEvents
 	o.activityMu.Unlock()
+	if o.events != nil {
+		o.events.Publish(eventbus.Event{
+			Type:     eventbus.TypeActivity,
+			Activity: &eventbus.ActivityInfo{Time: now, Event: event, Detail: detail},
+		})
+	}
 }
 
 // Status returns a snapshot of the orchestrator's current state.

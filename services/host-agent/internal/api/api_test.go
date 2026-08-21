@@ -166,6 +166,19 @@ func (f *FakeAppStore) SetOnChange(fn func()) {
 	f.onChange = fn
 }
 
+func (f *FakeAppStore) SetLastError(name, lastError string) error {
+	f.mu.Lock()
+	app, ok := f.apps[name]
+	if !ok {
+		f.mu.Unlock()
+		return fmt.Errorf("app not found: %s", name)
+	}
+	app.LastError = lastError
+	f.mu.Unlock()
+	f.notify()
+	return nil
+}
+
 func (f *FakeAppStore) notify() {
 	if f.onChange != nil {
 		f.onChange()
@@ -481,6 +494,7 @@ func initTestDB(db *sql.DB) error {
 			display_name TEXT,
 			version TEXT,
 			status TEXT DEFAULT 'installing',
+			last_error TEXT NOT NULL DEFAULT '',
 			port INTEGER,
 			is_system INTEGER DEFAULT 0,
 			tailnet_id TEXT,
