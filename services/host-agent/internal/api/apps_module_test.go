@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -383,6 +384,48 @@ func TestAppsHTTP_AppMetadata(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, "jellyfin", resp.CatalogID)
+}
+
+func TestAppsHTTP_Icon_ServesFile(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	tmpDir := t.TempDir()
+	appDir := filepath.Join(tmpDir, "jellyfin")
+	require.NoError(t, os.MkdirAll(appDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(appDir, "icon.png"), []byte("png-bytes"), 0o644))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+	mod.SetAppsDir(tmpDir)
+	r := chi.NewRouter(); NewAppsRouter(mod, r)
+
+	req := httptest.NewRequest("GET", "/apps/jellyfin/icon", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "png-bytes", w.Body.String())
+	assert.Equal(t, "public, max-age=86400", w.Header().Get("Cache-Control"))
+}
+
+func TestAppsHTTP_Icon_Missing(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	tmpDir := t.TempDir()
+	mod := NewAppsModule(cache, appStore, orch, logger)
+	mod.SetAppsDir(tmpDir)
+	r := chi.NewRouter(); NewAppsRouter(mod, r)
+
+	req := httptest.NewRequest("GET", "/apps/jellyfin/icon", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestAppsHTTP_RefreshCatalog(t *testing.T) {

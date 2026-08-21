@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
@@ -64,7 +65,8 @@ func NewAppsModule(
 	}
 }
 
-// SetAppsDir sets the apps directory for orphaned data cleanup.
+// SetAppsDir sets the apps directory (used for orphaned data cleanup and
+// serving app icons).
 func (m *appsModule) SetAppsDir(dir string) {
 	m.appsDir = dir
 }
@@ -202,11 +204,31 @@ func (m *appsModule) buildLaunchPaths() map[string]string {
 
 // ---- HTTP handler methods (on concrete type, not interface) ----
 
+// IconHandler serves the app icon (<appsDir>/<name>/icon.png). Missing
+// icons return 404 so the frontend falls back to a letter avatar.
+func (m *appsModule) IconHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+		if m.appsDir == "" || name == "" || strings.ContainsAny(name, "\\/") {
+			http.NotFound(w, r)
+			return
+		}
+		iconPath := filepath.Join(m.appsDir, name, "icon.png")
+		if _, err := os.Stat(iconPath); os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		http.ServeFile(w, r, iconPath)
+	}
+}
+
 // NewAppsRouter registers all app-related routes on the given router.
 func NewAppsRouter(mod *appsModule, r chi.Router) {
 	r.Get("/apps", mod.GetCatalogHandler())
 	r.Get("/apps/installed", mod.GetInstalledHandler())
 	r.Get("/apps/{name}/metadata", mod.AppMetadataHandler())
+	r.Get("/apps/{name}/icon", mod.IconHandler())
 	r.Post("/apps/{name}/install", mod.InstallHandler())
 	r.Post("/apps/{name}/uninstall", mod.UninstallHandler())
 	r.Patch("/apps/{name}/rename", mod.RenameHandler())
