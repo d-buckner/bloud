@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Daniel Buckner
 	import AppIcon from './AppIcon.svelte';
 	import { visibleApps, loading } from '$lib/stores/apps';
+	import { appProgress } from '$lib/stores/appProgress';
 	import { type App } from '$lib/types';
 
 	interface Props {
@@ -14,26 +15,69 @@
 	let { itemId, onAppClick, onAppContextMenu }: Props = $props();
 
 	let app = $derived($visibleApps.find((a) => a.catalog_id === itemId));
+	let progress = $derived(app ? $appProgress[app.catalog_id] ?? null : null);
 	let displayName = $derived(app?.display_name ?? itemId);
+	let status = $derived(app?.status ?? null);
 	let isInstalling = $derived(
-		app ? app.status === 'installing' || app.status === 'starting' : !$loading
+		app ? status === 'installing' || status === 'starting' : !$loading
+	);
+	let isFailed = $derived(status === 'failed');
+	let isDegraded = $derived(status === 'error');
+	let isStopped = $derived(status === 'stopped');
+
+	// Phase label under the icon while work is in flight. The spinner is the
+	// fallback for the brief window before the first node/pull event arrives.
+	let phase = $derived(progress?.phase ?? null);
+	let phaseLabel = $derived.by(() => {
+		if (!isInstalling || !phase || phase === 'failed') return null;
+		const base: Record<string, string> = {
+			queued: 'Queued',
+			pulling: 'Pulling image',
+			configuring: 'Configuring',
+			starting: 'Starting',
+			finalizing: 'Finalizing',
+			running: 'Ready'
+		};
+		const label = base[phase] ?? phase;
+		if (phase === 'pulling' && progress?.percent != null) return `${label} · ${progress.percent}%`;
+		return label;
+	});
+	let showSpinner = $derived(isInstalling && !phaseLabel);
+	let showProgressBar = $derived(
+		isInstalling && phase === 'pulling' && progress?.percent != null
 	);
 </script>
 
+<!-- Tiles stay clickable in every state: installing/failed open the install
+     detail modal (investigation is the point), running opens the app. -->
 <button
 	class="app-slot"
 	class:installing={isInstalling}
+	class:failed={isFailed}
+	class:degraded={isDegraded}
+	class:stopped={isStopped}
 	onclick={() => app && onAppClick?.(app)}
 	oncontextmenu={(e) => app && onAppContextMenu?.(e, app)}
-	disabled={isInstalling}
 >
 	<div class="app-icon-wrapper">
-		<AppIcon appName={itemId} {displayName} size="lg" transparent={isInstalling} />
-		{#if isInstalling}
+		<AppIcon appName={itemId} displayName={displayName} size="lg" transparent={isInstalling} />
+		{#if showSpinner}
 			<div class="install-spinner"></div>
 		{/if}
 	</div>
 	<span class="app-label">{displayName}</span>
+	{#if phaseLabel}
+		<span class="phase-label">{phaseLabel}</span>
+	{:else if isFailed}
+		<span class="phase-label failed">Failed</span>
+	{:else if isDegraded}
+		<span class="phase-label degraded">Degraded</span>
+	{/if}
+	{#if showProgressBar}
+		<div class="progress-track">
+			<div class="progress-fill" style="width: {progress?.percent ?? 0}%"></div>
+		</div>
+	{/if}
 </button>
 
 <style>
@@ -62,19 +106,26 @@
 	}
 
 	.app-slot.installing {
-		opacity: 0.7;
-		cursor: default;
-		pointer-events: none;
+		opacity: 0.85;
 	}
 
-	.app-slot.installing:hover {
-		transform: none;
+	.app-slot.stopped {
+		opacity: 0.5;
 	}
 
 	.app-icon-wrapper {
 		position: relative;
 		width: 52px;
 		height: 52px;
+		border-radius: 50%;
+	}
+
+	.app-slot.failed .app-icon-wrapper {
+		box-shadow: 0 0 0 2px var(--color-error);
+	}
+
+	.app-slot.degraded .app-icon-wrapper {
+		box-shadow: 0 0 0 2px var(--color-warning, #d97706);
 	}
 
 	.install-spinner {
@@ -113,5 +164,43 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.phase-label {
+		font-size: 9px;
+		font-weight: 500;
+		line-height: 1.2;
+		color: var(--color-text-muted);
+		text-align: center;
+		max-width: 80px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.phase-label.failed {
+		color: var(--color-error);
+	}
+
+	.phase-label.degraded {
+		color: var(--color-warning, #d97706);
+	}
+
+	.progress-track {
+		position: absolute;
+		bottom: 0;
+		left: 10%;
+		width: 80%;
+		height: 3px;
+		border-radius: 2px;
+		background: var(--color-border-subtle, var(--color-border));
+		overflow: hidden;
+	}
+
+	.progress-fill {
+		height: 100%;
+		border-radius: 2px;
+		background: var(--color-accent);
+		transition: width 0.4s ease;
 	}
 </style>

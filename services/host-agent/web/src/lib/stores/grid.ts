@@ -73,6 +73,28 @@ function createGridStore() {
 			update((elements) => elements.filter((el) => !(el.type === 'widget' && el.id === widgetId)));
 		},
 
+		/**
+		 * Add an app element with a null position so GridStack auto-places it.
+		 * Used when an install 202 carries the new app record before the next
+		 * snapshot arrives.
+		 */
+		addApp(appId: string): void {
+			update((elements) => {
+				if (elements.some((el) => el.type === 'app' && el.id === appId)) return elements;
+				return [
+					...elements,
+					{
+						type: 'app',
+						id: appId,
+						x: null,
+						y: null,
+						w: 1,
+						h: 1,
+					},
+				];
+			});
+		},
+
 		toggleWidget(widgetId: string): void {
 			if (!isValidWidgetId(widgetId)) return;
 			update((elements) => {

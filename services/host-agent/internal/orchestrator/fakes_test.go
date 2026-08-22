@@ -5,6 +5,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
@@ -534,6 +535,19 @@ func (f *FakeAppStore) SetOnChange(fn func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.onChange = fn
+}
+
+func (f *FakeAppStore) SetLastError(name, lastError string) error {
+	f.mu.Lock()
+	app, ok := f.apps[name]
+	if !ok {
+		f.mu.Unlock()
+		return fmt.Errorf("app not found: %s", name)
+	}
+	app.LastError = lastError
+	f.mu.Unlock()
+	f.notify()
+	return nil
 }
 
 func (f *FakeAppStore) notify() {

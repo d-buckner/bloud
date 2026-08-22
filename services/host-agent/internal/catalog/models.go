@@ -13,6 +13,10 @@ type App struct {
 	Screenshots   []string               `yaml:"screenshots" json:"screenshots"`
 	Version       string                 `yaml:"version" json:"version"`
 	Port          int                    `yaml:"port" json:"port"`
+	// EstimatedSizeMB is the approximate total image download size, so the
+	// catalog can set expectations before a long pull. Zero when unknown; the
+	// API falls back to local `podman image inspect` sizes when available.
+	EstimatedSizeMB int                  `yaml:"estimatedSizeMB,omitempty" json:"estimatedSizeMB,omitempty"`
 	IsSystem      bool                   `yaml:"isSystem" json:"isSystem"`
 	Dependencies  []string               `yaml:"dependencies" json:"dependencies"`
 	Resources     Resources              `yaml:"resources" json:"resources"`

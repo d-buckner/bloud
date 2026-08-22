@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 )
@@ -67,8 +68,25 @@ type Runtime interface {
 	Exec(ctx context.Context, name string, cmd []string) error
 }
 
+// PullProgress reports one image pull update while a container's image is
+// being downloaded (see podman.PullProgress for the field semantics).
+type PullProgress = podman.PullProgress
+
+// PullProgressFunc reports pull progress for a container's image.
+// containerName is the container the image is being pulled for, which lets
+// callers attribute the pull to its owning app.
+type PullProgressFunc func(containerName string, image string, progress PullProgress)
+
+// PullProgressReporter is implemented by runtimes that can report image pull
+// progress. It is an optional capability: the orchestrator type-asserts to it
+// so plain Runtime implementations need no changes.
+type PullProgressReporter interface {
+	SetPullProgressReporter(fn PullProgressFunc)
+}
+
 type podmanClient interface {
 	PullImage(ctx context.Context, image string) error
+	PullImageWithProgress(ctx context.Context, image string, onProgress func(podman.PullProgress)) error
 	CreateContainer(ctx context.Context, config podman.ContainerConfig) (string, error)
 	StartContainer(ctx context.Context, nameOrID string) error
 	RemoveContainer(ctx context.Context, nameOrID string, force bool) error
@@ -80,6 +98,9 @@ type podmanClient interface {
 // PodmanRuntime implements Runtime using the Podman API.
 type PodmanRuntime struct {
 	client podmanClient
+
+	mu           sync.Mutex
+	pullReporter PullProgressFunc
 }
 
 func NewPodmanRuntime(client *podman.Client) *PodmanRuntime {
@@ -88,6 +109,29 @@ func NewPodmanRuntime(client *podman.Client) *PodmanRuntime {
 
 func newPodmanRuntime(client podmanClient) *PodmanRuntime {
 	return &PodmanRuntime{client: client}
+}
+
+// SetPullProgressReporter registers a callback that receives image pull
+// progress while Ensure creates containers. Nil (or no reporter) keeps the
+// plain no-progress pull path.
+func (r *PodmanRuntime) SetPullProgressReporter(fn PullProgressFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pullReporter = fn
+}
+
+// pullImage pulls spec's image, reporting progress to the registered
+// reporter (when any) so the orchestrator can broadcast pull events.
+func (r *PodmanRuntime) pullImage(ctx context.Context, containerName, image string) error {
+	r.mu.Lock()
+	reporter := r.pullReporter
+	r.mu.Unlock()
+	if reporter == nil {
+		return r.client.PullImage(ctx, image)
+	}
+	return r.client.PullImageWithProgress(ctx, image, func(p podman.PullProgress) {
+		reporter(containerName, image, p)
+	})
 }
 
 func (r *PodmanRuntime) Ensure(ctx context.Context, spec Spec) (EnsureResult, error) {
@@ -121,7 +165,7 @@ func (r *PodmanRuntime) Ensure(ctx context.Context, spec Spec) (EnsureResult, er
 			return EnsureResult{}, err
 		}
 	}
-	if err := r.client.PullImage(ctx, spec.Image); err != nil {
+	if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
 		return EnsureResult{}, err
 	}
 	if _, err := r.client.CreateContainer(ctx, toPodmanConfig(spec, revision)); err != nil {

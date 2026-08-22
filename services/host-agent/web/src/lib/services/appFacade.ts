@@ -8,30 +8,24 @@
  */
 
 import { get } from 'svelte/store';
-import { apps, loading, error } from '$lib/stores/apps';
+import { apps, loading } from '$lib/stores/apps';
 import { gridElements } from '$lib/stores/grid';
-import { startPolling, stopPolling } from '$lib/api/poller';
+import { startAppEvents, stopAppEvents } from '$lib/api/appEvents';
 import {
 	installApp as apiInstall,
 	uninstallApp as apiUninstall,
 	renameApp as apiRename,
 	type RenameResult,
 } from '$lib/clients/appClient';
-import { type IntentResponse, AppStatus, type HomeData } from '$lib/types';
+import { type App, type IntentResponse, AppStatus } from '$lib/types';
 
 export type { RenameResult };
 
 let initialized = false;
 
-function handleHomeData(data: HomeData): void {
-	apps.set(data.apps);
-	gridElements.setFromHome(data);
-	loading.set(false);
-	error.set(null);
-}
-
 /**
- * Initialize the app system — start polling GET /api/user/home.
+ * Initialize the app system — open the SSE event stream (primary source)
+ * with the adaptive poller kept as a watchdog-armed safety net.
  * Called once when the app starts (in +layout.svelte).
  */
 export async function initApps(): Promise<void> {
@@ -39,25 +33,56 @@ export async function initApps(): Promise<void> {
 	initialized = true;
 
 	loading.set(true);
-	startPolling(handleHomeData);
+	startAppEvents();
 }
 
 /**
- * Stop polling and reset state.
+ * Stop the event stream (and any fallback polling) and reset state.
  * Called on layout destroy.
  */
 export function disconnectApps(): void {
-	stopPolling();
+	stopAppEvents();
 	initialized = false;
 }
 
 /**
  * Install an app. Returns once the intent is accepted (202);
- * the orchestrator handles the rest. The next poll will pick up
- * the new app in 'installing' status.
+ * the orchestrator handles the rest.
+ *
+ * The 202 response carries the installing app record (the orchestrator
+ * records it at submit time), which is applied to the stores immediately —
+ * the tile appears without waiting for the next snapshot. If the record is
+ * missing (store write failed server-side), a synthetic installing entry is
+ * inserted as an optimistic fallback.
  */
 export async function installApp(name: string): Promise<IntentResponse> {
-	return apiInstall(name);
+	const res = await apiInstall(name);
+	applyInstalledApp(res.app ?? null, name);
+	return res;
+}
+
+function applyInstalledApp(app: App | null, name: string): void {
+	const now = new Date().toISOString();
+	const entry: App = app ?? {
+		id: 0,
+		catalog_id: name,
+		display_name: name,
+		version: '',
+		status: AppStatus.Installing,
+		is_system: false,
+		installed_at: now,
+		updated_at: now
+	};
+	apps.update((current) => upsertApp(current, entry));
+	gridElements.addApp(entry.catalog_id);
+}
+
+function upsertApp(current: App[], entry: App): App[] {
+	const idx = current.findIndex((a) => a.catalog_id === entry.catalog_id);
+	if (idx === -1) return [...current, entry];
+	const next = [...current];
+	next[idx] = entry;
+	return next;
 }
 
 /**

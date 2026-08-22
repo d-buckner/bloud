@@ -39,6 +39,7 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -419,7 +420,11 @@ func TestAuthentikAdminLogin(t *testing.T) {
 		t.Fatalf("GET flow executor: status %d", resp.StatusCode)
 	}
 
-	resp, err = client.Post(flowURL, "application/json", strings.NewReader(`{"uid_field":"akadmin"}`))
+	// The product's admin user is "admin", created by the app configurator
+	// (scripts/set_admin_password.py) with the bootstrap password. The
+	// AUTHENTIK_BOOTSTRAP_PASSWORD env var is not consumed by authentik
+	// 2025.10.x, so the built-in "akadmin" user is not the product admin.
+	resp, err = client.Post(flowURL, "application/json", strings.NewReader(`{"uid_field":"admin"}`))
 	if err != nil {
 		t.Fatalf("POST identification: %v", err)
 	}
@@ -436,7 +441,7 @@ func TestAuthentikAdminLogin(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Authentik login as akadmin failed: status %d: %s", resp.StatusCode, body)
+		t.Fatalf("Authentik login as admin failed: status %d: %s", resp.StatusCode, body)
 	}
 
 	var flowResp struct {
@@ -447,10 +452,13 @@ func TestAuthentikAdminLogin(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&flowResp); err != nil {
 		t.Fatal(err)
 	}
-	if flowResp.Type != "redirect" {
-		t.Errorf("expected redirect after successful login, got type=%q component=%q", flowResp.Type, flowResp.Component)
+	// A successful final stage redirects to the dashboard. (Older authentik
+	// versions answered with type="redirect"; 2025.10.x answers with
+	// component="xak-flow-redirect" and to="/".)
+	if flowResp.Type != "redirect" && (flowResp.Component != "xak-flow-redirect" || flowResp.To != "/") {
+		t.Errorf("expected redirect to dashboard after successful login, got type=%q component=%q to=%q", flowResp.Type, flowResp.Component, flowResp.To)
 	}
-	t.Logf("Authentik login as akadmin successful (redirect to %s)", flowResp.To)
+	t.Logf("Authentik login as admin successful (redirect to %s)", flowResp.To)
 }
 
 // TestLDAPAuth_ServiceAccountCanBind is the key behavioral test for the LDAP
@@ -490,17 +498,147 @@ func TestLDAPAuth_AuthentikAdminCanBind(t *testing.T) {
 	out := runCmd(t, "ldapsearch",
 		"-x",
 		"-H", ldapURL,
-		"-D", "cn=akadmin,ou=users,dc=ldap,dc=goauthentik,dc=io",
+		"-D", "cn=admin,ou=users,dc=ldap,dc=goauthentik,dc=io",
 		"-w", adminPassword,
 		"-b", "ou=users,dc=ldap,dc=goauthentik,dc=io",
 		"-s", "one",
-		"(cn=akadmin)",
+		"(cn=admin)",
 		"cn",
 	)
-	if !strings.Contains(out, "akadmin") {
-		t.Errorf("LDAP search did not return akadmin user:\n%s", out)
+	if !strings.Contains(out, "cn=admin") {
+		t.Errorf("LDAP search did not return admin user:\n%s", out)
 	}
-	t.Log("akadmin LDAP authentication successful")
+	t.Log("admin LDAP authentication successful")
+}
+
+// --- Live state streaming (install 202 + SSE) ---
+
+type sseFrame struct {
+	event string
+	data  []byte
+}
+
+// readSSEFrames parses an SSE stream into {event, data} frames until the
+// stream closes. Comment lines (the ": ping" heartbeat) are skipped.
+func readSSEFrames(body io.Reader, frames chan<- sseFrame) {
+	defer close(frames)
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // snapshot lines can be large
+	var event string
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			frames <- sseFrame{event: event, data: []byte(strings.TrimPrefix(line, "data: "))}
+			event = ""
+		case line == "":
+			event = ""
+		}
+	}
+}
+
+// TestInstallLiveStateStream verifies the live-state contract:
+//
+//	 1. The install 202 response carries the app record immediately (the
+//	     orchestrator records it at submit time), so the UI can render the
+//	     tile without polling.
+//	 2. The /api/apps/events SSE stream delivers a snapshot before any node
+//	     event, then node/pull updates, ending with the app node RUNNING.
+//
+// It must run before TestJellyfinInstallViaAPI (source order) so the install
+// it drives is the fresh one.
+func TestInstallLiveStateStream(t *testing.T) {
+	// Open the SSE stream before submitting so no event is missed.
+	sseResp, err := http.Get(hostAgentURL + "/api/apps/events")
+	if err != nil {
+		t.Fatalf("GET /api/apps/events: %v", err)
+	}
+	defer sseResp.Body.Close()
+	if sseResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/apps/events: status %d", sseResp.StatusCode)
+	}
+	frames := make(chan sseFrame, 512)
+	go readSSEFrames(sseResp.Body, frames)
+
+	// POST install and inspect the 202 body.
+	installResp, err := http.Post(hostAgentURL+"/api/apps/jellyfin/install", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("POST install: %v", err)
+	}
+	defer installResp.Body.Close()
+	if installResp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(installResp.Body)
+		t.Fatalf("POST install: status %d: %s", installResp.StatusCode, body)
+	}
+	var install struct {
+		IntentID string        `json:"intentId"`
+		App      *installedApp `json:"app"`
+	}
+	if err := json.NewDecoder(installResp.Body).Decode(&install); err != nil {
+		t.Fatalf("decode install response: %v", err)
+	}
+	if install.App == nil {
+		t.Fatal("install 202 response must carry the app record (live-state contract)")
+	}
+	if install.App.Status != "installing" {
+		t.Fatalf("install 202 app record status = %q, want \"installing\"", install.App.Status)
+	}
+
+	// Consume frames until the jellyfin node is RUNNING. Fresh VMs may pull
+	// the image, so the budget matches TestJellyfinInstallViaAPI.
+	sawSnapshot, snapshotBeforeNode, sawNode, sawPull, nodeRunning := false, true, false, false, false
+	timeout := time.After(10 * time.Minute)
+	for !nodeRunning {
+		select {
+		case f, ok := <-frames:
+			if !ok {
+				t.Fatal("event stream closed before the app reached RUNNING")
+			}
+			switch f.event {
+			case "snapshot":
+				sawSnapshot = true
+			case "node":
+				// Node events carry the eventbus.NodeInfo projection
+				// {app, container, phase}, not the raw graph node.
+				var n struct {
+					App       string `json:"app"`
+					Container string `json:"container"`
+					Phase     string `json:"phase"`
+				}
+				if err := json.Unmarshal(f.data, &n); err == nil && (n.Container == "apps-jellyfin" || n.App == "jellyfin") {
+					sawNode = true
+					if !sawSnapshot {
+						snapshotBeforeNode = false
+					}
+					if n.Phase == "running" {
+						nodeRunning = true
+					}
+				}
+			case "pull":
+				var p struct {
+					App string `json:"app"`
+				}
+				if json.Unmarshal(f.data, &p) == nil && p.App == "jellyfin" {
+					sawPull = true
+				}
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for apps-jellyfin RUNNING on the event stream (sawSnapshot=%v sawNode=%v sawPull=%v)", sawSnapshot, sawNode, sawPull)
+		}
+	}
+
+	if !sawSnapshot {
+		t.Error("expected a snapshot event on the stream")
+	}
+	if !snapshotBeforeNode {
+		t.Error("snapshot must be delivered before any node event")
+	}
+	if !sawNode {
+		t.Error("expected node events for apps-jellyfin on the stream")
+	}
+	t.Logf("live-state stream: snapshot=%v node=%v pull=%v (pull absent if the image was already local)", sawSnapshot, sawNode, sawPull)
 }
 
 // --- Jellyfin through the real install path ---
@@ -584,7 +722,7 @@ func TestJellyfinConfiguredByConfigurator(t *testing.T) {
 // Jellyfin → LDAP bind (sAMAccountName lookup) → Authentik LDAP outpost.
 func TestJellyfinLDAPLogin(t *testing.T) {
 	waitAppRunning(t, "jellyfin", 2*time.Minute)
-	jellyfinLDAPLoginAs(t, "akadmin", readSecrets(t).AuthentikBootstrapPassword)
+	jellyfinLDAPLoginAs(t, "admin", readSecrets(t).AuthentikBootstrapPassword)
 }
 
 // jellyfinLDAPLoginAs authenticates to Jellyfin over LDAP and asserts the
@@ -676,7 +814,7 @@ func TestCrashRecoveryViaReconcile(t *testing.T) {
 	if !info.StartupWizardCompleted {
 		t.Error("StartupWizardCompleted should still be true after recovery")
 	}
-	jellyfinLDAPLoginAs(t, "akadmin", readSecrets(t).AuthentikBootstrapPassword)
+	jellyfinLDAPLoginAs(t, "admin", readSecrets(t).AuthentikBootstrapPassword)
 	t.Log("crash recovery complete: host-agent reconciled the container back")
 }
 

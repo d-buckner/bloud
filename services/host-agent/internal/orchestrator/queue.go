@@ -9,8 +9,10 @@ import (
 	"time"
 )
 
-// DefaultDebounce is the default debounce duration for WaitAndDrain.
-const DefaultDebounce = 5 * time.Second
+// DefaultDebounce is the coalescing window for bursts of intents that
+// arrive while the orchestrator is already processing a batch. A lone
+// intent is processed immediately (no wait); see WaitAndDrain.
+const DefaultDebounce = 750 * time.Millisecond
 
 // IntentQueue is a thread-safe FIFO queue for intents with debounce support.
 type IntentQueue struct {
@@ -62,22 +64,35 @@ func (q *IntentQueue) PendingCount() int {
 	return len(q.items)
 }
 
-// WaitAndDrain blocks until at least one intent arrives, then waits for the
-// debounce window to expire (resetting on each new arrival) before draining.
-// If ctx is cancelled before any intent arrives, returns nil.
-// If ctx is cancelled during debounce, returns any accumulated intents.
+// WaitAndDrain blocks until an intent is available, then returns a batch:
+//
+//   - If the queue is empty on entry it blocks until the first intent arrives
+//     and drains immediately — a lone intent is processed without any delay.
+//   - If intents are already queued (they arrived while the orchestrator was
+//     processing a previous batch) it waits out the debounce window, resetting
+//     on each new arrival, so a burst of intents coalesces into one batch.
+//
+// If ctx is cancelled before any intent arrives, returns nil. If ctx is
+// cancelled while coalescing, returns the accumulated intents.
 func (q *IntentQueue) WaitAndDrain(ctx context.Context) []Intent {
-	// Wait for the first intent or cancellation.
-	select {
-	case <-q.signal:
-	case <-ctx.Done():
-		return nil
+	q.mu.Lock()
+	pending := len(q.items) > 0
+	q.mu.Unlock()
+
+	if !pending {
+		// Wait for the first intent or cancellation, then drain right away.
+		select {
+		case <-q.signal:
+		case <-ctx.Done():
+			return nil
+		}
+		return q.Drain()
 	}
 
-	// Start debounce timer.
+	// Intents accumulated during processing: coalesce the burst before
+	// draining so one convergence pass handles the whole batch.
 	timer := time.NewTimer(q.debounce)
 	defer timer.Stop()
-
 	for {
 		select {
 		case <-q.signal:
@@ -88,7 +103,7 @@ func (q *IntentQueue) WaitAndDrain(ctx context.Context) []Intent {
 			timer.Reset(q.debounce)
 
 		case <-timer.C:
-			// Debounce window expired — drain and return.
+			// Coalescing window expired — drain and return.
 			return q.Drain()
 
 		case <-ctx.Done():

@@ -49,6 +49,51 @@ func TestAppStore_Install_SystemApp(t *testing.T) {
 	assert.Equal(t, 5432, app.Port)
 }
 
+func TestAppStore_SetLastError(t *testing.T) {
+	db := testdb.SetupTestDB(t)
+	store := NewAppStore(db)
+
+	err := store.Install("radarr", "Radarr", "5.0.0", nil, &InstallOptions{Port: 7878})
+	require.NoError(t, err)
+
+	// New installs start without an error.
+	app, err := store.GetByCatalogID("radarr")
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	assert.Empty(t, app.LastError)
+
+	// Record a failure, then read it back via both accessors.
+	require.NoError(t, store.SetLastError("radarr", "image pull timed out"))
+	app, err = store.GetByCatalogID("radarr")
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	assert.Equal(t, "image pull timed out", app.LastError)
+
+	apps, err := store.GetAll()
+	require.NoError(t, err)
+	require.Len(t, apps, 1)
+	assert.Equal(t, "image pull timed out", apps[0].LastError)
+
+	// Reinstall clears a previous error.
+	require.NoError(t, store.Install("radarr", "Radarr", "5.0.1", nil, &InstallOptions{Port: 7878}))
+	app, err = store.GetByCatalogID("radarr")
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	assert.Empty(t, app.LastError)
+
+	// Clearing the error with an empty string works too.
+	require.NoError(t, store.SetLastError("radarr", "boom"))
+	require.NoError(t, store.SetLastError("radarr", ""))
+	app, err = store.GetByCatalogID("radarr")
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	assert.Empty(t, app.LastError)
+
+	// Unknown app is an error.
+	err = store.SetLastError("nope", "x")
+	require.Error(t, err)
+}
+
 func TestAppStore_GetByCatalogID(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	store := NewAppStore(db)

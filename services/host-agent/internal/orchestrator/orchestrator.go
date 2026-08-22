@@ -19,6 +19,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
@@ -70,6 +71,10 @@ type OrchestratorConfig struct {
 
 	// ── Converge dependencies (nil = subsystem disabled) ─────────────────
 
+	// Events is the bus used to broadcast lifecycle transitions and activity
+	// to API subscribers (SSE). Nil disables event publishing.
+	Events *eventbus.Bus
+
 	AppStore         store.AppStoreInterface
 	CatalogGraph     catalog.AppGraphInterface
 	TailnetStore     store.TailnetStoreInterface
@@ -120,6 +125,7 @@ type Orchestrator struct {
 
 	// Intent processing fields
 	queue            *IntentQueue
+	events           *eventbus.Bus
 	appStore         store.AppStoreInterface
 	catalogGraph     catalog.AppGraphInterface
 	tailnetStore     store.TailnetStoreInterface
@@ -192,12 +198,15 @@ func NewOrchestrator(
 		traefikGen:       config.TraefikGen,
 		activeTailnetID:  config.ActiveTailnetID,
 		queue:            NewIntentQueue(DefaultDebounce),
+		events:           config.Events,
 		started:          make(chan struct{}),
 		ready:            make(chan struct{}),
 		done:             make(chan struct{}),
 		containerOwner:   make(map[string]string),
 	}
 	o.setupStatusSync()
+	o.setupNodeEvents()
+	o.setupPullEvents()
 	return o
 }
 
@@ -216,8 +225,10 @@ func (o *Orchestrator) setupStatusSync() {
 			switch node.ActualStatus {
 			case graph.StatusRunning:
 				_ = o.appStore.UpdateStatus(appID, "running")
+				_ = o.appStore.SetLastError(appID, "")
 			case graph.StatusError:
 				_ = o.appStore.UpdateStatus(appID, "error")
+				_ = o.appStore.SetLastError(appID, node.Error)
 			}
 			return
 		}
@@ -226,12 +237,104 @@ func (o *Orchestrator) setupStatusSync() {
 		switch node.ActualStatus {
 		case graph.StatusError:
 			_ = o.appStore.UpdateStatus(appID, "error")
+			_ = o.appStore.SetLastError(appID, node.Error)
 		case graph.StatusRunning:
 			if o.allContainersRunning(appID) {
 				_ = o.appStore.UpdateStatus(appID, "running")
+				_ = o.appStore.SetLastError(appID, "")
 			}
 		}
 	})
+}
+
+// setupNodeEvents broadcasts lifecycle node transitions on the event bus so
+// API subscribers (the SSE stream) can surface per-container progress and
+// errors without polling.
+func (o *Orchestrator) setupNodeEvents() {
+	if o.events == nil {
+		return
+	}
+	o.graph.On(graph.EventNodeUpdated, func(node graph.Node) {
+		o.events.Publish(eventbus.Event{
+			Type: eventbus.TypeNode,
+			Node: &eventbus.NodeInfo{
+				App:       o.ownerApp(node.ID),
+				Container: node.ID,
+				Phase:     phaseForStatus(node.ActualStatus),
+				Error:     node.Error,
+			},
+		})
+	})
+}
+
+// setupPullEvents wires image pull progress from the container runtime into
+// the event bus so SSE subscribers see live pull percentages. Runtimes that
+// don't implement PullProgressReporter (e.g. test doubles) are skipped.
+func (o *Orchestrator) setupPullEvents() {
+	if o.events == nil || o.config.Containers == nil {
+		return
+	}
+	reporter, ok := o.config.Containers.(containerruntime.PullProgressReporter)
+	if !ok {
+		return
+	}
+	reporter.SetPullProgressReporter(func(containerName, image string, p containerruntime.PullProgress) {
+		o.events.Publish(eventbus.Event{
+			Type: eventbus.TypePull,
+			Pull: &eventbus.PullInfo{
+				App:     o.ownerApp(containerName),
+				Image:   image,
+				Phase:   p.Phase,
+				Percent: p.Percent,
+				Detail:  pullDetail(p),
+			},
+		})
+	})
+}
+
+// pullDetail renders a user-facing pull progress detail, e.g.
+// "34% — 356.5 MiB of 1.0 GiB", falling back to the raw status line when no
+// sizes are known.
+func pullDetail(p containerruntime.PullProgress) string {
+	if p.Total > 0 {
+		return fmt.Sprintf("%d%% — %s of %s", p.Percent, humanBytes(p.Current), humanBytes(p.Total))
+	}
+	return p.Detail
+}
+
+// humanBytes formats a byte count as a compact binary unit (1.0 GiB).
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// phaseForStatus maps a lifecycle graph state to the user-facing phase name
+// shown in the dashboard.
+func phaseForStatus(s graph.NodeStatus) string {
+	switch s {
+	case graph.StatusInitializing:
+		return "queued"
+	case graph.StatusPreStartConfig:
+		return "configuring"
+	case graph.StatusStarting:
+		return "starting"
+	case graph.StatusPostStartConfig:
+		return "finalizing"
+	case graph.StatusRunning:
+		return "running"
+	case graph.StatusError:
+		return "failed"
+	default:
+		return string(s)
+	}
 }
 
 // allContainersRunning returns true when every container node for appID has
@@ -257,12 +360,20 @@ func (o *Orchestrator) allContainersRunning(appID string) bool {
 	return true
 }
 
-// recordActivity appends an event to the ring buffer.
+// recordActivity appends an event to the ring buffer and, when an event bus
+// is configured, publishes it to live API subscribers.
 func (o *Orchestrator) recordActivity(event, detail string) {
+	now := time.Now()
 	o.activityMu.Lock()
-	o.activityBuf[o.activityPos] = ActivityEvent{Time: time.Now(), Event: event, Detail: detail}
+	o.activityBuf[o.activityPos] = ActivityEvent{Time: now, Event: event, Detail: detail}
 	o.activityPos = (o.activityPos + 1) % maxOrchestratorEvents
 	o.activityMu.Unlock()
+	if o.events != nil {
+		o.events.Publish(eventbus.Event{
+			Type:     eventbus.TypeActivity,
+			Activity: &eventbus.ActivityInfo{Time: now, Event: event, Detail: detail},
+		})
+	}
 }
 
 // Status returns a snapshot of the orchestrator's current state.
@@ -290,6 +401,50 @@ func (o *Orchestrator) Enqueue(intent Intent) {
 	o.logger.Info("intent enqueued", "type", intentTypeName(intent), "id", intent.IntentID())
 	o.recordActivity("intent_enqueued", intentTypeName(intent))
 	o.queue.Enqueue(intent)
+}
+
+// Submit is the handler-facing entry point: it records the intent's
+// immediate user-visible effect on the store, then enqueues it for
+// reconciliation. For installs the app row exists (status "installing")
+// before this returns, so the API can include it in the 202 response and
+// the dashboard shows the tile without waiting for the reconciler. The
+// orchestrator remains the sole store writer (invariant #1): handlers only
+// ever call Submit, never the stores directly.
+func (o *Orchestrator) Submit(intent Intent) {
+	if i, ok := intent.(InstallAppIntent); ok {
+		o.recordInstallNow(i.AppName)
+	}
+	o.Enqueue(intent)
+}
+
+// recordInstallNow upserts the app row with status "installing" (clearing
+// last_error) before reconciliation picks the intent up. It is a plain
+// catalog-based upsert — the drain pass's recordIntent re-upserts the row
+// with the resolved integration config, so both writes are idempotent and
+// the reconciler sees no behavior change.
+func (o *Orchestrator) recordInstallNow(appName string) {
+	if o.appStore == nil || o.catalog == nil {
+		return
+	}
+	app, err := o.catalog.Get(appName)
+	if err != nil || app == nil {
+		o.logger.Warn("submit: app not in catalog, row will be recorded on drain", "app", appName, "error", err)
+		return
+	}
+	// Idempotent reinstall of a running app: keep the status "running" so
+	// the drain path's skip check (applyInstallIntent) still recognizes the
+	// intent as a no-op. Downgrading to "installing" here would make the
+	// drain run a full install that never transitions the graph node, and
+	// the app would be stuck at "installing".
+	if existing, _ := o.appStore.GetByCatalogID(appName); existing != nil && existing.Status == "running" {
+		return
+	}
+	if err := o.appStore.Install(app.CatalogID, app.DisplayName, app.Version, nil, &store.InstallOptions{
+		Port:     app.Port,
+		IsSystem: app.IsSystem,
+	}); err != nil {
+		o.logger.Error("submit: failed to record install row", "app", appName, "error", err)
+	}
 }
 
 // Start runs an initial convergence pass and then processes intents as they

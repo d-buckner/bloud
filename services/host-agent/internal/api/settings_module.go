@@ -111,7 +111,7 @@ func (m *settingsModule) SetTailnetHandler() http.HandlerFunc {
 		}
 
 		intent := orchestrator.NewSetTailnetIntent(req.Name, req.Type, req.AuthKey, req.ControlURL)
-		m.orch.Enqueue(intent)
+		m.orch.Submit(intent)
 
 		respondJSON(w, http.StatusAccepted, map[string]string{
 			"intentId": intent.IntentID(),
@@ -139,7 +139,7 @@ func (m *settingsModule) DeleteTailnetHandler() http.HandlerFunc {
 		}
 
 		intent := orchestrator.NewDeleteTailnetIntent()
-		m.orch.Enqueue(intent)
+		m.orch.Submit(intent)
 
 		respondJSON(w, http.StatusAccepted, map[string]string{
 			"intentId": intent.IntentID(),

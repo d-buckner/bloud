@@ -6,6 +6,7 @@
 	import { onMount } from 'svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
+	import Toasts from '$lib/components/Toasts.svelte';
 	import { initApps, disconnectApps } from '$lib/services/appFacade';
 	import { currentUser, type CurrentUser } from '$lib/stores/user';
 
@@ -93,6 +94,8 @@
 				{@render children()}
 			</div>
 		</main>
+
+		<Toasts />
 	</div>
 {/if}
 

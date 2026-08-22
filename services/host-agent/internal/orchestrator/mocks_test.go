@@ -55,6 +55,11 @@ func (m *MockAppStore) UpdateStatus(name, status string) error {
 	return args.Error(0)
 }
 
+func (m *MockAppStore) SetLastError(name, lastError string) error {
+	args := m.Called(name, lastError)
+	return args.Error(0)
+}
+
 func (m *MockAppStore) UpdateIntegrationConfig(name string, config map[string]string) error {
 	args := m.Called(name, config)
 	return args.Error(0)

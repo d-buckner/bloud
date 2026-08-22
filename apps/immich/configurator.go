@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,10 @@ const (
 // configFileName is the Immich config file written in PreStart and mounted
 // into the server container at /config/immich/immich-config.yaml.
 const configFileName = "immich-config.yaml"
+
+// mountFolders are Immich's system-integrity check folders (the values of
+// the server's StorageFolder enum, v3.1.x).
+var mountFolders = []string{"thumbs", "upload", "backups", "library", "profile", "encoded-video"}
 
 // Configurator handles Immich configuration: it writes the OAuth config file
 // before the server starts (PreStart) and bootstraps the server admin after
@@ -66,6 +71,15 @@ func (c *Configurator) Name() string {
 // so OAuth is enabled from the very first boot. Returns configChanged=true
 // when the file content changed so the orchestrator recreates the container.
 func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+	// Immich v3.1 crash-loops at startup when a .immich mount marker is
+	// missing: the startup check only re-verifies (reads) markers whose pass
+	// was already recorded in its database and never recreates missing ones.
+	// Ensure them here — PreStart runs on every reconciliation cycle, so
+	// this is idempotent and self-healing after any data-dir wipe.
+	if err := ensureMountMarkers(state.DataPath, c.logger); err != nil {
+		return false, err
+	}
+
 	if state.OIDC == nil {
 		// SSO not configured for this app: leave Immich defaults in place.
 		return false, nil
@@ -122,6 +136,29 @@ func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) 
 		return fmt.Errorf("creating admin: %w", err)
 	}
 	c.logger.Info("admin user created")
+	return nil
+}
+
+// ensureMountMarkers creates the upload subfolders and .immich marker files
+// when absent (Immich writes the current timestamp into the marker; any
+// content satisfies its read-back verification).
+func ensureMountMarkers(dataPath string, logger *slog.Logger) error {
+	for _, folder := range mountFolders {
+		dir := filepath.Join(dataPath, "upload", folder)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("creating mount folder %s: %w", folder, err)
+		}
+		marker := filepath.Join(dir, ".immich")
+		if _, err := os.Stat(marker); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("checking mount marker %s: %w", marker, err)
+		}
+		if err := os.WriteFile(marker, []byte(strconv.FormatInt(time.Now().UnixMilli(), 10)), 0644); err != nil {
+			return fmt.Errorf("writing mount marker %s: %w", marker, err)
+		}
+		logger.Info("created Immich mount marker", "folder", folder, "path", marker)
+	}
 	return nil
 }
 

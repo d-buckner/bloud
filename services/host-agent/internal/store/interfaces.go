@@ -10,6 +10,7 @@ type AppStoreInterface interface {
 	GetInstalledCatalogIDs() ([]string, error)
 	Install(catalogID, displayName, version string, integrationConfig map[string]string, opts *InstallOptions) error
 	UpdateStatus(catalogID, status string) error
+	SetLastError(catalogID, lastError string) error
 	EnsureSystemApp(catalogID, displayName string, port int) error
 	SetTailnetID(catalogID, tailnetID string) error
 	UpdateIntegrationConfig(catalogID string, config map[string]string) error

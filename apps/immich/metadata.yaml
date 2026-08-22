@@ -6,6 +6,7 @@ description: Self-hosted photo and video management
 category: media
 isSystem: false
 port: 2283
+estimatedSizeMB: 1800
 
 sso:
   strategy: native-oidc

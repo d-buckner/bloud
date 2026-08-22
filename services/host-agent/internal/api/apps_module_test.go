@@ -32,18 +32,29 @@ func addAppToCache(cache *FakeCatalogCache, app *catalog.App) {
 	cache.apps[app.CatalogID] = app
 }
 
-// FakeOrchestrator collects enqueued intents for testing
+// FakeOrchestrator collects submitted intents for testing.
+//
+// When appStore is set, Submit emulates the real orchestrator's
+// record-at-enqueue behavior: an install intent upserts the app row
+// (status "installing") synchronously before being recorded, so handler
+// tests can verify the 202-response app record.
 type FakeOrchestrator struct {
-	mu      sync.Mutex
-	intents []orchestrator.Intent
-	readyCh chan struct{}
+	mu       sync.Mutex
+	intents  []orchestrator.Intent
+	readyCh  chan struct{}
+	appStore store.AppStoreInterface
 }
 
 func newFakeOrchestrator() *FakeOrchestrator {
 	return &FakeOrchestrator{readyCh: make(chan struct{})}
 }
 
-func (f *FakeOrchestrator) Enqueue(intent orchestrator.Intent) {
+func (f *FakeOrchestrator) Submit(intent orchestrator.Intent) {
+	if f.appStore != nil {
+		if i, ok := intent.(orchestrator.InstallAppIntent); ok {
+			_ = f.appStore.Install(i.AppName, i.AppName, "", nil, nil)
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.intents = append(f.intents, intent)
@@ -88,8 +99,9 @@ func TestAppsModule_Install_EnqueuesIntent(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
+	orch.appStore = appStore // emulate record-at-enqueue
 
-	ref, err := mod.Install("jellyfin")
+	ref, app, err := mod.Install("jellyfin")
 	require.NoError(t, err)
 	assert.NotEmpty(t, ref.ID)
 	assert.Equal(t, 1, orch.IntentCount())
@@ -97,6 +109,12 @@ func TestAppsModule_Install_EnqueuesIntent(t *testing.T) {
 	intent, ok := orch.LastIntent().(orchestrator.InstallAppIntent)
 	assert.True(t, ok, "expected InstallAppIntent")
 	assert.Equal(t, "jellyfin", intent.AppName)
+
+	// The app record is read back after submit and returned alongside the
+	// intent ref.
+	require.NotNil(t, app)
+	assert.Equal(t, "jellyfin", app.CatalogID)
+	assert.Equal(t, "installing", app.Status)
 }
 
 func TestAppsModule_Install_NotFound(t *testing.T) {
@@ -107,7 +125,7 @@ func TestAppsModule_Install_NotFound(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 
-	_, err := mod.Install("nonexistent")
+	_, _, err := mod.Install("nonexistent")
 	assert.Error(t, err)
 	assert.Equal(t, 0, orch.IntentCount())
 }
@@ -175,9 +193,76 @@ func TestAppsModule_GetCatalog(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 
-	apps, err := mod.GetCatalog()
+	apps, err := mod.GetCatalog(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, apps, 2)
+}
+
+func TestAppsModule_GetCatalog_FillsSizeFromLocalImages(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	// Declared estimate wins; shared images counted once; missing images skipped.
+	addAppToCache(cache, &catalog.App{
+		CatalogID:       "jellyfin",
+		DisplayName:     "Jellyfin",
+		EstimatedSizeMB: 1150,
+		Containers: []catalog.ContainerDef{
+			{Name: "apps-jellyfin", Image: "docker.io/jellyfin/jellyfin:10.11.11"},
+		},
+	})
+	addAppToCache(cache, &catalog.App{
+		CatalogID:   "authentik",
+		DisplayName: "Authentik",
+		Containers: []catalog.ContainerDef{
+			{Name: "apps-authentik-server", Image: "ghcr.io/goauthentik/server:2025.10.3"},
+			{Name: "apps-authentik-worker", Image: "ghcr.io/goauthentik/server:2025.10.3"}, // shared
+			{Name: "apps-authentik-postgres", Image: "docker.io/postgres:16-alpine"},
+			{Name: "apps-authentik-redis", Image: "docker.io/redis:7-alpine"}, // not local
+		},
+	})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+	mod.SetImageSizeResolver(func(_ context.Context, image string) (int64, bool) {
+		switch image {
+		case "ghcr.io/goauthentik/server:2025.10.3":
+			return 524288000, true // 500 MiB
+		case "docker.io/postgres:16-alpine":
+			return 262144000, true // 250 MiB
+		default:
+			return 0, false
+		}
+	})
+
+	apps, err := mod.GetCatalog(context.Background())
+	require.NoError(t, err)
+
+	byID := map[string]catalog.App{}
+	for _, app := range apps {
+		byID[app.CatalogID] = *app
+	}
+	assert.Equal(t, 1150, byID["jellyfin"].EstimatedSizeMB, "declared estimate must not be overwritten")
+	assert.Equal(t, 750, byID["authentik"].EstimatedSizeMB, "shared image counted once, missing image skipped")
+}
+
+func TestAppsModule_GetCatalog_NoResolverKeepsZero(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{
+		CatalogID:   "navidrome",
+		DisplayName: "Navidrome",
+		Containers:  []catalog.ContainerDef{{Name: "apps-navidrome", Image: "docker.io/deluan/navidrome:latest"}},
+	})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+
+	apps, err := mod.GetCatalog(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, apps, 1)
+	assert.Equal(t, 0, apps[0].EstimatedSizeMB)
 }
 
 func TestAppsModule_GetInstalled_ExcludesSystem(t *testing.T) {
@@ -269,7 +354,7 @@ func TestAppsHTTP_ListInstalledApps(t *testing.T) {
 	assert.Len(t, apps, 1)
 }
 
-func TestAppsHTTP_Install_Returns202(t *testing.T) {
+func TestAppsHTTP_Install_Returns202WithAppRecord(t *testing.T) {
 	cache := NewFakeCatalogCache()
 	addAppToCache(cache, &catalog.App{CatalogID: "jellyfin", DisplayName: "Jellyfin"})
 	appStore := NewFakeAppStore()
@@ -277,6 +362,7 @@ func TestAppsHTTP_Install_Returns202(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
+	orch.appStore = appStore // emulate record-at-enqueue
 	appMod := mod
 	r := chi.NewRouter(); NewAppsRouter(appMod, r)
 
@@ -285,10 +371,19 @@ func TestAppsHTTP_Install_Returns202(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
-	var resp map[string]string
+	var resp struct {
+		IntentID string `json:"intentId"`
+		App      *struct {
+			CatalogID string `json:"catalog_id"`
+			Status    string `json:"status"`
+		} `json:"app"`
+	}
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
-	assert.NotEmpty(t, resp["intentId"])
+	assert.NotEmpty(t, resp.IntentID)
+	require.NotNil(t, resp.App, "202 must carry the installing app record")
+	assert.Equal(t, "jellyfin", resp.App.CatalogID)
+	assert.Equal(t, "installing", resp.App.Status)
 }
 
 func TestAppsHTTP_Install_NotFound(t *testing.T) {

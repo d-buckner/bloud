@@ -5,6 +5,7 @@ displayName: Authentik
 description: Open-source identity provider for SSO, user management, and authentication
 category: security
 port: 9001
+estimatedSizeMB: 1600
 isSystem: true
 
 integrations:

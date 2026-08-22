@@ -18,6 +18,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
@@ -71,6 +72,14 @@ func NewRouter(
 	if appStore == nil {
 		appStore = store.NewAppStore(db)
 	}
+
+	// Event bus: broadcasts app-store changes and orchestrator events to the
+	// SSE stream (/api/apps/events). The bus only reads state; the
+	// orchestrator remains the single writer.
+	eventsBus := eventbus.New()
+	appStore.SetOnChange(func() {
+		eventsBus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
+	})
 	positionStore := options.positionStore
 	if positionStore == nil {
 		positionStore = store.NewPositionStore(db)
@@ -116,7 +125,7 @@ func NewRouter(
 			realOrch = ro
 		}
 	} else if !options.noOrchestrator {
-		realOrch = initOrchestratorHelper(db, appStore, catalogCache, cfg, logger, tailnetStore, authentikClient)
+		realOrch = initOrchestratorHelper(db, appStore, catalogCache, cfg, logger, tailnetStore, authentikClient, eventsBus)
 		if realOrch != nil {
 			orchCaller = realOrch
 		}
@@ -147,10 +156,21 @@ func NewRouter(
 
 	appsMod := NewAppsModule(catalogCache, appStore, orchCaller, logger)
 	appsMod.SetAppsDir(cfg.AppsDir)
+	// Catalog size fallback: resolve undeclared estimates from local images.
+	if sizeClient, err := podman.NewClient(); err == nil {
+		appsMod.SetImageSizeResolver(func(ctx context.Context, image string) (int64, bool) {
+			size, found, err := sizeClient.ImageSize(ctx, image)
+			if err != nil {
+				return 0, false
+			}
+			return size, found
+		})
+	}
 
 	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger)
 
 	homeMod := NewHomeModule(positionStore, appStore, launchPathsFn, logger)
+	eventsMod := NewEventsModule(eventsBus, homeMod.GetLayout, logger)
 
 	logsMod := NewLogsModule(appStore, logger)
 
@@ -178,7 +198,6 @@ func NewRouter(
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173", "http://localhost:8080"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -187,55 +206,63 @@ func NewRouter(
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	// NOTE: no global request timeout here — SSE streams (below) must
+	// outlive a single request. Non-streaming routes opt into the timeout
+	// explicitly via With(requestTimeout).
+	requestTimeout := middleware.Timeout(60 * time.Second)
+	authMiddleware := authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets)
 
 	// Public routes
-	r.Get("/health", systemMod.HealthHandler())
-	r.Get("/auth/login", authMod.LoginHandler())
-	r.Get("/auth/callback", authMod.CallbackHandler())
-	r.Post("/auth/logout", authMod.LogoutHandler())
+	pub := r.With(requestTimeout)
+	pub.Get("/health", systemMod.HealthHandler())
+	pub.Get("/auth/login", authMod.LoginHandler())
+	pub.Get("/auth/callback", authMod.CallbackHandler())
+	pub.Post("/auth/logout", authMod.LogoutHandler())
 
 	r.Route("/api", func(api chi.Router) {
-		api.Get("/health", systemMod.HealthHandler())
-		api.Get("/setup/status", settingsMod.SetupStatusHandler())
-		api.Get("/auth/me", authMod.GetCurrentUserHandler())
+		// SSE streaming routes: authenticated, but exempt from the request
+		// timeout — these are long-lived streams, not single requests.
+		stream := api.With(authMiddleware)
+		NewEventsRouter(eventsMod, stream)
+		stream.Get("/apps/{name}/logs", logsMod.StreamLogsHandler())
+		stream.Get("/system/status/stream", logsMod.SystemStatusStreamHandler())
+
+		// Non-streaming public routes
+		npub := api.With(requestTimeout)
+		npub.Get("/health", systemMod.HealthHandler())
+		npub.Get("/setup/status", settingsMod.SetupStatusHandler())
+		npub.Get("/auth/me", authMod.GetCurrentUserHandler())
 
 		// System info (public, no auth required)
-		NewSystemRouter(systemMod, api)
+		NewSystemRouter(systemMod, npub)
 
-		// Authenticated routes
-		api.Group(func(auth chi.Router) {
-			auth.Use(authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets))
+		// Authenticated non-streaming routes
+		auth := api.With(requestTimeout, authMiddleware)
 
-			// User-accessible routes (registered directly)
-			NewAppsRouter(appsMod, auth)
-			NewHomeRouter(homeMod, auth)
-			NewLogsRouter(logsMod, auth)
+		// User-accessible routes (registered directly)
+		NewAppsRouter(appsMod, auth)
+		NewHomeRouter(homeMod, auth)
 
-			// Admin-only routes
-			auth.Group(func(admin chi.Router) {
-				admin.Use(adminMiddlewareFn)
-
-				// Admin routes (registered directly)
-				admin.Post("/apps/refresh-catalog", appsMod.RefreshCatalogHandler())
-				admin.Get("/system/rebuild/stream", rebuildStreamHandler())
-				NewSettingsRouter(settingsMod, admin)
-				NewSharingRouter(sharingMod, admin)
-				NewRemoteAppsRouter(remoteAppsMod, admin)
-			})
-		})
+		// Admin-only routes
+		admin := auth.With(adminMiddlewareFn)
+		admin.Post("/apps/refresh-catalog", appsMod.RefreshCatalogHandler())
+		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
+		NewSettingsRouter(settingsMod, admin)
+		NewSharingRouter(sharingMod, admin)
+		NewRemoteAppsRouter(remoteAppsMod, admin)
 	})
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "not found")
 	})
 
-	setupFrontendHelper(r, logger)
+	setupFrontendHelper(r.With(requestTimeout), logger)
 	return r, realOrch
 }
 
 // ---- Frontend ----
 
-func setupFrontendHelper(r *chi.Mux, logger *slog.Logger) {
+func setupFrontendHelper(r chi.Router, logger *slog.Logger) {
 	buildDir := filepath.Join("web", "build")
 
 	if _, err := os.Stat(buildDir); os.IsNotExist(err) {
@@ -284,6 +311,7 @@ func initOrchestratorHelper(
 	logger *slog.Logger,
 	tailnetStore *store.TailnetStore,
 	authentikClient *authentik.Client,
+	eventsBus *eventbus.Bus,
 ) *orchestrator.Orchestrator {
 	traefikConfigPath := filepath.Join(cfg.TraefikDynamicDir, "apps-routes.yml")
 	logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
@@ -368,6 +396,7 @@ func initOrchestratorHelper(
 			Containers:       runtime,
 			TemplateVars:     cfg.TemplateVars,
 			AppStore:         appStore,
+			Events:           eventsBus,
 			CatalogGraph:     catalogGraph,
 			TailnetStore:     tailnetStore,
 			RemoteAppStore:   store.NewRemoteAppStore(db),

@@ -682,6 +682,35 @@ Every operation must be safe to retry after:
 
 Reconciliation against an already-correct system must make no changes.
 
+#### Application Status Vocabulary
+
+Each managed app reports exactly one status: `installing`, `running`, `stopped`,
+`failed`, `error`, or `uninstalling`. The state machine:
+
+- `installing → running | failed` — the install lifecycle converged, or a
+  step (pull, configuration, startup) failed terminally.
+- `running → error` — degraded: a container stopped or went unhealthy.
+  The graph's ERROR state is terminal for the reconciler: the convergence
+  pass never retries an errored node on its own, so recovery is an explicit
+  user action (Retry install or uninstall/reinstall).
+- `failed → installing` — user retry re-runs the lifecycle; the install
+  intent resets any of the app's errored nodes before the pass runs, and
+  `last_error` is cleared when the retry is accepted.
+- `running → stopped` — the container is gone but the app had previously
+  completed its full lifecycle, so recovery is a re-create, not a re-install.
+  (If the container comes back on its own, the app returns to `running`
+  without a lifecycle re-run.)
+- `* → uninstalling` — explicit user action; the row is removed once its
+  containers are gone.
+
+`failed` and `error` are deliberately distinct: `failed` is a terminal
+install outcome, while `error` is a degraded but previously working app.
+Both carry the most recent failure detail in `last_error` and both recover
+the same way — an explicit retry (a new install intent) resets the errored
+nodes and re-runs the lifecycle. Status transitions are written by the
+orchestrator from graph node events (the single authoritative path); API
+handlers never set lifecycle status directly.
+
 ### 5. Durable Integration State
 
 Bloud persists desired and observed revisions for applications and integration instances.

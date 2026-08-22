@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,9 +34,11 @@ type IntentRef struct {
 }
 
 // orchestratorCaller is a minimal interface for the orchestrator dependency,
-// allowing easy mocking in tests.
+// allowing easy mocking in tests. Handlers submit intents (never enqueue
+// directly) so the orchestrator can record user-visible state at submit
+// time (e.g. the installing row behind an install 202).
 type orchestratorCaller interface {
-	Enqueue(intent orchestrator.Intent)
+	Submit(intent orchestrator.Intent)
 }
 
 // AppsModule encapsulates all app catalog and lifecycle operations.
@@ -48,6 +51,9 @@ type appsModule struct {
 	orch     orchestratorCaller
 	logger   *slog.Logger
 	appsDir  string
+	// imageSizeResolver returns the on-disk size (bytes) of a locally
+	// present image. Nil disables the catalog size fallback.
+	imageSizeResolver func(ctx context.Context, image string) (int64, bool)
 }
 
 // NewAppsModule creates a new AppsModule.
@@ -71,6 +77,12 @@ func (m *appsModule) SetAppsDir(dir string) {
 	m.appsDir = dir
 }
 
+// SetImageSizeResolver wires the local-image size lookup used to fill in
+// catalog entries without a declared estimatedSizeMB.
+func (m *appsModule) SetImageSizeResolver(fn func(ctx context.Context, image string) (int64, bool)) {
+	m.imageSizeResolver = fn
+}
+
 // RefreshCatalog reloads the catalog cache from disk.
 func (m *appsModule) RefreshCatalog() error {
 	loader := catalog.NewLoader(m.appsDir)
@@ -82,9 +94,39 @@ func (m *appsModule) RefreshCatalog() error {
 	return nil
 }
 
-// GetCatalog returns all user-facing apps.
-func (m *appsModule) GetCatalog() ([]*catalog.App, error) {
-	return m.catalog.GetUserApps()
+// GetCatalog returns all user-facing apps, enriching entries without a
+// declared size estimate with the summed local image sizes when the images
+// are already present (so the catalog can set pull expectations either way).
+func (m *appsModule) GetCatalog(ctx context.Context) ([]*catalog.App, error) {
+	apps, err := m.catalog.GetUserApps()
+	if err != nil {
+		return nil, err
+	}
+	if m.imageSizeResolver == nil {
+		return apps, nil
+	}
+	for _, app := range apps {
+		if app.EstimatedSizeMB > 0 || len(app.Containers) == 0 {
+			continue
+		}
+		var total int64
+		seen := make(map[string]bool, len(app.Containers))
+		for _, def := range app.Containers {
+			if seen[def.Image] {
+				continue // shared images (e.g. server+worker) pull once
+			}
+			seen[def.Image] = true
+			if size, ok := m.imageSizeResolver(ctx, def.Image); ok {
+				total += size
+			}
+		}
+		if total > 0 {
+			// Mutates the cached entry: the size is stable for the lifetime
+			// of the local image and re-resolution is cheap when absent.
+			app.EstimatedSizeMB = int(total / (1024 * 1024))
+		}
+	}
+	return apps, nil
 }
 
 // GetInstalled returns installed user apps enriched with SSO launch paths.
@@ -111,18 +153,29 @@ func (m *appsModule) AppMetadata(name string) (*catalog.App, error) {
 	return app, nil
 }
 
-// Install enqueues an install intent for the named app.
-func (m *appsModule) Install(name string) (*IntentRef, error) {
+// Install submits an install intent for the named app. Because the
+// orchestrator records the installing row synchronously at submit time, the
+// current app record is read back and returned alongside the intent ref so
+// the 202 response carries it.
+func (m *appsModule) Install(name string) (*IntentRef, *installedAppResponse, error) {
 	if _, err := m.catalog.Get(name); err != nil {
-		return nil, fmt.Errorf("%w: %s", errAppNotFound, name)
+		return nil, nil, fmt.Errorf("%w: %s", errAppNotFound, name)
 	}
 	if m.orch == nil {
-		return nil, fmt.Errorf("orchestrator not available")
+		return nil, nil, fmt.Errorf("orchestrator not available")
 	}
 	intent := orchestrator.NewInstallAppIntent(name)
-	m.orch.Enqueue(intent)
-	m.logger.Info("install intent enqueued", "app", name, "intentId", intent.IntentID())
-	return &IntentRef{ID: intent.IntentID()}, nil
+	m.orch.Submit(intent)
+	m.logger.Info("install intent submitted", "app", name, "intentId", intent.IntentID())
+
+	var app *installedAppResponse
+	if row, err := m.appStore.GetByCatalogID(name); err == nil && row != nil {
+		app = &installedAppResponse{InstalledApp: row}
+		if path, ok := m.buildLaunchPaths()[name]; ok {
+			app.SSOLaunchPath = path
+		}
+	}
+	return &IntentRef{ID: intent.IntentID()}, app, nil
 }
 
 // Uninstall enqueues an uninstall intent.
@@ -131,8 +184,8 @@ func (m *appsModule) Uninstall(name string, clearData bool) (*IntentRef, error) 
 		return nil, fmt.Errorf("orchestrator not available")
 	}
 	intent := orchestrator.NewUninstallAppIntent(name, clearData)
-	m.orch.Enqueue(intent)
-	m.logger.Info("uninstall intent enqueued", "app", name, "clearData", clearData)
+	m.orch.Submit(intent)
+	m.logger.Info("uninstall intent submitted", "app", name, "clearData", clearData)
 	return &IntentRef{ID: intent.IntentID()}, nil
 }
 
@@ -145,8 +198,8 @@ func (m *appsModule) Rename(name, displayName string) (*IntentRef, error) {
 		return nil, fmt.Errorf("orchestrator not available")
 	}
 	intent := orchestrator.NewRenameAppIntent(name, displayName)
-	m.orch.Enqueue(intent)
-	m.logger.Info("rename intent enqueued", "app", name, "displayName", displayName)
+	m.orch.Submit(intent)
+	m.logger.Info("rename intent submitted", "app", name, "displayName", displayName)
 	return &IntentRef{ID: intent.IntentID()}, nil
 }
 
@@ -166,8 +219,8 @@ func (m *appsModule) ClearData(name string) (*IntentRef, error) {
 			return nil, fmt.Errorf("orchestrator not available")
 		}
 		intent := orchestrator.NewUninstallAppIntent(name, true)
-		m.orch.Enqueue(intent)
-		m.logger.Info("clear data: enqueued uninstall intent", "app", name)
+		m.orch.Submit(intent)
+		m.logger.Info("clear data: submitted uninstall intent", "app", name)
 		return &IntentRef{ID: intent.IntentID()}, nil
 	}
 
@@ -238,7 +291,7 @@ func NewAppsRouter(mod *appsModule, r chi.Router) {
 // GetCatalogHandler returns all user-facing apps from the catalog.
 func (m *appsModule) GetCatalogHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apps, err := m.GetCatalog()
+		apps, err := m.GetCatalog(r.Context())
 		if err != nil {
 			m.logger.Error("failed to get apps from catalog", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to get apps")
@@ -275,11 +328,13 @@ func (m *appsModule) AppMetadataHandler() http.HandlerFunc {
 	}
 }
 
-// InstallHandler enqueues an install intent.
+// InstallHandler submits an install intent. The 202 response includes the
+// current app record (the orchestrator records the installing row at submit
+// time) so the frontend can render the tile immediately without polling.
 func (m *appsModule) InstallHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
-		ref, err := m.Install(name)
+		ref, app, err := m.Install(name)
 		if err != nil {
 			if errors.Is(err, errAppNotFound) {
 				respondError(w, http.StatusNotFound, "app not found in catalog")
@@ -288,7 +343,11 @@ func (m *appsModule) InstallHandler() http.HandlerFunc {
 			respondError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
-		respondJSON(w, http.StatusAccepted, map[string]string{"intentId": ref.ID})
+		resp := map[string]any{"intentId": ref.ID}
+		if app != nil {
+			resp["app"] = app
+		}
+		respondJSON(w, http.StatusAccepted, resp)
 	}
 }
 

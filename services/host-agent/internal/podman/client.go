@@ -183,6 +183,41 @@ func validPodmanName(name string) bool {
 	return true
 }
 
+// ImageSize returns the on-disk size (bytes) of a local image and whether
+// the image exists locally. It is used for catalog size fallbacks when the
+// metadata does not declare an estimate.
+func (c *Client) ImageSize(ctx context.Context, reference string) (int64, bool, error) {
+	// Image references contain "/" (e.g. docker.io/jellyfin/jellyfin:tag);
+	// escape each path segment individually.
+	segments := make([]string, 0, 3)
+	for _, part := range strings.Split(reference, "/") {
+		segments = append(segments, url.PathEscape(part))
+	}
+	path := "/libpod/images/" + strings.Join(segments, "/") + "/json"
+
+	resp, err := c.get(ctx, path)
+	if err != nil {
+		return 0, false, fmt.Errorf("inspect image %s: %w", reference, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return 0, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return 0, false, fmt.Errorf("inspect image %s: status %d: %s", reference, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var result struct {
+		Size int64 `json:"Size"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, false, fmt.Errorf("decode image inspect for %s: %w", reference, err)
+	}
+	return result.Size, true, nil
+}
+
 // Ping checks if Podman is running and accessible
 func (c *Client) Ping(ctx context.Context) error {
 	resp, err := c.get(ctx, "/libpod/_ping")
@@ -198,15 +233,13 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
-// PullImage pulls an image from a registry
+// PullImage pulls an image from a registry (no progress reporting; see
+// PullImageWithProgress).
 func (c *Client) PullImage(ctx context.Context, image string) error {
 	if image == "" || strings.ContainsAny(image, "\r\n") {
 		return fmt.Errorf("invalid image reference %q", image)
 	}
-	if c.runner == nil {
-		c.runner = execRunner{}
-	}
-	if output, err := c.runner.Run(ctx, "podman", "pull", image); err != nil {
+	if output, err := c.runExecPull(ctx, image); err != nil {
 		return fmt.Errorf("podman pull %s failed: %w: %s", image, err, strings.TrimSpace(string(output)))
 	}
 	return nil

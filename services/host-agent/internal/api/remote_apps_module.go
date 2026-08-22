@@ -69,7 +69,7 @@ func (m *remoteAppsModule) Add(appID, tailnetAddr, hostLabel string) (*IntentRef
 		return nil, fmt.Errorf("orchestrator not available")
 	}
 	intent := orchestrator.NewAddRemoteAppIntent(appID, tailnetAddr, hostLabel)
-	m.orch.Enqueue(intent)
+	m.orch.Submit(intent)
 	m.logger.Info("add remote app intent enqueued", "app", appID)
 	return &IntentRef{ID: intent.IntentID()}, nil
 }
@@ -84,7 +84,7 @@ func (m *remoteAppsModule) Delete(id string) (*IntentRef, error) {
 		return nil, fmt.Errorf("orchestrator not available")
 	}
 	intent := orchestrator.NewDeleteRemoteAppIntent(id)
-	m.orch.Enqueue(intent)
+	m.orch.Submit(intent)
 	m.logger.Info("delete remote app intent enqueued", "id", id)
 	return &IntentRef{ID: intent.IntentID()}, nil
 }

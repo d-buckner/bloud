@@ -166,6 +166,19 @@ func (f *FakeAppStore) SetOnChange(fn func()) {
 	f.onChange = fn
 }
 
+func (f *FakeAppStore) SetLastError(name, lastError string) error {
+	f.mu.Lock()
+	app, ok := f.apps[name]
+	if !ok {
+		f.mu.Unlock()
+		return fmt.Errorf("app not found: %s", name)
+	}
+	app.LastError = lastError
+	f.mu.Unlock()
+	f.notify()
+	return nil
+}
+
 func (f *FakeAppStore) notify() {
 	if f.onChange != nil {
 		f.onChange()
@@ -481,6 +494,7 @@ func initTestDB(db *sql.DB) error {
 			display_name TEXT,
 			version TEXT,
 			status TEXT DEFAULT 'installing',
+			last_error TEXT NOT NULL DEFAULT '',
 			port INTEGER,
 			is_system INTEGER DEFAULT 0,
 			tailnet_id TEXT,
@@ -591,10 +605,11 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 	return server, tmpDir
 }
 
-// FakeOrchForInstall creates a simple fake orchestrator that returns a valid intent ref.
+// fakeOrchestratorForTest is a no-op orchestrator that satisfies the
+// handler interface for router-level tests.
 type fakeOrchestratorForTest struct{}
 
-func (f *fakeOrchestratorForTest) Enqueue(intent orchestrator.Intent) {}
+func (f *fakeOrchestratorForTest) Submit(intent orchestrator.Intent) {}
 
 // setupTestServerWithWorkingOrchestrator creates a server with a non-nil orchestrator.
 func setupTestServerWithWorkingOrchestrator(t *testing.T) (*Server, string) {

@@ -72,6 +72,8 @@ func runMigrations(db *sql.DB) {
 		h            INTEGER NOT NULL DEFAULT 1,
 		PRIMARY KEY (username, element_id)
 	)`)
+	// v7: add last_error to apps
+	db.Exec("ALTER TABLE apps ADD COLUMN last_error TEXT NOT NULL DEFAULT ''")
 	migrateLayoutToPositions(db)
 }
 

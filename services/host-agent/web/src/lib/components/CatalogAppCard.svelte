@@ -16,8 +16,16 @@
 	let installing = $derived(status === 'installing' || status === 'starting');
 	let uninstalling = $derived(status === 'uninstalling');
 
+	let sizeLabel = $derived(formatSizeMB(app.estimatedSizeMB));
+
 	function formatAppName(name: string): string {
 		return name.charAt(0).toUpperCase() + name.slice(1);
+	}
+
+	function formatSizeMB(mb?: number): string {
+		if (!mb || mb <= 0) return '';
+		if (mb >= 1024) return `~${(mb / 1024).toFixed(1)} GB`;
+		return `~${mb} MB`;
 	}
 </script>
 
@@ -37,6 +45,9 @@
 	<div class="app-content">
 		<div class="app-header">
 			<h3 class="app-title">{app.displayName || formatAppName(app.catalogId)}</h3>
+			{#if sizeLabel}
+				<span class="app-size">{sizeLabel}</span>
+			{/if}
 			{#if app.category}
 				<span class="app-category">{app.category}</span>
 			{/if}
@@ -115,6 +126,13 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.app-size {
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 
 	.app-category {
