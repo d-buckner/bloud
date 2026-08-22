@@ -402,6 +402,42 @@ func (o *Orchestrator) Enqueue(intent Intent) {
 	o.queue.Enqueue(intent)
 }
 
+// Submit is the handler-facing entry point: it records the intent's
+// immediate user-visible effect on the store, then enqueues it for
+// reconciliation. For installs the app row exists (status "installing")
+// before this returns, so the API can include it in the 202 response and
+// the dashboard shows the tile without waiting for the reconciler. The
+// orchestrator remains the sole store writer (invariant #1): handlers only
+// ever call Submit, never the stores directly.
+func (o *Orchestrator) Submit(intent Intent) {
+	if i, ok := intent.(InstallAppIntent); ok {
+		o.recordInstallNow(i.AppName)
+	}
+	o.Enqueue(intent)
+}
+
+// recordInstallNow upserts the app row with status "installing" (clearing
+// last_error) before reconciliation picks the intent up. It is a plain
+// catalog-based upsert — the drain pass's recordIntent re-upserts the row
+// with the resolved integration config, so both writes are idempotent and
+// the reconciler sees no behavior change.
+func (o *Orchestrator) recordInstallNow(appName string) {
+	if o.appStore == nil || o.catalog == nil {
+		return
+	}
+	app, err := o.catalog.Get(appName)
+	if err != nil || app == nil {
+		o.logger.Warn("submit: app not in catalog, row will be recorded on drain", "app", appName, "error", err)
+		return
+	}
+	if err := o.appStore.Install(app.CatalogID, app.DisplayName, app.Version, nil, &store.InstallOptions{
+		Port:     app.Port,
+		IsSystem: app.IsSystem,
+	}); err != nil {
+		o.logger.Error("submit: failed to record install row", "app", appName, "error", err)
+	}
+}
+
 // Start runs an initial convergence pass and then processes intents as they
 // arrive. It blocks until the context is cancelled or Stop is called. Must be
 // called exactly once (typically via goroutine).

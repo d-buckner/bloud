@@ -605,10 +605,11 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 	return server, tmpDir
 }
 
-// FakeOrchForInstall creates a simple fake orchestrator that returns a valid intent ref.
+// fakeOrchestratorForTest is a no-op orchestrator that satisfies the
+// handler interface for router-level tests.
 type fakeOrchestratorForTest struct{}
 
-func (f *fakeOrchestratorForTest) Enqueue(intent orchestrator.Intent) {}
+func (f *fakeOrchestratorForTest) Submit(intent orchestrator.Intent) {}
 
 // setupTestServerWithWorkingOrchestrator creates a server with a non-nil orchestrator.
 func setupTestServerWithWorkingOrchestrator(t *testing.T) (*Server, string) {

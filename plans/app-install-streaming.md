@@ -243,7 +243,7 @@ One-paragraph state machine for `specs/spec.md`:
 | --- | --- | --- | --- |
 | M1 | Event bus + SSE endpoint + snapshot + `last_error` column + timeout-middleware fix | 1–2 d | ✅ done — commit `1d44be0` (2026-08-20) |
 | M2 | Pull progress (API pull + runtime callback + `pull` events) | 1 d | ✅ done — 2026-08-22 |
-| M3 | `Submit` record-at-enqueue + state in 202 + debounce coalescing | 0.5 d | pending |
+| M3 | `Submit` record-at-enqueue + state in 202 + debounce coalescing | 0.5 d | ✅ done — 2026-08-22 |
 | M4 | Frontend: event client + fallback, tile phase/progress/error visuals, live install timeline modal, toasts, attention chip | 2 d | pending |
 | M5 | Catalog size estimates, status-vocab doc in spec.md, e2e coverage, polish | 1 d | pending |
 
@@ -298,6 +298,45 @@ Delivered as planned, with these implementation details/deviations:
   shows ordered steps; assert failure path shows error + Retry.
 - **Pre-commit:** fast tier unchanged (unit + vitest + svelte-check); integration
   tier covers the full path.
+
+## M3 implementation notes (done 2026-08-22)
+
+Delivered as planned, with these implementation details/deviations:
+
+- **`Orchestrator.Submit(intent)`** is the new handler-facing entry point:
+  for `InstallAppIntent` it synchronously upserts the app row
+  (`status='installing'`, `last_error` cleared) from the catalog, then
+  `Enqueue`s. Handlers never write stores (invariant #1 intact). The
+  `orchestratorCaller` interface in the API package was renamed
+  `Enqueue` → `Submit`, so all modules (apps, remote-apps, settings) route
+  through it; non-install intents are recorded exactly as before (no store
+  write).
+- **202 install response** now carries the app record:
+  `{"intentId": …, "app": {…}}` where `app` has the same shape as an
+  `/api/apps/installed` entry (read back from the store after submit; the
+  handler read is allowed by invariant #1). `intentId` is unchanged for
+  backward compatibility; `app` is omitted if the store write failed (the
+  M4 frontend falls back to its optimistic entry).
+- **`WaitAndDrain` semantics (refined):** "first intent immediate" applies
+  to the queue-*empty-on-entry* path — the waiter blocks, the first intent
+  wakes it, and it drains with zero debounce delay. Intents already in the
+  queue when `WaitAndDrain` is called (i.e. they arrived while the
+  orchestrator was processing a previous batch) wait out the coalescing
+  window, which resets on each new arrival, so bursts collapse into one
+  convergence pass. `DefaultDebounce` dropped 5 s → 750 ms.
+- **`recordIntent` unchanged** — `appStore.Install` was already an idempotent
+  upsert (`ON CONFLICT DO UPDATE`, re-sets `status='installing'`, clears
+  `last_error`), so the drain pass re-upserting over the Submit-written row
+  is a no-op behaviorally; the reconciler is untouched.
+- **Tests added:** `Submit` — row exists before the intent is queued,
+  reinstall idempotent (single row, `last_error` cleared), non-install
+  intents don't write, missing-catalog app still enqueues; `WaitAndDrain` —
+  lone-intent-immediate (vs a 10 s window), pre-queued coalescing wait,
+  reset-on-arrival burst (7 intents, window honored after final arrival),
+  ctx-cancel on empty queue (nil) and mid-coalesce (accumulated batch);
+  API — 202 body shape with/without the app record (fake orchestrator now
+  emulates record-at-enqueue when wired to a store). Full pre-commit suite
+  green, `-race` clean.
 
 ## M2 implementation notes (done 2026-08-22)
 
