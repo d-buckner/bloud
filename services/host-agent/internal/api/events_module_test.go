@@ -127,6 +127,20 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 	assert.Equal(t, "jellyfin", node.App)
 	assert.Equal(t, "pulling", node.Phase)
 
+	// Pull progress events carry the owning app, image, phase and detail.
+	bus.Publish(eventbus.Event{
+		Type: eventbus.TypePull,
+		Pull: &eventbus.PullInfo{App: "immich", Image: "ghcr.io/immich-app/immich-server:v1",
+			Phase: "pulling", Detail: "34% — 340.0 MiB of 1.0 GiB"},
+	})
+	evt, payload = readSSEEvent(t, resp.Body)
+	assert.Equal(t, "pull", evt)
+	var pull eventbus.PullInfo
+	require.NoError(t, json.Unmarshal(payload, &pull))
+	assert.Equal(t, "immich", pull.App)
+	assert.Equal(t, "pulling", pull.Phase)
+	assert.Equal(t, "34% — 340.0 MiB of 1.0 GiB", pull.Detail)
+
 	// apps-changed triggers a fresh snapshot.
 	bus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
 	evt, _ = readSSEEvent(t, resp.Body)

@@ -69,7 +69,7 @@ loopback/trusted-net bypass unchanged).
 Events:
 
 | Event | Payload | Fired |
-|---|---|---|
+| --- | --- | --- |
 | `snapshot` | full home payload (same shape as `GET /api/user/home`) | on connect, and whenever the app store changes |
 | `node` | `{app, container, phase, error?}` | graph node actual-status change |
 | `pull` | `{app, image, phase: "pulling" \| "done", detail?}` | pull progress, throttled |
@@ -88,7 +88,7 @@ Events:
 Map graph `NodeStatus` → user-facing phase:
 
 | Graph state | Phase shown |
-|---|---|
+| --- | --- |
 | `INITIALIZING` | `queued` (planning / waiting on dependencies) |
 | `PRESTART_CONFIG` | `configuring` |
 | `STARTING` | `starting` (or `pulling` while a pull event is in flight) |
@@ -240,14 +240,14 @@ One-paragraph state machine for `specs/spec.md`:
 ## Milestones
 
 | # | Scope | Est. | Status |
-|---|---|---|---|
-| M1 | Event bus + SSE endpoint + snapshot + `last_error` column + timeout-middleware fix | 1–2 d | ✅ done — commit `5d57377` (2026-08-20) |
-| M2 | Pull progress (API pull + runtime callback + `pull` events) | 1 d | pending |
+| --- | --- | --- | --- |
+| M1 | Event bus + SSE endpoint + snapshot + `last_error` column + timeout-middleware fix | 1–2 d | ✅ done — commit `1d44be0` (2026-08-20) |
+| M2 | Pull progress (API pull + runtime callback + `pull` events) | 1 d | ✅ done — 2026-08-22 |
 | M3 | `Submit` record-at-enqueue + state in 202 + debounce coalescing | 0.5 d | pending |
 | M4 | Frontend: event client + fallback, tile phase/progress/error visuals, live install timeline modal, toasts, attention chip | 2 d | pending |
 | M5 | Catalog size estimates, status-vocab doc in spec.md, e2e coverage, polish | 1 d | pending |
 
-## M1 implementation notes (done 2026-08-20, commit `5d57377`)
+## M1 implementation notes (done 2026-08-20, commit `1d44be0`)
 
 Delivered as planned, with these implementation details/deviations:
 
@@ -298,3 +298,49 @@ Delivered as planned, with these implementation details/deviations:
   shows ordered steps; assert failure path shows error + Retry.
 - **Pre-commit:** fast tier unchanged (unit + vitest + svelte-check); integration
   tier covers the full path.
+
+## M2 implementation notes (done 2026-08-22)
+
+Delivered as planned, with these implementation details/deviations:
+
+- **New file:** `internal/podman/pull.go` (+ `pull_test.go`); `client.go` only
+  lost the exec body of `PullImage` into a shared `runExecPull` helper.
+- **Timeout trap (found while implementing):** the shared `podman.Client`
+  `http.Client` has `Timeout: 30 s`, which is a *whole-request* timeout — it
+  would have killed every streaming pull over 30 s. `pullViaSocket` uses a
+  dedicated per-call client with no timeout; only ctx bounds the stream.
+- **`Runtime` interface unchanged** (plan §4 anticipated an interface change;
+  avoided it): `PodmanRuntime` implements an optional capability interface
+  `container.PullProgressReporter { SetPullProgressReporter(fn) }`, which the
+  orchestrator detects via type assertion in `NewOrchestrator`/`setupPullEvents`.
+  Test doubles and any other runtime need no changes. The callback carries the
+  container name, so the orchestrator attributes the pull to the owning app via
+  the existing `containerOwner` map (all current apps use `containers:` lists).
+- **Throttling semantics:** coalescing window of 500 ms (≤ 2/s) — updates inside
+  the window are held and the *last* one is flushed at stream end, so the final
+  percent is never lost. A `done` event always terminates the stream.
+- **Percent aggregation is cross-blob:** registries report progress per blob
+  (each with its own total); `pullTracker` sums completed blob sizes + the
+  in-flight blob's progress over all known blob sizes, so the percentage is
+  monotonic and reaches 100% only when all known blobs are done. A blob that
+  hasn't been announced yet isn't in the total (early percent is over the
+  known subset — acceptable for v1).
+- **Fallback rules (refined from plan §4):** the exec `podman pull` retry
+  happens only for *infrastructure* failures (socket dial error, non-200 HTTP).
+  A `error` event inside the stream (bad reference, registry error) is
+  definitive and returned as-is — retrying would hit the same error; a
+  cancelled context surfaces without retry. Without a registered reporter,
+  `Ensure` keeps the original plain exec pull path (zero behavior change).
+- **"Already exists"** (status-only stream, no blob sizes) emits exactly one
+  `done` event with the status as detail — no fake progress (per plan §4).
+- **Detail rendering** happens in the orchestrator (`pullDetail` +
+  `humanBytes`), keeping the podman package UI-agnostic: `"34% — 340.0 MiB of
+  1.0 GiB"`, falling back to the raw status line when no sizes are known.
+- **Tests added:** podman stream parsing (percent + monotonicity + done),
+  already-exists, definitive stream error (no CLI retry), 500 → exec fallback
+  (final `done`), cancelled ctx (no fallback), unsafe reference rejection,
+  blob aggregation unit test, throttler coalescing; container Ensure →
+  reporter (with/without); orchestrator pull → bus with owning-app
+  attribution (multi-container + unknown-container fallback), `pullDetail`,
+  `humanBytes`; api SSE `pull` relay in the existing stream contract test.
+  Full pre-commit suite green, `-race` clean.

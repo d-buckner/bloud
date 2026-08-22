@@ -198,15 +198,13 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
-// PullImage pulls an image from a registry
+// PullImage pulls an image from a registry (no progress reporting; see
+// PullImageWithProgress).
 func (c *Client) PullImage(ctx context.Context, image string) error {
 	if image == "" || strings.ContainsAny(image, "\r\n") {
 		return fmt.Errorf("invalid image reference %q", image)
 	}
-	if c.runner == nil {
-		c.runner = execRunner{}
-	}
-	if output, err := c.runner.Run(ctx, "podman", "pull", image); err != nil {
+	if output, err := c.runExecPull(ctx, image); err != nil {
 		return fmt.Errorf("podman pull %s failed: %w: %s", image, err, strings.TrimSpace(string(output)))
 	}
 	return nil

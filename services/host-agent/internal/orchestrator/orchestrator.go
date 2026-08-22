@@ -206,6 +206,7 @@ func NewOrchestrator(
 	}
 	o.setupStatusSync()
 	o.setupNodeEvents()
+	o.setupPullEvents()
 	return o
 }
 
@@ -264,6 +265,54 @@ func (o *Orchestrator) setupNodeEvents() {
 			},
 		})
 	})
+}
+
+// setupPullEvents wires image pull progress from the container runtime into
+// the event bus so SSE subscribers see live pull percentages. Runtimes that
+// don't implement PullProgressReporter (e.g. test doubles) are skipped.
+func (o *Orchestrator) setupPullEvents() {
+	if o.events == nil || o.config.Containers == nil {
+		return
+	}
+	reporter, ok := o.config.Containers.(containerruntime.PullProgressReporter)
+	if !ok {
+		return
+	}
+	reporter.SetPullProgressReporter(func(containerName, image string, p containerruntime.PullProgress) {
+		o.events.Publish(eventbus.Event{
+			Type: eventbus.TypePull,
+			Pull: &eventbus.PullInfo{
+				App:    o.ownerApp(containerName),
+				Image:  image,
+				Phase:  p.Phase,
+				Detail: pullDetail(p),
+			},
+		})
+	})
+}
+
+// pullDetail renders a user-facing pull progress detail, e.g.
+// "34% — 356.5 MiB of 1.0 GiB", falling back to the raw status line when no
+// sizes are known.
+func pullDetail(p containerruntime.PullProgress) string {
+	if p.Total > 0 {
+		return fmt.Sprintf("%d%% — %s of %s", p.Percent, humanBytes(p.Current), humanBytes(p.Total))
+	}
+	return p.Detail
+}
+
+// humanBytes formats a byte count as a compact binary unit (1.0 GiB).
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // phaseForStatus maps a lifecycle graph state to the user-facing phase name

@@ -5,6 +5,7 @@ package container
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
@@ -15,6 +16,7 @@ import (
 type fakePodmanClient struct {
 	current  *podman.ContainerDetails
 	pulled   []string
+	progress []podman.PullProgress
 	created  []podman.ContainerConfig
 	started  []string
 	removed  []string
@@ -23,6 +25,14 @@ type fakePodmanClient struct {
 
 func (f *fakePodmanClient) PullImage(_ context.Context, image string) error {
 	f.pulled = append(f.pulled, image)
+	return nil
+}
+
+func (f *fakePodmanClient) PullImageWithProgress(_ context.Context, image string, onProgress func(podman.PullProgress)) error {
+	f.pulled = append(f.pulled, image)
+	onProgress(podman.PullProgress{Phase: "pulling", Percent: 50, Detail: "Copying blob"})
+	onProgress(podman.PullProgress{Phase: "done"})
+	f.progress = append(f.progress, podman.PullProgress{Phase: "done"})
 	return nil
 }
 
@@ -100,4 +110,50 @@ func TestRuntimeRejectsUnsafeContainerName(t *testing.T) {
 
 	_, err := runtime.Ensure(context.Background(), Spec{Name: "../external", Image: "image"})
 	require.ErrorContains(t, err, "invalid container name")
+}
+
+type pullUpdates struct {
+	mu         sync.Mutex
+	containers []string
+	images     []string
+	phases     []string
+}
+
+func (p *pullUpdates) record(container, image, phase string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.containers = append(p.containers, container)
+	p.images = append(p.images, image)
+	p.phases = append(p.phases, phase)
+}
+
+func TestPodmanRuntimeEnsureReportsPullProgress(t *testing.T) {
+	client := &fakePodmanClient{}
+	runtime := newPodmanRuntime(client)
+
+	updates := &pullUpdates{}
+	runtime.SetPullProgressReporter(func(containerName, image string, p PullProgress) {
+		updates.record(containerName, image, p.Phase)
+	})
+
+	_, err := runtime.Ensure(context.Background(), Spec{Name: "apps-jellyfin", Image: "jellyfin:1"})
+	require.NoError(t, err)
+
+	updates.mu.Lock()
+	defer updates.mu.Unlock()
+	require.Equal(t, []string{"apps-jellyfin", "apps-jellyfin"}, updates.containers)
+	require.Equal(t, []string{"jellyfin:1", "jellyfin:1"}, updates.images)
+	assert.Equal(t, []string{"pulling", "done"}, updates.phases)
+}
+
+func TestPodmanRuntimeEnsureWithoutReporterUsesPlainPull(t *testing.T) {
+	client := &fakePodmanClient{}
+	runtime := newPodmanRuntime(client)
+
+	_, err := runtime.Ensure(context.Background(), Spec{Name: "apps-jellyfin", Image: "jellyfin:1"})
+	require.NoError(t, err)
+
+	// No reporter registered: the plain pull path is used and no progress is
+	// recorded.
+	assert.Empty(t, client.progress)
 }
