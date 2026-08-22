@@ -47,10 +47,11 @@ type ActivityInfo struct {
 
 // PullInfo is a container image pull progress update.
 type PullInfo struct {
-	App    string `json:"app"`
-	Image  string `json:"image"`
-	Phase  string `json:"phase"` // "pulling" | "done"
-	Detail string `json:"detail,omitempty"`
+	App     string `json:"app"`
+	Image   string `json:"image"`
+	Phase   string `json:"phase"` // "pulling" | "done"
+	Percent int    `json:"percent,omitempty"`
+	Detail  string `json:"detail,omitempty"`
 }
 
 // Event is a single bus event. Exactly one payload field is set, selected by

@@ -12,21 +12,23 @@
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
 	import RenameModal from '$lib/components/RenameModal.svelte';
 	import ShareModal from '$lib/components/ShareModal.svelte';
+	import AppInstallModal from '$lib/components/AppInstallModal.svelte';
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
 	import { AppStatus, type App, type RemoteApp } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
-	import { uninstallApp, renameApp } from '$lib/services/appFacade';
+	import { installApp, uninstallApp, renameApp } from '$lib/services/appFacade';
 	import { getAppUrl } from '$lib/utils/appUrl';
 	import { getRemoteAppUrl } from '$lib/utils/appUrl';
 	import { fetchRemoteApps, removeRemoteApp } from '$lib/clients/remoteAppClient';
 	import { gridElements } from '$lib/stores/grid';
 
-	// Statuses for which clicking a card should not open the app.
-	const BLOCKED_OPEN_STATUSES = new Set<string>([
+	// Clicking an in-flight or unhealthy tile opens the live install view
+	// (investigation is the point); clicking a running tile opens the app.
+	const INSTALL_VIEW_STATUSES = new Set<string>([
 		AppStatus.Error,
 		AppStatus.Installing,
 		AppStatus.Starting,
-		AppStatus.Uninstalling
+		AppStatus.Failed
 	]);
 
 	// Context menu state
@@ -40,6 +42,15 @@
 	let shareApp = $state<App | null>(null);
 	let removeRemoteAppTarget = $state<RemoteApp | null>(null);
 	let showWidgetPicker = $state(false);
+	let installModalApp = $state<App | null>(null);
+
+	// Live reference: re-resolve from the store each render so the modal
+	// tracks status/progress updates for the app the user clicked.
+	let installModalLiveApp = $derived.by(() => {
+		const id = installModalApp?.catalog_id;
+		if (!id) return null;
+		return $apps.find((a) => a.catalog_id === id) ?? installModalApp;
+	});
 
 	// Remote apps
 	let remoteApps = $state<RemoteApp[]>([]);
@@ -57,9 +68,22 @@
 
 	function handleAppClick(app: App) {
 		if (!browser) return;
-		if (BLOCKED_OPEN_STATUSES.has(app.status)) return;
+		if (INSTALL_VIEW_STATUSES.has(app.status)) {
+			// Keep a live reference so the modal tracks status/progress updates.
+			installModalApp = app;
+			return;
+		}
+		if (app.status === AppStatus.Uninstalling) return;
 
 		window.open(getAppUrl(app.catalog_id), '_blank');
+	}
+
+	async function handleRetryInstall(appName: string) {
+		try {
+			await installApp(appName);
+		} catch (err) {
+			console.error('Retry install failed:', err);
+		}
 	}
 
 	function handleContextMenu(e: MouseEvent, app: App) {
@@ -176,6 +200,12 @@
 />
 
 <ShareModal app={shareApp} onclose={() => (shareApp = null)} />
+
+<AppInstallModal
+	app={installModalLiveApp}
+	onclose={() => (installModalApp = null)}
+	onretry={handleRetryInstall}
+/>
 
 <UninstallModal
 	appName={removeRemoteAppTarget ? `${removeRemoteAppTarget.app_name} (${removeRemoteAppTarget.host_label})` : null}

@@ -244,7 +244,7 @@ One-paragraph state machine for `specs/spec.md`:
 | M1 | Event bus + SSE endpoint + snapshot + `last_error` column + timeout-middleware fix | 1–2 d | ✅ done — commit `1d44be0` (2026-08-20) |
 | M2 | Pull progress (API pull + runtime callback + `pull` events) | 1 d | ✅ done — 2026-08-22 |
 | M3 | `Submit` record-at-enqueue + state in 202 + debounce coalescing | 0.5 d | ✅ done — 2026-08-22 |
-| M4 | Frontend: event client + fallback, tile phase/progress/error visuals, live install timeline modal, toasts, attention chip | 2 d | pending |
+| M4 | Frontend: event client + fallback, tile phase/progress/error visuals, live install timeline modal, toasts, attention chip | 2 d | ✅ done — 2026-08-22 |
 | M5 | Catalog size estimates, status-vocab doc in spec.md, e2e coverage, polish | 1 d | pending |
 
 ## M1 implementation notes (done 2026-08-20, commit `1d44be0`)
@@ -298,6 +298,62 @@ Delivered as planned, with these implementation details/deviations:
   shows ordered steps; assert failure path shows error + Retry.
 - **Pre-commit:** fast tier unchanged (unit + vitest + svelte-check); integration
   tier covers the full path.
+
+## M4 implementation notes (done 2026-08-22)
+
+Delivered as planned, with these implementation details/deviations:
+
+- **New web files:** `src/lib/api/appEvents.ts` (SSE client + watchdog),
+  `src/lib/stores/appProgress.ts` (progress store + pure merge fns +
+  `recentActivity`), `src/lib/stores/toasts.ts`,
+  `src/lib/services/installTimeline.ts` (pure timeline derivation),
+  `src/lib/components/Toasts.svelte`,
+  `src/lib/components/AppInstallModal.svelte`, plus 4 vitest files (31 new
+  tests).
+- **Event client as primary source:** `EventSource('/api/apps/events')` —
+  `snapshot` → apps + grid stores + progress reconciliation + transition
+  toasts; `node`/`pull` → `appProgress` store (kept separate from grid state
+  so pull ticks don't rewrite layout); `activity` → bounded
+  `recentActivity` ring. The existing adaptive poller is demoted to a
+  safety net: a 5 s watchdog enables it when no event (SSE or poll) arrived
+  for 10 s; any live event suspends it. The decision is a pure, tested
+  function (`shouldEnableFallback`). Snapshot-on-connect remains the whole
+  reconnect story.
+- **Install click flow:** the M3 202 `app` record is applied to the apps
+  store + grid (auto-positioned element) immediately by the facade;
+  optimistic synthetic `installing` entry as fallback if the record is
+  missing. The tile now appears on click, not on the next poll.
+- **AppTile:** no longer disabled while installing (`pointer-events: none`
+  removed) — clicking an installing/starting/failed/error tile opens the
+  live install modal; running tiles still open the app. Phase label under
+  the icon ("Pulling image · 42%" / "Configuring" / …); thin progress bar
+  only while pulling with a known percent; spinner only for the brief window
+  before the first phase event. `failed` = red ring + Failed label, `error`
+  = amber ring + Degraded, `stopped` = dimmed.
+- **AppInstallModal (new):** step timeline Accepted → Planned → Pulling
+  image → Configuring → Starting → Finalizing → Ready derived purely from
+  (status, progress) — `deriveTimeline` is unit tested. Timestamps come from
+  a bounded per-app phase history. On failure: `last_error` box (falling
+  back to the live node error), **View logs** (opens the existing SSE logs
+  stream in a tab) and **Retry install** (re-POSTs install; the M3 upsert
+  clears `last_error`). Running apps keep their existing click behavior.
+- **Multi-container app phase semantics:** the app phase is the *least*
+  advanced component phase (failed dominates) — it represents the remaining
+  work, so a container still starting keeps the app out of "Ready" even if
+  another container already reached running. (An early max-rank draft was
+  wrong: it showed "Ready" mid-install.)
+- **Toasts:** pure `detectToasts(prev, next)` on each snapshot — "X is
+  ready" (success) on the transition into running, "X failed — view
+  details" (error) on entering failed; deliberately silent for `error`
+  (degraded, auto-retrying) and for apps already in that state. 5 s TTL.
+- **Sidebar attention chip:** failed+error count on the Apps nav item with
+  a tooltip naming the affected apps; collapses to icon-only when the
+  sidebar is collapsed.
+- **Backend addition:** `eventbus.PullInfo` gained a first-class `Percent`
+  field (populated in `setupPullEvents`) so the frontend drives the progress
+  bar without parsing the rendered detail string.
+- **Verification:** 42 vitest tests green (31 new), svelte-check 0 errors,
+  full pre-commit suite green.
 
 ## M3 implementation notes (done 2026-08-22)
 

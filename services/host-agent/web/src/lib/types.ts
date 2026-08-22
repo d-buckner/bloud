@@ -20,6 +20,8 @@ export interface App {
 	display_name: string;
 	version: string;
 	status: AppStatus;
+	/** Persisted failure reason (cleared on successful re-install). */
+	last_error?: string;
 	port?: number;
 	is_system: boolean;
 	integration_config?: Record<string, string>;
@@ -99,9 +101,13 @@ export interface InvitePayload {
 	exp: number;
 }
 
-// Intent response (returned by install/uninstall endpoints)
+// Intent response (returned by install/uninstall endpoints).
+// Install 202s additionally carry the current app record (the orchestrator
+// records the installing row at submit time) so the UI can render the tile
+// immediately.
 export interface IntentResponse {
 	intentId: string;
+	app?: App;
 }
 
 // Grid element — null x/y means autoPosition (GridStack picks the cell)

@@ -4,6 +4,8 @@
 	import { page } from '$app/state';
 	import Icon from './Icon.svelte';
 	import { isAdmin } from '$lib/stores/user';
+	import { visibleApps } from '$lib/stores/apps';
+	import { AppStatus } from '$lib/types';
 
 	interface User {
 		id: number;
@@ -30,6 +32,11 @@
 	let navItems = $derived(
 		$isAdmin ? allNavItems : allNavItems.filter((item) => !item.adminOnly)
 	);
+
+	// Apps that need a look: install gave up (failed) or degraded (error).
+	let attentionApps = $derived(
+		$visibleApps.filter((a) => a.status === AppStatus.Failed || a.status === AppStatus.Error)
+	);
 </script>
 
 <nav class="sidebar" class:collapsed>
@@ -51,6 +58,17 @@
 						<Icon name={item.icon} size={20} />
 					</span>
 					<span>{item.label}</span>
+					{#if item.href === '/' && attentionApps.length > 0}
+						<span
+							class="attention-chip"
+							title={attentionApps.map((a) => a.display_name).join(', ')}
+						>
+							<Icon name="warning" size={12} />
+							{#if !collapsed}
+								<span class="attention-text">{attentionApps.length} need attention</span>
+							{/if}
+						</span>
+					{/if}
 				</a>
 			</li>
 		{/each}
@@ -161,6 +179,25 @@
 		align-items: center;
 		justify-content: center;
 		opacity: 0.7;
+	}
+
+	.attention-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-left: auto;
+		padding: 2px 8px;
+		border-radius: 10px;
+		background: var(--color-error-bg);
+		color: var(--color-error);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.attention-text {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.nav-links a.active .nav-icon {

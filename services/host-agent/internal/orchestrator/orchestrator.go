@@ -282,10 +282,11 @@ func (o *Orchestrator) setupPullEvents() {
 		o.events.Publish(eventbus.Event{
 			Type: eventbus.TypePull,
 			Pull: &eventbus.PullInfo{
-				App:    o.ownerApp(containerName),
-				Image:  image,
-				Phase:  p.Phase,
-				Detail: pullDetail(p),
+				App:     o.ownerApp(containerName),
+				Image:   image,
+				Phase:   p.Phase,
+				Percent: p.Percent,
+				Detail:  pullDetail(p),
 			},
 		})
 	})
