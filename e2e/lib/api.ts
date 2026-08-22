@@ -34,6 +34,13 @@ export async function installApp(name: string): Promise<void> {
   });
 }
 
+export async function uninstallApp(name: string): Promise<void> {
+  await fetchJSON('/api/apps/' + name + '/uninstall', {
+    method: 'POST',
+    body: '{}',
+  });
+}
+
 export async function waitForApp(
   name: string,
   status: string,

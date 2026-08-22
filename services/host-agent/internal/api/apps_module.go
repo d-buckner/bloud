@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +51,9 @@ type appsModule struct {
 	orch     orchestratorCaller
 	logger   *slog.Logger
 	appsDir  string
+	// imageSizeResolver returns the on-disk size (bytes) of a locally
+	// present image. Nil disables the catalog size fallback.
+	imageSizeResolver func(ctx context.Context, image string) (int64, bool)
 }
 
 // NewAppsModule creates a new AppsModule.
@@ -73,6 +77,12 @@ func (m *appsModule) SetAppsDir(dir string) {
 	m.appsDir = dir
 }
 
+// SetImageSizeResolver wires the local-image size lookup used to fill in
+// catalog entries without a declared estimatedSizeMB.
+func (m *appsModule) SetImageSizeResolver(fn func(ctx context.Context, image string) (int64, bool)) {
+	m.imageSizeResolver = fn
+}
+
 // RefreshCatalog reloads the catalog cache from disk.
 func (m *appsModule) RefreshCatalog() error {
 	loader := catalog.NewLoader(m.appsDir)
@@ -84,9 +94,39 @@ func (m *appsModule) RefreshCatalog() error {
 	return nil
 }
 
-// GetCatalog returns all user-facing apps.
-func (m *appsModule) GetCatalog() ([]*catalog.App, error) {
-	return m.catalog.GetUserApps()
+// GetCatalog returns all user-facing apps, enriching entries without a
+// declared size estimate with the summed local image sizes when the images
+// are already present (so the catalog can set pull expectations either way).
+func (m *appsModule) GetCatalog(ctx context.Context) ([]*catalog.App, error) {
+	apps, err := m.catalog.GetUserApps()
+	if err != nil {
+		return nil, err
+	}
+	if m.imageSizeResolver == nil {
+		return apps, nil
+	}
+	for _, app := range apps {
+		if app.EstimatedSizeMB > 0 || len(app.Containers) == 0 {
+			continue
+		}
+		var total int64
+		seen := make(map[string]bool, len(app.Containers))
+		for _, def := range app.Containers {
+			if seen[def.Image] {
+				continue // shared images (e.g. server+worker) pull once
+			}
+			seen[def.Image] = true
+			if size, ok := m.imageSizeResolver(ctx, def.Image); ok {
+				total += size
+			}
+		}
+		if total > 0 {
+			// Mutates the cached entry: the size is stable for the lifetime
+			// of the local image and re-resolution is cheap when absent.
+			app.EstimatedSizeMB = int(total / (1024 * 1024))
+		}
+	}
+	return apps, nil
 }
 
 // GetInstalled returns installed user apps enriched with SSO launch paths.
@@ -251,7 +291,7 @@ func NewAppsRouter(mod *appsModule, r chi.Router) {
 // GetCatalogHandler returns all user-facing apps from the catalog.
 func (m *appsModule) GetCatalogHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apps, err := m.GetCatalog()
+		apps, err := m.GetCatalog(r.Context())
 		if err != nil {
 			m.logger.Error("failed to get apps from catalog", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to get apps")

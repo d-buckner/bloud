@@ -53,6 +53,13 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 		return
 	}
 
+	// An explicit install intent is the user's "retry": reset any of the
+	// app's nodes stuck in the terminal ERROR state so the convergence pass
+	// re-runs their full lifecycle. collectWorkForLevel never retries ERROR
+	// nodes on its own — without this reset, retrying a failed/degraded app
+	// would leave it stuck at "installing" forever.
+	o.resetErroredNodes(appName)
+
 	if o.catalogGraph == nil {
 		return
 	}
@@ -82,6 +89,35 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 	// Record the target app with its integrations.
 	if err := o.recordIntent(appName, integrations); err != nil {
 		o.logger.Error("failed to record app", "app", appName, "error", err)
+	}
+}
+
+// resetErroredNodes resets the app's graph nodes from the terminal ERROR
+// state back to INITIALIZING. Called when an install intent is applied, the
+// explicit reset that makes "Retry install" recover failed and degraded apps.
+func (o *Orchestrator) resetErroredNodes(appName string) {
+	if o.catalog == nil {
+		return
+	}
+	app, err := o.catalog.Get(appName)
+	if err != nil || app == nil {
+		return
+	}
+	nodeIDs := make([]string, 0, len(app.Containers)+1)
+	if len(app.Containers) > 0 {
+		for _, def := range app.Containers {
+			nodeIDs = append(nodeIDs, def.Name)
+		}
+	} else {
+		nodeIDs = append(nodeIDs, appName)
+	}
+	for _, id := range nodeIDs {
+		node, err := o.graph.GetNode(id)
+		if err != nil || node == nil || node.ActualStatus != graph.StatusError {
+			continue
+		}
+		o.logger.Info("resetting errored node for install retry", "node", id, "error", node.Error)
+		_ = o.graph.SetActualStatus(id, graph.StatusInitializing, "")
 	}
 }
 

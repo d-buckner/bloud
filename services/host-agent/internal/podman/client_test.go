@@ -289,6 +289,35 @@ func TestClient_PullImageRejectsUnsafeImageReference(t *testing.T) {
 	require.ErrorContains(t, client.PullImage(context.Background(), "image\n--flag"), "invalid image reference")
 }
 
+func TestClient_ImageSize(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// r.URL.Path is percent-decoded by net/http.
+		switch r.URL.Path {
+		case "/libpod/images/docker.io/jellyfin/jellyfin:10.11.11/json":
+			json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:abc", "Size": 1174405120})
+		case "/libpod/images/docker.io/missing/image:1/json":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	socketPath, cleanup := setupMockPodman(t, handler)
+	defer cleanup()
+
+	client, err := NewClientWithSocket(socketPath)
+	require.NoError(t, err)
+
+	size, found, err := client.ImageSize(context.Background(), "docker.io/jellyfin/jellyfin:10.11.11")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(1174405120), size)
+
+	_, found, err = client.ImageSize(context.Background(), "docker.io/missing/image:1")
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
 func TestClient_DefaultSocketPath(t *testing.T) {
 	// Test with XDG_RUNTIME_DIR set
 	originalXDG := os.Getenv("XDG_RUNTIME_DIR")

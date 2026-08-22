@@ -431,6 +431,14 @@ func (o *Orchestrator) recordInstallNow(appName string) {
 		o.logger.Warn("submit: app not in catalog, row will be recorded on drain", "app", appName, "error", err)
 		return
 	}
+	// Idempotent reinstall of a running app: keep the status "running" so
+	// the drain path's skip check (applyInstallIntent) still recognizes the
+	// intent as a no-op. Downgrading to "installing" here would make the
+	// drain run a full install that never transitions the graph node, and
+	// the app would be stuck at "installing".
+	if existing, _ := o.appStore.GetByCatalogID(appName); existing != nil && existing.Status == "running" {
+		return
+	}
 	if err := o.appStore.Install(app.CatalogID, app.DisplayName, app.Version, nil, &store.InstallOptions{
 		Port:     app.Port,
 		IsSystem: app.IsSystem,

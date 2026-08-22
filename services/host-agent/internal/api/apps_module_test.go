@@ -193,9 +193,76 @@ func TestAppsModule_GetCatalog(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 
-	apps, err := mod.GetCatalog()
+	apps, err := mod.GetCatalog(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, apps, 2)
+}
+
+func TestAppsModule_GetCatalog_FillsSizeFromLocalImages(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	// Declared estimate wins; shared images counted once; missing images skipped.
+	addAppToCache(cache, &catalog.App{
+		CatalogID:       "jellyfin",
+		DisplayName:     "Jellyfin",
+		EstimatedSizeMB: 1150,
+		Containers: []catalog.ContainerDef{
+			{Name: "apps-jellyfin", Image: "docker.io/jellyfin/jellyfin:10.11.11"},
+		},
+	})
+	addAppToCache(cache, &catalog.App{
+		CatalogID:   "authentik",
+		DisplayName: "Authentik",
+		Containers: []catalog.ContainerDef{
+			{Name: "apps-authentik-server", Image: "ghcr.io/goauthentik/server:2025.10.3"},
+			{Name: "apps-authentik-worker", Image: "ghcr.io/goauthentik/server:2025.10.3"}, // shared
+			{Name: "apps-authentik-postgres", Image: "docker.io/postgres:16-alpine"},
+			{Name: "apps-authentik-redis", Image: "docker.io/redis:7-alpine"}, // not local
+		},
+	})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+	mod.SetImageSizeResolver(func(_ context.Context, image string) (int64, bool) {
+		switch image {
+		case "ghcr.io/goauthentik/server:2025.10.3":
+			return 524288000, true // 500 MiB
+		case "docker.io/postgres:16-alpine":
+			return 262144000, true // 250 MiB
+		default:
+			return 0, false
+		}
+	})
+
+	apps, err := mod.GetCatalog(context.Background())
+	require.NoError(t, err)
+
+	byID := map[string]catalog.App{}
+	for _, app := range apps {
+		byID[app.CatalogID] = *app
+	}
+	assert.Equal(t, 1150, byID["jellyfin"].EstimatedSizeMB, "declared estimate must not be overwritten")
+	assert.Equal(t, 750, byID["authentik"].EstimatedSizeMB, "shared image counted once, missing image skipped")
+}
+
+func TestAppsModule_GetCatalog_NoResolverKeepsZero(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{
+		CatalogID:   "navidrome",
+		DisplayName: "Navidrome",
+		Containers:  []catalog.ContainerDef{{Name: "apps-navidrome", Image: "docker.io/deluan/navidrome:latest"}},
+	})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+
+	apps, err := mod.GetCatalog(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, apps, 1)
+	assert.Equal(t, 0, apps[0].EstimatedSizeMB)
 }
 
 func TestAppsModule_GetInstalled_ExcludesSystem(t *testing.T) {

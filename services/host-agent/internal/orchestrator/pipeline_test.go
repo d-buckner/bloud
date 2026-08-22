@@ -116,6 +116,28 @@ func TestConverge_InstallIntent_RecordsInStoreAndSetsGraphTarget(t *testing.T) {
 	assert.Equal(t, graph.StatusRunning, h.graphTarget("jellyfin"))
 }
 
+// TestConverge_InstallIntent_ResetsErroredNode is the regression test for
+// "Retry install": a node stuck in the terminal ERROR state must be reset by
+// a new install intent, otherwise the convergence pass (which never retries
+// ERROR nodes) would leave the app stuck at "installing" forever.
+func TestConverge_InstallIntent_ResetsErroredNode(t *testing.T) {
+	h := newConvergeHarness(t)
+	h.addCatalogApp("jellyfin", "Jellyfin", 8096)
+
+	// Simulate a prior failed install: node exists in ERROR and the app row
+	// carries the failure.
+	require.NoError(t, h.g.AddNode("jellyfin"))
+	require.NoError(t, h.g.SetActualStatus("jellyfin", graph.StatusError, "boom"))
+	h.appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin", Status: "failed", LastError: "boom"})
+
+	h.orch.converge(context.Background(), []Intent{NewInstallAppIntent("jellyfin")})
+
+	node, err := h.g.GetNode("jellyfin")
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	assert.NotEqual(t, graph.StatusError, node.ActualStatus, "install retry must reset the errored node")
+}
+
 func TestConverge_InstallWithDeps_ResolvesDependenciesAndInstallsInOrder(t *testing.T) {
 	h := newConvergeHarness(t)
 	h.addCatalogApp("radarr", "Radarr", 7878)

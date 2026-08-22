@@ -61,6 +61,9 @@ export interface CatalogApp {
 	healthCheck?: HealthCheck;
 	docs?: Docs;
 	tags?: string[];
+	// Approximate total image download size, for pull expectations. Absent
+	// when unknown (no declared estimate and no local images to measure).
+	estimatedSizeMB?: number;
 }
 
 export interface Resources {

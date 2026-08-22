@@ -5,6 +5,7 @@ displayName: Jellyfin
 description: Free software media system for streaming movies, TV, and music
 category: media
 port: 8096
+estimatedSizeMB: 1150
 
 integrations:
   proxy:

@@ -73,6 +73,24 @@ func TestOrchestrator_SubmitInstall_ReinstallIsIdempotent(t *testing.T) {
 	assert.Equal(t, 2, orch.queue.PendingCount())
 }
 
+func TestOrchestrator_SubmitInstall_RunningAppNotDowngraded(t *testing.T) {
+	orch, fakeStore, fakeCatalog := newSubmitTestOrchestrator(t)
+	fakeCatalog.apps["jellyfin"] = &catalog.App{CatalogID: "jellyfin", DisplayName: "Jellyfin"}
+	fakeStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin", Status: "running"})
+
+	orch.Submit(NewInstallAppIntent("jellyfin"))
+
+	app, err := fakeStore.GetByCatalogID("jellyfin")
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	// A running app is never downgraded to "installing" at submit time: the
+	// drain path's skip check (applyInstallIntent) relies on the status
+	// staying "running", and a no-op install never transitions the graph
+	// node, so a downgrade would leave the app stuck at "installing".
+	assert.Equal(t, "running", app.Status)
+	assert.Equal(t, 1, orch.queue.PendingCount())
+}
+
 func TestOrchestrator_SubmitNonInstall_DoesNotWriteStore(t *testing.T) {
 	orch, fakeStore, _ := newSubmitTestOrchestrator(t)
 

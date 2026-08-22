@@ -156,6 +156,16 @@ func NewRouter(
 
 	appsMod := NewAppsModule(catalogCache, appStore, orchCaller, logger)
 	appsMod.SetAppsDir(cfg.AppsDir)
+	// Catalog size fallback: resolve undeclared estimates from local images.
+	if sizeClient, err := podman.NewClient(); err == nil {
+		appsMod.SetImageSizeResolver(func(ctx context.Context, image string) (int64, bool) {
+			size, found, err := sizeClient.ImageSize(ctx, image)
+			if err != nil {
+				return 0, false
+			}
+			return size, found
+		})
+	}
 
 	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger)
 

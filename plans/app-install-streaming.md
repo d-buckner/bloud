@@ -245,7 +245,7 @@ One-paragraph state machine for `specs/spec.md`:
 | M2 | Pull progress (API pull + runtime callback + `pull` events) | 1 d | ✅ done — 2026-08-22 |
 | M3 | `Submit` record-at-enqueue + state in 202 + debounce coalescing | 0.5 d | ✅ done — 2026-08-22 |
 | M4 | Frontend: event client + fallback, tile phase/progress/error visuals, live install timeline modal, toasts, attention chip | 2 d | ✅ done — 2026-08-22 |
-| M5 | Catalog size estimates, status-vocab doc in spec.md, e2e coverage, polish | 1 d | pending |
+| M5 | Catalog size estimates, status-vocab doc in spec.md, e2e coverage, polish | 1 d | ✅ done — 2026-08-22 |
 
 ## M1 implementation notes (done 2026-08-20, commit `1d44be0`)
 
@@ -298,6 +298,69 @@ Delivered as planned, with these implementation details/deviations:
   shows ordered steps; assert failure path shows error + Retry.
 - **Pre-commit:** fast tier unchanged (unit + vitest + svelte-check); integration
   tier covers the full path.
+
+## M5 implementation notes (done 2026-08-22)
+
+- **Catalog size estimates:** optional `estimatedSizeMB` in
+  `apps/*/metadata.yaml` (jellyfin 1150, immich 1800, navidrome 200,
+  authentik 1600, traefik 20) → `catalog.App.EstimatedSizeMB` →
+  `GET /api/apps` JSON → the catalog card shows a "~1.1 GB" label. The
+  `podman image inspect` fallback is wired via
+  `appsModule.SetImageSizeResolver` (router wires `podman.Client.ImageSize`):
+  declared estimates win, shared images count once, missing (non-local)
+  images are skipped so an app with no local images shows no size.
+  Tests: `ImageSize` against a mock socket; enrichment unit tests
+  (declared-wins, shared-once, no-resolver-keeps-zero).
+- **Status-vocab doc:** new "Application Status Vocabulary" section under
+  *Desired State and Reconciliation* in `specs/spec.md` (installing /
+  running / stopped / failed / error / uninstalling, with the
+  failed-vs-error distinction and the orchestrator-writes-only rule).
+  Writing it surfaced a doc-vs-code mismatch: the reconciler treats graph
+  ERROR as terminal (no auto-retry); recovery is an explicit retry. The
+  doc was corrected to match the code.
+- **e2e coverage (Go):** `TestInstallLiveStateStream` in
+  `internal/e2e/e2e_test.go` — opens the SSE stream, asserts the install 202
+  carries the `installing` app record, asserts snapshot-before-node, node
+  and pull events for the install, and termination at node `running`.
+  (Node events carry the `eventbus.NodeInfo` projection
+  `{app, container, phase}`, not the raw graph node.)
+- **e2e coverage (Playwright):** `e2e/tests/install-streaming.spec.ts` —
+  catalog card shows the size estimate; install click shows the tile on the
+  home grid within 2 s with a live phase label; clicking it opens the
+  install modal with the ordered step timeline; the app converges and the
+  tile reflects running. `e2e/lib/api.ts` gained `uninstallApp`. The
+  failure path (error display + Retry) stays covered by the
+  installTimeline/toasts unit tests; fault injection lives in the Go
+  crash-recovery test.
+- **Bugs the e2e runs caught (fixed this milestone):**
+  - M3 regression: reinstalling a running app downgraded its status to
+    "installing" at submit time, so the drain's already-running skip check
+    never fired and the app was stuck at "installing" forever.
+    `recordInstallNow` now keeps a running app's status (regression test
+    `TestOrchestrator_SubmitInstall_RunningAppNotDowngraded`).
+  - Retry from `error`/`failed` never worked: the convergence pass skips
+    ERROR nodes, and a new install intent did not reset them — "Retry
+    install" would leave the app stuck at "installing". `applyInstallIntent`
+    now resets the app's ERROR nodes to INITIALIZING via
+    `resetErroredNodes` (regression test
+    `TestConverge_InstallIntent_ResetsErroredNode`).
+  - Legacy e2e expectations: four tests logged in as `akadmin` with
+    `AUTHENTIK_BOOTSTRAP_PASSWORD` — an env var authentik 2025.10.x does not
+    consume. The product admin is `admin` (created by the app configurator
+    with that same secrets password), and the 2025.10.x flow answers the
+    final stage with `component:"xak-flow-redirect"`/`to:"/"` instead of
+    `type:"redirect"`. Tests corrected to the real product behavior.
+  - Immich crash-loop: v3.1's system-integrity check only *re-reads* the
+    `.immich` mount markers for folders its database already records as
+    checked — a lost marker crash-loops the server forever (ENOENT on
+    startup). The immich configurator's PreStart now ensures the six
+    subfolders + markers idempotently before every start (2 unit tests).
+    Note: the VM runs rootless podman (container root = host `bloud`,
+    UID 1000), so the markers must be written by the host-agent user, not
+    host root.
+- **Verification:** integration tier 12/12 green (fresh-validate-runtime
+  runs); Playwright 5/5 green (immich, install-streaming ×2, jellyfin,
+  navidrome); full pre-commit suite green.
 
 ## M4 implementation notes (done 2026-08-22)
 

@@ -5,6 +5,7 @@ displayName: Navidrome
 description: Modern music server and streamer compatible with Subsonic/Airsonic clients
 category: media
 port: 4533
+estimatedSizeMB: 200
 
 integrations:
   proxy:

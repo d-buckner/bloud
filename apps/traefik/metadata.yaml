@@ -5,6 +5,7 @@ displayName: Traefik
 description: Cloud-native reverse proxy and load balancer with automatic HTTPS
 category: network
 port: 8080
+estimatedSizeMB: 20
 isSystem: true
 
 integrations: {}
