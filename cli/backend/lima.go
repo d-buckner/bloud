@@ -82,6 +82,7 @@ func (b *LimaBackend) Host() executor.Host {
 			"authentik":  "9001",
 			"immich":     "2283",
 			"navidrome":  "4533",
+			"affine":     "3010",
 		},
 		executor.DataDirs{
 			HostAgentDir: devRemoteDir + "/host-agent",

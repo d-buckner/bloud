@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+name: affine
+displayName: AFFiNE
+description: AI-native knowledge base that unifies docs, databases, and whiteboards
+category: productivity
+port: 3010
+estimatedSizeMB: 400
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# SSO via the host-agent's per-app Authentik OIDC provider. AFFiNE's generic
+# OIDC provider (oauth.providers.oidc) performs discovery against the issuer
+# and uses PKCE + client secret; the browser callback lands on
+# /oauth/callback on the app's public subdomain (see the configurator, which
+# writes server.externalUrl so the redirect_uri matches the registered one).
+sso:
+  strategy: native-oidc
+  callbackPath: /oauth/callback
+  userCreation: true
+
+containers:
+  - name: apps-affine-postgres
+    image: docker.io/pgvector/pgvector:pg16
+    network: affine-internal
+    restartPolicy: always
+    environment:
+      POSTGRES_USER: affine
+      POSTGRES_DB: affine
+      POSTGRES_PASSWORD: "{{postgresPassword}}"
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - source: "{{appDataDir}}/postgres"
+        destination: /var/lib/postgresql/data
+    healthCheck:
+      test: ["CMD-SHELL", "pg_isready -U affine -d affine"]
+      interval: 5
+      timeout: 5
+      retries: 10
+
+  - name: apps-affine-redis
+    image: docker.io/redis:7-alpine
+    network: affine-internal
+    restartPolicy: always
+    healthCheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5
+      timeout: 5
+      retries: 5
+
+  # The official self-host deployment runs a one-shot migration job
+  # (prisma migrate deploy + data migrations + private.key generation) before
+  # the server starts. Bloud's orchestrator manages long-lived containers, so
+  # the migration step is chained into the server's startup command instead:
+  # it is idempotent and keeps the ordering guarantee (migrations complete
+  # before the server accepts traffic) in a single node.
+  - name: apps-affine
+    image: ghcr.io/toeverything/affine:0.27.4
+    networks:
+      - affine-internal
+      - apps-net
+    restartPolicy: always
+    command:
+      - sh
+      - -c
+      - node ./scripts/self-host-predeploy.js && exec node ./dist/main.js
+    ports:
+      - host: 3010
+        container: 3010
+    environment:
+      DATABASE_URL: "postgresql://affine:{{postgresPassword}}@apps-affine-postgres:5432/affine"
+      REDIS_SERVER_HOST: apps-affine-redis
+      # The AI indexer needs an external search provider; keep it off by
+      # default (matches the official self-host compose).
+      AFFINE_INDEXER_ENABLED: "false"
+    # sso.localhost resolves to the host gateway inside the VM, letting the
+    # server reach the OIDC provider (traefik) by the same name browsers use.
+    extraHosts:
+      - sso.localhost:host-gateway
+    volumes:
+      - source: "{{appDataDir}}/storage"
+        destination: /root/.affine/storage
+      - source: "{{appDataDir}}/config"
+        destination: /root/.affine/config
+    healthCheck:
+      # The slim node image has no curl/wget; node itself provides fetch.
+      test:
+        - CMD-SHELL
+        - "node -e 'fetch(\"http://127.0.0.1:3010/info\").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'"
+      interval: 5
+      timeout: 10
+      retries: 90
+    dependsOn:
+      - apps-affine-postgres
+      - apps-affine-redis

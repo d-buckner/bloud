@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
 // Config holds the application configuration
@@ -91,6 +92,15 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	// whereas the bootstrap token in secrets.json only works on first Authentik boot.
 	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
 
+	baseDomain := getEnv("BLOUD_BASE_DOMAIN", "localhost")
+	// The bootstrap admin's identity email must be a valid RFC-style email
+	// (SSO apps validate it); "admin@localhost" fails that check, so derive
+	// a TLD-bearing domain. An explicit BLOUD_AUTHENTIK_ADMIN_EMAIL always wins.
+	adminEmail := getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "")
+	if adminEmail == "" {
+		adminEmail = "admin@" + authentik.UserEmailDomain(baseDomain)
+	}
+
 	cfg := &Config{
 		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
 		DataDir:                dataDir,
@@ -102,11 +112,11 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
 		SSOIssuerURL:           getEnv("BLOUD_SSO_ISSUER_URL", ""),
 		AuthentikToken:         authentikToken,
-		BaseDomain:             getEnv("BLOUD_BASE_DOMAIN", "localhost"),
+		BaseDomain:             baseDomain,
 		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 8080),
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: authentikAdminPassword,
-		AuthentikAdminEmail:    getEnv("BLOUD_AUTHENTIK_ADMIN_EMAIL", "admin@localhost"),
+		AuthentikAdminEmail:    adminEmail,
 		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       ldapBindPassword,
 		TSAuthKey:              getEnv("BLOUD_TS_AUTHKEY", ""),

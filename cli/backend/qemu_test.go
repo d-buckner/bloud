@@ -169,7 +169,7 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
 		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
 		"hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283", "hostfwd=tcp::4533-:4533",
-		"seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
+		"hostfwd=tcp::3010-:3010", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
 		if !strings.Contains(joined, wantArg) {
 			t.Errorf("launch args missing %q: %s", wantArg, joined)
 		}

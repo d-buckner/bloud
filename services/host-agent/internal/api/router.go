@@ -98,7 +98,8 @@ func NewRouter(
 	var authentikClient *authentik.Client
 	if cfg.AuthentikToken != "" && cfg.AuthentikPort > 0 {
 		internalURL := fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort)
-		authentikClient = authentik.NewClient(internalURL, cfg.AuthentikToken)
+		authentikClient = authentik.NewClient(internalURL, cfg.AuthentikToken).
+			WithUserEmailDomain(cfg.BaseDomain)
 	}
 
 	var sessionStore = options.sessionStore

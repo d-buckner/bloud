@@ -5,7 +5,7 @@ from authentik.core.models import User, Group
 
 username = 'admin'
 password = os.environ.get('BLOUD_ADMIN_PASSWORD', 'password')
-email = os.environ.get('BLOUD_ADMIN_EMAIL', 'admin@localhost')
+email = os.environ.get('BLOUD_ADMIN_EMAIL', 'admin@localhost.local')
 
 user, created = User.objects.get_or_create(
     username=username,
@@ -21,7 +21,14 @@ if created:
     # bootstrap password on every start would overwrite the password the
     # operator chose in Bloud's setup wizard and lock them out on restart.
     user.set_password(password)
-    user.save()
+else:
+    # Self-heal the legacy default ("admin@localhost"): SSO apps validate
+    # identity emails with an RFC-style validator that requires a TLD, so
+    # the old default breaks OIDC login. Operator-set emails are untouched.
+    if user.email in ('', 'admin@localhost'):
+        user.email = email
+        user.save()
+        print(f'OK: updated admin email to {email}')
 
 try:
     group = Group.objects.get(name='authentik Admins')

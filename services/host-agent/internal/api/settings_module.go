@@ -22,6 +22,8 @@ import (
 type AuthentikUserManagerInterface interface {
 	CreateUser(username, password string) (int, error)
 	SetUserPassword(userID int, password string) error
+	SetUserEmail(userID int, email string) error
+	ManagedUserEmail(username string) string
 	ListUsers() ([]authentik.ManagedUserInfo, error)
 	DeleteUser(username string) error
 	AddUserToGroup(userID int, groupName string) error
@@ -247,6 +249,12 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 					Error:   "Failed to update the user in Authentik",
 				})
 				return
+			}
+			// Adopted users (e.g. the bootstrap admin) may predate managed-user
+			// emails or carry an unusable one (no TLD); give the user a valid
+			// identity email so SSO apps can create accounts for them.
+			if setErr := m.authentikClient.SetUserEmail(existingID, m.authentikClient.ManagedUserEmail(req.Username)); setErr != nil {
+				m.logger.Warn("failed to set email for adopted Authentik user", "error", setErr)
 			}
 			m.logger.Info("adopted existing Authentik user for initial setup", "username", req.Username)
 			authentikUserID = existingID
@@ -539,6 +547,7 @@ func (f *FakeSettingsAuthentikClient) CreateUser(username, password string) (int
 	f.users[username] = &authentik.ManagedUserInfo{
 		ID:       id,
 		Username: username,
+		Email:    f.ManagedUserEmail(username),
 		IsAdmin:  false,
 	}
 	f.lastCreatedUser = username
@@ -551,6 +560,28 @@ func (f *FakeSettingsAuthentikClient) SetUserPassword(userID int, password strin
 	}
 	f.lastSetPasswords[userID] = password
 	return nil
+}
+
+func (f *FakeSettingsAuthentikClient) SetUserEmail(userID int, email string) error {
+	u, ok := f.usersByPk(userID)
+	if !ok {
+		return fmt.Errorf("user %d not found", userID)
+	}
+	u.Email = email
+	return nil
+}
+
+func (f *FakeSettingsAuthentikClient) usersByPk(pk int) (*authentik.ManagedUserInfo, bool) {
+	for _, u := range f.users {
+		if u.ID == pk {
+			return u, true
+		}
+	}
+	return nil, false
+}
+
+func (f *FakeSettingsAuthentikClient) ManagedUserEmail(username string) string {
+	return username + "@localhost.local"
 }
 
 func (f *FakeSettingsAuthentikClient) ListUsers() ([]authentik.ManagedUserInfo, error) {

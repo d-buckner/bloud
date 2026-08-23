@@ -92,6 +92,7 @@ well.
 | **Media** | Jellyfin | Movies, TV, and music streaming |
 | **Media** | Navidrome | Your music library with Subsonic-compatible clients |
 | **Photos** | Immich | Private photo and video management |
+| **Productivity** | AFFiNE | AI-native knowledge base: docs, databases, whiteboards |
 
 ## One login everywhere
 
@@ -101,6 +102,7 @@ Apps get SSO automatically, using whatever strategy fits them:
 |---|---|---|
 | **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
 | **Forward Auth** | Traefik asks Authentik before reaching the app | Navidrome |
+| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Immich, AFFiNE |
 
 Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) have
 their own documented login path.
@@ -177,6 +179,7 @@ bloud/
 │   ├── authentik/
 │   ├── immich/
 │   ├── navidrome/
+│   ├── affine/
 │   └── traefik/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
