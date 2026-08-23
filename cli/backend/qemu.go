@@ -131,6 +131,7 @@ func (b *QEMUBackend) Host() executor.Host {
 			"authentik":  "9001",
 			"immich":     "2283",
 			"navidrome":  "4533",
+			"affine":     "3010",
 		},
 		executor.DataDirs{
 			HostAgentDir: qemuRemoteDir + "/host-agent",
@@ -241,7 +242,7 @@ func (b *QEMUBackend) launch(ctx context.Context) error {
 	// ports themselves never change; only the host port QEMU binds changes.
 	fwds := make([]string, 0, 8)
 	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort(strconv.Itoa(qemuSSHPort))))
-	for _, gp := range []string{"3000", "3389", "8080", "8096", "9001", "2283", "4533"} {
+	for _, gp := range []string{"3000", "3389", "8080", "8096", "9001", "2283", "4533", "3010"} {
 		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hostForwardPort(gp), gp))
 	}
 	netdev := "user,id=net0," + strings.Join(fwds, ",")

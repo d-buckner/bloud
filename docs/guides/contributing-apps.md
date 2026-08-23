@@ -164,4 +164,5 @@ Run with: `./bloud validate --tier integration`
 | `apps/jellyfin` | LDAP SSO, setup wizard, plugin config, media libraries |
 | `apps/authentik` | Multi-container, LDAP infrastructure, API token management |
 | `apps/immich` | Database integration, OIDC SSO |
+| `apps/affine` | Own postgres+redis, OIDC config file, first-run owner bootstrap (see `INTEGRATION.md`) |
 | `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app |

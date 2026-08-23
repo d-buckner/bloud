@@ -53,6 +53,13 @@ inference:
       triggers: [license-headers]
 
 apps:
+  affine:
+    auth: native-oidc
+    validation-level: embed
+    files:
+      - apps/affine/**
+    e2e-project: affine
+
   immich:
     auth: native-oidc
     validation-level: embed

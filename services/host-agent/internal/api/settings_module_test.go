@@ -341,6 +341,7 @@ func TestSettingsHTTP_CreateFirstUser_ShortPassword(t *testing.T) {
 
 func TestSettingsHTTP_CreateFirstUser_Success(t *testing.T) {
 	mod := newSettingsModule(t, nil)
+	fake := mod.authentikClient.(*FakeSettingsAuthentikClient)
 	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"admin","password":"securepass123"}`
@@ -354,6 +355,9 @@ func TestSettingsHTTP_CreateFirstUser_Success(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
+	// The user gets a valid identity email (TLD-bearing): SSO apps like
+	// AFFiNE reject email addresses without a TLD.
+	assert.Equal(t, "admin@localhost.local", fake.users["admin"].Email)
 }
 
 func TestSettingsHTTP_CreateFirstUser_AdoptsExistingUser(t *testing.T) {
@@ -362,7 +366,8 @@ func TestSettingsHTTP_CreateFirstUser_AdoptsExistingUser(t *testing.T) {
 	// Simulate a fresh install: the bootstrap already created "admin" in
 	// Authentik, so creating it again fails with a duplicate error.
 	adminID := fake.userIDCounter
-	fake.users["admin"] = &authentik.ManagedUserInfo{ID: adminID, Username: "admin"}
+	// The bootstrap admin carries the legacy invalid email (no TLD).
+	fake.users["admin"] = &authentik.ManagedUserInfo{ID: adminID, Username: "admin", Email: "admin@localhost"}
 	fake.userIDCounter++
 	fake.failCreateUsername = "admin"
 	r := chi.NewRouter(); NewSettingsRouter(mod, r)
@@ -380,6 +385,9 @@ func TestSettingsHTTP_CreateFirstUser_AdoptsExistingUser(t *testing.T) {
 	assert.True(t, resp.Success)
 	// The existing user was adopted: password updated and local record created.
 	assert.Equal(t, "password", fake.lastSetPasswords[adminID])
+	// Adoption also repairs the legacy invalid email so SSO apps can
+	// create accounts for the user.
+	assert.Equal(t, "admin@localhost.local", fake.users["admin"].Email)
 	hasUsers, err := mod.prefsStore.HasUsers()
 	require.NoError(t, err)
 	assert.True(t, hasUsers)

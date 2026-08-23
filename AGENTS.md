@@ -75,6 +75,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 9001 | Authentik server (direct) | debugging |
 | 3389 | LDAP outpost (direct) | debugging |
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
+| 3010 | AFFiNE (direct) | debugging |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
 (10.0.2.2), so `./bloud dev` sets `BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24` for the
@@ -139,7 +140,8 @@ go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
 - API helpers target the **internal port**: `BLOUD_API_URL` (default
   `http://localhost:3000`) — loopback, no auth needed.
 - Specs: `jellyfin.spec.ts` (LDAP SSO), `navidrome.spec.ts` (forward-auth),
-  `immich.spec.ts` (native-oidc + onboarding). Fixtures: `lib/fixtures.ts`
+  `immich.spec.ts` (native-oidc + onboarding), `affine.spec.ts`
+  (native-oidc, login via issuer origin). Fixtures: `lib/fixtures.ts`
   (`authenticatedPage`, `api`); shared login: `lib/auth.ts`, `lib/loginPage.ts`.
 - Config: single worker, no retries, 10 min/test, trace/screenshot/video retained
   on failure. `./bloud e2e` runs the suite against a runtime started by
@@ -198,7 +200,10 @@ The CLI resolves the project root by walking up from cwd looking for
    Bootstrap (system infra: Traefik + deps) runs **before** the HTTP listener
    opens; the orchestrator manages user apps only.
 6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`
-   (Immich: native-oidc, Jellyfin: ldap, Navidrome: forward-auth).
+   (Immich + AFFiNE: native-oidc, Jellyfin: ldap, Navidrome: forward-auth).
+   Native-oidc providers use Bloud's verified-email scope mapping (Authentik's
+   managed one reports `email_verified: false`, which apps like AFFiNE
+   reject) — see `apps/affine/INTEGRATION.md`.
 7. **Routing is regenerated after convergence** — the orchestrator rewrites the
    Traefik dynamic config (`BLOUD_TRAEFIK_DYNAMIC_DIR/apps-routes.yml`) before
    promoting nodes to RUNNING. (Route generation must not accumulate runtime
@@ -258,7 +263,8 @@ The CLI resolves the project root by walking up from cwd looking for
    validation-level, file globs, optional `e2e-project`).
 5. Reference patterns: `apps/jellyfin` (LDAP, setup wizard, plugins),
    `apps/authentik` (multi-container, LDAP infra), `apps/immich` (own
-   postgres+redis, native-oidc), `apps/navidrome` (forward-auth).
+   postgres+redis, native-oidc), `apps/affine` (own postgres+redis, OIDC
+   config file, first-run owner bootstrap), `apps/navidrome` (forward-auth).
 
 ## Integration validation runs the real dependency-graph path
 

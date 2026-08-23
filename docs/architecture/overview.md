@@ -157,6 +157,8 @@ type AppState struct {
 - **Authentik** — sets admin password, ensures API token, creates LDAP infrastructure
 - **Jellyfin** — completes setup wizard, creates libraries, configures LDAP plugin
 - **Navidrome** — SSO/config wiring
+- **AFFiNE** — writes the OIDC config file (public URL + provider), bootstraps the
+  first-run owner account, verifies the OIDC preflight round-trip
 
 ### Authentik Client (`pkg/authentik/`)
 

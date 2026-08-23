@@ -17,18 +17,43 @@ import (
 type Client struct {
 	baseURL    string
 	token      string
+	emailDomain string
 	httpClient *http.Client
+}
+
+// UserEmailDomain returns the domain used for managed users' identity
+// emails. SSO apps validate identity emails with an RFC-style validator
+// that requires a TLD, so the bare "localhost" base domain used in dev
+// environments is mapped to "localhost.local".
+func UserEmailDomain(baseDomain string) string {
+	if baseDomain == "" || baseDomain == "localhost" {
+		return "localhost.local"
+	}
+	return baseDomain
 }
 
 // NewClient creates a new Authentik API client
 func NewClient(baseURL, token string) *Client {
 	return &Client{
-		baseURL: baseURL,
-		token:   token,
+		baseURL:     baseURL,
+		token:       token,
+		emailDomain: UserEmailDomain(""),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// WithUserEmailDomain sets the domain used for managed users' identity
+// emails (see UserEmailDomain). Defaults to "localhost.local".
+func (c *Client) WithUserEmailDomain(domain string) *Client {
+	c.emailDomain = UserEmailDomain(domain)
+	return c
+}
+
+// ManagedUserEmail returns the identity email for a managed user.
+func (c *Client) ManagedUserEmail(username string) string {
+	return username + "@" + c.emailDomain
 }
 
 // ProviderResponse represents an Authentik provider in API responses
@@ -983,12 +1008,15 @@ func (c *Client) findOutpostByName(name string) (*OutpostResponse, error) {
 	return nil, nil // Not found
 }
 
-// CreateUser creates a new user in Authentik and sets their password
+// CreateUser creates a new user in Authentik and sets their password.
+// The user gets a derived identity email (username@<domain>): SSO apps
+// (e.g. AFFiNE) require a valid RFC-style email to create app accounts.
 func (c *Client) CreateUser(username, password string) (int, error) {
 	// Create the user
 	payload := map[string]interface{}{
 		"username":  username,
 		"name":      username,
+		"email":     c.ManagedUserEmail(username),
 		"path":      "users",
 		"is_active": true,
 	}
@@ -1057,6 +1085,33 @@ func (c *Client) setUserPassword(userID int, password string) error {
 	return nil
 }
 
+// SetUserEmail sets the user's identity email via the Authentik API.
+func (c *Client) SetUserEmail(userID int, email string) error {
+	reqURL := fmt.Sprintf("%s/api/v3/core/users/%d/", c.baseURL, userID)
+	payload := map[string]string{"email": email}
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("setting user email: status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // SetUserPassword sets a user's password via the Authentik API (public wrapper)
 func (c *Client) SetUserPassword(userID int, password string) error {
 	return c.setUserPassword(userID, password)
@@ -1110,6 +1165,7 @@ type ManagedUserInfo struct {
 	ID       int    `json:"id"`
 	Username string `json:"username"`
 	Name     string `json:"name"`
+	Email    string `json:"email"`
 	IsAdmin  bool   `json:"is_admin"`
 	IsActive bool   `json:"is_active"`
 }
@@ -1947,6 +2003,223 @@ func (c *Client) getScopePropertyMappings(scopes []string) ([]string, error) {
 	return mappings, nil
 }
 
+// bloudEmailScopeMappingName identifies the custom scope mapping Bloud
+// creates for the OIDC "email" scope.
+const bloudEmailScopeMappingName = "Bloud OIDC: OpenID 'email' (verified)"
+
+// bloudEmailScopeMappingExpression reports the user email as verified.
+// Bloud is the identity provider and user identities are operator-managed,
+// so the email is verified from the OP's point of view.
+const bloudEmailScopeMappingExpression = `return {
+    "email": request.user.email,
+    "email_verified": True
+}`
+
+// ensureBloudEmailScopeMapping returns the UUID of a non-managed scope
+// mapping for the OIDC "email" scope that reports email_verified: True.
+// Authentik's managed mapping hardcodes email_verified to False, which
+// breaks apps whose OIDC provider rejects unverified emails (e.g. AFFiNE).
+func (c *Client) ensureBloudEmailScopeMapping() (string, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/propertymappings/provider/scope/?page_size=100", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("listing scope mappings: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			PK      string `json:"pk"`
+			Name    string `json:"name"`
+			Managed string `json:"managed"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	for _, m := range result.Results {
+		if m.Name == bloudEmailScopeMappingName && m.Managed == "" {
+			return m.PK, nil
+		}
+	}
+
+	payload := map[string]interface{}{
+		"name":       bloudEmailScopeMappingName,
+		"scope_name": "email",
+		"expression": bloudEmailScopeMappingExpression,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/propertymappings/provider/scope/", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err = c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("creating scope mapping: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var created struct {
+		PK string `json:"pk"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", err
+	}
+	return created.PK, nil
+}
+
+// managedEmailScopeMappingUUID returns the UUID of Authentik's managed
+// "email" scope mapping (or "" when not found).
+func (c *Client) managedEmailScopeMappingUUID() (string, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/propertymappings/provider/scope/?page_size=100", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("listing scope mappings: status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Results []struct {
+			PK      string `json:"pk"`
+			Managed string `json:"managed"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	for _, m := range result.Results {
+		if m.Managed == "goauthentik.io/providers/oauth2/scope-email" {
+			return m.PK, nil
+		}
+	}
+	return "", nil
+}
+
+// ensureProviderEmailScopeMapping makes sure an OAuth2 provider's property
+// mappings use Bloud's verified-email scope mapping instead of Authentik's
+// managed one (which reports email_verified: False).
+func (c *Client) ensureProviderEmailScopeMapping(providerID int) error {
+	bloudEmail, err := c.ensureBloudEmailScopeMapping()
+	if err != nil {
+		return fmt.Errorf("ensuring email scope mapping: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/api/v3/providers/oauth2/%d/", c.baseURL, providerID)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("fetching provider: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var provider struct {
+		PropertyMappings []string `json:"property_mappings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&provider); err != nil {
+		return fmt.Errorf("decoding provider: %w", err)
+	}
+
+	managedEmail, _ := c.managedEmailScopeMappingUUID()
+
+	var mappings []string
+	for _, m := range provider.PropertyMappings {
+		// Swap the managed email mapping for Bloud's verified one, keeping
+		// every other mapping (including Bloud's when already present).
+		if managedEmail != "" && m == managedEmail {
+			mappings = append(mappings, bloudEmail)
+			continue
+		}
+		mappings = append(mappings, m)
+	}
+	found := false
+	for _, m := range mappings {
+		if m == bloudEmail {
+			found = true
+			break
+		}
+	}
+	if !found {
+		mappings = append(mappings, bloudEmail)
+	}
+
+	// No drift — avoid churning the provider on every reconciliation pass.
+	if len(mappings) == len(provider.PropertyMappings) {
+		same := true
+		for i := range mappings {
+			if mappings[i] != provider.PropertyMappings[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return nil
+		}
+	}
+
+	payload := map[string]interface{}{"property_mappings": mappings}
+	payloadBytes, _ := json.Marshal(payload)
+	patchReq, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return err
+	}
+	patchReq.Header.Set("Authorization", "Bearer "+c.token)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("Accept", "application/json")
+
+	patchResp, err := c.httpClient.Do(patchReq)
+	if err != nil {
+		return err
+	}
+	defer patchResp.Body.Close()
+
+	if patchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(patchResp.Body)
+		return fmt.Errorf("patching provider property mappings: status %d: %s", patchResp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // applicationExists checks if an application with the given slug exists
 func (c *Client) applicationExists(slug string) (bool, error) {
 	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
@@ -2412,6 +2685,11 @@ func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret s
 		if err := c.updateBloudOAuth2ProviderRedirectURIs(providerID, redirectURIs); err != nil {
 			return fmt.Errorf("updating redirect URIs: %w", err)
 		}
+		// Swap in the verified-email scope mapping (Authentik's managed one
+		// reports email_verified: False, which apps like AFFiNE reject).
+		if err := c.ensureProviderEmailScopeMapping(providerID); err != nil {
+			return fmt.Errorf("updating email scope mapping: %w", err)
+		}
 	} else {
 		// Find required flows
 		authFlowID, err := c.findFlowID("default-provider-authorization-implicit-consent")
@@ -2430,10 +2708,18 @@ func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret s
 		if err != nil {
 			return fmt.Errorf("getting signing certificate: %w", err)
 		}
-		scopeMappings, err := c.getScopePropertyMappings([]string{"openid", "profile", "email"})
+		// Use Bloud's verified-email scope mapping for the "email" scope:
+		// Authentik's managed mapping hardcodes email_verified: False, which
+		// breaks apps whose OIDC provider rejects unverified emails (AFFiNE).
+		scopeMappings, err := c.getScopePropertyMappings([]string{"openid", "profile"})
 		if err != nil {
 			return fmt.Errorf("getting scope mappings: %w", err)
 		}
+		bloudEmail, err := c.ensureBloudEmailScopeMapping()
+		if err != nil {
+			return fmt.Errorf("ensuring email scope mapping: %w", err)
+		}
+		scopeMappings = append(scopeMappings, bloudEmail)
 
 		var uriEntries []map[string]string
 		for _, uri := range redirectURIs {

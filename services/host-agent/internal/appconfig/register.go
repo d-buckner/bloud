@@ -7,6 +7,7 @@ package appconfig
 import (
 	"log/slog"
 
+	"codeberg.org/d-buckner/bloud/apps/affine"
 	"codeberg.org/d-buckner/bloud/apps/authentik"
 	"codeberg.org/d-buckner/bloud/apps/immich"
 	"codeberg.org/d-buckner/bloud/apps/jellyfin"
@@ -63,6 +64,7 @@ func RegisterAll(
 	}
 
 	// User app configurators (always registered)
+	registry.Register(affine.NewConfigurator(3010, cfg.SSOBaseURL, cfg.Secrets, logger))
 	registry.Register(navidrome.NewConfigurator(4533, cfg.SSOAuthentikURL, cfg.Secrets, logger))
 	registry.Register(jellyfin.NewConfigurator(8096, logger))
 	registry.Register(immich.NewConfigurator(2283, cfg.Secrets, logger))
