@@ -24,13 +24,23 @@ were ruled out:
 1. **forward-auth** — Traefik could authenticate the browser, but the SPA's
    API calls still need a valid GoTrue session token; proxy headers do not
    reach the API layer.
-2. **native-oidc** — GoTrue *can* act as an OIDC relying party, but its
-   custom-OIDC support enforces an HTTPS issuer, and Bloud's dev/self-host
-   issuer is plain HTTP (self-signed at most).
+2. **native-oidc** — GoTrue *can* act as an OIDC relying party. This fork
+   (`appflowyinc/gotrue:0.17.12`) actually ships admin-registered **custom
+   OIDC providers** (`POST /admin/custom-providers`) that render as named
+   "Continue with …" buttons in AppFlowy's login UI — exactly the
+   "sign in with Bloud" button we want. But its schema enforces an HTTPS
+   issuer (`issuer like 'https://%'`, migration `20260219120000`), and
+   Bloud's self-host issuer is plain HTTP.
 
 So AppFlowy runs with `strategy: none`: `GOTRUE_DISABLE_SIGNUP=false` and
 `GOTRUE_MAILER_AUTOCONFIRM=true` (no SMTP in the stack), which makes
 email/password sign-up work immediately out of the box.
+
+**Path to real SSO:** `plans/self-signed-tls.md` — a local CA + a Traefik
+TLS entrypoint make the issuer `https://sso.localhost:8443`, after which
+the configurator registers the OIDC provider in gotrue and users sign in
+through Bloud SSO. Blocked only on that TLS infrastructure; not on any
+AppFlowy-side limitation.
 
 ## Architecture
 
