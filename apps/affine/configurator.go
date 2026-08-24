@@ -49,16 +49,17 @@ const configFileName = "config.json"
 // owner.
 type Configurator struct {
 	port       int
-	ssoBaseURL string
+	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)
 	secrets    configurator.AppSecretsProvider
 	logger     *slog.Logger
 }
 
 // NewConfigurator creates a new AFFiNE configurator.
-// ssoBaseURL is the Bloud base URL (e.g. "http://localhost:8080"); the
-// app's public URL is derived from it the same way routes and OIDC
-// redirect URIs are (affine.<host>).
-func NewConfigurator(port int, ssoBaseURL string, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
+// ssoBaseURL supplies the current Bloud base URL (e.g. "http://localhost:8080");
+// the app's public URL is derived from it the same way routes and OIDC
+// redirect URIs are (affine.<host>). It is a function so host changes made in
+// the UI take effect without re-registering the configurator.
+func NewConfigurator(port int, ssoBaseURL func() string, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
 	if port == 0 {
 		port = 3010
 	}
@@ -81,10 +82,14 @@ func (c *Configurator) Name() string {
 // e.g. "http://affine.localhost:8080". It must match the OIDC redirect URI
 // base registered by the host-agent (app subdomain + callbackPath).
 func (c *Configurator) appExternalURL() string {
-	if c.ssoBaseURL == "" {
+	baseURL := ""
+	if c.ssoBaseURL != nil {
+		baseURL = c.ssoBaseURL()
+	}
+	if baseURL == "" {
 		return fmt.Sprintf("http://affine.localhost:8080")
 	}
-	parsed, err := url.Parse(c.ssoBaseURL)
+	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" {
 		return fmt.Sprintf("http://affine.localhost:8080")
 	}

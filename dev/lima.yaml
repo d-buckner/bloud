@@ -23,6 +23,8 @@ mounts:
     writable: true
 
 portForwards:
+  - guestPort: 80     # front proxy (port 80 -> traefik :8080); if host port 80
+                      # is busy, Lima picks a free one (see `limactl port`)
   - guestPort: 3000   # host-agent
   - guestPort: 3389   # LDAP outpost (authentik)
   - guestPort: 8080   # traefik
@@ -49,6 +51,28 @@ provision:
       # Enable lingering for the default user so user-level podman services
       # persist after SSH logout
       loginctl enable-linger "$(id -un 1000)"
+
+      # Front proxy: a root service that owns port 80 and forwards to the
+      # rootless Traefik entrypoint (:8080), serving a "starting up" page
+      # while the stack boots. The binary is deployed by `./bloud dev` at
+      # runtime, so the unit waits for it to appear.
+      cat > /etc/systemd/system/bloud-front.service << 'UNIT'
+[Unit]
+Description=Bloud front proxy (port 80 -> Traefik)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while [ ! -x /var/tmp/bloud-dev-runtime/host-agent/host-agent ]; do sleep 2; done; exec /var/tmp/bloud-dev-runtime/host-agent/host-agent front-proxy'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+      systemctl daemon-reload
+      systemctl enable --now bloud-front.service
   - mode: user
     script: |
       #!/bin/bash

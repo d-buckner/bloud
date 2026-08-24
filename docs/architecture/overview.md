@@ -226,6 +226,7 @@ Lima VM (Debian, Apple Virtualization) — macOS:
 ```
 macOS host
   └── Lima VM "bloud-dev"
+        ├── bloud-front.service (root, :80 → :8080, "starting up" page)
         ├── Podman (rootless)
         │   ├── Authentik + LDAP Outpost
         │   ├── Traefik  :8080
@@ -243,4 +244,6 @@ Linux host
         └── host-agent binary (:3000)
 ```
 
-Ports 3000 and 8080 are forwarded to the host localhost by `./bloud dev`.
+Ports 80, 3000, and 8080 are forwarded to the host localhost by `./bloud dev`
+(port 80 is the front proxy: `host-agent front-proxy` under the root
+`bloud-front.service`, forwarding to rootless Traefik on 8080).

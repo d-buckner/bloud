@@ -17,6 +17,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
@@ -31,6 +32,8 @@ func main() {
 			os.Exit(runConfigure(os.Args[2:]))
 		case "init-secrets":
 			os.Exit(runInitSecrets(os.Args[2:]))
+		case "front-proxy":
+			os.Exit(runFrontProxy())
 		}
 	}
 
@@ -85,6 +88,31 @@ func runServer() {
 		os.Exit(1)
 	}
 
+	// Host state: the effective set of hostnames (built-ins + admin custom
+	// hosts from the database, with legacy env fallbacks). Shared between the
+	// configurators, the orchestrator, and the API so UI host changes apply
+	// without a restart.
+	hostStore := store.NewHostStore(database)
+	var storedHosts []hostset.StoredHost
+	if stored, err := hostStore.List(); err != nil {
+		logger.Warn("failed to load stored hosts, using defaults", "error", err)
+	} else {
+		for _, h := range stored {
+			storedHosts = append(storedHosts, hostset.StoredHost{Hostname: h.Hostname, Primary: h.Primary})
+		}
+	}
+	hostSet, err := hostset.Resolve(hostset.Input{
+		Stored:     storedHosts,
+		BaseDomain: cfg.BaseDomain,
+		SSOBaseURL: cfg.SSOBaseURL,
+	})
+	if err != nil {
+		logger.Warn("failed to resolve host set, using defaults", "error", err)
+		hostSet = hostset.New(hostset.BuiltinHosts, hostset.DefaultPrimary)
+	}
+	hosts := hostset.NewState(hostSet)
+	logger.Info("host set resolved", "hosts", hostSet.Hosts(), "primary", hostSet.Primary())
+
 	// templateVars is the shared mutable map passed to the orchestrator and
 	// the authentik server configurator. PostStart writes authentikLdapToken
 	// at runtime so it is available when the LDAP container spec is resolved.
@@ -99,7 +127,7 @@ func runServer() {
 
 	// Register all configurators (system + user)
 	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg, runtime, catalogAppMap, logger, templateVars)
+	appconfig.RegisterAll(registry, cfg, runtime, catalogAppMap, logger, templateVars, hosts)
 
 	// Create HTTP server (orchestrator created + started inside)
 	server := api.NewServer(database, api.ServerConfig{
@@ -119,6 +147,8 @@ func runServer() {
 		TSAuthKey:         cfg.TSAuthKey,
 		HostLabel:        cfg.HostLabel,
 		TrustedLocalNets: cfg.TrustedLocalNets,
+		Hosts:             hosts,
+		HostStore:         hostStore,
 		LDAPOutput:        cfg.LDAPOutput(),
 		Registry:          registry,
 		TemplateVars:      templateVars,

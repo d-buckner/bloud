@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"unicode/utf8"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -32,7 +33,7 @@ type AuthentikUserManagerInterface interface {
 }
 
 // SettingsModule encapsulates all settings operations: tailnet management,
-// initial setup wizard, and user administration.
+// host (domain) configuration, initial setup wizard, and user administration.
 type settingsModule struct {
 	tailnetStore    store.TailnetStoreInterface
 	prefsStore      store.PreferencesStoreInterface
@@ -40,6 +41,8 @@ type settingsModule struct {
 	authentikClient AuthentikUserManagerInterface
 	orch            orchestratorCaller
 	authConfig      *authConfigRef
+	hostState       *hostset.State
+	hostStore       store.HostStoreInterface
 	logger          *slog.Logger
 }
 
@@ -51,6 +54,8 @@ func NewSettingsModule(
 	authClient AuthentikUserManagerInterface,
 	orch orchestratorCaller,
 	authConfig *authConfigRef,
+	hostState *hostset.State,
+	hostStore store.HostStoreInterface,
 	logger *slog.Logger,
 ) *settingsModule {
 	return &settingsModule{
@@ -60,6 +65,8 @@ func NewSettingsModule(
 		authentikClient: authClient,
 		orch:            orch,
 		authConfig:      authConfig,
+		hostState:       hostState,
+		hostStore:       hostStore,
 		logger:          logger,
 	}
 }
@@ -141,6 +148,125 @@ func (m *settingsModule) DeleteTailnetHandler() http.HandlerFunc {
 		}
 
 		intent := orchestrator.NewDeleteTailnetIntent()
+		m.orch.Submit(intent)
+
+		respondJSON(w, http.StatusAccepted, map[string]string{
+			"intentId": intent.IntentID(),
+		})
+	}
+}
+
+// ---- Hosts ----
+
+// hostResponse is the API representation of one host.
+type hostResponse struct {
+	Hostname string `json:"hostname"`
+	Primary  bool   `json:"primary"`
+	Builtin  bool   `json:"builtin"`
+}
+
+// currentHosts builds the effective host list (built-ins first, then stored
+// custom hosts) with the live primary host.
+func (m *settingsModule) currentHosts() []hostResponse {
+	var primary string
+	if m.hostState != nil {
+		primary = m.hostState.Get().Primary()
+	} else {
+		primary = hostset.DefaultPrimary
+	}
+
+	builtin := hostset.BuiltinSet()
+	seen := map[string]bool{}
+	var out []hostResponse
+	for _, h := range hostset.BuiltinHosts {
+		out = append(out, hostResponse{Hostname: h, Primary: h == primary, Builtin: true})
+		seen[h] = true
+	}
+	if m.hostStore != nil {
+		if stored, err := m.hostStore.List(); err == nil {
+			for _, h := range stored {
+				if builtin[h.Hostname] || seen[h.Hostname] {
+					continue
+				}
+				out = append(out, hostResponse{Hostname: h.Hostname, Primary: h.Hostname == primary, Builtin: false})
+				seen[h.Hostname] = true
+			}
+		}
+	}
+	return out
+}
+
+// GetHostsHandler returns the effective host list with the primary host.
+func (m *settingsModule) GetHostsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"hosts": m.currentHosts(),
+		})
+	}
+}
+
+// setHostsRequest is the request body for PUT /api/settings/hosts.
+type setHostsRequest struct {
+	Hosts   []string `json:"hosts"`
+	Primary string   `json:"primary"`
+}
+
+// SetHostsHandler validates the host list and enqueues a SetHostsIntent. The
+// orchestrator persists the change, re-provisions SSO, and restarts SSO apps
+// so they pick up the new URLs.
+func (m *settingsModule) SetHostsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req setHostsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		// Normalize and dedupe.
+		hosts := make([]string, 0, len(req.Hosts))
+		seen := map[string]bool{}
+		for _, raw := range req.Hosts {
+			h := hostset.Normalize(raw)
+			if h == "" {
+				respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid hostname: %q", raw))
+				return
+			}
+			if seen[h] {
+				continue
+			}
+			seen[h] = true
+			hosts = append(hosts, h)
+		}
+		if len(hosts) == 0 {
+			respondError(w, http.StatusBadRequest, "hosts is required")
+			return
+		}
+		if len(hosts) > hostset.MaxHosts {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("at most %d hosts are supported", hostset.MaxHosts))
+			return
+		}
+		// Built-in hosts are always present.
+		for _, b := range hostset.BuiltinHosts {
+			if !seen[b] {
+				respondError(w, http.StatusBadRequest, fmt.Sprintf("built-in host %q cannot be removed", b))
+				return
+			}
+		}
+		primary := hostset.Normalize(req.Primary)
+		if primary == "" {
+			primary = hostset.DefaultPrimary
+		}
+		if !seen[primary] {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("primary host %q is not in the host list", primary))
+			return
+		}
+
+		if m.orch == nil {
+			respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
+			return
+		}
+
+		intent := orchestrator.NewSetHostsIntent(hosts, primary)
 		m.orch.Submit(intent)
 
 		respondJSON(w, http.StatusAccepted, map[string]string{
@@ -501,6 +627,9 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 
 // NewSettingsRouter registers all settings-related routes on the given router.
 func NewSettingsRouter(mod *settingsModule, r chi.Router) {
+	r.Get("/settings/hosts", mod.GetHostsHandler())
+	r.Put("/settings/hosts", mod.SetHostsHandler())
+
 	r.Get("/settings/tailnet", mod.GetTailnetHandler())
 	r.Post("/settings/tailnet", mod.SetTailnetHandler())
 	r.Delete("/settings/tailnet", mod.DeleteTailnetHandler())

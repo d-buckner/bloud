@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS user_app_positions (
     PRIMARY KEY (username, element_id)
 );
 
+-- Admin-configured custom hosts. Built-in hosts (localhost, bloud.local)
+-- are implicit and never stored here.
+CREATE TABLE IF NOT EXISTS hosts (
+    hostname   TEXT PRIMARY KEY,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL,

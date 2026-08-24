@@ -160,6 +160,23 @@ func NewClearAppDataIntent(appName string) ClearAppDataIntent {
 	return ClearAppDataIntent{intentBase: newIntentBase(), AppName: appName}
 }
 
+// SetHostsIntent requests changing the host set: the full effective list of
+// hostnames (built-ins included, already validated) plus the primary host.
+// The orchestrator persists the custom hosts, updates the runtime URL state,
+// and resets SSO-dependent nodes so the convergence pass re-provisions SSO
+// and rewrites app configs with the new URLs.
+type SetHostsIntent struct {
+	intentBase
+	Hosts   []string
+	Primary string
+}
+
+func (SetHostsIntent) intentMarker() {}
+
+func NewSetHostsIntent(hosts []string, primary string) SetHostsIntent {
+	return SetHostsIntent{intentBase: newIntentBase(), Hosts: hosts, Primary: primary}
+}
+
 // Compile-time assertions that all types implement Intent.
 var (
 	_ Intent = InstallAppIntent{}
@@ -172,4 +189,5 @@ var (
 	_ Intent = CreateShareIntent{}
 	_ Intent = RevokeShareIntent{}
 	_ Intent = ClearAppDataIntent{}
+	_ Intent = SetHostsIntent{}
 )

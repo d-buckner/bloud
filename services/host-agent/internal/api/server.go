@@ -14,6 +14,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -69,6 +70,10 @@ type ServerConfig struct {
 	AuthentikPort     int
 	TSAuthKey         string
 	HostLabel         string
+	// Hosts is the live host-set state (multi-host SSO); nil disables the
+	// host endpoints and multi-host URL resolution.
+	Hosts     *hostset.State
+	HostStore store.HostStoreInterface
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
 	TrustedLocalNets []string

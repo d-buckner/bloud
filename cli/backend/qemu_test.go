@@ -25,6 +25,7 @@ func fakeQEMUBackend(t *testing.T, recorded *[][]string, sshReadyResults []bool)
 		dir:          t.TempDir(),
 		pollInterval: 0,
 		pollTimeout:  50 * time.Millisecond,
+		runGuest: func(context.Context, string) error { return nil },
 	}
 	b.newCmd = func(_ context.Context, name string, args ...string) *exec.Cmd {
 		*recorded = append(*recorded, append([]string{name}, args...))
@@ -147,9 +148,16 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 	if !strings.Contains(string(userData), "chown bloud:bloud") {
 		t.Errorf("user-data missing project dir ownership")
 	}
+	// First-boot installs the front proxy unit (base64-encoded script in runcmd).
+	if !strings.Contains(string(userData), "base64 -d | sh") {
+		t.Errorf("user-data missing front proxy install step")
+	}
 }
 
 func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
+	// Pin the guest-80 host port so the assertion is independent of whether
+	// the test host can bind privileged ports.
+	t.Setenv("BLOUD_QEMU_FWD_80", "18088")
 	var recorded [][]string
 	b := fakeQEMUBackend(t, &recorded, []bool{false, true})
 	if err := b.Create(context.Background()); err != nil {
@@ -166,7 +174,7 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 	}
 	joined := strings.Join(launch, " ")
 	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4G", "-smp 4",
-		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
+		"-daemonize", "-pidfile", "hostfwd=tcp::18088-:80", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
 		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
 		"hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283", "hostfwd=tcp::4533-:4533",
 		"hostfwd=tcp::3010-:3010", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {

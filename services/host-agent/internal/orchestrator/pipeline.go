@@ -9,6 +9,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/google/uuid"
 )
@@ -33,6 +34,8 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applyDeleteRemoteAppIntent(i)
 		case RenameAppIntent:
 			o.applyRenameAppIntent(i)
+		case SetHostsIntent:
+			o.applySetHostsIntent(i)
 		default:
 			o.logger.Warn("unhandled intent type in drain phase", "type", intentTypeName(intent))
 		}
@@ -241,6 +244,142 @@ func (o *Orchestrator) applyRenameAppIntent(intent RenameAppIntent) {
 	}
 	if err := o.appStore.UpdateDisplayName(intent.AppName, intent.DisplayName); err != nil {
 		o.logger.Error("failed to rename app", "app", intent.AppName, "error", err)
+	}
+}
+
+// applySetHostsIntent persists the new host set, swaps the runtime URL state,
+// and resets SSO-dependent nodes so the convergence pass that follows this
+// drain re-runs their full lifecycle: PreStart rewrites app configs with the
+// new URLs (recreating changed containers), ensureSSO re-provisions the
+// Authentik providers with the new redirect URIs, and PostStart re-applies
+// outpost/launch configuration.
+func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
+	hosts := make([]string, 0, len(intent.Hosts))
+	seen := map[string]bool{}
+	for _, h := range intent.Hosts {
+		h = hostset.Normalize(h)
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		hosts = append(hosts, h)
+	}
+	primary := hostset.Normalize(intent.Primary)
+	if primary == "" || !seen[primary] {
+		primary = hostset.DefaultPrimary
+		if !seen[primary] {
+			hosts = append(hosts, primary)
+		}
+	}
+	if len(hosts) == 0 {
+		return
+	}
+
+	hs := hostset.New(hosts, primary)
+
+	// No-op guard: skip all side effects when nothing actually changed.
+	if o.hosts != nil && hostSetsEqual(o.hosts.Get(), hs) {
+		o.logger.Info("host set unchanged, skipping SetHosts side effects", "hosts", hs.Hosts())
+		return
+	}
+
+	o.logger.Info("applying host set", "hosts", hs.Hosts(), "primary", hs.Primary())
+
+	// 1. Persist custom hosts (built-ins are implicit, never stored).
+	if o.hostStore != nil {
+		storedPrimary := ""
+		if !hostset.BuiltinSet()[hs.Primary()] {
+			storedPrimary = hs.Primary()
+		}
+		if err := o.hostStore.Replace(hosts, storedPrimary); err != nil {
+			o.logger.Error("failed to persist host set", "error", err)
+			return
+		}
+	}
+
+	// 2. Swap the runtime URL state before the convergence pass so SSO
+	//    provisioning and app config generation see the new URLs.
+	if o.hosts != nil {
+		o.hosts.Set(hs)
+	}
+
+	// 3. Reset SSO-dependent nodes so they re-run their full lifecycle.
+	o.resetSSONodes()
+
+	// 4. Notify the API layer (dashboard OAuth app re-ensure, etc.).
+	if o.onHostsChanged != nil {
+		o.onHostsChanged()
+	}
+}
+
+// hostSetsEqual reports whether two host sets contain the same hosts with the
+// same primary, ignoring order.
+func hostSetsEqual(a, b hostset.HostSet) bool {
+	if a.Primary() != b.Primary() {
+		return false
+	}
+	if len(a.Hosts()) != len(b.Hosts()) {
+		return false
+	}
+	set := map[string]bool{}
+	for _, h := range a.Hosts() {
+		set[h] = true
+	}
+	for _, h := range b.Hosts() {
+		if !set[h] {
+			return false
+		}
+	}
+	return true
+}
+
+// resetSSONodes resets every RUNNING node that depends on the host set back to
+// INITIALIZING: all containers of installed native-oidc / forward-auth apps
+// (their configs and SSO providers bake in host URLs) plus the Authentik
+// server container (its PostStart sets the embedded outpost's browser URL).
+func (o *Orchestrator) resetSSONodes() {
+	if o.graph == nil || o.appStore == nil {
+		return
+	}
+
+	reset := func(nodeID string) {
+		node, err := o.graph.GetNode(nodeID)
+		if err != nil || node == nil || node.ActualStatus != graph.StatusRunning {
+			return
+		}
+		o.logger.Info("resetting SSO-dependent node for host change", "node", nodeID)
+		_ = o.graph.SetActualStatus(nodeID, graph.StatusInitializing, "")
+	}
+
+	// Authentik server: PostStart re-applies the embedded outpost host URL.
+	if _, err := o.appStore.GetByCatalogID("authentik"); err == nil {
+		reset("apps-authentik-server")
+	}
+
+	apps, err := o.appStore.GetAll()
+	if err != nil {
+		return
+	}
+	for _, app := range apps {
+		if app.IsSystem || o.catalog == nil {
+			continue
+		}
+		catalogApp, err := o.catalog.Get(app.CatalogID)
+		if err != nil || catalogApp == nil {
+			continue
+		}
+		switch catalogApp.SSO.Strategy {
+		case "native-oidc", "forward-auth":
+		default:
+			continue
+		}
+		if len(catalogApp.Containers) > 0 {
+			for _, def := range catalogApp.Containers {
+				reset(def.Name)
+			}
+			continue
+		}
+		reset(app.CatalogID)
 	}
 }
 
@@ -646,6 +785,8 @@ func intentTypeName(intent Intent) string {
 		return "RevokeShare"
 	case ClearAppDataIntent:
 		return "ClearAppData"
+	case SetHostsIntent:
+		return "SetHosts"
 	default:
 		return "Unknown"
 	}

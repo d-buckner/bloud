@@ -1,7 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
-import { get, post, del } from './httpClient';
+import { get, post, del, put } from './httpClient';
 import type { IntentResponse } from '$lib/types';
+
+export interface Host {
+	hostname: string;
+	primary: boolean;
+	builtin: boolean;
+}
+
+export interface SetHostsRequest {
+	hosts: string[];
+	primary: string;
+}
+
+export function fetchHosts(): Promise<{ hosts: Host[] }> {
+	return get<{ hosts: Host[] }>('/api/settings/hosts');
+}
+
+export function setHosts(data: SetHostsRequest): Promise<IntentResponse> {
+	return put<IntentResponse>('/api/settings/hosts', data);
+}
 
 export interface TailnetConnection {
 	id: string;

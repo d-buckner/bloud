@@ -46,7 +46,7 @@ func runConfigure(args []string) int {
 	// In CLI mode, system configurators are not needed (system apps are managed
 	// by the orchestrator in server mode). Pass nil runtime and empty catalog.
 	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg, nil, nil, logger, nil)
+	appconfig.RegisterAll(registry, cfg, nil, nil, logger, nil, nil)
 
 	// For prestart, always regenerate env files from secrets.json before starting any app
 	// This ensures secrets.json is always the source of truth
