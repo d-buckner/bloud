@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/mdns"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -126,6 +128,15 @@ func runServer() {
 		"authentikAdminPassword":  cfg.AuthentikAdminPassword,
 		"authentikAdminEmail":     cfg.AuthentikAdminEmail,
 		"authentikLdapToken":      "", // written by apps-authentik-server PostStart
+		// AppFlowy: per-deployment secrets derived from the SSO host secret
+		// (stable across reboots, no extra persistence) and public URLs
+		// derived from the SSO base URL the same way Traefik routes are.
+		"appflowyGotrueJwtSecret":     sso.DeriveSecret(cfg.SSOHostSecret, "appflowy:gotrue-jwt-secret", 32),
+		"appflowyGotrueAdminPassword": sso.DeriveSecret(cfg.SSOHostSecret, "appflowy:gotrue-admin-password", 24),
+		"appflowyMinioAccessKey":      sso.DeriveSecret(cfg.SSOHostSecret, "appflowy:minio-access-key", 15),
+		"appflowyMinioSecretKey":      sso.DeriveSecret(cfg.SSOHostSecret, "appflowy:minio-secret-key", 24),
+		"appflowyPublicURL":           appSubdomainURL(cfg.SSOBaseURL, "appflowy"),
+		"appflowyWsURL":               appWSSubdomainURL(cfg.SSOBaseURL, "appflowy"),
 	}
 
 	// Register all configurators (system + user)
@@ -140,26 +151,26 @@ func runServer() {
 	server := api.NewServer(database, api.ServerConfig{
 		RefreshAuthentikToken: func() string { return cfg.ReadAuthentikToken(logger) },
 		AppsDir:               cfg.AppsDir,
-		DataDir:           cfg.DataDir,
-		TraefikDynamicDir: cfg.TraefikDynamicDir,
-		BaseDomain:        cfg.BaseDomain,
-		TraefikPort:       cfg.TraefikPort,
-		Port:              cfg.Port,
-		SSOHostSecret:     cfg.SSOHostSecret,
-		SSOBaseURL:        cfg.SSOBaseURL,
-		SSOAuthentikURL:   cfg.SSOAuthentikURL,
-		SSOIssuerURL:      cfg.SSOIssuerURL,
-		AuthentikToken:    cfg.AuthentikToken,
-		AuthentikPort:     cfg.AuthentikPort,
-		TSAuthKey:         cfg.TSAuthKey,
-		HostLabel:        cfg.HostLabel,
-		TrustedLocalNets: cfg.TrustedLocalNets,
-		Hosts:             hosts,
-		EventsBus:         eventsBus,
-		HostStore:         hostStore,
-		LDAPOutput:        cfg.LDAPOutput(),
-		Registry:          registry,
-		TemplateVars:      templateVars,
+		DataDir:               cfg.DataDir,
+		TraefikDynamicDir:     cfg.TraefikDynamicDir,
+		BaseDomain:            cfg.BaseDomain,
+		TraefikPort:           cfg.TraefikPort,
+		Port:                  cfg.Port,
+		SSOHostSecret:         cfg.SSOHostSecret,
+		SSOBaseURL:            cfg.SSOBaseURL,
+		SSOAuthentikURL:       cfg.SSOAuthentikURL,
+		SSOIssuerURL:          cfg.SSOIssuerURL,
+		AuthentikToken:        cfg.AuthentikToken,
+		AuthentikPort:         cfg.AuthentikPort,
+		TSAuthKey:             cfg.TSAuthKey,
+		HostLabel:             cfg.HostLabel,
+		TrustedLocalNets:      cfg.TrustedLocalNets,
+		Hosts:                 hosts,
+		EventsBus:             eventsBus,
+		HostStore:             hostStore,
+		LDAPOutput:            cfg.LDAPOutput(),
+		Registry:              registry,
+		TemplateVars:          templateVars,
 	}, logger)
 
 	// Block until system apps are healthy (first convergence pass).
@@ -238,4 +249,38 @@ func runServer() {
 	}
 
 	logger.Info("server stopped gracefully")
+}
+
+// appSubdomainURL builds the app's public URL from the SSO base URL, the same
+// way Traefik routes app subdomains. e.g. "http://localhost:8080" + "appflowy"
+// -> "http://appflowy.localhost:8080". Returns "" when baseURL is empty.
+func appSubdomainURL(baseURL, appName string) string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	parsed.Host = appName + "." + parsed.Host
+	parsed.Path = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+// appWSSubdomainURL builds the app's websocket base URL (ws/wss scheme with the
+// /ws/v2 path) for AppFlowy's realtime endpoint, derived from the SSO base URL.
+func appWSSubdomainURL(baseURL, appName string) string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme == "https" {
+		parsed.Scheme = "wss"
+	} else {
+		parsed.Scheme = "ws"
+	}
+	parsed.Host = appName + "." + parsed.Host
+	parsed.Path = "/ws/v2"
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }

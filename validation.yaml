@@ -60,6 +60,13 @@ apps:
       - apps/affine/**
     e2e-project: affine
 
+  appflowy:
+    auth: none
+    validation-level: full
+    files:
+      - apps/appflowy/**
+    e2e-project: appflowy
+
   immich:
     auth: native-oidc
     validation-level: embed

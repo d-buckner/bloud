@@ -542,11 +542,11 @@ func readSSEFrames(body io.Reader, frames chan<- sseFrame) {
 
 // TestInstallLiveStateStream verifies the live-state contract:
 //
-//	 1. The install 202 response carries the app record immediately (the
-//	     orchestrator records it at submit time), so the UI can render the
-//	     tile without polling.
-//	 2. The /api/apps/events SSE stream delivers a snapshot before any node
-//	     event, then node/pull updates, ending with the app node RUNNING.
+//  1. The install 202 response carries the app record immediately (the
+//     orchestrator records it at submit time), so the UI can render the
+//     tile without polling.
+//  2. The /api/apps/events SSE stream delivers a snapshot before any node
+//     event, then node/pull updates, ending with the app node RUNNING.
 //
 // It must run before TestJellyfinInstallViaAPI (source order) so the install
 // it drives is the fresh one.
@@ -967,6 +967,103 @@ func TestAffineUninstallCleanup(t *testing.T) {
 		}
 	}
 	t.Log("affine fully uninstalled: store, containers, data, and routes cleaned up")
+}
+
+var appflowyURL = getEnvDefault("BLOUD_E2E_APPFLOWY_URL", "http://localhost:8480")
+
+// TestAppFlowyInstallViaAPI installs AppFlowy through the API. The graph
+// spans nine containers (postgres, redis, minio, gotrue, cloud, worker,
+// search, web, nginx); the cloud API runs Rust migrations before its HTTP
+// listener opens, so first boot is slow.
+func TestAppFlowyInstallViaAPI(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/appflowy/install", `{}`, http.StatusAccepted)
+	// Fresh VMs pull ~1.5GB of images and run migrations on first boot.
+	waitAppRunning(t, "appflowy", 30*time.Minute)
+	waitHTTPOrFatal(t, 60*time.Second, appflowyURL+"/health")
+}
+
+// TestAppFlowyConfiguredByConfigurator verifies the configurator's outcomes
+// behaviorally: every proxied route answers through nginx (web, cloud API,
+// GoTrue), and GoTrue's signup flow works end-to-end (auto-confirm, no SMTP),
+// which only happens when the /gotrue prefix strip and upstream wiring are
+// correct.
+func TestAppFlowyConfiguredByConfigurator(t *testing.T) {
+	waitAppRunning(t, "appflowy", 2*time.Minute)
+
+	for _, path := range []string{"/health", "/api/health", "/gotrue/health"} {
+		waitHTTPOrFatal(t, 30*time.Second, appflowyURL+path)
+	}
+
+	email := fmt.Sprintf("probe-%d@appflowy.local", time.Now().UnixNano())
+	signupBody := fmt.Sprintf(`{"email":%q,"password":"probe-password-123"}`, email)
+	resp, err := http.Post(appflowyURL+"/gotrue/signup", "application/json", strings.NewReader(signupBody))
+	if err != nil {
+		t.Fatalf("POST /gotrue/signup: %v", err)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("signup = status %d body %q, want 200 (auto-confirm enabled)", resp.StatusCode, string(data))
+	}
+	var user struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(data, &user); err != nil {
+		t.Fatalf("unmarshaling signup response: %v", err)
+	}
+	if user.AccessToken == "" {
+		t.Errorf("signup response should contain an access_token (auto-confirm), got: %s", data)
+	}
+}
+
+// TestAppFlowyUninstallCleanup uninstalls AppFlowy through the API and
+// asserts the full cleanup: store entry, all containers, data directory,
+// and routes.
+func TestAppFlowyUninstallCleanup(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/appflowy/uninstall",
+		`{"clearData":true}`, http.StatusAccepted)
+
+	deadline := time.Now().Add(3 * time.Minute)
+	for time.Now().Before(deadline) {
+		if appStatus(t, "appflowy") == "" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if status := appStatus(t, "appflowy"); status != "" {
+		t.Fatalf("appflowy still listed as installed (status %q)", status)
+	}
+
+	// All graph nodes must be gone (the orchestrator removes them).
+	for _, name := range []string{
+		"apps-appflowy-nginx", "apps-appflowy-web", "apps-appflowy-cloud",
+		"apps-appflowy-worker", "apps-appflowy-search", "apps-appflowy-gotrue",
+		"apps-appflowy-minio", "apps-appflowy-redis", "apps-appflowy-postgres",
+	} {
+		if _, err := exec.Command("podman", "container", "exists", name).CombinedOutput(); err == nil {
+			t.Errorf("%s container still exists after uninstall", name)
+		}
+	}
+
+	if os.Getenv("BLOUD_DATA_DIR") != "" {
+		dataPath := filepath.Join(dataDir(), "appflowy")
+		if _, err := os.Stat(dataPath); err == nil {
+			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
+		}
+	}
+
+	traefikDir := os.Getenv("BLOUD_TRAEFIK_DYNAMIC_DIR")
+	if traefikDir != "" {
+		routesPath := filepath.Join(traefikDir, "apps-routes.yml")
+		routes, err := os.ReadFile(routesPath)
+		if err != nil {
+			t.Fatalf("reading %s: %v", routesPath, err)
+		}
+		if strings.Contains(string(routes), "appflowy") {
+			t.Errorf("apps-routes.yml still references appflowy after uninstall")
+		}
+	}
+	t.Log("appflowy fully uninstalled: store, containers, data, and routes cleaned up")
 }
 
 // expectedAffineCallbackURL mirrors apps/affine's configurator derivation:

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"codeberg.org/d-buckner/bloud/apps/affine"
+	"codeberg.org/d-buckner/bloud/apps/appflowy"
 	"codeberg.org/d-buckner/bloud/apps/authentik"
 	"codeberg.org/d-buckner/bloud/apps/immich"
 	"codeberg.org/d-buckner/bloud/apps/jellyfin"
@@ -78,6 +79,7 @@ func RegisterAll(
 	}
 
 	// User app configurators (always registered)
+	registry.Register(appflowy.NewConfigurator(8480, logger))
 	registry.Register(affine.NewConfigurator(3010, primaryBaseURLFn, cfg.Secrets, logger))
 	// Navidrome's user sync calls the Authentik API from the host itself, so it
 	// always uses the local Traefik URL regardless of the public host set.
