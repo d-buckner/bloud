@@ -183,6 +183,20 @@ Container specs are defined in `metadata.yaml` under the `containers:` key (one 
 container, multi-container apps expand to one graph node each) and rendered with template
 variables (data paths, passwords, etc.) at install time.
 
+### mDNS Publisher (`internal/mdns/`)
+
+Advertises the instance's `.local` hostnames over Multicast DNS (RFC 6762) so
+LAN devices can reach the dashboard and apps as `http://bloud.local` and
+`http://<app>.bloud.local` without DNS configuration. The publisher owns one
+UDP socket on port 5353 on the interface carrying the host's primary IPv4: it
+answers A queries for the advertised names and re-announces records at least
+every TTL (120s) so resolver caches stay fresh. The record set is recomputed
+from live state — the host set plus one `<app>.<host>` subdomain per routable
+installed app (mirroring the domain-agnostic Traefik routes) — on startup, on
+a 30s tick, and on app-change events from the event bus. Removed names and
+shutdown send TTL-0 "goodbye" records. Only `.local` hosts are advertised;
+custom domains are resolved by real DNS.
+
 ## Data Flow: Installing an App
 
 ```

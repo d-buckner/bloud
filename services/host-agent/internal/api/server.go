@@ -14,6 +14,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -82,6 +83,9 @@ type ServerConfig struct {
 	Registry         configurator.RegistryInterface
 	ContainerRuntime containerruntime.Runtime
 	TemplateVars     map[string]string
+	// EventsBus is the shared event bus (SSE streams, background consumers
+	// like the mDNS publisher). Nil creates one internally.
+	EventsBus *eventbus.Bus
 }
 
 // NewServer creates a new HTTP server instance. It delegates dependency

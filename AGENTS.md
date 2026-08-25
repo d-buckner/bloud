@@ -243,6 +243,12 @@ The CLI resolves the project root by walking up from cwd looking for
    re-provisions Authentik (redirect URIs, outpost browser URL) and rewrites
    app configs, then re-ensure the dashboard OAuth app. Traefik routes stay
    domain-agnostic (`HostRegexp`), so they match every host without changes.
+   mDNS: host-agent advertises every `.local` host (and each installed app's
+   `<app>.<host>` subdomain) as an A record for the host's primary LAN IP
+   (`internal/mdns`, port 5353; TTL-0 goodbyes on removal), so LAN devices
+   resolve `http://bloud.local` and `http://jellyfin.bloud.local` with no DNS
+   configuration. Only `.local` hosts are advertised — custom domains use
+   real DNS.
 10. **The front proxy owns port 80** (`host-agent front-proxy`,
     `bloud-front.service`, root). It health-gates on the host-agent
     (`GET :3000/api/health`, which only opens after system convergence) and

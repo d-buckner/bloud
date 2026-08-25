@@ -76,7 +76,10 @@ func NewRouter(
 	// Event bus: broadcasts app-store changes and orchestrator events to the
 	// SSE stream (/api/apps/events). The bus only reads state; the
 	// orchestrator remains the single writer.
-	eventsBus := eventbus.New()
+	eventsBus := cfg.EventsBus
+	if eventsBus == nil {
+		eventsBus = eventbus.New()
+	}
 	appStore.SetOnChange(func() {
 		eventsBus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
 	})
