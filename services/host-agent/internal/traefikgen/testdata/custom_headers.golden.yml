@@ -6,10 +6,21 @@ http:
   routers:
     actual-budget:
       rule: "HostRegexp(`^actual-budget\\.`)"
-      priority: 200
+      entryPoints:
+        - web
       middlewares:
         - actual-budget-headers
       service: actual-budget
+      priority: 200
+    actual-budget-tls:
+      rule: "HostRegexp(`^actual-budget\\.`)"
+      entryPoints:
+        - websecure
+      tls: true
+      middlewares:
+        - actual-budget-headers
+      service: actual-budget
+      priority: 200
 
   middlewares:
     actual-budget-headers:

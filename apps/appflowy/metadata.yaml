@@ -7,12 +7,16 @@ category: productivity
 port: 8480
 estimatedSizeMB: 2000
 
-# AppFlowy's auth layer is its own GoTrue (Supabase Auth) container; the cloud
-# API authenticates JWTs minted by GoTrue, so Traefik forward-auth cannot grant
-# access (the SPA's API calls need a GoTrue session, not proxy headers). GoTrue's
-# custom OIDC provider support enforces an HTTPS issuer, which Bloud's
-# self-signed/HTTP SSO issuer does not satisfy. AppFlowy therefore runs with
-# strategy "none": local email/password sign-up (auto-confirm, no SMTP needed).
+# AppFlowy's auth layer is its own GoTrue (Supabase Auth) container; the
+# cloud API authenticates JWTs minted by GoTrue, so Traefik forward-auth
+# cannot grant access (the SPA's API calls need a GoTrue session, not proxy
+# headers). Bloud SSO is therefore wired inside GoTrue as an admin-
+# registered custom OIDC provider ("Sign in with Bloud"): the configurator
+# ensures the Authentik OAuth2 application and the GoTrue provider (issuer
+# over TLS) on every reconcile. GoTrue enforces an HTTPS issuer and
+# rejects local/loopback issuers, so local dev deployments (sso.localhost)
+# fall back to local email/password sign-up (auto-confirm, no SMTP needed)
+# until the SSO issuer is a public FQDN.
 # See apps/appflowy/INTEGRATION.md for the full analysis.
 sso:
   strategy: none
@@ -36,6 +40,8 @@ integrations:
 #   {{appflowyMinioSecretKey}}      MinIO root password
 #   {{appflowyPublicURL}}           browser-facing base URL (e.g. http://appflowy.localhost:8080)
 #   {{appflowyWsURL}}               websocket base URL (e.g. ws://appflowy.localhost:8080/ws/v2)
+#   {{appCaBundlePath}}             CA trust bundle (system roots + Bloud local CA) for
+#                                   containers that fetch the SSO issuer server-side
 containers:
   - name: apps-appflowy-postgres
     image: docker.io/pgvector/pgvector:pg16
@@ -88,6 +94,11 @@ containers:
     environment:
       DATABASE_URL: "postgres://postgres:{{postgresPassword}}@apps-appflowy-postgres:5432/postgres?search_path=auth"
       GOTRUE_DB_DRIVER: postgres
+      # Trust the Bloud local CA when fetching the SSO issuer over TLS.
+      # GoTrue is a Go runtime: SSL_CERT_FILE overrides its root pool with
+      # the mounted bundle (system roots + Bloud CA), so public CAs keep
+      # working too.
+      SSL_CERT_FILE: /etc/ssl/bloud-ca-bundle.crt
       API_EXTERNAL_URL: "{{appflowyPublicURL}}/gotrue"
       GOTRUE_SITE_URL: "appflowy-flutter://"
       GOTRUE_URI_ALLOW_LIST: "**"
@@ -103,6 +114,18 @@ containers:
       GOTRUE_MAILER_URLPATHS_RECOVERY: /gotrue/verify
       GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /gotrue/verify
       PORT: "9999"
+    # Reach the SSO issuer (traefik websecure) the same way browsers do:
+    # sso.localhost resolves to the VM host gateway, so GoTrue's server-side
+    # discovery/JWKS/token calls hit https://sso.localhost:8443 over the
+    # Bloud leaf certificate (trusted via the mounted CA bundle).
+    extraHosts:
+      - sso.localhost:host-gateway
+    volumes:
+      # CA trust bundle (system roots + Bloud local CA), generated at
+      # bootstrap; mounted read-only for the SSL_CERT_FILE above.
+      - source: "{{appCaBundlePath}}"
+        destination: /etc/ssl/bloud-ca-bundle.crt
+        options: [ro]
     healthCheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9999/health"]
       interval: 5

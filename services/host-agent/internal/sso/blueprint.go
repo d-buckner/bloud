@@ -66,9 +66,9 @@ func (g *BlueprintGenerator) primaryBaseURL() string {
 	return ""
 }
 
-// appSubdomainURL builds a subdomain URL for an app from a base URL.
+// AppSubdomainURL builds a subdomain URL for an app from a base URL.
 // e.g., "http://localhost:8080" + "miniflux" → "http://miniflux.localhost:8080"
-func appSubdomainURL(baseURL, appName string) string {
+func AppSubdomainURL(baseURL, appName string) string {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return baseURL // fallback
@@ -112,7 +112,7 @@ func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) erro
 	// external_host should be the root URL, not the app-specific path.
 	// The callback URL (/outpost.goauthentik.io/callback) is handled at root level by Traefik.
 	externalHost := g.primaryBaseURL()
-	launchURL := appSubdomainURL(g.primaryBaseURL(), app.CatalogID)
+	launchURL := AppSubdomainURL(g.primaryBaseURL(), app.CatalogID)
 
 	blueprint, err := g.renderForwardAuthBlueprint(app, externalHost, launchURL)
 	if err != nil {
@@ -125,7 +125,7 @@ func (g *BlueprintGenerator) generateForwardAuthBlueprint(app *catalog.App) erro
 // generateLDAPBlueprint creates app-specific groups for LDAP authentication
 // The LDAP provider and outpost are created separately via GenerateLDAPOutpostBlueprint
 func (g *BlueprintGenerator) generateLDAPBlueprint(app *catalog.App) error {
-	launchURL := appSubdomainURL(g.primaryBaseURL(), app.CatalogID)
+	launchURL := AppSubdomainURL(g.primaryBaseURL(), app.CatalogID)
 
 	blueprint, err := g.renderLDAPBlueprint(app, launchURL)
 	if err != nil {
@@ -227,7 +227,7 @@ func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
 	clientID := g.generateClientID(app.CatalogID)
 	clientSecret := g.generateClientSecret(app.CatalogID)
 	discoveryURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.CatalogID)
-	appURL := appSubdomainURL(baseURL, app.CatalogID)
+	appURL := AppSubdomainURL(baseURL, app.CatalogID)
 	redirectURL := appURL + app.SSO.CallbackPath
 	serverHostname := appURL
 	issuerURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.CatalogID)

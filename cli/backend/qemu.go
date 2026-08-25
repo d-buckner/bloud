@@ -136,15 +136,16 @@ func (b *QEMUBackend) Host() executor.Host {
 			KeyFile: filepath.Join(b.dir, "id_ed25519"),
 		}),
 		map[string]string{
-			"host-agent": "3000",
-			"traefik":    "8080",
-			"ldap":       "3389",
-			"jellyfin":   "8096",
-			"authentik":  "9001",
-			"immich":     "2283",
-			"navidrome":  "4533",
-			"affine":     "3010",
-			"appflowy":   "8480",
+			"host-agent":  "3000",
+			"traefik":     "8080",
+			"traefik-tls": "8443",
+			"ldap":        "3389",
+			"jellyfin":    "8096",
+			"authentik":   "9001",
+			"immich":      "2283",
+			"navidrome":   "4533",
+			"affine":      "3010",
+			"appflowy":    "8480",
 		},
 		executor.DataDirs{
 			HostAgentDir: qemuRemoteDir + "/host-agent",
@@ -363,9 +364,9 @@ func (b *QEMUBackend) launchArgs(pidFile string) []string {
 	// host port via BLOUD_QEMU_FWD_<guestport> (e.g. BLOUD_QEMU_FWD_9001=9101)
 	// so the VM can run on hosts that already occupy a default port. The guest
 	// ports themselves never change; only the host port QEMU binds changes.
-	fwds := make([]string, 0, 10)
+	fwds := make([]string, 0, 11)
 	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort(strconv.Itoa(qemuSSHPort))))
-	for _, gp := range []string{"80", "3000", "3389", "8080", "8096", "9001", "2283", "4533", "3010", "8480"} {
+	for _, gp := range []string{"80", "3000", "3389", "8080", "8443", "8096", "9001", "2283", "4533", "3010", "8480"} {
 		hp := hostForwardPort(gp)
 		if gp == "80" && !canBindHostPort(hp) {
 			// Non-root hosts cannot bind port 80 (no cap_net_bind_service).

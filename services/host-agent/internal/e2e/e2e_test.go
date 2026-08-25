@@ -44,15 +44,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"codeberg.org/d-buckner/bloud/apps/appflowy"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 )
 
 // Service endpoints — published by the catalog to localhost inside the VM.
@@ -92,6 +97,7 @@ type secretsFile struct {
 	AuthentikBootstrapPassword string `json:"authentikBootstrapPassword"`
 	AuthentikBootstrapToken    string `json:"authentikBootstrapToken"`
 	LdapBindPassword           string `json:"ldapBindPassword"`
+	SSOHostSecret              string `json:"ssoHostSecret"`
 }
 
 // dataDir returns the runtime data directory (secrets.json, api-token, app
@@ -1014,6 +1020,207 @@ func TestAppFlowyConfiguredByConfigurator(t *testing.T) {
 	if user.AccessToken == "" {
 		t.Errorf("signup response should contain an access_token (auto-confirm), got: %s", data)
 	}
+}
+
+// TestAppFlowySSOWiring asserts the SSO wiring outcome per deployment
+// class. GoTrue rejects local/loopback issuers at registration (verified
+// against gotrue 0.17.12), so on a dev VM (sso.localhost) the wiring must
+// be cleanly skipped: no GoTrue provider, no Authentik provider, app still
+// RUNNING (local sign-up is covered by
+// TestAppFlowyConfiguredByConfigurator). With a public issuer, the provider
+// must exist in GoTrue with the exact desired configuration.
+func TestAppFlowySSOWiring(t *testing.T) {
+	waitAppRunning(t, "appflowy", 2*time.Minute)
+
+	issuer := expectedAppFlowyIssuer()
+
+	if !appflowy.IssuerRegistrable(issuer) {
+		// Dev class: the wiring is skipped, not failing.
+		providers := appflowyCustomProviders(t)
+		if p, ok := findCustomProvider(providers, "custom:bloud-sso"); ok {
+			t.Fatalf("custom:bloud-sso provider present despite local issuer %s (wiring should be skipped): %+v", issuer, p)
+		}
+		if id, err := authentikFindOAuth2Provider(t, "AppFlowy OAuth2 Provider"); err == nil && id != 0 {
+			t.Errorf("Authentik provider %q present despite local issuer (should not be created)", "AppFlowy OAuth2 Provider")
+		}
+		t.Logf("local issuer %s: SSO wiring correctly skipped (local sign-up only)", issuer)
+		return
+	}
+
+	// Public class: the provider must converge in (PostStart re-applies the
+	// wiring every cycle, so poll briefly for the first reconcile).
+	var found appflowyCustomProvider
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		for _, p := range appflowyCustomProviders(t) {
+			if p.Identifier == "custom:bloud-sso" {
+				found = p
+				break
+			}
+		}
+		if found.Identifier != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("custom:bloud-sso provider never appeared for issuer %s", issuer)
+		}
+		time.Sleep(5 * time.Second)
+	}
+
+	if found.Issuer != issuer {
+		t.Errorf("provider issuer = %q, want %q", found.Issuer, issuer)
+	}
+	if found.Name != "Bloud SSO" {
+		t.Errorf("provider name = %q, want %q", found.Name, "Bloud SSO")
+	}
+	if found.ClientID != "appflowy-client" {
+		t.Errorf("provider client_id = %q, want %q", found.ClientID, "appflowy-client")
+	}
+	if !containsAll(found.Scopes, "openid", "email", "profile") {
+		t.Errorf("provider scopes = %v, want to include openid, email, profile", found.Scopes)
+	}
+	if found.AttributeMapping["email"] != "{claims.email}" {
+		t.Errorf("provider attribute_mapping = %v, want email mapped to {claims.email}", found.AttributeMapping)
+	}
+}
+
+// expectedAppFlowyIssuer mirrors appconfig.appflowySSOConfig: the TLS SSO
+// origin for AppFlowy's Authentik application.
+func expectedAppFlowyIssuer() string {
+	baseDomain := getEnvDefault("BLOUD_BASE_DOMAIN", "localhost")
+	tlsPort := 8443
+	if p := os.Getenv("BLOUD_TRAEFIK_TLS_PORT"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			tlsPort = n
+		}
+	}
+	host := "sso." + baseDomain
+	if tlsPort > 0 && tlsPort != 443 {
+		host = net.JoinHostPort(host, strconv.Itoa(tlsPort))
+	}
+	return "https://" + host + "/application/o/appflowy/"
+}
+
+// appflowyGotrueAdminToken authenticates the GoTrue admin using the same
+// derivation and priority as the host-agent (env > secrets.json > fallback,
+// then HKDF from the SSO host secret).
+func appflowyGotrueAdminToken(t *testing.T) string {
+	t.Helper()
+	hostSecret := os.Getenv("BLOUD_SSO_HOST_SECRET")
+	if hostSecret == "" {
+		hostSecret = readSecrets(t).SSOHostSecret
+	}
+	if hostSecret == "" {
+		hostSecret = "dev-secret-change-in-production" // config.Load fallback
+	}
+	password := sso.DeriveSecret(hostSecret, "appflowy:gotrue-admin-password", 24)
+	body, _ := json.Marshal(map[string]string{"email": "admin@appflowy.local", "password": password})
+	resp, err := http.Post(appflowyURL+"/gotrue/token?grant_type=password", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("gotrue admin login: %v", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("gotrue admin login: status %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil || out.AccessToken == "" {
+		t.Fatalf("gotrue admin login: no access_token in %s", data)
+	}
+	return out.AccessToken
+}
+
+type appflowyCustomProvider struct {
+	Identifier       string            `json:"identifier"`
+	Name             string            `json:"name"`
+	ProviderType     string            `json:"provider_type"`
+	Issuer           string            `json:"issuer"`
+	ClientID         string            `json:"client_id"`
+	Scopes           []string          `json:"scopes"`
+	AttributeMapping map[string]string `json:"attribute_mapping"`
+}
+
+func appflowyCustomProviders(t *testing.T) []appflowyCustomProvider {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, appflowyURL+"/gotrue/admin/custom-providers", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+appflowyGotrueAdminToken(t))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET custom-providers: %v", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET custom-providers: status %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		Providers []appflowyCustomProvider `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("parsing custom-providers: %v", err)
+	}
+	return out.Providers
+}
+
+func findCustomProvider(providers []appflowyCustomProvider, identifier string) (appflowyCustomProvider, bool) {
+	for _, p := range providers {
+		if p.Identifier == identifier {
+			return p, true
+		}
+	}
+	return appflowyCustomProvider{}, false
+}
+
+// authentikFindOAuth2Provider returns the pk of an Authentik OAuth2 provider
+// by exact name (0 when absent).
+func authentikFindOAuth2Provider(t *testing.T, name string) (int, error) {
+	t.Helper()
+	resp, err := http.Get(authentikURL + "/api/v3/providers/oauth2/?search=" + url.QueryEscape(name))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Results []struct {
+			PK   int    `json:"pk"`
+			Name string `json:"name"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, err
+	}
+	for _, r := range out.Results {
+		if r.Name == name {
+			return r.PK, nil
+		}
+	}
+	return 0, nil
+}
+
+func containsAll(scopes []string, want ...string) bool {
+	for _, w := range want {
+		found := false
+		for _, s := range scopes {
+			if s == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // TestAppFlowyUninstallCleanup uninstalls AppFlowy through the API and

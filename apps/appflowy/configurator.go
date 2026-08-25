@@ -30,16 +30,20 @@ const configFileName = "nginx.conf"
 // Configurator handles AppFlowy configuration. It is registered under the
 // nginx container name (the stack's entry point, which starts last), so
 // PreStart runs right before the nginx container is created and PostStart
-// runs once the whole stack is healthy.
+// runs once the whole stack is healthy. When sso is enabled, PostStart also
+// wires Bloud SSO into the stack (Authentik app + GoTrue OIDC provider);
+// see sso.go for the design.
 type Configurator struct {
 	port   int
+	sso    SSOConfig
 	logger *slog.Logger
 }
 
 // NewConfigurator creates a new AppFlowy configurator. port is the
-// host-published port of the stack's nginx container.
-func NewConfigurator(port int, logger *slog.Logger) *Configurator {
-	return &Configurator{port: port, logger: logger}
+// host-published port of the stack's nginx container. sso carries the Bloud
+// SSO wiring inputs (zero value = local sign-up only).
+func NewConfigurator(port int, sso SSOConfig, logger *slog.Logger) *Configurator {
+	return &Configurator{port: port, sso: sso, logger: logger}
 }
 
 func (c *Configurator) Name() string {
@@ -206,7 +210,19 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 // cloud API, and the GoTrue auth service must all answer through nginx.
 // The container health checks already gate convergence; this catches a
 // misrouted or partially wired stack before the app is promoted to RUNNING.
+// Then it wires Bloud SSO (best-effort — failures are logged and retried
+// next cycle, never blocking the app).
 func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
+	if err := c.verifyRoutes(ctx); err != nil {
+		return err
+	}
+	c.configureSSO(ctx)
+	return nil
+}
+
+// verifyRoutes polls the proxied routes until they answer (or the deadline
+// passes).
+func (c *Configurator) verifyRoutes(ctx context.Context) error {
 	routes := []struct {
 		path string
 		want int

@@ -22,7 +22,7 @@ func testLogger() *slog.Logger {
 }
 
 func TestPreStartWritesNginxConf(t *testing.T) {
-	c := NewConfigurator(8480, testLogger())
+	c := NewConfigurator(8480, SSOConfig{}, testLogger())
 	state := &configurator.AppState{DataPath: t.TempDir()}
 
 	changed, err := c.PreStart(context.Background(), state)
@@ -53,7 +53,7 @@ func TestPreStartWritesNginxConf(t *testing.T) {
 }
 
 func TestPreStartIdempotent(t *testing.T) {
-	c := NewConfigurator(8480, testLogger())
+	c := NewConfigurator(8480, SSOConfig{}, testLogger())
 	state := &configurator.AppState{DataPath: t.TempDir()}
 
 	if _, err := c.PreStart(context.Background(), state); err != nil {
@@ -69,7 +69,7 @@ func TestPreStartIdempotent(t *testing.T) {
 }
 
 func TestPreStartDetectsContentDrift(t *testing.T) {
-	c := NewConfigurator(8480, testLogger())
+	c := NewConfigurator(8480, SSOConfig{}, testLogger())
 	state := &configurator.AppState{DataPath: t.TempDir()}
 
 	if _, err := c.PreStart(context.Background(), state); err != nil {
@@ -94,7 +94,7 @@ func TestPreStartDetectsContentDrift(t *testing.T) {
 }
 
 func TestPreStartFixesUnreadableMode(t *testing.T) {
-	c := NewConfigurator(8480, testLogger())
+	c := NewConfigurator(8480, SSOConfig{}, testLogger())
 	state := &configurator.AppState{DataPath: t.TempDir()}
 
 	if _, err := c.PreStart(context.Background(), state); err != nil {
@@ -132,7 +132,7 @@ func TestPostStartVerifiesRoutes(t *testing.T) {
 	defer srv.Close()
 
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	c := NewConfigurator(port, testLogger())
+	c := NewConfigurator(port, SSOConfig{}, testLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -151,7 +151,7 @@ func TestPostStartFailsWhenRouteMissing(t *testing.T) {
 	defer srv.Close()
 
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	c := NewConfigurator(port, testLogger())
+	c := NewConfigurator(port, SSOConfig{}, testLogger())
 
 	// waitForRoute is the unit under test here; give it a short deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -173,7 +173,7 @@ func TestWaitForRouteSucceedsAfterDelay(t *testing.T) {
 	defer srv.Close()
 
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	c := NewConfigurator(port, testLogger())
+	c := NewConfigurator(port, SSOConfig{}, testLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -223,7 +223,7 @@ func TestWaitForRouteHonorsContextCancellation(t *testing.T) {
 		}
 	}()
 
-	c := NewConfigurator(port, testLogger())
+	c := NewConfigurator(port, SSOConfig{}, testLogger())
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 

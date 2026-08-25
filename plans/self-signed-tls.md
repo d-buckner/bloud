@@ -1,5 +1,44 @@
 # Plan: Project-Wide Self-Signed TLS (local CA) + AppFlowy SSO
 
+## Status: Phases 0–2 implemented and verified (2026-08-25); Phase 3 deferred
+
+- **Phase 0** — `internal/tlsca` (CA + 10-year leaf + bundle, generated once
+  at bootstrap, wired into `init-secrets` and server start). `./bloud setup`
+  fetches the CA to `.bloud/ca.crt` and prints a per-OS trust one-liner
+  (best-effort, never blocks setup).
+- **Phase 1** — Traefik `websecure` entrypoint on `BLOUD_TRAEFIK_TLS_PORT`
+  (8443) with the leaf mounted; TLS mirrors the HTTP routes on base,
+  authentik, and app routers. Verified live: `https://sso.localhost:8443`
+  serves the issuer; container→issuer TLS verifies against the CA bundle
+  (`curl --cacert` verify=0 from inside a podman network).
+- **Phase 2** — AppFlowy SSO wiring (Authentik `AppFlowy OAuth2 Provider` +
+  GoTrue `custom:bloud-sso`, idempotent/drift-replacing/best-effort,
+  `SSL_CERT_FILE` bundle mount + `extraHosts` on the gotrue container).
+  Verified: `./bloud validate --tier integration` fully green including
+  `TestAppFlowySSOWiring` (local issuer → wiring correctly skipped, no
+  provider in GoTrue or Authentik, app RUNNING); Playwright appflowy spec
+  green (SSO journey auto-skips on localhost, local sign-up journey passes
+  through Traefik).
+- **Phase 3** — deferred as designed (HTTP remains the default public
+  scheme; `BLOUD_PUBLIC_SCHEME` not yet introduced).
+
+### Findings that changed the implementation
+
+1. **Single-label-suffix wildcards are rejected by OpenSSL/NSS.** Verified
+   against a live TLS server: `*.example.com` matches `foo.example.com`,
+   but `*.localhost` does NOT match `sso.localhost` (error 62). Go and
+   BoringSSL accept it. The leaf therefore carries a **literal
+   `sso.<baseDomain>` SAN** in addition to `*.<baseDomain>`, so the issuer
+   verifies in every TLS stack.
+2. **podman `host-gateway` resolves to 169.254.1.2** inside the QEMU VM's
+   podman network (not 10.0.2.2) — and it is reachable, so
+   `extraHosts: sso.localhost:host-gateway` works as designed.
+3. **Orchestrator mount-source mkdir** guessed file vs directory mounts by
+   extension; the CA bundle (`.crt`) hit `mkdir: not a directory`. Fixed to
+   an existence check (only create missing directory sources).
+4. **`./bloud setup` required `limactl` on the QEMU backend** (Lima is
+   macOS-only). Prerequisites are now backend-conditional.
+
 ## Problem
 
 Bloud's SSO issuer (Authentik behind Traefik) is plain HTTP. This blocks real SSO
@@ -55,6 +94,35 @@ existing tooling keep working). The SSO issuer becomes
 provider. Users get a "Sign in with Bloud" button in AppFlowy's login screen;
 accounts are created on first SSO login, keyed by the Authentik email.
 
+### End-user trust model (no forced CA install)
+
+TLS trust is two-sided, and only the server side is automatic:
+
+- **Server side (Bloud host + containers) — automatic, invisible.** The gotrue
+  container (and any app that fetches the issuer server-side) trusts the local
+  CA via `SSL_CERT_FILE` → the CA bundle, wired into the container env by Bloud.
+  Discovery, JWKS fetch, and token exchange all happen here and succeed with no
+  user action.
+- **Browser side (end user's device) — not automatic.** The only place an end
+  user's browser touches the self-signed issuer is the OAuth redirect: after
+  clicking "Sign in with Bloud," the browser navigates to
+  `https://sso.localhost:8443/...` (the Authentik authorize page). The browser
+  does not trust the CA, so it shows a "Your connection is not private" warning.
+  The user clicks **Advanced → Proceed** once; the login completes and they are
+  bounced back into AppFlowy over plain HTTP.
+
+**End users are never required to install the CA.** The SSO flow works with just
+the click-through. Installing the CA (`./bloud setup` on the dev host, or a
+served `.crt` download) is an *optional convenience* that suppresses the
+warning; it is never a prerequisite and no Bloud feature is gated on it.
+
+The one-time warning is unavoidable: gotrue's custom-provider schema (migration
+`20260219120000`, verified in the image) enforces `https://%` on the OIDC
+`issuer` and `discovery_url`, *and* — for the `oauth2` provider type — on
+`authorization_url`, `token_url`, `userinfo_url`, and `jwks_uri`. Every schema
+path forces the browser's authorize navigation onto https, so the warning cannot
+be designed away; it can only be suppressed by trusting the CA.
+
 ### Certificate bootstrap
 
 - `init-secrets` (or system bootstrap, whichever runs first) generates:
@@ -69,9 +137,12 @@ accounts are created on first SSO login, keyed by the Authentik email.
 - A merged trust bundle (`<dataDir>/tls/ca-bundle.crt` = system bundle + Bloud
   CA) is what containers receive via `SSL_CERT_FILE`, so they keep validating
   public CAs too.
-- Host browser trust is a one-time dev setup step (`./bloud setup` / `./bloud dev`
-  detects missing trust and offers to install: `security add-trusted-certificate`
-  on macOS, `update-ca-certificates` / certutil on Linux). Documented in AGENTS.md.
+- Host browser trust (the **dev machine** running the VM) is an optional
+  one-time convenience (`./bloud setup` / `./bloud dev` detects missing trust
+  and offers to install: `security add-trusted-certificate` on macOS,
+  `update-ca-certificates` / certutil on Linux) that suppresses the cert
+  warning in the e2e/browser workflows. **End users on other devices never
+  install the CA** — see the end-user trust model above.
 
 ### Traefik
 
@@ -159,9 +230,11 @@ Configurator `PreStart` (idempotent, per reconcile):
    the mounted CA bundle.
 
 Resulting user journey: AppFlowy login screen → "Continue with Bloud" →
+browser navigates to `https://sso.localhost:8443/...` (**one-time cert warning,
+user clicks Advanced → Proceed** — the only friction; no CA install required) →
 Authentik (already-logged-in Bloud session → immediate redirect; otherwise the
-normal Bloud login) → gotrue callback → AppFlowy session. The GoTrue account
-is created on first SSO login with the verified Authentik email
+normal Bloud login) → gotrue callback over plain HTTP → AppFlowy session. The
+GoTrue account is created on first SSO login with the verified Authentik email
 (`GOTRUE_MAILER_AUTOCONFIRM=true` already set, so no email confirmation).
 
 What this does and does not change:
@@ -206,9 +279,13 @@ HTTPS" cutover.
 
 ## Risks / open questions
 
-- **Browser trust UX**: untrusted CA = cert warnings on every https URL.
-  Mitigation: HTTP stays fully functional (dual entrypoints); `./bloud setup`
-  installs the CA; the scheme default can stay `http` until Phase 3.
+- **End-user cert warning**: an untrusted CA shows a "Your connection is not
+  private" warning on the SSO redirect (`https://sso.localhost:8443`). This is
+  the accepted end-user friction — a one-time Advanced → Proceed click, **no CA
+  install required** (see end-user trust model). Hardening is optional:
+  `./bloud setup` trusts the CA on the dev host, and the scheme default can stay
+  `http` until Phase 3 so non-SSO browsing never sees a warning. e2e simulates
+  the click-through with Playwright `ignoreHTTPSErrors`.
 - **Authentik issuer over a second host**: needs the Phase 1 empirical check
   (dynamic vs explicit issuer mode). If explicit mode pins the issuer to the
   HTTP URL, the TLS route may need its own OIDC provider — still local to the

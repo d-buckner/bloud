@@ -4,9 +4,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -19,15 +21,17 @@ func cmdSetup() int {
 
 	allGood := true
 
-	// Check prerequisites
+	// Check prerequisites. Lima is only needed for the Lima backend
+	// (macOS); the QEMU backend (Linux) needs qemu-system-x86_64 instead.
 	prereqs := []struct{ name, label string }{
 		{"go", "Go"},
 		{"node", "Node.js"},
-		{"limactl", "Lima"},
 		{"podman", "Podman"},
 	}
 	if backendName() == "qemu" {
 		prereqs = append(prereqs, struct{ name, label string }{"qemu-system-x86_64", "QEMU"})
+	} else {
+		prereqs = append(prereqs, struct{ name, label string }{"limactl", "Lima"})
 	}
 	for _, tool := range prereqs {
 		fmt.Printf("  Checking %s...%s", tool.label, strings.Repeat(" ", 22-len(tool.label)))
@@ -67,6 +71,12 @@ func cmdSetup() int {
 	}
 	fmt.Printf("%s✓ built%s\n", colorGreen, colorReset)
 
+	// Optional convenience: fetch the Bloud local CA from the VM (when it is
+	// running) and print per-OS trust instructions. Never fails setup —
+	// trusting the CA on the dev host only suppresses the browser warning on
+	// the TLS SSO issuer; the SSO flow works without it.
+	trustLocalCA(projectRoot)
+
 	fmt.Println()
 	fmt.Printf("%s✓ Setup complete!%s\n", colorGreen, colorReset)
 	fmt.Println()
@@ -90,4 +100,36 @@ func checkCommand(name string) bool {
 		}
 	}
 	return false
+}
+
+// trustLocalCA fetches the Bloud local CA certificate from the VM and saves
+// it under .bloud/, then prints the one-liner to trust it on this host.
+// Best-effort: a stopped VM or a not-yet-bootstrapped runtime simply skips
+// the step (the CA is generated on the first host-agent boot).
+func trustLocalCA(projectRoot string) {
+	bk, err := devBackend()
+	if err != nil {
+		return
+	}
+	host := bk.Host()
+	remoteCA := filepath.Join(host.DataDirs().DataDir, "tls", "ca.crt")
+	localCA := filepath.Join(projectRoot, ".bloud", "ca.crt")
+	if err := os.MkdirAll(filepath.Dir(localCA), 0755); err != nil {
+		return
+	}
+	if err := host.Executor().CopyFrom(context.Background(), remoteCA, localCA); err != nil {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("  Bloud local CA (optional — trust on this machine to skip the")
+	fmt.Printf("  browser warning on https://sso.* TLS routes): %s\n", localCA)
+	switch runtime.GOOS {
+	case "darwin":
+		fmt.Println("    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain .bloud/ca.crt")
+	case "linux":
+		fmt.Println("    sudo cp .bloud/ca.crt /etc/pki/ca-trust/source/anchors/bloud-local.crt && sudo update-ca-trust")
+	default:
+		fmt.Println("    import the certificate into your system trust store")
+	}
 }

@@ -1,46 +1,77 @@
 # AppFlowy Integration
 
-## Status: Complete (browser-verified: local sign-up + re-run login; full VM e2e via `./bloud e2e`)
+## Status: Complete (SSO wired for public deployments; local sign-up verified in dev VM; full VM e2e via `./bloud e2e`)
 
 AppFlowy (https://appflowy.com) is an open-source, AI-native Notion
 alternative — docs, databases, and real-time collaboration. Bloud installs it
 as a nine-container stack with an nginx entry point and a self-hosted GoTrue
-(Supabase Auth) for identity. Users sign up locally; Bloud SSO is not used
-(see "Why no SSO" below).
+(Supabase Auth) for identity. Bloud SSO is wired **inside GoTrue** as a
+custom OIDC provider ("Bloud SSO" login button) so identities stay in
+Authentik; on local dev deployments (where GoTrue rejects localhost
+issuers) the stack falls back to local email/password sign-up.
 
 - Images (pinned): `appflowyinc/appflowy_cloud:0.17.12`,
   `appflowyinc/appflowy_web:0.16.18`, `appflowyinc/appflowy_worker:0.17.12`,
   `appflowyinc/appflowy_search:0.17.12`, `appflowyinc/gotrue:0.17.12`
-- SSO strategy: `none` (local email/password, auto-confirm)
+- SSO strategy: `none` at the routing layer (Traefik does not forward-auth
+  AppFlowy's routes — the SPA's API calls need a GoTrue session); Bloud SSO
+  is provided by the GoTrue custom OIDC provider managed by the configurator
+  (see "How SSO works" below)
 - Public URL: `http://appflowy.localhost:8080` (app subdomain on the Bloud
   base domain); `:8480` direct on the host for debugging
 
-## Why no SSO
+## How SSO works (and why the routing strategy is `none`)
 
 AppFlowy's auth layer is its own GoTrue container, and the cloud API
-authenticates GoTrue-minted JWTs on every request. Two Bloud SSO strategies
-were ruled out:
+authenticates GoTrue-minted JWTs on every request. That rules out the
+proxy-level strategies:
 
-1. **forward-auth** — Traefik could authenticate the browser, but the SPA's
-   API calls still need a valid GoTrue session token; proxy headers do not
-   reach the API layer.
-2. **native-oidc** — GoTrue *can* act as an OIDC relying party. This fork
-   (`appflowyinc/gotrue:0.17.12`) actually ships admin-registered **custom
-   OIDC providers** (`POST /admin/custom-providers`) that render as named
-   "Continue with …" buttons in AppFlowy's login UI — exactly the
-   "sign in with Bloud" button we want. But its schema enforces an HTTPS
-   issuer (`issuer like 'https://%'`, migration `20260219120000`), and
-   Bloud's self-host issuer is plain HTTP.
+- **forward-auth** — Traefik could authenticate the browser, but the SPA's
+  API calls still need a valid GoTrue session token; proxy headers do not
+  reach the API layer.
+- **native-oidc (routing)** — same problem: the app's own auth layer must
+  mint the JWT, so the SSO relationship has to live *inside* GoTrue.
 
-So AppFlowy runs with `strategy: none`: `GOTRUE_DISABLE_SIGNUP=false` and
-`GOTRUE_MAILER_AUTOCONFIRM=true` (no SMTP in the stack), which makes
-email/password sign-up work immediately out of the box.
+GoTrue provides exactly that: this fork (`appflowyinc/gotrue:0.17.12`)
+ships admin-registered **custom OIDC providers**
+(`POST /admin/custom-providers`) that render as named "Continue with …"
+buttons in AppFlowy's login UI. The configurator registers one against
+Bloud's SSO issuer on every reconcile:
 
-**Path to real SSO:** `plans/self-signed-tls.md` — a local CA + a Traefik
-TLS entrypoint make the issuer `https://sso.localhost:8443`, after which
-the configurator registers the OIDC provider in gotrue and users sign in
-through Bloud SSO. Blocked only on that TLS infrastructure; not on any
-AppFlowy-side limitation.
+1. **Authentik side** — ensures the `AppFlowy OAuth2 Provider` application
+   (client id `appflowy-client`, redirect URI
+   `http://appflowy.<base>/gotrue/callback`, launch URL the app's public
+   origin) exists, idempotently.
+2. **GoTrue side** — authenticates as the GoTrue admin (derived password)
+   and ensures the `custom:bloud-sso` provider: issuer
+   `https://sso.<base>:<tls-port>/application/o/appflowy/`, client id
+   `appflowy-client`, client secret (HKDF-derived, stable), scopes
+   `openid email profile`, attribute mapping `email → {claims.email}`
+   (Authentik's verified-email scope mapping). A drifted provider is
+   deleted and re-created.
+
+The issuer must be HTTPS (GoTrue schema, migration `20260219120000`), so
+Bloud serves it through the Traefik `websecure` entrypoint with the local
+CA leaf (`plans/self-signed-tls.md`). GoTrue's discovery/JWKS/token calls
+reach `https://sso.localhost:8443` via `extraHosts: sso.localhost:host-gateway`
+and trust the CA through the mounted bundle (`SSL_CERT_FILE`, a Go-runtime
+override that keeps system roots too).
+
+**Deployment classes.** GoTrue additionally *rejects local issuers* at
+registration (literal localhost/loopback hosts and hostnames resolving to
+private/loopback addresses — verified against the image). So:
+
+- **Public `BLOUD_BASE_DOMAIN`**: the wiring converges and users sign in
+  with the "Bloud SSO" button; identities are created in the Bloud
+  directory (Authentik), not a second store.
+- **localhost/loopback (dev VM)**: the configurator skips the wiring with
+  an info log — it is skipped, *not* failing. `GOTRUE_DISABLE_SIGNUP=false`
+  + `GOTRUE_MAILER_AUTOCONFIRM=true` (no SMTP) keep local email/password
+  sign-up working, so the app is fully usable either way.
+
+The wiring is best-effort by design: any failure (Authentik or GoTrue
+unreachable, a 400 validation rejection) is logged and retried on the next
+reconcile cycle — it never blocks the app from starting.
 
 ## Architecture
 
@@ -118,13 +149,15 @@ practice).
 
 | File | Purpose |
 |------|---------|
-| `apps/appflowy/metadata.yaml` | Nine containers, private network, port 8480, strategy `none` |
-| `apps/appflowy/configurator.go` | nginx.conf writer (PreStart), route verification (PostStart) |
+| `apps/appflowy/metadata.yaml` | Nine containers, private network, port 8480, strategy `none`; GoTrue CA bundle mount + `extraHosts` |
+| `apps/appflowy/configurator.go` | nginx.conf writer (PreStart), route verification + SSO wiring (PostStart) |
+| `apps/appflowy/sso.go` | SSO wiring: Authentik application + GoTrue custom provider (idempotent, drift-replacing, best-effort); `IssuerRegistrable` |
 | `apps/appflowy/configurator_test.go` | Unit tests: config drift/idempotency/mode, route polling + cancellation |
-| `services/host-agent/cmd/host-agent/main.go` | Template vars (derived secrets + public URLs) |
-| `services/host-agent/internal/appconfig/register.go` | Configurator registration |
-| `services/host-agent/internal/e2e/e2e_test.go` | Go integration tests (install/configure/uninstall) |
-| `e2e/tests/appflowy.spec.ts` | Playwright user journey (home tile → local login/sign-up → app) |
+| `apps/appflowy/sso_test.go` | Unit tests: SSO config derivation, provider create/idempotency/drift, local-issuer skip, failure survival |
+| `services/host-agent/cmd/host-agent/main.go` | Template vars (derived secrets + public URLs + CA bundle path) |
+| `services/host-agent/internal/appconfig/register.go` | Configurator registration (`appflowySSOConfig`) |
+| `services/host-agent/internal/e2e/e2e_test.go` | Go integration tests (install/configure/SSO-wiring/uninstall) |
+| `e2e/tests/appflowy.spec.ts` | Playwright journeys (SSO button on public deployments; local login/sign-up on localhost) |
 | `dev/lima.yaml`, `cli/backend/{lima,qemu}.go` | Host port 8480 forwarding |
 
 ## Key endpoints (through nginx, :8480 / :8080)
@@ -147,12 +180,20 @@ cd e2e && npx playwright test appflowy
 ./bloud validate --tier integration
 ```
 
-Behavioral assertions (not config values): the Playwright spec logs in (or,
-on a fresh deployment, signs up) a fixed local user through the real
-`/gotrue` proxy and lands in the app shell (`/app/:workspaceId`, sidebar
-visible); the Go integration test checks all three proxied health routes,
-performs a real GoTrue sign-up (200 + `access_token`), then asserts full
-uninstall cleanup (nine containers, data dir, routes).
+Behavioral assertions (not config values):
+
+- The Playwright spec runs the deployment-class journey: on a public
+  deployment it clicks the "Bloud SSO" button, completes the Authentik
+  login, and lands in the app shell (`/app/:workspaceId`); on a localhost
+  deployment it logs in (or, on a fresh deployment, signs up) a fixed local
+  user through the real `/gotrue` proxy and lands in the app shell.
+- The Go integration test (`TestAppFlowySSOWiring`) asserts the wiring
+  outcome per class: for a local issuer, no `custom:bloud-sso` provider in
+  GoTrue and no `AppFlowy OAuth2 Provider` in Authentik (wiring skipped,
+  app still RUNNING); for a public issuer, the provider exists with the
+  exact issuer, client id, scopes, and email attribute mapping. The
+  uninstall test then asserts full cleanup (nine containers, data dir,
+  routes).
 
 ## Known limitations
 
@@ -179,4 +220,6 @@ uninstall cleanup (nine containers, data dir, routes).
 | Presigned file links 403 | The `/minio-api` Host rewrite is broken (SigV4 mismatch) — compare `nginx.conf` with the version in `configurator.go`. |
 | Realtime/collab disconnects | `/ws` upgrade headers missing, or `APPFLOWY_WS_BASE_URL` points at the wrong origin — it must be `ws(s)://<public host>/ws/v2` (derived from `BLOUD_SSO_BASE_URL`). |
 | Worker never processes imports | Worker image has no healthcheck, so its failures are silent — check `podman logs apps-appflowy-worker` (Redis + DB URLs must be reachable on the internal network). |
+| "Bloud SSO" button missing from the login screen | The GoTrue provider is not registered. On localhost/loopback deployments this is expected (local issuers are rejected — local sign-up is the contract). On a public deployment: check the host-agent logs for `appflowy SSO` warnings (Authentik/GoTrue unreachable, or a 400 rejection) and confirm the issuer `https://sso.<base>:<tls-port>/application/o/appflowy/` is reachable from the VM. |
+| SSO login bounces back with an error | The GoTrue→Authentik round trip failed: verify the CA bundle is mounted in the gotrue container (`SSL_CERT_FILE`), that `https://sso.<base>` answers from inside the VM, and that the Authentik application's redirect URI matches `http://appflowy.<base>/gotrue/callback`. |
 | Slow first boot | Expected: ~1.5GB of images plus Rust migrations before the cloud listener opens. The healthcheck window covers ~2 minutes of migrations after the pull. |

@@ -187,9 +187,9 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 	joined := strings.Join(launch, " ")
 	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4G", "-smp 4",
 		"-daemonize", "-pidfile", "hostfwd=tcp::18088-:80", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
-		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
-		"hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283", "hostfwd=tcp::4533-:4533",
-		"hostfwd=tcp::3010-:3010", "hostfwd=tcp::8480-:8480", "seed.iso", "virtio-net-pci",
+		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8443-:8443",
+		"hostfwd=tcp::8096-:8096", "hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283",
+		"hostfwd=tcp::4533-:4533", "hostfwd=tcp::3010-:3010", "hostfwd=tcp::8480-:8480", "seed.iso", "virtio-net-pci",
 		"-virtfs", "mount_tag=host0"} {
 		if !strings.Contains(joined, wantArg) {
 			t.Errorf("launch args missing %q: %s", wantArg, joined)

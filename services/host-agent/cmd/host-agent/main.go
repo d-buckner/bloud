@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/tlsca"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -66,6 +68,14 @@ func runServer() {
 	// Ensure data directory exists for SQLite
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		logger.Error("failed to create data directory", "error", err)
+		os.Exit(1)
+	}
+
+	// Generate the local CA + leaf + trust bundle (idempotent; the CA is
+	// created once and never regenerated). Must exist before the orchestrator
+	// starts Traefik, which mounts the leaf certificate.
+	if err := tlsca.EnsureAll(cfg.DataDir, cfg.BaseDomain); err != nil {
+		logger.Error("failed to ensure TLS certificates", "error", err)
 		os.Exit(1)
 	}
 
@@ -137,6 +147,9 @@ func runServer() {
 		"appflowyMinioSecretKey":      sso.DeriveSecret(cfg.SSOHostSecret, "appflowy:minio-secret-key", 24),
 		"appflowyPublicURL":           appSubdomainURL(cfg.SSOBaseURL, "appflowy"),
 		"appflowyWsURL":               appWSSubdomainURL(cfg.SSOBaseURL, "appflowy"),
+		// CA trust bundle for containers that fetch the SSO issuer
+		// server-side (GoTrue): system roots + the Bloud local CA.
+		"appCaBundlePath": filepath.Join(cfg.DataDir, "tls", "ca-bundle.crt"),
 	}
 
 	// Register all configurators (system + user)
