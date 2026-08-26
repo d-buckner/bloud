@@ -7,7 +7,10 @@
 		fetchTailnet,
 		setTailnet,
 		deleteTailnet,
-		type TailnetConnection
+		fetchHosts,
+		setHosts,
+		type TailnetConnection,
+		type Host
 	} from '$lib/clients/settingsClient';
 	import {
 		fetchUsers,
@@ -39,8 +42,38 @@
 	let formAuthKey = $state('');
 	let formControlUrl = $state('');
 
+	// Hosts state
+	let loadedHosts = $state<Host[]>([]);
+	let hostList = $state<string[]>([]);
+	let draftPrimary = $state('');
+	let hostsLoading = $state(true);
+	let hostsError = $state('');
+	let savingHosts = $state(false);
+	let newHost = $state('');
+
+	const BUILTIN_HOSTS = ['localhost', 'bloud.local'];
+
+	const hostPrimary = $derived(
+		loadedHosts.find((h) => h.primary)?.hostname ?? 'localhost'
+	);
+
+	function isBuiltin(hostname: string) {
+		return BUILTIN_HOSTS.includes(hostname);
+	}
+
+	function hostsDirty() {
+		const loaded = loadedHosts.map((h) => h.hostname).sort();
+		const draft = [...hostList].sort();
+		if (loaded.length !== draft.length) return true;
+		for (let i = 0; i < loaded.length; i++) {
+			if (loaded[i] !== draft[i]) return true;
+		}
+		return hostPrimary !== draftPrimary;
+	}
+
 	const POLL_INTERVAL = 500;
 	const POLL_TIMEOUT = 10_000;
+	const HOSTS_APPLY_TIMEOUT = 20_000;
 
 	async function pollTailnet(
 		predicate: (conn: TailnetConnection | null) => boolean
@@ -69,8 +102,69 @@
 			loading = false;
 		}
 
+		loadHosts();
 		loadUsers();
 	});
+
+	async function loadHosts() {
+		hostsLoading = true;
+		hostsError = '';
+		try {
+			const res = await fetchHosts();
+			loadedHosts = res.hosts;
+			hostList = res.hosts.map((h) => h.hostname);
+			draftPrimary = res.hosts.find((h) => h.primary)?.hostname ?? 'localhost';
+		} catch (err) {
+			hostsError = err instanceof Error ? err.message : 'Failed to load hosts';
+		} finally {
+			hostsLoading = false;
+		}
+	}
+
+	function handleAddHost() {
+		const hostname = newHost.trim().toLowerCase();
+		if (!hostname || hostList.includes(hostname)) return;
+		hostList = [...hostList, hostname];
+		newHost = '';
+	}
+
+	function handleRemoveHost(hostname: string) {
+		hostList = hostList.filter((h) => h !== hostname);
+		if (draftPrimary === hostname) {
+			draftPrimary = hostPrimary;
+		}
+	}
+
+	async function handleSaveHosts() {
+		hostsError = '';
+		savingHosts = true;
+		try {
+			await setHosts({ hosts: hostList, primary: draftPrimary });
+			// Poll until the orchestrator applies the change (store update is
+			// fast; SSO re-provisioning runs afterwards in the background).
+			const deadline = Date.now() + HOSTS_APPLY_TIMEOUT;
+			for (;;) {
+				const res = await fetchHosts();
+				const applied =
+					res.hosts.length === hostList.length &&
+					res.hosts.every((h) => hostList.includes(h.hostname)) &&
+					res.hosts.some((h) => h.hostname === draftPrimary && h.primary);
+				if (applied) {
+					loadedHosts = res.hosts;
+					break;
+				}
+				if (Date.now() >= deadline) break;
+				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+			}
+		} catch (err) {
+			const msg = err && typeof err === 'object' && 'message' in err
+				? (err as { message: string }).message
+				: 'Failed to save hosts';
+			hostsError = msg;
+		} finally {
+			savingHosts = false;
+		}
+	}
 
 	async function loadUsers() {
 		usersLoading = true;
@@ -191,7 +285,66 @@
 		</div>
 	</header>
 
-	<section class="section">
+	<section class="section hosts-section">
+		<h2>Hosts</h2>
+		<p class="section-description">
+			Domains this Bloud is reachable under. Login works from every host; the
+			primary host determines the SSO URLs baked into your apps. Saving a new
+			host set briefly restarts SSO apps so they pick up the new domain.
+		</p>
+
+		{#if hostsLoading}
+			<div class="loading-state"><p>Loading hosts...</p></div>
+		{:else}
+			<div class="hosts-list">
+				{#each hostList as hostname (hostname)}
+					<div class="host-row">
+						<label class="host-radio" title="Make primary host">
+							<input type="radio" name="host-primary" bind:group={draftPrimary} value={hostname} />
+						</label>
+						<div class="host-info">
+							<span class="host-name mono">{hostname}</span>
+							{#if isBuiltin(hostname)}
+								<span class="role-badge">built-in</span>
+							{/if}
+							{#if hostPrimary === hostname}
+								<span class="role-badge admin">primary</span>
+							{/if}
+						</div>
+						{#if !isBuiltin(hostname)}
+							<button class="btn-sm btn-sm-danger" onclick={() => handleRemoveHost(hostname)} disabled={savingHosts}>
+								Remove
+							</button>
+						{/if}
+					</div>
+				{/each}
+			</div>
+
+			<form class="add-host-form" onsubmit={(e) => { e.preventDefault(); handleAddHost(); }}>
+				<input
+					type="text"
+					placeholder="e.g. bloud.example.com"
+					bind:value={newHost}
+					spellcheck="false"
+				/>
+				<button class="btn" type="submit" disabled={savingHosts || !newHost.trim() || hostList.includes(newHost.trim().toLowerCase())}>
+					Add Host
+				</button>
+			</form>
+
+			{#if hostsDirty()}
+				<button class="btn btn-primary" onclick={handleSaveHosts} disabled={savingHosts}>
+					{savingHosts ? 'Applying…' : 'Save Hosts'}
+				</button>
+			{/if}
+		{/if}
+
+		{#if hostsError}
+			<div class="error-message">{hostsError}</div>
+		{/if}
+	</section>
+
+	<section class="section tailnet-section">
 		<h2>Tailnet Connection</h2>
 		<p class="section-description">
 			Connect to a Tailscale or Headscale network to enable app sharing with other Bloud users.
@@ -540,12 +693,74 @@
 		border-radius: var(--radius-md);
 	}
 
-	/* Users section */
+	/* Hosts section */
+	.hosts-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		margin-bottom: var(--space-lg);
+	}
+
+	.host-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+	}
+
+	.host-radio input {
+		cursor: pointer;
+	}
+
+	.host-info {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		flex: 1;
+	}
+
+	.host-name {
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+	}
+
+	.add-host-form {
+		display: flex;
+		gap: var(--space-sm);
+		margin-bottom: var(--space-lg);
+	}
+
+	.add-host-form input {
+		flex: 1;
+		padding: var(--space-sm) var(--space-md);
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-elevated);
+		color: var(--color-text);
+	}
+
+	.add-host-form input:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+
+	.add-host-form input::placeholder {
+		color: var(--color-text-muted);
+	}
+
+	.tailnet-section,
 	.users-section {
 		margin-top: var(--space-2xl);
 		padding-top: var(--space-2xl);
 		border-top: 1px solid var(--color-border);
 	}
+
+	/* Users section */
 
 	.users-list {
 		display: flex;

@@ -21,6 +21,7 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -91,6 +92,15 @@ type OrchestratorConfig struct {
 	SSOIssuerURL     string // OIDC issuer base URL reachable from app containers (empty = SSOAuthentikURL)
 	TraefikGen       traefikgen.GeneratorInterface
 	ActiveTailnetID  func() string // returns the active tailnet connection ID (empty if none)
+
+	// Hosts is the live host-set state (multi-host SSO). When non-nil it
+	// supersedes the SSOBaseURL/SSOAuthentikURL/SSOIssuerURL strings above.
+	Hosts *hostset.State
+	// HostStore persists admin-configured custom hosts (nil = not supported).
+	HostStore store.HostStoreInterface
+	// OnHostsChanged fires after a SetHosts intent is applied (e.g. to
+	// re-ensure the dashboard OAuth app with the new redirect URIs).
+	OnHostsChanged func()
 }
 
 // Orchestrator drives app nodes through their lifecycle phases in dependency
@@ -142,6 +152,11 @@ type Orchestrator struct {
 	ssoIssuerURL     string
 	traefikGen       traefikgen.GeneratorInterface
 	activeTailnetID  func() string
+
+	// Multi-host SSO state (nil = legacy single-URL mode from config).
+	hosts         *hostset.State
+	hostStore     store.HostStoreInterface
+	onHostsChanged func()
 
 	// Start/Stop lifecycle
 	cancel  context.CancelFunc
@@ -197,6 +212,9 @@ func NewOrchestrator(
 		ssoIssuerURL:     config.SSOIssuerURL,
 		traefikGen:       config.TraefikGen,
 		activeTailnetID:  config.ActiveTailnetID,
+		hosts:            config.Hosts,
+		hostStore:        config.HostStore,
+		onHostsChanged:   config.OnHostsChanged,
 		queue:            NewIntentQueue(DefaultDebounce),
 		events:           config.Events,
 		started:          make(chan struct{}),
@@ -835,6 +853,19 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 		return fmt.Errorf("build container spec: %w", err)
 	}
 
+	// Native-OIDC app containers must reach the OIDC issuer by the same
+	// hostname browsers use (token exchange happens inside the container).
+	// The issuer hostname is made resolvable to this machine via host-gateway.
+	if o.hosts != nil && o.catalog != nil {
+		if catalogApp, err := o.catalog.Get(appCatalogID); err == nil && catalogApp != nil &&
+			catalogApp.SSO.Strategy == "native-oidc" {
+			ehost := o.hosts.Get().IssuerExtraHost()
+			if !hasExtraHost(spec.ExtraHosts, ehost) {
+				spec.ExtraHosts = append(spec.ExtraHosts, ehost)
+			}
+		}
+	}
+
 	for _, mount := range spec.Mounts {
 		// Skip file mounts - only create directories for directory mounts
 		if !strings.HasSuffix(mount.Source, ".yml") && !strings.HasSuffix(mount.Source, ".yaml") && !strings.HasSuffix(mount.Source, ".json") && !strings.HasSuffix(mount.Source, ".conf") {
@@ -848,6 +879,17 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 		return fmt.Errorf("ensure container: %w", err)
 	}
 	return nil
+}
+
+// hasExtraHost reports whether the spec already carries the given host:target
+// extraHosts entry.
+func hasExtraHost(entries []string, want string) bool {
+	for _, e := range entries {
+		if e == want {
+			return true
+		}
+	}
+	return false
 }
 
 // runFullLifecycle executes all lifecycle phases for a node that has not yet
@@ -1079,7 +1121,7 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 				state.LDAP = o.config.LDAPOutput
 			}
 		case "native-oidc":
-			if inputs := o.oidcInputsForApp(catalogApp); inputs != nil && len(inputs.RedirectURIs) > 0 {
+			if inputs := o.oidcInputsForApp(catalogApp, o.resolveSSOURLs()); inputs != nil && len(inputs.RedirectURIs) > 0 {
 				state.OIDC = &configurator.OIDCOutput{
 					ClientID:     inputs.ClientID,
 					ClientSecret: inputs.ClientSecret,
@@ -1093,13 +1135,57 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 	return state, nil
 }
 
+// ssoURLs is the resolved set of SSO URLs for one provisioning pass.
+type ssoURLs struct {
+	hostSet      hostset.HostSet
+	baseURLs     []string // every base URL for redirect-URI registration (primary first, then other hosts, then IPs)
+	hostSecret   string
+	authentikURL string // browser-accessible Authentik URL for OIDC issuer/discovery
+	issuerURL    string // OIDC issuer base URL reachable from app containers (empty = authentikURL)
+}
+
+// resolveSSOURLs computes the SSO URLs from the live host state when one is
+// configured, falling back to the legacy single-URL config fields. IP-based
+// base URLs (detected local addresses) are appended so login keeps working
+// when the host is reached by IP.
+func (o *Orchestrator) resolveSSOURLs() ssoURLs {
+	if o.hosts != nil {
+		hs := o.hosts.Get()
+		return ssoURLs{
+			hostSet:      hs,
+			baseURLs:     hs.AllBaseURLs(),
+			hostSecret:   o.ssoHostSecret,
+			authentikURL: hs.PrimaryBaseURL(),
+			issuerURL:    hs.IssuerBaseURL(),
+		}
+	}
+	return ssoURLs{
+		hostSet:      hostset.New([]string{hostFromURL(o.ssoBaseURL)}, hostFromURL(o.ssoBaseURL)),
+		baseURLs:     netutil.BuildBaseURLs(o.ssoBaseURL),
+		hostSecret:   o.ssoHostSecret,
+		authentikURL: o.ssoAuthentikURL,
+		issuerURL:    o.ssoIssuerURL,
+	}
+}
+
+func hostFromURL(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return "localhost"
+}
+
 // ensureSSO provisions the per-app SSO provider in the identity provider for
 // apps that use forward-auth or native-oidc SSO. It is a no-op when SSO is not
 // configured or the app's strategy is not provisioned in the identity provider
 // (e.g. "ldap", which is provisioned by the LDAP outpost). Safe to call on
 // every lifecycle pass (idempotent).
 func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
-	if o.sso == nil || o.ssoBaseURL == "" || o.catalog == nil {
+	if o.sso == nil || o.catalog == nil {
+		return nil
+	}
+	u := o.resolveSSOURLs()
+	if len(u.baseURLs) == 0 {
 		return nil
 	}
 	// Use the owning app's catalog ID for subdomain and provider name. Graph
@@ -1122,15 +1208,15 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 	switch catalogApp.SSO.Strategy {
 	case "forward-auth":
 		o.logger.Info("provisioning forward-auth SSO", "app", appID)
-		externalURL := buildAppSubdomainURL(o.ssoBaseURL, appID)
+		externalURL := buildAppSubdomainURL(u.hostSet.PrimaryBaseURL(), appID)
 		return o.sso.EnsureForwardAuth(appID, catalogApp.DisplayName, externalURL)
 
 	case "native-oidc":
-		if o.ssoHostSecret == "" || o.ssoAuthentikURL == "" {
+		if u.hostSecret == "" || u.authentikURL == "" {
 			o.logger.Warn("native-oidc SSO skipped: missing SSO host secret or Authentik URL", "app", appID)
 			return nil
 		}
-		inputs := o.oidcInputsForApp(catalogApp)
+		inputs := o.oidcInputsForApp(catalogApp, u)
 		if inputs == nil || len(inputs.RedirectURIs) == 0 {
 			return fmt.Errorf("building OIDC inputs for %q", appID)
 		}
@@ -1142,18 +1228,18 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 }
 
 // oidcInputsForApp computes the deterministic OIDC inputs for a native-oidc
-// app from the configured base URL and host secret. Returns nil when the SSO
+// app from the resolved SSO URLs and host secret. Returns nil when the SSO
 // base URL or host secret is not configured.
-func (o *Orchestrator) oidcInputsForApp(catalogApp *catalog.App) *sso.OIDCInputs {
-	if o.ssoBaseURL == "" || o.ssoHostSecret == "" {
+func (o *Orchestrator) oidcInputsForApp(catalogApp *catalog.App, u ssoURLs) *sso.OIDCInputs {
+	if len(u.baseURLs) == 0 || u.hostSecret == "" {
 		return nil
 	}
 	gen := sso.NewBlueprintGenerator(
-		o.ssoHostSecret,
+		u.hostSecret,
 		"",
-		netutil.BuildBaseURLs(o.ssoBaseURL),
-		o.ssoAuthentikURL,
-		o.ssoIssuerURL,
+		u.baseURLs,
+		u.authentikURL,
+		u.issuerURL,
 		"", // no blueprints dir: provisioning goes through the identity provider API
 		nil,
 	)

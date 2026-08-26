@@ -26,6 +26,12 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+// staticBaseURL adapts a fixed URL to the configurator's func() string base
+// URL interface (tests do not mutate hosts at runtime).
+func staticBaseURL(u string) func() string {
+	return func() string { return u }
+}
+
 type fakeSecrets struct {
 	password string
 }
@@ -47,23 +53,23 @@ func configuratorForServer(t *testing.T, handler http.Handler, secrets configura
 	require.NoError(t, err)
 	_, err = fmt.Sscanf(portStr, "%d", &port)
 	require.NoError(t, err)
-	return NewConfigurator(port, "http://localhost:8080", secrets, quietLogger())
+	return NewConfigurator(port, staticBaseURL("http://localhost:8080"), secrets, quietLogger())
 }
 
 func TestAppExternalURL_DerivesSubdomain(t *testing.T) {
-	c := NewConfigurator(0, "http://localhost:8080", nil, quietLogger())
+	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
 
-	c = NewConfigurator(0, "http://192.168.1.5:8080", nil, quietLogger())
+	c = NewConfigurator(0, staticBaseURL("http://192.168.1.5:8080"), nil, quietLogger())
 	assert.Equal(t, "http://affine.192.168.1.5:8080", c.appExternalURL())
 
-	c = NewConfigurator(0, "https://bloud.example.com", nil, quietLogger())
+	c = NewConfigurator(0, staticBaseURL("https://bloud.example.com"), nil, quietLogger())
 	assert.Equal(t, "https://affine.bloud.example.com", c.appExternalURL())
 
 	// Empty/invalid base URL falls back to the dev default.
-	c = NewConfigurator(0, "", nil, quietLogger())
+	c = NewConfigurator(0, staticBaseURL(""), nil, quietLogger())
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
-	c = NewConfigurator(0, "://nonsense", nil, quietLogger())
+	c = NewConfigurator(0, staticBaseURL("://nonsense"), nil, quietLogger())
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
 }
 
@@ -114,7 +120,7 @@ func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
 
 func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, "http://localhost:8080", nil, quietLogger())
+	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
 	state := &configurator.AppState{
 		DataPath:   dataPath,
 		SSOEnabled: true,
@@ -143,7 +149,7 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 
 func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, "http://localhost:8080", nil, quietLogger())
+	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
 	state := &configurator.AppState{DataPath: dataPath}
 
 	changed, err := c.PreStart(context.Background(), state)
@@ -162,7 +168,7 @@ func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 
 func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, "http://localhost:8080", nil, quietLogger())
+	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
 
 	mkState := func(secret string) *configurator.AppState {
 		return &configurator.AppState{
@@ -191,7 +197,7 @@ func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
 }
 
 func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, "http://localhost:8080", nil, quietLogger())
+	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
 	require.NoError(t, c.Remove(context.Background(), &configurator.AppState{}, true))
 }
 
@@ -238,6 +244,6 @@ func TestEnsureBootstrapAdmin_SurfacesOtherRejections(t *testing.T) {
 }
 
 func TestEnsureBootstrapAdmin_RequiresSecretsProvider(t *testing.T) {
-	c := NewConfigurator(0, "http://localhost:1", nil, quietLogger())
+	c := NewConfigurator(0, staticBaseURL("http://localhost:1"), nil, quietLogger())
 	require.Error(t, c.ensureBootstrapAdmin(context.Background()))
 }

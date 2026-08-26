@@ -5,9 +5,12 @@ package backend
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ func fakeQEMUBackend(t *testing.T, recorded *[][]string, sshReadyResults []bool)
 		dir:          t.TempDir(),
 		pollInterval: 0,
 		pollTimeout:  50 * time.Millisecond,
+		runGuest: func(context.Context, string) error { return nil },
 	}
 	b.newCmd = func(_ context.Context, name string, args ...string) *exec.Cmd {
 		*recorded = append(*recorded, append([]string{name}, args...))
@@ -147,9 +151,25 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 	if !strings.Contains(string(userData), "chown bloud:bloud") {
 		t.Errorf("user-data missing project dir ownership")
 	}
+	// First-boot installs the front proxy unit (base64-encoded script in runcmd).
+	if !strings.Contains(string(userData), "base64 -d | sh") {
+		t.Errorf("user-data missing front proxy install step")
+	}
 }
 
 func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
+	// Pin the guest-80 host port so the assertion is independent of whether
+	// the test host can bind privileged ports.
+	t.Setenv("BLOUD_QEMU_FWD_80", "18088")
+	// Pin the mDNS host port to a free port so the assertion holds whatever
+	// the test host's own responder owns (5353, or the previous pick).
+	pc, err := net.ListenPacket("udp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	mdnsHostPort := pc.LocalAddr().(*net.UDPAddr).Port
+	pc.Close()
+	t.Setenv("BLOUD_QEMU_FWD_5353", strconv.Itoa(mdnsHostPort))
 	var recorded [][]string
 	b := fakeQEMUBackend(t, &recorded, []bool{false, true})
 	if err := b.Create(context.Background()); err != nil {
@@ -166,13 +186,16 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 	}
 	joined := strings.Join(launch, " ")
 	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4G", "-smp 4",
-		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
+		"-daemonize", "-pidfile", "hostfwd=tcp::18088-:80", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
 		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
 		"hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283", "hostfwd=tcp::4533-:4533",
 		"hostfwd=tcp::3010-:3010", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
 		if !strings.Contains(joined, wantArg) {
 			t.Errorf("launch args missing %q: %s", wantArg, joined)
 		}
+	}
+	if !strings.Contains(joined, fmt.Sprintf("hostfwd=udp::%d-:5353", mdnsHostPort)) {
+		t.Errorf("launch args missing mDNS forward: %s", joined)
 	}
 }
 
@@ -237,4 +260,28 @@ func slicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestCanBindHostUDPPort(t *testing.T) {
+	// Grab a free ephemeral UDP port.
+	pc, err := net.ListenPacket("udp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	port := strconv.Itoa(pc.LocalAddr().(*net.UDPAddr).Port)
+	pc.Close()
+
+	// A port no one holds is bindable.
+	if !canBindHostUDPPort(port) {
+		t.Fatalf("canBindHostUDPPort(%s) = false, want true", port)
+	}
+	// A port the test itself holds is not.
+	hold, err := net.ListenPacket("udp", "0.0.0.0:"+port)
+	if err != nil {
+		t.Fatalf("hold ListenPacket: %v", err)
+	}
+	defer hold.Close()
+	if canBindHostUDPPort(port) {
+		t.Errorf("canBindHostUDPPort(%s) = true while held, want false", port)
+	}
 }

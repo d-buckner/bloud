@@ -14,6 +14,8 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -69,6 +71,10 @@ type ServerConfig struct {
 	AuthentikPort     int
 	TSAuthKey         string
 	HostLabel         string
+	// Hosts is the live host-set state (multi-host SSO); nil disables the
+	// host endpoints and multi-host URL resolution.
+	Hosts     *hostset.State
+	HostStore store.HostStoreInterface
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
 	TrustedLocalNets []string
@@ -77,6 +83,9 @@ type ServerConfig struct {
 	Registry         configurator.RegistryInterface
 	ContainerRuntime containerruntime.Runtime
 	TemplateVars     map[string]string
+	// EventsBus is the shared event bus (SSE streams, background consumers
+	// like the mDNS publisher). Nil creates one internally.
+	EventsBus *eventbus.Bus
 }
 
 // NewServer creates a new HTTP server instance. It delegates dependency

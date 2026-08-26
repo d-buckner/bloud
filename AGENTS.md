@@ -69,6 +69,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 
 | Port | What | Audience |
 |---|---|---|
+| **80** | **Front proxy** — a thin root-level reverse proxy (`host-agent front-proxy`, systemd unit `bloud-front.service`) that forwards to Traefik `:8080` and serves a "starting up" page while the stack boots. It owns port 80 so Traefik and every container stay rootless. | end users (default browser port) |
 | **8080** | **Traefik — the public-facing port.** Users hit apps here (`jellyfin.localhost:8080`, `immich.localhost:8080`, …). Browser/e2e user journeys must go through this. | end users |
 | **3000** | **host-agent internal API** (install/uninstall/status, session auth with loopback/trusted-net bypass). Operator/automation surface, not the user surface. | ops, CLI, e2e API helpers |
 | 8096 | Jellyfin container (direct) | debugging |
@@ -76,10 +77,40 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 3389 | LDAP outpost (direct) | debugging |
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
+| 5353 (UDP) | mDNS — the guest's `.local` announcer (`bloud.local`, `<app>.bloud.local`); unicast queries only, since the VM boundary does not relay multicast | debugging / LAN reachability |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
 (10.0.2.2), so `./bloud dev` sets `BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24` for the
 host-agent; Lima forwards to loopback and needs none.
+
+mDNS note: the QEMU launch args include a unicast UDP 5353 forward
+(`hostfwd=udp::<host>-:5353`) when the host can bind the host port. Hosts
+that run their own responder (avahi-daemon on Linux, mDNSResponder on macOS)
+own 5353; then `./bloud dev` prints a note and skips the forward — stop
+avahi-daemon to enable it, or verify with `BLOUD_QEMU_FWD_5353=<free-port>`
+and `dig @127.0.0.1 -p <free-port> bloud.local A` (standard mDNS clients only
+speak 5353, so a remap serves verification only). With the forward in place,
+unicast queries reach the guest's announcer, which answers via unicast
+(RFC 6762 §6.7); LAN-wide multicast discovery from a dev VM is not possible
+(slirp does not relay multicast). In the dev VM the announcer also skips its
+multicast announcements and TTL-0 goodbyes entirely (`netutil.OnSlirp`,
+gateway 10.0.2.2): they could never reach the LAN, and slirp's hostfwd socket
+captures the guest's own port-5353 multicast, which corrupts its state and
+breaks the unicast reply path. On a real host the announcer binds 5353
+natively, announces normally, and full discovery works. Lima:
+`guestPort: 5353` in `dev/lima.yaml` (its default GRPC forwarder carries UDP).
+
+Port-80 note: the guest's port 80 (front proxy) is host-forwarded like every
+other port. Non-root hosts cannot bind host port 80, so when it is not
+bindable `./bloud dev` automatically forwards guest 80 to host **8088** (then
+8089/8090) with a note on stdout — no-port URLs like `http://jellyfin.localhost`
+then need `sudo setcap 'cap_net_bind_service=+ep' $(command -v
+qemu-system-x86_64)` (or `BLOUD_QEMU_FWD_80=<port>`). Existing VMs are
+restarted automatically when the QEMU launch args change (recorded in
+`.bloud/qemu/<instance>/<instance>.launch-args`). Lima VMs pick up the port-80
+forward + `bloud-front.service` by recreating the instance
+(`limactl delete bloud-dev && limactl create --name=bloud-dev dev/lima.yaml &&
+limactl start bloud-dev`).
 
 ## Daily dev loop
 
@@ -212,13 +243,40 @@ The CLI resolves the project root by walking up from cwd looking for
    `host-agent init-secrets`) > hardcoded dev fallback. Key env:
    `BLOUD_DATA_DIR`, `BLOUD_APPS_DIR`, `BLOUD_TRAEFIK_DYNAMIC_DIR`,
    `BLOUD_PODMAN_SOCKET`, `BLOUD_PORT` (3000), `BLOUD_BASE_DOMAIN`,
-   `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`
-   (issuer is the in-container name, e.g. `http://sso.localhost:8080`, mapped
-   via `extraHosts: sso.localhost:host-gateway`), `BLOUD_TRUSTED_LOCAL_NETS`.
-9. **Frontend is a static build** served by host-agent from
-   `<host-agent-dir>/web/build` (embedded `dev_dashboard.html` is only the
-   missing-build fallback). Rebuild the frontend before deploying.
-10. **Managed containers are labeled** `io.bloud.managed=true` and
+   `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`,
+   `BLOUD_TRUSTED_LOCAL_NETS`.
+9. **Hosts are a first-class setting.** The instance is reachable under a set
+   of hostnames — built-ins `localhost` + `bloud.local`, plus admin-added
+   custom domains (Settings → Hosts, `GET/PUT /api/settings/hosts`). One host
+   is **primary** (drives the OIDC issuer + launch URLs). Admin-saved hosts
+   win over `BLOUD_BASE_DOMAIN`/`BLOUD_SSO_BASE_URL`, which only seed the
+   initial state. URL rules: `localhost` → `http://localhost:8080` (dev/e2e
+   parity), any other host → `http://<host>` (port 80, served by the front
+   proxy). Issuer: `http://sso.localhost:8080` for a localhost primary
+   (containers resolve `sso.localhost` via `extraHosts`), `http://<primary>`
+   otherwise (the orchestrator injects `<primary>:host-gateway` into
+   native-oidc containers so the issuer resolves inside them). Host changes
+   flow through the orchestrator (`SetHostsIntent`): persist, update the live
+   `hostset.State`, reset SSO apps + `apps-authentik-server` so the lifecycle
+   re-provisions Authentik (redirect URIs, outpost browser URL) and rewrites
+   app configs, then re-ensure the dashboard OAuth app. Traefik routes stay
+   domain-agnostic (`HostRegexp`), so they match every host without changes.
+   mDNS: host-agent advertises every `.local` host (and each installed app's
+   `<app>.<host>` subdomain) as an A record for the host's primary LAN IP
+   (`internal/mdns`, port 5353; TTL-0 goodbyes on removal), so LAN devices
+   resolve `http://bloud.local` and `http://jellyfin.bloud.local` with no DNS
+   configuration. Only `.local` hosts are advertised — custom domains use
+   real DNS.
+10. **The front proxy owns port 80** (`host-agent front-proxy`,
+    `bloud-front.service`, root). It health-gates on the host-agent
+    (`GET :3000/api/health`, which only opens after system convergence) and
+    proxies to `:8080` preserving the `Host` header; while the stack is down
+    it serves an auto-reloading "starting up" page. Do not bind :80 from any
+    rootless container instead — that is the point of this split.
+11. **Frontend is a static build** served by host-agent from
+    `<host-agent-dir>/web/build` (embedded `dev_dashboard.html` is only the
+    missing-build fallback). Rebuild the frontend before deploying.
+12. **Managed containers are labeled** `io.bloud.managed=true` and
     `io.bloud.app=<name>`; container names follow `apps-<name>` /
     `apps-<name>-<component>`. e2e assertions rely on these labels.
 
@@ -233,7 +291,8 @@ The CLI resolves the project root by walking up from cwd looking for
   `POST /api/apps/{name}/uninstall`, `PATCH /api/apps/{name}/rename`,
   home + logs routers.
 - Admin: `POST /api/apps/refresh-catalog`, `GET /api/system/rebuild/stream`,
-  settings, sharing, remote-apps routers.
+  settings (incl. `GET/PUT /api/settings/hosts` — the multi-host setting),
+  sharing, remote-apps routers.
 
 ## Adding an app
 

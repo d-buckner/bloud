@@ -24,7 +24,7 @@ type ServerConfigurator struct {
 	tokenKey          string // API token key for host-agent
 	ldapBindPassword  string // LDAP bind password for service account
 	brandingCSS       string // Inline CSS to push to Authentik brand API
-	baseURL           string // External base URL for embedded outpost host
+	baseURLFn         func() string // Current external base URL (host-set aware; read on every PostStart)
 	appsDir           string // Path to the apps directory (for auth.yaml blueprint)
 	templateVars      map[string]string // Shared mutable map; PostStart writes authentikLdapToken
 }
@@ -47,9 +47,11 @@ func NewServerConfigurator(
 	}
 }
 
-// WithBaseURL sets the external base URL used to configure the embedded outpost host.
-func (c *ServerConfigurator) WithBaseURL(baseURL string) *ServerConfigurator {
-	c.baseURL = baseURL
+// WithBaseURLFn sets a supplier for the external base URL used to configure
+// the embedded outpost host. It is read on every PostStart so host changes
+// made in the UI take effect without re-registering the configurator.
+func (c *ServerConfigurator) WithBaseURLFn(baseURLFn func() string) *ServerConfigurator {
+	c.baseURLFn = baseURLFn
 	return c
 }
 
@@ -152,9 +154,11 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 	}
 
 	// Step 6: Set embedded outpost host.
-	if c.baseURL != "" {
-		if err := client.EnsureEmbeddedOutpostHost(c.baseURL); err != nil {
-			return fmt.Errorf("set embedded outpost host: %w", err)
+	if c.baseURLFn != nil {
+		if baseURL := c.baseURLFn(); baseURL != "" {
+			if err := client.EnsureEmbeddedOutpostHost(baseURL); err != nil {
+				return fmt.Errorf("set embedded outpost host: %w", err)
+			}
 		}
 	}
 

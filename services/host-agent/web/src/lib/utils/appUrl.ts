@@ -12,12 +12,14 @@ export function getAppUrl(appName: string, path: string = ''): string {
 	const { hostname, port, protocol } = window.location;
 	const portSuffix = port ? `:${port}` : '';
 	const pathPrefix = path && !path.startsWith('/') ? '/' : '';
-	// For tailnet domains (bloud.foo.ts.net with 3+ labels), strip the "bloud."
-	// prefix so apps use the tailnet domain (e.g., navidrome.foo.ts.net).
-	// For everything else (localhost, bloud.local), use the hostname as-is.
+	// For Tailscale MagicDNS tailnet domains (bloud.foo.ts.net, always 4
+	// labels ending in .ts.net), strip the "bloud." prefix so apps use the
+	// tailnet domain (e.g., navidrome.foo.ts.net). Any other hostname —
+	// localhost, bloud.local, or a custom domain like bloud.example.com — is
+	// used as-is.
 	const labels = hostname.split('.');
 	const baseDomain =
-		hostname.startsWith('bloud.') && labels.length >= 3
+		hostname.startsWith('bloud.') && hostname.endsWith('.ts.net') && labels.length >= 4
 			? labels.slice(1).join('.')
 			: hostname;
 	return `${protocol}//${appName}.${baseDomain}${portSuffix}${pathPrefix}${path}`;

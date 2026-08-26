@@ -76,7 +76,10 @@ func NewRouter(
 	// Event bus: broadcasts app-store changes and orchestrator events to the
 	// SSE stream (/api/apps/events). The bus only reads state; the
 	// orchestrator remains the single writer.
-	eventsBus := eventbus.New()
+	eventsBus := cfg.EventsBus
+	if eventsBus == nil {
+		eventsBus = eventbus.New()
+	}
 	appStore.SetOnChange(func() {
 		eventsBus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
 	})
@@ -115,6 +118,17 @@ func NewRouter(
 		refreshCatalogHelper(catalogCache, logger, cfg.AppsDir)
 	}
 
+	// Auth config ref: created before the orchestrator because the
+	// orchestrator's OnHostsChanged hook re-ensures it after a host change.
+	authRef := options.authConfig
+	if authRef == nil {
+		authRef = newAuthConfigRef(nil)
+	}
+	authRef.SetEnsure(func() *AuthConfig {
+		return initAuthHelper(authentikClient, sessionStore, cfg, logger)
+	})
+	authRef.Set(initAuthHelper(authentikClient, sessionStore, cfg, logger))
+
 	// Orchestrator: use provided one if set, else create real (unless noOrchestrator is true).
 	var ( 
 		orchCaller  orchestratorCaller
@@ -126,20 +140,11 @@ func NewRouter(
 			realOrch = ro
 		}
 	} else if !options.noOrchestrator {
-		realOrch = initOrchestratorHelper(db, appStore, catalogCache, cfg, logger, tailnetStore, authentikClient, eventsBus)
+		realOrch = initOrchestratorHelper(db, appStore, catalogCache, cfg, logger, tailnetStore, authentikClient, eventsBus, func() { authRef.Ensure() })
 		if realOrch != nil {
 			orchCaller = realOrch
 		}
 	}
-
-	authRef := options.authConfig
-	if authRef == nil {
-		authRef = newAuthConfigRef(nil)
-	}
-	authRef.SetEnsure(func() *AuthConfig {
-		return initAuthHelper(authentikClient, sessionStore, cfg, logger)
-	})
-	authRef.Set(initAuthHelper(authentikClient, sessionStore, cfg, logger))
 
 	launchPathsFn := func() map[string]string {
 		paths := make(map[string]string)
@@ -181,7 +186,7 @@ func NewRouter(
 	}
 	remoteAppsMod := NewRemoteAppsModule(remoteAppStore, catalogCache, orchCaller, logger)
 
-	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, logger)
+	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, cfg.Hosts, cfg.HostStore, logger)
 
 	gateway := sharing.NewGatewayManager(nil, nil, func() string { return "" }, sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
 	sharingMod := NewSharingModule(
@@ -313,6 +318,7 @@ func initOrchestratorHelper(
 	tailnetStore *store.TailnetStore,
 	authentikClient *authentik.Client,
 	eventsBus *eventbus.Bus,
+	onHostsChanged func(),
 ) *orchestrator.Orchestrator {
 	traefikConfigPath := filepath.Join(cfg.TraefikDynamicDir, "apps-routes.yml")
 	logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
@@ -419,6 +425,9 @@ func initOrchestratorHelper(
 				}
 				return conn.ID
 			},
+			Hosts:       cfg.Hosts,
+			HostStore:   cfg.HostStore,
+			OnHostsChanged: onHostsChanged,
 		},
 	)
 	logger.Info("lifecycle orchestrator initialized")
@@ -434,8 +443,21 @@ func initAuthHelper(
 	cfg ServerConfig,
 	logger *slog.Logger,
 ) *AuthConfig {
-	if authentikClient == nil || sessionStore == nil || cfg.SSOBaseURL == "" {
-		logger.Info("authentication disabled (missing Authentik client, session store, or base URL)")
+	if authentikClient == nil || sessionStore == nil {
+		logger.Info("authentication disabled (missing Authentik client or session store)")
+		return nil
+	}
+	// Base URLs come from the live host set when configured, so redirect
+	// URIs follow host changes made in the UI. Falls back to the legacy
+	// single SSO base URL env value.
+	var baseURLs []string
+	if cfg.Hosts != nil {
+		baseURLs = cfg.Hosts.Get().AllBaseURLs()
+	} else if cfg.SSOBaseURL != "" {
+		baseURLs = netutil.BuildBaseURLs(cfg.SSOBaseURL)
+	}
+	if len(baseURLs) == 0 {
+		logger.Info("authentication disabled (no SSO base URLs configured)")
 		return nil
 	}
 	if !authentikClient.IsAvailable() {
@@ -444,7 +466,6 @@ func initAuthHelper(
 	}
 
 	clientSecret := deriveSecretHelper(cfg.SSOHostSecret, "bloud-oauth", 32)
-	baseURLs := netutil.BuildBaseURLs(cfg.SSOBaseURL)
 	logger.Info("registering OAuth redirect URIs", "baseURLs", baseURLs)
 
 	oidcConfig, err := authentikClient.EnsureBloudOAuthApp(baseURLs, clientSecret)
