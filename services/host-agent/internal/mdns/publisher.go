@@ -30,6 +30,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 )
 
 const (
@@ -64,18 +65,25 @@ type Options struct {
 	// NewSocket builds the mDNS socket for the interface carrying ip.
 	// Production binds the mDNS port; tests inject a fake.
 	NewSocket func(ip net.IP) (Socket, error)
+	// MulticastAnnounce reports whether multicast announcements can reach
+	// the LAN. On QEMU's user-mode (slirp) network they cannot — and the
+	// guest's own announcements corrupt slirp's port-5353 hostfwd, breaking
+	// the unicast query path — so there the publisher answers unicast
+	// queries only. Default: true unless netutil.OnSlirp().
+	MulticastAnnounce func() bool
 }
 
 // Publisher reconciles the advertised mDNS record set against live host and
 // app state.
 type Publisher struct {
-	logger    *slog.Logger
-	hosts     *hostset.State
-	apps      func() []string
-	ip        func() string
-	events    *eventbus.Bus
-	interval  time.Duration
-	newSocket func(ip net.IP) (Socket, error)
+	logger            *slog.Logger
+	hosts             *hostset.State
+	apps              func() []string
+	ip                func() string
+	events            *eventbus.Bus
+	interval          time.Duration
+	newSocket         func(ip net.IP) (Socket, error)
+	multicastAnnounce func() bool
 
 	mu           sync.Mutex
 	socket       Socket
@@ -95,15 +103,19 @@ func New(opts Options) *Publisher {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.MulticastAnnounce == nil {
+		opts.MulticastAnnounce = func() bool { return !netutil.OnSlirp() }
+	}
 	return &Publisher{
-		logger:    opts.Logger,
-		hosts:     opts.Hosts,
-		apps:      opts.Apps,
-		ip:        opts.IP,
-		events:    opts.Events,
-		interval:  opts.ReconcileInterval,
-		newSocket: opts.NewSocket,
-		live:      map[string]struct{}{},
+		logger:            opts.Logger,
+		hosts:             opts.Hosts,
+		apps:              opts.Apps,
+		ip:                opts.IP,
+		events:            opts.Events,
+		interval:          opts.ReconcileInterval,
+		newSocket:         opts.NewSocket,
+		multicastAnnounce: opts.MulticastAnnounce,
+		live:              map[string]struct{}{},
 	}
 }
 
@@ -232,7 +244,11 @@ func (p *Publisher) Reconcile() {
 		p.mu.Lock()
 		p.lastAnnounce = time.Now()
 		p.mu.Unlock()
-		p.logger.Info("mdns: advertising", "names", announcements, "ip", ip)
+		if p.multicastAnnounce() {
+			p.logger.Info("mdns: advertising", "names", announcements, "ip", ip)
+		} else {
+			p.logger.Info("mdns: answering unicast queries only (multicast cannot reach the LAN on this network)", "names", announcements, "ip", ip)
+		}
 	}
 }
 
@@ -253,10 +269,14 @@ func (p *Publisher) startReader(socket Socket) {
 
 // handleQuery answers A questions for the advertised names; everything else
 // is ignored (the publisher is a host announcer, not a general mDNS server).
+// Unicast queries — QU bit set, or arriving from a unicast address (e.g. a
+// host reaching the announcer through a forwarded UDP 5353 in a dev VM) —
+// are answered via unicast as RFC 6762 §6.7 requires; a multicast reply to
+// such a query would never reach the sender.
 func (p *Publisher) handleQuery(socket Socket, msg *dns.Msg, from net.Addr) error {
 	p.mu.Lock()
 	ip := p.currentIP
-	unicast := hasUnicastFlag(msg)
+	respondUnicast := hasUnicastFlag(msg) || !isMulticastSource(from)
 	var names []string
 	seen := map[string]struct{}{}
 	for _, q := range msg.Question {
@@ -287,15 +307,19 @@ func (p *Publisher) handleQuery(socket Socket, msg *dns.Msg, from net.Addr) erro
 		records = append(records, aRecord(n, ipAddr))
 	}
 	resp := answerMsg(msg, records)
-	if unicast {
+	if respondUnicast {
 		return socket.Unicast(from, resp)
 	}
 	return socket.Multicast(resp)
 }
 
 // refreshIfDue re-announces all live records once they are a full TTL old,
-// keeping resolver caches fresh (RFC 6762 §10.1).
+// keeping resolver caches fresh (RFC 6762 §10.1). It is a no-op when
+// multicast announcements are disabled (e.g. QEMU slirp networks).
 func (p *Publisher) refreshIfDue() {
+	if !p.multicastAnnounce() {
+		return
+	}
 	p.mu.Lock()
 	socket := p.socket
 	ip := p.currentIP
@@ -319,8 +343,12 @@ func (p *Publisher) refreshIfDue() {
 }
 
 // announce sends the A records for names twice, burstGap apart (RFC 6762
-// §8.3.1 initial announcement sequence).
+// §8.3.1 initial announcement sequence). It is a no-op when multicast
+// announcements are disabled (e.g. QEMU slirp networks).
 func (p *Publisher) announce(socket Socket, ip string, names []string) {
+	if !p.multicastAnnounce() {
+		return
+	}
 	ipAddr := net.ParseIP(ip)
 	records := make([]dns.RR, 0, len(names))
 	for _, n := range names {
@@ -338,8 +366,13 @@ func (p *Publisher) announce(socket Socket, ip string, names []string) {
 }
 
 // sendGoodbyes withdraws names with TTL-0 records (RFC 6762 §10.1) so
-// resolvers drop them immediately.
+// resolvers drop them immediately. It is a no-op when multicast
+// announcements are disabled (e.g. QEMU slirp networks) — nothing was ever
+// announced to withdraw.
 func (p *Publisher) sendGoodbyes(socket Socket, ip string, names []string) {
+	if !p.multicastAnnounce() {
+		return
+	}
 	if socket == nil || len(names) == 0 {
 		return
 	}

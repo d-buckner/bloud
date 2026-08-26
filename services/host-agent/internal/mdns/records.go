@@ -106,6 +106,16 @@ func hasUnicastFlag(msg *dns.Msg) bool {
 	return false
 }
 
+// isMulticastSource reports whether from is an mDNS multicast group address,
+// i.e. whether the query arrived via multicast. A query arriving from any
+// other address is a unicast query and must be answered with a unicast
+// response (RFC 6762 §6.7) — in particular when the announcer is only
+// reachable through a unicast port forward (dev VMs).
+func isMulticastSource(from net.Addr) bool {
+	ua, ok := from.(*net.UDPAddr)
+	return ok && ua.IP.IsMulticast()
+}
+
 func containsString(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {

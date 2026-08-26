@@ -125,6 +125,9 @@ func newTestEnv(t *testing.T, hosts, apps []string, ip string) *testEnv {
 		Hosts:  env.hostState,
 		Apps:   func() []string { return env.apps },
 		IP:     func() string { return env.ip },
+		// Tests assert on announcement behaviour explicitly; never let the
+		// real slirp detection of the test host decide it.
+		MulticastAnnounce: func() bool { return true },
 		NewSocket: func(_ net.IP) (Socket, error) {
 			if env.fail {
 				return nil, fmt.Errorf("injected socket failure")
@@ -297,11 +300,12 @@ func TestHandleQueryAnswersOnlyAdvertisedNames(t *testing.T) {
 	env.p.Reconcile()
 	s := env.sockets[0]
 
-	// Advertised name: answered via multicast.
+	// Multicast query for an advertised name: answered via multicast.
+	fromMC := &net.UDPAddr{IP: net.ParseIP("224.0.0.251"), Port: 5353}
 	hit := new(dns.Msg)
 	hit.SetQuestion(dns.Fqdn("bloud.local"), dns.TypeA)
 	hit.Id = 1 // SetQuestion randomizes Id, so set it afterwards
-	if err := env.p.handleQuery(s, hit, &net.UDPAddr{IP: net.ParseIP("192.168.1.99"), Port: 50000}); err != nil {
+	if err := env.p.handleQuery(s, hit, fromMC); err != nil {
 		t.Fatalf("handleQuery: %v", err)
 	}
 	if got := s.multicastCount(); got != 3 { // 2 burst + 1 answer
@@ -322,7 +326,7 @@ func TestHandleQueryAnswersOnlyAdvertisedNames(t *testing.T) {
 	miss := new(dns.Msg)
 	miss.Id = 2
 	miss.SetQuestion(dns.Fqdn("unknown.bloud.local"), dns.TypeA)
-	if err := env.p.handleQuery(s, miss, &net.UDPAddr{IP: net.ParseIP("192.168.1.99"), Port: 50001}); err != nil {
+	if err := env.p.handleQuery(s, miss, fromMC); err != nil {
 		t.Fatalf("handleQuery: %v", err)
 	}
 	if got := s.multicastCount(); got != 3 {
@@ -353,6 +357,98 @@ func TestHandleQueryHonoursUnicastFlag(t *testing.T) {
 	}
 	if got := s.unicasts[0].to; got.String() != from.String() {
 		t.Errorf("unicast to %v, want %v", got, from)
+	}
+}
+
+// TestHandleQueryAnswersUnicastQueryViaUnicast verifies RFC 6762 §6.7: a
+// query arriving from a unicast address (no QU bit) must be answered with a
+// unicast response. This is the path a host uses to reach the announcer
+// through a forwarded UDP 5353 in a dev VM — a multicast reply would never
+// make it back to the sender.
+func TestHandleQueryAnswersUnicastQueryViaUnicast(t *testing.T) {
+	env := newTestEnv(t, []string{"bloud.local"}, []string{"jellyfin"}, "192.168.1.10")
+	env.p.Reconcile()
+	s := env.sockets[0]
+	beforeMulticast := s.multicastCount()
+	beforeUnicast := s.unicastCount()
+
+	query := new(dns.Msg)
+	query.Id = 9
+	query.SetQuestion(dns.Fqdn("jellyfin.bloud.local"), dns.TypeA)
+	from := &net.UDPAddr{IP: net.ParseIP("192.168.1.50"), Port: 50003}
+	if err := env.p.handleQuery(s, query, from); err != nil {
+		t.Fatalf("handleQuery: %v", err)
+	}
+
+	if got := s.multicastCount(); got != beforeMulticast {
+		t.Errorf("multicasts = %d, want %d (reply must not be multicast)", got, beforeMulticast)
+	}
+	if got := s.unicastCount(); got != beforeUnicast+1 {
+		t.Fatalf("unicasts = %d, want %d", got, beforeUnicast+1)
+	}
+	resp := s.unicasts[beforeUnicast]
+	if resp.to.String() != from.String() {
+		t.Errorf("unicast to %v, want %v", resp.to, from)
+	}
+	if len(resp.msg.Answer) != 1 {
+		t.Fatalf("answer RRs = %d, want 1", len(resp.msg.Answer))
+	}
+	if a := resp.msg.Answer[0].(*dns.A); a.Hdr.Name != "jellyfin.bloud.local." {
+		t.Errorf("answer name = %v, want jellyfin.bloud.local.", a.Hdr.Name)
+	}
+}
+
+// TestReconcileSkipsMulticastWhenAnnounceDisabled simulates the QEMU slirp
+// dev VM: multicast cannot reach the LAN, and the guest's own port-5353
+// multicast traffic corrupts slirp's hostfwd state, breaking the unicast
+// query path. The publisher must track the names and answer unicast queries,
+// but send no multicast at all — no announcements, no re-announcements, no
+// TTL-0 goodbyes.
+func TestReconcileSkipsMulticastWhenAnnounceDisabled(t *testing.T) {
+	var s *fakeSocket
+	appList := []string{"jellyfin"}
+	hostState := hostset.NewState(hostset.New([]string{"bloud.local"}, "bloud.local"))
+	p := New(Options{
+		Logger:            slog.Default(),
+		Hosts:             hostState,
+		Apps:              func() []string { return appList },
+		IP:                func() string { return "10.0.2.15" },
+		MulticastAnnounce: func() bool { return false },
+		NewSocket: func(_ net.IP) (Socket, error) {
+			s = &fakeSocket{}
+			return s, nil
+		},
+	})
+
+	p.Reconcile()
+	if got := s.multicastCount(); got != 0 {
+		t.Fatalf("multicasts after Reconcile = %d, want 0 (slirp: no announcements)", got)
+	}
+
+	// Unicast queries must still be answered.
+	query := new(dns.Msg)
+	query.Id = 7
+	query.SetQuestion(dns.Fqdn("jellyfin.bloud.local"), dns.TypeA)
+	from := &net.UDPAddr{IP: net.ParseIP("10.0.2.2"), Port: 40000}
+	if err := p.handleQuery(s, query, from); err != nil {
+		t.Fatalf("handleQuery: %v", err)
+	}
+	if got := s.unicastCount(); got != 1 {
+		t.Errorf("unicasts = %d, want 1", got)
+	}
+	if got := s.multicastCount(); got != 0 {
+		t.Errorf("multicasts after query = %d, want 0", got)
+	}
+
+	// Name removal and Close must not emit TTL-0 goodbyes either.
+	appList = nil
+	p.Reconcile()
+	p.Close()
+	if got := s.multicastCount(); got != 0 {
+		t.Errorf("multicasts after removal+Close = %d, want 0 (slirp: no goodbyes)", got)
+	}
+	if !s.isClosed() {
+		t.Error("socket not closed")
 	}
 }
 

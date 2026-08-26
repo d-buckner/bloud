@@ -33,6 +33,9 @@ portForwards:
   - guestPort: 2283   # immich
   - guestPort: 4533   # navidrome
   - guestPort: 3010   # affine
+  - guestPort: 5353  # mDNS: bare guestPort forwards TCP+UDP (Lima's default GRPC
+                     # forwarder); macOS' mDNSResponder owns 5353, so Lima may
+                     # remap it to a free host port (see `limactl port`)
 
 containerd:
   system: false

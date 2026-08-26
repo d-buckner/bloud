@@ -388,6 +388,18 @@ func (b *QEMUBackend) launchArgs(pidFile string) []string {
 		}
 		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hp, gp))
 	}
+	// mDNS: forward unicast UDP 5353 so the guest's .local announcer is
+	// reachable from the host (slirp does not relay multicast). The host
+	// port follows the usual BLOUD_QEMU_FWD_5353 remap — useful for
+	// verification on hosts whose own responder (usually avahi-daemon)
+	// owns 5353: dig @127.0.0.1 -p <port>. Standard mDNS clients only
+	// speak 5353, so a remap never serves them.
+	mdHostPort := hostForwardPort("5353")
+	if canBindHostUDPPort(mdHostPort) {
+		fwds = append(fwds, fmt.Sprintf("hostfwd=udp::%s-:5353", mdHostPort))
+	} else {
+		fmt.Fprintf(os.Stderr, "note: host UDP %s is busy (the host's mDNS responder, usually avahi-daemon, owns 5353); mDNS from the guest VM is not reachable from the host. To forward it: sudo systemctl stop avahi-daemon — or verify with BLOUD_QEMU_FWD_5353=<free-port> + dig @127.0.0.1 -p <free-port>\n", mdHostPort)
+	}
 	netdev := "user,id=net0," + strings.Join(fwds, ",")
 	return []string{
 		"-machine", "q35,accel=kvm",
@@ -526,6 +538,18 @@ func canBindHostPort(port string) bool {
 		return false
 	}
 	ln.Close()
+	return true
+}
+
+// canBindHostUDPPort probes whether the current user can bind the given UDP
+// port (mDNS 5353 is typically held by the host's own mDNS responder). The
+// probe socket is closed immediately; QEMU binds for real at launch.
+func canBindHostUDPPort(port string) bool {
+	pc, err := net.ListenPacket("udp", "0.0.0.0:"+port)
+	if err != nil {
+		return false
+	}
+	pc.Close()
 	return true
 }
 

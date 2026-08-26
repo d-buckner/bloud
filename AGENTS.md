@@ -77,10 +77,28 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 3389 | LDAP outpost (direct) | debugging |
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
+| 5353 (UDP) | mDNS — the guest's `.local` announcer (`bloud.local`, `<app>.bloud.local`); unicast queries only, since the VM boundary does not relay multicast | debugging / LAN reachability |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
 (10.0.2.2), so `./bloud dev` sets `BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24` for the
 host-agent; Lima forwards to loopback and needs none.
+
+mDNS note: the QEMU launch args include a unicast UDP 5353 forward
+(`hostfwd=udp::<host>-:5353`) when the host can bind the host port. Hosts
+that run their own responder (avahi-daemon on Linux, mDNSResponder on macOS)
+own 5353; then `./bloud dev` prints a note and skips the forward — stop
+avahi-daemon to enable it, or verify with `BLOUD_QEMU_FWD_5353=<free-port>`
+and `dig @127.0.0.1 -p <free-port> bloud.local A` (standard mDNS clients only
+speak 5353, so a remap serves verification only). With the forward in place,
+unicast queries reach the guest's announcer, which answers via unicast
+(RFC 6762 §6.7); LAN-wide multicast discovery from a dev VM is not possible
+(slirp does not relay multicast). In the dev VM the announcer also skips its
+multicast announcements and TTL-0 goodbyes entirely (`netutil.OnSlirp`,
+gateway 10.0.2.2): they could never reach the LAN, and slirp's hostfwd socket
+captures the guest's own port-5353 multicast, which corrupts its state and
+breaks the unicast reply path. On a real host the announcer binds 5353
+natively, announces normally, and full discovery works. Lima:
+`guestPort: 5353` in `dev/lima.yaml` (its default GRPC forwarder carries UDP).
 
 Port-80 note: the guest's port 80 (front proxy) is host-forwarded like every
 other port. Non-root hosts cannot bind host port 80, so when it is not
