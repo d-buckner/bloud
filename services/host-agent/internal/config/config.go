@@ -33,7 +33,8 @@ type Config struct {
 	AuthentikToken  string // Authentik API token for SSO cleanup
 	// Traefik configuration
 	BaseDomain  string // Base domain for subdomain routing (default: "localhost")
-	TraefikPort int    // Traefik entrypoint port (default: 8080)
+	TraefikPort int    // Traefik HTTP entrypoint port (default: 8080)
+	TraefikTLSPort int // Traefik HTTPS (websecure) entrypoint port (default: 8443)
 	// Authentik bootstrap configuration
 	AuthentikPort          int
 	AuthentikAdminPassword string
@@ -114,6 +115,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		AuthentikToken:         authentikToken,
 		BaseDomain:             baseDomain,
 		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 8080),
+		TraefikTLSPort:         getEnvAsInt("BLOUD_TRAEFIK_TLS_PORT", 8443),
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: authentikAdminPassword,
 		AuthentikAdminEmail:    adminEmail,

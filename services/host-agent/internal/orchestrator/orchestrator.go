@@ -867,11 +867,15 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 	}
 
 	for _, mount := range spec.Mounts {
-		// Skip file mounts - only create directories for directory mounts
-		if !strings.HasSuffix(mount.Source, ".yml") && !strings.HasSuffix(mount.Source, ".yaml") && !strings.HasSuffix(mount.Source, ".json") && !strings.HasSuffix(mount.Source, ".conf") {
-			if err := os.MkdirAll(mount.Source, 0755); err != nil {
-				o.logger.Warn("failed to create mount directory", "container", def.Name, "path", mount.Source, "error", err)
-			}
+		// Only create the source for directory mounts that do not exist
+		// yet; file mounts (config files written by PreStart, the CA
+		// bundle generated at bootstrap) already exist and must not be
+		// turned into directories.
+		if _, err := os.Stat(mount.Source); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(mount.Source, 0755); err != nil {
+			o.logger.Warn("failed to create mount directory", "container", def.Name, "path", mount.Source, "error", err)
 		}
 	}
 
