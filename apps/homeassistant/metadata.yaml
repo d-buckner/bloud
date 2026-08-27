@@ -3,7 +3,7 @@
 name: homeassistant
 displayName: Home Assistant
 description: Open-source home automation platform
-category: infrastructure
+category: productivity
 port: 8123
 
 integrations:
