@@ -28,6 +28,7 @@ type lifecycleConfig struct {
 	lima       string
 	qemu       string // QEMU instance name (auto-provisioned)
 	sshTarget  string
+	native     bool // run natively on the current machine (no VM)
 	sshKeyFile string // SSH key file for QEMU (auto-derived)
 	baseURL    string
 	remoteDir  string
@@ -68,6 +69,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 		lima:       getenv("BLOUD_E2E_LIMA_INSTANCE"),
 		qemu:       getenv("BLOUD_E2E_QEMU_INSTANCE"),
 		sshTarget:  getenv("BLOUD_E2E_SSH_TARGET"),
+		native:     getenv("BLOUD_BACKEND") == "native",
 		baseURL:    getenv("BLOUD_URL"),
 		remoteDir:  getenv("BLOUD_E2E_RUNTIME_DIR"),
 		goarch:     getenv("BLOUD_E2E_GOARCH"),
@@ -78,7 +80,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if cfg.remoteDir == "" {
 		cfg.remoteDir = "/var/tmp/bloud-e2e-runtime"
 	}
-	if cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "" {
+	if cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "" && !cfg.native {
 		cfg.lima = "bloud-dev"
 	}
 	if cfg.qemu != "" && cfg.sshTarget == "" {
@@ -86,7 +88,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 		cfg.sshTarget = "bloud@127.0.0.1"
 		cfg.sshKeyFile = filepath.Join(root, ".bloud", "qemu", cfg.qemu, "id_ed25519")
 	}
-	if cfg.baseURL == "" && cfg.lima != "" {
+	if cfg.baseURL == "" && (cfg.lima != "" || cfg.native) {
 		cfg.baseURL = "http://localhost:3000"
 	}
 	if cfg.goarch == "" {
@@ -114,6 +116,9 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	}
 	if flags.NArg() != 0 {
 		return cfg, false, fmt.Errorf("unexpected lifecycle arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if cfg.native && (cfg.lima != "" || cfg.qemu != "" || cfg.sshTarget != "") {
+		return cfg, false, fmt.Errorf("BLOUD_BACKEND=native cannot be combined with BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
 	}
 	if cfg.lima != "" && (cfg.qemu != "" || cfg.sshTarget != "") {
 		return cfg, false, fmt.Errorf("set only one of BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
@@ -150,6 +155,7 @@ Required environment:
   None for the default Lima target. It uses bloud-dev.
 
 Optional environment:
+  BLOUD_BACKEND            Set to "native" to run on the current machine (no VM)
   BLOUD_E2E_LIMA_INSTANCE
                          Lima instance name (default: bloud-dev)
   BLOUD_E2E_SSH_TARGET   Use a generic SSH target instead of Lima
@@ -197,6 +203,13 @@ func (r *lifecycle) run() (runErr error) {
 	}
 	if err := r.prepareQEMUTarget(); err != nil {
 		return err
+	}
+	if r.cfg.native {
+		r.step("Provisioning native runtime")
+		bk := backend.NewNativeBackend(r.cfg.root)
+		if err := bk.Create(context.Background()); err != nil {
+			return fmt.Errorf("native runtime provisioning failed: %w", err)
+		}
 	}
 
 	r.step("Building host-agent artifacts")
@@ -359,9 +372,16 @@ func (r *lifecycle) remoteOutput(script string, args ...string) (string, error) 
 	}
 	return string(output), nil
 }
-
 func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 	commandArgs := []string{}
+	if r.cfg.native {
+		name := "bash"
+		commandArgs = append(commandArgs, "-se", "--")
+		for _, arg := range args {
+			commandArgs = append(commandArgs, arg)
+		}
+		return exec.Command(name, commandArgs...)
+	}
 	if r.cfg.lima != "" {
 		name := "limactl"
 		commandArgs = append(commandArgs, "shell", "--start", r.cfg.lima, "bash", "-se", "--")
@@ -392,6 +412,9 @@ func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 }
 
 func (r *lifecycle) copyDirectory(source, destination string) error {
+	if r.cfg.native {
+		return r.localRun(r.cfg.root, os.Environ(), "cp", "-a", source, destination)
+	}
 	if r.cfg.lima != "" {
 		return r.remoteRun(`rm -rf "$2"
 mkdir -p "$2"
@@ -407,6 +430,9 @@ cp -a "$1/." "$2/"`, source, destination)
 }
 
 func (r *lifecycle) copyFile(source, destination string) error {
+	if r.cfg.native {
+		return r.localRun(r.cfg.root, os.Environ(), "cp", source, destination)
+	}
 	if r.cfg.lima != "" {
 		return r.localRun(r.cfg.root, os.Environ(), "limactl", "copy", source, r.cfg.lima+":"+destination)
 	} else if r.cfg.qemu != "" {
