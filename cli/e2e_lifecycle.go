@@ -414,7 +414,7 @@ func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 
 func (r *lifecycle) copyDirectory(source, destination string) error {
 	if r.cfg.native {
-		return r.localRun(r.cfg.root, os.Environ(), "cp", "-a", source, destination)
+		return r.localRun(r.cfg.root, os.Environ(), "cp", "-a", source+"/.", destination)
 	}
 	if r.cfg.lima != "" {
 		return r.remoteRun(`rm -rf "$2"
