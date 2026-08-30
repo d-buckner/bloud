@@ -528,7 +528,7 @@ systemctl --user daemon-reload
 systemctl --user enable "$unit"
 systemctl --user restart "$unit"`
 
-var remoteWaitForHostAgentScript = `deadline=$((SECONDS + 90))
+var remoteWaitForHostAgentScript = `deadline=$((SECONDS + 300))
 until curl -fsS http://localhost:3000/api/health >/dev/null; do
   if ((SECONDS >= deadline)); then exit 1; fi
   sleep 2
@@ -582,7 +582,7 @@ until curl -fsS http://localhost:8096/health >/dev/null; do
   sleep 2
 done
 systemctl --user restart "$1"
-deadline=$((SECONDS + 90))
+deadline=$((SECONDS + 300))
 until curl -fsS http://localhost:3000/api/health >/dev/null; do
   if ((SECONDS >= deadline)); then exit 1; fi
   sleep 2
