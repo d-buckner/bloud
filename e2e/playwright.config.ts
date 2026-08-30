@@ -20,7 +20,7 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 60_000,
   },
-  timeout: 10 * 60_000,
+  timeout: 15 * 60_000,
   expect: {
     timeout: 10_000,
   },

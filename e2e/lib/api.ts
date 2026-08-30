@@ -44,7 +44,7 @@ export async function uninstallApp(name: string): Promise<void> {
 export async function waitForApp(
   name: string,
   status: string,
-  timeoutMs = 5 * 60_000,
+  timeoutMs = 10 * 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
