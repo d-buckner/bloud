@@ -40,7 +40,6 @@ jobs:
         run: |
           sudo loginctl enable-linger "$USER"
           sleep 2
-          # Verify the user systemd socket is available
           test -S "$XDG_RUNTIME_DIR/systemd/private"
 
       - name: Build CLI
@@ -55,16 +54,16 @@ jobs:
           BLOUD_API_URL: http://localhost:3000
         run: ./bloud e2e lifecycle
 
-      - name: Debug: show systemd unit and journal
+      - name: Debug on failure
         if: failure()
         run: |
           echo "=== User systemd units ==="
           systemctl --user list-units --all --no-pager 2>&1 || true
-          echo "=== bloud-e2e-host-agent.service unit file ==="
-          cat ~/.config/systemd/user/bloud-e2e-host-agent.service 2>&1 || echo "unit file not found"
-          echo "=== systemctl status bloud-e2e-host-agent ==="
+          echo "=== Unit file ==="
+          cat ~/.config/systemd/user/bloud-e2e-host-agent.service 2>&1 || echo "not found"
+          echo "=== Systemctl status ==="
           systemctl --user status bloud-e2e-host-agent.service --no-pager 2>&1 || true
-          echo "=== Journal for bloud-e2e-host-agent ==="
+          echo "=== Journal ==="
           journalctl --user -u bloud-e2e-host-agent.service --no-pager -n 100 2>&1 || true
           echo "=== Podman socket ==="
           systemctl --user status podman.socket --no-pager 2>&1 || true
@@ -74,5 +73,5 @@ jobs:
           file /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>&1 || true
           echo "=== Podman info ==="
           podman info 2>&1 | head -20 || true
-          echo "=== Ports listening ==="
+          echo "=== Ports ==="
           ss -tlnp 2>&1 || true
