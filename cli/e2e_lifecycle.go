@@ -332,6 +332,7 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
+WantedBy=default.target
 `, cfg.remoteDir, cfg.remoteDir, cfg.remoteDir, cfg.traefikDir, ssoIssuerURL(), extraEnv.String(), cfg.remoteDir)
 }
 
