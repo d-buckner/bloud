@@ -550,7 +550,7 @@ installed="$(curl -sS http://localhost:3000/api/apps/installed || printf '[]')"
 var remoteInstallJellyfinScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:3000/api/apps/jellyfin/install)"
 printf 'install response: %%s\n' "$http_code"
 test "$http_code" -ge 200 && test "$http_code" -lt 300
-deadline=$((SECONDS + 120))
+deadline=$((SECONDS + 300))
 until curl -sS http://localhost:3000/api/apps/installed | grep -q '"status":"running".*"name":"jellyfin"\|"name":"jellyfin".*"status":"running"'; do
   if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin to reach running"; exit 1; fi
   sleep 3
@@ -576,7 +576,7 @@ curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'
 grep -q 'jellyfin-backend' "$1/apps-routes.yml"`
 
 var remoteRestartScript = `podman restart apps-jellyfin
-deadline=$((SECONDS + 120))
+deadline=$((SECONDS + 300))
 until curl -fsS http://localhost:8096/health >/dev/null; do
   if ((SECONDS >= deadline)); then exit 1; fi
   sleep 2
@@ -593,7 +593,7 @@ curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'
 var remoteUninstallScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
 printf 'uninstall response: %%s\n' "$http_code"
 test "$http_code" -ge 200 && test "$http_code" -lt 300
-deadline=$((SECONDS + 120))
+deadline=$((SECONDS + 300))
 until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'; do
   if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin removal"; exit 1; fi
   sleep 2

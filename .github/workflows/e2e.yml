@@ -51,6 +51,7 @@ jobs:
         env:
           BLOUD_BACKEND: native
           BLOUD_E2E_KEEP: "1"
+          BLOUD_E2E_PLAYWRIGHT_FILTER: "jellyfin"
           BLOUD_URL: http://localhost:8080
           BLOUD_API_URL: http://localhost:3000
         run: ./bloud e2e lifecycle

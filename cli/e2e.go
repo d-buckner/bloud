@@ -43,7 +43,11 @@ func cmdE2E(args []string) int {
 }
 
 func runPlaywright(root string) error {
-	cmd := exec.Command("npx", "playwright", "test")
+	args := []string{"playwright", "test"}
+	if filter := os.Getenv("BLOUD_E2E_PLAYWRIGHT_FILTER"); filter != "" {
+		args = append(args, "--grep", filter)
+	}
+	cmd := exec.Command("npx", args...)
 	cmd.Dir = filepath.Join(root, "e2e")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
