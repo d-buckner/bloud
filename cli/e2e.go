@@ -26,6 +26,14 @@ func cmdE2E(args []string) int {
 		return 0
 	}
 
+	if len(args) > 0 && args[0] == "app" {
+		if err := runAppE2E(root, args[1:]); err != nil {
+			errorf("App E2E failed: %v", err)
+			return 1
+		}
+		return 0
+	}
+
 	playwrightArgs := []string{"playwright", "test"}
 	playwrightArgs = append(playwrightArgs, args...)
 

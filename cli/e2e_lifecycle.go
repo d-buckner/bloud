@@ -173,11 +173,6 @@ Flags:
 }
 
 func (r *lifecycle) run() (runErr error) {
-	buildDir, err := os.MkdirTemp("", "bloud-e2e-build-*")
-	if err != nil {
-		return err
-	}
-	r.buildDir = buildDir
 	defer func() {
 		if r.failed {
 			fmt.Fprintf(os.Stderr, "Collecting failure logs in %s\n", r.artifactDir())
@@ -186,7 +181,6 @@ func (r *lifecycle) run() (runErr error) {
 		if !r.cfg.keep && r.cfg.remoteHome != "" {
 			r.cleanupRemoteDeployment()
 		}
-		os.RemoveAll(r.buildDir)
 	}()
 
 	r.step("Checking host prerequisites")
@@ -212,50 +206,8 @@ func (r *lifecycle) run() (runErr error) {
 		}
 	}
 
-	r.step("Building host-agent artifacts")
-	if err := r.localRun(r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
+	if err := r.buildAndDeploy(); err != nil {
 		return err
-	}
-	hostAgentDir := filepath.Join(r.cfg.root, "services", "host-agent")
-	buildEnv := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+r.cfg.goarch)
-	if err := r.localRun(hostAgentDir, buildEnv, "go", "build", "-o", filepath.Join(r.buildDir, "host-agent"), "./cmd/host-agent"); err != nil {
-		return err
-	}
-
-	r.step("Deploying host-agent, frontend, and app catalog")
-	if err := r.remoteRun("mkdir -p \"$1/host-agent/web/build\" \"$1/apps\"", r.cfg.remoteDir); err != nil {
-		return err
-	}
-	if err := r.copyDirectory(filepath.Join(r.cfg.root, "apps"), r.remotePath("apps")); err != nil {
-		return err
-	}
-	if err := r.copyDirectory(filepath.Join(hostAgentDir, "web", "build"), r.remotePath("host-agent/web/build")); err != nil {
-		return err
-	}
-	if err := r.copyFile(filepath.Join(r.buildDir, "host-agent"), r.remotePath("host-agent/host-agent")); err != nil {
-		return err
-	}
-	if err := r.remoteRun("chmod 755 \"$1/host-agent/host-agent\"", r.cfg.remoteDir); err != nil {
-		return err
-	}
-
-	r.step("Installing host-agent systemd service")
-	unit := renderLifecycleHostAgentUnit(r.cfg)
-	unitPath := filepath.Join(r.buildDir, lifecycleHostAgentUnit)
-	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
-		return err
-	}
-	if err := r.remoteRun("mkdir -p \"$1/.config/systemd/user\"", r.cfg.remoteHome); err != nil {
-		return err
-	}
-	if err := r.copyFile(unitPath, filepath.Join(r.cfg.remoteHome, ".config", "systemd", "user", lifecycleHostAgentUnit)); err != nil {
-		return err
-	}
-	if err := r.remoteRun(remoteInstallHostAgentScript, lifecycleHostAgentUnit); err != nil {
-		return err
-	}
-	if err := r.remoteRun(remoteWaitForHostAgentScript); err != nil {
-		return fmt.Errorf("wait for host-agent API: %w", err)
 	}
 
 	r.step("Resetting prior managed Jellyfin state")
@@ -338,6 +290,64 @@ WantedBy=default.target
 
 func (r *lifecycle) step(message string) {
 	fmt.Printf("\n%s==>%s %s\n", colorGreen, colorReset, message)
+}
+// buildAndDeploy builds the host-agent binary and frontend, deploys them to
+// the runtime, installs the systemd service, and waits for the API to come
+// up. Shared by the lifecycle and app E2E runners.
+func (r *lifecycle) buildAndDeploy() error {
+	r.step("Building host-agent artifacts")
+	buildDir, err := os.MkdirTemp("", "bloud-e2e-build-*")
+	if err != nil {
+		return err
+	}
+	r.buildDir = buildDir
+	defer os.RemoveAll(buildDir)
+
+	if err := r.localRun(r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
+		return err
+	}
+	hostAgentDir := filepath.Join(r.cfg.root, "services", "host-agent")
+	buildEnv := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+r.cfg.goarch)
+	if err := r.localRun(hostAgentDir, buildEnv, "go", "build", "-o", filepath.Join(buildDir, "host-agent"), "./cmd/host-agent"); err != nil {
+		return err
+	}
+
+	r.step("Deploying host-agent, frontend, and app catalog")
+	if err := r.remoteRun("mkdir -p \"$1/host-agent/web/build\" \"$1/apps\"", r.cfg.remoteDir); err != nil {
+		return err
+	}
+	if err := r.copyDirectory(filepath.Join(r.cfg.root, "apps"), r.remotePath("apps")); err != nil {
+		return err
+	}
+	if err := r.copyDirectory(filepath.Join(hostAgentDir, "web", "build"), r.remotePath("host-agent/web/build")); err != nil {
+		return err
+	}
+	if err := r.copyFile(filepath.Join(buildDir, "host-agent"), r.remotePath("host-agent/host-agent")); err != nil {
+		return err
+	}
+	if err := r.remoteRun("chmod 755 \"$1/host-agent/host-agent\"", r.cfg.remoteDir); err != nil {
+		return err
+	}
+
+	r.step("Installing host-agent systemd service")
+	unit := renderLifecycleHostAgentUnit(r.cfg)
+	unitPath := filepath.Join(buildDir, lifecycleHostAgentUnit)
+	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+		return err
+	}
+	if err := r.remoteRun("mkdir -p \"$1/.config/systemd/user\"", r.cfg.remoteHome); err != nil {
+		return err
+	}
+	if err := r.copyFile(unitPath, filepath.Join(r.cfg.remoteHome, ".config", "systemd", "user", lifecycleHostAgentUnit)); err != nil {
+		return err
+	}
+	if err := r.remoteRun(remoteInstallHostAgentScript, lifecycleHostAgentUnit); err != nil {
+		return err
+	}
+	if err := r.remoteRun(remoteWaitForHostAgentScript); err != nil {
+		return fmt.Errorf("wait for host-agent API: %w", err)
+	}
+	return nil
 }
 
 func (r *lifecycle) localRun(dir string, env []string, name string, args ...string) error {
