@@ -1,17 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 import { test, expect } from '../lib/fixtures';
-
-// Jellyfin uses LDAP authentication. The LDAP admin filter
-// (configurator.go:773) grants admin to members of "authentik Admins",
-// which the bootstrap admin ("admin") is. The setup user (TEST_CREDS) is
-// NOT in "authentik Admins", so LDAP login as the setup user fails.
-// Log into Jellyfin as "admin" with the Authentik bootstrap password,
-// matching the Go e2e test (e2e_test.go:730-733).
-const JELLYFIN_LDAP_CREDS = {
-  USERNAME: 'admin',
-  PASSWORD: process.env.BLOUD_AUTHENTIK_ADMIN_PASSWORD ?? 'password',
-} as const;
+import { TEST_CREDS } from './constants';
 
 test.describe('jellyfin (LDAP)', () => {
   test.beforeEach(async ({ api }) => {
@@ -37,8 +27,8 @@ test.describe('jellyfin (LDAP)', () => {
       await manualLoginBtn.click();
     }
 
-    await jellyfinPage.locator('#txtManualName').fill(JELLYFIN_LDAP_CREDS.USERNAME);
-    await jellyfinPage.locator('#txtManualPassword').fill(JELLYFIN_LDAP_CREDS.PASSWORD);
+    await jellyfinPage.locator('#txtManualName').fill(TEST_CREDS.USERNAME);
+    await jellyfinPage.locator('#txtManualPassword').fill(TEST_CREDS.PASSWORD);
     await jellyfinPage.getByRole('button', { name: 'Sign in' }).click();
 
     // Jellyfin dashboard should load
