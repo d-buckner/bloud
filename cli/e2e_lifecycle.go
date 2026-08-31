@@ -230,7 +230,7 @@ func (r *lifecycle) run() (runErr error) {
 			return err
 		}
 		r.step("Running Jellyfin browser install and login flow")
-		if err := runPlaywright(r.cfg.root); err != nil {
+		if err := runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password); err != nil {
 			return err
 		}
 	}
@@ -246,7 +246,7 @@ func (r *lifecycle) run() (runErr error) {
 	}
 	if !r.cfg.hostOnly {
 		r.step("Verifying browser flow after service restarts")
-		if err := runPlaywright(r.cfg.root); err != nil {
+		if err := runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password); err != nil {
 			return err
 		}
 	}

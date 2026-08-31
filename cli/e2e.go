@@ -50,7 +50,7 @@ func cmdE2E(args []string) int {
 	return 0
 }
 
-func runPlaywright(root string) error {
+func runPlaywright(root, username, password string) error {
 	args := []string{"playwright", "test"}
 	if filter := os.Getenv("BLOUD_E2E_PLAYWRIGHT_FILTER"); filter != "" {
 		args = append(args, "--grep", filter)
@@ -60,7 +60,16 @@ func runPlaywright(root string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = os.Environ()
+	// Propagate the resolved E2E credentials to the Playwright subprocess.
+	// The lifecycle/app runners create an Authentik user with these values
+	// (defaults: e2etest/e2etest123). Without this, TEST_CREDS in constants.ts
+	// falls back to admin/password and the login fails.
+	env := os.Environ()
+	env = append(env,
+		"BLOUD_E2E_USERNAME="+username,
+		"BLOUD_E2E_PASSWORD="+password,
+	)
+	cmd.Env = env
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run Playwright tests: %w", err)
 	}

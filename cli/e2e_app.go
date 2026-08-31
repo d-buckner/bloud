@@ -121,7 +121,7 @@ func (r *appE2ERunner) run() (runErr error) {
 	if os.Getenv("BLOUD_E2E_PLAYWRIGHT_FILTER") == "" {
 		os.Setenv("BLOUD_E2E_PLAYWRIGHT_FILTER", r.app)
 	}
-	if err := runPlaywright(r.cfg.root); err != nil {
+	if err := runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password); err != nil {
 		return err
 	}
 
