@@ -270,7 +270,30 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 }
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
+//
+// It runs on a context detached from the convergence pass (ctx) with its own
+// generous deadline. The pass context is short-lived and is cancelled when the
+// pass completes, but PostStart can outlive the pass — the 503-retry loop
+// sleeps between attempts, and the wizard/library/LDAP steps make network
+// calls. If any of those are bound to the pass context, the cancellation
+// surfaces as "context canceled" mid-step, the node goes to terminal ERROR,
+// and the reconciler never retries it. The detached deadline (90 s) bounds
+// the work; the outer e2e timeout is the real backstop.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	// WithoutCancel detaches from the pass's deadline (the pass completes
+	// shortly after dispatching PostStart, which would cancel the retry loop)
+	// while still propagating a genuine orchestrator-shutdown cancellation.
+	// A 90 s deadline bounds the work; the outer e2e timeout is the real
+	// backstop.
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+	defer cancel()
+	return c.postStart(runCtx, state)
+}
+
+// postStart contains the PostStart body. It receives a detached context with
+// its own deadline, so the 503-retry loop and the wizard/library/LDAP steps
+// survive the convergence pass completing.
+func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {
 	c.logger.Info("PostStart: checking setup wizard status")
 
 	// 1. Check if setup wizard is complete.
@@ -279,14 +302,26 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	// returns 200 then drops back to 503 "Server is loading" before stabilising.
 	// A single 503 here would fail PostStart, which the reconciler treats as a
 	// terminal node ERROR it never retries, so wait out the transient instead.
+	//
+	// ctx is detached from the pass (see PostStart), so the 2 s sleep between
+	// attempts cannot be cancelled mid-pass. The loop is bounded by the 90 s
+	// deadline on ctx.
 	var info *SystemInfo
 	var err error
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i > 0 {
-			time.Sleep(2 * time.Second)
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+			}
 		}
 		info, err = c.getSystemInfo(ctx)
 		if err == nil {
+			break
+		}
+		// A deadline means the retry budget is exhausted; stop retrying and
+		// surface the real last error (not ctx.Err()).
+		if ctx.Err() != nil {
 			break
 		}
 		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
@@ -297,8 +332,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 
 	if !info.StartupWizardCompleted {
 		// Retry a few times — Jellyfin 10.11.9+ may report false during early init
-		for i := 0; i < 5; i++ {
-			time.Sleep(2 * time.Second)
+		for range 5 {
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+			}
 			info, err = c.getSystemInfo(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get system info: %w", err)
