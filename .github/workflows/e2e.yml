@@ -43,7 +43,6 @@ jobs:
           test -S "$XDG_RUNTIME_DIR/systemd/private"
 
       - name: Purge stale Go build cache
-        if: env.CI == 'true'
         run: |
           # setup-go caches keyed on go.sum, which does NOT change when only
           # .go source changes (e.g. the 503-retry fix in apps/jellyfin/
