@@ -287,6 +287,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	// backstop.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
 	defer cancel()
+	c.logger.Info("PostStart: context detached from pass (WithoutCancel)", "deadline", 90*time.Second)
 	return c.postStart(runCtx, state)
 }
 
