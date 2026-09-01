@@ -10,7 +10,7 @@ on:
   pull_request:
 
 jobs:
-  e2e-lifecycle:
+  jellyfin-lifecycle:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -46,7 +46,7 @@ jobs:
         working-directory: cli
         run: go build -o ../bloud .
 
-      - name: Run E2E lifecycle (native backend)
+      - name: Run E2E lifecycle (Jellyfin, native backend)
         id: e2e
         env:
           BLOUD_BACKEND: native

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Daniel Buckner
-name: E2E Apps
+name: E2E
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ on:
 # The debug-status-labels spec is excluded: it is a manual debugging
 # tool, not a regression gate.
 jobs:
-  e2e-apps:
+  e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -34,7 +34,7 @@ jobs:
           - immich
           - affine
           - appflowy
-          - install-streaming
+          - install-streaming-ui
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -79,7 +79,7 @@ jobs:
         run: |
           # install-streaming has its own spec; everything else maps
           # 1:1 to <app>.spec.ts.
-          if [ "${{ matrix.app }}" = "install-streaming" ]; then
+          if [ "${{ matrix.app }}" = "install-streaming-ui" ]; then
             FILTER="install-streaming"
           else
             FILTER="${{ matrix.app }}"
