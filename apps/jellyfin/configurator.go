@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -270,29 +271,107 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 }
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
+// It runs on a context detached from the convergence pass with its own
+// 90 s deadline so the 503-retry loop and network steps survive the pass
+// completing. See the inline comment for the context-detach rationale.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	// The pass context is short-lived and is cancelled when the pass
+	// completes, but PostStart can outlive the pass — the 503-retry loop
+	// sleeps between attempts, and the wizard/library/LDAP steps make
+	// network calls. If any of those are bound to the pass context, the
+	// cancellation surfaces as "context canceled" mid-step, the node goes
+	// to terminal ERROR, and the reconciler never retries it.
+	//
+	// context.Background() detaches completely from the pass so the retry
+	// loop and subsequent steps survive the pass completing. A 90 s
+	// deadline bounds the work; the outer e2e timeout is the real backstop.
+	// (context.WithoutCancel was tried first but did not prevent the
+	// cancellation on Go 1.25 linux/amd64 — the retry loop still broke
+	// at the ctx.Err() check after the first getSystemInfo call.)
+	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	return c.postStart(runCtx, state)
+}
+
+// postStart contains the PostStart body. It receives a detached context with
+// its own deadline, so the 503-retry loop and the wizard/library/LDAP steps
+// survive the convergence pass completing.
+func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {
+	c.logger.Info("DBG postStart: entered", "ctx_err", ctx.Err(), "base_url", c.getBaseURL())
 	c.logger.Info("PostStart: checking setup wizard status")
 
 	// 1. Check if setup wizard is complete.
-	// HealthCheck already waited for /System/Info/Public to be ready,
-	// so this call should succeed immediately.
-	info, err := c.getSystemInfo(ctx)
+	// The container health check (curl -sf /System/Info/Public) passes on the
+	// first 200, but Jellyfin oscillates during first-run init — it briefly
+	// returns 200 then drops back to 503 "Server is loading" before stabilising.
+	// A single 503 here would fail PostStart, which the reconciler treats as a
+	// terminal node ERROR it never retries, so wait out the transient instead.
+	//
+	// ctx is detached from the pass (see PostStart), so the 2 s sleep between
+	// attempts cannot be cancelled mid-pass. The loop is bounded by the 90 s
+	// deadline on ctx.
+	var info *SystemInfo
+	var err error
+	for i := range 10 {
+		c.logger.Info("DBG retry-loop: iteration", "i", i, "ctx_err", ctx.Err())
+		if i > 0 {
+			select {
+			case <-time.After(2 * time.Second):
+				c.logger.Info("DBG retry-loop: sleep completed (2s elapsed)")
+			case <-ctx.Done():
+				c.logger.Info("DBG retry-loop: ctx.Done() fired during sleep", "ctx_err", ctx.Err())
+			}
+		}
+		info, err = c.getSystemInfo(ctx)
+		c.logger.Info("DBG retry-loop: getSystemInfo returned", "err", err, "info_nil", info == nil)
+		if err == nil {
+			c.logger.Info("DBG retry-loop: success, breaking")
+			break
+		}
+		// Break if the context was cancelled (e.g. orchestrator shutdown)
+		// or the 90 s deadline expired. A 503 or network error is not a
+		// context error — retry it.
+		isCanceled := errors.Is(err, context.Canceled)
+		isDeadline := errors.Is(err, context.DeadlineExceeded)
+		c.logger.Info("DBG retry-loop: error checks", "is_canceled", isCanceled, "is_deadline", isDeadline, "ctx_err", ctx.Err())
+		if isCanceled || isDeadline {
+			c.logger.Info("DBG retry-loop: context error, breaking")
+			break
+		}
+		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
+	}
+	c.logger.Info("DBG retry-loop: exited", "final_err", err, "info_nil", info == nil)
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
 	}
 
 	if !info.StartupWizardCompleted {
-		// Retry a few times — Jellyfin 10.11.9+ may report false during early init
-		for i := 0; i < 5; i++ {
-			time.Sleep(2 * time.Second)
+		// Retry a few times — Jellyfin 10.11.9+ may report false during early
+		// init, and the API oscillates between 200 and 503 "Server is loading"
+		// before stabilising. Retry on 503/network errors (not context
+		// errors); the 2 s sleep and 5-iteration cap bound the work.
+		for i := range 5 {
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+			}
 			info, err = c.getSystemInfo(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to get system info: %w", err)
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					break
+				}
+				// 503 or network error — retry on the next iteration
+				c.logger.Info("waiting for Jellyfin API (wizard check)", "attempt", i+1, "error", err)
+				continue
 			}
 			if info.StartupWizardCompleted {
 				break
 			}
 		}
+	}
+	if err != nil {
+		// All 5 retries hit 503/network errors — the API never stabilised
+		return fmt.Errorf("failed to get system info: %w", err)
 	}
 
 	if !info.StartupWizardCompleted {
@@ -336,20 +415,25 @@ type SystemInfo struct {
 // getSystemInfo fetches the system info from Jellyfin
 func (c *Configurator) getSystemInfo(ctx context.Context) (*SystemInfo, error) {
 	url := c.getBaseURL() + "/System/Info/Public"
+	c.logger.Info("DBG getSystemInfo: start", "url", url, "ctx_err", ctx.Err())
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
+		c.logger.Error("DBG getSystemInfo: NewRequestWithContext failed", "error", err)
 		return nil, err
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		c.logger.Error("DBG getSystemInfo: Do failed", "error", err, "is_ctx_canceled", errors.Is(err, context.Canceled), "is_deadline", errors.Is(err, context.DeadlineExceeded))
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	c.logger.Info("DBG getSystemInfo: got response", "status", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		c.logger.Warn("DBG getSystemInfo: non-200 status", "status", resp.StatusCode, "body", string(body[:min(len(body), 200)]))
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 

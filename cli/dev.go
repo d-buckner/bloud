@@ -72,8 +72,9 @@ func qemuInstance() string {
 	return "bloud-qemu"
 }
 
-// backendName returns the selected runtime backend: "lima" (macOS, default) or
-// "qemu" (Linux), from BLOUD_BACKEND.
+// backendName returns the selected runtime backend: "lima" (macOS, default),
+// "qemu" (Linux VM), or "native" (Linux, no VM — runs directly on the host),
+// from BLOUD_BACKEND.
 func backendName() string {
 	if v := os.Getenv("BLOUD_BACKEND"); v != "" {
 		return v
@@ -81,12 +82,17 @@ func backendName() string {
 	return "lima"
 }
 
-// vmInstance returns the current backend's instance name.
+// vmInstance returns the current backend's instance name. Native backends
+// have no instance; the label is "native".
 func vmInstance() string {
-	if backendName() == "qemu" {
+	switch backendName() {
+	case "qemu":
 		return qemuInstance()
+	case "native":
+		return "native"
+	default:
+		return limaInstance()
 	}
-	return limaInstance()
 }
 
 // trustedLocalNetsEnv returns the BLOUD_TRUSTED_LOCAL_NETS value for the
@@ -115,20 +121,28 @@ func ssoIssuerURL() string {
 	return fmt.Sprintf("http://sso.%s:8080", baseDomain)
 }
 
-// vmLabel is the human-readable VM name for the selected backend.
+// vmLabel is the human-readable backend name for the selected backend.
 func vmLabel() string {
-	if backendName() == "qemu" {
+	switch backendName() {
+	case "qemu":
 		return "QEMU VM"
+	case "native":
+		return "native host"
+	default:
+		return "Lima VM"
 	}
-	return "Lima VM"
 }
 
-// vmStartHint is the command shown to start the selected backend's VM.
+// vmStartHint is the command shown to start the selected backend's runtime.
 func vmStartHint() string {
-	if backendName() == "qemu" {
+	switch backendName() {
+	case "qemu":
 		return "BLOUD_BACKEND=qemu ./bloud dev"
+	case "native":
+		return "BLOUD_BACKEND=native ./bloud dev"
+	default:
+		return "limactl start " + limaInstance()
 	}
-	return "limactl start " + limaInstance()
 }
 
 // cmdStart prints usage guidance — the real dev loop is ./bloud dev.
@@ -429,6 +443,8 @@ func devBackend() (backend.Backend, error) {
 	switch backendName() {
 	case "qemu":
 		return backend.NewQEMUBackend(qemuInstance(), root), nil
+	case "native":
+		return backend.NewNativeBackend(root), nil
 	default:
 		return backend.NewLimaBackend(limaInstance(), root), nil
 	}

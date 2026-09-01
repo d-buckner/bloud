@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -717,6 +718,156 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 	err := c.PostStart(context.Background(), state)
 	if err != nil {
 		t.Fatalf("PostStart() error = %v", err)
+	}
+}
+
+func TestConfigurator_PostStart_ToleratesTransient503(t *testing.T) {
+	// Jellyfin serves /System/Info/Public as 200 during first-run init and then
+	// oscillates back to 503 "Server is loading" before stabilising. PostStart
+	// must wait this out rather than fail (a PostStart error is terminal in the
+	// reconciler, so the app would never reach RUNNING). Serve 503 twice, then 200.
+	var infoCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/System/Info/Public":
+			if atomic.AddInt32(&infoCalls, 1) <= 2 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+				return
+			}
+			json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
+
+		case "/Users/AuthenticateByName":
+			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+
+		case "/Library/VirtualFolders":
+			if r.Method == http.MethodGet {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]VirtualFolder{})
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		default:
+			t.Errorf("Unexpected endpoint called: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, nil)
+	c.baseURL = server.URL
+
+	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
+		t.Fatalf("PostStart() should tolerate transient 503, got error = %v", err)
+	}
+	if got := atomic.LoadInt32(&infoCalls); got < 3 {
+		t.Fatalf("expected at least 3 /System/Info/Public probes (2 x 503 + success), got %d", got)
+	}
+}
+
+func TestConfigurator_PostStart_Tolerates503WithCancelledPassContext(t *testing.T) {
+	// The convergence pass cancels its context when the pass completes, but
+	// PostStart may still be in its 503-retry loop. The retry must NOT be
+	// bound to the pass context (ctx): if it is, a 2 s sleep between attempts
+	// gets cancelled, the next getSystemInfo returns ctx.Err(), and the node
+	// is stuck in terminal ERROR (the reconciler never retries ERROR).
+	// Serve 503 twice, then 200; pass an already-cancelled ctx. PostStart
+	// must still succeed because the retry uses its own background context.
+	var infoCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/System/Info/Public":
+			if atomic.AddInt32(&infoCalls, 1) <= 2 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+				return
+			}
+			json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
+
+		case "/Users/AuthenticateByName":
+			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+
+		case "/Library/VirtualFolders":
+			if r.Method == http.MethodGet {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]VirtualFolder{})
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		default:
+			t.Errorf("Unexpected endpoint called: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, nil)
+	c.baseURL = server.URL
+
+	// Simulate the convergence pass cancelling its context mid-PostStart.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.PostStart(ctx, &configurator.AppState{SSOEnabled: false}); err != nil {
+		t.Fatalf("PostStart() must tolerate 503 even when the pass context is cancelled, got error = %v", err)
+	}
+	if got := atomic.LoadInt32(&infoCalls); got < 3 {
+		t.Fatalf("expected at least 3 /System/Info/Public probes (2 x 503 + success), got %d", got)
+	}
+}
+
+func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
+	// The first retry loop succeeds (200, StartupWizardCompleted=false),
+	// entering the second retry loop (wizard check). The second loop's
+	// calls must also tolerate 503 "Server is loading" — before the fix,
+	// the first 503 in the wizard loop was fatal. Serve: 1st call 200 with
+	// wizard incomplete, 2nd-3rd calls 503, 4th call 200 with wizard done.
+	var infoCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/System/Info/Public":
+			n := atomic.AddInt32(&infoCalls, 1)
+			switch {
+			case n == 1:
+				// First retry loop: 200, wizard incomplete
+				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: false})
+			case n <= 3:
+				// Wizard check loop: 503 "Server is loading"
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+			default:
+				// Wizard check loop: 200, wizard complete
+				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
+			}
+
+		case "/Users/AuthenticateByName":
+			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+
+		case "/Library/VirtualFolders":
+			if r.Method == http.MethodGet {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]VirtualFolder{})
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		default:
+			t.Errorf("Unexpected endpoint called: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, nil)
+	c.baseURL = server.URL
+
+	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
+		t.Fatalf("PostStart() should tolerate 503 in wizard check, got error = %v", err)
+	}
+	if got := atomic.LoadInt32(&infoCalls); got < 4 {
+		t.Fatalf("expected at least 4 /System/Info/Public probes (1 ok + 2 x 503 + 1 ok), got %d", got)
 	}
 }
 

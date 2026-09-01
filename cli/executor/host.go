@@ -58,6 +58,32 @@ func IsVMNameRunning(out, name string) bool {
 	return vmStatus(out, name) == "Running"
 }
 
+// LocalHost is a Host that runs directly on the current machine (no VM, no
+// SSH). It wraps a LocalExecutor with the same DataDirs/Ports shape as
+// SSHHost so the CLI can treat native and VM backends uniformly.
+type LocalHost struct {
+	exec     Executor
+	ports    map[string]string
+	dataDirs DataDirs
+}
+
+// NewLocalHost returns a Host backed by a LocalExecutor.
+func NewLocalHost(exec Executor, ports map[string]string, dataDirs DataDirs) *LocalHost {
+	return &LocalHost{exec: exec, ports: ports, dataDirs: dataDirs}
+}
+
+// Executor returns the executor that runs commands on the local machine.
+func (h *LocalHost) Executor() Executor { return h.exec }
+
+// Ports returns the host-agent service port map.
+func (h *LocalHost) Ports() map[string]string { return h.ports }
+
+// DataDirs returns the runtime directory layout.
+func (h *LocalHost) DataDirs() DataDirs { return h.dataDirs }
+
+// Ready reports whether the local machine is usable (always true).
+func (h *LocalHost) Ready() bool { return true }
+
 // IsVMNamePresent reports whether limactl list --json output lists name at all.
 func IsVMNamePresent(out, name string) bool {
 	return vmStatus(out, name) != ""

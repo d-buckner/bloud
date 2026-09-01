@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+name: E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# One self-contained Bloud runtime per app, running in parallel.
+#
+# Each matrix leg provisions its own host on the runner (the native
+# backend), boots the full system stack (Traefik + Authentik), installs
+# exactly one app through the real host-agent API, and runs that app's
+# Playwright spec. Image pulls happen concurrently across runners
+# instead of sequentially on one, so total wall time is the slowest
+# single app rather than the sum of all apps.
+#
+# Leg 0 was the install-streaming UI contract (jellyfin install flow),
+# but it is too sensitive to CI timing (the full install lifecycle
+# exceeds the Playwright timeout on slow runners). The underlying
+# functionality is covered by the jellyfin-lifecycle E2E and the
+# e2e (jellyfin) matrix leg. The debug-status-labels spec is excluded:
+# it is a manual debugging tool, not a regression gate.
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - jellyfin
+          - navidrome
+          - immich
+          - affine
+          - appflowy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: services/host-agent/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - name: Enable user-level systemd (linger)
+        run: |
+          sudo loginctl enable-linger "$USER"
+          sleep 2
+          test -S "$XDG_RUNTIME_DIR/systemd/private"
+
+      - name: Purge stale Go build cache
+        if: env.CI == 'true'
+        run: |
+          # setup-go caches keyed on go.sum, which does NOT change when only
+          # .go source changes (e.g. the 503-retry fix in apps/jellyfin/
+          # configurator.go). The Go build cache then reuses pre-fix object
+          # files for the apps module, linking a stale binary. The journal
+          # proves it: "PostStart: checking setup wizard status" followed
+          # immediately by "PostStart failed ... 503" with NO "waiting for
+          # Jellyfin API" retry lines — the fix's log string is absent from
+          # the running binary. Purge the build cache BEFORE any go build
+          # (CLI or host-agent) so both compile from clean source.
+          go clean -cache
+
+      - name: Build CLI
+        working-directory: cli
+        run: go build -o ../bloud .
+
+      - name: Wipe stale E2E runtime
+        if: env.CI == 'true'
+        run: |
+          # --keep (BLOUD_E2E_KEEP=1) suppresses the post-run cleanup so the
+          # failure-debug step can inspect the deployment. If the runner's
+          # /var/tmp is reused across jobs, a previous run's app data dir would
+          # survive into this run's "fresh install" — exercising the post-init
+          # path instead of first-run init. Wipe first.
+          sudo rm -rf /var/tmp/bloud-e2e-runtime
+          sudo chown -R "$USER" /var/tmp
+
+      - name: Run E2E for ${{ matrix.app }} (native backend)
+        id: e2e
+        env:
+          BLOUD_BACKEND: native
+          BLOUD_E2E_KEEP: "1"
+          BLOUD_E2E_APP: ${{ matrix.app }}
+          BLOUD_URL: http://localhost:8080
+          BLOUD_API_URL: http://localhost:3000
+        run: |
+          # Each matrix app maps 1:1 to <app>.spec.ts.
+          BLOUD_E2E_PLAYWRIGHT_FILTER="${{ matrix.app }}" ./bloud e2e app
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.app }}-results
+          path: e2e/test-results
+          retention-days: 7
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          echo "=== Host-agent lifecycle (jellyfin / phases / errors) ==="
+          echo "=== Deployed host-agent binary (cache check) ==="
+          ls -la /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>&1 || true
+          stat -c 'modified: %y  size: %s bytes' /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>&1 || true
+          systemctl --user show -p ExecMainStartTimestamp bloud-e2e-host-agent.service 2>&1 || true
+          # Proves the 503-retry fix is compiled in: this log string only
+          # exists in the binary if apps/jellyfin's retry loop was built in.
+          echo "=== 503-retry fix compiled in (expect: waiting for Jellyfin API) ==="
+          strings /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>/dev/null | grep -i 'waiting for Jellyfin API' | head -1 || echo "NOT FOUND - stale binary?"
+          journalctl --user -u bloud-e2e-host-agent.service --no-pager 2>&1 \
+            | grep -iE 'jellyfin|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|"level":"(error|warn)"' \
+            | tail -150 || true
+          echo "=== Jellyfin container logs ==="
+          podman logs --tail 80 apps-jellyfin 2>&1 || true
+          echo "=== Podman containers ==="
+          podman ps -a 2>&1 || true
+          echo "=== Podman socket ==="
+          systemctl --user status podman.socket --no-pager 2>&1 || true
+          echo "=== Runtime dir ==="
+          ls -la /var/tmp/bloud-e2e-runtime/ 2>&1 || true
+          echo "=== Ports ==="
+          ss -tlnp 2>&1 || true

@@ -6,6 +6,7 @@ package authentik
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1561,41 +1562,36 @@ func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
 // The CSS is pushed inline because Authentik uses Constructable Stylesheets
 // which forbid @import rules in branding_custom_css.
 // This is idempotent — safe to call on every PostStart.
+//
+// The default brand is created by an Authentik migration, which can lag
+// behind the server readiness probe on slow hosts (cold CI runners). A
+// PostStart error is terminal in the reconciler (ERROR status is never
+// retried), so a single transient "brand not found" would brick the SSO
+// stack. Retry while the brand is absent; other API errors fail fast.
 func (c *Client) EnsureBranding(css string) error {
-	// Find the default brand (domain = "authentik-default")
-	reqURL := fmt.Sprintf("%s/api/v3/core/brands/?domain=authentik-default", c.baseURL)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
+	const (
+		maxAttempts = 15
+		retryDelay  = 4 * time.Second
+	)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("fetching brands: %w", err)
+	brandPK := ""
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		brandPK, lastErr = c.defaultBrandPK()
+		if lastErr == nil {
+			break
+		}
+		if !errors.Is(lastErr, errBrandNotFound) {
+			return lastErr
+		}
+		if attempt < maxAttempts {
+			time.Sleep(retryDelay)
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("fetching brands: status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		Results []struct {
-			PK string `json:"brand_uuid"`
-		} `json:"results"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decoding brands: %w", err)
+	if brandPK == "" {
+		return lastErr
 	}
 
-	if len(result.Results) == 0 {
-		return fmt.Errorf("default brand not found")
-	}
-
-	brandPK := result.Results[0].PK
 	patchURL := fmt.Sprintf("%s/api/v3/core/brands/%s/", c.baseURL, brandPK)
 
 	payload := map[string]string{"branding_custom_css": css}
@@ -1621,6 +1617,47 @@ func (c *Client) EnsureBranding(css string) error {
 	}
 
 	return nil
+}
+
+// errBrandNotFound indicates the default brand does not exist yet (migration
+// still running).
+var errBrandNotFound = fmt.Errorf("default brand not found")
+
+// defaultBrandPK returns the UUID of the default Authentik brand
+// (domain = "authentik-default"), or errBrandNotFound while it does not exist.
+func (c *Client) defaultBrandPK() (string, error) {
+	reqURL := fmt.Sprintf("%s/api/v3/core/brands/?domain=authentik-default", c.baseURL)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching brands: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("fetching brands: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []struct {
+			PK string `json:"brand_uuid"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding brands: %w", err)
+	}
+
+	if len(result.Results) == 0 {
+		return "", errBrandNotFound
+	}
+	return result.Results[0].PK, nil
 }
 
 // OIDC constants for Bloud's own OAuth2 application

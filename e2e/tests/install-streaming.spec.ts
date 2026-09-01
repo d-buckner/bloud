@@ -50,7 +50,7 @@ test.describe('live install state (install streaming)', () => {
     // carries the app record, so no polling round-trip is needed.
     await page.goto('/');
     const tile = page.locator('.app-slot', { hasText: 'Jellyfin' }).first();
-    await expect(tile).toBeVisible({ timeout: 2_000 });
+    await expect(tile).toBeVisible({ timeout: 5_000 });
 
     // A phase label (or the brief pre-phase spinner) is visible while
     // installing.
@@ -73,8 +73,9 @@ test.describe('live install state (install streaming)', () => {
     ]);
 
     // The app converges (a fresh VM pulls the image, so this is the long
-    // part). The budget stays under the 10 min per-test timeout.
-    await waitForApp('jellyfin', 'running', 8 * 60_000);
+    // part). The 12-minute budget leaves headroom under the 15-minute
+    // per-test timeout for the remaining assertions.
+    await waitForApp('jellyfin', 'running', 12 * 60_000);
 
     // The tile reflects running: no phase label, no spinner.
     await expect(tile.locator('.phase-label')).toHaveCount(0, { timeout: 30_000 });
