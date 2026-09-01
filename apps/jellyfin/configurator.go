@@ -274,9 +274,23 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	c.logger.Info("PostStart: checking setup wizard status")
 
 	// 1. Check if setup wizard is complete.
-	// HealthCheck already waited for /System/Info/Public to be ready,
-	// so this call should succeed immediately.
-	info, err := c.getSystemInfo(ctx)
+	// The container health check (curl -sf /System/Info/Public) passes on the
+	// first 200, but Jellyfin oscillates during first-run init — it briefly
+	// returns 200 then drops back to 503 "Server is loading" before stabilising.
+	// A single 503 here would fail PostStart, which the reconciler treats as a
+	// terminal node ERROR it never retries, so wait out the transient instead.
+	var info *SystemInfo
+	var err error
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		info, err = c.getSystemInfo(ctx)
+		if err == nil {
+			break
+		}
+		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
 	}
