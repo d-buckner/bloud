@@ -97,21 +97,17 @@ jobs:
       - name: Debug on failure
         if: failure()
         run: |
-          echo "=== User systemd units ==="
-          systemctl --user list-units --all --no-pager 2>&1 || true
-          echo "=== Unit file ==="
-          cat ~/.config/systemd/user/bloud-e2e-host-agent.service 2>&1 || echo "not found"
-          echo "=== Systemctl status ==="
-          systemctl --user status bloud-e2e-host-agent.service --no-pager 2>&1 || true
-          echo "=== Journal ==="
-          journalctl --user -u bloud-e2e-host-agent.service --no-pager -n 200 2>&1 || true
+          echo "=== Host-agent lifecycle (jellyfin / phases / errors) ==="
+          journalctl --user -u bloud-e2e-host-agent.service --no-pager 2>&1 \
+            | grep -iE 'jellyfin|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|"level":"(error|warn)"' \
+            | tail -150 || true
+          echo "=== Jellyfin container logs ==="
+          podman logs --tail 80 apps-jellyfin 2>&1 || true
           echo "=== Podman containers ==="
           podman ps -a 2>&1 || true
           echo "=== Podman socket ==="
           systemctl --user status podman.socket --no-pager 2>&1 || true
           echo "=== Runtime dir ==="
           ls -la /var/tmp/bloud-e2e-runtime/ 2>&1 || true
-          echo "=== Host-agent binary ==="
-          file /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>&1 || true
           echo "=== Ports ==="
           ss -tlnp 2>&1 || true
