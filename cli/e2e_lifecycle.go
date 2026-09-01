@@ -107,7 +107,11 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	flags := flag.NewFlagSet("e2e lifecycle", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.BoolVar(&cfg.hostOnly, "host-only", false, "skip Playwright browser tests")
-	flags.BoolVar(&cfg.keep, "keep", false, "leave the host-agent service running")
+	// Default from env so CI (which sets BLOUD_E2E_KEEP=1) gets the same
+	// behavior as passing --keep on the command line. The flag can still
+	// override the env default.
+	keepDefault := getenv("BLOUD_E2E_KEEP") == "1"
+	flags.BoolVar(&cfg.keep, "keep", keepDefault, "leave the host-agent service running")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return cfg, true, nil
