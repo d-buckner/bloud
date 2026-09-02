@@ -270,24 +270,25 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 }
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
-//
-// It runs on a context detached from the convergence pass (ctx) with its own
-// generous deadline. The pass context is short-lived and is cancelled when the
-// pass completes, but PostStart can outlive the pass — the 503-retry loop
-// sleeps between attempts, and the wizard/library/LDAP steps make network
-// calls. If any of those are bound to the pass context, the cancellation
-// surfaces as "context canceled" mid-step, the node goes to terminal ERROR,
-// and the reconciler never retries it. The detached deadline (90 s) bounds
-// the work; the outer e2e timeout is the real backstop.
+// It runs on a context detached from the convergence pass with its own
+// 90 s deadline so the 503-retry loop and network steps survive the pass
+// completing. See the inline comment for the context-detach rationale.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	// WithoutCancel detaches from the pass's deadline (the pass completes
-	// shortly after dispatching PostStart, which would cancel the retry loop)
-	// while still propagating a genuine orchestrator-shutdown cancellation.
-	// A 90 s deadline bounds the work; the outer e2e timeout is the real
-	// backstop.
-	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+	// The pass context is short-lived and is cancelled when the pass
+	// completes, but PostStart can outlive the pass — the 503-retry loop
+	// sleeps between attempts, and the wizard/library/LDAP steps make
+	// network calls. If any of those are bound to the pass context, the
+	// cancellation surfaces as "context canceled" mid-step, the node goes
+	// to terminal ERROR, and the reconciler never retries it.
+	//
+	// context.Background() detaches completely from the pass so the retry
+	// loop and subsequent steps survive the pass completing. A 90 s
+	// deadline bounds the work; the outer e2e timeout is the real backstop.
+	// (context.WithoutCancel was tried first but did not prevent the
+	// cancellation on Go 1.25 linux/amd64 — the retry loop still broke
+	// at the ctx.Err() check after the first getSystemInfo call.)
+	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	c.logger.Info("PostStart: context detached from pass (WithoutCancel)", "deadline", 90*time.Second)
 	return c.postStart(runCtx, state)
 }
 
