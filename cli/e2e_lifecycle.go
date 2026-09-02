@@ -596,7 +596,7 @@ until curl -fsS http://localhost:8096/health >/dev/null; do
   sleep 2
 done
 curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'
-grep -q 'jellyfin-backend' "$1/apps-routes.yml"`
+grep -q 'jellyfin' "$1/apps-routes.yml"`
 
 var remoteRestartScript = `podman restart apps-jellyfin
 deadline=$((SECONDS + 300))
