@@ -582,21 +582,29 @@ if printf '%s' "$status" | grep -q '"setupRequired":true'; then
   curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" http://localhost:3000/api/setup/create-user | grep -q '"success":true'
 fi`
 
-var remoteAssertInstalledScript = `test "$(podman inspect -f '{{ index .Config.Labels "io.bloud.managed" }}' apps-jellyfin)" = true
-test "$(podman inspect -f '{{ index .Config.Labels "io.bloud.app" }}' apps-jellyfin)" = jellyfin
-test "$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)" = true
+var remoteAssertInstalledScript = `
+set -e
+managed=$(podman inspect -f '{{ index .Config.Labels "io.bloud.managed" }}' apps-jellyfin)
+test "$managed" = true || { echo "FAIL: io.bloud.managed=$managed" >&2; exit 1; }
+app=$(podman inspect -f '{{ index .Config.Labels "io.bloud.app" }}' apps-jellyfin)
+test "$app" = jellyfin || { echo "FAIL: io.bloud.app=$app" >&2; exit 1; }
+running=$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)
+test "$running" = true || { echo "FAIL: container running=$running" >&2; exit 1; }
 # Retry the Jellyfin health check: the API oscillates between 200 and 503
 # "Server is loading" during first-run init, even after PostStart completes.
 deadline=$((SECONDS + 60))
 until curl -fsS http://localhost:8096/health >/dev/null; do
   if ((SECONDS >= deadline)); then
-    echo "Jellyfin health check timed out" >&2
+    echo "FAIL: Jellyfin health check timed out after 60s" >&2
+    curl -sS http://localhost:8096/health >&2 || true
     exit 1
   fi
   sleep 2
 done
-curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'
-grep -q 'jellyfin' "$1/apps-routes.yml"`
+curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"' || { echo "FAIL: jellyfin not in installed apps" >&2; exit 1; }
+grep -q 'jellyfin' "$1/apps-routes.yml" || { echo "FAIL: jellyfin route not in $1/apps-routes.yml" >&2; exit 1; }
+echo "OK: installed Jellyfin host state verified"
+`
 
 var remoteRestartScript = `podman restart apps-jellyfin
 deadline=$((SECONDS + 300))
