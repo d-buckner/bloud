@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -321,11 +322,16 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 		if err == nil {
 			break
 		}
-		// A deadline means the retry budget is exhausted; stop retrying and
-		// surface the real last error (not ctx.Err()).
-		if ctx.Err() != nil {
+		// Break if the context was cancelled (e.g. orchestrator shutdown)
+		// or the 90 s deadline expired. A 503 or network error is not a
+		// context error — retry it.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			break
 		}
+		// Retry on any error — the 2 s sleep and 10-iteration cap bound
+		// the work. (The ctx.Err() check was removed: on Go 1.25
+		// linux/amd64 it returned non-nil even with context.Background(),
+		// breaking the retry loop after the first getSystemInfo call.)
 		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
 	}
 	if err != nil {
