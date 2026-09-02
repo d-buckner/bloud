@@ -585,7 +585,16 @@ fi`
 var remoteAssertInstalledScript = `test "$(podman inspect -f '{{ index .Config.Labels "io.bloud.managed" }}' apps-jellyfin)" = true
 test "$(podman inspect -f '{{ index .Config.Labels "io.bloud.app" }}' apps-jellyfin)" = jellyfin
 test "$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)" = true
-curl -fsS http://localhost:8096/health >/dev/null
+# Retry the Jellyfin health check: the API oscillates between 200 and 503
+# "Server is loading" during first-run init, even after PostStart completes.
+deadline=$((SECONDS + 60))
+until curl -fsS http://localhost:8096/health >/dev/null; do
+  if ((SECONDS >= deadline)); then
+    echo "Jellyfin health check timed out" >&2
+    exit 1
+  fi
+  sleep 2
+done
 curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'
 grep -q 'jellyfin-backend' "$1/apps-routes.yml"`
 
