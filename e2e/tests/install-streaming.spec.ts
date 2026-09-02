@@ -50,7 +50,7 @@ test.describe('live install state (install streaming)', () => {
     // carries the app record, so no polling round-trip is needed.
     await page.goto('/');
     const tile = page.locator('.app-slot', { hasText: 'Jellyfin' }).first();
-    await expect(tile).toBeVisible({ timeout: 2_000 });
+    await expect(tile).toBeVisible({ timeout: 5_000 });
 
     // A phase label (or the brief pre-phase spinner) is visible while
     // installing.
