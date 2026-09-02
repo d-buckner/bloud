@@ -135,6 +135,7 @@ func RegisterAll(
     catalogApps map[string]*catalog.App,
     logger *slog.Logger,
     templateVars map[string]string,
+    hosts *hostset.State,
 ) {
     // ... existing ...
     registry.Register(yourapp.NewConfigurator(8080))
@@ -144,8 +145,8 @@ func RegisterAll(
 ## Step 3: Test
 
 Add integration test assertions to `services/host-agent/internal/e2e/e2e_test.go`
-(build-tag gated with `//go:build integration`). Tests run against real services in the
-Lima VM.
+(build-tag gated with `//go:build integration`). Tests run against real services on the
+selected runtime (Lima/QEMU VM or native host).
 
 Test the behavioral outcome, not config values:
 
@@ -157,6 +158,16 @@ func TestYourApp_PostStartConfiguresCorrectly(t *testing.T) {
 
 Run with: `./bloud validate --tier integration`
 
+Also add:
+
+- A user-journey Playwright spec in `e2e/tests/your-app.spec.ts` (user flows go
+  through the public port `http://localhost:8080`; API helpers use the internal
+  API at `BLOUD_API_URL` / `:3000`). Wire it up with
+  `./bloud e2e app` + `BLOUD_E2E_APP=your-app`.
+- An entry for the app in `validation.yaml` under `apps:` (auth strategy,
+  validation level, file globs, `e2e-project`). `./bloud validate` infers the
+  affected apps from this registry — keep it in sync.
+
 ## Reference Apps
 
 | App | Pattern |
@@ -166,3 +177,4 @@ Run with: `./bloud validate --tier integration`
 | `apps/immich` | Database integration, OIDC SSO |
 | `apps/affine` | Own postgres+redis, OIDC config file, first-run owner bootstrap (see `INTEGRATION.md`) |
 | `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app |
+| `apps/appflowy` | `none` routing strategy that still wires Bloud SSO into the app's own GoTrue OIDC provider (see `INTEGRATION.md`) |

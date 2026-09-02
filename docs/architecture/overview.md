@@ -246,12 +246,13 @@ postgres and redis containers declared in `containers:` metadata.
 | Tier | Scope | Command |
 |---|---|---|
 | `fast` | Unit tests, type checks | `./bloud validate --tier fast` |
-| `integration` | Backend against real services in Lima VM | `./bloud validate --tier integration` |
+| `integration` | Backend against real services on the runtime | `./bloud validate --tier integration` |
 
 ## Dev Environment
 
-Two interchangeable VM backends, selected via `BLOUD_BACKEND` (`lima` default on
-macOS, `qemu` for Linux):
+Interchangeable runtimes, selected via `BLOUD_BACKEND` (`lima` default on
+macOS, `qemu` for Linux VMs, `native` for Linux CI where the host-agent runs
+directly on the machine without a VM):
 
 Lima VM (Debian, Apple Virtualization) — macOS:
 
@@ -276,6 +277,7 @@ Linux host
         └── host-agent binary (:3000)
 ```
 
-Ports 80, 3000, and 8080 are forwarded to the host localhost by `./bloud dev`
-(port 80 is the front proxy: `host-agent front-proxy` under the root
-`bloud-front.service`, forwarding to rootless Traefik on 8080).
+Ports 80, 3000, 8080, 8443, and each app's direct port are forwarded to the host
+localhost by `./bloud dev` (port 80 is the front proxy: `host-agent front-proxy`
+under the root `bloud-front.service`, forwarding to rootless Traefik on 8080).
+The native backend needs no forwarding — everything already runs on the host.

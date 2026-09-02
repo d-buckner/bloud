@@ -2,6 +2,10 @@
 
 **Status:** Complete — All phases done; legacy interface removed; all apps on `containers:` format
 
+> This is the multi-container model design document. The canonical metadata field
+> reference is `services/host-agent/internal/catalog/models.go`; to add an app, follow
+> [docs/guides/contributing-apps.md](../guides/contributing-apps.md).
+
 ## Implementation Status
 
 - **Phase 1-2:** Multi-container metadata parsing and orchestrator lifecycle — implemented

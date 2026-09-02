@@ -23,6 +23,10 @@ func cmdSetup() int {
 
 	// Check prerequisites. Lima is only needed for the Lima backend
 	// (macOS); the QEMU backend (Linux) needs qemu-system-x86_64 instead.
+	// NOTE: only lima and qemu branch here — BLOUD_BACKEND=native falls into
+	// the lima path and is checked for limactl. Known gap (native is a CI
+	// backend whose real prereqs, podman + user-level systemd, are set up by
+	// the workflow); tracked in AGENTS.md "Known debt".
 	prereqs := []struct{ name, label string }{
 		{"go", "Go"},
 		{"node", "Node.js"},
