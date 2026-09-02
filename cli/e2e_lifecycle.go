@@ -50,7 +50,16 @@ type lifecycle struct {
 var lifecycleRemotePath = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
 
 func runLifecycle(root string, args []string) error {
-	cfg, help, err := parseLifecycleConfig(root, args, os.Getenv)
+	if wantsHelp(args) {
+		printLifecycleUsage(os.Stdout)
+		return nil
+	}
+	name, err := backendName()
+	if err != nil {
+		return err
+	}
+
+	cfg, help, err := parseLifecycleConfig(root, args, os.Getenv, name)
 	if err != nil {
 		return err
 	}
@@ -63,13 +72,27 @@ func runLifecycle(root string, args []string) error {
 	return runner.run()
 }
 
-func parseLifecycleConfig(root string, args []string, getenv func(string) string) (lifecycleConfig, bool, error) {
+// wantsHelp reports whether args ask for usage text; checked before backend
+// resolution so '--help' never triggers the backend prompt.
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+// parseLifecycleConfig builds the lifecycle config from args and the
+// environment. backendName is the resolved runtime backend (see
+// backendName); explicit BLOUD_E2E_* instance variables still override it.
+func parseLifecycleConfig(root string, args []string, getenv func(string) string, backendName string) (lifecycleConfig, bool, error) {
 	cfg := lifecycleConfig{
 		root:       root,
 		lima:       getenv("BLOUD_E2E_LIMA_INSTANCE"),
 		qemu:       getenv("BLOUD_E2E_QEMU_INSTANCE"),
 		sshTarget:  getenv("BLOUD_E2E_SSH_TARGET"),
-		native:     getenv("BLOUD_BACKEND") == "native",
+		native:     backendName == "native",
 		baseURL:    getenv("BLOUD_URL"),
 		remoteDir:  getenv("BLOUD_E2E_RUNTIME_DIR"),
 		goarch:     getenv("BLOUD_E2E_GOARCH"),
@@ -80,7 +103,13 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if cfg.remoteDir == "" {
 		cfg.remoteDir = "/var/tmp/bloud-e2e-runtime"
 	}
-	if cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "" && !cfg.native {
+	// Default the VM instance from the backend when nothing is explicit.
+	switch {
+	case cfg.native:
+		// Runs on the current machine; no VM instance.
+	case cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "" && backendName == "qemu":
+		cfg.qemu = "bloud-qemu"
+	case cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "":
 		cfg.lima = "bloud-dev"
 	}
 	if cfg.qemu != "" && cfg.sshTarget == "" {
@@ -122,7 +151,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 		return cfg, false, fmt.Errorf("unexpected lifecycle arguments: %s", strings.Join(flags.Args(), " "))
 	}
 	if cfg.native && (cfg.lima != "" || cfg.qemu != "" || cfg.sshTarget != "") {
-		return cfg, false, fmt.Errorf("BLOUD_BACKEND=native cannot be combined with BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
+		return cfg, false, fmt.Errorf("native backend cannot be combined with BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
 	}
 	if cfg.lima != "" && (cfg.qemu != "" || cfg.sshTarget != "") {
 		return cfg, false, fmt.Errorf("set only one of BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
@@ -156,10 +185,12 @@ func printLifecycleUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
 
 Required environment:
-  None for the default Lima target. It uses bloud-dev.
+  None — the VM instance defaults from the backend preference
+  (.bloud/preferences.yaml, set by ./bloud setup).
 
 Optional environment:
-  BLOUD_BACKEND            Set to "native" to run on the current machine (no VM)
+  BLOUD_BACKEND            Override the stored backend preference
+                           (e.g. native = run on the current machine, no VM)
   BLOUD_E2E_LIMA_INSTANCE
                          Lima instance name (default: bloud-dev)
   BLOUD_E2E_SSH_TARGET   Use a generic SSH target instead of Lima

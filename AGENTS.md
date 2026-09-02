@@ -39,11 +39,15 @@ Go modules are linked by `replace` directives (host-agent ↔ apps). CI: GitHub 
 
 - Go 1.25 (host-agent, apps), Go 1.24 (cli), Node ≥18 (CI uses 22), npm 10.
 - Host tools: `go`, `node`, `limactl`, `podman` (plus `qemu-system-x86_64` for the QEMU backend).
-  `./bloud setup` (or `npm run setup`) checks prerequisites and rebuilds `./bloud`.
+  `./bloud setup` (or `npm run setup`) selects the runtime backend (stored in
+  gitignored `.bloud/preferences.yaml`), checks prerequisites, and rebuilds `./bloud`.
 - Build the CLI: `cd cli && go build -o ../bloud .`
 
-Development runs **inside a VM** — macOS uses Lima (default), Linux uses QEMU
-(`BLOUD_BACKEND=qemu`):
+Development runs **inside a VM** — macOS uses Lima (the only applicable
+backend, chosen automatically), Linux uses QEMU (or `native`, running directly
+on the host). The backend preference is picked by `./bloud setup` (or prompted
+on first use of any VM command) and stored in gitignored
+`.bloud/preferences.yaml`; `BLOUD_BACKEND` overrides it:
 
 ```bash
 # Lima (macOS)
@@ -51,7 +55,7 @@ limactl create --name=bloud-dev dev/lima.yaml
 limactl start bloud-dev
 
 # QEMU (Linux) — self-provisioning
-BLOUD_BACKEND=qemu ./bloud dev              # creates .bloud/qemu/bloud-qemu (gitignored)
+./bloud dev                           # creates .bloud/qemu/bloud-qemu (gitignored)
 # manual SSH: ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1
 ```
 
@@ -191,7 +195,7 @@ go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
 ## `./bloud` CLI reference
 
 ```
-Setup:       setup                Check prerequisites and build CLI
+Setup:       setup                Select runtime backend, check prerequisites, build CLI
 Dev (VM):    dev                  Build + deploy + run host-agent (Ctrl-C to stop)
             start                Show quick-start instructions
             stop | status | services | logs
@@ -205,9 +209,12 @@ Other:       depgraph             Mermaid dependency graph from app metadata
 
 The CLI resolves the project root by walking up from cwd looking for
 `cli/main.go`, `specs/spec.md`, etc., and loads a gitignored root `.env`
-(existing env vars win). Backend selection: `BLOUD_BACKEND=qemu|lima`
-(default lima); instance overrides: `BLOUD_E2E_LIMA_INSTANCE` (default
-`bloud-dev`), `BLOUD_QEMU_INSTANCE` (default `bloud-qemu`).
+(existing env vars win). Backend selection: `./bloud setup` stores the choice
+in gitignored `.bloud/preferences.yaml` (macOS: `lima` automatically; Linux:
+`qemu` | `native`, prompted if unset); `BLOUD_BACKEND=lima|qemu|native`
+overrides the stored preference. Instance overrides:
+`BLOUD_E2E_LIMA_INSTANCE` (default `bloud-dev`), `BLOUD_QEMU_INSTANCE`
+(default `bloud-qemu`).
 
 ## Architecture invariants (do not break)
 
