@@ -818,6 +818,59 @@ func TestConfigurator_PostStart_Tolerates503WithCancelledPassContext(t *testing.
 	}
 }
 
+func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
+	// The first retry loop succeeds (200, StartupWizardCompleted=false),
+	// entering the second retry loop (wizard check). The second loop's
+	// calls must also tolerate 503 "Server is loading" — before the fix,
+	// the first 503 in the wizard loop was fatal. Serve: 1st call 200 with
+	// wizard incomplete, 2nd-3rd calls 503, 4th call 200 with wizard done.
+	var infoCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/System/Info/Public":
+			n := atomic.AddInt32(&infoCalls, 1)
+			switch {
+			case n == 1:
+				// First retry loop: 200, wizard incomplete
+				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: false})
+			case n <= 3:
+				// Wizard check loop: 503 "Server is loading"
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+			default:
+				// Wizard check loop: 200, wizard complete
+				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
+			}
+
+		case "/Users/AuthenticateByName":
+			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+
+		case "/Library/VirtualFolders":
+			if r.Method == http.MethodGet {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]VirtualFolder{})
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		default:
+			t.Errorf("Unexpected endpoint called: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, nil)
+	c.baseURL = server.URL
+
+	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
+		t.Fatalf("PostStart() should tolerate 503 in wizard check, got error = %v", err)
+	}
+	if got := atomic.LoadInt32(&infoCalls); got < 4 {
+		t.Fatalf("expected at least 4 /System/Info/Public probes (1 ok + 2 x 503 + 1 ok), got %d", got)
+	}
+}
+
 func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 	ldap := &configurator.LDAPOutput{
 		Host:         "apps-authentik-ldap",

@@ -346,20 +346,32 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	}
 
 	if !info.StartupWizardCompleted {
-		// Retry a few times — Jellyfin 10.11.9+ may report false during early init
-		for range 5 {
+		// Retry a few times — Jellyfin 10.11.9+ may report false during early
+		// init, and the API oscillates between 200 and 503 "Server is loading"
+		// before stabilising. Retry on 503/network errors (not context
+		// errors); the 2 s sleep and 5-iteration cap bound the work.
+		for i := range 5 {
 			select {
 			case <-time.After(2 * time.Second):
 			case <-ctx.Done():
 			}
 			info, err = c.getSystemInfo(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to get system info: %w", err)
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					break
+				}
+				// 503 or network error — retry on the next iteration
+				c.logger.Info("waiting for Jellyfin API (wizard check)", "attempt", i+1, "error", err)
+				continue
 			}
 			if info.StartupWizardCompleted {
 				break
 			}
 		}
+	}
+	if err != nil {
+		// All 5 retries hit 503/network errors — the API never stabilised
+		return fmt.Errorf("failed to get system info: %w", err)
 	}
 
 	if !info.StartupWizardCompleted {
