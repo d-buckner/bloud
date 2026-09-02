@@ -297,6 +297,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // its own deadline, so the 503-retry loop and the wizard/library/LDAP steps
 // survive the convergence pass completing.
 func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {
+	c.logger.Info("DBG postStart: entered", "ctx_err", ctx.Err(), "base_url", c.getBaseURL())
 	c.logger.Info("PostStart: checking setup wizard status")
 
 	// 1. Check if setup wizard is complete.
@@ -312,28 +313,34 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	var info *SystemInfo
 	var err error
 	for i := range 10 {
+		c.logger.Info("DBG retry-loop: iteration", "i", i, "ctx_err", ctx.Err())
 		if i > 0 {
 			select {
 			case <-time.After(2 * time.Second):
+				c.logger.Info("DBG retry-loop: sleep completed (2s elapsed)")
 			case <-ctx.Done():
+				c.logger.Info("DBG retry-loop: ctx.Done() fired during sleep", "ctx_err", ctx.Err())
 			}
 		}
 		info, err = c.getSystemInfo(ctx)
+		c.logger.Info("DBG retry-loop: getSystemInfo returned", "err", err, "info_nil", info == nil)
 		if err == nil {
+			c.logger.Info("DBG retry-loop: success, breaking")
 			break
 		}
 		// Break if the context was cancelled (e.g. orchestrator shutdown)
 		// or the 90 s deadline expired. A 503 or network error is not a
 		// context error — retry it.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		isCanceled := errors.Is(err, context.Canceled)
+		isDeadline := errors.Is(err, context.DeadlineExceeded)
+		c.logger.Info("DBG retry-loop: error checks", "is_canceled", isCanceled, "is_deadline", isDeadline, "ctx_err", ctx.Err())
+		if isCanceled || isDeadline {
+			c.logger.Info("DBG retry-loop: context error, breaking")
 			break
 		}
-		// Retry on any error — the 2 s sleep and 10-iteration cap bound
-		// the work. (The ctx.Err() check was removed: on Go 1.25
-		// linux/amd64 it returned non-nil even with context.Background(),
-		// breaking the retry loop after the first getSystemInfo call.)
 		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
 	}
+	c.logger.Info("DBG retry-loop: exited", "final_err", err, "info_nil", info == nil)
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
 	}
@@ -396,20 +403,25 @@ type SystemInfo struct {
 // getSystemInfo fetches the system info from Jellyfin
 func (c *Configurator) getSystemInfo(ctx context.Context) (*SystemInfo, error) {
 	url := c.getBaseURL() + "/System/Info/Public"
+	c.logger.Info("DBG getSystemInfo: start", "url", url, "ctx_err", ctx.Err())
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
+		c.logger.Error("DBG getSystemInfo: NewRequestWithContext failed", "error", err)
 		return nil, err
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		c.logger.Error("DBG getSystemInfo: Do failed", "error", err, "is_ctx_canceled", errors.Is(err, context.Canceled), "is_deadline", errors.Is(err, context.DeadlineExceeded))
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	c.logger.Info("DBG getSystemInfo: got response", "status", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		c.logger.Warn("DBG getSystemInfo: non-200 status", "status", resp.StatusCode, "body", string(body[:min(len(body), 200)]))
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 

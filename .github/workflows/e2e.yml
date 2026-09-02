@@ -94,8 +94,8 @@ jobs:
           echo "=== 503-retry fix compiled in (expect: waiting for Jellyfin API) ==="
           strings /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>/dev/null | grep -i 'waiting for Jellyfin API' | head -1 || echo "NOT FOUND - stale binary?"
           journalctl --user -u bloud-e2e-host-agent.service --no-pager 2>&1 \
-            | grep -iE 'jellyfin|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|"level":"(error|warn)"' \
-            | tail -150 || true
+            | grep -iE 'jellyfin|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|DBG|"level":"(error|warn)"' \
+            | tail -300 || true
           echo "=== Jellyfin container logs ==="
           podman logs --tail 80 apps-jellyfin 2>&1 || true
           echo "=== Podman containers ==="
