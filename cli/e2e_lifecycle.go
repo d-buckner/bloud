@@ -601,7 +601,7 @@ until curl -fsS http://localhost:8096/health >/dev/null; do
   fi
   sleep 2
 done
-curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"' || { echo "FAIL: jellyfin not in installed apps" >&2; exit 1; }
+curl -fsS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"' || { echo "FAIL: jellyfin not in installed apps" >&2; exit 1; }
 grep -q 'jellyfin' "$1/apps-routes.yml" || { echo "FAIL: jellyfin route not in $1/apps-routes.yml" >&2; exit 1; }
 echo "OK: installed Jellyfin host state verified"
 `
@@ -619,16 +619,16 @@ until curl -fsS http://localhost:3000/api/health >/dev/null; do
   sleep 2
 done
 test "$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)" = true
-curl -fsS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'`
+curl -fsS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'`
 
 var remoteUninstallScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
 printf 'uninstall response: %%s\n' "$http_code"
 test "$http_code" -ge 200 && test "$http_code" -lt 300
 deadline=$((SECONDS + 300))
-until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'; do
+until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'; do
   if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin removal"; exit 1; fi
   sleep 2
 done
 ! podman container exists apps-jellyfin
 test ! -e "$1/data/jellyfin"
-! grep -q 'jellyfin-backend' "$2/apps-routes.yml"`
+! grep -q 'jellyfin' "$2/apps-routes.yml"`
