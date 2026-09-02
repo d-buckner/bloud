@@ -43,20 +43,25 @@ Go modules are linked by `replace` directives (host-agent ↔ apps). CI: GitHub 
   gitignored `.bloud/preferences.yaml`), checks prerequisites, and rebuilds `./bloud`.
 - Build the CLI: `cd cli && go build -o ../bloud .`
 
-Development runs **inside a VM** — macOS uses Lima (the only applicable
-backend, chosen automatically), Linux uses QEMU (or `native`, running directly
-on the host). The backend preference is picked by `./bloud setup` (or prompted
-on first use of any VM command) and stored in gitignored
-`.bloud/preferences.yaml`; `BLOUD_BACKEND` overrides it:
+Development runs **inside a VM** on developer machines — macOS uses Lima (the
+only applicable backend, chosen automatically), Linux uses QEMU (or `native`,
+running host-agent directly on the host; needs podman + user-level systemd —
+`NativeBackend.Create` enables `podman.socket` and linger as needed). The
+backend preference is picked by `./bloud setup` (or prompted on first use of
+any runtime command) and stored in gitignored `.bloud/preferences.yaml`;
+`BLOUD_BACKEND` overrides it:
 
 ```bash
-# Lima (macOS)
+# Lima (macOS, default)
 limactl create --name=bloud-dev dev/lima.yaml
 limactl start bloud-dev
 
 # QEMU (Linux) — self-provisioning
 ./bloud dev                           # creates .bloud/qemu/bloud-qemu (gitignored)
 # manual SSH: ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1
+
+# Native (Linux CI) — no VM; runtime in /var/tmp/bloud-native-runtime
+BLOUD_BACKEND=native ./bloud dev
 ```
 
 `./bloud dev` is the whole loop: provisions the VM if needed, builds host-agent
@@ -65,8 +70,8 @@ host-agent in the foreground (Ctrl-C stops it). **There is no hot reload —
 re-run `./bloud dev` after any code change** (`./bloud rebuild` is a no-op; the
 Nix runtime was removed).
 
-VM data lives in `/var/tmp/bloud-dev-runtime` (Lima) or `/var/tmp/bloud-qemu-runtime`
-(QEMU): `<dir>/host-agent` (binary + `web/build`), `<dir>/data` (BLOUD_DATA_DIR,
+VM data lives in `/var/tmp/bloud-dev-runtime` (Lima), `/var/tmp/bloud-qemu-runtime`
+(QEMU), or `/var/tmp/bloud-native-runtime` (native): `<dir>/host-agent` (binary + `web/build`), `<dir>/data` (BLOUD_DATA_DIR,
 SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 
 ### Ports (forwarded to host localhost)
@@ -82,6 +87,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 3389 | LDAP outpost (direct) | debugging |
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
+| 8480 | AppFlowy (direct) | debugging |
 | 5353 (UDP) | mDNS — the guest's `.local` announcer (`bloud.local`, `<app>.bloud.local`); unicast queries only, since the VM boundary does not relay multicast | debugging / LAN reachability |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
@@ -191,6 +197,8 @@ go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
   `BLOUD_E2E_QEMU_INSTANCE`, `BLOUD_E2E_SSH_TARGET`, `BLOUD_E2E_RUNTIME_DIR`,
   `BLOUD_E2E_GOARCH` (amd64|arm64), `BLOUD_E2E_USERNAME`/`BLOUD_E2E_PASSWORD`
   (defaults `e2etest`/`e2etest123`), `BLOUD_E2E_TRAEFIK_DYNAMIC_DIR`.
+  `./bloud e2e app` (used by `.github/workflows/e2e-apps.yml` on the native
+  backend) adds `BLOUD_E2E_APP` (required) and `BLOUD_E2E_PLAYWRIGHT_FILTER`.
 
 ## `./bloud` CLI reference
 
@@ -203,7 +211,11 @@ Dev (VM):    dev                  Build + deploy + run host-agent (Ctrl-C to sto
             install <app> | uninstall <app>    via host-agent API (:3000)
             reset | destroy      Wipe VM data (keep VM) / delete VM
 Validation:  validate [flags]     Tiered validation (default --tier changed)
-            e2e [lifecycle]      Playwright against running runtime / full lifecycle
+            e2e                  Playwright against the running runtime
+            e2e lifecycle        Self-contained install→restart→uninstall lifecycle
+            e2e app              Single app's spec (BLOUD_E2E_APP=jellyfin|navidrome|
+                                 immich|affine|appflowy|install-streaming) on a
+                                 self-contained runtime — used by CI
 Other:       depgraph             Mermaid dependency graph from app metadata
 ```
 
@@ -212,7 +224,8 @@ The CLI resolves the project root by walking up from cwd looking for
 (existing env vars win). Backend selection: `./bloud setup` stores the choice
 in gitignored `.bloud/preferences.yaml` (macOS: `lima` automatically; Linux:
 `qemu` | `native`, prompted if unset); `BLOUD_BACKEND=lima|qemu|native`
-overrides the stored preference. Instance overrides:
+overrides the stored preference (CI relies on the override; `native` cannot be
+combined with instance/SSH-target env vars). Instance overrides:
 `BLOUD_E2E_LIMA_INSTANCE` (default `bloud-dev`), `BLOUD_QEMU_INSTANCE`
 (default `bloud-qemu`).
 

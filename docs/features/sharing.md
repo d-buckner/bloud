@@ -1,7 +1,8 @@
 # Bloud Sharing
 
-**Status:** Proposed  
-**Last updated:** 2026-06-21
+**Status:** In progress — core sharing implemented (sharing gateway, remote-apps
+store + API, tailnet node, proxied outpost); tailnet outpost auth in development  
+**Last updated:** 2026-09-02
 
 ---
 

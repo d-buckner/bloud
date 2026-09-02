@@ -32,6 +32,8 @@ services/host-agent/bin/*
 
 # CLI binary
 bloud
+# `go build` in cli/ without -o lands cli/cli here
+cli/cli
 
 # Environment
 .env

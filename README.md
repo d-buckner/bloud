@@ -40,9 +40,10 @@ Install Bloud on a Debian box and get:
 - One account and a shared login across every app
 - One-click app installation, dependencies included
 - Automatic inter-app configuration: API keys, OIDC clients, LDAP setup
-- Automatic routing through Traefik
+- Automatic routing through Traefik, over HTTP and HTTPS (Bloud generates its own local CA)
 - Reliable reconciliation after failures and reboot
 - Per-app databases, isolated from each other
+- Your server reachable as `localhost`, `bloud.local` (mDNS, no DNS setup), or your own domain
 - Sharing with people who don't need to manage anything
 
 Bloud's differentiator isn't container installation. It's that apps declare what they
@@ -93,6 +94,7 @@ well.
 | **Media** | Navidrome | Your music library with Subsonic-compatible clients |
 | **Photos** | Immich | Private photo and video management |
 | **Productivity** | AFFiNE | AI-native knowledge base: docs, databases, whiteboards |
+| **Productivity** | AppFlowy | Open-source Notion alternative: docs and databases |
 
 ## One login everywhere
 
@@ -103,6 +105,7 @@ Apps get SSO automatically, using whatever strategy fits them:
 | **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
 | **Forward Auth** | Traefik asks Authentik before reaching the app | Navidrome |
 | **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Immich, AFFiNE |
+| **None** | The app manages its own auth; Bloud still wires your account in (e.g. into the app's own OIDC provider) | AppFlowy |
 
 Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) have
 their own documented login path.
@@ -130,73 +133,94 @@ one-command install on Debian 13.
 
 ## Local development
 
-Development runs inside a **Lima VM** (Debian 13 with rootless Podman).
+Everything goes through the `./bloud` CLI. `npm run setup` picks your runtime
+backend, checks prerequisites, and builds the CLI; `./bloud dev` is the whole loop — it builds host-agent and the
+frontend, deploys them to the runtime, and runs the agent (Ctrl-C to stop).
+There is no hot reload: re-run `./bloud dev` after any code change.
 
-### Prerequisites
+### Backends
+
+The runtime is a Debian 13 environment with rootless Podman. Where it runs is
+a per-checkout preference: `./bloud setup` chooses it (or the first runtime
+command prompts and saves the answer) into gitignored
+`.bloud/preferences.yaml`, and `BLOUD_BACKEND` overrides it:
+
+| Backend | Platform | Chosen as | Prerequisites |
+|---|---|---|---|
+| **Lima** | macOS | automatic — the only applicable backend | `brew install lima` |
+| **QEMU** | Linux | the default choice | `qemu-system-x86_64` |
+| **Native** | Linux (CI) | a prompt choice, or `BLOUD_BACKEND=native` | podman + user-level systemd |
 
 ```bash
-brew install lima
-npm run setup    # Check prerequisites + build ./bloud CLI
+npm run setup            # Choose backend, check prereqs, build ./bloud
 ```
 
-### First-time setup
-
-```bash
-limactl create --name=bloud-dev dev/lima.yaml
-limactl start bloud-dev
-```
+Every backend provisions itself on first run — `./bloud dev` creates the Lima
+VM from `dev/lima.yaml`, provisions the QEMU VM under `.bloud/qemu/`, or sets
+up the native runtime in `/var/tmp/bloud-native-runtime` — then builds,
+deploys, and starts the agent. No separate create/start step.
 
 ### Daily development
 
 ```bash
 ./bloud dev              # Build + deploy + run host-agent (Ctrl-C to stop)
 ./bloud stop             # Stop host-agent
-./bloud status           # Lima VM + host-agent status
+./bloud status           # Runtime + host-agent status
 ./bloud services         # App container status
 ./bloud logs             # Stream host-agent logs
 ./bloud install <app>    # Install an app via API
 ./bloud uninstall <app>  # Uninstall an app via API
+./bloud attach           # Shell on the runtime (VM backends)
+./bloud reset            # Wipe runtime data (keeps the VM)
+./bloud destroy          # Delete the VM
 ```
+
+Apps are then served through Traefik at `http://<app>.localhost:8080` (and
+`http://<app>.bloud.local` via the port-80 front proxy).
 
 ### Validation
 
 ```bash
-./bloud validate                    # Changed-file-based (default)
-./bloud validate --tier fast        # Unit tests only (~30s)
-./bloud validate --tier integration # Against real services in Lima VM
-./bloud e2e lifecycle              # Full build → deploy → install → verify → uninstall
+./bloud validate                     # Changed-file-based (default)
+./bloud validate --tier fast         # Unit tests only (~30s)
+./bloud validate --tier integration # Real install/reconcile flow on the runtime
+./bloud e2e                         # Playwright against a running ./bloud dev
+./bloud e2e lifecycle               # Full build → deploy → install → verify → uninstall
+./bloud e2e app                     # Single app's spec on its own runtime (CI)
 ```
 
 ## Project structure
 
 ```
 bloud/
-├── apps/                          # App definitions
+├── apps/                          # App catalog (one dir per app)
 │   ├── jellyfin/
 │   │   ├── metadata.yaml          # Integrations, SSO, port, container spec
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
-│   ├── authentik/
-│   ├── immich/
-│   ├── navidrome/
-│   ├── affine/
-│   └── traefik/
+│   ├── affine/                    # + appflowy/, authentik/, immich/,
+│   └── traefik/                   #   navidrome/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
-│   ├── cmd/host-agent/            # Entry point, bootstrap
+│   ├── cmd/host-agent/            # Entry point, bootstrap, front-proxy
 │   ├── internal/
 │   │   ├── orchestrator/          # Intent queue, reconciler, container management
 │   │   ├── catalog/               # App discovery from metadata.yaml
 │   │   ├── integration/           # Typed integration resolver
 │   │   ├── store/                 # SQLite persistence
+│   │   ├── tlsca/                 # Local CA + per-host TLS
+│   │   ├── mdns/                  # bloud.local advertisement
 │   │   └── api/                   # HTTP API (chi router)
 │   ├── pkg/
 │   │   ├── authentik/             # Authentik REST API client
 │   │   └── configurator/          # Configurator interface + helpers
 │   └── web/                       # Svelte frontend
 │
-├── cli/                           # ./bloud command-line tool
-├── dev/                           # Lima VM config + setup scripts
+├── cli/                           # ./bloud CLI (lima / qemu / native backends)
+├── e2e/                           # Playwright browser tests
+├── dev/                           # VM configs (lima.yaml, qemu.yaml)
+├── specs/                         # Release + subsystem specs
+├── validation.yaml                # ./bloud validate manifest
 └── docs/                          # Architecture and contribution guides
 ```
 

@@ -920,12 +920,18 @@ Using fake adapters and configurators:
 
 ### Layer 5: E2E Lifecycle Tests
 
-The `./bloud e2e lifecycle` command builds the host-agent, deploys it to a Lima VM, and runs
-the full install/uninstall lifecycle with Playwright browser tests for SSO verification.
+The `./bloud e2e lifecycle` command builds the host-agent, deploys it to a runtime —
+Lima VM (default), QEMU VM, or the local machine (`BLOUD_BACKEND=native`) — and runs
+the full install/restart/uninstall lifecycle with Playwright browser tests for SSO
+verification. `./bloud e2e app` runs a single app's spec on a self-contained runtime
+(used by CI, one runtime per app in parallel).
 
 Current coverage:
 - Jellyfin: install, Bloud login, LDAP SSO login in embedded iframe, uninstall
 - Navidrome: install, forward-auth login via Traefik, uninstall
+- Immich, AFFiNE: native-oidc login journeys
+- AppFlowy: Bloud SSO wired into the app's own GoTrue provider
+- install-streaming: live app-state stream during install
 
 The release gate will run on a clean Debian VM with the real `.deb` package.
 
