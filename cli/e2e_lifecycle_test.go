@@ -5,6 +5,7 @@ package main
 
 import (
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestParseLifecycleConfig(t *testing.T) {
 
 	cfg, help, err := parseLifecycleConfig("/repo", []string{"--host-only", "--keep"}, func(key string) string {
 		return values[key]
-	})
+	}, "lima")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func TestParseLifecycleConfigRequiresBrowserURL(t *testing.T) {
 		default:
 			return ""
 		}
-	})
+	}, "lima")
 	if err == nil || !strings.Contains(err.Error(), "BLOUD_URL") {
 		t.Fatalf("expected missing BLOUD_URL error, got %v", err)
 	}
@@ -60,7 +61,7 @@ func TestParseLifecycleConfigRejectsRootRuntimeDirectory(t *testing.T) {
 		default:
 			return ""
 		}
-	})
+	}, "lima")
 	if err == nil || !strings.Contains(err.Error(), "non-root absolute path") {
 		t.Fatalf("expected unsafe runtime directory error, got %v", err)
 	}
@@ -77,7 +78,7 @@ func TestParseLifecycleConfigRejectsBroadRuntimeDirectory(t *testing.T) {
 		default:
 			return ""
 		}
-	})
+	}, "lima")
 	if err == nil || !strings.Contains(err.Error(), "dedicated child directory") {
 		t.Fatalf("expected broad runtime directory error, got %v", err)
 	}
@@ -137,11 +138,52 @@ func TestRemoteCommandQuotesArguments(t *testing.T) {
 
 func TestLifecycleDefaultsToLima(t *testing.T) {
 	root := t.TempDir()
-	cfg, _, err := parseLifecycleConfig(root, []string{"--host-only"}, func(string) string { return "" })
+	cfg, _, err := parseLifecycleConfig(root, []string{"--host-only"}, func(string) string { return "" }, "lima")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.lima != "bloud-dev" {
 		t.Fatalf("expected bloud-dev Lima default, got %+v", cfg)
+	}
+}
+
+func TestLifecycleDefaultsToQEMU(t *testing.T) {
+	root := t.TempDir()
+	cfg, _, err := parseLifecycleConfig(root, []string{"--host-only"}, func(string) string { return "" }, "qemu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.qemu != "bloud-qemu" {
+		t.Fatalf("expected bloud-qemu QEMU default, got %+v", cfg)
+	}
+	if cfg.sshTarget != "bloud@127.0.0.1" || !strings.HasSuffix(cfg.sshKeyFile, filepath.Join(".bloud", "qemu", "bloud-qemu", "id_ed25519")) {
+		t.Fatalf("expected derived SSH target/key, got %+v", cfg)
+	}
+}
+
+func TestLifecycleNativeBackend(t *testing.T) {
+	root := t.TempDir()
+	cfg, _, err := parseLifecycleConfig(root, []string{"--host-only"}, func(string) string { return "" }, "native")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.native || cfg.lima != "" || cfg.qemu != "" || cfg.sshTarget != "" {
+		t.Fatalf("native config should have no VM instance, got %+v", cfg)
+	}
+	if cfg.baseURL != "http://localhost:3000" {
+		t.Fatalf("native default base URL = %q", cfg.baseURL)
+	}
+}
+
+func TestLifecycleNativeBackendRejectsExplicitInstance(t *testing.T) {
+	root := t.TempDir()
+	_, _, err := parseLifecycleConfig(root, []string{"--host-only"}, func(key string) string {
+		if key == "BLOUD_E2E_LIMA_INSTANCE" {
+			return "bloud-dev"
+		}
+		return ""
+	}, "native")
+	if err == nil || !strings.Contains(err.Error(), "native backend") {
+		t.Fatalf("expected native+instance rejection, got %v", err)
 	}
 }

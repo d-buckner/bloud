@@ -31,7 +31,16 @@ type appE2ERunner struct {
 }
 
 func runAppE2E(root string, args []string) error {
-	cfg, help, err := parseLifecycleConfig(root, args, os.Getenv)
+	if wantsHelp(args) {
+		printAppE2EUsage(os.Stdout)
+		return nil
+	}
+	name, err := backendName()
+	if err != nil {
+		return err
+	}
+
+	cfg, help, err := parseLifecycleConfig(root, args, os.Getenv, name)
 	if err != nil {
 		return err
 	}
@@ -62,7 +71,8 @@ Required environment:
   BLOUD_E2E_APP            App to test: jellyfin | navidrome | immich | affine | appflowy | install-streaming
 
 Optional environment (same as "e2e lifecycle"):
-  BLOUD_BACKEND            Set to "native" to run on the current machine (no VM)
+  BLOUD_BACKEND            Override the stored backend preference
+                           (e.g. native = run on the current machine, no VM)
   BLOUD_URL                Browser-accessible ingress URL
   BLOUD_E2E_PLAYWRIGHT_FILTER
                            Playwright --grep filter (default: the app name)

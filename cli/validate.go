@@ -434,12 +434,12 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	}
 
 	// Step 1: Provision the VM (no-op if it is already running).
-	step("Provisioning " + vmLabel())
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("could not set up backend: %v", err)
 		return fail("backend setup failed")
 	}
+	step("Provisioning " + vmLabel(name))
 	if err := bk.Create(ctx); err != nil {
 		errorf("failed to provision VM: %v", err)
 		return fail("VM provisioning failed")
@@ -450,7 +450,7 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		return fail("VM not reachable")
 	}
 	ex := host.Executor()
-	qemu := backendName() == "qemu"
+	qemu := name == "qemu"
 	rt := integrationRuntimeDir
 
 	// Step 2: Guest preflight.

@@ -125,7 +125,7 @@ func printUsage() {
 	fmt.Println("Usage: ./bloud <command> [args]")
 	fmt.Println()
 	fmt.Println("Setup:")
-	fmt.Println("  setup           Check prerequisites and build CLI")
+	fmt.Println("  setup           Select runtime backend, check prerequisites, build CLI")
 	fmt.Println()
 	fmt.Println("Dev (VM):")
 	fmt.Println("  dev             Build + deploy + run host-agent on the VM (Ctrl-C to stop)")
@@ -154,13 +154,20 @@ func printUsage() {
 	fmt.Println("Other:")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
 	fmt.Println()
-	if backendName() == "qemu" {
+	switch usageBackend() {
+	case "qemu":
 		fmt.Println("QEMU VM quick-start:")
-		fmt.Println("  BLOUD_BACKEND=qemu ./bloud dev")
-	} else {
+		fmt.Println("  ./bloud dev   # provisions .bloud/qemu/bloud-qemu, boots VM")
+	case "native":
+		fmt.Println("Native quick-start:")
+		fmt.Println("  ./bloud dev   # runs directly on this host (no VM)")
+	case "lima":
 		fmt.Println("Lima VM quick-start:")
 		fmt.Println("  limactl create --name=bloud-dev dev/lima.yaml")
 		fmt.Println("  limactl start bloud-dev")
+	default:
+		fmt.Println("First time? Pick a runtime backend:")
+		fmt.Println("  ./bloud setup")
 	}
 	fmt.Println("  ./bloud dev")
 }

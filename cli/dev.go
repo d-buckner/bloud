@@ -72,20 +72,10 @@ func qemuInstance() string {
 	return "bloud-qemu"
 }
 
-// backendName returns the selected runtime backend: "lima" (macOS, default),
-// "qemu" (Linux VM), or "native" (Linux, no VM — runs directly on the host),
-// from BLOUD_BACKEND.
-func backendName() string {
-	if v := os.Getenv("BLOUD_BACKEND"); v != "" {
-		return v
-	}
-	return "lima"
-}
-
-// vmInstance returns the current backend's instance name. Native backends
-// have no instance; the label is "native".
-func vmInstance() string {
-	switch backendName() {
+// vmInstance returns the instance name for a backend. Native backends have
+// no instance; the label is "native".
+func vmInstance(name string) string {
+	switch name {
 	case "qemu":
 		return qemuInstance()
 	case "native":
@@ -100,8 +90,8 @@ func vmInstance() string {
 // gateway (10.0.2.2), not loopback, so the host-agent must trust that subnet
 // for host-side API calls (e.g. ./bloud install, e2e). Lima forwards to
 // loopback, so no trusted nets are needed.
-func trustedLocalNetsEnv() string {
-	if backendName() == "qemu" {
+func trustedLocalNetsEnv(name string) string {
+	if name == "qemu" {
 		return "10.0.2.0/24"
 	}
 	return ""
@@ -121,9 +111,9 @@ func ssoIssuerURL() string {
 	return fmt.Sprintf("http://sso.%s:8080", baseDomain)
 }
 
-// vmLabel is the human-readable backend name for the selected backend.
-func vmLabel() string {
-	switch backendName() {
+// vmLabel is the human-readable backend name for a backend.
+func vmLabel(name string) string {
+	switch name {
 	case "qemu":
 		return "QEMU VM"
 	case "native":
@@ -133,28 +123,26 @@ func vmLabel() string {
 	}
 }
 
-// vmStartHint is the command shown to start the selected backend's runtime.
-func vmStartHint() string {
-	switch backendName() {
-	case "qemu":
-		return "BLOUD_BACKEND=qemu ./bloud dev"
-	case "native":
-		return "BLOUD_BACKEND=native ./bloud dev"
-	default:
-		return "limactl start " + limaInstance()
-	}
-}
-
 // cmdStart prints usage guidance — the real dev loop is ./bloud dev.
 func cmdStart() int {
+	name, err := backendName()
+	if err != nil {
+		errorf("No runtime backend: %v", err)
+		return 1
+	}
+
 	fmt.Println("Start the dev environment:")
 	fmt.Println()
 	fmt.Println("  ./bloud dev          Build, deploy to runtime VM, and run host-agent (Ctrl-C to stop)")
 	fmt.Println()
-	if backendName() == "qemu" {
+	switch name {
+	case "qemu":
 		fmt.Println("Prerequisites (QEMU backend):")
-		fmt.Println("  BLOUD_BACKEND=qemu ./bloud dev   # provisions .bloud/qemu/bloud-qemu, boots VM")
-	} else {
+		fmt.Println("  ./bloud dev   # provisions .bloud/qemu/bloud-qemu, boots VM")
+	case "native":
+		fmt.Println("Prerequisites (native backend):")
+		fmt.Println("  ./bloud setup  # checks prerequisites; ./bloud dev runs on this host")
+	default:
 		fmt.Println("Prerequisites (Lima backend):")
 		fmt.Println("  limactl create --name=bloud-dev dev/lima.yaml")
 		fmt.Println("  limactl start bloud-dev")
@@ -163,12 +151,12 @@ func cmdStart() int {
 }
 
 func cmdStop() int {
-	inst := vmInstance()
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
+	inst := vmInstance(name)
 	log("Stopping host-agent on " + inst)
 	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
 		Command: `pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop apps-*.service 2>/dev/null; true`,
@@ -182,15 +170,15 @@ func cmdStop() int {
 }
 
 func cmdStatus() int {
-	inst := vmInstance()
-	fmt.Println()
-	fmt.Printf("  %s:  %s\n", vmLabel(), inst)
-
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
+	inst := vmInstance(name)
+	fmt.Println()
+	fmt.Printf("  %s:  %s\n", vmLabel(name), inst)
+
 	host := bk.Host()
 
 	// Check if VM is running
@@ -199,7 +187,7 @@ func cmdStatus() int {
 	} else {
 		fmt.Printf("  VM status: %sStopped%s\n", colorRed, colorReset)
 		fmt.Println()
-		fmt.Println("  Start the VM with: " + vmStartHint())
+		fmt.Println("  Start the VM with: ./bloud dev")
 		return 0
 	}
 
@@ -220,12 +208,12 @@ func cmdStatus() int {
 }
 
 func cmdLogs() int {
-	inst := vmInstance()
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
+	inst := vmInstance(name)
 	log("Streaming host-agent logs from " + inst + " (Ctrl-C to stop)...")
 	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
 		Command: `journalctl --user -u host-agent -f 2>/dev/null || journalctl -f 2>/dev/null`,
@@ -238,12 +226,12 @@ func cmdLogs() int {
 }
 
 func cmdAttach() int {
-	inst := vmInstance()
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
+	inst := vmInstance(name)
 	sshex, ok := bk.Host().Executor().(*executor.SSHExecutor)
 	if !ok {
 		errorf("Backend host does not support interactive shells")
@@ -261,7 +249,7 @@ func cmdShell(args []string) int {
 	if len(args) == 0 {
 		return cmdAttach()
 	}
-	bk, err := devBackend()
+	bk, _, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
@@ -284,7 +272,7 @@ func cmdRebuild() int {
 }
 
 func cmdServices() int {
-	bk, err := devBackend()
+	bk, _, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
@@ -300,12 +288,12 @@ func cmdServices() int {
 }
 
 func cmdReset() int {
-	inst := vmInstance()
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
+	inst := vmInstance(name)
 	host := bk.Host()
 	ex := host.Executor()
 	dirs := host.DataDirs()
@@ -313,8 +301,7 @@ func cmdReset() int {
 	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", inst)
 	fmt.Printf("The VM itself is kept — only data, containers, and the database are removed.\n")
 	fmt.Print("Continue? [y/N] ")
-	var resp string
-	fmt.Scanln(&resp)
+	resp, _ := stdinReader.ReadString('\n')
 	if strings.ToLower(strings.TrimSpace(resp)) != "y" {
 		fmt.Println("Aborted.")
 		return 0
@@ -365,21 +352,19 @@ rm -f %s/bloud.db
 }
 
 func cmdDestroy() int {
-	inst := vmInstance()
-	fmt.Printf("This will stop and delete the %s '%s'.\n", vmLabel(), inst)
-	fmt.Print("Continue? [y/N] ")
-	var resp string
-	fmt.Scanln(&resp)
-	if strings.ToLower(strings.TrimSpace(resp)) != "y" {
-		fmt.Println("Aborted.")
-		return 0
-	}
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
 	}
-	log("Deleting " + inst + "...")
+	inst := vmInstance(name)
+	fmt.Printf("This will stop and delete the %s '%s'.\n", vmLabel(name), inst)
+	fmt.Print("Continue? [y/N] ")
+	resp, _ := stdinReader.ReadString('\n')
+	if strings.ToLower(strings.TrimSpace(resp)) != "y" {
+		fmt.Println("Aborted.")
+		return 0
+	}
 	if err := bk.Destroy(context.Background()); err != nil {
 		errorf("Failed to delete VM: %v", err)
 		return 1
@@ -434,19 +419,24 @@ func installApp(apiPort int, appName string) int {
 	return 0
 }
 
-// devBackend builds the selected backend for the current project.
-func devBackend() (backend.Backend, error) {
+// devBackend builds the selected backend for the current project and
+// returns its name.
+func devBackend() (backend.Backend, string, error) {
 	root, err := getProjectRoot()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	switch backendName() {
+	name, err := backendName()
+	if err != nil {
+		return nil, "", err
+	}
+	switch name {
 	case "qemu":
-		return backend.NewQEMUBackend(qemuInstance(), root), nil
+		return backend.NewQEMUBackend(qemuInstance(), root), name, nil
 	case "native":
-		return backend.NewNativeBackend(root), nil
+		return backend.NewNativeBackend(root), name, nil
 	default:
-		return backend.NewLimaBackend(limaInstance(), root), nil
+		return backend.NewLimaBackend(limaInstance(), root), name, nil
 	}
 }
 
@@ -457,7 +447,7 @@ func cmdDev() int {
 		return 1
 	}
 
-	bk, err := devBackend()
+	bk, name, err := devBackend()
 	if err != nil {
 		errorf("Could not set up backend: %v", err)
 		return 1
@@ -466,7 +456,7 @@ func cmdDev() int {
 	// Provision the VM if it is not already running. This is a no-op when the
 	// guest is already up (Lima: already created+started; QEMU: image+seed
 	// present and guest reachable), so it is safe for both backends.
-	log("Provisioning " + vmLabel())
+	log("Provisioning " + vmLabel(name))
 	if err := bk.Create(context.Background()); err != nil {
 		errorf("Failed to provision VM: %v", err)
 		return 1
@@ -583,7 +573,7 @@ func cmdDev() int {
 		"BLOUD_DATA_DIR":            dirs.DataDir,
 		"BLOUD_APPS_DIR":            dirs.AppsDir,
 		"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
-		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(),
+		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(name),
 		"BLOUD_SSO_ISSUER_URL":      ssoIssuerURL(),
 	}
 	runErr := ex.RunStream(context.Background(), executor.RunSpec{

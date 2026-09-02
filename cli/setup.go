@@ -21,16 +21,32 @@ func cmdSetup() int {
 
 	allGood := true
 
-	// Check prerequisites. Lima is only needed for the Lima backend
-	// (macOS); the QEMU backend (Linux) needs qemu-system-x86_64 instead.
+	projectRoot, err := getProjectRoot()
+	if err != nil {
+		errorf("Could not find project root: %v", err)
+		return 1
+	}
+
+	// Select (or confirm) the runtime backend; persisted to
+	// .bloud/preferences.yaml and consulted by every other command.
+	bkName, err := setupBackend(projectRoot)
+	if err != nil {
+		errorf("%v", err)
+		return 1
+	}
+
+	// Check prerequisites. Lima is only needed for the Lima backend (macOS);
+	// the QEMU backend (Linux) needs qemu-system-x86_64 instead; the native
+	// backend is covered by the base list (podman).
 	prereqs := []struct{ name, label string }{
 		{"go", "Go"},
 		{"node", "Node.js"},
 		{"podman", "Podman"},
 	}
-	if backendName() == "qemu" {
+	switch bkName {
+	case "qemu":
 		prereqs = append(prereqs, struct{ name, label string }{"qemu-system-x86_64", "QEMU"})
-	} else {
+	case "lima":
 		prereqs = append(prereqs, struct{ name, label string }{"limactl", "Lima"})
 	}
 	for _, tool := range prereqs {
@@ -54,11 +70,6 @@ func cmdSetup() int {
 	}
 
 	// Build CLI binary
-	projectRoot, err := getProjectRoot()
-	if err != nil {
-		errorf("Could not find project root: %v", err)
-		return 1
-	}
 
 	fmt.Print("  Building CLI binary...        ")
 	buildCmd := fmt.Sprintf("cd %s/cli && go build -o ../bloud .", projectRoot)
@@ -81,12 +92,6 @@ func cmdSetup() int {
 	fmt.Printf("%s✓ Setup complete!%s\n", colorGreen, colorReset)
 	fmt.Println()
 	fmt.Println("  Next steps:")
-	if backendName() == "qemu" {
-		fmt.Println("    BLOUD_BACKEND=qemu ./bloud dev")
-	} else {
-		fmt.Println("    limactl create --name=bloud-dev dev/lima.yaml")
-		fmt.Println("    limactl start bloud-dev")
-	}
 	fmt.Println("    ./bloud dev")
 	fmt.Println()
 	return 0
@@ -107,7 +112,7 @@ func checkCommand(name string) bool {
 // Best-effort: a stopped VM or a not-yet-bootstrapped runtime simply skips
 // the step (the CA is generated on the first host-agent boot).
 func trustLocalCA(projectRoot string) {
-	bk, err := devBackend()
+	bk, _, err := devBackend()
 	if err != nil {
 		return
 	}

@@ -3,9 +3,8 @@
 # QEMU VM for Bloud local development (x86_64 via KVM on Linux).
 #
 # This file documents the QEMU backend's spec; the backend hardcodes it (same
-# convention as dev/lima.yaml for Lima). Select with:
-#
-#   BLOUD_BACKEND=qemu ./bloud dev
+# convention as dev/lima.yaml for Lima). Select via `./bloud setup`
+# (.bloud/preferences.yaml) or `BLOUD_BACKEND=qemu`:
 #
 # Runtime artifacts live under .bloud/qemu/<instance>/ (gitignored).
 instance: bloud-qemu

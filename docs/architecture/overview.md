@@ -250,8 +250,10 @@ postgres and redis containers declared in `containers:` metadata.
 
 ## Dev Environment
 
-Two interchangeable VM backends, selected via `BLOUD_BACKEND` (`lima` default on
-macOS, `qemu` for Linux):
+Three interchangeable runtimes, selected per checkout via
+`.bloud/preferences.yaml` (chosen by `./bloud setup`, or prompted on first
+use; `BLOUD_BACKEND` overrides): `lima` is automatic on macOS, Linux picks
+`qemu` (VM) or `native` (no VM):
 
 Lima VM (Debian, Apple Virtualization) — macOS:
 
@@ -266,7 +268,7 @@ macOS host
         └── host-agent binary (:3000, systemd user service)
 ```
 
-QEMU VM (Debian, KVM) — Linux (`BLOUD_BACKEND=qemu ./bloud dev`):
+QEMU VM (Debian, KVM) — Linux (default backend after `./bloud setup`):
 
 ```
 Linux host
