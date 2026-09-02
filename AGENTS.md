@@ -39,15 +39,17 @@ Go modules are linked by `replace` directives (host-agent ↔ apps). CI: GitHub 
 
 - Go 1.25 (host-agent, apps), Go 1.24 (cli), Node ≥18 (CI uses 22), npm 10.
 - Host tools: `go`, `node`, `limactl`, `podman` (plus `qemu-system-x86_64` for the QEMU backend).
-  `./bloud setup` (or `npm run setup`) checks prerequisites and rebuilds `./bloud`.
+  `./bloud setup` (or `npm run setup`) selects the runtime backend (stored in
+  gitignored `.bloud/preferences.yaml`), checks prerequisites, and rebuilds `./bloud`.
 - Build the CLI: `cd cli && go build -o ../bloud .`
 
-Development runs on a **runtime** selected by `BLOUD_BACKEND` — a VM on
-developer machines, or the machine itself in CI. macOS uses Lima (default),
-Linux uses QEMU (`BLOUD_BACKEND=qemu`), and Linux CI can skip the VM entirely
-with the native backend (`BLOUD_BACKEND=native`): runs host-agent directly on
-the current machine (needs podman + user-level systemd; `NativeBackend.Create`
-enables `podman.socket` and linger as needed):
+Development runs **inside a VM** on developer machines — macOS uses Lima (the
+only applicable backend, chosen automatically), Linux uses QEMU (or `native`,
+running host-agent directly on the host; needs podman + user-level systemd —
+`NativeBackend.Create` enables `podman.socket` and linger as needed). The
+backend preference is picked by `./bloud setup` (or prompted on first use of
+any runtime command) and stored in gitignored `.bloud/preferences.yaml`;
+`BLOUD_BACKEND` overrides it:
 
 ```bash
 # Lima (macOS, default)
@@ -55,7 +57,7 @@ limactl create --name=bloud-dev dev/lima.yaml
 limactl start bloud-dev
 
 # QEMU (Linux) — self-provisioning
-BLOUD_BACKEND=qemu ./bloud dev              # creates .bloud/qemu/bloud-qemu (gitignored)
+./bloud dev                           # creates .bloud/qemu/bloud-qemu (gitignored)
 # manual SSH: ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1
 
 # Native (Linux CI) — no VM; runtime in /var/tmp/bloud-native-runtime
@@ -201,7 +203,7 @@ go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
 ## `./bloud` CLI reference
 
 ```
-Setup:       setup                Check prerequisites and build CLI
+Setup:       setup                Select runtime backend, check prerequisites, build CLI
 Dev (VM):    dev                  Build + deploy + run host-agent (Ctrl-C to stop)
             start                Show quick-start instructions
             stop | status | services | logs
@@ -219,11 +221,13 @@ Other:       depgraph             Mermaid dependency graph from app metadata
 
 The CLI resolves the project root by walking up from cwd looking for
 `cli/main.go`, `specs/spec.md`, etc., and loads a gitignored root `.env`
-(existing env vars win). Backend selection: `BLOUD_BACKEND=qemu|lima|native`
-(default lima; native cannot be combined with instance/SSH-target env vars);
-instance for native is the label "native" and its runtime dir is
-`/var/tmp/bloud-native-runtime`; instance overrides: `BLOUD_E2E_LIMA_INSTANCE` (default
-`bloud-dev`), `BLOUD_QEMU_INSTANCE` (default `bloud-qemu`).
+(existing env vars win). Backend selection: `./bloud setup` stores the choice
+in gitignored `.bloud/preferences.yaml` (macOS: `lima` automatically; Linux:
+`qemu` | `native`, prompted if unset); `BLOUD_BACKEND=lima|qemu|native`
+overrides the stored preference (CI relies on the override; `native` cannot be
+combined with instance/SSH-target env vars). Instance overrides:
+`BLOUD_E2E_LIMA_INSTANCE` (default `bloud-dev`), `BLOUD_QEMU_INSTANCE`
+(default `bloud-qemu`).
 
 ## Architecture invariants (do not break)
 
@@ -385,11 +389,6 @@ graph, route-generation side effects, ad hoc migrations). Review findings:
 `specs/review.md` (e.g. §C1 production router constructs the orchestrator with
 `CatalogGraph: nil`, §C2 in-memory `MapRepository`). Highlights:
 
-- `./bloud setup` only branches its prerequisite list on lima vs qemu: with
-  `BLOUD_BACKEND=native` it still checks for `limactl` instead of podman +
-  user-level systemd (`cli/setup.go` checks `backendName() == "qemu"`, else
-  lima). Harmless in practice — native runs in CI, where those prereqs are
-  provisioned by the workflow — but the check is wrong for that backend.
 - Sharing/guest API handlers write stores directly, bypassing the intent queue.
 - Admin is granted to loopback requests without a credential; config ships
   hardcoded fallback secrets when env/`secrets.json` are unset.

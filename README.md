@@ -133,24 +133,26 @@ one-command install on Debian 13.
 
 ## Local development
 
-Everything goes through the `./bloud` CLI. `npm run setup` checks prerequisites
-and builds it; `./bloud dev` is the whole loop — it builds host-agent and the
+Everything goes through the `./bloud` CLI. `npm run setup` picks your runtime
+backend, checks prerequisites, and builds the CLI; `./bloud dev` is the whole loop — it builds host-agent and the
 frontend, deploys them to the runtime, and runs the agent (Ctrl-C to stop).
 There is no hot reload: re-run `./bloud dev` after any code change.
 
 ### Backends
 
 The runtime is a Debian 13 environment with rootless Podman. Where it runs is
-a choice:
+a per-checkout preference: `./bloud setup` chooses it (or the first runtime
+command prompts and saves the answer) into gitignored
+`.bloud/preferences.yaml`, and `BLOUD_BACKEND` overrides it:
 
-| Backend | Platform | Start | Prerequisites |
+| Backend | Platform | Chosen as | Prerequisites |
 |---|---|---|---|
-| **Lima** (default) | macOS | `./bloud dev` | `brew install lima` |
-| **QEMU** | Linux | `BLOUD_BACKEND=qemu ./bloud dev` | `qemu-system-x86_64` |
-| **Native** | Linux (CI) | `BLOUD_BACKEND=native ./bloud dev` | podman + user-level systemd |
+| **Lima** | macOS | automatic — the only applicable backend | `brew install lima` |
+| **QEMU** | Linux | the default choice | `qemu-system-x86_64` |
+| **Native** | Linux (CI) | a prompt choice, or `BLOUD_BACKEND=native` | podman + user-level systemd |
 
 ```bash
-npm run setup            # Check prerequisites + build the ./bloud CLI
+npm run setup            # Choose backend, check prereqs, build ./bloud
 ```
 
 Every backend provisions itself on first run — `./bloud dev` creates the Lima
