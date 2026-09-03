@@ -121,26 +121,36 @@ The orchestrator passes resolved integration outputs to each configurator:
 | `state.SSOEnabled` | Whether SSO integration is active for this app |
 | `state.LDAP` | Typed LDAP output (host, port, baseDN, bindUser, bindPassword) |
 
-### Register your configurator
+### Register your configurator (self-registering)
 
-In `services/host-agent/internal/appconfig/register.go`:
+Create `apps/your-app/registration.go`. The package registers a factory in
+`init()`; the host-agent registry instantiates it lazily on the first lookup
+of the node, so your configurator is only built when the app is actually
+reconciled:
 
 ```go
-import yourapp "codeberg.org/d-buckner/bloud/apps/your-app"
+package yourapp
 
-func RegisterAll(
-    registry *configurator.Registry,
-    cfg *config.Config,
-    runtime containerruntime.Runtime,
-    catalogApps map[string]*catalog.App,
-    logger *slog.Logger,
-    templateVars map[string]string,
-    hosts *hostset.State,
-) {
-    // ... existing ...
-    registry.Register(yourapp.NewConfigurator(8080))
+import "codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+
+func init() {
+    configurator.MustRegisterFactory("apps-your-app", func(deps configurator.Deps) configurator.NodeLifecycle {
+        return NewConfigurator(0, deps.PrimaryBaseURL, deps.Secrets, deps.Logger)
+    })
 }
 ```
+
+`configurator.Deps` carries the host-side inputs (logger, secrets provider,
+primary-base-URL resolver, Traefik port). Then add one blank import to
+`services/host-agent/internal/appconfig/register.go` so the package is linked
+into host-agent:
+
+```go
+_ "codeberg.org/d-buckner/bloud/apps/your-app"
+```
+
+That's the only host-agent-side change. System apps (Traefik, Authentik) are
+wired eagerly in `RegisterSystem` and do not use factories.
 
 ## Step 3: Test
 

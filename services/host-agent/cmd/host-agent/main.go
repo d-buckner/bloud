@@ -13,7 +13,6 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/api"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/appconfig"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
@@ -84,13 +83,6 @@ func runServer() {
 	}
 	runtime := containerruntime.NewPodmanRuntime(client)
 
-	// Load catalog for configurator registration
-	catalogAppMap, err := catalog.NewLoader(cfg.AppsDir).LoadAll()
-	if err != nil {
-		logger.Error("failed to load catalog", "error", err)
-		os.Exit(1)
-	}
-
 	// Host state: the effective set of hostnames (built-ins + admin custom
 	// hosts from the database, with legacy env fallbacks). Shared between the
 	// configurators, the orchestrator, and the API so UI host changes apply
@@ -128,9 +120,11 @@ func runServer() {
 		"authentikLdapToken":      "", // written by apps-authentik-server PostStart
 	}
 
-	// Register all configurators (system + user)
-	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg, runtime, catalogAppMap, logger, templateVars, hosts)
+	// Configurator registry: system configurators are registered eagerly;
+	// app configurators self-register factories (apps/<name>/registration.go)
+	// and are instantiated lazily on first lookup.
+	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, hosts))
+	appconfig.RegisterSystem(registry, cfg, runtime, logger, templateVars, hosts)
 
 	// Event bus: shared between the API (SSE streams) and background
 	// consumers (the mDNS publisher reconciles on app changes).
@@ -140,26 +134,26 @@ func runServer() {
 	server := api.NewServer(database, api.ServerConfig{
 		RefreshAuthentikToken: func() string { return cfg.ReadAuthentikToken(logger) },
 		AppsDir:               cfg.AppsDir,
-		DataDir:           cfg.DataDir,
-		TraefikDynamicDir: cfg.TraefikDynamicDir,
-		BaseDomain:        cfg.BaseDomain,
-		TraefikPort:       cfg.TraefikPort,
-		Port:              cfg.Port,
-		SSOHostSecret:     cfg.SSOHostSecret,
-		SSOBaseURL:        cfg.SSOBaseURL,
-		SSOAuthentikURL:   cfg.SSOAuthentikURL,
-		SSOIssuerURL:      cfg.SSOIssuerURL,
-		AuthentikToken:    cfg.AuthentikToken,
-		AuthentikPort:     cfg.AuthentikPort,
-		TSAuthKey:         cfg.TSAuthKey,
-		HostLabel:        cfg.HostLabel,
-		TrustedLocalNets: cfg.TrustedLocalNets,
-		Hosts:             hosts,
-		EventsBus:         eventsBus,
-		HostStore:         hostStore,
-		LDAPOutput:        cfg.LDAPOutput(),
-		Registry:          registry,
-		TemplateVars:      templateVars,
+		DataDir:               cfg.DataDir,
+		TraefikDynamicDir:     cfg.TraefikDynamicDir,
+		BaseDomain:            cfg.BaseDomain,
+		TraefikPort:           cfg.TraefikPort,
+		Port:                  cfg.Port,
+		SSOHostSecret:         cfg.SSOHostSecret,
+		SSOBaseURL:            cfg.SSOBaseURL,
+		SSOAuthentikURL:       cfg.SSOAuthentikURL,
+		SSOIssuerURL:          cfg.SSOIssuerURL,
+		AuthentikToken:        cfg.AuthentikToken,
+		AuthentikPort:         cfg.AuthentikPort,
+		TSAuthKey:             cfg.TSAuthKey,
+		HostLabel:             cfg.HostLabel,
+		TrustedLocalNets:      cfg.TrustedLocalNets,
+		Hosts:                 hosts,
+		EventsBus:             eventsBus,
+		HostStore:             hostStore,
+		LDAPOutput:            cfg.LDAPOutput(),
+		Registry:              registry,
+		TemplateVars:          templateVars,
 	}, logger)
 
 	// Block until system apps are healthy (first convergence pass).
