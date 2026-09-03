@@ -28,7 +28,6 @@ portForwards:
   - guestPort: 3000   # host-agent
   - guestPort: 3389   # LDAP outpost (authentik)
   - guestPort: 8080   # traefik
-  - guestPort: 8443   # traefik TLS (websecure)
   - guestPort: 8096   # jellyfin
   - guestPort: 9001   # authentik server
   - guestPort: 2283   # immich
@@ -37,7 +36,6 @@ portForwards:
   - guestPort: 5353  # mDNS: bare guestPort forwards TCP+UDP (Lima's default GRPC
                      # forwarder); macOS' mDNSResponder owns 5353, so Lima may
                      # remap it to a free host port (see `limactl port`)
-  - guestPort: 8480   # appflowy
 
 containerd:
   system: false

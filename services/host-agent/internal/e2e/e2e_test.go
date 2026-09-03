@@ -44,20 +44,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"codeberg.org/d-buckner/bloud/apps/appflowy"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 )
 
 // Service endpoints — published by the catalog to localhost inside the VM.
@@ -97,7 +92,6 @@ type secretsFile struct {
 	AuthentikBootstrapPassword string `json:"authentikBootstrapPassword"`
 	AuthentikBootstrapToken    string `json:"authentikBootstrapToken"`
 	LdapBindPassword           string `json:"ldapBindPassword"`
-	SSOHostSecret              string `json:"ssoHostSecret"`
 }
 
 // dataDir returns the runtime data directory (secrets.json, api-token, app
@@ -548,11 +542,11 @@ func readSSEFrames(body io.Reader, frames chan<- sseFrame) {
 
 // TestInstallLiveStateStream verifies the live-state contract:
 //
-//  1. The install 202 response carries the app record immediately (the
-//     orchestrator records it at submit time), so the UI can render the
-//     tile without polling.
-//  2. The /api/apps/events SSE stream delivers a snapshot before any node
-//     event, then node/pull updates, ending with the app node RUNNING.
+//	 1. The install 202 response carries the app record immediately (the
+//	     orchestrator records it at submit time), so the UI can render the
+//	     tile without polling.
+//	 2. The /api/apps/events SSE stream delivers a snapshot before any node
+//	     event, then node/pull updates, ending with the app node RUNNING.
 //
 // It must run before TestJellyfinInstallViaAPI (source order) so the install
 // it drives is the fresh one.
@@ -973,304 +967,6 @@ func TestAffineUninstallCleanup(t *testing.T) {
 		}
 	}
 	t.Log("affine fully uninstalled: store, containers, data, and routes cleaned up")
-}
-
-var appflowyURL = getEnvDefault("BLOUD_E2E_APPFLOWY_URL", "http://localhost:8480")
-
-// TestAppFlowyInstallViaAPI installs AppFlowy through the API. The graph
-// spans nine containers (postgres, redis, minio, gotrue, cloud, worker,
-// search, web, nginx); the cloud API runs Rust migrations before its HTTP
-// listener opens, so first boot is slow.
-func TestAppFlowyInstallViaAPI(t *testing.T) {
-	postJSON(t, hostAgentURL+"/api/apps/appflowy/install", `{}`, http.StatusAccepted)
-	// Fresh VMs pull ~1.5GB of images and run migrations on first boot.
-	waitAppRunning(t, "appflowy", 30*time.Minute)
-	waitHTTPOrFatal(t, 60*time.Second, appflowyURL+"/health")
-}
-
-// TestAppFlowyConfiguredByConfigurator verifies the configurator's outcomes
-// behaviorally: every proxied route answers through nginx (web, cloud API,
-// GoTrue), and GoTrue's signup flow works end-to-end (auto-confirm, no SMTP),
-// which only happens when the /gotrue prefix strip and upstream wiring are
-// correct.
-func TestAppFlowyConfiguredByConfigurator(t *testing.T) {
-	waitAppRunning(t, "appflowy", 2*time.Minute)
-
-	for _, path := range []string{"/health", "/api/health", "/gotrue/health"} {
-		waitHTTPOrFatal(t, 30*time.Second, appflowyURL+path)
-	}
-
-	email := fmt.Sprintf("probe-%d@appflowy.local", time.Now().UnixNano())
-	signupBody := fmt.Sprintf(`{"email":%q,"password":"probe-password-123"}`, email)
-	resp, err := http.Post(appflowyURL+"/gotrue/signup", "application/json", strings.NewReader(signupBody))
-	if err != nil {
-		t.Fatalf("POST /gotrue/signup: %v", err)
-	}
-	data, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("signup = status %d body %q, want 200 (auto-confirm enabled)", resp.StatusCode, string(data))
-	}
-	var user struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(data, &user); err != nil {
-		t.Fatalf("unmarshaling signup response: %v", err)
-	}
-	if user.AccessToken == "" {
-		t.Errorf("signup response should contain an access_token (auto-confirm), got: %s", data)
-	}
-}
-
-// TestAppFlowySSOWiring asserts the SSO wiring outcome per deployment
-// class. GoTrue rejects local/loopback issuers at registration (verified
-// against gotrue 0.17.12), so on a dev VM (sso.localhost) the wiring must
-// be cleanly skipped: no GoTrue provider, no Authentik provider, app still
-// RUNNING (local sign-up is covered by
-// TestAppFlowyConfiguredByConfigurator). With a public issuer, the provider
-// must exist in GoTrue with the exact desired configuration.
-func TestAppFlowySSOWiring(t *testing.T) {
-	waitAppRunning(t, "appflowy", 2*time.Minute)
-
-	issuer := expectedAppFlowyIssuer()
-
-	if !appflowy.IssuerRegistrable(issuer) {
-		// Dev class: the wiring is skipped, not failing.
-		providers := appflowyCustomProviders(t)
-		if p, ok := findCustomProvider(providers, "custom:bloud-sso"); ok {
-			t.Fatalf("custom:bloud-sso provider present despite local issuer %s (wiring should be skipped): %+v", issuer, p)
-		}
-		if id, err := authentikFindOAuth2Provider(t, "AppFlowy OAuth2 Provider"); err == nil && id != 0 {
-			t.Errorf("Authentik provider %q present despite local issuer (should not be created)", "AppFlowy OAuth2 Provider")
-		}
-		t.Logf("local issuer %s: SSO wiring correctly skipped (local sign-up only)", issuer)
-		return
-	}
-
-	// Public class: the provider must converge in (PostStart re-applies the
-	// wiring every cycle, so poll briefly for the first reconcile).
-	var found appflowyCustomProvider
-	deadline := time.Now().Add(2 * time.Minute)
-	for {
-		for _, p := range appflowyCustomProviders(t) {
-			if p.Identifier == "custom:bloud-sso" {
-				found = p
-				break
-			}
-		}
-		if found.Identifier != "" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("custom:bloud-sso provider never appeared for issuer %s", issuer)
-		}
-		time.Sleep(5 * time.Second)
-	}
-
-	if found.Issuer != issuer {
-		t.Errorf("provider issuer = %q, want %q", found.Issuer, issuer)
-	}
-	if found.Name != "Bloud SSO" {
-		t.Errorf("provider name = %q, want %q", found.Name, "Bloud SSO")
-	}
-	if found.ClientID != "appflowy-client" {
-		t.Errorf("provider client_id = %q, want %q", found.ClientID, "appflowy-client")
-	}
-	if !containsAll(found.Scopes, "openid", "email", "profile") {
-		t.Errorf("provider scopes = %v, want to include openid, email, profile", found.Scopes)
-	}
-	if found.AttributeMapping["email"] != "{claims.email}" {
-		t.Errorf("provider attribute_mapping = %v, want email mapped to {claims.email}", found.AttributeMapping)
-	}
-}
-
-// expectedAppFlowyIssuer mirrors appconfig.appflowySSOConfig: the TLS SSO
-// origin for AppFlowy's Authentik application.
-func expectedAppFlowyIssuer() string {
-	baseDomain := getEnvDefault("BLOUD_BASE_DOMAIN", "localhost")
-	tlsPort := 8443
-	if p := os.Getenv("BLOUD_TRAEFIK_TLS_PORT"); p != "" {
-		if n, err := strconv.Atoi(p); err == nil {
-			tlsPort = n
-		}
-	}
-	host := "sso." + baseDomain
-	if tlsPort > 0 && tlsPort != 443 {
-		host = net.JoinHostPort(host, strconv.Itoa(tlsPort))
-	}
-	return "https://" + host + "/application/o/appflowy/"
-}
-
-// appflowyGotrueAdminToken authenticates the GoTrue admin using the same
-// derivation and priority as the host-agent (env > secrets.json > fallback,
-// then HKDF from the SSO host secret).
-func appflowyGotrueAdminToken(t *testing.T) string {
-	t.Helper()
-	hostSecret := os.Getenv("BLOUD_SSO_HOST_SECRET")
-	if hostSecret == "" {
-		hostSecret = readSecrets(t).SSOHostSecret
-	}
-	if hostSecret == "" {
-		hostSecret = "dev-secret-change-in-production" // config.Load fallback
-	}
-	password := sso.DeriveSecret(hostSecret, "appflowy:gotrue-admin-password", 24)
-	body, _ := json.Marshal(map[string]string{"email": "admin@appflowy.local", "password": password})
-	resp, err := http.Post(appflowyURL+"/gotrue/token?grant_type=password", "application/json", strings.NewReader(string(body)))
-	if err != nil {
-		t.Fatalf("gotrue admin login: %v", err)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("gotrue admin login: status %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil || out.AccessToken == "" {
-		t.Fatalf("gotrue admin login: no access_token in %s", data)
-	}
-	return out.AccessToken
-}
-
-type appflowyCustomProvider struct {
-	Identifier       string            `json:"identifier"`
-	Name             string            `json:"name"`
-	ProviderType     string            `json:"provider_type"`
-	Issuer           string            `json:"issuer"`
-	ClientID         string            `json:"client_id"`
-	Scopes           []string          `json:"scopes"`
-	AttributeMapping map[string]string `json:"attribute_mapping"`
-}
-
-func appflowyCustomProviders(t *testing.T) []appflowyCustomProvider {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, appflowyURL+"/gotrue/admin/custom-providers", nil)
-	if err != nil {
-		t.Fatalf("building request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+appflowyGotrueAdminToken(t))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET custom-providers: %v", err)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET custom-providers: status %d: %s", resp.StatusCode, data)
-	}
-	var out struct {
-		Providers []appflowyCustomProvider `json:"providers"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatalf("parsing custom-providers: %v", err)
-	}
-	return out.Providers
-}
-
-func findCustomProvider(providers []appflowyCustomProvider, identifier string) (appflowyCustomProvider, bool) {
-	for _, p := range providers {
-		if p.Identifier == identifier {
-			return p, true
-		}
-	}
-	return appflowyCustomProvider{}, false
-}
-
-// authentikFindOAuth2Provider returns the pk of an Authentik OAuth2 provider
-// by exact name (0 when absent).
-func authentikFindOAuth2Provider(t *testing.T, name string) (int, error) {
-	t.Helper()
-	resp, err := http.Get(authentikURL + "/api/v3/providers/oauth2/?search=" + url.QueryEscape(name))
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, body)
-	}
-	var out struct {
-		Results []struct {
-			PK   int    `json:"pk"`
-			Name string `json:"name"`
-		} `json:"results"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return 0, err
-	}
-	for _, r := range out.Results {
-		if r.Name == name {
-			return r.PK, nil
-		}
-	}
-	return 0, nil
-}
-
-func containsAll(scopes []string, want ...string) bool {
-	for _, w := range want {
-		found := false
-		for _, s := range scopes {
-			if s == w {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-// TestAppFlowyUninstallCleanup uninstalls AppFlowy through the API and
-// asserts the full cleanup: store entry, all containers, data directory,
-// and routes.
-func TestAppFlowyUninstallCleanup(t *testing.T) {
-	postJSON(t, hostAgentURL+"/api/apps/appflowy/uninstall",
-		`{"clearData":true}`, http.StatusAccepted)
-
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
-		if appStatus(t, "appflowy") == "" {
-			break
-		}
-		time.Sleep(3 * time.Second)
-	}
-	if status := appStatus(t, "appflowy"); status != "" {
-		t.Fatalf("appflowy still listed as installed (status %q)", status)
-	}
-
-	// All graph nodes must be gone (the orchestrator removes them).
-	for _, name := range []string{
-		"apps-appflowy-nginx", "apps-appflowy-web", "apps-appflowy-cloud",
-		"apps-appflowy-worker", "apps-appflowy-search", "apps-appflowy-gotrue",
-		"apps-appflowy-minio", "apps-appflowy-redis", "apps-appflowy-postgres",
-	} {
-		if _, err := exec.Command("podman", "container", "exists", name).CombinedOutput(); err == nil {
-			t.Errorf("%s container still exists after uninstall", name)
-		}
-	}
-
-	if os.Getenv("BLOUD_DATA_DIR") != "" {
-		dataPath := filepath.Join(dataDir(), "appflowy")
-		if _, err := os.Stat(dataPath); err == nil {
-			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
-		}
-	}
-
-	traefikDir := os.Getenv("BLOUD_TRAEFIK_DYNAMIC_DIR")
-	if traefikDir != "" {
-		routesPath := filepath.Join(traefikDir, "apps-routes.yml")
-		routes, err := os.ReadFile(routesPath)
-		if err != nil {
-			t.Fatalf("reading %s: %v", routesPath, err)
-		}
-		if strings.Contains(string(routes), "appflowy") {
-			t.Errorf("apps-routes.yml still references appflowy after uninstall")
-		}
-	}
-	t.Log("appflowy fully uninstalled: store, containers, data, and routes cleaned up")
 }
 
 // expectedAffineCallbackURL mirrors apps/affine's configurator derivation:

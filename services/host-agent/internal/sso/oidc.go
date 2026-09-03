@@ -39,7 +39,7 @@ func (g *BlueprintGenerator) OIDCInputsForApp(app *catalog.App) *OIDCInputs {
 
 	var redirectURIs []string
 	for _, baseURL := range g.baseURLs {
-		redirectURIs = append(redirectURIs, AppSubdomainURL(baseURL, app.CatalogID)+app.SSO.CallbackPath)
+		redirectURIs = append(redirectURIs, appSubdomainURL(baseURL, app.CatalogID)+app.SSO.CallbackPath)
 	}
 	if app.Port > 0 {
 		parsed, err := url.Parse(g.primaryBaseURL())
@@ -57,6 +57,6 @@ func (g *BlueprintGenerator) OIDCInputsForApp(app *catalog.App) *OIDCInputs {
 		ClientSecret: clientSecret,
 		IssuerURL:    strings.TrimSuffix(g.issuerBaseURL(), "/") + "/application/o/" + app.CatalogID + "/",
 		RedirectURIs: redirectURIs,
-		LaunchURL:    AppSubdomainURL(g.primaryBaseURL(), app.CatalogID),
+		LaunchURL:    appSubdomainURL(g.primaryBaseURL(), app.CatalogID),
 	}
 }
