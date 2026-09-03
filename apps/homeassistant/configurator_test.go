@@ -1,0 +1,346 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Daniel Buckner
+
+package homeassistant
+
+import (
+	"archive/zip"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+)
+
+type fakeSecrets struct{ pw string }
+
+func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return f.pw, nil }
+func (f *fakeSecrets) GetAppSecret(string, string) string              { return "" }
+
+func testOIDC() *configurator.OIDCOutput {
+	return &configurator.OIDCOutput{
+		ClientID:     "cid123",
+		ClientSecret: "s3cr3t",
+		IssuerURL:    "http://sso.localhost:8080/application/o/homeassistant/",
+		RedirectURI:  "http://homeassistant.localhost:8080/auth/oidc/callback",
+	}
+}
+
+type sliceWriter struct{ buf *[]byte }
+
+func (s *sliceWriter) Write(p []byte) (int, error) {
+	*s.buf = append(*s.buf, p...)
+	return len(p), nil
+}
+
+// newZip builds a flat hass-oidc-auth release fixture (files at archive root,
+// matching the real asset layout) and returns its bytes + sha256 hex.
+func newZip(t *testing.T, files map[string]string) ([]byte, string) {
+	t.Helper()
+	var raw []byte
+	zw := zip.NewWriter(&sliceWriter{buf: &raw})
+	for name, content := range files {
+		f, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	return raw, fmt.Sprintf("%x", sum)
+}
+
+func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configurator {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".zip") {
+			w.Header().Set("Content-Type", "application/zip")
+			w.Write(zipBody)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	c := NewConfigurator(0, &fakeSecrets{pw: "test-bootstrap-pw"}, nil)
+	c.componentURL = srv.URL + "/hass-oidc-auth.zip"
+	c.componentSHA = zipSHA
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 2 * time.Second
+	return c
+}
+
+func TestPreStartCreatesDirs(t *testing.T) {
+	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	data := t.TempDir()
+	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
+	require.NoError(t, err)
+	assert.False(t, changed)
+	_, err = os.Stat(filepath.Join(data, "config"))
+	require.NoError(t, err)
+}
+
+func TestPreStartInstallsComponentAndWritesBlock(t *testing.T) {
+	zipBody, sha := newZip(t, map[string]string{
+		"manifest.json": `{"domain":"auth_oidc","name":"OIDC Auth","version":"v1.2.1"}`,
+		"__init__.py":   "# integration\n",
+	})
+	c := newTestConfigurator(t, zipBody, sha)
+	data := t.TempDir()
+	state := &configurator.AppState{DataPath: data, SSOEnabled: true, OIDC: testOIDC()}
+
+	changed, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	assert.True(t, changed, "first PreStart must report changed")
+
+	// component installed at the right path with the right manifest
+	manifest, err := os.ReadFile(filepath.Join(data, "config", "custom_components", "auth_oidc", "manifest.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(manifest), `"auth_oidc"`)
+
+	// configuration.yaml block written with the full well-known discovery URL
+	yaml, err := os.ReadFile(filepath.Join(data, "config", "configuration.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(yaml), `client_id: "cid123"`)
+	assert.Contains(t, string(yaml), `client_secret: "s3cr3t"`)
+	assert.Contains(t, string(yaml),
+		`discovery_url: "http://sso.localhost:8080/application/o/homeassistant/.well-known/openid-configuration"`)
+	assert.Contains(t, string(yaml), `admin: "authentik Admins"`)
+
+	// second cycle is a no-op (no churn)
+	changed2, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	assert.False(t, changed2, "unchanged config must not churn")
+}
+
+func TestPreStartChecksumMismatchLeavesNoTree(t *testing.T) {
+	zipBody, _ := newZip(t, map[string]string{
+		"manifest.json": `{"domain":"auth_oidc","version":"v1.2.1"}`,
+	})
+	c := newTestConfigurator(t, zipBody, "000000000000000000000000000000000000000000000000000000000000000")
+	data := t.TempDir()
+	_, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data, SSOEnabled: true, OIDC: testOIDC()})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "checksum mismatch")
+
+	// never a half-installed component tree
+	_, err = os.Stat(filepath.Join(data, "config", "custom_components", "auth_oidc"))
+	assert.True(t, os.IsNotExist(err), "must not leave a half-installed component")
+	// and no configuration written
+	_, err = os.Stat(filepath.Join(data, "config", "configuration.yaml"))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestPreStartPreservesUserConfigAndUpdatesOnDrift(t *testing.T) {
+	zipBody, sha := newZip(t, map[string]string{"manifest.json": `{"domain":"auth_oidc","version":"v1.2.1"}`})
+	c := newTestConfigurator(t, zipBody, sha)
+	data := t.TempDir()
+	cfgDir := filepath.Join(data, "config")
+	require.NoError(t, os.MkdirAll(cfgDir, 0755))
+	user := "default_config:\n\n# my custom stuff\nhistory:\n  include:\n    - domain: light\n"
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "configuration.yaml"), []byte(user), 0o644))
+
+	state := &configurator.AppState{DataPath: data, SSOEnabled: true, OIDC: testOIDC()}
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+
+	// drift: client id rotates
+	rotated := testOIDC()
+	rotated.ClientID = "cid456"
+	state.OIDC = rotated
+	changed, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	yaml, err := os.ReadFile(filepath.Join(cfgDir, "configuration.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(yaml), `client_id: "cid456"`)
+	assert.NotContains(t, string(yaml), `client_id: "cid123"`)
+	// user content intact
+	assert.Contains(t, string(yaml), "# my custom stuff")
+	assert.Contains(t, string(yaml), "default_config:")
+	// exactly one managed block
+	assert.Equal(t, 1, strings.Count(string(yaml), managedBegin))
+	assert.Equal(t, 1, strings.Count(string(yaml), managedEnd))
+}
+
+func TestPreStartRemovesBlockWhenSSODisabled(t *testing.T) {
+	zipBody, sha := newZip(t, map[string]string{"manifest.json": `{"domain":"auth_oidc","version":"v1.2.1"}`})
+	c := newTestConfigurator(t, zipBody, sha)
+	data := t.TempDir()
+	cfgDir := filepath.Join(data, "config")
+	require.NoError(t, os.MkdirAll(cfgDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "configuration.yaml"), []byte("default_config:\n"), 0o644))
+
+	_, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data, SSOEnabled: true, OIDC: testOIDC()})
+	require.NoError(t, err)
+
+	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data, SSOEnabled: false})
+	require.NoError(t, err)
+	assert.True(t, changed, "removing the leftover block is a change")
+	yaml, err := os.ReadFile(filepath.Join(cfgDir, "configuration.yaml"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(yaml), managedBegin)
+	assert.NotContains(t, string(yaml), "auth_oidc")
+	assert.Contains(t, string(yaml), "default_config:")
+
+	changed2, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data, SSOEnabled: false})
+	require.NoError(t, err)
+	assert.False(t, changed2)
+}
+
+// apiServer is a fake Home Assistant for PostStart tests.
+type apiServer struct {
+	mu         sync.Mutex
+	onboarded  bool
+	postBodies []string
+	oidcLive   bool
+	srv        *httptest.Server
+}
+
+func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
+	t.Helper()
+	s := &apiServer{oidcLive: oidcLive}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/":
+			w.WriteHeader(200)
+			io.WriteString(w, `{"message":"API running."}`)
+		case "/api/onboarding":
+			s.mu.Lock()
+			onboarded := s.onboarded
+			s.mu.Unlock()
+			w.WriteHeader(200)
+			if onboarded {
+				io.WriteString(w, `[]`)
+			} else {
+				io.WriteString(w, `[{"step":"user","data":{}}]`)
+			}
+		case "/api/onboarding/users":
+			body, _ := io.ReadAll(r.Body)
+			s.mu.Lock()
+			s.postBodies = append(s.postBodies, string(body))
+			s.onboarded = true
+			s.mu.Unlock()
+			w.WriteHeader(201)
+			io.WriteString(w, `{"access_token":"tok"}`)
+		case "/auth/oidc/":
+			if s.isOIDCLive() {
+				w.Header().Set("Location", "http://sso.localhost:8080/application/o/authorize/?client_id=cid123")
+				w.WriteHeader(302)
+				return
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+func (s *apiServer) isOIDCLive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.oidcLive
+}
+
+func (s *apiServer) setOIDCLive(v bool) {
+	s.mu.Lock()
+	s.oidcLive = v
+	s.mu.Unlock()
+}
+
+func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
+	srv := newAPIServer(t, false)
+	c := NewConfigurator(0, &fakeSecrets{pw: "test-bootstrap-pw"}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 3 * time.Second
+
+	// provider becomes live asynchronously, like HA finishing setup
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		srv.setOIDCLive(true)
+	}()
+
+	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()}))
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	require.Len(t, srv.postBodies, 1, "must create the owner exactly once")
+	var req map[string]string
+	require.NoError(t, json.Unmarshal([]byte(srv.postBodies[0]), &req))
+	assert.Equal(t, onboardingClientID, req["client_id"])
+	assert.Equal(t, bootstrapUsername, req["username"])
+	assert.Equal(t, "test-bootstrap-pw", req["password"])
+	assert.Equal(t, bootstrapFullname, req["name"])
+}
+
+func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
+	srv := newAPIServer(t, true)
+	srv.mu.Lock()
+	srv.onboarded = true
+	srv.mu.Unlock()
+	c := NewConfigurator(0, &fakeSecrets{pw: "x"}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 2 * time.Second
+
+	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()}))
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	assert.Empty(t, srv.postBodies, "must not re-run onboarding")
+}
+
+func TestPostStartFailsWhenProviderNeverLives(t *testing.T) {
+	srv := newAPIServer(t, false)
+	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 200 * time.Millisecond
+
+	err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "never became live")
+}
+
+func TestPostStartNoSSOSkipsOIDCProbe(t *testing.T) {
+	srv := newAPIServer(t, false)
+	srv.mu.Lock()
+	srv.onboarded = true
+	srv.mu.Unlock()
+	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 300 * time.Millisecond
+
+	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}))
+}
+
+func TestMergeManagedBlockAppendsToEmpty(t *testing.T) {
+	out := mergeManagedBlock("", "auth_oidc:\n  client_id: \"x\"\n# END")
+	assert.Contains(t, out, "auth_oidc:")
+	assert.True(t, strings.HasSuffix(out, "\n"))
+}
+
+func TestYamlQuoteEscapes(t *testing.T) {
+	assert.Equal(t, `"a\"b\\c"`, yamlQuote(`a"b\c`))
+}
