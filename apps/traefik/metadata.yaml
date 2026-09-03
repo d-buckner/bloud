@@ -22,11 +22,6 @@ containers:
       - source: "{{dataDir}}/traefik/dynamic"
         destination: /dynamic
         options: [ro]
-      # Bloud leaf certificate for the websecure (HTTPS) entrypoint,
-      # generated once at bootstrap (see internal/tlsca).
-      - source: "{{dataDir}}/tls"
-        destination: /certs
-        options: [ro]
     healthCheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ping | grep -qi ok"]
       interval: 1

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/tlsca"
 )
 
 // runInitSecrets handles the "init-secrets" subcommand
@@ -31,18 +30,6 @@ func runInitSecrets(args []string) int {
 	// Ensure data directory exists
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot create data directory %s: %v\n", dataDir, err)
-		return 1
-	}
-
-	// Generate the local CA + leaf + trust bundle (idempotent; the CA is
-	// created once and never regenerated). Runs before any container that
-	// mounts or trusts the certificates.
-	baseDomain := os.Getenv("BLOUD_BASE_DOMAIN")
-	if baseDomain == "" {
-		baseDomain = "localhost"
-	}
-	if err := tlsca.EnsureAll(dataDir, baseDomain); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to generate TLS certificates: %v\n", err)
 		return 1
 	}
 

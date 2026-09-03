@@ -10,37 +10,34 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
+
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // TraefikConfigurator manages the Traefik reverse proxy lifecycle.
 type TraefikConfigurator struct {
-	runtime        containerruntime.Runtime
-	traefikPort    int
-	traefikTLSPort int
-	hostAgentPort  int
-	authentikPort  int
-	dataDir        string
+	runtime       containerruntime.Runtime
+	traefikPort   int
+	hostAgentPort int
+	authentikPort int
+	dataDir       string
 }
 
 // NewTraefikConfigurator creates a new Traefik configurator.
 func NewTraefikConfigurator(
 	runtime containerruntime.Runtime,
 	traefikPort int,
-	traefikTLSPort int,
 	hostAgentPort int,
 	authentikPort int,
 	dataDir string,
 ) *TraefikConfigurator {
 	return &TraefikConfigurator{
-		runtime:        runtime,
-		traefikPort:    traefikPort,
-		traefikTLSPort: traefikTLSPort,
-		hostAgentPort:  hostAgentPort,
-		authentikPort:  authentikPort,
-		dataDir:        dataDir,
+		runtime:       runtime,
+		traefikPort:   traefikPort,
+		hostAgentPort: hostAgentPort,
+		authentikPort: authentikPort,
+		dataDir:       dataDir,
 	}
 }
 
@@ -66,7 +63,6 @@ func (c *TraefikConfigurator) PreStart(_ context.Context, _ *configurator.AppSta
 		{staticConfigPath, []byte(c.staticConfig())},
 		{filepath.Join(dynamicDir, "base.yml"), []byte(c.baseDynamicConfig())},
 		{filepath.Join(dynamicDir, "authentik-routes.yml"), []byte(c.authentikRoutes())},
-		{filepath.Join(dynamicDir, "tls.yml"), []byte(c.tlsDynamicConfig())},
 	}
 
 	for _, f := range files {
@@ -96,8 +92,6 @@ func (c *TraefikConfigurator) staticConfig() string {
     address: ":` + strconv.Itoa(c.traefikPort) + `"
     forwardedHeaders:
       insecure: true
-  websecure:
-    address: ":` + strconv.Itoa(c.traefikTLSPort) + `"
 providers:
   file:
     directory: "/dynamic"
@@ -111,74 +105,100 @@ log:
 `
 }
 
-// tlsDynamicConfig writes the certificate store for the websecure entrypoint.
-// Traefik v3 moved the TLS store out of the static config: it is dynamic
-// configuration, served from the same /dynamic file provider. The default
-// certificate is the Bloud leaf (internal/tlsca), mounted at /certs.
-func (c *TraefikConfigurator) tlsDynamicConfig() string {
-	return `tls:
-  stores:
-    default:
-      defaultCertificate:
-        certFile: /certs/server.crt
-        keyFile: /certs/server.key
-`
-}
-
-// routerPair emits a router bound to the default entrypoint (web) and a
-// "-tls" twin bound to websecure with TLS enabled. The websecure entrypoint's
-// default certificate (the Bloud leaf, mounted at /certs) is used.
-func (c *TraefikConfigurator) routerPair(name, rule, service string, priority int) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("    %s:\n      rule: \"%s\"\n      service: %s\n      priority: %d\n\n", name, rule, service, priority))
-	b.WriteString(fmt.Sprintf("    %s-tls:\n      rule: \"%s\"\n      entryPoints:\n        - websecure\n      tls: true\n      service: %s\n      priority: %d\n\n", name, rule, service, priority))
-	return b.String()
-}
-
 func (c *TraefikConfigurator) baseDynamicConfig() string {
 	agentURL := "http://localhost:" + strconv.Itoa(c.hostAgentPort)
-	routers := []struct {
-		comment, name, rule, service string
-		priority                     int
-	}{
-		{"Traefik dashboard (access via /dashboard/)", "traefik-dashboard", "PathPrefix(`/dashboard`)", "api@internal", 95},
-		{"Host agent API", "host-api", "PathPrefix(`/api`)", "host-agent", 90},
-		{"Host agent auth routes (OAuth login/callback/logout)", "host-auth", "PathPrefix(`/auth`)", "host-agent", 89},
-		{"Bloud UI (catch-all)", "bloud-ui", "PathPrefix(`/`)", "host-agent", 1},
-	}
-	var b strings.Builder
-	b.WriteString("http:\n  routers:\n")
-	for _, r := range routers {
-		b.WriteString(fmt.Sprintf("    # %s\n", r.comment))
-		b.WriteString(c.routerPair(r.name, r.rule, r.service, r.priority))
-	}
-	b.WriteString("  services:\n    host-agent:\n      loadBalancer:\n        servers:\n          - url: \"" + agentURL + "\"\n")
-	return b.String()
+	return `http:
+  routers:
+    # Traefik dashboard (access via /dashboard/)
+    traefik-dashboard:
+      rule: "PathPrefix(` + "`" + `/dashboard` + "`" + `)"
+      service: api@internal
+      priority: 95
+
+    # Host agent API
+    host-api:
+      rule: "PathPrefix(` + "`" + `/api` + "`" + `)"
+      service: host-agent
+      priority: 90
+
+    # Host agent auth routes (OAuth login/callback/logout)
+    host-auth:
+      rule: "PathPrefix(` + "`" + `/auth` + "`" + `)"
+      service: host-agent
+      priority: 89
+
+    # Bloud UI (catch-all)
+    bloud-ui:
+      rule: "PathPrefix(` + "`" + `/` + "`" + `)"
+      service: host-agent
+      priority: 1
+
+  services:
+    host-agent:
+      loadBalancer:
+        servers:
+          - url: "` + agentURL + `"
+`
 }
 
 func (c *TraefikConfigurator) authentikRoutes() string {
 	authentikURL := "http://localhost:" + strconv.Itoa(c.authentikPort)
-	routers := []struct {
-		comment, name, rule string
-		priority            int
-	}{
-		{"Authentik embedded outpost for forward auth", "authentik-outpost", "PathPrefix(`/outpost.goauthentik.io`)", 96},
-		{"Authentik API v3 endpoints (higher priority than Bloud /api routes)", "authentik-api", "PathPrefix(`/api/v3`)", 95},
-		{"Authentik OAuth/OIDC endpoints", "authentik-application", "PathPrefix(`/application`)", 85},
-		{"Authentik flows (login, logout, etc.)", "authentik-flows", "PathPrefix(`/flows`)", 85},
-		{"Authentik Identity Frontend UI", "authentik-if", "PathPrefix(`/if`)", 85},
-		{"Authentik internal endpoints", "authentik-internal", "PathPrefix(`/-`)", 85},
-		{"Authentik static assets", "authentik-static", "PathPrefix(`/static`)", 85},
-		{"Authentik WebSocket (admin UI live updates)", "authentik-ws", "PathPrefix(`/ws`)", 85},
-	}
-	var b strings.Builder
-	b.WriteString("http:\n  routers:\n")
-	for _, r := range routers {
-		b.WriteString(fmt.Sprintf("    # %s\n", r.comment))
-		b.WriteString(c.routerPair(r.name, r.rule, "authentik", r.priority))
-	}
-	b.WriteString("  services:\n    authentik:\n      loadBalancer:\n        servers:\n          - url: \"" + authentikURL + "\"\n")
-	return b.String()
+	return `http:
+  routers:
+    # Authentik embedded outpost for forward auth
+    authentik-outpost:
+      rule: "PathPrefix(` + "`" + `/outpost.goauthentik.io` + "`" + `)"
+      service: authentik
+      priority: 96
+
+    # Authentik API v3 endpoints (higher priority than Bloud /api routes)
+    authentik-api:
+      rule: "PathPrefix(` + "`" + `/api/v3` + "`" + `)"
+      service: authentik
+      priority: 95
+
+    # Authentik OAuth/OIDC endpoints
+    authentik-application:
+      rule: "PathPrefix(` + "`" + `/application` + "`" + `)"
+      service: authentik
+      priority: 85
+
+    # Authentik flows (login, logout, etc.)
+    authentik-flows:
+      rule: "PathPrefix(` + "`" + `/flows` + "`" + `)"
+      service: authentik
+      priority: 85
+
+    # Authentik Identity Frontend UI
+    authentik-if:
+      rule: "PathPrefix(` + "`" + `/if` + "`" + `)"
+      service: authentik
+      priority: 85
+
+    # Authentik internal endpoints
+    authentik-internal:
+      rule: "PathPrefix(` + "`" + `/-` + "`" + `)"
+      service: authentik
+      priority: 85
+
+    # Authentik static assets
+    authentik-static:
+      rule: "PathPrefix(` + "`" + `/static` + "`" + `)"
+      service: authentik
+      priority: 85
+
+    # Authentik WebSocket (admin UI live updates)
+    authentik-ws:
+      rule: "PathPrefix(` + "`" + `/ws` + "`" + `)"
+      service: authentik
+      priority: 85
+
+  services:
+    authentik:
+      loadBalancer:
+        servers:
+          - url: "` + authentikURL + `"
+`
 }
 
 func writeFileAtomic(path string, data []byte) error {

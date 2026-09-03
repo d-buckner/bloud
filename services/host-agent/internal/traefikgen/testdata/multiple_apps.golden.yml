@@ -6,43 +6,16 @@ http:
   routers:
     actual-budget:
       rule: "HostRegexp(`^actual-budget\\.`)"
-      entryPoints:
-        - web
-      service: actual-budget
       priority: 200
-    actual-budget-tls:
-      rule: "HostRegexp(`^actual-budget\\.`)"
-      entryPoints:
-        - websecure
-      tls: true
       service: actual-budget
-      priority: 200
     adguard-home:
       rule: "HostRegexp(`^adguard-home\\.`)"
-      entryPoints:
-        - web
-      service: adguard-home
       priority: 200
-    adguard-home-tls:
-      rule: "HostRegexp(`^adguard-home\\.`)"
-      entryPoints:
-        - websecure
-      tls: true
       service: adguard-home
-      priority: 200
     miniflux:
       rule: "HostRegexp(`^miniflux\\.`)"
-      entryPoints:
-        - web
-      service: miniflux
       priority: 200
-    miniflux-tls:
-      rule: "HostRegexp(`^miniflux\\.`)"
-      entryPoints:
-        - websecure
-      tls: true
       service: miniflux
-      priority: 200
 
   services:
     actual-budget:

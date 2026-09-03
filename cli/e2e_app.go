@@ -51,7 +51,7 @@ func runAppE2E(root string, args []string) error {
 
 	app := os.Getenv("BLOUD_E2E_APP")
 	if app == "" {
-		return fmt.Errorf("BLOUD_E2E_APP is required (e.g. jellyfin, navidrome, immich, affine, appflowy, install-streaming)")
+		return fmt.Errorf("BLOUD_E2E_APP is required (e.g. jellyfin, navidrome, immich, affine, install-streaming)")
 	}
 
 	runner := &appE2ERunner{
@@ -68,7 +68,7 @@ Provisions a self-contained runtime, installs one app through the
 host-agent API, and runs that app's Playwright spec.
 
 Required environment:
-  BLOUD_E2E_APP            App to test: jellyfin | navidrome | immich | affine | appflowy | install-streaming
+  BLOUD_E2E_APP            App to test: jellyfin | navidrome | immich | affine | install-streaming
 
 Optional environment (same as "e2e lifecycle"):
   BLOUD_BACKEND            Override the stored backend preference

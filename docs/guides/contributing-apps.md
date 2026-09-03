@@ -177,4 +177,3 @@ Also add:
 | `apps/immich` | Database integration, OIDC SSO |
 | `apps/affine` | Own postgres+redis, OIDC config file, first-run owner bootstrap (see `INTEGRATION.md`) |
 | `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app |
-| `apps/appflowy` | `none` routing strategy that still wires Bloud SSO into the app's own GoTrue OIDC provider (see `INTEGRATION.md`) |

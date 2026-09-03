@@ -6,17 +6,8 @@ http:
   routers:
     miniflux:
       rule: "HostRegexp(`^miniflux\\.`)"
-      entryPoints:
-        - web
-      service: miniflux
       priority: 200
-    miniflux-tls:
-      rule: "HostRegexp(`^miniflux\\.`)"
-      entryPoints:
-        - websecure
-      tls: true
       service: miniflux
-      priority: 200
 
   services:
     miniflux:
