@@ -108,7 +108,6 @@ func (b *NativeBackend) Host() executor.Host {
 			"immich":      "2283",
 			"navidrome":   "4533",
 			"affine":      "3010",
-			"appflowy":    "8480",
 		},
 		executor.DataDirs{
 			HostAgentDir: nativeRemoteDir + "/host-agent",

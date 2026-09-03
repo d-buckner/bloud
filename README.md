@@ -94,7 +94,6 @@ well.
 | **Media** | Navidrome | Your music library with Subsonic-compatible clients |
 | **Photos** | Immich | Private photo and video management |
 | **Productivity** | AFFiNE | AI-native knowledge base: docs, databases, whiteboards |
-| **Productivity** | AppFlowy | Open-source Notion alternative: docs and databases |
 
 ## One login everywhere
 
@@ -105,7 +104,7 @@ Apps get SSO automatically, using whatever strategy fits them:
 | **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
 | **Forward Auth** | Traefik asks Authentik before reaching the app | Navidrome |
 | **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Immich, AFFiNE |
-| **None** | The app manages its own auth; Bloud still wires your account in (e.g. into the app's own OIDC provider) | AppFlowy |
+| **None** | The app manages its own auth; Bloud still wires your account in (e.g. into the app's own OIDC provider) | — |
 
 Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) have
 their own documented login path.
@@ -198,7 +197,7 @@ bloud/
 │   │   ├── metadata.yaml          # Integrations, SSO, port, container spec
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
-│   ├── affine/                    # + appflowy/, authentik/, immich/,
+│   ├── affine/                    # + authentik/, immich/,
 │   └── traefik/                   #   navidrome/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend

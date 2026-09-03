@@ -86,7 +86,6 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 3389 | LDAP outpost (direct) | debugging |
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
-| 8480 | AppFlowy (direct) | debugging |
 | 5353 (UDP) | mDNS — the guest's `.local` announcer (`bloud.local`, `<app>.bloud.local`); unicast queries only, since the VM boundary does not relay multicast | debugging / LAN reachability |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
@@ -213,7 +212,7 @@ Validation:  validate [flags]     Tiered validation (default --tier changed)
             e2e                  Playwright against the running runtime
             e2e lifecycle        Self-contained install→restart→uninstall lifecycle
             e2e app              Single app's spec (BLOUD_E2E_APP=jellyfin|navidrome|
-                                 immich|affine|appflowy|install-streaming) on a
+                                 immich|affine|install-streaming) on a
                                  self-contained runtime — used by CI
 Other:       depgraph             Mermaid dependency graph from app metadata
 ```

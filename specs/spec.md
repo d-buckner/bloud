@@ -930,7 +930,6 @@ Current coverage:
 - Jellyfin: install, Bloud login, LDAP SSO login in embedded iframe, uninstall
 - Navidrome: install, forward-auth login via Traefik, uninstall
 - Immich, AFFiNE: native-oidc login journeys
-- AppFlowy: Bloud SSO wired into the app's own GoTrue provider
 - install-streaming: live app-state stream during install
 
 The release gate will run on a clean Debian VM with the real `.deb` package.
