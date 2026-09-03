@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "setup": "npm install && npm run cli:build && ./bloud setup",
-    "cli:build": "mkdir -p .bloud && cd cli && go build -o ../.bloud/cli .",
+    "cli:build": "cd cli && go build -o ../bloud .",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "frontend:dev": "npm run dev --workspace=services/host-agent/web",
