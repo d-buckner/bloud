@@ -26,31 +26,34 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
-// readSSEEvent reads the next SSE event (event name + JSON data) from the
-// stream, timing out if the stream stalls. Comments (": ping") are ignored.
-func readSSEEvent(t *testing.T, r io.Reader) (string, []byte) {
-	t.Helper()
-	type result struct {
-		event string
-		data  []byte
-		err   error
-	}
-	ch := make(chan result, 1)
+// sseStream reads SSE events from a stream. One reader goroutine per stream:
+// creating a new bufio.Scanner per read would let abandoned goroutines steal
+// bytes (and whole events) from the underlying body, and a second scanner on
+// the same io.Reader is a data race. The single goroutine lives until the
+// body closes (test teardown); its buffered channel keeps it unblocked.
+type sseStream struct {
+	events chan sseResult
+}
+
+type sseResult struct {
+	event string
+	data  []byte
+	err   error
+}
+
+func newSSEStream(r io.Reader) *sseStream {
+	s := &sseStream{events: make(chan sseResult, 64)}
 	go func() {
 		scanner := bufio.NewScanner(r)
 		var event string
 		var data []byte
-		for {
-			if !scanner.Scan() {
-				ch <- result{err: scanner.Err()}
-				return
-			}
+		for scanner.Scan() {
 			line := scanner.Text()
 			switch {
 			case line == "":
 				if event != "" {
-					ch <- result{event: event, data: data}
-					return
+					s.events <- sseResult{event: event, data: data}
+					event, data = "", nil
 				}
 			case strings.HasPrefix(line, "event: "):
 				event = strings.TrimPrefix(line, "event: ")
@@ -58,9 +61,19 @@ func readSSEEvent(t *testing.T, r io.Reader) (string, []byte) {
 				data = append(data, []byte(strings.TrimPrefix(line, "data: "))...)
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			s.events <- sseResult{err: err}
+		}
 	}()
+	return s
+}
+
+// next returns the next SSE event (name + JSON data), timing out if the
+// stream stalls. Comments (": ping") are ignored by the reader loop.
+func (s *sseStream) next(t *testing.T) (string, []byte) {
+	t.Helper()
 	select {
-	case res := <-ch:
+	case res := <-s.events:
 		if res.err != nil {
 			t.Fatalf("reading SSE stream: %v", res.err)
 		}
@@ -93,12 +106,13 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
+	stream := newSSEStream(resp.Body)
 
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// First event must be a snapshot.
-	evt, payload := readSSEEvent(t, resp.Body)
+	evt, payload := stream.next(t)
 	assert.Equal(t, "snapshot", evt)
 	var home homeResponse
 	require.NoError(t, json.Unmarshal(payload, &home))
@@ -109,7 +123,7 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 		Type:     eventbus.TypeActivity,
 		Activity: &eventbus.ActivityInfo{Event: "converge_start", Detail: "1"},
 	})
-	evt, payload = readSSEEvent(t, resp.Body)
+	evt, payload = stream.next(t)
 	assert.Equal(t, "activity", evt)
 	var act eventbus.ActivityInfo
 	require.NoError(t, json.Unmarshal(payload, &act))
@@ -120,7 +134,7 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 		Type: eventbus.TypeNode,
 		Node: &eventbus.NodeInfo{App: "jellyfin", Container: "jellyfin", Phase: "pulling"},
 	})
-	evt, payload = readSSEEvent(t, resp.Body)
+	evt, payload = stream.next(t)
 	assert.Equal(t, "node", evt)
 	var node eventbus.NodeInfo
 	require.NoError(t, json.Unmarshal(payload, &node))
@@ -133,7 +147,7 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 		Pull: &eventbus.PullInfo{App: "immich", Image: "ghcr.io/immich-app/immich-server:v1",
 			Phase: "pulling", Detail: "34% — 340.0 MiB of 1.0 GiB"},
 	})
-	evt, payload = readSSEEvent(t, resp.Body)
+	evt, payload = stream.next(t)
 	assert.Equal(t, "pull", evt)
 	var pull eventbus.PullInfo
 	require.NoError(t, json.Unmarshal(payload, &pull))
@@ -143,7 +157,7 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 
 	// apps-changed triggers a fresh snapshot.
 	bus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
-	evt, _ = readSSEEvent(t, resp.Body)
+	evt, _ = stream.next(t)
 	assert.Equal(t, "snapshot", evt)
 	assert.Equal(t, 2, layoutCalls)
 }
@@ -198,11 +212,12 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
+	stream := newSSEStream(resp.Body)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 
-	evt, payload := readSSEEvent(t, resp.Body)
+	evt, payload := stream.next(t)
 	require.Equal(t, "snapshot", evt)
 	var home struct {
 		Apps []map[string]any `json:"apps"`
@@ -214,7 +229,7 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 
 	// A store change must produce a fresh snapshot reflecting new state.
 	require.NoError(t, fAppStore.UpdateStatus("jellyfin", "error"))
-	evt, payload = readSSEEvent(t, resp.Body)
+	evt, payload = stream.next(t)
 	require.Equal(t, "snapshot", evt)
 	require.NoError(t, json.Unmarshal(payload, &home))
 	require.Len(t, home.Apps, 1)

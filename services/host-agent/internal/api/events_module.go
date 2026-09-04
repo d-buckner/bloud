@@ -68,13 +68,17 @@ func (m *eventsModule) StreamHandler() http.HandlerFunc {
 			username = user.Username
 		}
 
+		// Subscribe before writing the snapshot: a store change that lands
+		// while the snapshot is being written must still be delivered (it
+		// buffers and triggers an idempotent resnapshot). Subscribing after
+		// the snapshot write would silently drop those events.
+		events, cancel := m.bus.Subscribe()
+		defer cancel()
+
 		if err := m.writeSnapshot(w, flusher, username); err != nil {
 			m.logger.Debug("events stream: initial snapshot failed", "user", username, "error", err)
 			return
 		}
-
-		events, cancel := m.bus.Subscribe()
-		defer cancel()
 
 		heartbeat := time.NewTicker(sseHeartbeatInterval)
 		defer heartbeat.Stop()
