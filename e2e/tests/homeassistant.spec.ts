@@ -3,42 +3,64 @@
 import { test, expect } from '../lib/fixtures';
 import { LoginPage } from '../lib/loginPage';
 
+const HA_URL = 'http://homeassistant.localhost:8080';
+
 test.describe('homeassistant (native-oidc)', () => {
   test.beforeEach(async ({ api }) => {
     await api.ensureInstalled('homeassistant');
   });
 
-  test('SSO login reaches Home Assistant UI', async ({ authenticatedPage }) => {
-    const page = authenticatedPage;
+  test('SSO login reaches the Home Assistant dashboard', async ({ page }) => {
+    const loginPage = new LoginPage(page);
+    const bloudButton = page.getByRole('button', { name: /Bloud/ });
 
-    // Open Home Assistant from the Bloud home screen — opens in a new tab
+    // Open Home Assistant from the Bloud home screen — opens in a new tab.
     await page.goto('/');
-    const homeassistantPagePromise = page.waitForEvent('popup');
+    const haPromise = page.waitForEvent('popup');
     await page.getByText('Home Assistant').click();
-    const homeassistantPage = await homeassistantPagePromise;
-    await homeassistantPage.waitForLoadState();
-    // native-oidc may redirect through Authentik; log in if needed.
-    const loginPage = new LoginPage(homeassistantPage);
-    const deadline = Date.now() + 120_000;
-    for (;;) {
-      const url = homeassistantPage.url();
-      if (url.includes('homeassistant.localhost:8080') && !url.includes('/auth/login')) break;
-      if (Date.now() > deadline) break;
+    const ha = await haPromise;
+    await ha.waitForLoadState();
 
-      if (await loginPage.isVisible()) {
-        await loginPage.login();
+    // A fresh HA install has no owner yet, so the browser holds no Home
+    // Assistant session: the visit must be redirected out to the IdP.
+    // hass-oidc-auth is the default provider (features.default_redirect), so
+    // no "Continue with Bloud" click should be needed — but click it if the
+    // provider-selection page ever shows, to keep the journey robust.
+    const haLoginPage = new LoginPage(ha);
+    const deadline = Date.now() + 240_000;
+    for (;;) {
+      const url = ha.url();
+      if (url.startsWith(HA_URL) && !url.includes('/auth/')) break;
+      if (Date.now() > deadline) break;
+      if (await haLoginPage.isVisible()) {
+        await haLoginPage.login();
         continue;
       }
-
-      await homeassistantPage.waitForTimeout(500);
+      if (await bloudButton.isVisible({ timeout: 1_000 }).catch(() => false)) {
+        await bloudButton.click();
+        continue;
+      }
+      await ha.waitForTimeout(500);
     }
 
-    // Should land on Home Assistant
-    await expect(homeassistantPage).toHaveURL(/homeassistant\.localhost:8080/, { timeout: 30_000 });
+    // Must land back on Home Assistant outside its auth flow — not on the
+    // Authentik flow page and not on HA's provider-selection (/auth/authorize).
+    await expect(ha).toHaveURL(/^http:\/\/homeassistant\.localhost:8080\/(?!auth\/)/, {
+      timeout: 60_000,
+    });
 
-    // Home Assistant UI should render — look for the app shell
+    // The Lovelace dashboard shell renders only for an authenticated Home
+    // Assistant session; an unauthenticated browser sits on the auth flow.
     await expect(
-      homeassistantPage.locator('#root, .MuiBox-root, nav').first(),
-    ).toBeVisible({ timeout: 30_000 });
+      ha.locator('ha-panel-lovelace, lovelace-ui').first(),
+    ).toBeVisible({ timeout: 60_000 });
+
+    // The sidebar shows the signed-in identity (display name claim from the
+    // IdP), proving the account came from Authentik rather than HA's built-in
+    // legacy provider.
+    await expect(ha.locator('sidebar-user')).toBeVisible({ timeout: 60_000 });
+
+    // No leftover credentials form on the dashboard view.
+    await expect(ha.locator('input[name="uidField"]')).toHaveCount(0);
   });
 });
