@@ -48,7 +48,7 @@ containers:
     healthCheck:
       test:
         - CMD-SHELL
-        - python3 -c 'import urllib.request,sys;urllib.request.urlopen("http://localhost:8123/api/",timeout=5)'
+        - curl -fsS http://localhost:8123/
       interval: 5
       timeout: 10
       retries: 60
