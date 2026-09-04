@@ -1,19 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 
-// Package appconfig registers all available configurators with the registry.
+// Package appconfig wires system-infrastructure configurators with the
+// registry and links in the app catalog's self-registering configurators.
+//
+// User-app configurators are NOT registered here: each app package in the
+// apps/ module registers a factory from its own init() (see
+// apps/<name>/registration.go), and the registry instantiates them lazily on
+// first lookup. This file only imports the app packages for their side
+// effects and wires the system configurators (Traefik, Authentik server),
+// which are always needed and runtime-dependent.
 package appconfig
 
 import (
-	"fmt"
 	"log/slog"
 
-	"codeberg.org/d-buckner/bloud/apps/affine"
 	"codeberg.org/d-buckner/bloud/apps/authentik"
-	"codeberg.org/d-buckner/bloud/apps/immich"
-	"codeberg.org/d-buckner/bloud/apps/jellyfin"
-	"codeberg.org/d-buckner/bloud/apps/navidrome"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+
+	// User-app configurators: blank imports run each app's init(), which
+	// registers its factory with the configurator registry. Adding an app
+	// means adding one blank import here — and nothing else in host-agent.
+	_ "codeberg.org/d-buckner/bloud/apps/affine"
+	_ "codeberg.org/d-buckner/bloud/apps/immich"
+	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
+	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
+
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
@@ -21,15 +32,15 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/web/static"
 )
 
-// RegisterAll registers all available configurators with the registry.
-// This should be called during host-agent startup. hosts is the live host-set
-// state (may be nil in tests/CLI mode); configurators read the current base
-// URL through it so UI host changes take effect without restarts.
-func RegisterAll(
+// RegisterSystem registers the system configurators (Traefik, Authentik
+// server) with the registry. This should be called during host-agent startup.
+// hosts is the live host-set state (may be nil in tests/CLI mode);
+// configurators read the current base URL through it so UI host changes take
+// effect without restarts.
+func RegisterSystem(
 	registry *configurator.Registry,
 	cfg *config.Config,
 	runtime containerruntime.Runtime,
-	catalogApps map[string]*catalog.App,
 	logger *slog.Logger,
 	templateVars map[string]string,
 	hosts *hostset.State,
@@ -76,12 +87,22 @@ func RegisterAll(
 			nil, // no templateVars in CLI mode
 		).WithBaseURLFn(primaryBaseURLFn))
 	}
+}
 
-	// User app configurators (always registered)
-	registry.Register(affine.NewConfigurator(3010, primaryBaseURLFn, cfg.Secrets, logger))
-	// Navidrome's user sync calls the Authentik API from the host itself, so it
-	// always uses the local Traefik URL regardless of the public host set.
-	registry.Register(navidrome.NewConfigurator(4533, fmt.Sprintf("http://localhost:%d", cfg.TraefikPort), cfg.Secrets, logger))
-	registry.Register(jellyfin.NewConfigurator(8096, logger))
-	registry.Register(immich.NewConfigurator(2283, cfg.Secrets, logger))
+// AppDeps builds the dependency set passed to app configurator factories.
+// hosts may be nil (tests/CLI mode), in which case the static SSO base URL
+// is used.
+func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State) configurator.Deps {
+	primaryBaseURL := func() string {
+		if hosts != nil {
+			return hosts.Get().PrimaryBaseURL()
+		}
+		return cfg.SSOBaseURL
+	}
+	return configurator.Deps{
+		Logger:         logger,
+		Secrets:        cfg.Secrets,
+		PrimaryBaseURL: primaryBaseURL,
+		TraefikPort:    cfg.TraefikPort,
+	}
 }

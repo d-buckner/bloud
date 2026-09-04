@@ -331,8 +331,12 @@ combined with instance/SSH-target env vars). Instance overrides:
    (`Name()`, `PreStart(ctx, *AppState) (changed bool, err error)`,
    `PostStart(ctx, *AppState) error`, `Remove(ctx, *AppState, clearData bool)
    error`) from `pkg/configurator`. `AppState` carries `DataPath`,
-   `BloudDataPath`, `SSOEnabled`, typed `LDAP` output. Register it in
-   `services/host-agent/internal/appconfig/register.go`.
+   `BloudDataPath`, `SSOEnabled`, typed `LDAP` output. Self-register it: add
+   `apps/<name>/registration.go` with an `init()` calling
+   `configurator.MustRegisterFactory("<node-name>", ...)` (factory is
+   instantiated lazily on first lookup), and add a blank import of the app
+   package to `services/host-agent/internal/appconfig/register.go`. System
+   apps (Traefik, Authentik) stay eagerly registered in `RegisterSystem`.
 3. Tests: unit tests in the app package; integration assertions in
    `services/host-agent/internal/e2e/e2e_test.go` (build tag `integration`);
    user-journey spec in `e2e/tests/`. **Test behavioral outcomes** (verify via

@@ -42,11 +42,11 @@ func runConfigure(args []string) int {
 
 	cfg := config.Load()
 
-	// Create and populate registry first to check if app has a configurator.
-	// In CLI mode, system configurators are not needed (system apps are managed
-	// by the orchestrator in server mode). Pass nil runtime and empty catalog.
-	registry := configurator.NewRegistry(logger)
-	appconfig.RegisterAll(registry, cfg, nil, nil, logger, nil, nil)
+	// Create the registry first to check if the app has a configurator.
+	// In CLI mode, system configurators are not needed (system apps are
+	// managed by the orchestrator in server mode). App configurators are
+	// factory-registered and instantiate lazily on Get.
+	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, nil))
 
 	// For prestart, always regenerate env files from secrets.json before starting any app
 	// This ensures secrets.json is always the source of truth

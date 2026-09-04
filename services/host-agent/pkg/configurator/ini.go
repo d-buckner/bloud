@@ -18,10 +18,10 @@ type INIFile struct {
 
 // INISection represents a section in an INI file
 type INISection struct {
-	name   string
-	keys   map[string]string
-	order  []string // Preserve key order
-	lines  []string // Original lines for preservation
+	name  string
+	keys  map[string]string
+	order []string // Preserve key order
+	lines []string // Original lines for preservation
 }
 
 // NewINIFile creates a new empty INI file
