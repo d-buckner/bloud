@@ -229,9 +229,11 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			s.mu.Unlock()
 			w.WriteHeader(200)
 			if onboarded {
-				io.WriteString(w, `[]`)
+				// Realistic post-owner flow: remaining interactive steps
+				// are still pending; onboarding must NOT be re-run.
+				io.WriteString(w, `[{"step":"user","done":true},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
 			} else {
-				io.WriteString(w, `[{"step":"user","data":{}}]`)
+				io.WriteString(w, `[{"step":"user","done":false},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
 			}
 		case "/api/onboarding/users":
 			body, _ := io.ReadAll(r.Body)

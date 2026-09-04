@@ -498,15 +498,24 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) error {
 	}
 	var steps []struct {
 		Step string `json:"step"`
+		Done bool   `json:"done"`
 	}
 	if err := json.Unmarshal(body, &steps); err != nil {
 		return fmt.Errorf("onboarding status malformed: %w", err)
 	}
-	if len(steps) == 0 {
-		return nil
+	// HA returns the first-run step flow (user, core_config, analytics,
+	// integration) with done flags. Only the "user" step is required for a
+	// headless install (it creates the owner); the remaining steps are
+	// interactive extras that are simply never shown once an owner exists.
+	userPending := false
+	for _, s := range steps {
+		if s.Step == "user" && !s.Done {
+			userPending = true
+			break
+		}
 	}
-	if len(steps) > 1 || steps[0].Step != "user" {
-		return fmt.Errorf("unexpected onboarding state: %s", string(body))
+	if !userPending {
+		return nil
 	}
 
 	password, err := c.secrets.GenerateAppAdminPassword(appName)
