@@ -8,8 +8,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // LocalExecutor runs commands on the local machine.
@@ -33,22 +35,45 @@ func (e *LocalExecutor) RunStream(ctx context.Context, spec RunSpec, stdout, std
 	return cmd.Run()
 }
 
-// CopyTo copies a local file to another local path.
+// CopyTo copies a local file or directory to another local path. Directories
+// are copied recursively, matching SSHExecutor's rsync-based semantics: the
+// contents of `from` land at `to` (which is created if missing), rather than
+// nesting `from`'s basename inside it.
 func (e *LocalExecutor) CopyTo(_ context.Context, from, to string) error {
+	if isDirectory(from) {
+		return copyDir(from, to)
+	}
 	return copyFile(from, to)
 }
 
-// CopyFrom copies a local file from another local path.
+// CopyFrom copies a local file or directory from another local path. See CopyTo.
 func (e *LocalExecutor) CopyFrom(_ context.Context, from, to string) error {
+	if isDirectory(from) {
+		return copyDir(from, to)
+	}
 	return copyFile(from, to)
 }
 
 func buildLocalCommand(ctx context.Context, spec RunSpec) *exec.Cmd {
-	name, args := spec.Command, spec.Args
-	if spec.AsRoot {
-		name, args = "sudo", append([]string{spec.Command}, spec.Args...)
+	var cmd *exec.Cmd
+	switch {
+	case len(spec.Args) > 0:
+		// Command names a program and Args are its literal arguments — exec
+		// it directly, no shell involved.
+		name, args := spec.Command, spec.Args
+		if spec.AsRoot {
+			name, args = "sudo", append([]string{spec.Command}, spec.Args...)
+		}
+		cmd = exec.CommandContext(ctx, name, args...)
+	case spec.AsRoot:
+		cmd = exec.CommandContext(ctx, "sudo", "sh", "-c", spec.Command)
+	default:
+		// Command is a full shell command line (pipes, redirects, quoting,
+		// &&/;, etc.), matching the contract of the SSH/Lima executors, which
+		// hand it to a remote shell verbatim. Run it through "sh -c" here too,
+		// rather than treating spec.Command as a literal executable name.
+		cmd = exec.CommandContext(ctx, "sh", "-c", spec.Command)
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
 	if len(spec.Env) > 0 {
 		cmd.Env = append(os.Environ(), envSlice(spec.Env)...)
 	}
@@ -95,4 +120,26 @@ func copyFile(from, to string) error {
 		return fmt.Errorf("copy %s -> %s: %w", from, to, err)
 	}
 	return out.Close()
+}
+
+// copyDir recursively copies the contents of the directory `from` into `to`,
+// creating `to` as needed.
+func copyDir(from, to string) error {
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", to, err)
+	}
+	return filepath.WalkDir(from, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(from, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(to, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		return copyFile(path, target)
+	})
 }

@@ -134,16 +134,19 @@ type authModule struct {
 	prefsStore        store.PreferencesStoreInterface
 	sessionStore      sessionStoreInterface
 	logger            *slog.Logger
+	selfPort          int
 	knownRedirectURIs sync.Map // tracks redirect URIs already registered in Authentik
 }
 
-// NewAuthModule creates a new AuthModule.
+// NewAuthModule creates a new AuthModule. selfPort is host-agent's own bind
+// port (0 disables the direct-access check, e.g. in tests).
 func NewAuthModule(
 	client AuthentikClientInterface,
 	cfg *authConfigRef,
 	prefsStore store.PreferencesStoreInterface,
 	sessStore sessionStoreInterface,
 	logger *slog.Logger,
+	selfPort int,
 ) *authModule {
 	return &authModule{
 		authentikClient: client,
@@ -151,6 +154,7 @@ func NewAuthModule(
 		prefsStore:      prefsStore,
 		sessionStore:    sessStore,
 		logger:          logger,
+		selfPort:        selfPort,
 	}
 }
 
@@ -167,6 +171,11 @@ func (m *authModule) getAuthConfig() *AuthConfig {
 // LoginHandler initiates the OIDC login flow.
 func (m *authModule) LoginHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if isDirectAgentRequest(r, m.selfPort) {
+			http.Error(w, "Login isn't available on this port. Use the app's Traefik URL (e.g. http://localhost:8080) instead.", http.StatusBadRequest)
+			return
+		}
+
 		cfg := m.getAuthConfig()
 		if cfg == nil || cfg.OIDCConfig == nil {
 			m.logger.Error("auth not configured")

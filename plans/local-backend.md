@@ -1,7 +1,7 @@
 # Plan: Fix the Native (No-VM) Backend + Apt-Based Setup Tooling
 
-**Status:** Proposed — not yet implemented.
-**Last updated:** 2026-09-02
+**Status:** Implemented.
+**Last updated:** 2026-09-03
 
 ---
 
@@ -270,3 +270,45 @@ verified from a Mac dev machine):
    wiped but that real path is untouched (validates §4's fix).
 8. `./bloud destroy` — confirm `/var/tmp/bloud-native-runtime` gone, project checkout
    untouched.
+
+---
+
+## 8. Implementation notes
+
+All of §1–6 are done. Running the checklist against a real Debian 13 box (this sandbox)
+surfaced additional bugs beyond the original scope, all fixed:
+
+- **`buildContainerSpec` hardcoded `"cgroups_mode": "disabled"`**
+  (`services/host-agent/internal/podman/client.go`), which `runc` rejects
+  (`NoCgroups: invalid argument`) — every container create failed on a real host with
+  proper cgroup v2 delegation. Removed; Podman's default cgroup handling works on native,
+  Lima, and QEMU alike.
+- **`./bloud install`/`uninstall` always reported failure** — the API correctly returns
+  `202 Accepted` for the async intent queue; the CLI only accepted `200`/`201` (install)
+  or `200` (uninstall). Fixed to accept `202` too.
+- **`./bloud services` always printed 0 units** — leftover from the pre-#39 Quadlet
+  architecture (`systemctl --user list-units 'apps-*'`); apps have been plain Podman
+  containers since. Switched to `podman ps`.
+- **Login redirect loop when accessed on host-agent's own port (`:3000`) instead of
+  Traefik's (`:8080`)** — the OIDC authorize URL is built from the request's own
+  host/port, which only resolves to Authentik when proxied through Traefik. Hitting
+  `:3000` directly built a dead authorize URL that fell through to the SPA's static
+  fallback, looping forever with no login form ever shown. `LoginHandler` now detects a
+  direct hit on host-agent's own bind port and returns a clear 400 instead.
+
+### Known follow-up (not yet fixed)
+
+**host-agent binds `0.0.0.0:<port>`, not `127.0.0.1`.** On native this means the
+dashboard/API is reachable from the whole LAN over plain HTTP, bypassing Traefik's TLS
+and local CA entirely — and since cookies aren't port-scoped, a `bloud_session` cookie
+set while browsing through Traefik is also honored on the raw port. Traefik itself
+reaches host-agent via `http://localhost:3000` (host networking), so a loopback-only
+bind wouldn't break routing on native.
+
+This can't be fixed by just changing the bind address unconditionally, though: the QEMU
+backend's CLI depends on `0.0.0.0` inside the guest, since QEMU's slirp NAT forwards
+host→guest connections to the guest's real interface, not its loopback (see the
+`10.0.2.2` comment in `cli/dev.go`). That exposure is contained inside the VM's NAT, so
+it's low-risk there — native has no such boundary. A real fix needs the bind address to
+be backend-aware (loopback-only on native, unchanged on Lima/QEMU), which is out of
+scope for this pass.
