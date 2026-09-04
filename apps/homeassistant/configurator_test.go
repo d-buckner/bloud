@@ -209,6 +209,7 @@ func TestPreStartRemovesBlockWhenSSODisabled(t *testing.T) {
 // apiServer is a fake Home Assistant for PostStart tests.
 type apiServer struct {
 	mu         sync.Mutex
+	restarts   []string // Authorization headers seen on restart calls
 	onboarded  bool
 	postBodies []string
 	oidcLive   bool
@@ -249,6 +250,11 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 				return
 			}
 			http.NotFound(w, r)
+		case "/api/services/homeassistant/restart":
+			s.mu.Lock()
+			s.restarts = append(s.restarts, r.Header.Get("Authorization"))
+			s.mu.Unlock()
+			w.WriteHeader(200)
 		default:
 			http.NotFound(w, r)
 		}
@@ -344,4 +350,136 @@ func TestMergeManagedBlockAppendsToEmpty(t *testing.T) {
 
 func TestYamlQuoteEscapes(t *testing.T) {
 	assert.Equal(t, `"a\"b\\c"`, yamlQuote(`a"b\c`))
+}
+
+// --- reverse-proxy trust in the stored http config entry -----------------
+
+// writeStoredHTTP writes a stored-config document for the http integration at
+// <dir>/.storage/http (where <data> is the HA config dir) and returns its path.
+func writeConfig(t *testing.T, dir, body string) string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".storage"), 0o755))
+	p := filepath.Join(dir, ".storage", "http")
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	return p
+}
+
+func readStoredJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(b, &m))
+	return m
+}
+
+// configSection returns the named payload object nested under the config
+// document's "data" object (the "http" block carrying the live settings).
+func configBlock(t *testing.T, doc map[string]any, key string) map[string]any {
+	t.Helper()
+	d, ok := doc["data"].(map[string]interface{})
+	require.True(t, ok, "config file has no data section")
+	v, ok := d[key].(map[string]interface{})
+	require.True(t, ok, "missing %v section", key)
+	return v
+}
+
+// storageJSON mirrors the shape HA 2026.x writes to disk: settings live
+// under data.http, not at the top level.
+const storageJSON = `{
+  "data": {
+    "http": {
+      "id": "01EXAMPLE",
+      "server_port": 8123,
+      "server_host": "0.0.0.0",
+      "ssl_certificate": "",
+      "ssl_key": "",
+      "trusted_proxies": ["127.0.0.1"],
+      "use_x_forwarded_for": false,
+      "custom_key": "keep"
+    },
+    "type": "http"
+  },
+  "minor_version": 1,
+  "version": 1
+}`
+
+// A fresh install must not get a hand-written config entry: HA rejects foreign
+// entries and takes the whole web stack down with it.
+func TestPreStartDoesNotCreateConfigFile(t *testing.T) {
+	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	data := t.TempDir()
+
+	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
+	require.NoError(t, err)
+	assert.False(t, changed, "must not create the stored http config before HA does")
+	assert.NoFileExists(t, filepath.Join(data, "config", ".storage", "http"))
+}
+
+// Against a real-shaped stored file the configurator flips trust on, leaves
+// unrelated values alone, and settles on the second cycle.
+func TestPreStartPatchesStoredConfig(t *testing.T) {
+	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	data := t.TempDir()
+	path := writeConfig(t, filepath.Join(data, "config"), storageJSON)
+
+	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
+	require.NoError(t, err)
+	assert.True(t, changed, "enabling proxy trust in an existing file is a change")
+
+	doc := readStoredJSON(t, path)
+	hcfg := configBlock(t, doc, "http")
+	assert.Equal(t, true, hcfg["use_x_forwarded_for"])
+	assert.Equal(t, []interface{}{"10.0.0.0/8"}, hcfg["trusted_proxies"])
+	assert.Equal(t, "keep", hcfg["custom_key"])
+	assert.Equal(t, float64(8123), hcfg["server_port"])
+
+	// second cycle: already trusted, no churn
+	changed2, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
+	require.NoError(t, err)
+	assert.False(t, changed2, "idempotent after first write")
+}
+
+// A corrupt stored file must surface as an error, not be silently ignored.
+func TestPreStartRejectsCorruptConfigFile(t *testing.T) {
+	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	data := t.TempDir()
+	writeConfig(t, filepath.Join(data, "config"), "{ nope")
+
+	_, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "valid JSON")
+}
+
+// End-to-end through the POST path: with the stored entry untrusted,
+// PostStart must patch it AND restart Home Assistant via the API — that
+// restart is what makes proxied OIDC callbacks work.
+func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
+	fakeSrv := newAPIServer(t, true)
+
+	data := t.TempDir()
+	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
+
+	cfg := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+cfg.baseURLOverride = fakeSrv.srv.URL
+cfg.pollInterval = 10 * time.Millisecond
+cfg.postStartTimeout = 3 * time.Second
+
+	require.NoError(t, cfg.PostStart(context.Background(), &configurator.AppState{
+		DataPath:   data,
+		SSOEnabled: true,
+		OIDC:       testOIDC(),
+	}))
+
+	// the stored config file was rewritten with trust enabled
+	doc := readStoredJSON(t, storedPath)
+	h := configBlock(t, doc, "http")
+	assert.Equal(t, true, h["use_x_forwarded_for"])
+	assert.Equal(t, []interface{}{"10.0.0.0/8"}, h["trusted_proxies"])
+
+	// and HA was restarted through the API with the session token
+fakeSrv.mu.Lock()
+	defer fakeSrv.mu.Unlock()
+	require.Len(t, fakeSrv.restarts, 1)
+	assert.Equal(t, "Bearer tok", fakeSrv.restarts[0])
 }

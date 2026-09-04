@@ -110,10 +110,21 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return false, fmt.Errorf("failed to create config dir: %w", err)
 	}
 
+	// Reverse-proxy trust is required whenever HA sits behind Traefik — every
+	// proxied request needs it, independent of SSO (see ensureReverseProxy).
+	rpChanged, err := c.ensureReverseProxy(configDir)
+	if err != nil {
+		return false, err
+	}
+
 	if !state.SSOEnabled {
 		// SSO off (e.g. authentik removed): a leftover auth_oidc block points at
 		// a dead provider and would break HA startup. Strip it.
-		return c.writeConfig(configDir, "")
+		stripped, err := c.writeConfig(configDir, "")
+		if err != nil {
+			return false, err
+		}
+		return rpChanged || stripped, nil
 	}
 	if state.OIDC == nil {
 		return false, fmt.Errorf("OIDC output not available for native-oidc setup")
@@ -127,7 +138,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	if err != nil {
 		return false, err
 	}
-	return changed || ok, nil
+	return rpChanged || changed || ok, nil
 }
 
 // Remove is a no-op for the Home Assistant configurator; container and data
@@ -147,12 +158,35 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 }
 
 func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {
+	configDir := filepath.Join(state.DataPath, "config")
+
 	if err := c.waitForAPI(ctx); err != nil {
 		return err
 	}
-	if err := c.ensureOnboarded(ctx); err != nil {
+
+	// Onboarding creates the owner and returns its access token — the only token
+	// available for driving admin API calls after this point.
+	token, err := c.ensureOnboarded(ctx)
+	if err != nil {
 		return err
 	}
+
+	// Reverse-proxy trust: HA writes its own http config entry on first boot and
+	// only reads it at startup. Patch that stored entry so HA trusts Traefik's
+	// X-Forwarded-* headers, then restart HA to apply it. Without this, the OIDC
+	// callback proxied through Traefik fails with 400. No-op once already set.
+	if changed, err := c.ensureReverseProxy(configDir); err != nil {
+		return err
+	} else if changed {
+		c.logger.Info("restarting Home Assistant to apply reverse-proxy trust")
+		if err := c.restartHomeAssistant(ctx, token); err != nil {
+			return err
+		}
+		if err := c.waitForAPI(ctx); err != nil {
+			return err
+		}
+	}
+
 	if state.SSOEnabled {
 		return c.waitForOIDCReady(ctx)
 	}
@@ -340,10 +374,10 @@ func (c *Configurator) writeConfig(configDir string, block string) (bool, error)
 	return true, nil
 }
 
-// managedBlock renders the desired auth_oidc block. Fixed key order and
-// always double-quoted values keep the rendering deterministic across
-// reconciliation cycles. discovery_url must be the full well-known URL — the
-// integration fetches it verbatim (verified against v1.2.1 source).
+// managedBlock renders the desired auth_oidc block. Fixed key order and always
+// double-quoted values keep the rendering deterministic across reconciliation
+// cycles. discovery_url must be the full well-known URL — the integration
+// fetches it verbatim (verified against v1.2.1 source).
 func managedBlock(oidc *configurator.OIDCOutput) string {
 	discovery := strings.TrimSuffix(oidc.IssuerURL, "/") + "/.well-known/openid-configuration"
 	return strings.Join([]string{
@@ -357,6 +391,113 @@ func managedBlock(oidc *configurator.OIDCOutput) string {
 		`    admin: "authentik Admins"`,
 		managedEnd,
 	}, "\n")
+}
+
+// trustedProxies are the networks Home Assistant must trust for X-Forwarded-*
+// headers. Traefik (host network) reaches HA over the published loopback port,
+// and podman's rootless port-forward presents that connection from HA's
+// container network, so HA sees a peer in the private range. The broad /8 is a
+// deliberate, documented trade-off (see INTEGRATION.md); Home Assistant logs a
+// warning about it that is expected and accepted here.
+var trustedProxies = []string{"10.0.0.0/8"}
+
+// ensureReverseProxy makes an existing Home Assistant http config entry honour
+// the X-Forwarded-* headers that Traefik adds in front of it. HA 2026.x
+// moved the http integration to a stored config entry (config/.storage/http)
+// and ignores the `http:` block in configuration.yaml entirely (it files a
+// yaml_still_present_after_onboarding repair). Without use_x_forwarded_for +
+// trusted_proxies on that stored entry, HA's forwarding middleware rejects
+// every request arriving via Traefik and the OIDC callback (/auth/oidc/callback)
+// fails with 400.
+//
+// The entry HA writes (schema version 2) holds its live settings under
+// data.stable — that is where the two keys are merged; every other field HA
+// set is preserved. It never creates the file: a hand-written config entry is
+// rejected by HA's strict schema validation on first boot (which would take
+// down the entire http integration, and with it auth/onboarding/everything
+// else). When the entry is absent — or carries no data.stable block yet — this
+// is a no-op; the caller (PostStart) calls it again once HA has written its
+// own entry, then restarts Home Assistant to apply it.
+// Returns changed=true only when the on-disk content actually changed.
+func (c *Configurator) ensureReverseProxy(configDir string) (bool, error) {
+	path := filepath.Join(configDir, ".storage", "http")
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil // HA hasn't written its own entry yet; nothing to patch
+		}
+		return false, fmt.Errorf("failed to read stored http entry: %w", err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return false, nil
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return false, fmt.Errorf("stored http entry %s is not valid JSON: %w", path, err)
+	}
+	data, ok := doc["data"].(map[string]any)
+	if !ok {
+		return false, fmt.Errorf("stored http entry has no data object")
+	}
+	httpCfg, ok := data["stable"].(map[string]any)
+	if !ok {
+		// No live settings block yet (e.g. pending first-boot migration);
+		// nothing to patch this cycle.
+		return false, nil
+	}
+
+	changed := false
+	if v, ok := httpCfg["use_x_forwarded_for"].(bool); !ok || !v {
+		httpCfg["use_x_forwarded_for"] = true
+		changed = true
+	}
+	if !equalStrings(toStringSlice(httpCfg["trusted_proxies"]), trustedProxies) {
+		httpCfg["trusted_proxies"] = trustedProxies
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal http config entry: %w", err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0600); err != nil {
+		return false, fmt.Errorf("failed to write http config entry: %w", err)
+	}
+	return true, nil
+}
+
+// toStringSlice coerces a decoded JSON value to []string, returning nil for a
+// non-array or any non-string element.
+func toStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		s, ok := e.(string)
+		if !ok {
+			return nil
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeManagedBlock returns existing with the marker-delimited region replaced
@@ -485,28 +626,30 @@ func (c *Configurator) waitForAPI(ctx context.Context) error {
 // ensureOnboarded completes Home Assistant's first-run onboarding headlessly
 // by creating the break-glass owner. Without an owner every request is
 // redirected into the onboarding flow. The iOS client is one of HA's built-in
-// OAuth2 clients (see onboardingClientID).
-func (c *Configurator) ensureOnboarded(ctx context.Context) error {
+// OAuth2 clients (see onboardingClientID). It returns the owner's access token
+// (the only token usable for authenticated API calls after this point), or ""
+// when onboarding was already complete.
+func (c *Configurator) ensureOnboarded(ctx context.Context) (string, error) {
 	resp, err := c.apiGet(ctx, "/api/onboarding")
 	if err != nil {
-		return fmt.Errorf("onboarding status request failed: %w", err)
+		return "", fmt.Errorf("onboarding status request failed: %w", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("onboarding status returned HTTP %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("onboarding status returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	var steps []struct {
 		Step string `json:"step"`
 		Done bool   `json:"done"`
 	}
 	if err := json.Unmarshal(body, &steps); err != nil {
-		return fmt.Errorf("onboarding status malformed: %w", err)
+		return "", fmt.Errorf("onboarding status malformed: %w", err)
 	}
-	// HA returns the first-run step flow (user, core_config, analytics,
-	// integration) with done flags. Only the "user" step is required for a
-	// headless install (it creates the owner); the remaining steps are
-	// interactive extras that are simply never shown once an owner exists.
+	// HA returns the first-run step flow (user, core_config, ...) with done
+	// flags. Only the "user" step is required for a headless install (it
+	// creates the owner); the rest are optional onboarding prompts that are
+	// never shown once an owner exists.
 	userPending := false
 	for _, s := range steps {
 		if s.Step == "user" && !s.Done {
@@ -515,12 +658,12 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) error {
 		}
 	}
 	if !userPending {
-		return nil
+		return "", nil
 	}
 
 	password, err := c.secrets.GenerateAppAdminPassword(appName)
 	if err != nil {
-		return fmt.Errorf("failed to obtain bootstrap password: %w", err)
+		return "", fmt.Errorf("failed to obtain bootstrap password: %w", err)
 	}
 	payload, err := json.Marshal(map[string]string{
 		"client_id": onboardingClientID,
@@ -530,24 +673,58 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) error {
 		"language":  "en",
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/onboarding/users", bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 15 * time.Second}
 	ownerResp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("onboarding request failed: %w", err)
+		return "", fmt.Errorf("onboarding request failed: %w", err)
 	}
 	ownerBody, _ := io.ReadAll(ownerResp.Body)
 	ownerResp.Body.Close()
 	if ownerResp.StatusCode != http.StatusOK && ownerResp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("onboarding returned HTTP %d: %s", ownerResp.StatusCode, string(ownerBody))
+		return "", fmt.Errorf("onboarding returned HTTP %d: %s", ownerResp.StatusCode, string(ownerBody))
 	}
-	c.logger.Info("first-run onboarding completed", "owner", bootstrapUsername)
+	c.logger.Info("first-run onboarding completed", "user", bootstrapUsername)
+
+	// The onboarding response carries the owner's access token, needed for any
+	// subsequent authenticated API call (e.g. the post-trust restart below).
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.Unmarshal(ownerBody, &tok)
+	return tok.AccessToken, nil
+}
+
+// restartHomeAssistant triggers a graceful in-container HA restart via the
+// supervisor's process manager so Home Assistant re-reads its stored config
+// entries (notably the http entry whose reverse-proxy trust we just set). The
+// container itself stays up; only the HA process restarts. The request returns
+// before the restart completes, so callers re-wait on the API afterwards.
+func (c *Configurator) restartHomeAssistant(ctx context.Context, token string) error {
+	if token == "" {
+		return fmt.Errorf("no access token to restart Home Assistant")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/services/homeassistant/restart", strings.NewReader("{}"))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("restart request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("restart returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
 	return nil
 }
 

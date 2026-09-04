@@ -10,9 +10,10 @@ test.describe('homeassistant (native-oidc)', () => {
     await api.ensureInstalled('homeassistant');
   });
 
-  test('SSO login reaches the Home Assistant dashboard', async ({ page }) => {
-    const loginPage = new LoginPage(page);
-    const bloudButton = page.getByRole('button', { name: /Bloud/ });
+  test('SSO login reaches the Home Assistant dashboard', async ({
+    authenticatedPage,
+  }) => {
+    const page = authenticatedPage;
 
     // Open Home Assistant from the Bloud home screen — opens in a new tab.
     await page.goto('/');
@@ -20,6 +21,9 @@ test.describe('homeassistant (native-oidc)', () => {
     await page.getByText('Home Assistant').click();
     const ha = await haPromise;
     await ha.waitForLoadState();
+    // HA's provider-selection page ("Continue with Bloud") renders inside the
+    // popup, not the home-screen tab.
+    const bloudButton = ha.getByRole('button', { name: /Bloud/ });
 
     // A fresh HA install has no owner yet, so the browser holds no Home
     // Assistant session: the visit must be redirected out to the IdP.

@@ -1,12 +1,12 @@
 # Home Assistant Integration
 
-## Status: Implemented — pending verification
+## Status: Implemented — SSO verified behind the reverse proxy
 
-Home Assistant (https://www.home-assistant.io/) is an open-source home
+Home Assistant (https://www-home-assistant.io/) is an open-source home
 automation platform. Bloud installs the official Home Assistant container and
 wires its SSO to Bloud's identity provider (Authentik).
 
-- Image: `docker.io/homeassistant/home-assistant:2026.9.0` (pinned)
+- Image: `docker.io/home-assistant/home-assistant:2026.9.0` (pinned)
 - Port: 8123
 - Public URL: `http://homeassistant.localhost:8080` (direct `:8123` for debugging)
 
@@ -49,15 +49,74 @@ for this integration. **Read them before touching the configurator.**
   1. creates `<appDataDir>/config`;
   2. fetches the pinned `hass-oidc-auth` release zip, verifies sha256, extracts
      into `<appDataDir>/config/custom_components/auth_oidc/` (see constants);
-  3. writes/merges Bloud's `auth_oidc:` block in `configuration.yaml` (markers,
-     idempotent, no churn on unchanged values).
+  3. writes/merges Bloud's `auth_oidc:` provider block in `configuration.yaml`
+     (markers, idempotent, no churn on unchanged values);
+  4. writes the reverse-proxy trust into HA's **stored http config entry**
+     `<configDir>/.storage/http` (see "Reverse proxy" below).
   Returns `changed=true` when anything was written → the orchestrator restarts
-  the node so HA picks up the new config (HA does not hot-reload auth providers).
+  the node so HA picks up the new configuration (HA loads its HTTP/auth config at
+  startup and never hot-reloads it).
 - **PostStart**: wait for the HTTP API, complete HA first-run onboarding
   headlessly, then verify the OIDC provider is live.
 - Login flow: HA login page → "Log in with Bloud" → Authentik login →
   `/auth/oidc/callback` on HA → HA provisions the user (first login) and maps
   groups → roles.
+
+## Reverse proxy (required — HA behind Traefik)
+
+Traefik runs on the **host network** and reaches HA over the published loopback
+port (`http://localhost:8123`), adding `X-Forwarded-*` headers on every request.
+Home Assistant refuses to honour `X-Forwarded-*` unless it is explicitly told it
+sits behind a reverse proxy, and its forwarded middleware then rejects the
+proxied request (`homeassistant.components.http.forwarded` raises
+`HTTPBadRequest`). The symptom is a **`400: Bad Request` page after the Authentik
+round-trip** — the OIDC callback (`/auth/oidc/callback`) never completes. The HA
+log shows `homeassistant.components.http.forwarded: A request from a reverse
+proxy was received … but your HTTP integration is not set-up for reverse
+proxies`.
+
+**The YAML `http:` block does not work on HA 2026.9.** HA migrated the `http`
+integration to a *stored config entry* (`<config>/..bloud-data…/http` — the file
+keyed `http` under `.storage/`) and now ignores the YAML block entirely; it even
+files a `yaml_still_present_after_migration` repair and keeps using the stored
+entry's values. So writing `use_x_forwarded_for: true` under `http:` in
+`configuration.yaml` does nothing — the callback still 400s. The values **must**
+be written into the stored entry:
+
+```json
+{
+  "version": 2, "minor_version": 2, "key": "http",
+  "data": {
+    "stable": {
+      "server_port": 8123,
+      "use_x_forwarded_for": true,
+      "trusted_proxies": ["10.0.0.0/8"]
+    },
+    "pending": null,
+    "yaml_migration_done": true
+  }
+}
+```
+
+`ensureReverseProxy` in `configurator.go` merges `use_x_forwarded_for` +
+`trusted_proxies` into that stored entry's `stable` object — preserving every
+other field HA wrote (`server_port`, `cors_*`, …) — and creates the file when HA
+has not written it yet (first install). It runs on every PreStart and is
+idempotent (unchanged values → no churn). Home Assistant reads this entry at
+startup, so a `changed=true` return makes the orchestrator restart the node so HA
+loads the patched entry. This is what turns `/auth/oidc/welcome` and
+`/auth/oidc/callback` from `400` into a working flow.
+
+`trusted_proxies` must cover the address HA's socket sees the proxy connect from.
+Traefik connects to the published `localhost:8123` and podman's rootless
+port-forward presents that connection from HA's container network, so HA sees a
+peer in the private `10.0.0.0/8` range. The broad `/8` is a deliberate,
+documented trade-off: the only thing that can reach HA's port is the container
+network itself (Traefik via the published port; everything else is firewalled at
+the container boundary), so this internal network is not attacker-reachable. Home
+Assistant logs a warning about broad trusted proxies — that warning is expected
+and accepted here. This is standard reverse-proxy configuration, not header
+spoofing — the SSO decision above still holds.
 
 ## Verified constants (hass-oidc-auth — do NOT re-investigate)
 
@@ -147,7 +206,7 @@ only onboarding step needed):
 | `apps/homeassistant/haas-oidc-auth-authentik-setup.md` | Upstream authentik setup reference |
 | `apps/homeassistant/haas-oidc-auth-config.md` | Upstream YAML config reference |
 | `apps/homeassistant/metadata.yaml` | Container definition, port, SSO strategy |
-| `apps/homeassistant/configurator.go` | PreStart fetch/config + PostStart onboarding/verify |
+| `apps/homeassistant/configurator.go` | PreStart fetch/config + reverse-proxy + PostStart onboarding/verify |
 | `apps/homeassistant/configurator_test.go` | Unit tests (httptest) |
 | `apps/homeassistant/icon.png` | Catalog icon |
 
