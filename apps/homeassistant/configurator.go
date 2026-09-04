@@ -527,6 +527,7 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) error {
 		"username":  bootstrapUsername,
 		"password":  password,
 		"name":      bootstrapFullname,
+		"language":  "en",
 	})
 	if err != nil {
 		return err
