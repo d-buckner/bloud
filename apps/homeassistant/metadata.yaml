@@ -43,12 +43,13 @@ containers:
     volumes:
       - source: "{{appDataDir}}/config"
         destination: /config
-    # The HA image has no curl; use its own python. /api/ answers without
-    # auth ("API running") once the HTTP listener is up.
+    # The HA image has no curl; poll with its own python3 (HA is Python-based).
+    # A raw HTTP GET on '/' verifies the listener answers with an HTTP
+    # response (redirect to login/onboarding is fine). /api/ requires auth.
     healthCheck:
       test:
         - CMD-SHELL
-        - curl -fsS http://localhost:8123/
+        - 'python3 -c "import socket,sys; s=socket.create_connection((\"localhost\",8123),5); s.sendall(b\"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n\"); ok=s.recv(16).startswith(b\"HTTP/1\"); s.close(); sys.exit(0 if ok else 1)"'
       interval: 5
       timeout: 10
       retries: 60
