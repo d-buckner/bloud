@@ -173,7 +173,7 @@ func NewRouter(
 		})
 	}
 
-	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger)
+	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port)
 
 	homeMod := NewHomeModule(positionStore, appStore, launchPathsFn, logger)
 	eventsMod := NewEventsModule(eventsBus, homeMod.GetLayout, logger)

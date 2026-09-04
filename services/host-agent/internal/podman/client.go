@@ -465,9 +465,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 // buildContainerSpec converts our simple config to Podman's container spec
 func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 	spec := map[string]interface{}{
-		"image":        config.Image,
-		"name":         config.Name,
-		"cgroups_mode": "disabled",
+		"image": config.Image,
+		"name":  config.Name,
 	}
 	// Environment variables
 	if len(config.Env) > 0 {
