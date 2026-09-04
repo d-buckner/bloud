@@ -6,7 +6,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -25,35 +29,44 @@ func cmdSetup() int {
 		return 1
 	}
 
-	// Select (or confirm) the runtime backend; persisted to
-	// .bloud/preferences.yaml and consulted by every other command.
 	bkName, err := setupBackend(projectRoot)
 	if err != nil {
 		errorf("%v", err)
 		return 1
 	}
 
-	// Check prerequisites. Lima is only needed for the Lima backend (macOS);
-	// the QEMU backend (Linux) needs qemu-system-x86_64 instead; the native
-	// backend is covered by the base list (podman).
-	prereqs := []struct{ name, label string }{
+	prereqs := []prereq{
 		{"go", "Go"},
 		{"node", "Node.js"},
 		{"podman", "Podman"},
 	}
 	switch bkName {
 	case "qemu":
-		prereqs = append(prereqs, struct{ name, label string }{"qemu-system-x86_64", "QEMU"})
+		prereqs = append(prereqs, prereq{"qemu-system-x86_64", "QEMU"})
 	case "lima":
-		prereqs = append(prereqs, struct{ name, label string }{"limactl", "Lima"})
+		prereqs = append(prereqs, prereq{"limactl", "Lima"})
 	}
-	for _, tool := range prereqs {
-		fmt.Printf("  Checking %s...%s", tool.label, strings.Repeat(" ", 22-len(tool.label)))
-		if checkCommand(tool.name) {
-			fmt.Printf("%s✓ installed%s\n", colorGreen, colorReset)
-		} else {
-			fmt.Printf("%s✗ not installed%s\n", colorRed, colorReset)
-			allGood = false
+	missing := checkPrereqs(prereqs)
+	allGood = len(missing) == 0
+
+	canAptInstall := bkName == "native" && runtime.GOOS == "linux" && checkCommand("apt-get")
+	if !allGood && canAptInstall {
+		pkgs := aptPackagesFor(missing)
+		if len(pkgs) > 0 {
+			fmt.Println()
+			fmt.Printf("  Installing missing packages via apt: %s\n", strings.Join(pkgs, " "))
+			installCmd := "sudo apt-get update -qq && sudo apt-get install -y -qq " + strings.Join(pkgs, " ")
+			cmd := localExec("bash", "-c", installCmd)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				errorf("apt-get install failed: %v", err)
+				return 1
+			}
+			fmt.Println()
+			missing = checkPrereqs(prereqs)
+			allGood = len(missing) == 0
 		}
 	}
 
@@ -65,6 +78,13 @@ func cmdSetup() int {
 		fmt.Println("  Fix the issues above, then run './bloud setup' again.")
 		fmt.Println()
 		return 1
+	}
+
+	if bkName == "native" {
+		if err := ensureSubuidSubgid(); err != nil {
+			errorf("%v", err)
+			return 1
+		}
 	}
 
 	// Build CLI binary
@@ -97,5 +117,78 @@ func checkCommand(name string) bool {
 		}
 	}
 	return false
+}
+
+type prereq struct{ name, label string }
+
+func checkPrereqs(prereqs []prereq) []prereq {
+	var missing []prereq
+	for _, tool := range prereqs {
+		fmt.Printf("  Checking %s...%s", tool.label, strings.Repeat(" ", 22-len(tool.label)))
+		if checkCommand(tool.name) {
+			fmt.Printf("%s✓ installed%s\n", colorGreen, colorReset)
+		} else {
+			fmt.Printf("%s✗ not installed%s\n", colorRed, colorReset)
+			missing = append(missing, tool)
+		}
+	}
+	return missing
+}
+
+var aptPackageNames = map[string][]string{
+	"go":     {"golang-go"},
+	"node":   {"nodejs", "npm"},
+	"podman": {"podman"},
+}
+
+func aptPackagesFor(missing []prereq) []string {
+	seen := map[string]bool{}
+	var pkgs []string
+	for _, tool := range missing {
+		for _, pkg := range aptPackageNames[tool.name] {
+			if !seen[pkg] {
+				seen[pkg] = true
+				pkgs = append(pkgs, pkg)
+			}
+		}
+	}
+	sort.Strings(pkgs)
+	return pkgs
+}
+
+func ensureSubuidSubgid() error {
+	u, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("could not determine current user: %w", err)
+	}
+
+	hasEntry := func(path string) bool {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, u.Username+":") {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hasEntry("/etc/subuid") && hasEntry("/etc/subgid") {
+		return nil
+	}
+
+	fmt.Printf("  Adding subuid/subgid range for %s (needed for rootless Podman)...\n", u.Username)
+	cmd := exec.Command("sudo", "usermod", "--add-subuids", "100000-165535", "--add-subgids", "100000-165535", u.Username)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("usermod --add-subuids/--add-subgids failed: %w", err)
+	}
+	fmt.Println("  Note: a fresh login session (or reboot) may be needed for the new subuid/subgid")
+	fmt.Println("  range and linger/podman.socket setup to take effect.")
+	return nil
 }
 

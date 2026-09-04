@@ -27,7 +27,7 @@ func newAuthModule(t *testing.T, cfg *AuthConfig) (*authModule, *FakeAuthentikCl
 	prefsStore := NewFakePreferencesStore()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	mod := NewAuthModule(client, newAuthConfigRef(cfg), prefsStore, sessStore, logger)
+	mod := NewAuthModule(client, newAuthConfigRef(cfg), prefsStore, sessStore, logger, 0)
 	return mod, client, sessStore
 }
 
@@ -181,6 +181,19 @@ func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestAuthHTTP_Login_DirectAgentPort(t *testing.T) {
+	client := NewFakeAuthentikClient()
+	mod := NewAuthModule(client, newAuthConfigRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000)
+	r := chi.NewRouter(); NewAuthRouter(mod, r)
+
+	req := httptest.NewRequest("GET", "/auth/login", nil)
+	req.Host = "localhost:3000"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestAuthHTTP_Logout_ClearsCookie(t *testing.T) {

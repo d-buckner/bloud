@@ -84,6 +84,18 @@ func TestLocalRunDir(t *testing.T) {
 	}
 }
 
+func TestLocalRunShellSyntax(t *testing.T) {
+	res, err := (&LocalExecutor{}).Run(context.Background(), RunSpec{
+		Command: `pkill -f 'no-such-process-xyz$' 2>/dev/null; echo done; true`,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(res.Stdout, "done") {
+		t.Fatalf("Stdout = %q, want it to contain %q", res.Stdout, "done")
+	}
+}
+
 func TestLocalCopyTo(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "src.txt")
 	dst := filepath.Join(t.TempDir(), "dst.txt")
@@ -117,6 +129,41 @@ func TestLocalCopyFrom(t *testing.T) {
 	}
 	if string(got) != "payload" {
 		t.Fatalf("dst = %q, want %q", string(got), "payload")
+	}
+}
+
+func TestLocalCopyToDirectory(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "top.txt"), []byte("top"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(src, "nested", "deeper")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "leaf.txt"), []byte("leaf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "dst")
+	if err := (&LocalExecutor{}).CopyTo(context.Background(), src, dst); err != nil {
+		t.Fatalf("CopyTo() error = %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, "top.txt"))
+	if err != nil {
+		t.Fatalf("reading dst/top.txt: %v", err)
+	}
+	if string(got) != "top" {
+		t.Fatalf("dst/top.txt = %q, want %q", string(got), "top")
+	}
+
+	got, err = os.ReadFile(filepath.Join(dst, "nested", "deeper", "leaf.txt"))
+	if err != nil {
+		t.Fatalf("reading dst/nested/deeper/leaf.txt: %v", err)
+	}
+	if string(got) != "leaf" {
+		t.Fatalf("dst/nested/deeper/leaf.txt = %q, want %q", string(got), "leaf")
 	}
 }
 

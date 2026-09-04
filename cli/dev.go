@@ -278,7 +278,7 @@ func cmdServices() int {
 		return 1
 	}
 	err = bk.Host().Executor().RunStream(context.Background(), executor.RunSpec{
-		Command: `systemctl --user list-units 'apps-*' --all --no-pager`,
+		Command: `podman ps --all --filter 'name=^apps-' --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'`,
 	}, os.Stdout, os.Stderr)
 	if err != nil && !isSignalExit(err) {
 		errorf("Failed to list services: %v", err)
@@ -334,14 +334,16 @@ podman system prune -f 2>/dev/null || true
 	// /var/tmp/bloud-qemu-runtime/data); the bloud.db database lives inside
 	// it (BLOUD_DATA_DIR). Use podman unshare for dirs with container-owned
 	// files (e.g. postgres).
+	//
+	// $HOME/.local/share/bloud is a real, non-disposable path on native.
+	homeWipe := ""
+	if name != "native" {
+		homeWipe = "podman unshare rm -rf \"$HOME/.local/share/bloud\"\n"
+	}
+	wipe := fmt.Sprintf("set -e\n%spodman unshare rm -rf %s\nrm -f %s/bloud.db\n", homeWipe, dirs.DataDir, dirs.DataDir)
 	log("Wiping data")
 	if err := ex.RunStream(context.Background(), executor.RunSpec{
-		Command: fmt.Sprintf(`
-set -e
-podman unshare rm -rf "$HOME/.local/share/bloud"
-podman unshare rm -rf %s
-rm -f %s/bloud.db
-`, dirs.DataDir, dirs.DataDir),
+		Command: wipe,
 	}, os.Stdout, os.Stderr); err != nil {
 		errorf("Failed to wipe data: %v", err)
 		return 1
@@ -409,7 +411,7 @@ func installApp(apiPort int, appName string) int {
 	httpCode := lines[len(lines)-1]
 	responseBody := strings.Join(lines[:len(lines)-1], "\n")
 
-	if httpCode != "200" && httpCode != "201" {
+	if httpCode != "200" && httpCode != "201" && httpCode != "202" {
 		errorf("Install failed (HTTP %s): %s", httpCode, responseBody)
 		return 1
 	}
@@ -608,7 +610,7 @@ func uninstallApp(apiPort int, appName string) int {
 	httpCode := lines[len(lines)-1]
 	responseBody := strings.Join(lines[:len(lines)-1], "\n")
 
-	if httpCode != "200" {
+	if httpCode != "200" && httpCode != "202" {
 		errorf("Uninstall failed (HTTP %s): %s", httpCode, responseBody)
 		return 1
 	}

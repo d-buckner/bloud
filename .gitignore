@@ -6,11 +6,13 @@ result-*
 .direnv/
 .playwrite-mcp/
 
-# Node.js / Turborepo
+# Node.js / Turborepo / mise
+
 node_modules/
 .turbo/
 *.log
 npm-debug.log*
+mise.toml
 
 # Frontend build outputs
 build/

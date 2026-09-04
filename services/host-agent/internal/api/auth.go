@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync/atomic"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -121,6 +122,27 @@ func getUserFromContext(ctx context.Context) *store.User {
 	return user
 }
 
+func requestHost(r *http.Request) string {
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		return fwdHost
+	}
+	return r.Host
+}
+
+// isDirectAgentRequest reports whether r bypassed Traefik and hit
+// host-agent's own bind port directly, where OIDC login can't work.
+func isDirectAgentRequest(r *http.Request, selfPort int) bool {
+	if selfPort <= 0 {
+		return false
+	}
+	_, portStr, err := net.SplitHostPort(requestHost(r))
+	if err != nil {
+		return false
+	}
+	port, err := strconv.Atoi(portStr)
+	return err == nil && port == selfPort
+}
+
 // requestBaseURL derives the base URL (scheme + host) from the incoming request.
 func requestBaseURL(r *http.Request) string {
 	scheme := "http"
@@ -131,14 +153,9 @@ func requestBaseURL(r *http.Request) string {
 		scheme = proto
 	}
 
-	host := r.Host
-	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
-		host = fwdHost
-	}
-
 	u := &url.URL{
 		Scheme: scheme,
-		Host:   host,
+		Host:   requestHost(r),
 	}
 	return u.String()
 }
