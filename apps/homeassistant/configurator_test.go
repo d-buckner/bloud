@@ -243,10 +243,9 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			s.mu.Unlock()
 			w.WriteHeader(201)
 			io.WriteString(w, `{"access_token":"tok"}`)
-		case "/auth/oidc/":
+		case "/auth/oidc/welcome":
 			if s.isOIDCLive() {
-				w.Header().Set("Location", "http://sso.localhost:8080/application/o/authorize/?client_id=cid123")
-				w.WriteHeader(302)
+				io.WriteString(w, `<!doctype html><title>Sign in with Bloud</title>`)
 				return
 			}
 			http.NotFound(w, r)

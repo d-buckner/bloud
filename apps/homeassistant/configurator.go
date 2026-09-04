@@ -551,24 +551,24 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) error {
 	return nil
 }
 
-// waitForOIDCReady verifies the OIDC auth provider is registered by probing
-// /auth/oidc/: the provider's authorize route answers 302 to the identity
-// provider and is only registered when hass-oidc-auth set up successfully
-// (its discovery fetch runs during setup). 404 persists only while HA is
-// finishing setup; it is retried until the deadline.
+// waitForOIDCReady verifies the OIDC auth provider is live by probing
+// /auth/oidc/welcome. hass-oidc-auth registers that view only when its
+// async_setup succeeds, and fetching the provider's discovery document is
+// part of that setup — so a 200 from this page proves both the component
+// loaded and the provider discovery succeeded. The route 404s while HA is
+// still booting, so it is retried until the deadline.
 func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
 	for {
-		resp, err := c.apiGet(ctx, "/auth/oidc/")
+		resp, err := c.apiGet(ctx, "/auth/oidc/welcome")
 		if err == nil {
 			resp.Body.Close()
-			switch resp.StatusCode {
-			case http.StatusOK, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect:
+			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("OIDC provider never became live at %s/auth/oidc/ (component missing or discovery failed): %w", c.baseURL(), ctx.Err())
+			return fmt.Errorf("OIDC provider never became live at %s/auth/oidc/welcome (component missing or discovery failed): %w", c.baseURL(), ctx.Err())
 		case <-time.After(c.pollInterval):
 		}
 	}
