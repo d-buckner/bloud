@@ -50,19 +50,7 @@ provide and consume, and Bloud keeps those relationships working.
 
 ## How it works
 
-Each app ships a portable manifest declaring its integrations:
-
-```yaml
-integrations:
-  database:
-    required: true
-    compatible: [{ app: postgres, default: true }]
-  sso:
-    required: false
-    compatible: [{ app: authentik }]
-```
-
-When you install an app, Bloud resolves its dependency graph and starts everything in
+Each app ships a portable manifest declaring its integrations. When you install an app, Bloud resolves its dependency graph and starts everything in
 order. Apps that need storage (like Immich) declare their own PostgreSQL and Redis
 containers, each with its own isolated database. Apps that don't (like Jellyfin) just
 declare the integrations they use.
@@ -92,6 +80,7 @@ well.
 | **Media** | Jellyfin | Movies, TV, and music streaming |
 | **Media** | Navidrome | Your music library with Subsonic-compatible clients |
 | **Photos** | Immich | Private photo and video management |
+| **Productivity** | Home Assistant | Open-source home automation platform |
 | **Productivity** | AFFiNE | AI-native knowledge base: docs, databases, whiteboards |
 
 ## One login everywhere
@@ -102,8 +91,7 @@ Apps get SSO automatically, using whatever strategy fits them:
 |---|---|---|
 | **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
 | **Forward Auth** | Traefik asks Authentik before reaching the app | Navidrome |
-| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Immich, AFFiNE |
-| **None** | The app manages its own auth; Bloud still wires your account in (e.g. into the app's own OIDC provider) | — |
+| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Home Assistant, Immich, AFFiNE |
 
 Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) have
 their own documented login path.
