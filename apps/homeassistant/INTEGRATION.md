@@ -1,7 +1,5 @@
 # Home Assistant Integration
 
-## Status: Implemented — **currently REGRESSED**: the browser goes straight to the first-run onboarding page and OIDC login is never offered (see Open items #3). Earlier verified: SSO verified behind the reverse proxy (manual browser test, 2026-09-04).
-
 Home Assistant (https://www-home-assistant.io/) is an open-source home
 automation platform. Bloud installs the official Home Assistant container and
 wires its SSO to Bloud's identity provider (Authentik).
@@ -10,15 +8,10 @@ wires its SSO to Bloud's identity provider (Authentik).
 - Port: 8123
 - Public URL: `http://homeassistant.localhost:8080` (direct `:8123` for debugging)
 
-## SSO approach (DECIDED — not up for debate)
+## SSO approach
 
 **SSO is implemented with the community auth provider
 [christiaangoossens/hass-oidc-auth](https://github.com/christiaangoossens/hass-oidc-auth).**
-
-This is a settled decision. Do not revisit it and do not propose alternatives
-(legacy `trusted_networks`, `trusted_devices`, other community auth hacks, a
-custom fork, reverse-proxy header spoofing, etc.). If something about the SSO
-flow doesn't work, debug *this* integration — don't replace it.
 
 ### Why this component
 
@@ -63,7 +56,7 @@ The configurator's **PreStart** (runs before every container start):
   `/auth/oidc/callback` on HA → HA provisions the user (first login) and maps
   groups → roles.
 
-## Reverse proxy (required — HA behind Traefik) — VERIFIED WORKING
+## Reverse proxy (required — HA behind Traefik)
 
 Traefik runs on the **host network** and reaches HA over the published loopback
 port (`http://localhost:8123`), adding `X-Forwarded-*` headers on every request.
@@ -133,7 +126,7 @@ Assistant logs a warning about broad trusted proxies — that warning is expecte
 and accepted here. This is standard reverse-proxy configuration, not header
 spoofing — the SSO decision above still holds.
 
-## Verified constants (hass-oidc-auth — do NOT re-investigate)
+## Verified constants (hass-oidc-auth)
 
 Verified against upstream source at tag `v1.2.1`:
 
