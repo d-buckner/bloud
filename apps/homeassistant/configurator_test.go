@@ -373,8 +373,8 @@ func readStoredJSON(t *testing.T, path string) map[string]any {
 	return m
 }
 
-// configSection returns the named payload object nested under the config
-// document's "data" object (the "http" block carrying the live settings).
+// configBlock returns the live settings block (v2: data.stable) nested under
+// the config document's "data" object.
 func configBlock(t *testing.T, doc map[string]any, key string) map[string]any {
 	t.Helper()
 	d, ok := doc["data"].(map[string]interface{})
@@ -384,24 +384,22 @@ func configBlock(t *testing.T, doc map[string]any, key string) map[string]any {
 	return v
 }
 
-// storageJSON mirrors the shape HA 2026.x writes to disk: settings live
-// under data.http, not at the top level.
+// storageJSON mirrors the v2 layout HA 2026.9 writes to .storage/http: live
+// settings under data.stable (see INTEGRATION.md "Reverse proxy").
 const storageJSON = `{
+  "version": 2,
+  "minor_version": 2,
+  "key": "http",
   "data": {
-    "http": {
-      "id": "01EXAMPLE",
+    "stable": {
       "server_port": 8123,
-      "server_host": "0.0.0.0",
-      "ssl_certificate": "",
-      "ssl_key": "",
-      "trusted_proxies": ["127.0.0.1"],
+      "trusted_proxies": ["10.0.0.0/8"],
       "use_x_forwarded_for": false,
       "custom_key": "keep"
     },
-    "type": "http"
-  },
-  "minor_version": 1,
-  "version": 1
+    "pending": null,
+    "yaml_migration_done": true
+  }
 }`
 
 // A fresh install must not get a hand-written config entry: HA rejects foreign
@@ -428,7 +426,7 @@ func TestPreStartPatchesStoredConfig(t *testing.T) {
 	assert.True(t, changed, "enabling proxy trust in an existing file is a change")
 
 	doc := readStoredJSON(t, path)
-	hcfg := configBlock(t, doc, "http")
+	hcfg := configBlock(t, doc, "stable")
 	assert.Equal(t, true, hcfg["use_x_forwarded_for"])
 	assert.Equal(t, []interface{}{"10.0.0.0/8"}, hcfg["trusted_proxies"])
 	assert.Equal(t, "keep", hcfg["custom_key"])
@@ -473,7 +471,7 @@ cfg.postStartTimeout = 3 * time.Second
 
 	// the stored config file was rewritten with trust enabled
 	doc := readStoredJSON(t, storedPath)
-	h := configBlock(t, doc, "http")
+	h := configBlock(t, doc, "stable")
 	assert.Equal(t, true, h["use_x_forwarded_for"])
 	assert.Equal(t, []interface{}{"10.0.0.0/8"}, h["trusted_proxies"])
 

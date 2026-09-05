@@ -630,12 +630,31 @@ func (c *Configurator) waitForAPI(ctx context.Context) error {
 // (the only token usable for authenticated API calls after this point), or ""
 // when onboarding was already complete.
 func (c *Configurator) ensureOnboarded(ctx context.Context) (string, error) {
-	resp, err := c.apiGet(ctx, "/api/onboarding")
-	if err != nil {
-		return "", fmt.Errorf("onboarding status request failed: %w", err)
+	// /api/onboarding is served only once HA's onboarding integration has
+	// registered its routes — during boot the HTTP listener is already up
+	// (waitForAPI passes on any <500 answer) while this route still 404s.
+	// Treat 404 as "still booting" and retry until the deadline; a fresh
+	// container restart makes this race deterministic enough that the first
+	// install attempt used to fail on it (see INTEGRATION.md open items).
+	var resp *http.Response
+	for {
+		r, err := c.apiGet(ctx, "/api/onboarding")
+		if err == nil {
+			if r.StatusCode == http.StatusOK {
+				resp = r
+				break
+			}
+			r.Body.Close()
+			err = fmt.Errorf("HTTP %d", r.StatusCode)
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("timed out waiting for the Home Assistant onboarding API (HTTP listener is up but /api/onboarding keeps failing: %v): %w", err, ctx.Err())
+		case <-time.After(c.pollInterval):
+		}
 	}
+	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("onboarding status returned HTTP %d: %s", resp.StatusCode, string(body))
 	}

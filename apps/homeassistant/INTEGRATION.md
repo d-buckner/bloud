@@ -1,6 +1,6 @@
 # Home Assistant Integration
 
-## Status: Implemented — SSO verified behind the reverse proxy
+## Status: Implemented — SSO verified behind the reverse proxy (manual browser test)
 
 Home Assistant (https://www-home-assistant.io/) is an open-source home
 automation platform. Bloud installs the official Home Assistant container and
@@ -56,13 +56,13 @@ for this integration. **Read them before touching the configurator.**
   Returns `changed=true` when anything was written → the orchestrator restarts
   the node so HA picks up the new configuration (HA loads its HTTP/auth config at
   startup and never hot-reloads it).
-- **PostStart**: wait for the HTTP API, complete HA first-run onboarding
-  headlessly, then verify the OIDC provider is live.
-- Login flow: HA login page → "Log in with Bloud" → Authentik login →
+- **PostStart**: wait for the HTTP API, complete HA first-run onboarding headlessly,
+  then verify the OIDC provider is live.
+- Login flow: HA login page ("Log in with Bloud" button) → Authentik login →
   `/auth/oidc/callback` on HA → HA provisions the user (first login) and maps
   groups → roles.
 
-## Reverse proxy (required — HA behind Traefik)
+## Reverse proxy (required — HA behind Traefik) — VERIFIED WORKING
 
 Traefik runs on the **host network** and reaches HA over the published loopback
 port (`http://localhost:8123`), adding `X-Forwarded-*` headers on every request.
@@ -75,20 +75,38 @@ log shows `homeassistant.components.http.forwarded: A request from a reverse
 proxy was received … but your HTTP integration is not set-up for reverse
 proxies`.
 
-**The YAML `http:` block does not work on HA 2026.9.** HA migrated the `http`
-integration to a *stored config entry* (`<config>/..bloud-data…/http` — the file
-keyed `http` under `.storage/`) and now ignores the YAML block entirely; it even
-files a `yaml_still_present_after_migration` repair and keeps using the stored
-entry's values. So writing `use_x_forwarded_for: true` under `http:` in
-`configuration.yaml` does nothing — the callback still 400s. The values **must**
-be written into the stored entry:
+**HA 2026.x migrated the `http:` YAML block into a stored config entry**
+(`<config>/.storage/http` — the `.storage/` file keyed `http`) and ignores the
+YAML `http:` block (it files a `yaml_still_present_after_migration` repair).
+Writing `use_x_forwarded_for: true` under `http:` in `configuration.yaml` does
+nothing on these versions — the callback still 400s.
+
+**Fix (current code, verified working via manual browser test):**
+`ensureReverseProxy` in `configurator.go` merges `use_x_forwarded_for` +
+`trusted_proxies` into the stored entry's `data.stable` object while preserving
+every other field HA wrote. HA (schema v2) writes this file on its own first
+start, and it **rejects hand-written config entries** with strict schema
+validation — a bad entry takes down the whole http integration (auth, onboarding,
+everything). So the code **never creates the file**: it is a no-op until HA has
+written its own entry. PostStart calls it after HA's entry exists and restarts
+HA (in-container restart via the process manager) to apply it.
+
+The stored entry HA writes looks like (v2 layout):
 
 ```json
 {
-  "version": 2, "minor_version": 2, "key": "http",
+  "version": 2,
+  "minor_version": 2,
+  "key": "http",
   "data": {
     "stable": {
       "server_port": 8123,
+      "cors_allowed_origins": ["https://cast.home-assistant.io"],
+      "login_attempts_threshold": -1,
+      "ip_ban_enabled": true,
+      "ssl_profile": "modern",
+      "use_x_frame_options": true,
+      "created_at": "...",
       "use_x_forwarded_for": true,
       "trusted_proxies": ["10.0.0.0/8"]
     },
@@ -98,14 +116,10 @@ be written into the stored entry:
 }
 ```
 
-`ensureReverseProxy` in `configurator.go` merges `use_x_forwarded_for` +
-`trusted_proxies` into that stored entry's `stable` object — preserving every
-other field HA wrote (`server_port`, `cors_*`, …) — and creates the file when HA
-has not written it yet (first install). It runs on every PreStart and is
-idempotent (unchanged values → no churn). Home Assistant reads this entry at
-startup, so a `changed=true` return makes the orchestrator restart the node so HA
-loads the patched entry. This is what turns `/auth/oidc/welcome` and
-`/auth/oidc/callback` from `400` into a working flow.
+Note: older notes described a v1 layout (flat `{"id","use_x_forwarded_for",
+"trusted_proxies"}` under `data`). The live HA 2026.9 writes the **v2 layout
+above** — the merge targets `data.stable`, and `data` without a `stable` block
+is treated as "nothing to patch yet" (no-op, not an error).
 
 `trusted_proxies` must cover the address HA's socket sees the proxy connect from.
 Traefik connects to the published `localhost:8123` and podman's rootless
@@ -167,9 +181,38 @@ only onboarding step needed):
   `secrets.json`). **The owner cannot be deleted in HA** (unlike Jellyfin's
   bootstrap admin) — it is the documented break-glass account. Users authenticate
   via SSO; the owner password is never shared.
-- **OIDC liveness check**: `GET /auth/oidc/` must return **302** (redirect to
-  the IdP). 404 → provider not registered (component missing / discovery
-  failed). No token needed — works even before full setup finishes.
+- **OIDC liveness check**: `GET /auth/oidc/welcome` must return **200** (the view
+  is registered only when `async_setup` succeeded, and discovery is part of
+  setup, so 200 proves both component load and provider discovery). 404 →
+  provider not registered. No token needed — works even before full setup finishes.
+
+## Manual browser test — status and observations (manual test session, 2026-09-04)
+
+The full product flow was validated end-to-end by hand (fresh VM):
+
+1. **First install attempt FAILED. Second install attempt WORKED.**
+   Suspected cause: the flow does not properly wait for the container image
+   pull to complete before proceeding (needs confirmation — see Open items).
+2. After the successful install, opening the Home Assistant app tile shows
+   **HA's OIDC landing page** ("Log in with Bloud" button + "Default login"
+   link). Clicking through the **two** login screens completes the OIDC login
+   and **then everything worked** — the user lands signed-in on the HA dashboard.
+3. The golden path is therefore PROVEN at the product level. The remaining work
+   is automation only (see Open items).
+
+## Open items (tracked)
+
+1. **First-try install must work.** Reproduce: fresh VM → `./bloud install
+   homeassistant` → fails; run again → works. Investigate the image-pull wait:
+   the install path appears to proceed before the image pull has completed
+   (possibly a timeout vs. an actual pull-completion check, or a status check
+   that races the pull). Fix so the first install succeeds.
+2. **E2E test must drive HA's OIDC landing page.** The current spec navigates to
+   the tile and assumes a direct redirect; instead the browser must click the
+   HA OIDC landing page buttons (two screens: "Log in with Bloud" → the
+   following login screen). Use Playwright to dump the rendered document at each
+   phase and derive stable selectors (roles/text) for each phase, then update the
+   spec.
 
 ## Design decisions
 
@@ -181,7 +224,7 @@ only onboarding step needed):
 - **Markers**: `# BEGIN/END bloud managed auth_oidc` delimit Bloud's block.
   Everything else in `configuration.yaml` is the user's and is never rewritten.
   If a user authors their *own* top-level `auth_oidc:` block outside the
-  markers, YAML duplicate-key error surfaces as an install failure (limitation,
+  markers, a YAML duplicate-key error surfaces as an install failure (limitation,
   documented).
 - **No hardcoding of issuer/redirect**: everything comes from the typed
   `OIDCOutput` (`IssuerURL`, `RedirectURI` built from `sso.callbackPath`,
@@ -193,10 +236,10 @@ only onboarding step needed):
   mismatch, extract to staging then rename into place — never a half-installed
   tree. Mirror `apps/jellyfin/configurator.go` (`ensureLDAPPlugin`).
 - **Legacy password login stays enabled** on the HA login page (the
-  `homeassistant` auth provider). It's the break-glass path (break-glass owner
-  above). Full enforcement (disabling legacy) isn't possible without removing
-  the only durable credential; e2e asserts SSO *works* + identity comes from
-  Authentik, not that legacy is dead.
+  `homeassistant` auth provider). It is the break-glass path (see break-glass
+  owner above). Full enforcement (disabling legacy) isn't possible without
+  removing the only durable credential; e2e asserts SSO *works* + identity comes
+  from Authentik, not that legacy is dead.
 
 ## Files
 
