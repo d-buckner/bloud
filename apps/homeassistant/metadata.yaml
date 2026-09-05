@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+name: homeassistant
+displayName: Home Assistant
+description: Open-source home automation platform
+category: productivity
+port: 8123
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# SSO via the community hass-oidc-auth auth provider (fetched at PreStart by
+# the configurator). Callback route is the provider's fixed
+# /auth/oidc/callback — see INTEGRATION.md.
+sso:
+  strategy: native-oidc
+  callbackPath: /auth/oidc/callback
+  userCreation: true
+
+containers:
+  - name: apps-homeassistant
+    image: docker.io/homeassistant/home-assistant:2026.9.0
+    network: apps-net
+    # always: homeassistant.restart (used by the configurator after config
+    # changes) exits the process; the restart policy brings the container back.
+    restartPolicy: always
+    environment:
+      TZ: Etc/UTC
+    ports:
+      - host: 8123
+        container: 8123
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /config
+    # The HA image has no curl; poll with its own python3 (HA is Python-based).
+    # A raw HTTP GET on '/' verifies the listener answers with an HTTP
+    # response (redirect to login/onboarding is fine). /api/ requires auth.
+    healthCheck:
+      test:
+        - CMD-SHELL
+        - 'python3 -c "import socket,sys; s=socket.create_connection((\"localhost\",8123),5); s.sendall(b\"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n\"); ok=s.recv(16).startswith(b\"HTTP/1\"); s.close(); sys.exit(0 if ok else 1)"'
+      interval: 5
+      timeout: 10
+      retries: 60
