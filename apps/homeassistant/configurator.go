@@ -168,7 +168,7 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	// Onboarding creates the owner and returns its access token — the only token
 	// available for driving admin API calls after this point (empty when HA was
 	// already onboarded, in which case there is nothing to restart anyway).
-	token, err := c.ensureOnboarded(ctx)
+	token, err := c.ensureOnboarded(ctx, configDir)
 	if err != nil {
 		return err
 	}
@@ -183,15 +183,15 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 		if err := c.restartHomeAssistant(ctx, token); err != nil {
 			// The restart needs an owner access token. We only have one on the
 			// single PostStart run that actually created the owner — HA hands out
-			// a short-lived auth code there and never re-issues it (a retried
-			// install hits an already-done user step, so ensureOnboarded returns
-			// ""). Rather than fail the whole install for something that recovers
-			// on its own, fall back to a container restart: the entry is already
-			// patched on disk, so the next HA process start loads it. The node is
-			// left in ERROR (not promoted to RUNNING) and the next reconcile pass
-			// recreates the container, which re-applies the trust without any token.
-			c.logger.Warn("in-place HA restart unavailable; deferring reverse-proxy reload to a container restart", "error", err)
-			return fmt.Errorf("reverse-proxy trust written but Home Assistant could not be restarted (%v); retrying the install will recreate the container and apply it", err)
+			// a one-shot auth code there and never re-issues it (a retried install
+			// hits an already-done user step, so ensureOnboarded returns ""). The
+			// patched entry is on disk; if we leave this pass running, HA keeps
+			// rejecting Traefik's forwarded headers (OIDC callback 400s) until some
+			// later restart. Fail the pass instead: the node lands in ERROR, and a
+			// retry install resets it (pipeline.resetErroredNodes), recreating the
+			// container — which loads the patched entry with no token needed.
+			c.logger.Warn("in-place HA restart unavailable; failing so an install retry recreates the container", "error", err)
+			return fmt.Errorf("reverse-proxy trust written but Home Assistant could not be restarted (%v); retrying the install recreates the container and applies it", err)
 		}
 		if err := c.waitForAPI(ctx); err != nil {
 			return err
@@ -199,7 +199,18 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	}
 
 	if state.SSOEnabled {
-		return c.waitForOIDCReady(ctx)
+		if err := c.waitForOIDCReady(ctx); err != nil {
+			// The OIDC provider registers at HA startup and its /auth/oidc/welcome
+			// view answers only once setup + discovery succeed. A fresh container can
+			// still be mid-boot (or mid first-run onboarding) when this probe runs, so
+			// a timeout is usually transient — but the orchestrator treats PostStart
+			// errors as terminal ERROR (only an explicit install intent resets them),
+			// so word this as a recoverable retry rather than a hard failure. The
+			// owner is already created by this point, so once the provider is live the
+			// browser's OIDC landing page works; a re-install re-runs this check.
+			return fmt.Errorf("OIDC provider not yet live (%v); retry the install to reconcile and re-check it", err)
+		}
+		return nil
 	}
 	return nil
 }
@@ -635,39 +646,50 @@ func (c *Configurator) waitForAPI(ctx context.Context) error {
 }
 
 // ensureOnboarded completes Home Assistant's first-run onboarding headlessly
-// by creating the break-glass owner. Without an owner every request is
-// redirected into the onboarding flow. The iOS client is one of HA's built-in
-// OAuth2 clients (see onboardingClientID). It returns the owner's access token
-// (the only token usable for authenticated API calls after this point), or ""
-// when onboarding was already complete.
-func (c *Configurator) ensureOnboarded(ctx context.Context) (string, error) {
+// (creating the break-glass owner and finishing the remaining steps) so the
+// instance is fully onboarded before any user browser can reach it: HA answers
+// every unauthenticated request with the onboarding wizard until the last step
+// closes, and the sign-in page — where the OIDC provider lives — is only
+// reachable once HA considers itself onboarded. The iOS client is one of HA's
+// built-in OAuth2 clients (see onboardingClientID). It returns the owner's
+// access token (the only token usable for authenticated API calls after this
+// point), or "" when HA was already fully onboarded.
+func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (string, error) {
 	// /api/onboarding is served only once HA's onboarding integration has
 	// registered its routes — during boot the HTTP listener is already up
-	// (waitForAPI passes on any <500 answer) while this route still 404s.
-	// Treat 404 as "still booting" and retry until the deadline; a fresh
-	// container restart makes this race deterministic enough that the first
-	// install attempt used to fail on it (see INTEGRATION.md open items).
-	var resp *http.Response
+	// (waitForAPI passes on any <500 response) while this route still 404s, so
+	// any non-2xx is retried until the deadline. A 404 is special: Home
+	// Assistant *deregisters* the endpoint once every step is closed, so a 404
+	// alongside an owner in the auth store means "already onboarded", not
+	// "still booting" — see ownerOnDisk.
+	var body []byte
 	for {
 		r, err := c.apiGet(ctx, "/api/onboarding")
 		if err == nil {
+			b, _ := io.ReadAll(r.Body)
+			r.Body.Close()
 			if r.StatusCode == http.StatusOK {
-				resp = r
+				body = b
 				break
 			}
-			r.Body.Close()
-			err = fmt.Errorf("HTTP %d", r.StatusCode)
+			if r.StatusCode == http.StatusNotFound && ownerOnDisk(configDir) {
+				// Permanent 404: Home Assistant deregisters this endpoint once
+				// every onboarding step is closed — with an owner in the auth
+				// store this is "already onboarded", not a boot race. Return
+				// no token; postStart still runs ensureReverseProxy afterwards,
+				// so a not-yet-applied trust patch (e.g. an owner created via
+				// the CLI rather than here) is picked up on this or the next
+				// pass, exactly as before.
+				c.logger.Info("Home Assistant already fully onboarded; onboarding endpoint not registered")
+				return "", nil
+			}
+			err = fmt.Errorf("HTTP %d: %s", r.StatusCode, string(b))
 		}
 		select {
 		case <-ctx.Done():
 			return "", fmt.Errorf("timed out waiting for the Home Assistant onboarding API (HTTP listener is up but /api/onboarding keeps failing: %v): %w", err, ctx.Err())
 		case <-time.After(c.pollInterval):
 		}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("onboarding status returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	var steps []struct {
 		Step string `json:"step"`
@@ -676,10 +698,11 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) (string, error) {
 	if err := json.Unmarshal(body, &steps); err != nil {
 		return "", fmt.Errorf("onboarding status malformed: %w", err)
 	}
-	// HA returns the first-run step flow (user, core_config, ...) with done
-	// flags. Only the "user" step is required for a headless install (it
-	// creates the owner); the rest are optional onboarding prompts that are
-	// never shown once an owner exists.
+	// HA returns the first-run step flow (user, core_config, analytics,
+	// integration) with done flags. "user" is the gate: until the owner exists
+	// every visitor is redirected into the wizard; the remaining steps must be
+	// closed too, or the wizard keeps intercepting the sign-in page (see
+	// finishFirstRunSteps below).
 	userPending := false
 	for _, s := range steps {
 		if s.Step == "user" && !s.Done {
@@ -720,7 +743,7 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) (string, error) {
 	if ownerResp.StatusCode != http.StatusOK && ownerResp.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("onboarding returned HTTP %d: %s", ownerResp.StatusCode, string(ownerBody))
 	}
-	c.logger.Info("first-run onboarding completed", "user", bootstrapUsername)
+	c.logger.Info("first-run owner created", "user", bootstrapUsername)
 
 	// HA's onboarding hands back a one-shot authorization code, not an access
 	// token (verified against core 2026.9 onboarding/views.py — it returns
@@ -736,7 +759,86 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to exchange the onboarding authorization code for an access token: %w", err)
 	}
+	// Close the steps that follow "user" with the owner token. The integration
+	// step exists to hand the browser an auth_code; we complete it with the
+	// built-in my.home-assistant.io redirect that nobody redeems — the point is
+	// that HA then reports the instance onboarded, so the user's first visit
+	// lands on the sign-in page and goes straight through OIDC instead of the
+	// half-raced wizard.
+	if err := c.finishFirstRunSteps(ctx, accessToken); err != nil {
+		return "", fmt.Errorf("failed to finish first-run steps: %w", err)
+	}
 	return accessToken, nil
+}
+
+// finishFirstRunSteps closes the onboarding steps that follow "user" using the
+// owner token. Idempotent: HTTP 403 means a previous reconciliation already
+// closed the step, which is treated as success.
+func (c *Configurator) finishFirstRunSteps(ctx context.Context, token string) error {
+	steps := []struct{ path, body string }{
+		{"/api/onboarding/core_config", "{}"},
+		{"/api/onboarding/analytics", "{}"},
+		{"/api/onboarding/integration", `{"client_id":"https://my.home-assistant.io/redirect/oauth","redirect_uri":"https://my.home-assistant.io/redirect/oauth"}`},
+	}
+	for _, s := range steps {
+		if err := c.postJSONBearer(ctx, s.path, []byte(s.body), token); err != nil {
+			return fmt.Errorf("%s: %w", s.path, err)
+		}
+	}
+	return nil
+}
+
+// postJSONBearer POSTs a JSON body with an owner bearer token. 403 (step
+// already done, the idempotent replay case) is returned as success.
+func (c *Configurator) postJSONBearer(ctx context.Context, path string, payload []byte, token string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusForbidden {
+		return nil
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// ownerOnDisk reports whether Home Assistant's auth store — read the same way
+// ensureReverseProxy reads the http store — already holds an owner user. That
+// distinguishes the permanent 404 of /api/onboarding (endpoint deregistered
+// once every step is closed) from the transient 404 of a booting instance.
+func ownerOnDisk(configDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(configDir, ".storage", "auth"))
+	if err != nil {
+		return false
+	}
+	var doc struct {
+		Data struct {
+			Users []struct {
+				IsOwner         bool `json:"is_owner"`
+				SystemGenerated bool `json:"system_generated"`
+			} `json:"users"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return false
+	}
+	for _, u := range doc.Data.Users {
+		if u.IsOwner && !u.SystemGenerated {
+			return true
+		}
+	}
+	return false
 }
 
 // exchangeAuthCode trades a Home Assistant authorization code for an owner
@@ -809,10 +911,11 @@ func (c *Configurator) restartHomeAssistant(ctx context.Context, token string) e
 
 // waitForOIDCReady verifies the OIDC auth provider is live by probing
 // /auth/oidc/welcome. hass-oidc-auth registers that view only when its
-// async_setup succeeds, and fetching the provider's discovery document is
-// part of that setup — so a 200 from this page proves both the component
-// loaded and the provider discovery succeeded. The route 404s while HA is
-// still booting, so it is retried until the deadline.
+// async_setup succeeds, and fetching the provider's discovery document is part
+// of that setup — so a 200 from this page proves both the component loaded and
+// provider discovery succeeded. The route 404s while HA is still booting (and
+// while the onboarding integration registers its routes), so it is retried until
+// the deadline.
 func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
 	for {
 		resp, err := c.apiGet(ctx, "/auth/oidc/welcome")

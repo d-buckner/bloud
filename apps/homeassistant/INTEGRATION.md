@@ -1,6 +1,6 @@
 # Home Assistant Integration
 
-## Status: Implemented — SSO verified behind the reverse proxy (manual browser test)
+## Status: Implemented — **currently REGRESSED**: the browser goes straight to the first-run onboarding page and OIDC login is never offered (see Open items #3). Earlier verified: SSO verified behind the reverse proxy (manual browser test, 2026-09-04).
 
 Home Assistant (https://www-home-assistant.io/) is an open-source home
 automation platform. Bloud installs the official Home Assistant container and
@@ -45,19 +45,20 @@ for this integration. **Read them before touching the configurator.**
 
 ## How it works
 
-- The configurator's **PreStart** (runs before every container start):
+The configurator's **PreStart** (runs before every container start):
   1. creates `<appDataDir>/config`;
   2. fetches the pinned `hass-oidc-auth` release zip, verifies sha256, extracts
      into `<appDataDir>/config/custom_components/auth_oidc/` (see constants);
   3. writes/merges Bloud's `auth_oidc:` provider block in `configuration.yaml`
-     (markers, idempotent, no churn on unchanged values);
-  4. writes the reverse-proxy trust into HA's **stored http config entry**
-     `<configDir>/.storage/http` (see "Reverse proxy" below).
+     (markers, idempotent, no churn on unchanged values).
   Returns `changed=true` when anything was written → the orchestrator restarts
   the node so HA picks up the new configuration (HA loads its HTTP/auth config at
-  startup and never hot-reloads it).
-- **PostStart**: wait for the HTTP API, complete HA first-run onboarding headlessly,
-  then verify the OIDC provider is live.
+  startup and never hot-reloads it). The reverse-proxy trust patch is **not** done
+  here — it happens in PostStart, after HA has written its stored http entry (see
+  "Reverse proxy" below).
+- **PostStart**: wait for the HTTP API; complete HA first-run onboarding headlessly
+  (creating the owner); patch reverse-proxy trust into HA's stored http config
+  entry and restart HA in-place if it changed; verify the OIDC provider is live.
 - Login flow: HA login page ("Log in with Bloud" button) → Authentik login →
   `/auth/oidc/callback` on HA → HA provisions the user (first login) and maps
   groups → roles.
@@ -193,9 +194,10 @@ only onboarding step needed):
   bootstrap admin) — it is the documented break-glass account. Users authenticate
   via SSO; the owner password is never shared.
 - **OIDC liveness check**: `GET /auth/oidc/welcome` must return **200** (the view
-  is registered only when `async_setup` succeeded, and discovery is part of
-  setup, so 200 proves both component load and provider discovery). 404 →
-  provider not registered. No token needed — works even before full setup finishes.
+  registers only when `async_setup` succeeded, and discovery is part of setup, so
+  200 proves both component load and provider discovery). Non-200 → not ready yet:
+  404 covers both "provider never registered" and "HA still booting", so the check
+  retries until the deadline. No token needed.
 
 ## Manual browser test — status and observations (manual test session, 2026-09-04)
 
@@ -209,8 +211,10 @@ The full product flow was validated end-to-end by hand (fresh VM):
    **HA's OIDC landing page** ("Log in with Bloud" button + "Default login"
    link). Clicking through the **two** login screens completes the OIDC login
    and **then everything worked** — the user lands signed-in on the HA dashboard.
-3. The golden path is therefore PROVEN at the product level. The remaining work
-   is automation only (see Open items).
+   *(This behavior has since REGRESSED — the tile now goes directly to the
+   onboarding page without offering OIDC login; see Open items #3.)*
+3. The golden path was therefore PROVEN at the product level on 2026-09-04. The
+   remaining work was automation only — now superseded by the #3 regression.
 
 ### Why a retry used to be needed (fixed)
 
@@ -228,14 +232,17 @@ was **not** the image pull. The chain:
 3. Retrying "worked" because the second run's PostStart found trust **already**
    set on disk (`ensureReverseProxy` → no change) and skipped the restart entirely
    — it never fixed the token; it just avoided the step that needed one, while the
-   container was already running with a HA process that had loaded its own entry.
+   container kept running with a HA process that had loaded its own (unpatched)
+   entry. The pass itself had failed: the node landed in ERROR, which the
+   orchestrator treats as terminal — nothing auto-reconciles it; only an explicit
+   install intent resets errored nodes (`pipeline.resetErroredNodes`).
 
 Fix: exchange the onboarding authorization code for a real access token (see
-"First-run onboarding" above) so the restart has a real token; and if no token is
-available (e.g. a retry against an already-onboarded HA, which never re-issues a
-code), PostStart returns a self-describing error instead of failing opaquely —
-the patched entry is on disk, so the next reconcile recreates the container and
-HA loads the trust with no token at all. The install converges either way.
+"First-run onboarding" above) so the restart has a token. And if no token is
+available — e.g. a retry against an already-onboarded HA, which never re-issues a
+code — PostStart fails the pass with a self-describing error instead of failing
+opaquely: the patched entry is on disk, and the retry install resets the errored
+node and recreates the container, so HA loads the trust with no token at all.
 
 ## Open items (tracked)
 
@@ -246,13 +253,44 @@ HA loads the trust with no token at all. The install converges either way.
    post-trust restart always had an empty token. Now exchanged via `/auth/token`
    (see "First-run onboarding" + "Why a retry used to be needed"). Covered by
    `TestEnsureOnboardedExchangesAuthCodeForToken` and
-   `TestPostStartAlreadyOnboardedDefersRestart`.
+   `TestPostStartAlreadyOnboardedSkipsRestart`.
 2. **E2E test must drive HA's OIDC landing page.** The current spec navigates to
    the tile and assumes a direct redirect; instead the browser must click the
    HA OIDC landing page buttons (two screens: "Log in with Bloud" → the
    following login screen). Use Playwright to dump the rendered document at each
    phase and derive stable selectors (roles/text) for each phase, then update the
    spec.
+3. **[BUG — FIXED] The browser went straight to the first-run onboarding wizard;
+   hass-oidc-auth login was never offered.** On a fresh host, opening the app tile
+   no longer landed on the hass-oidc-auth landing page ("Log in with Bloud" +
+   "Default login"). It went directly to the wizard, which then *always* failed
+   with **"Something went wrong loading onboarding, try refreshing"**.
+   Root cause (rooted against upstream `onboarding/views.py` +
+   `endpoints/welcome.py`):
+   - HA routes *every* unauthenticated visitor to the wizard until all wizard
+     steps are closed — the sign-in page where the OIDC provider lives is
+     unreachable until then. `ensureOnboarded` closed only the `user` step, so
+     every post-install tile visit hit the half-open wizard (the
+     "goes straight to onboarding" symptom).
+   - The wizard itself then failed because its backing API calls ran before the
+     backend's onboarding integration had registered its routes — HA serves wizard
+     panels before the integration registers them — yielding the permanent
+     "Something went wrong loading onboarding, try refreshing" loop.
+   - Aggravating it: once every step is closed HA *deregisters*
+     `GET /api/onboarding` (404 forever). `ensureOnboarded` treated any 404 as
+     "still booting" and burned the whole postStart timeout into ERROR — and
+     since PostStart re-runs each reconcile pass, a "Retry install" could never
+     make the app reach `running`. Observed directly (status=error with
+     "…/api/onboarding keeps failing: HTTP 404: 404: Not Found").
+   Fix: `ensureOnboarded` now closes the `core_config`, `analytics` and
+   `integration` wizard steps with the owner token (idempotent; 403 replays are
+   success) so the browser lands directly on the provider welcome page and OIDC
+   login is offered from the first visit; and it treats a permanent 404 with an
+   owner present in the auth store (`ownerOnDisk`, read from `.storage/auth`
+   like the http entry) as "already onboarded" instead of "still booting", so the
+   retry-install path converges again.
+   Verified: `BLOUD_E2E_APP=homeassistant ./bloud e2e app` — green (dashboard
+   reached, signed-in identity visible).
 
 ## Design decisions
 
@@ -289,7 +327,7 @@ HA loads the trust with no token at all. The install converges either way.
 | `apps/homeassistant/haas-oidc-auth-authentik-setup.md` | Upstream authentik setup reference |
 | `apps/homeassistant/haas-oidc-auth-config.md` | Upstream YAML config reference |
 | `apps/homeassistant/metadata.yaml` | Container definition, port, SSO strategy |
-| `apps/homeassistant/configurator.go` | PreStart fetch/config + reverse-proxy + PostStart onboarding/verify |
+| `apps/homeassistant/configurator.go` | PreStart fetch/config; PostStart onboarding + reverse-proxy patch/restart + OIDC verify |
 | `apps/homeassistant/configurator_test.go` | Unit tests (httptest) |
 | `apps/homeassistant/icon.png` | Catalog icon |
 

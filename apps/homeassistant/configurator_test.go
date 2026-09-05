@@ -216,12 +216,14 @@ type apiServer struct {
 	tokenReqs      []string // form bodies seen on /auth/token
 	authCodeIssued bool     // an auth code was handed out and not yet exchanged
 	oidcLive       bool
+	deregistered   bool            // GET /api/onboarding always 404s (all steps closed)
+	stepsCompleted map[string]bool // interactive step paths already closed
 	srv            *httptest.Server
 }
 
 func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 	t.Helper()
-	s := &apiServer{oidcLive: oidcLive}
+	s := &apiServer{oidcLive: oidcLive, stepsCompleted: map[string]bool{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/":
@@ -230,7 +232,14 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 		case "/api/onboarding":
 			s.mu.Lock()
 			onboarded := s.onboarded
+			dereg := s.deregistered
 			s.mu.Unlock()
+			if dereg {
+				// Real HA deregisters this endpoint once every step is closed.
+				w.WriteHeader(http.StatusNotFound)
+				io.WriteString(w, `404: Not Found`)
+				return
+			}
 			w.WriteHeader(200)
 			if onboarded {
 				// Realistic post-owner flow: remaining interactive steps
@@ -239,6 +248,19 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			} else {
 				io.WriteString(w, `[{"step":"user","done":false},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
 			}
+		case "/api/onboarding/core_config", "/api/onboarding/analytics", "/api/onboarding/integration":
+			s.mu.Lock()
+			if s.stepsCompleted[r.URL.Path] {
+				// Real HA: already-closed steps answer 403 (replay).
+				s.mu.Unlock()
+				w.WriteHeader(http.StatusForbidden)
+				io.WriteString(w, `{"message":"step already done"}`)
+				return
+			}
+			s.stepsCompleted[r.URL.Path] = true
+			s.mu.Unlock()
+			w.WriteHeader(200)
+			io.WriteString(w, `{}`)
 		case "/api/onboarding/users":
 			body, _ := io.ReadAll(r.Body)
 			s.mu.Lock()
@@ -336,20 +358,41 @@ func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 	assert.Equal(t, bootstrapFullname, req["name"])
 }
 
+// A fully-onboarded HA *deregisters* GET /api/onboarding: the endpoint 404s
+// forever. The old code read that as "still booting", burned the whole
+// postStart timeout into an ERROR — and since PostStart re-runs on every
+// reconcile, the app could never reach 'running'. With a non-system owner in
+// the auth store, the permanent 404 now means "already onboarded" (no token
+// needed) and the probe never blocks.
 func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	srv := newAPIServer(t, true)
 	srv.mu.Lock()
-	srv.onboarded = true
+	srv.deregistered = true
 	srv.mu.Unlock()
+
+	data := t.TempDir()
+	writeOwnerFile(t, filepath.Join(data, "config"))
+
 	c := NewConfigurator(0, &fakeSecrets{pw: "x"}, nil)
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 2 * time.Second
 
-	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()}))
+	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{
+		DataPath: data, SSOEnabled: true, OIDC: testOIDC(),
+	}))
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	assert.Empty(t, srv.postBodies, "must not re-run onboarding")
+}
+
+// writeOwnerFile drops a minimal .storage/auth document holding a
+// non-system-generated owner user — exactly what ownerOnDisk reads.
+func writeOwnerFile(t *testing.T, cfgDir string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(cfgDir, ".storage"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, ".storage", "auth"),
+		[]byte(`{"version":1,"key":"auth","data":{"users":[{"id":"1","is_owner":true,"system_generated":false}]}}`), 0o600))
 }
 
 func TestPostStartFailsWhenProviderNeverLives(t *testing.T) {
@@ -529,7 +572,7 @@ func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 2 * time.Second
 
-	token, err := c.ensureOnboarded(context.Background())
+	token, err := c.ensureOnboarded(context.Background(), t.TempDir())
 	require.NoError(t, err)
 	assert.Equal(t, "tok", token, "must return the exchanged access token, not the raw code")
 
