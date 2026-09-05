@@ -60,8 +60,9 @@ export async function waitForApp(
 export async function ensureInstalled(name: string): Promise<void> {
   const status = await getAppStatus(name);
   if (status === 'running') return;
-  if (!status) {
-    await installApp(name);
-  }
+  // Missing, errored, or mid-transition: submit an install intent (the
+  // orchestrator's reset of ERROR nodes makes install idempotent — it is
+  // the "Retry install" recovery path) and wait for convergence.
+  await installApp(name);
   await waitForApp(name, 'running');
 }

@@ -21,10 +21,10 @@ import (
 	// registers its factory with the configurator registry. Adding an app
 	// means adding one blank import here — and nothing else in host-agent.
 	_ "codeberg.org/d-buckner/bloud/apps/affine"
+	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
 	_ "codeberg.org/d-buckner/bloud/apps/immich"
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
-
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"

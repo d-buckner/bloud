@@ -40,5 +40,7 @@ export async function ensureSignedIn(page: Page): Promise<void> {
 
   const loginPage = new LoginPage(page);
   await loginPage.login();
-  await page.waitForURL('/', { timeout: 30_000 });
+  // String patterns match loosely; require the pathname to actually be the
+  // Bloud origin root so we never treat a still-on-Authentik page as signed in.
+  await page.waitForURL((url) => url.pathname === '/', { timeout: 30_000 });
 }
