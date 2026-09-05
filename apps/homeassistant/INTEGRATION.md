@@ -173,9 +173,20 @@ only onboarding step needed):
 - `GET /api/onboarding` (public pre-onboarding) → `[{"step":"user"}]` when
   incomplete, `[]` when done.
 - `POST /api/onboarding/users` with
-  `{client_id: "https://home-assistant.io/iOS", username, password, name}` →
-  creates the owner and returns an access token. The iOS client is one of HA's
+  `{client_id: "https://home-assistant.io/iOS", username, password, name, language}` →
+  creates the owner and returns a **one-shot authorization code** (`{"auth_code": …}`),
+  **not** an access token (verified against core `2026.9` `onboarding/views.py`,
+  which has zero `access_token` in the module). The iOS client is one of HA's
   built-in OAuth2 clients, so no client registration chicken-and-egg.
+- Exchange that code for a usable Bearer token: `POST /auth/token` with
+  `{grant_type: "authorization_code", client_id: <same built-in id>, code}` →
+  `{access_token, refresh_token, expires_in}` (core `auth/__init__.py`). HA's
+  `/auth/token` supports only `authorization_code` and `refresh_token` grants —
+  there is **no** password grant and no HTTP way to mint a token for an
+  already-onboarded instance. HA validates only that the client id parses as an
+  IndieAuth URL, so no redirect_uri/client_secret is involved. This access token
+  is what drives the authenticated `homeassistant.restart` below (the service
+  call requires admin).
 - Owner account `bloud-bootstrap-admin`, password from
   `secrets.GenerateAppAdminPassword("homeassistant")` (durable in
   `secrets.json`). **The owner cannot be deleted in HA** (unlike Jellyfin's
@@ -190,9 +201,10 @@ only onboarding step needed):
 
 The full product flow was validated end-to-end by hand (fresh VM):
 
-1. **First install attempt FAILED. Second install attempt WORKED.**
-   Suspected cause: the flow does not properly wait for the container image
-   pull to complete before proceeding (needs confirmation — see Open items).
+1. **First install attempt FAILED ("no access token to restart Home
+   Assistant"); second attempt WORKED.** Root cause (rooted, not the image
+   pull): see "Why a retry used to be needed" below — the onboarding code was
+   never exchanged for an access token, so the post-trust restart had none. Fixed.
 2. After the successful install, opening the Home Assistant app tile shows
    **HA's OIDC landing page** ("Log in with Bloud" button + "Default login"
    link). Clicking through the **two** login screens completes the OIDC login
@@ -200,13 +212,41 @@ The full product flow was validated end-to-end by hand (fresh VM):
 3. The golden path is therefore PROVEN at the product level. The remaining work
    is automation only (see Open items).
 
+### Why a retry used to be needed (fixed)
+
+Symptom on a fresh host: first `./bloud install homeassistant` errored with
+**"no access token to restart Home Assistant"**; running it again succeeded. It
+was **not** the image pull. The chain:
+
+1. PostStart patches reverse-proxy trust into `.storage/http`. On a fresh HA that
+   is a real change, so it triggers an in-place `homeassistant.restart` — which
+   needs an admin Bearer token.
+2. The owner's access token comes from onboarding, but the code parsed
+   `access_token` off the onboarding response. HA never returns that key (it
+   returns `{"auth_code": …}`), so the token was **always empty** → restart failed
+   with "no access token".
+3. Retrying "worked" because the second run's PostStart found trust **already**
+   set on disk (`ensureReverseProxy` → no change) and skipped the restart entirely
+   — it never fixed the token; it just avoided the step that needed one, while the
+   container was already running with a HA process that had loaded its own entry.
+
+Fix: exchange the onboarding authorization code for a real access token (see
+"First-run onboarding" above) so the restart has a real token; and if no token is
+available (e.g. a retry against an already-onboarded HA, which never re-issues a
+code), PostStart returns a self-describing error instead of failing opaquely —
+the patched entry is on disk, so the next reconcile recreates the container and
+HA loads the trust with no token at all. The install converges either way.
+
 ## Open items (tracked)
 
-1. **First-try install must work.** Reproduce: fresh VM → `./bloud install
-   homeassistant` → fails; run again → works. Investigate the image-pull wait:
-   the install path appears to proceed before the image pull has completed
-   (possibly a timeout vs. an actual pull-completion check, or a status check
-   that races the pull). Fix so the first install succeeds.
+1. **First-try install must work — FIXED.** The fresh-host failure was
+   "no access token to restart Home Assistant", **not** the image pull (the
+   earlier image-pull hypothesis was wrong). Onboarding returns an authorization
+   code, never an `access_token`; the old code parsed `access_token`, so the
+   post-trust restart always had an empty token. Now exchanged via `/auth/token`
+   (see "First-run onboarding" + "Why a retry used to be needed"). Covered by
+   `TestEnsureOnboardedExchangesAuthCodeForToken` and
+   `TestPostStartAlreadyOnboardedDefersRestart`.
 2. **E2E test must drive HA's OIDC landing page.** The current spec navigates to
    the tile and assumes a direct redirect; instead the browser must click the
    HA OIDC landing page buttons (two screens: "Log in with Bloud" → the

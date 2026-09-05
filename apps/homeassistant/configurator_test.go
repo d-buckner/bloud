@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,12 +209,14 @@ func TestPreStartRemovesBlockWhenSSODisabled(t *testing.T) {
 
 // apiServer is a fake Home Assistant for PostStart tests.
 type apiServer struct {
-	mu         sync.Mutex
-	restarts   []string // Authorization headers seen on restart calls
-	onboarded  bool
-	postBodies []string
-	oidcLive   bool
-	srv        *httptest.Server
+	mu             sync.Mutex
+	restarts       []string // Authorization headers seen on restart calls
+	onboarded      bool
+	postBodies     []string
+	tokenReqs      []string // form bodies seen on /auth/token
+	authCodeIssued bool     // an auth code was handed out and not yet exchanged
+	oidcLive       bool
+	srv            *httptest.Server
 }
 
 func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
@@ -239,11 +242,35 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 		case "/api/onboarding/users":
 			body, _ := io.ReadAll(r.Body)
 			s.mu.Lock()
+			if s.onboarded {
+				// Real HA: the user step is already done → 403, no code re-issued.
+				s.mu.Unlock()
+				w.WriteHeader(http.StatusForbidden)
+				io.WriteString(w, `{"message":"User step already done"}`)
+				return
+			}
 			s.postBodies = append(s.postBodies, string(body))
 			s.onboarded = true
+			s.authCodeIssued = true
 			s.mu.Unlock()
 			w.WriteHeader(201)
-			io.WriteString(w, `{"access_token":"tok"}`)
+			io.WriteString(w, `{"auth_code":"code123"}`)
+		case "/auth/token":
+			form, _ := io.ReadAll(r.Body)
+			s.mu.Lock()
+			s.tokenReqs = append(s.tokenReqs, string(form))
+			ok := s.authCodeIssued && strings.Contains(string(form), "grant_type=authorization_code") && strings.Contains(string(form), "code=code123")
+			if ok {
+				s.authCodeIssued = false // one-shot code, like real HA
+			}
+			s.mu.Unlock()
+			if !ok {
+				w.WriteHeader(http.StatusBadRequest)
+				io.WriteString(w, `{"error":"invalid_request"}`)
+				return
+			}
+			w.WriteHeader(200)
+			io.WriteString(w, `{"access_token":"tok","token_type":"Bearer","refresh_token":"rtok","expires_in":1800}`)
 		case "/auth/oidc/welcome":
 			if s.isOIDCLive() {
 				io.WriteString(w, `<!doctype html><title>Sign in with Bloud</title>`)
@@ -251,8 +278,16 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			}
 			http.NotFound(w, r)
 		case "/api/services/homeassistant/restart":
+			authz := r.Header.Get("Authorization")
 			s.mu.Lock()
-			s.restarts = append(s.restarts, r.Header.Get("Authorization"))
+			// Real HA requires a valid admin bearer token; without one the call is
+			// rejected (auth_middleware leaves it unauthenticated → 401).
+			if authz == "" || authz == "Bearer " {
+				s.mu.Unlock()
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			s.restarts = append(s.restarts, authz)
 			s.mu.Unlock()
 			w.WriteHeader(200)
 		default:
@@ -459,9 +494,9 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
 	cfg := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
-cfg.baseURLOverride = fakeSrv.srv.URL
-cfg.pollInterval = 10 * time.Millisecond
-cfg.postStartTimeout = 3 * time.Second
+	cfg.baseURLOverride = fakeSrv.srv.URL
+	cfg.pollInterval = 10 * time.Millisecond
+	cfg.postStartTimeout = 3 * time.Second
 
 	require.NoError(t, cfg.PostStart(context.Background(), &configurator.AppState{
 		DataPath:   data,
@@ -476,8 +511,70 @@ cfg.postStartTimeout = 3 * time.Second
 	assert.Equal(t, []interface{}{"10.0.0.0/8"}, h["trusted_proxies"])
 
 	// and HA was restarted through the API with the session token
-fakeSrv.mu.Lock()
+	fakeSrv.mu.Lock()
 	defer fakeSrv.mu.Unlock()
 	require.Len(t, fakeSrv.restarts, 1)
 	assert.Equal(t, "Bearer tok", fakeSrv.restarts[0])
+}
+
+// Regression: HA hands out an authorization CODE, never an access_token (core
+// 2026.9 onboarding/views.py). The old code parsed "access_token" straight off
+// the onboarding response and always got "" — so the post-trust restart died
+// with "no access token". Onboard → exchange → restart must use the exchanged
+// token, and the exchange must actually hit /auth/token.
+func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
+	srv := newAPIServer(t, false)
+	c := NewConfigurator(0, &fakeSecrets{pw: "test-bootstrap-pw"}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 2 * time.Second
+
+	token, err := c.ensureOnboarded(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "tok", token, "must return the exchanged access token, not the raw code")
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	require.Len(t, srv.tokenReqs, 1, "must exchange the code exactly once")
+	assert.Contains(t, srv.tokenReqs[0], "grant_type=authorization_code")
+	assert.Contains(t, srv.tokenReqs[0], "code=code123")
+	assert.Contains(t, srv.tokenReqs[0], "client_id="+url.QueryEscape(onboardingClientID))
+}
+
+// Regression for the reported failure: on a RETRY (owner already created), HA
+// never re-issues an auth code — /api/onboarding/users returns 403 and there is
+// no token to restart with. Patching reverse-proxy trust then cannot do the
+// in-place restart; that must surface as a self-healing ERROR (the patched entry
+// is on disk, so the next reconcile recreates the container and applies it) —
+// never a silent success, and never a crash.
+func TestPostStartAlreadyOnboardedDefersRestart(t *testing.T) {
+	srv := newAPIServer(t, true)
+	srv.mu.Lock()
+	srv.onboarded = true // owner exists; onboarding step done → no token available
+	srv.mu.Unlock()
+
+	data := t.TempDir()
+	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
+
+	cfg := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+	cfg.baseURLOverride = srv.srv.URL
+	cfg.pollInterval = 10 * time.Millisecond
+	cfg.postStartTimeout = 2 * time.Second
+
+	err := cfg.PostStart(context.Background(), &configurator.AppState{
+		DataPath:   data,
+		SSOEnabled: true,
+		OIDC:       testOIDC(),
+	})
+	require.Error(t, err, "trust was patched but cannot be applied without a token")
+	assert.Contains(t, err.Error(), "could not be restarted")
+
+	// the trust IS still written to disk (so a container restart applies it)…
+	doc := readStoredJSON(t, storedPath)
+	h := configBlock(t, doc, "stable")
+	assert.Equal(t, true, h["use_x_forwarded_for"])
+	// …and no restart was attempted with an empty token.
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	assert.Empty(t, srv.restarts, "must not fire a tokenless restart")
 }

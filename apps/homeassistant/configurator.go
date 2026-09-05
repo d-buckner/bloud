@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,12 +166,12 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	}
 
 	// Onboarding creates the owner and returns its access token — the only token
-	// available for driving admin API calls after this point.
+	// available for driving admin API calls after this point (empty when HA was
+	// already onboarded, in which case there is nothing to restart anyway).
 	token, err := c.ensureOnboarded(ctx)
 	if err != nil {
 		return err
 	}
-
 	// Reverse-proxy trust: HA writes its own http config entry on first boot and
 	// only reads it at startup. Patch that stored entry so HA trusts Traefik's
 	// X-Forwarded-* headers, then restart HA to apply it. Without this, the OIDC
@@ -180,7 +181,17 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	} else if changed {
 		c.logger.Info("restarting Home Assistant to apply reverse-proxy trust")
 		if err := c.restartHomeAssistant(ctx, token); err != nil {
-			return err
+			// The restart needs an owner access token. We only have one on the
+			// single PostStart run that actually created the owner — HA hands out
+			// a short-lived auth code there and never re-issues it (a retried
+			// install hits an already-done user step, so ensureOnboarded returns
+			// ""). Rather than fail the whole install for something that recovers
+			// on its own, fall back to a container restart: the entry is already
+			// patched on disk, so the next HA process start loads it. The node is
+			// left in ERROR (not promoted to RUNNING) and the next reconcile pass
+			// recreates the container, which re-applies the trust without any token.
+			c.logger.Warn("in-place HA restart unavailable; deferring reverse-proxy reload to a container restart", "error", err)
+			return fmt.Errorf("reverse-proxy trust written but Home Assistant could not be restarted (%v); retrying the install will recreate the container and apply it", err)
 		}
 		if err := c.waitForAPI(ctx); err != nil {
 			return err
@@ -711,12 +722,61 @@ func (c *Configurator) ensureOnboarded(ctx context.Context) (string, error) {
 	}
 	c.logger.Info("first-run onboarding completed", "user", bootstrapUsername)
 
-	// The onboarding response carries the owner's access token, needed for any
-	// subsequent authenticated API call (e.g. the post-trust restart below).
+	// HA's onboarding hands back a one-shot authorization code, not an access
+	// token (verified against core 2026.9 onboarding/views.py — it returns
+	// {"auth_code": …} and nothing else). Exchange it for the owner's real
+	// access token; that token is what drives the authenticated restart below.
+	var onboarding struct {
+		AuthCode string `json:"auth_code"`
+	}
+	if err := json.Unmarshal(ownerBody, &onboarding); err != nil || onboarding.AuthCode == "" {
+		return "", fmt.Errorf("onboarding response carried no authorization code: %s", string(ownerBody))
+	}
+	accessToken, err := c.exchangeAuthCode(ctx, onboarding.AuthCode)
+	if err != nil {
+		return "", fmt.Errorf("failed to exchange the onboarding authorization code for an access token: %w", err)
+	}
+	return accessToken, nil
+}
+
+// exchangeAuthCode trades a Home Assistant authorization code for an owner
+// access token. HA's onboarding (and login flow) hand out a short-lived,
+// single-use authorization code rather than a usable token; POST /auth/token
+// with the authorization_code grant exchanges it for a Bearer access token plus
+// a refresh token (core auth/__init__.py). The built-in iOS client id used to
+// create the owner is reused here — HA validates only that the client id parses
+// as an IndieAuth URL, so no redirect_uri or client secret is involved.
+func (c *Configurator) exchangeAuthCode(ctx context.Context, authCode string) (string, error) {
+	form := url.Values{
+		"grant_type": {"authorization_code"},
+		"client_id":  {onboardingClientID},
+		"code":       {authCode},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/auth/token",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token exchange returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
-	_ = json.Unmarshal(ownerBody, &tok)
+	if err := json.Unmarshal(body, &tok); err != nil {
+		return "", fmt.Errorf("token response malformed: %w", err)
+	}
+	if tok.AccessToken == "" {
+		return "", fmt.Errorf("token exchange returned no access token: %s", string(body))
+	}
 	return tok.AccessToken, nil
 }
 
