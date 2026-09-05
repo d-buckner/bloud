@@ -1,7 +1,6 @@
 # Bloud
 
-An open-source home server. You add an app; the reverse proxy, SSL, SSO, and
-databases get set up for you.
+An open-source home server. You add an app; the reverse proxy, SSO, and app-to-app integrations happen automatically.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
@@ -11,8 +10,8 @@ databases get set up for you.
 ## The problem
 
 Self-hosting is kind of unreasonably hard. Installing one service is manageable.
-Everything around it is not. Every service needs its own reverse proxy rules, SSL, SSO
-wiring, and database, and keeping it all connected and running is a pile of manual,
+Everything around it is not. Every service needs its own reverse proxy rules, SSO
+wiring, configurations, and keeping it all connected and running is a pile of manual,
 easy-to-forget glue.
 
 To connect services together, you typically have to:
@@ -129,6 +128,9 @@ Sharing work is in progress (Phase 6 of the [release plan](specs/spec.md)).
 
 Alpha. We're working on the sharing and federation layer, then packaging for a
 one-command install on Debian 13.
+
+## AI Disclosure
+While the high level technical design and architecture are done by me personally, much of the low level implementation is done by LLM. For me, this is done with local models hosted on my own infrastructure. If this does not align with the values you want your software to have, I understand, this project may not be for you.
 
 ## Local development
 
