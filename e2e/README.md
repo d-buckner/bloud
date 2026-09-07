@@ -15,8 +15,9 @@ reference).
 
 - **Jellyfin** — converges to running, appears in catalog/home, opens from
   the home tile, and logs in via LDAP to reach the dashboard.
-- **Navidrome** — completes Authentik forward-auth login and verifies the
-  Navidrome UI renders.
+- **Navidrome** — converges to running, appears in catalog/home, is gated by
+  forward-auth (the popup lands on the Authentik prompt), then completes that
+  login and verifies the Navidrome UI renders.
 - **Immich** — completes the native-oidc SSO round-trip (auto-launched from
   the login page), walks first-login onboarding, and verifies the photos
   page renders.
