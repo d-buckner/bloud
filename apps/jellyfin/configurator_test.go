@@ -871,6 +871,79 @@ func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
 	}
 }
 
+func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T) {
+	// Regression: on a cold install the API answered the health check with
+	// 200 (wizard pending), then stayed on 503 "Server is loading" past
+	// the old 5-attempt cap, and the loop's leftover error failed PostStart
+	// — a terminal node ERROR the reconciler never retries, so the install
+	// hung until the e2e timeout. The 503s must instead fall through to
+	// completeStartupWizard, which waits on /Startup/Configuration itself.
+	// Here the wizard reports ready via 401 (complete), so PostStart
+	// finishes; the point is that it does NOT error out of the wizard
+	// check.
+	var infoCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/System/Info/Public":
+			n := atomic.AddInt32(&infoCalls, 1)
+			if n == 1 {
+				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: false})
+				return
+			}
+			// Every wizard-check poll: the API is still loading.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+
+		case "/Startup/Configuration":
+			if r.Method == http.MethodGet {
+				// Wizard already reachable/complete: readiness check accepts 401.
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case "/Startup/User":
+			if r.Method == http.MethodGet {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{}`))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case "/Startup/RemoteAccess", "/Startup/Complete":
+			w.WriteHeader(http.StatusNoContent)
+
+		case "/Users/AuthenticateByName":
+			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+
+
+		case "/Library/VirtualFolders":
+			if r.Method == http.MethodGet {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]VirtualFolder{})
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+
+		default:
+			t.Errorf("Unexpected endpoint called: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewConfigurator(8096, nil)
+	c.baseURL = server.URL
+
+	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
+		t.Fatalf("PostStart() must fall through to the wizard on persistent 503, got error = %v", err)
+	}
+	if got := atomic.LoadInt32(&infoCalls); got < 6 {
+		t.Fatalf("expected the wizard check to poll 5 times before falling through, got %d /System/Info/Public probes", got)
+	}
+}
+
 func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 	ldap := &configurator.LDAPOutput{
 		Host:         "apps-authentik-ldap",

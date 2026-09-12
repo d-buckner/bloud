@@ -5,15 +5,22 @@ already-provisioned portable runtime host.
 
 ## Tests
 
-- **Jellyfin** — Installs Jellyfin via host-agent API, signs in to Bloud via
-  Authentik, opens Jellyfin in the embedded iframe, and logs in via LDAP.
-- **Navidrome** — Installs Navidrome via host-agent API, navigates to
-  `navidrome.localhost:8080` through Traefik, completes Authentik forward-auth
-  login, and verifies the Navidrome UI renders.
-- **Immich** — Installs Immich via host-agent API, opens Immich in a new tab,
-  completes the native-oidc SSO round-trip through Authentik (auto-launched
-  from the login page), walks the first-login onboarding wizard, and verifies
-  the photos page renders.
+Each app spec is a behavior ladder: one test case per observable stage,
+declared via `describeApp` (`lib/app-suite.ts`) — a real `test.describe`
+that supplies a shared authenticated page and runs the block serially, so
+the first failed case skips the rest and the report names the stage that
+broke. Convergence runs as a named first case (`converges to running`);
+only the sign-in case is app-specific (`jellyfin.spec.ts` is the
+reference).
+
+- **Jellyfin** — converges to running, appears in catalog/home, opens from
+  the home tile, and logs in via LDAP to reach the dashboard.
+- **Navidrome** — converges to running, appears in catalog/home, is gated by
+  forward-auth (the popup lands on the Authentik prompt), then completes that
+  login and verifies the Navidrome UI renders.
+- **Immich** — completes the native-oidc SSO round-trip (auto-launched from
+  the login page), walks first-login onboarding, and verifies the photos
+  page renders.
 
 ## Running
 

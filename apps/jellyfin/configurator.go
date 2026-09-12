@@ -346,32 +346,33 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	}
 
 	if !info.StartupWizardCompleted {
-		// Retry a few times — Jellyfin 10.11.9+ may report false during early
-		// init, and the API oscillates between 200 and 503 "Server is loading"
-		// before stabilising. Retry on 503/network errors (not context
-		// errors); the 2 s sleep and 5-iteration cap bound the work.
+		// A fresh install reports the wizard as pending; Jellyfin 10.11.x
+		// may also briefly answer 200 mid-initialisation and then flip to
+		// 503 "Server is loading" while first-run init finishes. Poll for a
+		// completed read, but a 503 here must never fail PostStart: a
+		// failed PostStart is a terminal node ERROR the reconciler never
+		// retries, and the old code did exactly that when a slow cold
+		// start outlived the attempt cap. Keep the last good read and fall
+		// through — completeStartupWizard gates on /Startup/Configuration
+		// (503 while loading), which absorbs an API that hasn't settled.
 		for i := range 5 {
 			select {
 			case <-time.After(2 * time.Second):
 			case <-ctx.Done():
 			}
-			info, err = c.getSystemInfo(ctx)
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			next, perr := c.getSystemInfo(ctx)
+			if perr != nil {
+				if errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) {
 					break
 				}
-				// 503 or network error — retry on the next iteration
-				c.logger.Info("waiting for Jellyfin API (wizard check)", "attempt", i+1, "error", err)
+				c.logger.Info("waiting for Jellyfin API (wizard check)", "attempt", i+1, "error", perr)
 				continue
 			}
+			info = next
 			if info.StartupWizardCompleted {
 				break
 			}
 		}
-	}
-	if err != nil {
-		// All 5 retries hit 503/network errors — the API never stabilised
-		return fmt.Errorf("failed to get system info: %w", err)
 	}
 
 	if !info.StartupWizardCompleted {

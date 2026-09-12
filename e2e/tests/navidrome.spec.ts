@@ -1,30 +1,73 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 import { test, expect } from '../lib/fixtures';
+import { describeApp } from '../lib/app-suite';
+import {
+  expectInstalledInCatalog,
+  expectRunningTile,
+  openAppFromHome,
+} from '../lib/apps';
+import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
 
-test.describe('navidrome (forward-auth)', () => {
-  test.beforeEach(async ({ api }) => {
-    await api.ensureInstalled('navidrome');
+// One test case per observable behavior; serial mode (from describeApp)
+// means the first failure skips the rungs behind it. Navidrome uses
+// forward-auth: every request to the app origin is checked against
+// Authentik before it reaches the container, so the popup opens on the
+// Authentik prompt — the prompt appearing is itself the observable
+// behavior of the auth rung, and completing it is the sign-in rung.
+describeApp('navidrome', (app) => {
+  test('converges to running', async () => {
+    // Infrastructure rung: fresh-VM image pull + first-run convergence.
+    // When this fails, the UI rungs below are skipped, which distinguishes
+    // a broken install from a misbehaving app.
+    test.setTimeout(12 * 60_000);
+    await ensureInstalled('navidrome');
   });
 
-  test('SSO login reaches Navidrome UI', async ({ authenticatedPage }) => {
-    const page = authenticatedPage;
+  test('appears in the catalog as installed', async () => {
+    test.setTimeout(60_000);
+    await expectInstalledInCatalog(app.page, 'Navidrome');
+  });
 
-    // Open Navidrome from the Bloud home screen — opens in a new tab
-    await page.goto('/');
-    const navidromePagePromise = page.waitForEvent('popup');
-    await page.getByText('Navidrome').click();
-    const navidromePage = await navidromePagePromise;
-    await navidromePage.waitForLoadState();
-    // Forward-auth may redirect through Authentik; log in if needed. The
-    // flow page is a React app that renders its form after document load,
-    // so poll for the form within a deadline instead of checking once.
-    const loginPage = new LoginPage(navidromePage);
-    const deadline = Date.now() + 120_000;
+  test('appears on the home screen as a converged tile', async () => {
+    test.setTimeout(60_000);
+    await app.page.goto('/');
+    await expectRunningTile(app.page, 'Navidrome');
+  });
+
+  test('forward-auth gates the app: the popup lands on the login prompt', async () => {
+    test.setTimeout(120_000);
+    const navidrome = await openAppFromHome(app.page, 'Navidrome');
+    try {
+      // A fresh popup has no Navidrome session, so forward-auth must
+      // intercept: the popup round-trips to the Authentik flow on the
+      // Navidrome origin instead of serving the app. The flow page is a
+      // React app that renders its form after document load, so wait on
+      // the form itself (redirect included) rather than checking once.
+      const loginPage = new LoginPage(navidrome);
+      await loginPage.usernameField.waitFor({
+        state: 'visible',
+        timeout: 60_000,
+      });
+    } finally {
+      await navidrome.close();
+    }
+  });
+
+  test('signs in through forward-auth and reaches the Navidrome UI', async () => {
+    test.setTimeout(300_000);
+    const navidrome = await openAppFromHome(app.page, 'Navidrome');
+
+    // Complete the Authentik prompt. The flow can hop through
+    // /if/flow/... steps that re-render after document load, so poll for
+    // the form within a deadline instead of checking once.
+    const loginPage = new LoginPage(navidrome);
+    const deadline = Date.now() + 180_000;
     for (;;) {
-      const url = navidromePage.url();
-      if (url.includes('navidrome.localhost:8080') && !url.includes('/if/flow')) break;
+      const url = navidrome.url();
+      if (url.includes('navidrome.localhost:8080') && !url.includes('/if/flow'))
+        break;
       if (Date.now() > deadline) break;
 
       if (await loginPage.isVisible()) {
@@ -32,15 +75,15 @@ test.describe('navidrome (forward-auth)', () => {
         continue;
       }
 
-      await navidromePage.waitForTimeout(500);
+      await navidrome.waitForTimeout(500);
     }
 
-    // Should land on Navidrome
-    await expect(navidromePage).toHaveURL(/navidrome\.localhost:8080/, { timeout: 30_000 });
-
-    // Navidrome UI should render — look for the app shell
+    // Forward-auth issued the session and Navidrome served the app.
+    await expect(navidrome).toHaveURL(/navidrome\.localhost:8080/, {
+      timeout: 30_000,
+    });
     await expect(
-      navidromePage.locator('#root, .MuiBox-root, nav').first(),
+      navidrome.locator('#root, .MuiBox-root, nav').first(),
     ).toBeVisible({ timeout: 30_000 });
   });
 });
