@@ -174,6 +174,12 @@ Also add:
   through the public port `http://localhost:8080`; API helpers use the internal
   API at `BLOUD_API_URL` / `:3000`). Wire it up with
   `./bloud e2e app` + `BLOUD_E2E_APP=your-app`.
+  Use `describeApp` from `e2e/lib/app-suite.ts`: it is a real
+  `test.describe` that also provides one shared authenticated page
+  (`app.page`) and serial execution, so a red run stops at the stage that
+  broke. Write one test case per observable behavior — converge → catalog
+  → home tile → open → sign-in (`openAppFromHome` opens the app popup;
+  only the sign-in body is app-specific). See `e2e/tests/jellyfin.spec.ts`.
 - An entry for the app in `validation.yaml` under `apps:` (auth strategy,
   validation level, file globs, `e2e-project`). `./bloud validate` infers the
   affected apps from this registry — keep it in sync.
