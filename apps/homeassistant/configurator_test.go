@@ -218,15 +218,51 @@ type apiServer struct {
 	oidcLive       bool
 	deregistered   bool            // GET /api/onboarding always 404s (all steps closed)
 	stepsCompleted map[string]bool // interactive step paths already closed
-	srv            *httptest.Server
+
+	// Proxy-trust lifecycle (models HA's forwarded middleware). trustLive
+	// mirrors what the RUNNING process has loaded: false answers any
+	// X-Forwarded-For-bearing request with 400 ("not set-up for reverse
+	// proxies") — the CI failure; a restart with a valid token flips it
+	// (after trustFlipDelay, simulating reload latency) when
+	// restartAppliesTrust. xffRejected records the probe addresses seen
+	// while stale, so tests can assert the wait actually held.
+	trustLive           bool
+	xffRejected         []string
+	restartAppliesTrust bool
+	trustFlipDelay      time.Duration
+
+	srv *httptest.Server
 }
 
 func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
-	t.Helper()
-	s := &apiServer{oidcLive: oidcLive, stepsCompleted: map[string]bool{}}
+	s := &apiServer{oidcLive: oidcLive, stepsCompleted: map[string]bool{}, restartAppliesTrust: true}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/":
+			// Model HA 2026.9's forwarded middleware: a request carrying
+			// X-Forwarded-For is rejected 400 until the running process has
+			// the trust loaded. Once trust is live the forward check passes and
+			// the (unauthenticated) request falls through to the auth layer,
+			// which answers 401 Bearer — the live-trust signal is "not 400".
+			// An unforwarded (no-XFF) request always answers 200 here, so the
+			// plain wait still sees the listener up.
+			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+				s.mu.Lock()
+				live := s.trustLive
+				if !live {
+					s.xffRejected = append(s.xffRejected, xff)
+				}
+				s.mu.Unlock()
+				if !live {
+					w.WriteHeader(http.StatusBadRequest)
+					io.WriteString(w, "400: Bad Request")
+					return
+				}
+				w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="http://localhost:8123/.well-known/oauth-protected-resource"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				io.WriteString(w, "401: Unauthorized")
+				return
+			}
 			w.WriteHeader(200)
 			io.WriteString(w, `{"message":"API running."}`)
 		case "/api/onboarding":
@@ -310,7 +346,20 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 				return
 			}
 			s.restarts = append(s.restarts, authz)
+			applies := s.restartAppliesTrust
+			delay := s.trustFlipDelay
 			s.mu.Unlock()
+			// A healthy HA restart reloads the patched trust; flip the live
+			// flag so the forwarded-400 clears. restartAppliesTrust=false
+			// models a restart that accepts but never reloads (the CI case).
+			if applies {
+				if delay > 0 {
+					timer := time.AfterFunc(delay, func() { s.setTrustLive(true) })
+					t.Cleanup(func() { timer.Stop() })
+				} else {
+					s.setTrustLive(true)
+				}
+			}
 			w.WriteHeader(200)
 		default:
 			http.NotFound(w, r)
@@ -329,6 +378,12 @@ func (s *apiServer) isOIDCLive() bool {
 func (s *apiServer) setOIDCLive(v bool) {
 	s.mu.Lock()
 	s.oidcLive = v
+	s.mu.Unlock()
+}
+
+func (s *apiServer) setTrustLive(v bool) {
+	s.mu.Lock()
+	s.trustLive = v
 	s.mu.Unlock()
 }
 
@@ -620,4 +675,172 @@ func TestPostStartAlreadyOnboardedDefersRestart(t *testing.T) {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	assert.Empty(t, srv.restarts, "must not fire a tokenless restart")
+}
+
+// trustedStorageJSON: the stored http entry as it looks AFTER Bloud patched
+// it (v2 layout, trust enabled) but before we know whether the running
+// process loaded it.
+const trustedStorageJSON = `{
+  "version": 2,
+  "minor_version": 2,
+  "key": "http",
+  "data": {
+    "stable": {
+      "server_port": 8123,
+      "trusted_proxies": ["10.0.0.0/8"],
+      "use_x_forwarded_for": true,
+      "custom_key": "keep"
+    },
+    "pending": null,
+    "yaml_migration_done": true
+  }
+}`
+
+// The CI failure: the restart API returns 200 long before HA reloads (QEMU
+// needed ~4.4s; the old code's waitForAPI passed in 336ms against the stale
+// process). PostStart must hold until the FORWARDED probe goes live, not
+// return on the first 200. The fake flips trust with a delay; the test
+// asserts the wait actually observed the stale 400s before succeeding.
+func TestPostStartWaitsForTrustReloadAfterRestart(t *testing.T) {
+	srv := newAPIServer(t, true)
+	srv.mu.Lock()
+	srv.trustFlipDelay = 150 * time.Millisecond
+	srv.mu.Unlock()
+
+	data := t.TempDir()
+	writeConfig(t, filepath.Join(data, "config"), storageJSON) // untrusted on disk
+
+	c := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 5 * time.Second
+
+	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{
+		DataPath: data, SSOEnabled: true, OIDC: testOIDC(),
+	}))
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	assert.NotEmpty(t, srv.xffRejected, "the trust wait must have seen the stale process reject forwarded requests before the reload landed")
+}
+
+// Restart accepted but never reloads (the ~100s-stale CI state): the wait
+// must time out into an ERROR naming the reload failure — never a silent
+// success that marks a stale, proxy-rejecting process RUNNING.
+func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
+	srv := newAPIServer(t, true)
+	srv.mu.Lock()
+	srv.restartAppliesTrust = false
+	srv.mu.Unlock()
+
+	data := t.TempDir()
+	writeConfig(t, filepath.Join(data, "config"), storageJSON)
+
+	c := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+	c.postStartTimeout = 300 * time.Millisecond
+
+	err := c.PostStart(context.Background(), &configurator.AppState{
+		DataPath: data, SSOEnabled: true, OIDC: testOIDC(),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reverse-proxy trust")
+	assert.Contains(t, err.Error(), "restart never took effect")
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	assert.NotEmpty(t, srv.xffRejected, "must have polled the running process until the deadline")
+}
+
+// Steady-state self-heal wiring: the disk entry is trusted but the RUNNING
+// process still rejects forwarded requests (restart fired on an earlier
+// pass and never took). PreStart must report changed=true with no file
+// rewrite, forcing the orchestrator's container-recreate — a cold boot
+// applies the patch with no admin token needed.
+func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
+	srv := newAPIServer(t, true)
+	srv.mu.Lock()
+	srv.restartAppliesTrust = false
+	srv.mu.Unlock()
+
+	data := t.TempDir()
+	storedPath := writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
+
+	c := NewConfigurator(0, &fakeSecrets{pw: "x"}, nil)
+	c.baseURLOverride = srv.srv.URL
+	c.pollInterval = 10 * time.Millisecond
+
+	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
+	require.NoError(t, err)
+	assert.True(t, changed, "stale live process against trusted disk entry must force a recreate")
+
+	// the file is untouched (no rewrite churn)
+	doc := readStoredJSON(t, storedPath)
+	h := configBlock(t, doc, "stable")
+	assert.Equal(t, true, h["use_x_forwarded_for"])
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	assert.NotEmpty(t, srv.xffRejected, "the staleness check must probe the running process")
+}
+
+// A refused probe (fresh install / mid-crash — process not up yet) must NOT
+// force a recreate: the normal start path handles that; forcing would churn
+// containers during recovery.
+func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	url := srv.URL
+	srv.Close() // closed port → connection refused
+
+	data := t.TempDir()
+	writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
+
+	c := NewConfigurator(0, &fakeSecrets{pw: "x"}, nil)
+	c.baseURLOverride = url
+	c.pollInterval = 10 * time.Millisecond
+
+	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
+	require.NoError(t, err)
+	assert.False(t, changed, "unreachable process must not force a recreate")
+}
+
+// The probe itself: 400 on forwarded requests reads as not-live-but-
+// reachable; 200 reads as live. (Unit-guards the three-state mapping the
+// waits above depend on.)
+func TestProbeProxyTrustStates(t *testing.T) {
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer live.Close()
+	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c.baseURLOverride = live.URL
+	ok, reachable, status, perr := c.probeProxyTrust(context.Background())
+	assert.True(t, ok)
+	assert.True(t, reachable)
+	assert.Equal(t, 200, status)
+	assert.NoError(t, perr)
+
+	stale := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+	}))
+	defer stale.Close()
+	c.baseURLOverride = stale.URL
+	ok, reachable, status, perr = c.probeProxyTrust(context.Background())
+	assert.False(t, ok)
+	assert.True(t, reachable)
+	assert.Equal(t, 400, status)
+	assert.NoError(t, perr)
+
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	downURL := down.URL
+	down.Close()
+	c.baseURLOverride = downURL
+	ok, reachable, status, perr = c.probeProxyTrust(context.Background())
+	assert.False(t, ok)
+	assert.False(t, reachable)
+	assert.Equal(t, 0, status)
+	assert.Error(t, perr)
 }

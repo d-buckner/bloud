@@ -118,6 +118,22 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return false, err
 	}
 
+	// Self-heal a stale running process: the trust patch is on disk but the
+	// live HA still rejects forwarded headers (an in-place restart was issued
+	// on an earlier pass and never actually reloaded — see CI evidence where
+	// the forward-rejection persisted ~100s after the restart call).
+	// Reporting a change makes the orchestrator recreate the container; the
+	// cold boot loads the patched entry with no admin token required. A
+	// refused probe means HA is simply not reachable yet (fresh install /
+	// crash recovery), which the normal start path handles — do NOT force.
+	staleForce := false
+	if !rpChanged && storedProxyTrusted(configDir) {
+		if live, reachable, status, _ := c.probeProxyTrust(ctx); reachable && !live {
+			c.logger.Warn("stored proxy trust not live in running Home Assistant; forcing container recreate", "status", status)
+			staleForce = true
+		}
+	}
+
 	if !state.SSOEnabled {
 		// SSO off (e.g. authentik removed): a leftover auth_oidc block points at
 		// a dead provider and would break HA startup. Strip it.
@@ -125,7 +141,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		if err != nil {
 			return false, err
 		}
-		return rpChanged || stripped, nil
+		return rpChanged || stripped || staleForce, nil
 	}
 	if state.OIDC == nil {
 		return false, fmt.Errorf("OIDC output not available for native-oidc setup")
@@ -139,7 +155,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	if err != nil {
 		return false, err
 	}
-	return rpChanged || changed || ok, nil
+	return rpChanged || changed || ok || staleForce, nil
 }
 
 // Remove is a no-op for the Home Assistant configurator; container and data
@@ -172,13 +188,16 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	if err != nil {
 		return err
 	}
-	// Reverse-proxy trust: HA writes its own http config entry on first boot and
-	// only reads it at startup. Patch that stored entry so HA trusts Traefik's
-	// X-Forwarded-* headers, then restart HA to apply it. Without this, the OIDC
-	// callback proxied through Traefik fails with 400. No-op once already set.
-	if changed, err := c.ensureReverseProxy(configDir); err != nil {
+	// Reverse-proxy trust: HA writes its own http config entry on first boot
+	// and only reads it at startup. Patch that stored entry so HA trusts
+	// Traefik's X-Forwarded-* headers, then restart HA to apply it. Without
+	// this, the OIDC callback proxied through Traefik fails with 400. No-op
+	// once already set.
+	changed, err := c.ensureReverseProxy(configDir)
+	if err != nil {
 		return err
-	} else if changed {
+	}
+	if changed {
 		c.logger.Info("restarting Home Assistant to apply reverse-proxy trust")
 		if err := c.restartHomeAssistant(ctx, token); err != nil {
 			// The restart needs an owner access token. We only have one on the
@@ -193,7 +212,20 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 			c.logger.Warn("in-place HA restart unavailable; failing so an install retry recreates the container", "error", err)
 			return fmt.Errorf("reverse-proxy trust written but Home Assistant could not be restarted (%v); retrying the install recreates the container and applies it", err)
 		}
-		if err := c.waitForAPI(ctx); err != nil {
+	}
+	// Verify the RUNNING process actually honours forwarded headers before the
+	// node can be marked RUNNING — but only when there is trust on disk to
+	// verify (just-patched or already-trusted). When HA has not written its
+	// http entry yet (early onboarding) there is nothing to check and the
+	// wait is skipped. The restart call returns long before HA has reloaded
+	// — and can return without reloading at all (CI showed the forward-
+	// rejection persisting ~100s after the restart while the API was already
+	// answering 200). The on-disk patch proves nothing about the live
+	// process; the probe does. If trust never goes live this pass fails into
+	// ERROR and the next install recreate (PreStart's stale check) loads the
+	// patched entry on a cold boot.
+	if changed || storedProxyTrusted(configDir) {
+		if err := c.waitForProxyTrust(ctx); err != nil {
 			return err
 		}
 	}
@@ -643,6 +675,122 @@ func (c *Configurator) waitForAPI(ctx context.Context) error {
 		case <-time.After(c.pollInterval):
 		}
 	}
+}
+
+// xffProbeAddr is a TEST-NET-3 address (RFC 5737, reserved for documentation
+// and guaranteed unroutable). It sits outside Bloud's trusted_proxies CIDR, so
+// as an X-Forwarded-For value it is unambiguous forwarded-client traffic for
+// HA's middleware to act on.
+const xffProbeAddr = "203.0.113.119"
+
+// probeProxyTrust reports whether the RUNNING Home Assistant process currently
+// accepts forwarded (X-Forwarded-For-bearing) requests. It GETs /api/ with a
+// forged X-Forwarded-For header and reads the answer at the forwarding
+// middleware — the same gate a proxied browser request hits:
+//
+//	trusted=true                  → the forward middleware passed the
+//	                               forwarded request (any HTTP status except
+//	                               400; an unauthenticated /api/ answers 401
+//	                               Bearer once trust is loaded — the auth
+//	                               layer is downstream of the forward check
+//	                               and irrelevant to this property).
+//	trusted=false, status=400     → the running process still has the
+//	                               pre-patch settings and the forwarding
+//	                               middleware rejects forwarded headers
+//	                               ("not set-up for reverse proxies") — the
+//	                               precise failure the popup observed.
+//	reachable=false               → the probe never connected: HA is down or
+//	                               mid-restart (connection refused), or
+//	                               still booting (HTTP 5xx) — retried, NOT
+//	                               a definitive rejection.
+//
+// The probe reaches HA over the same published port Traefik's traffic is
+// port-forwarded through, so HA sees a peer inside trusted_proxies (see
+// trustedProxies) and the use_x_forwarded_for flag alone governs the
+// 400-vs-pass boundary — the same coupling the trust design already relies on.
+func (c *Configurator) probeProxyTrust(ctx context.Context) (trusted bool, reachable bool, status int, perr error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+"/api/", nil)
+	if err != nil {
+		return false, false, 0, err
+	}
+	req.Header.Set("X-Forwarded-For", xffProbeAddr)
+	client := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, false, 0, err
+	}
+	defer resp.Body.Close()
+	// 400 = forward middleware rejected (stale). 5xx = still booting.
+	// Anything else that connected means the forward middleware passed.
+	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= 500 {
+		return false, true, resp.StatusCode, nil
+	}
+	return true, true, resp.StatusCode, nil
+}
+
+// waitForProxyTrust polls the forwarded-header probe until the running process
+// accepts forwarded requests (the forward middleware stops answering 400).
+// A 400 (stale process that has not reloaded) and a refused connection
+// (mid-restart) are both retried; an HTTP 5xx is treated as still-booting.
+// Any other status — 200 or 401 or 302 — means the forward middleware let the
+// request through, which is exactly the property we need: a browser's proxied
+// request will no longer hit the forward-400. (Unauthenticated, HA 2026.9
+// answers /api/ with 401 Bearer once trust is loaded; the 400-vs-not-400
+// boundary at the forwarding middleware, not 200, is the live signal.)
+// Returning nil guarantees the node never goes RUNNING on a proxy-rejecting
+// process.
+func (c *Configurator) waitForProxyTrust(ctx context.Context) error {
+	// lastTrustLive remembers the most recent probe that actually connected
+	// (regardless of auth outcome). The final poll is often cancelled mid-
+	// flight by the deadline (Do returns a transport error), which would
+	// otherwise misreport a live-401 process as "unreachable".
+	lastReachable := false
+	for {
+		trusted, reachable, _, perr := c.probeProxyTrust(ctx)
+		if trusted {
+			return nil
+		}
+		if reachable {
+			lastReachable = true
+		}
+		select {
+		case <-ctx.Done():
+			if lastReachable {
+				return fmt.Errorf("timed out waiting for Home Assistant to reload reverse-proxy trust (process still answers 400 to forwarded requests, restart never took effect): %w", ctx.Err())
+			}
+			return fmt.Errorf("timed out waiting for Home Assistant reverse-proxy trust (process unreachable: %v): %w", perr, ctx.Err())
+		case <-time.After(c.pollInterval):
+		}
+	}
+}
+
+// storedProxyTrusted reports whether the on-disk http entry already carries
+// Bloud's proxy-trust settings. PreStart uses it to tell "HA wrote its own
+// file and we have not patched it yet" (absent → nothing to force) from "we
+// patched it but the live process disagrees" (present → check the probe).
+// Read errors are treated as false; ensureReverseProxy is the authoritative
+// merge path that surfaces real corruption.
+func storedProxyTrusted(configDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(configDir, ".storage", "http"))
+	if err != nil {
+		return false
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return false
+	}
+	data, ok := doc["data"].(map[string]any)
+	if !ok {
+		return false
+	}
+	httpCfg, ok := data["stable"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return httpCfg["use_x_forwarded_for"] == true && equalStrings(toStringSlice(httpCfg["trusted_proxies"]), trustedProxies)
 }
 
 // ensureOnboarded completes Home Assistant's first-run onboarding headlessly
