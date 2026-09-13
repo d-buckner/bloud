@@ -175,3 +175,27 @@ jobs:
             | grep -iE 'forward|trust|proxy|X-Forwarded|400|Bad Request|not set.?up' | tail -40 || true
           echo "=== full recent $CTR logs (last 40) ==="
           podman logs --tail 40 "$CTR" 2>&1 || true
+
+      - name: HA restart audit (did the first trust-restart fire?)
+        if: failure()
+        run: |
+          # The trust fix needs a process reload after patching .storage/http.
+          # The jellyfin-oriented grep above filters out the HA-specific
+          # restart/onboard lines (they contain no matching term), so dump the
+          # FULL homeassistant host-agent journal unfiltered and tally the
+          # decisive signals: container recreate, owner creation, restart,
+          # already-onboarded. Cross-check against the number of s6 process
+          # boots in the container log to see if HA ever actually reloaded.
+          J="journalctl --user -u bloud-e2e-host-agent.service --no-pager"
+          echo "=== FULL homeassistant host-agent journal (unfiltered) ==="
+          $J 2>/dev/null | grep -i 'homeassistant' || echo "(no homeassistant journal lines)"
+          echo "=== signal tally across the whole HA journal ==="
+          for s in 'downloading hass-oidc-auth' 'PreStart complete' 'config changed, removing container before re-create' 'first-run owner created' 'restarting Home Assistant to apply reverse-proxy trust' 'already fully onboarded' 'reverse-proxy trust written but' 'PostStart complete'; do
+            n=$($J 2>/dev/null | grep -c "$s" || true)
+            echo "  [$n] $s"
+          done
+          echo "=== s6 process boots in container log (reload count) ==="
+          podman logs "apps-${{ matrix.app }}" 2>&1 \
+            | grep -c 's6-rc: info: service legacy-services: starting' || echo 0
+          echo "=== container StartedAt vs StoredTrust created_at ==="
+          podman inspect "apps-${{ matrix.app }}" --format 'startedAt={{.State.StartedAt}}' 2>&1 || true
