@@ -141,32 +141,37 @@ jobs:
           echo "=== Ports ==="
           ss -tlnp 2>&1 || true
 
-      - name: Probe ingress routing (route-race diagnosis)
+      - name: Probe ingress + HA reverse-proxy trust (400 diagnosis)
         if: failure()
         run: |
-          # Diagnosis for the HA popup-SSO failure (and any app popup that
-          # shows the Bloud SPA at the app host instead of the app/auth screen).
-          # Hypothesis: the popup hit the dashboard catch-all route because the
-          # app-specific Traefik route was not yet active — a route-propagation
-          # race. The runtime is kept (BLOUD_E2E_KEEP=1), so probe the LIVE stack.
-          ROUTES=/var/tmp/bloud-e2e-runtime/data/traefik/dynamic/apps-routes.yml
+          # The HA popup fails with "400: Bad Request" from aiohttp even though
+          # the route + container are up. Hypothesis: HA's http integration does
+          # not trust the peer IP Traefik's proxied request arrives from, so its
+          # forwarded middleware rejects X-Forwarded-* (see apps/homeassistant/
+          # INTEGRATION.md). trusted_proxies is hardcoded to 10.0.0.0/8; if CI's
+          # apps-net subnet is outside that, every proxied request 400s. This step
+          # captures the ACTUAL peer IP HA sees, so the fix trusts the right range.
           APP="${{ matrix.app }}"
+          CTR="apps-$APP"
+          ROUTES=/var/tmp/bloud-e2e-runtime/data/traefik/dynamic/apps-routes.yml
           echo "=== live apps-routes.yml ==="
           cat "$ROUTES" 2>&1 || echo "NO ROUTE FILE"
-          echo "=== app host via :8080 (Host: $APP.localhost) ==="
+          echo "=== $CTR state: started-at, restart count, networks ==="
+          podman inspect "$CTR" \
+            --format 'startedAt={{.State.StartedAt}} exitCode={{.State.ExitCode}} restarted={{.RestartCount}} {{json .NetworkSettings.Networks}}' 2>&1 || true
+          echo "=== $CTR container-side IP + default route ==="
+          podman exec "$CTR" sh -c 'ip -4 addr show 2>/dev/null; echo "--routes--"; ip route 2>/dev/null' 2>&1 || true
+          echo "=== fresh proxied request: Host: $APP.localhost -> :8080 ==="
           curl -sS -D - -o /tmp/app_body -H "Host: $APP.localhost" \
             http://localhost:8080/ 2>&1 || true
-          echo "--- body (first 400 bytes) ---"
-          head -c 400 /tmp/app_body 2>&1 || true; echo
-          echo "=== dashboard host via :8080 (Host: localhost) ==="
-          curl -sS -D - -o /tmp/dash_body -H "Host: localhost" \
-            http://localhost:8080/ 2>&1 || true
-          echo "--- body (first 400 bytes) ---"
-          head -c 400 /tmp/dash_body 2>&1 || true; echo
-          echo "=== app container status ==="
-          podman ps -a --filter "name=apps-$APP" \
-            --format "{{.Names}} {{.Status}}" 2>&1 || true
-          echo "=== route-regen / RUNNING logs (last 40) ==="
-          journalctl --user -u bloud-e2e-host-agent.service --no-pager 2>&1 \
-            | grep -iE "$APP|route|regenerat|marking node RUNNING|converge" \
-            | tail -40 || true
+          echo "--- body (first 400 bytes) ---"; head -c 400 /tmp/app_body 2>&1 || true; echo
+          echo "=== stored HA http config entry (is trust persisted?) ==="
+          cat /var/tmp/bloud-e2e-runtime/data/homeassistant/config/.storage/http 2>&1 || echo "NO STORED ENTRY"
+          echo "=== config.yaml auth block (what HA actually loads) ==="
+          cat /var/tmp/bloud-e2e-runtime/data/homeassistant/config/configuration.yaml 2>&1 | grep -iA12 'auth_oidc' || echo "NO OIDC BLOCK"
+
+          echo "=== $CTR recent logs (reverse-proxy / forwarded / trusted) ==="
+          podman logs --tail 200 "$CTR" 2>&1 \
+            | grep -iE 'forward|trust|proxy|X-Forwarded|400|Bad Request|not set.?up' | tail -40 || true
+          echo "=== full recent $CTR logs (last 40) ==="
+          podman logs --tail 40 "$CTR" 2>&1 || true
