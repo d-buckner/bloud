@@ -52,11 +52,32 @@ describeApp('homeassistant', (app) => {
       const bloudLink = ha.getByRole('link', { name: /Bloud/ });
       const deadline = Date.now() + 90_000;
       for (;;) {
-        if (await loginPage.isVisible()) break;
-        if (await bloudLink.first().isVisible({ timeout: 1_000 }).catch(() => false)) break;
+        const sawAuth = await loginPage.isVisible().catch(() => false);
+        const sawBloudLink = await bloudLink.first().isVisible({ timeout: 500 }).catch(() => false);
+        if (sawAuth || sawBloudLink) break;
         if (Date.now() > deadline) {
+          // No auth screen and no Lovelace rendered. Capture what the popup
+          // actually shows so a CI-only failure self-diagnoses without a local
+          // repro. Key signal: if the Bloud SPA (its "Add Widget" control) is
+          // present at the app host, the popup was served the dashboard catch-all
+          // route instead of Home Assistant — a Traefik route-propagation race,
+          // not an HA auth gate. The title + body snippet distinguish a blank
+          // page, a Traefik 502, and the SPA.
+          const title = await ha.title().catch(() => '<none>');
+          const body = await ha
+            .locator('body')
+            .innerText({ timeout: 2_000 })
+            .catch(() => '<unreadable>');
+          const snippet = body.replace(/\s+/g, ' ').slice(0, 300);
+          const bloudSpaServed = await ha
+            .getByText('Add Widget')
+            .first()
+            .isVisible({ timeout: 1_000 })
+            .catch(() => false);
           throw new Error(
-            `popup reached neither an auth screen nor the dashboard (url: ${ha.url()})`,
+            `popup reached neither an auth screen nor the dashboard ` +
+              `(url: ${ha.url()}; title: ${title}; bloudSpaServed: ${bloudSpaServed}; ` +
+              `body: ${JSON.stringify(snippet)})`,
           );
         }
         await ha.waitForTimeout(500);

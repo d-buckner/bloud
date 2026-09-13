@@ -140,3 +140,33 @@ jobs:
           ls -la /var/tmp/bloud-e2e-runtime/ 2>&1 || true
           echo "=== Ports ==="
           ss -tlnp 2>&1 || true
+
+      - name: Probe ingress routing (route-race diagnosis)
+        if: failure()
+        run: |
+          # Diagnosis for the HA popup-SSO failure (and any app popup that
+          # shows the Bloud SPA at the app host instead of the app/auth screen).
+          # Hypothesis: the popup hit the dashboard catch-all route because the
+          # app-specific Traefik route was not yet active — a route-propagation
+          # race. The runtime is kept (BLOUD_E2E_KEEP=1), so probe the LIVE stack.
+          ROUTES=/var/tmp/bloud-e2e-runtime/data/traefik/dynamic/apps-routes.yml
+          APP="${{ matrix.app }}"
+          echo "=== live apps-routes.yml ==="
+          cat "$ROUTES" 2>&1 || echo "NO ROUTE FILE"
+          echo "=== app host via :8080 (Host: $APP.localhost) ==="
+          curl -sS -D - -o /tmp/app_body -H "Host: $APP.localhost" \
+            http://localhost:8080/ 2>&1 || true
+          echo "--- body (first 400 bytes) ---"
+          head -c 400 /tmp/app_body 2>&1 || true; echo
+          echo "=== dashboard host via :8080 (Host: localhost) ==="
+          curl -sS -D - -o /tmp/dash_body -H "Host: localhost" \
+            http://localhost:8080/ 2>&1 || true
+          echo "--- body (first 400 bytes) ---"
+          head -c 400 /tmp/dash_body 2>&1 || true; echo
+          echo "=== app container status ==="
+          podman ps -a --filter "name=apps-$APP" \
+            --format "{{.Names}} {{.Status}}" 2>&1 || true
+          echo "=== route-regen / RUNNING logs (last 40) ==="
+          journalctl --user -u bloud-e2e-host-agent.service --no-pager 2>&1 \
+            | grep -iE "$APP|route|regenerat|marking node RUNNING|converge" \
+            | tail -40 || true
