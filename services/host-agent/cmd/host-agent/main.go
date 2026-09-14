@@ -123,7 +123,18 @@ func runServer() {
 	// Configurator registry: system configurators are registered eagerly;
 	// app configurators self-register factories (apps/<name>/registration.go)
 	// and are instantiated lazily on first lookup.
-	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, hosts))
+	//
+	// restartContainer forces a running container to stop and start again, so
+	// its process re-execs and re-reads on-disk config. Configurators use this
+	// where the app's own in-app restart is unreliable under a container init
+	// (Home Assistant). Stop grace lets the app shut down cleanly before SIGKILL.
+	restartContainer := func(ctx context.Context, name string) error {
+		if err := client.StopContainer(ctx, name, 30); err != nil {
+			return err
+		}
+		return client.StartContainer(ctx, name)
+	}
+	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, hosts, restartContainer))
 	appconfig.RegisterSystem(registry, cfg, runtime, logger, templateVars, hosts)
 
 	// Event bus: shared between the API (SSE streams) and background

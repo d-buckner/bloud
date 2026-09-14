@@ -50,8 +50,12 @@ The configurator's **PreStart** (runs before every container start):
   here — it happens in PostStart, after HA has written its stored http entry (see
   "Reverse proxy" below).
 - **PostStart**: wait for the HTTP API; complete HA first-run onboarding headlessly
-  (creating the owner); patch reverse-proxy trust into HA's stored http config
-  entry and restart HA in-place if it changed; verify the OIDC provider is live.
+  (creating the owner); ensure reverse-proxy trust in HA's stored http config
+  entry, and if it changed force a **real container restart** so the running
+  process re-reads it (HA only reads the http store at startup — see "Applying
+  the config reload" below), then wait until a forwarded-header probe confirms
+  trust is actually live before the node can go RUNNING; verify the OIDC
+  provider is live.
 - Login flow: HA login page ("Log in with Bloud" button) → Authentik login →
   `/auth/oidc/callback` on HA → HA provisions the user (first login) and maps
   groups → roles.
@@ -75,15 +79,60 @@ YAML `http:` block (it files a `yaml_still_present_after_migration` repair).
 Writing `use_x_forwarded_for: true` under `http:` in `configuration.yaml` does
 nothing on these versions — the callback still 400s.
 
-**Fix (current code, verified working via manual browser test):**
-`ensureReverseProxy` in `configurator.go` merges `use_x_forwarded_for` +
-`trusted_proxies` into the stored entry's `data.stable` object while preserving
-every other field HA wrote. HA (schema v2) writes this file on its own first
-start, and it **rejects hand-written config entries** with strict schema
-validation — a bad entry takes down the whole http integration (auth, onboarding,
-everything). So the code **never creates the file**: it is a no-op until HA has
-written its own entry. PostStart calls it after HA's entry exists and restarts
-HA (in-container restart via the process manager) to apply it.
+**Is there a supported write API?** Earlier notes here wrongly said there was
+none. The actual surfaces in HA 2026.9:
+
+- **REST:** the http integration registers exactly one HTTP view —
+  `GET /api/core/http_config` (`HassioHTTPConfigView`) — and it is **read-only**
+  and **Supervisor-only** (`get()` raises 404 unless the request arrives over the
+  Supervisor Unix socket, which the Container image has no). No REST write path.
+- **Websocket (admin):** `http/config` (read), `http/config/configure` (write a
+  new **pending** config validated by HA's own `HTTP_STORAGE_SCHEMA`),
+  `http/config/promote` (pending → stable)
+  (`homeassistant/components/http/websocket_api.py`).
+
+**Fix (current code).** `ensureReverseProxy` in `configurator.go` merges
+`use_x_forwarded_for` + `trusted_proxies` into the stored entry's `data.stable`
+object while preserving every other field HA wrote. We write `data.stable`
+directly rather than drive `http/config/configure` over the websocket:
+
+- `configure` writes into **`pending`**, which auto-reverts to `stable` after
+  `AUTO_REVERT_DELAY` (5 min) unless explicitly `promote`d, and **recovery mode
+  always uses `stable`** — so a trust value parked in `pending` disappears on
+  the next boot. `stable` is the durable slot with no revert timer.
+- The merge only flips the two keys the schema already permits and never builds
+  the envelope itself — it no-ops until HA has written its own valid entry — so
+  there is no schema/brick risk from writing `data.stable` directly. (The older
+  "rejects hand-written entries" warning only applied to hand-creating the whole
+  file, which we still never do.)
+- The websocket path would also need an admin auth handshake over a socket just
+  to end up doing the same reload the next step describes — for a value we need
+  durable, not "trial-then-promote".
+
+**Applying the config reload (the subtle part).** The store is read **only at
+HA startup** (`async_setup → async_load_config → server.async_initialize(
+use_x_forwarded_for=…)`); nothing hot-applies `use_x_forwarded_for`, and
+`http/config/configure` doesn't either — it applies by *restarting* HA. So a
+reload is always required; the only question is whether it actually happens.
+`homeassistant.restart` (what `configure` calls) is a **soft restart**: it
+clean-shuts-down HA and exits with `RESTART_EXIT_CODE = 100`, expecting the
+launcher to re-exec. Under the official Container image that re-exec is the
+container-init's (s6) job and is **not reliable here** — in the e2e the process
+kept serving with the pre-patch `use_x_forwarded_for` for minutes after the
+restart call (s6 boot count stayed at 1). That is the bug this section documents.
+
+Therefore the reload is done as a **real container restart through the
+host-agent's `container.Runtime`**, injected into the configurator as a `Deps`
+callback (the orchestrator stays the only executor of side effects — the
+configurator holds no shell/podman handle itself), never HA's soft restart.
+`waitForProxyTrust` then polls a forged-`X-Forwarded-For` probe of `/api/` to
+confirm the running process actually loaded the trust before the node goes
+RUNNING: **400** = still stale (retry), anything else that connects (200, or
+the real 2026.9 **401** Bearer) = the forward middleware passed = trust live.
+`PreStart` also self-heals a stale running process (trusted on disk, live probe
+400) by returning `changed=true`, which makes the orchestrator recreate the
+container. The on-disk patch proves nothing about the live process; the probe
+does.
 
 The stored entry HA writes looks like (v2 layout):
 
@@ -230,23 +279,29 @@ was **not** the image pull. The chain:
    orchestrator treats as terminal — nothing auto-reconciles it; only an explicit
    install intent resets errored nodes (`pipeline.resetErroredNodes`).
 
-Fix: exchange the onboarding authorization code for a real access token (see
-"First-run onboarding" above) so the restart has a token. And if no token is
-available — e.g. a retry against an already-onboarded HA, which never re-issues a
-code — PostStart fails the pass with a self-describing error instead of failing
-opaquely: the patched entry is on disk, and the retry install resets the errored
-node and recreates the container, so HA loads the trust with no token at all.
+Historical fix (token exchange): the onboarding authorization code is now
+exchanged for a real access token (see "First-run onboarding" above), which
+resolved the original empty-token symptom under the then-current API-restart
+design.
+
+**Superseded by a container restart (current).** The API restart is gone: the
+reload is now a host-runtime **container** restart through the `Deps`
+`RestartContainer` callback (see "Applying the config reload"). A container
+stop+start needs **no admin token**, so the whole "no access token to restart"
+failure class cannot recur — and the already-onboarded retry that used to strand
+the node in ERROR now simply restarts the container and applies the trust. The
+onboarding code is still exchanged (the owner still has to be created) but the
+restart no longer consumes the token.
 
 ## Open items (tracked)
 
 1. **First-try install must work — FIXED.** The fresh-host failure was
-   "no access token to restart Home Assistant", **not** the image pull (the
-   earlier image-pull hypothesis was wrong). Onboarding returns an authorization
-   code, never an `access_token`; the old code parsed `access_token`, so the
-   post-trust restart always had an empty token. Now exchanged via `/auth/token`
-   (see "First-run onboarding" + "Why a retry used to be needed"). Covered by
-   `TestEnsureOnboardedExchangesAuthCodeForToken` and
-   `TestPostStartAlreadyOnboardedSkipsRestart`.
+   "no access token to restart Home Assistant" (the old token-bearing API
+   restart), **not** the image pull (that hypothesis was wrong). It is fixed
+   two ways now: the onboarding code is exchanged for a token via `/auth/token`
+   (`TestEnsureOnboardedExchangesAuthCodeForToken`), and — decisively — the
+   restart is now a tokenless container restart, so an already-onboarded retry
+   applies the trust too (`TestPostStartAlreadyOnboardedAppliesTrustViaContainerRestart`).
 2. **E2E test must drive HA's OIDC landing page.** The current spec navigates to
    the tile and assumes a direct redirect; instead the browser must click the
    HA OIDC landing page buttons (two screens: "Log in with Bloud" → the

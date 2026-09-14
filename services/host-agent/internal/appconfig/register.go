@@ -13,6 +13,7 @@
 package appconfig
 
 import (
+	"context"
 	"log/slog"
 
 	"codeberg.org/d-buckner/bloud/apps/authentik"
@@ -92,7 +93,10 @@ func RegisterSystem(
 // AppDeps builds the dependency set passed to app configurator factories.
 // hosts may be nil (tests/CLI mode), in which case the static SSO base URL
 // is used.
-func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State) configurator.Deps {
+// restartContainer (may be nil in CLI/tests) is the host-runtime callback
+// configurators use to force a running container to re-exec and reload
+// on-disk config; it is plumbed straight into Deps.
+func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, restartContainer func(ctx context.Context, name string) error) configurator.Deps {
 	primaryBaseURL := func() string {
 		if hosts != nil {
 			return hosts.Get().PrimaryBaseURL()
@@ -100,9 +104,10 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State) conf
 		return cfg.SSOBaseURL
 	}
 	return configurator.Deps{
-		Logger:         logger,
-		Secrets:        cfg.Secrets,
-		PrimaryBaseURL: primaryBaseURL,
-		TraefikPort:    cfg.TraefikPort,
+		Logger:           logger,
+		Secrets:          cfg.Secrets,
+		PrimaryBaseURL:   primaryBaseURL,
+		TraefikPort:      cfg.TraefikPort,
+		RestartContainer: restartContainer,
 	}
 }
