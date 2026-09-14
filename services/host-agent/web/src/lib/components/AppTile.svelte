@@ -3,7 +3,6 @@
 // Copyright (c) 2026 Daniel Buckner
 	import AppIcon from './AppIcon.svelte';
 	import { visibleApps, loading } from '$lib/stores/apps';
-	import { appProgress } from '$lib/stores/appProgress';
 	import { type App } from '$lib/types';
 
 	interface Props {
@@ -15,7 +14,6 @@
 	let { itemId, onAppClick, onAppContextMenu }: Props = $props();
 
 	let app = $derived($visibleApps.find((a) => a.catalog_id === itemId));
-	let progress = $derived(app ? $appProgress[app.catalog_id] ?? null : null);
 	let displayName = $derived(app?.display_name ?? itemId);
 	let status = $derived(app?.status ?? null);
 	let isInstalling = $derived(
@@ -24,28 +22,9 @@
 	let isFailed = $derived(status === 'failed');
 	let isDegraded = $derived(status === 'error');
 	let isStopped = $derived(status === 'stopped');
-
-	// Phase label under the icon while work is in flight. The spinner is the
-	// fallback for the brief window before the first node/pull event arrives.
-	let phase = $derived(progress?.phase ?? null);
-	let phaseLabel = $derived.by(() => {
-		if (!isInstalling || !phase || phase === 'failed') return null;
-		const base: Record<string, string> = {
-			queued: 'Queued',
-			pulling: 'Pulling image',
-			configuring: 'Configuring',
-			starting: 'Starting',
-			finalizing: 'Finalizing',
-			running: 'Ready'
-		};
-		const label = base[phase] ?? phase;
-		if (phase === 'pulling' && progress?.percent != null) return `${label} · ${progress.percent}%`;
-		return label;
-	});
-	let showSpinner = $derived(isInstalling && !phaseLabel);
-	let showProgressBar = $derived(
-		isInstalling && phase === 'pulling' && progress?.percent != null
-	);
+	// While installing, the tile shows only the app name; the icon itself
+	// carries the loading animation (a spinning accent ring). Live phase
+	// detail lives in the install detail modal, not on the tile.
 </script>
 
 <!-- Tiles stay clickable in every state: installing/failed open the install
@@ -61,22 +40,15 @@
 >
 	<div class="app-icon-wrapper">
 		<AppIcon appName={itemId} displayName={displayName} size="lg" transparent={isInstalling} />
-		{#if showSpinner}
-			<div class="install-spinner"></div>
+		{#if isInstalling}
+			<div class="install-spinner" role="status" aria-label="Installing"></div>
 		{/if}
 	</div>
 	<span class="app-label">{displayName}</span>
-	{#if phaseLabel}
-		<span class="phase-label">{phaseLabel}</span>
-	{:else if isFailed}
+	{#if isFailed}
 		<span class="phase-label failed">Failed</span>
 	{:else if isDegraded}
 		<span class="phase-label degraded">Degraded</span>
-	{/if}
-	{#if showProgressBar}
-		<div class="progress-track">
-			<div class="progress-fill" style="width: {progress?.percent ?? 0}%"></div>
-		</div>
 	{/if}
 </button>
 
@@ -130,11 +102,11 @@
 
 	.install-spinner {
 		position: absolute;
-		inset: -4px;
-		border: 2px solid var(--color-border);
+		inset: -5px;
+		border: 3px solid var(--color-border);
 		border-top-color: var(--color-accent);
 		border-radius: 50%;
-		animation: spin 1s linear infinite;
+		animation: spin 0.9s linear infinite;
 	}
 
 	@keyframes spin {
@@ -186,21 +158,4 @@
 		color: var(--color-warning, #d97706);
 	}
 
-	.progress-track {
-		position: absolute;
-		bottom: 0;
-		left: 10%;
-		width: 80%;
-		height: 3px;
-		border-radius: 2px;
-		background: var(--color-border-subtle, var(--color-border));
-		overflow: hidden;
-	}
-
-	.progress-fill {
-		height: 100%;
-		border-radius: 2px;
-		background: var(--color-accent);
-		transition: width 0.4s ease;
-	}
 </style>

@@ -7,8 +7,8 @@ import { getAppStatus, uninstallApp, waitForApp } from '../lib/api';
 // (plans/app-install-streaming.md):
 //   - the catalog card shows the estimated download size
 //   - install click -> the tile appears on the home grid within 2 s with a
-//     live phase label (the install 202 carries the app record; no polling
-//     round-trip)
+//     loading spinner on the icon (the tile carries only the app name as
+//     text; the install 202 carries the app record, no polling round-trip)
 //   - clicking the installing tile opens the live install modal with the
 //     ordered step timeline
 //   - the app converges to running and the tile reflects it
@@ -52,9 +52,9 @@ test.describe('live install state (install streaming)', () => {
     const tile = page.locator('.app-slot', { hasText: 'Jellyfin' }).first();
     await expect(tile).toBeVisible({ timeout: 5_000 });
 
-    // A phase label (or the brief pre-phase spinner) is visible while
-    // installing.
-    await expect(tile.locator('.phase-label, .install-spinner').first()).toBeVisible({
+    // The icon spinner is visible while installing (the tile itself shows
+    // no phase text — live phase detail lives in the install modal).
+    await expect(tile.locator('.install-spinner')).toBeVisible({
       timeout: 2_000,
     });
 
@@ -77,7 +77,7 @@ test.describe('live install state (install streaming)', () => {
     // per-test timeout for the remaining assertions.
     await waitForApp('jellyfin', 'running', 12 * 60_000);
 
-    // The tile reflects running: no phase label, no spinner.
+    // The tile reflects running: no spinner.
     await expect(tile.locator('.phase-label')).toHaveCount(0, { timeout: 30_000 });
     await expect(tile.locator('.install-spinner')).toHaveCount(0);
   });
