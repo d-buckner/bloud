@@ -118,20 +118,16 @@ jobs:
       - name: Debug on failure
         if: failure()
         run: |
-          echo "=== Host-agent lifecycle (jellyfin / phases / errors) ==="
+          echo "=== Host-agent lifecycle (phases / errors) ==="
           echo "=== Deployed host-agent binary (cache check) ==="
           ls -la /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>&1 || true
           stat -c 'modified: %y  size: %s bytes' /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>&1 || true
           systemctl --user show -p ExecMainStartTimestamp bloud-e2e-host-agent.service 2>&1 || true
-          # Proves the 503-retry fix is compiled in: this log string only
-          # exists in the binary if apps/jellyfin's retry loop was built in.
-          echo "=== 503-retry fix compiled in (expect: waiting for Jellyfin API) ==="
-          strings /var/tmp/bloud-e2e-runtime/host-agent/host-agent 2>/dev/null | grep -i 'waiting for Jellyfin API' | head -1 || echo "NOT FOUND - stale binary?"
           journalctl --user -u bloud-e2e-host-agent.service --no-pager 2>&1 \
-            | grep -iE 'jellyfin|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|"level":"(error|warn)"' \
+            | grep -iE '${{ matrix.app }}|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|system info|503|loading|"level":"(error|warn)"' \
             | tail -150 || true
-          echo "=== Jellyfin container logs ==="
-          podman logs --tail 80 apps-jellyfin 2>&1 || true
+          echo "=== App container logs ==="
+          podman logs --tail 80 "apps-${{ matrix.app }}" 2>&1 || true
           echo "=== Podman containers ==="
           podman ps -a 2>&1 || true
           echo "=== Podman socket ==="
@@ -140,62 +136,3 @@ jobs:
           ls -la /var/tmp/bloud-e2e-runtime/ 2>&1 || true
           echo "=== Ports ==="
           ss -tlnp 2>&1 || true
-
-      - name: Probe ingress + HA reverse-proxy trust (400 diagnosis)
-        if: failure()
-        run: |
-          # The HA popup fails with "400: Bad Request" from aiohttp even though
-          # the route + container are up. Hypothesis: HA's http integration does
-          # not trust the peer IP Traefik's proxied request arrives from, so its
-          # forwarded middleware rejects X-Forwarded-* (see apps/homeassistant/
-          # INTEGRATION.md). trusted_proxies is hardcoded to 10.0.0.0/8; if CI's
-          # apps-net subnet is outside that, every proxied request 400s. This step
-          # captures the ACTUAL peer IP HA sees, so the fix trusts the right range.
-          APP="${{ matrix.app }}"
-          CTR="apps-$APP"
-          ROUTES=/var/tmp/bloud-e2e-runtime/data/traefik/dynamic/apps-routes.yml
-          echo "=== live apps-routes.yml ==="
-          cat "$ROUTES" 2>&1 || echo "NO ROUTE FILE"
-          echo "=== $CTR state: started-at, restart count, networks ==="
-          podman inspect "$CTR" \
-            --format 'startedAt={{.State.StartedAt}} exitCode={{.State.ExitCode}} restarted={{.RestartCount}} {{json .NetworkSettings.Networks}}' 2>&1 || true
-          echo "=== $CTR container-side IP + default route ==="
-          podman exec "$CTR" sh -c 'ip -4 addr show 2>/dev/null; echo "--routes--"; ip route 2>/dev/null' 2>&1 || true
-          echo "=== fresh proxied request: Host: $APP.localhost -> :8080 ==="
-          curl -sS -D - -o /tmp/app_body -H "Host: $APP.localhost" \
-            http://localhost:8080/ 2>&1 || true
-          echo "--- body (first 400 bytes) ---"; head -c 400 /tmp/app_body 2>&1 || true; echo
-          echo "=== stored HA http config entry (is trust persisted?) ==="
-          cat /var/tmp/bloud-e2e-runtime/data/homeassistant/config/.storage/http 2>&1 || echo "NO STORED ENTRY"
-          echo "=== config.yaml auth block (what HA actually loads) ==="
-          cat /var/tmp/bloud-e2e-runtime/data/homeassistant/config/configuration.yaml 2>&1 | grep -iA12 'auth_oidc' || echo "NO OIDC BLOCK"
-
-          echo "=== $CTR recent logs (reverse-proxy / forwarded / trusted) ==="
-          podman logs --tail 200 "$CTR" 2>&1 \
-            | grep -iE 'forward|trust|proxy|X-Forwarded|400|Bad Request|not set.?up' | tail -40 || true
-          echo "=== full recent $CTR logs (last 40) ==="
-          podman logs --tail 40 "$CTR" 2>&1 || true
-
-      - name: HA restart audit (did the first trust-restart fire?)
-        if: failure()
-        run: |
-          # The trust fix needs a process reload after patching .storage/http.
-          # The jellyfin-oriented grep above filters out the HA-specific
-          # restart/onboard lines (they contain no matching term), so dump the
-          # FULL homeassistant host-agent journal unfiltered and tally the
-          # decisive signals: container recreate, owner creation, restart,
-          # already-onboarded. Cross-check against the number of s6 process
-          # boots in the container log to see if HA ever actually reloaded.
-          J="journalctl --user -u bloud-e2e-host-agent.service --no-pager"
-          echo "=== FULL homeassistant host-agent journal (unfiltered) ==="
-          $J 2>/dev/null | grep -i 'homeassistant' || echo "(no homeassistant journal lines)"
-          echo "=== signal tally across the whole HA journal ==="
-          for s in 'downloading hass-oidc-auth' 'PreStart complete' 'config changed, removing container before re-create' 'first-run owner created' 'restarting Home Assistant to apply reverse-proxy trust' 'already fully onboarded' 'reverse-proxy trust written but' 'PostStart complete'; do
-            n=$($J 2>/dev/null | grep -c "$s" || true)
-            echo "  [$n] $s"
-          done
-          echo "=== s6 process boots in container log (reload count) ==="
-          podman logs "apps-${{ matrix.app }}" 2>&1 \
-            | grep -c 's6-rc: info: service legacy-services: starting' || echo 0
-          echo "=== container StartedAt vs StoredTrust created_at ==="
-          podman inspect "apps-${{ matrix.app }}" --format 'startedAt={{.State.StartedAt}}' 2>&1 || true
