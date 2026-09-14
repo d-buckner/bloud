@@ -291,103 +291,21 @@ func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string
 		return false, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.componentURL, nil)
+	archivePath, err := c.downloadComponentZip(ctx, customDir)
 	if err != nil {
 		return false, err
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
-	}
-
-	archive, err := os.CreateTemp(customDir, ".hass-oidc-auth-*.zip")
-	if err != nil {
-		return false, err
-	}
-	archivePath := archive.Name()
 	defer func() { _ = os.Remove(archivePath) }()
 
-	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
-		_ = archive.Close()
-		return false, err
-	}
-	if err := archive.Close(); err != nil {
-		return false, err
-	}
-	if c.componentSHA != "" && fmt.Sprintf("%x", hash.Sum(nil)) != c.componentSHA {
-		return false, fmt.Errorf("download checksum mismatch")
-	}
-
-	// The release zip is flat (files at the archive root) — extract into the
-	// target dir, no top-level entry to strip.
-	reader, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = reader.Close() }()
-
-	stagingDir, err := os.MkdirTemp(customDir, ".auth_oidc-*")
+	stagingDir, err := extractZipToStaging(archivePath, customDir, ".auth_oidc-*")
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = os.RemoveAll(stagingDir) }()
-	for _, file := range reader.File {
-		destination := filepath.Join(stagingDir, file.Name)
-		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
-			return false, fmt.Errorf("archive contains invalid path %q", file.Name)
-		}
-		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(destination, 0755); err != nil {
-				return false, err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
-			return false, err
-		}
-		source, err := file.Open()
-		if err != nil {
-			return false, err
-		}
-		mode := file.Mode()
-		if mode == 0 {
-			mode = 0644
-		}
-		out, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-		if err != nil {
-			_ = source.Close()
-			return false, err
-		}
-		_, copyErr := io.Copy(out, source)
-		closeErr := out.Close()
-		_ = source.Close()
-		if copyErr != nil {
-			return false, copyErr
-		}
-		if closeErr != nil {
-			return false, closeErr
-		}
-	}
-	// Sanity-check the payload: the domain's manifest must be present and must
-	// declare the auth provider domain (guards against a wrong asset).
-	manifest, err := os.ReadFile(filepath.Join(stagingDir, "manifest.json"))
+
+	version, err := validateComponentManifest(stagingDir)
 	if err != nil {
-		return false, fmt.Errorf("archive did not contain manifest.json: %w", err)
-	}
-	var m struct {
-		Domain  string `json:"domain"`
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(manifest, &m); err != nil {
-		return false, fmt.Errorf("archive manifest.json is not valid JSON: %w", err)
-	}
-	if m.Domain != componentDomain {
-		return false, fmt.Errorf("archive manifest domain %q != %q", m.Domain, componentDomain)
+		return false, err
 	}
 
 	if _, err := os.Stat(targetDir); err == nil {
@@ -398,8 +316,120 @@ func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string
 	if err := os.Rename(stagingDir, targetDir); err != nil {
 		return false, err
 	}
-	c.logger.Info("hass-oidc-auth installed", "path", targetDir, "version", m.Version)
+	c.logger.Info("hass-oidc-auth installed", "path", targetDir, "version", version)
 	return true, nil
+}
+
+// downloadComponentZip fetches the component release into a temp zip inside
+// dir and verifies its checksum (when configured). Returns the zip path.
+func (c *Configurator) downloadComponentZip(ctx context.Context, dir string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.componentURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	archive, err := os.CreateTemp(dir, ".hass-oidc-auth-*.zip")
+	if err != nil {
+		return "", err
+	}
+	archivePath := archive.Name()
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
+		_ = archive.Close()
+		return "", err
+	}
+	if err := archive.Close(); err != nil {
+		return "", err
+	}
+	if c.componentSHA != "" && fmt.Sprintf("%x", hash.Sum(nil)) != c.componentSHA {
+		return "", fmt.Errorf("download checksum mismatch")
+	}
+	return archivePath, nil
+}
+
+// extractZipToStaging unpacks the zip into a fresh temp dir created in
+// parent with the given glob pattern. Rejects archive entries that would
+// escape the staging dir (zip-slip guard).
+func extractZipToStaging(archivePath, parent, pattern string) (string, error) {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = reader.Close() }()
+
+	stagingDir, err := os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", err
+	}
+
+	for _, file := range reader.File {
+		destination := filepath.Join(stagingDir, file.Name)
+		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
+			return "", fmt.Errorf("archive contains invalid path %q", file.Name)
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(destination, 0755); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+			return "", err
+		}
+		source, err := file.Open()
+		if err != nil {
+			return "", err
+		}
+		mode := file.Mode()
+		if mode == 0 {
+			mode = 0644
+		}
+		out, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			_ = source.Close()
+			return "", err
+		}
+		_, copyErr := io.Copy(out, source)
+		closeErr := out.Close()
+		_ = source.Close()
+		if copyErr != nil {
+			return "", copyErr
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+	}
+	return stagingDir, nil
+}
+
+// validateComponentManifest sanity-checks the payload: the domain's manifest
+// must be present and declare the expected auth provider domain (guards
+// against a wrong asset). Returns the manifest's version string.
+func validateComponentManifest(stagingDir string) (string, error) {
+	manifest, err := os.ReadFile(filepath.Join(stagingDir, "manifest.json"))
+	if err != nil {
+		return "", fmt.Errorf("archive did not contain manifest.json: %w", err)
+	}
+	var m struct {
+		Domain  string `json:"domain"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		return "", fmt.Errorf("archive manifest.json is not valid JSON: %w", err)
+	}
+	if m.Domain != componentDomain {
+		return "", fmt.Errorf("archive manifest domain %q != %q", m.Domain, componentDomain)
+	}
+	return m.Version, nil
 }
 
 // installedComponentVersion returns the version recorded in the installed
@@ -830,22 +860,63 @@ func storedProxyTrusted(configDir string) bool {
 // access token (the only token usable for authenticated API calls after this
 // point), or "" when HA was already fully onboarded.
 func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (string, error) {
-	// /api/onboarding is served only once HA's onboarding integration has
-	// registered its routes — during boot the HTTP listener is already up
-	// (waitForAPI passes on any <500 response) while this route still 404s, so
-	// any non-2xx is retried until the deadline. A 404 is special: Home
-	// Assistant *deregisters* the endpoint once every step is closed, so a 404
-	// alongside an owner in the auth store means "already onboarded", not
-	// "still booting" — see ownerOnDisk.
-	var body []byte
+	body, alreadyOnboarded, err := c.pollOnboardingStatus(ctx, configDir)
+	if err != nil {
+		return "", err
+	}
+	if alreadyOnboarded {
+		return "", nil
+	}
+
+	var steps []onboardingStep
+	if err := json.Unmarshal(body, &steps); err != nil {
+		return "", fmt.Errorf("onboarding status malformed: %w", err)
+	}
+	// HA returns the first-run step flow (user, core_config, analytics,
+	// integration) with done flags. "user" is the gate: until the owner exists
+	// every visitor is redirected into the wizard; the remaining steps must be
+	// closed too, or the wizard keeps intercepting the sign-in page (see
+	// finishFirstRunSteps below).
+	if !userStepPending(steps) {
+		return "", nil
+	}
+
+	return c.createFirstRunOwner(ctx)
+}
+
+// onboardingStep is one entry of HA's /api/onboarding step list.
+type onboardingStep struct {
+	Step string `json:"step"`
+	Done bool   `json:"done"`
+}
+
+// userStepPending reports whether the "user" onboarding step is still open.
+func userStepPending(steps []onboardingStep) bool {
+	for _, s := range steps {
+		if s.Step == "user" && !s.Done {
+			return true
+		}
+	}
+	return false
+}
+
+// pollOnboardingStatus retries GET /api/onboarding until it succeeds or the
+// context deadline passes. /api/onboarding is served only once HA's
+// onboarding integration has registered its routes — during boot the HTTP
+// listener is already up (waitForAPI passes on any <500 response) while this
+// route still 404s, so any non-2xx is retried until the deadline. A 404 is
+// special: Home Assistant *deregisters* the endpoint once every step is
+// closed, so a 404 alongside an owner in the auth store means "already
+// onboarded" (alreadyOnboarded=true), not "still booting" — see ownerOnDisk.
+func (c *Configurator) pollOnboardingStatus(ctx context.Context, configDir string) ([]byte, bool, error) {
+	var lastErr error
 	for {
 		r, err := c.apiGet(ctx, "/api/onboarding")
 		if err == nil {
 			b, _ := io.ReadAll(r.Body)
 			_ = r.Body.Close()
 			if r.StatusCode == http.StatusOK {
-				body = b
-				break
+				return b, false, nil
 			}
 			if r.StatusCode == http.StatusNotFound && ownerOnDisk(configDir) {
 				// Permanent 404: Home Assistant deregisters this endpoint once
@@ -856,39 +927,24 @@ func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (s
 				// the CLI rather than here) is picked up on this or the next
 				// pass, exactly as before.
 				c.logger.Info("Home Assistant already fully onboarded; onboarding endpoint not registered")
-				return "", nil
+				return nil, true, nil
 			}
-			err = fmt.Errorf("HTTP %d: %s", r.StatusCode, string(b))
+			lastErr = fmt.Errorf("HTTP %d: %s", r.StatusCode, string(b))
+		} else {
+			lastErr = err
 		}
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("timed out waiting for the Home Assistant onboarding API (HTTP listener is up but /api/onboarding keeps failing: %v): %w", err, ctx.Err())
+			return nil, false, fmt.Errorf("timed out waiting for the Home Assistant onboarding API (HTTP listener is up but /api/onboarding keeps failing: %v): %w", lastErr, ctx.Err())
 		case <-time.After(c.pollInterval):
 		}
 	}
-	var steps []struct {
-		Step string `json:"step"`
-		Done bool   `json:"done"`
-	}
-	if err := json.Unmarshal(body, &steps); err != nil {
-		return "", fmt.Errorf("onboarding status malformed: %w", err)
-	}
-	// HA returns the first-run step flow (user, core_config, analytics,
-	// integration) with done flags. "user" is the gate: until the owner exists
-	// every visitor is redirected into the wizard; the remaining steps must be
-	// closed too, or the wizard keeps intercepting the sign-in page (see
-	// finishFirstRunSteps below).
-	userPending := false
-	for _, s := range steps {
-		if s.Step == "user" && !s.Done {
-			userPending = true
-			break
-		}
-	}
-	if !userPending {
-		return "", nil
-	}
+}
 
+// createFirstRunOwner runs the first-run wizard: create the bootstrap owner,
+// exchange its one-shot authorization code for an access token, and close
+// the remaining onboarding steps. Returns the owner access token.
+func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) {
 	password, err := c.secrets.GenerateAppAdminPassword(appName)
 	if err != nil {
 		return "", fmt.Errorf("failed to obtain bootstrap password: %w", err)

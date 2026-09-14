@@ -636,28 +636,36 @@ func (o *Orchestrator) provisionTailnetSSO(ctx context.Context) bool {
 // Inter-app edges connect from each app's primary container to the provider's
 // primary container.
 func (o *Orchestrator) populateGraphNodes(appMap map[string]*store.InstalledApp) {
-	// Pass 1: create nodes.
-	for appName := range appMap {
-		var defs []catalog.ContainerDef
-		var hasCatalogContainers bool
-		if o.catalog != nil {
-			if catalogApp, err := o.catalog.Get(appName); err == nil && catalogApp != nil {
-				if len(catalogApp.Containers) > 0 {
-					defs = catalogApp.ContainerDefs()
-					hasCatalogContainers = true
-				}
-			}
-		}
+	o.createGraphNodes(appMap)
+	o.wireInAppEdges(appMap)
+	o.wireInterAppEdges(appMap)
+	o.setGraphTargets(appMap)
+}
 
+// containerDefsFor returns the catalog container defs for an installed app,
+// and whether the app declares any containers (vs. legacy single-node).
+func (o *Orchestrator) containerDefsFor(appName string) ([]catalog.ContainerDef, bool) {
+	if o.catalog == nil {
+		return nil, false
+	}
+	catalogApp, err := o.catalog.Get(appName)
+	if err != nil || catalogApp == nil || len(catalogApp.Containers) == 0 {
+		return nil, false
+	}
+	return catalogApp.ContainerDefs(), true
+}
+
+// Pass 1: create nodes — one per container def for multi-container apps,
+// one with the catalog ID for legacy/no-container apps.
+func (o *Orchestrator) createGraphNodes(appMap map[string]*store.InstalledApp) {
+	for appName := range appMap {
+		defs, hasCatalogContainers := o.containerDefsFor(appName)
 		if !hasCatalogContainers {
-			// Legacy or no-container app: one node with the catalog ID.
 			if existing, _ := o.graph.GetNode(appName); existing == nil {
 				_ = o.graph.AddNode(appName)
 			}
 			continue
 		}
-
-		// Multi-container app: create one node per container def.
 		for _, def := range defs {
 			if existing, _ := o.graph.GetNode(def.Name); existing == nil {
 				_ = o.graph.AddNode(def.Name)
@@ -665,28 +673,25 @@ func (o *Orchestrator) populateGraphNodes(appMap map[string]*store.InstalledApp)
 			o.registerContainerOwner(def.Name, appName)
 		}
 	}
+}
 
-	// Pass 2: wire within-app dependsOn edges for multi-container apps.
+// Pass 2: wire within-app dependsOn edges for multi-container apps.
+func (o *Orchestrator) wireInAppEdges(appMap map[string]*store.InstalledApp) {
 	for appName := range appMap {
-		if o.catalog == nil {
+		defs, ok := o.containerDefsFor(appName)
+		if !ok {
 			continue
 		}
-		catalogApp, err := o.catalog.Get(appName)
-		if err != nil || catalogApp == nil {
-			continue
-		}
-		if len(catalogApp.Containers) == 0 {
-			continue
-		}
-		defs := catalogApp.ContainerDefs()
 		for _, def := range defs {
 			for _, dep := range def.DependsOn {
 				_ = o.graph.AddEdge(def.Name, dep)
 			}
 		}
 	}
+}
 
-	// Pass 3: wire inter-app dependency edges.
+// Pass 3: wire inter-app dependency edges through each app's primary node.
+func (o *Orchestrator) wireInterAppEdges(appMap map[string]*store.InstalledApp) {
 	appDeps := computeAppDeps(appMap, o.catalog)
 	for appName, deps := range appDeps {
 		fromNode := o.primaryContainerNode(appName)
@@ -695,20 +700,19 @@ func (o *Orchestrator) populateGraphNodes(appMap map[string]*store.InstalledApp)
 			_ = o.graph.AddEdge(fromNode, toNode)
 		}
 	}
+}
 
-	// Pass 4: set all targets to RUNNING.
+// Pass 4: set every created node's target to RUNNING.
+func (o *Orchestrator) setGraphTargets(appMap map[string]*store.InstalledApp) {
 	for appName := range appMap {
-		if o.catalog != nil {
-			if catalogApp, err := o.catalog.Get(appName); err == nil && catalogApp != nil {
-				if defs := catalogApp.ContainerDefs(); len(defs) > 0 {
-					for _, def := range defs {
-						_ = o.graph.SetTargetStatus(def.Name, graph.StatusRunning)
-					}
-					continue
-				}
-			}
+		defs, ok := o.containerDefsFor(appName)
+		if !ok {
+			_ = o.graph.SetTargetStatus(appName, graph.StatusRunning)
+			continue
 		}
-		_ = o.graph.SetTargetStatus(appName, graph.StatusRunning)
+		for _, def := range defs {
+			_ = o.graph.SetTargetStatus(def.Name, graph.StatusRunning)
+		}
 	}
 }
 

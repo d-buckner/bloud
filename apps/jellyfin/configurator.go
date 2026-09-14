@@ -120,86 +120,18 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 		return false, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.pluginURL, nil)
+	archivePath, err := c.downloadPluginZip(ctx, pluginParent)
 	if err != nil {
 		return false, err
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
-	}
-
-	archive, err := os.CreateTemp(pluginParent, ".ldap-plugin-*.zip")
-	if err != nil {
-		return false, err
-	}
-	archivePath := archive.Name()
 	defer func() { _ = os.Remove(archivePath) }()
 
-	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
-		_ = archive.Close()
-		return false, err
-	}
-	if err := archive.Close(); err != nil {
-		return false, err
-	}
-	if c.pluginSHA256 != "" && fmt.Sprintf("%x", hash.Sum(nil)) != c.pluginSHA256 {
-		return false, fmt.Errorf("download checksum mismatch")
-	}
-
-	reader, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = reader.Close() }()
-
-	stagingDir, err := os.MkdirTemp(pluginParent, ".LDAP-Auth-*")
+	stagingDir, err := extractPluginZip(archivePath, pluginParent)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = os.RemoveAll(stagingDir) }()
-	for _, file := range reader.File {
-		destination := filepath.Join(stagingDir, file.Name)
-		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
-			return false, fmt.Errorf("plugin archive contains invalid path %q", file.Name)
-		}
-		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(destination, 0755); err != nil {
-				return false, err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
-			return false, err
-		}
-		source, err := file.Open()
-		if err != nil {
-			return false, err
-		}
-		mode := file.Mode()
-		if mode == 0 {
-			mode = 0644
-		}
-		target, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-		if err != nil {
-			_ = source.Close()
-			return false, err
-		}
-		_, copyErr := io.Copy(target, source)
-		closeErr := target.Close()
-		_ = source.Close()
-		if copyErr != nil {
-			return false, copyErr
-		}
-		if closeErr != nil {
-			return false, closeErr
-		}
-	}
+
 	if _, err := os.Stat(filepath.Join(stagingDir, "LDAP-Auth.dll")); err != nil {
 		return false, fmt.Errorf("plugin archive did not contain LDAP-Auth.dll")
 	}
@@ -211,6 +143,96 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 	}
 	c.logger.Info("LDAP plugin installed", "path", pluginDir)
 	return true, nil
+}
+
+// downloadPluginZip fetches the LDAP plugin release into a temp zip inside
+// dir and verifies its checksum (when configured). Returns the zip path.
+func (c *Configurator) downloadPluginZip(ctx context.Context, dir string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.pluginURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	archive, err := os.CreateTemp(dir, ".ldap-plugin-*.zip")
+	if err != nil {
+		return "", err
+	}
+	archivePath := archive.Name()
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
+		_ = archive.Close()
+		return "", err
+	}
+	if err := archive.Close(); err != nil {
+		return "", err
+	}
+	if c.pluginSHA256 != "" && fmt.Sprintf("%x", hash.Sum(nil)) != c.pluginSHA256 {
+		return "", fmt.Errorf("download checksum mismatch")
+	}
+	return archivePath, nil
+}
+
+// extractPluginZip unpacks the plugin zip into a fresh temp dir inside
+// parent, rejecting archive entries that would escape it (zip-slip guard).
+func extractPluginZip(archivePath, parent string) (string, error) {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = reader.Close() }()
+
+	stagingDir, err := os.MkdirTemp(parent, ".LDAP-Auth-*")
+	if err != nil {
+		return "", err
+	}
+
+	for _, file := range reader.File {
+		destination := filepath.Join(stagingDir, file.Name)
+		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
+			return "", fmt.Errorf("plugin archive contains invalid path %q", file.Name)
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(destination, 0755); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+			return "", err
+		}
+		source, err := file.Open()
+		if err != nil {
+			return "", err
+		}
+		mode := file.Mode()
+		if mode == 0 {
+			mode = 0644
+		}
+		target, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+		if err != nil {
+			_ = source.Close()
+			return "", err
+		}
+		_, copyErr := io.Copy(target, source)
+		closeErr := target.Close()
+		_ = source.Close()
+		if copyErr != nil {
+			return "", copyErr
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+	}
+	return stagingDir, nil
 }
 
 // jellyfinNetworkConfig returns the desired XML config for network.xml.
@@ -301,79 +323,11 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	c.logger.Info("PostStart: checking setup wizard status")
 
 	// 1. Check if setup wizard is complete.
-	// The container health check (curl -sf /System/Info/Public) passes on the
-	// first 200, but Jellyfin oscillates during first-run init — it briefly
-	// returns 200 then drops back to 503 "Server is loading" before stabilising.
-	// A single 503 here would fail PostStart, which the reconciler treats as a
-	// terminal node ERROR it never retries, so wait out the transient instead.
-	//
-	// ctx is detached from the pass (see PostStart), so the 2 s sleep between
-	// attempts cannot be cancelled mid-pass. The loop is bounded by the 90 s
-	// deadline on ctx.
-	var info *SystemInfo
-	var err error
-	for i := range 10 {
-		c.logger.Info("DBG retry-loop: iteration", "i", i, "ctx_err", ctx.Err())
-		if i > 0 {
-			select {
-			case <-time.After(2 * time.Second):
-				c.logger.Info("DBG retry-loop: sleep completed (2s elapsed)")
-			case <-ctx.Done():
-				c.logger.Info("DBG retry-loop: ctx.Done() fired during sleep", "ctx_err", ctx.Err())
-			}
-		}
-		info, err = c.getSystemInfo(ctx)
-		c.logger.Info("DBG retry-loop: getSystemInfo returned", "err", err, "info_nil", info == nil)
-		if err == nil {
-			c.logger.Info("DBG retry-loop: success, breaking")
-			break
-		}
-		// Break if the context was cancelled (e.g. orchestrator shutdown)
-		// or the 90 s deadline expired. A 503 or network error is not a
-		// context error — retry it.
-		isCanceled := errors.Is(err, context.Canceled)
-		isDeadline := errors.Is(err, context.DeadlineExceeded)
-		c.logger.Info("DBG retry-loop: error checks", "is_canceled", isCanceled, "is_deadline", isDeadline, "ctx_err", ctx.Err())
-		if isCanceled || isDeadline {
-			c.logger.Info("DBG retry-loop: context error, breaking")
-			break
-		}
-		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
-	}
-	c.logger.Info("DBG retry-loop: exited", "final_err", err, "info_nil", info == nil)
+	info, err := c.waitForSystemInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
 	}
-
-	if !info.StartupWizardCompleted {
-		// A fresh install reports the wizard as pending; Jellyfin 10.11.x
-		// may also briefly answer 200 mid-initialisation and then flip to
-		// 503 "Server is loading" while first-run init finishes. Poll for a
-		// completed read, but a 503 here must never fail PostStart: a
-		// failed PostStart is a terminal node ERROR the reconciler never
-		// retries, and the old code did exactly that when a slow cold
-		// start outlived the attempt cap. Keep the last good read and fall
-		// through — completeStartupWizard gates on /Startup/Configuration
-		// (503 while loading), which absorbs an API that hasn't settled.
-		for i := range 5 {
-			select {
-			case <-time.After(2 * time.Second):
-			case <-ctx.Done():
-			}
-			next, perr := c.getSystemInfo(ctx)
-			if perr != nil {
-				if errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) {
-					break
-				}
-				c.logger.Info("waiting for Jellyfin API (wizard check)", "attempt", i+1, "error", perr)
-				continue
-			}
-			info = next
-			if info.StartupWizardCompleted {
-				break
-			}
-		}
-	}
+	info = c.awaitWizardCompletion(ctx, info)
 
 	if !info.StartupWizardCompleted {
 		c.logger.Info("completing setup wizard")
@@ -403,6 +357,84 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 
 	c.logger.Info("PostStart complete")
 	return nil
+}
+
+// waitForSystemInfo polls /System/Info until it answers or the context ends.
+// The container health check (curl -sf /System/Info/Public) passes on the
+// first 200, but Jellyfin oscillates during first-run init — it briefly
+// returns 200 then drops back to 503 "Server is loading" before
+// stabilising. A single 503 here would fail PostStart, which the reconciler
+// treats as a terminal node ERROR it never retries, so wait out the
+// transient instead. ctx is detached from the pass (see PostStart), so the
+// 2 s sleep between attempts cannot be cancelled mid-pass; the loop is
+// bounded by the deadline on ctx.
+func (c *Configurator) waitForSystemInfo(ctx context.Context) (*SystemInfo, error) {
+	var info *SystemInfo
+	var err error
+	for i := range 10 {
+		c.logger.Info("DBG retry-loop: iteration", "i", i, "ctx_err", ctx.Err())
+		if i > 0 {
+			select {
+			case <-time.After(2 * time.Second):
+				c.logger.Info("DBG retry-loop: sleep completed (2s elapsed)")
+			case <-ctx.Done():
+				c.logger.Info("DBG retry-loop: ctx.Done() fired during sleep", "ctx_err", ctx.Err())
+			}
+		}
+		info, err = c.getSystemInfo(ctx)
+		c.logger.Info("DBG retry-loop: getSystemInfo returned", "err", err, "info_nil", info == nil)
+		if err == nil {
+			c.logger.Info("DBG retry-loop: success, breaking")
+			break
+		}
+		// Break if the context was cancelled (e.g. orchestrator shutdown)
+		// or the deadline expired. A 503 or network error is not a
+		// context error — retry it.
+		isCanceled := errors.Is(err, context.Canceled)
+		isDeadline := errors.Is(err, context.DeadlineExceeded)
+		c.logger.Info("DBG retry-loop: error checks", "is_canceled", isCanceled, "is_deadline", isDeadline, "ctx_err", ctx.Err())
+		if isCanceled || isDeadline {
+			c.logger.Info("DBG retry-loop: context error, breaking")
+			break
+		}
+		c.logger.Info("waiting for Jellyfin API", "attempt", i+1, "error", err)
+	}
+	c.logger.Info("DBG retry-loop: exited", "final_err", err, "info_nil", info == nil)
+	return info, err
+}
+
+// awaitWizardCompletion re-polls system info while the wizard still reads as
+// pending. Jellyfin 10.11.x may briefly answer 200 mid-initialisation and
+// then flip to 503 "Server is loading" while first-run init finishes. Poll
+// for a completed read, but a 503 here must never fail PostStart: a failed
+// PostStart is a terminal node ERROR the reconciler never retries, and the
+// old code did exactly that when a slow cold start outlived the attempt
+// cap. Keep the last good read and fall through — completeStartupWizard
+// gates on /Startup/Configuration (503 while loading), which absorbs an
+// API that hasn't settled. Returns the latest (possibly unchanged) info.
+func (c *Configurator) awaitWizardCompletion(ctx context.Context, info *SystemInfo) *SystemInfo {
+	if info.StartupWizardCompleted {
+		return info
+	}
+	for i := range 5 {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+		}
+		next, perr := c.getSystemInfo(ctx)
+		if perr != nil {
+			if errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) {
+				break
+			}
+			c.logger.Info("waiting for Jellyfin API (wizard check)", "attempt", i+1, "error", perr)
+			continue
+		}
+		info = next
+		if info.StartupWizardCompleted {
+			break
+		}
+	}
+	return info
 }
 
 // SystemInfo represents the /System/Info response

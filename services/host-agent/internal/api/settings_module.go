@@ -533,6 +533,22 @@ func (m *settingsModule) DeleteManagedUserHandler() http.HandlerFunc {
 	}
 }
 
+// wouldOrphanAdmin reports whether the current admin count is <= 1, i.e.
+// demoting another user would leave nobody with admin access.
+func (m *settingsModule) wouldOrphanAdmin() (bool, error) {
+	users, err := m.authentikClient.ListUsers()
+	if err != nil {
+		return false, err
+	}
+	adminCount := 0
+	for _, u := range users {
+		if u.IsAdmin {
+			adminCount++
+		}
+	}
+	return adminCount <= 1, nil
+}
+
 // SetUserRoleHandler changes a user's role by adding/removing from Authentik Admins group.
 func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -576,21 +592,13 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 		}
 
 		if req.Role == store.RoleMember {
-			users, err := m.authentikClient.ListUsers()
+			lastAdmin, err := m.wouldOrphanAdmin()
 			if err != nil {
 				m.logger.Error("failed to list users for last-admin check", "error", err)
 				respondError(w, http.StatusInternalServerError, "failed to verify admin count")
 				return
 			}
-
-			adminCount := 0
-			for _, u := range users {
-				if u.IsAdmin {
-					adminCount++
-				}
-			}
-
-			if adminCount <= 1 {
+			if lastAdmin {
 				respondError(w, http.StatusBadRequest, "cannot demote the last admin")
 				return
 			}

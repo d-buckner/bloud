@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -224,37 +225,14 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	}
 
 	// Infer commands and risk areas from changed files
-	triggeredIDs := map[string]bool{}
-	riskAreas := map[string]bool{}
-	var unmapped []string
-
-	for _, f := range changedFiles {
-		matched := false
-		for _, p := range manifest.Inference.Paths {
-			if pathMatches(f, p.Pattern) {
-				matched = true
-				for _, t := range p.Triggers {
-					triggeredIDs[t] = true
-				}
-				for _, r := range p.RiskAreas {
-					riskAreas[r] = true
-				}
-			}
-		}
-		if !matched {
-			unmapped = append(unmapped, f)
-		}
-	}
+	triggeredIDs, riskAreas, unmapped := inferTriggers(changedFiles, manifest)
 
 	result.UnmappedFiles = unmapped
-	for r := range riskAreas {
-		result.RiskAreas = append(result.RiskAreas, r)
-	}
-	sort.Strings(result.RiskAreas)
+	result.RiskAreas = riskAreas
 
 	// Determine confidence
 	result.Confidence = "high"
-	result.ConfidenceReason = "all changed files mapped to commands"
+	result.ConfidenceReason = "all changed files mapped to validation commands"
 	if len(unmapped) > 0 {
 		result.Confidence = "medium"
 		result.ConfidenceReason = fmt.Sprintf("%d file(s) not mapped to any validation command", len(unmapped))
@@ -270,24 +248,7 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	}
 
 	// Detect affected apps
-	appSet := map[string]bool{}
-	for appName, appDef := range manifest.Apps {
-		for _, f := range changedFiles {
-			if appSet[appName] {
-				break
-			}
-			for _, pattern := range appDef.Files {
-				if pathMatches(f, pattern) {
-					appSet[appName] = true
-					break
-				}
-			}
-		}
-	}
-	for a := range appSet {
-		result.Apps = append(result.Apps, a)
-	}
-	sort.Strings(result.Apps)
+	result.Apps = detectAffectedApps(changedFiles, manifest)
 
 	if flags.dryRun {
 		printDryRun("changed", commands, result.RiskAreas, changedFiles, flags)
@@ -324,6 +285,65 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	writeLedger(root, result, flags)
 	return exitCode
+}
+
+// inferTriggers maps changed files through the manifest's inference globs:
+// which validation command IDs are triggered, which risk areas are hit,
+// and which files matched no pattern at all.
+func inferTriggers(changedFiles []string, manifest *validationManifest) (map[string]bool, []string, []string) {
+	triggeredIDs := map[string]bool{}
+	riskAreaSet := map[string]bool{}
+	var unmapped []string
+
+	for _, f := range changedFiles {
+		matched := false
+		for _, p := range manifest.Inference.Paths {
+			if pathMatches(f, p.Pattern) {
+				matched = true
+				for _, t := range p.Triggers {
+					triggeredIDs[t] = true
+				}
+				for _, r := range p.RiskAreas {
+					riskAreaSet[r] = true
+				}
+			}
+		}
+		if !matched {
+			unmapped = append(unmapped, f)
+		}
+	}
+
+	var riskAreas []string
+	for r := range riskAreaSet {
+		riskAreas = append(riskAreas, r)
+	}
+	sort.Strings(riskAreas)
+	return triggeredIDs, riskAreas, unmapped
+}
+
+// detectAffectedApps returns the sorted names of catalog apps whose file
+// globs match any changed file.
+func detectAffectedApps(changedFiles []string, manifest *validationManifest) []string {
+	appSet := map[string]bool{}
+	for appName, appDef := range manifest.Apps {
+		for _, f := range changedFiles {
+			if appSet[appName] {
+				break
+			}
+			for _, pattern := range appDef.Files {
+				if pathMatches(f, pattern) {
+					appSet[appName] = true
+					break
+				}
+			}
+		}
+	}
+	var apps []string
+	for a := range appSet {
+		apps = append(apps, a)
+	}
+	sort.Strings(apps)
+	return apps
 }
 
 // --- Integration tier ---
@@ -453,129 +473,37 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	qemu := name == "qemu"
 	rt := integrationRuntimeDir
 
-	// Step 2: Guest preflight.
-	step("Checking integration prerequisites")
-	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationPreflightScript}); err != nil || res.ExitCode != 0 {
-		detail := strings.TrimSpace(res.Stderr)
-		if detail == "" && err != nil {
-			detail = err.Error()
-		}
-		errorf("integration prerequisites missing (recreate the VM): %s", detail)
-		return fail("integration prerequisites missing")
-	}
-
-	// Step 3: Stop any host-agent holding port 3000. The validation runtime
-	// takes the port over for the duration of the tier; the dev runtime
-	// state (data, containers) is untouched and ./bloud dev converges it
-	// back afterwards.
-	step("Stopping any running host-agent (validation runtime takes over port 3000)")
-	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationStopAgentScript}); err != nil || res.ExitCode != 0 {
-		errorf("failed to stop running host-agent: %v", err)
-		return fail("failed to stop running host-agent")
+	// Steps 2-3: guest preflight + take over port 3000. The validation
+	// runtime takes the port over for the duration of the tier; the dev
+	// runtime state (data, containers) is untouched and ./bloud dev
+	// converges it back afterwards.
+	if reason := integrationPrepareGuest(ctx, ex, step); reason != "" {
+		return fail(reason)
 	}
 
 	// Step 4: Build artifacts locally.
-	step("Building host-agent for linux/" + runtime.GOARCH)
 	tmpDir, err := os.MkdirTemp("", "bloud-validate-build-*")
 	if err != nil {
 		errorf("failed to create build dir: %v", err)
 		return fail("could not create build dir")
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
-
 	hostAgentSrc := filepath.Join(root, "services", "host-agent")
-	binaryPath := filepath.Join(tmpDir, "host-agent")
-	buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/host-agent")
-	buildCmd.Dir = hostAgentSrc
-	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Stderr = os.Stderr
-	if err := buildCmd.Run(); err != nil {
-		errorf("host-agent build failed: %v", err)
-		return fail("host-agent build failed")
-	}
-
-	step("Building frontend")
-	webCmd := exec.Command("npm", "run", "build", "--workspace=@bloud/host-agent-web")
-	webCmd.Dir = root
-	webCmd.Stdout = os.Stdout
-	webCmd.Stderr = os.Stderr
-	if err := webCmd.Run(); err != nil {
-		errorf("frontend build failed: %v", err)
-		return fail("frontend build failed")
-	}
-
-	step("Building integration test binary")
-	testBinary := filepath.Join(tmpDir, "bloud-integration.test")
-	testBuild := exec.Command("go", "test", "-tags", "integration", "-c", "-o", testBinary, "./internal/e2e")
-	testBuild.Dir = hostAgentSrc
-	testBuild.Stdout = os.Stdout
-	testBuild.Stderr = os.Stderr
-	if err := testBuild.Run(); err != nil {
-		errorf("integration test build failed: %v", err)
-		return fail("integration test build failed")
+	binaryPath, testBinary, err := integrationBuildArtifacts(root, hostAgentSrc, tmpDir, step)
+	if err != nil {
+		return fail(err.Error())
 	}
 
 	// Step 5: Deploy to the validation runtime.
 	step("Deploying to " + rt)
-	if _, err := ex.Run(ctx, executor.RunSpec{
-		Command: fmt.Sprintf("rm -rf %s/host-agent %s/apps && mkdir -p %s/host-agent/web/build %s/apps %s/data %s/bin", rt, rt, rt, rt, rt, rt),
-	}); err != nil {
-		errorf("failed to prepare runtime dir: %v", err)
-		return fail("failed to prepare runtime dir")
-	}
-	deployments := []struct {
-		from string
-		to   string
-	}{
-		{binaryPath, rt + "/host-agent/host-agent"},
-		{filepath.Join(hostAgentSrc, "web", "build"), rt + "/host-agent/web/build"},
-		{filepath.Join(root, "apps"), rt + "/apps"},
-		{testBinary, rt + "/bin/bloud-integration.test"},
-	}
-	for _, d := range deployments {
-		if err := ex.CopyTo(ctx, d.from, d.to); err != nil {
-			errorf("failed to copy %s into guest: %v", d.from, err)
-			return fail("deployment failed")
-		}
-	}
-	if _, err := ex.Run(ctx, executor.RunSpec{
-		Command: fmt.Sprintf("chmod 755 %s/host-agent/host-agent %s/bin/bloud-integration.test", rt, rt),
-	}); err != nil {
-		errorf("failed to chmod deployed binaries: %v", err)
-		return fail("deployment failed")
-	}
-
-	// Generate runtime secrets on first use (product command; idempotent).
-	// The integration tests read the real values from secrets.json.
-	if _, err := ex.Run(ctx, executor.RunSpec{
-		Command: fmt.Sprintf("%s/host-agent/host-agent init-secrets %s/data", rt, rt),
-	}); err != nil {
-		errorf("failed to initialize runtime secrets: %v", err)
-		return fail("secret initialization failed")
+	if err := integrationDeploy(ctx, ex, root, hostAgentSrc, rt, binaryPath, testBinary); err != nil {
+		return fail(err.Error())
 	}
 
 	// Step 6: Install and start the host-agent systemd service.
 	step("Installing and starting " + integrationHostAgentUnit)
-	unit := renderIntegrationHostAgentUnit(rt, qemu)
-	unitPath := filepath.Join(tmpDir, integrationHostAgentUnit)
-	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
-		errorf("failed to write unit file: %v", err)
-		return fail("failed to write unit file")
-	}
-	if err := ex.CopyTo(ctx, unitPath, "/tmp/"+integrationHostAgentUnit); err != nil {
-		errorf("failed to copy unit file into guest: %v", err)
-		return fail("failed to deploy unit file")
-	}
-	if res, err := ex.Run(ctx, executor.RunSpec{
-		Command: fmt.Sprintf(`install -d "$HOME/.config/systemd/user"
-install -m 644 /tmp/%[1]s "$HOME/.config/systemd/user/%[1]s"
-rm -f /tmp/%[1]s
-systemctl --user daemon-reload
-systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
-	}); err != nil || res.ExitCode != 0 {
-		errorf("failed to install host-agent service: %v", err)
-		return fail("failed to install host-agent service")
+	if err := integrationInstallService(ctx, ex, rt, qemu, tmpDir); err != nil {
+		return fail(err.Error())
 	}
 
 	// Step 7: Wait for the API (first boot converges the system apps).
@@ -590,6 +518,167 @@ systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
 
 	// Step 8: Run the tier's commands against the deployed runtime.
 	step("Running integration tests")
+	exitCode := integrationRunTests(ctx, ex, tier, rt, result, flags)
+
+	// Stop the validation unit. The runtime dir and containers are left in
+	// place for inspection; ./bloud dev re-converges the dev state.
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: "systemctl --user disable --now " + integrationHostAgentUnit + " >/dev/null 2>&1 || true",
+	}); err != nil {
+		errorf("failed to stop validation host-agent: %v", err)
+	}
+
+	if exitCode != 0 {
+		result.ExitCode = 1
+		result.Confidence = "low"
+		result.ConfidenceReason = "integration tests failed"
+		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		writeLedger(root, result, flags)
+		return 1
+	}
+
+	result.ExitCode = 0
+	result.Confidence = "high"
+	result.ConfidenceReason = "integration tests passed against the real dependency-graph path"
+	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	if !flags.json {
+		fmt.Printf("\n%s==>%s Validation runtime remains at %s (guest). Re-run %s%s%s to restore the dev runtime state.\n",
+			colorGreen, colorReset, rt, colorCyan, "./bloud dev", colorReset)
+	}
+	writeLedger(root, result, flags)
+	return 0
+}
+
+// integrationPrepareGuest verifies the guest has everything the tier needs
+// and stops any host-agent holding port 3000. Returns a ledger fail reason,
+// or "" when the guest is ready.
+func integrationPrepareGuest(ctx context.Context, ex executor.Executor, step func(string)) string {
+	step("Checking integration prerequisites")
+	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationPreflightScript}); err != nil || res.ExitCode != 0 {
+		detail := strings.TrimSpace(res.Stderr)
+		if detail == "" && err != nil {
+			detail = err.Error()
+		}
+		errorf("integration prerequisites missing (recreate the VM): %s", detail)
+		return "integration prerequisites missing"
+	}
+	step("Stopping any running host-agent (validation runtime takes over port 3000)")
+	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationStopAgentScript}); err != nil || res.ExitCode != 0 {
+		errorf("failed to stop running host-agent: %v", err)
+		return "failed to stop running host-agent"
+	}
+	return ""
+}
+
+// integrationBuildArtifacts builds the host-agent binary, the frontend, and
+// the integration test binary locally into tmpDir. The error message is the
+// ledger confidence reason for the failing build.
+func integrationBuildArtifacts(root, hostAgentSrc, tmpDir string, step func(string)) (string, string, error) {
+	step("Building host-agent for linux/" + runtime.GOARCH)
+	binaryPath := filepath.Join(tmpDir, "host-agent")
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/host-agent")
+	buildCmd.Dir = hostAgentSrc
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		errorf("host-agent build failed: %v", err)
+		return "", "", errors.New("host-agent build failed")
+	}
+
+	step("Building frontend")
+	webCmd := exec.Command("npm", "run", "build", "--workspace=@bloud/host-agent-web")
+	webCmd.Dir = root
+	webCmd.Stdout = os.Stdout
+	webCmd.Stderr = os.Stderr
+	if err := webCmd.Run(); err != nil {
+		errorf("frontend build failed: %v", err)
+		return "", "", errors.New("frontend build failed")
+	}
+
+	step("Building integration test binary")
+	testBinary := filepath.Join(tmpDir, "bloud-integration.test")
+	testBuild := exec.Command("go", "test", "-tags", "integration", "-c", "-o", testBinary, "./internal/e2e")
+	testBuild.Dir = hostAgentSrc
+	testBuild.Stdout = os.Stdout
+	testBuild.Stderr = os.Stderr
+	if err := testBuild.Run(); err != nil {
+		errorf("integration test build failed: %v", err)
+		return "", "", errors.New("integration test build failed")
+	}
+	return binaryPath, testBinary, nil
+}
+
+// integrationDeploy copies the built artifacts into the guest validation
+// runtime dir and initializes runtime secrets (idempotent product command;
+// the tests read the real values from secrets.json).
+func integrationDeploy(ctx context.Context, ex executor.Executor, root, hostAgentSrc, rt, binaryPath, testBinary string) error {
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf("rm -rf %s/host-agent %s/apps && mkdir -p %s/host-agent/web/build %s/apps %s/data %s/bin", rt, rt, rt, rt, rt, rt),
+	}); err != nil {
+		errorf("failed to prepare runtime dir: %v", err)
+		return errors.New("failed to prepare runtime dir")
+	}
+	deployments := []struct {
+		from string
+		to   string
+	}{
+		{binaryPath, rt + "/host-agent/host-agent"},
+		{filepath.Join(hostAgentSrc, "web", "build"), rt + "/host-agent/web/build"},
+		{filepath.Join(root, "apps"), rt + "/apps"},
+		{testBinary, rt + "/bin/bloud-integration.test"},
+	}
+	for _, d := range deployments {
+		if err := ex.CopyTo(ctx, d.from, d.to); err != nil {
+			errorf("failed to copy %s into guest: %v", d.from, err)
+			return errors.New("deployment failed")
+		}
+	}
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf("chmod 755 %s/host-agent/host-agent %s/bin/bloud-integration.test", rt, rt),
+	}); err != nil {
+		errorf("failed to chmod deployed binaries: %v", err)
+		return errors.New("deployment failed")
+	}
+	if _, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf("%s/host-agent/host-agent init-secrets %s/data", rt, rt),
+	}); err != nil {
+		errorf("failed to initialize runtime secrets: %v", err)
+		return errors.New("secret initialization failed")
+	}
+	return nil
+}
+
+// integrationInstallService installs the validation host-agent systemd user
+// unit in the guest and starts it.
+func integrationInstallService(ctx context.Context, ex executor.Executor, rt string, qemu bool, tmpDir string) error {
+	unit := renderIntegrationHostAgentUnit(rt, qemu)
+	unitPath := filepath.Join(tmpDir, integrationHostAgentUnit)
+	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+		errorf("failed to write unit file: %v", err)
+		return errors.New("failed to write unit file")
+	}
+	if err := ex.CopyTo(ctx, unitPath, "/tmp/"+integrationHostAgentUnit); err != nil {
+		errorf("failed to copy unit file into guest: %v", err)
+		return errors.New("failed to deploy unit file")
+	}
+	if res, err := ex.Run(ctx, executor.RunSpec{
+		Command: fmt.Sprintf(`install -d "$HOME/.config/systemd/user"
+install -m 644 /tmp/%[1]s "$HOME/.config/systemd/user/%[1]s"
+rm -f /tmp/%[1]s
+systemctl --user daemon-reload
+systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
+	}); err != nil || res.ExitCode != 0 {
+		errorf("failed to install host-agent service: %v", err)
+		return errors.New("failed to install host-agent service")
+	}
+	return nil
+}
+
+// integrationRunTests runs the tier's commands against the deployed
+// runtime and records each result. Returns 0 when every command passed,
+// 1 on the first failure (remaining commands are skipped).
+func integrationRunTests(ctx context.Context, ex executor.Executor, tier manifestTier, rt string, result *ValidateResult, flags validateFlags) int {
 	testEnv := map[string]string{
 		"BLOUD_DATA_DIR":            rt + "/data",
 		"BLOUD_TRAEFIK_DYNAMIC_DIR": rt + "/data/traefik/dynamic",
@@ -650,34 +739,7 @@ systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
 			break
 		}
 	}
-
-	// Stop the validation unit. The runtime dir and containers are left in
-	// place for inspection; ./bloud dev re-converges the dev state.
-	if _, err := ex.Run(ctx, executor.RunSpec{
-		Command: "systemctl --user disable --now " + integrationHostAgentUnit + " >/dev/null 2>&1 || true",
-	}); err != nil {
-		errorf("failed to stop validation host-agent: %v", err)
-	}
-
-	if exitCode != 0 {
-		result.ExitCode = 1
-		result.Confidence = "low"
-		result.ConfidenceReason = "integration tests failed"
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 1
-	}
-
-	result.ExitCode = 0
-	result.Confidence = "high"
-	result.ConfidenceReason = "integration tests passed against the real dependency-graph path"
-	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-	if !flags.json {
-		fmt.Printf("\n%s==>%s Validation runtime remains at %s (guest). Re-run %s%s%s to restore the dev runtime state.\n",
-			colorGreen, colorReset, rt, colorCyan, "./bloud dev", colorReset)
-	}
-	writeLedger(root, result, flags)
-	return 0
+	return exitCode
 }
 
 func shellQuote(value string) string {

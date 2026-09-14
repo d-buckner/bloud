@@ -829,7 +829,26 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 		return nil
 	}
 
-	// Collect all networks referenced by this container.
+	o.ensureNetworksForContainer(ctx, def)
+
+	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.TemplateVars)
+	if err != nil {
+		return fmt.Errorf("build container spec: %w", err)
+	}
+
+	o.applyIssuerExtraHost(&spec, appCatalogID)
+	o.ensureMountDirs(def.Name, spec)
+
+	if _, err := o.config.Containers.Ensure(ctx, spec); err != nil {
+		return fmt.Errorf("ensure container: %w", err)
+	}
+	return nil
+}
+
+// ensureNetworksForContainer creates every user-defined network the
+// container references ("host" mode needs no creation). Failures are
+// logged, not fatal — Ensure() surfaces the real error later.
+func (o *Orchestrator) ensureNetworksForContainer(ctx context.Context, def *catalog.ContainerDef) {
 	var networks []string
 	if def.Network != "" {
 		networks = append(networks, def.Network)
@@ -847,38 +866,48 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 			o.logger.Warn("failed to ensure network", "container", def.Name, "network", network, "error", err)
 		}
 	}
+}
 
-	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.TemplateVars)
-	if err != nil {
-		return fmt.Errorf("build container spec: %w", err)
+// applyIssuerExtraHost adds the OIDC issuer host-gateway mapping to native
+// OIDC app containers so they can reach the issuer by the same hostname
+// browsers use (token exchange happens inside the container).
+func (o *Orchestrator) applyIssuerExtraHost(spec *containerruntime.Spec, appCatalogID string) {
+	if o.hosts == nil || o.catalog == nil {
+		return
 	}
-
-	// Native-OIDC app containers must reach the OIDC issuer by the same
-	// hostname browsers use (token exchange happens inside the container).
-	// The issuer hostname is made resolvable to this machine via host-gateway.
-	if o.hosts != nil && o.catalog != nil {
-		if catalogApp, err := o.catalog.Get(appCatalogID); err == nil && catalogApp != nil &&
-			catalogApp.SSO.Strategy == "native-oidc" {
-			ehost := o.hosts.Get().IssuerExtraHost()
-			if !hasExtraHost(spec.ExtraHosts, ehost) {
-				spec.ExtraHosts = append(spec.ExtraHosts, ehost)
-			}
-		}
+	catalogApp, err := o.catalog.Get(appCatalogID)
+	if err != nil || catalogApp == nil || catalogApp.SSO.Strategy != "native-oidc" {
+		return
 	}
+	ehost := o.hosts.Get().IssuerExtraHost()
+	if !hasExtraHost(spec.ExtraHosts, ehost) {
+		spec.ExtraHosts = append(spec.ExtraHosts, ehost)
+	}
+}
 
+// ensureMountDirs creates the source directory for each directory mount.
+// File mounts (.yml/.yaml/.json/.conf) are skipped — their parents are
+// created by whoever generates the file.
+func (o *Orchestrator) ensureMountDirs(containerName string, spec containerruntime.Spec) {
 	for _, mount := range spec.Mounts {
-		// Skip file mounts - only create directories for directory mounts
-		if !strings.HasSuffix(mount.Source, ".yml") && !strings.HasSuffix(mount.Source, ".yaml") && !strings.HasSuffix(mount.Source, ".json") && !strings.HasSuffix(mount.Source, ".conf") {
-			if err := os.MkdirAll(mount.Source, 0755); err != nil {
-				o.logger.Warn("failed to create mount directory", "container", def.Name, "path", mount.Source, "error", err)
-			}
+		if isFileMountPath(mount.Source) {
+			continue
+		}
+		if err := os.MkdirAll(mount.Source, 0755); err != nil {
+			o.logger.Warn("failed to create mount directory", "container", containerName, "path", mount.Source, "error", err)
 		}
 	}
+}
 
-	if _, err := o.config.Containers.Ensure(ctx, spec); err != nil {
-		return fmt.Errorf("ensure container: %w", err)
+// isFileMountPath reports whether a mount source names a config file rather
+// than a directory.
+func isFileMountPath(source string) bool {
+	for _, ext := range []string{".yml", ".yaml", ".json", ".conf"} {
+		if strings.HasSuffix(source, ext) {
+			return true
+		}
 	}
-	return nil
+	return false
 }
 
 // hasExtraHost reports whether the spec already carries the given host:target

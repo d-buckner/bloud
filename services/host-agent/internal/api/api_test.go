@@ -584,6 +584,11 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 		o.catalog = fCatalog
 		o.appStore = fAppStore
 		o.remoteAppStore = fRemoteStore
+		// No real orchestrator: handler-level fakes are all these tests
+		// need. The real one starts a background convergence goroutine on
+		// context.Background() that outlives the test, races t.TempDir
+		// cleanup with sqlite writes, and errors on the closed DB.
+		o.noOrchestrator = true
 	})
 	server := &Server{
 		cfg:              cfg,
