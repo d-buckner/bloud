@@ -28,60 +28,74 @@ func fakeQEMUBackend(t *testing.T, recorded *[][]string, sshReadyResults []bool)
 		dir:          t.TempDir(),
 		pollInterval: 0,
 		pollTimeout:  50 * time.Millisecond,
-		runGuest: func(context.Context, string) error { return nil },
+		runGuest:     func(context.Context, string) error { return nil },
 	}
 	b.newCmd = func(_ context.Context, name string, args ...string) *exec.Cmd {
 		*recorded = append(*recorded, append([]string{name}, args...))
 		if name == "ssh" {
-			if len(args) > 0 && args[len(args)-1] == "true" {
-				idx := call
-				if idx >= len(sshReadyResults) {
-					idx = len(sshReadyResults) - 1
-				}
-				call++
-				if sshReadyResults[idx] {
-					return exec.Command("true")
-				}
-				return exec.Command("sh", "-c", "exit 1")
-			}
-			// provisioning marker check → assume provisioned
-			return exec.Command("true")
+			return fakeSSHProbe(args, sshReadyResults, &call)
 		}
-		if name == "ssh-keygen" {
-			// Emulate key generation: create <key> and <key>.pub so ReadFile succeeds.
-			for i, a := range args {
-				if a == "-f" && i+1 < len(args) {
-					_ = os.WriteFile(args[i+1], []byte("key"), 0600)
-					_ = os.WriteFile(args[i+1]+".pub", []byte("ssh-ed25519 AAAAC3Nza fake@host\n"), 0644)
-					break
-				}
-			}
-		}
-		if name == "curl" {
-			// -o <file>: write the downloaded base image
-			for i, a := range args {
-				if a == "-o" && i+1 < len(args) {
-					_ = os.WriteFile(args[i+1], []byte("base"), 0644)
-					break
-				}
-			}
-		}
-		if name == "qemu-img" && len(args) > 0 && args[0] == "create" {
-			// create overlay disk at the final positional arg
-			_ = os.WriteFile(args[len(args)-1], []byte("disk"), 0644)
-		}
-		if name == "mkisofs" {
-			// -output <file>: write the seed ISO
-			for i, a := range args {
-				if a == "-output" && i+1 < len(args) {
-					_ = os.WriteFile(args[i+1], []byte("seed"), 0644)
-					break
-				}
-			}
-		}
+		emulateToolFiles(name, args)
 		return exec.Command("true")
 	}
 	return b
+}
+
+// fakeSSHProbe answers the two kinds of ssh calls the backend makes: the
+// readiness probe (last arg "true", driven by sshReadyResults in order,
+// last value repeated) and the provisioning marker check (always succeeds).
+func fakeSSHProbe(args []string, sshReadyResults []bool, call *int) *exec.Cmd {
+	if len(args) > 0 && args[len(args)-1] == "true" {
+		idx := *call
+		if idx >= len(sshReadyResults) {
+			idx = len(sshReadyResults) - 1
+		}
+		*call++
+		if sshReadyResults[idx] {
+			return exec.Command("true")
+		}
+		return exec.Command("sh", "-c", "exit 1")
+	}
+	// provisioning marker check → assume provisioned
+	return exec.Command("true")
+}
+
+// emulateToolFiles emulates the side effects (created files) of the
+// provisioning tools the backend shells out to, so later ReadFile/Stat
+// calls in the code under test succeed.
+func emulateToolFiles(name string, args []string) {
+	switch name {
+	case "ssh-keygen":
+		// Emulate key generation: create <key> and <key>.pub so ReadFile succeeds.
+		for i, a := range args {
+			if a == "-f" && i+1 < len(args) {
+				_ = os.WriteFile(args[i+1], []byte("key"), 0600)
+				_ = os.WriteFile(args[i+1]+".pub", []byte("ssh-ed25519 AAAAC3Nza fake@host\n"), 0644)
+				break
+			}
+		}
+	case "curl":
+		// -o <file>: write the downloaded base image
+		for i, a := range args {
+			if a == "-o" && i+1 < len(args) {
+				_ = os.WriteFile(args[i+1], []byte("base"), 0644)
+				break
+			}
+		}
+	case "qemu-img":
+		if len(args) > 0 && args[0] == "create" {
+			// create overlay disk at the final positional arg
+			_ = os.WriteFile(args[len(args)-1], []byte("disk"), 0644)
+		}
+	case "mkisofs":
+		// -output <file>: write the seed ISO
+		for i, a := range args {
+			if a == "-output" && i+1 < len(args) {
+				_ = os.WriteFile(args[i+1], []byte("seed"), 0644)
+				break
+			}
+		}
+	}
 }
 
 func TestQEMUBackendCreateAlreadyProvisionedAndRunning(t *testing.T) {

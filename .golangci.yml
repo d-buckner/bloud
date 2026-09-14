@@ -20,8 +20,8 @@ linters:
     - cyclop
   settings:
     cyclop:
-      # Fail any function with cyclomatic complexity > 42.
-      max-complexity: 42
+      # Fail any function with cyclomatic complexity > 20.
+      max-complexity: 20
       # Fail any package whose average function complexity > 7.0.
       package-average: 7.0
 

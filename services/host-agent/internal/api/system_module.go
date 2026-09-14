@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -187,166 +188,222 @@ func (m *systemModule) DeveloperGraphHandler() http.HandlerFunc {
 			return
 		}
 
-		// Build catalog integration lookup from the app graph
 		var graphDefs map[string]*catalog.AppDefinition
 		if m.graph != nil {
 			graphDefs = m.graph.GetApps()
 		}
 
-		nodes := make([]graphNode, 0, len(apps))
-		edges := make([]graphEdge, 0)
+		respondJSON(w, http.StatusOK, m.buildDeveloperGraph(r.Context(), apps, graphDefs))
+	}
+}
 
-		// Track unique tailnet IDs to create connection nodes
-		tailnetIDs := make(map[string]bool)
-		hasTraefik := false
+// tailnetNodeInfo carries the per-app fields needed to render a tunnel node.
+type tailnetNodeInfo struct {
+	appName     string
+	displayName string
+	tailnetID   string
+	status      string
+}
 
-		type tailnetNodeInfo struct {
-			appName     string
-			displayName string
-			tailnetID   string
-			status      string
-		}
-		var tailnetNodeApps []tailnetNodeInfo
+// buildDeveloperGraph assembles the developer dashboard graph from the
+// installed apps, their catalog definitions, and the live gateway state.
+func (m *systemModule) buildDeveloperGraph(
+	ctx context.Context,
+	apps []*store.InstalledApp,
+	graphDefs map[string]*catalog.AppDefinition,
+) developerGraph {
+	nodes, edges, tailnetApps, tailnetIDs, hasTraefik := m.appNodes(apps, graphDefs)
+	domain := m.resolveTailnetDomain(ctx, tailnetIDs)
 
-		for _, app := range apps {
-			node := graphNode{
-				ID:          app.CatalogID,
-				DisplayName: app.DisplayName,
-				Status:      app.Status,
-				IsSystem:    app.IsSystem,
-				NodeType:    "app",
-			}
-			nodes = append(nodes, node)
+	tunnelNodes, tunnelEdges := m.tunnelNodes(tailnetApps, tailnetIDs, domain, hasTraefik)
+	nodes = append(nodes, tunnelNodes...)
+	edges = append(edges, tunnelEdges...)
 
-			if app.CatalogID == "traefik" {
-				hasTraefik = true
-			}
+	gwNodes, gwEdges := m.gatewayAndLocalNodes(ctx, tailnetIDs, hasTraefik)
+	nodes = append(nodes, gwNodes...)
+	edges = append(edges, gwEdges...)
 
-			if app.TailnetID != "" {
-				tailnetIDs[app.TailnetID] = true
-				tailnetNodeApps = append(tailnetNodeApps, tailnetNodeInfo{
-					appName:     app.CatalogID,
-					displayName: app.DisplayName,
-					tailnetID:   app.TailnetID,
-					status:      app.Status,
-				})
-			}
+	var orchStatus *orchestrator.OrchestratorStatus
+	if m.orch != nil {
+		status := m.orch.Status()
+		orchStatus = &status
+	}
 
-			var def *catalog.AppDefinition
-			if graphDefs != nil {
-				def = graphDefs[app.CatalogID]
-			}
-			edges = append(edges, m.buildGraphEdges(app, def)...)
-		}
+	return developerGraph{
+		Nodes:         nodes,
+		Edges:         edges,
+		TailnetDomain: domain,
+		Orchestrator:  orchStatus,
+	}
+}
 
-		// Add tailnet node containers
-		for _, tn := range tailnetNodeApps {
-			tsNodeID := "ts:" + tn.appName
-			nodes = append(nodes, graphNode{
-				ID:          tsNodeID,
-				DisplayName: tn.displayName + " Tunnel",
-				Status:      tn.status,
-				IsSystem:    true,
-				NodeType:    "app",
-			})
-			edges = append(edges, graphEdge{
-				Source: "conn:tailnet:" + tn.tailnetID,
-				Target: tsNodeID,
-				Label:  "tailnet",
-			})
-			if hasTraefik {
-				edges = append(edges, graphEdge{
-					Source: tsNodeID,
-					Target: "traefik",
-					Label:  "route",
-				})
-			}
-		}
+// appNodes builds one node per installed app and collects the tailnet/apps
+// bookkeeping (unique tailnet IDs, the tunnel-node list, traefik presence)
+// plus each app's integration edges.
+func (m *systemModule) appNodes(
+	apps []*store.InstalledApp,
+	graphDefs map[string]*catalog.AppDefinition,
+) ([]graphNode, []graphEdge, []tailnetNodeInfo, map[string]bool, bool) {
+	nodes := make([]graphNode, 0, len(apps))
+	edges := make([]graphEdge, 0)
+	tailnetIDs := make(map[string]bool)
+	hasTraefik := false
+	var tailnetApps []tailnetNodeInfo
 
-		// Discover tailnet domain from the gateway
-		var tailnetDomain string
-		if m.gateway != nil && len(tailnetIDs) > 0 {
-			if domain, err := m.gateway.GetTailnetDomain(r.Context()); err == nil {
-				tailnetDomain = domain
-			}
+	for _, app := range apps {
+		nodes = append(nodes, graphNode{
+			ID:          app.CatalogID,
+			DisplayName: app.DisplayName,
+			Status:      app.Status,
+			IsSystem:    app.IsSystem,
+			NodeType:    "app",
+		})
+
+		if app.CatalogID == "traefik" {
+			hasTraefik = true
 		}
 
-		// Add tailnet connection nodes
-		for tailnetID := range tailnetIDs {
-			displayName := "Tailnet"
-			status := "unknown"
-			if conn, err := m.tailnetStore.GetByID(tailnetID); err == nil && conn != nil {
-				displayName = conn.Name
-				status = conn.Status
-			}
-			if tailnetDomain != "" {
-				displayName = "bloud." + tailnetDomain
-			}
-			nodes = append(nodes, graphNode{
-				ID:          "conn:tailnet:" + tailnetID,
-				DisplayName: displayName,
-				Status:      status,
-				NodeType:    "connection",
+		if app.TailnetID != "" {
+			tailnetIDs[app.TailnetID] = true
+			tailnetApps = append(tailnetApps, tailnetNodeInfo{
+				appName:     app.CatalogID,
+				displayName: app.DisplayName,
+				tailnetID:   app.TailnetID,
+				status:      app.Status,
 			})
 		}
 
-		// Add gateway node
-		if m.gateway != nil && len(tailnetIDs) > 0 {
-			gwStatus := "stopped"
-			if m.gateway.IsRunning(r.Context()) {
-				gwStatus = "running"
-			}
-			nodes = append(nodes, graphNode{
-				ID:          "sys:gateway",
-				DisplayName: "Tailnet Gateway",
-				Status:      gwStatus,
-				IsSystem:    true,
-				NodeType:    "app",
-			})
-			for tailnetID := range tailnetIDs {
-				edges = append(edges, graphEdge{
-					Source: "conn:tailnet:" + tailnetID,
-					Target: "sys:gateway",
-					Label:  "tailnet",
-				})
-			}
-			if hasTraefik {
-				edges = append(edges, graphEdge{
-					Source: "sys:gateway",
-					Target: "traefik",
-					Label:  "proxy",
-				})
-			}
+		var def *catalog.AppDefinition
+		if graphDefs != nil {
+			def = graphDefs[app.CatalogID]
 		}
+		edges = append(edges, m.buildGraphEdges(app, def)...)
+	}
 
-		// Add local connection node
+	return nodes, edges, tailnetApps, tailnetIDs, hasTraefik
+}
+
+// resolveTailnetDomain asks the gateway for the active tailnet domain, if
+// any tailnet-connected apps exist.
+func (m *systemModule) resolveTailnetDomain(ctx context.Context, tailnetIDs map[string]bool) string {
+	if m.gateway == nil || len(tailnetIDs) == 0 {
+		return ""
+	}
+	domain, err := m.gateway.GetTailnetDomain(ctx)
+	if err != nil {
+		return ""
+	}
+	return domain
+}
+
+// tunnelNodes builds the per-app tunnel nodes and their tailnet connection
+// nodes (and the tunnel→traefik route edges when traefik is present).
+func (m *systemModule) tunnelNodes(
+	tailnetApps []tailnetNodeInfo,
+	tailnetIDs map[string]bool,
+	tailnetDomain string,
+	hasTraefik bool,
+) ([]graphNode, []graphEdge) {
+	nodes := make([]graphNode, 0)
+	edges := make([]graphEdge, 0)
+
+	for _, tn := range tailnetApps {
+		tsNodeID := "ts:" + tn.appName
+		nodes = append(nodes, graphNode{
+			ID:          tsNodeID,
+			DisplayName: tn.displayName + " Tunnel",
+			Status:      tn.status,
+			IsSystem:    true,
+			NodeType:    "app",
+		})
+		edges = append(edges, graphEdge{
+			Source: "conn:tailnet:" + tn.tailnetID,
+			Target: tsNodeID,
+			Label:  "tailnet",
+		})
 		if hasTraefik {
-			nodes = append(nodes, graphNode{
-				ID:          "conn:local",
-				DisplayName: "LAN",
-				Status:      "active",
-				NodeType:    "connection",
-			})
 			edges = append(edges, graphEdge{
-				Source: "conn:local",
+				Source: tsNodeID,
 				Target: "traefik",
 				Label:  "route",
 			})
 		}
+	}
 
-		var orchStatus *orchestrator.OrchestratorStatus
-		if m.orch != nil {
-			status := m.orch.Status()
-			orchStatus = &status
+	for tailnetID := range tailnetIDs {
+		displayName := "Tailnet"
+		status := "unknown"
+		if conn, err := m.tailnetStore.GetByID(tailnetID); err == nil && conn != nil {
+			displayName = conn.Name
+			status = conn.Status
 		}
-
-		respondJSON(w, http.StatusOK, developerGraph{
-			Nodes:         nodes,
-			Edges:         edges,
-			TailnetDomain: tailnetDomain,
-			Orchestrator:  orchStatus,
+		if tailnetDomain != "" {
+			displayName = "bloud." + tailnetDomain
+		}
+		nodes = append(nodes, graphNode{
+			ID:          "conn:tailnet:" + tailnetID,
+			DisplayName: displayName,
+			Status:      status,
+			NodeType:    "connection",
 		})
 	}
+
+	return nodes, edges
+}
+
+// gatewayAndLocalNodes builds the tailnet gateway node (with its connection
+// edges) and the local LAN connection node.
+func (m *systemModule) gatewayAndLocalNodes(
+	ctx context.Context,
+	tailnetIDs map[string]bool,
+	hasTraefik bool,
+) ([]graphNode, []graphEdge) {
+	nodes := make([]graphNode, 0)
+	edges := make([]graphEdge, 0)
+
+	if m.gateway != nil && len(tailnetIDs) > 0 {
+		gwStatus := "stopped"
+		if m.gateway.IsRunning(ctx) {
+			gwStatus = "running"
+		}
+		nodes = append(nodes, graphNode{
+			ID:          "sys:gateway",
+			DisplayName: "Tailnet Gateway",
+			Status:      gwStatus,
+			IsSystem:    true,
+			NodeType:    "app",
+		})
+		for tailnetID := range tailnetIDs {
+			edges = append(edges, graphEdge{
+				Source: "conn:tailnet:" + tailnetID,
+				Target: "sys:gateway",
+				Label:  "tailnet",
+			})
+		}
+		if hasTraefik {
+			edges = append(edges, graphEdge{
+				Source: "sys:gateway",
+				Target: "traefik",
+				Label:  "proxy",
+			})
+		}
+	}
+
+	if hasTraefik {
+		nodes = append(nodes, graphNode{
+			ID:          "conn:local",
+			DisplayName: "LAN",
+			Status:      "active",
+			NodeType:    "connection",
+		})
+		edges = append(edges, graphEdge{
+			Source: "conn:local",
+			Target: "traefik",
+			Label:  "route",
+		})
+	}
+
+	return nodes, edges
 }
 
 // ---- Router ----

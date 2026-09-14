@@ -104,88 +104,17 @@ func generateMermaid(apps map[string]*AppMetadata) string {
 	sb.WriteString("flowchart TD\n")
 
 	// Collect all apps and sort for consistent output
-	var appNames []string
 	var systemApps []string
 	var userApps []string
 	for name := range apps {
-		appNames = append(appNames, name)
 		if apps[name].IsSystem {
 			systemApps = append(systemApps, name)
 		} else {
 			userApps = append(userApps, name)
 		}
 	}
-	sort.Strings(appNames)
 	sort.Strings(systemApps)
 	sort.Strings(userApps)
-
-	// Track which edges we've added to avoid duplicates
-	edges := make(map[string]bool)
-	// Track apps that appear in edges
-	appsInEdges := make(map[string]bool)
-	// Collect edges to write after subgraph
-	var edgeLines []string
-
-	// Generate edges for each app's integrations
-	for _, appName := range appNames {
-		app := apps[appName]
-
-		// Sort integration names for consistent output
-		var integrationNames []string
-		for intName := range app.Integrations {
-			integrationNames = append(integrationNames, intName)
-		}
-		sort.Strings(integrationNames)
-
-		for _, intName := range integrationNames {
-			integration := app.Integrations[intName]
-			for _, compat := range integration.Compatible {
-				// Edge: app depends on compatible app
-				edgeKey := fmt.Sprintf("%s->%s", appName, compat.App)
-				if edges[edgeKey] {
-					continue
-				}
-				edges[edgeKey] = true
-				appsInEdges[appName] = true
-				appsInEdges[compat.App] = true
-
-				label := intName
-				if integration.Required {
-					label += "*"
-				}
-				edgeLines = append(edgeLines, fmt.Sprintf("    %s -->|%s| %s", appName, label, compat.App))
-			}
-		}
-	}
-
-	// Add implicit SSO edges for apps using authentik
-	for _, appName := range appNames {
-		app := apps[appName]
-		if app.SSO.Strategy == "forward-auth" || app.SSO.Strategy == "native-oidc" {
-			edgeKey := fmt.Sprintf("%s->authentik", appName)
-			if !edges[edgeKey] {
-				edges[edgeKey] = true
-				appsInEdges[appName] = true
-				appsInEdges["authentik"] = true
-				edgeLines = append(edgeLines, fmt.Sprintf("    %s -->|sso| authentik", appName))
-			}
-		}
-	}
-
-	// Add implicit traefik edges for web-routed apps (exclude infrastructure)
-	for _, appName := range appNames {
-		app := apps[appName]
-		if appName == "traefik" || app.Category == "infrastructure" {
-			continue
-		}
-		edgeKey := fmt.Sprintf("%s->traefik", appName)
-		if !edges[edgeKey] {
-			edges[edgeKey] = true
-			appsInEdges[appName] = true
-			appsInEdges["traefik"] = true
-			edgeLines = append(edgeLines, fmt.Sprintf("    %s -->|routing| traefik", appName))
-		}
-	}
 
 	// Write user apps subgraph (above system)
 	if len(userApps) > 0 {
@@ -204,11 +133,12 @@ func generateMermaid(apps map[string]*AppMetadata) string {
 	}
 	sb.WriteString("    end\n")
 
-	// Add host-agent's database dependency
-	edgeLines = append(edgeLines, "    host-agent -->|database*| postgres")
-
-	// Write all edges
-	for _, edge := range edgeLines {
+	g := &graphBuilder{}
+	g.addIntegrationEdges(apps)
+	g.addSSOEdges(apps)
+	g.addRoutingEdges(apps)
+	g.edges = append(g.edges, "    host-agent -->|database*| postgres")
+	for _, edge := range g.edges {
 		sb.WriteString(edge + "\n")
 	}
 
@@ -216,4 +146,75 @@ func generateMermaid(apps map[string]*AppMetadata) string {
 	sb.WriteString("\n_* = required integration_\n")
 
 	return sb.String()
+}
+
+// graphBuilder accumulates mermaid edge lines, deduplicating by
+// from->to so overlapping passes never emit the same edge twice.
+type graphBuilder struct {
+	seen  map[string]bool
+	edges []string
+}
+
+// addEdge records "from -->|label| to" unless that pair was already added.
+func (g *graphBuilder) addEdge(from, to, label string) {
+	key := from + "->" + to
+	if g.seen[key] {
+		return
+	}
+	if g.seen == nil {
+		g.seen = make(map[string]bool)
+	}
+	g.seen[key] = true
+	g.edges = append(g.edges, fmt.Sprintf("    %s -->|%s| %s", from, label, to))
+}
+
+// addIntegrationEdges emits one edge per compatible app declared in each
+// app's integrations block; required integrations get a "*" suffix.
+func (g *graphBuilder) addIntegrationEdges(apps map[string]*AppMetadata) {
+	for _, appName := range sortedKeys(apps) {
+		app := apps[appName]
+		// Sort integration names for consistent output
+		for _, intName := range sortedKeys(app.Integrations) {
+			integration := app.Integrations[intName]
+			label := intName
+			if integration.Required {
+				label += "*"
+			}
+			for _, compat := range integration.Compatible {
+				g.addEdge(appName, compat.App, label)
+			}
+		}
+	}
+}
+
+// addSSOEdges emits implicit sso edges for apps whose SSO strategy is
+// served by authentik (forward-auth and native-oidc).
+func (g *graphBuilder) addSSOEdges(apps map[string]*AppMetadata) {
+	for _, appName := range sortedKeys(apps) {
+		switch apps[appName].SSO.Strategy {
+		case "forward-auth", "native-oidc":
+			g.addEdge(appName, "authentik", "sso")
+		}
+	}
+}
+
+// addRoutingEdges emits implicit routing edges to traefik for web-routed
+// apps (everything except traefik itself and infrastructure apps).
+func (g *graphBuilder) addRoutingEdges(apps map[string]*AppMetadata) {
+	for _, appName := range sortedKeys(apps) {
+		if appName == "traefik" || apps[appName].Category == "infrastructure" {
+			continue
+		}
+		g.addEdge(appName, "traefik", "routing")
+	}
+}
+
+// sortedKeys returns a map's keys sorted for deterministic output.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

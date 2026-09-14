@@ -51,6 +51,114 @@ type routerOptions struct {
 	authConfig       *authConfigRef
 }
 
+// routerDeps bundles every store, client, and collaborator that NewRouter's
+// modules need. All the "use the provided override, else construct from the
+// DB" defaulting lives here so NewRouter stays focused on wiring modules and
+// routes.
+type routerDeps struct {
+	appStore       store.AppStoreInterface
+	eventsBus      *eventbus.Bus
+	positionStore  store.PositionStoreInterface
+	prefsStore     store.PreferencesStoreInterface
+	sessionStore   store.SessionStoreInterface
+	tailnetStore   *store.TailnetStore
+	remoteAppStore store.RemoteAppStoreInterface
+	catalogCache   catalog.CacheInterface
+	authentik      *authentik.Client
+	authRef        *authConfigRef
+	orchCaller     orchestratorCaller
+	realOrch       *orchestrator.Orchestrator
+}
+
+func buildRouterDeps(
+	db *sql.DB,
+	cfg ServerConfig,
+	logger *slog.Logger,
+	options *routerOptions,
+) *routerDeps {
+	d := &routerDeps{}
+
+	d.appStore = options.appStore
+	if d.appStore == nil {
+		d.appStore = store.NewAppStore(db)
+	}
+
+	// Event bus: broadcasts app-store changes and orchestrator events to the
+	// SSE stream (/api/apps/events). The bus only reads state; the
+	// orchestrator remains the single writer.
+	d.eventsBus = cfg.EventsBus
+	if d.eventsBus == nil {
+		d.eventsBus = eventbus.New()
+	}
+	d.appStore.SetOnChange(func() {
+		d.eventsBus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
+	})
+	d.positionStore = options.positionStore
+	if d.positionStore == nil {
+		d.positionStore = store.NewPositionStore(db)
+	}
+	d.prefsStore = options.prefsStore
+	if d.prefsStore == nil {
+		d.prefsStore = store.NewPreferencesStore(db)
+	}
+
+	secretsPath := filepath.Join(cfg.DataDir, "secrets.json")
+	secretsMgr := secrets.NewManager(secretsPath)
+	if err := secretsMgr.Load(); err != nil {
+		logger.Error("failed to load secrets", "error", err)
+	}
+
+	if cfg.AuthentikToken != "" && cfg.AuthentikPort > 0 {
+		internalURL := fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort)
+		d.authentik = authentik.NewClient(internalURL, cfg.AuthentikToken).
+			WithUserEmailDomain(cfg.BaseDomain)
+	}
+
+	d.sessionStore = options.sessionStore
+	if d.sessionStore == nil {
+		d.sessionStore = store.NewSessionStore(db)
+	}
+
+	d.tailnetStore = store.NewTailnetStore(db)
+
+	d.catalogCache = options.catalog
+	if d.catalogCache == nil {
+		d.catalogCache = catalog.NewMemoryCache()
+		refreshCatalogHelper(d.catalogCache, logger, cfg.AppsDir)
+	}
+
+	d.remoteAppStore = options.remoteAppStore
+	if d.remoteAppStore == nil {
+		d.remoteAppStore = store.NewRemoteAppStore(db)
+	}
+
+	// Auth config ref: created before the orchestrator because the
+	// orchestrator's OnHostsChanged hook re-ensures it after a host change.
+	d.authRef = options.authConfig
+	if d.authRef == nil {
+		d.authRef = newAuthConfigRef(nil)
+	}
+	d.authRef.SetEnsure(func() *AuthConfig {
+		return initAuthHelper(d.authentik, d.sessionStore, cfg, logger)
+	})
+	d.authRef.Set(initAuthHelper(d.authentik, d.sessionStore, cfg, logger))
+
+	// Orchestrator: use provided one if set, else create real (unless noOrchestrator is true).
+	if o, ok := options.orch.(orchestratorCaller); ok && o != nil {
+		d.orchCaller = o
+		if ro, isReal := o.(*orchestrator.Orchestrator); isReal {
+			d.realOrch = ro
+		}
+	} else if !options.noOrchestrator {
+		d.realOrch = initOrchestratorHelper(db, d.appStore, d.catalogCache, cfg, logger, d.tailnetStore, d.authentik, d.eventsBus, func() { d.authRef.Ensure() })
+		if d.realOrch != nil {
+			d.orchCaller = d.realOrch
+		}
+	}
+
+	return d
+}
+
 // NewRouter builds a fully wired *chi.Mux with all domain modules and
 // middleware. It is the single entry point for constructing the HTTP
 // routing layer.
@@ -67,84 +175,18 @@ func NewRouter(
 	}
 
 	// ---- Dependencies ----
-
-	appStore := options.appStore
-	if appStore == nil {
-		appStore = store.NewAppStore(db)
-	}
-
-	// Event bus: broadcasts app-store changes and orchestrator events to the
-	// SSE stream (/api/apps/events). The bus only reads state; the
-	// orchestrator remains the single writer.
-	eventsBus := cfg.EventsBus
-	if eventsBus == nil {
-		eventsBus = eventbus.New()
-	}
-	appStore.SetOnChange(func() {
-		eventsBus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
-	})
-	positionStore := options.positionStore
-	if positionStore == nil {
-		positionStore = store.NewPositionStore(db)
-	}
-	prefsStore := options.prefsStore
-	if prefsStore == nil {
-		prefsStore = store.NewPreferencesStore(db)
-	}
-
-	secretsPath := filepath.Join(cfg.DataDir, "secrets.json")
-	secretsMgr := secrets.NewManager(secretsPath)
-	if err := secretsMgr.Load(); err != nil {
-		logger.Error("failed to load secrets", "error", err)
-	}
-
-	var authentikClient *authentik.Client
-	if cfg.AuthentikToken != "" && cfg.AuthentikPort > 0 {
-		internalURL := fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort)
-		authentikClient = authentik.NewClient(internalURL, cfg.AuthentikToken).
-			WithUserEmailDomain(cfg.BaseDomain)
-	}
-
-	var sessionStore = options.sessionStore
-	if sessionStore == nil {
-		sessionStore = store.NewSessionStore(db)
-	}
-
-	tailnetStore := store.NewTailnetStore(db)
-
-	catalogCache := options.catalog
-	if catalogCache == nil {
-		catalogCache = catalog.NewMemoryCache()
-		refreshCatalogHelper(catalogCache, logger, cfg.AppsDir)
-	}
-
-	// Auth config ref: created before the orchestrator because the
-	// orchestrator's OnHostsChanged hook re-ensures it after a host change.
-	authRef := options.authConfig
-	if authRef == nil {
-		authRef = newAuthConfigRef(nil)
-	}
-	authRef.SetEnsure(func() *AuthConfig {
-		return initAuthHelper(authentikClient, sessionStore, cfg, logger)
-	})
-	authRef.Set(initAuthHelper(authentikClient, sessionStore, cfg, logger))
-
-	// Orchestrator: use provided one if set, else create real (unless noOrchestrator is true).
-	var ( 
-		orchCaller  orchestratorCaller
-		realOrch    *orchestrator.Orchestrator
-	)
-	if o, ok := options.orch.(orchestratorCaller); ok && o != nil {
-		orchCaller = o
-		if ro, isReal := o.(*orchestrator.Orchestrator); isReal {
-			realOrch = ro
-		}
-	} else if !options.noOrchestrator {
-		realOrch = initOrchestratorHelper(db, appStore, catalogCache, cfg, logger, tailnetStore, authentikClient, eventsBus, func() { authRef.Ensure() })
-		if realOrch != nil {
-			orchCaller = realOrch
-		}
-	}
+	deps := buildRouterDeps(db, cfg, logger, options)
+	appStore := deps.appStore
+	eventsBus := deps.eventsBus
+	positionStore := deps.positionStore
+	prefsStore := deps.prefsStore
+	sessionStore := deps.sessionStore
+	tailnetStore := deps.tailnetStore
+	catalogCache := deps.catalogCache
+	authentikClient := deps.authentik
+	authRef := deps.authRef
+	orchCaller := deps.orchCaller
+	realOrch := deps.realOrch
 
 	launchPathsFn := func() map[string]string {
 		paths := make(map[string]string)
@@ -180,10 +222,7 @@ func NewRouter(
 
 	logsMod := NewLogsModule(appStore, logger)
 
-	remoteAppStore := options.remoteAppStore
-	if remoteAppStore == nil {
-		remoteAppStore = store.NewRemoteAppStore(db)
-	}
+	remoteAppStore := deps.remoteAppStore
 	remoteAppsMod := NewRemoteAppsModule(remoteAppStore, catalogCache, orchCaller, logger)
 
 	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, cfg.Hosts, cfg.HostStore, logger)

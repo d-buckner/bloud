@@ -71,52 +71,41 @@ func main() {
 		os.Exit(cmdSetup())
 	}
 
-	var exitCode int
+	os.Exit(dispatch(cmd, args))
+}
 
+// dispatch routes a CLI command to its handler; unknown commands print usage.
+func dispatch(cmd string, args []string) int {
+	handlers := map[string]func([]string) int{
+		"start":     func([]string) int { return cmdStart() },
+		"stop":      func([]string) int { return cmdStop() },
+		"status":    func([]string) int { return cmdStatus() },
+		"logs":      func([]string) int { return cmdLogs() },
+		"shell":     cmdShell,
+		"install":   cmdInstall,
+		"uninstall": cmdUninstall,
+		"reset":     func([]string) int { return cmdReset() },
+		"destroy":   func([]string) int { return cmdDestroy() },
+		"services":  func([]string) int { return cmdServices() },
+		"attach":    func([]string) int { return cmdAttach() },
+		"rebuild":   func([]string) int { return cmdRebuild() },
+		"dev":       func([]string) int { return cmdDev() },
+		"e2e":       cmdE2E,
+		"validate":  cmdValidate,
+		"depgraph":  func([]string) int { return cmdDepGraph() },
+	}
+	if h, ok := handlers[cmd]; ok {
+		return h(args)
+	}
 	switch cmd {
-	case "start":
-		exitCode = cmdStart()
-	case "stop":
-		exitCode = cmdStop()
-	case "status":
-		exitCode = cmdStatus()
-	case "logs":
-		exitCode = cmdLogs()
-	case "shell":
-		exitCode = cmdShell(args)
-	case "install":
-		exitCode = cmdInstall(args)
-	case "uninstall":
-		exitCode = cmdUninstall(args)
-	case "reset":
-		exitCode = cmdReset()
-	case "destroy":
-		exitCode = cmdDestroy()
-	case "services":
-		exitCode = cmdServices()
-	case "attach":
-		exitCode = cmdAttach()
-	case "rebuild":
-		exitCode = cmdRebuild()
-	case "dev":
-		exitCode = cmdDev()
-	case "e2e":
-		exitCode = cmdE2E(args)
-	case "validate":
-		exitCode = cmdValidate(args)
-	case "depgraph":
-		exitCode = cmdDepGraph()
 	case "help", "--help", "-h":
 		printUsage()
-		exitCode = 0
-
+		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "%sError:%s Unknown command: %s\n", colorRed, colorReset, cmd)
 		printUsage()
-		exitCode = 1
+		return 1
 	}
-
-	os.Exit(exitCode)
 }
 
 func printUsage() {
