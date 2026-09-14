@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 	import { onMount, onDestroy, mount, unmount } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { GridStack, type GridStackNode } from 'gridstack';
 	import { gridElements, type GridElement } from '$lib/stores/grid';
 	import { getWidgetById } from '$lib/widgets/registry';
@@ -9,6 +10,7 @@
 	import { type App } from '$lib/types';
 	import AppTile from './AppTile.svelte';
 	import WidgetWrapper from './WidgetWrapper.svelte';
+	import { diffGrid, type GridNodeState } from '$lib/utils/gridDiff';
 
 	interface Props {
 		onAppClick?: (app: App) => void;
@@ -22,7 +24,7 @@
 	let grid: GridStack;
 
 	// Track mounted Svelte component instances by item id for cleanup
-	const mountedComponents = new Map<string, ReturnType<typeof mount>>();
+	const mountedComponents = new SvelteMap<string, ReturnType<typeof mount>>();
 
 	// Prevent sending PUT requests for programmatic position syncs.
 	// True while syncGridFromStore is running; false during user drag/resize.
@@ -32,122 +34,128 @@
 	let isDragging = false;
 
 	/**
+	 * Mount the Svelte component for a grid item into its content element.
+	 * Returns null for a non-app element with no matching widget (nothing to render).
+	 */
+	function mountComponentFor(
+		element: GridElement,
+		target: HTMLElement,
+		widget: ReturnType<typeof getWidgetById>
+	): ReturnType<typeof mount> | null {
+		if (element.type === 'app') {
+			return mount(AppTile, {
+				target,
+				props: { itemId: element.id, onAppClick, onAppContextMenu },
+			});
+		}
+		if (!widget) return null;
+		return mount(WidgetWrapper, {
+			target,
+			props: { widget, onRemove: () => gridElements.removeWidget(element.id) },
+		});
+	}
+
+	/**
+	 * GridStack position props: concrete x/y when the store has them,
+	 * else autoPosition so GridStack picks the cell.
+	 */
+	function positionProps(element: GridElement) {
+		if (element.x !== null && element.y !== null) {
+			return { x: element.x, y: element.y };
+		}
+		return { autoPosition: true };
+	}
+
+	/**
 	 * Add a single GridStack item and mount its Svelte component into it.
-	 * Passes autoPosition: true when x/y are null so GridStack picks the cell.
 	 */
 	function addGridStackItem(element: GridElement) {
 		const isApp = element.type === 'app';
-		const widget = isApp ? null : getWidgetById(element.id);
-		const hasPosition = element.x !== null && element.y !== null;
+		const widget = isApp ? undefined : getWidgetById(element.id);
+		const size = widget?.size ?? { cols: 1, rows: 1 };
 
 		const node = grid.addWidget({
 			id: element.id,
-			...(hasPosition ? { x: element.x!, y: element.y! } : { autoPosition: true }),
+			...positionProps(element),
 			w: element.w,
 			h: element.h,
 			noResize: isApp,
 			noMove: false,
-			minW: isApp ? 1 : (widget?.size.cols ?? 1),
-			minH: isApp ? 1 : (widget?.size.rows ?? 1),
+			minW: isApp ? 1 : size.cols,
+			minH: isApp ? 1 : size.rows,
 		});
 
 		const contentEl = node?.querySelector('.grid-stack-item-content');
 		if (!contentEl) return;
 
-		let instance: ReturnType<typeof mount>;
-		if (isApp) {
-			instance = mount(AppTile, {
-				target: contentEl as HTMLElement,
-				props: { itemId: element.id, onAppClick, onAppContextMenu },
-			});
-		} else if (widget) {
-			instance = mount(WidgetWrapper, {
-				target: contentEl as HTMLElement,
-				props: {
-					widget,
-					onRemove: () => {
-						gridElements.removeWidget(element.id);
-					},
-				},
-			});
-		} else {
-			return;
-		}
-
+		const instance = mountComponentFor(element, contentEl as HTMLElement, widget);
+		if (!instance) return;
 		mountedComponents.set(element.id, instance);
+	}
+
+	/** Snapshot the grid's current node geometries for diffing against the store. */
+	function currentGridState(): GridNodeState[] {
+		const state: GridNodeState[] = [];
+		for (const item of grid.getGridItems()) {
+			const gsn = item.gridstackNode;
+			if (!gsn?.id) continue;
+			state.push({
+				id: gsn.id as string,
+				x: gsn.x ?? 0,
+				y: gsn.y ?? 0,
+				w: gsn.w ?? 1,
+				h: gsn.h ?? 1,
+			});
+		}
+		return state;
+	}
+
+	/** Locate a grid item element by its store id. */
+	function findNodeById(id: string) {
+		return grid.getGridItems().find((n) => (n.gridstackNode?.id as string) === id);
 	}
 
 	/**
 	 * Sync the GridStack DOM to match the provided element list.
-	 * - Removes items not in the list.
-	 * - Adds new items (with autoPosition if x/y null).
-	 * - Updates positions for existing items only when not dragging.
+	 * The add/remove/update/skip decision lives in `diffGrid` (unit-tested);
+	 * this applies it to the DOM.
 	 *
-	 * Sets suppressLayoutSave=true so the resulting 'change' events don't
-	 * trigger a PUT — except when new items are added (their auto-placed
-	 * positions need to be persisted).
+	 * suppressLayoutSave stays true across the programmatic changes so they
+	 * don't fire a PUT — except a structural change (add/remove) re-enables
+	 * it, so auto-placed new items get their positions persisted.
 	 */
 	function syncGridFromStore(elements: GridElement[]) {
 		if (!grid) return;
 
-		const storeIds = new Set(elements.map((e) => e.id));
-		let hasStructuralChange = false;
+		const diff = diffGrid(currentGridState(), elements, isDragging);
 
 		suppressLayoutSave = true;
 		grid.batchUpdate(true);
 
-		// Remove items that are no longer in the store
-		for (const node of grid.getGridItems()) {
-			const id = node.gridstackNode?.id as string | undefined;
-			if (id && !storeIds.has(id)) {
-				const instance = mountedComponents.get(id);
-				if (instance) {
-					unmount(instance);
-					mountedComponents.delete(id);
-				}
-				grid.removeWidget(node, true, false);
-				hasStructuralChange = true;
+		for (const id of diff.remove) {
+			const node = findNodeById(id);
+			if (!node) continue;
+			const instance = mountedComponents.get(id);
+			if (instance) {
+				unmount(instance);
+				mountedComponents.delete(id);
 			}
+			grid.removeWidget(node, true, false);
 		}
 
-		// Build the current id set after removals
-		const currentIds = new Set(
-			grid
-				.getGridItems()
-				.map((n) => n.gridstackNode?.id as string | undefined)
-				.filter(Boolean)
-		);
+		for (const element of diff.add) {
+			addGridStackItem(element);
+		}
 
-		for (const element of elements) {
-			// New item — add it (autoPosition when x/y null)
-			if (!currentIds.has(element.id)) {
-				addGridStackItem(element);
-				hasStructuralChange = true;
-				continue;
-			}
-
-			// Update position/size for existing items when not dragging
-			if (isDragging || element.x === null || element.y === null) continue;
-
-			const node = grid
-				.getGridItems()
-				.find((n) => (n.gridstackNode?.id as string) === element.id);
-			const gsn = node?.gridstackNode;
-			if (!node || !gsn) continue;
-
-			if (
-				gsn.x !== element.x ||
-				gsn.y !== element.y ||
-				gsn.w !== element.w ||
-				gsn.h !== element.h
-			) {
-				grid.update(node, { x: element.x, y: element.y, w: element.w, h: element.h });
-			}
+		for (const element of diff.update) {
+			const node = findNodeById(element.id);
+			if (!node) continue;
+			grid.update(node, { x: element.x!, y: element.y!, w: element.w, h: element.h });
 		}
 
 		// Allow the 'change' event from auto-positioned new items to fire a PUT.
 		// Position-only updates from the poller should not trigger a PUT.
-		if (hasStructuralChange) {
+		if (diff.structural) {
 			suppressLayoutSave = false;
 		}
 

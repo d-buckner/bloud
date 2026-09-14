@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import CatalogAppCard from '$lib/components/CatalogAppCard.svelte';
 	import AppDetailModal from '$lib/components/AppDetailModal.svelte';
 	import AddSharedAppModal from '$lib/components/AddSharedAppModal.svelte';
@@ -29,7 +30,7 @@
 
 	// Derived: unique categories from catalog apps
 	let categories = $derived.by(() => {
-		const cats = new Set<string>();
+		const cats = new SvelteSet<string>();
 		for (const app of catalogApps) {
 			if (app.category) cats.add(app.category);
 		}
@@ -143,7 +144,7 @@
 					>
 						all
 					</button>
-					{#each categories as category}
+					{#each categories as category (category)}
 						<button
 							class="pill"
 							class:active={selectedCategory === category}
@@ -163,7 +164,7 @@
 			</div>
 		{:else}
 			<div class="apps-grid">
-				{#each filteredApps as app}
+				{#each filteredApps as app (app.catalogId)}
 					<CatalogAppCard
 						{app}
 						status={getAppStatus(app.catalogId)}

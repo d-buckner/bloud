@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 	import { Handle, Position } from '@xyflow/svelte';
+	import { statusColor } from '$lib/utils/statusColor';
 
 	interface NodeData {
 		displayName: string;
@@ -13,22 +14,6 @@
 	}
 
 	let { data }: { data: NodeData } = $props();
-
-	function statusColor(status: string): string {
-		switch (status) {
-			case 'running': return '#16a34a';
-			case 'active': return '#16a34a';
-			case 'error':
-			case 'exited':
-			case 'dead': return '#dc2626';
-			case 'healthcheck': return '#eab308';
-			case 'prestart':
-			case 'poststart': return '#3b82f6';
-			case 'queued':
-			case 'installing': return '#9ca3af';
-			default: return '#9ca3af';
-		}
-	}
 
 	const isConnection = $derived(data.nodeType === 'connection');
 	const label = $derived(data.displayName || window.location.hostname);

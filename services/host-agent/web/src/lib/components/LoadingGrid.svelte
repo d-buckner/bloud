@@ -9,7 +9,7 @@
 </script>
 
 <div class="loading-grid">
-	{#each Array(count) as _}
+	{#each Array(count) as _, i (i)}
 		<div class="skeleton-item">
 			<div class="skeleton-icon"></div>
 			<div class="skeleton-label"></div>

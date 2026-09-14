@@ -18,6 +18,8 @@
 
 	let { app, position, onRename, onShare, onUninstall, onClose }: Props = $props();
 
+	let menuEl = $state<HTMLDivElement>();
+
 	function handleRename() {
 		if (app) {
 			onRename?.(app);
@@ -39,7 +41,10 @@
 		}
 	}
 
-	function handleDocumentClick() {
+	function handleDocumentClick(event: MouseEvent) {
+		// Dismiss only on clicks outside the menu; clicks inside (buttons, padding)
+		// must not close it before the button's own handler runs.
+		if (menuEl && event.target instanceof Node && menuEl.contains(event.target)) return;
 		onClose?.();
 	}
 
@@ -55,11 +60,10 @@
 </script>
 
 {#if app && $isAdmin}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
+		bind:this={menuEl}
 		class="context-menu"
 		style="left: {position.x}px; top: {position.y}px;"
-		onclick={(e) => e.stopPropagation()}
 		role="menu"
 		tabindex="-1"
 	>
