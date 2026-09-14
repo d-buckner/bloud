@@ -46,7 +46,7 @@ func runConfigure(args []string) int {
 	// In CLI mode, system configurators are not needed (system apps are
 	// managed by the orchestrator in server mode). App configurators are
 	// factory-registered and instantiate lazily on Get.
-	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, nil))
+	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, nil, nil))
 
 	// For prestart, always regenerate env files from secrets.json before starting any app
 	// This ensures secrets.json is always the source of truth
