@@ -182,7 +182,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 }
 
 func printLifecycleUsage(w io.Writer) {
-	fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
+	_, _ = fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
 
 Required environment:
   None — the VM instance defaults from the backend preference
@@ -337,7 +337,7 @@ func (r *lifecycle) buildAndDeploy() error {
 		return err
 	}
 	r.buildDir = buildDir
-	defer os.RemoveAll(buildDir)
+	defer func() { _ = os.RemoveAll(buildDir) }()
 
 	if err := r.localRun(r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
 		return err

@@ -107,7 +107,10 @@ func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
-			fmt.Fprintf(w, "data: %s\n\n", line)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", line); err != nil {
+				// Client disconnected mid-stream.
+				return
+			}
 			flusher.Flush()
 
 			select {
@@ -122,7 +125,7 @@ func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
 			m.logger.Error("scanner error reading logs", "error", err)
 		}
 
-		cmd.Wait()
+		_ = cmd.Wait()
 		m.logger.Info("log stream ended", "app", name)
 	}
 }
@@ -163,7 +166,10 @@ func (m *logsModule) SystemStatusStreamHandler() http.HandlerFunc {
 					m.logger.Error("failed to marshal stats for SSE", "error", err)
 					continue
 				}
-				fmt.Fprintf(w, "data: %s\n\n", data)
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+					// Client disconnected mid-stream.
+					return
+				}
 				flusher.Flush()
 			}
 		}

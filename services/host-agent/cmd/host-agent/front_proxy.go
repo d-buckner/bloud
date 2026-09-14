@@ -126,7 +126,7 @@ func (f *frontProxy) agentReady(ctx context.Context) bool {
 	resp, err := f.client.Do(req)
 	ready := err == nil && resp.StatusCode == http.StatusOK
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	f.cacheMu.Lock()
@@ -146,7 +146,7 @@ func (f *frontProxy) traefikUp(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
 }
 

@@ -216,7 +216,7 @@ func (c *Configurator) waitForServer(ctx context.Context) error {
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -248,11 +248,11 @@ func (c *Configurator) createAdmin(ctx context.Context, password string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusCreated:
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	case http.StatusBadRequest:
 		b, _ := io.ReadAll(resp.Body)
@@ -284,7 +284,7 @@ func (c *Configurator) login(ctx context.Context, email, password string) (strin
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("login failed: status %d", resp.StatusCode)

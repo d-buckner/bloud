@@ -177,7 +177,7 @@ func (m *RemoteProxyManager) stopProxyLocked(id string) {
 	}
 
 	// Close the listener to ensure the port is released immediately.
-	rp.listener.Close()
+	_ = rp.listener.Close()
 
 	delete(m.proxies, id)
 	m.logger.Info("stopped reverse proxy", "target", id, "port", rp.port)

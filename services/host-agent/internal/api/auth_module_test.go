@@ -67,7 +67,7 @@ func TestAuthModule_Logout_ClearsSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, sessStore := newAuthModule(t, cfg)
 
-	sessStore.Create("user1", "alice", store.RoleMember)
+	_, _ = sessStore.Create("user1", "alice", store.RoleMember)
 
 	handler := mod.LogoutHandler()
 
@@ -141,7 +141,7 @@ func TestAuthHTTP_GetCurrentUser_ValidSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, sessStore := newAuthModule(t, cfg)
 
-	sessStore.Create("user1", "bob", store.RoleAdmin)
+	_, _ = sessStore.Create("user1", "bob", store.RoleAdmin)
 
 	r := chi.NewRouter(); NewAuthRouter(mod, r)
 

@@ -97,7 +97,7 @@ func runConfigure(args []string) int {
 		logger.Error("failed to initialize database", "error", err)
 		return 1
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Create app store
 	appStore := store.NewAppStore(database)

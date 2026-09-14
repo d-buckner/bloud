@@ -459,7 +459,7 @@ func TestDeriveSecret_NoPadding(t *testing.T) {
 
 	// Also verify it's a valid base64 URL-safe string (alphanumeric, -, _)
 	for _, c := range secret {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' {
 			t.Errorf("Secret contains invalid character '%c', should only contain URL-safe base64 chars", c)
 		}
 	}

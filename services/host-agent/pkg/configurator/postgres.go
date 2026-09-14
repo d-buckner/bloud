@@ -22,7 +22,7 @@ func EnsureDatabase(ctx context.Context, socketDir, owner, dbName string, extens
 	if err != nil {
 		return fmt.Errorf("connecting to postgres: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	var exists bool
 	if err := conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)", dbName).Scan(&exists); err != nil {
@@ -44,14 +44,14 @@ func EnsureDatabase(ctx context.Context, socketDir, owner, dbName string, extens
 		return nil
 	}
 
-	conn.Close(ctx)
+	_ = conn.Close(ctx)
 
 	appConnStr := fmt.Sprintf("user=%s host=%s dbname=%s sslmode=disable", owner, socketDir, dbName)
 	appConn, err := pgx.Connect(ctx, appConnStr)
 	if err != nil {
 		return fmt.Errorf("connecting to database %q: %w", dbName, err)
 	}
-	defer appConn.Close(ctx)
+	defer func() { _ = appConn.Close(ctx) }()
 
 	for _, ext := range extensions {
 		if _, err := appConn.Exec(ctx, fmt.Sprintf("CREATE EXTENSION IF NOT EXISTS %q", ext)); err != nil {

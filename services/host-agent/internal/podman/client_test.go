@@ -29,12 +29,12 @@ func setupMockPodman(t *testing.T, handler http.Handler) (string, func()) {
 	require.NoError(t, err)
 
 	server := &http.Server{Handler: http.StripPrefix("/v5.0.0", handler)}
-	go server.Serve(listener)
+	go func() { _ = server.Serve(listener) }()
 
 	cleanup := func() {
-		server.Close()
-		listener.Close()
-		os.RemoveAll(tmpDir)
+		_ = server.Close()
+		_ = listener.Close()
+		_ = os.RemoveAll(tmpDir)
 	}
 
 	return socketPath, cleanup
@@ -62,7 +62,7 @@ func TestClient_Ping(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/libpod/_ping" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
+			_, _ = w.Write([]byte("OK"))
 			return
 		}
 		http.NotFound(w, r)
@@ -97,7 +97,7 @@ func TestClient_ListContainers(t *testing.T) {
 					Status: "Exited (0) 1 hour ago",
 				},
 			}
-			json.NewEncoder(w).Encode(containers)
+			_ = json.NewEncoder(w).Encode(containers)
 			return
 		}
 		http.NotFound(w, r)
@@ -124,10 +124,10 @@ func TestClient_CreateContainer(t *testing.T) {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/libpod/containers/create" && r.Method == http.MethodPost {
-			json.NewDecoder(r.Body).Decode(&receivedSpec)
+			_ = json.NewDecoder(r.Body).Decode(&receivedSpec)
 
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"Id": "newcontainer123",
 			})
 			return
@@ -218,7 +218,7 @@ func TestClient_GetContainer(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/libpod/containers/existing/json":
-			json.NewEncoder(w).Encode(Container{
+			_ = json.NewEncoder(w).Encode(Container{
 				ID:    "abc123",
 				Names: []string{"existing"},
 				State: "running",
@@ -294,7 +294,7 @@ func TestClient_ImageSize(t *testing.T) {
 		// r.URL.Path is percent-decoded by net/http.
 		switch r.URL.Path {
 		case "/libpod/images/docker.io/jellyfin/jellyfin:10.11.11/json":
-			json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:abc", "Size": 1174405120})
+			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:abc", "Size": 1174405120})
 		case "/libpod/images/docker.io/missing/image:1/json":
 			w.WriteHeader(http.StatusNotFound)
 		default:
@@ -321,9 +321,9 @@ func TestClient_ImageSize(t *testing.T) {
 func TestClient_DefaultSocketPath(t *testing.T) {
 	// Test with XDG_RUNTIME_DIR set
 	originalXDG := os.Getenv("XDG_RUNTIME_DIR")
-	defer os.Setenv("XDG_RUNTIME_DIR", originalXDG)
+	defer func() { _ = os.Setenv("XDG_RUNTIME_DIR", originalXDG) }()
 
-	os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	_ = os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
 	path := defaultSocketPath()
 	assert.Equal(t, "/run/user/1000/podman/podman.sock", path)
 }

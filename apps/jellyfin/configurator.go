@@ -128,7 +128,7 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
@@ -138,11 +138,11 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 		return false, err
 	}
 	archivePath := archive.Name()
-	defer os.Remove(archivePath)
+	defer func() { _ = os.Remove(archivePath) }()
 
 	hash := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
-		archive.Close()
+		_ = archive.Close()
 		return false, err
 	}
 	if err := archive.Close(); err != nil {
@@ -156,13 +156,13 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 	if err != nil {
 		return false, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	stagingDir, err := os.MkdirTemp(pluginParent, ".LDAP-Auth-*")
 	if err != nil {
 		return false, err
 	}
-	defer os.RemoveAll(stagingDir)
+	defer func() { _ = os.RemoveAll(stagingDir) }()
 	for _, file := range reader.File {
 		destination := filepath.Join(stagingDir, file.Name)
 		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
@@ -187,12 +187,12 @@ func (c *Configurator) ensureLDAPPlugin(ctx context.Context, dataPath string) (b
 		}
 		target, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 		if err != nil {
-			source.Close()
+			_ = source.Close()
 			return false, err
 		}
 		_, copyErr := io.Copy(target, source)
 		closeErr := target.Close()
-		source.Close()
+		_ = source.Close()
 		if copyErr != nil {
 			return false, copyErr
 		}
@@ -429,7 +429,7 @@ func (c *Configurator) getSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		c.logger.Error("DBG getSystemInfo: Do failed", "error", err, "is_ctx_canceled", errors.Is(err, context.Canceled), "is_deadline", errors.Is(err, context.DeadlineExceeded))
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	c.logger.Info("DBG getSystemInfo: got response", "status", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
@@ -465,7 +465,7 @@ func (c *Configurator) waitForStartupWizardReady(ctx context.Context) error {
 		}
 
 		contentType := resp.Header.Get("Content-Type")
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK && (contentType == "application/json" || contentType == "application/json; charset=utf-8") {
 			c.logger.Info("startup wizard API ready")
@@ -538,7 +538,7 @@ func (c *Configurator) setStartupConfiguration(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -568,7 +568,7 @@ func (c *Configurator) setStartupUser(ctx context.Context, username, password st
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
 			// Initial user is ready, proceed with update
@@ -600,7 +600,7 @@ func (c *Configurator) setStartupUser(ctx context.Context, username, password st
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -630,7 +630,7 @@ func (c *Configurator) setRemoteAccess(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -653,7 +653,7 @@ func (c *Configurator) completeWizard(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -730,7 +730,7 @@ func (c *Configurator) getVirtualFolders(ctx context.Context, token string) ([]V
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -761,7 +761,7 @@ func (c *Configurator) addVirtualFolder(ctx context.Context, token, name, collec
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -920,7 +920,7 @@ func (c *Configurator) authenticate(ctx context.Context, username, password stri
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -949,7 +949,7 @@ func (c *Configurator) getPluginConfiguration(ctx context.Context, token, plugin
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -974,7 +974,7 @@ func (c *Configurator) setPluginConfiguration(ctx context.Context, token, plugin
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -1004,7 +1004,7 @@ func (c *Configurator) getUsers(ctx context.Context, token string) ([]User, erro
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -1033,7 +1033,7 @@ func (c *Configurator) deleteUser(ctx context.Context, token, userID string) err
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

@@ -524,7 +524,7 @@ func TestLiveMDSNRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Skipf("client socket: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	pc := ipv4.NewPacketConn(client)
 	if err := pc.JoinGroup(iface, mdnsGroupAddr); err != nil {
 		t.Skipf("join multicast group: %v", err)
@@ -539,7 +539,7 @@ func TestLiveMDSNRoundTrip(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
-	client.SetReadDeadline(deadline)
+	_ = client.SetReadDeadline(deadline)
 	buf := make([]byte, maxQuerySize)
 	for {
 		n, _, err := client.ReadFromUDP(buf)

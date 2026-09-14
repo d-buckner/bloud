@@ -38,7 +38,7 @@ func (s *PositionStore) GetForUser(username string) ([]Position, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query positions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var positions []Position
 	for rows.Next() {
@@ -66,7 +66,7 @@ func (s *PositionStore) SetForUser(username string, positions []Position) error 
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec("DELETE FROM user_app_positions WHERE username = ?", username); err != nil {
 		return fmt.Errorf("delete positions: %w", err)

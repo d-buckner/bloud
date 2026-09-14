@@ -21,7 +21,7 @@ func cmdSetup() int {
 	fmt.Printf("%s╰──────────────────────────────╯%s\n", colorCyan, colorReset)
 	fmt.Println()
 
-	allGood := true
+	var allGood bool
 
 	projectRoot, err := getProjectRoot()
 	if err != nil {

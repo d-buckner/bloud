@@ -108,7 +108,7 @@ func TestAPI_ListRemoteApps_WithApps(t *testing.T) {
 
 	// Add a remote app directly to the store
 	fakeStore := server.remoteAppStore.(*FakeRemoteAppStore)
-	fakeStore.Create(store.RemoteApp{
+	_ = fakeStore.Create(store.RemoteApp{
 		ID:                 "test-id-1",
 		HostLabel:          "Johan",
 		AppID:              "jellyfin",
@@ -134,7 +134,7 @@ func TestAPI_DeleteRemoteApp(t *testing.T) {
 
 	// Add a remote app
 	fakeStore := server.remoteAppStore.(*FakeRemoteAppStore)
-	fakeStore.Create(store.RemoteApp{
+	_ = fakeStore.Create(store.RemoteApp{
 		ID:          "delete-me",
 		HostLabel:   "Johan",
 		AppID:       "jellyfin",

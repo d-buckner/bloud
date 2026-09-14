@@ -40,7 +40,7 @@ func LoadINI(path string) (*INIFile, error) {
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ini := NewINIFile()
 	var currentSection *INISection
@@ -118,21 +118,33 @@ func (ini *INIFile) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
+	w := bufio.NewWriter(f)
 	for i, sectionName := range ini.order {
 		section := ini.sections[sectionName]
 		if i > 0 {
-			fmt.Fprintln(f)
+			if _, err := fmt.Fprintln(w); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("writing %s: %w", path, err)
+			}
 		}
-		fmt.Fprintf(f, "[%s]\n", sectionName)
+		if _, err := fmt.Fprintf(w, "[%s]\n", sectionName); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
 		for _, key := range section.order {
 			value := section.keys[key]
-			fmt.Fprintf(f, "%s=%s\n", key, value)
+			if _, err := fmt.Fprintf(w, "%s=%s\n", key, value); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("writing %s: %w", path, err)
+			}
 		}
 	}
-
-	return nil
+	if err := w.Flush(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return f.Close()
 }
 
 // EnsureKeys ensures the specified keys exist with the specified values

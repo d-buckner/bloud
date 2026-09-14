@@ -271,7 +271,7 @@ func TestSettingsHTTP_SetupStatus_AuthReadyReflectsSharedRef(t *testing.T) {
 
 func TestSettingsHTTP_SetupStatus_WithUsers(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
+	_ = mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
 	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/setup/status", nil)
@@ -287,7 +287,7 @@ func TestSettingsHTTP_SetupStatus_WithUsers(t *testing.T) {
 
 func TestSettingsHTTP_CreateFirstUser_AlreadySetup(t *testing.T) {
 	mod := newSettingsModule(t, nil)
-	mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
+	_ = mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
 	r := chi.NewRouter(); NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`

@@ -36,16 +36,16 @@ func TestCreateUserSetsValidEmail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v3/core/users/" && r.Method == http.MethodPost {
 			var payload map[string]any
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 			capturedEmail, _ = payload["email"].(string)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte(`{"pk": 42}`))
+			_, _ = w.Write([]byte(`{"pk": 42}`))
 			return
 		}
 		// Password set + group add succeed silently.
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
 

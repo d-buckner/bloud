@@ -34,7 +34,7 @@ func TestRemoteProxy_Reconcile_StartsProxies(t *testing.T) {
 	for _, port := range result {
 		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		require.NoError(t, err, "proxy should be listening on port %d", port)
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 
@@ -78,7 +78,7 @@ func TestRemoteProxy_Reconcile_StopsRemovedTargets(t *testing.T) {
 	// Navidrome port should no longer be listening.
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", navidromePort))
 	if err == nil {
-		conn.Close()
+		_ = conn.Close()
 		t.Error("navidrome proxy should have been stopped")
 	}
 }
@@ -100,7 +100,7 @@ func TestRemoteProxy_Reconcile_EmptyTargets_StopsAll(t *testing.T) {
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err == nil {
-		conn.Close()
+		_ = conn.Close()
 		t.Error("proxy should have been stopped")
 	}
 }
@@ -121,7 +121,7 @@ func TestRemoteProxy_StopAll(t *testing.T) {
 	for id, port := range result {
 		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			t.Errorf("proxy %s on port %d should have been stopped", id, port)
 		}
 	}
@@ -143,7 +143,7 @@ func TestRemoteProxy_ProxiesHTTPRequest(t *testing.T) {
 	// Start a simple backend HTTP server.
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("hello from backend"))
+		_, _ = w.Write([]byte("hello from backend"))
 	}))
 	defer backend.Close()
 
@@ -168,7 +168,7 @@ func TestRemoteProxy_ProxiesHTTPRequest(t *testing.T) {
 	port := result["test-app"]
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	require.NoError(t, err)
-	conn.Close()
+	_ = conn.Close()
 }
 
 func TestRemoteProxy_DeterministicPortAssignment(t *testing.T) {

@@ -74,7 +74,7 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ".zip") {
 			w.Header().Set("Content-Type", "application/zip")
-			w.Write(zipBody)
+			_, _ = w.Write(zipBody)
 			return
 		}
 		http.NotFound(w, r)
@@ -256,16 +256,16 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 				s.mu.Unlock()
 				if !live {
 					w.WriteHeader(http.StatusBadRequest)
-					io.WriteString(w, "400: Bad Request")
+					_, _ = io.WriteString(w, "400: Bad Request")
 					return
 				}
 				w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="http://localhost:8123/.well-known/oauth-protected-resource"`)
 				w.WriteHeader(http.StatusUnauthorized)
-				io.WriteString(w, "401: Unauthorized")
+				_, _ = io.WriteString(w, "401: Unauthorized")
 				return
 			}
 			w.WriteHeader(200)
-			io.WriteString(w, `{"message":"API running."}`)
+			_, _ = io.WriteString(w, `{"message":"API running."}`)
 		case "/api/onboarding":
 			s.mu.Lock()
 			onboarded := s.onboarded
@@ -274,16 +274,16 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			if dereg {
 				// Real HA deregisters this endpoint once every step is closed.
 				w.WriteHeader(http.StatusNotFound)
-				io.WriteString(w, `404: Not Found`)
+				_, _ = io.WriteString(w, `404: Not Found`)
 				return
 			}
 			w.WriteHeader(200)
 			if onboarded {
 				// Realistic post-owner flow: remaining interactive steps
 				// are still pending; onboarding must NOT be re-run.
-				io.WriteString(w, `[{"step":"user","done":true},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
+				_, _ = io.WriteString(w, `[{"step":"user","done":true},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
 			} else {
-				io.WriteString(w, `[{"step":"user","done":false},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
+				_, _ = io.WriteString(w, `[{"step":"user","done":false},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
 			}
 		case "/api/onboarding/core_config", "/api/onboarding/analytics", "/api/onboarding/integration":
 			s.mu.Lock()
@@ -291,13 +291,13 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 				// Real HA: already-closed steps answer 403 (replay).
 				s.mu.Unlock()
 				w.WriteHeader(http.StatusForbidden)
-				io.WriteString(w, `{"message":"step already done"}`)
+				_, _ = io.WriteString(w, `{"message":"step already done"}`)
 				return
 			}
 			s.stepsCompleted[r.URL.Path] = true
 			s.mu.Unlock()
 			w.WriteHeader(200)
-			io.WriteString(w, `{}`)
+			_, _ = io.WriteString(w, `{}`)
 		case "/api/onboarding/users":
 			body, _ := io.ReadAll(r.Body)
 			s.mu.Lock()
@@ -305,7 +305,7 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 				// Real HA: the user step is already done → 403, no code re-issued.
 				s.mu.Unlock()
 				w.WriteHeader(http.StatusForbidden)
-				io.WriteString(w, `{"message":"User step already done"}`)
+				_, _ = io.WriteString(w, `{"message":"User step already done"}`)
 				return
 			}
 			s.postBodies = append(s.postBodies, string(body))
@@ -313,7 +313,7 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			s.authCodeIssued = true
 			s.mu.Unlock()
 			w.WriteHeader(201)
-			io.WriteString(w, `{"auth_code":"code123"}`)
+			_, _ = io.WriteString(w, `{"auth_code":"code123"}`)
 		case "/auth/token":
 			form, _ := io.ReadAll(r.Body)
 			s.mu.Lock()
@@ -325,14 +325,14 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			s.mu.Unlock()
 			if !ok {
 				w.WriteHeader(http.StatusBadRequest)
-				io.WriteString(w, `{"error":"invalid_request"}`)
+				_, _ = io.WriteString(w, `{"error":"invalid_request"}`)
 				return
 			}
 			w.WriteHeader(200)
-			io.WriteString(w, `{"access_token":"tok","token_type":"Bearer","refresh_token":"rtok","expires_in":1800}`)
+			_, _ = io.WriteString(w, `{"access_token":"tok","token_type":"Bearer","refresh_token":"rtok","expires_in":1800}`)
 		case "/auth/oidc/welcome":
 			if s.isOIDCLive() {
-				io.WriteString(w, `<!doctype html><title>Sign in with Bloud</title>`)
+				_, _ = io.WriteString(w, `<!doctype html><title>Sign in with Bloud</title>`)
 				return
 			}
 			http.NotFound(w, r)

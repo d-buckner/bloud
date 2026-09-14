@@ -184,11 +184,11 @@ func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated:
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		c.logger.Info("owner account created")
 		return nil
 	case http.StatusForbidden:
@@ -263,7 +263,7 @@ func (c *Configurator) waitForServer(ctx context.Context) error {
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -297,7 +297,7 @@ func (c *Configurator) waitForOIDCPreflight(ctx context.Context) error {
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			data, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK && strings.Contains(string(data), `"url"`) {
 				return nil
 			}

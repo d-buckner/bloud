@@ -87,7 +87,7 @@ func (c *Client) DeleteApplication(slug string) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 204 No Content = success, 404 = already deleted (acceptable)
 	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
@@ -140,7 +140,7 @@ func (c *Client) findProviderID(providerType, name string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -178,7 +178,7 @@ func (c *Client) deleteProviderByID(providerType string, id int) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
 		return nil
@@ -229,7 +229,7 @@ func (c *Client) IsAvailable() bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return resp.StatusCode == http.StatusOK
 }
@@ -297,7 +297,7 @@ func (c *Client) findEmbeddedOutpost() (*OutpostResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -343,7 +343,7 @@ func (c *Client) EnsureEmbeddedOutpostHost(baseURL string) error {
 		return err
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("fetching outpost: status %d: %s", resp.StatusCode, string(body))
 	}
@@ -374,7 +374,7 @@ func (c *Client) EnsureEmbeddedOutpostHost(baseURL string) error {
 	if err != nil {
 		return err
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusOK {
 		body2, _ := io.ReadAll(resp2.Body)
 		return fmt.Errorf("updating outpost host: status %d: %s", resp2.StatusCode, string(body2))
@@ -408,7 +408,7 @@ func (c *Client) updateOutpostProviders(outpostPK string, providers []int) error
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -528,7 +528,7 @@ func (c *Client) ensureLDAPProvider() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -557,7 +557,7 @@ func (c *Client) ensureLDAPApplication(providerID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusOK {
 		return nil // Already exists
@@ -584,7 +584,7 @@ func (c *Client) ensureLDAPApplication(providerID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -627,7 +627,7 @@ func (c *Client) ensureLDAPServiceAccount() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -677,7 +677,7 @@ func (c *Client) ensureLDAPServiceToken(userID int, password string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -722,7 +722,7 @@ func (c *Client) ensureLDAPOutpost(providerID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -746,7 +746,7 @@ func (c *Client) GetLDAPServiceTokenKey() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -790,7 +790,7 @@ func (c *Client) GetLDAPOutpostToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -819,7 +819,7 @@ func (c *Client) findFlowID(slug string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -846,7 +846,7 @@ func (c *Client) findGroupID(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -882,7 +882,7 @@ func (c *Client) findUserID(username string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -932,7 +932,7 @@ func (c *Client) addUserToGroup(userID int, groupName string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 204 = success, 200 = already in group (idempotent)
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
@@ -953,7 +953,7 @@ func (c *Client) tokenExists(identifier string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -988,7 +988,7 @@ func (c *Client) findOutpostByName(name string) (*OutpostResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1035,7 +1035,7 @@ func (c *Client) CreateUser(username, password string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -1075,7 +1075,7 @@ func (c *Client) setUserPassword(userID int, password string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 204 No Content = success
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
@@ -1104,7 +1104,7 @@ func (c *Client) SetUserEmail(userID int, email string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1146,7 +1146,7 @@ func (c *Client) RemoveUserFromGroup(userID int, groupName string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1186,7 +1186,7 @@ func (c *Client) ListUsers() ([]ManagedUserInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1265,7 +1265,7 @@ func (c *Client) getAdminGroupMembers() (map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1310,7 +1310,7 @@ func (c *Client) DeleteUser(username string) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 204 No Content = success, 404 = already deleted
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
@@ -1405,7 +1405,7 @@ func (c *Client) getFlowTitle(slug string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1432,7 +1432,7 @@ func (c *Client) getIdentificationStageUserFields(stageName string) ([]string, e
 	if err != nil {
 		return nil, fmt.Errorf("fetching identification stage: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1476,7 +1476,7 @@ func (c *Client) ensureFlowTitle(slug, title string) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1500,7 +1500,7 @@ func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
 	if err != nil {
 		return fmt.Errorf("fetching identification stages: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1548,7 +1548,7 @@ func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer patchResp.Body.Close()
+	defer func() { _ = patchResp.Body.Close() }()
 
 	if patchResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(patchResp.Body)
@@ -1609,7 +1609,7 @@ func (c *Client) EnsureBranding(css string) error {
 	if err != nil {
 		return fmt.Errorf("patching brand: %w", err)
 	}
-	defer patchResp.Body.Close()
+	defer func() { _ = patchResp.Body.Close() }()
 
 	if patchResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(patchResp.Body)
@@ -1638,7 +1638,7 @@ func (c *Client) defaultBrandPK() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetching brands: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1821,7 +1821,7 @@ func (c *Client) createBloudOAuth2Provider(redirectURIs []string, clientSecret s
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -1854,7 +1854,7 @@ func (c *Client) AddRedirectURI(providerID int, redirectURI string) error {
 	if err != nil {
 		return fmt.Errorf("fetching provider: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1908,7 +1908,7 @@ func (c *Client) AddRedirectURI(providerID int, redirectURI string) error {
 	if err != nil {
 		return fmt.Errorf("patching provider: %w", err)
 	}
-	defer patchResp.Body.Close()
+	defer func() { _ = patchResp.Body.Close() }()
 
 	if patchResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(patchResp.Body)
@@ -1946,7 +1946,7 @@ func (c *Client) updateBloudOAuth2ProviderRedirectURIs(providerID int, redirectU
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -1970,7 +1970,7 @@ func (c *Client) getFirstCertificateUUID() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -2006,7 +2006,7 @@ func (c *Client) getScopePropertyMappings(scopes []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -2068,7 +2068,7 @@ func (c *Client) ensureBloudEmailScopeMapping() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -2110,7 +2110,7 @@ func (c *Client) ensureBloudEmailScopeMapping() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -2140,7 +2140,7 @@ func (c *Client) managedEmailScopeMappingUUID() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("listing scope mappings: status %d", resp.StatusCode)
 	}
@@ -2183,7 +2183,7 @@ func (c *Client) ensureProviderEmailScopeMapping(providerID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -2248,7 +2248,7 @@ func (c *Client) ensureProviderEmailScopeMapping(providerID int) error {
 	if err != nil {
 		return err
 	}
-	defer patchResp.Body.Close()
+	defer func() { _ = patchResp.Body.Close() }()
 
 	if patchResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(patchResp.Body)
@@ -2268,7 +2268,7 @@ func (c *Client) applicationExists(slug string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return resp.StatusCode == http.StatusOK, nil
 }
@@ -2295,7 +2295,7 @@ func (c *Client) createBloudApplication(providerID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -2325,7 +2325,7 @@ func (c *Client) ExchangeCode(code, redirectURI, clientID, clientSecret string) 
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -2353,7 +2353,7 @@ func (c *Client) GetUserInfo(accessToken string) (*UserInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -2476,7 +2476,7 @@ func (c *Client) ensureProxyOutpost(providerID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -2511,7 +2511,7 @@ func (c *Client) GetProxyOutpostToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -2552,7 +2552,7 @@ func (c *Client) createForwardDomainProvider(name, externalHost, cookieDomain, a
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -2637,7 +2637,7 @@ func (c *Client) createProxyProvider(name, externalHost, authFlowID, invalidatio
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -2664,7 +2664,7 @@ func (c *Client) ensureProxyApplication(slug, displayName string, providerID int
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusOK {
 		return nil // Already exists
@@ -2691,7 +2691,7 @@ func (c *Client) ensureProxyApplication(slug, displayName string, providerID int
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -2796,7 +2796,7 @@ func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret s
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusCreated {
 			body, _ := io.ReadAll(resp.Body)
@@ -2833,7 +2833,7 @@ func (c *Client) ensureOIDCApplication(slug, displayName string, providerID int,
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusOK {
 		return nil // Already exists
@@ -2862,7 +2862,7 @@ func (c *Client) ensureOIDCApplication(slug, displayName string, providerID int,
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)

@@ -36,12 +36,12 @@ func newScopeMappingTestServer(t *testing.T, currentMappings []string, bloudExis
 				"pk": "bloud-email-uuid", "name": bloudEmailScopeMappingName, "managed": "",
 			})
 		}
-		json.NewEncoder(w).Encode(map[string]any{"results": results})
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
 	})
 	mux.HandleFunc("/api/v3/providers/oauth2/7/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			json.NewEncoder(w).Encode(map[string]any{"property_mappings": currentMappings})
+			_ = json.NewEncoder(w).Encode(map[string]any{"property_mappings": currentMappings})
 		case http.MethodPatch:
 			body, _ := io.ReadAll(r.Body)
 			var payload struct {

@@ -481,7 +481,7 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		errorf("failed to create build dir: %v", err)
 		return fail("could not create build dir")
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	hostAgentSrc := filepath.Join(root, "services", "host-agent")
 	binaryPath := filepath.Join(tmpDir, "host-agent")
@@ -991,11 +991,15 @@ func writeLedger(root string, result *ValidateResult, flags validateFlags) {
 	// Write timestamped file
 	ts := time.Now().UTC().Format("2006-01-02T15-04-05Z")
 	tsPath := filepath.Join(dir, ts+".json")
-	os.WriteFile(tsPath, data, 0644)
+	if err := os.WriteFile(tsPath, data, 0644); err != nil {
+		return
+	}
 
 	// Write latest.json
 	latestPath := filepath.Join(dir, "latest.json")
-	os.WriteFile(latestPath, data, 0644)
+	if err := os.WriteFile(latestPath, data, 0644); err != nil {
+		return
+	}
 
 	// Prune old files (keep newest 20)
 	pruneOldLedgers(dir, 20)
@@ -1023,6 +1027,6 @@ func pruneOldLedgers(dir string, keep int) {
 	sort.Strings(jsonFiles)
 	toRemove := jsonFiles[:len(jsonFiles)-keep]
 	for _, name := range toRemove {
-		os.Remove(filepath.Join(dir, name))
+		_ = os.Remove(filepath.Join(dir, name))
 	}
 }

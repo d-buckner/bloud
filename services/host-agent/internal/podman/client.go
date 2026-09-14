@@ -199,7 +199,7 @@ func (c *Client) ImageSize(ctx context.Context, reference string) (int64, bool, 
 	if err != nil {
 		return 0, false, fmt.Errorf("inspect image %s: %w", reference, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return 0, false, nil
@@ -224,7 +224,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to ping podman: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("podman ping returned status %d", resp.StatusCode)
@@ -259,7 +259,7 @@ func (c *Client) CreateContainer(ctx context.Context, config ContainerConfig) (s
 	if err != nil {
 		return "", fmt.Errorf("failed to create container: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -282,7 +282,7 @@ func (c *Client) StartContainer(ctx context.Context, nameOrID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -308,7 +308,7 @@ func (c *Client) StopContainer(ctx context.Context, nameOrID string, timeout int
 	if err != nil {
 		return fmt.Errorf("failed to stop container: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -334,7 +334,7 @@ func (c *Client) RemoveContainer(ctx context.Context, nameOrID string, force boo
 	if err != nil {
 		return fmt.Errorf("failed to remove container: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -353,7 +353,7 @@ func (c *Client) ListContainers(ctx context.Context) ([]Container, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -374,7 +374,7 @@ func (c *Client) GetContainer(ctx context.Context, nameOrID string) (*Container,
 	if err != nil {
 		return nil, fmt.Errorf("failed to get container: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
@@ -399,7 +399,7 @@ func (c *Client) InspectContainer(ctx context.Context, nameOrID string) (*Contai
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil

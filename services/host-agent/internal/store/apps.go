@@ -59,7 +59,7 @@ func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query apps: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	apps := []*InstalledApp{}
 	for rows.Next() {
@@ -98,7 +98,7 @@ func (s *AppStore) GetInstalledCatalogIDs() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query app catalog IDs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []string
 	for rows.Next() {

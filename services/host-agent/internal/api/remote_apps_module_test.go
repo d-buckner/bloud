@@ -32,7 +32,7 @@ func TestRemoteAppsModule_List_Empty(t *testing.T) {
 
 func TestRemoteAppsModule_List_WithApps(t *testing.T) {
 	s := NewFakeRemoteAppStore()
-	s.Create(store.RemoteApp{ID: "app1", AppID: "jellyfin", TailnetAddr: "ts-jellyfin.ts.net", HostLabel: "John's server"})
+	_ = s.Create(store.RemoteApp{ID: "app1", AppID: "jellyfin", TailnetAddr: "ts-jellyfin.ts.net", HostLabel: "John's server"})
 	cache := NewFakeCatalogCache()
 	orch := newFakeOrchestrator()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -89,7 +89,7 @@ func TestRemoteAppsModule_Add_UnknownApp(t *testing.T) {
 
 func TestRemoteAppsModule_Delete_Valid(t *testing.T) {
 	s := NewFakeRemoteAppStore()
-	s.Create(store.RemoteApp{ID: "app1", AppID: "jellyfin"})
+	_ = s.Create(store.RemoteApp{ID: "app1", AppID: "jellyfin"})
 	cache := NewFakeCatalogCache()
 	orch := newFakeOrchestrator()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -116,7 +116,7 @@ func TestRemoteAppsModule_Delete_NotFound(t *testing.T) {
 
 func TestRemoteAppsHTTP_List(t *testing.T) {
 	s := NewFakeRemoteAppStore()
-	s.Create(store.RemoteApp{ID: "app1", AppID: "jellyfin", HostLabel: "John's"})
+	_ = s.Create(store.RemoteApp{ID: "app1", AppID: "jellyfin", HostLabel: "John's"})
 	cache := NewFakeCatalogCache()
 	orch := newFakeOrchestrator()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

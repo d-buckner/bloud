@@ -55,7 +55,7 @@ func (g *Generator) GenerateAll(apps []*catalog.App, remoteApps []RemoteAppRoute
 	}
 
 	if err := os.Rename(tempPath, g.configPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("failed to update config: %w", err)
 	}
 

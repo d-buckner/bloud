@@ -21,8 +21,6 @@ import (
 )
 
 const (
-	// qemuArch is the guest architecture for the QEMU VM (x86_64 on Linux via KVM).
-	qemuArch = "x86_64"
 	// qemuImageURL is the Debian 13 genericcloud amd64 base image.
 	qemuImageURL = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
 	// qemuImageBase is the downloaded base image filename.
@@ -284,7 +282,7 @@ func (b *QEMUBackend) stop() error {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat("/proc" + strconv.Itoa(pid)); err != nil {
-			os.Remove(pidFile)
+			_ = os.Remove(pidFile)
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -537,7 +535,7 @@ func canBindHostPort(port string) bool {
 	if err != nil {
 		return false
 	}
-	ln.Close()
+	_ = ln.Close()
 	return true
 }
 
@@ -549,7 +547,7 @@ func canBindHostUDPPort(port string) bool {
 	if err != nil {
 		return false
 	}
-	pc.Close()
+	_ = pc.Close()
 	return true
 }
 

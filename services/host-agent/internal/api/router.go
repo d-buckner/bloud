@@ -277,7 +277,7 @@ func setupFrontendHelper(r chi.Router, logger *slog.Logger) {
 			w.Header().Set("Content-Type", "text/html")
 			w.Header().Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusOK)
-			w.Write(devDashboardHTML)
+			_, _ = w.Write(devDashboardHTML)
 		})
 		return
 	}
@@ -347,14 +347,17 @@ func initOrchestratorHelper(
 	if cfg.TSAuthKey != "" {
 		active, _ := tailnetStore.GetActive()
 		if active == nil {
-			tailnetStore.Create(store.TailnetConnection{
+			if err := tailnetStore.Create(store.TailnetConnection{
 				ID:      uuid.New().String(),
 				Name:    "Default",
 				Type:    "tailscale",
 				AuthKey: cfg.TSAuthKey,
 				Status:  "active",
-			})
-			logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
+			}); err != nil {
+				logger.Error("failed to migrate BLOUD_TS_AUTHKEY to tailnet_connections store", "error", err)
+			} else {
+				logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
+			}
 		}
 	}
 
@@ -533,13 +536,13 @@ func authMiddlewareFn(sessionStore store.SessionStoreInterface, logger *slog.Log
 			}
 
 			if time.Now().After(session.ExpiresAt) {
-				sessionStore.Delete(session.ID)
+				_ = sessionStore.Delete(session.ID)
 				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "Session expired"})
 				return
 			}
 
 			if session.Role == "" {
-				sessionStore.Delete(session.ID)
+				_ = sessionStore.Delete(session.ID)
 				http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 				respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "Session expired"})
 				return
@@ -568,7 +571,7 @@ func adminMiddlewareFn(next http.Handler) http.Handler {
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func respondError(w http.ResponseWriter, status int, message string) {

@@ -89,7 +89,7 @@ func (s *TailnetStore) List() ([]*TailnetConnection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tailnet connections: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	conns := []*TailnetConnection{}
 	for rows.Next() {

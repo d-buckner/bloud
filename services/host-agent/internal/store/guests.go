@@ -64,7 +64,7 @@ func (s *GuestStore) List() ([]*Guest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query guests: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	guests := []*Guest{}
 	for rows.Next() {

@@ -29,9 +29,9 @@ func fakeLimaBackend(t *testing.T, recorded *[][]string, listOutputs []string) *
 					if idx >= len(listOutputs) {
 						idx = len(listOutputs) - 1
 					}
-					f.WriteString(listOutputs[idx])
+					_, _ = f.WriteString(listOutputs[idx])
 				}
-				f.Close()
+				_ = f.Close()
 				call++
 				return exec.Command("cat", f.Name())
 			}

@@ -30,7 +30,7 @@ func loadDotEnv() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -50,7 +50,7 @@ func loadDotEnv() {
 		}
 		// Only set if not already in environment
 		if os.Getenv(key) == "" {
-			os.Setenv(key, value)
+			_ = os.Setenv(key, value)
 		}
 	}
 }
@@ -174,10 +174,6 @@ func printUsage() {
 
 func log(msg string) {
 	fmt.Printf("%s==>%s %s\n", colorGreen, colorReset, msg)
-}
-
-func warn(msg string) {
-	fmt.Printf("%sWarning:%s %s\n", colorYellow, colorReset, msg)
 }
 
 func errorf(format string, args ...any) {

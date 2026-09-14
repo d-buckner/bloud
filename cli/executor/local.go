@@ -109,14 +109,14 @@ func copyFile(from, to string) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", from, err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.Create(to)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", to, err)
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return fmt.Errorf("copy %s -> %s: %w", from, to, err)
 	}
 	return out.Close()

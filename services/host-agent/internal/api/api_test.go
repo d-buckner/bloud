@@ -433,7 +433,7 @@ tags:
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	// Initialize database tables
 	require.NoError(t, initTestDB(db))
@@ -566,7 +566,7 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, initTestDB(db))
 
 	cfg := ServerConfig{
@@ -645,7 +645,7 @@ tags:
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, initTestDB(db))
 
 	cfg := ServerConfig{
