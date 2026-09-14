@@ -15,6 +15,9 @@ tiers:
       - id: go-cli
         cwd: cli
         run: go test ./...
+      - id: go-lint
+        cwd: .
+        run: npm run lint:go
       - id: web-unit
         cwd: .
         run: npm run test --workspace=@bloud/host-agent-web
@@ -40,12 +43,12 @@ inference:
     - pattern: "services/host-agent/web/**"
       triggers: [web-unit, web-check-host-agent]
     - pattern: "services/host-agent/**"
-      triggers: [go-host-agent, go-host-agent-race]
+      triggers: [go-host-agent, go-host-agent-race, go-lint]
     - pattern: "apps/**"
-      triggers: [go-apps]
+      triggers: [go-apps, go-lint]
       riskAreas: [app-install, embed]
     - pattern: "cli/**"
-      triggers: [go-cli]
+      triggers: [go-cli, go-lint]
     - pattern: "e2e/**"
       triggers: []
       riskAreas: [playwright]

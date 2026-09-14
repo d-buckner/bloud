@@ -692,11 +692,12 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 			json.NewEncoder(w).Encode(resp)
 
 		case "/Library/VirtualFolders":
-			if r.Method == http.MethodGet {
+			switch r.Method {
+			case http.MethodGet:
 				// Return empty list - no libraries yet
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode([]VirtualFolder{})
-			} else if r.Method == http.MethodPost {
+			case http.MethodPost:
 				// Library creation
 				w.WriteHeader(http.StatusNoContent)
 			}
@@ -917,7 +918,6 @@ func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T
 		case "/Users/AuthenticateByName":
 			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
 
-
 		case "/Library/VirtualFolders":
 			if r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "application/json")
@@ -1035,10 +1035,11 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 			json.NewEncoder(w).Encode(resp)
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
-			if r.Method == "GET" {
+			switch r.Method {
+			case "GET":
 				// Return unconfigured LDAP
 				json.NewEncoder(w).Encode(LDAPConfig{})
-			} else if r.Method == "POST" {
+			case "POST":
 				json.NewDecoder(r.Body).Decode(&receivedConfig)
 				w.WriteHeader(http.StatusNoContent)
 			}
@@ -1146,9 +1147,10 @@ func TestConfigurator_PostStart_SkipsLDAPWhenNilDespiteSSOEnabled(t *testing.T) 
 			json.NewEncoder(w).Encode(resp)
 
 		case "/Library/VirtualFolders":
-			if r.Method == http.MethodGet {
+			switch r.Method {
+			case http.MethodGet:
 				json.NewEncoder(w).Encode([]VirtualFolder{})
-			} else if r.Method == http.MethodPost {
+			case http.MethodPost:
 				w.WriteHeader(http.StatusNoContent)
 			}
 

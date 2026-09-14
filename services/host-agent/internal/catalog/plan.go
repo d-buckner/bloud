@@ -167,22 +167,14 @@ func makeChoice(intName string, integration Integration, installed, available []
 	}
 
 	for _, c := range installed {
-		choice.Installed = append(choice.Installed, ChoiceOption{
-			App:      c.App,
-			Default:  c.Default,
-			Category: c.Category,
-		})
+		choice.Installed = append(choice.Installed, ChoiceOption(c))
 		if c.Default {
 			choice.Recommended = c.App
 		}
 	}
 
 	for _, c := range available {
-		choice.Available = append(choice.Available, ChoiceOption{
-			App:      c.App,
-			Default:  c.Default,
-			Category: c.Category,
-		})
+		choice.Available = append(choice.Available, ChoiceOption(c))
 		if c.Default && choice.Recommended == "" {
 			choice.Recommended = c.App
 		}

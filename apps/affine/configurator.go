@@ -87,11 +87,11 @@ func (c *Configurator) appExternalURL() string {
 		baseURL = c.ssoBaseURL()
 	}
 	if baseURL == "" {
-		return fmt.Sprintf("http://affine.localhost:8080")
+		return "http://affine.localhost:8080"
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" {
-		return fmt.Sprintf("http://affine.localhost:8080")
+		return "http://affine.localhost:8080"
 	}
 	parsed.Host = appName + "." + parsed.Host
 	parsed.Path = ""
@@ -219,9 +219,9 @@ func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) string 
 		cfg["oauth"] = map[string]any{
 			"providers": map[string]any{
 				"oidc": map[string]any{
-					"clientId":          oidc.ClientID,
-					"clientSecret":      oidc.ClientSecret,
-					"issuer":            oidc.IssuerURL,
+					"clientId":            oidc.ClientID,
+					"clientSecret":        oidc.ClientSecret,
+					"issuer":              oidc.IssuerURL,
 					"allowPrivateNetwork": true,
 				},
 			},

@@ -191,7 +191,7 @@ func generateMermaid(apps map[string]*AppMetadata) string {
 	if len(userApps) > 0 {
 		sb.WriteString("    subgraph Apps\n")
 		for _, appName := range userApps {
-			sb.WriteString(fmt.Sprintf("        %s\n", appName))
+			fmt.Fprintf(&sb, "        %s\n", appName)
 		}
 		sb.WriteString("    end\n")
 	}
@@ -200,7 +200,7 @@ func generateMermaid(apps map[string]*AppMetadata) string {
 	sb.WriteString("    subgraph System\n")
 	sb.WriteString("        host-agent\n")
 	for _, appName := range systemApps {
-		sb.WriteString(fmt.Sprintf("        %s\n", appName))
+		fmt.Fprintf(&sb, "        %s\n", appName)
 	}
 	sb.WriteString("    end\n")
 

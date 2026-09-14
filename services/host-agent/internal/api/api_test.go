@@ -388,14 +388,6 @@ func (f *FakeCatalogCache) AddApp(app *catalog.App) {
 	f.apps[app.CatalogID] = app
 }
 
-// withFakes returns router options that inject test fakes into the router.
-func withFakes(fCatalog catalog.CacheInterface, fAppStore store.AppStoreInterface) func(*routerOptions) {
-	return func(o *routerOptions) {
-		o.catalog = fCatalog
-		o.appStore = fAppStore
-	}
-}
-
 // setupTestServer creates a test server with real stores and a test catalog.
 func setupTestServer(t *testing.T) (*Server, string) {
 	t.Helper()

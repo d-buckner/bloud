@@ -250,11 +250,11 @@ func (c *Configurator) createAdmin(ctx context.Context, password string) error {
 	}
 	defer resp.Body.Close()
 
-	switch {
-	case resp.StatusCode == http.StatusCreated:
+	switch resp.StatusCode {
+	case http.StatusCreated:
 		io.Copy(io.Discard, resp.Body)
 		return nil
-	case resp.StatusCode == http.StatusBadRequest:
+	case http.StatusBadRequest:
 		b, _ := io.ReadAll(resp.Body)
 		// Idempotency: a previous run already created the admin (possibly with
 		// a different password). Anything else is a real validation error.
