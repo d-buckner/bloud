@@ -39,7 +39,11 @@ jobs:
         working-directory: services/host-agent/web
         run: npm ci
 
-      - name: Lint and typecheck
+      - name: Lint (ESLint / complexity)
+        working-directory: services/host-agent/web
+        run: npm run lint
+
+      - name: Typecheck
         working-directory: services/host-agent/web
         run: npm run check
 

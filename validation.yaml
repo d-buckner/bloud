@@ -24,6 +24,9 @@ tiers:
       - id: web-check-host-agent
         cwd: .
         run: npm run check --workspace=@bloud/host-agent-web
+      - id: web-lint
+        cwd: .
+        run: npm run lint:web
       - id: license-headers
         cwd: .
         run: npm run license:check
@@ -41,7 +44,7 @@ tiers:
 inference:
   paths:
     - pattern: "services/host-agent/web/**"
-      triggers: [web-unit, web-check-host-agent]
+      triggers: [web-unit, web-check-host-agent, web-lint]
     - pattern: "services/host-agent/**"
       triggers: [go-host-agent, go-host-agent-race, go-lint]
     - pattern: "apps/**"

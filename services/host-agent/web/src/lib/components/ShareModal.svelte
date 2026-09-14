@@ -163,7 +163,7 @@
 				{:else}
 					<select id="share-guest" value={selectedGuestId} onchange={handleGuestSelect}>
 						<option value="" disabled>Select a guest...</option>
-						{#each guests as guest}
+						{#each guests as guest (guest.id)}
 							<option value={guest.id}>{guest.name}</option>
 						{/each}
 						<option value="__new__">+ Add new guest...</option>

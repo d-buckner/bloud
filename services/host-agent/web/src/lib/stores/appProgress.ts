@@ -97,6 +97,23 @@ function pushHistory(entry: AppProgress, phase: string, at: number): void {
 }
 
 /**
+ * The app-level phase given all its container components: failed dominates;
+ * otherwise the least-advanced phase wins, so the app reflects remaining
+ * work (a container still starting keeps the app out of "Ready" even if
+ * another reached running). Single-container apps just take that container's
+ * phase.
+ */
+function aggregatePhase(components: Record<string, ComponentProgress>, nodePhase: string): string {
+	if (Object.keys(components).length <= 1) return nodePhase;
+	let phase = 'running';
+	for (const comp of Object.values(components)) {
+		if (comp.phase === 'failed') return 'failed';
+		if (phaseRank(comp.phase) < phaseRank(phase)) phase = comp.phase;
+	}
+	return phase;
+}
+
+/**
  * Merge one node (graph transition) event into the progress map.
  * The app-level phase is the most advanced phase across its containers
  * (failed dominates).
@@ -109,21 +126,7 @@ export function mergeNodeEvent(map: ProgressMap, node: NodeEvent, now = Date.now
 		[node.container]: { phase: node.phase, error: node.error || undefined }
 	};
 
-	// Aggregate across components: failed dominates; otherwise the least
-	// advanced phase wins — the app's phase reflects the remaining work, so a
-	// container still starting keeps the app out of "Ready" even if another
-	// container already reached running.
-	let phase: string = node.phase;
-	if (Object.keys(entry.components).length > 1) {
-		phase = 'running';
-		for (const comp of Object.values(entry.components)) {
-			if (comp.phase === 'failed') {
-				phase = 'failed';
-				break;
-			}
-			if (phaseRank(comp.phase) < phaseRank(phase)) phase = comp.phase;
-		}
-	}
+	const phase = aggregatePhase(entry.components, node.phase);
 
 	if (phase !== entry.phase) {
 		if (phase === 'failed' && entry.phase) {

@@ -89,7 +89,7 @@
 
 			{#if app.screenshots?.length}
 				<div class="screenshots">
-					{#each app.screenshots as screenshot}
+					{#each app.screenshots as screenshot, i (i)}
 						<img src={screenshot} alt="Screenshot" class="screenshot" />
 					{/each}
 				</div>

@@ -1,6 +1,8 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
+	import { resolve } from '$app/paths';
+	import type { RouteId } from '$app/types';
 	import Icon from './Icon.svelte';
 
 	interface Props {
@@ -8,7 +10,7 @@
 		title?: string;
 		description?: string;
 		actionLabel?: string;
-		actionHref?: string;
+		actionHref?: RouteId;
 	}
 
 	let {
@@ -27,7 +29,7 @@
 	<h2>{title}</h2>
 	<p>{description}</p>
 	{#if actionLabel && actionHref}
-		<a href={actionHref} class="action-btn">{actionLabel}</a>
+		<a href={resolve(actionHref)} class="action-btn">{actionLabel}</a>
 	{/if}
 </div>
 

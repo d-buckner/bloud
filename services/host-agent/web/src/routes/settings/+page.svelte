@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Daniel Buckner
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import {
 		fetchTailnet,
 		setTailnet,
@@ -90,7 +91,7 @@
 	onMount(async () => {
 		// Redirect non-admins
 		if (!$isAdmin) {
-			goto('/');
+			goto(resolve('/'));
 			return;
 		}
 

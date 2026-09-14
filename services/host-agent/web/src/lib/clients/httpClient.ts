@@ -12,7 +12,7 @@ export interface HttpError {
 }
 
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
-	body?: Record<string, any>;
+	body?: unknown;
 }
 
 /**
@@ -67,21 +67,21 @@ export function get<T>(url: string, options?: Omit<RequestOptions, 'method'>): P
 /**
  * Make a POST request
  */
-export function post<T>(url: string, body?: Record<string, any>, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+export function post<T>(url: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
 	return request<T>(url, { ...options, method: 'POST', body });
 }
 
 /**
  * Make a PUT request
  */
-export function put<T>(url: string, body?: Record<string, any>, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+export function put<T>(url: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
 	return request<T>(url, { ...options, method: 'PUT', body });
 }
 
 /**
  * Make a PATCH request
  */
-export function patch<T>(url: string, body?: Record<string, any>, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+export function patch<T>(url: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
 	return request<T>(url, { ...options, method: 'PATCH', body });
 }
 

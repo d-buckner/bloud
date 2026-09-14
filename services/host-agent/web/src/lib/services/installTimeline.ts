@@ -47,6 +47,58 @@ function phaseRank(phase: string | null): number {
 }
 
 /**
+ * State of a step when the install has failed: everything before the failed
+ * phase is done, the failed phase itself is 'failed', the rest pending.
+ */
+function failedStepState(step: FlowStep, failedPhase: string | null): TimelineStep['state'] {
+	if (step.phase === null) return 'done'; // accepted always completes
+	if (phaseRank(step.phase) < phaseRank(failedPhase)) return 'done';
+	return step.phase === failedPhase ? 'failed' : 'pending';
+}
+
+/**
+ * State of a step during a live (non-failed) install: done before the
+ * current phase, 'current' at it, pending after.
+ */
+function liveStepState(
+	step: FlowStep,
+	currentPhase: string | null,
+	currentRank: number
+): TimelineStep['state'] {
+	if (step.phase === null) return 'done'; // accepted
+	if (phaseRank(step.phase) < currentRank) return 'done';
+	return step.phase === currentPhase ? 'current' : 'pending';
+}
+
+/** The pulling step carries the live pull detail while it is current/done. */
+function pullDetail(
+	step: FlowStep,
+	state: TimelineStep['state'],
+	progress: AppProgress | null
+): string | undefined {
+	const show = step.phase === 'pulling' && (state === 'current' || state === 'done');
+	return show ? progress?.phaseDetail || undefined : undefined;
+}
+
+/** The phase the install is on, defaulting queued/starting by status. */
+function resolveCurrentPhase(status: string, phase: string | null): string | null {
+	if (phase) return phase;
+	if (status === 'installing') return 'queued';
+	if (status === 'starting') return 'starting';
+	return null;
+}
+
+/** The phase an install got stuck on, or null when not failed. */
+function resolveFailedPhase(
+	failed: boolean,
+	progress: AppProgress | null,
+	currentPhase: string | null
+): string | null {
+	if (!failed) return null;
+	return progress?.lastPhase ?? currentPhase ?? 'queued';
+}
+
+/**
  * Derive the timeline steps.
  *
  *  - running  → every step done
@@ -61,53 +113,27 @@ export function deriveTimeline(status: string, progress: AppProgress | null): Ti
 
 	const timeFor = (ph: string | null): number | undefined => {
 		if (!ph) return undefined;
-		const entry = history.find((h) => h.phase === ph);
-		return entry?.at;
+		return history.find((h) => h.phase === ph)?.at;
 	};
 
-	// The phase the install is (or was) stuck on.
-	let currentPhase: string | null = phase;
-	if (!currentPhase) {
-		if (status === 'installing') currentPhase = 'queued';
-		else if (status === 'starting') currentPhase = 'starting';
-	}
+	const currentPhase = resolveCurrentPhase(status, phase);
 	const currentRank = phaseRank(currentPhase);
 	const failed = status === 'failed' || status === 'error';
-	const failedPhase = failed ? (progress?.lastPhase ?? currentPhase ?? 'queued') : null;
-	const failedRank = phaseRank(failedPhase);
+	const failedPhase = resolveFailedPhase(failed, progress, currentPhase);
 
-	const steps: TimelineStep[] = INSTALL_FLOW.map((step) => {
-		const rank = phaseRank(step.phase);
-		let state: TimelineStep['state'];
-
-		if (status === 'running') {
-			state = 'done';
-		} else if (failed) {
-			if (step.phase === null) state = 'done'; // accepted always completes
-			else if (rank < failedRank) state = 'done';
-			else if (step.phase === failedPhase) state = 'failed';
-			else state = 'pending';
-		} else if (step.phase === null) {
-			state = 'done'; // accepted
-		} else if (rank < currentRank) {
-			state = 'done';
-		} else if (step.phase === currentPhase) {
-			state = 'current';
-		} else {
-			state = 'pending';
-		}
-
-		const at = timeFor(step.phase);
+	return INSTALL_FLOW.map((step) => {
+		const state =
+			status === 'running'
+				? 'done'
+				: failed
+					? failedStepState(step, failedPhase)
+					: liveStepState(step, currentPhase, currentRank);
 		return {
 			id: step.id,
 			label: step.label,
 			state,
-			at,
-			detail: step.phase === 'pulling' && (state === 'current' || state === 'done')
-				? progress?.phaseDetail || undefined
-				: undefined
+			at: timeFor(step.phase),
+			detail: pullDetail(step, state, progress)
 		};
 	});
-
-	return steps;
 }

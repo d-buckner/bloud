@@ -160,7 +160,7 @@
 							class="tailscale-link"
 							href={decoded.nodeShareLink}
 							target="_blank"
-							rel="noopener noreferrer"
+							rel="noopener noreferrer external"
 						>
 							Accept Tailscale access
 						</a>
@@ -179,7 +179,7 @@
 			<div class="field">
 				<label for="shared-app-type">App type</label>
 				<select id="shared-app-type" bind:value={appId}>
-					{#each catalogApps as app}
+					{#each catalogApps as app (app.catalogId)}
 						<option value={app.catalogId}>{app.displayName}</option>
 					{/each}
 				</select>

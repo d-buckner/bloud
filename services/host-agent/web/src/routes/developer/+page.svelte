@@ -3,13 +3,14 @@
 // Copyright (c) 2026 Daniel Buckner
 	import { onMount } from 'svelte';
 	import { SvelteFlow, type Node, type Edge, type NodeTypes } from '@xyflow/svelte';
-	import dagre from '@dagrejs/dagre';
+	import { layoutGraph } from '$lib/services/graphLayout';
 	import {
 		fetchDeveloperGraph,
 		type DeveloperGraph,
 		type GraphNode,
 		type OrchestratorStatus
 	} from '$lib/clients/developerClient';
+	import { parseTimeline } from '$lib/services/convergeTimeline';
 	import AppNode from './AppNode.svelte';
 	import UserNode from './UserNode.svelte';
 	import FitView from '$lib/components/FitView.svelte';
@@ -28,98 +29,6 @@
 	let graphKey = $state('');
 	let orchestrator = $state<OrchestratorStatus | undefined>(undefined);
 
-	const NODE_WIDTH = 170;
-	const NODE_HEIGHT = 60;
-	const USER_NODE_SIZE = 64;
-	const GROUP_PADDING = 40;
-	const CONNECTION_GAP = 100;
-	const USER_GAP = 60;
-
-	const CONVERGE_STEPS = [
-		'sync-container-state',
-		'handle-uninstalls',
-		'set-graph-targets',
-		'converge-tailnet',
-		'update-graph',
-		'reconcile'
-	];
-
-	interface TimelineStep {
-		name: string;
-		status: 'done' | 'active' | 'pending';
-		detail: string;
-	}
-
-	interface Timeline {
-		recentIntents: { detail: string; time: string }[];
-		drain: { detail: string; time: string } | null;
-		steps: TimelineStep[];
-		convergeDuration: string | null;
-		convergeTime: string | null;
-		hasCycle: boolean;
-	}
-
-	function parseTimeline(status: OrchestratorStatus): Timeline {
-		const activity = status.recentActivity;
-
-		const recentIntents = activity
-			.filter((a) => a.event === 'intent_enqueued')
-			.slice(0, 5)
-			.map((a) => ({ detail: a.detail, time: a.time }));
-
-		const lastDrain = activity.find((a) => a.event === 'drain_complete');
-		const drain = lastDrain ? { detail: lastDrain.detail, time: lastDrain.time } : null;
-
-		const completedSteps = new Map<string, string>();
-		let cycleComplete = false;
-		let convergeDuration: string | null = null;
-		let convergeTime: string | null = null;
-		let hasCycle = false;
-
-		for (const entry of activity) {
-			if (entry.event === 'converge_complete') {
-				cycleComplete = true;
-				const parts = entry.detail.split(', ');
-				convergeDuration = parts.length > 1 ? parts[parts.length - 1] : null;
-				convergeTime = entry.time;
-				continue;
-			}
-			if (entry.event === 'converge_start') {
-				hasCycle = true;
-				break;
-			}
-			if (entry.event === 'converge_step') {
-				hasCycle = true;
-				const stepName = entry.detail.split(' (')[0];
-				completedSteps.set(stepName, entry.detail);
-			}
-		}
-
-		const steps: TimelineStep[] = CONVERGE_STEPS.map((name) => {
-			if (completedSteps.has(name)) {
-				return { name, status: 'done' as const, detail: completedSteps.get(name)! };
-			}
-			return { name, status: 'pending' as const, detail: '' };
-		});
-
-		if (status.isConverging && !cycleComplete) {
-			const firstPending = steps.find((s) => s.status === 'pending');
-			if (firstPending) {
-				firstPending.status = 'active';
-			}
-		}
-
-		if (cycleComplete) {
-			for (const step of steps) {
-				if (step.status === 'pending') {
-					step.status = 'done';
-				}
-			}
-		}
-
-		return { recentIntents, drain, steps, convergeDuration, convergeTime, hasCycle };
-	}
-
 	function timeAgo(isoTime: string): string {
 		const diff = Date.now() - new Date(isoTime).getTime();
 		if (diff < 1000) return 'just now';
@@ -129,191 +38,6 @@
 		if (minutes < 60) return `${minutes}m ago`;
 		const hours = Math.floor(minutes / 60);
 		return `${hours}h ago`;
-	}
-
-	function detectUserConnection(graph: DeveloperGraph): string | null {
-		const hostname = window.location.hostname;
-		const tailnetDomain = graph.tailnetDomain;
-
-		// If the hostname matches the tailnet domain, user is on the tailnet
-		if (tailnetDomain && hostname.endsWith(tailnetDomain)) {
-			const tailnetConn = graph.nodes.find((n) => n.id.startsWith('conn:tailnet:'));
-			if (tailnetConn) return tailnetConn.id;
-		}
-
-		// Otherwise user is on LAN
-		const localConn = graph.nodes.find((n) => n.id === 'conn:local');
-		if (localConn) return localConn.id;
-
-		return null;
-	}
-
-	function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge[] } {
-		const appNodes = graph.nodes.filter((n) => n.nodeType === 'app');
-		const connectionNodes = graph.nodes.filter((n) => n.nodeType === 'connection');
-
-		const appNodeIds = new Set(appNodes.map((n) => n.id));
-		const appEdges = graph.edges.filter((e) => appNodeIds.has(e.source) && appNodeIds.has(e.target));
-
-		const g = new dagre.graphlib.Graph();
-		g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
-		g.setDefaultEdgeLabel(() => ({}));
-
-		for (const n of appNodes) {
-			g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
-		}
-		for (const e of appEdges) {
-			g.setEdge(e.source, e.target);
-		}
-
-		dagre.layout(g);
-
-		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-		for (const n of appNodes) {
-			const pos = g.node(n.id);
-			minX = Math.min(minX, pos.x - NODE_WIDTH / 2);
-			minY = Math.min(minY, pos.y - NODE_HEIGHT / 2);
-			maxX = Math.max(maxX, pos.x + NODE_WIDTH / 2);
-			maxY = Math.max(maxY, pos.y + NODE_HEIGHT / 2);
-		}
-
-		const sources = new Set(graph.edges.map((e) => e.source));
-		const targets = new Set(graph.edges.map((e) => e.target));
-
-		// Detect which connection the current user is reaching through
-		const userConnectionId = detectUserConnection(graph);
-
-		// Include the "You" node in source/target tracking so handles render
-		if (userConnectionId) {
-			sources.add('__you__');
-			targets.add(userConnectionId);
-		}
-
-		function nodeData(n: GraphNode) {
-			return {
-				displayName: n.displayName,
-				status: n.status,
-				isSystem: n.isSystem,
-				nodeType: n.nodeType,
-				hasOutgoing: sources.has(n.id),
-				hasIncoming: targets.has(n.id)
-			};
-		}
-
-		const layoutNodes: Node[] = [];
-
-		if (appNodes.length > 0) {
-			const groupWidth = maxX - minX + GROUP_PADDING * 2;
-			const groupHeight = maxY - minY + GROUP_PADDING * 2;
-			const groupX = minX - GROUP_PADDING;
-			const groupY = minY - GROUP_PADDING;
-
-			layoutNodes.push({
-				id: '__apps_group',
-				type: 'group',
-				position: { x: groupX, y: groupY },
-				style: `width: ${groupWidth}px; height: ${groupHeight}px;`,
-				data: {}
-			});
-
-			for (const n of appNodes) {
-				const pos = g.node(n.id);
-				layoutNodes.push({
-					id: n.id,
-					type: 'app',
-					position: { x: pos.x - NODE_WIDTH / 2 - groupX, y: pos.y - NODE_HEIGHT / 2 - groupY },
-					parentId: '__apps_group',
-					data: nodeData(n)
-				});
-			}
-
-			const connY = groupY - NODE_HEIGHT - CONNECTION_GAP;
-			const totalConnWidth = connectionNodes.length * NODE_WIDTH + (connectionNodes.length - 1) * 60;
-			const connStartX = groupX + groupWidth / 2 - totalConnWidth / 2;
-
-			for (let i = 0; i < connectionNodes.length; i++) {
-				const cn = connectionNodes[i];
-				layoutNodes.push({
-					id: cn.id,
-					type: 'app',
-					position: { x: connStartX + i * (NODE_WIDTH + 60), y: connY },
-					data: nodeData(cn)
-				});
-			}
-
-			// Add "You" node above the connection the user is accessing through
-			if (userConnectionId && connectionNodes.length > 0) {
-				const connIndex = connectionNodes.findIndex((cn) => cn.id === userConnectionId);
-				const idx = connIndex >= 0 ? connIndex : 0;
-				const connX = connStartX + idx * (NODE_WIDTH + 60);
-				const userX = connX + NODE_WIDTH / 2 - USER_NODE_SIZE / 2;
-				const userY = connY - USER_NODE_SIZE - USER_GAP;
-
-				layoutNodes.push({
-					id: '__you__',
-					type: 'user',
-					position: { x: userX, y: userY },
-					data: { label: 'You', hasOutgoing: true }
-				});
-			}
-		} else {
-			for (let i = 0; i < connectionNodes.length; i++) {
-				const cn = connectionNodes[i];
-				layoutNodes.push({
-					id: cn.id,
-					type: 'app',
-					position: { x: i * (NODE_WIDTH + 60), y: 0 },
-					data: nodeData(cn)
-				});
-			}
-
-			// Add "You" node when only connections exist
-			if (userConnectionId && connectionNodes.length > 0) {
-				const connIndex = connectionNodes.findIndex((cn) => cn.id === userConnectionId);
-				const idx = connIndex >= 0 ? connIndex : 0;
-				const connX = idx * (NODE_WIDTH + 60);
-				const userX = connX + NODE_WIDTH / 2 - USER_NODE_SIZE / 2;
-
-				layoutNodes.push({
-					id: '__you__',
-					type: 'user',
-					position: { x: userX, y: -(USER_NODE_SIZE + USER_GAP) },
-					data: { label: 'You', hasOutgoing: true }
-				});
-			}
-		}
-
-		const nodeStatusMap = new Map(graph.nodes.map((n) => [n.id, n.status]));
-		// Add "You" as always active for edge animation
-		nodeStatusMap.set('__you__', 'active');
-
-		const layoutEdges: Edge[] = graph.edges.map((e, i) => {
-			const sourceStatus = nodeStatusMap.get(e.source) ?? '';
-			const targetStatus = nodeStatusMap.get(e.target) ?? '';
-			const sourceActive = sourceStatus === 'running' || sourceStatus === 'active';
-			const targetActive = targetStatus === 'running' || targetStatus === 'active';
-			return {
-				id: `e-${i}`,
-				source: e.source,
-				target: e.target,
-				label: e.label,
-				animated: sourceActive && targetActive
-			};
-		});
-
-		// Add edge from "You" to the active connection
-		if (userConnectionId) {
-			const connStatus = nodeStatusMap.get(userConnectionId) ?? '';
-			const connActive = connStatus === 'running' || connStatus === 'active';
-			layoutEdges.push({
-				id: 'e-you',
-				source: '__you__',
-				target: userConnectionId,
-				animated: connActive
-			});
-		}
-
-		return { nodes: layoutNodes, edges: layoutEdges };
 	}
 
 	function extractErrorMessage(err: unknown): string {
@@ -330,7 +54,7 @@
 		inflight = true;
 		try {
 			const graph = await fetchDeveloperGraph();
-			const layout = layoutGraph(graph);
+			const layout = layoutGraph(graph, window.location.hostname);
 			nodes = layout.nodes;
 			edges = layout.edges;
 			graphKey = nodes.map((n) => `${n.id}:${n.data?.status ?? ''}`).join(',');
@@ -402,7 +126,7 @@
 								</div>
 								{#if tl.recentIntents.length > 0}
 									<div class="tl-items">
-										{#each tl.recentIntents as intent}
+										{#each tl.recentIntents as intent, i (i)}
 											<div class="tl-intent">
 												<span class="intent-arrow">&rarr;</span>
 												<span class="intent-detail">{intent.detail}</span>
@@ -453,7 +177,7 @@
 								</div>
 								{#if tl.hasCycle}
 									<div class="tl-steps">
-										{#each tl.steps as step}
+										{#each tl.steps as step (step.name)}
 											<div class="step" class:step-done={step.status === 'done'} class:step-active={step.status === 'active'} class:step-pending={step.status === 'pending'}>
 												<span class="step-icon">
 													{#if step.status === 'done'}

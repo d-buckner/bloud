@@ -6,6 +6,8 @@
 	import { isAdmin } from '$lib/stores/user';
 	import { visibleApps } from '$lib/stores/apps';
 	import { AppStatus } from '$lib/types';
+	import { resolve } from '$app/paths';
+	import type { RouteId } from '$app/types';
 
 	interface User {
 		id: number;
@@ -21,7 +23,14 @@
 
 	let currentPath = $derived(page.url.pathname);
 
-	const allNavItems = [
+	interface NavItem {
+		href: RouteId;
+		label: string;
+		icon: string;
+		adminOnly: boolean;
+	}
+
+	const allNavItems: NavItem[] = [
 		{ href: '/', label: 'Apps', icon: 'home', adminOnly: false },
 		{ href: '/catalog', label: 'Catalog', icon: 'store', adminOnly: false },
 		{ href: '/settings', label: 'Settings', icon: 'settings', adminOnly: true },
@@ -51,9 +60,9 @@
 	</div>
 
 	<ul class="nav-links">
-		{#each navItems as item}
+		{#each navItems as item (item.href)}
 			<li>
-				<a href={item.href} class:active={currentPath === item.href}>
+				<a href={resolve(item.href)} class:active={currentPath === item.href}>
 					<span class="nav-icon">
 						<Icon name={item.icon} size={20} />
 					</span>
