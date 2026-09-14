@@ -491,7 +491,7 @@ func cmdDev() int {
 		errorf("Failed to create temp dir: %v", err)
 		return 1
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	hostAgentDir := filepath.Join(root, "services", "host-agent")
 	binaryPath := filepath.Join(tmpDir, "host-agent")

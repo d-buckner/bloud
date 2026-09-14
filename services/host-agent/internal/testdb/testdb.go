@@ -32,17 +32,17 @@ func SetupTestDB(t *testing.T) *sql.DB {
 		"PRAGMA foreign_keys=ON",
 	} {
 		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
+			_ = db.Close()
 			t.Fatalf("failed to set pragma: %v", err)
 		}
 	}
 
 	// Create schema
 	if _, err := db.Exec(Schema); err != nil {
-		db.Close()
+		_ = db.Close()
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }

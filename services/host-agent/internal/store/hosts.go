@@ -46,7 +46,7 @@ func (s *HostStore) List() ([]Host, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query hosts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	hosts := []Host{}
 	for rows.Next() {
@@ -67,7 +67,7 @@ func (s *HostStore) Replace(hosts []string, primary string) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin hosts transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`DELETE FROM hosts`); err != nil {
 		return fmt.Errorf("failed to clear hosts: %w", err)

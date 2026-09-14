@@ -51,8 +51,8 @@ func fakeQEMUBackend(t *testing.T, recorded *[][]string, sshReadyResults []bool)
 			// Emulate key generation: create <key> and <key>.pub so ReadFile succeeds.
 			for i, a := range args {
 				if a == "-f" && i+1 < len(args) {
-					os.WriteFile(args[i+1], []byte("key"), 0600)
-					os.WriteFile(args[i+1]+".pub", []byte("ssh-ed25519 AAAAC3Nza fake@host\n"), 0644)
+					_ = os.WriteFile(args[i+1], []byte("key"), 0600)
+					_ = os.WriteFile(args[i+1]+".pub", []byte("ssh-ed25519 AAAAC3Nza fake@host\n"), 0644)
 					break
 				}
 			}
@@ -61,20 +61,20 @@ func fakeQEMUBackend(t *testing.T, recorded *[][]string, sshReadyResults []bool)
 			// -o <file>: write the downloaded base image
 			for i, a := range args {
 				if a == "-o" && i+1 < len(args) {
-					os.WriteFile(args[i+1], []byte("base"), 0644)
+					_ = os.WriteFile(args[i+1], []byte("base"), 0644)
 					break
 				}
 			}
 		}
 		if name == "qemu-img" && len(args) > 0 && args[0] == "create" {
 			// create overlay disk at the final positional arg
-			os.WriteFile(args[len(args)-1], []byte("disk"), 0644)
+			_ = os.WriteFile(args[len(args)-1], []byte("disk"), 0644)
 		}
 		if name == "mkisofs" {
 			// -output <file>: write the seed ISO
 			for i, a := range args {
 				if a == "-output" && i+1 < len(args) {
-					os.WriteFile(args[i+1], []byte("seed"), 0644)
+					_ = os.WriteFile(args[i+1], []byte("seed"), 0644)
 					break
 				}
 			}
@@ -88,8 +88,8 @@ func TestQEMUBackendCreateAlreadyProvisionedAndRunning(t *testing.T) {
 	var recorded [][]string
 	b := fakeQEMUBackend(t, &recorded, []bool{true})
 	// Preset the disk + seed so provisioning steps are skipped.
-	os.WriteFile(filepath.Join(b.dir, b.instance+".qcow2"), []byte("disk"), 0644)
-	os.WriteFile(filepath.Join(b.dir, "seed.iso"), []byte("seed"), 0644)
+	_ = os.WriteFile(filepath.Join(b.dir, b.instance+".qcow2"), []byte("disk"), 0644)
+	_ = os.WriteFile(filepath.Join(b.dir, "seed.iso"), []byte("seed"), 0644)
 
 	if err := b.Create(context.Background()); err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -168,7 +168,7 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 		t.Fatalf("ListenPacket: %v", err)
 	}
 	mdnsHostPort := pc.LocalAddr().(*net.UDPAddr).Port
-	pc.Close()
+	_ = pc.Close()
 	t.Setenv("BLOUD_QEMU_FWD_5353", strconv.Itoa(mdnsHostPort))
 	var recorded [][]string
 	b := fakeQEMUBackend(t, &recorded, []bool{false, true})
@@ -269,7 +269,7 @@ func TestCanBindHostUDPPort(t *testing.T) {
 		t.Fatalf("ListenPacket: %v", err)
 	}
 	port := strconv.Itoa(pc.LocalAddr().(*net.UDPAddr).Port)
-	pc.Close()
+	_ = pc.Close()
 
 	// A port no one holds is bindable.
 	if !canBindHostUDPPort(port) {
@@ -280,7 +280,7 @@ func TestCanBindHostUDPPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hold ListenPacket: %v", err)
 	}
-	defer hold.Close()
+	defer func() { _ = hold.Close() }()
 	if canBindHostUDPPort(port) {
 		t.Errorf("canBindHostUDPPort(%s) = true while held, want false", port)
 	}

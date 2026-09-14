@@ -54,7 +54,7 @@ func (r *SQLiteRepository) GetNodes() ([]Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get graph nodes: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var nodes []Node
 	for rows.Next() {
@@ -97,7 +97,7 @@ func (r *SQLiteRepository) GetDependencies(nodeID string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get dependencies for %q: %w", nodeID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var deps []string
 	for rows.Next() {
@@ -117,7 +117,7 @@ func (r *SQLiteRepository) GetDependents(nodeID string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get dependents for %q: %w", nodeID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var deps []string
 	for rows.Next() {

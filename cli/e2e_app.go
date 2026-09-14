@@ -62,7 +62,7 @@ func runAppE2E(root string, args []string) error {
 }
 
 func printAppE2EUsage(w io.Writer) {
-	fmt.Fprintln(w, `Usage: ./bloud e2e app
+	_, _ = fmt.Fprintln(w, `Usage: ./bloud e2e app
 
 Provisions a self-contained runtime, installs one app through the
 host-agent API, and runs that app's Playwright spec.
@@ -129,7 +129,7 @@ func (r *appE2ERunner) run() (runErr error) {
 
 	r.step(fmt.Sprintf("Running %s E2E (browser)", r.app))
 	if os.Getenv("BLOUD_E2E_PLAYWRIGHT_FILTER") == "" {
-		os.Setenv("BLOUD_E2E_PLAYWRIGHT_FILTER", r.app)
+		_ = os.Setenv("BLOUD_E2E_PLAYWRIGHT_FILTER", r.app)
 	}
 	if err := runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password); err != nil {
 		return err

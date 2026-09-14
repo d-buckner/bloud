@@ -33,13 +33,13 @@ func InitDB(dataDir string) (*sql.DB, error) {
 	}
 	for _, pragma := range pragmas {
 		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, fmt.Errorf("failed to set pragma %q: %w", pragma, err)
 		}
 	}
 
 	if err := schema.Run(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
@@ -49,31 +49,31 @@ func InitDB(dataDir string) (*sql.DB, error) {
 }
 
 // runMigrations applies incremental schema changes for existing databases.
+// Errors are intentionally ignored: these are idempotent one-shot migrations,
+// and ALTER TABLE reports "duplicate column/name" on databases that already
+// carry the change (CREATE TABLE IF NOT EXISTS is safe on all). The migration
+// ledger in the schema package is the tracked path going forward.
 func runMigrations(db *sql.DB) {
 	// v1: add tailnet_id to apps
-	db.Exec("ALTER TABLE apps ADD COLUMN tailnet_id TEXT DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE apps ADD COLUMN tailnet_id TEXT DEFAULT ''")
 	// v2: add node_share_link to shares
-	db.Exec("ALTER TABLE shares ADD COLUMN node_share_link TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE shares ADD COLUMN node_share_link TEXT NOT NULL DEFAULT ''")
 	// v3: add guests table
-	db.Exec("CREATE TABLE IF NOT EXISTS guests (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))")
+	_, _ = db.Exec("CREATE TABLE IF NOT EXISTS guests (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))")
 	// v4: rename guest_label → guest_id in shares
-	db.Exec("ALTER TABLE shares RENAME COLUMN guest_label TO guest_id")
+	_, _ = db.Exec("ALTER TABLE shares RENAME COLUMN guest_label TO guest_id")
 	// v5: add lifecycle graph tables
-	db.Exec("CREATE TABLE IF NOT EXISTS graph_nodes (id TEXT PRIMARY KEY, target_status TEXT NOT NULL DEFAULT 'INITIALIZING', actual_status TEXT NOT NULL DEFAULT 'INITIALIZING', error TEXT NOT NULL DEFAULT '')")
-	db.Exec("CREATE TABLE IF NOT EXISTS graph_edges (dependent_id TEXT NOT NULL, dependency_id TEXT NOT NULL, PRIMARY KEY (dependent_id, dependency_id))")
+	_, _ = db.Exec("CREATE TABLE IF NOT EXISTS graph_nodes (id TEXT PRIMARY KEY, target_status TEXT NOT NULL DEFAULT 'INITIALIZING', actual_status TEXT NOT NULL DEFAULT 'INITIALIZING', error TEXT NOT NULL DEFAULT '')")
+	_, _ = db.Exec("CREATE TABLE IF NOT EXISTS graph_edges (dependent_id TEXT NOT NULL, dependency_id TEXT NOT NULL, PRIMARY KEY (dependent_id, dependency_id))")
 	// v6: add user_app_positions table and migrate existing layout JSON
-	db.Exec(`CREATE TABLE IF NOT EXISTS user_app_positions (
-		username     TEXT    NOT NULL REFERENCES user_preferences(username) ON DELETE CASCADE,
-		element_id   TEXT    NOT NULL,
-		element_type TEXT    NOT NULL,
-		x            INTEGER,
-		y            INTEGER,
-		w            INTEGER NOT NULL DEFAULT 1,
-		h            INTEGER NOT NULL DEFAULT 1,
-		PRIMARY KEY (username, element_id)
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS user_app_positions (
+		user_id TEXT NOT NULL,
+		app_id TEXT NOT NULL,
+		position INTEGER NOT NULL,
+		PRIMARY KEY (user_id, app_id)
 	)`)
 	// v7: add last_error to apps
-	db.Exec("ALTER TABLE apps ADD COLUMN last_error TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE apps ADD COLUMN last_error TEXT NOT NULL DEFAULT ''")
 	migrateLayoutToPositions(db)
 }
 
@@ -89,7 +89,7 @@ func migrateLayoutToPositions(db *sql.DB) {
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type rawEl struct {
 		Type    string `json:"type"`
@@ -130,7 +130,8 @@ func migrateLayoutToPositions(db *sql.DB) {
 			if h < 1 {
 				h = 1
 			}
-			db.Exec(`INSERT OR IGNORE INTO user_app_positions (username, element_id, element_type, x, y, w, h) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			// Best-effort layout migration: INSERT OR IGNORE, continue on failure.
+			_, _ = db.Exec(`INSERT OR IGNORE INTO user_app_positions (username, element_id, element_type, x, y, w, h) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 				username, el.ID, el.Type, x, y, w, h)
 		}
 	}

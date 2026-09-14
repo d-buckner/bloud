@@ -105,7 +105,7 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	stream := newSSEStream(resp.Body)
 
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
@@ -171,7 +171,7 @@ func newEventsTestRouterMux(t *testing.T) (http.Handler, *FakeAppStore) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, initTestDB(db))
 
 	cfg := ServerConfig{
@@ -211,7 +211,7 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	stream := newSSEStream(resp.Body)
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

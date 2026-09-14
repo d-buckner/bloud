@@ -77,11 +77,11 @@ func (b *NativeBackend) Create(ctx context.Context) error {
 // managed containers, and wipes the runtime directory. The host itself is
 // untouched.
 func (b *NativeBackend) Destroy(ctx context.Context) error {
-	// Stop host-agent and any app systemd units.
-	b.run(ctx, "sh", "-c", "pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop 'apps-*.service' 'bloud-e2e-host-agent.service' 2>/dev/null; true")
+	// Stop host-agent and any app systemd units (best-effort cleanup).
+	_, _ = b.run(ctx, "sh", "-c", "pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop 'apps-*.service' 'bloud-e2e-host-agent.service' 2>/dev/null; true")
 
 	// Remove all containers.
-	b.run(ctx, "sh", "-c", "podman rm -f $(podman ps -aq) 2>/dev/null || true; podman system prune -f 2>/dev/null || true")
+	_, _ = b.run(ctx, "sh", "-c", "podman rm -f $(podman ps -aq) 2>/dev/null || true; podman system prune -f 2>/dev/null || true")
 
 	// Wipe the runtime directory.
 	if err := os.RemoveAll(nativeRemoteDir); err != nil {

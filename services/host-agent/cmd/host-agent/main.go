@@ -72,7 +72,7 @@ func runServer() {
 		logger.Error("failed to initialize database", "error", err)
 		os.Exit(1)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 	logger.Info("database initialized successfully")
 
 	// Create PodmanRuntime for system app configurators

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
@@ -18,7 +17,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
 )
@@ -27,18 +25,15 @@ import (
 // wiring is performed by NewRouter; Server retains the runtime state needed
 // by main.go (orchestrator lifecycle, health checks).
 type Server struct {
-	cfg             ServerConfig
-	router          *chi.Mux
-	db              *sql.DB
-	catalog         catalog.CacheInterface
-	appStore        appStoreHelper
-	orch            *orchestrator.Orchestrator
-	sessionStore    sessionStoreHelper
-	remoteAppStore  store.RemoteAppStoreInterface
-	authentikClient *authentik.Client
-	authConfig      *authConfigRef
-	knownRedirectURIs sync.Map
-	logger          *slog.Logger
+	cfg            ServerConfig
+	router         *chi.Mux
+	db             *sql.DB
+	catalog        catalog.CacheInterface
+	appStore       appStoreHelper
+	orch           *orchestrator.Orchestrator
+	remoteAppStore store.RemoteAppStoreInterface
+	authConfig     *authConfigRef
+	logger         *slog.Logger
 }
 
 // appStoreHelper provides minimal app store access for health checks.
@@ -51,9 +46,6 @@ type appEntry struct {
 	Status    string
 	IsSystem  bool
 }
-
-// sessionStoreHelper provides minimal session store access.
-type sessionStoreHelper interface{}
 
 // ServerConfig holds paths and configuration for server initialization.
 type ServerConfig struct {

@@ -201,7 +201,7 @@ func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write(archive.Bytes())
+		_, _ = w.Write(archive.Bytes())
 	}))
 	defer server.Close()
 
@@ -328,7 +328,7 @@ func TestConfigurator_GetSystemInfo(t *testing.T) {
 
 				w.WriteHeader(tt.statusCode)
 				if tt.statusCode == http.StatusOK {
-					json.NewEncoder(w).Encode(tt.response)
+					_ = json.NewEncoder(w).Encode(tt.response)
 				}
 			}))
 			defer server.Close()
@@ -361,14 +361,14 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 				// waitForStartupWizardReady checks this endpoint
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(`{}`))
 				return
 			}
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
 			var payload map[string]string
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 			if payload["UICulture"] != "en-US" {
 				t.Errorf("expected UICulture=en-US, got %s", payload["UICulture"])
 			}
@@ -379,14 +379,14 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 				// setStartupUser waits for initial user to be available
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(`{}`))
 				return
 			}
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
 			var payload map[string]string
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 			if payload["Name"] != bootstrapUsername {
 				t.Errorf("expected Name=%s, got %s", bootstrapUsername, payload["Name"])
 			}
@@ -462,7 +462,7 @@ func TestConfigurator_Authenticate(t *testing.T) {
 		}
 		resp.User.ID = "user-id"
 		resp.User.Name = bootstrapUsername
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -501,7 +501,7 @@ func TestConfigurator_GetPluginConfiguration(t *testing.T) {
 			t.Error("Missing token in Authorization header")
 		}
 
-		json.NewEncoder(w).Encode(expectedConfig)
+		_ = json.NewEncoder(w).Encode(expectedConfig)
 	}))
 	defer server.Close()
 
@@ -531,7 +531,7 @@ func TestConfigurator_SetPluginConfiguration(t *testing.T) {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
 
-		json.NewDecoder(r.Body).Decode(&receivedConfig)
+		_ = json.NewDecoder(r.Body).Decode(&receivedConfig)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
@@ -568,7 +568,7 @@ func TestConfigurator_GetUsers(t *testing.T) {
 			{ID: "user-1", Name: "admin"},
 			{ID: "user-2", Name: bootstrapUsername},
 		}
-		json.NewEncoder(w).Encode(users)
+		_ = json.NewEncoder(w).Encode(users)
 	}))
 	defer server.Close()
 
@@ -628,7 +628,7 @@ func TestConfigurator_DeleteBootstrapAdmin(t *testing.T) {
 				{ID: "keep-me", Name: "admin"},
 				{ID: "delete-me", Name: bootstrapUsername},
 			}
-			json.NewEncoder(w).Encode(users)
+			_ = json.NewEncoder(w).Encode(users)
 
 		case strings.HasPrefix(r.URL.Path, "/Users/") && r.Method == "DELETE":
 			userID := strings.TrimPrefix(r.URL.Path, "/Users/")
@@ -665,7 +665,7 @@ func TestConfigurator_DeleteBootstrapAdmin_NotFound(t *testing.T) {
 			{ID: "user-1", Name: "admin"},
 			{ID: "user-2", Name: "other-user"},
 		}
-		json.NewEncoder(w).Encode(users)
+		_ = json.NewEncoder(w).Encode(users)
 	}))
 	defer server.Close()
 
@@ -684,19 +684,20 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 		switch r.URL.Path {
 		case "/System/Info/Public":
 			resp := SystemInfo{StartupWizardCompleted: true}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Users/AuthenticateByName":
 			// configureLibraries needs to authenticate
 			resp := AuthResponse{AccessToken: "test-token"}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Library/VirtualFolders":
-			if r.Method == http.MethodGet {
+			switch r.Method {
+			case http.MethodGet:
 				// Return empty list - no libraries yet
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode([]VirtualFolder{})
-			} else if r.Method == http.MethodPost {
+				_ = json.NewEncoder(w).Encode([]VirtualFolder{})
+			case http.MethodPost:
 				// Library creation
 				w.WriteHeader(http.StatusNoContent)
 			}
@@ -732,18 +733,18 @@ func TestConfigurator_PostStart_ToleratesTransient503(t *testing.T) {
 		case "/System/Info/Public":
 			if atomic.AddInt32(&infoCalls, 1) <= 2 {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+				_, _ = w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
 				return
 			}
-			json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
+			_ = json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
 
 		case "/Users/AuthenticateByName":
-			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+			_ = json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
 
 		case "/Library/VirtualFolders":
 			if r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode([]VirtualFolder{})
+				_ = json.NewEncoder(w).Encode([]VirtualFolder{})
 			} else {
 				w.WriteHeader(http.StatusNoContent)
 			}
@@ -780,18 +781,18 @@ func TestConfigurator_PostStart_Tolerates503WithCancelledPassContext(t *testing.
 		case "/System/Info/Public":
 			if atomic.AddInt32(&infoCalls, 1) <= 2 {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+				_, _ = w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
 				return
 			}
-			json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
+			_ = json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
 
 		case "/Users/AuthenticateByName":
-			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+			_ = json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
 
 		case "/Library/VirtualFolders":
 			if r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode([]VirtualFolder{})
+				_ = json.NewEncoder(w).Encode([]VirtualFolder{})
 			} else {
 				w.WriteHeader(http.StatusNoContent)
 			}
@@ -832,23 +833,23 @@ func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
 			switch {
 			case n == 1:
 				// First retry loop: 200, wizard incomplete
-				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: false})
+				_ = json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: false})
 			case n <= 3:
 				// Wizard check loop: 503 "Server is loading"
 				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+				_, _ = w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
 			default:
 				// Wizard check loop: 200, wizard complete
-				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
+				_ = json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: true})
 			}
 
 		case "/Users/AuthenticateByName":
-			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+			_ = json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
 
 		case "/Library/VirtualFolders":
 			if r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode([]VirtualFolder{})
+				_ = json.NewEncoder(w).Encode([]VirtualFolder{})
 			} else {
 				w.WriteHeader(http.StatusNoContent)
 			}
@@ -887,12 +888,12 @@ func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T
 		case "/System/Info/Public":
 			n := atomic.AddInt32(&infoCalls, 1)
 			if n == 1 {
-				json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: false})
+				_ = json.NewEncoder(w).Encode(SystemInfo{StartupWizardCompleted: false})
 				return
 			}
 			// Every wizard-check poll: the API is still loading.
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
+			_, _ = w.Write([]byte("Jellyfin Server is loading. Please try again shortly."))
 
 		case "/Startup/Configuration":
 			if r.Method == http.MethodGet {
@@ -906,7 +907,7 @@ func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T
 			if r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(`{}`))
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -915,13 +916,12 @@ func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T
 			w.WriteHeader(http.StatusNoContent)
 
 		case "/Users/AuthenticateByName":
-			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
-
+			_ = json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
 
 		case "/Library/VirtualFolders":
 			if r.Method == http.MethodGet {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode([]VirtualFolder{})
+				_ = json.NewEncoder(w).Encode([]VirtualFolder{})
 			} else {
 				w.WriteHeader(http.StatusNoContent)
 			}
@@ -956,11 +956,11 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
 			resp := AuthResponse{AccessToken: "test-token"}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
 			if r.Method == "GET" {
-				json.NewEncoder(w).Encode(desiredLDAPConfig(ldap))
+				_ = json.NewEncoder(w).Encode(desiredLDAPConfig(ldap))
 			} else {
 				// POST should not be called
 				t.Error("SetPluginConfiguration should not be called when already configured")
@@ -992,7 +992,7 @@ func TestConfigurator_ConfigureLDAP_PluginNotInstalled(t *testing.T) {
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
 			resp := AuthResponse{AccessToken: "test-token"}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
 			// Plugin not found
@@ -1032,14 +1032,15 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
 			resp := AuthResponse{AccessToken: "test-token"}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
-			if r.Method == "GET" {
+			switch r.Method {
+			case "GET":
 				// Return unconfigured LDAP
-				json.NewEncoder(w).Encode(LDAPConfig{})
-			} else if r.Method == "POST" {
-				json.NewDecoder(r.Body).Decode(&receivedConfig)
+				_ = json.NewEncoder(w).Encode(LDAPConfig{})
+			case "POST":
+				_ = json.NewDecoder(r.Body).Decode(&receivedConfig)
 				w.WriteHeader(http.StatusNoContent)
 			}
 
@@ -1104,13 +1105,13 @@ func TestConfigurator_ConfigureLDAP_UpdatesRotatedPassword(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/Users/AuthenticateByName":
-			json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
+			_ = json.NewEncoder(w).Encode(AuthResponse{AccessToken: "test-token"})
 		case "/Plugins/" + ldapPluginID + "/Configuration":
 			if r.Method == http.MethodGet {
-				json.NewEncoder(w).Encode(current)
+				_ = json.NewEncoder(w).Encode(current)
 				return
 			}
-			json.NewDecoder(r.Body).Decode(&receivedConfig)
+			_ = json.NewDecoder(r.Body).Decode(&receivedConfig)
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("Unexpected endpoint: %s %s", r.Method, r.URL.Path)
@@ -1139,16 +1140,17 @@ func TestConfigurator_PostStart_SkipsLDAPWhenNilDespiteSSOEnabled(t *testing.T) 
 		switch r.URL.Path {
 		case "/System/Info/Public":
 			resp := SystemInfo{StartupWizardCompleted: true}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Users/AuthenticateByName":
 			resp := AuthResponse{AccessToken: "test-token"}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Library/VirtualFolders":
-			if r.Method == http.MethodGet {
-				json.NewEncoder(w).Encode([]VirtualFolder{})
-			} else if r.Method == http.MethodPost {
+			switch r.Method {
+			case http.MethodGet:
+				_ = json.NewEncoder(w).Encode([]VirtualFolder{})
+			case http.MethodPost:
 				w.WriteHeader(http.StatusNoContent)
 			}
 

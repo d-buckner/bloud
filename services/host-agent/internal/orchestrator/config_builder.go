@@ -24,11 +24,9 @@ func buildIntegrationConfig(
 ) map[string]string {
 	config := make(map[string]string)
 
-	// Copy user choices first
-	if userChoices != nil {
-		for k, v := range userChoices {
-			config[k] = v
-		}
+	// Copy user choices first (range over a nil map is a no-op)
+	for k, v := range userChoices {
+		config[k] = v
 	}
 
 	// Auto-config overwrites user choices - these are required for functionality

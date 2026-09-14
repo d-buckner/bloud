@@ -42,7 +42,6 @@ type FakeAuthentikClient struct {
 	available          bool
 	redirectURIs       map[int][]string
 	oauthAppBaseURLs   [][]string
-	oauthAppClientID   string
 	oauthAppClientSecret string
 	oidcConfig         *authentik.OIDCConfig
 	exchangeCodeCalled bool

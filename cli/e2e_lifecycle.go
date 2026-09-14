@@ -28,7 +28,7 @@ type lifecycleConfig struct {
 	lima       string
 	qemu       string // QEMU instance name (auto-provisioned)
 	sshTarget  string
-	native     bool // run natively on the current machine (no VM)
+	native     bool   // run natively on the current machine (no VM)
 	sshKeyFile string // SSH key file for QEMU (auto-derived)
 	baseURL    string
 	remoteDir  string
@@ -182,7 +182,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 }
 
 func printLifecycleUsage(w io.Writer) {
-	fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
+	_, _ = fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
 
 Required environment:
   None — the VM instance defaults from the backend preference
@@ -326,6 +326,7 @@ WantedBy=default.target
 func (r *lifecycle) step(message string) {
 	fmt.Printf("\n%s==>%s %s\n", colorGreen, colorReset, message)
 }
+
 // buildAndDeploy builds the host-agent binary and frontend, deploys them to
 // the runtime, installs the systemd service, and waits for the API to come
 // up. Shared by the lifecycle and app E2E runners.
@@ -336,7 +337,7 @@ func (r *lifecycle) buildAndDeploy() error {
 		return err
 	}
 	r.buildDir = buildDir
-	defer os.RemoveAll(buildDir)
+	defer func() { _ = os.RemoveAll(buildDir) }()
 
 	if err := r.localRun(r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
 		return err
@@ -423,17 +424,13 @@ func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 	if r.cfg.native {
 		name := "bash"
 		commandArgs = append(commandArgs, "-se", "--")
-		for _, arg := range args {
-			commandArgs = append(commandArgs, arg)
-		}
+		commandArgs = append(commandArgs, args...)
 		return exec.Command(name, commandArgs...)
 	}
 	if r.cfg.lima != "" {
 		name := "limactl"
 		commandArgs = append(commandArgs, "shell", "--start", r.cfg.lima, "bash", "-se", "--")
-		for _, arg := range args {
-			commandArgs = append(commandArgs, arg)
-		}
+		commandArgs = append(commandArgs, args...)
 		return exec.Command(name, commandArgs...)
 	} else if r.cfg.qemu != "" {
 		name := "ssh"

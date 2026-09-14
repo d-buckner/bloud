@@ -71,7 +71,7 @@ func (s *ShareStore) List() ([]*Share, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query shares: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	shares := []*Share{}
 	for rows.Next() {

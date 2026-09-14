@@ -34,6 +34,24 @@ jobs:
         working-directory: cli
         run: go build ./...
 
+  lint-go:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: |
+            services/host-agent/go.sum
+            apps/go.sum
+            cli/go.sum
+
+      - name: Lint Go (golangci-lint / cyclop)
+        run: npm run lint:go
+
   test-frontend:
     runs-on: ubuntu-latest
     steps:

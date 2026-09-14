@@ -119,12 +119,6 @@ func (t *pullTracker) add(evt pullStreamEvent) PullProgress {
 	}
 }
 
-// hasProgress reports whether any blob size information has been seen.
-// Status-only streams (e.g. "image already exists") produce no progress.
-func (t *pullTracker) hasProgress() bool {
-	return len(t.blobTotals) > 0
-}
-
 // doneProgress builds the final "done" update. A stream that ended without
 // error means the image is fully pulled, so the totals are reported as 100%.
 func (t *pullTracker) doneProgress() PullProgress {
@@ -242,7 +236,7 @@ func (c *Client) pullViaSocket(ctx context.Context, image string, onProgress fun
 	if err != nil {
 		return fmt.Errorf("pull request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

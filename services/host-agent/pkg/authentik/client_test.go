@@ -91,7 +91,7 @@ func TestDeleteOAuth2Provider(t *testing.T) {
 				case http.MethodGet:
 					resp := PaginatedResponse{Results: tt.providers}
 					resp.Pagination.Count = len(tt.providers)
-					json.NewEncoder(w).Encode(resp)
+					_ = json.NewEncoder(w).Encode(resp)
 				case http.MethodDelete:
 					w.WriteHeader(http.StatusNoContent)
 				}
@@ -138,7 +138,7 @@ func TestDeleteProxyProvider(t *testing.T) {
 				case http.MethodGet:
 					resp := PaginatedResponse{Results: tt.providers}
 					resp.Pagination.Count = len(tt.providers)
-					json.NewEncoder(w).Encode(resp)
+					_ = json.NewEncoder(w).Encode(resp)
 				case http.MethodDelete:
 					w.WriteHeader(http.StatusNoContent)
 				}
@@ -192,7 +192,7 @@ func TestDeleteAppSSO(t *testing.T) {
 				switch r.Method {
 				case http.MethodGet:
 					resp := PaginatedResponse{Results: []ProviderResponse{}}
-					json.NewEncoder(w).Encode(resp)
+					_ = json.NewEncoder(w).Encode(resp)
 				case http.MethodDelete:
 					w.WriteHeader(http.StatusNoContent)
 				}

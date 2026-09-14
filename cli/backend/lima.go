@@ -54,7 +54,7 @@ func (b *LimaBackend) Create(ctx context.Context) error {
 		return fmt.Errorf("failed to verify Lima VM: %w", err)
 	}
 	if !executor.IsVMNameRunning(out, b.instance) {
-		return fmt.Errorf("Lima VM %q did not become ready", b.instance)
+		return fmt.Errorf("lima VM %q did not become ready", b.instance)
 	}
 	return nil
 }

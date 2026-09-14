@@ -187,7 +187,7 @@ func TestSessionStore_SchemaHasIndexes(t *testing.T) {
 		"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sessions' ORDER BY name",
 	)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var name string
 		require.NoError(t, rows.Scan(&name))

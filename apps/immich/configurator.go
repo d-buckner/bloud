@@ -216,7 +216,7 @@ func (c *Configurator) waitForServer(ctx context.Context) error {
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -248,13 +248,13 @@ func (c *Configurator) createAdmin(ctx context.Context, password string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	switch {
-	case resp.StatusCode == http.StatusCreated:
-		io.Copy(io.Discard, resp.Body)
+	switch resp.StatusCode {
+	case http.StatusCreated:
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
-	case resp.StatusCode == http.StatusBadRequest:
+	case http.StatusBadRequest:
 		b, _ := io.ReadAll(resp.Body)
 		// Idempotency: a previous run already created the admin (possibly with
 		// a different password). Anything else is a real validation error.
@@ -284,7 +284,7 @@ func (c *Configurator) login(ctx context.Context, email, password string) (strin
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("login failed: status %d", resp.StatusCode)

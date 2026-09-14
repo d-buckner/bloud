@@ -48,7 +48,7 @@ func TestHomeModule_GetLayout_WithPositions(t *testing.T) {
 	appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin", IsSystem: false})
 
 	x, y := 0, 0
-	posStore.SetForUser("alice", []store.Position{
+	_ = posStore.SetForUser("alice", []store.Position{
 		{ElementID: "jellyfin", ElementType: "app", X: &x, Y: &y, W: 2, H: 2},
 	})
 

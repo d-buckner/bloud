@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+#
+# Shared golangci-lint v2 config for all Go modules (services/host-agent,
+# apps, cli). golangci-lint walks up from each module dir to find this,
+# so one file at the repo root governs every module.
+#
+# Cyclop baselines measured 2026-09-13 with golangci-lint v2.13.2
+# (cyclop reports only when complexity is STRICTLY above the threshold,
+# so the current worst values pass):
+#   worst function complexity: 42  (cli: runIntegrationTier, parseLifecycleConfig)
+#   worst package average:     7.0 (services/host-agent/internal/db)
+# The thresholds sit at the current ceiling: nothing fails today, but any
+# new code more complex than the worst function that exists right now errors.
+# Repayment plan: lower max-complexity over time (first target: 20).
+version: "2"
+
+linters:
+  enable:
+    - cyclop
+  settings:
+    cyclop:
+      # Fail any function with cyclomatic complexity > 42.
+      max-complexity: 42
+      # Fail any package whose average function complexity > 7.0.
+      package-average: 7.0
+
+issues:
+  # Report the full totality of issues: never cap per linter or collapse
+  # identical messages. Collapsed counts hide how many call sites actually
+  # need fixing, so the default truncation is disabled repo-wide.
+  max-issues-per-linter: 0
+  max-same-issues: 0

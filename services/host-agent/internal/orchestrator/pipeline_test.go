@@ -244,7 +244,7 @@ func TestConverge_SetTailnetIntent_CreatesConnection(t *testing.T) {
 func TestConverge_SetTailnetIntent_ReplacesExisting(t *testing.T) {
 	h := newConvergeHarness(t)
 
-	h.tailnetStore.Create(store.TailnetConnection{
+	_ = h.tailnetStore.Create(store.TailnetConnection{
 		ID: "old-id", Name: "Old", Type: "tailscale", AuthKey: "old-key", Status: "active",
 	})
 
@@ -264,7 +264,7 @@ func TestConverge_SetTailnetIntent_ReplacesExisting(t *testing.T) {
 func TestConverge_DeleteTailnetIntent_RemovesConnection(t *testing.T) {
 	h := newConvergeHarness(t)
 
-	h.tailnetStore.Create(store.TailnetConnection{
+	_ = h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "My Tailnet", Type: "tailscale", AuthKey: "key", Status: "active",
 	})
 
@@ -284,7 +284,7 @@ func TestConverge_ActiveTailnet_EnsuresTailnetNodesForRunningApps(t *testing.T) 
 	h.appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", Status: "running", Port: 8096})
 	h.appStore.AddApp(&store.InstalledApp{CatalogID: "radarr", Status: "running", Port: 7878})
 
-	h.tailnetStore.Create(store.TailnetConnection{
+	_ = h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
@@ -328,7 +328,7 @@ func TestConverge_ActiveTailnet_SkipsSystemApps(t *testing.T) {
 		CatalogID: "traefik", Status: "running", IsSystem: true, Port: 8080,
 	})
 
-	h.tailnetStore.Create(store.TailnetConnection{
+	_ = h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
@@ -394,7 +394,7 @@ func TestConverge_AddRemoteAppIntent_NilBypassPaths(t *testing.T) {
 func TestConverge_DeleteRemoteAppIntent_RemovesFromStore(t *testing.T) {
 	h := newConvergeHarness(t)
 
-	h.remoteAppStore.Create(store.RemoteApp{
+	_ = h.remoteAppStore.Create(store.RemoteApp{
 		ID: "ra-1", AppID: "jellyfin", Status: "active",
 	})
 
@@ -427,7 +427,7 @@ func TestConverge_RenameAppIntent_UpdatesDisplayName(t *testing.T) {
 func TestConverge_ProvisionTailnetSSO_CallsEnsureForwardDomainAuth(t *testing.T) {
 	h := newConvergeHarness(t)
 
-	h.tailnetStore.Create(store.TailnetConnection{
+	_ = h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
@@ -457,7 +457,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenNoTailnet(t *testing.T) {
 func TestConverge_ProvisionTailnetSSO_SkipsWhenInterfacesNil(t *testing.T) {
 	h := newConvergeHarness(t)
 
-	h.tailnetStore.Create(store.TailnetConnection{
+	_ = h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
@@ -468,7 +468,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenInterfacesNil(t *testing.T) {
 func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
 	h := newConvergeHarness(t)
 
-	h.tailnetStore.Create(store.TailnetConnection{
+	_ = h.tailnetStore.Create(store.TailnetConnection{
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 

@@ -30,7 +30,7 @@ func streamPullHandler(t *testing.T, events []string) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		flusher := w.(http.Flusher)
 		for _, evt := range events {
-			fmt.Fprintln(w, evt)
+			_, _ = fmt.Fprintln(w, evt)
 			flusher.Flush()
 		}
 	})

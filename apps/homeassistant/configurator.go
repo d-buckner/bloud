@@ -299,7 +299,7 @@ func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
@@ -309,11 +309,11 @@ func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string
 		return false, err
 	}
 	archivePath := archive.Name()
-	defer os.Remove(archivePath)
+	defer func() { _ = os.Remove(archivePath) }()
 
 	hash := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
-		archive.Close()
+		_ = archive.Close()
 		return false, err
 	}
 	if err := archive.Close(); err != nil {
@@ -329,13 +329,13 @@ func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string
 	if err != nil {
 		return false, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	stagingDir, err := os.MkdirTemp(customDir, ".auth_oidc-*")
 	if err != nil {
 		return false, err
 	}
-	defer os.RemoveAll(stagingDir)
+	defer func() { _ = os.RemoveAll(stagingDir) }()
 	for _, file := range reader.File {
 		destination := filepath.Join(stagingDir, file.Name)
 		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
@@ -360,12 +360,12 @@ func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string
 		}
 		out, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 		if err != nil {
-			source.Close()
+			_ = source.Close()
 			return false, err
 		}
 		_, copyErr := io.Copy(out, source)
 		closeErr := out.Close()
-		source.Close()
+		_ = source.Close()
 		if copyErr != nil {
 			return false, copyErr
 		}
@@ -691,7 +691,7 @@ func (c *Configurator) waitForAPI(ctx context.Context) error {
 	for {
 		resp, err := c.apiGet(ctx, "/api/")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode < 500 {
 				return nil
 			}
@@ -749,7 +749,7 @@ func (c *Configurator) probeProxyTrust(ctx context.Context) (trusted bool, reach
 	if err != nil {
 		return false, false, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// 400 = forward middleware rejected (stale). 5xx = still booting.
 	// Anything else that connected means the forward middleware passed.
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= 500 {
@@ -842,7 +842,7 @@ func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (s
 		r, err := c.apiGet(ctx, "/api/onboarding")
 		if err == nil {
 			b, _ := io.ReadAll(r.Body)
-			r.Body.Close()
+			_ = r.Body.Close()
 			if r.StatusCode == http.StatusOK {
 				body = b
 				break
@@ -914,7 +914,7 @@ func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (s
 		return "", fmt.Errorf("onboarding request failed: %w", err)
 	}
 	ownerBody, _ := io.ReadAll(ownerResp.Body)
-	ownerResp.Body.Close()
+	_ = ownerResp.Body.Close()
 	if ownerResp.StatusCode != http.StatusOK && ownerResp.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("onboarding returned HTTP %d: %s", ownerResp.StatusCode, string(ownerBody))
 	}
@@ -977,7 +977,7 @@ func (c *Configurator) postJSONBearer(ctx context.Context, path string, payload 
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusForbidden {
 		return nil
@@ -1040,7 +1040,7 @@ func (c *Configurator) exchangeAuthCode(ctx context.Context, authCode string) (s
 	if err != nil {
 		return "", fmt.Errorf("token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("token exchange returned HTTP %d: %s", resp.StatusCode, string(body))
@@ -1068,7 +1068,7 @@ func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
 	for {
 		resp, err := c.apiGet(ctx, "/auth/oidc/welcome")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}

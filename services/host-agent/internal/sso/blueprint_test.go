@@ -30,7 +30,7 @@ func TestGenerateOIDCBlueprint(t *testing.T) {
 	gen := testBlueprintGenerator(t, dir)
 
 	app := &catalog.App{
-		CatalogID:        "actual-budget",
+		CatalogID:   "actual-budget",
 		DisplayName: "Actual Budget",
 		Port:        5006,
 		SSO: catalog.SSO{
@@ -79,7 +79,7 @@ func TestGenerateForwardAuthBlueprint(t *testing.T) {
 	gen := testBlueprintGenerator(t, dir)
 
 	app := &catalog.App{
-		CatalogID:        "adguard-home",
+		CatalogID:   "adguard-home",
 		DisplayName: "AdGuard Home",
 		Port:        3080,
 		SSO: catalog.SSO{
@@ -124,7 +124,7 @@ func TestDeleteBlueprint(t *testing.T) {
 
 	// Create a blueprint file first
 	app := &catalog.App{
-		CatalogID:        "test-app",
+		CatalogID:   "test-app",
 		DisplayName: "Test App",
 		Port:        8080,
 		SSO: catalog.SSO{
@@ -275,7 +275,7 @@ func TestGenerateLDAPBlueprint(t *testing.T) {
 	gen := testBlueprintGenerator(t, dir)
 
 	app := &catalog.App{
-		CatalogID:        "jellyfin",
+		CatalogID:   "jellyfin",
 		DisplayName: "Jellyfin",
 		Port:        8096,
 		SSO: catalog.SSO{
@@ -459,7 +459,7 @@ func TestDeriveSecret_NoPadding(t *testing.T) {
 
 	// Also verify it's a valid base64 URL-safe string (alphanumeric, -, _)
 	for _, c := range secret {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' {
 			t.Errorf("Secret contains invalid character '%c', should only contain URL-safe base64 chars", c)
 		}
 	}

@@ -120,7 +120,7 @@ func TestWrite_AtomicNoCorruption(t *testing.T) {
 	if mountErr != nil {
 		t.Skipf("mount unavailable (%v), skipping atomic-corruption test", mountErr)
 	}
-	defer exec.Command("umount", roDir).Run()
+	defer func() { _ = exec.Command("umount", roDir).Run() }()
 
 	targetInReadOnly := filepath.Join(roDir, "subdir", "file.txt")
 

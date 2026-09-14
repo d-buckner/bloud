@@ -257,7 +257,7 @@ func TestSharingHTTP_CreateInvite_Success(t *testing.T) {
 	})
 
 	// Ensure tailnet node has an address
-	mod.tailnetNode.EnsureRunning(context.Background(), "jellyfin")
+	_ = mod.tailnetNode.EnsureRunning(context.Background(), "jellyfin")
 
 	r := chi.NewRouter(); NewSharingRouter(mod, r)
 

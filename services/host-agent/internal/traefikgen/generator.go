@@ -55,7 +55,7 @@ func (g *Generator) GenerateAll(apps []*catalog.App, remoteApps []RemoteAppRoute
 	}
 
 	if err := os.Rename(tempPath, g.configPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("failed to update config: %w", err)
 	}
 
@@ -194,8 +194,8 @@ func (g *Generator) appNeedsMiddleware(app *catalog.App) bool {
 // Uses HostRegexp for domain-agnostic subdomain matching: matches jellyfin.localhost,
 // jellyfin.bloud.co, jellyfin.<anything> — any host starting with the app's subdomain.
 func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikEnabled bool) {
-	b.WriteString(fmt.Sprintf("    %s:\n", app.CatalogID))
-	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`)\"\n", app.CatalogID))
+	fmt.Fprintf(b, "    %s:\n", app.CatalogID)
+	fmt.Fprintf(b, "      rule: \"HostRegexp(`^%s\\\\.`)\"\n", app.CatalogID)
 	b.WriteString("      priority: 200\n")
 
 	// Build middleware list
@@ -214,18 +214,18 @@ func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikE
 	if len(middlewares) > 0 {
 		b.WriteString("      middlewares:\n")
 		for _, mw := range middlewares {
-			b.WriteString(fmt.Sprintf("        - %s\n", mw))
+			fmt.Fprintf(b, "        - %s\n", mw)
 		}
 	}
 
-	b.WriteString(fmt.Sprintf("      service: %s\n", app.CatalogID))
+	fmt.Fprintf(b, "      service: %s\n", app.CatalogID)
 }
 
 // writeMiddleware writes the middleware configuration for an app
 func (g *Generator) writeMiddleware(b *strings.Builder, app *catalog.App) {
 	// ForwardAuth middleware for apps using forward-auth SSO strategy
 	if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
-		b.WriteString(fmt.Sprintf("    %s-forwardauth:\n", app.CatalogID))
+		fmt.Fprintf(b, "    %s-forwardauth:\n", app.CatalogID)
 		b.WriteString("      forwardAuth:\n")
 		b.WriteString("        address: \"http://localhost:9001/outpost.goauthentik.io/auth/traefik\"\n")
 		b.WriteString("        trustForwardHeader: true\n")
@@ -245,7 +245,7 @@ func (g *Generator) writeMiddleware(b *strings.Builder, app *catalog.App) {
 
 // writeHeadersMiddleware writes a headers middleware with the given name and headers
 func (g *Generator) writeHeadersMiddleware(b *strings.Builder, name string, headers map[string]string) {
-	b.WriteString(fmt.Sprintf("    %s:\n", name))
+	fmt.Fprintf(b, "    %s:\n", name)
 	b.WriteString("      headers:\n")
 	b.WriteString("        customResponseHeaders:\n")
 
@@ -257,7 +257,7 @@ func (g *Generator) writeHeadersMiddleware(b *strings.Builder, name string, head
 	sort.Strings(headerNames)
 
 	for _, headerName := range headerNames {
-		b.WriteString(fmt.Sprintf("          %s: \"%s\"\n", headerName, headers[headerName]))
+		fmt.Fprintf(b, "          %s: \"%s\"\n", headerName, headers[headerName])
 	}
 }
 
@@ -268,9 +268,9 @@ func (g *Generator) writeBypassRouter(b *strings.Builder, app *catalog.App, path
 	// Derive a safe router name from the path: strip slashes, replace / with -.
 	sanitized := strings.Trim(path, "/")
 	sanitized = strings.ReplaceAll(sanitized, "/", "-")
-	b.WriteString(fmt.Sprintf("    %s-bypass-%s:\n", app.CatalogID, sanitized))
-	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`) && PathPrefix(`%s`)\"\n", app.CatalogID, path))
-	b.WriteString(fmt.Sprintf("      service: %s\n", app.CatalogID))
+	fmt.Fprintf(b, "    %s-bypass-%s:\n", app.CatalogID, sanitized)
+	fmt.Fprintf(b, "      rule: \"HostRegexp(`^%s\\\\.`) && PathPrefix(`%s`)\"\n", app.CatalogID, path)
+	fmt.Fprintf(b, "      service: %s\n", app.CatalogID)
 	b.WriteString("      priority: 300\n")
 }
 
@@ -278,58 +278,58 @@ func (g *Generator) writeBypassRouter(b *strings.Builder, app *catalog.App, path
 // requests for a forward-auth app directly to the Authentik embedded outpost,
 // bypassing the forward-auth middleware so the OAuth callback can complete.
 func (g *Generator) writeOutpostRouter(b *strings.Builder, app *catalog.App) {
-	b.WriteString(fmt.Sprintf("    %s-outpost:\n", app.CatalogID))
-	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", app.CatalogID))
+	fmt.Fprintf(b, "    %s-outpost:\n", app.CatalogID)
+	fmt.Fprintf(b, "      rule: \"HostRegexp(`^%s\\\\.`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", app.CatalogID)
 	b.WriteString("      service: authentik-outpost\n")
 	b.WriteString("      priority: 300\n")
 }
 
 // writeService writes the service configuration for an app
 func (g *Generator) writeService(b *strings.Builder, app *catalog.App) {
-	b.WriteString(fmt.Sprintf("    %s:\n", app.CatalogID))
+	fmt.Fprintf(b, "    %s:\n", app.CatalogID)
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
-	b.WriteString(fmt.Sprintf("          - url: \"http://localhost:%d\"\n", app.Port))
+	fmt.Fprintf(b, "          - url: \"http://localhost:%d\"\n", app.Port)
 }
 
 // writeRemoteRouter writes the router configuration for a remote (shared) app.
 func (g *Generator) writeRemoteRouter(b *strings.Builder, ra RemoteAppRoute) {
 	routerName := "shared-" + ra.ID
 
-	b.WriteString(fmt.Sprintf("    %s:\n", routerName))
-	b.WriteString(fmt.Sprintf("      rule: \"HostRegexp(`^%s\\\\.`)\"\n", ra.ID))
+	fmt.Fprintf(b, "    %s:\n", routerName)
+	fmt.Fprintf(b, "      rule: \"HostRegexp(`^%s\\\\.`)\"\n", ra.ID)
 	b.WriteString("      priority: 200\n")
-	b.WriteString(fmt.Sprintf("      service: %s\n", routerName))
+	fmt.Fprintf(b, "      service: %s\n", routerName)
 }
 
 // writeRemoteService writes the service configuration for a remote (shared) app.
 func (g *Generator) writeRemoteService(b *strings.Builder, ra RemoteAppRoute) {
 	serviceName := "shared-" + ra.ID
 
-	b.WriteString(fmt.Sprintf("    %s:\n", serviceName))
+	fmt.Fprintf(b, "    %s:\n", serviceName)
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
-	b.WriteString(fmt.Sprintf("          - url: \"%s\"\n", ra.ProxyURL))
+	fmt.Fprintf(b, "          - url: \"%s\"\n", ra.ProxyURL)
 }
 
 // writeTailnetRouter writes a tailnet-specific router for a forward-auth app.
 // Higher priority (250) than the local router (200), so requests matching the
 // tailnet domain use the standalone outpost for auth instead of the embedded one.
 func (g *Generator) writeTailnetRouter(b *strings.Builder, app *catalog.App, tailnetDomain string) {
-	b.WriteString(fmt.Sprintf("    %s-tailnet:\n", app.CatalogID))
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s.%s`)\"\n", app.CatalogID, tailnetDomain))
+	fmt.Fprintf(b, "    %s-tailnet:\n", app.CatalogID)
+	fmt.Fprintf(b, "      rule: \"Host(`%s.%s`)\"\n", app.CatalogID, tailnetDomain)
 	b.WriteString("      priority: 250\n")
 	b.WriteString("      middlewares:\n")
 	b.WriteString("        - tailnet-forwardauth\n")
-	b.WriteString(fmt.Sprintf("      service: %s\n", app.CatalogID))
+	fmt.Fprintf(b, "      service: %s\n", app.CatalogID)
 }
 
 // writeTailnetOutpostRouter writes a router for /outpost.goauthentik.io/ paths
 // on tailnet app domains. This ensures the OAuth callback from the standalone
 // outpost is routed to the outpost, not to the app.
 func (g *Generator) writeTailnetOutpostRouter(b *strings.Builder, app *catalog.App, tailnetDomain string) {
-	b.WriteString(fmt.Sprintf("    %s-tailnet-outpost:\n", app.CatalogID))
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`%s.%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", app.CatalogID, tailnetDomain))
+	fmt.Fprintf(b, "    %s-tailnet-outpost:\n", app.CatalogID)
+	fmt.Fprintf(b, "      rule: \"Host(`%s.%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", app.CatalogID, tailnetDomain)
 	b.WriteString("      priority: 300\n")
 	b.WriteString("      service: tailnet-outpost\n")
 }
@@ -340,7 +340,7 @@ func (g *Generator) writeTailnetOutpostRouter(b *strings.Builder, app *catalog.A
 func (g *Generator) writeTailnetGatewayRouters(b *strings.Builder, tailnetDomain string) {
 	// Outpost callback router — must be higher priority to intercept /outpost.goauthentik.io/
 	b.WriteString("    tailnet-gateway-outpost:\n")
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`bloud.%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", tailnetDomain))
+	fmt.Fprintf(b, "      rule: \"Host(`bloud.%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", tailnetDomain)
 	b.WriteString("      priority: 300\n")
 	b.WriteString("      service: tailnet-outpost\n")
 
@@ -348,14 +348,14 @@ func (g *Generator) writeTailnetGatewayRouters(b *strings.Builder, tailnetDomain
 	// /if/ (frontend), /api/v3/ (Authentik API), /static/ (assets), /-/ (internal)
 	// Uses /api/v3/ (not /api/) to avoid conflicting with the Bloud API at /api/.
 	b.WriteString("    tailnet-gateway-authentik:\n")
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`bloud.%s`) && (PathPrefix(`/if/`) || PathPrefix(`/application/`) || PathPrefix(`/api/v3/`) || PathPrefix(`/static/`) || PathPrefix(`/-/`))\"\n", tailnetDomain))
+	fmt.Fprintf(b, "      rule: \"Host(`bloud.%s`) && (PathPrefix(`/if/`) || PathPrefix(`/application/`) || PathPrefix(`/api/v3/`) || PathPrefix(`/static/`) || PathPrefix(`/-/`))\"\n", tailnetDomain)
 	b.WriteString("      priority: 250\n")
 	b.WriteString("      service: authentik-web\n")
 
 	// Dashboard catch-all — proxies everything else on the gateway domain to
 	// the host-agent (Bloud dashboard + API).
 	b.WriteString("    tailnet-gateway-dashboard:\n")
-	b.WriteString(fmt.Sprintf("      rule: \"Host(`bloud.%s`)\"\n", tailnetDomain))
+	fmt.Fprintf(b, "      rule: \"Host(`bloud.%s`)\"\n", tailnetDomain)
 	b.WriteString("      priority: 100\n")
 	b.WriteString("      service: bloud-dashboard\n")
 }

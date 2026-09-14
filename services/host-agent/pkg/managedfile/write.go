@@ -28,17 +28,19 @@ func Write(path string, content []byte, mode os.FileMode) (bool, error) {
 		return false, fmt.Errorf("create managed file temp: %w", err)
 	}
 	tempPath := temp.Name()
-	defer os.Remove(tempPath)
+	// Safety-net cleanup: after a successful rename the temp file is already gone
+	// (ENOENT), so the Remove error is expected and ignored.
+	defer func() { _ = os.Remove(tempPath) }()
 	if err := temp.Chmod(mode); err != nil {
-		temp.Close()
+		_ = temp.Close()
 		return false, err
 	}
 	if _, err := temp.Write(content); err != nil {
-		temp.Close()
+		_ = temp.Close()
 		return false, err
 	}
 	if err := temp.Sync(); err != nil {
-		temp.Close()
+		_ = temp.Close()
 		return false, err
 	}
 	if err := temp.Close(); err != nil {

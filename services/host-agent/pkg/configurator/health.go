@@ -43,7 +43,7 @@ func WaitForHTTP(ctx context.Context, url string, timeout time.Duration) error {
 			if err != nil {
 				continue
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				return nil
@@ -79,7 +79,7 @@ func WaitForHTTPWithAuth(ctx context.Context, url string, timeout time.Duration)
 			if err != nil {
 				continue
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			// Service is ready if it responds at all (even with auth error)
 			if resp.StatusCode >= 200 && resp.StatusCode < 500 {
@@ -107,7 +107,7 @@ func WaitForTCP(ctx context.Context, host string, port int, timeout time.Duratio
 			if err != nil {
 				continue
 			}
-			conn.Close()
+			_ = conn.Close()
 			return nil
 		}
 	}
@@ -141,7 +141,7 @@ func ShouldWaitForSSO(appName string, authentikPort int) bool {
 		// Connection error - Authentik isn't running, no SSO to wait for
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 404 means no OpenID provider for this app - no SSO configured
 	if resp.StatusCode == http.StatusNotFound {
@@ -189,7 +189,7 @@ func WaitForOpenIDConfig(ctx context.Context, url string, timeout time.Duration)
 			}
 
 			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if err != nil {
 				lastErr = err

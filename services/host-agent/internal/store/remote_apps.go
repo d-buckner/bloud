@@ -79,7 +79,7 @@ func (s *RemoteAppStore) List() ([]*RemoteApp, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query remote apps: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	apps := []*RemoteApp{}
 	for rows.Next() {

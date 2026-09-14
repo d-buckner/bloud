@@ -33,7 +33,7 @@ func testFrontProxy(t *testing.T, agentReady bool) (*frontProxy, *httptest.Serve
 
 	traefik := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ping" {
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("ok"))
 			return
 		}
 		w.Header().Set("X-Test", "proxied")
