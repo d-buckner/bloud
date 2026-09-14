@@ -209,8 +209,9 @@ func TestPreStartRemovesBlockWhenSSODisabled(t *testing.T) {
 
 // apiServer is a fake Home Assistant for PostStart tests.
 type apiServer struct {
+	t              *testing.T
 	mu             sync.Mutex
-	restarts       []string // Authorization headers seen on restart calls
+	restarts       []string // container names handed to the restart callback
 	onboarded      bool
 	postBodies     []string
 	tokenReqs      []string // form bodies seen on /auth/token
@@ -235,7 +236,7 @@ type apiServer struct {
 }
 
 func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
-	s := &apiServer{oidcLive: oidcLive, stepsCompleted: map[string]bool{}, restartAppliesTrust: true}
+	s := &apiServer{t: t, oidcLive: oidcLive, stepsCompleted: map[string]bool{}, restartAppliesTrust: true}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/":
@@ -335,32 +336,6 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 				return
 			}
 			http.NotFound(w, r)
-		case "/api/services/homeassistant/restart":
-			authz := r.Header.Get("Authorization")
-			s.mu.Lock()
-			// Real HA requires a valid admin bearer token; without one the call is
-			// rejected (auth_middleware leaves it unauthenticated → 401).
-			if authz == "" || authz == "Bearer " {
-				s.mu.Unlock()
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			s.restarts = append(s.restarts, authz)
-			applies := s.restartAppliesTrust
-			delay := s.trustFlipDelay
-			s.mu.Unlock()
-			// A healthy HA restart reloads the patched trust; flip the live
-			// flag so the forwarded-400 clears. restartAppliesTrust=false
-			// models a restart that accepts but never reloads (the CI case).
-			if applies {
-				if delay > 0 {
-					timer := time.AfterFunc(delay, func() { s.setTrustLive(true) })
-					t.Cleanup(func() { timer.Stop() })
-				} else {
-					s.setTrustLive(true)
-				}
-			}
-			w.WriteHeader(200)
 		default:
 			http.NotFound(w, r)
 		}
@@ -385,6 +360,32 @@ func (s *apiServer) setTrustLive(v bool) {
 	s.mu.Lock()
 	s.trustLive = v
 	s.mu.Unlock()
+}
+
+// restartContainer returns the host-runtime callback to inject into the
+// configurator via SetRestartContainer. It models a real container stop+start:
+// the re-exec'd process re-reads the patched .storage/http, so it flips
+// trustLive (after trustFlipDelay, modelling restart latency) when
+// restartAppliesTrust. restartAppliesTrust=false models a restart that never
+// reloads, so the forwarded-400 persists. Records each container name it is
+// asked to restart.
+func (s *apiServer) restartContainer() func(context.Context, string) error {
+	return func(_ context.Context, name string) error {
+		s.mu.Lock()
+		s.restarts = append(s.restarts, name)
+		applies := s.restartAppliesTrust
+		delay := s.trustFlipDelay
+		s.mu.Unlock()
+		if applies {
+			if delay > 0 {
+				timer := time.AfterFunc(delay, func() { s.setTrustLive(true) })
+				s.t.Cleanup(func() { timer.Stop() })
+			} else {
+				s.setTrustLive(true)
+			}
+		}
+		return nil
+	}
 }
 
 func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
@@ -583,8 +584,10 @@ func TestPreStartRejectsCorruptConfigFile(t *testing.T) {
 }
 
 // End-to-end through the POST path: with the stored entry untrusted,
-// PostStart must patch it AND restart Home Assistant via the API — that
-// restart is what makes proxied OIDC callbacks work.
+// PostStart must patch it AND restart the Home Assistant CONTAINER — that
+// restart is what makes proxied OIDC callbacks work. The restart is a
+// host-runtime container restart (via the injected callback), not HA's own
+// soft restart service, so it needs no admin token.
 func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	fakeSrv := newAPIServer(t, true)
 
@@ -593,6 +596,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 
 	cfg := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
 	cfg.baseURLOverride = fakeSrv.srv.URL
+	cfg.SetRestartContainer(fakeSrv.restartContainer())
 	cfg.pollInterval = 10 * time.Millisecond
 	cfg.postStartTimeout = 3 * time.Second
 
@@ -608,11 +612,11 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	assert.Equal(t, true, h["use_x_forwarded_for"])
 	assert.Equal(t, []interface{}{"10.0.0.0/8"}, h["trusted_proxies"])
 
-	// and HA was restarted through the API with the session token
+	// and the container was restarted through the runtime (by its own name)
 	fakeSrv.mu.Lock()
 	defer fakeSrv.mu.Unlock()
 	require.Len(t, fakeSrv.restarts, 1)
-	assert.Equal(t, "Bearer tok", fakeSrv.restarts[0])
+	assert.Equal(t, "apps-homeassistant", fakeSrv.restarts[0])
 }
 
 // Regression: HA hands out an authorization CODE, never an access_token (core
@@ -639,13 +643,13 @@ func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 	assert.Contains(t, srv.tokenReqs[0], "client_id="+url.QueryEscape(onboardingClientID))
 }
 
-// Regression for the reported failure: on a RETRY (owner already created), HA
-// never re-issues an auth code — /api/onboarding/users returns 403 and there is
-// no token to restart with. Patching reverse-proxy trust then cannot do the
-// in-place restart; that must surface as a self-healing ERROR (the patched entry
-// is on disk, so the next reconcile recreates the container and applies it) —
-// never a silent success, and never a crash.
-func TestPostStartAlreadyOnboardedDefersRestart(t *testing.T) {
+// Regression for the reported failure, now fixed: on a RETRY (owner already
+// created), HA never re-issues an auth code, so there is no admin token — the
+// old API-restart path died there and had to surface a self-healing ERROR. A
+// container restart needs no token, so PostStart now succeeds on the retry: it
+// patches the on-disk trust and restarts the container, which re-execs HA to
+// load it. This is the case that used to strand the app in ERROR.
+func TestPostStartAlreadyOnboardedAppliesTrustViaContainerRestart(t *testing.T) {
 	srv := newAPIServer(t, true)
 	srv.mu.Lock()
 	srv.onboarded = true // owner exists; onboarding step done → no token available
@@ -656,25 +660,26 @@ func TestPostStartAlreadyOnboardedDefersRestart(t *testing.T) {
 
 	cfg := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
 	cfg.baseURLOverride = srv.srv.URL
+	cfg.SetRestartContainer(srv.restartContainer())
 	cfg.pollInterval = 10 * time.Millisecond
 	cfg.postStartTimeout = 2 * time.Second
 
-	err := cfg.PostStart(context.Background(), &configurator.AppState{
+	require.NoError(t, cfg.PostStart(context.Background(), &configurator.AppState{
 		DataPath:   data,
 		SSOEnabled: true,
 		OIDC:       testOIDC(),
-	})
-	require.Error(t, err, "trust was patched but cannot be applied without a token")
-	assert.Contains(t, err.Error(), "could not be restarted")
+	}))
 
-	// the trust IS still written to disk (so a container restart applies it)…
+	// trust is on disk…
 	doc := readStoredJSON(t, storedPath)
 	h := configBlock(t, doc, "stable")
 	assert.Equal(t, true, h["use_x_forwarded_for"])
-	// …and no restart was attempted with an empty token.
+	// …and the container WAS restarted (no token needed), applying it live.
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
-	assert.Empty(t, srv.restarts, "must not fire a tokenless restart")
+	require.Len(t, srv.restarts, 1, "the retry must restart the container to apply trust")
+	assert.Equal(t, "apps-homeassistant", srv.restarts[0])
+	assert.True(t, srv.trustLive, "the restarted process loaded the patched trust")
 }
 
 // trustedStorageJSON: the stored http entry as it looks AFTER Bloud patched
@@ -712,6 +717,7 @@ func TestPostStartWaitsForTrustReloadAfterRestart(t *testing.T) {
 
 	c := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
 	c.baseURLOverride = srv.srv.URL
+	c.SetRestartContainer(srv.restartContainer())
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 5 * time.Second
 
@@ -738,6 +744,7 @@ func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
 
 	c := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
 	c.baseURLOverride = srv.srv.URL
+	c.SetRestartContainer(srv.restartContainer())
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 300 * time.Millisecond
 

@@ -4,6 +4,7 @@
 package configurator
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -28,6 +29,16 @@ type Deps struct {
 	// TraefikPort is the public Traefik HTTP entrypoint port, used to build
 	// host-local URLs (e.g. API calls made from the host itself).
 	TraefikPort int
+
+	// RestartContainer stops and starts a running container by name through
+	// the host's container runtime, forcing its process to re-exec and re-read
+	// on-disk config. Configurators need this when the app reads config only
+	// at startup and its own in-app restart is unreliable (e.g. Home Assistant
+	// under a container init). The runtime call is executed by the
+	// orchestrator-provided callback so the orchestrator stays the single
+	// writer of side effects. Nil when no runtime is available (CLI/tests);
+	// factories that require a restart must treat nil as "cannot apply now".
+	RestartContainer func(ctx context.Context, name string) error
 }
 
 // LocalTraefikURL returns the loopback URL of the Traefik HTTP entrypoint.

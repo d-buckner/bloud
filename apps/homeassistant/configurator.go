@@ -75,9 +75,29 @@ type Configurator struct {
 
 	pollInterval     time.Duration
 	postStartTimeout time.Duration
+
+	// restartContainer stops and starts a running container by name through
+	// the host runtime, forcing its process to re-exec and re-read on-disk
+	// config. Injected via Deps (the configurator holds no podman handle of
+	// its own). Nil when no runtime is available (CLI/tests); callers of
+	// restartContainer treat that as "cannot apply now".
+	restartContainerFn func(ctx context.Context, name string) error
 }
 
-// NewConfigurator creates a new Home Assistant configurator.
+// restartContainer restarts this configurator's container through the
+// injected host-runtime callback. It is the only way this process reloads the
+// patched http trust; the callback is expected to be a real container
+// stop+start, so the re-exec re-reads .storage/http.
+func (c *Configurator) restartContainer(ctx context.Context) error {
+	if c.restartContainerFn == nil {
+		return fmt.Errorf("no container restart available (no host runtime wired)")
+	}
+	return c.restartContainerFn(ctx, c.Name())
+}
+
+// NewConfigurator creates a new Home Assistant configurator. Wire the
+// container-restart callback with SetRestartContainer (the host-agent factory
+// does this from Deps.RestartContainer).
 func NewConfigurator(port int, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
 	if port == 0 {
 		port = 8123
@@ -94,6 +114,14 @@ func NewConfigurator(port int, secrets configurator.AppSecretsProvider, logger *
 		pollInterval:     2 * time.Second,
 		postStartTimeout: 150 * time.Second,
 	}
+}
+
+// SetRestartContainer injects the host-runtime callback used to restart this
+// app's container so its process re-execs and reloads on-disk config. Called
+// by the host-agent factory from Deps.RestartContainer; left unset (CLI) or
+// set from a fake (tests) the restart path degrades to a clear error.
+func (c *Configurator) SetRestartContainer(fn func(ctx context.Context, name string) error) {
+	c.restartContainerFn = fn
 }
 
 func (c *Configurator) Name() string {
@@ -181,36 +209,35 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 		return err
 	}
 
-	// Onboarding creates the owner and returns its access token — the only token
-	// available for driving admin API calls after this point (empty when HA was
-	// already onboarded, in which case there is nothing to restart anyway).
-	token, err := c.ensureOnboarded(ctx, configDir)
-	if err != nil {
+	if _, err := c.ensureOnboarded(ctx, configDir); err != nil {
 		return err
 	}
 	// Reverse-proxy trust: HA writes its own http config entry on first boot
 	// and only reads it at startup. Patch that stored entry so HA trusts
-	// Traefik's X-Forwarded-* headers, then restart HA to apply it. Without
-	// this, the OIDC callback proxied through Traefik fails with 400. No-op
-	// once already set.
+	// Traefik's X-Forwarded-* headers, then restart the CONTAINER so the new
+	// process re-reads it. Without this, the OIDC callback proxied through
+	// Traefik fails with 400. No-op once already set.
+	//
+	// We restart the container (via the host runtime callback), not HA's own
+	// `homeassistant.restart` service: under the official Container image that
+	// soft restart (exit-code 100 re-exec by s6) is unreliable and can accept
+	// without ever reloading (see INTEGRATION.md). A podman stop+start is a
+	// real process re-exec and needs no admin token — so it works on a retried
+	// install too, where onboarding is already done and no token is available.
 	changed, err := c.ensureReverseProxy(configDir)
 	if err != nil {
 		return err
 	}
 	if changed {
-		c.logger.Info("restarting Home Assistant to apply reverse-proxy trust")
-		if err := c.restartHomeAssistant(ctx, token); err != nil {
-			// The restart needs an owner access token. We only have one on the
-			// single PostStart run that actually created the owner — HA hands out
-			// a one-shot auth code there and never re-issues it (a retried install
-			// hits an already-done user step, so ensureOnboarded returns ""). The
-			// patched entry is on disk; if we leave this pass running, HA keeps
-			// rejecting Traefik's forwarded headers (OIDC callback 400s) until some
-			// later restart. Fail the pass instead: the node lands in ERROR, and a
-			// retry install resets it (pipeline.resetErroredNodes), recreating the
-			// container — which loads the patched entry with no token needed.
-			c.logger.Warn("in-place HA restart unavailable; failing so an install retry recreates the container", "error", err)
-			return fmt.Errorf("reverse-proxy trust written but Home Assistant could not be restarted (%v); retrying the install recreates the container and applies it", err)
+		c.logger.Info("restarting Home Assistant container to apply reverse-proxy trust")
+		if err := c.restartContainer(ctx); err != nil {
+			// The patched entry is on disk; if we leave this pass running, HA
+			// keeps rejecting Traefik's forwarded headers (OIDC callback 400s)
+			// until some later restart. Fail the pass instead: the node lands in
+			// ERROR, and the PreStart stale-check (or a retry install's reset)
+			// recreates the container — which loads the patched entry.
+			c.logger.Warn("container restart unavailable; failing so a recreate applies the patched trust", "error", err)
+			return fmt.Errorf("reverse-proxy trust written but the container could not be restarted (%v); the next recreate applies it", err)
 		}
 	}
 	// Verify the RUNNING process actually honours forwarded headers before the
@@ -1028,33 +1055,6 @@ func (c *Configurator) exchangeAuthCode(ctx context.Context, authCode string) (s
 		return "", fmt.Errorf("token exchange returned no access token: %s", string(body))
 	}
 	return tok.AccessToken, nil
-}
-
-// restartHomeAssistant triggers a graceful in-container HA restart via the
-// supervisor's process manager so Home Assistant re-reads its stored config
-// entries (notably the http entry whose reverse-proxy trust we just set). The
-// container itself stays up; only the HA process restarts. The request returns
-// before the restart completes, so callers re-wait on the API afterwards.
-func (c *Configurator) restartHomeAssistant(ctx context.Context, token string) error {
-	if token == "" {
-		return fmt.Errorf("no access token to restart Home Assistant")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/services/homeassistant/restart", strings.NewReader("{}"))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("restart request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("restart returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
 }
 
 // waitForOIDCReady verifies the OIDC auth provider is live by probing
