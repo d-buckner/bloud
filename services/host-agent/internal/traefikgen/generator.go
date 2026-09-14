@@ -91,45 +91,62 @@ func (g *Generator) generateConfig(apps []*catalog.App, remoteApps []RemoteAppRo
 		return remoteApps[i].ID < remoteApps[j].ID
 	})
 
-	// Generate routers section
+	g.writeRouters(&b, routableApps, remoteApps)
+	hasTailnetRoutes := g.writeTailnetRouters(&b, routableApps, tailnetDomain)
+	g.writeMiddlewares(&b, routableApps, hasTailnetRoutes)
+	g.writeServices(&b, routableApps, remoteApps, hasTailnetRoutes)
+
+	return b.String()
+}
+
+// writeRouters emits the http.routers section: one router per local app
+// (plus outpost/bypass routers for forward-auth apps) and one per remote app.
+func (g *Generator) writeRouters(b *strings.Builder, routableApps []*catalog.App, remoteApps []RemoteAppRoute) {
 	b.WriteString("http:\n")
 	b.WriteString("  routers:\n")
 	for _, app := range routableApps {
-		g.writeRouter(&b, app, g.authentikEnabled)
+		g.writeRouter(b, app, g.authentikEnabled)
 		if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
 			// Forward-auth apps need a second, higher-priority router that passes
 			// /outpost.goauthentik.io/ requests directly to Authentik. Without this,
 			// the OAuth callback (code exchange) gets intercepted by the forward-auth
 			// middleware and the embedded outpost returns 400.
-			g.writeOutpostRouter(&b, app)
+			g.writeOutpostRouter(b, app)
 			// Native-client API paths bypass forward-auth so apps like Navidrome can
 			// serve Subsonic clients using their own credential scheme.
 			for _, path := range app.SSO.BypassPaths {
-				g.writeBypassRouter(&b, app, path)
+				g.writeBypassRouter(b, app, path)
 			}
 		}
 	}
 	for _, ra := range remoteApps {
-		g.writeRemoteRouter(&b, ra)
+		g.writeRemoteRouter(b, ra)
 	}
+}
 
-	// Tailnet-specific routers: higher-priority routes that use the standalone
-	// proxy outpost for forward-auth, so remote users get redirected to the
-	// tailnet URL for login instead of localhost.
+// writeTailnetRouters emits the tailnet-specific routers (standalone proxy
+// outpost forward-auth + gateway domain routes) and reports whether any
+// tailnet routes were written.
+func (g *Generator) writeTailnetRouters(b *strings.Builder, routableApps []*catalog.App, tailnetDomain string) bool {
+	if tailnetDomain == "" || !g.authentikEnabled {
+		return false
+	}
 	hasTailnetRoutes := false
-	if tailnetDomain != "" && g.authentikEnabled {
-		for _, app := range routableApps {
-			if app.SSO.Strategy == "forward-auth" {
-				g.writeTailnetRouter(&b, app, tailnetDomain)
-				g.writeTailnetOutpostRouter(&b, app, tailnetDomain)
-				hasTailnetRoutes = true
-			}
+	for _, app := range routableApps {
+		if app.SSO.Strategy == "forward-auth" {
+			g.writeTailnetRouter(b, app, tailnetDomain)
+			g.writeTailnetOutpostRouter(b, app, tailnetDomain)
+			hasTailnetRoutes = true
 		}
-		// Gateway domain routes: Authentik login page + outpost callback.
-		g.writeTailnetGatewayRouters(&b, tailnetDomain)
 	}
+	// Gateway domain routes: Authentik login page + outpost callback.
+	g.writeTailnetGatewayRouters(b, tailnetDomain)
+	return hasTailnetRoutes
+}
 
-	// Generate middlewares section (only if any app needs one)
+// writeMiddlewares emits the http.middlewares section when any app needs
+// one, or when tailnet routes require the tailnet middleware.
+func (g *Generator) writeMiddlewares(b *strings.Builder, routableApps []*catalog.App, hasTailnetRoutes bool) {
 	hasMiddlewares := false
 	for _, app := range routableApps {
 		if g.appNeedsMiddleware(app) {
@@ -137,23 +154,28 @@ func (g *Generator) generateConfig(apps []*catalog.App, remoteApps []RemoteAppRo
 			break
 		}
 	}
-	if hasMiddlewares || hasTailnetRoutes {
-		b.WriteString("\n  middlewares:\n")
-		for _, app := range routableApps {
-			g.writeMiddleware(&b, app)
-		}
-		if hasTailnetRoutes {
-			g.writeTailnetMiddleware(&b)
-		}
+	if !hasMiddlewares && !hasTailnetRoutes {
+		return
 	}
+	b.WriteString("\n  middlewares:\n")
+	for _, app := range routableApps {
+		g.writeMiddleware(b, app)
+	}
+	if hasTailnetRoutes {
+		g.writeTailnetMiddleware(b)
+	}
+}
 
-	// Generate services section
+// writeServices emits the http.services section: local app services,
+// remote app services, the shared authentik-outpost service (when any
+// forward-auth app is installed), and the tailnet services.
+func (g *Generator) writeServices(b *strings.Builder, routableApps []*catalog.App, remoteApps []RemoteAppRoute, hasTailnetRoutes bool) {
 	b.WriteString("\n  services:\n")
 	for _, app := range routableApps {
-		g.writeService(&b, app)
+		g.writeService(b, app)
 	}
 	for _, ra := range remoteApps {
-		g.writeRemoteService(&b, ra)
+		g.writeRemoteService(b, ra)
 	}
 
 	// Add the shared authentik-outpost service if any forward-auth apps are installed
@@ -173,10 +195,8 @@ func (g *Generator) generateConfig(apps []*catalog.App, remoteApps []RemoteAppRo
 
 	// Tailnet services: standalone proxy outpost + Authentik web UI.
 	if hasTailnetRoutes {
-		g.writeTailnetServices(&b)
+		g.writeTailnetServices(b)
 	}
-
-	return b.String()
 }
 
 // appNeedsMiddleware returns true if the app requires any middleware definitions

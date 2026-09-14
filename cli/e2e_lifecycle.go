@@ -100,6 +100,31 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 		password:   getenv("BLOUD_E2E_PASSWORD"),
 		traefikDir: getenv("BLOUD_E2E_TRAEFIK_DYNAMIC_DIR"),
 	}
+	applyLifecycleDefaults(&cfg, backendName)
+
+	flags := flag.NewFlagSet("e2e lifecycle", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.BoolVar(&cfg.hostOnly, "host-only", false, "skip Playwright browser tests")
+	// Default from env so CI (which sets BLOUD_E2E_KEEP=1) gets the same
+	// behavior as passing --keep on the command line. The flag can still
+	// override the env default.
+	keepDefault := getenv("BLOUD_E2E_KEEP") == "1"
+	flags.BoolVar(&cfg.keep, "keep", keepDefault, "leave the host-agent service running")
+	if err := flags.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return cfg, true, nil
+		}
+		return cfg, false, err
+	}
+	if err := validateLifecycleConfig(&cfg); err != nil {
+		return cfg, false, err
+	}
+	return cfg, false, nil
+}
+
+// applyLifecycleDefaults fills unset config fields with backend-aware
+// defaults (instance names, URLs, credentials, derived paths).
+func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
 	if cfg.remoteDir == "" {
 		cfg.remoteDir = "/var/tmp/bloud-e2e-runtime"
 	}
@@ -115,7 +140,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if cfg.qemu != "" && cfg.sshTarget == "" {
 		// Derive SSH target and key from QEMU instance
 		cfg.sshTarget = "bloud@127.0.0.1"
-		cfg.sshKeyFile = filepath.Join(root, ".bloud", "qemu", cfg.qemu, "id_ed25519")
+		cfg.sshKeyFile = filepath.Join(cfg.root, ".bloud", "qemu", cfg.qemu, "id_ed25519")
 	}
 	if cfg.baseURL == "" && (cfg.lima != "" || cfg.native) {
 		cfg.baseURL = "http://localhost:3000"
@@ -132,53 +157,58 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	if cfg.traefikDir == "" {
 		cfg.traefikDir = filepath.Join(cfg.remoteDir, "data", "traefik", "dynamic")
 	}
+}
 
-	flags := flag.NewFlagSet("e2e lifecycle", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	flags.BoolVar(&cfg.hostOnly, "host-only", false, "skip Playwright browser tests")
-	// Default from env so CI (which sets BLOUD_E2E_KEEP=1) gets the same
-	// behavior as passing --keep on the command line. The flag can still
-	// override the env default.
-	keepDefault := getenv("BLOUD_E2E_KEEP") == "1"
-	flags.BoolVar(&cfg.keep, "keep", keepDefault, "leave the host-agent service running")
-	if err := flags.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			return cfg, true, nil
-		}
-		return cfg, false, err
-	}
-	if flags.NArg() != 0 {
-		return cfg, false, fmt.Errorf("unexpected lifecycle arguments: %s", strings.Join(flags.Args(), " "))
-	}
-	if cfg.native && (cfg.lima != "" || cfg.qemu != "" || cfg.sshTarget != "") {
-		return cfg, false, fmt.Errorf("native backend cannot be combined with BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
-	}
-	if cfg.lima != "" && (cfg.qemu != "" || cfg.sshTarget != "") {
-		return cfg, false, fmt.Errorf("set only one of BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
-	}
-	if cfg.qemu != "" && cfg.sshTarget != "" && cfg.sshKeyFile == "" {
-		// sshTarget was set manually, not derived from QEMU
-		return cfg, false, fmt.Errorf("BLOUD_E2E_QEMU_INSTANCE and BLOUD_E2E_SSH_TARGET cannot be used together")
+// validateLifecycleConfig rejects combinations of instance/SSH/runtime
+// settings that cannot describe one coherent deployment target.
+func validateLifecycleConfig(cfg *lifecycleConfig) error {
+	if err := validateInstanceSelection(cfg); err != nil {
+		return err
 	}
 	if !cfg.hostOnly && cfg.baseURL == "" {
-		return cfg, false, fmt.Errorf("BLOUD_URL is required unless --host-only is used")
+		return fmt.Errorf("BLOUD_URL is required unless --host-only is used")
 	}
 	if !filepath.IsAbs(cfg.remoteDir) || filepath.Clean(cfg.remoteDir) == "/" || !lifecycleRemotePath.MatchString(cfg.remoteDir) {
-		return cfg, false, fmt.Errorf("BLOUD_E2E_RUNTIME_DIR must be a non-root absolute path")
+		return fmt.Errorf("BLOUD_E2E_RUNTIME_DIR must be a non-root absolute path")
 	}
-	switch filepath.Clean(cfg.remoteDir) {
-	case "/bin", "/boot", "/dev", "/etc", "/home", "/opt", "/run", "/srv", "/tmp", "/usr", "/var":
-		return cfg, false, fmt.Errorf("BLOUD_E2E_RUNTIME_DIR must identify a dedicated child directory")
+	if lifecycleReservedDir(cfg.remoteDir) {
+		return fmt.Errorf("BLOUD_E2E_RUNTIME_DIR must identify a dedicated child directory")
 	}
 	if !filepath.IsAbs(cfg.traefikDir) || !lifecycleRemotePath.MatchString(cfg.traefikDir) {
-		return cfg, false, fmt.Errorf("BLOUD_E2E_TRAEFIK_DYNAMIC_DIR must be an absolute path containing only letters, numbers, '.', '_', '-', and '/'")
+		return fmt.Errorf("BLOUD_E2E_TRAEFIK_DYNAMIC_DIR must be an absolute path containing only letters, numbers, '.', '_', '-', and '/'")
 	}
 	switch cfg.goarch {
 	case "amd64", "arm64":
 	default:
-		return cfg, false, fmt.Errorf("unsupported BLOUD_E2E_GOARCH %q", cfg.goarch)
+		return fmt.Errorf("unsupported BLOUD_E2E_GOARCH %q", cfg.goarch)
 	}
-	return cfg, false, nil
+	return nil
+}
+
+// validateInstanceSelection enforces that at most one VM/SSH target is
+// configured and that it is compatible with the chosen backend.
+func validateInstanceSelection(cfg *lifecycleConfig) error {
+	if cfg.native && (cfg.lima != "" || cfg.qemu != "" || cfg.sshTarget != "") {
+		return fmt.Errorf("native backend cannot be combined with BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
+	}
+	if cfg.lima != "" && (cfg.qemu != "" || cfg.sshTarget != "") {
+		return fmt.Errorf("set only one of BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
+	}
+	if cfg.qemu != "" && cfg.sshTarget != "" && cfg.sshKeyFile == "" {
+		// sshTarget was set manually, not derived from QEMU
+		return fmt.Errorf("BLOUD_E2E_QEMU_INSTANCE and BLOUD_E2E_SSH_TARGET cannot be used together")
+	}
+	return nil
+}
+
+// lifecycleReservedDir reports whether a runtime dir is (or is inside) a
+// system directory that a dedicated validation runtime must never occupy.
+func lifecycleReservedDir(dir string) bool {
+	switch filepath.Clean(dir) {
+	case "/bin", "/boot", "/dev", "/etc", "/home", "/opt", "/run", "/srv", "/tmp", "/usr", "/var":
+		return true
+	}
+	return false
 }
 
 func printLifecycleUsage(w io.Writer) {
@@ -218,6 +248,45 @@ func (r *lifecycle) run() (runErr error) {
 		}
 	}()
 
+	if err := r.checkPrerequisites(); err != nil {
+		return err
+	}
+	if err := r.buildAndDeploy(); err != nil {
+		return err
+	}
+
+	r.step("Resetting prior managed Jellyfin state")
+	if err := r.remoteRun(remoteResetJellyfinScript); err != nil {
+		return err
+	}
+
+	if err := r.runInstallFlow(); err != nil {
+		return err
+	}
+
+	r.step("Asserting installed Jellyfin host state")
+	if err := r.remoteRun(remoteAssertInstalledScript, r.cfg.traefikDir); err != nil {
+		return err
+	}
+
+	if err := r.verifyAfterRestart(); err != nil {
+		return err
+	}
+
+	r.step("Uninstalling Jellyfin and asserting cleanup")
+	if err := r.remoteRun(remoteUninstallScript, r.cfg.remoteDir, r.cfg.traefikDir); err != nil {
+		return err
+	}
+
+	r.failed = false
+	r.step("Jellyfin lifecycle passed")
+	return nil
+}
+
+// checkPrerequisites verifies the remote host (HOME, preflight script),
+// prepares a QEMU target if one is configured, and provisions the native
+// runtime when running without a VM.
+func (r *lifecycle) checkPrerequisites() error {
 	r.step("Checking host prerequisites")
 	home, err := r.remoteOutput("printf %s \"$HOME\"")
 	if err != nil {
@@ -240,59 +309,40 @@ func (r *lifecycle) run() (runErr error) {
 			return fmt.Errorf("native runtime provisioning failed: %w", err)
 		}
 	}
+	return nil
+}
 
-	if err := r.buildAndDeploy(); err != nil {
-		return err
-	}
-
-	r.step("Resetting prior managed Jellyfin state")
-	if err := r.remoteRun(remoteResetJellyfinScript); err != nil {
-		return err
-	}
-
+// runInstallFlow installs Jellyfin through the host-local API in --host-only
+// mode, or through the browser (ensure user + Playwright install/login flow)
+// otherwise.
+func (r *lifecycle) runInstallFlow() error {
 	if r.cfg.hostOnly {
 		r.step("Installing Jellyfin through the host-local API")
-		if err := r.remoteRun(remoteInstallJellyfinScript); err != nil {
-			return err
-		}
-	} else {
-		r.step("Ensuring the E2E user exists")
-		payload, err := json.Marshal(map[string]string{"username": r.cfg.username, "password": r.cfg.password})
-		if err != nil {
-			return err
-		}
-		if err := r.remoteRun(remoteEnsureUserScript, string(payload)); err != nil {
-			return err
-		}
-		r.step("Running Jellyfin browser install and login flow")
-		if err := runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password); err != nil {
-			return err
-		}
+		return r.remoteRun(remoteInstallJellyfinScript)
 	}
-
-	r.step("Asserting installed Jellyfin host state")
-	if err := r.remoteRun(remoteAssertInstalledScript, r.cfg.traefikDir); err != nil {
+	r.step("Ensuring the E2E user exists")
+	payload, err := json.Marshal(map[string]string{"username": r.cfg.username, "password": r.cfg.password})
+	if err != nil {
 		return err
 	}
+	if err := r.remoteRun(remoteEnsureUserScript, string(payload)); err != nil {
+		return err
+	}
+	r.step("Running Jellyfin browser install and login flow")
+	return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password)
+}
 
+// verifyAfterRestart restarts Jellyfin and the host-agent and re-runs the
+// browser flow (unless --host-only) to prove the lifecycle survives restarts.
+func (r *lifecycle) verifyAfterRestart() error {
 	r.step("Restarting Jellyfin and host-agent")
 	if err := r.remoteRun(remoteRestartScript, lifecycleHostAgentUnit); err != nil {
 		return err
 	}
 	if !r.cfg.hostOnly {
 		r.step("Verifying browser flow after service restarts")
-		if err := runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password); err != nil {
-			return err
-		}
+		return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password)
 	}
-
-	r.step("Uninstalling Jellyfin and asserting cleanup")
-	if err := r.remoteRun(remoteUninstallScript, r.cfg.remoteDir, r.cfg.traefikDir); err != nil {
-		return err
-	}
-
-	r.failed = false
-	r.step("Jellyfin lifecycle passed")
 	return nil
 }
 

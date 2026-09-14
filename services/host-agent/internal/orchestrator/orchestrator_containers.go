@@ -109,38 +109,7 @@ func (o *Orchestrator) RegenerateRoutes() error {
 	}
 
 	// Build remote app routes if store is available.
-	var remoteRoutes []traefikgen.RemoteAppRoute
-	if o.remoteAppStore != nil {
-		remoteApps, err := o.remoteAppStore.List()
-		if err != nil {
-			o.logger.Warn("failed to list remote apps for route generation", "error", err)
-		} else {
-			// Build proxy targets for reconciliation.
-			var targets []sharing.ProxyTarget
-			for _, ra := range remoteApps {
-				targets = append(targets, sharing.ProxyTarget{
-					ID:         ra.AppID + "-" + slug.Slugify(ra.HostLabel),
-					TailnetURL: "https://" + ra.TailnetAddr,
-				})
-			}
-
-			// Reconcile reverse proxies — returns port assignments.
-			if o.remoteProxy != nil && len(targets) > 0 {
-				portMap := o.remoteProxy.Reconcile(targets)
-				for _, t := range targets {
-					if port, ok := portMap[t.ID]; ok {
-						remoteRoutes = append(remoteRoutes, traefikgen.RemoteAppRoute{
-							ID:       t.ID,
-							ProxyURL: fmt.Sprintf("http://localhost:%d", port),
-						})
-					}
-				}
-			} else if o.remoteProxy != nil {
-				// No targets — stop all proxies.
-				o.remoteProxy.Reconcile(nil)
-			}
-		}
-	}
+	remoteRoutes := o.buildRemoteRoutes()
 
 	// Discover tailnet domain for tailnet-specific routes (forward-auth via
 	// the standalone proxy outpost). Only available when the gateway is running.
@@ -152,6 +121,47 @@ func (o *Orchestrator) RegenerateRoutes() error {
 	}
 
 	return o.traefikGen.GenerateAll(apps, remoteRoutes, tailnetDomain)
+}
+
+// buildRemoteRoutes reconciles the reverse proxies for remote (shared)
+// apps and translates the resulting port assignments into Traefik routes.
+// Returns nil when no remote app store is configured.
+func (o *Orchestrator) buildRemoteRoutes() []traefikgen.RemoteAppRoute {
+	if o.remoteAppStore == nil {
+		return nil
+	}
+	remoteApps, err := o.remoteAppStore.List()
+	if err != nil {
+		o.logger.Warn("failed to list remote apps for route generation", "error", err)
+		return nil
+	}
+
+	// Build proxy targets for reconciliation.
+	var targets []sharing.ProxyTarget
+	for _, ra := range remoteApps {
+		targets = append(targets, sharing.ProxyTarget{
+			ID:         ra.AppID + "-" + slug.Slugify(ra.HostLabel),
+			TailnetURL: "https://" + ra.TailnetAddr,
+		})
+	}
+
+	if o.remoteProxy == nil {
+		return nil
+	}
+
+	// Reconcile reverse proxies — returns port assignments. With no
+	// targets this stops all proxies.
+	portMap := o.remoteProxy.Reconcile(targets)
+	var remoteRoutes []traefikgen.RemoteAppRoute
+	for _, t := range targets {
+		if port, ok := portMap[t.ID]; ok {
+			remoteRoutes = append(remoteRoutes, traefikgen.RemoteAppRoute{
+				ID:       t.ID,
+				ProxyURL: fmt.Sprintf("http://localhost:%d", port),
+			})
+		}
+	}
+	return remoteRoutes
 }
 
 // ContainerSpecFromDef builds a container spec from a ContainerDef.
