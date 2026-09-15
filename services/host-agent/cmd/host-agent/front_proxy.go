@@ -34,13 +34,13 @@ import (
 // for the entire bootstrap window.
 
 const (
-	frontPortEnv        = "BLOUD_FRONT_PORT"
-	traefikPortEnv      = "BLOUD_TRAEFIK_PORT"
-	hostAgentPortEnv    = "BLOUD_PORT"
-	healthCheckTimeout  = 500 * time.Millisecond
-	readyCacheTTL       = 2 * time.Second
-	unreadyCacheTTL     = time.Second
-	fallbackReloadSecs  = 5
+	frontPortEnv       = "BLOUD_FRONT_PORT"
+	traefikPortEnv     = "BLOUD_TRAEFIK_PORT"
+	hostAgentPortEnv   = "BLOUD_PORT"
+	healthCheckTimeout = 500 * time.Millisecond
+	readyCacheTTL      = 2 * time.Second
+	unreadyCacheTTL    = time.Second
+	fallbackReloadSecs = 5
 )
 
 // frontProxy forwards requests to Traefik when the host-agent reports ready,
@@ -218,7 +218,8 @@ func fallbackPageHTML(detail string) []byte {
 </main>
 </body>
 </html>
-`)}
+`)
+}
 
 // runFrontProxy runs the port-80 front proxy until interrupted.
 func runFrontProxy() int {
@@ -236,8 +237,8 @@ func runFrontProxy() int {
 	logger.Info("front proxy starting", "listen", addr, "target", f.traefikAddr, "health", f.agentHealthURL)
 
 	server := &http.Server{
-		Addr:      addr,
-		Handler:   f,
+		Addr:    addr,
+		Handler: f,
 		// No request timeout: long-lived streams (SSE) are proxied through.
 		IdleTimeout: 120 * time.Second,
 	}

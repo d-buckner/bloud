@@ -69,12 +69,12 @@ type ServerConfig struct {
 	HostStore store.HostStoreInterface
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
-	TrustedLocalNets []string
+	TrustedLocalNets      []string
 	RefreshAuthentikToken func() string
-	LDAPOutput       *configurator.LDAPOutput
-	Registry         configurator.RegistryInterface
-	ContainerRuntime containerruntime.Runtime
-	TemplateVars     map[string]string
+	LDAPOutput            *configurator.LDAPOutput
+	Registry              configurator.RegistryInterface
+	ContainerRuntime      containerruntime.Runtime
+	TemplateVars          map[string]string
 	// EventsBus is the shared event bus (SSE streams, background consumers
 	// like the mDNS publisher). Nil creates one internally.
 	EventsBus *eventbus.Bus
@@ -92,13 +92,13 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	})
 
 	s := &Server{
-		cfg:             cfg,
-		router:          router,
-		db:              db,
-		orch:            orch,
-		remoteAppStore:  remoteAppStore,
-		authConfig:      authRef,
-		logger:          logger,
+		cfg:            cfg,
+		router:         router,
+		db:             db,
+		orch:           orch,
+		remoteAppStore: remoteAppStore,
+		authConfig:     authRef,
+		logger:         logger,
 	}
 
 	return s

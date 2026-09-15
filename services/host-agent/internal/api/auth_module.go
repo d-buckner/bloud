@@ -39,15 +39,15 @@ type AuthentikClientInterface interface {
 
 // FakeAuthentikClient is a fake Authentik client for testing.
 type FakeAuthentikClient struct {
-	available          bool
-	redirectURIs       map[int][]string
-	oauthAppBaseURLs   [][]string
+	available            bool
+	redirectURIs         map[int][]string
+	oauthAppBaseURLs     [][]string
 	oauthAppClientSecret string
-	oidcConfig         *authentik.OIDCConfig
-	exchangeCodeCalled bool
-	exchangeCodeResp   *authentik.TokenResponse
-	getUserInfoCalled  bool
-	userInfo           *authentik.UserInfo
+	oidcConfig           *authentik.OIDCConfig
+	exchangeCodeCalled   bool
+	exchangeCodeResp     *authentik.TokenResponse
+	getUserInfoCalled    bool
+	userInfo             *authentik.UserInfo
 }
 
 // NewFakeAuthentikClient creates a fake Authentik client.

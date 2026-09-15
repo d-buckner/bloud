@@ -90,9 +90,9 @@ func setupSetHostsTest(t *testing.T, changed *bool) (*Orchestrator, *hostset.Sta
 		"/tmp/bloud-test",
 		newTestLogger(),
 		OrchestratorConfig{
-			AppStore:     appStore,
-			Hosts:        state,
-			HostStore:    hostStore,
+			AppStore:  appStore,
+			Hosts:     state,
+			HostStore: hostStore,
 			OnHostsChanged: func() {
 				if changed != nil {
 					*changed = true

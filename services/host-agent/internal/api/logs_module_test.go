@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"github.com/stretchr/testify/assert"
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestLogsModule_CanStream_ExistingApp(t *testing.T) {

@@ -21,11 +21,11 @@ type ServerConfigurator struct {
 	port              int
 	bootstrapPassword string
 	bootstrapEmail    string
-	tokenKey          string // API token key for host-agent
-	ldapBindPassword  string // LDAP bind password for service account
-	brandingCSS       string // Inline CSS to push to Authentik brand API
-	baseURLFn         func() string // Current external base URL (host-set aware; read on every PostStart)
-	appsDir           string // Path to the apps directory (for auth.yaml blueprint)
+	tokenKey          string            // API token key for host-agent
+	ldapBindPassword  string            // LDAP bind password for service account
+	brandingCSS       string            // Inline CSS to push to Authentik brand API
+	baseURLFn         func() string     // Current external base URL (host-set aware; read on every PostStart)
+	appsDir           string            // Path to the apps directory (for auth.yaml blueprint)
 	templateVars      map[string]string // Shared mutable map; PostStart writes authentikLdapToken
 }
 

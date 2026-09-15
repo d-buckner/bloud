@@ -14,9 +14,9 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/go-chi/chi/v5"
 )
 
 func TestHomeModule_GetLayout(t *testing.T) {
@@ -92,7 +92,8 @@ func TestHomeHTTP_GetLayout(t *testing.T) {
 
 	getLaunchPaths := func() map[string]string { return nil }
 	mod := NewHomeModule(posStore, appStore, getLaunchPaths, logger)
-	r := chi.NewRouter(); NewHomeRouter(mod, r)
+	r := chi.NewRouter()
+	NewHomeRouter(mod, r)
 
 	// Add a fake user to context
 	req := httptest.NewRequest("GET", "/user/home", nil)
@@ -117,7 +118,8 @@ func TestHomeHTTP_SetLayout(t *testing.T) {
 
 	getLaunchPaths := func() map[string]string { return nil }
 	mod := NewHomeModule(posStore, appStore, getLaunchPaths, logger)
-	r := chi.NewRouter(); NewHomeRouter(mod, r)
+	r := chi.NewRouter()
+	NewHomeRouter(mod, r)
 
 	body := `[]`
 	req := httptest.NewRequest("PUT", "/user/layout", strings.NewReader(body))
@@ -135,7 +137,8 @@ func TestHomeHTTP_SetLayout_InvalidBody(t *testing.T) {
 
 	getLaunchPaths := func() map[string]string { return nil }
 	mod := NewHomeModule(posStore, appStore, getLaunchPaths, logger)
-	r := chi.NewRouter(); NewHomeRouter(mod, r)
+	r := chi.NewRouter()
+	NewHomeRouter(mod, r)
 
 	body := `not-json`
 	req := httptest.NewRequest("PUT", "/user/layout", strings.NewReader(body))

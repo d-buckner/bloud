@@ -18,9 +18,9 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/go-chi/chi/v5"
 )
 
 // ---- Test helpers ----
@@ -339,7 +339,8 @@ func TestAppsHTTP_ListInstalledApps(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("GET", "/apps/installed", nil)
 	w := httptest.NewRecorder()
@@ -364,7 +365,8 @@ func TestAppsHTTP_Install_Returns202WithAppRecord(t *testing.T) {
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	orch.appStore = appStore // emulate record-at-enqueue
 	appMod := mod
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("POST", "/apps/jellyfin/install", nil)
 	w := httptest.NewRecorder()
@@ -394,7 +396,8 @@ func TestAppsHTTP_Install_NotFound(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("POST", "/apps/nonexistent/install", nil)
 	w := httptest.NewRecorder()
@@ -411,7 +414,8 @@ func TestAppsHTTP_Uninstall_Returns202(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("POST", "/apps/jellyfin/uninstall", strings.NewReader(`{"clearData":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -429,7 +433,8 @@ func TestAppsHTTP_Rename_Returns202(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	body := `{"displayName":"My Jellyfin"}`
 	req := httptest.NewRequest("PATCH", "/apps/jellyfin/rename", strings.NewReader(body))
@@ -448,7 +453,8 @@ func TestAppsHTTP_Rename_MissingDisplayName(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	body := `{"displayName":""}`
 	req := httptest.NewRequest("PATCH", "/apps/jellyfin/rename", strings.NewReader(body))
@@ -468,7 +474,8 @@ func TestAppsHTTP_AppMetadata(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("GET", "/apps/jellyfin/metadata", nil)
 	w := httptest.NewRecorder()
@@ -494,7 +501,8 @@ func TestAppsHTTP_Icon_ServesFile(t *testing.T) {
 
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	mod.SetAppsDir(tmpDir)
-	r := chi.NewRouter(); NewAppsRouter(mod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/apps/jellyfin/icon", nil)
 	w := httptest.NewRecorder()
@@ -514,7 +522,8 @@ func TestAppsHTTP_Icon_Missing(t *testing.T) {
 	tmpDir := t.TempDir()
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	mod.SetAppsDir(tmpDir)
-	r := chi.NewRouter(); NewAppsRouter(mod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/apps/jellyfin/icon", nil)
 	w := httptest.NewRecorder()
@@ -533,7 +542,8 @@ func TestAppsHTTP_RefreshCatalog(t *testing.T) {
 	mod := NewAppsModule(cache, appStore, orch, logger)
 	appMod := mod
 	appMod.SetAppsDir(tmpDir)
-	r := chi.NewRouter(); NewAppsRouter(appMod, r)
+	r := chi.NewRouter()
+	NewAppsRouter(appMod, r)
 
 	req := httptest.NewRequest("POST", "/apps/refresh-catalog", nil)
 	w := httptest.NewRecorder()

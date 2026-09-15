@@ -16,10 +16,10 @@ import (
 
 // Client provides access to the Authentik API
 type Client struct {
-	baseURL    string
-	token      string
+	baseURL     string
+	token       string
 	emailDomain string
-	httpClient *http.Client
+	httpClient  *http.Client
 }
 
 // UserEmailDomain returns the domain used for managed users' identity

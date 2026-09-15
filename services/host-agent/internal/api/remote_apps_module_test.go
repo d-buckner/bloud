@@ -13,9 +13,9 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/go-chi/chi/v5"
 )
 
 func TestRemoteAppsModule_List_Empty(t *testing.T) {
@@ -122,7 +122,8 @@ func TestRemoteAppsHTTP_List(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
+	r := chi.NewRouter()
+	NewRemoteAppsRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/sharing/remote-apps", nil)
 	w := httptest.NewRecorder()
@@ -139,7 +140,8 @@ func TestRemoteAppsHTTP_Add(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
+	r := chi.NewRouter()
+	NewRemoteAppsRouter(mod, r)
 
 	body := `{"appId":"jellyfin","tailnetAddr":"ts-jellyfin.ts.net","hostLabel":"John's"}`
 	req := httptest.NewRequest("POST", "/sharing/remote-apps", strings.NewReader(body))
@@ -157,7 +159,8 @@ func TestRemoteAppsHTTP_Add_UnknownApp(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
+	r := chi.NewRouter()
+	NewRemoteAppsRouter(mod, r)
 
 	body := `{"appId":"unknown","tailnetAddr":"addr","hostLabel":"label"}`
 	req := httptest.NewRequest("POST", "/sharing/remote-apps", strings.NewReader(body))
@@ -175,7 +178,8 @@ func TestRemoteAppsHTTP_Delete_NotFound(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewRemoteAppsModule(s, cache, orch, logger)
-	r := chi.NewRouter(); NewRemoteAppsRouter(mod, r)
+	r := chi.NewRouter()
+	NewRemoteAppsRouter(mod, r)
 
 	req := httptest.NewRequest("DELETE", "/sharing/remote-apps/nonexistent", nil)
 	w := httptest.NewRecorder()

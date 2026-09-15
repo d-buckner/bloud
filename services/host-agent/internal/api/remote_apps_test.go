@@ -109,13 +109,13 @@ func TestAPI_ListRemoteApps_WithApps(t *testing.T) {
 	// Add a remote app directly to the store
 	fakeStore := server.remoteAppStore.(*FakeRemoteAppStore)
 	_ = fakeStore.Create(store.RemoteApp{
-		ID:                 "test-id-1",
-		HostLabel:          "Johan",
-		AppID:              "jellyfin",
-		AppName:            "Jellyfin",
-		TailnetAddr:        "ts-jf.tail123.ts.net",
-		Status:             "active",
-		BypassPaths:        []string{},
+		ID:          "test-id-1",
+		HostLabel:   "Johan",
+		AppID:       "jellyfin",
+		AppName:     "Jellyfin",
+		TailnetAddr: "ts-jf.tail123.ts.net",
+		Status:      "active",
+		BypassPaths: []string{},
 	})
 
 	w := serverRequest(t, server, "GET", "/api/sharing/remote-apps", nil)

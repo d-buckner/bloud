@@ -653,12 +653,12 @@ func NewSettingsRouter(mod *settingsModule, r chi.Router) {
 
 // FakeSettingsAuthentikClient implements AuthentikUserManagerInterface for testing.
 type FakeSettingsAuthentikClient struct {
-	users          map[string]*authentik.ManagedUserInfo
-	userIDCounter  int
-	lastAddedGroup string
+	users            map[string]*authentik.ManagedUserInfo
+	userIDCounter    int
+	lastAddedGroup   string
 	lastRemovedGroup string
-	lastCreatedUser string
-	listCalled     bool
+	lastCreatedUser  string
+	listCalled       bool
 	// failCreateUsername, when set, makes CreateUser fail with a duplicate
 	// error for that username (simulates a user that already exists).
 	failCreateUsername string

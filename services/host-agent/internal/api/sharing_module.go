@@ -399,8 +399,8 @@ type communityGraphResponse struct {
 type communityNode struct {
 	ID       string `json:"id"`
 	Label    string `json:"label"`
-	NodeType string `json:"nodeType"`          // "person" | "app"
-	AppID    string `json:"appId,omitempty"`    // for app nodes: catalog app name (icon lookup)
+	NodeType string `json:"nodeType"`        // "person" | "app"
+	AppID    string `json:"appId,omitempty"` // for app nodes: catalog app name (icon lookup)
 }
 
 // communityEdge represents a directional edge in the community graph.
