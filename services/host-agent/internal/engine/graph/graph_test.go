@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 )
 
 // newGraph creates a Graph backed by an in-memory MapRepository.

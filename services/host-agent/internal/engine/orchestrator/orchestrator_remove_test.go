@@ -16,7 +16,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 )
 
 // newRemoveTestOrchestrator builds an orchestrator with a mock runtime

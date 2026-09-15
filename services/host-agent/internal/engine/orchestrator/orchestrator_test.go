@@ -17,7 +17,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 )
 
 // testOrchestrator groups a real Graph (in-memory) with a mock registry.

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/google/uuid"
