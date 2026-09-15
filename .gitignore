@@ -1,7 +1,3 @@
-# Nix build outputs
-result
-result-*
-
 # direnv
 .direnv/
 .playwrite-mcp/
@@ -59,6 +55,11 @@ Thumbs.db
 
 # Bloud local state
 .bloud/
+
+# Generated Traefik dynamic routes. Written at runtime into
+# BLOUD_TRAEFIK_DYNAMIC_DIR; must never be committed in-tree (a stray
+# host-agent boot with the default cwd used to drop it here).
+services/host-agent/internal/api/traefik/
 
 # Dolt
 .dolt/
