@@ -4,6 +4,7 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -17,8 +18,8 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	Port        int
-	DataDir     string
+	Port              int
+	DataDir           string
 	AppsDir           string // Path to apps/ directory containing app definitions
 	TraefikDynamicDir string // Path to Traefik dynamic config directory (contains apps-routes.yml)
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
@@ -52,21 +53,17 @@ type Config struct {
 	Secrets *secrets.Manager
 }
 
-// PostgresURL returns a connection string for the shared Postgres instance.
-// Used by bootstrap code that creates app-specific databases (e.g. authentik).
-func (c *Config) PostgresURL() string {
-	return "postgres://apps:" + c.PostgresPassword + "@localhost:5432/bloud?sslmode=disable"
-}
-
 // Load reads configuration from environment variables with sensible defaults.
-// It also initializes the secrets manager and uses generated secrets for
-// any values not explicitly set via environment variables.
-func Load() *Config {
+// It initializes the secrets manager (auto-generating secrets when its file is
+// missing) and returns an error if any required secret cannot be resolved to a
+// non-empty value. There is no static fallback: a fault in the secrets path is
+// fatal rather than a silent downgrade to known credentials.
+func Load() (*Config, error) {
 	return LoadWithLogger(slog.Default())
 }
 
 // LoadWithLogger is like Load but allows specifying a logger.
-func LoadWithLogger(logger *slog.Logger) *Config {
+func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 	dataDir := getEnv("BLOUD_DATA_DIR", getDefaultDataDir())
 	appsDir := getEnv("BLOUD_APPS_DIR", "../../apps")
 
@@ -74,20 +71,33 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 	secretsPath := filepath.Join(dataDir, "secrets.json")
 	secretsMgr := secrets.NewManager(secretsPath)
 	if err := secretsMgr.Load(); err != nil {
-		logger.Warn("failed to load secrets, using fallback defaults", "error", err, "path", secretsPath)
-		// Don't fail - use fallback defaults
-	} else {
-		logger.Info("loaded secrets", "path", secretsPath)
+		return nil, fmt.Errorf("loading secrets from %s: %w", secretsPath, err)
+	}
+	logger.Info("loaded secrets", "path", secretsPath)
+
+	// Required secrets: env var > generated secret. An empty resolution is a
+	// configuration fault with no safe fallback. The secrets manager generates
+	// every secret when its file is missing and migrates missing fields on load,
+	// so a successful Load guarantees non-empty; the guard also catches an env var
+	// explicitly set to empty and any future secret not covered by migration.
+	postgresPassword, err := getSecret("BLOUD_POSTGRES_PASSWORD", secretsMgr.GetPostgresPassword())
+	if err != nil {
+		return nil, err
+	}
+	ssoHostSecret, err := getSecret("BLOUD_SSO_HOST_SECRET", secretsMgr.GetSSOHostSecret())
+	if err != nil {
+		return nil, err
+	}
+	authentikAdminPassword, err := getSecret("BLOUD_AUTHENTIK_ADMIN_PASSWORD", secretsMgr.GetAuthentikBootstrapPassword())
+	if err != nil {
+		return nil, err
+	}
+	ldapBindPassword, err := getSecret("BLOUD_LDAP_BIND_PASSWORD", secretsMgr.GetLDAPBindPassword())
+	if err != nil {
+		return nil, err
 	}
 
-	// Get secrets with fallbacks to env vars or static defaults
-	// Priority: env var > generated secret > static fallback
-	postgresPassword := getEnvOrSecret("BLOUD_POSTGRES_PASSWORD", secretsMgr.GetPostgresPassword(), "testpass123")
-	ssoHostSecret := getEnvOrSecret("BLOUD_SSO_HOST_SECRET", secretsMgr.GetSSOHostSecret(), "dev-secret-change-in-production")
-	authentikAdminPassword := getEnvOrSecret("BLOUD_AUTHENTIK_ADMIN_PASSWORD", secretsMgr.GetAuthentikBootstrapPassword(), "password")
-	ldapBindPassword := getEnvOrSecret("BLOUD_LDAP_BIND_PASSWORD", secretsMgr.GetLDAPBindPassword(), "ldap-bind-password-change-in-production")
-
-	// Authentik token priority: env var > api-token file (created by configurator) > secrets.json > fallback
+	// Authentik token priority: env var > api-token file (created by configurator) > secrets.json bootstrap token.
 	// The api-token file is created by the Authentik configurator via Django shell and is always valid,
 	// whereas the bootstrap token in secrets.json only works on first Authentik boot.
 	authentikToken := getAuthentikToken(dataDir, secretsMgr, logger)
@@ -125,7 +135,7 @@ func LoadWithLogger(logger *slog.Logger) *Config {
 		Secrets:                secretsMgr,
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 // getDefaultDataDir returns the default data directory path
@@ -165,15 +175,19 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvOrSecret returns the value from: env var > secret > fallback
-func getEnvOrSecret(envKey, secretValue, fallback string) string {
+// getSecret resolves a required secret from the environment or the generated
+// store. Priority: env var > generated secret. An empty resolution is a fatal
+// configuration fault — there is no static fallback.
+func getSecret(envKey, secretValue string) (string, error) {
 	if value := os.Getenv(envKey); value != "" {
-		return value
+		return value, nil
 	}
 	if secretValue != "" {
-		return secretValue
+		return secretValue, nil
 	}
-	return fallback
+	return "", fmt.Errorf(
+		"required secret %s unresolved: set %s or initialize secrets.json (host-agent init-secrets)",
+		envKey, envKey)
 }
 
 // hostname returns the OS hostname or "bloud" as fallback.
@@ -212,7 +226,8 @@ func (c *Config) ReadAuthentikToken(logger *slog.Logger) string {
 // 1. BLOUD_AUTHENTIK_TOKEN env var
 // 2. api-token file created by Authentik configurator (always valid)
 // 3. Bootstrap token from secrets.json (only works on first Authentik boot)
-// 4. Static fallback for development
+// Returns empty when none is available (e.g. before the configurator first runs);
+// callers guard on non-empty. There is no static fallback token.
 func getAuthentikToken(dataDir string, secretsMgr *secrets.Manager, logger *slog.Logger) string {
 	// Check env var first
 	if value := os.Getenv("BLOUD_AUTHENTIK_TOKEN"); value != "" {
@@ -236,7 +251,5 @@ func getAuthentikToken(dataDir string, secretsMgr *secrets.Manager, logger *slog
 		logger.Info("using Authentik bootstrap token from secrets.json")
 		return token
 	}
-
-	// Static fallback for development
-	return "test-bootstrap-token-change-in-production"
+	return ""
 }

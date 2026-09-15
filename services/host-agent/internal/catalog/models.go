@@ -5,28 +5,28 @@ package catalog
 
 // App represents an application in the catalog
 type App struct {
-	CatalogID     string                 `yaml:"name" json:"catalogId"`
-	DisplayName   string                 `yaml:"displayName" json:"displayName"`
-	Description   string                 `yaml:"description" json:"description"`
-	Category      string                 `yaml:"category" json:"category"`
-	Icon          string                 `yaml:"icon" json:"icon"`
-	Screenshots   []string               `yaml:"screenshots" json:"screenshots"`
-	Version       string                 `yaml:"version" json:"version"`
-	Port          int                    `yaml:"port" json:"port"`
+	CatalogID   string   `yaml:"name" json:"catalogId"`
+	DisplayName string   `yaml:"displayName" json:"displayName"`
+	Description string   `yaml:"description" json:"description"`
+	Category    string   `yaml:"category" json:"category"`
+	Icon        string   `yaml:"icon" json:"icon"`
+	Screenshots []string `yaml:"screenshots" json:"screenshots"`
+	Version     string   `yaml:"version" json:"version"`
+	Port        int      `yaml:"port" json:"port"`
 	// EstimatedSizeMB is the approximate total image download size, so the
 	// catalog can set expectations before a long pull. Zero when unknown; the
 	// API falls back to local `podman image inspect` sizes when available.
-	EstimatedSizeMB int                  `yaml:"estimatedSizeMB,omitempty" json:"estimatedSizeMB,omitempty"`
-	IsSystem      bool                   `yaml:"isSystem" json:"isSystem"`
-	Dependencies  []string               `yaml:"dependencies" json:"dependencies"`
-	Resources     Resources              `yaml:"resources" json:"resources"`
-	SSO           SSO                    `yaml:"sso" json:"sso"`
-	DefaultConfig map[string]interface{} `yaml:"defaultConfig" json:"defaultConfig"`
-	Docs         Docs                   `yaml:"docs" json:"docs"`
-	Tags         []string               `yaml:"tags" json:"tags"`
-	Routing      *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Integrations map[string]Integration `yaml:"integrations" json:"integrations"`
-	Containers   []ContainerDef         `yaml:"containers,omitempty" json:"containers,omitempty"`
+	EstimatedSizeMB int                    `yaml:"estimatedSizeMB,omitempty" json:"estimatedSizeMB,omitempty"`
+	IsSystem        bool                   `yaml:"isSystem" json:"isSystem"`
+	Dependencies    []string               `yaml:"dependencies" json:"dependencies"`
+	Resources       Resources              `yaml:"resources" json:"resources"`
+	SSO             SSO                    `yaml:"sso" json:"sso"`
+	DefaultConfig   map[string]interface{} `yaml:"defaultConfig" json:"defaultConfig"`
+	Docs            Docs                   `yaml:"docs" json:"docs"`
+	Tags            []string               `yaml:"tags" json:"tags"`
+	Routing         *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Integrations    map[string]Integration `yaml:"integrations" json:"integrations"`
+	Containers      []ContainerDef         `yaml:"containers,omitempty" json:"containers,omitempty"`
 }
 
 // ContainerDef describes one container in a multi-container app.

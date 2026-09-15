@@ -783,10 +783,6 @@ func intentTypeName(intent Intent) string {
 		return "AddRemoteApp"
 	case DeleteRemoteAppIntent:
 		return "DeleteRemoteApp"
-	case CreateShareIntent:
-		return "CreateShare"
-	case RevokeShareIntent:
-		return "RevokeShare"
 	case ClearAppDataIntent:
 		return "ClearAppData"
 	case SetHostsIntent:

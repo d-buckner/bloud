@@ -88,10 +88,10 @@ func TestRenderConfigFile_WithOIDC(t *testing.T) {
 		OAuth struct {
 			Providers struct {
 				OIDC struct {
-					ClientID          string `json:"clientId"`
-					ClientSecret      string `json:"clientSecret"`
-					Issuer            string `json:"issuer"`
-					AllowPrivateNet   bool   `json:"allowPrivateNetwork"`
+					ClientID        string `json:"clientId"`
+					ClientSecret    string `json:"clientSecret"`
+					Issuer          string `json:"issuer"`
+					AllowPrivateNet bool   `json:"allowPrivateNetwork"`
 				} `json:"oidc"`
 			} `json:"providers"`
 		} `json:"oauth"`

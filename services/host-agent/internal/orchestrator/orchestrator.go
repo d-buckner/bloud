@@ -154,8 +154,8 @@ type Orchestrator struct {
 	activeTailnetID  func() string
 
 	// Multi-host SSO state (nil = legacy single-URL mode from config).
-	hosts         *hostset.State
-	hostStore     store.HostStoreInterface
+	hosts          *hostset.State
+	hostStore      store.HostStoreInterface
 	onHostsChanged func()
 
 	// Start/Stop lifecycle

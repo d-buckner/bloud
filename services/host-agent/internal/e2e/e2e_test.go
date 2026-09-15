@@ -81,10 +81,10 @@ const (
 	expectedLDAPBindUser = "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io"
 )
 
-// Jellyfin bootstrap admin — must match constants in apps/jellyfin/configurator.go
+// Jellyfin managed bootstrap admin — the username matches apps/jellyfin; the
+// password is generated per-deployment and read from secrets.json (never hardcoded).
 const (
 	bootstrapUsername = "bloud-bootstrap-admin"
-	bootstrapPassword = "bloud-bootstrap-password-change-me"
 	ldapPluginID      = "958aad6637844d2ab89aa7b6fab6e25c"
 )
 
@@ -92,6 +92,9 @@ type secretsFile struct {
 	AuthentikBootstrapPassword string `json:"authentikBootstrapPassword"`
 	AuthentikBootstrapToken    string `json:"authentikBootstrapToken"`
 	LdapBindPassword           string `json:"ldapBindPassword"`
+	AppSecrets                 map[string]struct {
+		AdminPassword string `json:"adminPassword"`
+	} `json:"appSecrets"`
 }
 
 // dataDir returns the runtime data directory (secrets.json, api-token, app
@@ -542,11 +545,11 @@ func readSSEFrames(body io.Reader, frames chan<- sseFrame) {
 
 // TestInstallLiveStateStream verifies the live-state contract:
 //
-//	 1. The install 202 response carries the app record immediately (the
-//	     orchestrator records it at submit time), so the UI can render the
-//	     tile without polling.
-//	 2. The /api/apps/events SSE stream delivers a snapshot before any node
-//	     event, then node/pull updates, ending with the app node RUNNING.
+//  1. The install 202 response carries the app record immediately (the
+//     orchestrator records it at submit time), so the UI can render the
+//     tile without polling.
+//  2. The /api/apps/events SSE stream delivers a snapshot before any node
+//     event, then node/pull updates, ending with the app node RUNNING.
 //
 // It must run before TestJellyfinInstallViaAPI (source order) so the install
 // it drives is the fresh one.
@@ -1079,7 +1082,11 @@ func getJellyfinSystemInfo(t *testing.T) jellyfinPublicInfo {
 // access token.
 func authenticateJellyfin(t *testing.T) string {
 	t.Helper()
-	body := fmt.Sprintf(`{"Username":%q,"Pw":%q}`, bootstrapUsername, bootstrapPassword)
+	pw := readSecrets(t).AppSecrets["jellyfin"].AdminPassword
+	if pw == "" {
+		t.Fatal("no Jellyfin admin password in secrets.json (appSecrets.jellyfin.adminPassword)")
+	}
+	body := fmt.Sprintf(`{"Username":%q,"Pw":%q}`, bootstrapUsername, pw)
 	req, err := http.NewRequestWithContext(context.Background(), "POST",
 		jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
 	if err != nil {

@@ -25,10 +25,12 @@ import (
 )
 
 const (
-	// Managed admin credentials used for setup and subsequent reconciliation.
-	// Keep this account until Jellyfin configuration has a separate durable credential.
+	// appName is the secrets-manager key for Jellyfin's generated credentials.
+	appName = "jellyfin"
+	// bootstrapUsername is the managed admin account used for setup and
+	// subsequent reconciliation. Its password is generated per-deployment and
+	// persisted by the secrets manager — never hardcoded here.
 	bootstrapUsername = "bloud-bootstrap-admin"
-	bootstrapPassword = "bloud-bootstrap-password-change-me"
 
 	// LDAP plugin GUID - this is the standard ID for the Jellyfin LDAP-Auth plugin
 	// Note: Jellyfin uses GUIDs without dashes in the API
@@ -43,11 +45,12 @@ type Configurator struct {
 	baseURL      string // Override for testing; if empty, uses localhost:Port
 	pluginURL    string
 	pluginSHA256 string
+	secrets      configurator.AppSecretsProvider
 	logger       *slog.Logger
 }
 
 // NewConfigurator creates a new Jellyfin configurator
-func NewConfigurator(port int, logger *slog.Logger) *Configurator {
+func NewConfigurator(port int, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
 	if port == 0 {
 		port = 8096
 	}
@@ -56,10 +59,25 @@ func NewConfigurator(port int, logger *slog.Logger) *Configurator {
 	}
 	return &Configurator{
 		Port:         port,
+		secrets:      secrets,
 		pluginURL:    ldapPluginURL,
 		pluginSHA256: ldapPluginSHA256,
 		logger:       logger.With("app", "jellyfin"),
 	}
+}
+
+// resolveAdminPassword returns the durable, per-deployment bootstrap admin
+// password from the secrets manager (generated on first call, then stable across
+// reconciliations). The password is never a hardcoded constant.
+func (c *Configurator) resolveAdminPassword() (string, error) {
+	if c.secrets == nil {
+		return "", fmt.Errorf("no secrets provider for Jellyfin bootstrap admin")
+	}
+	pw, err := c.secrets.GenerateAppAdminPassword(appName)
+	if err != nil {
+		return "", fmt.Errorf("generating Jellyfin admin password: %w", err)
+	}
+	return pw, nil
 }
 
 // getBaseURL returns the base URL for API calls
@@ -532,7 +550,11 @@ func (c *Configurator) completeStartupWizard(ctx context.Context) error {
 	}
 
 	// Step 2: Create the bootstrap admin user
-	if err := c.setStartupUser(ctx, bootstrapUsername, bootstrapPassword); err != nil {
+	adminPassword, err := c.resolveAdminPassword()
+	if err != nil {
+		return err
+	}
+	if err := c.setStartupUser(ctx, bootstrapUsername, adminPassword); err != nil {
 		return fmt.Errorf("creating startup user: %w", err)
 	}
 
@@ -706,7 +728,11 @@ type VirtualFolder struct {
 // configureLibraries sets up the default media libraries
 func (c *Configurator) configureLibraries(ctx context.Context) error {
 	// Authenticate first
-	token, err := c.authenticate(ctx, bootstrapUsername, bootstrapPassword)
+	adminPassword, err := c.resolveAdminPassword()
+	if err != nil {
+		return err
+	}
+	token, err := c.authenticate(ctx, bootstrapUsername, adminPassword)
 	if err != nil {
 		return fmt.Errorf("authenticating: %w", err)
 	}
@@ -840,7 +866,11 @@ func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.Ap
 	desiredConfig := desiredLDAPConfig(ldap)
 
 	// First, authenticate to get an access token
-	token, err := c.authenticate(ctx, bootstrapUsername, bootstrapPassword)
+	adminPassword, err := c.resolveAdminPassword()
+	if err != nil {
+		return err
+	}
+	token, err := c.authenticate(ctx, bootstrapUsername, adminPassword)
 	if err != nil {
 		return fmt.Errorf("authenticating: %w", err)
 	}

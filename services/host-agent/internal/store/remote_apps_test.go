@@ -16,14 +16,14 @@ func TestRemoteAppStore_Create_List(t *testing.T) {
 	store := NewRemoteAppStore(db)
 
 	err := store.Create(RemoteApp{
-		ID:                 "ra-001",
-		HostLabel:          "alice-server",
-		AppID:              "jellyfin",
-		AppName:            "Jellyfin",
-		SSOStrategy:        "native-oidc",
-		BypassPaths:        []string{"/health", "/metrics"},
+		ID:          "ra-001",
+		HostLabel:   "alice-server",
+		AppID:       "jellyfin",
+		AppName:     "Jellyfin",
+		SSOStrategy: "native-oidc",
+		BypassPaths: []string{"/health", "/metrics"},
 		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
-		Status:             "pending_credential",
+		Status:      "pending_credential",
 	})
 	require.NoError(t, err)
 
@@ -46,14 +46,14 @@ func TestRemoteAppStore_SetCredential_GetByID(t *testing.T) {
 	store := NewRemoteAppStore(db)
 
 	require.NoError(t, store.Create(RemoteApp{
-		ID:                 "ra-001",
-		HostLabel:          "alice-server",
-		AppID:              "jellyfin",
-		AppName:            "Jellyfin",
-		SSOStrategy:        "native-oidc",
-		BypassPaths:        []string{},
+		ID:          "ra-001",
+		HostLabel:   "alice-server",
+		AppID:       "jellyfin",
+		AppName:     "Jellyfin",
+		SSOStrategy: "native-oidc",
+		BypassPaths: []string{},
 		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
-		Status:             "pending_credential",
+		Status:      "pending_credential",
 	}))
 
 	cred := []byte("encrypted-api-key-data")
@@ -81,14 +81,14 @@ func TestRemoteAppStore_SetStatus(t *testing.T) {
 	store := NewRemoteAppStore(db)
 
 	require.NoError(t, store.Create(RemoteApp{
-		ID:                 "ra-001",
-		HostLabel:          "alice-server",
-		AppID:              "jellyfin",
-		AppName:            "Jellyfin",
-		SSOStrategy:        "native-oidc",
-		BypassPaths:        []string{},
+		ID:          "ra-001",
+		HostLabel:   "alice-server",
+		AppID:       "jellyfin",
+		AppName:     "Jellyfin",
+		SSOStrategy: "native-oidc",
+		BypassPaths: []string{},
 		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
-		Status:             "pending_credential",
+		Status:      "pending_credential",
 	}))
 
 	err := store.SetStatus("ra-001", "error")
@@ -104,14 +104,14 @@ func TestRemoteAppStore_Delete(t *testing.T) {
 	store := NewRemoteAppStore(db)
 
 	require.NoError(t, store.Create(RemoteApp{
-		ID:                 "ra-001",
-		HostLabel:          "alice-server",
-		AppID:              "jellyfin",
-		AppName:            "Jellyfin",
-		SSOStrategy:        "native-oidc",
-		BypassPaths:        []string{},
+		ID:          "ra-001",
+		HostLabel:   "alice-server",
+		AppID:       "jellyfin",
+		AppName:     "Jellyfin",
+		SSOStrategy: "native-oidc",
+		BypassPaths: []string{},
 		TailnetAddr: "alice-jellyfin.tail1234.ts.net",
-		Status:             "pending_credential",
+		Status:      "pending_credential",
 	}))
 
 	err := store.Delete("ra-001")

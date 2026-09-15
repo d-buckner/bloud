@@ -6,8 +6,8 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,7 +23,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -40,15 +39,15 @@ var devDashboardHTML []byte
 
 // routerOptions are optional overrides for NewRouter, used mainly in tests.
 type routerOptions struct {
-	catalog          catalog.CacheInterface
-	appStore         store.AppStoreInterface
-	positionStore    store.PositionStoreInterface
-	prefsStore       store.PreferencesStoreInterface
-	sessionStore     store.SessionStoreInterface
-	remoteAppStore   store.RemoteAppStoreInterface
-	orch             interface{} // any orchestratorCaller implementation
-	noOrchestrator   bool        // if true, skip creating a real orchestrator
-	authConfig       *authConfigRef
+	catalog        catalog.CacheInterface
+	appStore       store.AppStoreInterface
+	positionStore  store.PositionStoreInterface
+	prefsStore     store.PreferencesStoreInterface
+	sessionStore   store.SessionStoreInterface
+	remoteAppStore store.RemoteAppStoreInterface
+	orch           interface{} // any orchestratorCaller implementation
+	noOrchestrator bool        // if true, skip creating a real orchestrator
+	authConfig     *authConfigRef
 }
 
 // routerDeps bundles every store, client, and collaborator that NewRouter's
@@ -100,12 +99,6 @@ func buildRouterDeps(
 	d.prefsStore = options.prefsStore
 	if d.prefsStore == nil {
 		d.prefsStore = store.NewPreferencesStore(db)
-	}
-
-	secretsPath := filepath.Join(cfg.DataDir, "secrets.json")
-	secretsMgr := secrets.NewManager(secretsPath)
-	if err := secretsMgr.Load(); err != nil {
-		logger.Error("failed to load secrets", "error", err)
 	}
 
 	if cfg.AuthentikToken != "" && cfg.AuthentikPort > 0 {
@@ -467,8 +460,8 @@ func initOrchestratorHelper(
 				}
 				return conn.ID
 			},
-			Hosts:       cfg.Hosts,
-			HostStore:   cfg.HostStore,
+			Hosts:          cfg.Hosts,
+			HostStore:      cfg.HostStore,
 			OnHostsChanged: onHostsChanged,
 		},
 	)

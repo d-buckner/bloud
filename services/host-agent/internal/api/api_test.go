@@ -440,10 +440,10 @@ tags:
 
 	// Create server config
 	cfg := ServerConfig{
-		AppsDir:             tmpDir,
-		DataDir:             tmpDir,
-		TraefikDynamicDir:   tmpDir,
-		Port:                8080,
+		AppsDir:           tmpDir,
+		DataDir:           tmpDir,
+		TraefikDynamicDir: tmpDir,
+		Port:              8080,
 	}
 
 	// Create a fake catalog cache with the test app
@@ -465,14 +465,14 @@ tags:
 		o.noOrchestrator = true // modules get nil orchestrator
 	})
 	server := &Server{
-		cfg:              cfg,
-		router:           router,
-		db:               db,
-		catalog:          fCatalog,
-		appStore:         fAppStore,
-		orch:             nil,
-		remoteAppStore:   fRemoteStore,
-		logger:           logger,
+		cfg:            cfg,
+		router:         router,
+		db:             db,
+		catalog:        fCatalog,
+		appStore:       fAppStore,
+		orch:           nil,
+		remoteAppStore: fRemoteStore,
+		logger:         logger,
 	}
 	return server, tmpDir
 }
@@ -570,10 +570,10 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 	require.NoError(t, initTestDB(db))
 
 	cfg := ServerConfig{
-		AppsDir:             tmpDir,
-		DataDir:             tmpDir,
-		TraefikDynamicDir:   tmpDir,
-		Port:                8080,
+		AppsDir:           tmpDir,
+		DataDir:           tmpDir,
+		TraefikDynamicDir: tmpDir,
+		Port:              8080,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -591,13 +591,13 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 		o.noOrchestrator = true
 	})
 	server := &Server{
-		cfg:              cfg,
-		router:           router,
-		db:               db,
-		catalog:          fCatalog,
-		appStore:         fAppStore,
-		remoteAppStore:   fRemoteStore,
-		logger:           logger,
+		cfg:            cfg,
+		router:         router,
+		db:             db,
+		catalog:        fCatalog,
+		appStore:       fAppStore,
+		remoteAppStore: fRemoteStore,
+		logger:         logger,
 	}
 	return server, tmpDir
 }
@@ -654,10 +654,10 @@ tags:
 	require.NoError(t, initTestDB(db))
 
 	cfg := ServerConfig{
-		AppsDir:             tmpDir,
-		DataDir:             tmpDir,
-		TraefikDynamicDir:   tmpDir,
-		Port:                8080,
+		AppsDir:           tmpDir,
+		DataDir:           tmpDir,
+		TraefikDynamicDir: tmpDir,
+		Port:              8080,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -674,14 +674,14 @@ tags:
 		o.orch = &fakeOrchestratorForTest{}
 	})
 	server := &Server{
-		cfg:              cfg,
-		router:           router,
-		db:               db,
-		catalog:          fCatalog,
-		appStore:         fAppStore,
-		orch:             nil,
-		remoteAppStore:   fRemoteStore,
-		logger:           logger,
+		cfg:            cfg,
+		router:         router,
+		db:             db,
+		catalog:        fCatalog,
+		appStore:       fAppStore,
+		orch:           nil,
+		remoteAppStore: fRemoteStore,
+		logger:         logger,
 	}
 	return server, tmpDir
 }

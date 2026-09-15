@@ -8,7 +8,8 @@
 > convergence loop described below are exactly what the orchestrator implements today.
 > Read this as the architecture-as-built, with the component name updated to *orchestrator*.
 > Two deviations from this spec are now permanent and documented in [specs/review.md](specs/review.md): share/guest
-> writes stay direct in the API (the intent types remain as dead code), and the lifecycle
+> writes stay direct in the API (the unused `CreateShareIntent`/`RevokeShareIntent`
+> types were deleted 2026-09-14), and the lifecycle
 > graph uses an in-memory repository rather than its SQLite backing.
 
 ## Motivation
@@ -236,16 +237,6 @@ type DeleteRemoteAppIntent struct {
     RemoteAppID string
 }
 
-type CreateShareIntent struct {
-    ID      string
-    AppName string
-}
-
-type RevokeShareIntent struct {
-    ID      string
-    ShareID string
-}
-
 type ClearAppDataIntent struct {
     ID      string
     AppName string
@@ -266,8 +257,8 @@ type ClearAppDataIntent struct {
 | `handleDeleteTailnet` | Store delete, sync stop/purge sidecars + gateway + proxies | Enqueue `DeleteTailnetIntent`, return 202 |
 | `handleAddRemoteApp` | Validate, store write, `RegenerateRoutes()` | Validate, enqueue `AddRemoteAppIntent`, return 202 |
 | `handleDeleteRemoteApp` | Store delete, `RegenerateRoutes()` | Enqueue `DeleteRemoteAppIntent`, return 202 |
-| `handleCreateInvite` | Validate, store write, generate token | Enqueue `CreateShareIntent`, return 202 |
-| `handleRevokeShare` | `shareStore.Revoke()` | Enqueue `RevokeShareIntent`, return 202 |
+| `handleCreateInvite` | Validate, store write, generate token | **Stays direct** — token must return synchronously (no intent; see Open Q2) |
+| `handleRevokeShare` | `shareStore.Revoke()` | **Stays direct** — pure store write (no intent; see Open Q2) |
 | `handlePlanInstall` | Read-only dependency planning | **Removed** |
 | `handlePlanRemove` | Read-only removal impact analysis | **Removed** |
 
@@ -591,6 +582,7 @@ Then cleanup:
    routing, no reconciliation needed), it may be better to keep share creation as a direct
    operation outside the reconciler. Same for `handleRevokeShare`.
 
-   **Resolved (2026):** the implementation kept share/guest writes direct in the API
-   types remain in `intent.go` as dead code. Clean this up: either route through the queue
-   or delete the dead types and document the boundary. See specs/review.md §C3.
+   **Resolved (2026):** the implementation kept share/guest writes direct in the
+   API. **Cleanup (2026-09-14):** the unused `CreateShareIntent`/`RevokeShareIntent`
+   types were deleted from `intent.go`; the direct-write boundary is documented
+   there and in specs/review.md §C3.

@@ -15,9 +15,9 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/go-chi/chi/v5"
 )
 
 func newAuthModule(t *testing.T, cfg *AuthConfig) (*authModule, *FakeAuthentikClient, *fakeSessionStore) {
@@ -105,7 +105,8 @@ func TestAuthModule_Logout_ReducesToAuthentik(t *testing.T) {
 func TestAuthHTTP_GetCurrentUser_NoSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	w := httptest.NewRecorder()
@@ -127,7 +128,8 @@ func TestAuthHTTP_GetCurrentUser_NoSessionStore(t *testing.T) {
 		sessionStore:    nil,
 		logger:          logger,
 	}
-	r := chi.NewRouter(); NewAuthRouter(authMod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(authMod, r)
 
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "some-session"})
@@ -143,7 +145,8 @@ func TestAuthHTTP_GetCurrentUser_ValidSession(t *testing.T) {
 
 	_, _ = sessStore.Create("user1", "bob", store.RoleAdmin)
 
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "fake-session-bob"})
@@ -162,7 +165,8 @@ func TestAuthHTTP_GetCurrentUser_ValidSession(t *testing.T) {
 func TestAuthHTTP_GetCurrentUser_InvalidSession(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "nonexistent-session"})
@@ -174,7 +178,8 @@ func TestAuthHTTP_GetCurrentUser_InvalidSession(t *testing.T) {
 
 func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 	mod, _, _ := newAuthModule(t, nil)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/login", nil)
 	w := httptest.NewRecorder()
@@ -186,7 +191,8 @@ func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 func TestAuthHTTP_Login_DirectAgentPort(t *testing.T) {
 	client := NewFakeAuthentikClient()
 	mod := NewAuthModule(client, newAuthConfigRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/login", nil)
 	req.Host = "localhost:3000"
@@ -199,7 +205,8 @@ func TestAuthHTTP_Login_DirectAgentPort(t *testing.T) {
 func TestAuthHTTP_Logout_ClearsCookie(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_session", Value: "some-session-id"})
@@ -224,7 +231,8 @@ func TestAuthHTTP_Logout_ClearsCookie(t *testing.T) {
 func TestAuthHTTP_Logout_DefaultRedirect(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	w := httptest.NewRecorder()
@@ -242,7 +250,8 @@ func TestAuthHTTP_Callback_MissingState(t *testing.T) {
 		},
 	}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=abc123&state=xyz", nil)
 	w := httptest.NewRecorder()
@@ -259,7 +268,8 @@ func TestAuthHTTP_Callback_StateMismatch(t *testing.T) {
 		},
 	}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=abc123&state=wrong-state", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "expected-state"})
@@ -277,7 +287,8 @@ func TestAuthHTTP_Callback_NoCode(t *testing.T) {
 		},
 	}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?state=correct-state", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "correct-state"})
@@ -295,7 +306,8 @@ func TestAuthHTTP_Callback_WithOAuthError(t *testing.T) {
 		},
 	}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=User+denied+access&state=s", nil)
 	req.AddCookie(&http.Cookie{Name: "bloud_oauth_state", Value: "s"})
@@ -315,7 +327,8 @@ func TestAuthHTTP_Callback_FullFlow(t *testing.T) {
 		},
 	}
 	mod, client, sessStore := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	state := "test-state-123"
 	req := httptest.NewRequest("GET", "/auth/callback?code=auth-code-xyz&state="+state, nil)
@@ -432,7 +445,8 @@ func TestServer_InitAuth_NilRefIsNoop(t *testing.T) {
 func TestAuthRouter_RegistersRoutes(t *testing.T) {
 	cfg := &AuthConfig{}
 	mod, _, _ := newAuthModule(t, cfg)
-	r := chi.NewRouter(); NewAuthRouter(mod, r)
+	r := chi.NewRouter()
+	NewAuthRouter(mod, r)
 
 	routes := []struct {
 		method string

@@ -7,6 +7,11 @@ import "github.com/google/uuid"
 
 // Intent represents a mutation request to be processed by the orchestrator.
 // The interface is sealed via the unexported intentMarker() method.
+//
+// Boundary: share/guest records are intentionally NOT intents. They are pure store
+// writes with no lifecycle side effects (no containers, routing, or reconciliation),
+// and invite creation must return its JWT token synchronously — the sharing API
+// writes them directly. See specs/review.md §C3 and reconciler-spec.md Open Q2.
 type Intent interface {
 	intentMarker()
 	IntentID() string
@@ -124,30 +129,6 @@ func NewDeleteRemoteAppIntent(remoteAppID string) DeleteRemoteAppIntent {
 	return DeleteRemoteAppIntent{intentBase: newIntentBase(), RemoteAppID: remoteAppID}
 }
 
-// CreateShareIntent requests sharing an app with other hosts.
-type CreateShareIntent struct {
-	intentBase
-	AppName string
-}
-
-func (CreateShareIntent) intentMarker() {}
-
-func NewCreateShareIntent(appName string) CreateShareIntent {
-	return CreateShareIntent{intentBase: newIntentBase(), AppName: appName}
-}
-
-// RevokeShareIntent requests revoking an existing share.
-type RevokeShareIntent struct {
-	intentBase
-	ShareID string
-}
-
-func (RevokeShareIntent) intentMarker() {}
-
-func NewRevokeShareIntent(shareID string) RevokeShareIntent {
-	return RevokeShareIntent{intentBase: newIntentBase(), ShareID: shareID}
-}
-
 // ClearAppDataIntent requests clearing an app's data directory.
 type ClearAppDataIntent struct {
 	intentBase
@@ -186,8 +167,6 @@ var (
 	_ Intent = DeleteTailnetIntent{}
 	_ Intent = AddRemoteAppIntent{}
 	_ Intent = DeleteRemoteAppIntent{}
-	_ Intent = CreateShareIntent{}
-	_ Intent = RevokeShareIntent{}
 	_ Intent = ClearAppDataIntent{}
 	_ Intent = SetHostsIntent{}
 )

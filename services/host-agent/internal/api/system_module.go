@@ -113,9 +113,9 @@ type graphEdge struct {
 }
 
 type developerGraph struct {
-	Nodes         []graphNode                    `json:"nodes"`
-	Edges         []graphEdge                    `json:"edges"`
-	TailnetDomain string                         `json:"tailnetDomain,omitempty"`
+	Nodes         []graphNode                      `json:"nodes"`
+	Edges         []graphEdge                      `json:"edges"`
+	TailnetDomain string                           `json:"tailnetDomain,omitempty"`
 	Orchestrator  *orchestrator.OrchestratorStatus `json:"orchestrator,omitempty"`
 }
 

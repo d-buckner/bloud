@@ -146,11 +146,11 @@ func TestPromptBackendParsesInput(t *testing.T) {
 	}{
 		{"1\n", "qemu"},
 		{"2\n", "native"},
-		{"\n", "qemu"},             // empty = default
-		{"  2 \n", "native"},       // padded
-		{"native\n", "native"},     // by name
-		{"NATIVE\n", "native"},     // case-insensitive
-		{"bogus\n1\n", "qemu"},     // invalid, then valid
+		{"\n", "qemu"},         // empty = default
+		{"  2 \n", "native"},   // padded
+		{"native\n", "native"}, // by name
+		{"NATIVE\n", "native"}, // case-insensitive
+		{"bogus\n1\n", "qemu"}, // invalid, then valid
 	}
 	for _, tc := range cases {
 		got, err := promptBackend(bufio.NewReader(strings.NewReader(tc.input)), "/tmp/preferences.yaml", options)

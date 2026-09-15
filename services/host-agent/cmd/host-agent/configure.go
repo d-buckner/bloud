@@ -40,7 +40,11 @@ func runConfigure(args []string) int {
 		Level: slog.LevelInfo,
 	}))
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
 
 	// Create the registry first to check if the app has a configurator.
 	// In CLI mode, system configurators are not needed (system apps are

@@ -108,7 +108,7 @@ Admin Filter: (memberOf=cn=jellyfin-admins,ou=groups,dc=ldap,dc=goauthentik,dc=i
 ### Media Libraries
 After installation, you must manually configure media libraries in Jellyfin:
 
-1. Log in with the bootstrap admin (`bloud-bootstrap-admin` / `bloud-bootstrap-password-change-me`)
+1. Log in with the bootstrap admin (`bloud-bootstrap-admin`). Its password is generated per-deployment and stored in `secrets.json` under `appSecrets.jellyfin.adminPassword` (retrieve with: `bloud shell "cat \$BLOUD_DATA_DIR/secrets.json"` or read the `jellyfin.env` env file) — it is never hardcoded.
 2. Go to **Dashboard** > **Libraries**
 3. Add libraries for the mounted media directories:
    - **Movies**: `/movies` (maps to host's shared media directory)

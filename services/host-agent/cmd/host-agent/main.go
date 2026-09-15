@@ -53,7 +53,11 @@ func runServer() {
 	logger.Info("starting Bloud host agent")
 
 	// Load configuration
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("failed to load configuration", "error", err)
+		os.Exit(1)
+	}
 	logger.Info("loaded configuration",
 		"port", cfg.Port,
 		"data_dir", cfg.DataDir,

@@ -191,4 +191,3 @@ func ensureSubuidSubgid() error {
 	fmt.Println("  range and linger/podman.socket setup to take effect.")
 	return nil
 }
-

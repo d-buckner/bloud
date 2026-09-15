@@ -104,9 +104,9 @@ func TestGenerator_Generate_CustomHeaders(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			CatalogID:     "actual-budget",
-			Port:     5006,
-			IsSystem: false,
+			CatalogID: "actual-budget",
+			Port:      5006,
+			IsSystem:  false,
 			Routing: &catalog.Routing{
 				Headers: map[string]string{
 					"Cross-Origin-Opener-Policy":   "same-origin",
@@ -296,9 +296,9 @@ func TestGolden_CustomHeaders(t *testing.T) {
 	g := NewGenerator("/tmp/test.yml")
 	apps := []*catalog.App{
 		{
-			CatalogID:     "actual-budget",
-			Port:     5006,
-			IsSystem: false,
+			CatalogID: "actual-budget",
+			Port:      5006,
+			IsSystem:  false,
 			Routing: &catalog.Routing{
 				Headers: map[string]string{
 					"Cross-Origin-Opener-Policy":   "same-origin",
@@ -338,9 +338,9 @@ func TestGenerator_Generate_ForwardAuth(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			CatalogID:     "adguard-home",
-			Port:     3080,
-			IsSystem: false,
+			CatalogID: "adguard-home",
+			Port:      3080,
+			IsSystem:  false,
 			SSO: catalog.SSO{
 				Strategy: "forward-auth",
 			},
@@ -408,9 +408,9 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			CatalogID:     "navidrome",
-			Port:     4533,
-			IsSystem: false,
+			CatalogID: "navidrome",
+			Port:      4533,
+			IsSystem:  false,
 			SSO: catalog.SSO{
 				Strategy:    "forward-auth",
 				BypassPaths: []string{"/rest/"},
@@ -459,9 +459,9 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths_AuthentikDisabled(t *testing
 
 	apps := []*catalog.App{
 		{
-			CatalogID:     "navidrome",
-			Port:     4533,
-			IsSystem: false,
+			CatalogID: "navidrome",
+			Port:      4533,
+			IsSystem:  false,
 			SSO: catalog.SSO{
 				Strategy:    "forward-auth",
 				BypassPaths: []string{"/rest/"},
@@ -493,9 +493,9 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 
 	apps := []*catalog.App{
 		{
-			CatalogID:     "adguard-home",
-			Port:     3080,
-			IsSystem: false,
+			CatalogID: "adguard-home",
+			Port:      3080,
+			IsSystem:  false,
 			SSO: catalog.SSO{
 				Strategy: "forward-auth",
 			},
