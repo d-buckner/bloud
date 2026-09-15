@@ -183,6 +183,11 @@ planner.
 **Priority: P0.** This is the user-visible "installs don't start" bug and the single
 highest-impact one-line fix in the codebase.
 
+> **Fixed (2026-09):** `initOrchestratorHelper` now constructs the catalog graph
+> and passes it as `CatalogGraph` (`router.go:449`); the install path is live in
+> production and exercised end-to-end by `./bloud validate --tier integration`
+> and `./bloud e2e lifecycle`.
+
 ### C2 — Lifecycle-graph durability is dead code; ERROR-terminal is process-local
 
 **Where:** `router.go` builds `graph.New(graph.NewMapRepository())`; `schema.sql` has
@@ -232,6 +237,11 @@ queue. Either is fine; the current half-and-half state is not.
 
 **Priority: P1.**
 
+> **Resolved (2026-09-14):** chose (a). Share/guest writes stay direct in the API
+> (pure store writes with no lifecycle side effects; invite creation returns its
+> JWT token synchronously), and the dead `CreateShareIntent`/`RevokeShareIntent`
+> types have been deleted from `intent.go`. The boundary is documented there.
+
 ### C4 — Hardcoded fallback secrets ship in the production config path
 
 **Where:** `internal/config/config.go` `getEnvOrSecret` fallbacks: `testpass123`,
@@ -252,6 +262,21 @@ non-dev mode; gate the static fallbacks behind an explicit `BLOUD_DEV` flag. Do 
 a known password in the default path.
 
 **Priority: P1.**
+
+> **Resolved (2026-09-14):** the static fallbacks are gone. `config.Load` is now
+> fallible (`(*Config, error)`); `getEnvOrSecret` became `getSecret(envKey, secret)`
+> with no fallback parameter, and an empty resolution is fatal. Resolution is
+> **env var > `secrets.json` > error**. Note the mechanism correction: a *fresh*
+> install was never actually on a known password — `secrets.Manager.Load()`
+> auto-generates random secrets when the file is missing. The real exposure was the
+> fault-downgrade path: a corrupt/unreadable `secrets.json` was logged-and-ignored,
+> then `Get*` returned `""` and fell through to a known string. That is now fatal,
+> and the corrupt file is preserved (not regenerated over). `getAuthentikToken`
+> likewise returns empty (not the static token) when nothing is available, which is
+> a legitimate early-boot state guarded by callers. The `Router`'s second
+> secrets-manager instance (a redundant re-load that also swallowed errors) was
+> deleted. Jellyfin's hardcoded bootstrap-admin password literal was migrated to
+> `GenerateAppAdminPassword("jellyfin")`, matching every other app.
 
 ---
 
@@ -352,10 +377,7 @@ actual system dependencies.
 
 ### M1 — Dead code / architecture drift inventory
 
-- `config.Config.PostgresURL()` — shared-Postgres connection string; no callers after
-  the per-app-database refactor. Dead.
 - `graph/sqlite_repository.go` — durable graph backing; never wired (see C2). Dead.
-- `CreateShareIntent` / `RevokeShareIntent` — never enqueued (see C3). Dead.
 - `apps/authentik/server_configurator.go`, `configurator.go` — check whether the
   "shared postgres" bootstrap references remain after the per-app refactor.
 - `specs/reconciler-spec.md`, `docs/architecture/overview.md`, `docs/operations/tech-debt.md`

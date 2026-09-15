@@ -113,8 +113,9 @@ Intent types (`intent.go`):
 - **SetTailnetIntent / DeleteTailnetIntent** — tailnet configuration changes
 - **AddRemoteAppIntent / DeleteRemoteAppIntent** — remote app management
 - **ClearAppDataIntent** — wipe app data
-- *(CreateShareIntent / RevokeShareIntent are defined but shares are currently written
-  directly by the sharing API module)*
+- *(Share/guest records are not intents by design: pure store writes with no
+  lifecycle side effects, and invite creation returns its token synchronously —
+  the sharing API writes them directly; see specs/review.md §C3)*
 
 The orchestrator drains the intent queue, applies intents to stores (desired state), then
 converges actual state toward desired: sync container state, handle uninstalls, populate

@@ -1,7 +1,7 @@
 # Backend Tech Debt
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-06-23
+**Last updated:** 2026-09-14
 
 ## Biggest Debt: Lifecycle State Ownership
 
@@ -28,15 +28,18 @@ invalidation, phase-specific failure records, and resume-after-restart semantics
     lifecycle graph itself is in-memory (`MapRepository`) — the durable SQLite backing is
     dead code, so ERROR-terminal state does not survive restart.
 - `internal/api/router.go`
-  - Constructs the orchestrator with `CatalogGraph: nil`, making the install path inert
-    in production. Grants admin to any loopback request without a credential.
-  - Share/guest handlers write to stores directly, bypassing the intent queue.
+  - Grants admin to any loopback request without a credential.
+  - Share/guest handlers write to stores directly — an intentional, documented
+    boundary (pure store writes, no lifecycle side effects; invite tokens must
+    return synchronously). Dead share intent types removed 2026-09-14.
 - `internal/store/apps.go`
   - The `apps.status` field is doing too much work. It represents install operation
     progress, observed runtime health, and user-visible application state.
 - `internal/config/config.go`
-  - Hardcoded fallback secrets (`password`, `dev-secret-change-in-production`, etc.) ship
-    in the production config path when `secrets.json`/env are unset.
+  - ~~Hardcoded fallback secrets ship in the production path~~ **Fixed 2026-09-14**:
+    `Load` is fallible; resolution is env > `secrets.json` (auto-generated when
+    missing) > error, with no static fallback and the corrupt-file fault-downgrade
+    closed. Jellyfin's bootstrap password migrated to the secrets manager.
 - `internal/db/db.go`
   - Schema migration is ad hoc and ignores errors. This increases risk as state tables
     become more important.
