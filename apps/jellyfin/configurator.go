@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -29,40 +30,55 @@ const (
 	ldapPluginSHA256 = "952e33fa8d3ac512ccb5c1e2e1c655cbb1957e41fa1f00bd6ccf3076e0467446"
 )
 
-// Configurator handles Jellyfin configuration
-
-// Configurator handles Jellyfin configuration
+// Configurator handles Jellyfin configuration. It owns the orchestration of
+// the typed API client (api.go) and the static asset installer; all raw HTTP
+// lives in appclient behind the client.
 type Configurator struct {
-	Port         int
-	baseURL      string // Override for testing; if empty, uses localhost:Port
+	Port    int
+	secrets configurator.AppSecretsProvider
+	logger  *slog.Logger
+	api     *jellyfinAPI
+	assets  appasset.Installer
+
+	// baseURL is a test seam: when set, the API client resolves to it instead
+	// of localhost:Port. (The asset installer takes its URL from pluginURL.)
+	baseURL string
+	// pluginURL / pluginSHA256 are the LDAP plugin source + digest; overridable
+	// in tests so the download path is exercised without the real CDN.
 	pluginURL    string
 	pluginSHA256 string
-	secrets      configurator.AppSecretsProvider
-	logger       *slog.Logger
 }
 
-// NewConfigurator creates a new Jellyfin configurator
-
-// NewConfigurator creates a new Jellyfin configurator
-func NewConfigurator(port int, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
+// NewConfigurator creates a new Jellyfin configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
 		port = 8096
 	}
+	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Configurator{
+	c := &Configurator{
 		Port:         port,
-		secrets:      secrets,
+		secrets:      deps.Secrets,
+		logger:       logger.With("app", "jellyfin"),
+		assets:       deps.Assets,
 		pluginURL:    ldapPluginURL,
 		pluginSHA256: ldapPluginSHA256,
-		logger:       logger.With("app", "jellyfin"),
 	}
+	c.api = newAPI(deps.HTTP, func() string {
+		if c.baseURL != "" {
+			return c.baseURL
+		}
+		return fmt.Sprintf("http://localhost:%d", c.Port)
+	})
+	return c
 }
 
-// resolveAdminPassword returns the durable, per-deployment bootstrap admin
-// password from the secrets manager (generated on first call, then stable across
-// reconciliations). The password is never a hardcoded constant.
+// Name returns the node name this configurator manages.
+func (c *Configurator) Name() string {
+	return "apps-jellyfin"
+}
 
 // resolveAdminPassword returns the durable, per-deployment bootstrap admin
 // password from the secrets manager (generated on first call, then stable across
@@ -78,47 +94,26 @@ func (c *Configurator) resolveAdminPassword() (string, error) {
 	return pw, nil
 }
 
-// getBaseURL returns the base URL for API calls
-
-// getBaseURL returns the base URL for API calls
-func (c *Configurator) getBaseURL() string {
-	if c.baseURL != "" {
-		return c.baseURL
-	}
-	return fmt.Sprintf("http://localhost:%d", c.Port)
-}
-
-func (c *Configurator) Name() string {
-	return "apps-jellyfin"
-}
-
-// PreStart ensures directories exist, installs the LDAP plugin, and
-// configures network settings.
-
 // PreStart ensures directories exist, installs the LDAP plugin, and
 // configures network settings.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
-	c.logger.Info("PreStart: creating data directories")
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
 		filepath.Join(state.BloudDataPath, "media", "movies"),
 		filepath.Join(state.BloudDataPath, "media", "shows"),
 	}
-
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
-	c.logger.Info("PreStart: ensuring LDAP plugin")
 	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
-	c.logger.Info("PreStart: configuring network")
 	networkChanged, err := c.configureNetwork(state.DataPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to configure network: %w", err)
@@ -135,50 +130,28 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 }
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
-// It runs on a context detached from the convergence pass with its own
-// 90 s deadline so the 503-retry loop and network steps survive the pass
-// completing. See the inline comment for the context-detach rationale.
-
-// PostStart completes the Jellyfin setup wizard and configures LDAP.
-// It runs on a context detached from the convergence pass with its own
-// 90 s deadline so the 503-retry loop and network steps survive the pass
-// completing. See the inline comment for the context-detach rationale.
+//
+// It runs on a context detached from the convergence pass with its own 90 s
+// deadline: the wizard readiness waits sleep between attempts and outlive a
+// single pass. (The pass context is process-scoped in the current orchestrator,
+// so the detach here bounds the work rather than being strictly required — the
+// S9 slice revisits this and the app-level budget.)
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	// The pass context is short-lived and is cancelled when the pass
-	// completes, but PostStart can outlive the pass — the 503-retry loop
-	// sleeps between attempts, and the wizard/library/LDAP steps make
-	// network calls. If any of those are bound to the pass context, the
-	// cancellation surfaces as "context canceled" mid-step, the node goes
-	// to terminal ERROR, and the reconciler never retries it.
-	//
-	// context.Background() detaches completely from the pass so the retry
-	// loop and subsequent steps survive the pass completing. A 90 s
-	// deadline bounds the work; the outer e2e timeout is the real backstop.
-	// (context.WithoutCancel was tried first but did not prevent the
-	// cancellation on Go 1.25 linux/amd64 — the retry loop still broke
-	// at the ctx.Err() check after the first getSystemInfo call.)
 	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	return c.postStart(runCtx, state)
 }
 
-// postStart contains the PostStart body. It receives a detached context with
-// its own deadline, so the 503-retry loop and the wizard/library/LDAP steps
-// survive the convergence pass completing.
-
-// postStart contains the PostStart body. It receives a detached context with
-// its own deadline, so the 503-retry loop and the wizard/library/LDAP steps
-// survive the convergence pass completing.
+// postStart contains the PostStart body.
 func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {
-	c.logger.Info("DBG postStart: entered", "ctx_err", ctx.Err(), "base_url", c.getBaseURL())
 	c.logger.Info("PostStart: checking setup wizard status")
 
 	// 1. Check if setup wizard is complete.
-	info, err := c.waitForSystemInfo(ctx)
+	info, err := c.api.waitForSystemInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get system info: %w", err)
 	}
-	info = c.awaitWizardCompletion(ctx, info)
+	info = c.api.awaitWizardCompletion(ctx, info)
 
 	if !info.StartupWizardCompleted {
 		c.logger.Info("completing setup wizard")
@@ -209,13 +182,3 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	c.logger.Info("PostStart complete")
 	return nil
 }
-
-// waitForSystemInfo polls /System/Info until it answers or the context ends.
-// The container health check (curl -sf /System/Info/Public) passes on the
-// first 200, but Jellyfin oscillates during first-run init — it briefly
-// returns 200 then drops back to 503 "Server is loading" before
-// stabilising. A single 503 here would fail PostStart, which the reconciler
-// treats as a terminal node ERROR it never retries, so wait out the
-// transient instead. ctx is detached from the pass (see PostStart), so the
-// 2 s sleep between attempts cannot be cancelled mid-pass; the loop is
-// bounded by the deadline on ctx.

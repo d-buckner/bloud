@@ -53,23 +53,25 @@ func configuratorForServer(t *testing.T, handler http.Handler, secrets configura
 	require.NoError(t, err)
 	_, err = fmt.Sscanf(portStr, "%d", &port)
 	require.NoError(t, err)
-	return NewConfigurator(port, staticBaseURL("http://localhost:8080"), secrets, quietLogger())
+	c := NewConfigurator(port, configurator.Deps{Secrets: secrets, Logger: quietLogger()})
+	c.baseURL = fmt.Sprintf("http://localhost:%d", port)
+	return c
 }
 
 func TestAppExternalURL_DerivesSubdomain(t *testing.T) {
-	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
+	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
 
-	c = NewConfigurator(0, staticBaseURL("http://192.168.1.5:8080"), nil, quietLogger())
+	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://192.168.1.5:8080"), Logger: quietLogger()})
 	assert.Equal(t, "http://affine.192.168.1.5:8080", c.appExternalURL())
 
-	c = NewConfigurator(0, staticBaseURL("https://bloud.example.com"), nil, quietLogger())
+	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("https://bloud.example.com"), Logger: quietLogger()})
 	assert.Equal(t, "https://affine.bloud.example.com", c.appExternalURL())
 
 	// Empty/invalid base URL falls back to the dev default.
-	c = NewConfigurator(0, staticBaseURL(""), nil, quietLogger())
+	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL(""), Logger: quietLogger()})
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
-	c = NewConfigurator(0, staticBaseURL("://nonsense"), nil, quietLogger())
+	c = NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("://nonsense"), Logger: quietLogger()})
 	assert.Equal(t, "http://affine.localhost:8080", c.appExternalURL())
 }
 
@@ -120,7 +122,7 @@ func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
 
 func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
+	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
 	state := &configurator.AppState{
 		DataPath:   dataPath,
 		SSOEnabled: true,
@@ -149,7 +151,7 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 
 func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
+	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
 	state := &configurator.AppState{DataPath: dataPath}
 
 	changed, err := c.PreStart(context.Background(), state)
@@ -168,7 +170,7 @@ func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 
 func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
 	dataPath := t.TempDir()
-	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
+	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
 
 	mkState := func(secret string) *configurator.AppState {
 		return &configurator.AppState{
@@ -197,7 +199,7 @@ func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
 }
 
 func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, staticBaseURL("http://localhost:8080"), nil, quietLogger())
+	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
 	require.NoError(t, c.Remove(context.Background(), &configurator.AppState{}, true))
 }
 
@@ -244,6 +246,6 @@ func TestEnsureBootstrapAdmin_SurfacesOtherRejections(t *testing.T) {
 }
 
 func TestEnsureBootstrapAdmin_RequiresSecretsProvider(t *testing.T) {
-	c := NewConfigurator(0, staticBaseURL("http://localhost:1"), nil, quietLogger())
+	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:1"), Logger: quietLogger()})
 	require.Error(t, c.ensureBootstrapAdmin(context.Background()))
 }

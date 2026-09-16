@@ -6,15 +6,11 @@ package immich
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -46,21 +42,34 @@ type Configurator struct {
 	port    int
 	secrets configurator.AppSecretsProvider
 	logger  *slog.Logger
+	api     *immichAPI
+
+	// baseURL is a test seam: when set, the API client resolves to it
+	// instead of localhost:port. Never used to build request URLs by hand.
+	baseURL string
 }
 
-// NewConfigurator creates a new Immich configurator.
-func NewConfigurator(port int, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
+// NewConfigurator creates a new Immich configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
 		port = 2283
 	}
+	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Configurator{
+	c := &Configurator{
 		port:    port,
-		secrets: secrets,
+		secrets: deps.Secrets,
 		logger:  logger.With("app", "immich"),
 	}
+	c.api = newAPI(deps.HTTP, func() string {
+		if c.baseURL != "" {
+			return c.baseURL
+		}
+		return fmt.Sprintf("http://localhost:%d", c.port)
+	})
+	return c
 }
 
 func (c *Configurator) Name() string {
@@ -122,17 +131,17 @@ func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) 
 		return fmt.Errorf("generating admin password: %w", err)
 	}
 
-	if err := c.waitForServer(ctx); err != nil {
+	if err := c.api.waitServer(ctx); err != nil {
 		return fmt.Errorf("waiting for immich server: %w", err)
 	}
 
 	// Fast path: admin already exists and the known password works.
-	if _, err := c.login(ctx, bootstrapAdminEmail, password); err == nil {
+	if _, err := c.api.login(ctx, bootstrapAdminEmail, password); err == nil {
 		return nil
 	}
 
 	c.logger.Info("bootstrapping admin user")
-	if err := c.createAdmin(ctx, password); err != nil {
+	if err := c.api.createAdmin(ctx, bootstrapAdminName, bootstrapAdminEmail, password); err != nil {
 		return fmt.Errorf("creating admin: %w", err)
 	}
 	c.logger.Info("admin user created")
@@ -188,116 +197,4 @@ passwordLogin:
   # SSO is the only login path.
   enabled: false
 `, oidc.IssuerURL, oidc.ClientID, oidc.ClientSecret)
-}
-
-// --- Server API ---
-
-func (c *Configurator) baseURL() string {
-	return fmt.Sprintf("http://localhost:%d", c.port)
-}
-
-// waitForServer polls /api/server/ping until the server answers or the
-// context is cancelled. The first boot runs database migrations, which can
-// take a while.
-func (c *Configurator) waitForServer(ctx context.Context) error {
-	deadline := time.Now().Add(5 * time.Minute)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+"/api/server/ping", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-			lastErr = fmt.Errorf("ping status %d: %s", resp.StatusCode, body)
-		} else {
-			lastErr = err
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("server did not become ready: %w", lastErr)
-}
-
-// createAdmin registers the first admin. Only works while no admin exists;
-// Immich rejects it with 400 otherwise (which is fine — an admin is present).
-// Success is 201 with the created user.
-func (c *Configurator) createAdmin(ctx context.Context, password string) error {
-	body, _ := json.Marshal(map[string]string{
-		"name":     bootstrapAdminName,
-		"email":    bootstrapAdminEmail,
-		"password": password,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/auth/admin-sign-up", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	switch resp.StatusCode {
-	case http.StatusCreated:
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
-	case http.StatusBadRequest:
-		b, _ := io.ReadAll(resp.Body)
-		// Idempotency: a previous run already created the admin (possibly with
-		// a different password). Anything else is a real validation error.
-		if strings.Contains(strings.ToLower(string(b)), "already has an admin") {
-			return nil
-		}
-		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	default:
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	}
-}
-
-// login exchanges credentials for an access token.
-func (c *Configurator) login(ctx context.Context, email, password string) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"email":    email,
-		"password": password,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/auth/login", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("login failed: status %d", resp.StatusCode)
-	}
-
-	var out struct {
-		AccessToken string `json:"accessToken"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if out.AccessToken == "" {
-		return "", fmt.Errorf("empty token")
-	}
-	return out.AccessToken, nil
 }

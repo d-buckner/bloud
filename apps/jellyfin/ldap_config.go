@@ -11,7 +11,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
-// LDAPConfig represents the LDAP plugin configuration
+// LDAPConfig represents the LDAP plugin configuration.
 type LDAPConfig struct {
 	LdapServer                     string   `json:"LdapServer"`
 	LdapPort                       int      `json:"LdapPort"`
@@ -42,28 +42,28 @@ type LDAPConfig struct {
 	PasswordResetUrl               string   `json:"PasswordResetUrl"`
 }
 
-// configureLDAP configures the LDAP plugin using the typed LDAP output from AppState.
-
-// configureLDAP configures the LDAP plugin using the typed LDAP output from AppState.
+// configureLDAP configures the LDAP plugin using the typed LDAP output from
+// AppState. It is a compare-and-apply: read current, skip if already converged,
+// otherwise POST the desired config.
 func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.AppState) error {
 	ldap := state.LDAP
 	desiredConfig := desiredLDAPConfig(ldap)
 
-	// First, authenticate to get an access token
 	adminPassword, err := c.resolveAdminPassword()
 	if err != nil {
 		return err
 	}
-	token, err := c.authenticate(ctx, bootstrapUsername, adminPassword)
+	token, err := c.api.authenticate(ctx, bootstrapUsername, adminPassword)
 	if err != nil {
 		return fmt.Errorf("authenticating: %w", err)
 	}
 
-	// Get current LDAP config to check if already configured
-	currentConfig, err := c.getPluginConfiguration(ctx, token, ldapPluginID)
+	// Read the current plugin config; a failure means the plugin isn't installed,
+	// which is not an error for LDAP config (we simply can't apply yet).
+	currentConfig, err := c.api.getPluginConfiguration(ctx, token, ldapPluginID)
 	if err != nil {
 		c.logger.Warn("could not get LDAP plugin config (plugin may not be installed)", "error", err)
-		return nil // Plugin not installed, skip LDAP configuration
+		return nil
 	}
 
 	var config LDAPConfig
@@ -81,7 +81,7 @@ func (c *Configurator) configureLDAP(ctx context.Context, state *configurator.Ap
 	if err != nil {
 		return fmt.Errorf("marshalling LDAP config: %w", err)
 	}
-	if err := c.setPluginConfiguration(ctx, token, ldapPluginID, configBytes); err != nil {
+	if err := c.api.setPluginConfiguration(ctx, token, ldapPluginID, configBytes); err != nil {
 		return fmt.Errorf("setting LDAP config: %w", err)
 	}
 
@@ -133,5 +133,3 @@ func ldapConfigMatchesDesired(current, desired LDAPConfig) bool {
 		current.AllowPassChange == desired.AllowPassChange &&
 		current.EnableAllFolders == desired.EnableAllFolders
 }
-
-// AuthResponse represents the authentication response
