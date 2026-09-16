@@ -12,8 +12,6 @@ import (
 // configurator is only built when Home Assistant is actually being reconciled.
 func init() {
 	configurator.MustRegisterFactory("apps-homeassistant", func(deps configurator.Deps) configurator.NodeLifecycle {
-		c := NewConfigurator(8123, deps.Secrets, deps.Logger)
-		c.SetRestartContainer(deps.RestartContainer)
-		return c
+		return NewConfigurator(8123, deps)
 	})
 }
