@@ -53,11 +53,6 @@ Auto-generates OAuth2/OIDC configs for apps. Example:
      callbackPath: /oauth2/callback
    ```
 
-2. Check in NixOS module:
-   ```nix
-   authentikEnabled = config.bloud.apps.authentik.enable or false;
-   ```
-
 ## Health Check
 - **Endpoint:** `/-/health/live/`
 - **Timeout:** 90 seconds (slow startup)

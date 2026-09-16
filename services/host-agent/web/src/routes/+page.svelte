@@ -16,7 +16,7 @@
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
 	import { AppStatus, type App, type RemoteApp } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
-	import { installApp, uninstallApp, renameApp } from '$lib/services/appFacade';
+	import { installApp, uninstallApp, renameApp } from '$lib/clients/appFacade';
 	import { getAppUrl } from '$lib/utils/appUrl';
 	import { getRemoteAppUrl } from '$lib/utils/appUrl';
 	import { fetchRemoteApps, removeRemoteApp } from '$lib/clients/remoteAppClient';

@@ -4,28 +4,22 @@
 // Package appconfig wires system-infrastructure configurators with the
 // registry and links in the app catalog's self-registering configurators.
 //
-// User-app configurators are NOT registered here: each app package in the
-// apps/ module registers a factory from its own init() (see
-// apps/<name>/registration.go), and the registry instantiates them lazily on
-// first lookup. This file only imports the app packages for their side
-// effects and wires the system configurators (Traefik, Authentik server),
-// which are always needed and runtime-dependent.
+// User-app configurators are NOT registered here: the apps module owns that
+// list (see apps/registry.go). Calling apps.RegisterAll() links every user-app
+// factory, which each app package registers from its own init() (see
+// apps/<name>/registration.go); the registry instantiates them lazily on first
+// lookup. This file wires only the system configurators (Traefik, Authentik
+// server), which are always needed and runtime-dependent.
+//
+// Adding an app therefore touches apps/registry.go only — never this file.
 package appconfig
 
 import (
 	"context"
 	"log/slog"
 
+	"codeberg.org/d-buckner/bloud/apps"
 	"codeberg.org/d-buckner/bloud/apps/authentik"
-
-	// User-app configurators: blank imports run each app's init(), which
-	// registers its factory with the configurator registry. Adding an app
-	// means adding one blank import here — and nothing else in host-agent.
-	_ "codeberg.org/d-buckner/bloud/apps/affine"
-	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
-	_ "codeberg.org/d-buckner/bloud/apps/immich"
-	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
-	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
@@ -46,6 +40,10 @@ func RegisterSystem(
 	templateVars map[string]string,
 	hosts *hostset.State,
 ) {
+	// Link every user-app configurator factory before wiring the system ones.
+	// Idempotent: the registration itself already ran in each app's init().
+	apps.RegisterAll()
+
 	// primaryBaseURLFn resolves the current primary host's base URL, falling
 	// back to the static env value when no host state is configured.
 	primaryBaseURLFn := func() string {

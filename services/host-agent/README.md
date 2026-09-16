@@ -9,7 +9,7 @@ Go service that manages app installation, system monitoring, and provides a web 
 
 - **Backend**: Go HTTP server with SQLite database
 - **Frontend**: SvelteKit with SSR/SSG (embedded in Go binary)
-- **Deployment**: Portable binary managed by systemd; standalone during development
+- **Deployment**: Single static binary managed by systemd; standalone during development
 
 ## Prerequisites
 
@@ -104,7 +104,6 @@ go build -o bin/host-agent ./cmd/host-agent
 ```bash
 export BLOUD_PORT=8080                          # HTTP port (default: 8080)
 export BLOUD_DATA_DIR=$HOME/.local/share/bloud  # Data directory
-export BLOUD_RUNTIME=portable                   # Only supported value
 ```
 
 ### Database
@@ -141,17 +140,16 @@ The Go binary will embed the `web/build/` directory and serve it at `/`.
 ./bin/host-agent
 ```
 
-The portable runtime is the default. It requires an accessible Podman API socket:
+Bloud runs directly against an accessible Podman API socket:
 
 ```bash
-export BLOUD_RUNTIME=portable
 export BLOUD_PODMAN_SOCKET="${XDG_RUNTIME_DIR}/podman/podman.sock"
 export BLOUD_DATA_DIR="${HOME}/.local/share/bloud"
 export BLOUD_APPS_DIR="$(pwd)/../../apps"
 ./bin/host-agent
 ```
 
-The portable runtime owns managed application containers and networks, creating
+Bloud owns managed application containers and networks, creating
 and starting them directly through the Podman API. It refuses to remove or adopt
 containers that were not created by Bloud.
 

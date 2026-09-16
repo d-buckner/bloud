@@ -281,7 +281,7 @@ func (g *BlueprintGenerator) generateClientSecret(appName string) string {
 	// 3. Secrets are cryptographically strong
 	secret := DeriveSecret(g.hostSecret, "oauth-client-secret:"+appName, 32)
 
-	// Persist the derived secret so NixOS modules can read it
+	// Persist the derived secret so it survives reconciliation
 	if g.secrets != nil {
 		_ = g.secrets.SetAppSecret(appName, "oauthClientSecret", secret)
 	}

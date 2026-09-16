@@ -45,12 +45,14 @@ Install Bloud on a Debian box and get:
 - Your server reachable as `localhost`, `bloud.local` (mDNS, no DNS setup), or your own domain
 - Sharing with people who don't need to manage anything
 
-Bloud's differentiator isn't container installation. It's that apps declare what they
-provide and consume, and Bloud keeps those relationships working.
+Bloud's differentiator isn't container installation — anyone can run `podman run`.
+It's the **engine**: the reconciliation layer that reads what each app declares,
+works out the wiring (API keys, OIDC clients, LDAP, databases, routes), and keeps
+those relationships correct forever — on install, after a crash, and on every reboot.
 
 ## How it works
 
-Each app ships a portable manifest declaring its integrations. When you install an app, Bloud resolves its dependency graph and starts everything in
+Each app ships a declarative manifest declaring its integrations. When you install an app, Bloud resolves its dependency graph and starts everything in
 order. Apps that need storage (like Immich) declare their own PostgreSQL and Redis
 containers, each with its own isolated database. Apps that don't (like Jellyfin) just
 declare the integrations they use.
@@ -61,11 +63,24 @@ Level 1: jellyfin          ← Proxy + SSO; no database of its own
 Level 1: immich             ← Self-contained: postgres + redis + server + ML
 ```
 
-Apps run as rootless Podman containers managed directly by a small Go service
-(`host-agent`) that handles orchestration, configuration, and the web dashboard. It
-uses an intent-driven reconciler: all changes flow through a queue, and the reconciler
-continuously makes reality match what you asked for. It's safe to retry after crashes,
-failures, and reboots, and it makes no changes when the system already matches.
+### The engine
+
+The heart of Bloud is the **engine** — a reconciliation control loop, directly
+inspired by how Kubernetes controllers work. You declare intent (the apps you
+want, plus what each app *provides* and *consumes*); the engine continuously
+drives reality to match, converging the dependency graph level by level and
+re-converging on every crash or reboot.
+
+Concretely: every change is pushed onto a typed **intent queue**. The engine drains
+it, resolves the dependency graph, and runs each node through its lifecycle
+(`INITIALIZING → PRESTART → STARTING → POSTSTART → RUNNING`) — creating containers,
+generating Traefik routes, and provisioning SSO clients and secrets — until the
+observed state matches the declared state. Like a k8s controller, it's idempotent:
+when reality already matches intent, it does nothing. And the engine is the *single
+writer* — the HTTP API only submits intents; it never mutates state directly.
+
+This is what makes Bloud self-healing rather than a one-shot installer: the same loop
+that installed your apps is the loop that brings them back after a power cut.
 
 ## App catalog
 
@@ -193,13 +208,16 @@ bloud/
 ├── services/host-agent/           # Go backend + Svelte frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap, front-proxy
 │   ├── internal/
-│   │   ├── orchestrator/          # Intent queue, reconciler, container management
+│   │   ├── engine/                # ★ The differentiator: the reconcile engine
+│   │   │   ├── orchestrator/      #   Typed intent queue + lifecycle reconciler
+│   │   │   └── graph/             #   The dependency graph the engine converges
 │   │   ├── catalog/               # App discovery from metadata.yaml
-│   │   ├── integration/           # Typed integration resolver
+│   │   ├── sso/                   # OIDC / LDAP / forward-auth wiring
+│   │   ├── secrets/               # Per-instance generated keys
+│   │   ├── traefikgen/            # Route generation from the graph
 │   │   ├── store/                 # SQLite persistence
-│   │   ├── tlsca/                 # Local CA + per-host TLS
 │   │   ├── mdns/                  # bloud.local advertisement
-│   │   └── api/                   # HTTP API (chi router)
+│   │   └── api/                   # HTTP API — submits intents, never writes state
 │   ├── pkg/
 │   │   ├── authentik/             # Authentik REST API client
 │   │   └── configurator/          # Configurator interface + helpers

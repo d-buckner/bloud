@@ -11,9 +11,15 @@ Each app lives in `apps/<name>/` with these files:
 ```
 apps/your-app/
   metadata.yaml     # identity, port, integrations, container spec, SSO
-  configurator.go   # Go hooks for runtime configuration
+  configurator.go   # NodeLifecycle implementation only
+  registration.go   # init() -> configurator.MustRegisterFactory
+  lib/              # optional: app-specific helpers (package lib)
   icon.png          # 256x256 PNG, transparent background
+  INTEGRATION.md    # integration notes for whoever maintains this app
 ```
+
+Keep `configurator.go` to the lifecycle wiring. Everything else has its own
+place — see [Where helper code goes](#where-helper-code-goes).
 
 ## Step 1: metadata.yaml
 
@@ -73,12 +79,14 @@ redis containers in `containers:` — each app gets its own isolated database.
 Implements runtime configuration that can't be expressed in the static container
 definition. Every configurator must be idempotent — it runs on every reconciliation cycle.
 
+Implement `configurator.NodeLifecycle` — four methods, all idempotent:
+
 ```go
 package yourapp
 
 import (
     "context"
-    "fmt"
+
     "codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -90,25 +98,32 @@ func NewConfigurator(port int) *Configurator {
     return &Configurator{port: port}
 }
 
-func (c *Configurator) Name() string { return "your-app" }
+func (c *Configurator) Name() string { return "apps-your-app" }
 
-// PreStart: config files, directories. Runs before the container starts.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) error {
-    return nil
+// PreStart runs before the container starts: directories, config files,
+// certificates. Return changed=true when you modified a file the container
+// read at boot, which signals that it must be restarted to pick it up.
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
+    return false, nil
 }
 
-// HealthCheck: wait for the app to be ready.
-func (c *Configurator) HealthCheck(ctx context.Context) error {
-    return configurator.WaitForHTTP(ctx,
-        fmt.Sprintf("http://localhost:%d/health", c.port),
-        configurator.DefaultHealthCheckTimeout)
-}
-
-// PostStart: API calls, integrations, runtime setup. Runs after the container is healthy.
+// PostStart runs after the container is healthy: API calls, integrations,
+// runtime setup. Called on every reconciliation, so it must be a no-op
+// when everything is already in place.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
     return nil
 }
+
+// Remove tears down app-owned state. clearData=true means persistent data
+// should go too. Container removal itself is the orchestrator's job.
+func (c *Configurator) Remove(ctx context.Context, state *configurator.AppState, clearData bool) error {
+    return nil
+}
 ```
+
+There is no `HealthCheck` method on `NodeLifecycle` — readiness comes from the
+`healthCheck:` block you declared in `metadata.yaml`, which the orchestrator
+enforces between PreStart and PostStart.
 
 ### AppState
 
@@ -141,22 +156,83 @@ func init() {
 ```
 
 `configurator.Deps` carries the host-side inputs (logger, secrets provider,
-primary-base-URL resolver, Traefik port). Then add one blank import to
-`services/host-agent/internal/appconfig/register.go` so the package is linked
-into host-agent:
+primary-base-URL resolver, Traefik port, restart-container callback).
+
+Then add your app to **`apps/registry.go`** — the single place that lists the
+catalog. Two edits, both in the `apps/` module:
 
 ```go
-_ "codeberg.org/d-buckner/bloud/apps/your-app"
+import (
+    _ "codeberg.org/d-buckner/bloud/apps/your-app"
+)
+
+func NodeNames() []string {
+    return []string{
+        // ...
+        "apps-your-app",
+    }
+}
 ```
 
-That's the only host-agent-side change. System apps (Traefik, Authentik) are
-wired eagerly in `RegisterSystem` and do not use factories.
+You do **not** touch `services/host-agent/internal/appconfig/register.go`
+anymore. That file wires only the system configurators (Traefik, Authentik),
+which are runtime-dependent and registered eagerly in `RegisterSystem`.
+
+`TestRegisterAll` in `apps/registry_test.go` asserts every `NodeNames()`
+entry actually has a registered factory, so a missing `registration.go` or a
+typo fails `go test ./...` instead of surfacing as a missing configurator
+during an install.
+
+## Where helper code goes
+
+A configurator accretes fast: a typed client for the app's own HTTP API, a
+config-file builder, parsers, fixtures. Three tiers decide where each piece
+lives.
+
+| Helper kind | Goes in |
+|---|---|
+| Lifecycle flow (`PreStart`/`PostStart` steps, wizard logic) | `apps/<name>/` top level, same package as the configurator |
+| App-specific reusable helper (own-API client, config builder, parser, fixtures) | `apps/<name>/lib/` |
+| Needed by 2+ apps, **or** by host-agent itself | `services/host-agent/pkg/` (existing: `xmlutil`, `slug`, `authentik`) |
+
+`lib/` is an ordinary Go sub-package (`package lib`), imported as
+`bloud/apps/<name>/lib`. Two hard rules:
+
+- It must **not** import its parent app package — that is an import cycle.
+- It must **not** import anything under `services/host-agent/internal/`.
+  The compiler enforces this; if a helper needs an `internal/` type, it
+  belongs in the parent package, not in `lib/`.
+
+Pass what it needs in as arguments rather than reaching for host-agent state.
+A `lib/` package that takes `(baseURL, token, logger)` is testable on its own;
+one that imports the orchestrator is not.
+
+New `lib/` files carry the standard two-line SPDX header, same as everything
+else (`npm run license:check` enforces it).
+
+Migration is opportunistic — existing apps are not being reshaped in one go.
+New apps should start in this shape, and when a fat `configurator.go` gets
+split, the non-lifecycle helpers move into `lib/` as part of that work.
 
 ## Step 3: Test
 
-Add integration test assertions to `services/host-agent/internal/e2e/e2e_test.go`
-(build-tag gated with `//go:build integration`). Tests run against real services on the
-selected runtime (Lima/QEMU VM or native host).
+Add integration test assertions under
+`services/host-agent/internal/e2e/`, which is split per scenario
+(`system_apps_test.go`, `jellyfin_test.go`, `affine_test.go`,
+`crash_recovery_test.go`, `uninstall_test.go`, …). Add a new
+`<yourapp>_test.go` for your app. Shared harness helpers — env resolution,
+`waitHTTP`, `getInstalledApps`, `postJSON`, `TestMain` — live in
+`e2e_test.go`; reuse them rather than writing your own.
+
+Every file in this package is build-tag gated and must carry the tag, or it
+will silently stop running:
+
+```go
+//go:build integration
+```
+
+Tests run against real services on the selected runtime (Lima/QEMU VM or
+native host).
 
 Test the behavioral outcome, not config values:
 

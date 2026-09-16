@@ -31,9 +31,7 @@ const EXCLUDE_EXTS = new Set([
 
 // Generated / fixture files: their content is owned by the code that
 // emits them, so a header would drift (or have to be mirrored in goldens).
-const EXCLUDE_PATHS = new Set([
-  'services/host-agent/internal/api/traefik/dynamic/apps-routes.yml',
-]);
+const EXCLUDE_PATHS = new Set();
 
 function isGenerated(file) {
   return file.endsWith('.golden.yml') || file.includes('/testdata/');

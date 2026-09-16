@@ -4,7 +4,7 @@
 **Last updated:** 2026-07-03
 
 > **Naming note (2026):** the *reconciler* described here was folded into the
-> **orchestrator** (`internal/orchestrator/`). The intent queue, single-writer model, and
+> **orchestrator** (`internal/engine/orchestrator/`). The intent queue, single-writer model, and
 > convergence loop described below are exactly what the orchestrator implements today.
 > Read this as the architecture-as-built, with the component name updated to *orchestrator*.
 > Two deviations from this spec are now permanent and documented in [specs/review.md](specs/review.md): share/guest

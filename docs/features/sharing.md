@@ -469,10 +469,10 @@ podman rm -f ts-navidrome-spike
 
 ### Phase 2 — Orchestrator: sidecar lifecycle
 
-**Files:** `internal/orchestrator/orchestrator_portable.go`,
-`internal/sharing/sidecar.go`
+**Files:** `internal/engine/orchestrator/orchestrator.go` (the lifecycle loop),
+`internal/sharing/sidecar.go` (new)
 
-The portable orchestrator already manages app container lifecycle. Extend it to start a
+The engine already manages app container lifecycle. Extend it to start a
 TS sidecar alongside every non-system app when `BLOUD_TS_AUTHKEY` is configured, and
 stop it when the app stops.
 

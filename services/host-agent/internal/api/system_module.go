@@ -10,7 +10,7 @@ import (
 	"sort"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"

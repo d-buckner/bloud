@@ -1,13 +1,20 @@
-# Portable Runtime Architecture
+# Architecture
 
-Bloud manages apps (Jellyfin, Immich, etc.) on a single Linux host. The **portable
-runtime** is the Go binary (`host-agent`) that orchestrates app lifecycle, configuration,
-and integration via the Podman API.
+Bloud manages apps (Jellyfin, Immich, etc.) on a single Linux host. The heart of it is
+the **engine** — a reconciliation control loop, directly inspired by how Kubernetes
+controllers work. You declare intent (the apps you want, plus what each app *provides*
+and *consumes*); the engine continuously drives reality to match, converging the
+dependency graph level by level and re-converging after every crash or reboot.
+
+The engine ships inside a single Go binary, the `host-agent`, alongside a small HTTP API
+that only submits intents. Everything the engine reconciles — containers, routes, SSO
+clients, secrets — it reaches through the Podman API and the per-app configurators
+described below.
 
 > **Naming note:** earlier docs called this component the *reconciler*. It was refactored
-> into the **orchestrator** (`internal/orchestrator/`), which owns both intent draining
-> `specs/reconciler-spec.md` describes that target architecture as
-> implemented.
+> into the **orchestrator**, and the orchestrator together with its dependency-graph
+> package is now grouped under `internal/engine/` — the name for the whole reconciliation
+> loop. `specs/reconciler-spec.md` describes that architecture as implemented.
 
 ## Component Diagram
 
@@ -16,7 +23,6 @@ graph TD
     CLI["./bloud CLI<br/>(macOS, validates + deploys)"]
     API["Host-Agent API<br/>:3000"]
     CAT["Catalog"]
-    ORC["Orchestrator"]
     PLAN["Catalog AppGraph / Planner"]
     REG["Configurator Registry"]
     AK_CFG["Authentik Configurator"]
@@ -24,7 +30,11 @@ graph TD
     NM_CFG["Navidrome Configurator"]
     AK_CLIENT["Authentik Client"]
     STORE["App Store<br/>(SQLite)"]
-    GRAPH["Lifecycle Graph<br/>(target/actual status)"]
+
+    subgraph ENG["Engine (internal/engine/)"]
+        ORC["Orchestrator<br/>(intent queue + reconcile loop)"]
+        GRAPH["Lifecycle Graph<br/>(target/actual status)"]
+    end
 
     CLI -->|validate, deploy| API
     API -->|install, uninstall| ORC
@@ -99,7 +109,14 @@ Resolution happens through `catalog.AppGraph.PlanInstall` during the install int
 > need databases (Immich, Authentik) declare their own postgres and redis containers
 > in `containers:`; each app gets its own isolated database.
 
-### Orchestrator (`internal/orchestrator/`)
+### The Engine (`internal/engine/`)
+
+The engine is Bloud's differentiator: a reconciliation control loop directly inspired by
+Kubernetes controllers. It lives in two packages — `orchestrator/` (the typed intent queue
+and the loop that drains it) and `graph/` (the lifecycle DAG whose `targetStatus` vs
+`actualStatus` the loop converges). You declare the desired state; the engine observes the
+actual state and runs the actions needed to close the gap — then keeps running them, so a
+crash or reboot simply triggers another convergence pass.
 
 All mutations flow through a typed intent queue with debounce. The orchestrator is the
 single writer to all stores and the single executor of all side effects. It is also the
@@ -175,7 +192,7 @@ bindings. The orchestrator reads desired state from here and (as single writer) 
 only author of lifecycle status. Schema lives in `internal/db/schema.sql`. The lifecycle
 orchestrator currently uses an in-memory repository (see specs/review.md §C2).
 
-### Container Runtime (`internal/container/`, `internal/orchestrator/`)
+### Container Runtime (`internal/container/`, `internal/engine/orchestrator/`)
 
 Apps run as Podman containers created and managed directly by the orchestrator through
 the Podman API (`internal/podman/`). The orchestrator builds a container spec from

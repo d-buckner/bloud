@@ -666,7 +666,7 @@ Write tests that unmarshal metadata.yaml content and verify the parsed
 
 #### Task 2.1: Add `ContainerSpecFromDef()` function
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator_containers.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator_containers.go`
 
 Add function analogous to existing `ContainerSpec()` but takes a
 `catalog.ContainerDef` instead of a `*catalog.App`:
@@ -701,7 +701,7 @@ Handles both `Network` (single) and `Networks` (multi) fields.
 
 #### Task 2.2: Add `containerOwner` mapping to orchestrator
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`
 
 Add field to `Orchestrator` struct:
 
@@ -739,7 +739,7 @@ so that `apps-authentik-server` resolves to `~/bloud-data/authentik/` not
 
 #### Task 2.3: Multi-node creation in `convergeFromStores()`
 
-**Files:** `services/host-agent/internal/orchestrator/pipeline.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/pipeline.go`
 
 Modify step 3 of `convergeFromStores()` (currently lines 309-332). When
 an app has multiple `ContainerDefs()`, create one graph node per container
@@ -777,7 +777,7 @@ connect from app B's first container to the last container in app A's list
 
 #### Task 2.4: Container-level health check execution
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`
 
 Add method to run a container health check from metadata:
 
@@ -819,7 +819,7 @@ ensure), Task 2.3 (needs multi-node creation to exist)
 
 #### Task 2.5: Multi-container ensure in `runFullLifecycle()`
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`
 
 Modify `runFullLifecycle()` to handle multi-container nodes:
 
@@ -850,7 +850,7 @@ For single-container nodes: behavior is unchanged (uses existing
 
 #### Task 2.6: Multi-container uninstall in `RemoveApp()`
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`
 (or wherever `RemoveApp` is defined)
 
 Modify `RemoveApp()` to remove all container nodes belonging to an app:
@@ -879,7 +879,7 @@ Modify `RemoveApp()` to remove all container nodes belonging to an app:
 
 #### Task 2.7: Skip multi-container nodes in `SyncContainerState()`
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator_containers.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator_containers.go`
 
 `SyncContainerState()` currently inspects containers and reconciles with
 app store records. Multi-container nodes don't map 1:1 to app store
@@ -948,7 +948,7 @@ func (a *LegacyAdapter) PreStart(ctx, state) error {
 
 #### Task 3.2: Update orchestrator to use new interface
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`
 
 Modify `runFullLifecycle()`:
 - Remove `cfg.EnsureContainer(ctx, changed)` call
@@ -973,7 +973,7 @@ via `LegacyAdapter` wrapping.
 
 #### Task 3.3: Add spec-hash diffing for container recreation
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`,
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`,
 `orchestrator_containers.go`
 
 Replace the `changed bool` signal from `PreStart` with spec-hash diffing.
@@ -1030,7 +1030,7 @@ vars, volume mounts.
 
 #### Task 4.2: Status rollup in API
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`
 
 > **Implementation note:** Status rollup was implemented in the orchestrator's
 > `setupStatusSync()` event handler rather than the API layer. The
@@ -1060,7 +1060,7 @@ Rules:
 
 #### Task 4.3: Network creation in container ensure step
 
-**Files:** `services/host-agent/internal/orchestrator/orchestrator.go`
+**Files:** `services/host-agent/internal/engine/orchestrator/orchestrator.go`
 
 Ensure the orchestrator creates per-app internal networks
 (`{appName}-internal`) before starting containers. Inspect each

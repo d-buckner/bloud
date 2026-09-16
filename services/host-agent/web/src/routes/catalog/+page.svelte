@@ -9,8 +9,8 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { type CatalogApp, AppStatus } from '$lib/types';
 	import { apps as installedApps } from '$lib/stores/apps';
-	import { installApp } from '$lib/services/appFacade';
-	import { fetchCatalog } from '$lib/api/catalog';
+	import { installApp } from '$lib/clients/appFacade';
+	import { fetchCatalog } from '$lib/clients/catalog';
 	import { addRemoteApp } from '$lib/clients/remoteAppClient';
 
 	let catalogApps = $state<CatalogApp[]>([]);

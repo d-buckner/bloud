@@ -2,7 +2,7 @@
 
 **Status:** Authoritative active plan
 **Last updated:** 2026-07-03
-**Product:** Portable single-host home cloud\
+**Product:** Single-host home cloud\
 **Initial target:** Debian 13, `x86_64`, systemd\
 **Primary risk:** Unreliable implementation and architecture\
 **Release strategy:** Preserve Bloud's integration model on a small, tested host runtime
@@ -53,7 +53,7 @@ Completed:
   Navidrome configurators implement them.
 - Portable application manifests exist as `metadata.yaml` per app with container specs,
   integrations, health checks, and routing configuration.
-- The Podman API adapter is working. The portable orchestrator creates containers and
+- The Podman API adapter is working. The orchestrator creates containers and
   manages the container lifecycle directly through Podman.
 - Domain-agnostic Traefik routing with HostRegexp patterns is implemented. Apps are
   accessible via any origin (localhost, tailnet FQDN, custom domain).
@@ -182,7 +182,7 @@ The desired topology describes runtime resources:
 - Health checks
 - Process-level startup dependencies
 
-The portable runtime applies topology through the Podman API, filesystem, and
+The runtime applies topology through the Podman API, filesystem, and
 host-network adapters.
 
 ### Integration Graph
@@ -642,7 +642,7 @@ architecture boundaries. Change internal callers together when replacing an old 
 
 ### 2. One Authoritative Application Model
 
-A portable application manifest is the authoritative description of:
+A declarative application manifest is the authoritative description of:
 
 - Identity and version
 - Service and container topology
@@ -723,7 +723,7 @@ verification, and poststart configuration have succeeded.
 
 Required architectural boundaries:
 
-- `catalog`: loads and validates portable application manifests
+- `catalog`: loads and validates declarative application manifests
 - `planner`: calculates topology, integration, install, removal, and reconfiguration plans
 - `state`: persists desired and observed application and integration state
 - `runtime`: applies topology through host adapters
@@ -750,7 +750,7 @@ and health must be decomposed before adding new behavior.
 An application is supported only when its complete topology and integration lifecycle is
 automated and repeatably verified. Existing code or a successful manual test is insufficient.
 
-## Portable Runtime
+## Engine
 
 ### Runtime Boundary
 
@@ -819,7 +819,7 @@ modifies host state (DNS, firewall, networking) must:
 
 ## Migration Engineering Policy
 
-The migration targets the clean portable architecture, not backward compatibility with
+The migration targets the clean engine architecture, not backward compatibility with
 legacy runtime-specific interfaces. Change internal callers in the same validated slice when an
 old contract does not belong in the target design.
 
@@ -841,7 +841,7 @@ Every migration slice must leave behind:
   option maps, or compatibility adapters by default.
 - Keep planning pure, deterministic, serializable, inspectable, and independently testable.
 - Separate durable operations from observed application status.
-- Make portable manifests authoritative and reject hidden behavior.
+- Make declarative manifests authoritative and reject hidden behavior.
 - Allow application configuration and individual integration-edge configuration to reconcile
   independently.
 - Use typed errors at domain boundaries to drive retry policy, diagnostics, and tests.
@@ -991,7 +991,7 @@ Each phase ends with an automated gate.
 | Phase 0: Freeze, Inventory, and Measure | Complete |
 | Phase 1: Extract the Integration Engine | Complete |
 | Phase 2: Implement Reconciler Architecture | Complete |
-| Phase 3: Implement the Portable Runtime | Complete; Podman management working on Lima VM |
+| Phase 3: Implement the Engine | Complete; Podman management working on Lima VM |
 | Phase 4: Port Jellyfin | Complete; LDAP SSO, E2E lifecycle tests passing |
 | Phase 5: Port Navidrome | Complete; forward-auth SSO, E2E tests passing |
 | Phase 6: Implement Sharing and Federation | In progress; core sharing works, tailnet outpost auth in development |
@@ -1040,7 +1040,7 @@ Gate:
 **Status:** Complete. Merged in PR #2 (`reconciler-architecture`). All intent types
 implemented. Old `EnqueueInstall`/`EnqueueUninstall` paths removed.
 
-### Phase 3: Implement the Portable Runtime
+### Phase 3: Implement the Engine
 
 - Implement filesystem and Podman adapters.
 - Run the host agent as a systemd user service.
@@ -1055,7 +1055,7 @@ on Lima VM. Not yet validated on a clean Debian VM without Lima.
 
 ### Phase 4: Port Jellyfin
 
-- Port topology and LDAP integration to portable contracts.
+- Port topology and LDAP integration to declarative contracts.
 - Verify dashboard access, native clients, media playback, persistence, reboot, and removal.
 
 Gate:
@@ -1068,7 +1068,7 @@ install, Bloud login, LDAP SSO login, and uninstall.
 
 ### Phase 5: Port Navidrome
 
-- Port topology and forward-auth SSO to portable contracts.
+- Port topology and forward-auth SSO to declarative contracts.
 - Verify dashboard access, Subsonic API bypass, persistence, reboot, and removal.
 
 Gate:
@@ -1122,7 +1122,7 @@ validation.
 
 The first release is ready only when:
 
-- The portable integration engine is the authoritative execution model.
+- The engine is the authoritative execution model.
 - The supported app set satisfies its complete contracts.
 - Clean Debian acceptance passes repeatedly.
 - Install, integration configuration, reconciliation, reboot, upgrade, and removal are

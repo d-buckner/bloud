@@ -8,7 +8,7 @@ tiers:
         run: go test ./...
       - id: go-host-agent-race
         cwd: services/host-agent
-        run: go test -race ./internal/orchestrator/...
+        run: go test -race ./internal/engine/orchestrator/...
       - id: go-apps
         cwd: apps
         run: go test ./...
@@ -27,6 +27,12 @@ tiers:
       - id: web-lint
         cwd: .
         run: npm run lint:web
+      # The static bundle is the artifact host-agent actually serves
+      # (invariant 11), so a broken production build is a real failure --
+      # typecheck alone does not catch adapter/build-time errors.
+      - id: web-build
+        cwd: .
+        run: npm run build --workspace=@bloud/host-agent-web
       - id: license-headers
         cwd: .
         run: npm run license:check
@@ -44,7 +50,7 @@ tiers:
 inference:
   paths:
     - pattern: "services/host-agent/web/**"
-      triggers: [web-unit, web-check-host-agent, web-lint]
+      triggers: [web-unit, web-check-host-agent, web-lint, web-build]
     - pattern: "services/host-agent/**"
       triggers: [go-host-agent, go-host-agent-race, go-lint]
     - pattern: "apps/**"

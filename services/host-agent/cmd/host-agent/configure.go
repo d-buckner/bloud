@@ -11,13 +11,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/apps"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/appconfig"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -49,7 +50,8 @@ func runConfigure(args []string) int {
 	// Create the registry first to check if the app has a configurator.
 	// In CLI mode, system configurators are not needed (system apps are
 	// managed by the orchestrator in server mode). App configurators are
-	// factory-registered and instantiate lazily on Get.
+	// factory-registered and instantiate lazily on Get, so link them here.
+	apps.RegisterAll()
 	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, nil, nil))
 
 	// For prestart, always regenerate env files from secrets.json before starting any app

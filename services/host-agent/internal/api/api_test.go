@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
