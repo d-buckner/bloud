@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
 )
 
 // Deps carries the host-side inputs app configurator factories need.
@@ -39,6 +41,16 @@ type Deps struct {
 	// writer of side effects. Nil when no runtime is available (CLI/tests);
 	// factories that require a restart must treat nil as "cannot apply now".
 	RestartContainer func(ctx context.Context, name string) error
+
+	// HTTP builds app HTTP clients for this process: shared transport,
+	// default retry policy, shared logger. The zero value is usable (lazy
+	// defaults), so a configurator can always call deps.HTTP.New(...).
+	HTTP ClientFactory
+
+	// Assets installs static/downloaded files with the shared content
+	// cache. The zero value is usable. Populated by the host runtime; see
+	// pkg/appasset.
+	Assets appasset.Installer
 }
 
 // LocalTraefikURL returns the loopback URL of the Traefik HTTP entrypoint.

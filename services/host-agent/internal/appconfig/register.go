@@ -17,12 +17,15 @@ package appconfig
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
 
 	"codeberg.org/d-buckner/bloud/apps"
 	"codeberg.org/d-buckner/bloud/apps/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/web/static"
 )
@@ -101,11 +104,24 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, rest
 		}
 		return cfg.SSOBaseURL
 	}
+	// One process-shared transport for every app HTTP client: connection
+	// pooling across reconciliation cycles, one dial timeout, one keep-alive
+	// policy for the whole runtime.
+	transport := appclient.DefaultTransport()
 	return configurator.Deps{
 		Logger:           logger,
 		Secrets:          cfg.Secrets,
 		PrimaryBaseURL:   primaryBaseURL,
 		TraefikPort:      cfg.TraefikPort,
 		RestartContainer: restartContainer,
+		HTTP: configurator.ClientFactory{
+			Transport: transport,
+			Retry:     appclient.DefaultRetry,
+			Logger:    logger,
+		},
+		Assets: appasset.Installer{
+			CacheDir: filepath.Join(cfg.DataDir, "asset-cache"),
+			Retry:    appclient.DefaultRetry,
+		},
 	}
 }

@@ -6,11 +6,8 @@ package navidrome
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 
@@ -23,28 +20,43 @@ const appName = "navidrome"
 // It never appears in Authentik and is not meant for end users.
 const bootstrapAdminUsername = "bloud-admin"
 
-// Configurator handles Navidrome configuration
+// Configurator handles Navidrome configuration.
 type Configurator struct {
 	port         int
 	authentikURL string
 	secrets      configurator.AppSecretsProvider
 	logger       *slog.Logger
+	navi         *navidromeAPI
+	ak         *authentikAPI
+
+	// baseURL is a test seam: when set, the own-API client resolves to it
+	// instead of localhost:port.
+	baseURL string
 }
 
-// NewConfigurator creates a new Navidrome configurator.
-func NewConfigurator(port int, authentikURL string, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
+// NewConfigurator creates a new Navidrome configurator from the host Deps.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
 		port = 4533
 	}
+	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Configurator{
+	c := &Configurator{
 		port:         port,
-		authentikURL: authentikURL,
-		secrets:      secrets,
+		authentikURL: deps.LocalTraefikURL(),
+		secrets:      deps.Secrets,
 		logger:       logger.With("app", "navidrome"),
 	}
+	c.navi = newNavidromeAPI(deps.HTTP, func() string {
+		if c.baseURL != "" {
+			return c.baseURL
+		}
+		return fmt.Sprintf("http://localhost:%d", c.port)
+	})
+	c.ak = newAuthentikAPI(deps.HTTP, func() string { return c.authentikURL })
+	return c
 }
 
 func (c *Configurator) Name() string {
@@ -108,195 +120,18 @@ func (c *Configurator) ensureAdminAndLogin(ctx context.Context) (string, error) 
 	}
 
 	// Fast path: try logging in with existing credentials.
-	if token, err := c.login(ctx, bootstrapAdminUsername, password); err == nil {
+	if token, err := c.navi.login(ctx, bootstrapAdminUsername, password); err == nil {
 		return token, nil
 	}
 
 	// No admin yet — bootstrap the first admin user.
 	c.logger.Info("bootstrapping admin user")
-	token, err := c.createAdmin(ctx, bootstrapAdminUsername, password)
+	token, err := c.navi.createAdmin(ctx, bootstrapAdminUsername, password)
 	if err != nil {
 		return "", fmt.Errorf("creating admin: %w", err)
 	}
 	c.logger.Info("admin user created")
 	return token, nil
-}
-
-func (c *Configurator) baseURL() string {
-	return fmt.Sprintf("http://localhost:%d", c.port)
-}
-
-// createAdmin calls /auth/createAdmin (only works when no users exist).
-func (c *Configurator) createAdmin(ctx context.Context, username, password string) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"username": username,
-		"password": password,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/auth/createAdmin", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	}
-
-	var out struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	return out.Token, nil
-}
-
-// login exchanges credentials for a session token.
-func (c *Configurator) login(ctx context.Context, username, password string) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"username": username,
-		"password": password,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/auth/login", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("login failed: status %d", resp.StatusCode)
-	}
-
-	var out struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if out.Token == "" {
-		return "", fmt.Errorf("empty token")
-	}
-	return out.Token, nil
-}
-
-// --- Navidrome user API ---
-
-type navidromeUser struct {
-	ID       string `json:"id"`
-	UserName string `json:"userName"`
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	IsAdmin  bool   `json:"isAdmin"`
-}
-
-// listNavidromeUsers returns all users from Navidrome.
-func (c *Configurator) listNavidromeUsers(ctx context.Context, token string) ([]navidromeUser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL()+"/api/user?_end=500&_start=0&_order=ASC&_sort=id", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-ND-Authorization", "Bearer "+token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	}
-
-	var users []navidromeUser
-	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
-		return nil, err
-	}
-	return users, nil
-}
-
-// createNavidromeUser creates a user in Navidrome.
-func (c *Configurator) createNavidromeUser(ctx context.Context, token, username, name, email string) error {
-	body, _ := json.Marshal(map[string]interface{}{
-		"userName": username,
-		"name":     name,
-		"email":    email,
-		"isAdmin":  false,
-		"password": "placeholder", // unused with forward-auth; required field
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/user", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-ND-Authorization", "Bearer "+token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	}
-	return nil
-}
-
-// --- Authentik user API ---
-
-type authentikUser struct {
-	Username string `json:"username"`
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-}
-
-// listAuthentikUsers returns internal active users from Authentik.
-func (c *Configurator) listAuthentikUsers(ctx context.Context, token string) ([]authentikUser, error) {
-	if c.authentikURL == "" {
-		return nil, fmt.Errorf("no authentik URL configured")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.authentikURL+"/api/v3/core/users/?type=internal&is_active=true&page_size=100", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	}
-
-	var out struct {
-		Results []authentikUser `json:"results"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out.Results, nil
 }
 
 // readAuthentikToken reads the Authentik API token from disk.
@@ -315,10 +150,11 @@ func (c *Configurator) readAuthentikToken(state *configurator.AppState) (string,
 
 // --- Sync logic ---
 
-// syncUsersFromAuthentik creates any Authentik users that don't yet exist in Navidrome.
-// Existing users are left untouched. The bootstrap admin is excluded from sync.
+// syncUsersFromAuthentik creates any Authentik users that don't yet exist in
+// Navidrome. Existing users are left untouched. The bootstrap admin is
+// excluded from sync.
 func (c *Configurator) syncUsersFromAuthentik(ctx context.Context, naviToken, authentikToken string) error {
-	navUsers, err := c.listNavidromeUsers(ctx, naviToken)
+	navUsers, err := c.navi.listUsers(ctx, naviToken)
 	if err != nil {
 		return fmt.Errorf("listing navidrome users: %w", err)
 	}
@@ -328,7 +164,7 @@ func (c *Configurator) syncUsersFromAuthentik(ctx context.Context, naviToken, au
 		existing[u.UserName] = struct{}{}
 	}
 
-	akUsers, err := c.listAuthentikUsers(ctx, authentikToken)
+	akUsers, err := c.ak.listActiveUsers(ctx, authentikToken)
 	if err != nil {
 		return fmt.Errorf("listing authentik users: %w", err)
 	}
@@ -347,7 +183,7 @@ func (c *Configurator) syncUsersFromAuthentik(ctx context.Context, naviToken, au
 			displayName = u.Username
 		}
 		c.logger.Info("creating user", "username", u.Username, "display_name", displayName)
-		if err := c.createNavidromeUser(ctx, naviToken, u.Username, displayName, u.Email); err != nil {
+		if err := c.navi.createUser(ctx, naviToken, u.Username, displayName, u.Email); err != nil {
 			c.logger.Warn("failed to create user", "username", u.Username, "error", err)
 			continue
 		}
