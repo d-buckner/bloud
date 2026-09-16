@@ -8,14 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -52,26 +49,39 @@ type Configurator struct {
 	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)
 	secrets    configurator.AppSecretsProvider
 	logger     *slog.Logger
+	api        *affineAPI
+
+	// baseURL is a test seam: when set, the API client resolves to it
+	// instead of localhost:port. Never used to build request URLs by hand.
+	baseURL string
 }
 
-// NewConfigurator creates a new AFFiNE configurator.
-// ssoBaseURL supplies the current Bloud base URL (e.g. "http://localhost:8080");
-// the app's public URL is derived from it the same way routes and OIDC
-// redirect URIs are (affine.<host>). It is a function so host changes made in
-// the UI take effect without re-registering the configurator.
-func NewConfigurator(port int, ssoBaseURL func() string, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
+// NewConfigurator creates a new AFFiNE configurator from the host Deps.
+// deps.PrimaryBaseURL supplies the current Bloud base URL (e.g.
+// "http://localhost:8080"); the app's public URL is derived from it the same
+// way routes and OIDC redirect URIs are (affine.<host>). It is a function so
+// host changes made in the UI take effect without re-registering.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
 		port = 3010
 	}
+	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Configurator{
+	c := &Configurator{
 		port:       port,
-		ssoBaseURL: ssoBaseURL,
-		secrets:    secrets,
+		ssoBaseURL: deps.PrimaryBaseURL,
+		secrets:    deps.Secrets,
 		logger:     logger.With("app", "affine"),
 	}
+	c.api = newAPI(deps.HTTP, func() string {
+		if c.baseURL != "" {
+			return c.baseURL
+		}
+		return fmt.Sprintf("http://localhost:%d", c.port)
+	})
+	return c
 }
 
 func (c *Configurator) Name() string {
@@ -138,7 +148,7 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 // authorization URL, which proves config.json loaded, issuer discovery
 // succeeded, and the PKCE flow is ready. Idempotent on every reconciliation.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	if err := c.waitForServer(ctx); err != nil {
+	if err := c.api.waitServer(ctx); err != nil {
 		return fmt.Errorf("waiting for affine server: %w", err)
 	}
 
@@ -149,7 +159,7 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	if state.OIDC == nil {
 		return nil
 	}
-	if err := c.waitForOIDCPreflight(ctx); err != nil {
+	if err := c.api.waitForOIDCPreflight(ctx); err != nil {
 		return fmt.Errorf("verifying OIDC provider: %w", err)
 	}
 	c.logger.Info("OIDC login flow verified", "issuer", state.OIDC.IssuerURL)
@@ -169,40 +179,14 @@ func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) error {
 		return fmt.Errorf("generating admin password: %w", err)
 	}
 
-	body, _ := json.Marshal(map[string]string{
-		"name":     bootstrapAdminName,
-		"email":    bootstrapAdminEmail,
-		"password": password,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/setup/create-admin-user", bytes.NewReader(body))
+	changed, err := c.api.ensureOwner(ctx, bootstrapAdminName, bootstrapAdminEmail, password)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	switch resp.StatusCode {
-	case http.StatusOK, http.StatusCreated:
-		_, _ = io.Copy(io.Discard, resp.Body)
+	if changed {
 		c.logger.Info("owner account created")
-		return nil
-	case http.StatusForbidden:
-		b, _ := io.ReadAll(resp.Body)
-		// Idempotency: the first user already exists (created by an earlier
-		// pass or manually). Anything else is a real rejection.
-		if strings.Contains(string(b), "First user already created") {
-			return nil
-		}
-		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
-	default:
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
 	}
+	return nil
 }
 
 // --- Config file ---
@@ -235,77 +219,4 @@ func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) string 
 		return "" // unreachable: all values are marshalable
 	}
 	return string(out) + "\n"
-}
-
-// --- Server API ---
-
-func (c *Configurator) baseURL() string {
-	return fmt.Sprintf("http://localhost:%d", c.port)
-}
-
-// waitForServer polls /info (public, no auth) until the server answers or
-// the context is cancelled. The first boot runs prisma migrations before
-// the HTTP listener opens, which can take a while.
-func (c *Configurator) waitForServer(ctx context.Context) error {
-	deadline := time.Now().Add(5 * time.Minute)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+"/info", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-			lastErr = fmt.Errorf("info status %d: %s", resp.StatusCode, body)
-		} else {
-			lastErr = err
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("server did not become ready: %w", lastErr)
-}
-
-// waitForOIDCPreflight polls the public OAuth preflight endpoint until it
-// returns the authorization URL. The server validates the issuer
-// asynchronously after boot (with backoff), so allow a generous window.
-func (c *Configurator) waitForOIDCPreflight(ctx context.Context) error {
-	deadline := time.Now().Add(3 * time.Minute)
-	var lastErr error
-	body := []byte(`{"provider":"OIDC","client":"web","client_nonce":"bloud-poststart-check"}`)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/oauth/preflight", bytes.NewReader(body))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			data, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK && strings.Contains(string(data), `"url"`) {
-				return nil
-			}
-			lastErr = fmt.Errorf("preflight status %d: %s", resp.StatusCode, data)
-		} else {
-			lastErr = err
-		}
-		time.Sleep(3 * time.Second)
-	}
-	return fmt.Errorf("OIDC preflight did not become ready: %w", lastErr)
 }

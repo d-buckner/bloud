@@ -12,6 +12,6 @@ import (
 // only built when Immich is actually being reconciled.
 func init() {
 	configurator.MustRegisterFactory("apps-immich-server", func(deps configurator.Deps) configurator.NodeLifecycle {
-		return NewConfigurator(0, deps.Secrets, deps.Logger)
+		return NewConfigurator(0, deps)
 	})
 }

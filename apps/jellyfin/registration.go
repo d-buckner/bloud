@@ -12,6 +12,6 @@ import (
 // only built when Jellyfin is actually being reconciled.
 func init() {
 	configurator.MustRegisterFactory("apps-jellyfin", func(deps configurator.Deps) configurator.NodeLifecycle {
-		return NewConfigurator(0, deps.Secrets, deps.Logger)
+		return NewConfigurator(0, deps)
 	})
 }

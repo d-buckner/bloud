@@ -12,6 +12,6 @@ import (
 // only built when AFFiNE is actually being reconciled.
 func init() {
 	configurator.MustRegisterFactory("apps-affine", func(deps configurator.Deps) configurator.NodeLifecycle {
-		return NewConfigurator(0, deps.PrimaryBaseURL, deps.Secrets, deps.Logger)
+		return NewConfigurator(0, deps)
 	})
 }

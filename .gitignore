@@ -28,6 +28,9 @@ go.work.sum
 services/host-agent/bin/*
 .last-run.json
 
+# Local Go build cache (GOCACHE override used by some dev shells)
+.gocache/
+
 # CLI binary
 bloud
 # `go build` in cli/ without -o lands cli/cli here

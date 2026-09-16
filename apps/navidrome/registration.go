@@ -15,6 +15,6 @@ import (
 // always uses the local Traefik URL regardless of the public host set.
 func init() {
 	configurator.MustRegisterFactory("apps-navidrome", func(deps configurator.Deps) configurator.NodeLifecycle {
-		return NewConfigurator(0, deps.LocalTraefikURL(), deps.Secrets, deps.Logger)
+		return NewConfigurator(0, deps)
 	})
 }
