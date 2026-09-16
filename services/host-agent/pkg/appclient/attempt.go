@@ -160,7 +160,7 @@ func (x *Call) runStream(ctx context.Context, consume func(io.Reader) error) err
 	if x.buildErr != nil {
 		return x.buildErr
 	}
-	policy := x.c.retry
+	policy := x.effectivePolicy()
 	start := time.Now()
 	attempt := 0
 	var lastErr error

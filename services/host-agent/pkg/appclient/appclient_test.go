@@ -89,6 +89,32 @@ func TestRetryAfter_HonoredOverBackoff(t *testing.T) {
 	assert.Equal(t, 30*time.Millisecond, slept[0], "Retry-After clamped to MaxInterval*3")
 }
 
+func TestWithRetry_FactorUnset_KeepsDeclaredInterval(t *testing.T) {
+	// Regression (jellyfin lifecycle CI): policies declared with only
+	// Initial/MaxInterval must poll at the declared cadence. When
+	// effectivePolicy returned the WithRetry override without applying
+	// withDefaults, the zero Factor collapsed every delay past the first
+	// attempt to 0 — the 60×1s wizard wait burned its whole budget in ~1s
+	// and went terminal-error while Jellyfin was still legitimately loading.
+	var slept []time.Duration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	c := New(Spec{Name: "test", BaseURL: srv.URL})
+	c.WithSleeper(func(d time.Duration) { slept = append(slept, d) })
+
+	err := c.GET("/x").
+		WithRetry(RetryPolicy{MaxAttempts: 4, Initial: 30 * time.Millisecond, MaxInterval: 30 * time.Millisecond}).
+		Ready(func(status int, body []byte) bool { return status == http.StatusOK }).
+		Wait(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t,
+		[]time.Duration{30 * time.Millisecond, 30 * time.Millisecond, 30 * time.Millisecond},
+		slept, "unset Factor must not collapse the poll interval to zero")
+}
+
 func TestNonTransient_FailsImmediately(t *testing.T) {
 	var calls int32
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

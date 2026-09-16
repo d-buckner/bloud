@@ -365,7 +365,11 @@ func (x *Call) applyAuth(req *http.Request) error {
 // retry policy.
 func (x *Call) effectivePolicy() RetryPolicy {
 	if x.retryOverride != nil {
-		return *x.retryOverride
+		// Defaults must be applied here too: a declared policy that omits
+		// Factor (e.g. jellyfin's fixed-cadence wait policies) would otherwise
+		// multiply its interval by zero from the second attempt on, collapsing
+		// a 60 s wait into a ~1 s spin.
+		return x.retryOverride.withDefaults()
 	}
 	return x.c.retry
 }
