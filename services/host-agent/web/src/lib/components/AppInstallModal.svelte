@@ -6,7 +6,7 @@
 	import CloseButton from './CloseButton.svelte';
 	import Icon from './Icon.svelte';
 	import { appProgress, recentActivity } from '$lib/stores/appProgress';
-	import { deriveTimeline } from '$lib/services/installTimeline';
+	import { deriveTimeline } from '$lib/timeline/installTimeline';
 	import type { App } from '$lib/types';
 
 	interface Props {

@@ -1,3 +1,5 @@
+> Status: accepted
+
 # Plan: Auth Federation — bloud + headscale Control Plane
 
 > **Status: PROPOSED — not reviewed, not accepted, not aligned with product direction.**

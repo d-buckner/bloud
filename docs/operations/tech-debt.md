@@ -1,5 +1,9 @@
 # Backend Tech Debt
 
+> **This is the single debt ledger.** New backend findings go here, not into
+> `specs/review.md` — that file is a dated review snapshot whose findings are
+> annotated against the statuses recorded here.
+
 **Status:** Active debt inventory  
 **Last updated:** 2026-09-14
 
@@ -7,7 +11,7 @@
 
 The largest backend debt is that application lifecycle state does not have one clear
 owner. Desired state, observed state, side effects, and recovery behavior are currently
-spread across the API server, portable orchestrator, reconciler, stores, route generation,
+spread across the API server, the engine, stores, route generation,
 and sharing managers.
 
 This makes Bloud behave more like a sequence of assumed-success commands than a durable
@@ -17,13 +21,13 @@ invalidation, phase-specific failure records, and resume-after-restart semantics
 
 ## Evidence
 
-- `internal/orchestrator/orchestrator.go` + `orchestrator_containers.go`
+- `internal/engine/orchestrator/orchestrator.go` + `orchestrator_containers.go`
   - `Reconcile` runs topological levels concurrently; `runFullLifecycle` interleaves
     prestart config, container/network creation, health checks, poststart config, and SSO
     provisioning.
   - `RegenerateRoutes` also starts the gateway and reconciles remote app proxies, so
     route generation has runtime side effects.
-- `internal/orchestrator/pipeline.go`
+- `internal/engine/orchestrator/pipeline.go`
   - `applyInstallIntent` resolves dependencies via `catalogGraph` and records apps; the
     lifecycle graph itself is in-memory (`MapRepository`) — the durable SQLite backing is
     dead code, so ERROR-terminal state does not survive restart.

@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Daniel Buckner
+#
+# Thin CI shell -- the Forgejo mirror of .github/workflows/ci.yml. Same
+# contract: all validation logic lives in validation.yaml and runs through
+# ./bloud validate. Change one, change the other.
 name: Test
 
 on:
@@ -9,44 +13,22 @@ on:
   pull_request:
 
 jobs:
-  test-go:
+  validate:
     runs-on: docker
     container:
-      image: golang:1.24.2-alpine
+      image: golang:1.25-alpine
     steps:
       - name: Install Node.js
-        run: apk add --no-cache nodejs npm
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run Go tests
-        working-directory: services/host-agent
-        run: go run gotest.tools/gotestsum@latest --format testdox ./...
-
-  build-ui:
-    runs-on: docker
-    container:
-      image: golang:1.24.2-alpine
-    steps:
-      - name: Install Node.js
-        run: apk add --no-cache nodejs npm
+        run: apk add --no-cache nodejs npm git
 
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        working-directory: services/host-agent/web
         run: npm ci
 
-      - name: Lint (ESLint / complexity)
-        working-directory: services/host-agent/web
-        run: npm run lint
+      - name: Build the bloud CLI
+        run: npm run cli:build
 
-      - name: Typecheck
-        working-directory: services/host-agent/web
-        run: npm run check
-
-      - name: Build
-        working-directory: services/host-agent/web
-        run: npm run build
+      - name: Validate (fast tier)
+        run: ./bloud validate --tier fast

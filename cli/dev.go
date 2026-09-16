@@ -14,7 +14,6 @@ import (
 
 	"codeberg.org/d-buckner/bloud/cli/backend"
 	"codeberg.org/d-buckner/bloud/cli/executor"
-	"codeberg.org/d-buckner/bloud/cli/vm"
 )
 
 // localExec runs a command on the host machine
@@ -396,7 +395,7 @@ func installApp(apiPort int, appName string) int {
 	log(fmt.Sprintf("Installing %s...", appName))
 
 	curlCmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/install`, apiPort, appName)
-	output, err := vm.LocalExec(curlCmd)
+	output, err := LocalExec(curlCmd)
 	if err != nil {
 		errorf("Failed to call install API: %v", err)
 		return 1
@@ -595,7 +594,7 @@ func uninstallApp(apiPort int, appName string) int {
 	log(fmt.Sprintf("Uninstalling %s...", appName))
 
 	curlCmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/uninstall`, apiPort, appName)
-	output, err := vm.LocalExec(curlCmd)
+	output, err := LocalExec(curlCmd)
 	if err != nil {
 		errorf("Failed to call uninstall API: %v", err)
 		return 1

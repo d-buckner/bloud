@@ -1,3 +1,5 @@
+> Status: accepted
+
 # Plan: Persistent Proxy Ports, Gateway FQDN, and Owner Remote Access
 
 **Status:** Draft

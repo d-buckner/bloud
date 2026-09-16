@@ -1,7 +1,7 @@
-# Portable Runtime End-to-End Tests
+# Bloud End-to-End Tests
 
 Playwright suite that verifies the user-visible lifecycle of apps on an
-already-provisioned portable runtime host.
+already-provisioned Bloud host.
 
 ## Tests
 
@@ -41,7 +41,7 @@ Or via the CLI:
 the Lima VM. `./bloud e2e lifecycle` is a self-contained deploy→test→uninstall
 flow that doesn't require `./bloud dev` to be running first.
 
-## Full Portable Lifecycle
+## Full Lifecycle
 
 `./bloud e2e lifecycle` deploys the current host-agent binary and app catalog to
 a Lima VM, installs the host-agent as a user systemd service, and runs the full

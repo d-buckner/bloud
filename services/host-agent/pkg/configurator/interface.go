@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Daniel Buckner
 
 // Package configurator provides the interface and utilities for app configuration.
-// Configurators handle app-specific setup that can't be expressed purely in Nix,
-// such as config file generation and API-based configuration.
+// Configurators handle app-specific setup that can't be expressed in static
+// config (manifests / container defs): config-file generation, API-based setup.
 package configurator
 
 import (

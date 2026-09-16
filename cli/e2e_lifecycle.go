@@ -4,19 +4,13 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strings"
-
-	"codeberg.org/d-buckner/bloud/cli/backend"
 )
 
 const (
@@ -74,6 +68,9 @@ func runLifecycle(root string, args []string) error {
 
 // wantsHelp reports whether args ask for usage text; checked before backend
 // resolution so '--help' never triggers the backend prompt.
+
+// wantsHelp reports whether args ask for usage text; checked before backend
+// resolution so '--help' never triggers the backend prompt.
 func wantsHelp(args []string) bool {
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -82,6 +79,10 @@ func wantsHelp(args []string) bool {
 	}
 	return false
 }
+
+// parseLifecycleConfig builds the lifecycle config from args and the
+// environment. backendName is the resolved runtime backend (see
+// backendName); explicit BLOUD_E2E_* instance variables still override it.
 
 // parseLifecycleConfig builds the lifecycle config from args and the
 // environment. backendName is the resolved runtime backend (see
@@ -124,6 +125,9 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 
 // applyLifecycleDefaults fills unset config fields with backend-aware
 // defaults (instance names, URLs, credentials, derived paths).
+
+// applyLifecycleDefaults fills unset config fields with backend-aware
+// defaults (instance names, URLs, credentials, derived paths).
 func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
 	if cfg.remoteDir == "" {
 		cfg.remoteDir = "/var/tmp/bloud-e2e-runtime"
@@ -161,6 +165,9 @@ func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
 
 // validateLifecycleConfig rejects combinations of instance/SSH/runtime
 // settings that cannot describe one coherent deployment target.
+
+// validateLifecycleConfig rejects combinations of instance/SSH/runtime
+// settings that cannot describe one coherent deployment target.
 func validateLifecycleConfig(cfg *lifecycleConfig) error {
 	if err := validateInstanceSelection(cfg); err != nil {
 		return err
@@ -187,6 +194,9 @@ func validateLifecycleConfig(cfg *lifecycleConfig) error {
 
 // validateInstanceSelection enforces that at most one VM/SSH target is
 // configured and that it is compatible with the chosen backend.
+
+// validateInstanceSelection enforces that at most one VM/SSH target is
+// configured and that it is compatible with the chosen backend.
 func validateInstanceSelection(cfg *lifecycleConfig) error {
 	if cfg.native && (cfg.lima != "" || cfg.qemu != "" || cfg.sshTarget != "") {
 		return fmt.Errorf("native backend cannot be combined with BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
@@ -200,6 +210,9 @@ func validateInstanceSelection(cfg *lifecycleConfig) error {
 	}
 	return nil
 }
+
+// lifecycleReservedDir reports whether a runtime dir is (or is inside) a
+// system directory that a dedicated validation runtime must never occupy.
 
 // lifecycleReservedDir reports whether a runtime dir is (or is inside) a
 // system directory that a dedicated validation runtime must never occupy.
@@ -286,427 +299,3 @@ func (r *lifecycle) run() (runErr error) {
 // checkPrerequisites verifies the remote host (HOME, preflight script),
 // prepares a QEMU target if one is configured, and provisions the native
 // runtime when running without a VM.
-func (r *lifecycle) checkPrerequisites() error {
-	r.step("Checking host prerequisites")
-	home, err := r.remoteOutput("printf %s \"$HOME\"")
-	if err != nil {
-		return err
-	}
-	r.cfg.remoteHome = strings.TrimSpace(home)
-	if r.cfg.remoteHome == "" {
-		return fmt.Errorf("remote HOME is empty")
-	}
-	if err := r.remoteRun(remotePreflightScript, r.cfg.remoteDir); err != nil {
-		return fmt.Errorf("host preflight: %w", err)
-	}
-	if err := r.prepareQEMUTarget(); err != nil {
-		return err
-	}
-	if r.cfg.native {
-		r.step("Provisioning native runtime")
-		bk := backend.NewNativeBackend(r.cfg.root)
-		if err := bk.Create(context.Background()); err != nil {
-			return fmt.Errorf("native runtime provisioning failed: %w", err)
-		}
-	}
-	return nil
-}
-
-// runInstallFlow installs Jellyfin through the host-local API in --host-only
-// mode, or through the browser (ensure user + Playwright install/login flow)
-// otherwise.
-func (r *lifecycle) runInstallFlow() error {
-	if r.cfg.hostOnly {
-		r.step("Installing Jellyfin through the host-local API")
-		return r.remoteRun(remoteInstallJellyfinScript)
-	}
-	r.step("Ensuring the E2E user exists")
-	payload, err := json.Marshal(map[string]string{"username": r.cfg.username, "password": r.cfg.password})
-	if err != nil {
-		return err
-	}
-	if err := r.remoteRun(remoteEnsureUserScript, string(payload)); err != nil {
-		return err
-	}
-	r.step("Running Jellyfin browser install and login flow")
-	return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password)
-}
-
-// verifyAfterRestart restarts Jellyfin and the host-agent and re-runs the
-// browser flow (unless --host-only) to prove the lifecycle survives restarts.
-func (r *lifecycle) verifyAfterRestart() error {
-	r.step("Restarting Jellyfin and host-agent")
-	if err := r.remoteRun(remoteRestartScript, lifecycleHostAgentUnit); err != nil {
-		return err
-	}
-	if !r.cfg.hostOnly {
-		r.step("Verifying browser flow after service restarts")
-		return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password)
-	}
-	return nil
-}
-
-func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
-	var extraEnv strings.Builder
-	if cfg.qemu != "" {
-		fmt.Fprintf(&extraEnv, "Environment=BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24\n")
-	}
-	return fmt.Sprintf(`[Unit]
-Description=Bloud E2E host agent
-After=network-online.target podman.socket
-Wants=network-online.target podman.socket
-
-[Service]
-Type=simple
-WorkingDirectory=%s/host-agent
-Environment=BLOUD_DATA_DIR=%s/data
-Environment=BLOUD_APPS_DIR=%s/apps
-Environment=BLOUD_TRAEFIK_DYNAMIC_DIR=%s
-Environment=BLOUD_SSO_ISSUER_URL=%s
-%s
-ExecStart=%s/host-agent/host-agent
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-`, cfg.remoteDir, cfg.remoteDir, cfg.remoteDir, cfg.traefikDir, ssoIssuerURL(), extraEnv.String(), cfg.remoteDir)
-}
-
-func (r *lifecycle) step(message string) {
-	fmt.Printf("\n%s==>%s %s\n", colorGreen, colorReset, message)
-}
-
-// buildAndDeploy builds the host-agent binary and frontend, deploys them to
-// the runtime, installs the systemd service, and waits for the API to come
-// up. Shared by the lifecycle and app E2E runners.
-func (r *lifecycle) buildAndDeploy() error {
-	r.step("Building host-agent artifacts")
-	buildDir, err := os.MkdirTemp("", "bloud-e2e-build-*")
-	if err != nil {
-		return err
-	}
-	r.buildDir = buildDir
-	defer func() { _ = os.RemoveAll(buildDir) }()
-
-	if err := r.localRun(r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
-		return err
-	}
-	hostAgentDir := filepath.Join(r.cfg.root, "services", "host-agent")
-	buildEnv := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+r.cfg.goarch)
-	if err := r.localRun(hostAgentDir, buildEnv, "go", "build", "-o", filepath.Join(buildDir, "host-agent"), "./cmd/host-agent"); err != nil {
-		return err
-	}
-
-	r.step("Deploying host-agent, frontend, and app catalog")
-	if err := r.remoteRun("mkdir -p \"$1/host-agent/web/build\" \"$1/apps\"", r.cfg.remoteDir); err != nil {
-		return err
-	}
-	if err := r.copyDirectory(filepath.Join(r.cfg.root, "apps"), r.remotePath("apps")); err != nil {
-		return err
-	}
-	if err := r.copyDirectory(filepath.Join(hostAgentDir, "web", "build"), r.remotePath("host-agent/web/build")); err != nil {
-		return err
-	}
-	if err := r.copyFile(filepath.Join(buildDir, "host-agent"), r.remotePath("host-agent/host-agent")); err != nil {
-		return err
-	}
-	if err := r.remoteRun("chmod 755 \"$1/host-agent/host-agent\"", r.cfg.remoteDir); err != nil {
-		return err
-	}
-
-	r.step("Installing host-agent systemd service")
-	unit := renderLifecycleHostAgentUnit(r.cfg)
-	unitPath := filepath.Join(buildDir, lifecycleHostAgentUnit)
-	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
-		return err
-	}
-	if err := r.remoteRun("mkdir -p \"$1/.config/systemd/user\"", r.cfg.remoteHome); err != nil {
-		return err
-	}
-	if err := r.copyFile(unitPath, filepath.Join(r.cfg.remoteHome, ".config", "systemd", "user", lifecycleHostAgentUnit)); err != nil {
-		return err
-	}
-	if err := r.remoteRun(remoteInstallHostAgentScript, lifecycleHostAgentUnit); err != nil {
-		return err
-	}
-	if err := r.remoteRun(remoteWaitForHostAgentScript); err != nil {
-		return fmt.Errorf("wait for host-agent API: %w", err)
-	}
-	return nil
-}
-
-func (r *lifecycle) localRun(dir string, env []string, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s failed: %w", name, err)
-	}
-	return nil
-}
-
-func (r *lifecycle) remoteRun(script string, args ...string) error {
-	cmd := r.remoteCommand(script, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = strings.NewReader("set -euo pipefail\n" + script)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("remote command failed: %w", err)
-	}
-	return nil
-}
-
-func (r *lifecycle) remoteOutput(script string, args ...string) (string, error) {
-	cmd := r.remoteCommand(script, args...)
-	cmd.Stdin = strings.NewReader("set -euo pipefail\n" + script)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("remote command failed: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return string(output), nil
-}
-func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
-	commandArgs := []string{}
-	if r.cfg.native {
-		name := "bash"
-		commandArgs = append(commandArgs, "-se", "--")
-		commandArgs = append(commandArgs, args...)
-		return exec.Command(name, commandArgs...)
-	}
-	if r.cfg.lima != "" {
-		name := "limactl"
-		commandArgs = append(commandArgs, "shell", "--start", r.cfg.lima, "bash", "-se", "--")
-		commandArgs = append(commandArgs, args...)
-		return exec.Command(name, commandArgs...)
-	} else if r.cfg.qemu != "" {
-		name := "ssh"
-		commandArgs = append(commandArgs,
-			"-i", r.cfg.sshKeyFile,
-			"-p", "2222",
-			"-o", "StrictHostKeyChecking=accept-new",
-			"-o", "ConnectTimeout=5",
-			r.cfg.sshTarget, "bash", "-se", "--")
-		for _, arg := range args {
-			commandArgs = append(commandArgs, shellQuote(arg))
-		}
-		return exec.Command(name, commandArgs...)
-	} else {
-		name := "ssh"
-		commandArgs = append(commandArgs, r.cfg.sshTarget, "bash", "-se", "--")
-		for _, arg := range args {
-			commandArgs = append(commandArgs, shellQuote(arg))
-		}
-		return exec.Command(name, commandArgs...)
-	}
-}
-
-func (r *lifecycle) copyDirectory(source, destination string) error {
-	if r.cfg.native {
-		return r.localRun(r.cfg.root, os.Environ(), "cp", "-a", source+"/.", destination)
-	}
-	if r.cfg.lima != "" {
-		return r.remoteRun(`rm -rf "$2"
-mkdir -p "$2"
-cp -a "$1/." "$2/"`, source, destination)
-	} else if r.cfg.qemu != "" {
-		sshCmd := fmt.Sprintf("ssh -i %s -p 2222 -o StrictHostKeyChecking=accept-new", shellQuote(r.cfg.sshKeyFile))
-		args := []string{"-a", "--delete", "-e", sshCmd, source + string(os.PathSeparator), r.cfg.sshTarget + ":" + destination + "/"}
-		return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
-	} else {
-		args := []string{"-a", "--delete", source + string(os.PathSeparator), r.cfg.sshTarget + ":" + shellQuote(destination) + "/"}
-		return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
-	}
-}
-
-func (r *lifecycle) copyFile(source, destination string) error {
-	if r.cfg.native {
-		return r.localRun(r.cfg.root, os.Environ(), "cp", source, destination)
-	}
-	if r.cfg.lima != "" {
-		return r.localRun(r.cfg.root, os.Environ(), "limactl", "copy", source, r.cfg.lima+":"+destination)
-	} else if r.cfg.qemu != "" {
-		sshCmd := fmt.Sprintf("ssh -i %s -p 2222 -o StrictHostKeyChecking=accept-new", shellQuote(r.cfg.sshKeyFile))
-		return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", "-e", sshCmd, source, r.cfg.sshTarget+":"+destination)
-	} else {
-		return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", source, r.cfg.sshTarget+":"+shellQuote(destination))
-	}
-}
-
-func (r *lifecycle) remotePath(relative string) string {
-	return filepath.Join(r.cfg.remoteDir, relative)
-}
-
-func (r *lifecycle) artifactDir() string {
-	return filepath.Join(r.cfg.root, "e2e", "test-results", "runtime-lifecycle")
-}
-
-func (r *lifecycle) collectLogs() {
-	if r.cfg.remoteHome == "" {
-		return
-	}
-	if err := os.MkdirAll(r.artifactDir(), 0755); err != nil {
-		errorf("failed to create artifact dir: %v", err)
-		return
-	}
-	logs := map[string]string{
-		"journal.log": `journalctl --user -u bloud-e2e-host-agent.service --no-pager -n 500 || true`,
-		"podman.log":  `podman ps -a; podman inspect apps-jellyfin 2>&1 || true`,
-		"routes.log":  `test -f "$1/apps-routes.yml" && cat "$1/apps-routes.yml"; true`,
-	}
-	for name, script := range logs {
-		args := []string{}
-		if name == "routes.log" {
-			args = append(args, r.cfg.traefikDir)
-		}
-		output, err := r.remoteOutput(script, args...)
-		if err != nil {
-			output += "\n" + err.Error()
-		}
-		if err := os.WriteFile(filepath.Join(r.artifactDir(), name), []byte(output), 0644); err != nil {
-			errorf("failed to write %s artifact: %v", name, err)
-		}
-	}
-}
-
-func (r *lifecycle) cleanupRemoteDeployment() {
-	script := `curl -fsS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null 2>&1 || true
-podman rm -f apps-jellyfin >/dev/null 2>&1 || true
-systemctl --user disable --now "$1" >/dev/null 2>&1 || true
-rm -f "$2/.config/systemd/user/$1"
-if test -f "$3/.bloud-e2e-runtime"; then
-  rm -rf "$3"
-fi
-systemctl --user daemon-reload >/dev/null 2>&1 || true`
-	if err := r.remoteRun(script, lifecycleHostAgentUnit, r.cfg.remoteHome, r.cfg.remoteDir); err != nil {
-		errorf("failed to clean up remote deployment: %v", err)
-	}
-}
-
-func (r *lifecycle) prepareQEMUTarget() error {
-	if r.cfg.qemu == "" {
-		return nil
-	}
-	r.step("Provisioning QEMU VM")
-	bk := backend.NewQEMUBackend(r.cfg.qemu, r.cfg.root)
-	if err := bk.Create(context.Background()); err != nil {
-		return fmt.Errorf("QEMU VM provisioning failed: %w", err)
-	}
-	if err := bk.SyncProject(context.Background()); err != nil {
-		return fmt.Errorf("QEMU project sync failed: %w", err)
-	}
-	return nil
-}
-
-var remotePreflightScript = `command -v systemctl >/dev/null
-command -v podman >/dev/null
-command -v curl >/dev/null
-test "$(uname -s)" = Linux
-systemctl --user show-environment >/dev/null
-if test -e "$1" && test ! -f "$1/.bloud-e2e-runtime"; then
-  echo "refusing to use unowned runtime directory: $1" >&2
-  exit 1
-fi
-mkdir -p "$1"
-touch "$1/.bloud-e2e-runtime"
-systemctl --user enable --now podman.socket
-podman info >/dev/null`
-
-var remoteInstallHostAgentScript = `unit="$1"
-systemctl --user daemon-reload
-systemctl --user enable "$unit"
-systemctl --user restart "$unit"`
-
-var remoteWaitForHostAgentScript = `deadline=$((SECONDS + 300))
-until curl -fsS http://localhost:3000/api/health >/dev/null; do
-  if ((SECONDS >= deadline)); then exit 1; fi
-  sleep 2
-done`
-
-var remoteResetJellyfinScript = `installed="$(curl -sS http://localhost:3000/api/apps/installed || printf '[]')"
-if printf '%s' "$installed" | grep -q '"name":"jellyfin"'; then
-  curl -sS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null || true
-  deadline=$((SECONDS + 120))
-  until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'; do
-    if ((SECONDS >= deadline)); then exit 1; fi
-    sleep 2
-  done
-fi
-podman rm -f apps-jellyfin >/dev/null 2>&1 || true
-installed="$(curl -sS http://localhost:3000/api/apps/installed || printf '[]')"
-! printf '%s' "$installed" | grep -q '"name":"jellyfin"'`
-
-var remoteInstallJellyfinScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:3000/api/apps/jellyfin/install)"
-printf 'install response: %%s\n' "$http_code"
-test "$http_code" -ge 200 && test "$http_code" -lt 300
-deadline=$((SECONDS + 300))
-until curl -sS http://localhost:3000/api/apps/installed | grep -q '"status":"running".*"name":"jellyfin"\|"name":"jellyfin".*"status":"running"'; do
-  if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin to reach running"; exit 1; fi
-  sleep 3
-done
-printf 'jellyfin is running\n'`
-
-var remoteEnsureUserScript = `payload="$1"
-status="$(curl -fsS http://localhost:3000/api/setup/status)"
-if printf '%s' "$status" | grep -q '"setupRequired":true'; then
-  deadline=$((SECONDS + 180))
-  until curl -fsS http://localhost:3000/api/setup/status | grep -q '"authentikReady":true'; do
-    if ((SECONDS >= deadline)); then exit 1; fi
-    sleep 3
-  done
-  curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" http://localhost:3000/api/setup/create-user | grep -q '"success":true'
-fi`
-
-var remoteAssertInstalledScript = `
-set -e
-managed=$(podman inspect -f '{{ index .Config.Labels "io.bloud.managed" }}' apps-jellyfin)
-test "$managed" = true || { echo "FAIL: io.bloud.managed=$managed" >&2; exit 1; }
-app=$(podman inspect -f '{{ index .Config.Labels "io.bloud.app" }}' apps-jellyfin)
-test "$app" = jellyfin || { echo "FAIL: io.bloud.app=$app" >&2; exit 1; }
-running=$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)
-test "$running" = true || { echo "FAIL: container running=$running" >&2; exit 1; }
-# Retry the Jellyfin health check: the API oscillates between 200 and 503
-# "Server is loading" during first-run init, even after PostStart completes.
-deadline=$((SECONDS + 60))
-until curl -fsS http://localhost:8096/health >/dev/null; do
-  if ((SECONDS >= deadline)); then
-    echo "FAIL: Jellyfin health check timed out after 60s" >&2
-    curl -sS http://localhost:8096/health >&2 || true
-    exit 1
-  fi
-  sleep 2
-done
-curl -fsS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"' || { echo "FAIL: jellyfin not in installed apps" >&2; exit 1; }
-grep -q 'jellyfin' "$1/apps-routes.yml" || { echo "FAIL: jellyfin route not in $1/apps-routes.yml" >&2; exit 1; }
-echo "OK: installed Jellyfin host state verified"
-`
-
-var remoteRestartScript = `podman restart apps-jellyfin
-deadline=$((SECONDS + 300))
-until curl -fsS http://localhost:8096/health >/dev/null; do
-  if ((SECONDS >= deadline)); then exit 1; fi
-  sleep 2
-done
-systemctl --user restart "$1"
-deadline=$((SECONDS + 300))
-until curl -fsS http://localhost:3000/api/health >/dev/null; do
-  if ((SECONDS >= deadline)); then exit 1; fi
-  sleep 2
-done
-test "$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)" = true
-curl -fsS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'`
-
-var remoteUninstallScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
-printf 'uninstall response: %%s\n' "$http_code"
-test "$http_code" -ge 200 && test "$http_code" -lt 300
-deadline=$((SECONDS + 300))
-until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'; do
-  if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin removal"; exit 1; fi
-  sleep 2
-done
-! podman container exists apps-jellyfin
-test ! -e "$1/data/jellyfin"
-! grep -q 'jellyfin' "$2/apps-routes.yml"`

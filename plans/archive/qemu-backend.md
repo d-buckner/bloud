@@ -1,3 +1,5 @@
+> Status: landed
+
 # Plan: QEMU Backend (Parallel, Selectable)
 
 **Status:** Implementing — phases 1-3 (transport, QEMUBackend, CLI wiring) are done on

@@ -1,5 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Daniel Buckner
+#
+# Thin CI shell. Every check is defined once, in validation.yaml, and executed
+# by ./bloud validate. Do NOT add test, lint, or build steps here -- add a
+# command to validation.yaml instead, so local runs and CI stay identical.
+#
+# The fast tier covers: host-agent tests, orchestrator race tests, apps tests,
+# cli tests, golangci-lint (cyclop), web unit tests, svelte-check, ESLint,
+# the static production build, and the license-header check.
 name: CI
 
 on:
@@ -10,31 +18,7 @@ on:
   pull_request:
 
 jobs:
-  test-go:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-          cache-dependency-path: services/host-agent/go.sum
-
-      - name: Build host-agent
-        working-directory: services/host-agent
-        run: go build ./...
-
-      - name: Run unit tests
-        working-directory: services/host-agent
-        run: go test ./...
-
-      - name: Build CLI
-        working-directory: cli
-        run: go build ./...
-
-  lint-go:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,14 +33,6 @@ jobs:
             apps/go.sum
             cli/go.sum
 
-      - name: Lint Go (golangci-lint / cyclop)
-        run: npm run lint:go
-  lint-web:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -66,26 +42,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint web (ESLint / complexity)
-        run: npm run lint:web
+      - name: Build the bloud CLI
+        run: npm run cli:build
 
-  test-frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build frontend
-        run: npm run build --workspace=services/host-agent/web
-
-      - name: Run frontend tests
-        run: npm test --workspace=services/host-agent/web --if-present
+      - name: Validate (fast tier)
+        run: ./bloud validate --tier fast

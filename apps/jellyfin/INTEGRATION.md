@@ -76,9 +76,7 @@ Admin Filter: (memberOf=cn=jellyfin-admins,ou=groups,dc=ldap,dc=goauthentik,dc=i
 | File | Purpose |
 |------|---------|
 | `apps/jellyfin/configurator.go` | Wizard completion + LDAP configuration |
-| `apps/jellyfin/module.nix` | LDAP plugin install + enable LDAP outpost |
 | `apps/jellyfin/metadata.yaml` | SSO strategy: ldap |
-| `apps/authentik/module.nix` | LDAP outpost container with token query |
 | `services/host-agent/internal/sso/blueprint.go` | LDAP blueprint templates |
 
 ## Key API Calls

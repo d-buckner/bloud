@@ -8,7 +8,7 @@ fix the doc in the same change.
 
 Bloud is an open-source home server: you add an app and the reverse proxy, SSL, SSO,
 and databases get set up for you. Apps declare what they **provide** and **consume**
-in a portable `metadata.yaml`; a small Go service (**host-agent**) runs an
+in a declarative `metadata.yaml`; a small Go service (**host-agent**) runs an
 intent-driven orchestrator that continuously makes reality match intent, on install
 and after every crash/reboot. Status: alpha. License: AGPL-3.0.
 
@@ -28,7 +28,7 @@ relationships working.
 | `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
 | `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference + app registry. |
 | `specs/` | `spec.md` (authoritative release plan), `reconciler-spec.md`, `review.md`. |
-| `plans/` | Design plans (qemu-backend, tailnet-outpost, control-plane-auth, persistent-ports-fqdn-remote, layout-refactor). |
+| `plans/` | Design plans. Every `plans/*.md` starts with `> Status: draft \| accepted \| landed \| dropped`; landed plans move to `plans/archive/`. |
 | `docs/` | architecture/, guides/, specifications/, features/, operations/tech-debt.md. |
 | root `package.json` | npm workspaces + turbo; husky pre-commit runs `npm run test:precommit`. |
 
@@ -155,7 +155,7 @@ Run individual suites directly (from the repo root unless noted):
 
 ```bash
 cd services/host-agent && go test ./...          # backend unit tests
-cd services/host-agent && go test -race ./internal/orchestrator/...
+cd services/host-agent && go test -race ./internal/engine/orchestrator/...
 cd apps && go test ./...                          # configurator tests
 cd cli && go test ./...
 npm run lint:go                                 # golangci-lint v2 / cyclop (all three Go modules; pinned v2.13.2 via go run)
@@ -231,7 +231,7 @@ combined with instance/SSH-target env vars). Instance overrides:
 ## Architecture invariants (do not break)
 
 1. **Orchestrator is the single writer.** All mutations flow through the typed
-   intent queue (`internal/orchestrator/intent.go`); the orchestrator is the only
+   intent queue (`internal/engine/orchestrator/intent.go`); the orchestrator is the only
    author of lifecycle status and the only executor of side effects. API handlers
    submit intents (202 accepted) and return current state — they must not write
    stores directly or advance app status.
@@ -299,6 +299,18 @@ combined with instance/SSH-target env vars). Instance overrides:
 12. **Managed containers are labeled** `io.bloud.managed=true` and
     `io.bloud.app=<name>`; container names follow `apps-<name>` /
     `apps-<name>-<component>`. e2e assertions rely on these labels.
+13. **A new `services/<name>` requires shipping to a machine where host-agent
+    does not run.** Deploy location — not code concern — is what earns a
+    directory under `services/`. SSO, orchestrator, API, and store run on the
+    same box as host-agent → they stay packages under `internal/` or
+    subcommands of the host-agent binary. A remote tailnet outpost or control
+    plane (a different machine) earns its own `services/<name>/` module when
+    it gets built.
+14. **Wire contracts stay stdlib-only.** Token formats, gateway protocol
+    constants, and share-envelope types must not import
+    `store`/`config`/host-agent-internal machinery, so a future extraction to
+    a shared `pkg/` or module is a move, not a surgery.
+    `internal/sharing/token.go` (pure stdlib) is the exemplar.
 
 ## host-agent HTTP API (port 3000)
 

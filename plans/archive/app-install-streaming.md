@@ -1,3 +1,5 @@
+> Status: landed
+
 # Plan: App Install & Dashboard — Live State Streaming
 
 ## Problem

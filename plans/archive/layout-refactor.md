@@ -1,3 +1,5 @@
+> Status: landed
+
 # Plan: Layout Refactor — Server-Owned Positions + Polling
 
 ## Problem

@@ -10,13 +10,13 @@
 import { get } from 'svelte/store';
 import { apps, loading } from '$lib/stores/apps';
 import { gridElements } from '$lib/stores/grid';
-import { startAppEvents, stopAppEvents } from '$lib/api/appEvents';
+import { startAppEvents, stopAppEvents } from './appEvents';
 import {
 	installApp as apiInstall,
 	uninstallApp as apiUninstall,
 	renameApp as apiRename,
 	type RenameResult,
-} from '$lib/clients/appClient';
+} from './appClient';
 import { type App, type IntentResponse, AppStatus } from '$lib/types';
 
 export type { RenameResult };

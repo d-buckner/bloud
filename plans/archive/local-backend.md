@@ -1,3 +1,5 @@
+> Status: landed
+
 # Plan: Fix the Native (No-VM) Backend + Apt-Based Setup Tooling
 
 **Status:** Implemented.

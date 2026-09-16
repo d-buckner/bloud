@@ -1,3 +1,5 @@
+> Status: draft
+
 # Plan: Standalone Proxy Outpost for Tailnet Auth
 
 ## Problem

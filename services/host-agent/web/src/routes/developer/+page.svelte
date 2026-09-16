@@ -3,14 +3,14 @@
 // Copyright (c) 2026 Daniel Buckner
 	import { onMount } from 'svelte';
 	import { SvelteFlow, type Node, type Edge, type NodeTypes } from '@xyflow/svelte';
-	import { layoutGraph } from '$lib/services/graphLayout';
+	import { layoutGraph } from '$lib/timeline/graphLayout';
 	import {
 		fetchDeveloperGraph,
 		type DeveloperGraph,
 		type GraphNode,
 		type OrchestratorStatus
 	} from '$lib/clients/developerClient';
-	import { parseTimeline } from '$lib/services/convergeTimeline';
+	import { parseTimeline } from '$lib/timeline/convergeTimeline';
 	import AppNode from './AppNode.svelte';
 	import UserNode from './UserNode.svelte';
 	import FitView from '$lib/components/FitView.svelte';

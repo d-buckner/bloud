@@ -9,6 +9,25 @@
 
 ## 0. How to Read This
 
+> **This file is a dated review snapshot, not the debt ledger.**
+>
+> The single living ledger for backend debt and its repayment plan is
+> [`docs/operations/tech-debt.md`](../docs/operations/tech-debt.md). Do not
+> add new findings here — add them there. Findings below are annotated with
+> their status as of the 2026-09-15 layout-cleanup pass so this snapshot can
+> be read without mistaking resolved items for live ones:
+>
+> | Finding | Status |
+> |---|---|
+> | C1 install path inert | **RESOLVED** — the router wires the catalog graph |
+> | C2 graph durability | **OPEN** — `router.go` still builds `graph.NewMapRepository()` |
+> | C3 share/guest writes bypass the queue | **BY DESIGN** — deliberate, documented boundary (pure store writes, synchronous invite tokens) |
+> | C4 hardcoded fallback secrets | **RESOLVED 2026-09-14** — `config.Load` is fallible: env > `secrets.json` > error |
+> | H1 loopback grants admin | **OPEN** — `isLocalRequest` bypass still live at `router.go:544` |
+> | H2–H4, M1–M6 | **OPEN** — tracked in the ledger |
+
+
+
 This is a **design review**, not a bug audit. It evaluates the architecture against the
 problem Bloud is trying to solve, the way a deep architecture review would defend or attack
 the design. Where the architecture and the implementation
@@ -151,7 +170,7 @@ solution to the "Authentik isn't ready at construction" problem.
 ### C1 — The install path is inert in production (root cause of "installs don't start")
 
 **Where:** `services/host-agent/internal/api/router.go` (line 371) sets `CatalogGraph: nil`;
-`internal/orchestrator/pipeline.go` `applyInstallIntent` returns before recording.
+`internal/engine/orchestrator/pipeline.go` `applyInstallIntent` returns before recording.
 
 **Mechanism:**
 ```
@@ -191,7 +210,7 @@ highest-impact one-line fix in the codebase.
 ### C2 — Lifecycle-graph durability is dead code; ERROR-terminal is process-local
 
 **Where:** `router.go` builds `graph.New(graph.NewMapRepository())`; `schema.sql` has
-`graph_nodes`/`graph_edges`; `internal/graph/sqlite_repository.go` implements the durable
+`graph_nodes`/`graph_edges`; `internal/engine/graph/sqlite_repository.go` implements the durable
 backing but nothing uses it.
 
 **Mechanism:** The graph is rebuilt in-memory on every boot from the stores, so

@@ -1,3 +1,5 @@
+> Status: draft
+
 # Design: App Client — structured HTTP, assets, and retries for configurators
 
 **Issue:** [#70 — Add app client into framework](https://github.com/d-buckner/bloud/issues/70)

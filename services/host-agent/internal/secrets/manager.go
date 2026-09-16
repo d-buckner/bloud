@@ -412,7 +412,7 @@ func (m *Manager) DeleteAppSecrets(appName string) error {
 	return m.saveLocked()
 }
 
-// GetAllSecrets returns a copy of all secrets (for NixOS generation).
+// GetAllSecrets returns a copy of all secrets.
 func (m *Manager) GetAllSecrets() *Secrets {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
