@@ -27,9 +27,7 @@ relationships working.
 | `e2e/` | Playwright (TS) browser tests of the user-visible lifecycle. |
 | `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
 | `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference + app registry. |
-| `specs/` | `spec.md` (authoritative release plan), `reconciler-spec.md`, `review.md`. |
-| `plans/` | Design plans. Every `plans/*.md` starts with `> Status: draft \| accepted \| landed \| dropped`; landed plans move to `plans/archive/`. |
-| `docs/` | architecture/, guides/, specifications/, features/, operations/tech-debt.md. |
+| `docs/` | All documentation. Index and "read for..." table: `docs/README.md`. Contains `specs/` (release plan, reconciler spec, app spec, dated review), `architecture/`, `guides/`, `features/`, `operations/` (tech-debt ledger), `plans/`. |
 | root `package.json` | npm workspaces + turbo; husky pre-commit runs `npm run test:precommit`. |
 
 Go modules are linked by `replace` directives (host-agent ↔ apps). CI: GitHub Actions
@@ -218,9 +216,9 @@ Validation:  validate [flags]     Tiered validation (default --tier changed)
 Other:       depgraph             Mermaid dependency graph from app metadata
 ```
 
-The CLI resolves the project root by walking up from cwd looking for
-`cli/main.go`, `specs/spec.md`, etc., and loads a gitignored root `.env`
-(existing env vars win). Backend selection: `./bloud setup` stores the choice
+The CLI resolves the project root from cwd using the `rootMarkers` list in
+`cli/dev.go` (stable root-level files such as `validation.yaml` and
+`AGENTS.md`), and loads a gitignored root `.env` (existing env vars win). Backend selection: `./bloud setup` stores the choice
 in gitignored `.bloud/preferences.yaml` (macOS: `lima` automatically; Linux:
 `qemu` | `native`, prompted if unset); `BLOUD_BACKEND=lima|qemu|native`
 overrides the stored preference (CI relies on the override; `native` cannot be
@@ -385,12 +383,13 @@ postgres, compose service naming, no graph ordering).
 cleanup assertions). The Playwright suite (`e2e/tests/*.spec.ts`) remains the
 mandatory regression gate for changes to install/reconcile behavior.
 
-## Known debt (verified 2026-09-14)
+## Known debt (re-verified 2026-09-16)
 
-Full backend-debt ledger with the repayment plan:
+The ledger is the source of truth; the notes below are a pointer, not a
+mirror. Full backend-debt ledger with the repayment plan:
 `docs/operations/tech-debt.md` (lifecycle state ownership, in-memory lifecycle
 graph, route-generation side effects, ad hoc migrations). Review findings:
-`specs/review.md` (e.g. §C2 in-memory `MapRepository`; §C1's inert install path
+`docs/specs/review.md` (e.g. §C2 in-memory `MapRepository`; §C1's inert install path
 is fixed: the router wires the catalog graph). Highlights:
 
 - Sharing/guest API handlers write stores directly: a deliberate, documented
@@ -409,15 +408,9 @@ is fixed: the router wires the catalog graph). Highlights:
 - The CLI loads a gitignored root `.env` before dispatching commands (existing
   env vars win).
 
-## Docs map (read for…)
+## Docs map
 
-| Question | Read |
-|---|---|
-| What are we building / release plan | `specs/spec.md` |
-| Orchestrator/reconciler design | `specs/reconciler-spec.md` |
-| Component overview + data flows | `docs/architecture/overview.md` |
-| How to add an app | `docs/guides/contributing-apps.md` |
-| Multi-container app model | `docs/specifications/app-spec.md` |
-| Backend debt + repayment plan | `docs/operations/tech-debt.md` |
-| Sharing/federation (in progress) | `docs/features/sharing.md` |
-| In-flight designs | `plans/*.md` |
+Documentation lives under `docs/`. The index, including the "read for..."
+question table, is `docs/README.md`. This file deliberately does not mirror
+individual doc paths: when a doc moves, update `docs/README.md` and leave
+AGENTS.md alone.
