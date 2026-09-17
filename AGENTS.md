@@ -27,7 +27,7 @@ relationships working.
 | `e2e/` | Playwright (TS) browser tests of the user-visible lifecycle. |
 | `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
 | `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference + app registry. |
-| `docs/` | All documentation. Index and "read for..." table: `docs/README.md`. Contains `specs/` (release plan, reconciler spec, app spec, dated review), `architecture/`, `guides/`, `features/`, `operations/` (tech-debt ledger), `plans/`. |
+| `docs/` | All documentation. Index and "read for..." table: [`docs/README.md`](docs/README.md). Contains `specs/` (release plan, reconciler spec, app spec, dated review), `architecture/`, `guides/`, `features/`, `operations/` (tech-debt ledger), `plans/`. |
 | root `package.json` | npm workspaces + turbo; husky pre-commit runs `npm run test:precommit`. |
 
 Go modules are linked by `replace` directives (host-agent ↔ apps). CI: GitHub Actions
@@ -387,9 +387,9 @@ mandatory regression gate for changes to install/reconcile behavior.
 
 The ledger is the source of truth; the notes below are a pointer, not a
 mirror. Full backend-debt ledger with the repayment plan:
-`docs/operations/tech-debt.md` (lifecycle state ownership, in-memory lifecycle
+[`docs/operations/tech-debt.md`](docs/operations/tech-debt.md) (lifecycle state ownership, in-memory lifecycle
 graph, route-generation side effects, ad hoc migrations). Review findings:
-`docs/specs/review.md` (e.g. §C2 in-memory `MapRepository`; §C1's inert install path
+[`docs/specs/review.md`](docs/specs/review.md) (e.g. §C2 in-memory `MapRepository`; §C1's inert install path
 is fixed: the router wires the catalog graph). Highlights:
 
 - Sharing/guest API handlers write stores directly: a deliberate, documented
@@ -408,9 +408,20 @@ is fixed: the router wires the catalog graph). Highlights:
 - The CLI loads a gitignored root `.env` before dispatching commands (existing
   env vars win).
 
-## Docs map
+## Docs map (read for…)
 
-Documentation lives under `docs/`. The index, including the "read for..."
-question table, is `docs/README.md`. This file deliberately does not mirror
-individual doc paths: when a doc moves, update `docs/README.md` and leave
-AGENTS.md alone.
+`docs/` is the documentation tree; [`docs/README.md`](docs/README.md) is the
+canonical index. The routes below are mirrored here so the guide links straight
+to the right doc — when a doc moves, update it in both places.
+
+| Question | Read |
+|---|---|
+| What are we building / release plan | [specs/spec.md](docs/specs/spec.md) |
+| Orchestrator/reconciler design | [specs/reconciler-spec.md](docs/specs/reconciler-spec.md) |
+| Component overview + data flows | [architecture/overview.md](docs/architecture/overview.md) |
+| How to add an app | [guides/contributing-apps.md](docs/guides/contributing-apps.md) |
+| Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
+| Backend debt + repayment plan | [operations/tech-debt.md](docs/operations/tech-debt.md) |
+| Sharing/federation (in progress) | [features/sharing.md](docs/features/sharing.md) |
+| Dated review findings | [specs/review.md](docs/specs/review.md) |
+| In-flight designs | [plans/](docs/plans/) |
