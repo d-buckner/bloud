@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
@@ -248,7 +249,7 @@ func NewRouter(
 	// outlive a single request. Non-streaming routes opt into the timeout
 	// explicitly via With(requestTimeout).
 	requestTimeout := middleware.Timeout(60 * time.Second)
-	authMiddleware := authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets)
+	authMiddleware := authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets, cfg.APIToken)
 
 	// Public routes
 	pub := r.With(requestTimeout)
@@ -540,13 +541,26 @@ func rebuildStreamHandler() http.HandlerFunc {
 
 // ---- Middleware ----
 
-func authMiddlewareFn(sessionStore store.SessionStoreInterface, logger *slog.Logger, trustedNets []string) func(http.Handler) http.Handler {
+func authMiddlewareFn(sessionStore store.SessionStoreInterface, logger *slog.Logger, trustedNets []string, apiToken string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isLocalRequest(r, trustedNets) {
-				user := &store.User{Username: "_cli", Role: store.RoleAdmin}
-				ctx := context.WithValue(r.Context(), userContextKey, user)
-				next.ServeHTTP(w, r.WithContext(ctx))
+			// The CLI / local automation authenticates with a bearer token
+			// instead of a session. The token is the credential; the
+			// loopback/trusted-net origin is a *scope* on it — a stolen
+			// token presented from off-network is rejected, so a leaked
+			// secrets.json is not remotely exploitable. A wrong bearer is
+			// rejected outright (a misconfig, not a browser); the ABSENCE
+			// of a bearer simply means "not the CLI path" and falls through
+			// to normal session-cookie auth, so local browsers still work.
+			if bearer, present := bearerToken(r); present {
+				if apiToken != "" && isLocalRequest(r, trustedNets) &&
+					subtleTokenEqual(bearer, apiToken) {
+					user := &store.User{Username: "_cli", Role: store.RoleAdmin}
+					ctx := context.WithValue(r.Context(), userContextKey, user)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+				respondError(w, http.StatusUnauthorized, "Invalid API token")
 				return
 			}
 
@@ -610,4 +624,31 @@ func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 
 func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, map[string]string{"error": message})
+}
+
+// bearerToken extracts a bearer credential from the Authorization header.
+// Returns present=false when the header is absent, not a Bearer scheme, or
+// carries an empty credential — so the caller can distinguish "not using a
+// token" (fall through to session auth) from "presented a token".
+func bearerToken(r *http.Request) (string, bool) {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return "", false
+	}
+	token := strings.TrimSpace(h[len(prefix):])
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+// subtleTokenEqual compares a presented bearer against the expected token in
+// constant time (with a length guard so the comparison length never leaks
+// via subtle.ConstantTimeCompare's unequal-length short-circuit).
+func subtleTokenEqual(presented, expected string) bool {
+	if len(presented) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) == 1
 }

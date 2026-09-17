@@ -386,7 +386,17 @@ func cmdInstall(args []string) int {
 		errorf("Usage: ./bloud install <app-name>")
 		return 1
 	}
-	return installApp(3000, args[0])
+	bk, _, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
+	token, err := runtimeAPIToken(bk.Host())
+	if err != nil {
+		errorf("Failed to read API token: %v", err)
+		return 1
+	}
+	return installApp(3000, args[0], token)
 }
 
 func cmdUninstall(args []string) int {
@@ -394,14 +404,24 @@ func cmdUninstall(args []string) int {
 		errorf("Usage: ./bloud uninstall <app-name>")
 		return 1
 	}
-	return uninstallApp(3000, args[0])
+	bk, _, err := devBackend()
+	if err != nil {
+		errorf("Could not set up backend: %v", err)
+		return 1
+	}
+	token, err := runtimeAPIToken(bk.Host())
+	if err != nil {
+		errorf("Failed to read API token: %v", err)
+		return 1
+	}
+	return uninstallApp(3000, args[0], token)
 }
 
 // installApp calls the host-agent API to install an app
-func installApp(apiPort int, appName string) int {
+func installApp(apiPort int, appName, apiToken string) int {
 	log(fmt.Sprintf("Installing %s...", appName))
 
-	curlCmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/install`, apiPort, appName)
+	curlCmd := fmt.Sprintf(`curl -s -X POST -H 'Authorization: Bearer %s' -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/install`, apiToken, apiPort, appName)
 	output, err := LocalExec(curlCmd)
 	if err != nil {
 		errorf("Failed to call install API: %v", err)
@@ -597,10 +617,10 @@ func cmdDev() int {
 }
 
 // uninstallApp calls the host-agent API to uninstall an app
-func uninstallApp(apiPort int, appName string) int {
+func uninstallApp(apiPort int, appName, apiToken string) int {
 	log(fmt.Sprintf("Uninstalling %s...", appName))
 
-	curlCmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/uninstall`, apiPort, appName)
+	curlCmd := fmt.Sprintf(`curl -s -X POST -H 'Authorization: Bearer %s' -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/uninstall`, apiToken, apiPort, appName)
 	output, err := LocalExec(curlCmd)
 	if err != nil {
 		errorf("Failed to call uninstall API: %v", err)

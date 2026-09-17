@@ -129,6 +129,8 @@ until curl -fsS http://localhost:3000/api/health >/dev/null; do
 done`
 
 var remoteEnsureUserScript = `payload="$1"
+RT="$2"
+TOK="$("$RT/host-agent/host-agent" token "$RT/data")"
 status="$(curl -fsS http://localhost:3000/api/setup/status)"
 if printf '%s' "$status" | grep -q '"setupRequired":true'; then
   deadline=$((SECONDS + 180))
@@ -136,5 +138,5 @@ if printf '%s' "$status" | grep -q '"setupRequired":true'; then
     if ((SECONDS >= deadline)); then exit 1; fi
     sleep 3
   done
-  curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" http://localhost:3000/api/setup/create-user | grep -q '"success":true'
+  curl -fsS -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -d "$payload" http://localhost:3000/api/setup/create-user | grep -q '"success":true'
 fi`

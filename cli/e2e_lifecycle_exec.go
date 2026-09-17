@@ -115,6 +115,34 @@ func (r *lifecycle) remoteOutput(script string, args ...string) (string, error) 
 	return string(output), nil
 }
 
+// apiToken reads the running deployment's API bearer token by invoking the
+// deployed host-agent binary inside the guest. The secret never crosses the
+// host boundary: only the runtime dir is passed, and `host-agent token`
+// prints the token from the guest's own secrets.json. The Playwright helper
+// (running on the host) uses this to authenticate against the
+// port-forwarded API now that the loopback auto-admin bypass is gone.
+func (r *lifecycle) apiToken() (string, error) {
+	out, err := r.remoteOutput(`printf '%s' "$("$1/host-agent/host-agent" token "$1/data")"`, r.cfg.remoteDir)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(out)
+	if token == "" {
+		return "", fmt.Errorf("runtime returned an empty API token")
+	}
+	return token, nil
+}
+
+// playwright runs the browser suite with the bearer token exported so
+// e2e/lib/api.ts can authenticate every host-agent API call.
+func (r *lifecycle) playwright() error {
+	token, err := r.apiToken()
+	if err != nil {
+		return fmt.Errorf("reading API token for Playwright: %w", err)
+	}
+	return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password, token)
+}
+
 func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 	commandArgs := []string{}
 	if r.cfg.native {

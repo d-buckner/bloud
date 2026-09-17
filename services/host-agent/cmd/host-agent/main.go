@@ -34,6 +34,8 @@ func main() {
 			os.Exit(runConfigure(os.Args[2:]))
 		case "init-secrets":
 			os.Exit(runInitSecrets(os.Args[2:]))
+		case "token":
+			os.Exit(runToken(os.Args[2:]))
 		case "front-proxy":
 			os.Exit(runFrontProxy())
 		}
@@ -159,6 +161,7 @@ func runServer() {
 		SSOAuthentikURL:       cfg.SSOAuthentikURL,
 		SSOIssuerURL:          cfg.SSOIssuerURL,
 		AuthentikToken:        cfg.AuthentikToken,
+		APIToken:              cfg.Secrets.GetAPIToken(),
 		AuthentikPort:         cfg.AuthentikPort,
 		TSAuthKey:             cfg.TSAuthKey,
 		HostLabel:             cfg.HostLabel,

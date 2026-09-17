@@ -42,6 +42,17 @@ func cmdE2E(args []string) int {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	// The loopback auto-admin bypass is gone: e2e/lib/api.ts needs the
+	// bearer token against the running (dev) runtime's port-forwarded API.
+	env := os.Environ()
+	if bk, _, derr := devBackend(); derr == nil {
+		if tok, terr := runtimeAPIToken(bk.Host()); terr == nil {
+			env = append(env, "BLOUD_API_TOKEN="+tok)
+		} else {
+			errorf("could not read API token for e2e (protected calls will fail): %v", terr)
+		}
+	}
+	cmd.Env = env
 
 	if err := cmd.Run(); err != nil {
 		errorf("End-to-end tests failed: %v", err)
@@ -50,7 +61,7 @@ func cmdE2E(args []string) int {
 	return 0
 }
 
-func runPlaywright(root, username, password string) error {
+func runPlaywright(root, username, password, apiToken string) error {
 	args := []string{"playwright", "test"}
 	if filter := os.Getenv("BLOUD_E2E_PLAYWRIGHT_FILTER"); filter != "" {
 		args = append(args, "--grep", filter)
@@ -68,6 +79,9 @@ func runPlaywright(root, username, password string) error {
 	env = append(env,
 		"BLOUD_E2E_USERNAME="+username,
 		"BLOUD_E2E_PASSWORD="+password,
+		// The loopback auto-admin bypass is gone: e2e/lib/api.ts attaches
+		// this bearer to every host-agent API call.
+		"BLOUD_API_TOKEN="+apiToken,
 	)
 	cmd.Env = env
 	if err := cmd.Run(); err != nil {

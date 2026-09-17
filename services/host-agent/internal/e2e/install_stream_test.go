@@ -67,7 +67,7 @@ func readSSEFrames(body io.Reader, frames chan<- sseFrame) {
 // it drives is the fresh one.
 func TestInstallLiveStateStream(t *testing.T) {
 	// Open the SSE stream before submitting so no event is missed.
-	sseResp, err := http.Get(hostAgentURL + "/api/apps/events")
+	sseResp, err := apiRequest("GET", hostAgentURL+"/api/apps/events", nil)
 	if err != nil {
 		t.Fatalf("GET /api/apps/events: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestInstallLiveStateStream(t *testing.T) {
 	go readSSEFrames(sseResp.Body, frames)
 
 	// POST install and inspect the 202 body.
-	installResp, err := http.Post(hostAgentURL+"/api/apps/jellyfin/install", "application/json", strings.NewReader(`{}`))
+	installResp, err := apiRequest("POST", hostAgentURL+"/api/apps/jellyfin/install", strings.NewReader(`{}`))
 	if err != nil {
 		t.Fatalf("POST install: %v", err)
 	}
