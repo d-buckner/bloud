@@ -262,42 +262,42 @@ type MockAuthentikClient struct {
 	mock.Mock
 }
 
-func (m *MockAuthentikClient) DeleteAppSSO(appName, displayName, ssoStrategy string) error {
+func (m *MockAuthentikClient) DeleteAppSSO(ctx context.Context, appName, displayName, ssoStrategy string) error {
 	args := m.Called(appName, displayName, ssoStrategy)
 	return args.Error(0)
 }
 
-func (m *MockAuthentikClient) AddProviderToEmbeddedOutpost(providerName string) error {
+func (m *MockAuthentikClient) AddProviderToEmbeddedOutpost(ctx context.Context, providerName string) error {
 	args := m.Called(providerName)
 	return args.Error(0)
 }
 
-func (m *MockAuthentikClient) IsAvailable() bool {
+func (m *MockAuthentikClient) IsAvailable(ctx context.Context) bool {
 	args := m.Called()
 	return args.Bool(0)
 }
 
-func (m *MockAuthentikClient) DeleteApplication(slug string) error {
+func (m *MockAuthentikClient) DeleteApplication(ctx context.Context, slug string) error {
 	args := m.Called(slug)
 	return args.Error(0)
 }
 
-func (m *MockAuthentikClient) DeleteOAuth2Provider(providerName string) error {
+func (m *MockAuthentikClient) DeleteOAuth2Provider(ctx context.Context, providerName string) error {
 	args := m.Called(providerName)
 	return args.Error(0)
 }
 
-func (m *MockAuthentikClient) DeleteProxyProvider(providerName string) error {
+func (m *MockAuthentikClient) DeleteProxyProvider(ctx context.Context, providerName string) error {
 	args := m.Called(providerName)
 	return args.Error(0)
 }
 
-func (m *MockAuthentikClient) EnsureLDAPInfrastructure(ldapBindPassword string) error {
+func (m *MockAuthentikClient) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword string) error {
 	args := m.Called(ldapBindPassword)
 	return args.Error(0)
 }
 
-func (m *MockAuthentikClient) GetLDAPOutpostToken() (string, error) {
+func (m *MockAuthentikClient) GetLDAPOutpostToken(ctx context.Context) (string, error) {
 	args := m.Called()
 	return args.String(0), args.Error(1)
 }
@@ -307,12 +307,12 @@ type MockSSOProvisioner struct {
 	mock.Mock
 }
 
-func (m *MockSSOProvisioner) EnsureForwardAuth(appName, displayName, externalURL string) error {
+func (m *MockSSOProvisioner) EnsureForwardAuth(ctx context.Context, appName, displayName, externalURL string) error {
 	args := m.Called(appName, displayName, externalURL)
 	return args.Error(0)
 }
 
-func (m *MockSSOProvisioner) EnsureNativeOIDC(appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
+func (m *MockSSOProvisioner) EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
 	args := m.Called(appName, displayName, clientID, clientSecret, redirectURIs, launchURL)
 	return args.Error(0)
 }

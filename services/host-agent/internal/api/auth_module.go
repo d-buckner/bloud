@@ -189,11 +189,11 @@ type sessionStoreInterface interface {
 // AuthentikClientInterface abstracts the Authentik OIDC client so we can
 // mock it in tests.
 type AuthentikClientInterface interface {
-	IsAvailable() bool
-	AddRedirectURI(providerID int, uri string) error
-	EnsureBloudOAuthApp(baseURLs []string, clientSecret string) (*authentik.OIDCConfig, error)
-	ExchangeCode(code, redirectURI, clientID, clientSecret string) (*authentik.TokenResponse, error)
-	GetUserInfo(accessToken string) (*authentik.UserInfo, error)
+	IsAvailable(ctx context.Context) bool
+	AddRedirectURI(ctx context.Context, providerID int, uri string) error
+	EnsureBloudOAuthApp(ctx context.Context, baseURLs []string, clientSecret string) (*authentik.OIDCConfig, error)
+	ExchangeCode(ctx context.Context, code, redirectURI, clientID, clientSecret string) (*authentik.TokenResponse, error)
+	GetUserInfo(ctx context.Context, accessToken string) (*authentik.UserInfo, error)
 }
 
 // AuthModule encapsulates all authentication operations (login, callback,
@@ -233,25 +233,25 @@ func NewFakeAuthentikClient() *FakeAuthentikClient {
 	}
 }
 
-func (f *FakeAuthentikClient) IsAvailable() bool { return f.available }
+func (f *FakeAuthentikClient) IsAvailable(ctx context.Context) bool { return f.available }
 
-func (f *FakeAuthentikClient) AddRedirectURI(providerID int, uri string) error {
+func (f *FakeAuthentikClient) AddRedirectURI(ctx context.Context, providerID int, uri string) error {
 	f.redirectURIs[providerID] = append(f.redirectURIs[providerID], uri)
 	return nil
 }
 
-func (f *FakeAuthentikClient) EnsureBloudOAuthApp(baseURLs []string, clientSecret string) (*authentik.OIDCConfig, error) {
+func (f *FakeAuthentikClient) EnsureBloudOAuthApp(ctx context.Context, baseURLs []string, clientSecret string) (*authentik.OIDCConfig, error) {
 	f.oauthAppBaseURLs = append(f.oauthAppBaseURLs, baseURLs)
 	f.oauthAppClientSecret = clientSecret
 	return f.oidcConfig, nil
 }
 
-func (f *FakeAuthentikClient) ExchangeCode(code, redirectURI, clientID, clientSecret string) (*authentik.TokenResponse, error) {
+func (f *FakeAuthentikClient) ExchangeCode(ctx context.Context, code, redirectURI, clientID, clientSecret string) (*authentik.TokenResponse, error) {
 	f.exchangeCodeCalled = true
 	return f.exchangeCodeResp, nil
 }
 
-func (f *FakeAuthentikClient) GetUserInfo(accessToken string) (*authentik.UserInfo, error) {
+func (f *FakeAuthentikClient) GetUserInfo(ctx context.Context, accessToken string) (*authentik.UserInfo, error) {
 	f.getUserInfoCalled = true
 	return f.userInfo, nil
 }
@@ -367,7 +367,7 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 		// Lazily register this redirect URI in Authentik if we haven't seen this host before.
 		if _, known := m.knownRedirectURIs.Load(redirectURI); !known {
 			if m.authentikClient != nil && cfg.OIDCConfig.ProviderID > 0 {
-				if err := m.authentikClient.AddRedirectURI(cfg.OIDCConfig.ProviderID, redirectURI); err != nil {
+				if err := m.authentikClient.AddRedirectURI(r.Context(), cfg.OIDCConfig.ProviderID, redirectURI); err != nil {
 					m.logger.Warn("failed to register redirect URI lazily", "uri", redirectURI, "error", err)
 				} else {
 					m.logger.Info("lazily registered redirect URI", "uri", redirectURI)
@@ -449,6 +449,7 @@ func (m *authModule) CallbackHandler() http.HandlerFunc {
 		redirectURI := requestBaseURL(r) + "/auth/callback"
 
 		tokenResp, err := m.authentikClient.ExchangeCode(
+			r.Context(),
 			code,
 			redirectURI,
 			cfg.OIDCConfig.ClientID,
@@ -460,7 +461,7 @@ func (m *authModule) CallbackHandler() http.HandlerFunc {
 			return
 		}
 
-		userInfo, err := m.authentikClient.GetUserInfo(tokenResp.AccessToken)
+		userInfo, err := m.authentikClient.GetUserInfo(r.Context(), tokenResp.AccessToken)
 		if err != nil {
 			m.logger.Error("failed to get user info", "error", err)
 			http.Error(w, "Failed to get user info", http.StatusInternalServerError)

@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -131,15 +130,13 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
 //
-// It runs on a context detached from the convergence pass with its own 90 s
-// deadline: the wizard readiness waits sleep between attempts and outlive a
-// single pass. (The pass context is process-scoped in the current orchestrator,
-// so the detach here bounds the work rather than being strictly required — the
-// S9 slice revisits this and the app-level budget.)
+// It runs under the framework's PostStartBudget: the orchestrator bounds the
+// finalization wait and cancels it on shutdown, so the app uses the pass ctx
+// directly rather than detaching with its own Background deadline. The wizard
+// readiness waits survive a pass because the pass ctx is process-scoped (only
+// Stop cancels it), not because the app detached.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	return c.postStart(runCtx, state)
+	return c.postStart(ctx, state)
 }
 
 // postStart contains the PostStart body.

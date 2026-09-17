@@ -31,6 +31,11 @@ import (
 
 const maxOrchestratorEvents = 20
 
+// DefaultPostStartBudget bounds a node's PostStart finalization when the
+// configured OrchestratorConfig.PostStartBudget is zero. It replaces the
+// per-app detach-and-timeout the apps used to implement themselves.
+const DefaultPostStartBudget = 150 * time.Second
+
 // OrchestratorStatus is a snapshot of the orchestrator's current state for
 // the developer API.
 type OrchestratorStatus struct {
@@ -55,6 +60,12 @@ type OrchestratorConfig struct {
 	// HealthCheckTimeout limits how long each app's HealthCheck can run.
 	// Zero means no timeout (the caller's context deadline applies).
 	HealthCheckTimeout time.Duration
+	// PostStartBudget bounds how long a node's PostStart finalization wait may
+	// run before the framework cancels it. It is the ceiling the apps used to
+	// set themselves (jellyfin's 90s / homeassistant's per-app timeout) lifted
+	// into the framework so the budget is uniform and Stop() can still interrupt
+	// the call. Zero means use DefaultPostStartBudget.
+	PostStartBudget time.Duration
 
 	// LDAPOutput is the LDAP provider endpoint injected into apps with
 	// LDAP SSO strategy. Nil when no LDAP provider is configured.
@@ -815,11 +826,26 @@ func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 		return
 	}
 	o.logger.Info("staleness re-run: running PostStart", "app", id)
-	if err := cfg.PostStart(ctx, state); err != nil {
+	if err := o.runPostStart(ctx, cfg, state); err != nil {
 		o.logger.Warn("staleness re-run: PostStart failed", "app", id, "error", err)
 		return
 	}
 	o.logger.Info("staleness re-run: PostStart complete", "app", id)
+}
+
+// runPostStart invokes a configurator's PostStart bounded by the framework's
+// PostStartBudget (DefaultPostStartBudget when unset). The budget ctx is
+// derived from the pass ctx, so a Stop()-cancellation propagates immediately
+// while the budget independently caps a hung finalization. The framework — not
+// the app — owns this ceiling; apps use the ctx they are given directly.
+func (o *Orchestrator) runPostStart(ctx context.Context, cfg configurator.NodeLifecycle, state *configurator.AppState) error {
+	budget := o.config.PostStartBudget
+	if budget <= 0 {
+		budget = DefaultPostStartBudget
+	}
+	bctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	return cfg.PostStart(bctx, state)
 }
 
 // ensureContainerFromDef ensures a container exists and is running from a ContainerDef,
@@ -1003,11 +1029,19 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 		o.logger.Info("lifecycle phase: HealthCheck complete", "app", id)
 	}
 
-	// Phase 4: PostStart
+	// Phase 4: PostStart — run under the framework's PostStartBudget so the
+	// finalization wait is bounded and Stop() can interrupt it (apps no longer
+	// detach their own contexts). A failure whose cause is the cancelled pass
+	// context is an interruption, not a fault: leave the node where it is so the
+	// next start re-converges, rather than parking a shutdown in ERROR (R3).
 	if cfg != nil {
 		o.logger.Info("lifecycle phase: PostStart", "app", id)
 		_ = o.graph.SetActualStatus(id, graph.StatusPostStartConfig, "")
-		if err := cfg.PostStart(ctx, state); err != nil {
+		if err := o.runPostStart(ctx, cfg, state); err != nil {
+			if ctx.Err() != nil {
+				o.logger.Info("PostStart interrupted by shutdown; leaving status for re-converge", "app", id, "error", err)
+				return false
+			}
 			o.logger.Warn("PostStart failed", "app", id, "error", err)
 			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
 			return false
@@ -1238,7 +1272,7 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 	case "forward-auth":
 		o.logger.Info("provisioning forward-auth SSO", "app", appID)
 		externalURL := buildAppSubdomainURL(u.hostSet.PrimaryBaseURL(), appID)
-		return o.sso.EnsureForwardAuth(appID, catalogApp.DisplayName, externalURL)
+		return o.sso.EnsureForwardAuth(ctx, appID, catalogApp.DisplayName, externalURL)
 
 	case "native-oidc":
 		if u.hostSecret == "" || u.authentikURL == "" {
@@ -1250,7 +1284,7 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 			return fmt.Errorf("building OIDC inputs for %q", appID)
 		}
 		o.logger.Info("provisioning native-oidc SSO", "app", appID)
-		return o.sso.EnsureNativeOIDC(appID, catalogApp.DisplayName, inputs.ClientID, inputs.ClientSecret, inputs.RedirectURIs, inputs.LaunchURL)
+		return o.sso.EnsureNativeOIDC(ctx, appID, catalogApp.DisplayName, inputs.ClientID, inputs.ClientSecret, inputs.RedirectURIs, inputs.LaunchURL)
 	}
 
 	return nil

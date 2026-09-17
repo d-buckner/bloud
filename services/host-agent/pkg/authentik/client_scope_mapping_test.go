@@ -4,6 +4,7 @@
 package authentik
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -76,7 +77,7 @@ func TestEnsureProviderEmailScopeMappingIdempotent(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token")
-	if err := client.ensureProviderEmailScopeMapping(7); err != nil {
+	if err := client.ensureProviderEmailScopeMapping(context.Background(), 7); err != nil {
 		t.Fatalf("ensureProviderEmailScopeMapping() error: %v", err)
 	}
 	if *patchCalled {
@@ -92,7 +93,7 @@ func TestEnsureProviderEmailScopeMappingSwapsManaged(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token")
-	if err := client.ensureProviderEmailScopeMapping(7); err != nil {
+	if err := client.ensureProviderEmailScopeMapping(context.Background(), 7); err != nil {
 		t.Fatalf("ensureProviderEmailScopeMapping() error: %v", err)
 	}
 	if !*patchCalled {
@@ -117,7 +118,7 @@ func TestEnsureProviderEmailScopeMappingAppendsMissing(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token")
-	if err := client.ensureProviderEmailScopeMapping(7); err != nil {
+	if err := client.ensureProviderEmailScopeMapping(context.Background(), 7); err != nil {
 		t.Fatalf("ensureProviderEmailScopeMapping() error: %v", err)
 	}
 	if !*patchCalled {

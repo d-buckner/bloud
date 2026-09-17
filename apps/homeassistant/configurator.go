@@ -79,7 +79,6 @@ type Configurator struct {
 	baseURLOverride string
 
 	pollInterval     time.Duration
-	postStartTimeout time.Duration
 
 	// api is the typed HTTP surface (transport + retry + redirect policy live
 	// behind it). Built in the constructor from Deps.HTTP.
@@ -128,7 +127,6 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		componentURL:       oidcComponentURL,
 		componentSHA:       oidcComponentSHA256,
 		pollInterval:       2 * time.Second,
-		postStartTimeout:   150 * time.Second,
 		assets:             deps.Assets,
 		restartContainerFn: deps.RestartContainer,
 	}
@@ -222,17 +220,15 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 }
 
 // PostStart waits for the HTTP API, completes first-run onboarding headlessly,
-// and verifies the OIDC provider is registered. It runs on a context detached
-// from the convergence pass with its own deadline so the retry loops survive the
-// pass completing.
+// and verifies the OIDC provider is registered.
 //
-// NOTE: the detach here is a pre-S9 hold. The pass context is process-scoped in
-// the current orchestrator, so the WithoutCancel is defensive rather than
-// strictly required; S9 replaces it with a framework-owned PostStart budget.
+// It runs under the framework's PostStartBudget: the orchestrator bounds the
+// finalization wait and cancels it on shutdown, so the app uses the pass ctx
+// directly rather than detaching with WithoutCancel + its own deadline. The
+// retry loops survive the pass because the pass ctx is process-scoped (only
+// Stop cancels it), not because the app detached.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.postStartTimeout)
-	defer cancel()
-	return c.postStart(detached, state)
+	return c.postStart(ctx, state)
 }
 
 func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {

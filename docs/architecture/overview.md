@@ -179,6 +179,34 @@ type AppState struct {
 - **AFFiNE** — writes the OIDC config file (public URL + provider), bootstraps the
   first-run owner account, verifies the OIDC preflight round-trip
 
+
+### App Client & Assets (`pkg/appclient/`, `pkg/appasset/`)
+
+The framework layer every configurator runs its integration through, so app
+code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
+
+- **`pkg/appclient`** — a typed HTTP surface. A `Client` (built from `deps.HTTP`,
+  a shared-transport factory) issues `Call`s with a verb and exactly one
+  terminal: `Do` (raw body), `DoInto` (JSON decode), `Ensure` (idempotent
+  create-or-verify), or `Wait` (poll a readiness predicate until ready/deadline).
+  Retries with backoff, per-request timeouts, declarative outcome contracts
+  (`OK`/`AlreadyDone`), auth (`TokenSpec` with 401 refresh covering every header
+  dialect), and "still booting / already done" handling live here rather than in
+  each app. A PostStart finalization is bounded by the orchestrator's
+  `PostStartBudget` (default 150s); configurators use the passed ctx directly
+  and never detach with `context.Background()`/`WithoutCancel`.
+- **`pkg/appasset`** — static-file install. `deps.Assets.Install(ctx, Asset{…})`
+  sources bytes remotely, from `go:embed`, or locally into a content-addressed
+  cache under `BLOUD_DATA_DIR`; a required `SHA256` guards the payload (a
+  mismatch deletes the poisoned cache entry and fails rather than installing a
+  retagged file), Zip unpack is zip-slip-safe, and a sentinel/`SkipIf` keeps
+  installs idempotent. Every pinned remote asset records its provenance in the
+  app's `INTEGRATION.md` under **Verified constants**.
+
+A pre-commit guard (`npm run check:app-http`) keeps `apps/**/*.go` free of
+`http.NewRequest`, `http.DefaultClient`, and `client.Do(request)` — the
+sanctioned terminal is appclient's `.Do(ctx)`.
+
 ### Authentik Client (`pkg/authentik/`)
 
 Manages the Authentik identity provider via its REST API. Key operations:

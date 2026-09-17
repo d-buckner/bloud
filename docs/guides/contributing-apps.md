@@ -108,8 +108,15 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 }
 
 // PostStart runs after the container is healthy: API calls, integrations,
-// runtime setup. Called on every reconciliation, so it must be a no-op
-// when everything is already in place.
+// runtime setup. Called on every reconciliation, so it must be a no-op when
+// everything is already in place.
+//
+// The orchestrator runs this under the framework's PostStartBudget (default
+// 150 s): the passed ctx is already bounded and is cancelled on shutdown, so
+// use it directly. Do NOT detach with context.Background() or
+// context.WithoutCancel(ctx) — that makes shutdown uncancellable. A
+// finalization still running when shutdown cancels the ctx is left to
+// re-converge on the next start rather than being recorded as a terminal error.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
     return nil
 }
@@ -124,6 +131,108 @@ func (c *Configurator) Remove(ctx context.Context, state *configurator.AppState,
 There is no `HealthCheck` method on `NodeLifecycle` — readiness comes from the
 `healthCheck:` block you declared in `metadata.yaml`, which the orchestrator
 enforces between PreStart and PostStart.
+
+### Making HTTP calls: `pkg/appclient`
+
+Configurators never hand-roll `net/http`. The host injects a client factory
+(`deps.HTTP`, a `configurator.ClientFactory`) that stamps a shared transport,
+the default retry policy, and the shared logger, so every app's calls pool
+connections and behave the same way. Build one client per app in the
+constructor and hold it:
+
+```go
+import "codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+
+type Configurator struct {
+    api *appclient.Client
+}
+
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
+    return &Configurator{
+        api: deps.HTTP.New(appclient.Spec{
+            Name:    "your-app",
+            BaseURL: fmt.Sprintf("http://localhost:%d", port),
+        }),
+    }
+}
+```
+
+A `Call` is started with a verb (`GET`/`POST`/`PUT`/`PATCH`/`DELETE`) and ended
+with exactly one terminal:
+
+| Terminal | Use |
+|---|---|
+| `.Do(ctx)` | fire the request, return the raw body `([]byte, error)` |
+| `.DoInto(ctx, &out)` | decode a JSON response into `out` |
+| `.Ensure(ctx)` | create-or-verify an idempotent resource (`(bool, error)`) |
+| `.Wait(ctx)` | poll a readiness predicate until ready or the deadline |
+
+Status handling is **declarative**, never `strings.Contains` on a body. Attach an
+outcome contract before the terminal:
+
+```go
+// 200 or 204 is success; a 409 "already exists" is treated as done.
+err := c.api.POST("/things").JSON(payload).
+    OK(http.StatusOK, http.StatusNoContent).
+    AlreadyDone(http.StatusConflict).
+    Do(ctx)
+```
+
+Readiness polling replaces the old hand-rolled `for { time.Sleep … }` loops:
+
+```go
+// Poll until the OIDC discovery document answers with an "issuer".
+err := c.api.GET("/.well-known/openid-configuration").
+    Ready(appclient.JSONHas("issuer")).
+    Interval(2 * time.Second).
+    Wait(ctx)
+```
+
+Auth — `Authorization: Bearer …`, custom headers/format templates, and 401
+token refresh — is a `TokenSpec` on the client, not per-call boilerplate. See
+`apps/jellyfin/api.go`, `apps/homeassistant/api.go`, and the others for the
+real shapes.
+
+**A pre-commit guard enforces this.** `npm run check:app-http`
+(`scripts/no-adhoc-http.mjs`) fails on `http.NewRequest`, `http.DefaultClient`,
+a raw `http.Client{…}`, or `client.Do(request)` in any `apps/**/*.go` (non-test).
+The sanctioned terminal is appclient's `.Do(ctx)`, never a raw `*http.Request`.
+If one call genuinely cannot go through `appclient`, add the file to the
+`ALLOWLIST` in the script with a written reason — the bypass stays visible
+rather than silent.
+
+### Pinned remote assets and provenance
+
+Apps that need a file fetched from upstream at install time (a plugin, a theme,
+a bundled binary) install it through the injected asset installer —
+`deps.Assets.Install(ctx, appasset.Asset{…})` — which fetches into a
+content-addressed cache under `BLOUD_DATA_DIR`: repeat installs reuse the cache
+(no re-download), and a digest mismatch deletes the bad entry and fails loudly
+instead of installing a retagged/corrupted file.
+
+```go
+changed, err := c.assets.Install(ctx, appasset.Asset{
+    Name:   "your-plugin",
+    Dest:   targetDir,
+    Source: appasset.URL("https://upstream.example/release.zip"),
+    Kind:   appasset.Zip,
+    SHA256: "…expected digest…",
+})
+```
+
+Every pinned remote asset **must** record its provenance in `INTEGRATION.md`
+under a **Verified constants** section:
+
+- upstream URL
+- version (tag or commit)
+- sha256
+- verification date
+- the command used, e.g. `curl -sL <url> | sha256sum`
+
+This turns "where did this hash come from / why is it pinned" into a lookup
+instead of an archaeology dig, and makes re-verification a one-liner. See
+`apps/homeassistant/INTEGRATION.md` ("Verified constants") for the worked
+example.
 
 ### AppState
 
@@ -150,13 +259,16 @@ import "codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 
 func init() {
     configurator.MustRegisterFactory("apps-your-app", func(deps configurator.Deps) configurator.NodeLifecycle {
-        return NewConfigurator(0, deps.PrimaryBaseURL, deps.Secrets, deps.Logger)
+        // Pass the whole Deps — NewConfigurator reads what it needs from it.
+        return NewConfigurator(0, deps)
     })
 }
 ```
 
-`configurator.Deps` carries the host-side inputs (logger, secrets provider,
-primary-base-URL resolver, Traefik port, restart-container callback).
+`configurator.Deps` carries the host-side inputs a factory may need: `Logger`,
+`Secrets`, a `PrimaryBaseURL func()`, `TraefikPort`, a `RestartContainer`
+callback, `HTTP` (the `ClientFactory` for app HTTP calls — see below), and
+`Assets` (the `appasset.Installer` for static/downloaded files).
 
 Then add your app to **`apps/registry.go`** — the single place that lists the
 catalog. Two edits, both in the `apps/` module:

@@ -181,7 +181,7 @@ func NewFakeAuthentikClient() *FakeAuthentikClient {
 	}
 }
 
-func (f *FakeAuthentikClient) DeleteAppSSO(appName, displayName, ssoStrategy string) error {
+func (f *FakeAuthentikClient) DeleteAppSSO(ctx context.Context, appName, displayName, ssoStrategy string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -196,33 +196,33 @@ func (f *FakeAuthentikClient) DeleteAppSSO(appName, displayName, ssoStrategy str
 	return nil
 }
 
-func (f *FakeAuthentikClient) AddProviderToEmbeddedOutpost(providerName string) error {
+func (f *FakeAuthentikClient) AddProviderToEmbeddedOutpost(ctx context.Context, providerName string) error {
 	return nil
 }
 
-func (f *FakeAuthentikClient) IsAvailable() bool {
+func (f *FakeAuthentikClient) IsAvailable(ctx context.Context) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.available
 }
 
-func (f *FakeAuthentikClient) DeleteApplication(slug string) error {
+func (f *FakeAuthentikClient) DeleteApplication(ctx context.Context, slug string) error {
 	return nil
 }
 
-func (f *FakeAuthentikClient) DeleteOAuth2Provider(providerName string) error {
+func (f *FakeAuthentikClient) DeleteOAuth2Provider(ctx context.Context, providerName string) error {
 	return nil
 }
 
-func (f *FakeAuthentikClient) DeleteProxyProvider(providerName string) error {
+func (f *FakeAuthentikClient) DeleteProxyProvider(ctx context.Context, providerName string) error {
 	return nil
 }
 
-func (f *FakeAuthentikClient) EnsureLDAPInfrastructure(ldapBindPassword string) error {
+func (f *FakeAuthentikClient) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword string) error {
 	return nil
 }
 
-func (f *FakeAuthentikClient) GetLDAPOutpostToken() (string, error) {
+func (f *FakeAuthentikClient) GetLDAPOutpostToken(ctx context.Context) (string, error) {
 	return "fake-ldap-outpost-token", nil
 }
 
@@ -874,7 +874,7 @@ func NewFakeForwardDomainProvisioner(token string, err error) *FakeForwardDomain
 	return &FakeForwardDomainProvisioner{token: token, err: err}
 }
 
-func (f *FakeForwardDomainProvisioner) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
+func (f *FakeForwardDomainProvisioner) EnsureForwardDomainAuth(ctx context.Context, cookieDomain string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calledDomain = cookieDomain

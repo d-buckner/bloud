@@ -132,9 +132,9 @@ func buildRouterDeps(
 		d.authRef = newAuthConfigRef(nil)
 	}
 	d.authRef.SetEnsure(func() *AuthConfig {
-		return initAuthHelper(d.authentik, d.sessionStore, cfg, logger)
+		return initAuthHelper(context.Background(), d.authentik, d.sessionStore, cfg, logger)
 	})
-	d.authRef.Set(initAuthHelper(d.authentik, d.sessionStore, cfg, logger))
+	d.authRef.Set(initAuthHelper(context.Background(), d.authentik, d.sessionStore, cfg, logger))
 
 	// Orchestrator: use provided one if set, else create real (unless noOrchestrator is true).
 	if o, ok := options.orch.(orchestratorCaller); ok && o != nil {
@@ -473,6 +473,7 @@ func initOrchestratorHelper(
 // ---- Auth initialization ----
 
 func initAuthHelper(
+	ctx context.Context,
 	authentikClient *authentik.Client,
 	sessionStore store.SessionStoreInterface,
 	cfg ServerConfig,
@@ -495,7 +496,7 @@ func initAuthHelper(
 		logger.Info("authentication disabled (no SSO base URLs configured)")
 		return nil
 	}
-	if !authentikClient.IsAvailable() {
+	if !authentikClient.IsAvailable(ctx) {
 		logger.Warn("Authentik not available, auth will be initialized on first request")
 		return nil
 	}
@@ -503,7 +504,7 @@ func initAuthHelper(
 	clientSecret := deriveSecretHelper(cfg.SSOHostSecret, "bloud-oauth", 32)
 	logger.Info("registering OAuth redirect URIs", "baseURLs", baseURLs)
 
-	oidcConfig, err := authentikClient.EnsureBloudOAuthApp(baseURLs, clientSecret)
+	oidcConfig, err := authentikClient.EnsureBloudOAuthApp(ctx, baseURLs, clientSecret)
 	if err != nil {
 		logger.Error("failed to ensure Bloud OAuth app", "error", err)
 		return nil

@@ -29,8 +29,9 @@
     "test:go:coverage": "cd services/host-agent && go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1",
     "license:check": "node scripts/license-header.mjs check",
     "license:fix": "node scripts/license-header.mjs fix",
+    "check:app-http": "node scripts/no-adhoc-http.mjs",
     "test:unit": "npm run test:go:all && npm run test:ts",
-    "test:precommit": "npm run license:check && npm run lint && npm run test:go:all && npm run test:ts",
+    "test:precommit": "npm run license:check && npm run check:app-http && npm run lint && npm run test:go:all && npm run test:ts",
     "test:e2e": "npm --prefix e2e test",
     "show-report": "cd e2e && npx playwright show-report"
   },

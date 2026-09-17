@@ -1,9 +1,10 @@
-> Status: draft
+> Status: landed
 
 # Design: App Client — structured HTTP, assets, and retries for configurators
 
 **Issue:** [#70 — Add app client into framework](https://github.com/d-buckner/bloud/issues/70)
-**Status:** Proposed (design; no code landed)
+**Status:** Landed — S1–S10 shipped; `--tier fast` green (incl. the new `check:app-http`
+guard). Remaining VM-gated confirmations: `--tier integration` and `./bloud e2e lifecycle`.
 **Date:** 2026-09-13
 **Scope:** `services/host-agent/pkg/*`, `apps/*/configurator.go`, `services/host-agent/pkg/authentik`, wiring in `pkg/configurator/factory.go` + `internal/appconfig`.
 

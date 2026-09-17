@@ -612,7 +612,7 @@ func (o *Orchestrator) provisionTailnetSSO(ctx context.Context) bool {
 		return false
 	}
 
-	token, err := o.forwardDomainSSO.EnsureForwardDomainAuth(domain)
+	token, err := o.forwardDomainSSO.EnsureForwardDomainAuth(ctx, domain)
 	if err != nil {
 		o.logger.Warn("failed to provision tailnet forward_domain SSO", "error", err, "domain", domain)
 		return false

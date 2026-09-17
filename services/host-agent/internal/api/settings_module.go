@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,15 +22,15 @@ import (
 // AuthentikUserManagerInterface abstracts the subset of Authentik Client
 // methods needed for user management (separate from OIDC client methods).
 type AuthentikUserManagerInterface interface {
-	CreateUser(username, password string) (int, error)
-	SetUserPassword(userID int, password string) error
-	SetUserEmail(userID int, email string) error
+	CreateUser(ctx context.Context, username, password string) (int, error)
+	SetUserPassword(ctx context.Context, userID int, password string) error
+	SetUserEmail(ctx context.Context, userID int, email string) error
 	ManagedUserEmail(username string) string
-	ListUsers() ([]authentik.ManagedUserInfo, error)
-	DeleteUser(username string) error
-	AddUserToGroup(userID int, groupName string) error
-	RemoveUserFromGroup(userID int, groupName string) error
-	FindUserID(username string) (int, error)
+	ListUsers(ctx context.Context) ([]authentik.ManagedUserInfo, error)
+	DeleteUser(ctx context.Context, username string) error
+	AddUserToGroup(ctx context.Context, userID int, groupName string) error
+	RemoveUserFromGroup(ctx context.Context, userID int, groupName string) error
+	FindUserID(ctx context.Context, username string) (int, error)
 }
 
 // SettingsModule encapsulates all settings operations: tailnet management,
@@ -290,7 +291,7 @@ func (m *settingsModule) SetupStatusHandler() http.HandlerFunc {
 			return
 		}
 
-		authentikReady := m.authentikClientIsAvailable(m.authentikClient)
+		authentikReady := m.authentikClientIsAvailable(r.Context(), m.authentikClient)
 
 		respondJSON(w, http.StatusOK, SetupStatusResponse{
 			SetupRequired:  !hasUsers,
@@ -301,9 +302,9 @@ func (m *settingsModule) SetupStatusHandler() http.HandlerFunc {
 }
 
 // authentikClientIsAvailable checks whether the Authentik client is ready.
-func (m *settingsModule) authentikClientIsAvailable(client AuthentikUserManagerInterface) bool {
-	if ac, ok := client.(interface{ IsAvailable() bool }); ok {
-		return ac.IsAvailable()
+func (m *settingsModule) authentikClientIsAvailable(ctx context.Context, client AuthentikUserManagerInterface) bool {
+	if ac, ok := client.(interface{ IsAvailable(context.Context) bool }); ok {
+		return ac.IsAvailable(ctx)
 	}
 	return false
 }
@@ -328,7 +329,7 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 			return
 		}
 
-		if m.authentikClient == nil || !m.authentikClientIsAvailable(m.authentikClient) {
+		if m.authentikClient == nil || !m.authentikClientIsAvailable(r.Context(), m.authentikClient) {
 			respondJSON(w, http.StatusServiceUnavailable, CreateUserResponse{
 				Success: false,
 				Error:   "Authentik is not available. Please wait for it to start.",
@@ -353,13 +354,13 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 			return
 		}
 
-		authentikUserID, err := m.authentikClient.CreateUser(req.Username, req.Password)
+		authentikUserID, err := m.authentikClient.CreateUser(r.Context(), req.Username, req.Password)
 		if err != nil {
 			// A fresh install already has an "admin" user in Authentik: the
 			// bootstrap script creates it before Bloud's setup completes. Adopt
 			// it (reset its password) so the first-user flow works out of the
 			// box instead of failing on the duplicate username.
-			existingID, findErr := m.authentikClient.FindUserID(req.Username)
+			existingID, findErr := m.authentikClient.FindUserID(r.Context(), req.Username)
 			if findErr != nil || existingID == 0 {
 				m.logger.Error("failed to create user in Authentik", "error", err)
 				respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
@@ -368,7 +369,7 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 				})
 				return
 			}
-			if setErr := m.authentikClient.SetUserPassword(existingID, req.Password); setErr != nil {
+			if setErr := m.authentikClient.SetUserPassword(r.Context(), existingID, req.Password); setErr != nil {
 				m.logger.Error("failed to set password for existing Authentik user", "error", setErr)
 				respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
 					Success: false,
@@ -379,14 +380,14 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 			// Adopted users (e.g. the bootstrap admin) may predate managed-user
 			// emails or carry an unusable one (no TLD); give the user a valid
 			// identity email so SSO apps can create accounts for them.
-			if setErr := m.authentikClient.SetUserEmail(existingID, m.authentikClient.ManagedUserEmail(req.Username)); setErr != nil {
+			if setErr := m.authentikClient.SetUserEmail(r.Context(), existingID, m.authentikClient.ManagedUserEmail(req.Username)); setErr != nil {
 				m.logger.Warn("failed to set email for adopted Authentik user", "error", setErr)
 			}
 			m.logger.Info("adopted existing Authentik user for initial setup", "username", req.Username)
 			authentikUserID = existingID
 		}
 
-		if err := m.authentikClient.AddUserToGroup(authentikUserID, "authentik Admins"); err != nil {
+		if err := m.authentikClient.AddUserToGroup(r.Context(), authentikUserID, "authentik Admins"); err != nil {
 			m.logger.Warn("failed to add user to admins group", "error", err)
 		}
 
@@ -399,7 +400,7 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 			return
 		}
 
-		if err := m.authentikClient.DeleteUser("akadmin"); err != nil {
+		if err := m.authentikClient.DeleteUser(r.Context(), "akadmin"); err != nil {
 			m.logger.Warn("failed to delete akadmin user", "error", err)
 		} else {
 			m.logger.Info("deleted default akadmin user")
@@ -423,7 +424,7 @@ func (m *settingsModule) ListUsersHandler() http.HandlerFunc {
 			return
 		}
 
-		users, err := m.authentikClient.ListUsers()
+		users, err := m.authentikClient.ListUsers(r.Context())
 		if err != nil {
 			m.logger.Error("failed to list users", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to list users")
@@ -464,7 +465,7 @@ func (m *settingsModule) CreateManagedUserHandler() http.HandlerFunc {
 			return
 		}
 
-		userID, err := m.authentikClient.CreateUser(req.Username, req.Password)
+		userID, err := m.authentikClient.CreateUser(r.Context(), req.Username, req.Password)
 		if err != nil {
 			m.logger.Error("failed to create user in Authentik", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to create user")
@@ -472,7 +473,7 @@ func (m *settingsModule) CreateManagedUserHandler() http.HandlerFunc {
 		}
 
 		if req.Role == store.RoleAdmin {
-			if err := m.authentikClient.AddUserToGroup(userID, "authentik Admins"); err != nil {
+			if err := m.authentikClient.AddUserToGroup(r.Context(), userID, "authentik Admins"); err != nil {
 				m.logger.Error("failed to add user to admin group", "error", err)
 				respondError(w, http.StatusInternalServerError, "user created but failed to set admin role")
 				return
@@ -511,7 +512,7 @@ func (m *settingsModule) DeleteManagedUserHandler() http.HandlerFunc {
 			return
 		}
 
-		if err := m.authentikClient.DeleteUser(username); err != nil {
+		if err := m.authentikClient.DeleteUser(r.Context(), username); err != nil {
 			m.logger.Error("failed to delete user from Authentik", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to delete user")
 			return
@@ -535,8 +536,8 @@ func (m *settingsModule) DeleteManagedUserHandler() http.HandlerFunc {
 
 // wouldOrphanAdmin reports whether the current admin count is <= 1, i.e.
 // demoting another user would leave nobody with admin access.
-func (m *settingsModule) wouldOrphanAdmin() (bool, error) {
-	users, err := m.authentikClient.ListUsers()
+func (m *settingsModule) wouldOrphanAdmin(ctx context.Context) (bool, error) {
+	users, err := m.authentikClient.ListUsers(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -580,7 +581,7 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 			return
 		}
 
-		userID, err := m.authentikClient.FindUserID(username)
+		userID, err := m.authentikClient.FindUserID(r.Context(), username)
 		if err != nil {
 			m.logger.Error("failed to find user", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to find user")
@@ -592,7 +593,7 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 		}
 
 		if req.Role == store.RoleMember {
-			lastAdmin, err := m.wouldOrphanAdmin()
+			lastAdmin, err := m.wouldOrphanAdmin(r.Context())
 			if err != nil {
 				m.logger.Error("failed to list users for last-admin check", "error", err)
 				respondError(w, http.StatusInternalServerError, "failed to verify admin count")
@@ -605,13 +606,13 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 		}
 
 		if req.Role == store.RoleAdmin {
-			if err := m.authentikClient.AddUserToGroup(userID, "authentik Admins"); err != nil {
+			if err := m.authentikClient.AddUserToGroup(r.Context(), userID, "authentik Admins"); err != nil {
 				m.logger.Error("failed to add user to admin group", "error", err)
 				respondError(w, http.StatusInternalServerError, "failed to update role")
 				return
 			}
 		} else {
-			if err := m.authentikClient.RemoveUserFromGroup(userID, "authentik Admins"); err != nil {
+			if err := m.authentikClient.RemoveUserFromGroup(r.Context(), userID, "authentik Admins"); err != nil {
 				m.logger.Error("failed to remove user from admin group", "error", err)
 				respondError(w, http.StatusInternalServerError, "failed to update role")
 				return
@@ -673,9 +674,9 @@ func NewFakeSettingsAuthentikClient() *FakeSettingsAuthentikClient {
 	}
 }
 
-func (f *FakeSettingsAuthentikClient) IsAvailable() bool { return true }
+func (f *FakeSettingsAuthentikClient) IsAvailable(context.Context) bool { return true }
 
-func (f *FakeSettingsAuthentikClient) CreateUser(username, password string) (int, error) {
+func (f *FakeSettingsAuthentikClient) CreateUser(ctx context.Context, username, password string) (int, error) {
 	if username == f.failCreateUsername {
 		return 0, fmt.Errorf("creating user: status 400: {\"username\":[\"This field must be unique.\"]}")
 	}
@@ -691,7 +692,7 @@ func (f *FakeSettingsAuthentikClient) CreateUser(username, password string) (int
 	return id, nil
 }
 
-func (f *FakeSettingsAuthentikClient) SetUserPassword(userID int, password string) error {
+func (f *FakeSettingsAuthentikClient) SetUserPassword(ctx context.Context, userID int, password string) error {
 	if f.lastSetPasswords == nil {
 		f.lastSetPasswords = make(map[int]string)
 	}
@@ -699,7 +700,7 @@ func (f *FakeSettingsAuthentikClient) SetUserPassword(userID int, password strin
 	return nil
 }
 
-func (f *FakeSettingsAuthentikClient) SetUserEmail(userID int, email string) error {
+func (f *FakeSettingsAuthentikClient) SetUserEmail(ctx context.Context, userID int, email string) error {
 	u, ok := f.usersByPk(userID)
 	if !ok {
 		return fmt.Errorf("user %d not found", userID)
@@ -721,7 +722,7 @@ func (f *FakeSettingsAuthentikClient) ManagedUserEmail(username string) string {
 	return username + "@localhost.local"
 }
 
-func (f *FakeSettingsAuthentikClient) ListUsers() ([]authentik.ManagedUserInfo, error) {
+func (f *FakeSettingsAuthentikClient) ListUsers(ctx context.Context) ([]authentik.ManagedUserInfo, error) {
 	f.listCalled = true
 	var result []authentik.ManagedUserInfo
 	for _, u := range f.users {
@@ -730,12 +731,12 @@ func (f *FakeSettingsAuthentikClient) ListUsers() ([]authentik.ManagedUserInfo, 
 	return result, nil
 }
 
-func (f *FakeSettingsAuthentikClient) DeleteUser(username string) error {
+func (f *FakeSettingsAuthentikClient) DeleteUser(ctx context.Context, username string) error {
 	delete(f.users, username)
 	return nil
 }
 
-func (f *FakeSettingsAuthentikClient) AddUserToGroup(userID int, groupName string) error {
+func (f *FakeSettingsAuthentikClient) AddUserToGroup(ctx context.Context, userID int, groupName string) error {
 	f.lastAddedGroup = groupName
 	for _, u := range f.users {
 		if u.ID == userID {
@@ -746,7 +747,7 @@ func (f *FakeSettingsAuthentikClient) AddUserToGroup(userID int, groupName strin
 	return nil
 }
 
-func (f *FakeSettingsAuthentikClient) RemoveUserFromGroup(userID int, groupName string) error {
+func (f *FakeSettingsAuthentikClient) RemoveUserFromGroup(ctx context.Context, userID int, groupName string) error {
 	f.lastRemovedGroup = groupName
 	for _, u := range f.users {
 		if u.ID == userID {
@@ -757,7 +758,7 @@ func (f *FakeSettingsAuthentikClient) RemoveUserFromGroup(userID int, groupName 
 	return nil
 }
 
-func (f *FakeSettingsAuthentikClient) FindUserID(username string) (int, error) {
+func (f *FakeSettingsAuthentikClient) FindUserID(ctx context.Context, username string) (int, error) {
 	if u, ok := f.users[username]; ok {
 		return u.ID, nil
 	}

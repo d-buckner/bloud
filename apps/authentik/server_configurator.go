@@ -138,25 +138,25 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 
 	// Step 3: Push branding CSS.
 	if c.brandingCSS != "" {
-		if err := client.EnsureBranding(c.brandingCSS); err != nil {
+		if err := client.EnsureBranding(ctx, c.brandingCSS); err != nil {
 			return fmt.Errorf("ensure branding: %w", err)
 		}
 	}
 
 	// Step 4: Apply login page configuration.
-	if err := client.EnsureLoginConfiguration(); err != nil {
+	if err := client.EnsureLoginConfiguration(ctx); err != nil {
 		return fmt.Errorf("ensure login configuration: %w", err)
 	}
 
 	// Step 5: Create LDAP infrastructure.
-	if err := client.EnsureLDAPInfrastructure(c.ldapBindPassword); err != nil {
+	if err := client.EnsureLDAPInfrastructure(ctx, c.ldapBindPassword); err != nil {
 		return fmt.Errorf("ensure LDAP infrastructure: %w", err)
 	}
 
 	// Step 6: Set embedded outpost host.
 	if c.baseURLFn != nil {
 		if baseURL := c.baseURLFn(); baseURL != "" {
-			if err := client.EnsureEmbeddedOutpostHost(baseURL); err != nil {
+			if err := client.EnsureEmbeddedOutpostHost(ctx, baseURL); err != nil {
 				return fmt.Errorf("set embedded outpost host: %w", err)
 			}
 		}
@@ -166,7 +166,7 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 	// The apps-authentik-ldap container spec uses {{authentikLdapToken}}; the
 	// orchestrator resolves this map at container spec build time, which happens
 	// after this PostStart (ldap depends on server via metadata dependsOn).
-	ldapToken, err := client.GetLDAPOutpostToken()
+	ldapToken, err := client.GetLDAPOutpostToken(ctx)
 	if err != nil {
 		return fmt.Errorf("get LDAP outpost token: %w", err)
 	}

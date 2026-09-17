@@ -84,8 +84,14 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 	c.componentURL = srv.URL + "/hass-oidc-auth.zip"
 	c.componentSHA = zipSHA
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 2 * time.Second
 	return c
+}
+// testCtx bounds a PostStart wait the way the orchestrator now does: a deadline
+// on the pass context. Configurators no longer carry their own post-start timeout;
+// the framework's PostStartBudget is the ceiling and tests reproduce it here.
+func testCtx(t *testing.T, d time.Duration) (context.Context, context.CancelFunc) {
+	t.Helper()
+	return context.WithTimeout(context.Background(), d)
 }
 
 func TestPreStartCreatesDirs(t *testing.T) {
@@ -393,7 +399,8 @@ func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 3 * time.Second
+	ctx, cancel := testCtx(t, 3*time.Second)
+	defer cancel()
 
 	// provider becomes live asynchronously, like HA finishing setup
 	go func() {
@@ -401,7 +408,7 @@ func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 		srv.setOIDCLive(true)
 	}()
 
-	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()}))
+	require.NoError(t, c.PostStart(ctx, &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()}))
 
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
@@ -432,9 +439,10 @@ func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 2 * time.Second
+	ctx, cancel := testCtx(t, 2*time.Second)
+	defer cancel()
 
-	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{
+	require.NoError(t, c.PostStart(ctx, &configurator.AppState{
 		DataPath: data, SSOEnabled: true, OIDC: testOIDC(),
 	}))
 	srv.mu.Lock()
@@ -456,9 +464,10 @@ func TestPostStartFailsWhenProviderNeverLives(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 200 * time.Millisecond
+	ctx, cancel := testCtx(t, 200*time.Millisecond)
+	defer cancel()
 
-	err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()})
+	err := c.PostStart(ctx, &configurator.AppState{SSOEnabled: true, OIDC: testOIDC()})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "never became live")
 }
@@ -471,9 +480,10 @@ func TestPostStartNoSSOSkipsOIDCProbe(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 300 * time.Millisecond
+	ctx, cancel := testCtx(t, 300*time.Millisecond)
+	defer cancel()
 
-	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}))
+	require.NoError(t, c.PostStart(ctx, &configurator.AppState{SSOEnabled: false}))
 }
 
 func TestYamlQuoteEscapes(t *testing.T) {
@@ -592,9 +602,10 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	cfg.baseURLOverride = fakeSrv.srv.URL
 	cfg.restartContainerFn = fakeSrv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
-	cfg.postStartTimeout = 3 * time.Second
+	ctx, cancel := testCtx(t, 3*time.Second)
+	defer cancel()
 
-	require.NoError(t, cfg.PostStart(context.Background(), &configurator.AppState{
+	require.NoError(t, cfg.PostStart(ctx, &configurator.AppState{
 		DataPath:   data,
 		SSOEnabled: true,
 		OIDC:       testOIDC(),
@@ -623,7 +634,6 @@ func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 2 * time.Second
 
 	token, err := c.ensureOnboarded(context.Background(), t.TempDir())
 	require.NoError(t, err)
@@ -656,9 +666,10 @@ func TestPostStartAlreadyOnboardedAppliesTrustViaContainerRestart(t *testing.T) 
 	cfg.baseURLOverride = srv.srv.URL
 	cfg.restartContainerFn = srv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
-	cfg.postStartTimeout = 2 * time.Second
+	ctx, cancel := testCtx(t, 2*time.Second)
+	defer cancel()
 
-	require.NoError(t, cfg.PostStart(context.Background(), &configurator.AppState{
+	require.NoError(t, cfg.PostStart(ctx, &configurator.AppState{
 		DataPath:   data,
 		SSOEnabled: true,
 		OIDC:       testOIDC(),
@@ -713,9 +724,10 @@ func TestPostStartWaitsForTrustReloadAfterRestart(t *testing.T) {
 	c.baseURLOverride = srv.srv.URL
 	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 5 * time.Second
+	ctx, cancel := testCtx(t, 5*time.Second)
+	defer cancel()
 
-	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{
+	require.NoError(t, c.PostStart(ctx, &configurator.AppState{
 		DataPath: data, SSOEnabled: true, OIDC: testOIDC(),
 	}))
 
@@ -740,9 +752,10 @@ func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
 	c.baseURLOverride = srv.srv.URL
 	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
-	c.postStartTimeout = 300 * time.Millisecond
+	ctx, cancel := testCtx(t, 300*time.Millisecond)
+	defer cancel()
 
-	err := c.PostStart(context.Background(), &configurator.AppState{
+	err := c.PostStart(ctx, &configurator.AppState{
 		DataPath: data, SSOEnabled: true, OIDC: testOIDC(),
 	})
 	require.Error(t, err)

@@ -4,22 +4,26 @@
 package authentik
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 )
 
-// Client provides access to the Authentik API
+// Client provides access to the Authentik API. It wraps a single
+// *appclient.Client — one appclient spec carries the base URL, the
+// management-token bearer, the Accept header, and the (single-shot)
+// retry/timeout policy — so every method below reads as declared intent
+// over a shared transport instead of hand-rolling http.NewRequest.
 type Client struct {
 	baseURL     string
-	token       string
+	cl        *appclient.Client
 	emailDomain string
-	httpClient  *http.Client
 }
 
 // UserEmailDomain returns the domain used for managed users' identity
@@ -33,16 +37,28 @@ func UserEmailDomain(baseDomain string) string {
 	return baseDomain
 }
 
-// NewClient creates a new Authentik API client
+// NewClient creates a new Authentik API client.
+//
+// The underlying appclient is single-shot (one attempt, no backoff) and
+// 30s per-request, matching the client's historical behavior: these calls
+// run inside an idempotent reconciliation pass, so a transient blip is
+// retried on the next cycle rather than backed off here.
 func NewClient(baseURL, token string) *Client {
-	return &Client{
+	c := &Client{
 		baseURL:     baseURL,
-		token:       token,
 		emailDomain: UserEmailDomain(""),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
 	}
+	c.cl = appclient.New(appclient.Spec{
+		Name:    "authentik",
+		BaseURL: baseURL,
+		Headers: map[string]string{"Accept": "application/json"},
+		StaticAuth: func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+token)
+		},
+		Timeout: 30 * time.Second,
+		Retry:   appclient.RetryPolicy{MaxAttempts: 1},
+	})
+	return c
 }
 
 // WithUserEmailDomain sets the domain used for managed users' identity
@@ -57,7 +73,7 @@ func (c *Client) ManagedUserEmail(username string) string {
 	return username + "@" + c.emailDomain
 }
 
-// ProviderResponse represents an Authentik provider in API responses
+// ProviderResponse represents an Authentik API response
 type ProviderResponse struct {
 	PK   int    `json:"pk"`
 	Name string `json:"name"`
@@ -72,35 +88,16 @@ type PaginatedResponse struct {
 }
 
 // DeleteApplication deletes an Authentik application by slug
-func (c *Client) DeleteApplication(slug string) error {
-	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
-
-	req, err := http.NewRequest(http.MethodDelete, reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
+func (c *Client) DeleteApplication(ctx context.Context, slug string) error {
 	// 204 No Content = success, 404 = already deleted (acceptable)
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	return c.cl.DELETE("/api/v3/core/applications/" + url.PathEscape(slug) + "/").
+		OK(http.StatusNoContent, http.StatusNotFound).
+		Exec(ctx)
 }
 
 // DeleteOAuth2Provider deletes an OAuth2 provider by name
-func (c *Client) DeleteOAuth2Provider(providerName string) error {
-	providerID, err := c.findProviderID("oauth2", providerName)
+func (c *Client) DeleteOAuth2Provider(ctx context.Context, providerName string) error {
+	providerID, err := c.findProviderID(ctx, "oauth2", providerName)
 	if err != nil {
 		return err
 	}
@@ -108,12 +105,12 @@ func (c *Client) DeleteOAuth2Provider(providerName string) error {
 		return nil // Provider doesn't exist
 	}
 
-	return c.deleteProviderByID("oauth2", providerID)
+	return c.deleteProviderByID(ctx, "oauth2", providerID)
 }
 
 // DeleteProxyProvider deletes a proxy provider by name
-func (c *Client) DeleteProxyProvider(providerName string) error {
-	providerID, err := c.findProviderID("proxy", providerName)
+func (c *Client) DeleteProxyProvider(ctx context.Context, providerName string) error {
+	providerID, err := c.findProviderID(ctx, "proxy", providerName)
 	if err != nil {
 		return err
 	}
@@ -121,35 +118,16 @@ func (c *Client) DeleteProxyProvider(providerName string) error {
 		return nil // Provider doesn't exist
 	}
 
-	return c.deleteProviderByID("proxy", providerID)
+	return c.deleteProviderByID(ctx, "proxy", providerID)
 }
 
 // findProviderID finds a provider ID by type and name
-func (c *Client) findProviderID(providerType, name string) (int, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/providers/%s/?search=%s", c.baseURL, providerType, url.QueryEscape(name))
-
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return 0, fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) findProviderID(ctx context.Context, providerType, name string) (int, error) {
 	var result PaginatedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("decoding response: %w", err)
+	if err := c.cl.GET("/api/v3/providers/"+providerType+"/").
+		Query("search", name).
+		DoInto(ctx, &result); err != nil {
+		return 0, fmt.Errorf("searching %s providers: %w", providerType, err)
 	}
 
 	// Find exact match
@@ -163,36 +141,18 @@ func (c *Client) findProviderID(providerType, name string) (int, error) {
 }
 
 // deleteProviderByID deletes a provider by type and ID
-func (c *Client) deleteProviderByID(providerType string, id int) error {
-	reqURL := fmt.Sprintf("%s/api/v3/providers/%s/%d/", c.baseURL, providerType, id)
-
-	req, err := http.NewRequest(http.MethodDelete, reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+func (c *Client) deleteProviderByID(ctx context.Context, providerType string, id int) error {
+	// 204 No Content = success, 404 = already deleted (acceptable)
+	return c.cl.DELETE(fmt.Sprintf("/api/v3/providers/%s/%d/", providerType, id)).
+		OK(http.StatusNoContent, http.StatusNotFound).
+		Exec(ctx)
 }
 
 // DeleteAppSSO deletes both the application and provider for an app.
 // This is the main cleanup function to call during app uninstall.
-func (c *Client) DeleteAppSSO(appName, displayName, ssoStrategy string) error {
+func (c *Client) DeleteAppSSO(ctx context.Context, appName, displayName, ssoStrategy string) error {
 	// Delete the application first (by slug)
-	if err := c.DeleteApplication(appName); err != nil {
+	if err := c.DeleteApplication(ctx, appName); err != nil {
 		return fmt.Errorf("deleting application: %w", err)
 	}
 
@@ -200,12 +160,12 @@ func (c *Client) DeleteAppSSO(appName, displayName, ssoStrategy string) error {
 	switch ssoStrategy {
 	case "native-oidc":
 		providerName := fmt.Sprintf("%s OAuth2 Provider", displayName)
-		if err := c.DeleteOAuth2Provider(providerName); err != nil {
+		if err := c.DeleteOAuth2Provider(ctx, providerName); err != nil {
 			return fmt.Errorf("deleting OAuth2 provider: %w", err)
 		}
 	case "forward-auth":
 		providerName := fmt.Sprintf("%s Proxy Provider", displayName)
-		if err := c.DeleteProxyProvider(providerName); err != nil {
+		if err := c.DeleteProxyProvider(ctx, providerName); err != nil {
 			return fmt.Errorf("deleting proxy provider: %w", err)
 		}
 	}
@@ -214,24 +174,9 @@ func (c *Client) DeleteAppSSO(appName, displayName, ssoStrategy string) error {
 }
 
 // IsAvailable checks if Authentik is available and the token is valid
-func (c *Client) IsAvailable() bool {
-	reqURL := fmt.Sprintf("%s/api/v3/core/applications/", c.baseURL)
-
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return false
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	return resp.StatusCode == http.StatusOK
+func (c *Client) IsAvailable(ctx context.Context) bool {
+	_, err := c.cl.GET("/api/v3/core/applications/").Do(ctx)
+	return err == nil
 }
 
 // OutpostResponse represents an Authentik outpost in API responses
@@ -250,9 +195,9 @@ type OutpostPaginatedResponse struct {
 }
 
 // AddProviderToEmbeddedOutpost adds a proxy provider to the embedded outpost
-func (c *Client) AddProviderToEmbeddedOutpost(providerName string) error {
+func (c *Client) AddProviderToEmbeddedOutpost(ctx context.Context, providerName string) error {
 	// Find the proxy provider ID
-	providerID, err := c.findProviderID("proxy", providerName)
+	providerID, err := c.findProviderID(ctx, "proxy", providerName)
 	if err != nil {
 		return fmt.Errorf("finding provider: %w", err)
 	}
@@ -261,7 +206,7 @@ func (c *Client) AddProviderToEmbeddedOutpost(providerName string) error {
 	}
 
 	// Find the embedded outpost
-	outpost, err := c.findEmbeddedOutpost()
+	outpost, err := c.findEmbeddedOutpost(ctx)
 	if err != nil {
 		return fmt.Errorf("finding embedded outpost: %w", err)
 	}
@@ -278,35 +223,16 @@ func (c *Client) AddProviderToEmbeddedOutpost(providerName string) error {
 
 	// Add the provider to the outpost
 	outpost.Providers = append(outpost.Providers, providerID)
-	return c.updateOutpostProviders(outpost.PK, outpost.Providers)
+	return c.updateOutpostProviders(ctx, outpost.PK, outpost.Providers)
 }
 
 // findEmbeddedOutpost finds the authentik Embedded Outpost
-func (c *Client) findEmbeddedOutpost() (*OutpostResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/?search=Embedded", c.baseURL)
-
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) findEmbeddedOutpost(ctx context.Context) (*OutpostResponse, error) {
 	var result OutpostPaginatedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+	if err := c.cl.GET("/api/v3/outposts/instances/").
+		Query("search", "Embedded").
+		DoInto(ctx, &result); err != nil {
+		return nil, fmt.Errorf("searching outposts: %w", err)
 	}
 
 	// Find the embedded outpost
@@ -323,8 +249,8 @@ func (c *Client) findEmbeddedOutpost() (*OutpostResponse, error) {
 // embedded outpost generates browser-accessible authorize redirect URLs (e.g. via Traefik)
 // rather than the server's internal bind address. Safe to call repeatedly — only patches
 // when the value differs.
-func (c *Client) EnsureEmbeddedOutpostHost(baseURL string) error {
-	outpost, err := c.findEmbeddedOutpost()
+func (c *Client) EnsureEmbeddedOutpostHost(ctx context.Context, baseURL string) error {
+	outpost, err := c.findEmbeddedOutpost(ctx)
 	if err != nil {
 		return fmt.Errorf("finding embedded outpost: %w", err)
 	}
@@ -333,19 +259,10 @@ func (c *Client) EnsureEmbeddedOutpostHost(baseURL string) error {
 	}
 
 	// Fetch full outpost object to get current config
-	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/%s/", c.baseURL, outpost.PK)
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
+	path := "/api/v3/outposts/instances/" + outpost.PK + "/"
+	body, err := c.cl.GET(path).Do(ctx)
 	if err != nil {
-		return err
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetching outpost: status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("fetching outpost: %w", err)
 	}
 
 	var full map[string]interface{}
@@ -364,58 +281,18 @@ func (c *Client) EnsureEmbeddedOutpostHost(baseURL string) error {
 	config["authentik_host"] = baseURL
 	full["config"] = config
 
-	patchBytes, _ := json.Marshal(full)
-	req2, _ := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(patchBytes))
-	req2.Header.Set("Authorization", "Bearer "+c.token)
-	req2.Header.Set("Content-Type", "application/json")
-	req2.Header.Set("Accept", "application/json")
-
-	resp2, err := c.httpClient.Do(req2)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp2.Body.Close() }()
-	if resp2.StatusCode != http.StatusOK {
-		body2, _ := io.ReadAll(resp2.Body)
-		return fmt.Errorf("updating outpost host: status %d: %s", resp2.StatusCode, string(body2))
+	if err := c.cl.PUT(path).JSON(full).OK(http.StatusOK).Exec(ctx); err != nil {
+		return fmt.Errorf("updating outpost host: %w", err)
 	}
 	return nil
 }
 
 // updateOutpostProviders updates the providers list for an outpost
-func (c *Client) updateOutpostProviders(outpostPK string, providers []int) error {
-	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/%s/", c.baseURL, outpostPK)
-
-	// Create the patch payload
-	payload := map[string]interface{}{
-		"providers": providers,
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshaling payload: %w", err)
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+func (c *Client) updateOutpostProviders(ctx context.Context, outpostPK string, providers []int) error {
+	return c.cl.PATCH("/api/v3/outposts/instances/"+outpostPK+"/").
+		JSON(map[string]interface{}{"providers": providers}).
+		OK(http.StatusOK).
+		Exec(ctx)
 }
 
 // LDAP Infrastructure constants
@@ -435,43 +312,43 @@ const (
 
 // EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
 // if they don't already exist. This is idempotent - safe to call multiple times.
-func (c *Client) EnsureLDAPInfrastructure(ldapBindPassword string) error {
+func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword string) error {
 	// 1. Create LDAP provider (if not exists)
-	providerID, err := c.ensureLDAPProvider()
+	providerID, err := c.ensureLDAPProvider(ctx)
 	if err != nil {
 		return fmt.Errorf("ensuring LDAP provider: %w", err)
 	}
 
 	// 2. Create LDAP application (if not exists)
-	if err := c.ensureLDAPApplication(providerID); err != nil {
+	if err := c.ensureLDAPApplication(ctx, providerID); err != nil {
 		return fmt.Errorf("ensuring LDAP application: %w", err)
 	}
 
 	// 3. Create service account (if not exists)
-	serviceAccountID, err := c.ensureLDAPServiceAccount()
+	serviceAccountID, err := c.ensureLDAPServiceAccount(ctx)
 	if err != nil {
 		return fmt.Errorf("ensuring LDAP service account: %w", err)
 	}
 
 	// 4. Add service account to authentik Admins group (for LDAP search permissions)
-	if err := c.addUserToGroup(serviceAccountID, "authentik Admins"); err != nil {
+	if err := c.addUserToGroup(ctx, serviceAccountID, "authentik Admins"); err != nil {
 		return fmt.Errorf("adding service account to group: %w", err)
 	}
 
 	// 5. Create service account token (if not exists)
-	if err := c.ensureLDAPServiceToken(serviceAccountID, ldapBindPassword); err != nil {
+	if err := c.ensureLDAPServiceToken(ctx, serviceAccountID, ldapBindPassword); err != nil {
 		return fmt.Errorf("ensuring LDAP service token: %w", err)
 	}
 
 	// 6. Set the service account's password for LDAP direct bind.
 	// The app_password token alone is not sufficient — Authentik's LDAP outpost
 	// in direct bind mode requires the user's actual password.
-	if err := c.setUserPassword(serviceAccountID, ldapBindPassword); err != nil {
+	if err := c.setUserPassword(ctx, serviceAccountID, ldapBindPassword); err != nil {
 		return fmt.Errorf("setting service account password: %w", err)
 	}
 
 	// 7. Create LDAP outpost (if not exists)
-	if err := c.ensureLDAPOutpost(providerID); err != nil {
+	if err := c.ensureLDAPOutpost(ctx, providerID); err != nil {
 		return fmt.Errorf("ensuring LDAP outpost: %w", err)
 	}
 
@@ -479,9 +356,9 @@ func (c *Client) EnsureLDAPInfrastructure(ldapBindPassword string) error {
 }
 
 // ensureLDAPProvider creates the LDAP provider if it doesn't exist
-func (c *Client) ensureLDAPProvider() (int, error) {
+func (c *Client) ensureLDAPProvider(ctx context.Context) (int, error) {
 	// Check if provider exists
-	providerID, err := c.findProviderID("ldap", ldapProviderName)
+	providerID, err := c.findProviderID(ctx, "ldap", ldapProviderName)
 	if err != nil {
 		return 0, err
 	}
@@ -490,17 +367,17 @@ func (c *Client) ensureLDAPProvider() (int, error) {
 	}
 
 	// Find required flows
-	authFlowID, err := c.findFlowID("default-authentication-flow")
+	authFlowID, err := c.findFlowID(ctx, "default-authentication-flow")
 	if err != nil {
 		return 0, fmt.Errorf("finding auth flow: %w", err)
 	}
-	invalidFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+	invalidFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 	if err != nil {
 		return 0, fmt.Errorf("finding invalidation flow: %w", err)
 	}
 
 	// Find search group (authentik Admins)
-	searchGroupID, err := c.findGroupID("authentik Admins")
+	searchGroupID, err := c.findGroupID(ctx, "authentik Admins")
 	if err != nil {
 		return 0, fmt.Errorf("finding search group: %w", err)
 	}
@@ -514,53 +391,26 @@ func (c *Client) ensureLDAPProvider() (int, error) {
 		"bind_mode":          "direct",
 		"search_mode":        "direct",
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/ldap/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("creating LDAP provider: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result struct {
 		PK int `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, err
+	if err := c.cl.POST("/api/v3/providers/ldap/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
+		return 0, fmt.Errorf("creating LDAP provider: %w", err)
 	}
 
 	return result.PK, nil
 }
 
 // ensureLDAPApplication creates the LDAP application if it doesn't exist
-func (c *Client) ensureLDAPApplication(providerID int) error {
+func (c *Client) ensureLDAPApplication(ctx context.Context, providerID int) error {
 	// Check if application exists
-	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, ldapApplicationSlug)
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusOK {
+	appPath := "/api/v3/core/applications/" + ldapApplicationSlug + "/"
+	_, err := c.cl.GET(appPath).Do(ctx)
+	if err == nil {
 		return nil // Already exists
+	}
+	if appclient.StatusOf(err) == 0 {
+		return err // transport error — don't attempt create on an unreachable server
 	}
 
 	// Create the application
@@ -570,34 +420,17 @@ func (c *Client) ensureLDAPApplication(providerID int) error {
 		"provider":           providerID,
 		"policy_engine_mode": "any",
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err = c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("creating LDAP application: status %d: %s", resp.StatusCode, string(body))
+	if err := c.cl.POST("/api/v3/core/applications/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
+		return fmt.Errorf("creating LDAP application: %w", err)
 	}
 
 	return nil
 }
 
 // ensureLDAPServiceAccount creates the service account if it doesn't exist
-func (c *Client) ensureLDAPServiceAccount() (int, error) {
+func (c *Client) ensureLDAPServiceAccount(ctx context.Context) (int, error) {
 	// Check if user exists
-	userID, err := c.findUserID(ldapServiceUsername)
+	userID, err := c.findUserID(ctx, ldapServiceUsername)
 	if err != nil {
 		return 0, err
 	}
@@ -613,41 +446,20 @@ func (c *Client) ensureLDAPServiceAccount() (int, error) {
 		"type":      "service_account",
 		"is_active": true,
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/users/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("creating service account: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result struct {
 		PK int `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, err
+	if err := c.cl.POST("/api/v3/core/users/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
+		return 0, fmt.Errorf("creating service account: %w", err)
 	}
 
 	return result.PK, nil
 }
 
 // ensureLDAPServiceToken creates the service account token if it doesn't exist
-func (c *Client) ensureLDAPServiceToken(userID int, password string) error {
+func (c *Client) ensureLDAPServiceToken(ctx context.Context, userID int, password string) error {
 	// Check if token exists
-	tokenExists, err := c.tokenExists(ldapServiceTokenID)
+	tokenExists, err := c.tokenExists(ctx, ldapServiceTokenID)
 	if err != nil {
 		return err
 	}
@@ -663,34 +475,17 @@ func (c *Client) ensureLDAPServiceToken(userID int, password string) error {
 		"expiring":   false,
 		"key":        password,
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/tokens/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("creating service token: status %d: %s", resp.StatusCode, string(body))
+	if err := c.cl.POST("/api/v3/core/tokens/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
+		return fmt.Errorf("creating service token: %w", err)
 	}
 
 	return nil
 }
 
 // ensureLDAPOutpost creates the LDAP outpost if it doesn't exist
-func (c *Client) ensureLDAPOutpost(providerID int) error {
+func (c *Client) ensureLDAPOutpost(ctx context.Context, providerID int) error {
 	// Check if outpost exists
-	outpost, err := c.findOutpostByName(ldapOutpostName)
+	outpost, err := c.findOutpostByName(ctx, ldapOutpostName)
 	if err != nil {
 		return err
 	}
@@ -708,65 +503,30 @@ func (c *Client) ensureLDAPOutpost(providerID int) error {
 			"log_level":      "info",
 		},
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/outposts/instances/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("creating LDAP outpost: status %d: %s", resp.StatusCode, string(body))
+	if err := c.cl.POST("/api/v3/outposts/instances/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
+		return fmt.Errorf("creating LDAP outpost: %w", err)
 	}
 
 	return nil
 }
 
 // GetLDAPServiceTokenKey returns the LDAP service account token key for bind operations
-func (c *Client) GetLDAPServiceTokenKey() (string, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", c.baseURL, url.PathEscape(ldapServiceTokenID))
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("getting LDAP service token key: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) GetLDAPServiceTokenKey(ctx context.Context) (string, error) {
 	var result struct {
 		Key string `json:"key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/core/tokens/" + url.PathEscape(ldapServiceTokenID) + "/view_key/").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("getting LDAP service token key: %w", err)
 	}
-
 	return result.Key, nil
 }
 
 // GetLDAPOutpostToken returns the auto-generated token for the LDAP outpost
-func (c *Client) GetLDAPOutpostToken() (string, error) {
+func (c *Client) GetLDAPOutpostToken(ctx context.Context) (string, error) {
 	// Find the LDAP outpost
-	outpost, err := c.findOutpostByName(ldapOutpostName)
+	outpost, err := c.findOutpostByName(ctx, ldapOutpostName)
 	if err != nil {
 		return "", fmt.Errorf("finding outpost: %w", err)
 	}
@@ -778,89 +538,43 @@ func (c *Client) GetLDAPOutpostToken() (string, error) {
 	tokenIdentifier := fmt.Sprintf("ak-outpost-%s-api", outpost.PK)
 
 	// Query for the token key using the view_key endpoint
-	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", c.baseURL, url.PathEscape(tokenIdentifier))
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("getting token key: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result struct {
 		Key string `json:"key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/core/tokens/" + url.PathEscape(tokenIdentifier) + "/view_key/").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("getting token key: %w", err)
 	}
-
 	return result.Key, nil
 }
 
 // Helper methods for LDAP infrastructure
 
-func (c *Client) findFlowID(slug string) (string, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/flows/instances/%s/", c.baseURL, url.PathEscape(slug))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("flow %s not found: status %d: %s", slug, resp.StatusCode, string(body))
-	}
-
+func (c *Client) findFlowID(ctx context.Context, slug string) (string, error) {
 	var result struct {
 		PK string `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/flows/instances/" + url.PathEscape(slug) + "/").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("flow %s not found: %w", slug, err)
 	}
-
 	return result.PK, nil
 }
 
-func (c *Client) findGroupID(name string) (string, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/core/groups/?search=%s", c.baseURL, url.QueryEscape(name))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("searching groups: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) findGroupID(ctx context.Context, name string) (string, error) {
 	var result struct {
 		Results []struct {
 			PK   string `json:"pk"`
 			Name string `json:"name"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/core/groups/").
+		Query("search", name).
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("searching groups: %w", err)
 	}
 
 	for _, group := range result.Results {
@@ -872,31 +586,18 @@ func (c *Client) findGroupID(name string) (string, error) {
 	return "", fmt.Errorf("group %s not found", name)
 }
 
-func (c *Client) findUserID(username string) (int, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/core/users/?search=%s", c.baseURL, url.QueryEscape(username))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("searching users: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) findUserID(ctx context.Context, username string) (int, error) {
 	var result struct {
 		Results []struct {
 			PK       int    `json:"pk"`
 			Username string `json:"username"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, err
+	if err := c.cl.GET("/api/v3/core/users/").
+		Query("search", username).
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return 0, fmt.Errorf("searching users: %w", err)
 	}
 
 	for _, user := range result.Results {
@@ -908,65 +609,36 @@ func (c *Client) findUserID(username string) (int, error) {
 	return 0, nil // Not found
 }
 
-func (c *Client) addUserToGroup(userID int, groupName string) error {
+func (c *Client) addUserToGroup(ctx context.Context, userID int, groupName string) error {
 	// Find the group
-	groupID, err := c.findGroupID(groupName)
+	groupID, err := c.findGroupID(ctx, groupName)
 	if err != nil {
 		return err
 	}
 
-	// Add user to group using the group's add_user endpoint
-	reqURL := fmt.Sprintf("%s/api/v3/core/groups/%s/add_user/", c.baseURL, groupID)
-	payload := map[string]int{"pk": userID}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
+	// Add user to group using the group's add_user endpoint.
 	// 204 = success, 200 = already in group (idempotent)
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("adding user to group: status %d: %s", resp.StatusCode, string(body))
+	if err := c.cl.POST("/api/v3/core/groups/"+groupID+"/add_user/").
+		JSON(map[string]int{"pk": userID}).
+		OK(http.StatusNoContent, http.StatusOK).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("adding user to group: %w", err)
 	}
 
 	return nil
 }
 
-func (c *Client) tokenExists(identifier string) (bool, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/?identifier=%s", c.baseURL, url.QueryEscape(identifier))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("searching tokens: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) tokenExists(ctx context.Context, identifier string) (bool, error) {
 	var result struct {
 		Results []struct {
 			Identifier string `json:"identifier"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false, err
+	if err := c.cl.GET("/api/v3/core/tokens/").
+		Query("identifier", identifier).
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return false, fmt.Errorf("searching tokens: %w", err)
 	}
 
 	for _, token := range result.Results {
@@ -978,26 +650,13 @@ func (c *Client) tokenExists(identifier string) (bool, error) {
 	return false, nil
 }
 
-func (c *Client) findOutpostByName(name string) (*OutpostResponse, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/outposts/instances/?search=%s", c.baseURL, url.QueryEscape(name))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("searching outposts: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) findOutpostByName(ctx context.Context, name string) (*OutpostResponse, error) {
 	var result OutpostPaginatedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+	if err := c.cl.GET("/api/v3/outposts/instances/").
+		Query("search", name).
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return nil, fmt.Errorf("searching outposts: %w", err)
 	}
 
 	for i, outpost := range result.Results {
@@ -1012,7 +671,7 @@ func (c *Client) findOutpostByName(name string) (*OutpostResponse, error) {
 // CreateUser creates a new user in Authentik and sets their password.
 // The user gets a derived identity email (username@<domain>): SSO apps
 // (e.g. AFFiNE) require a valid RFC-style email to create app accounts.
-func (c *Client) CreateUser(username, password string) (int, error) {
+func (c *Client) CreateUser(ctx context.Context, username, password string) (int, error) {
 	// Create the user
 	payload := map[string]interface{}{
 		"username":  username,
@@ -1021,36 +680,15 @@ func (c *Client) CreateUser(username, password string) (int, error) {
 		"path":      "users",
 		"is_active": true,
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/users/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return 0, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("creating user: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result struct {
 		PK int `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("decoding response: %w", err)
+	if err := c.cl.POST("/api/v3/core/users/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
+		return 0, fmt.Errorf("creating user: %w", err)
 	}
 
 	// Set the user's password
-	if err := c.setUserPassword(result.PK, password); err != nil {
+	if err := c.setUserPassword(ctx, result.PK, password); err != nil {
 		return 0, fmt.Errorf("setting password: %w", err)
 	}
 
@@ -1058,107 +696,56 @@ func (c *Client) CreateUser(username, password string) (int, error) {
 }
 
 // setUserPassword sets a user's password via the Authentik API
-func (c *Client) setUserPassword(userID int, password string) error {
-	reqURL := fmt.Sprintf("%s/api/v3/core/users/%d/set_password/", c.baseURL, userID)
-	payload := map[string]string{"password": password}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
+func (c *Client) setUserPassword(ctx context.Context, userID int, password string) error {
 	// 204 No Content = success
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("setting password: status %d: %s", resp.StatusCode, string(body))
+	if err := c.cl.POST(fmt.Sprintf("/api/v3/core/users/%d/set_password/", userID)).
+		JSON(map[string]string{"password": password}).
+		OK(http.StatusNoContent, http.StatusOK).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("setting password: %w", err)
 	}
 
 	return nil
 }
 
 // SetUserEmail sets the user's identity email via the Authentik API.
-func (c *Client) SetUserEmail(userID int, email string) error {
-	reqURL := fmt.Sprintf("%s/api/v3/core/users/%d/", c.baseURL, userID)
-	payload := map[string]string{"email": email}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("setting user email: status %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
+func (c *Client) SetUserEmail(ctx context.Context, userID int, email string) error {
+	return c.cl.PATCH(fmt.Sprintf("/api/v3/core/users/%d/", userID)).
+		JSON(map[string]string{"email": email}).
+		OK(http.StatusOK).
+		Exec(ctx)
 }
 
 // SetUserPassword sets a user's password via the Authentik API (public wrapper)
-func (c *Client) SetUserPassword(userID int, password string) error {
-	return c.setUserPassword(userID, password)
+func (c *Client) SetUserPassword(ctx context.Context, userID int, password string) error {
+	return c.setUserPassword(ctx, userID, password)
 }
 
 // AddUserToGroup adds a user to a group by name (public wrapper around internal method)
-func (c *Client) AddUserToGroup(userID int, groupName string) error {
-	return c.addUserToGroup(userID, groupName)
+func (c *Client) AddUserToGroup(ctx context.Context, userID int, groupName string) error {
+	return c.addUserToGroup(ctx, userID, groupName)
 }
 
 // RemoveUserFromGroup removes a user from a group by name
-func (c *Client) RemoveUserFromGroup(userID int, groupName string) error {
-	groupID, err := c.findGroupID(groupName)
+func (c *Client) RemoveUserFromGroup(ctx context.Context, userID int, groupName string) error {
+	groupID, err := c.findGroupID(ctx, groupName)
 	if err != nil {
 		return err
 	}
 
-	reqURL := fmt.Sprintf("%s/api/v3/core/groups/%s/remove_user/", c.baseURL, groupID)
-	payload := map[string]int{"pk": userID}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("removing user from group: status %d: %s", resp.StatusCode, string(body))
+	if err := c.cl.POST("/api/v3/core/groups/"+groupID+"/remove_user/").
+		JSON(map[string]int{"pk": userID}).
+		OK(http.StatusNoContent, http.StatusOK).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("removing user from group: %w", err)
 	}
 
 	return nil
 }
 
 // FindUserID finds a user ID by username (public wrapper)
-func (c *Client) FindUserID(username string) (int, error) {
-	return c.findUserID(username)
+func (c *Client) FindUserID(ctx context.Context, username string) (int, error) {
+	return c.findUserID(ctx, username)
 }
 
 // ManagedUserInfo represents a user returned by ListUsers
@@ -1172,41 +759,21 @@ type ManagedUserInfo struct {
 }
 
 // ListUsers fetches internal (non-service) users from Authentik and determines their roles
-func (c *Client) ListUsers() ([]ManagedUserInfo, error) {
+func (c *Client) ListUsers(ctx context.Context) ([]ManagedUserInfo, error) {
 	// Fetch users of type "internal"
-	reqURL := fmt.Sprintf("%s/api/v3/core/users/?type=internal&page_size=200", c.baseURL)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("listing users: status %d: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
 	var rawResult struct {
 		Results []json.RawMessage `json:"results"`
 	}
-	if err := json.Unmarshal(body, &rawResult); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+	if err := c.cl.GET("/api/v3/core/users/").
+		Query("type", "internal").
+		Query("page_size", "200").
+		OK(http.StatusOK).
+		DoInto(ctx, &rawResult); err != nil {
+		return nil, fmt.Errorf("listing users: %w", err)
 	}
 
 	// Get the admin group members to cross-reference
-	adminGroupMembers, err := c.getAdminGroupMembers()
+	adminGroupMembers, err := c.getAdminGroupMembers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting admin group members: %w", err)
 	}
@@ -1247,36 +814,19 @@ func (c *Client) ListUsers() ([]ManagedUserInfo, error) {
 }
 
 // getAdminGroupMembers returns a set of user IDs that are in the "authentik Admins" group
-func (c *Client) getAdminGroupMembers() (map[int]bool, error) {
-	groupID, err := c.findGroupID("authentik Admins")
+func (c *Client) getAdminGroupMembers(ctx context.Context) (map[int]bool, error) {
+	groupID, err := c.findGroupID(ctx, "authentik Admins")
 	if err != nil {
 		return nil, err
-	}
-
-	reqURL := fmt.Sprintf("%s/api/v3/core/groups/%s/", c.baseURL, groupID)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("fetching group: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var group struct {
 		Users []int `json:"users"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&group); err != nil {
-		return nil, fmt.Errorf("decoding group: %w", err)
+	if err := c.cl.GET("/api/v3/core/groups/" + groupID + "/").
+		OK(http.StatusOK).
+		DoInto(ctx, &group); err != nil {
+		return nil, fmt.Errorf("fetching group: %w", err)
 	}
 
 	members := make(map[int]bool)
@@ -1287,9 +837,9 @@ func (c *Client) getAdminGroupMembers() (map[int]bool, error) {
 }
 
 // DeleteUser deletes a user by username
-func (c *Client) DeleteUser(username string) error {
+func (c *Client) DeleteUser(ctx context.Context, username string) error {
 	// Find the user ID first
-	userID, err := c.findUserID(username)
+	userID, err := c.findUserID(ctx, username)
 	if err != nil {
 		return fmt.Errorf("finding user: %w", err)
 	}
@@ -1297,28 +847,10 @@ func (c *Client) DeleteUser(username string) error {
 		return nil // User doesn't exist, nothing to delete
 	}
 
-	// Delete the user
-	reqURL := fmt.Sprintf("%s/api/v3/core/users/%d/", c.baseURL, userID)
-	req, err := http.NewRequest(http.MethodDelete, reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	// 204 No Content = success, 404 = already deleted
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("deleting user: status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	return c.cl.DELETE(fmt.Sprintf("/api/v3/core/users/%d/", userID)).
+		OK(http.StatusNoContent, http.StatusNotFound).
+		Exec(ctx)
 }
 
 // EnsureLoginConfiguration applies Bloud-specific login page settings:
@@ -1336,7 +868,7 @@ func (c *Client) DeleteUser(username string) error {
 //   - PATCH /api/v3/flows/instances/:slug/ (slug path param, title body field)
 //   - GET  /api/v3/flows/instances/:slug/ (verify title)
 //   - PATCH /api/v3/stages/identification/:stage_uuid/ (UUID path param, user_fields body field)
-func (c *Client) EnsureLoginConfiguration() error {
+func (c *Client) EnsureLoginConfiguration(ctx context.Context) error {
 	const (
 		timeout  = 2 * time.Minute
 		interval = 10 * time.Second
@@ -1344,7 +876,7 @@ func (c *Client) EnsureLoginConfiguration() error {
 	deadline := time.Now().Add(timeout)
 
 	for {
-		err := c.applyAndVerifyLoginConfiguration()
+		err := c.applyAndVerifyLoginConfiguration(ctx)
 		if err == nil {
 			return nil
 		}
@@ -1353,26 +885,30 @@ func (c *Client) EnsureLoginConfiguration() error {
 			return fmt.Errorf("timed out waiting for login configuration to apply: %w", err)
 		}
 
-		time.Sleep(interval)
+		if err := sleepCtx(ctx, interval); err != nil {
+			return fmt.Errorf("timed out waiting for login configuration to apply: %w", err)
+		}
 	}
 }
 
 // applyAndVerifyLoginConfiguration patches the flow title and identification stage, then
 // waits 3 seconds and re-reads both to confirm a blueprint didn't overwrite them.
-func (c *Client) applyAndVerifyLoginConfiguration() error {
-	if err := c.ensureFlowTitle("default-authentication-flow", "Sign in to Bloud"); err != nil {
+func (c *Client) applyAndVerifyLoginConfiguration(ctx context.Context) error {
+	if err := c.ensureFlowTitle(ctx, "default-authentication-flow", "Sign in to Bloud"); err != nil {
 		return fmt.Errorf("ensuring flow title: %w", err)
 	}
 
-	if err := c.ensureIdentificationStageUsernameOnly("default-authentication-identification"); err != nil {
+	if err := c.ensureIdentificationStageUsernameOnly(ctx, "default-authentication-identification"); err != nil {
 		return fmt.Errorf("ensuring identification stage: %w", err)
 	}
 
 	// Wait briefly, then re-read both the flow title and identification stage user_fields
 	// to confirm no blueprint overwrote our patches.
-	time.Sleep(3 * time.Second)
+	if err := sleepCtx(ctx, 3*time.Second); err != nil {
+		return err
+	}
 
-	title, err := c.getFlowTitle("default-authentication-flow")
+	title, err := c.getFlowTitle(ctx, "default-authentication-flow")
 	if err != nil {
 		return fmt.Errorf("verifying flow title: %w", err)
 	}
@@ -1380,7 +916,7 @@ func (c *Client) applyAndVerifyLoginConfiguration() error {
 		return fmt.Errorf("flow title was reset to %q by a blueprint, will retry", title)
 	}
 
-	userFields, err := c.getIdentificationStageUserFields("default-authentication-identification")
+	userFields, err := c.getIdentificationStageUserFields(ctx, "default-authentication-identification")
 	if err != nil {
 		return fmt.Errorf("verifying identification stage: %w", err)
 	}
@@ -1392,61 +928,31 @@ func (c *Client) applyAndVerifyLoginConfiguration() error {
 }
 
 // getFlowTitle fetches the current title of a flow by slug.
-func (c *Client) getFlowTitle(slug string) (string, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/flows/instances/%s/", c.baseURL, url.PathEscape(slug))
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("fetching flow: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) getFlowTitle(ctx context.Context, slug string) (string, error) {
 	var result struct {
 		Title string `json:"title"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decoding flow: %w", err)
+	if err := c.cl.GET("/api/v3/flows/instances/" + url.PathEscape(slug) + "/").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("fetching flow: %w", err)
 	}
 	return result.Title, nil
 }
 
 // getIdentificationStageUserFields fetches the current user_fields of an identification stage by name.
-func (c *Client) getIdentificationStageUserFields(stageName string) ([]string, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/stages/identification/?search=%s", c.baseURL, url.QueryEscape(stageName))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching identification stage: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("fetching identification stage: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) getIdentificationStageUserFields(ctx context.Context, stageName string) ([]string, error) {
 	var result struct {
 		Results []struct {
 			Name       string   `json:"name"`
 			UserFields []string `json:"user_fields"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding identification stage: %w", err)
+	if err := c.cl.GET("/api/v3/stages/identification/").
+		Query("search", stageName).
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return nil, fmt.Errorf("fetching identification stage: %w", err)
 	}
 
 	for _, stage := range result.Results {
@@ -1459,54 +965,18 @@ func (c *Client) getIdentificationStageUserFields(stageName string) ([]string, e
 
 // ensureFlowTitle PATCHes the title of a flow by slug.
 // API: PATCH /api/v3/flows/instances/:slug/ — slug is the URL path parameter.
-func (c *Client) ensureFlowTitle(slug, title string) error {
-	reqURL := fmt.Sprintf("%s/api/v3/flows/instances/%s/", c.baseURL, url.PathEscape(slug))
-	payload := map[string]string{"title": title}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("patching flow title: status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+func (c *Client) ensureFlowTitle(ctx context.Context, slug, title string) error {
+	return c.cl.PATCH("/api/v3/flows/instances/" + url.PathEscape(slug) + "/").
+		JSON(map[string]string{"title": title}).
+		OK(http.StatusOK).
+		Exec(ctx)
 }
 
 // ensureIdentificationStageUsernameOnly sets user_fields to ["username"] on an identification stage.
 // API: GET /api/v3/stages/identification/?search=name to find the stage UUID,
 // then PATCH /api/v3/stages/identification/:stage_uuid/ with user_fields.
 // Valid user_fields values: email, username, upn.
-func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
-	reqURL := fmt.Sprintf("%s/api/v3/stages/identification/?search=%s", c.baseURL, url.QueryEscape(stageName))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("fetching identification stages: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("fetching identification stages: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) ensureIdentificationStageUsernameOnly(ctx context.Context, stageName string) error {
 	// pk is a UUID string (stage_uuid), used as the path parameter for PATCH
 	var result struct {
 		Results []struct {
@@ -1514,8 +984,11 @@ func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
 			Name string `json:"name"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decoding identification stages: %w", err)
+	if err := c.cl.GET("/api/v3/stages/identification/").
+		Query("search", stageName).
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return fmt.Errorf("fetching identification stages: %w", err)
 	}
 
 	var stageUUID string
@@ -1530,32 +1003,10 @@ func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
 		return fmt.Errorf("identification stage %q not found", stageName)
 	}
 
-	patchURL := fmt.Sprintf("%s/api/v3/stages/identification/%s/", c.baseURL, stageUUID)
-	payload := map[string]interface{}{
-		"user_fields": []string{"username"},
-	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	patchReq, err := http.NewRequest(http.MethodPatch, patchURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	patchReq.Header.Set("Authorization", "Bearer "+c.token)
-	patchReq.Header.Set("Content-Type", "application/json")
-	patchReq.Header.Set("Accept", "application/json")
-
-	patchResp, err := c.httpClient.Do(patchReq)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = patchResp.Body.Close() }()
-
-	if patchResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(patchResp.Body)
-		return fmt.Errorf("patching identification stage: status %d: %s", patchResp.StatusCode, string(body))
-	}
-
-	return nil
+	return c.cl.PATCH("/api/v3/stages/identification/" + stageUUID + "/").
+		JSON(map[string]interface{}{"user_fields": []string{"username"}}).
+		OK(http.StatusOK).
+		Exec(ctx)
 }
 
 // EnsureBranding updates the default Authentik brand with the provided CSS.
@@ -1568,7 +1019,7 @@ func (c *Client) ensureIdentificationStageUsernameOnly(stageName string) error {
 // PostStart error is terminal in the reconciler (ERROR status is never
 // retried), so a single transient "brand not found" would brick the SSO
 // stack. Retry while the brand is absent; other API errors fail fast.
-func (c *Client) EnsureBranding(css string) error {
+func (c *Client) EnsureBranding(ctx context.Context, css string) error {
 	const (
 		maxAttempts = 15
 		retryDelay  = 4 * time.Second
@@ -1577,7 +1028,7 @@ func (c *Client) EnsureBranding(css string) error {
 	brandPK := ""
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		brandPK, lastErr = c.defaultBrandPK()
+		brandPK, lastErr = c.defaultBrandPK(ctx)
 		if lastErr == nil {
 			break
 		}
@@ -1585,38 +1036,19 @@ func (c *Client) EnsureBranding(css string) error {
 			return lastErr
 		}
 		if attempt < maxAttempts {
-			time.Sleep(retryDelay)
+			if err := sleepCtx(ctx, retryDelay); err != nil {
+				return err
+			}
 		}
 	}
 	if brandPK == "" {
 		return lastErr
 	}
 
-	patchURL := fmt.Sprintf("%s/api/v3/core/brands/%s/", c.baseURL, brandPK)
-
-	payload := map[string]string{"branding_custom_css": css}
-	payloadBytes, _ := json.Marshal(payload)
-
-	patchReq, err := http.NewRequest(http.MethodPatch, patchURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return fmt.Errorf("creating patch request: %w", err)
-	}
-	patchReq.Header.Set("Authorization", "Bearer "+c.token)
-	patchReq.Header.Set("Content-Type", "application/json")
-	patchReq.Header.Set("Accept", "application/json")
-
-	patchResp, err := c.httpClient.Do(patchReq)
-	if err != nil {
-		return fmt.Errorf("patching brand: %w", err)
-	}
-	defer func() { _ = patchResp.Body.Close() }()
-
-	if patchResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(patchResp.Body)
-		return fmt.Errorf("patching brand CSS: status %d: %s", patchResp.StatusCode, string(body))
-	}
-
-	return nil
+	return c.cl.PATCH("/api/v3/core/brands/"+brandPK+"/").
+		JSON(map[string]string{"branding_custom_css": css}).
+		OK(http.StatusOK).
+		Exec(ctx)
 }
 
 // errBrandNotFound indicates the default brand does not exist yet (migration
@@ -1625,33 +1057,17 @@ var errBrandNotFound = fmt.Errorf("default brand not found")
 
 // defaultBrandPK returns the UUID of the default Authentik brand
 // (domain = "authentik-default"), or errBrandNotFound while it does not exist.
-func (c *Client) defaultBrandPK() (string, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/core/brands/?domain=authentik-default", c.baseURL)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetching brands: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("fetching brands: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) defaultBrandPK(ctx context.Context) (string, error) {
 	var result struct {
 		Results []struct {
 			PK string `json:"brand_uuid"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decoding brands: %w", err)
+	if err := c.cl.GET("/api/v3/core/brands/").
+		Query("domain", "authentik-default").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("fetching brands: %w", err)
 	}
 
 	if len(result.Results) == 0 {
@@ -1703,7 +1119,7 @@ type UserInfo struct {
 // baseURLs contains the external host URLs (e.g., ["http://bloud.local", "http://192.168.1.50:8080"]).
 // A redirect URI is registered for each base URL so OAuth works regardless of which host the user accesses.
 // The returned OIDCConfig contains path templates (no host) — callers derive full URLs from the request Host.
-func (c *Client) EnsureBloudOAuthApp(baseURLs []string, clientSecret string) (*OIDCConfig, error) {
+func (c *Client) EnsureBloudOAuthApp(ctx context.Context, baseURLs []string, clientSecret string) (*OIDCConfig, error) {
 	// Build redirect URIs for all base URLs
 	var redirectURIs []string
 	for _, baseURL := range baseURLs {
@@ -1711,33 +1127,33 @@ func (c *Client) EnsureBloudOAuthApp(baseURLs []string, clientSecret string) (*O
 	}
 
 	// Check if provider already exists
-	providerID, err := c.findProviderID("oauth2", bloudProviderName)
+	providerID, err := c.findProviderID(ctx, "oauth2", bloudProviderName)
 	if err != nil {
 		return nil, fmt.Errorf("checking existing provider: %w", err)
 	}
 
 	if providerID == 0 {
 		// Create the OAuth2 provider with all redirect URIs
-		providerID, err = c.createBloudOAuth2Provider(redirectURIs, clientSecret)
+		providerID, err = c.createBloudOAuth2Provider(ctx, redirectURIs, clientSecret)
 		if err != nil {
 			return nil, fmt.Errorf("creating OAuth2 provider: %w", err)
 		}
 	} else {
 		// Provider exists — update redirect URIs to include any new IPs
-		if err := c.updateBloudOAuth2ProviderRedirectURIs(providerID, redirectURIs); err != nil {
+		if err := c.updateBloudOAuth2ProviderRedirectURIs(ctx, providerID, redirectURIs); err != nil {
 			return nil, fmt.Errorf("updating redirect URIs: %w", err)
 		}
 	}
 
 	// Check if application already exists
-	exists, err := c.applicationExists(bloudAppSlug)
+	exists, err := c.applicationExists(ctx, bloudAppSlug)
 	if err != nil {
 		return nil, fmt.Errorf("checking existing application: %w", err)
 	}
 
 	if !exists {
 		// Create the application
-		if err := c.createBloudApplication(providerID); err != nil {
+		if err := c.createBloudApplication(ctx, providerID); err != nil {
 			return nil, fmt.Errorf("creating application: %w", err)
 		}
 	}
@@ -1757,30 +1173,30 @@ func (c *Client) EnsureBloudOAuthApp(baseURLs []string, clientSecret string) (*O
 }
 
 // createBloudOAuth2Provider creates the OAuth2 provider for Bloud
-func (c *Client) createBloudOAuth2Provider(redirectURIs []string, clientSecret string) (int, error) {
+func (c *Client) createBloudOAuth2Provider(ctx context.Context, redirectURIs []string, clientSecret string) (int, error) {
 	// Find required flows
-	authFlowID, err := c.findFlowID("default-provider-authorization-implicit-consent")
+	authFlowID, err := c.findFlowID(ctx, "default-provider-authorization-implicit-consent")
 	if err != nil {
 		// Fall back to explicit consent flow
-		authFlowID, err = c.findFlowID("default-provider-authorization-explicit-consent")
+		authFlowID, err = c.findFlowID(ctx, "default-provider-authorization-explicit-consent")
 		if err != nil {
 			return 0, fmt.Errorf("finding authorization flow: %w", err)
 		}
 	}
 
-	invalidFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+	invalidFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 	if err != nil {
 		return 0, fmt.Errorf("finding invalidation flow: %w", err)
 	}
 
 	// Get certificate UUID for signing (Authentik API requires UUID, not name)
-	certUUID, err := c.getFirstCertificateUUID()
+	certUUID, err := c.getFirstCertificateUUID(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("getting signing certificate: %w", err)
 	}
 
 	// Get scope property mappings for openid, profile, and email
-	scopeMappings, err := c.getScopePropertyMappings([]string{"openid", "profile", "email"})
+	scopeMappings, err := c.getScopePropertyMappings(ctx, []string{"openid", "profile", "email"})
 	if err != nil {
 		return 0, fmt.Errorf("getting scope mappings: %w", err)
 	}
@@ -1807,32 +1223,12 @@ func (c *Client) createBloudOAuth2Provider(redirectURIs []string, clientSecret s
 		"sub_mode":                   "user_username",
 		"include_claims_in_id_token": true,
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/oauth2/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("creating OAuth2 provider: status %d: %s", resp.StatusCode, string(body))
-	}
 
 	var result struct {
 		PK int `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, err
+	if err := c.cl.POST("/api/v3/providers/oauth2/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
+		return 0, fmt.Errorf("creating OAuth2 provider: %w", err)
 	}
 
 	return result.PK, nil
@@ -1840,35 +1236,17 @@ func (c *Client) createBloudOAuth2Provider(redirectURIs []string, clientSecret s
 
 // AddRedirectURI adds a redirect URI to an OAuth2 provider if it's not already registered.
 // This is called lazily on first request from an unknown host.
-func (c *Client) AddRedirectURI(providerID int, redirectURI string) error {
+func (c *Client) AddRedirectURI(ctx context.Context, providerID int, redirectURI string) error {
 	// Fetch current provider to get existing redirect URIs
-	reqURL := fmt.Sprintf("%s/api/v3/providers/oauth2/%d/", c.baseURL, providerID)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("fetching provider: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("fetching provider: status %d: %s", resp.StatusCode, string(body))
-	}
-
+	reqPath := fmt.Sprintf("/api/v3/providers/oauth2/%d/", providerID)
 	var provider struct {
 		RedirectURIs []struct {
 			MatchingMode string `json:"matching_mode"`
 			URL          string `json:"url"`
 		} `json:"redirect_uris"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&provider); err != nil {
-		return fmt.Errorf("decoding provider: %w", err)
+	if err := c.cl.GET(reqPath).OK(http.StatusOK).DoInto(ctx, &provider); err != nil {
+		return fmt.Errorf("fetching provider: %w", err)
 	}
 
 	// Check if already registered
@@ -1891,35 +1269,15 @@ func (c *Client) AddRedirectURI(providerID int, redirectURI string) error {
 		"url":           redirectURI,
 	})
 
-	payload := map[string]interface{}{
-		"redirect_uris": uriEntries,
-	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	patchReq, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return fmt.Errorf("creating patch request: %w", err)
-	}
-	patchReq.Header.Set("Authorization", "Bearer "+c.token)
-	patchReq.Header.Set("Content-Type", "application/json")
-	patchReq.Header.Set("Accept", "application/json")
-
-	patchResp, err := c.httpClient.Do(patchReq)
-	if err != nil {
-		return fmt.Errorf("patching provider: %w", err)
-	}
-	defer func() { _ = patchResp.Body.Close() }()
-
-	if patchResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(patchResp.Body)
-		return fmt.Errorf("patching redirect URIs: status %d: %s", patchResp.StatusCode, string(body))
+	if err := c.cl.PATCH(reqPath).JSON(map[string]interface{}{"redirect_uris": uriEntries}).OK(http.StatusOK).Exec(ctx); err != nil {
+		return fmt.Errorf("patching redirect URIs: %w", err)
 	}
 
 	return nil
 }
 
 // updateBloudOAuth2ProviderRedirectURIs patches the redirect URIs on an existing provider
-func (c *Client) updateBloudOAuth2ProviderRedirectURIs(providerID int, redirectURIs []string) error {
+func (c *Client) updateBloudOAuth2ProviderRedirectURIs(ctx context.Context, providerID int, redirectURIs []string) error {
 	var uriEntries []map[string]string
 	for _, uri := range redirectURIs {
 		uriEntries = append(uriEntries, map[string]string{
@@ -1928,62 +1286,22 @@ func (c *Client) updateBloudOAuth2ProviderRedirectURIs(providerID int, redirectU
 		})
 	}
 
-	payload := map[string]interface{}{
-		"redirect_uris": uriEntries,
-	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	reqURL := fmt.Sprintf("%s/api/v3/providers/oauth2/%d/", c.baseURL, providerID)
-	req, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("updating redirect URIs: status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	return c.cl.PATCH(fmt.Sprintf("/api/v3/providers/oauth2/%d/", providerID)).
+		JSON(map[string]interface{}{"redirect_uris": uriEntries}).
+		OK(http.StatusOK).
+		Exec(ctx)
 }
 
 // getFirstCertificateUUID retrieves the UUID of the first available certificate keypair
 // This is needed because the Authentik API requires a UUID for signing_key, not a name
-func (c *Client) getFirstCertificateUUID() (string, error) {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/crypto/certificatekeypairs/", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("listing certificates: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) getFirstCertificateUUID(ctx context.Context) (string, error) {
 	var result struct {
 		Results []struct {
 			PK string `json:"pk"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/crypto/certificatekeypairs/").OK(http.StatusOK).DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("listing certificates: %w", err)
 	}
 
 	if len(result.Results) == 0 {
@@ -1994,33 +1312,18 @@ func (c *Client) getFirstCertificateUUID() (string, error) {
 }
 
 // getScopePropertyMappings retrieves the UUIDs of scope property mappings by scope name
-func (c *Client) getScopePropertyMappings(scopes []string) ([]string, error) {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/propertymappings/provider/scope/?page_size=50", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("listing scope mappings: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) getScopePropertyMappings(ctx context.Context, scopes []string) ([]string, error) {
 	var result struct {
 		Results []struct {
 			PK        string `json:"pk"`
 			ScopeName string `json:"scope_name"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+	if err := c.cl.GET("/api/v3/propertymappings/provider/scope/").
+		Query("page_size", "50").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return nil, fmt.Errorf("listing scope mappings: %w", err)
 	}
 
 	// Build a set of requested scopes for quick lookup
@@ -2056,25 +1359,7 @@ const bloudEmailScopeMappingExpression = `return {
 // mapping for the OIDC "email" scope that reports email_verified: True.
 // Authentik's managed mapping hardcodes email_verified to False, which
 // breaks apps whose OIDC provider rejects unverified emails (e.g. AFFiNE).
-func (c *Client) ensureBloudEmailScopeMapping() (string, error) {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/propertymappings/provider/scope/?page_size=100", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("listing scope mappings: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) ensureBloudEmailScopeMapping(ctx context.Context) (string, error) {
 	var result struct {
 		Results []struct {
 			PK      string `json:"pk"`
@@ -2082,8 +1367,11 @@ func (c *Client) ensureBloudEmailScopeMapping() (string, error) {
 			Managed string `json:"managed"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/propertymappings/provider/scope/").
+		Query("page_size", "100").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("listing scope mappings: %w", err)
 	}
 
 	for _, m := range result.Results {
@@ -2097,62 +1385,29 @@ func (c *Client) ensureBloudEmailScopeMapping() (string, error) {
 		"scope_name": "email",
 		"expression": bloudEmailScopeMappingExpression,
 	}
-	payloadBytes, _ := json.Marshal(payload)
-	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/propertymappings/provider/scope/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err = c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("creating scope mapping: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var created struct {
 		PK string `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return "", err
+	if err := c.cl.POST("/api/v3/propertymappings/provider/scope/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &created); err != nil {
+		return "", fmt.Errorf("creating scope mapping: %w", err)
 	}
 	return created.PK, nil
 }
 
 // managedEmailScopeMappingUUID returns the UUID of Authentik's managed
 // "email" scope mapping (or "" when not found).
-func (c *Client) managedEmailScopeMappingUUID() (string, error) {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v3/propertymappings/provider/scope/?page_size=100", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("listing scope mappings: status %d", resp.StatusCode)
-	}
-
+func (c *Client) managedEmailScopeMappingUUID(ctx context.Context) (string, error) {
 	var result struct {
 		Results []struct {
 			PK      string `json:"pk"`
 			Managed string `json:"managed"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/propertymappings/provider/scope/").
+		Query("page_size", "100").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("listing scope mappings: %w", err)
 	}
 	for _, m := range result.Results {
 		if m.Managed == "goauthentik.io/providers/oauth2/scope-email" {
@@ -2165,39 +1420,21 @@ func (c *Client) managedEmailScopeMappingUUID() (string, error) {
 // ensureProviderEmailScopeMapping makes sure an OAuth2 provider's property
 // mappings use Bloud's verified-email scope mapping instead of Authentik's
 // managed one (which reports email_verified: False).
-func (c *Client) ensureProviderEmailScopeMapping(providerID int) error {
-	bloudEmail, err := c.ensureBloudEmailScopeMapping()
+func (c *Client) ensureProviderEmailScopeMapping(ctx context.Context, providerID int) error {
+	bloudEmail, err := c.ensureBloudEmailScopeMapping(ctx)
 	if err != nil {
 		return fmt.Errorf("ensuring email scope mapping: %w", err)
 	}
 
-	reqURL := fmt.Sprintf("%s/api/v3/providers/oauth2/%d/", c.baseURL, providerID)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("fetching provider: status %d: %s", resp.StatusCode, string(body))
-	}
-
+	reqPath := fmt.Sprintf("/api/v3/providers/oauth2/%d/", providerID)
 	var provider struct {
 		PropertyMappings []string `json:"property_mappings"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&provider); err != nil {
-		return fmt.Errorf("decoding provider: %w", err)
+	if err := c.cl.GET(reqPath).OK(http.StatusOK).DoInto(ctx, &provider); err != nil {
+		return fmt.Errorf("fetching provider: %w", err)
 	}
 
-	managedEmail, _ := c.managedEmailScopeMappingUUID()
+	managedEmail, _ := c.managedEmailScopeMappingUUID(ctx)
 
 	var mappings []string
 	for _, m := range provider.PropertyMappings {
@@ -2234,79 +1471,40 @@ func (c *Client) ensureProviderEmailScopeMapping(providerID int) error {
 		}
 	}
 
-	payload := map[string]interface{}{"property_mappings": mappings}
-	payloadBytes, _ := json.Marshal(payload)
-	patchReq, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	patchReq.Header.Set("Authorization", "Bearer "+c.token)
-	patchReq.Header.Set("Content-Type", "application/json")
-	patchReq.Header.Set("Accept", "application/json")
-
-	patchResp, err := c.httpClient.Do(patchReq)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = patchResp.Body.Close() }()
-
-	if patchResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(patchResp.Body)
-		return fmt.Errorf("patching provider property mappings: status %d: %s", patchResp.StatusCode, string(body))
+	if err := c.cl.PATCH(reqPath).JSON(map[string]interface{}{"property_mappings": mappings}).OK(http.StatusOK).Exec(ctx); err != nil {
+		return fmt.Errorf("patching provider property mappings: %w", err)
 	}
 	return nil
 }
 
 // applicationExists checks if an application with the given slug exists
-func (c *Client) applicationExists(slug string) (bool, error) {
-	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false, err
+func (c *Client) applicationExists(ctx context.Context, slug string) (bool, error) {
+	_, err := c.cl.GET("/api/v3/core/applications/" + url.PathEscape(slug) + "/").Do(ctx)
+	if err == nil {
+		return true, nil
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	return resp.StatusCode == http.StatusOK, nil
+	if appclient.StatusOf(err) == 0 {
+		return false, err // transport error
+	}
+	return false, nil // 404 (or any definitive non-OK) → does not exist
 }
 
 // createBloudApplication creates the Authentik application for Bloud
-func (c *Client) createBloudApplication(providerID int) error {
+func (c *Client) createBloudApplication(ctx context.Context, providerID int) error {
 	payload := map[string]interface{}{
 		"name":               bloudAppName,
 		"slug":               bloudAppSlug,
 		"provider":           providerID,
 		"policy_engine_mode": "any",
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
+	if err := c.cl.POST("/api/v3/core/applications/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
+		return fmt.Errorf("creating application: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("creating application: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	return nil
 }
 
 // ExchangeCode exchanges an authorization code for tokens
-func (c *Client) ExchangeCode(code, redirectURI, clientID, clientSecret string) (*TokenResponse, error) {
+func (c *Client) ExchangeCode(ctx context.Context, code, redirectURI, clientID, clientSecret string) (*TokenResponse, error) {
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
@@ -2314,63 +1512,31 @@ func (c *Client) ExchangeCode(code, redirectURI, clientID, clientSecret string) 
 	data.Set("client_id", clientID)
 	data.Set("client_secret", clientSecret)
 
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/application/o/token/", bytes.NewReader([]byte(data.Encode())))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("token exchange failed: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var tokenResp TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+	if err := c.cl.POST("/application/o/token/").Anonymous().Form(data).OK(http.StatusOK).DoInto(ctx, &tokenResp); err != nil {
+		return nil, fmt.Errorf("token exchange failed: %w", err)
 	}
 
 	return &tokenResp, nil
 }
 
 // GetUserInfo retrieves user information using an access token
-func (c *Client) GetUserInfo(accessToken string) (*UserInfo, error) {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/application/o/userinfo/", nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("userinfo request failed: status %d: %s", resp.StatusCode, string(body))
-	}
-
+func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (*UserInfo, error) {
 	var userInfo UserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+	if err := c.cl.GET("/application/o/userinfo/").
+		Anonymous().
+		Header("Authorization", "Bearer "+accessToken).
+		OK(http.StatusOK).
+		DoInto(ctx, &userInfo); err != nil {
+		return nil, fmt.Errorf("userinfo request failed: %w", err)
 	}
 
 	return &userInfo, nil
 }
 
 // EnsureForwardAuth implements orchestrator.SSOProvisioner.
-func (c *Client) EnsureForwardAuth(appName, displayName, externalURL string) error {
-	return c.EnsureForwardAuthApplication(appName, displayName, externalURL)
+func (c *Client) EnsureForwardAuth(ctx context.Context, appName, displayName, externalURL string) error {
+	return c.EnsureForwardAuthApplication(ctx, appName, displayName, externalURL)
 }
 
 // EnsureForwardDomainAuth creates a forward_domain proxy provider, application, and
@@ -2381,7 +1547,7 @@ func (c *Client) EnsureForwardAuth(appName, displayName, externalURL string) err
 // continues using localhost for local access.
 // Returns the outpost API token needed to start the standalone outpost container.
 // cookieDomain is the MagicDNS suffix (e.g. "tail12756a.ts.net").
-func (c *Client) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
+func (c *Client) EnsureForwardDomainAuth(ctx context.Context, cookieDomain string) (string, error) {
 	const (
 		providerName = "Tailnet Forward Domain Provider"
 		appSlug      = "tailnet-domain"
@@ -2391,7 +1557,7 @@ func (c *Client) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
 	externalHost := "https://bloud." + cookieDomain
 
 	// Check if provider already exists.
-	existingID, err := c.findProviderID("proxy", providerName)
+	existingID, err := c.findProviderID(ctx, "proxy", providerName)
 	if err != nil {
 		return "", fmt.Errorf("checking proxy provider: %w", err)
 	}
@@ -2400,32 +1566,32 @@ func (c *Client) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
 	if existingID != 0 {
 		providerID = existingID
 	} else {
-		authFlowID, err := c.findFlowID("default-authentication-flow")
+		authFlowID, err := c.findFlowID(ctx, "default-authentication-flow")
 		if err != nil {
 			return "", fmt.Errorf("finding auth flow: %w", err)
 		}
-		invalidationFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+		invalidationFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 		if err != nil {
 			return "", fmt.Errorf("finding invalidation flow: %w", err)
 		}
 
-		providerID, err = c.createForwardDomainProvider(providerName, externalHost, cookieDomain, authFlowID, invalidationFlowID)
+		providerID, err = c.createForwardDomainProvider(ctx, providerName, externalHost, cookieDomain, authFlowID, invalidationFlowID)
 		if err != nil {
 			return "", fmt.Errorf("creating forward_domain provider: %w", err)
 		}
 	}
 
-	if err := c.ensureProxyApplication(appSlug, appName, providerID); err != nil {
+	if err := c.ensureProxyApplication(ctx, appSlug, appName, providerID); err != nil {
 		return "", fmt.Errorf("ensuring proxy application: %w", err)
 	}
 
 	// Use a standalone proxy outpost (not the embedded outpost) so the browser-facing
 	// URL can be the tailnet domain while local auth stays on localhost.
-	if err := c.ensureProxyOutpost(providerID); err != nil {
+	if err := c.ensureProxyOutpost(ctx, providerID); err != nil {
 		return "", fmt.Errorf("ensuring proxy outpost: %w", err)
 	}
 
-	token, err := c.GetProxyOutpostToken()
+	token, err := c.GetProxyOutpostToken(ctx)
 	if err != nil {
 		return "", fmt.Errorf("getting proxy outpost token: %w", err)
 	}
@@ -2437,8 +1603,8 @@ func (c *Client) EnsureForwardDomainAuth(cookieDomain string) (string, error) {
 // This outpost runs as a separate container with AUTHENTIK_HOST_BROWSER set to the
 // tailnet URL, allowing remote users to authenticate via tailnet while the embedded
 // outpost continues serving local auth on localhost.
-func (c *Client) ensureProxyOutpost(providerID int) error {
-	outpost, err := c.findOutpostByName(proxyOutpostName)
+func (c *Client) ensureProxyOutpost(ctx context.Context, providerID int) error {
+	outpost, err := c.findOutpostByName(ctx, proxyOutpostName)
 	if err != nil {
 		return err
 	}
@@ -2450,7 +1616,7 @@ func (c *Client) ensureProxyOutpost(providerID int) error {
 			}
 		}
 		outpost.Providers = append(outpost.Providers, providerID)
-		return c.updateOutpostProviders(outpost.PK, outpost.Providers)
+		return c.updateOutpostProviders(ctx, outpost.PK, outpost.Providers)
 	}
 
 	payload := map[string]interface{}{
@@ -2462,25 +1628,8 @@ func (c *Client) ensureProxyOutpost(providerID int) error {
 			"log_level":      "info",
 		},
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/outposts/instances/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("creating proxy outpost: status %d: %s", resp.StatusCode, string(body))
+	if err := c.cl.POST("/api/v3/outposts/instances/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
+		return fmt.Errorf("creating proxy outpost: %w", err)
 	}
 
 	return nil
@@ -2488,8 +1637,8 @@ func (c *Client) ensureProxyOutpost(providerID int) error {
 
 // GetProxyOutpostToken returns the auto-generated token for the standalone proxy outpost.
 // Authentik creates a token with identifier "ak-outpost-{uuid}-api" when an outpost is created.
-func (c *Client) GetProxyOutpostToken() (string, error) {
-	outpost, err := c.findOutpostByName(proxyOutpostName)
+func (c *Client) GetProxyOutpostToken(ctx context.Context) (string, error) {
+	outpost, err := c.findOutpostByName(ctx, proxyOutpostName)
 	if err != nil {
 		return "", fmt.Errorf("finding outpost: %w", err)
 	}
@@ -2499,37 +1648,19 @@ func (c *Client) GetProxyOutpostToken() (string, error) {
 
 	tokenIdentifier := fmt.Sprintf("ak-outpost-%s-api", outpost.PK)
 
-	reqURL := fmt.Sprintf("%s/api/v3/core/tokens/%s/view_key/", c.baseURL, url.PathEscape(tokenIdentifier))
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("getting token key: status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result struct {
 		Key string `json:"key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := c.cl.GET("/api/v3/core/tokens/" + url.PathEscape(tokenIdentifier) + "/view_key/").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("getting token key: %w", err)
 	}
-
 	return result.Key, nil
 }
 
 // createForwardDomainProvider creates a proxy provider in forward_domain mode.
-func (c *Client) createForwardDomainProvider(name, externalHost, cookieDomain, authFlowID, invalidationFlowID string) (int, error) {
+func (c *Client) createForwardDomainProvider(ctx context.Context, name, externalHost, cookieDomain, authFlowID, invalidationFlowID string) (int, error) {
 	payload := map[string]interface{}{
 		"name":               name,
 		"authorization_flow": authFlowID,
@@ -2538,31 +1669,10 @@ func (c *Client) createForwardDomainProvider(name, externalHost, cookieDomain, a
 		"mode":               "forward_domain",
 		"cookie_domain":      cookieDomain,
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/proxy/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result struct {
 		PK int `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.cl.POST("/api/v3/providers/proxy/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
 		return 0, err
 	}
 	return result.PK, nil
@@ -2572,11 +1682,11 @@ func (c *Client) createForwardDomainProvider(name, externalHost, cookieDomain, a
 // application for an app using the forward-auth SSO strategy. It also adds the
 // provider to the embedded outpost so Traefik's forwardAuth middleware can reach it.
 // externalURL is the full URL users access the app on, e.g. "http://navidrome.localhost:8080".
-func (c *Client) EnsureForwardAuthApplication(appName, displayName, externalURL string) error {
+func (c *Client) EnsureForwardAuthApplication(ctx context.Context, appName, displayName, externalURL string) error {
 	providerName := fmt.Sprintf("%s Proxy Provider", displayName)
 
 	// Check if provider already exists
-	existingID, err := c.findProviderID("proxy", providerName)
+	existingID, err := c.findProviderID(ctx, "proxy", providerName)
 	if err != nil {
 		return fmt.Errorf("checking proxy provider: %w", err)
 	}
@@ -2586,28 +1696,28 @@ func (c *Client) EnsureForwardAuthApplication(appName, displayName, externalURL 
 		providerID = existingID
 	} else {
 		// Find required flows
-		authFlowID, err := c.findFlowID("default-authentication-flow")
+		authFlowID, err := c.findFlowID(ctx, "default-authentication-flow")
 		if err != nil {
 			return fmt.Errorf("finding auth flow: %w", err)
 		}
-		invalidationFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+		invalidationFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 		if err != nil {
 			return fmt.Errorf("finding invalidation flow: %w", err)
 		}
 
-		providerID, err = c.createProxyProvider(providerName, externalURL, authFlowID, invalidationFlowID)
+		providerID, err = c.createProxyProvider(ctx, providerName, externalURL, authFlowID, invalidationFlowID)
 		if err != nil {
 			return fmt.Errorf("creating proxy provider: %w", err)
 		}
 	}
 
 	// Ensure application exists
-	if err := c.ensureProxyApplication(appName, displayName, providerID); err != nil {
+	if err := c.ensureProxyApplication(ctx, appName, displayName, providerID); err != nil {
 		return fmt.Errorf("ensuring proxy application: %w", err)
 	}
 
 	// Add provider to embedded outpost
-	if err := c.AddProviderToEmbeddedOutpost(providerName); err != nil {
+	if err := c.AddProviderToEmbeddedOutpost(ctx, providerName); err != nil {
 		return fmt.Errorf("adding to embedded outpost: %w", err)
 	}
 
@@ -2615,7 +1725,7 @@ func (c *Client) EnsureForwardAuthApplication(appName, displayName, externalURL 
 }
 
 // createProxyProvider creates a new Authentik proxy provider in forward_single mode.
-func (c *Client) createProxyProvider(name, externalHost, authFlowID, invalidationFlowID string) (int, error) {
+func (c *Client) createProxyProvider(ctx context.Context, name, externalHost, authFlowID, invalidationFlowID string) (int, error) {
 	payload := map[string]interface{}{
 		"name":               name,
 		"authorization_flow": authFlowID,
@@ -2623,51 +1733,24 @@ func (c *Client) createProxyProvider(name, externalHost, authFlowID, invalidatio
 		"external_host":      externalHost,
 		"mode":               "forward_single",
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/proxy/", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var result struct {
 		PK int `json:"pk"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := c.cl.POST("/api/v3/providers/proxy/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
 		return 0, err
 	}
 	return result.PK, nil
 }
 
 // ensureProxyApplication creates the Authentik application for a proxy provider if it doesn't exist.
-func (c *Client) ensureProxyApplication(slug, displayName string, providerID int) error {
-	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusOK {
+func (c *Client) ensureProxyApplication(ctx context.Context, slug, displayName string, providerID int) error {
+	appPath := "/api/v3/core/applications/" + url.PathEscape(slug) + "/"
+	_, err := c.cl.GET(appPath).Do(ctx)
+	if err == nil {
 		return nil // Already exists
+	}
+	if appclient.StatusOf(err) == 0 {
+		return err // transport error — don't attempt create on an unreachable server
 	}
 
 	// Create application
@@ -2677,25 +1760,8 @@ func (c *Client) ensureProxyApplication(slug, displayName string, providerID int
 		"provider":           providerID,
 		"policy_engine_mode": "any",
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
-	if err != nil {
+	if err := c.cl.POST("/api/v3/core/applications/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
 		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err = c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
 }
@@ -2706,11 +1772,11 @@ func (c *Client) ensureProxyApplication(slug, displayName string, providerID int
 // host-agent (so the app and the identity provider agree without a shared
 // store). redirectURIs must cover every URL the app may use as its callback.
 // launchURL, when non-empty, is set as the application's meta launch URL.
-func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
+func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
 	providerName := fmt.Sprintf("%s OAuth2 Provider", displayName)
 
 	// Check if provider already exists
-	existingID, err := c.findProviderID("oauth2", providerName)
+	existingID, err := c.findProviderID(ctx, "oauth2", providerName)
 	if err != nil {
 		return fmt.Errorf("checking OAuth2 provider: %w", err)
 	}
@@ -2719,40 +1785,40 @@ func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret s
 	if existingID != 0 {
 		providerID = existingID
 		// Refresh redirect URIs so newly detected hosts/IPs work
-		if err := c.updateBloudOAuth2ProviderRedirectURIs(providerID, redirectURIs); err != nil {
+		if err := c.updateBloudOAuth2ProviderRedirectURIs(ctx, providerID, redirectURIs); err != nil {
 			return fmt.Errorf("updating redirect URIs: %w", err)
 		}
 		// Swap in the verified-email scope mapping (Authentik's managed one
 		// reports email_verified: False, which apps like AFFiNE reject).
-		if err := c.ensureProviderEmailScopeMapping(providerID); err != nil {
+		if err := c.ensureProviderEmailScopeMapping(ctx, providerID); err != nil {
 			return fmt.Errorf("updating email scope mapping: %w", err)
 		}
 	} else {
 		// Find required flows
-		authFlowID, err := c.findFlowID("default-provider-authorization-implicit-consent")
+		authFlowID, err := c.findFlowID(ctx, "default-provider-authorization-implicit-consent")
 		if err != nil {
-			authFlowID, err = c.findFlowID("default-provider-authorization-explicit-consent")
+			authFlowID, err = c.findFlowID(ctx, "default-provider-authorization-explicit-consent")
 			if err != nil {
 				return fmt.Errorf("finding authorization flow: %w", err)
 			}
 		}
-		invalidationFlowID, err := c.findFlowID("default-provider-invalidation-flow")
+		invalidationFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 		if err != nil {
 			return fmt.Errorf("finding invalidation flow: %w", err)
 		}
 
-		certUUID, err := c.getFirstCertificateUUID()
+		certUUID, err := c.getFirstCertificateUUID(ctx)
 		if err != nil {
 			return fmt.Errorf("getting signing certificate: %w", err)
 		}
 		// Use Bloud's verified-email scope mapping for the "email" scope:
 		// Authentik's managed mapping hardcodes email_verified: False, which
 		// breaks apps whose OIDC provider rejects unverified emails (AFFiNE).
-		scopeMappings, err := c.getScopePropertyMappings([]string{"openid", "profile"})
+		scopeMappings, err := c.getScopePropertyMappings(ctx, []string{"openid", "profile"})
 		if err != nil {
 			return fmt.Errorf("getting scope mappings: %w", err)
 		}
-		bloudEmail, err := c.ensureBloudEmailScopeMapping()
+		bloudEmail, err := c.ensureBloudEmailScopeMapping(ctx)
 		if err != nil {
 			return fmt.Errorf("ensuring email scope mapping: %w", err)
 		}
@@ -2782,38 +1848,18 @@ func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret s
 			"access_token_validity":      "minutes=5",
 			"refresh_token_validity":     "days=30",
 		}
-		payloadBytes, _ := json.Marshal(payload)
-
-		req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/providers/oauth2/", bytes.NewReader(payloadBytes))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Bearer "+c.token)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("creating OAuth2 provider: status %d: %s", resp.StatusCode, string(body))
-		}
 
 		var result struct {
 			PK int `json:"pk"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return err
+		if err := c.cl.POST("/api/v3/providers/oauth2/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
+			return fmt.Errorf("creating OAuth2 provider: %w", err)
 		}
 		providerID = result.PK
 	}
 
 	// Ensure the application exists (and points at this provider)
-	if err := c.ensureOIDCApplication(appName, displayName, providerID, launchURL); err != nil {
+	if err := c.ensureOIDCApplication(ctx, appName, displayName, providerID, launchURL); err != nil {
 		return fmt.Errorf("ensuring OAuth2 application: %w", err)
 	}
 
@@ -2823,20 +1869,14 @@ func (c *Client) EnsureNativeOIDC(appName, displayName, clientID, clientSecret s
 // ensureOIDCApplication creates the Authentik application for an OIDC provider
 // if it doesn't exist. An existing application is left untouched (provider
 // drift is not reconciled — the provider is the source of auth behavior).
-func (c *Client) ensureOIDCApplication(slug, displayName string, providerID int, launchURL string) error {
-	reqURL := fmt.Sprintf("%s/api/v3/core/applications/%s/", c.baseURL, url.PathEscape(slug))
-	req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusOK {
+func (c *Client) ensureOIDCApplication(ctx context.Context, slug, displayName string, providerID int, launchURL string) error {
+	appPath := "/api/v3/core/applications/" + url.PathEscape(slug) + "/"
+	_, err := c.cl.GET(appPath).Do(ctx)
+	if err == nil {
 		return nil // Already exists
+	}
+	if appclient.StatusOf(err) == 0 {
+		return err // transport error — don't attempt create on an unreachable server
 	}
 
 	payload := map[string]interface{}{
@@ -2848,25 +1888,25 @@ func (c *Client) ensureOIDCApplication(slug, displayName string, providerID int,
 	if launchURL != "" {
 		payload["meta_launch_url"] = launchURL
 	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	req, err = http.NewRequest(http.MethodPost, c.baseURL+"/api/v3/core/applications/", bytes.NewReader(payloadBytes))
-	if err != nil {
+	if err := c.cl.POST("/api/v3/core/applications/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
 		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err = c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// sleepCtx sleeps for d unless ctx is done first; returns the ctx error when
+// canceled. Used by the login/branding retry loops so a PostStart-budget
+// cancel interrupts the wait instead of blocking for the full interval.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }

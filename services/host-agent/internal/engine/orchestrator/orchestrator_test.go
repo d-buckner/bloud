@@ -771,3 +771,112 @@ func TestContainerSpecFromDef_NoNetwork(t *testing.T) {
 
 	assert.Empty(t, spec.Networks)
 }
+
+// ============================================================================
+// S9: framework-owned PostStartBudget + shutdown-interrupt semantics
+// ============================================================================
+
+// TestOrchestrator_PostStart_ApppliesBudgetDeadline asserts the framework hands
+// the configurator a context carrying the configured PostStartBudget. Apps no
+// longer set their own deadline; the budget is what bounds a hung finalization.
+func TestOrchestrator_PostStart_ApppliesBudgetDeadline(t *testing.T) {
+	to := newTestOrchestrator()
+	to.orch.config.PostStartBudget = 250 * time.Millisecond
+
+	require.NoError(t, to.g.AddNode("app"))
+	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
+
+	mockCfg := new(MockConfigurator)
+	to.registry.On("Get", "app").Return(mockCfg)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+
+	var hadDeadline bool
+	var remaining time.Duration
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			dl, ok := ctx.Deadline()
+			hadDeadline = ok
+			if ok {
+				remaining = time.Until(dl)
+			}
+		}).
+		Return(nil)
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	assert.True(t, hadDeadline, "framework must hand PostStart a context with a deadline")
+	assert.Greater(t, remaining.Milliseconds(), int64(0))
+	assert.LessOrEqual(t, remaining, 250*time.Millisecond)
+}
+
+// TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError asserts a
+// shutdown cancellation of the pass context during a running PostStart is an
+// interruption, not a fault: the node is NOT parked in terminal ERROR — it is
+// left at POSTSTART_CONFIG to re-converge on the next start (R3).
+func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing.T) {
+	to := newTestOrchestrator()
+	to.orch.config.PostStartBudget = 5 * time.Second
+
+	require.NoError(t, to.g.AddNode("app"))
+	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
+
+	mockCfg := new(MockConfigurator)
+	to.registry.On("Get", "app").Return(mockCfg)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+
+	started := make(chan struct{})
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			close(started)
+			<-ctx.Done() // a finalization wait caught by shutdown
+		}).
+		Return(context.Canceled)
+
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-started
+		cancel() // simulate orchestrator.Stop() mid-PostStart
+	}()
+
+	_ = to.orch.Reconcile(parent)
+
+	node, err := to.g.GetNode("app")
+	require.NoError(t, err)
+	assert.NotEqual(t, graph.StatusError, node.ActualStatus,
+		"a shutdown-cancelled PostStart must not park the node in terminal ERROR")
+	assert.Equal(t, graph.StatusPostStartConfig, node.ActualStatus,
+		"the node is left where the finalization was interrupted, to re-converge on next start")
+}
+
+// TestOrchestrator_PostStart_BudgetExpiryWithLiveParentIsError asserts that,
+// distinct from shutdown, a budget expiry with the pass context still live is a
+// genuine timeout and surfaces as ERROR (the app never finished finalizing).
+func TestOrchestrator_PostStart_BudgetExpiryWithLiveParentIsError(t *testing.T) {
+	to := newTestOrchestrator()
+	to.orch.config.PostStartBudget = 50 * time.Millisecond
+
+	require.NoError(t, to.g.AddNode("app"))
+	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
+
+	mockCfg := new(MockConfigurator)
+	to.registry.On("Get", "app").Return(mockCfg)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+
+	// Block until the budget ctx expires; the parent pass ctx stays live.
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			<-ctx.Done()
+		}).
+		Return(context.DeadlineExceeded)
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	node, err := to.g.GetNode("app")
+	require.NoError(t, err)
+	assert.Equal(t, graph.StatusError, node.ActualStatus,
+		"a budget-expired finalization with a live pass context is a real failure (ERROR)")
+}

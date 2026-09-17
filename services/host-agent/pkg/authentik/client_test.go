@@ -4,6 +4,7 @@
 package authentik
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +52,7 @@ func TestDeleteApplication(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(server.URL, "test-token")
-			err := client.DeleteApplication(tt.slug)
+			err := client.DeleteApplication(context.Background(), tt.slug)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeleteApplication() error = %v, wantErr %v", err, tt.wantErr)
@@ -99,7 +100,7 @@ func TestDeleteOAuth2Provider(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(server.URL, "test-token")
-			err := client.DeleteOAuth2Provider(tt.providerName)
+			err := client.DeleteOAuth2Provider(context.Background(), tt.providerName)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeleteOAuth2Provider() error = %v, wantErr %v", err, tt.wantErr)
@@ -146,7 +147,7 @@ func TestDeleteProxyProvider(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(server.URL, "test-token")
-			err := client.DeleteProxyProvider(tt.providerName)
+			err := client.DeleteProxyProvider(context.Background(), tt.providerName)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeleteProxyProvider() error = %v, wantErr %v", err, tt.wantErr)
@@ -200,7 +201,7 @@ func TestDeleteAppSSO(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(server.URL, "test-token")
-			err := client.DeleteAppSSO(tt.appName, tt.displayName, tt.strategy)
+			err := client.DeleteAppSSO(context.Background(), tt.appName, tt.displayName, tt.strategy)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeleteAppSSO() error = %v, wantErr %v", err, tt.wantErr)
@@ -240,7 +241,7 @@ func TestIsAvailable(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(server.URL, "test-token")
-			got := client.IsAvailable()
+			got := client.IsAvailable(context.Background())
 
 			if got != tt.want {
 				t.Errorf("IsAvailable() = %v, want %v", got, tt.want)

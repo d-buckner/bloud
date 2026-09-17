@@ -4,6 +4,7 @@
 package authentik
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -50,7 +51,7 @@ func TestCreateUserSetsValidEmail(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token").WithUserEmailDomain("localhost")
-	id, err := client.CreateUser("e2etest", "password")
+	id, err := client.CreateUser(context.Background(), "e2etest", "password")
 	if err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
