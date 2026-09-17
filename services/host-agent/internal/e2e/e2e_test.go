@@ -360,4 +360,4 @@ func postJSON(t *testing.T, url string, body string, wantStatus int) {
 
 // TestSystemAppsConverged verifies the bootstrap contract: system apps are
 // auto-installed by the orchestrator and their containers are up, running,
-// and carry the managed labels (architecture invariant 10).
+// and carry the managed labels (architecture invariant 12).

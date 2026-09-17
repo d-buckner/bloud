@@ -19,7 +19,7 @@ import (
 
 // TestSystemAppsConverged verifies the bootstrap contract: system apps are
 // auto-installed by the orchestrator and their containers are up, running,
-// and carry the managed labels (architecture invariant 10).
+// and carry the managed labels (architecture invariant 12).
 func TestSystemAppsConverged(t *testing.T) {
 	want := map[string]string{
 		"apps-traefik":            "traefik",

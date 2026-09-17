@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,8 +19,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/mdns"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
@@ -34,8 +33,6 @@ func main() {
 			os.Exit(runConfigure(os.Args[2:]))
 		case "init-secrets":
 			os.Exit(runInitSecrets(os.Args[2:]))
-		case "front-proxy":
-			os.Exit(runFrontProxy())
 		}
 	}
 
@@ -91,38 +88,12 @@ func runServer() {
 	// hosts from the database, with legacy env fallbacks). Shared between the
 	// configurators, the orchestrator, and the API so UI host changes apply
 	// without a restart.
-	hostStore := store.NewHostStore(database)
-	var storedHosts []hostset.StoredHost
-	if stored, err := hostStore.List(); err != nil {
-		logger.Warn("failed to load stored hosts, using defaults", "error", err)
-	} else {
-		for _, h := range stored {
-			storedHosts = append(storedHosts, hostset.StoredHost{Hostname: h.Hostname, Primary: h.Primary})
-		}
-	}
-	hostSet, err := hostset.Resolve(hostset.Input{
-		Stored:     storedHosts,
-		BaseDomain: cfg.BaseDomain,
-		SSOBaseURL: cfg.SSOBaseURL,
-	})
-	if err != nil {
-		logger.Warn("failed to resolve host set, using defaults", "error", err)
-		hostSet = hostset.New(hostset.BuiltinHosts, hostset.DefaultPrimary)
-	}
+	hostSet, hostStore := resolveHostSet(database, cfg, logger)
 	hosts := hostset.NewState(hostSet)
-	logger.Info("host set resolved", "hosts", hostSet.Hosts(), "primary", hostSet.Primary())
 
-	// templateVars is the shared mutable map passed to the orchestrator and
-	// the authentik server configurator. PostStart writes authentikLdapToken
-	// at runtime so it is available when the LDAP container spec is resolved.
-	templateVars := map[string]string{
-		"postgresPassword":        cfg.PostgresPassword,
-		"authentikSecretKey":      cfg.Secrets.GetAuthentikSecretKey(),
-		"authentikBootstrapToken": cfg.Secrets.GetAuthentikBootstrapToken(),
-		"authentikAdminPassword":  cfg.AuthentikAdminPassword,
-		"authentikAdminEmail":     cfg.AuthentikAdminEmail,
-		"authentikLdapToken":      "", // written by apps-authentik-server PostStart
-	}
+	// templateVars is shared by reference with the authentik configurator, so the
+	// LDAP token its PostStart writes is visible to the orchestrator.
+	templateVars := buildTemplateVars(cfg)
 
 	// Configurator registry: system configurators are registered eagerly;
 	// app configurators self-register factories (apps/<name>/registration.go)
@@ -141,8 +112,7 @@ func runServer() {
 	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, hosts, restartContainer))
 	appconfig.RegisterSystem(registry, cfg, runtime, logger, templateVars, hosts)
 
-	// Event bus: shared between the API (SSE streams) and background
-	// consumers (the mDNS publisher reconciles on app changes).
+	// Event bus: shared between the API (SSE streams) and background consumers.
 	eventsBus := eventbus.New()
 
 	// Create HTTP server (orchestrator created + started inside)
@@ -171,22 +141,7 @@ func runServer() {
 		TemplateVars:          templateVars,
 	}, logger)
 
-	// Block until system apps are healthy (first convergence pass).
-	logger.Info("waiting for system apps to converge")
-	readyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	select {
-	case <-server.OrchestratorReady():
-		if err := server.CheckSystemHealth(); err != nil {
-			logger.Error("system app failed during startup", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("system apps converged successfully")
-		server.InitAuth()
-	case <-readyCtx.Done():
-		logger.Error("system startup timed out")
-		os.Exit(1)
-	}
+	waitForSystemConvergence(server, logger)
 
 	// Setup graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -197,33 +152,6 @@ func runServer() {
 
 	// Start background purge of expired sessions (SQLite has no TTL)
 	store.StartSessionPurger(ctx, store.NewSessionStore(database), logger)
-
-	// Advertise the .local hostnames (bloud.local + one subdomain per
-	// installed app) over mDNS so LAN devices can reach the instance
-	// without DNS configuration.
-	mdnsAppStore := store.NewAppStore(database)
-	mdns.Start(ctx, mdns.Options{
-		Logger: logger,
-		Hosts:  hosts,
-		Apps: func() []string {
-			apps, err := mdnsAppStore.GetAll()
-			if err != nil {
-				return nil
-			}
-			var ids []string
-			for _, a := range apps {
-				// Mirror traefikgen's routable filter: subdomains exist only
-				// for non-system apps with a port.
-				if a.IsSystem || a.Port <= 0 {
-					continue
-				}
-				ids = append(ids, a.CatalogID)
-			}
-			return ids
-		},
-		IP:     netutil.GetPrimaryIP,
-		Events: eventsBus,
-	})
 
 	// Start server in a goroutine
 	go func() {
@@ -247,4 +175,68 @@ func runServer() {
 	}
 
 	logger.Info("server stopped gracefully")
+}
+
+// resolveHostSet computes the effective host set from stored admin hosts and the
+// legacy env fallbacks, and returns it with the host store the caller wires into
+// the API. Resolution failures degrade to the built-in set rather than aborting
+// boot — the instance must still come up reachable on localhost.
+func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (hostset.HostSet, *store.HostStore) {
+	hostStore := store.NewHostStore(database)
+	var storedHosts []hostset.StoredHost
+	if stored, err := hostStore.List(); err != nil {
+		logger.Warn("failed to load stored hosts, using defaults", "error", err)
+	} else {
+		for _, h := range stored {
+			storedHosts = append(storedHosts, hostset.StoredHost{Hostname: h.Hostname, Primary: h.Primary})
+		}
+	}
+	hostSet, err := hostset.Resolve(hostset.Input{
+		Stored:     storedHosts,
+		BaseDomain: cfg.BaseDomain,
+		SSOBaseURL: cfg.SSOBaseURL,
+	})
+	if err != nil {
+		logger.Warn("failed to resolve host set, using defaults", "error", err)
+		hostSet = hostset.New(hostset.BuiltinHosts, hostset.DefaultPrimary)
+	}
+	logger.Info("host set resolved", "hosts", hostSet.Hosts(), "primary", hostSet.Primary())
+	return hostSet, hostStore
+}
+
+// buildTemplateVars renders the shared template-variable map passed to the
+// orchestrator and the authentik configurator. authentikLdapToken is empty here
+// and written at runtime by apps-authentik-server's PostStart, so the same map
+// instance must be shared by both consumers.
+func buildTemplateVars(cfg *config.Config) map[string]string {
+	return map[string]string{
+		"postgresPassword":        cfg.PostgresPassword,
+		"authentikSecretKey":      cfg.Secrets.GetAuthentikSecretKey(),
+		"authentikBootstrapToken": cfg.Secrets.GetAuthentikBootstrapToken(),
+		"authentikAdminPassword":  cfg.AuthentikAdminPassword,
+		"authentikAdminEmail":     cfg.AuthentikAdminEmail,
+		"authentikLdapToken":      "",
+	}
+}
+
+// waitForSystemConvergence blocks until the orchestrator reports ready and the
+// system apps pass their health check, then initialises auth. It aborts the
+// process on a failed health check or a 10-minute timeout: the API must not open
+// before the system apps it depends on are actually running.
+func waitForSystemConvergence(server *api.Server, logger *slog.Logger) {
+	logger.Info("waiting for system apps to converge")
+	readyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	select {
+	case <-server.OrchestratorReady():
+		if err := server.CheckSystemHealth(); err != nil {
+			logger.Error("system app failed during startup", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("system apps converged successfully")
+		server.InitAuth()
+	case <-readyCtx.Done():
+		logger.Error("system startup timed out")
+		os.Exit(1)
+	}
 }

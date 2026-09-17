@@ -75,8 +75,8 @@ type ServerConfig struct {
 	Registry              configurator.RegistryInterface
 	ContainerRuntime      containerruntime.Runtime
 	TemplateVars          map[string]string
-	// EventsBus is the shared event bus (SSE streams, background consumers
-	// like the mDNS publisher). Nil creates one internally.
+	// EventsBus is the shared event bus (SSE streams + app-change
+	// publishing). Nil creates one internally.
 	EventsBus *eventbus.Bus
 }
 

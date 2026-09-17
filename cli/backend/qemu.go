@@ -6,9 +6,7 @@ package backend
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,9 +47,6 @@ type QEMUBackend struct {
 	newCmd       func(ctx context.Context, name string, args ...string) *exec.Cmd
 	pollInterval time.Duration // readiness poll cadence (tests set to 0)
 	pollTimeout  time.Duration // readiness poll deadline (tests shrink)
-	// runGuest executes a shell script on the guest via SSH (used for the
-	// front-proxy unit install). Tests override it; nil = real SSH.
-	runGuest func(ctx context.Context, script string) error
 }
 
 // NewQEMUBackend returns a backend that manages the named QEMU VM. projectDir is
@@ -80,12 +75,6 @@ func (b *QEMUBackend) Create(ctx context.Context) error {
 	}
 	if err := b.ensureRunning(ctx); err != nil {
 		return err
-	}
-	// Install the front proxy unit (port 80 → Traefik 8080) on existing VMs.
-	// Fresh VMs get it from the cloud-init runcmd; here it is a best-effort
-	// upgrade (sudo) so a missing unit never blocks `./bloud dev`.
-	if err := b.ensureFrontProxyUnit(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install bloud-front.service (port 80 unavailable until the VM is recreated): %v\n", err)
 	}
 	// Debian cloud images ship no 9p/virtiofs kernel modules, so a live host
 	// mount is unavailable; instead rsync the project into the guest so the
@@ -290,51 +279,6 @@ func (b *QEMUBackend) stop() error {
 	return fmt.Errorf("timed out stopping QEMU VM (pid %d)", pid)
 }
 
-// frontProxyInstallScript installs and enables the port-80 front proxy system
-// unit (the proxy itself serves the "starting up" fallback page). It runs as
-// root: via the cloud-init runcmd on first boot, or via sudo when upgrading an
-// existing VM. The unit's ExecStartPre waits for the host-agent binary that
-// `./bloud dev` deploys into the guest.
-const frontProxyInstallScript = `set -e
-/sbin/sysctl -w net.ipv4.ip_unprivileged_port_start=80
-cat > /etc/systemd/system/bloud-front.service << 'UNIT'
-[Unit]
-Description=Bloud front proxy (port 80 -> Traefik 8080, startup page)
-After=network.target
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-Environment=BLOUD_FRONT_PORT=80 BLOUD_TRAEFIK_PORT=8080 BLOUD_PORT=3000
-ExecStartPre=/sbin/sysctl -w net.ipv4.ip_unprivileged_port_start=80
-ExecStartPre=/bin/sh -c 'i=0; while [ $i -lt 120 ]; do [ -x ` + qemuRemoteDir + `/host-agent/host-agent ] && exit 0; sleep 1; i=$((i+1)); done; exit 1'
-ExecStart=` + qemuRemoteDir + `/host-agent/host-agent front-proxy
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-systemctl daemon-reload
-systemctl enable --now bloud-front.service
-`
-
-// ensureFrontProxyUnit installs/refreshes the front proxy unit on a running VM.
-// It is idempotent, so running it on every Create keeps existing VMs in sync.
-// The unit is a system unit; the dev user has passwordless sudo (sudoers
-// drop-in in the cloud-init spec), so the script runs through sudo -n.
-func (b *QEMUBackend) ensureFrontProxyUnit(ctx context.Context) error {
-	wrapped := "sudo -n sh -c '" + strings.ReplaceAll(frontProxyInstallScript, "'", "'\\''") + "'"
-	if b.runGuest != nil {
-		return b.runGuest(ctx, wrapped)
-	}
-	res, err := b.Host().Executor().Run(ctx, executor.RunSpec{Command: wrapped})
-	if err != nil {
-		return fmt.Errorf("install front proxy unit: %v: %s", err, strings.TrimSpace(res.Stderr))
-	}
-	return nil
-}
-
 // vmAlive reports whether a qemu process for this VM is currently running,
 // using the pidfile written at launch.
 func (b *QEMUBackend) vmAlive() bool {
@@ -362,41 +306,9 @@ func (b *QEMUBackend) launchArgs(pidFile string) []string {
 	// ports themselves never change; only the host port QEMU binds changes.
 	fwds := make([]string, 0, 9)
 	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort(strconv.Itoa(qemuSSHPort))))
-	for _, gp := range []string{"80", "3000", "3389", "8080", "8096", "9001", "2283", "4533", "3010"} {
+	for _, gp := range []string{"3000", "3389", "8080", "8096", "9001", "2283", "4533", "3010"} {
 		hp := hostForwardPort(gp)
-		if gp == "80" && !canBindHostPort(hp) {
-			// Non-root hosts cannot bind port 80 (no cap_net_bind_service).
-			// Fall back to a deterministic high port so the front proxy is
-			// still reachable (http://jellyfin.localhost:<port>); true
-			// no-port URLs need: sudo setcap 'cap_net_bind_service=+ep'
-			// $(command -v qemu-system-x86_64)  (or BLOUD_QEMU_FWD_80).
-			chosen := ""
-			for _, cand := range []string{"8088", "8089", "8090"} {
-				if canBindHostPort(cand) {
-					chosen = cand
-					break
-				}
-			}
-			if chosen == "" {
-				fmt.Fprintf(os.Stderr, "warning: no bindable host port for guest 80; skipping the port-80 forward.\n")
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "note: host cannot bind port 80 (non-root without cap_net_bind_service); forwarding guest 80 to host %s instead (http://jellyfin.localhost:%s). For true no-port URLs run: sudo setcap 'cap_net_bind_service=+ep' $(command -v qemu-system-x86_64)\n", chosen, chosen)
-			hp = chosen
-		}
 		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hp, gp))
-	}
-	// mDNS: forward unicast UDP 5353 so the guest's .local announcer is
-	// reachable from the host (slirp does not relay multicast). The host
-	// port follows the usual BLOUD_QEMU_FWD_5353 remap — useful for
-	// verification on hosts whose own responder (usually avahi-daemon)
-	// owns 5353: dig @127.0.0.1 -p <port>. Standard mDNS clients only
-	// speak 5353, so a remap never serves them.
-	mdHostPort := hostForwardPort("5353")
-	if canBindHostUDPPort(mdHostPort) {
-		fwds = append(fwds, fmt.Sprintf("hostfwd=udp::%s-:5353", mdHostPort))
-	} else {
-		fmt.Fprintf(os.Stderr, "note: host UDP %s is busy (the host's mDNS responder, usually avahi-daemon, owns 5353); mDNS from the guest VM is not reachable from the host. To forward it: sudo systemctl stop avahi-daemon — or verify with BLOUD_QEMU_FWD_5353=<free-port> + dig @127.0.0.1 -p <free-port>\n", mdHostPort)
 	}
 	netdev := "user,id=net0," + strings.Join(fwds, ",")
 	return []string{
@@ -513,9 +425,7 @@ runcmd:
   - systemctl --user enable --now podman.socket
   - mkdir -p %s && chown bloud:bloud %s
   - touch %s
-  - sh -c 'echo %s | base64 -d | sh'
-`, hostUID, pubKey, projectDir, projectDir, qemuRemoteDir, qemuRemoteDir, qemuReadyMark,
-		base64.StdEncoding.EncodeToString([]byte(frontProxyInstallScript)))
+`, hostUID, pubKey, projectDir, projectDir, qemuRemoteDir, qemuRemoteDir, qemuReadyMark)
 }
 
 // hostForwardPort returns the host-side port for a guest port, defaulting to the
@@ -525,30 +435,6 @@ func hostForwardPort(guestPort string) string {
 		return v
 	}
 	return guestPort
-}
-
-// canBindHostPort probes whether the current user can bind the given TCP port
-// (privileged ports fail for non-root without cap_net_bind_service). The probe
-// listener is closed immediately; QEMU binds for real at launch.
-func canBindHostPort(port string) bool {
-	ln, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		return false
-	}
-	_ = ln.Close()
-	return true
-}
-
-// canBindHostUDPPort probes whether the current user can bind the given UDP
-// port (mDNS 5353 is typically held by the host's own mDNS responder). The
-// probe socket is closed immediately; QEMU binds for real at launch.
-func canBindHostUDPPort(port string) bool {
-	pc, err := net.ListenPacket("udp", "0.0.0.0:"+port)
-	if err != nil {
-		return false
-	}
-	_ = pc.Close()
-	return true
 }
 
 func (b *QEMUBackend) run(ctx context.Context, name string, args ...string) (string, error) {

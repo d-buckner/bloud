@@ -77,7 +77,6 @@ Entry point. Runs as a systemd user service (API mode) or executes one-shot comm
 | *(none)* | Start the REST API server on `:3000` |
 | `configure` | One-shot configure commands (prestart/poststart/etc.) |
 | `init-secrets` | Generate and persist initial secrets |
-| `front-proxy` | Root-level port-80 reverse proxy → Traefik `:8080`; serves a "starting up" page until the stack is healthy (runs as `bloud-front.service`) |
 
 ### Catalog (`internal/catalog/`)
 
@@ -230,37 +229,6 @@ Container specs are defined in `metadata.yaml` under the `containers:` key (one 
 container, multi-container apps expand to one graph node each) and rendered with template
 variables (data paths, passwords, etc.) at install time.
 
-### mDNS Publisher (`internal/mdns/`)
-
-Advertises the instance's `.local` hostnames over Multicast DNS (RFC 6762) so
-LAN devices can reach the dashboard and apps as `http://bloud.local` and
-`http://<app>.bloud.local` without DNS configuration. The publisher owns one
-UDP socket on port 5353 on the interface carrying the host's primary IPv4: it
-answers A queries for the advertised names and re-announces records at least
-every TTL (120s) so resolver caches stay fresh. The record set is recomputed
-from live state — the host set plus one `<app>.<host>` subdomain per routable
-installed app (mirroring the domain-agnostic Traefik routes) — on startup, on
-a 30s tick, and on app-change events from the event bus. Removed names and
-shutdown send TTL-0 "goodbye" records. Only `.local` hosts are advertised;
-custom domains are resolved by real DNS.
-
-On a real host the announcer binds 5353 on the LAN interface directly. In the
-dev VM, multicast never crosses the VM boundary, so the QEMU launch args
-include a unicast `hostfwd=udp::<host>-:5353` (skipped, with a note, when the
-host's own responder — usually avahi-daemon — owns 5353; the host port can be
-remapped via `BLOUD_QEMU_FWD_5353` for verification): the host can then query
-the announcer, and unicast queries get unicast replies (RFC 6762 §6.7).
-LAN-wide multicast discovery from the dev VM is not possible by design of
-slirp; Lima gets the same forward via `guestPort: 5353` (its default GRPC
-forwarder carries UDP).
-
-On a slirp network (`netutil.OnSlirp`, detected via the fixed 10.0.2.2
-gateway) the announcer also skips its multicast announcements, re-announcements,
-and TTL-0 goodbyes: they could never reach the LAN, and slirp's hostfwd
-socket captures the guest's own port-5353 multicast traffic, which corrupts
-the forward's state and breaks the unicast reply path. The dev-VM announcer
-is therefore a unicast-only responder.
-
 ## Data Flow: Installing an App
 
 ```
@@ -321,7 +289,6 @@ Linux host
         └── host-agent binary (:3000)
 ```
 
-Ports 80, 3000, 8080, 8443, and each app's direct port are forwarded to the host
-localhost by `./bloud dev` (port 80 is the front proxy: `host-agent front-proxy`
-under the root `bloud-front.service`, forwarding to rootless Traefik on 8080).
-The native backend needs no forwarding — everything already runs on the host.
+Ports 3000, 8080, 8443, and each app's direct port are forwarded to the host
+localhost by `./bloud dev`. The native backend needs no forwarding — everything
+already runs on the host.
