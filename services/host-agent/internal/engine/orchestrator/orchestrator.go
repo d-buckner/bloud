@@ -700,11 +700,13 @@ func (o *Orchestrator) Reconcile(ctx context.Context) error {
 		}
 	}
 
-	// Regenerate routes now that all lifecycle phases are complete. Deferring
-	// this — and the RUNNING promotion below — ensures the UI never shows an
-	// app as "installed" before its Traefik routes are live.
-	if err := o.RegenerateRoutes(); err != nil {
-		o.logger.Warn("route regeneration failed", "error", err)
+	// Sync routes now that all lifecycle phases are complete: the
+	// runtime steps (gateway, remote proxies) run first, then the pure
+	// config write. Deferring this — and the RUNNING promotion below —
+	// ensures the UI never shows an app as "installed" before its
+	// Traefik routes are live.
+	if err := o.SyncRoutes(); err != nil {
+		o.logger.Warn("route sync failed", "error", err)
 	}
 
 	for id := range changedIDs {

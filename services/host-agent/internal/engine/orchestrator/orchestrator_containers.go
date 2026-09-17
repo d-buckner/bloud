@@ -76,10 +76,58 @@ func (o *Orchestrator) SyncContainerState(ctx context.Context) {
 	o.logger.Info("container state sync completed")
 }
 
-// RegenerateRoutes rebuilds the Traefik dynamic config for all installed apps,
-// manages the gateway, and reconciles remote proxies.
-// It is a no-op when traefikGen is not configured.
-func (o *Orchestrator) RegenerateRoutes() error {
+// tailnetActive reports whether a tailnet is currently connected.
+func (o *Orchestrator) tailnetActive() bool {
+	return o.activeTailnetID != nil && o.activeTailnetID() != ""
+}
+
+// SyncRoutes is the full route-sync entry point. The runtime steps the
+// route config depends on run first, as explicit named steps: bring up
+// the gateway (best-effort), reconcile the remote-app reverse proxies,
+// and discover the tailnet domain. Only then is the pure config write
+// performed. Callers use this; RegenerateRoutes itself never touches
+// the runtime.
+func (o *Orchestrator) SyncRoutes() error {
+	o.ensureGateway()
+	remoteRoutes := o.reconcileRemoteProxies()
+	tailnetDomain := o.resolveTailnetDomain()
+	return o.RegenerateRoutes(remoteRoutes, tailnetDomain)
+}
+
+// ensureGateway brings up the tailnet gateway when a tailnet is active.
+// The gateway provides the SOCKS5 proxy that lets remote apps (shared
+// from other hosts) be proxied through Traefik to the LAN. Best-effort:
+// an unavailable gateway is logged, not fatal — routes for local apps
+// are still written.
+func (o *Orchestrator) ensureGateway() {
+	if o.gateway == nil || !o.tailnetActive() {
+		return
+	}
+	if err := o.gateway.EnsureRunning(context.Background()); err != nil {
+		o.logger.Warn("gateway not available", "error", err)
+	}
+}
+
+// resolveTailnetDomain discovers the tailnet MagicDNS domain used for
+// tailnet-specific routes (forward-auth via the standalone proxy
+// outpost). Only meaningful while the gateway runs; returns "" otherwise.
+func (o *Orchestrator) resolveTailnetDomain() string {
+	if o.gateway == nil || !o.tailnetActive() {
+		return ""
+	}
+	domain, err := o.gateway.GetTailnetDomain(context.Background())
+	if err != nil {
+		return ""
+	}
+	return domain
+}
+
+// RegenerateRoutes writes the Traefik dynamic config for all installed
+// apps. Pure with respect to the runtime: it starts nothing and mutates
+// no proxies. Everything runtime-shaped that the config depends on —
+// remote proxy port assignments, the tailnet domain — is passed in by
+// the caller (see SyncRoutes). No-op when traefikGen is not configured.
+func (o *Orchestrator) RegenerateRoutes(remoteRoutes []traefikgen.RemoteAppRoute, tailnetDomain string) error {
 	if o.traefikGen == nil {
 		return nil
 	}
@@ -98,35 +146,14 @@ func (o *Orchestrator) RegenerateRoutes() error {
 		authentikEnabled = authentikEnabled || name == "authentik"
 	}
 	o.traefikGen.SetAuthentikEnabled(authentikEnabled)
-
-	// Ensure gateway is running whenever a tailnet is active. The gateway
-	// provides a SOCKS5 proxy so remote apps (shared from other hosts) can
-	// be proxied through Traefik to the LAN.
-	if o.gateway != nil && o.activeTailnetID != nil && o.activeTailnetID() != "" {
-		if err := o.gateway.EnsureRunning(context.Background()); err != nil {
-			o.logger.Warn("gateway not available", "error", err)
-		}
-	}
-
-	// Build remote app routes if store is available.
-	remoteRoutes := o.buildRemoteRoutes()
-
-	// Discover tailnet domain for tailnet-specific routes (forward-auth via
-	// the standalone proxy outpost). Only available when the gateway is running.
-	var tailnetDomain string
-	if o.gateway != nil && o.activeTailnetID != nil && o.activeTailnetID() != "" {
-		if domain, err := o.gateway.GetTailnetDomain(context.Background()); err == nil {
-			tailnetDomain = domain
-		}
-	}
-
 	return o.traefikGen.GenerateAll(apps, remoteRoutes, tailnetDomain)
 }
 
-// buildRemoteRoutes reconciles the reverse proxies for remote (shared)
-// apps and translates the resulting port assignments into Traefik routes.
-// Returns nil when no remote app store is configured.
-func (o *Orchestrator) buildRemoteRoutes() []traefikgen.RemoteAppRoute {
+// reconcileRemoteProxies reconciles the reverse proxies for remote
+// (shared) apps — a runtime mutation — and translates the resulting
+// port assignments into Traefik routes. Returns nil when no remote app
+// store is configured.
+func (o *Orchestrator) reconcileRemoteProxies() []traefikgen.RemoteAppRoute {
 	if o.remoteAppStore == nil {
 		return nil
 	}

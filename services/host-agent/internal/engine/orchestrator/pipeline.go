@@ -513,9 +513,9 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 
 	// Step 7: Provision forward_domain SSO for tailnet access (best-effort).
 	if o.provisionTailnetSSO(ctx) {
-		o.logger.Info("convergence step", "step", "regenerate-routes-tailnet")
-		if err := o.RegenerateRoutes(); err != nil {
-			o.logger.Warn("failed to regenerate routes after tailnet SSO", "error", err)
+		o.logger.Info("convergence step", "step", "sync-routes-tailnet")
+		if err := o.SyncRoutes(); err != nil {
+			o.logger.Warn("failed to sync routes after tailnet SSO", "error", err)
 		}
 	}
 
