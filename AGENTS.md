@@ -1,7 +1,7 @@
-# AGENTS.md — Bloud
+# AGENTS.md: Bloud
 
 Operating instructions for AI coding agents (and humans) working in this repository.
-Everything here is verified against the code — if it contradicts a doc, the code wins;
+Everything here is verified against the code: if it contradicts a doc, the code wins;
 fix the doc in the same change.
 
 ## What Bloud is
@@ -12,7 +12,7 @@ in a declarative `metadata.yaml`; a small Go service (**host-agent**) runs an
 intent-driven orchestrator that continuously makes reality match intent, on install
 and after every crash/reboot. Status: alpha. License: AGPL-3.0.
 
-The differentiator is not container installation — it's that Bloud holds the
+The differentiator is not container installation: it's that Bloud holds the
 integration knowledge (API keys, OIDC clients, LDAP wiring) and keeps those
 relationships working.
 
@@ -20,10 +20,10 @@ relationships working.
 
 | Path | What it is |
 |---|---|
-| `cli/` | Go module (`.../bloud/cli`) — the `./bloud` dev/validation CLI. Builds to repo root `./bloud` (gitignored). |
-| `services/host-agent/` | Go module — the runtime: API server (:3000), orchestrator, catalog, stores, container management. |
+| `cli/` | Go module (`.../bloud/cli`): the `./bloud` dev/validation CLI. Builds to repo root `./bloud` (gitignored). |
+| `services/host-agent/` | Go module. The runtime: API server (:3000), orchestrator, catalog, stores, container management. |
 | `services/host-agent/web/` | SvelteKit 2 + Svelte 5 frontend (npm workspace `@bloud/host-agent-web`), static build served by host-agent. |
-| `apps/` | Go module — the app catalog. One dir per app: `metadata.yaml` + `configurator.go` (+ assets). |
+| `apps/` | Go module: the app catalog. One dir per app: `metadata.yaml` + `configurator.go` (+ assets). |
 | `e2e/` | Playwright (TS) browser tests of the user-visible lifecycle. |
 | `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
 | `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference + app registry. |
@@ -43,9 +43,9 @@ Go modules are linked by `replace` directives (host-agent ↔ apps). CI: GitHub 
   gitignored `.bloud/preferences.yaml`), checks prerequisites, and rebuilds `./bloud`.
 - Build the CLI: `cd cli && go build -o ../bloud .`
 
-Development runs **inside a VM** on developer machines — macOS uses Lima (the
+Development runs **inside a VM** on developer machines: macOS uses Lima (the
 only applicable backend, chosen automatically), Linux uses QEMU (or `native`,
-running host-agent directly on the host; needs podman + user-level systemd —
+running host-agent directly on the host; needs podman + user-level systemd:
 `NativeBackend.Create` enables `podman.socket` and linger as needed). The
 backend preference is picked by `./bloud setup` (or prompted on first use of
 any runtime command) and stored in gitignored `.bloud/preferences.yaml`;
@@ -56,17 +56,17 @@ any runtime command) and stored in gitignored `.bloud/preferences.yaml`;
 limactl create --name=bloud-dev dev/lima.yaml
 limactl start bloud-dev
 
-# QEMU (Linux) — self-provisioning
+# QEMU (Linux, self-provisioning)
 ./bloud dev                           # creates .bloud/qemu/bloud-qemu (gitignored)
 # manual SSH: ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1
 
-# Native (Linux CI) — no VM; runtime in /var/tmp/bloud-native-runtime
+# Native (Linux CI): no VM; runtime in /var/tmp/bloud-native-runtime
 BLOUD_BACKEND=native ./bloud dev
 ```
 
 `./bloud dev` is the whole loop: provisions the VM if needed, builds host-agent
 (`CGO_ENABLED=0 GOOS=linux`) + frontend, deploys both into the VM, and runs
-host-agent in the foreground (Ctrl-C stops it). **There is no hot reload —
+host-agent in the foreground (Ctrl-C stops it). **There is no hot reload:
 re-run `./bloud dev` after any code change** (`./bloud rebuild` is a no-op; the
 Nix runtime was removed).
 
@@ -78,15 +78,15 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 
 | Port | What | Audience |
 |---|---|---|
-| **80** | **Front proxy** — a thin root-level reverse proxy (`host-agent front-proxy`, systemd unit `bloud-front.service`) that forwards to Traefik `:8080` and serves a "starting up" page while the stack boots. It owns port 80 so Traefik and every container stay rootless. | end users (default browser port) |
-| **8080** | **Traefik — the public-facing port.** Users hit apps here (`jellyfin.localhost:8080`, `immich.localhost:8080`, …). Browser/e2e user journeys must go through this. | end users |
+| **80** | **Front proxy**: a thin root-level reverse proxy (`host-agent front-proxy`, systemd unit `bloud-front.service`) that forwards to Traefik `:8080` and serves a "starting up" page while the stack boots. It owns port 80 so Traefik and every container stay rootless. | end users (default browser port) |
+| **8080** | **Traefik: the public-facing port.** Users hit apps here (`jellyfin.localhost:8080`, `immich.localhost:8080`, …). Browser/e2e user journeys must go through this. | end users |
 | **3000** | **host-agent internal API** (install/uninstall/status, session auth with loopback/trusted-net bypass). Operator/automation surface, not the user surface. | ops, CLI, e2e API helpers |
 | 8096 | Jellyfin container (direct) | debugging |
 | 9001 | Authentik server (direct) | debugging |
 | 3389 | LDAP outpost (direct) | debugging |
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
-| 5353 (UDP) | mDNS — the guest's `.local` announcer (`bloud.local`, `<app>.bloud.local`); unicast queries only, since the VM boundary does not relay multicast | debugging / LAN reachability |
+| 5353 (UDP) | mDNS: the guest's `.local` announcer (`bloud.local`, `<app>.bloud.local`); unicast queries only, since the VM boundary does not relay multicast | debugging / LAN reachability |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
 (10.0.2.2), so `./bloud dev` sets `BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24` for the
@@ -95,7 +95,7 @@ host-agent; Lima forwards to loopback and needs none.
 mDNS note: the QEMU launch args include a unicast UDP 5353 forward
 (`hostfwd=udp::<host>-:5353`) when the host can bind the host port. Hosts
 that run their own responder (avahi-daemon on Linux, mDNSResponder on macOS)
-own 5353; then `./bloud dev` prints a note and skips the forward — stop
+own 5353; then `./bloud dev` prints a note and skips the forward. Stop
 avahi-daemon to enable it, or verify with `BLOUD_QEMU_FWD_5353=<free-port>`
 and `dig @127.0.0.1 -p <free-port> bloud.local A` (standard mDNS clients only
 speak 5353, so a remap serves verification only). With the forward in place,
@@ -112,7 +112,7 @@ natively, announces normally, and full discovery works. Lima:
 Port-80 note: the guest's port 80 (front proxy) is host-forwarded like every
 other port. Non-root hosts cannot bind host port 80, so when it is not
 bindable `./bloud dev` automatically forwards guest 80 to host **8088** (then
-8089/8090) with a note on stdout — no-port URLs like `http://jellyfin.localhost`
+8089/8090) with a note on stdout. No-port URLs like `http://jellyfin.localhost`
 then need `sudo setcap 'cap_net_bind_service=+ep' $(command -v
 qemu-system-x86_64)` (or `BLOUD_QEMU_FWD_80=<port>`). Existing VMs are
 restarted automatically when the QEMU launch args change (recorded in
@@ -177,9 +177,9 @@ go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
 ### Playwright e2e (`e2e/`)
 
 - Browser tests target the **public port**: `BLOUD_URL` (default
-  `http://localhost:8080`) — user journeys go through Traefik.
+  `http://localhost:8080`): user journeys go through Traefik.
 - API helpers target the **internal port**: `BLOUD_API_URL` (default
-  `http://localhost:3000`) — loopback, no auth needed.
+  `http://localhost:3000`): loopback, no auth needed.
 - Specs: `jellyfin.spec.ts` (LDAP SSO), `navidrome.spec.ts` (forward-auth),
   `immich.spec.ts` (native-oidc + onboarding), `affine.spec.ts`
   (native-oidc, login via issuer origin). Fixtures: `lib/fixtures.ts`
@@ -214,7 +214,7 @@ Validation:  validate [flags]     Tiered validation (default --tier changed)
             e2e lifecycle        Self-contained install→restart→uninstall lifecycle
             e2e app              Single app's spec (BLOUD_E2E_APP=jellyfin|navidrome|
                                  immich|affine|install-streaming) on a
-                                 self-contained runtime — used by CI
+                                 self-contained runtime; used by CI
 Other:       depgraph             Mermaid dependency graph from app metadata
 ```
 
@@ -233,7 +233,7 @@ combined with instance/SSH-target env vars). Instance overrides:
 1. **Orchestrator is the single writer.** All mutations flow through the typed
    intent queue (`internal/engine/orchestrator/intent.go`); the orchestrator is the only
    author of lifecycle status and the only executor of side effects. API handlers
-   submit intents (202 accepted) and return current state — they must not write
+   submit intents (202 accepted) and return current state; they must not write
    stores directly or advance app status.
 2. **Configurators are idempotent.** `PreStart`/`PostStart` run on *every*
    reconciliation cycle (install, crash recovery, reboot). A configurator that
@@ -254,19 +254,19 @@ combined with instance/SSH-target env vars). Instance overrides:
    (Immich + AFFiNE: native-oidc, Jellyfin: ldap, Navidrome: forward-auth).
    Native-oidc providers use Bloud's verified-email scope mapping (Authentik's
    managed one reports `email_verified: false`, which apps like AFFiNE
-   reject) — see `apps/affine/INTEGRATION.md`.
-7. **Routing is regenerated after convergence** — the orchestrator rewrites the
+   reject). See `apps/affine/INTEGRATION.md`.
+7. **Routing is regenerated after convergence.** The orchestrator rewrites the
    Traefik dynamic config (`BLOUD_TRAEFIK_DYNAMIC_DIR/apps-routes.yml`) before
    promoting nodes to RUNNING. (Route generation must not accumulate runtime
-   side effects — see tech debt.)
+   side effects; see tech debt.)
 8. **Config precedence**: env var > `secrets.json` (auto-generated on first boot,
-   or by `host-agent init-secrets`) > **error** — there is no hardcoded fallback. Key env:
+   or by `host-agent init-secrets`) > **error**: there is no hardcoded fallback. Key env:
    `BLOUD_DATA_DIR`, `BLOUD_APPS_DIR`, `BLOUD_TRAEFIK_DYNAMIC_DIR`,
    `BLOUD_PODMAN_SOCKET`, `BLOUD_PORT` (3000), `BLOUD_BASE_DOMAIN`,
    `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`,
    `BLOUD_TRUSTED_LOCAL_NETS`.
 9. **Hosts are a first-class setting.** The instance is reachable under a set
-   of hostnames — built-ins `localhost` + `bloud.local`, plus admin-added
+   of hostnames: built-ins `localhost` + `bloud.local`, plus admin-added
    custom domains (Settings → Hosts, `GET/PUT /api/settings/hosts`). One host
    is **primary** (drives the OIDC issuer + launch URLs). Admin-saved hosts
    win over `BLOUD_BASE_DOMAIN`/`BLOUD_SSO_BASE_URL`, which only seed the
@@ -285,14 +285,14 @@ combined with instance/SSH-target env vars). Instance overrides:
    `<app>.<host>` subdomain) as an A record for the host's primary LAN IP
    (`internal/mdns`, port 5353; TTL-0 goodbyes on removal), so LAN devices
    resolve `http://bloud.local` and `http://jellyfin.bloud.local` with no DNS
-   configuration. Only `.local` hosts are advertised — custom domains use
+   configuration. Only `.local` hosts are advertised; custom domains use
    real DNS.
 10. **The front proxy owns port 80** (`host-agent front-proxy`,
     `bloud-front.service`, root). It health-gates on the host-agent
     (`GET :3000/api/health`, which only opens after system convergence) and
     proxies to `:8080` preserving the `Host` header; while the stack is down
     it serves an auto-reloading "starting up" page. Do not bind :80 from any
-    rootless container instead — that is the point of this split.
+    rootless container instead; that is the point of this split.
 11. **Frontend is a static build** served by host-agent from
     `<host-agent-dir>/web/build` (embedded `dev_dashboard.html` is only the
     missing-build fallback). Rebuild the frontend before deploying.
@@ -300,7 +300,7 @@ combined with instance/SSH-target env vars). Instance overrides:
     `io.bloud.app=<name>`; container names follow `apps-<name>` /
     `apps-<name>-<component>`. e2e assertions rely on these labels.
 13. **A new `services/<name>` requires shipping to a machine where host-agent
-    does not run.** Deploy location — not code concern — is what earns a
+    does not run.** Deploy location (not code concern) is what earns a
     directory under `services/`. SSO, orchestrator, API, and store run on the
     same box as host-agent → they stay packages under `internal/` or
     subcommands of the host-agent binary. A remote tailnet outpost or control
@@ -323,33 +323,35 @@ combined with instance/SSH-target env vars). Instance overrides:
   `POST /api/apps/{name}/uninstall`, `PATCH /api/apps/{name}/rename`,
   home + logs routers.
 - Admin: `POST /api/apps/refresh-catalog`, `GET /api/system/rebuild/stream`,
-  settings (incl. `GET/PUT /api/settings/hosts` — the multi-host setting),
+  settings (incl. `GET/PUT /api/settings/hosts`: the multi-host setting),
   sharing, remote-apps routers.
 
 ## Adding an app
 
-1. `apps/<name>/metadata.yaml` — full field reference in
+1. `apps/<name>/metadata.yaml`. Full field reference in
    `services/host-agent/internal/catalog/models.go` (source of truth):
    `name`, `displayName`, `description`, `category` (media | productivity |
    security | infrastructure), `port`, `isSystem`, `sso`
    (`strategy`, `callbackPath`, `userCreation`, `bypassPaths`, `env` mappings),
    `integrations` (`proxy` / `sso` / `database`: `{required, multi,
    compatible: [{app, default}]}`), `containers[]`
-   (`name`, `image` — **pin versions**, `command`, `network`/`networks`,
+   (`name`, `image` (**pin versions**), `command`, `network`/`networks`,
    `restartPolicy`, `environment`, `extraHosts`, `ports`, `volumes`,
    `dependsOn`, `healthCheck {test, interval, timeout, retries}`).
    Template vars in environment/volumes: `{{appDataDir}}`, `{{dataDir}}`,
    `{{postgresPassword}}`.
-2. `apps/<name>/configurator.go` — implements `NodeLifecycle`
+2. `apps/<name>/configurator.go`. Implements `NodeLifecycle`
    (`Name()`, `PreStart(ctx, *AppState) (changed bool, err error)`,
    `PostStart(ctx, *AppState) error`, `Remove(ctx, *AppState, clearData bool)
    error`) from `pkg/configurator`. `AppState` carries `DataPath`,
-   `BloudDataPath`, `SSOEnabled`, typed `LDAP` output. Self-register it: add
-   `apps/<name>/registration.go` with an `init()` calling
+   `BloudDataPath`, `SSOEnabled`, typed `LDAP` / `OIDC` outputs. Self-register
+   it: add `apps/<name>/registration.go` with an `init()` calling
    `configurator.MustRegisterFactory("<node-name>", ...)` (factory is
-   instantiated lazily on first lookup), and add a blank import of the app
-   package to `services/host-agent/internal/appconfig/register.go`. System
-   apps (Traefik, Authentik) stay eagerly registered in `RegisterSystem`.
+   instantiated lazily on first lookup), and add the blank import and node name
+   to `apps/registry.go`; `TestRegisterAll` fails if the two drift apart.
+   Host-agent's `internal/appconfig/register.go` is for system apps only
+   (Traefik, Authentik, eagerly registered in `RegisterSystem`); user apps
+   never touch it.
 3. Tests: unit tests in the app package; integration assertions in
    `services/host-agent/internal/e2e/e2e_test.go` (build tag `integration`);
    user-journey spec in `e2e/tests/`. **Test behavioral outcomes** (verify via
@@ -359,7 +361,9 @@ combined with instance/SSH-target env vars). Instance overrides:
 5. Reference patterns: `apps/jellyfin` (LDAP, setup wizard, plugins),
    `apps/authentik` (multi-container, LDAP infra), `apps/immich` (own
    postgres+redis, native-oidc), `apps/affine` (own postgres+redis, OIDC
-   config file, first-run owner bootstrap), `apps/navidrome` (forward-auth).
+   config file, first-run owner bootstrap), `apps/navidrome` (forward-auth),
+   `apps/homeassistant` (pinned remote asset via `pkg/appasset` + provenance,
+   YAML marker merge, `RestartContainer`-driven config reload).
 
 ## Integration validation runs the real dependency-graph path
 
@@ -372,7 +376,7 @@ orchestrator converge, then run the behavioral tests inside the VM.
 The old `dev/compose.yml` static stack (shared postgres/redis/authentik/jellyfin)
 was retired in 2026-08: it bypassed the catalog planner, the orchestrator
 intent queue, and the `io.bloud.managed` container labels, so integration
-tests could pass while the real install/reconcile flow was broken — and fail
+tests could pass while the real install/reconcile flow was broken, and fail
 for reasons the product path never hits (shared postgres vs per-app
 postgres, compose service naming, no graph ordering).
 
@@ -387,9 +391,9 @@ Full backend-debt ledger with the repayment plan:
 `docs/operations/tech-debt.md` (lifecycle state ownership, in-memory lifecycle
 graph, route-generation side effects, ad hoc migrations). Review findings:
 `specs/review.md` (e.g. §C2 in-memory `MapRepository`; §C1's inert install path
-is fixed — the router wires the catalog graph). Highlights:
+is fixed: the router wires the catalog graph). Highlights:
 
-- Sharing/guest API handlers write stores directly — a deliberate, documented
+- Sharing/guest API handlers write stores directly: a deliberate, documented
   boundary (pure store writes, synchronous invite tokens), not intent-queue drift.
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
   is fallible with no static fallback (env > `secrets.json` > error). Still open:
@@ -400,7 +404,7 @@ is fixed — the router wires the catalog graph). Highlights:
 ## Environment conventions (by design)
 
 - `dev/lima.yaml` hardcodes the repo mount at `~/Projects/bloud` (Lima reads
-  the yaml verbatim) — adjust if the checkout lives elsewhere. The QEMU backend
+  the yaml verbatim); adjust if the checkout lives elsewhere. The QEMU backend
   auto-detects the checkout dir; `dev/qemu.yaml` documents the spec only.
 - The CLI loads a gitignored root `.env` before dispatching commands (existing
   env vars win).
