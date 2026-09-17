@@ -30,6 +30,11 @@ func isSignalExit(err error) bool {
 	return false
 }
 
+// rootMarkers are files whose presence identifies the Bloud repo root. They are
+// deliberately root-level and stable: keying off a single documentation file
+// breaks root resolution every time the docs tree is reorganized.
+var rootMarkers = []string{"validation.yaml", "AGENTS.md", "docs/specs/spec.md"}
+
 func getProjectRoot() (string, error) {
 	// Find project root by looking for cli/main.go relative to executable or cwd
 	cwd, err := os.Getwd()
@@ -47,14 +52,16 @@ func getProjectRoot() (string, error) {
 		return filepath.Dir(cwd), nil
 	}
 
-	// Walk up looking for specs/spec.md (project root marker)
+	// Walk up looking for a root marker.
 	for dir := cwd; dir != "/"; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, "specs", "spec.md")); err == nil {
-			return dir, nil
+		for _, marker := range rootMarkers {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir, nil
+			}
 		}
 	}
 
-	return "", fmt.Errorf("could not find project root (looking for specs/spec.md)")
+	return "", fmt.Errorf("could not find project root (looking for %s)", strings.Join(rootMarkers, ", "))
 }
 
 func limaInstance() string {
