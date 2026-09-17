@@ -9,23 +9,25 @@ import (
 	"fmt"
 )
 
-// Operation type values.
+// Operation type values. Kept to what drive paths actually record: a
+// constant with no writer is vocabulary nobody can observe. When a
+// deliberate reconfigure flow lands, add OpTypeReconfigure with it.
 const (
-	OpTypeInstall      = "install"
-	OpTypeUninstall    = "uninstall"
-	OpTypeReconfigure  = "reconfigure"
-	OpTypeReconcile    = "reconcile"
+	OpTypeInstall   = "install"
+	OpTypeUninstall = "uninstall"
+	OpTypeReconcile = "reconcile"
 )
 
-// Operation phase values.
+// Operation phase values: the phases runFullLifecycle records on entry.
+// Routing and sharing are deliberately absent — route generation is not
+// recorded as an operation phase (that step is its own open debt; see
+// docs/operations/tech-debt.md).
 const (
 	OpPhasePlanning  = "planning"
 	OpPhaseTopology  = "topology"
 	OpPhasePrestart  = "prestart"
 	OpPhaseHealth    = "health"
 	OpPhasePoststart = "poststart"
-	OpPhaseRouting   = "routing"
-	OpPhaseSharing   = "sharing"
 	OpPhaseComplete  = "complete"
 )
 

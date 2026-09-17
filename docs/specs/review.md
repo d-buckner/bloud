@@ -12,10 +12,10 @@
 > **This file is a dated review snapshot, not the debt ledger.**
 >
 > The single living ledger for backend debt and its repayment plan is
-> [`docs/operations/tech-debt.md`](../docs/operations/tech-debt.md). Do not
+> [`docs/operations/tech-debt.md`](../operations/tech-debt.md). Do not
 > add new findings here — add them there. Findings below are annotated with
-> their status as of the 2026-09-15 layout-cleanup pass so this snapshot can
-> be read without mistaking resolved items for live ones:
+> their status as of the last sync (2026-09-17) so this snapshot can be
+> read without mistaking resolved items for live ones:
 >
 > | Finding | Status |
 > |---|---|
@@ -24,7 +24,8 @@
 > | C3 share/guest writes bypass the queue | **BY DESIGN** — deliberate, documented boundary (pure store writes, synchronous invite tokens) |
 > | C4 hardcoded fallback secrets | **RESOLVED 2026-09-14** — `config.Load` is fallible: env > `secrets.json` > error |
 > | H1 loopback grants admin | **OPEN** — `isLocalRequest` bypass still live at `router.go:544` |
-> | H2–H4, M1–M6 | **OPEN** — tracked in the ledger |
+> | H2 `apps.status` overloaded / no operation-state model | **RESOLVED 2026-09-17** — separate `operations` row per app (`store/operations.go` + orchestrator recorder, PR #86); `apps.status` narrowed to the user-facing projection |
+> | H3–H4, M1–M6 | **OPEN** — tracked in the ledger |
 
 
 
