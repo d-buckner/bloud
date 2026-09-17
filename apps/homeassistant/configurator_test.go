@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -421,13 +420,15 @@ func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 	assert.Equal(t, "test-bootstrap-pw", req["password"])
 	assert.Equal(t, bootstrapFullname, req["name"])
 
-	// Bloud closes ONLY the integration step (my.home-assistant.io). The
-	// human's welcome steps stay open so the first visit shows the
-	// home-name/location/units screen after OIDC login, then analytics —
-	// the required first-run info Bloud must not silently default.
-	assert.True(t, srv.stepsCompleted["/api/onboarding/integration"], "Bloud must close the integration step")
+	// Bloud closes NO onboarding steps. The human owns the entire first-run
+	// flow: core_config (home name/location/units) and analytics carry the
+	// required info Bloud must not silently default, and the integration
+	// step's Finish is the only redirect into the app in HA's onboarding
+	// SPA — so it must stay for the human too. Bloud creates the owner only.
 	assert.False(t, srv.stepsCompleted["/api/onboarding/core_config"], "core_config must be left for the human")
 	assert.False(t, srv.stepsCompleted["/api/onboarding/analytics"], "analytics must be left for the human")
+	assert.False(t, srv.stepsCompleted["/api/onboarding/integration"], "integration must be left for the human (its Finish is the app redirect)")
+	assert.Empty(t, srv.tokenReqs, "Bloud must not exchange the owner auth code; the reload is a tokenless container restart")
 }
 
 // A fully-onboarded HA *deregisters* GET /api/onboarding: the endpoint 404s
@@ -631,29 +632,6 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	defer fakeSrv.mu.Unlock()
 	require.Len(t, fakeSrv.restarts, 1)
 	assert.Equal(t, "apps-homeassistant", fakeSrv.restarts[0])
-}
-
-// Regression: HA hands out an authorization CODE, never an access_token (core
-// 2026.9 onboarding/views.py). The old code parsed "access_token" straight off
-// the onboarding response and always got "" — so the post-trust restart died
-// with "no access token". Onboard → exchange → restart must use the exchanged
-// token, and the exchange must actually hit /auth/token.
-func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
-	srv := newAPIServer(t, false)
-	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
-	c.baseURLOverride = srv.srv.URL
-	c.pollInterval = 10 * time.Millisecond
-
-	token, err := c.ensureOnboarded(context.Background(), t.TempDir())
-	require.NoError(t, err)
-	assert.Equal(t, "tok", token, "must return the exchanged access token, not the raw code")
-
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
-	require.Len(t, srv.tokenReqs, 1, "must exchange the code exactly once")
-	assert.Contains(t, srv.tokenReqs[0], "grant_type=authorization_code")
-	assert.Contains(t, srv.tokenReqs[0], "code=code123")
-	assert.Contains(t, srv.tokenReqs[0], "client_id="+url.QueryEscape(onboardingClientID))
 }
 
 // Regression for the reported failure, now fixed: on a RETRY (owner already

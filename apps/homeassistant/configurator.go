@@ -238,7 +238,7 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 		return err
 	}
 
-	if _, err := c.ensureOnboarded(ctx, configDir); err != nil {
+	if err := c.ensureOwner(ctx, configDir); err != nil {
 		return err
 	}
 	// Reverse-proxy trust: HA writes its own http config entry on first boot
@@ -485,35 +485,41 @@ func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
 	return nil
 }
 
-// ensureOnboarded makes the instance SSO-ready headlessly: it creates the
-// break-glass owner (the "user" step) and closes the "integration" step,
-// returning the owner's access token. It deliberately does NOT close the
-// "core_config" (home name/location/units) or "analytics" steps — those are
-// the human's first-run welcome screen and carry required info. The instance
-// therefore ships SSO-ready but not fully onboarded. Returns "" when no owner
-// step is pending (owner already exists / human already finished).
-func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (string, error) {
+// ensureOwner makes the instance SSO-ready headlessly by creating the
+// break-glass owner (HA's "user" onboarding step) when none exists. It
+// closes NO onboarding steps: core_config (home name/location/units),
+// analytics, and integration are all left for the human. The integration
+// step's Finish button is the only thing in HA's onboarding SPA that
+// redirects the browser into the app, so Bloud must leave it for the human
+// to click — pre-closing it strands them on a spinner once analytics ends.
+// With the owner created, the HA router no longer forces the create-account
+// screen and routes the first visitor through the normal authorize flow
+// (where "Login with Bloud" lives) into the welcome screens. Returns nil
+// when no owner step is pending (owner already exists / human already
+// finished — HA then deregisters /api/onboarding, the permanent-404 case).
+func (c *Configurator) ensureOwner(ctx context.Context, configDir string) error {
 	body, alreadyOnboarded, err := c.api.onboardingStatus(ctx, c.pollInterval, func() bool { return ownerOnDisk(configDir) })
 	if err != nil {
-		return "", err
+		return err
 	}
 	if alreadyOnboarded {
 		c.logger.Info("Home Assistant already fully onboarded; onboarding endpoint not registered")
-		return "", nil
+		return nil
 	}
 
 	var steps []onboardingStep
 	if err := json.Unmarshal(body, &steps); err != nil {
-		return "", fmt.Errorf("onboarding status malformed: %w", err)
+		return fmt.Errorf("onboarding status malformed: %w", err)
 	}
 	// "user" is the gate: until the owner exists every visitor is forced
 	// into the create-account wizard. Once the owner exists (this step
 	// closed), the HA onboarding router detects steps[0].done and routes
 	// visitors through the normal authorize flow — where the OIDC provider
-	// lives — then surfaces core_config/analytics for the human. So we act
-	// only while the user step is still pending.
+	// lives — then surfaces core_config/analytics/integration for the
+	// human. So Bloud acts only while the user step is still pending, and
+	// only to create the owner; every human step stays open.
 	if !userStepPending(steps) {
-		return "", nil
+		return nil
 	}
 
 	return c.createFirstRunOwner(ctx)
@@ -535,67 +541,27 @@ func userStepPending(steps []onboardingStep) bool {
 	return false
 }
 
-// createFirstRunOwner runs the first-run wizard: create the bootstrap owner,
-// exchange its one-shot authorization code for an access token, and close
-// the integration step. Returns the owner access token.
-func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) {
+// createFirstRunOwner runs HA's first-run "user" step headlessly: create
+// the break-glass owner. Bloud does NOT exchange the returned authorization
+// code and does NOT close any later step — the human completes core_config →
+// analytics → integration (whose Finish redirects them into the app), and
+// the post-trust reload is a tokenless container restart, so the owner's
+// access token is never needed here.
+func (c *Configurator) createFirstRunOwner(ctx context.Context) error {
 	password, err := c.secrets.GenerateAppAdminPassword(appName)
 	if err != nil {
-		return "", fmt.Errorf("failed to obtain bootstrap password: %w", err)
+		return fmt.Errorf("failed to obtain bootstrap password: %w", err)
 	}
-	authCode, err := c.api.createOwner(ctx, map[string]string{
+	if _, err := c.api.createOwner(ctx, map[string]string{
 		"client_id": onboardingClientID,
 		"username":  bootstrapUsername,
 		"password":  password,
 		"name":      bootstrapFullname,
 		"language":  "en",
-	})
-	if err != nil {
-		return "", fmt.Errorf("onboarding request failed: %w", err)
+	}); err != nil {
+		return fmt.Errorf("onboarding request failed: %w", err)
 	}
 	c.logger.Info("first-run owner created", "user", bootstrapUsername)
-
-	// HA's onboarding hands back a one-shot authorization code, not an access
-	// token (verified against core 2026.9 onboarding/views.py). Exchange it for
-	// the owner's real access token; that token drives the authenticated steps.
-	accessToken, err := c.api.exchangeAuthCode(ctx, authCode)
-	if err != nil {
-		return "", fmt.Errorf("failed to exchange the onboarding authorization code for an access token: %w", err)
-	}
-	// Close only the "integration" step (the my.home-assistant.io
-	// registration) with the owner token. The "core_config" (home
-	// name/location/units/timezone) and "analytics" steps are deliberately
-	// left OPEN for the human: that welcome screen carries required
-	// first-run information Bloud must not silently default (0,0 / UTC).
-	// With the owner ("user") step already closed, the HA onboarding router
-	// detects steps[0].done and kicks the first visitor through the normal
-	// authorize flow — where "Login with Bloud" (OIDC) lives — then shows
-	// core_config to the now-authenticated user, then analytics, then the
-	// instance is fully onboarded. Integration is closed so the
-	// my.home-assistant.io step is never surfaced (it has no interactive
-	// value for a Bloud-SSO user and the headless flow already satisfies it).
-	if err := c.finishFirstRunSteps(ctx, accessToken); err != nil {
-		return "", fmt.Errorf("failed to finish first-run steps: %w", err)
-	}
-	return accessToken, nil
-}
-
-// finishFirstRunSteps closes the onboarding steps Bloud owns headlessly —
-// just "integration" (my.home-assistant.io). "core_config" and "analytics"
-// are intentionally left open: they are the human's first-run welcome screen
-// (location, home name, units, analytics opt-in). Restricting the list to
-// integration means the human's steps can never be closed by accident.
-// Each step declares 403 as AlreadyDone, so a replay against an
-// already-closed step is a no-op rather than a string-matched success.
-func (c *Configurator) finishFirstRunSteps(ctx context.Context, token string) error {
-	steps := []struct{ path, body string }{
-		{"/api/onboarding/integration", `{"client_id":"https://my.home-assistant.io/redirect/oauth","redirect_uri":"https://my.home-assistant.io/redirect/oauth"}`},
-	}
-	for _, s := range steps {
-		if err := c.api.finishStep(ctx, s.path, s.body, token); err != nil {
-			return fmt.Errorf("%s: %w", s.path, err)
-		}
-	}
 	return nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
@@ -173,40 +172,4 @@ func (a *haAPI) createOwner(ctx context.Context, payload map[string]string) (str
 		return "", fmt.Errorf("onboarding response carried no authorization code")
 	}
 	return resp.AuthCode, nil
-}
-
-// exchangeAuthCode trades a one-shot authorization code for the owner access
-// token via POST /auth/token (authorization_code grant, built-in iOS client id,
-// no redirect_uri or client secret).
-func (a *haAPI) exchangeAuthCode(ctx context.Context, authCode string) (string, error) {
-	form := url.Values{
-		"grant_type": {"authorization_code"},
-		"client_id":  {onboardingClientID},
-		"code":       {authCode},
-	}
-	var tok struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := a.cl.POST("/auth/token").Form(form).
-		OK(http.StatusOK).
-		DoInto(ctx, &tok); err != nil {
-		return "", err
-	}
-	if tok.AccessToken == "" {
-		return "", fmt.Errorf("token exchange returned no access token")
-	}
-	return tok.AccessToken, nil
-}
-
-// finishStep closes one onboarding step that follows "user" with the owner
-// bearer token. A 403 means a previous reconciliation already closed the step
-// — declared AlreadyDone so the idempotent replay is a no-op, not a string
-// match on the body.
-func (a *haAPI) finishStep(ctx context.Context, path, body, token string) error {
-	return a.cl.POST(path).
-		Body([]byte(body), "application/json").
-		Header("Authorization", "Bearer "+token).
-		OK(http.StatusOK, http.StatusCreated).
-		AlreadyDone(http.StatusForbidden).
-		Exec(ctx)
 }
