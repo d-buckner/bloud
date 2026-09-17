@@ -1,138 +1,137 @@
 # Backend Tech Debt
 
 > **This is the single debt ledger.** New backend findings go here, not into
-> `docs/specs/review.md`. That file is a dated review snapshot whose findings are
+> `docs/specs/review.md`; that file is a dated review snapshot whose findings are
 > annotated against the statuses recorded here.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-16 (re-verified against HEAD `13dfd11`)
+**Last updated:** 2026-09-16 (re-audited after the S1-S10 app-client series,
+layout cleanup, and the security pass landed; previous version 2026-09-14)
 
-## Biggest Debt: Lifecycle State Ownership
+## Biggest Debt: Lifecycle Operation State Is Missing
 
-The largest backend debt is that application lifecycle state does not have one clear
-owner. Desired state, observed state, side effects, and recovery behavior are spread
-across the engine, stores, route generation, and sharing managers.
+The orchestrator has phases but no state for them. `runFullLifecycle`
+(`internal/engine/orchestrator/orchestrator.go`) interleaves prestart config,
+container/network creation, health checks, poststart config, and SSO
+provisioning in one control-flow block. Phases are implicit in code position,
+not facts anyone can read. A failure mid-pass records an ERROR with a message
+but loses which phase it happened in, whether it was retryable, and where a
+resume should land. Meanwhile `apps.status` carries install progress, observed
+runtime health, and user-visible state at once, in three vocabularies from
+three writers.
 
-The intent side of this has been tightened since the note was first written: the API now
-submits typed intents and nothing but the orchestrator advances lifecycle status. What
-has not been repaid is the durability half. The lifecycle graph lives in process memory,
-so observed state, terminal ERROR markers, and phase context are rebuilt from scratch on
-every start rather than resumed.
+The previous version of this doc said lifecycle state was "spread across the
+API server, the engine, stores, route generation, and sharing managers." Half
+of that is now obsolete. The API side is paid (see "Already Paid" below). What
+remains is inside the orchestrator, and it is narrower: a missing
+operation-state model, not a missing single writer.
 
-This makes Bloud behave more like a sequence of assumed-success commands than a durable
-reconciliation system. That conflicts with the release architecture in
-`docs/specs/spec.md`, which requires durable desired and observed application and
-integration state, explicit invalidation, phase-specific failure records, and
-resume-after-restart semantics.
+The conflict with the release architecture in `docs/specs/spec.md` is
+unchanged: the spec requires explicit invalidation, phase-specific failure
+records, and resume-after-restart semantics that the current code cannot
+express.
 
 ## Evidence
 
-Re-verified 2026-09-16 against HEAD `13dfd11`. Statuses reflect the code as it
-stands now, not as of the original note.
+- `internal/engine/orchestrator/orchestrator.go`
+  - `runFullLifecycle` interleaves all lifecycle phases per node. Phase
+    context is control flow, not recorded state.
+  - `setupStatusSync` maps graph transitions onto `apps.status` as "the single
+    authoritative path from graph state to DB status". Correct as far as it
+    goes: the field it writes into is the overloaded one.
+- `internal/engine/orchestrator/orchestrator_containers.go`
+  - `RegenerateRoutes` also starts the gateway (`EnsureRunning`), queries the
+    tailnet domain, and reconciles remote app proxies (`buildRemoteRoutes`).
+    Route generation still has runtime side effects.
+- `internal/store/apps.go`
+  - `apps.status` carries three meanings from three writers: `Submit` writes
+    "installing", the orchestrator status sync writes "running"/"error",
+    `SyncContainerState` writes "stopped"/"running", and `EnsureSystemApp`
+    pins "running". No single owner of the field's meaning.
+- `internal/engine/graph/`
+  - Production wires the in-memory `MapRepository` in both
+    `cmd/host-agent/configure.go` and `internal/api/router.go`;
+    `SQLiteRepository` exists but is never constructed.
+  - Nuance the previous version lacked: because integration credentials are
+    HKDF-derived from the host secret, rebuilding the graph from the app store
+    on restart actually works. What is lost is only ERROR-terminal semantics,
+    and a restart retries those apps anyway, which is arguably the
+    self-healing behavior we want. This is less severe than the earlier
+    "durable backing is dead code" framing implied.
+- `internal/api/router.go`
+  - `authMiddlewareFn` grants `RoleAdmin` to any loopback/trusted-net request
+    with no credential. Still open.
+- `internal/db/db.go`
+  - `runMigrations` is seven `_, _ = db.Exec` calls with the version recorded
+    only in a comment. The error-ignoring is deliberate (idempotent ALTERs),
+    but the versionless ledger is what produced the fork below.
+- Share/guest handlers write stores directly: unchanged, and still a
+  deliberate, documented boundary (pure store writes, synchronous invite
+  tokens). Not a top item.
 
-### Still open
+## The Landmine the Previous Version Missed: `user_app_positions` Schema Fork
 
-- `internal/engine/orchestrator/orchestrator_containers.go:82` (`RegenerateRoutes`)
-  still has runtime side effects. It calls `gateway.EnsureRunning` (line 106) and
-  `buildRemoteRoutes`, which calls `remoteProxy.Reconcile` (line 154) and therefore
-  starts and stops live listeners. No test asserts that route generation is free of
-  runtime side effects. This is the "First Contained Slice" below, still unclaimed.
-- `internal/engine/graph/sqlite_repository.go` is still dead code.
-  `NewSQLiteRepository` has zero call sites outside its own file; both production
-  wirings use the in-memory map: `internal/api/router.go:358` and
-  `cmd/host-agent/configure.go:219`. The `graph_nodes` and `graph_edges` tables are
-  created by migration v5 and never written. Consequence: the graph is rebuilt from
-  the app store on every start with every node at `INITIALIZING`
-  (`pipeline.go:660`), so a node's terminal ERROR state and its phase context are
-  lost across a restart. `apps.status` keeps the user-visible `error` string only
-  until the next reconcile overwrites it.
-- `internal/api/router.go:545` still grants admin to any loopback or
-  `BLOUD_TRUSTED_LOCAL_NETS` request with no credential: `isLocalRequest` injects
-  `User{Username: "_cli", Role: RoleAdmin}`.
-- `internal/store/apps.go:19`: the single `Status` string still carries install
-  progress, observed runtime health, and user-visible state. `last_error` (v7) added
-  a message but no phase, retryability, or operation identity.
-- `internal/db/db.go:56` (`runMigrations`) still fires seven
-  `_, _ = db.Exec(...)` statements with errors deliberately ignored, on every boot.
-- `runFullLifecycle` (`orchestrator.go:950`) still interleaves prestart config, SSO
-  provisioning, container creation, health checks, and poststart config in one pass.
+`runMigrations` v6 creates `user_app_positions(user_id, app_id, position)`.
+`internal/schema/schema.sql` defines the same table as
+`(username, element_id, element_type, x, y, w, h)`, and that is the shape
+`store/positions.go` queries. On fresh databases `schema.sql` wins and
+everything works. On any database that ran v6 before the grid redesign,
+`CREATE TABLE IF NOT EXISTS` is a no-op, the table keeps the dead v6 shape,
+and every position read and write fails at query time. The write path is
+best-effort and swallows errors, so upgraded installs break the dashboard
+layout silently.
 
-### Landed since the 2026-09-14 note
+This is what "ad hoc migrations increase risk as state tables become more
+important" looked like when it became real. It ranks first because it is cheap
+to fix, already has a broken upgrade path as live evidence, and every future
+migration inherits the same failure mode if the mechanism is not fixed.
 
-- ~~Background goroutines can update status outside the same operation owner.~~
-  No non-test file under `internal/api/` calls `UpdateStatus` or `SetLastError`
-  anymore. `setupStatusSync` (`orchestrator.go:246`) is the single authoritative
-  graph-to-DB status path, and install/uninstall/rename handlers submit intents and
-  return 202 with an intent ref (`apps_module.go:334-396`).
-- Startup container sync and startup state reconciliation now run inside the
-  orchestrator's convergence pass (`pipeline.go:451-491`), not in API helpers.
-  Caveat carried forward below: `SyncContainerState` skips every multi-container app.
-- Dead share intent types removed 2026-09-14. Share and guest handlers still write
-  stores directly (`sharing_module.go:242,297,351`), which remains a deliberate,
-  documented boundary: pure store writes, no lifecycle side effects, because invite
-  tokens must return synchronously.
-- ~~Hardcoded fallback secrets ship in the production path~~ **Fixed 2026-09-14**:
-  `Load` is fallible; resolution is env > `secrets.json` (auto-generated when
-  missing) > error, with no static fallback and the corrupt-file fault-downgrade
-  closed. Jellyfin's bootstrap password migrated to the secrets manager.
+## Already Paid Since 2026-09-14
 
-### Partially repaid
+- The old plan's item 2, "move status progression out of API background
+  helpers into the orchestrator", is done. There are zero `go func(` launches
+  in non-test `internal/api` code. All non-test `UpdateStatus` callers live
+  inside the orchestrator: `Submit()` records the immediate user-visible
+  effect, `setupStatusSync()` owns the transition mapping. Invariant 1 (the
+  orchestrator is the only lifecycle writer) holds in practice, not just by
+  convention.
+- App-client (S1-S10) gave configurators a deep client layer: `appclient`
+  owns transport, retry policy, readiness polling, and asset provenance. All
+  five user apps (jellyfin, homeassistant, immich, affine, navidrome) adopted
+  it uniformly with a typed `api.go` over it. There is no second integration
+  idiom. The tactical per-app HTTP and retry code that amplified changes in
+  the old shape is gone.
+- Hardcoded fallback secrets: fixed 2026-09-14. `config.Load` is fallible
+  (env > `secrets.json` > error), the corrupt-file fault-downgrade is closed,
+  and Jellyfin's bootstrap password moved to the secrets manager.
 
-- Schema source of truth landed: `internal/schema` now holds the single embedded
-  `schema.sql` with a checked `Run(db)`, applied by both `db.InitDB` and `testdb`,
-  so prod and test schemas cannot drift. The ad hoc, error-ignoring `runMigrations`
-  in `db.go` is still present and still the path for incremental column changes.
+## Revised Repayment Plan
 
-## Why It Matters
+Ranked by risk times cheapness, not by architectural ambition.
 
-New lifecycle features must thread through too many layers. Examples include persistent
-remote proxy ports, gateway FQDN persistence, owner remote access, provider-output
-invalidation, selective restarts, and retry behavior.
+### 1. Versioned Migrations (fix the schema fork with them)
 
-The current shape creates recurring risks:
+Replace `runMigrations` with a versioned ledger: a `schema_migrations` table,
+an ordered list of applied versions, checked errors, each migration
+individually tested. `schema.sql` becomes the generated baseline and the
+migration list is the single upgrade path. Concrete first fix inside the
+ledger: detect the dead v6 `user_app_positions` shape (a `user_id` column),
+migrate or drop it, then apply the grid schema.
 
-- Partial failures are hard to resume precisely after host-agent termination or reboot.
-- ~~Background goroutines can update status outside the same operation owner.~~
-  Closed 2026-09-16: `setupStatusSync` is the only graph-to-DB status writer and API
-  handlers no longer advance status themselves.
-- Routing and sharing side effects can happen while generating routes.
-- Failures lose phase context such as provider, integration type, retryability, and cause.
-- Tests verify many pieces, but there is no single contract for lifecycle state transitions.
+This needs no heavyweight framework. Ordered, idempotent, checked.
 
-## Target Shape
+### 2. Remove Route-Generation Side Effects
 
-Move toward this ownership model:
+Unchanged from the previous version; still the right first boundary slice.
+Extract gateway startup (`EnsureRunning`) and remote proxy reconciliation
+(`buildRemoteRoutes`) out of `RegenerateRoutes` into explicit reconciliation
+steps. `RegenerateRoutes` should only compute and write Traefik
+configuration. Add a test that proves route generation has no runtime side
+effects.
 
-1. API writes desired intent only.
-2. Planner (catalog.AppGraph) calculates deterministic topology and integration changes.
-3. Orchestrator exclusively advances observed state and operation state.
-4. Runtime, routing, sharing, health, and configurators are effect adapters.
-5. Store persists separate desired state, observed state, operation state, and integration
-   state.
+### 3. Durable Lifecycle Operation State
 
-The target is not a large rewrite. Each slice should create a narrower contract and move
-one lifecycle responsibility behind it.
-
-## Suggested Repayment Plan
-
-### First Contained Slice: Remove Route-Generation Side Effects
-
-The shortest useful first PR is to extract gateway startup and remote proxy reconciliation
-out of `RegenerateRoutes`.
-
-`RegenerateRoutes` should only compute and write Traefik configuration. Starting the
-gateway and reconciling remote proxies should become explicit reconciliation steps with
-their own tests. This is smaller than introducing the full durable operation model, but it
-sets the correct boundary and prevents new lifecycle behavior from accumulating inside
-route generation.
-
-Add a test that proves route generation has no runtime side effects.
-
-### 1. Define Durable Operation State
-
-Add a minimal operation-state model separate from `apps.status`.
-
-Track:
+Add a minimal operation-state model separate from `apps.status`:
 
 - operation ID
 - app name
@@ -141,56 +140,50 @@ Track:
 - status: pending, running, failed, complete
 - retryability and failure cause
 
-Keep `apps.status` as user-facing observed state until it can be narrowed.
+Design consequence: `runFullLifecycle` becomes a phase reporter instead of a
+phase owner. Keep `apps.status` as user-facing observed state until it can be
+narrowed. This single model kills the three-vocabulary writes that
+`apps.status` lives on today.
 
-### 2. Make the Orchestrator the Only Lifecycle Mutator
+### 4. Loopback Admin Behind a Credential
 
-~~Move status progression and phase handling out of API background helpers and into the
-orchestrator.~~ **Largely landed 2026-09-16.** API handlers submit intents and return
-202 with an intent ref; `setupStatusSync` (`orchestrator.go:246`) is the single
-graph-to-DB status path; startup container sync and startup reconciliation run inside
-the convergence pass.
+Grant loopback admin only with a CLI-obtained token (or signed request), not
+on bare network position. One middleware change plus one CLI change: the
+largest security win per line changed in the repo.
 
-Remaining:
+### 5. Single Orchestrator Builder
 
-- `SyncContainerState` only covers single-container apps. It bails on any app whose
-  catalog declares more or fewer than one container
-  (`orchestrator_containers.go:45`, `len(defs) != 1`), so Immich, AFFiNE, and
-  Authentik get no startup drift correction. Extending it to walk container defs and
-  reconcile per node is the next concrete step here.
-- Health reconciliation for `starting` and `error` apps still has no durable record of
-  which phase failed, so it cannot resume mid-operation. That is item 1.
+`cmd/host-agent/configure.go` (CLI `reconcile`, minimal config) and
+`internal/api/router.go` (full product path) each hand-construct the
+orchestrator with different config surfaces. The "how to wire the system
+core" knowledge exists in two places. One builder function makes drift between
+them impossible.
 
-### 3. Split Routing From Runtime Effects
+### 6. Persist Only Externally-Issued Artifacts (rescopes the old item 4)
 
-Make route generation pure with respect to runtime state. Gateway startup and remote proxy
-reconciliation should be explicit reconciliation steps, not hidden side effects of
-`RegenerateRoutes`.
+The old plan called for persisting integration instances (provider identity,
+consumer identity, type, revision, status). That contradicts the design that
+actually shipped: integration credentials are derived, not stored.
+`DeriveSecret` (HKDF-SHA256 from the host secret) and `OIDCInputsForApp`
+compute client credentials, redirect URIs, and issuer/launch URLs as a pure
+function of host secret and host set. Persisting derived state creates a
+second source of truth for values that are already recomputable, and every
+disagreement between the copies becomes a reconciliation bug.
 
-### 4. Introduce Durable Integration Instances
-
-Persist desired and observed integration instances with provider identity, consumer
-identity, integration type, revision, status, and failure phase. Use this before adding
-more provider-output or selective restart behavior.
-
-### 5. Replace Ad Hoc Migrations
-
-~~Introduce a single schema source of truth.~~ **Half landed 2026-09-16:**
-`internal/schema` now owns one embedded `schema.sql` with a checked `Run(db)`, and
-both `db.InitDB` and `testdb` apply it, so prod and test schemas cannot drift.
-
-Remaining: retire `runMigrations` in `db.go`. Its seven error-ignoring statements
-should move into the schema package as ordered, idempotent, test-covered steps that
-fail loudly, before any further durable state columns are added.
+What is genuinely worth persisting is state we do not derive because
+something else issued it: remote proxy port assignments, the tailnet domain,
+gateway state. The old item 4 is re-scoped to exactly that.
 
 ## Non-Goals
 
+- Do not persist derived state (secrets, OIDC inputs) that can be recomputed
+  from the host secret. The derivation is the source of truth.
 - Do not split files just to reduce line count.
 - Do not add a generic workflow engine.
-- Do not introduce speculative provider abstractions before a concrete consumer needs
-  them.
-- Do not block small product fixes, but avoid adding new lifecycle side effects to route
-  generation or API handlers.
+- Do not introduce speculative provider abstractions before a concrete
+  consumer needs them.
+- Do not block small product fixes, but avoid adding new lifecycle side
+  effects to route generation or API handlers.
 
 ## Validation Bar
 
@@ -201,7 +194,7 @@ Each repayment slice should leave behind:
 - no new app-specific branch in shared orchestration
 - a clear deletion path for replaced code
 
-Baseline re-run 2026-09-16 at HEAD `13dfd11`:
+Current baseline as of this note:
 
 ```sh
 cd services/host-agent && go test ./...

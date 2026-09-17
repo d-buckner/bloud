@@ -2,23 +2,16 @@
 // Copyright (c) 2026 Daniel Buckner
 
 // Package schema holds the single source of truth for the host-agent
-// SQLite schema. Both the production database (db.InitDB) and the test
-// database (testdb) apply the same embedded schema.sql, so the two can
-// never drift apart.
+// SQLite schema plus the versioned migration ledger that upgrades
+// databases to it. Both the production database (db.InitDB) and the
+// test databases apply the same embedded schema.sql through
+// Migrate, so the two can never drift apart.
 package schema
 
-import (
-	"database/sql"
-	_ "embed"
-)
+import _ "embed"
 
 //go:embed schema.sql
 var SQL string
 
-// Run executes the schema against db. All statements are idempotent
-// (CREATE TABLE/INDEX IF NOT EXISTS), so it is safe to call on every
-// startup.
-func Run(db *sql.DB) error {
-	_, err := db.Exec(SQL)
-	return err
-}
+// Baseline DDL (schema.sql) corresponds to the top of the ledger:
+// see Migrations and LatestVersion in migrations.go.
