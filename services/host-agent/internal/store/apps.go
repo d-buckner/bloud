@@ -12,12 +12,16 @@ import (
 
 // InstalledApp represents an app installed on this host
 type InstalledApp struct {
-	ID                int               `json:"id"`
-	CatalogID         string            `json:"catalog_id"`
-	DisplayName       string            `json:"display_name"`
-	Version           string            `json:"version"`
-	Status            string            `json:"status"`
-	LastError         string            `json:"last_error,omitempty"`
+	ID          int    `json:"id"`
+	CatalogID   string `json:"catalog_id"`
+	DisplayName string `json:"display_name"`
+	Version     string `json:"version"`
+	Status      string `json:"status"`
+	LastError   string `json:"last_error,omitempty"`
+	// Operation is the current-or-last lifecycle drive for this app
+	// (docs/plans/operation-state-design.md). Read-side join; writes
+	// belong to the orchestrator's operation recorder only.
+	Operation         *Operation        `json:"operation,omitempty"`
 	Port              int               `json:"port,omitempty"`
 	IsSystem          bool              `json:"is_system"`
 	TailnetID         string            `json:"tailnet_id,omitempty"`
@@ -52,9 +56,11 @@ func (s *AppStore) notify() {
 // GetAll returns all installed apps
 func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	rows, err := s.db.Query(`
-		SELECT id, catalog_id, display_name, version, status, last_error, port, is_system, tailnet_id, integration_config, installed_at, updated_at
-		FROM apps
-		ORDER BY catalog_id
+		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.tailnet_id, a.integration_config, a.installed_at, a.updated_at,
+			op.id, op.type, op.phase, op.status, op.retryable, op.cause, op.started_at, op.updated_at
+		FROM apps a
+		LEFT JOIN operations op ON op.app_name = a.catalog_id
+		ORDER BY a.catalog_id
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query apps: %w", err)
@@ -76,10 +82,11 @@ func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 // GetByCatalogID returns an installed app by catalog ID
 func (s *AppStore) GetByCatalogID(catalogID string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
-		SELECT id, catalog_id, display_name, version, status, last_error, port, is_system, tailnet_id, integration_config, installed_at, updated_at
-		FROM apps
-		WHERE catalog_id = ?
-	`, catalogID)
+		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.tailnet_id, a.integration_config, a.installed_at, a.updated_at,
+			op.id, op.type, op.phase, op.status, op.retryable, op.cause, op.started_at, op.updated_at
+		FROM apps a
+		LEFT JOIN operations op ON op.app_name = a.catalog_id
+		WHERE a.catalog_id = ?`, catalogID)
 
 	app, err := s.scanAppRow(row)
 	if err == sql.ErrNoRows {
@@ -312,6 +319,8 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 	var port sql.NullInt64
 	var configJSON sql.NullString
 	var installedAt, updatedAt string
+	var opID, opType, opPhase, opStatus, opCause, opStarted, opUpdated sql.NullString
+	var opRetry sql.NullInt64
 
 	err := rows.Scan(
 		&app.ID,
@@ -326,6 +335,14 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 		&configJSON,
 		&installedAt,
 		&updatedAt,
+		&opID,
+		&opType,
+		&opPhase,
+		&opStatus,
+		&opRetry,
+		&opCause,
+		&opStarted,
+		&opUpdated,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan app: %w", err)
@@ -344,6 +361,10 @@ func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
 		}
 	}
 
+	if opID.Valid {
+		app.Operation = opFromJoin(app.CatalogID, opID, opType, opPhase, opStatus, opRetry, opCause, opStarted, opUpdated)
+	}
+
 	return &app, nil
 }
 
@@ -352,6 +373,8 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 	var port sql.NullInt64
 	var configJSON sql.NullString
 	var installedAt, updatedAt string
+	var opID, opType, opPhase, opStatus, opCause, opStarted, opUpdated sql.NullString
+	var opRetry sql.NullInt64
 
 	err := row.Scan(
 		&app.ID,
@@ -366,6 +389,14 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 		&configJSON,
 		&installedAt,
 		&updatedAt,
+		&opID,
+		&opType,
+		&opPhase,
+		&opStatus,
+		&opRetry,
+		&opCause,
+		&opStarted,
+		&opUpdated,
 	)
 	if err != nil {
 		return nil, err
@@ -384,5 +415,25 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 		}
 	}
 
+	if opID.Valid {
+		app.Operation = opFromJoin(app.CatalogID, opID, opType, opPhase, opStatus, opRetry, opCause, opStarted, opUpdated)
+	}
+
 	return &app, nil
+}
+
+// opFromJoin assembles the operation side of the apps LEFT JOIN
+// operations read. NULL join columns mean "no recorded operation".
+func opFromJoin(catalogID string, opID, opType, opPhase, opStatus sql.NullString, opRetry sql.NullInt64, opCause, opStarted, opUpdated sql.NullString) *Operation {
+	return &Operation{
+		AppName:   catalogID,
+		ID:        opID.String,
+		Type:      opType.String,
+		Phase:     opPhase.String,
+		Status:    opStatus.String,
+		Retryable: opRetry.Int64 != 0,
+		Cause:     opCause.String,
+		StartedAt: opStarted.String,
+		UpdatedAt: opUpdated.String,
+	}
 }

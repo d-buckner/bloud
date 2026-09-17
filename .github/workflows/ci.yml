@@ -13,7 +13,6 @@ name: CI
 on:
   workflow_dispatch:
   push:
-  pull_request:
 
 jobs:
   validate:

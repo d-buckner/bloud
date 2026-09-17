@@ -24,6 +24,10 @@ func SetupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 
+	// ':memory:' is per-connection: a second pooled connection would
+	// be a brand-new empty database. Serialize on one connection.
+	db.SetMaxOpenConns(1)
+
 	// Set pragmas
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",

@@ -383,14 +383,17 @@ postgres, compose service naming, no graph ordering).
 cleanup assertions). The Playwright suite (`e2e/tests/*.spec.ts`) remains the
 mandatory regression gate for changes to install/reconcile behavior.
 
-## Known debt (re-verified 2026-09-16)
+## Known debt (re-verified 2026-09-17)
 
 The ledger is the source of truth; the notes below are a pointer, not a
 mirror. Full backend-debt ledger with the repayment plan:
-[`docs/operations/tech-debt.md`](docs/operations/tech-debt.md) (missing
-lifecycle operation state, versioned schema migrations including the
-`user_app_positions` fork fix, route-generation side effects, loopback
-admin). Review findings:
+[`docs/operations/tech-debt.md`](docs/operations/tech-debt.md). Top open
+items: route-generation side effects (gateway startup + remote proxy
+reconciliation inside `RegenerateRoutes`), credentialless loopback admin,
+duplicated orchestrator wiring (CLI vs router). Recently paid: durable
+lifecycle operation state (`store/operations.go` + orchestrator recorder,
+plan archived) and versioned schema migrations including the
+`user_app_positions` fork fix. Review findings:
 [`docs/specs/review.md`](docs/specs/review.md) (e.g. §C2 in-memory
 `MapRepository`, which the 2026-09-16 re-audit reframes: HKDF-derived
 credentials make restart reconstruction work, so only ERROR-terminal

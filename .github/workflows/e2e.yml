@@ -5,7 +5,6 @@ name: E2E
 on:
   workflow_dispatch:
   push:
-  pull_request:
 
 jobs:
   jellyfin-lifecycle:

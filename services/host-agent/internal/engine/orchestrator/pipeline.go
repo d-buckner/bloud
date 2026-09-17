@@ -133,6 +133,7 @@ func (o *Orchestrator) applyUninstallIntent(intent UninstallAppIntent, pendingCl
 		o.logger.Error("failed to mark app as uninstalling", "app", intent.AppName, "error", err)
 		return
 	}
+	o.recordOpStart(intent.AppName, store.OpTypeUninstall, store.OpPhaseTopology)
 	pendingClearData[intent.AppName] = intent.ClearData
 }
 

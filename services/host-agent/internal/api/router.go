@@ -438,6 +438,7 @@ func initOrchestratorHelper(
 			Containers:       runtime,
 			TemplateVars:     cfg.TemplateVars,
 			AppStore:         appStore,
+			Operations:       store.NewOperationStore(db),
 			Events:           eventsBus,
 			CatalogGraph:     catalogGraph,
 			TailnetStore:     tailnetStore,

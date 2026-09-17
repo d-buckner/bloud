@@ -112,6 +112,10 @@ type OrchestratorConfig struct {
 	// OnHostsChanged fires after a SetHosts intent is applied (e.g. to
 	// re-ensure the dashboard OAuth app with the new redirect URIs).
 	OnHostsChanged func()
+
+	// Operations persists durable lifecycle operation state
+	// (current-or-last drive per app). Nil disables the recorder.
+	Operations *store.OperationStore
 }
 
 // Orchestrator drives app nodes through their lifecycle phases in dependency
@@ -255,6 +259,7 @@ func (o *Orchestrator) setupStatusSync() {
 			case graph.StatusRunning:
 				_ = o.appStore.UpdateStatus(appID, "running")
 				_ = o.appStore.SetLastError(appID, "")
+				o.recordOpComplete(appID)
 			case graph.StatusError:
 				_ = o.appStore.UpdateStatus(appID, "error")
 				_ = o.appStore.SetLastError(appID, node.Error)
@@ -271,6 +276,7 @@ func (o *Orchestrator) setupStatusSync() {
 			if o.allContainersRunning(appID) {
 				_ = o.appStore.UpdateStatus(appID, "running")
 				_ = o.appStore.SetLastError(appID, "")
+				o.recordOpComplete(appID)
 			}
 		}
 	})
@@ -473,7 +479,9 @@ func (o *Orchestrator) recordInstallNow(appName string) {
 		IsSystem: app.IsSystem,
 	}); err != nil {
 		o.logger.Error("submit: failed to record install row", "app", appName, "error", err)
+		return
 	}
+	o.recordOpStart(appName, store.OpTypeInstall, store.OpPhasePlanning)
 }
 
 // Start runs an initial convergence pass and then processes intents as they
@@ -485,6 +493,18 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	defer close(o.done)
 
 	o.logger.Info("orchestrator started")
+
+	// A 'running' operation row that survived a process restart means
+	// the drive died mid-phase (phase writes happen before entering the
+	// phase). Flip those to failed/retryable for diagnostic continuity;
+	// normal convergence re-drives the work.
+	if o.config.Operations != nil {
+		if n, err := o.config.Operations.MarkOrphansInterrupted(); err != nil {
+			o.logger.Error("operation recorder: orphan sweep failed", "error", err)
+		} else if n > 0 {
+			o.logger.Warn("operation recorder: flipped interrupted operations", "count", n)
+		}
+	}
 
 	// Initial convergence (blocks until system apps are up).
 	o.converge(ctx, nil)
@@ -542,7 +562,22 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 // RemoveApp calls NodeLifecycle.Remove for the named app (if a configurator is
 // registered), removes containers, then deletes graph node(s).
 // For multi-container apps, all container nodes are removed.
+// The drive's terminal operation state is recorded here: the whole
+// removal is one uninstall phase from the row's point of view.
 func (o *Orchestrator) RemoveApp(ctx context.Context, appName string, clearData bool) error {
+	// Guarantee a drive row: the Submit-created uninstall row is
+	// continued when present; otherwise the removal is recorded as a
+	// fresh drive so a failed removal never goes untracked.
+	o.ensureOpDrive(appName)
+	if err := o.removeApp(ctx, appName, clearData); err != nil {
+		o.recordOpFail(appName, store.OpPhaseTopology, err, true)
+		return err
+	}
+	o.recordOpComplete(appName)
+	return nil
+}
+
+func (o *Orchestrator) removeApp(ctx context.Context, appName string, clearData bool) error {
 	o.logger.Info("removing app", "app", appName, "clear_data", clearData)
 
 	// Multi-container apps: remove each container node individually.
@@ -820,6 +855,7 @@ func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 	if cfg == nil {
 		return
 	}
+	appID := o.ownerApp(id)
 	state, err := o.buildAppState(id)
 	if err != nil {
 		o.logger.Warn("staleness re-run: failed to build state", "app", id, "error", err)
@@ -828,8 +864,11 @@ func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 	o.logger.Info("staleness re-run: running PostStart", "app", id)
 	if err := o.runPostStart(ctx, cfg, state); err != nil {
 		o.logger.Warn("staleness re-run: PostStart failed", "app", id, "error", err)
+		o.ensureOpDrive(appID)
+		o.recordOpFail(appID, store.OpPhasePoststart, opCause(id, appID, err), true)
 		return
 	}
+	o.healOp(appID)
 	o.logger.Info("staleness re-run: PostStart complete", "app", id)
 }
 
@@ -964,10 +1003,14 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 		return true
 	}
 
+	owner := o.ownerApp(id)
+	o.ensureOpDrive(owner)
+
 	state, err := o.buildAppState(id)
 	if err != nil {
 		o.logger.Error("failed to build app state", "app", id, "error", err)
 		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+		o.recordOpFail(owner, store.OpPhasePlanning, opCause(id, owner, err), true)
 		return false
 	}
 
@@ -975,12 +1018,14 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	var configChanged bool
 	if cfg != nil {
 		o.logger.Info("lifecycle phase: PreStart", "app", id)
+		o.recordOpPhase(owner, store.OpPhasePrestart)
 		_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
 		var err error
 		configChanged, err = cfg.PreStart(ctx, state)
 		if err != nil {
 			o.logger.Warn("PreStart failed", "app", id, "error", err)
 			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+			o.recordOpFail(owner, store.OpPhasePrestart, opCause(id, owner, err), true)
 			return false
 		}
 		o.logger.Info("lifecycle phase: PreStart complete", "app", id, "config_changed", configChanged)
@@ -991,6 +1036,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	if err := o.ensureSSO(ctx, id); err != nil {
 		o.logger.Warn("SSO provisioning failed", "app", id, "error", err)
 		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+		o.recordOpFail(owner, store.OpPhasePrestart, opCause(id, owner, err), true)
 		return false
 	}
 
@@ -1003,16 +1049,19 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 			_ = o.config.Containers.Remove(ctx, def.Name)
 		}
 		o.logger.Info("lifecycle phase: EnsureContainer", "app", id)
+		o.recordOpPhase(owner, store.OpPhaseTopology)
 		_ = o.graph.SetActualStatus(id, graph.StatusStarting, "")
 		if err := o.ensureContainerFromDef(ctx, def, appCatalogID); err != nil {
 			o.logger.Warn("EnsureContainer failed", "app", id, "error", err)
 			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+			o.recordOpFail(owner, store.OpPhaseTopology, opCause(id, owner, err), true)
 			return false
 		}
 		o.logger.Info("lifecycle phase: EnsureContainer complete", "app", id)
 
 		// Phase 3: HealthCheck
 		o.logger.Info("lifecycle phase: HealthCheck", "app", id)
+		o.recordOpPhase(owner, store.OpPhaseHealth)
 		healthCtx := ctx
 		if o.config.HealthCheckTimeout > 0 {
 			var cancel context.CancelFunc
@@ -1023,6 +1072,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 			if err := o.runContainerHealthCheck(healthCtx, def.Name, def.HealthCheck); err != nil {
 				o.logger.Warn("HealthCheck failed", "app", id, "error", err)
 				_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+				o.recordOpFail(owner, store.OpPhaseHealth, opCause(id, owner, err), true)
 				return false
 			}
 		}
@@ -1036,14 +1086,17 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	// next start re-converges, rather than parking a shutdown in ERROR (R3).
 	if cfg != nil {
 		o.logger.Info("lifecycle phase: PostStart", "app", id)
+		o.recordOpPhase(owner, store.OpPhasePoststart)
 		_ = o.graph.SetActualStatus(id, graph.StatusPostStartConfig, "")
 		if err := o.runPostStart(ctx, cfg, state); err != nil {
 			if ctx.Err() != nil {
 				o.logger.Info("PostStart interrupted by shutdown; leaving status for re-converge", "app", id, "error", err)
+				o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, fmt.Errorf("interrupted by shutdown: %w", err)), true)
 				return false
 			}
 			o.logger.Warn("PostStart failed", "app", id, "error", err)
 			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+			o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, err), true)
 			return false
 		}
 		o.logger.Info("lifecycle phase: PostStart complete", "app", id)
