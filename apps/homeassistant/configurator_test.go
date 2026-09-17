@@ -80,7 +80,7 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	c := NewConfigurator(0, &fakeSecrets{pw: "test-bootstrap-pw"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
 	c.componentURL = srv.URL + "/hass-oidc-auth.zip"
 	c.componentSHA = zipSHA
 	c.pollInterval = 10 * time.Millisecond
@@ -89,7 +89,7 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 }
 
 func TestPreStartCreatesDirs(t *testing.T) {
-	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	data := t.TempDir()
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
@@ -363,7 +363,7 @@ func (s *apiServer) setTrustLive(v bool) {
 }
 
 // restartContainer returns the host-runtime callback to inject into the
-// configurator via SetRestartContainer. It models a real container stop+start:
+// configurator's restartContainerFn (normally from Deps.RestartContainer). It models a real container stop+start:
 // the re-exec'd process re-reads the patched .storage/http, so it flips
 // trustLive (after trustFlipDelay, modelling restart latency) when
 // restartAppliesTrust. restartAppliesTrust=false models a restart that never
@@ -390,7 +390,7 @@ func (s *apiServer) restartContainer() func(context.Context, string) error {
 
 func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 	srv := newAPIServer(t, false)
-	c := NewConfigurator(0, &fakeSecrets{pw: "test-bootstrap-pw"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 3 * time.Second
@@ -429,7 +429,7 @@ func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 	data := t.TempDir()
 	writeOwnerFile(t, filepath.Join(data, "config"))
 
-	c := NewConfigurator(0, &fakeSecrets{pw: "x"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 2 * time.Second
@@ -453,7 +453,7 @@ func writeOwnerFile(t *testing.T, cfgDir string) {
 
 func TestPostStartFailsWhenProviderNeverLives(t *testing.T) {
 	srv := newAPIServer(t, false)
-	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 200 * time.Millisecond
@@ -468,18 +468,12 @@ func TestPostStartNoSSOSkipsOIDCProbe(t *testing.T) {
 	srv.mu.Lock()
 	srv.onboarded = true
 	srv.mu.Unlock()
-	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 300 * time.Millisecond
 
 	require.NoError(t, c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}))
-}
-
-func TestMergeManagedBlockAppendsToEmpty(t *testing.T) {
-	out := mergeManagedBlock("", "auth_oidc:\n  client_id: \"x\"\n# END")
-	assert.Contains(t, out, "auth_oidc:")
-	assert.True(t, strings.HasSuffix(out, "\n"))
 }
 
 func TestYamlQuoteEscapes(t *testing.T) {
@@ -539,7 +533,7 @@ const storageJSON = `{
 // A fresh install must not get a hand-written config entry: HA rejects foreign
 // entries and takes the whole web stack down with it.
 func TestPreStartDoesNotCreateConfigFile(t *testing.T) {
-	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	data := t.TempDir()
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
@@ -551,7 +545,7 @@ func TestPreStartDoesNotCreateConfigFile(t *testing.T) {
 // Against a real-shaped stored file the configurator flips trust on, leaves
 // unrelated values alone, and settles on the second cycle.
 func TestPreStartPatchesStoredConfig(t *testing.T) {
-	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	data := t.TempDir()
 	path := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
@@ -574,7 +568,7 @@ func TestPreStartPatchesStoredConfig(t *testing.T) {
 
 // A corrupt stored file must surface as an error, not be silently ignored.
 func TestPreStartRejectsCorruptConfigFile(t *testing.T) {
-	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), "{ nope")
 
@@ -594,9 +588,9 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	data := t.TempDir()
 	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
-	cfg := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
 	cfg.baseURLOverride = fakeSrv.srv.URL
-	cfg.SetRestartContainer(fakeSrv.restartContainer())
+	cfg.restartContainerFn = fakeSrv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
 	cfg.postStartTimeout = 3 * time.Second
 
@@ -626,7 +620,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 // token, and the exchange must actually hit /auth/token.
 func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 	srv := newAPIServer(t, false)
-	c := NewConfigurator(0, &fakeSecrets{pw: "test-bootstrap-pw"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "test-bootstrap-pw"}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 2 * time.Second
@@ -658,9 +652,9 @@ func TestPostStartAlreadyOnboardedAppliesTrustViaContainerRestart(t *testing.T) 
 	data := t.TempDir()
 	storedPath := writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
-	cfg := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+	cfg := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
 	cfg.baseURLOverride = srv.srv.URL
-	cfg.SetRestartContainer(srv.restartContainer())
+	cfg.restartContainerFn = srv.restartContainer()
 	cfg.pollInterval = 10 * time.Millisecond
 	cfg.postStartTimeout = 2 * time.Second
 
@@ -715,9 +709,9 @@ func TestPostStartWaitsForTrustReloadAfterRestart(t *testing.T) {
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), storageJSON) // untrusted on disk
 
-	c := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
 	c.baseURLOverride = srv.srv.URL
-	c.SetRestartContainer(srv.restartContainer())
+	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 5 * time.Second
 
@@ -742,9 +736,9 @@ func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), storageJSON)
 
-	c := NewConfigurator(0, &fakeSecrets{pw: "pwd"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "pwd"}})
 	c.baseURLOverride = srv.srv.URL
-	c.SetRestartContainer(srv.restartContainer())
+	c.restartContainerFn = srv.restartContainer()
 	c.pollInterval = 10 * time.Millisecond
 	c.postStartTimeout = 300 * time.Millisecond
 
@@ -774,7 +768,7 @@ func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
 	data := t.TempDir()
 	storedPath := writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
 
-	c := NewConfigurator(0, &fakeSecrets{pw: "x"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
 	c.baseURLOverride = srv.srv.URL
 	c.pollInterval = 10 * time.Millisecond
 
@@ -805,7 +799,7 @@ func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {
 	data := t.TempDir()
 	writeConfig(t, filepath.Join(data, "config"), trustedStorageJSON)
 
-	c := NewConfigurator(0, &fakeSecrets{pw: "x"}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{pw: "x"}})
 	c.baseURLOverride = url
 	c.pollInterval = 10 * time.Millisecond
 
@@ -822,7 +816,7 @@ func TestProbeProxyTrustStates(t *testing.T) {
 		w.WriteHeader(200)
 	}))
 	defer live.Close()
-	c := NewConfigurator(0, &fakeSecrets{}, nil)
+	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
 	c.baseURLOverride = live.URL
 	ok, reachable, status, perr := c.probeProxyTrust(context.Background())
 	assert.True(t, ok)

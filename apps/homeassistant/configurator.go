@@ -4,22 +4,19 @@
 package homeassistant
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appasset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
 const appName = "homeassistant"
@@ -56,10 +53,18 @@ const (
 	managedEnd   = "# END bloud managed auth_oidc"
 )
 
+// xffProbeAddr is a TEST-NET-3 address (RFC 5737, reserved for documentation
+// and guaranteed unroutable). It sits outside Bloud's trusted_proxies CIDR, so
+// as an X-Forwarded-For value it is unambiguous forwarded-client traffic for
+// HA's middleware to act on.
+const xffProbeAddr = "203.0.113.119"
+
 // Configurator handles Home Assistant configuration: it provisions the
 // hass-oidc-auth auth provider and the managed auth_oidc configuration block
 // before the container starts (PreStart), then completes HA's first-run
-// onboarding and verifies the OIDC provider is live (PostStart).
+// onboarding and verifies the OIDC provider is live (PostStart). All HTTP goes
+// through the typed client (api.go); asset install goes through appasset; the
+// managed config block goes through managedfile.
 type Configurator struct {
 	port    int
 	secrets configurator.AppSecretsProvider
@@ -75,6 +80,14 @@ type Configurator struct {
 
 	pollInterval     time.Duration
 	postStartTimeout time.Duration
+
+	// api is the typed HTTP surface (transport + retry + redirect policy live
+	// behind it). Built in the constructor from Deps.HTTP.
+	api *haAPI
+
+	// assets installs the pinned hass-oidc-auth release (fetch/verify/stage/
+	// commit) with the shared content cache.
+	assets appasset.Installer
 
 	// restartContainer stops and starts a running container by name through
 	// the host runtime, forcing its process to re-exec and re-read on-disk
@@ -95,37 +108,49 @@ func (c *Configurator) restartContainer(ctx context.Context) error {
 	return c.restartContainerFn(ctx, c.Name())
 }
 
-// NewConfigurator creates a new Home Assistant configurator. Wire the
-// container-restart callback with SetRestartContainer (the host-agent factory
-// does this from Deps.RestartContainer).
-func NewConfigurator(port int, secrets configurator.AppSecretsProvider, logger *slog.Logger) *Configurator {
+// NewConfigurator creates a new Home Assistant configurator from the host Deps.
+// The container-restart callback is taken from Deps.RestartContainer; the typed
+// HTTP client from Deps.HTTP (shared transport/policy); the asset installer from
+// Deps.Assets (shared content cache). A zero-value Deps is usable: the client
+// falls back to process defaults and the restart path degrades to a clear error.
+func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
 		port = 8123
 	}
+	logger := deps.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Configurator{
-		port:             port,
-		secrets:          secrets,
-		logger:           logger.With("app", appName),
-		componentURL:     oidcComponentURL,
-		componentSHA:     oidcComponentSHA256,
-		pollInterval:     2 * time.Second,
-		postStartTimeout: 150 * time.Second,
+	c := &Configurator{
+		port:               port,
+		secrets:            deps.Secrets,
+		logger:             logger.With("app", appName),
+		componentURL:       oidcComponentURL,
+		componentSHA:       oidcComponentSHA256,
+		pollInterval:       2 * time.Second,
+		postStartTimeout:   150 * time.Second,
+		assets:             deps.Assets,
+		restartContainerFn: deps.RestartContainer,
 	}
-}
-
-// SetRestartContainer injects the host-runtime callback used to restart this
-// app's container so its process re-execs and reloads on-disk config. Called
-// by the host-agent factory from Deps.RestartContainer; left unset (CLI) or
-// set from a fake (tests) the restart path degrades to a clear error.
-func (c *Configurator) SetRestartContainer(fn func(ctx context.Context, name string) error) {
-	c.restartContainerFn = fn
+	c.api = newAPI(deps.HTTP, func() string {
+		if c.baseURLOverride != "" {
+			return c.baseURLOverride
+		}
+		return fmt.Sprintf("http://localhost:%d", c.port)
+	})
+	return c
 }
 
 func (c *Configurator) Name() string {
 	return "apps-homeassistant"
+}
+
+// baseURL returns the base URL for API calls.
+func (c *Configurator) baseURL() string {
+	if c.baseURLOverride != "" {
+		return c.baseURLOverride
+	}
+	return fmt.Sprintf("http://localhost:%d", c.port)
 }
 
 // PreStart creates the data directories, fetches the pinned hass-oidc-auth
@@ -162,10 +187,13 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		}
 	}
 
+	marker := managedfile.Marker{Begin: managedBegin, End: managedEnd}
+	cfgPath := filepath.Join(configDir, "configuration.yaml")
+
 	if !state.SSOEnabled {
 		// SSO off (e.g. authentik removed): a leftover auth_oidc block points at
 		// a dead provider and would break HA startup. Strip it.
-		stripped, err := c.writeConfig(configDir, "")
+		stripped, err := managedfile.RemoveBlock(cfgPath, marker)
 		if err != nil {
 			return false, err
 		}
@@ -179,7 +207,8 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	if err != nil {
 		return false, fmt.Errorf("failed to provision hass-oidc-auth: %w", err)
 	}
-	ok, err := c.writeConfigBlock(configDir, state.OIDC)
+	block := managedBlock(state.OIDC)
+	ok, err := managedfile.Block(cfgPath, marker, 0o600, func() string { return block })
 	if err != nil {
 		return false, err
 	}
@@ -194,8 +223,12 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 
 // PostStart waits for the HTTP API, completes first-run onboarding headlessly,
 // and verifies the OIDC provider is registered. It runs on a context detached
-// from the convergence pass with its own deadline so the retry loops survive
-// the pass completing (same rationale as the Jellyfin configurator).
+// from the convergence pass with its own deadline so the retry loops survive the
+// pass completing.
+//
+// NOTE: the detach here is a pre-S9 hold. The pass context is process-scoped in
+// the current orchestrator, so the WithoutCancel is defensive rather than
+// strictly required; S9 replaces it with a framework-owned PostStart budget.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.postStartTimeout)
 	defer cancel()
@@ -243,14 +276,11 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	// Verify the RUNNING process actually honours forwarded headers before the
 	// node can be marked RUNNING — but only when there is trust on disk to
 	// verify (just-patched or already-trusted). When HA has not written its
-	// http entry yet (early onboarding) there is nothing to check and the
-	// wait is skipped. The restart call returns long before HA has reloaded
-	// — and can return without reloading at all (CI showed the forward-
-	// rejection persisting ~100s after the restart while the API was already
-	// answering 200). The on-disk patch proves nothing about the live
-	// process; the probe does. If trust never goes live this pass fails into
-	// ERROR and the next install recreate (PreStart's stale check) loads the
-	// patched entry on a cold boot.
+	// http entry yet (early onboarding) there is nothing to check and the wait
+	// is skipped. The restart call returns long before HA has reloaded — and can
+	// return without reloading at all (CI showed the forward-rejection persisting
+	// ~100s after the restart while the API was already answering 200). The
+	// on-disk patch proves nothing about the live process; the probe does.
 	if changed || storedProxyTrusted(configDir) {
 		if err := c.waitForProxyTrust(ctx); err != nil {
 			return err
@@ -264,9 +294,7 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 			// still be mid-boot (or mid first-run onboarding) when this probe runs, so
 			// a timeout is usually transient — but the orchestrator treats PostStart
 			// errors as terminal ERROR (only an explicit install intent resets them),
-			// so word this as a recoverable retry rather than a hard failure. The
-			// owner is already created by this point, so once the provider is live the
-			// browser's OIDC landing page works; a re-install re-runs this check.
+			// so word this as a recoverable retry rather than a hard failure.
 			return fmt.Errorf("OIDC provider not yet live (%v); retry the install to reconcile and re-check it", err)
 		}
 		return nil
@@ -275,214 +303,23 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 }
 
 // ensureOIDCComponent installs the pinned hass-oidc-auth release into
-// <configDir>/custom_components/auth_oidc/. It is a no-op when the installed
-// manifest already reports the pinned version. The download is hashed while
-// streaming and aborts on mismatch; extraction lands in a staging dir that is
-// renamed into place, so a failed fetch never leaves a half-installed tree.
+// <configDir>/custom_components/auth_oidc/ via the shared asset installer:
+// fetch (retried) → sha256 verify → stage → atomic commit. The version-aware
+// SkipIf makes it a no-op (no network) when the installed manifest already
+// reports the pinned version; the Verify callback asserts the archive actually
+// declares the expected provider domain before anything lands.
 func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string) (bool, error) {
-	customDir := filepath.Join(configDir, "custom_components")
-	targetDir := filepath.Join(customDir, componentDomain)
-	if installedComponentVersion(targetDir) == oidcComponentVersion {
-		return false, nil
-	}
-
-	c.logger.Info("downloading hass-oidc-auth", "url", c.componentURL, "version", oidcComponentVersion)
-	if err := os.MkdirAll(customDir, 0755); err != nil {
-		return false, err
-	}
-
-	archivePath, err := c.downloadComponentZip(ctx, customDir)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = os.Remove(archivePath) }()
-
-	stagingDir, err := extractZipToStaging(archivePath, customDir, ".auth_oidc-*")
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = os.RemoveAll(stagingDir) }()
-
-	version, err := validateComponentManifest(stagingDir)
-	if err != nil {
-		return false, err
-	}
-
-	if _, err := os.Stat(targetDir); err == nil {
-		if err := os.RemoveAll(targetDir); err != nil {
-			return false, err
-		}
-	}
-	if err := os.Rename(stagingDir, targetDir); err != nil {
-		return false, err
-	}
-	c.logger.Info("hass-oidc-auth installed", "path", targetDir, "version", version)
-	return true, nil
-}
-
-// downloadComponentZip fetches the component release into a temp zip inside
-// dir and verifies its checksum (when configured). Returns the zip path.
-func (c *Configurator) downloadComponentZip(ctx context.Context, dir string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.componentURL, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
-	}
-
-	archive, err := os.CreateTemp(dir, ".hass-oidc-auth-*.zip")
-	if err != nil {
-		return "", err
-	}
-	archivePath := archive.Name()
-
-	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(archive, hash), resp.Body); err != nil {
-		_ = archive.Close()
-		return "", err
-	}
-	if err := archive.Close(); err != nil {
-		return "", err
-	}
-	if c.componentSHA != "" && fmt.Sprintf("%x", hash.Sum(nil)) != c.componentSHA {
-		return "", fmt.Errorf("download checksum mismatch")
-	}
-	return archivePath, nil
-}
-
-// extractZipToStaging unpacks the zip into a fresh temp dir created in
-// parent with the given glob pattern. Rejects archive entries that would
-// escape the staging dir (zip-slip guard).
-func extractZipToStaging(archivePath, parent, pattern string) (string, error) {
-	reader, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = reader.Close() }()
-
-	stagingDir, err := os.MkdirTemp(parent, pattern)
-	if err != nil {
-		return "", err
-	}
-
-	for _, file := range reader.File {
-		destination := filepath.Join(stagingDir, file.Name)
-		if !strings.HasPrefix(filepath.Clean(destination), filepath.Clean(stagingDir)+string(os.PathSeparator)) {
-			return "", fmt.Errorf("archive contains invalid path %q", file.Name)
-		}
-		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(destination, 0755); err != nil {
-				return "", err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
-			return "", err
-		}
-		source, err := file.Open()
-		if err != nil {
-			return "", err
-		}
-		mode := file.Mode()
-		if mode == 0 {
-			mode = 0644
-		}
-		out, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-		if err != nil {
-			_ = source.Close()
-			return "", err
-		}
-		_, copyErr := io.Copy(out, source)
-		closeErr := out.Close()
-		_ = source.Close()
-		if copyErr != nil {
-			return "", copyErr
-		}
-		if closeErr != nil {
-			return "", closeErr
-		}
-	}
-	return stagingDir, nil
-}
-
-// validateComponentManifest sanity-checks the payload: the domain's manifest
-// must be present and declare the expected auth provider domain (guards
-// against a wrong asset). Returns the manifest's version string.
-func validateComponentManifest(stagingDir string) (string, error) {
-	manifest, err := os.ReadFile(filepath.Join(stagingDir, "manifest.json"))
-	if err != nil {
-		return "", fmt.Errorf("archive did not contain manifest.json: %w", err)
-	}
-	var m struct {
-		Domain  string `json:"domain"`
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(manifest, &m); err != nil {
-		return "", fmt.Errorf("archive manifest.json is not valid JSON: %w", err)
-	}
-	if m.Domain != componentDomain {
-		return "", fmt.Errorf("archive manifest domain %q != %q", m.Domain, componentDomain)
-	}
-	return m.Version, nil
-}
-
-// installedComponentVersion returns the version recorded in the installed
-// component's manifest.json, or "" when absent/unreadable/corrupt.
-func installedComponentVersion(targetDir string) string {
-	data, err := os.ReadFile(filepath.Join(targetDir, "manifest.json"))
-	if err != nil {
-		return ""
-	}
-	var m struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return ""
-	}
-	return m.Version
-}
-
-// writeConfigBlock merges Bloud's managed auth_oidc block into
-// configuration.yaml. The file belongs to the user; only the marker-delimited
-// block is touched. Rendering is deterministic so unchanged values never churn
-// the file (changed=false).
-func (c *Configurator) writeConfigBlock(configDir string, oidc *configurator.OIDCOutput) (bool, error) {
-	return c.writeConfig(configDir, managedBlock(oidc))
-}
-
-// writeConfig replaces the marker-delimited block with block (empty block
-// removes it), preserving everything else. Returns changed=true only when the
-// file content actually changes.
-func (c *Configurator) writeConfig(configDir string, block string) (bool, error) {
-	path := filepath.Join(configDir, "configuration.yaml")
-	existing, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("failed to read configuration.yaml: %w", err)
-	}
-
-	var desired string
-	if block == "" {
-		desired, _ = removeManagedBlock(string(existing))
-	} else {
-		desired = mergeManagedBlock(string(existing), block)
-	}
-	if desired == string(existing) {
-		return false, nil
-	}
-	if len(existing) == 0 && len(desired) == 0 {
-		return false, nil
-	}
-	// The block contains client_secret.
-	if err := os.WriteFile(path, []byte(desired), 0o600); err != nil {
-		return false, fmt.Errorf("failed to write configuration.yaml: %w", err)
-	}
-	return true, nil
+	targetDir := filepath.Join(configDir, "custom_components", componentDomain)
+	return c.assets.Install(ctx, appasset.Asset{
+		Name:     "hass-oidc-auth",
+		Dest:     targetDir,
+		Source:   appasset.URL(c.componentURL),
+		Kind:     appasset.Zip,
+		SHA256:   c.componentSHA,
+		SkipIf:   appasset.ManifestVersionEq("manifest.json", oidcComponentVersion),
+		Verify:   appasset.ManifestFieldEq("manifest.json", "domain", componentDomain),
+		Sentinel: "manifest.json",
+	})
 }
 
 // managedBlock renders the desired auth_oidc block. Fixed key order and always
@@ -575,10 +412,7 @@ func (c *Configurator) ensureReverseProxy(configDir string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal http config entry: %w", err)
 	}
-	if err := os.WriteFile(path, append(out, '\n'), 0600); err != nil {
-		return false, fmt.Errorf("failed to write http config entry: %w", err)
-	}
-	return true, nil
+	return managedfile.Write(path, append(out, '\n'), 0600)
 }
 
 // toStringSlice coerces a decoded JSON value to []string, returning nil for a
@@ -611,260 +445,62 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// mergeManagedBlock returns existing with the marker-delimited region replaced
-// by block (appended when no region exists). A lone BEGIN (no END) is treated
-// as an unterminated region and replaced to EOF.
-func mergeManagedBlock(existing, block string) string {
-	blockLines := strings.Split(block, "\n")
-	lines := []string{}
-	if existing != "" {
-		lines = strings.Split(existing, "\n")
-	}
-	begin, end := -1, -1
-	for i, line := range lines {
-		if strings.HasPrefix(line, managedBegin) {
-			if begin == -1 {
-				begin = i
-			}
-			if strings.HasPrefix(line, managedEnd) {
-				end = i
-			}
-		} else if begin != -1 && strings.HasPrefix(line, managedEnd) {
-			end = i
-		}
-	}
-	switch {
-	case begin == -1:
-		if strings.TrimSpace(existing) == "" {
-			return block + "\n"
-		}
-		return strings.TrimRight(existing, "\n") + "\n\n" + block + "\n"
-	case end == -1 || end < begin:
-		// Unterminated region: replace from BEGIN to EOF.
-		out := append(append([]string{}, lines[:begin]...), blockLines...)
-		return joinLines(out)
-	default:
-		out := append(append([]string{}, lines[:begin]...), blockLines...)
-		out = append(out, lines[end+1:]...)
-		return joinLines(out)
-	}
-}
-
-// removeManagedBlock deletes the marker-delimited region (including an
-// unterminated one, to EOF).
-func removeManagedBlock(existing string) (string, bool) {
-	if existing == "" {
-		return "", false
-	}
-	lines := strings.Split(existing, "\n")
-	begin, end := -1, len(lines)-1
-	for i, line := range lines {
-		if strings.HasPrefix(line, managedBegin) && begin == -1 {
-			begin = i
-		}
-		if begin != -1 && strings.HasPrefix(line, managedEnd) {
-			end = i
-			break
-		}
-	}
-	if begin == -1 {
-		return existing, false
-	}
-	out := append(append([]string{}, lines[:begin]...), lines[end+1:]...)
-	trimmed := strings.TrimRight(joinLines(out), "\n")
-	if trimmed == "" {
-		return "", true
-	}
-	return trimmed + "\n", true
-}
-
-func joinLines(lines []string) string {
-	out := strings.Join(lines, "\n")
-	if out == "" {
-		return out
-	}
-	if !strings.HasSuffix(out, "\n") {
-		out += "\n"
-	}
-	return out
-}
-
 func yamlQuote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
-// baseURL returns the base URL for API calls.
-func (c *Configurator) baseURL() string {
-	if c.baseURLOverride != "" {
-		return c.baseURLOverride
-	}
-	return fmt.Sprintf("http://localhost:%d", c.port)
-}
+// --- HTTP wait/probe wrappers over the typed client ---
 
-// apiClient performs single API requests without following redirects (the
-// OIDC liveness probe inspects the redirect itself).
-func (c *Configurator) apiGet(ctx context.Context, path string) (*http.Response, error) {
-	client := &http.Client{
-		Timeout:       10 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	return client.Do(req)
-}
-
-// waitForAPI polls /api/ (public, answers "API running" without auth) until
-// the HTTP listener is up. Connection errors and 5xx mean HA is still booting.
+// waitForAPI polls /api/ until the HTTP listener answers anything under 500.
 func (c *Configurator) waitForAPI(ctx context.Context) error {
-	for {
-		resp, err := c.apiGet(ctx, "/api/")
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode < 500 {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for Home Assistant API: %w", ctx.Err())
-		case <-time.After(c.pollInterval):
-		}
+	if err := c.api.waitAPI(ctx, c.pollInterval); err != nil {
+		return fmt.Errorf("timed out waiting for Home Assistant API: %w", err)
 	}
+	return nil
 }
-
-// xffProbeAddr is a TEST-NET-3 address (RFC 5737, reserved for documentation
-// and guaranteed unroutable). It sits outside Bloud's trusted_proxies CIDR, so
-// as an X-Forwarded-For value it is unambiguous forwarded-client traffic for
-// HA's middleware to act on.
-const xffProbeAddr = "203.0.113.119"
 
 // probeProxyTrust reports whether the RUNNING Home Assistant process currently
-// accepts forwarded (X-Forwarded-For-bearing) requests. It GETs /api/ with a
-// forged X-Forwarded-For header and reads the answer at the forwarding
-// middleware — the same gate a proxied browser request hits:
-//
-//	trusted=true                  → the forward middleware passed the
-//	                               forwarded request (any HTTP status except
-//	                               400; an unauthenticated /api/ answers 401
-//	                               Bearer once trust is loaded — the auth
-//	                               layer is downstream of the forward check
-//	                               and irrelevant to this property).
-//	trusted=false, status=400     → the running process still has the
-//	                               pre-patch settings and the forwarding
-//	                               middleware rejects forwarded headers
-//	                               ("not set-up for reverse proxies") — the
-//	                               precise failure the popup observed.
-//	reachable=false               → the probe never connected: HA is down or
-//	                               mid-restart (connection refused), or
-//	                               still booting (HTTP 5xx) — retried, NOT
-//	                               a definitive rejection.
-//
-// The probe reaches HA over the same published port Traefik's traffic is
-// port-forwarded through, so HA sees a peer inside trusted_proxies (see
-// trustedProxies) and the use_x_forwarded_for flag alone governs the
-// 400-vs-pass boundary — the same coupling the trust design already relies on.
-func (c *Configurator) probeProxyTrust(ctx context.Context) (trusted bool, reachable bool, status int, perr error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+"/api/", nil)
-	if err != nil {
-		return false, false, 0, err
-	}
-	req.Header.Set("X-Forwarded-For", xffProbeAddr)
-	client := &http.Client{
-		Timeout:       10 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, false, 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	// 400 = forward middleware rejected (stale). 5xx = still booting.
-	// Anything else that connected means the forward middleware passed.
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= 500 {
-		return false, true, resp.StatusCode, nil
-	}
-	return true, true, resp.StatusCode, nil
+// accepts forwarded (X-Forwarded-For-bearing) requests. Single-shot, three
+// states (trusted / reachable-but-stale / unreachable) — the contract the
+// PreStart stale-check consumes. See haAPI.probeProxyTrust for the mapping.
+func (c *Configurator) probeProxyTrust(ctx context.Context) (trusted, reachable bool, status int, perr error) {
+	return c.api.probeProxyTrust(ctx)
 }
 
 // waitForProxyTrust polls the forwarded-header probe until the running process
 // accepts forwarded requests (the forward middleware stops answering 400).
-// A 400 (stale process that has not reloaded) and a refused connection
-// (mid-restart) are both retried; an HTTP 5xx is treated as still-booting.
-// Any other status — 200 or 401 or 302 — means the forward middleware let the
-// request through, which is exactly the property we need: a browser's proxied
-// request will no longer hit the forward-400. (Unauthenticated, HA 2026.9
-// answers /api/ with 401 Bearer once trust is loaded; the 400-vs-not-400
-// boundary at the forwarding middleware, not 200, is the live signal.)
-// Returning nil guarantees the node never goes RUNNING on a proxy-rejecting
-// process.
+// A 400 (stale process that has not reloaded) is retried; a refused connection
+// (mid-restart) and a 5xx (still booting) are retried. Any other status means
+// the forward middleware let the request through. Returning nil guarantees the
+// node never goes RUNNING on a proxy-rejecting process.
 func (c *Configurator) waitForProxyTrust(ctx context.Context) error {
-	// lastTrustLive remembers the most recent probe that actually connected
-	// (regardless of auth outcome). The final poll is often cancelled mid-
-	// flight by the deadline (Do returns a transport error), which would
-	// otherwise misreport a live-401 process as "unreachable".
-	lastReachable := false
-	for {
-		trusted, reachable, _, perr := c.probeProxyTrust(ctx)
-		if trusted {
-			return nil
-		}
-		if reachable {
-			lastReachable = true
-		}
-		select {
-		case <-ctx.Done():
-			if lastReachable {
-				return fmt.Errorf("timed out waiting for Home Assistant to reload reverse-proxy trust (process still answers 400 to forwarded requests, restart never took effect): %w", ctx.Err())
-			}
-			return fmt.Errorf("timed out waiting for Home Assistant reverse-proxy trust (process unreachable: %v): %w", perr, ctx.Err())
-		case <-time.After(c.pollInterval):
-		}
+	if err := c.api.waitProxyTrust(ctx, c.pollInterval); err != nil {
+		return fmt.Errorf("timed out waiting for Home Assistant to reload reverse-proxy trust (process still answers 400 to forwarded requests, restart never took effect): %w", err)
 	}
+	return nil
 }
 
-// storedProxyTrusted reports whether the on-disk http entry already carries
-// Bloud's proxy-trust settings. PreStart uses it to tell "HA wrote its own
-// file and we have not patched it yet" (absent → nothing to force) from "we
-// patched it but the live process disagrees" (present → check the probe).
-// Read errors are treated as false; ensureReverseProxy is the authoritative
-// merge path that surfaces real corruption.
-func storedProxyTrusted(configDir string) bool {
-	raw, err := os.ReadFile(filepath.Join(configDir, ".storage", "http"))
-	if err != nil {
-		return false
+// waitForOIDCReady verifies the OIDC auth provider is live by probing
+// /auth/oidc/welcome until it answers 200.
+func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
+	if err := c.api.waitOIDCReady(ctx, c.pollInterval); err != nil {
+		return fmt.Errorf("OIDC provider never became live at %s/auth/oidc/welcome (component missing or discovery failed): %w", c.baseURL(), err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return false
-	}
-	data, ok := doc["data"].(map[string]any)
-	if !ok {
-		return false
-	}
-	httpCfg, ok := data["stable"].(map[string]any)
-	if !ok {
-		return false
-	}
-	return httpCfg["use_x_forwarded_for"] == true && equalStrings(toStringSlice(httpCfg["trusted_proxies"]), trustedProxies)
+	return nil
 }
 
 // ensureOnboarded completes Home Assistant's first-run onboarding headlessly
 // (creating the break-glass owner and finishing the remaining steps) so the
-// instance is fully onboarded before any user browser can reach it: HA answers
-// every unauthenticated request with the onboarding wizard until the last step
-// closes, and the sign-in page — where the OIDC provider lives — is only
-// reachable once HA considers itself onboarded. The iOS client is one of HA's
-// built-in OAuth2 clients (see onboardingClientID). It returns the owner's
-// access token (the only token usable for authenticated API calls after this
-// point), or "" when HA was already fully onboarded.
+// instance is fully onboarded before any user browser can reach it. It returns
+// the owner's access token, or "" when HA was already fully onboarded (or no
+// owner step is pending).
 func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (string, error) {
-	body, alreadyOnboarded, err := c.pollOnboardingStatus(ctx, configDir)
+	body, alreadyOnboarded, err := c.api.onboardingStatus(ctx, c.pollInterval, func() bool { return ownerOnDisk(configDir) })
 	if err != nil {
 		return "", err
 	}
 	if alreadyOnboarded {
+		c.logger.Info("Home Assistant already fully onboarded; onboarding endpoint not registered")
 		return "", nil
 	}
 
@@ -875,8 +511,7 @@ func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (s
 	// HA returns the first-run step flow (user, core_config, analytics,
 	// integration) with done flags. "user" is the gate: until the owner exists
 	// every visitor is redirected into the wizard; the remaining steps must be
-	// closed too, or the wizard keeps intercepting the sign-in page (see
-	// finishFirstRunSteps below).
+	// closed too, or the wizard keeps intercepting the sign-in page.
 	if !userStepPending(steps) {
 		return "", nil
 	}
@@ -900,56 +535,15 @@ func userStepPending(steps []onboardingStep) bool {
 	return false
 }
 
-// pollOnboardingStatus retries GET /api/onboarding until it succeeds or the
-// context deadline passes. /api/onboarding is served only once HA's
-// onboarding integration has registered its routes — during boot the HTTP
-// listener is already up (waitForAPI passes on any <500 response) while this
-// route still 404s, so any non-2xx is retried until the deadline. A 404 is
-// special: Home Assistant *deregisters* the endpoint once every step is
-// closed, so a 404 alongside an owner in the auth store means "already
-// onboarded" (alreadyOnboarded=true), not "still booting" — see ownerOnDisk.
-func (c *Configurator) pollOnboardingStatus(ctx context.Context, configDir string) ([]byte, bool, error) {
-	var lastErr error
-	for {
-		r, err := c.apiGet(ctx, "/api/onboarding")
-		if err == nil {
-			b, _ := io.ReadAll(r.Body)
-			_ = r.Body.Close()
-			if r.StatusCode == http.StatusOK {
-				return b, false, nil
-			}
-			if r.StatusCode == http.StatusNotFound && ownerOnDisk(configDir) {
-				// Permanent 404: Home Assistant deregisters this endpoint once
-				// every onboarding step is closed — with an owner in the auth
-				// store this is "already onboarded", not a boot race. Return
-				// no token; postStart still runs ensureReverseProxy afterwards,
-				// so a not-yet-applied trust patch (e.g. an owner created via
-				// the CLI rather than here) is picked up on this or the next
-				// pass, exactly as before.
-				c.logger.Info("Home Assistant already fully onboarded; onboarding endpoint not registered")
-				return nil, true, nil
-			}
-			lastErr = fmt.Errorf("HTTP %d: %s", r.StatusCode, string(b))
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return nil, false, fmt.Errorf("timed out waiting for the Home Assistant onboarding API (HTTP listener is up but /api/onboarding keeps failing: %v): %w", lastErr, ctx.Err())
-		case <-time.After(c.pollInterval):
-		}
-	}
-}
-
 // createFirstRunOwner runs the first-run wizard: create the bootstrap owner,
-// exchange its one-shot authorization code for an access token, and close
-// the remaining onboarding steps. Returns the owner access token.
+// exchange its one-shot authorization code for an access token, and close the
+// remaining onboarding steps. Returns the owner access token.
 func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) {
 	password, err := c.secrets.GenerateAppAdminPassword(appName)
 	if err != nil {
 		return "", fmt.Errorf("failed to obtain bootstrap password: %w", err)
 	}
-	payload, err := json.Marshal(map[string]string{
+	authCode, err := c.api.createOwner(ctx, map[string]string{
 		"client_id": onboardingClientID,
 		"username":  bootstrapUsername,
 		"password":  password,
@@ -957,36 +551,14 @@ func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) 
 		"language":  "en",
 	})
 	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/onboarding/users", bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 15 * time.Second}
-	ownerResp, err := client.Do(req)
-	if err != nil {
 		return "", fmt.Errorf("onboarding request failed: %w", err)
-	}
-	ownerBody, _ := io.ReadAll(ownerResp.Body)
-	_ = ownerResp.Body.Close()
-	if ownerResp.StatusCode != http.StatusOK && ownerResp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("onboarding returned HTTP %d: %s", ownerResp.StatusCode, string(ownerBody))
 	}
 	c.logger.Info("first-run owner created", "user", bootstrapUsername)
 
 	// HA's onboarding hands back a one-shot authorization code, not an access
-	// token (verified against core 2026.9 onboarding/views.py — it returns
-	// {"auth_code": …} and nothing else). Exchange it for the owner's real
-	// access token; that token is what drives the authenticated restart below.
-	var onboarding struct {
-		AuthCode string `json:"auth_code"`
-	}
-	if err := json.Unmarshal(ownerBody, &onboarding); err != nil || onboarding.AuthCode == "" {
-		return "", fmt.Errorf("onboarding response carried no authorization code: %s", string(ownerBody))
-	}
-	accessToken, err := c.exchangeAuthCode(ctx, onboarding.AuthCode)
+	// token (verified against core 2026.9 onboarding/views.py). Exchange it for
+	// the owner's real access token; that token drives the authenticated steps.
+	accessToken, err := c.api.exchangeAuthCode(ctx, authCode)
 	if err != nil {
 		return "", fmt.Errorf("failed to exchange the onboarding authorization code for an access token: %w", err)
 	}
@@ -1003,8 +575,8 @@ func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) 
 }
 
 // finishFirstRunSteps closes the onboarding steps that follow "user" using the
-// owner token. Idempotent: HTTP 403 means a previous reconciliation already
-// closed the step, which is treated as success.
+// owner token. Each step declares 403 as AlreadyDone, so a replay against an
+// already-closed step is a no-op rather than a string-matched success.
 func (c *Configurator) finishFirstRunSteps(ctx context.Context, token string) error {
 	steps := []struct{ path, body string }{
 		{"/api/onboarding/core_config", "{}"},
@@ -1012,34 +584,9 @@ func (c *Configurator) finishFirstRunSteps(ctx context.Context, token string) er
 		{"/api/onboarding/integration", `{"client_id":"https://my.home-assistant.io/redirect/oauth","redirect_uri":"https://my.home-assistant.io/redirect/oauth"}`},
 	}
 	for _, s := range steps {
-		if err := c.postJSONBearer(ctx, s.path, []byte(s.body), token); err != nil {
+		if err := c.api.finishStep(ctx, s.path, s.body, token); err != nil {
 			return fmt.Errorf("%s: %w", s.path, err)
 		}
-	}
-	return nil
-}
-
-// postJSONBearer POSTs a JSON body with an owner bearer token. 403 (step
-// already done, the idempotent replay case) is returned as success.
-func (c *Configurator) postJSONBearer(ctx context.Context, path string, payload []byte, token string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+path, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusForbidden {
-		return nil
-	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
 }
@@ -1072,67 +619,28 @@ func ownerOnDisk(configDir string) bool {
 	return false
 }
 
-// exchangeAuthCode trades a Home Assistant authorization code for an owner
-// access token. HA's onboarding (and login flow) hand out a short-lived,
-// single-use authorization code rather than a usable token; POST /auth/token
-// with the authorization_code grant exchanges it for a Bearer access token plus
-// a refresh token (core auth/__init__.py). The built-in iOS client id used to
-// create the owner is reused here — HA validates only that the client id parses
-// as an IndieAuth URL, so no redirect_uri or client secret is involved.
-func (c *Configurator) exchangeAuthCode(ctx context.Context, authCode string) (string, error) {
-	form := url.Values{
-		"grant_type": {"authorization_code"},
-		"client_id":  {onboardingClientID},
-		"code":       {authCode},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/auth/token",
-		strings.NewReader(form.Encode()))
+// storedProxyTrusted reports whether the on-disk http entry already carries
+// Bloud's proxy-trust settings. PreStart uses it to tell "HA wrote its own
+// file and we have not patched it yet" (absent → nothing to force) from "we
+// patched it but the live process disagrees" (present → check the probe).
+// Read errors are treated as false; ensureReverseProxy is the authoritative
+// merge path that surfaces real corruption.
+func storedProxyTrusted(configDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(configDir, ".storage", "http"))
 	if err != nil {
-		return "", err
+		return false
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token request failed: %w", err)
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return false
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token exchange returned HTTP %d: %s", resp.StatusCode, string(body))
+	data, ok := doc["data"].(map[string]any)
+	if !ok {
+		return false
 	}
-	var tok struct {
-		AccessToken string `json:"access_token"`
+	httpCfg, ok := data["stable"].(map[string]any)
+	if !ok {
+		return false
 	}
-	if err := json.Unmarshal(body, &tok); err != nil {
-		return "", fmt.Errorf("token response malformed: %w", err)
-	}
-	if tok.AccessToken == "" {
-		return "", fmt.Errorf("token exchange returned no access token: %s", string(body))
-	}
-	return tok.AccessToken, nil
-}
-
-// waitForOIDCReady verifies the OIDC auth provider is live by probing
-// /auth/oidc/welcome. hass-oidc-auth registers that view only when its
-// async_setup succeeds, and fetching the provider's discovery document is part
-// of that setup — so a 200 from this page proves both the component loaded and
-// provider discovery succeeded. The route 404s while HA is still booting (and
-// while the onboarding integration registers its routes), so it is retried until
-// the deadline.
-func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
-	for {
-		resp, err := c.apiGet(ctx, "/auth/oidc/welcome")
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("OIDC provider never became live at %s/auth/oidc/welcome (component missing or discovery failed): %w", c.baseURL(), ctx.Err())
-		case <-time.After(c.pollInterval):
-		}
-	}
+	return httpCfg["use_x_forwarded_for"] == true && equalStrings(toStringSlice(httpCfg["trusted_proxies"]), trustedProxies)
 }
