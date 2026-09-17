@@ -77,8 +77,14 @@ describeApp('homeassistant', (app) => {
     //   • hass-oidc-auth welcome screen → "Login with Bloud" (an <a>, not a
     //     button: /auth/oidc/redirect)
     //   • the provider's "Logged in!" page → "Continue on this device"
-    //   • HA first-run onboarding wizard (core config → analytics → finish);
-    //     repeat runs skip it
+    //   • HA first-run onboarding: Bloud leaves core_config + analytics open
+    //     (human's welcome screen), so after OIDC login the browser hits
+    //     core-config ("Finish") — its _save requires the location picker to
+    //     resolve a location first (the map auto-populates on mount) — then
+    //     analytics. Repeat visits (already onboarded) skip it entirely.
+    //     NOTE: requires a live `BLOUD_E2E_APP=homeassistant ./bloud e2e app`
+    //     to confirm the picker auto-resolves so "Finish" advances; if it does
+    //     not, this loop must drive the location input explicitly.
     // The terminal state is the authenticated Lovelace shell — an
     // unauthenticated browser can never render it.
     const dashboard = ha.locator('ha-panel-lovelace, lovelace-ui');

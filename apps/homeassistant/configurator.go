@@ -78,7 +78,7 @@ type Configurator struct {
 	// baseURLOverride redirects API calls in tests (httptest servers).
 	baseURLOverride string
 
-	pollInterval     time.Duration
+	pollInterval time.Duration
 
 	// api is the typed HTTP surface (transport + retry + redirect policy live
 	// behind it). Built in the constructor from Deps.HTTP.
@@ -485,11 +485,13 @@ func (c *Configurator) waitForOIDCReady(ctx context.Context) error {
 	return nil
 }
 
-// ensureOnboarded completes Home Assistant's first-run onboarding headlessly
-// (creating the break-glass owner and finishing the remaining steps) so the
-// instance is fully onboarded before any user browser can reach it. It returns
-// the owner's access token, or "" when HA was already fully onboarded (or no
-// owner step is pending).
+// ensureOnboarded makes the instance SSO-ready headlessly: it creates the
+// break-glass owner (the "user" step) and closes the "integration" step,
+// returning the owner's access token. It deliberately does NOT close the
+// "core_config" (home name/location/units) or "analytics" steps — those are
+// the human's first-run welcome screen and carry required info. The instance
+// therefore ships SSO-ready but not fully onboarded. Returns "" when no owner
+// step is pending (owner already exists / human already finished).
 func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (string, error) {
 	body, alreadyOnboarded, err := c.api.onboardingStatus(ctx, c.pollInterval, func() bool { return ownerOnDisk(configDir) })
 	if err != nil {
@@ -504,10 +506,12 @@ func (c *Configurator) ensureOnboarded(ctx context.Context, configDir string) (s
 	if err := json.Unmarshal(body, &steps); err != nil {
 		return "", fmt.Errorf("onboarding status malformed: %w", err)
 	}
-	// HA returns the first-run step flow (user, core_config, analytics,
-	// integration) with done flags. "user" is the gate: until the owner exists
-	// every visitor is redirected into the wizard; the remaining steps must be
-	// closed too, or the wizard keeps intercepting the sign-in page.
+	// "user" is the gate: until the owner exists every visitor is forced
+	// into the create-account wizard. Once the owner exists (this step
+	// closed), the HA onboarding router detects steps[0].done and routes
+	// visitors through the normal authorize flow — where the OIDC provider
+	// lives — then surfaces core_config/analytics for the human. So we act
+	// only while the user step is still pending.
 	if !userStepPending(steps) {
 		return "", nil
 	}
@@ -532,8 +536,8 @@ func userStepPending(steps []onboardingStep) bool {
 }
 
 // createFirstRunOwner runs the first-run wizard: create the bootstrap owner,
-// exchange its one-shot authorization code for an access token, and close the
-// remaining onboarding steps. Returns the owner access token.
+// exchange its one-shot authorization code for an access token, and close
+// the integration step. Returns the owner access token.
 func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) {
 	password, err := c.secrets.GenerateAppAdminPassword(appName)
 	if err != nil {
@@ -558,25 +562,33 @@ func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("failed to exchange the onboarding authorization code for an access token: %w", err)
 	}
-	// Close the steps that follow "user" with the owner token. The integration
-	// step exists to hand the browser an auth_code; we complete it with the
-	// built-in my.home-assistant.io redirect that nobody redeems — the point is
-	// that HA then reports the instance onboarded, so the user's first visit
-	// lands on the sign-in page and goes straight through OIDC instead of the
-	// half-raced wizard.
+	// Close only the "integration" step (the my.home-assistant.io
+	// registration) with the owner token. The "core_config" (home
+	// name/location/units/timezone) and "analytics" steps are deliberately
+	// left OPEN for the human: that welcome screen carries required
+	// first-run information Bloud must not silently default (0,0 / UTC).
+	// With the owner ("user") step already closed, the HA onboarding router
+	// detects steps[0].done and kicks the first visitor through the normal
+	// authorize flow — where "Login with Bloud" (OIDC) lives — then shows
+	// core_config to the now-authenticated user, then analytics, then the
+	// instance is fully onboarded. Integration is closed so the
+	// my.home-assistant.io step is never surfaced (it has no interactive
+	// value for a Bloud-SSO user and the headless flow already satisfies it).
 	if err := c.finishFirstRunSteps(ctx, accessToken); err != nil {
 		return "", fmt.Errorf("failed to finish first-run steps: %w", err)
 	}
 	return accessToken, nil
 }
 
-// finishFirstRunSteps closes the onboarding steps that follow "user" using the
-// owner token. Each step declares 403 as AlreadyDone, so a replay against an
+// finishFirstRunSteps closes the onboarding steps Bloud owns headlessly —
+// just "integration" (my.home-assistant.io). "core_config" and "analytics"
+// are intentionally left open: they are the human's first-run welcome screen
+// (location, home name, units, analytics opt-in). Restricting the list to
+// integration means the human's steps can never be closed by accident.
+// Each step declares 403 as AlreadyDone, so a replay against an
 // already-closed step is a no-op rather than a string-matched success.
 func (c *Configurator) finishFirstRunSteps(ctx context.Context, token string) error {
 	steps := []struct{ path, body string }{
-		{"/api/onboarding/core_config", "{}"},
-		{"/api/onboarding/analytics", "{}"},
 		{"/api/onboarding/integration", `{"client_id":"https://my.home-assistant.io/redirect/oauth","redirect_uri":"https://my.home-assistant.io/redirect/oauth"}`},
 	}
 	for _, s := range steps {

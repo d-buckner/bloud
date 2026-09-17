@@ -86,6 +86,7 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 	c.pollInterval = 10 * time.Millisecond
 	return c
 }
+
 // testCtx bounds a PostStart wait the way the orchestrator now does: a deadline
 // on the pass context. Configurators no longer carry their own post-start timeout;
 // the framework's PostStartBudget is the ceiling and tests reproduce it here.
@@ -419,6 +420,14 @@ func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 	assert.Equal(t, bootstrapUsername, req["username"])
 	assert.Equal(t, "test-bootstrap-pw", req["password"])
 	assert.Equal(t, bootstrapFullname, req["name"])
+
+	// Bloud closes ONLY the integration step (my.home-assistant.io). The
+	// human's welcome steps stay open so the first visit shows the
+	// home-name/location/units screen after OIDC login, then analytics —
+	// the required first-run info Bloud must not silently default.
+	assert.True(t, srv.stepsCompleted["/api/onboarding/integration"], "Bloud must close the integration step")
+	assert.False(t, srv.stepsCompleted["/api/onboarding/core_config"], "core_config must be left for the human")
+	assert.False(t, srv.stepsCompleted["/api/onboarding/analytics"], "analytics must be left for the human")
 }
 
 // A fully-onboarded HA *deregisters* GET /api/onboarding: the endpoint 404s

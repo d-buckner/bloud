@@ -49,13 +49,15 @@ The configurator's **PreStart** (runs before every container start):
   startup and never hot-reloads it). The reverse-proxy trust patch is **not** done
   here — it happens in PostStart, after HA has written its stored http entry (see
   "Reverse proxy" below).
-- **PostStart**: wait for the HTTP API; complete HA first-run onboarding headlessly
-  (creating the owner); ensure reverse-proxy trust in HA's stored http config
-  entry, and if it changed force a **real container restart** so the running
-  process re-reads it (HA only reads the http store at startup — see "Applying
-  the config reload" below), then wait until a forwarded-header probe confirms
-  trust is actually live before the node can go RUNNING; verify the OIDC
-  provider is live.
+- **PostStart**: wait for the HTTP API; make the instance SSO-ready
+  headlessly (create the break-glass owner + close the `integration` step,
+  **leaving the `core_config`/`analytics` welcome screen for the human** —
+  see "First-run onboarding" below); ensure reverse-proxy trust in HA's
+  stored http config entry, and if it changed force a **real container
+  restart** so the running process re-reads it (HA only reads the http store
+  at startup — see "Applying the config reload" below); then wait until a
+  forwarded-header probe confirms trust is actually live before the node can
+  go RUNNING; verify the OIDC provider is live.
 - Login flow: HA login page ("Log in with Bloud" button) → Authentik login →
   `/auth/oidc/callback` on HA → HA provisions the user (first login) and maps
   groups → roles.
@@ -209,9 +211,11 @@ Verified against upstream source at tag `v1.2.1`:
 
 ## First-run onboarding (headless)
 
-HA without a completed onboarding shows the onboarding flow for every visitor
-and no auth API works. PostStart completes it headlessly (owner creation is the
-only onboarding step needed):
+Bloud does **not** fully onboard Home Assistant. It makes the instance
+*SSO-ready* headlessly — create the owner (`user` step) + close the
+`integration` step — and deliberately leaves the `core_config` (home
+name/location/units/timezone) and `analytics` steps **open** so the human
+still gets HA's welcome screen on first load. The endpoints involved:
 
 - `GET /api/onboarding` (public pre-onboarding) → `[{"step":"user"}]` when
   incomplete, `[]` when done.
@@ -228,8 +232,9 @@ only onboarding step needed):
   there is **no** password grant and no HTTP way to mint a token for an
   already-onboarded instance. HA validates only that the client id parses as an
   IndieAuth URL, so no redirect_uri/client_secret is involved. This access token
-  is what drives the authenticated `homeassistant.restart` below (the service
-  call requires admin).
+  drives the integration-step close below (it requires an admin session). The
+  config reload is a **container** restart and consumes no token (see "Applying
+  the config reload").
 - Owner account `bloud-bootstrap-admin`, password from
   `secrets.GenerateAppAdminPassword("homeassistant")` (durable in
   `secrets.json`). **The owner cannot be deleted in HA** (unlike Jellyfin's
@@ -240,6 +245,35 @@ only onboarding step needed):
   200 proves both component load and provider discovery). Non-200 → not ready yet:
   404 covers both "provider never registered" and "HA still booting", so the check
   retries until the deadline. No token needed.
+
+### The welcome screen is the human's (`core_config` + `analytics` left open)
+
+With `user` closed but `core_config`/`analytics` open, the instance reports
+`not onboarded`, so the frontend loads the onboarding entrypoint. Its step
+router (`ha-onboarding.ts::_fetchOnboardingSteps`, verified against frontend
+`20260826.7`) does:
+
+- `steps[0]` is the `user` step; because it is already `done`, the router
+  calls `getAuth(...)` — the **normal HA authorize flow** — which is exactly
+  where the "Login with Bloud" OIDC provider is offered. The OIDC routes
+  (`/auth/oidc/*`) are registered by the component at setup and are **not**
+  gated by onboarding, so login works while the instance is un-onboarded,
+  **provided reverse-proxy trust is live** (PostStart guarantees that before
+  RUNNING) or the callback 400s through Traefik.
+- After the OIDC login the router `_connectHass`es and surfaces the first
+  not-done step — `core_config` (the home-name/location/units/timezone form)
+  — then `analytics`. The human fills them, `set(done) == STEPS`, HA
+  deregisters `/api/onboarding`, and the user lands on the dashboard.
+- `integration` is pre-closed by Bloud so `my.home-assistant.io` is never
+  surfaced. Crucially, `CoreConfigOnboardingView.post` takes **no body** — it
+  only flips the step done and boots default integrations; the real home
+  name/location arrive from the frontend form. Closing `core_config` headlessly
+  (the old behavior) silently defaulted the location to `0,0` / UTC — the
+  "required first-run info skipped" this section exists to prevent.
+- `ensureOnboarded` returns early whenever the `user` step is no longer
+  pending, so Bloud never re-touches the human's steps on a later reconcile;
+  once the human finishes everything, a later pass reads the permanent
+  `404` + owner-on-disk as already-onboarded.
 
 ## Manual browser test — status and observations (manual test session, 2026-09-04)
 
@@ -308,7 +342,7 @@ restart no longer consumes the token.
    following login screen). Use Playwright to dump the rendered document at each
    phase and derive stable selectors (roles/text) for each phase, then update the
    spec.
-3. **[BUG — FIXED] The browser went straight to the first-run onboarding wizard;
+3. **[BUG — FIXED, then REVISED] The browser went straight to the first-run onboarding wizard;
    hass-oidc-auth login was never offered.** On a fresh host, opening the app tile
    no longer landed on the hass-oidc-auth landing page ("Log in with Bloud" +
    "Default login"). It went directly to the wizard, which then *always* failed
@@ -330,15 +364,22 @@ restart no longer consumes the token.
      since PostStart re-runs each reconcile pass, a "Retry install" could never
      make the app reach `running`. Observed directly (status=error with
      "…/api/onboarding keeps failing: HTTP 404: 404: Not Found").
-   Fix: `ensureOnboarded` now closes the `core_config`, `analytics` and
-   `integration` wizard steps with the owner token (idempotent; 403 replays are
-   success) so the browser lands directly on the provider welcome page and OIDC
-   login is offered from the first visit; and it treats a permanent 404 with an
-   owner present in the auth store (`ownerOnDisk`, read from `.storage/auth`
-   like the http entry) as "already onboarded" instead of "still booting", so the
-   retry-install path converges again.
-   Verified: `BLOUD_E2E_APP=homeassistant ./bloud e2e app` — green (dashboard
-   reached, signed-in identity visible).
+  Fixes: (a) the permanent-404-with-owner-in-auth-store (`ownerOnDisk`, read
+  from `.storage/auth` like the http entry) path now treats a deregistered
+  `/api/onboarding` as "already onboarded" instead of "still booting", so a
+  retry-install converges instead of timing out in ERROR.
+  (b) REVISED (2026-09): the original fix *also* closed `core_config` and
+  `analytics`, which silently defaulted the human's location to `0,0` / UTC.
+  That is reversed — Bloud now closes ONLY `integration` and intentionally
+  leaves the `core_config`/`analytics` welcome screen for the human (see
+  "The welcome screen is the human's"). This does not reintroduce the
+  failure above: the human reaches the wizard only after PostStart has
+  converged reverse-proxy trust + OIDC liveness (so the wizard's backend
+  routes are registered and the callback won't 400), and the `ownerOnDisk`
+  permanent-404 path covers already-onboarded reconciles.
+  Re-verification pending: `BLOUD_E2E_APP=homeassistant ./bloud e2e app`,
+  with the Playwright spec now filling the `core_config` home/location form
+  in-browser before asserting the dashboard.
 
 ## Design decisions
 
