@@ -399,7 +399,7 @@ actual system dependencies.
 - `graph/sqlite_repository.go` — durable graph backing; never wired (see C2). Dead.
 - `apps/authentik/server_configurator.go`, `configurator.go` — check whether the
   "shared postgres" bootstrap references remain after the per-app refactor.
-- `specs/reconciler-spec.md`, `docs/architecture/overview.md`, `docs/operations/tech-debt.md`
+- `docs/specs/reconciler-spec.md`, `docs/architecture/overview.md`, `docs/operations/tech-debt.md`
   describe a "reconciler" component and phases that no longer exist; the code now uses
   an `orchestrator` with the intent pattern folded in. Docs are stale (see M2).
 

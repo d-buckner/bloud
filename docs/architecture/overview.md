@@ -14,7 +14,7 @@ described below.
 > **Naming note:** earlier docs called this component the *reconciler*. It was refactored
 > into the **orchestrator**, and the orchestrator together with its dependency-graph
 > package is now grouped under `internal/engine/` — the name for the whole reconciliation
-> loop. `specs/reconciler-spec.md` describes that architecture as implemented.
+> loop. `docs/specs/reconciler-spec.md` describes that architecture as implemented.
 
 ## Component Diagram
 
@@ -132,7 +132,7 @@ Intent types (`intent.go`):
 - **ClearAppDataIntent** — wipe app data
 - *(Share/guest records are not intents by design: pure store writes with no
   lifecycle side effects, and invite creation returns its token synchronously —
-  the sharing API writes them directly; see specs/review.md §C3)*
+  the sharing API writes them directly; see docs/specs/review.md §C3)*
 
 The orchestrator drains the intent queue, applies intents to stores (desired state), then
 converges actual state toward desired: sync container state, handle uninstalls, populate
@@ -218,7 +218,7 @@ provisioning, and forward-auth provider creation for tailnet access.
 SQLite-backed persistence for installed apps, their status, and resolved integration
 bindings. The orchestrator reads desired state from here and (as single writer) is the
 only author of lifecycle status. Schema lives in `internal/db/schema.sql`. The lifecycle
-orchestrator currently uses an in-memory repository (see specs/review.md §C2).
+orchestrator currently uses an in-memory repository (see docs/specs/review.md §C2).
 
 ### Container Runtime (`internal/container/`, `internal/engine/orchestrator/`)
 
@@ -283,9 +283,6 @@ User clicks "Install Jellyfin"
 
 For apps with databases (e.g. Immich), the dependency graph includes their per-app
 postgres and redis containers declared in `containers:` metadata.
-
-> ⚠️ **Known wiring gap:** the production router currently constructs the orchestrator
-> app — installs no-op until this is wired. See specs/review.md §C1.
 
 ## Validation Tiers
 

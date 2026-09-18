@@ -387,10 +387,15 @@ mandatory regression gate for changes to install/reconcile behavior.
 
 The ledger is the source of truth; the notes below are a pointer, not a
 mirror. Full backend-debt ledger with the repayment plan:
-[`docs/operations/tech-debt.md`](docs/operations/tech-debt.md) (lifecycle state ownership, in-memory lifecycle
-graph, route-generation side effects, ad hoc migrations). Review findings:
-[`docs/specs/review.md`](docs/specs/review.md) (e.g. §C2 in-memory `MapRepository`; §C1's inert install path
-is fixed: the router wires the catalog graph). Highlights:
+[`docs/operations/tech-debt.md`](docs/operations/tech-debt.md) (missing
+lifecycle operation state, versioned schema migrations including the
+`user_app_positions` fork fix, route-generation side effects, loopback
+admin). Review findings:
+[`docs/specs/review.md`](docs/specs/review.md) (e.g. §C2 in-memory
+`MapRepository`, which the 2026-09-16 re-audit reframes: HKDF-derived
+credentials make restart reconstruction work, so only ERROR-terminal
+semantics is lost. §C1's inert install path is fixed: the router wires the
+catalog graph). Highlights:
 
 - Sharing/guest API handlers write stores directly: a deliberate, documented
   boundary (pure store writes, synchronous invite tokens), not intent-queue drift.
