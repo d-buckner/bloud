@@ -169,6 +169,7 @@ func runServer() {
 		LDAPOutput:            cfg.LDAPOutput(),
 		Registry:              registry,
 		TemplateVars:          templateVars,
+		AppAdminPassword:      cfg.Secrets.GenerateAppAdminPassword,
 	}, logger)
 
 	// Block until system apps are healthy (first convergence pass).

@@ -81,6 +81,13 @@ type OrchestratorConfig struct {
 	// (e.g. "postgresPassword"). Passed to ContainerSpec.
 	TemplateVars map[string]string
 
+	// AppAdminPassword returns the per-app generated admin password used
+	// to render the {{appAdminPassword}} template var in container specs
+	// (generate-and-persist on first use; stable afterwards). Only needed
+	// by apps whose container defs reference the placeholder; apps that
+	// don't reference it never trigger generation.
+	AppAdminPassword func(appName string) (string, error)
+
 	// ── Converge dependencies (nil = subsystem disabled) ─────────────────
 
 	// Events is the bus used to broadcast lifecycle transitions and activity
@@ -898,7 +905,12 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 
 	o.ensureNetworksForContainer(ctx, def)
 
-	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.TemplateVars)
+	vars, err := o.specTemplateVars(def, appCatalogID)
+	if err != nil {
+		return err
+	}
+
+	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, vars)
 	if err != nil {
 		return fmt.Errorf("build container spec: %w", err)
 	}

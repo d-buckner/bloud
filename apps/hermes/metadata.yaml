@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+name: hermes
+displayName: Hermes
+description: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard
+category: productivity
+port: 9119
+estimatedSizeMB: 5000
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+
+# No Authentik SSO. The Hermes dashboard enforces its own auth gate on
+# non-loopback binds and accepts only two upstream providers: a bundled
+# username/password provider or Nous Portal OAuth (a vendor IDP — there is
+# no generic OIDC config). Bloud satisfies the gate with the password
+# provider using a per-deployment generated credential rendered from
+# secrets.json (appSecrets.hermes.adminPassword), so the app carries its
+# own managed credential instead of joining the identity provider.
+# Login: username "bloud", password via
+#   bloud shell "cat \$BLOUD_DATA_DIR/secrets.json"
+sso:
+  strategy: none
+
+containers:
+  - name: apps-hermes
+    image: docker.io/nousresearch/hermes-agent:v2026.9.14
+    network: apps-net
+    restartPolicy: always
+    # The image is an s6-overlay stack: the web dashboard runs as a
+    # supervised service when HERMES_DASHBOARD=1 (per-profile messaging
+    # gateways register dynamically under it). The container's main
+    # program is a parked sleep — the interactive `hermes` TUI the
+    # empty CMD would start needs a TTY and would exit immediately
+    # headless. Dashboard chat runs in-process; no gateway required.
+    command: ["sleep", "infinity"]
+    ports:
+      - host: 9119
+        container: 9119
+    environment:
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_PORT: "9119"
+      # Bundled dashboard_auth/basic provider: satisfies the non-loopback
+      # auth gate fail-closed (empty password ⇒ gate refuses to start).
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: bloud
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "{{appAdminPassword}}"
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /opt/data
+    healthCheck:
+      # /api/health is the upstream public liveness path, exempt from the
+      # dashboard auth gate (safe for external probes by design).
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9119/api/health || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 90

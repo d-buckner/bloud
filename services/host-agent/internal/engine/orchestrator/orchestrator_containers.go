@@ -248,3 +248,51 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 	}
 	return spec, nil
 }
+
+// appAdminPasswordVar is the per-app template variable rendered from the
+// app's generated admin password (persisted in secrets.json under
+// appSecrets.<app>.adminPassword). Unlike the global TemplateVars, it is
+// resolved per owning app at spec-build time.
+const appAdminPasswordVar = "{{appAdminPassword}}"
+
+// specTemplateVars returns the template variables for rendering def.
+// The global TemplateVars are passed through unchanged unless the def
+// actually references {{appAdminPassword}} in an environment value or
+// command argument — only then is the per-app admin password generated
+// (idempotent: first call persists, later calls return the same value)
+// and merged into a copy of the map. An unresolved placeholder is a hard
+// error: rendering it literally would silently make the placeholder text
+// the container's credential.
+func (o *Orchestrator) specTemplateVars(def *catalog.ContainerDef, appCatalogID string) (map[string]string, error) {
+	refs := false
+	for _, v := range def.Environment {
+		if strings.Contains(v, appAdminPasswordVar) {
+			refs = true
+			break
+		}
+	}
+	if !refs {
+		for _, arg := range def.Command {
+			if strings.Contains(arg, appAdminPasswordVar) {
+				refs = true
+				break
+			}
+		}
+	}
+	if !refs {
+		return o.config.TemplateVars, nil
+	}
+	if o.config.AppAdminPassword == nil {
+		return nil, fmt.Errorf("container %q references %s but no admin-password generator is configured", def.Name, appAdminPasswordVar)
+	}
+	password, err := o.config.AppAdminPassword(appCatalogID)
+	if err != nil {
+		return nil, fmt.Errorf("generate admin password for %q: %w", appCatalogID, err)
+	}
+	vars := make(map[string]string, len(o.config.TemplateVars)+1)
+	for k, v := range o.config.TemplateVars {
+		vars[k] = v
+	}
+	vars["appAdminPassword"] = password
+	return vars, nil
+}
