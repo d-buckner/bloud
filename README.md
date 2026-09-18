@@ -42,7 +42,7 @@ Install Bloud on a Debian box and get:
 - Automatic routing through Traefik, over HTTP and HTTPS (Bloud generates its own local CA)
 - Reliable reconciliation after failures and reboot
 - Per-app databases, isolated from each other
-- Your server reachable as `localhost`, `bloud.local` (mDNS, no DNS setup), or your own domain
+- Your server reachable on `localhost` or your own domain (reach-by-name via real DNS or Tailscale is a planned follow-up)
 - Sharing with people who don't need to manage anything
 
 Bloud's differentiator isn't container installation — anyone can run `podman run`.
@@ -179,8 +179,7 @@ deploys, and starts the agent. No separate create/start step.
 ./bloud destroy          # Delete the VM
 ```
 
-Apps are then served through Traefik at `http://<app>.localhost:8080` (and
-`http://<app>.bloud.local` via the port-80 front proxy).
+Apps are then served through Traefik at `http://<app>.localhost:8080`.
 
 ### Validation
 
@@ -206,7 +205,7 @@ bloud/
 │   └── traefik/                   #   navidrome/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
-│   ├── cmd/host-agent/            # Entry point, bootstrap, front-proxy
+│   ├── cmd/host-agent/            # Entry point, bootstrap
 │   ├── internal/
 │   │   ├── engine/                # ★ The differentiator: the reconcile engine
 │   │   │   ├── orchestrator/      #   Typed intent queue + lifecycle reconciler
@@ -216,7 +215,6 @@ bloud/
 │   │   ├── secrets/               # Per-instance generated keys
 │   │   ├── traefikgen/            # Route generation from the graph
 │   │   ├── store/                 # SQLite persistence
-│   │   ├── mdns/                  # bloud.local advertisement
 │   │   └── api/                   # HTTP API — submits intents, never writes state
 │   ├── pkg/
 │   │   ├── authentik/             # Authentik REST API client
