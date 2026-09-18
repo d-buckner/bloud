@@ -126,6 +126,7 @@ apps:
     validation-level: full
     files:
       - apps/hermes/**
+    e2e-project: hermes
 
   paperless-ngx:
     auth: native-oidc

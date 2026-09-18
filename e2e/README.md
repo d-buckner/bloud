@@ -26,6 +26,11 @@ reference).
   django-allauth; its own sign-in page offers only the provider), and after
   the Authentik login reaches the dashboard with the session authenticating
   the app's API.
+- **Hermes** — converges to running (the `sso: none` credential contract:
+  a green converge means the generated admin password resolved and the
+  gate-exempt health path answered), appears in catalog/home, launches on
+  its own origin without a Bloud SSO hand-off, and serves the gate-exempt
+  health path directly over the public route (no `/if/flow` interception).
 
 ## Running
 
