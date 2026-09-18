@@ -1,4 +1,4 @@
-> Status: in progress — PR 1 landed (#85), PR 2 landed (#86, 2026-09-17). Next: PR 3.
+> Status: in progress — PRs 1-2 landed (#85, #86); PR 3 in review (#88). Next: PR 4 (loopback token).
 
 # Plan: Tech-Debt Repayment — Next Five PRs
 

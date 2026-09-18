@@ -5,33 +5,30 @@
 > annotated against the statuses recorded here.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-17 (versioned migrations and durable operation state
-landed; previous version 2026-09-16)
+**Last updated:** 2026-09-17 (route-generation purity landed; prior updates the
+same day: versioned migrations + durable operation state)
 
-## Biggest Debt: Route Generation Still Owns Runtime Side Effects
+## Biggest Debt: Credentialless Loopback Admin
 
-`RegenerateRoutes` (`internal/engine/orchestrator/orchestrator_containers.go`)
-does not just compute routes. It also starts the gateway (`EnsureRunning`),
-queries the tailnet domain, and reconciles remote app proxies
-(`buildRemoteRoutes`). Route generation is supposed to be a pure
-"compute config, write file" step whose only failure domain is the config file;
-instead a route pass can fail because a gateway is down, and a gateway startup
-path is entangled with config rendering. The orchestrator's convergence loop
-therefore has an unnamed subsystem hiding inside one of its phases.
+`authMiddlewareFn` (`internal/api/router.go`) grants `RoleAdmin` to any
+request arriving from loopback or `BLOUD_TRUSTED_LOCAL_NETS` with no
+credential at all. Network position *is* the credential. Anything running on
+the host — a compromised container with host networking, a stray local
+process — gets full operator control of the appliance: install, uninstall,
+settings, secrets-adjacent surfaces.
 
-This is now the top item because the two items ranked above it in earlier
-versions — the missing migration ledger and the missing operation-state model —
-are paid (below), and this is the largest remaining case of a module whose real
-interface is much bigger than its name.
+It tops the list now because the two larger structural items above it in
+earlier versions (missing operation state, entangled route generation) are
+paid, and this is the largest remaining gap between what the system promises
+(a controlled operator surface) and what it enforces (an unauthenticated
+one). Per the previous audit: the largest security win per line changed in
+the repo.
 
 ## Evidence (still open)
 
-- `internal/engine/orchestrator/orchestrator_containers.go`
-  - `RegenerateRoutes` starts the gateway and reconciles remote proxies inside
-    what should be a config-generation step.
 - `internal/api/router.go`
-  - `authMiddlewareFn` grants `RoleAdmin` to any loopback/trusted-net request
-    with no credential. Still open; the largest security win per line changed.
+  - `authMiddlewareFn`: loopback/trusted-net → `RoleAdmin`, no credential.
+    The top item above.
 - `cmd/host-agent/configure.go` vs `internal/api/router.go`
   - Two hand-built orchestrator configurations (CLI `reconcile` minimal path vs
     the product path). The "how to wire the system core" knowledge exists in
@@ -41,6 +38,23 @@ interface is much bigger than its name.
   tokens). Not a top item.
 
 ## Already Paid
+
+### Route generation no longer owns runtime side effects (2026-09-17)
+
+The "Biggest Debt" of the previous version — a route config step that
+silently started gateways and mutated proxies — is closed:
+
+- `RegenerateRoutes(remoteRoutes, tailnetDomain)`
+  (`internal/engine/orchestrator/orchestrator_containers.go`) is pure
+  with respect to the runtime: no gateway calls, no proxy mutation. All
+  runtime-shaped inputs are passed in by the caller.
+- `SyncRoutes()` owns the explicit ordering the old interleaving only
+  accidentally provided: `ensureGateway()` → `reconcileRemoteProxies()`
+  (the former `buildRemoteRoutes`, named for what it does) →
+  `resolveTailnetDomain()` → config write.
+- Contract tests (`route_sync_test.go`): the pure generator touches zero
+  runtime fakes even when gateway/proxy are configured; SyncRoutes order
+  and input piping; inactive tailnet skips the gateway entirely.
 
 ### Durable lifecycle operation state (2026-09-17)
 
@@ -105,27 +119,20 @@ the checked path instead of the ad hoc one.
 
 Ranked by risk times cheapness, not by architectural ambition.
 
-### 1. Remove Route-Generation Side Effects
-
-Extract gateway startup (`EnsureRunning`) and remote proxy reconciliation
-(`buildRemoteRoutes`) out of `RegenerateRoutes` into explicit reconciliation
-steps the orchestrator owns by name. `RegenerateRoutes` should only compute
-and write Traefik configuration. Add a test that proves route generation has
-no runtime side effects.
-
-### 2. Loopback Admin Behind a Credential
+### 1. Loopback Admin Behind a Credential
 
 Grant loopback admin only with a CLI-obtained token (or signed request), not
-on bare network position. One middleware change plus one CLI change.
+on bare network position. One middleware change plus one CLI change: the
+`ReadRuntimeFile` backend seam carries the token across Lima/QEMU/native.
 
-### 3. Single Orchestrator Builder
+### 2. Single Orchestrator Builder
 
 One builder function owns the orchestrator wiring; `configure.go` and
 `router.go` both call it with an explicit profile. Makes config drift
 between the CLI path and the product path impossible. (With operation state
 landed, the recorder wiring is one more field that would otherwise fork.)
 
-### 4. Persist Only Externally-Issued Artifacts (rescopes the old item 4)
+### 3. Persist Only Externally-Issued Artifacts (rescopes the old item 4)
 
 Integration credentials are derived, not stored: `DeriveSecret`
 (HKDF-SHA256 from the host secret) and `OIDCInputsForApp` compute client
@@ -146,7 +153,8 @@ item 4 is re-scoped to exactly that.
 - Do not introduce speculative provider abstractions before a concrete
   consumer needs them.
 - Do not block small product fixes, but avoid adding new lifecycle side
-  effects to route generation or API handlers.
+  effects to route generation or API handlers. (Route generation is now a
+  pure config step; keep it that way — see the `route_sync_test.go` contract.)
 
 ## Validation Bar
 
