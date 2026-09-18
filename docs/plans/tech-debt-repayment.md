@@ -1,8 +1,11 @@
-> Status: draft
+> Status: in progress — PR 1 landed (#85), PR 2 landed (#86, 2026-09-17). Next: PR 3.
 
 # Plan: Tech-Debt Repayment — Next Five PRs
 
-**Source:** `docs/operations/tech-debt.md` (2026-09-16 re-audit)
+**Source:** `docs/operations/tech-debt.md` (2026-09-16 re-audit; the
+ledger was rewritten 2026-09-17 after PRs 1-2 landed — remaining items
+match this plan's PRs 3-5)
+
 **Goal:** Execute the ledger's top items as a sequence of small, independently
 mergeable PRs, ordered so each one builds on the previous foundation.
 
