@@ -121,6 +121,12 @@ apps:
       - apps/homeassistant/**
     e2e-project: homeassistant
 
+  hermes:
+    auth: none
+    validation-level: full
+    files:
+      - apps/hermes/**
+
   paperless-ngx:
     auth: native-oidc
     validation-level: embed

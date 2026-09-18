@@ -267,7 +267,11 @@ combined with instance/SSH-target env vars). Instance overrides:
    Bootstrap (system infra: Traefik + deps) runs **before** the HTTP listener
    opens; the orchestrator manages user apps only.
 6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`
-   (Immich + AFFiNE: native-oidc, Jellyfin: ldap, Navidrome: forward-auth).
+   (Immich + AFFiNE: native-oidc, Jellyfin: ldap, Navidrome: forward-auth,
+   Hermes: none). `none` means the app does not join the identity provider: it
+   carries its own Bloud-managed credential instead — Hermes enforces its own
+   auth gate and Bloud satisfies it with a generated admin password via
+   `{{appAdminPassword}}`. See `apps/hermes/INTEGRATION.md`.
    Native-oidc providers use Bloud's verified-email scope mapping (Authentik's
    managed one reports `email_verified: false`, which apps like AFFiNE
    reject). See `apps/affine/INTEGRATION.md`.
@@ -354,7 +358,10 @@ combined with instance/SSH-target env vars). Instance overrides:
    `restartPolicy`, `environment`, `extraHosts`, `ports`, `volumes`,
    `dependsOn`, `healthCheck {test, interval, timeout, retries}`).
    Template vars in environment/volumes: `{{appDataDir}}`, `{{dataDir}}`,
-   `{{postgresPassword}}`.
+   `{{postgresPassword}}`, and the per-app `{{appAdminPassword}}` (the
+   app's own generated admin credential from `appSecrets.<app>.adminPassword`,
+   resolved lazily at spec-build time only if the def references it — see
+   `orchestrator.specTemplateVars`).
 2. `apps/<name>/configurator.go`. Implements `NodeLifecycle`
    (`Name()`, `PreStart(ctx, *AppState) (changed bool, err error)`,
    `PostStart(ctx, *AppState) error`, `Remove(ctx, *AppState, clearData bool)

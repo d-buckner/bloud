@@ -772,6 +772,112 @@ func TestContainerSpecFromDef_NoNetwork(t *testing.T) {
 	assert.Empty(t, spec.Networks)
 }
 
+// TestSpecTemplateVars_NoReferencePassesThrough: a def that never mentions
+// {{appAdminPassword}} must return the global TemplateVars unchanged and
+// must NOT invoke the generator — generation is strictly lazy so apps that
+// don't need an admin credential never trigger it.
+func TestSpecTemplateVars_NoReferencePassesThrough(t *testing.T) {
+	called := false
+	o := &Orchestrator{config: OrchestratorConfig{
+		TemplateVars: map[string]string{"postgresPassword": "pg-secret"},
+		AppAdminPassword: func(string) (string, error) {
+			called = true
+			return "should-not-be-used", nil
+		},
+	}}
+	def := &catalog.ContainerDef{
+		Name:        "apps-jellyfin",
+		Environment: map[string]string{"JELLYFIN_KEY": "{{postgresPassword}}"},
+	}
+
+	vars, err := o.specTemplateVars(def, "jellyfin")
+	require.NoError(t, err)
+	assert.False(t, called, "generator must not run when the placeholder is absent")
+	assert.Equal(t, "pg-secret", vars["postgresPassword"])
+	_, hasAdmin := vars["appAdminPassword"]
+	assert.False(t, hasAdmin, "no per-app password injected when unrefenced")
+}
+
+// TestSpecTemplateVars_EnvReferenceResolvesAdminPassword: a def that
+// references {{appAdminPassword}} in an env value gets the per-app
+// password merged into a copy of the global vars (the global map itself is
+// never mutated, since it's shared across apps).
+func TestSpecTemplateVars_EnvReferenceResolvesAdminPassword(t *testing.T) {
+	var gotApp string
+	o := &Orchestrator{config: OrchestratorConfig{
+		TemplateVars: map[string]string{"postgresPassword": "pg-secret"},
+		AppAdminPassword: func(app string) (string, error) {
+			gotApp = app
+			return "hermes-admin-pw", nil
+		},
+	}}
+	def := &catalog.ContainerDef{
+		Name:        "apps-hermes",
+		Environment: map[string]string{"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "{{appAdminPassword}}"},
+	}
+
+	vars, err := o.specTemplateVars(def, "hermes")
+	require.NoError(t, err)
+	assert.Equal(t, "hermes", gotApp, "generator receives the owning catalog ID")
+	assert.Equal(t, "hermes-admin-pw", vars["appAdminPassword"])
+	assert.Equal(t, "pg-secret", vars["postgresPassword"], "global vars still pass through")
+	// The shared TemplateVars map must not have been mutated.
+	assert.NotContains(t, o.config.TemplateVars, "appAdminPassword")
+}
+
+// TestSpecTemplateVars_CommandReferenceResolvesAdminPassword: the command
+// vector is scanned too, so a password passed as an argv is covered.
+func TestSpecTemplateVars_CommandReferenceResolvesAdminPassword(t *testing.T) {
+	called := false
+	o := &Orchestrator{config: OrchestratorConfig{
+		AppAdminPassword: func(string) (string, error) {
+			called = true
+			return "cmd-pw", nil
+		},
+	}}
+	def := &catalog.ContainerDef{
+		Name:    "apps-foo",
+		Command: []string{"run", "--password={{appAdminPassword}}"},
+	}
+
+	vars, err := o.specTemplateVars(def, "foo")
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Equal(t, "cmd-pw", vars["appAdminPassword"])
+}
+
+// TestSpecTemplateVars_MissingGeneratorIsError: a reference with no
+// generator configured is a hard error rather than a silently-unrendered
+// placeholder (which would make the literal text the credential).
+func TestSpecTemplateVars_MissingGeneratorIsError(t *testing.T) {
+	o := &Orchestrator{config: OrchestratorConfig{}}
+	def := &catalog.ContainerDef{
+		Name:        "apps-hermes",
+		Environment: map[string]string{"PW": "{{appAdminPassword}}"},
+	}
+
+	_, err := o.specTemplateVars(def, "hermes")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no admin-password generator")
+}
+
+// TestSpecTemplateVars_GeneratorErrorWrapped: a generator failure is
+// surfaced, not swallowed.
+func TestSpecTemplateVars_GeneratorErrorWrapped(t *testing.T) {
+	o := &Orchestrator{config: OrchestratorConfig{
+		AppAdminPassword: func(string) (string, error) { return "", errors.New("store down") },
+	}}
+	def := &catalog.ContainerDef{
+		Name:        "apps-hermes",
+		Environment: map[string]string{"PW": "{{appAdminPassword}}"},
+	}
+
+	_, err := o.specTemplateVars(def, "hermes")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "generate admin password")
+	assert.Contains(t, err.Error(), "store down")
+}
+
 // ============================================================================
 // S9: framework-owned PostStartBudget + shutdown-interrupt semantics
 // ============================================================================

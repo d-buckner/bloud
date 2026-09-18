@@ -140,6 +140,7 @@ func runServer() {
 		LDAPOutput:            cfg.LDAPOutput(),
 		Registry:              registry,
 		TemplateVars:          templateVars,
+		AppAdminPassword:      cfg.Secrets.GenerateAppAdminPassword,
 	}, logger)
 
 	waitForSystemConvergence(server, logger)
