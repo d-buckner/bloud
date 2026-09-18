@@ -12,11 +12,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Schema is the production schema, shared from the schema package so
-// tests always exercise the same DDL as the real database.
-var Schema = schema.SQL
-
-// SetupTestDB returns an in-memory SQLite database for testing
+// SetupTestDB returns an in-memory SQLite database migrated to the
+// current schema version through the same versioned ledger that
+// production (db.InitDB) runs, so tests always exercise the real
+// upgrade path against the real DDL.
 func SetupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -37,10 +36,9 @@ func SetupTestDB(t *testing.T) *sql.DB {
 		}
 	}
 
-	// Create schema
-	if _, err := db.Exec(Schema); err != nil {
+	if err := schema.Migrate(db); err != nil {
 		_ = db.Close()
-		t.Fatalf("failed to create schema: %v", err)
+		t.Fatalf("failed to migrate test schema: %v", err)
 	}
 
 	t.Cleanup(func() { _ = db.Close() })
