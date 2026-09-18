@@ -60,6 +60,12 @@ var (
 	ldapURL      = getEnvDefault("BLOUD_E2E_LDAP_URL", "ldap://localhost:3389")
 )
 
+// hostAgentAPIToken is the bearer credential this test binary uses against
+// the host-agent API. Loaded from secrets.json in TestMain. The loopback
+// auto-admin bypass was removed: every non-public call must present it,
+// exactly as the CLI does.
+var hostAgentAPIToken string
+
 // expectedLDAPHost is the LDAP host the Jellyfin configurator must be given.
 // It matches config.Load's BLOUD_LDAP_HOST default (the catalog container
 // name), overridable for exotic deployments.
@@ -99,6 +105,7 @@ type secretsFile struct {
 	AuthentikBootstrapPassword string `json:"authentikBootstrapPassword"`
 	AuthentikBootstrapToken    string `json:"authentikBootstrapToken"`
 	LdapBindPassword           string `json:"ldapBindPassword"`
+	APIToken                   string `json:"apiToken"`
 	AppSecrets                 map[string]struct {
 		AdminPassword string `json:"adminPassword"`
 	} `json:"appSecrets"`
@@ -119,18 +126,44 @@ func dataDir() string {
 	return filepath.Join(home, ".local", "share", "bloud")
 }
 
-func readSecrets(t *testing.T) secretsFile {
-	t.Helper()
+// loadSecrets reads the runtime secrets.json without a testing.T so it can
+// run from TestMain before any test body.
+func loadSecrets() (secretsFile, error) {
 	path := filepath.Join(dataDir(), "secrets.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
+		return secretsFile{}, fmt.Errorf("reading %s: %w", path, err)
 	}
 	var s secretsFile
 	if err := json.Unmarshal(data, &s); err != nil {
-		t.Fatalf("parsing %s: %v", path, err)
+		return secretsFile{}, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return s, nil
+}
+
+func readSecrets(t *testing.T) secretsFile {
+	t.Helper()
+	s, err := loadSecrets()
+	if err != nil {
+		t.Fatal(err)
 	}
 	return s
+}
+
+// apiRequest builds a request against the host-agent API carrying the
+// bearer token that authorizes local automation. With the loopback
+// auto-admin bypass gone, every host-agent call except the public
+// health/setup-status endpoints must present it, mirroring the CLI.
+func apiRequest(method, url string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if hostAgentAPIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+hostAgentAPIToken)
+	}
+	return http.DefaultClient.Do(req)
 }
 
 // authentikToken returns the host-agent's long-lived Authentik API token,
@@ -215,7 +248,7 @@ type installedApp struct {
 
 func getInstalledApps(t *testing.T) []installedApp {
 	t.Helper()
-	resp, err := http.Get(hostAgentURL + "/api/apps/installed")
+	resp, err := apiRequest("GET", hostAgentURL+"/api/apps/installed", nil)
 	if err != nil {
 		t.Fatalf("GET /api/apps/installed: %v", err)
 	}
@@ -299,6 +332,18 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: host-agent API not reachable:", err)
 		os.Exit(1)
 	}
+	// Load the bearer token that authorizes every non-public call now that
+	// the loopback auto-admin bypass is gone.
+	s, err := loadSecrets()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "e2e: cannot read API token:", err)
+		os.Exit(1)
+	}
+	if s.APIToken == "" {
+		fmt.Fprintln(os.Stderr, "e2e: secrets.json has no apiToken; re-init secrets")
+		os.Exit(1)
+	}
+	hostAgentAPIToken = s.APIToken
 	// Clean slate before the suite: uninstall whatever user apps a previous
 	// run (or dev session) left behind.
 	if err := resetUserApps(); err != nil {
@@ -309,7 +354,7 @@ func TestMain(m *testing.M) {
 }
 
 func fetchInstalled() ([]installedApp, error) {
-	resp, err := http.Get(hostAgentURL + "/api/apps/installed")
+	resp, err := apiRequest("GET", hostAgentURL+"/api/apps/installed", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -327,8 +372,8 @@ func fetchInstalled() ([]installedApp, error) {
 }
 
 func postUninstall(catalogID string) error {
-	resp, err := http.Post(fmt.Sprintf("%s/api/apps/%s/uninstall", hostAgentURL, catalogID),
-		"application/json", strings.NewReader(`{"clearData":true}`))
+	resp, err := apiRequest("POST", fmt.Sprintf("%s/api/apps/%s/uninstall", hostAgentURL, catalogID),
+		strings.NewReader(`{"clearData":true}`))
 	if err != nil {
 		return err
 	}
@@ -345,7 +390,7 @@ func postUninstall(catalogID string) error {
 // postJSON POSTs a JSON body and asserts the expected status code.
 func postJSON(t *testing.T, url string, body string, wantStatus int) {
 	t.Helper()
-	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	resp, err := apiRequest("POST", url, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}

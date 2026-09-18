@@ -123,7 +123,7 @@ func (r *appE2ERunner) run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	if err := r.remoteRun(remoteEnsureUserScript, string(payload)); err != nil {
+	if err := r.remoteRun(remoteEnsureUserScript, string(payload), r.cfg.remoteDir); err != nil {
 		return err
 	}
 
@@ -131,7 +131,7 @@ func (r *appE2ERunner) run() (runErr error) {
 	if os.Getenv("BLOUD_E2E_PLAYWRIGHT_FILTER") == "" {
 		_ = os.Setenv("BLOUD_E2E_PLAYWRIGHT_FILTER", r.app)
 	}
-	if err := runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password); err != nil {
+	if err := r.playwright(); err != nil {
 		return err
 	}
 

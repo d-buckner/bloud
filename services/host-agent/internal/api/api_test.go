@@ -388,6 +388,12 @@ func (f *FakeCatalogCache) AddApp(app *catalog.App) {
 	f.apps[app.CatalogID] = app
 }
 
+// testAPIToken is the bearer credential the test routers are configured
+// with. setupTestServer* set it on ServerConfig, and serverRequest attaches
+// it so the default-auth path authenticates as admin exactly as the old
+// loopback bypass did (now via a real token, not network position).
+const testAPIToken = "test-instance-api-token-0123456789abcdef"
+
 // setupTestServer creates a test server with real stores and a test catalog.
 func setupTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
@@ -444,6 +450,7 @@ tags:
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	// Create a fake catalog cache with the test app
@@ -574,6 +581,7 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -658,6 +666,7 @@ tags:
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -697,9 +706,12 @@ func serverRequest(t *testing.T, server *Server, method, path string, body *stri
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
-	// Simulate localhost request for auth middleware to auto-authenticate as admin
+	// Default (authenticated): simulate the CLI — a loopback request that
+	// presents the bearer token. Both the origin scope and the credential
+	// must line up for admin, mirroring production.
 	if len(noAuth) == 0 || !noAuth[0] {
 		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	}
 	w := httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)

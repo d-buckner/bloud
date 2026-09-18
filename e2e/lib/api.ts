@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
-// API calls go directly to the host-agent (loopback bypass, no auth needed).
+// The host-agent no longer grants admin on loopback position alone: every
+// call carries the bearer token injected by the harness (./bloud e2e sets
+// BLOUD_API_TOKEN from the running runtime's secrets.json).
 function delay(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -24,9 +26,14 @@ async function getApp(name: string): Promise<InstalledApp | null> {
 }
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = process.env.BLOUD_API_TOKEN ?? '';
   const resp = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
   });
   if (!resp.ok) {
     throw new Error(`${init?.method ?? 'GET'} ${path} → ${resp.status}`);

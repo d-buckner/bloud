@@ -40,6 +40,13 @@ type Secrets struct {
 	// Master secret for deriving per-app OAuth client secrets
 	SSOHostSecret string `json:"ssoHostSecret"`
 
+	// APIToken authenticates the CLI / local automation against the
+	// host-agent API. Loopback no longer grants admin on network position
+	// alone; callers present this as `Authorization: Bearer <token>`.
+	// Read by the `host-agent token` subcommand and forwarded by the CLI's
+	// backend seam.
+	APIToken string `json:"apiToken"`
+
 	// Per-app secrets (generated during install)
 	AppSecrets map[string]AppSecrets `json:"appSecrets,omitempty"`
 }
@@ -119,6 +126,10 @@ func (m *Manager) Load() error {
 		secrets.SSOHostSecret = generateSecret(64)
 		updated = true
 	}
+	if secrets.APIToken == "" {
+		secrets.APIToken = generateSecret(32)
+		updated = true
+	}
 
 	m.secrets = &secrets
 
@@ -140,6 +151,7 @@ func (m *Manager) generateAndSave() error {
 		LDAPOutpostToken:           generateSecret(48),
 		LDAPBindPassword:           generateSecret(32),
 		SSOHostSecret:              generateSecret(64),
+		APIToken:                   generateSecret(32),
 		AppSecrets:                 make(map[string]AppSecrets),
 	}
 
@@ -301,6 +313,8 @@ func (m *Manager) Get(name string) string {
 		return m.secrets.LDAPBindPassword
 	case "ssoHostSecret":
 		return m.secrets.SSOHostSecret
+	case "apiToken":
+		return m.secrets.APIToken
 	default:
 		return ""
 	}
@@ -339,6 +353,12 @@ func (m *Manager) GetLDAPBindPassword() string {
 // GetSSOHostSecret returns the master secret for OAuth client secret derivation.
 func (m *Manager) GetSSOHostSecret() string {
 	return m.Get("ssoHostSecret")
+}
+
+// GetAPIToken returns the bearer token that authenticates the CLI and
+// local automation against the host-agent API.
+func (m *Manager) GetAPIToken() string {
+	return m.Get("apiToken")
 }
 
 // GetAppSecret returns a specific secret for an app.

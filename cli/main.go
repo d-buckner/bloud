@@ -84,6 +84,7 @@ func dispatch(cmd string, args []string) int {
 		"shell":     cmdShell,
 		"install":   cmdInstall,
 		"uninstall": cmdUninstall,
+		"token":     func([]string) int { return cmdToken() },
 		"reset":     func([]string) int { return cmdReset() },
 		"destroy":   func([]string) int { return cmdDestroy() },
 		"services":  func([]string) int { return cmdServices() },
@@ -127,6 +128,7 @@ func printUsage() {
 	fmt.Println("  shell [cmd]     Run a command on the VM (or open a shell)")
 	fmt.Println("  install <app>   Install an app via API (requires running host-agent)")
 	fmt.Println("  uninstall <app> Uninstall an app via API")
+	fmt.Println("  token           Print the running instance's API bearer token")
 	fmt.Println("  reset           Wipe all data in the VM and re-run setup (keeps VM)")
 	fmt.Println("  destroy         Delete the VM")
 	fmt.Println()

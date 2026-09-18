@@ -64,3 +64,42 @@ func resolveDataDir(args []string) (string, error) {
 	}
 	return filepath.Join(homeDir, ".local", "share", "bloud"), nil
 }
+
+// runToken handles the "token" subcommand: it prints the API bearer token
+// stored in the runtime's secrets.json to stdout. The CLI and the e2e
+// lifecycle use this to authenticate local (loopback/trusted-net) calls to
+// the host-agent API now that loopback origin alone no longer grants admin.
+//
+// Usage:
+//
+//	host-agent token [data-dir]
+//
+// If data-dir is not provided, defaults to ~/.local/share/bloud.
+func runToken(args []string) int {
+	dataDir, err := resolveDataDir(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
+		return 1
+	}
+
+	secretsPath := filepath.Join(dataDir, "secrets.json")
+	if _, err := os.Stat(secretsPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: no secrets at %s (run host-agent init-secrets first)\n", secretsPath)
+		return 1
+	}
+
+	mgr := secrets.NewManager(secretsPath)
+	if err := mgr.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to load secrets: %v\n", err)
+		return 1
+	}
+
+	token := mgr.GetAPIToken()
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "Error: secrets have no apiToken (re-init secrets)")
+		return 1
+	}
+
+	fmt.Println(token)
+	return 0
+}

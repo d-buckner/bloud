@@ -69,7 +69,13 @@ type ServerConfig struct {
 	HostStore store.HostStoreInterface
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
-	TrustedLocalNets      []string
+	TrustedLocalNets []string
+	// APIToken is the bearer credential required from local (loopback /
+	// trusted-net) requests. Loopback alone no longer grants admin: the
+	// network-origin check becomes a *scope* on the token (where it may be
+	// used), not the credential itself. Empty disables local bypass —
+	// every request then needs a session cookie.
+	APIToken              string
 	RefreshAuthentikToken func() string
 	LDAPOutput            *configurator.LDAPOutput
 	Registry              configurator.RegistryInterface

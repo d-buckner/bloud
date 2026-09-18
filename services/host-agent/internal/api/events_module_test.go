@@ -179,6 +179,7 @@ func newEventsTestRouterMux(t *testing.T) (http.Handler, *FakeAppStore) {
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -209,6 +210,7 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/apps/events", nil)
 	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()

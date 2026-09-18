@@ -78,7 +78,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 |---|---|---|
 | **80** | **Front proxy**: a thin root-level reverse proxy (`host-agent front-proxy`, systemd unit `bloud-front.service`) that forwards to Traefik `:8080` and serves a "starting up" page while the stack boots. It owns port 80 so Traefik and every container stay rootless. | end users (default browser port) |
 | **8080** | **Traefik: the public-facing port.** Users hit apps here (`jellyfin.localhost:8080`, `immich.localhost:8080`, …). Browser/e2e user journeys must go through this. | end users |
-| **3000** | **host-agent internal API** (install/uninstall/status, session auth with loopback/trusted-net bypass). Operator/automation surface, not the user surface. | ops, CLI, e2e API helpers |
+| **3000** | **host-agent internal API** (install/uninstall/status). Auth: a session cookie (browsers) or a bearer token (CLI/e2e) presented from loopback / `BLOUD_TRUSTED_LOCAL_NETS`. Operator/automation surface, not the user surface. | ops, CLI, e2e API helpers |
 | 8096 | Jellyfin container (direct) | debugging |
 | 9001 | Authentik server (direct) | debugging |
 | 3389 | LDAP outpost (direct) | debugging |
@@ -177,7 +177,8 @@ go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
 - Browser tests target the **public port**: `BLOUD_URL` (default
   `http://localhost:8080`): user journeys go through Traefik.
 - API helpers target the **internal port**: `BLOUD_API_URL` (default
-  `http://localhost:3000`): loopback, no auth needed.
+  `http://localhost:3000`): loopback; the harness injects `BLOUD_API_TOKEN`
+  and `lib/api.ts` attaches it as a bearer credential.
 - Specs: `jellyfin.spec.ts` (LDAP SSO), `navidrome.spec.ts` (forward-auth),
   `immich.spec.ts` (native-oidc + onboarding), `affine.spec.ts`
   (native-oidc, login via issuer origin). Fixtures: `lib/fixtures.ts`
@@ -315,7 +316,8 @@ combined with instance/SSH-target env vars). Instance overrides:
 - Public: `GET /health`, `GET /auth/login`, `GET /auth/callback`,
   `POST /auth/logout`, `GET /api/health`, `GET /api/setup/status`,
   `GET /api/auth/me`, plus the public system-info router.
-- Authenticated (session cookie, or loopback/`BLOUD_TRUSTED_LOCAL_NETS` bypass):
+- Authenticated (session cookie for browsers, or a bearer token — the
+  `apiToken` from `secrets.json` — presented from loopback/`BLOUD_TRUSTED_LOCAL_NETS`):
   `GET /api/apps` (catalog), `GET /api/apps/installed`,
   `GET /api/apps/{name}/metadata`, `POST /api/apps/{name}/install`,
   `POST /api/apps/{name}/uninstall`, `PATCH /api/apps/{name}/rename`,
@@ -389,11 +391,12 @@ The ledger is the source of truth; the notes below are a pointer, not a
 mirror. Full backend-debt ledger with the repayment plan:
 [`docs/operations/tech-debt.md`](docs/operations/tech-debt.md). Top open
 items: route-generation side effects (gateway startup + remote proxy
-reconciliation inside `RegenerateRoutes`), credentialless loopback admin,
-duplicated orchestrator wiring (CLI vs router). Recently paid: durable
-lifecycle operation state (`store/operations.go` + orchestrator recorder,
-plan archived) and versioned schema migrations including the
-`user_app_positions` fork fix. Review findings:
+reconciliation inside `RegenerateRoutes`) and duplicated orchestrator
+wiring (CLI vs router). Recently paid: durable lifecycle operation state
+(`store/operations.go` + orchestrator recorder, plan archived), the
+credentialless loopback admin (now bearer-token gated), and versioned
+schema migrations including the `user_app_positions` fork fix. Review
+findings:
 [`docs/specs/review.md`](docs/specs/review.md) (e.g. §C2 in-memory
 `MapRepository`, which the 2026-09-16 re-audit reframes: HKDF-derived
 credentials make restart reconstruction work, so only ERROR-terminal
@@ -403,8 +406,12 @@ catalog graph). Highlights:
 - Sharing/guest API handlers write stores directly: a deliberate, documented
   boundary (pure store writes, synchronous invite tokens), not intent-queue drift.
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
-  is fallible with no static fallback (env > `secrets.json` > error). Still open:
-  loopback requests are granted admin without a credential.
+  is fallible with no static fallback (env > `secrets.json` > error).
+- ~~Loopback requests are granted admin without a credential~~ **Fixed
+  2026-09-17**: the loopback auto-admin bypass is gone. Local callers must
+  present the `apiToken` bearer (read via `bloud token` / the `host-agent
+  token` subcommand); loopback/trusted-net is now a *scope* on the token,
+  not a credential. Browsers keep working via the session-cookie path.
 - Keep the `apps:` registry in `validation.yaml` in sync with `apps/` when apps
   are added/removed (the changed tier infers affected apps from it).
 

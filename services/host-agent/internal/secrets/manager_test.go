@@ -93,6 +93,7 @@ func TestManager_SecretsAreUnique(t *testing.T) {
 		m.GetLDAPOutpostToken(),
 		m.GetLDAPBindPassword(),
 		m.GetSSOHostSecret(),
+		m.GetAPIToken(),
 	}
 
 	seen := make(map[string]bool)
@@ -125,6 +126,7 @@ func TestManager_SecretsHaveCorrectLength(t *testing.T) {
 		{"ldapOutpostToken", m.GetLDAPOutpostToken(), 48},
 		{"ldapBindPassword", m.GetLDAPBindPassword(), 32},
 		{"ssoHostSecret", m.GetSSOHostSecret(), 64},
+		{"apiToken", m.GetAPIToken(), 32},
 	}
 
 	for _, tc := range tests {
@@ -300,6 +302,58 @@ func TestManager_MigratesPartialSecrets(t *testing.T) {
 	}
 	if m.GetSSOHostSecret() == "" {
 		t.Error("ssoHostSecret not migrated")
+	}
+}
+
+// TestManager_APITokenPersistsAndMigrates locks the two properties that make
+// the bearer token usable as a stable credential: it survives reloads, and an
+// old secrets.json without an apiToken field gets one generated on load.
+func TestManager_APITokenPersistsAndMigrates(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretsPath := filepath.Join(tmpDir, "secrets.json")
+
+	// Fresh generation is stable across a reload.
+	m := NewManager(secretsPath)
+	if err := m.Load(); err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+	first := m.GetAPIToken()
+	if first == "" {
+		t.Fatal("apiToken not generated on fresh load")
+	}
+
+	m2 := NewManager(secretsPath)
+	if err := m2.Load(); err != nil {
+		t.Fatalf("failed to reload: %v", err)
+	}
+	if m2.GetAPIToken() != first {
+		t.Errorf("apiToken changed across reload: got %q want %q", m2.GetAPIToken(), first)
+	}
+
+	// An old-version file with no apiToken field must get one migrated in,
+	// without disturbing the existing secrets.
+	oldPath := filepath.Join(tmpDir, "old.json")
+	oldSecrets := `{"postgresPassword":"legacy-pw-12345678901234567890"}`
+	if err := os.WriteFile(oldPath, []byte(oldSecrets), 0600); err != nil {
+		t.Fatalf("failed to write old secrets: %v", err)
+	}
+	mo := NewManager(oldPath)
+	if err := mo.Load(); err != nil {
+		t.Fatalf("failed to load old secrets: %v", err)
+	}
+	if mo.GetAPIToken() == "" {
+		t.Error("apiToken not migrated into an old secrets file")
+	}
+	if mo.GetPostgresPassword() != "legacy-pw-12345678901234567890" {
+		t.Error("migration disturbed an existing secret")
+	}
+	// And the migrated token must persist on a subsequent load.
+	mo2 := NewManager(oldPath)
+	if err := mo2.Load(); err != nil {
+		t.Fatalf("failed to reload migrated secrets: %v", err)
+	}
+	if mo2.GetAPIToken() != mo.GetAPIToken() {
+		t.Error("migrated apiToken did not persist")
 	}
 }
 
