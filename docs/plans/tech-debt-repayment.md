@@ -59,7 +59,7 @@ mechanism — it must hold first.
 
 ## PR 2 — Durable lifecycle operation state
 
-**Design required: yes.** Full design in `plans/operation-state-design.md` —
+**Design required: yes.** Full design in `docs/plans/operation-state-design.md` —
 resolves: current-or-last row (not append log), single-writer
 `recordPhase`, "last attempted phase" write ordering, startup orphan rule,
 and the authoritative-state boundary vs `NodeStatus`. Per-phase resume

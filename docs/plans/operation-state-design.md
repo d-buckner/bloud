@@ -3,7 +3,7 @@
 # Design: Durable Lifecycle Operation State
 
 **Issue:** `docs/operations/tech-debt.md` — "Missing lifecycle operation state"
-**Depends on:** versioned migration ledger (`plans/tech-debt-repayment.md` PR 1)
+**Depends on:** versioned migration ledger (`docs/plans/tech-debt-repayment.md` PR 1)
 **Decision needed before implementation: yes (this doc)**
 
 ---
