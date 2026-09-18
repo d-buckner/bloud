@@ -39,6 +39,20 @@ var Migrations = []Migration{
 	{4, "legacy: shares.guest_label renamed to guest_id", renameColumn("shares", "guest_label", "guest_id")},
 	{5, "legacy: apps.last_error", ensureColumn("apps", "last_error", "TEXT NOT NULL DEFAULT ''")},
 	{6, "fix: user_app_positions shape fork", fixUserAppPositionsShape},
+	{7, "operations: durable lifecycle operation state", func(tx *sql.Tx) error {
+		_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS operations (
+			app_name   TEXT PRIMARY KEY,
+			id         TEXT NOT NULL,
+			type       TEXT NOT NULL,
+			phase      TEXT NOT NULL,
+			status     TEXT NOT NULL,
+			retryable  INTEGER NOT NULL DEFAULT 1,
+			cause      TEXT NOT NULL DEFAULT '',
+			started_at TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)`)
+		return err
+	}},
 }
 
 // LatestVersion is the schema version that schema.sql represents:

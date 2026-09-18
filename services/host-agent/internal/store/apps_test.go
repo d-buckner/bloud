@@ -238,3 +238,37 @@ func TestAppStore_GetAll(t *testing.T) {
 	assert.Equal(t, "radarr", apps[1].CatalogID)
 	assert.Equal(t, "qbittorrent", apps[1].IntegrationConfig["downloadClient"])
 }
+
+func TestAppStore_ReadsJoinOperations(t *testing.T) {
+	db := testdb.SetupTestDB(t)
+	apps := NewAppStore(db)
+	ops := NewOperationStore(db)
+
+	require.NoError(t, apps.Install("jellyfin", "Jellyfin", "1.0", nil, &InstallOptions{}))
+
+	// No drive recorded: operation stays nil.
+	app, err := apps.GetByCatalogID("jellyfin")
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	assert.Nil(t, app.Operation)
+
+	// A failed install drive surfaces on both read paths.
+	require.NoError(t, ops.Start("jellyfin", "op-1", OpTypeInstall, OpPhasePoststart))
+	require.NoError(t, ops.Fail("jellyfin", OpPhasePoststart, "wizard timeout", true))
+
+	app, err = apps.GetByCatalogID("jellyfin")
+	require.NoError(t, err)
+	require.NotNil(t, app.Operation)
+	assert.Equal(t, "op-1", app.Operation.ID)
+	assert.Equal(t, OpTypeInstall, app.Operation.Type)
+	assert.Equal(t, OpPhasePoststart, app.Operation.Phase)
+	assert.Equal(t, OpStatusFailed, app.Operation.Status)
+	assert.True(t, app.Operation.Retryable)
+	assert.Equal(t, "wizard timeout", app.Operation.Cause)
+
+	all, err := apps.GetAll()
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	require.NotNil(t, all[0].Operation)
+	assert.Equal(t, OpStatusFailed, all[0].Operation.Status)
+}

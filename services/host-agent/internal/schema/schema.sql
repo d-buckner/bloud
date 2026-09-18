@@ -109,3 +109,19 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
+-- Durable lifecycle operation state: current-or-last drive per app.
+-- Graph state controls convergence; this row explains user-intent
+-- outcome (which phase, retryability, cause) and crash visibility.
+-- See docs/plans/operation-state-design.md.
+CREATE TABLE IF NOT EXISTS operations (
+    app_name   TEXT PRIMARY KEY,
+    id         TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    phase      TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    retryable  INTEGER NOT NULL DEFAULT 1,
+    cause      TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -1,4 +1,4 @@
-> Status: draft
+> Status: landed 2026-09-17 (backend + read-surface API landed; UI tile rework deferred per §9)
 
 # Design: Durable Lifecycle Operation State
 
