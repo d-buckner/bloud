@@ -5,25 +5,15 @@ import { widgetRegistry, getWidgetById, isValidWidgetId } from '../registry';
 
 describe('widget registry', () => {
 	describe('widgetRegistry', () => {
-		it('contains system-stats widget', () => {
-			const widget = widgetRegistry.find((w) => w.id === 'system-stats');
-			expect(widget).toBeDefined();
-			expect(widget?.name).toBe('System');
-			expect(widget?.size).toEqual({ cols: 2, rows: 3 });
-		});
-
-		it('contains storage widget', () => {
-			const widget = widgetRegistry.find((w) => w.id === 'storage');
-			expect(widget).toBeDefined();
-			expect(widget?.name).toBe('Storage');
-			expect(widget?.size).toEqual({ cols: 2, rows: 2 });
-		});
-
-		it('contains quick-notes widget', () => {
-			const widget = widgetRegistry.find((w) => w.id === 'quick-notes');
-			expect(widget).toBeDefined();
-			expect(widget?.name).toBe('Notes');
-			expect(widget?.size).toEqual({ cols: 2, rows: 2 });
+		it('contains the built-in widgets at their documented default sizes', () => {
+			const sizes = Object.fromEntries(
+				widgetRegistry.map((w) => [w.id, `${w.size.cols}x${w.size.rows}`])
+			);
+			expect(sizes).toEqual({
+				'system-stats': '2x2',
+				storage: '2x2',
+				'quick-notes': '2x2',
+			});
 		});
 
 		it('all widgets have required properties', () => {
@@ -31,18 +21,23 @@ describe('widget registry', () => {
 				expect(widget.id).toBeTruthy();
 				expect(widget.name).toBeTruthy();
 				expect(widget.description).toBeTruthy();
+				expect(widget.icon).toBeTruthy();
 				expect(widget.component).toBeDefined();
-				expect(widget.size).toHaveProperty('cols');
-				expect(widget.size).toHaveProperty('rows');
-				expect([1, 2, 3]).toContain(widget.size.cols);
-				expect([1, 2, 3]).toContain(widget.size.rows);
+			}
+		});
+
+		it('every widget can grow to at least its default size', () => {
+			// A maxSize below the default would make the grid clamp a widget
+			// smaller than the registry says it starts at.
+			for (const widget of widgetRegistry) {
+				expect(widget.maxSize.cols).toBeGreaterThanOrEqual(widget.size.cols);
+				expect(widget.maxSize.rows).toBeGreaterThanOrEqual(widget.size.rows);
 			}
 		});
 
 		it('all widget IDs are unique', () => {
 			const ids = widgetRegistry.map((w) => w.id);
-			const uniqueIds = new Set(ids);
-			expect(uniqueIds.size).toBe(ids.length);
+			expect(new Set(ids).size).toBe(ids.length);
 		});
 	});
 
@@ -54,13 +49,11 @@ describe('widget registry', () => {
 		});
 
 		it('returns undefined for invalid ID', () => {
-			const widget = getWidgetById('non-existent-widget');
-			expect(widget).toBeUndefined();
+			expect(getWidgetById('non-existent-widget')).toBeUndefined();
 		});
 
 		it('returns undefined for empty string', () => {
-			const widget = getWidgetById('');
-			expect(widget).toBeUndefined();
+			expect(getWidgetById('')).toBeUndefined();
 		});
 	});
 

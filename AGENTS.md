@@ -407,7 +407,8 @@ to the right doc — when a doc moves, update it in both places.
 | How to add an app | [guides/contributing-apps.md](docs/guides/contributing-apps.md) |
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 | Backend debt + repayment plan | [operations/tech-debt.md](docs/operations/tech-debt.md) |
-| Sharing/federation (in progress) | [features/sharing.md](docs/features/sharing.md) |
+|Sharing/federation (in progress)|[features/sharing.md](docs/features/sharing.md)|
+|Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Dated review findings|[specs/review.md](docs/specs/review.md)|
 | Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|
 | In-flight designs | [plans/](docs/plans/) |

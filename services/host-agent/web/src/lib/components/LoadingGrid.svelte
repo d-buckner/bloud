@@ -5,10 +5,11 @@
 		count?: number;
 	}
 
-	let { count = 8 }: Props = $props();
+	// Two rows of the six-column desktop grid.
+	let { count = 12 }: Props = $props();
 </script>
 
-<div class="loading-grid">
+<div class="loading-grid" aria-hidden="true">
 	{#each Array(count) as _, i (i)}
 		<div class="skeleton-item">
 			<div class="skeleton-icon"></div>
@@ -21,67 +22,64 @@
 	.loading-grid {
 		display: grid;
 		grid-template-columns: repeat(6, 1fr);
-		gap: var(--space-lg);
-		max-width: 1200px;
-		margin: 0 auto;
-		width: 100%;
+		gap: 12px;
+		/* Same gutter trick as the real grid: cancel the outer gutter so the
+		   skeleton sits exactly where the tiles will land. */
+		width: calc(100% + 24px);
+		margin: -12px -12px 0;
+	}
+
+	/* Mirrors the grid's column breakpoints so the skeleton does not jump
+	   when the real tiles arrive. */
+	@media (max-width: 1100px) {
+		.loading-grid {
+			grid-template-columns: repeat(4, 1fr);
+		}
+	}
+
+	@media (max-width: 700px) {
+		.loading-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
 	}
 
 	.skeleton-item {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-md);
+		justify-content: center;
+		gap: 6px;
+		height: 104px;
+		padding: var(--space-sm);
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
 	}
 
 	.skeleton-icon {
-		width: 60px;
-		height: 60px;
-		border-radius: 14px;
-		background: linear-gradient(
-			90deg,
-			var(--color-bg-subtle) 25%,
-			var(--color-bg-elevated) 50%,
-			var(--color-bg-subtle) 75%
-		);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s infinite;
+		width: 44px;
+		height: 44px;
+		border-radius: 12px;
+		background: var(--color-bg-subtle);
+		animation: pulse 1.4s ease-in-out infinite;
 	}
 
 	.skeleton-label {
-		width: 50px;
-		height: 11px;
+		width: 56px;
+		height: 9px;
 		border-radius: 4px;
-		background: linear-gradient(
-			90deg,
-			var(--color-bg-subtle) 25%,
-			var(--color-bg-elevated) 50%,
-			var(--color-bg-subtle) 75%
-		);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s infinite;
-		animation-delay: 0.1s;
+		background: var(--color-bg-subtle);
+		animation: pulse 1.4s ease-in-out infinite;
+		animation-delay: 0.15s;
 	}
 
-	@keyframes shimmer {
-		0% {
-			background-position: 200% 0;
-		}
+	@keyframes pulse {
+		0%,
 		100% {
-			background-position: -200% 0;
+			opacity: 1;
 		}
-	}
-
-	@media (max-width: 768px) {
-		.loading-grid {
-			grid-template-columns: repeat(3, 1fr);
-		}
-	}
-
-	@media (max-width: 400px) {
-		.loading-grid {
-			grid-template-columns: repeat(2, 1fr);
+		50% {
+			opacity: 0.45;
 		}
 	}
 </style>

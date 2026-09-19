@@ -4,59 +4,48 @@
 	import { browser } from '$app/environment';
 
 	const STORAGE_KEY = 'bloud-quick-notes';
+	const DEBOUNCE_MS = 400;
+	const SAVED_HOLD_MS = 1500;
 
-	let notes = $state('');
-	let isSaving = $state(false);
-	let lastSaved = $state<Date | null>(null);
+	// The widget is mounted client-side only, but guard anyway so an SSR pass
+	// that ever reaches this component cannot touch `localStorage`.
+	let notes = $state(browser ? (localStorage.getItem(STORAGE_KEY) ?? '') : '');
+	let saveState = $state<'idle' | 'saving' | 'saved'>('idle');
 
-	// Load notes from localStorage on mount
-	$effect(() => {
-		if (browser) {
-			const saved = localStorage.getItem(STORAGE_KEY);
-			if (saved) {
-				notes = saved;
-			}
-		}
-	});
+	let saveTimeout: ReturnType<typeof setTimeout> | undefined;
+	let holdTimeout: ReturnType<typeof setTimeout> | undefined;
 
-	// Debounced save
-	let saveTimeout: ReturnType<typeof setTimeout>;
-
-	// Clear any pending save on unmount so we never write to localStorage after teardown
-	$effect(() => {
-		return () => clearTimeout(saveTimeout);
-	});
-
-	function handleInput(e: Event) {
-		const target = e.target as HTMLTextAreaElement;
-		notes = target.value;
-
-		// Debounce save
+	$effect(() => () => {
 		clearTimeout(saveTimeout);
-		isSaving = true;
+		clearTimeout(holdTimeout);
+	});
+
+	function handleInput(event: Event) {
+		notes = (event.target as HTMLTextAreaElement).value;
+		saveState = 'saving';
+
+		clearTimeout(saveTimeout);
 		saveTimeout = setTimeout(() => {
-			if (browser) {
-				localStorage.setItem(STORAGE_KEY, notes);
-				lastSaved = new Date();
-				isSaving = false;
-			}
-		}, 500);
+			localStorage.setItem(STORAGE_KEY, notes);
+			saveState = 'saved';
+			clearTimeout(holdTimeout);
+			holdTimeout = setTimeout(() => (saveState = 'idle'), SAVED_HOLD_MS);
+		}, DEBOUNCE_MS);
 	}
 </script>
 
 <div class="quick-notes">
 	<textarea
 		class="notes-input"
-		placeholder="Jot down a quick note..."
+		placeholder="Jot something down…"
+		aria-label="Notes"
 		value={notes}
 		oninput={handleInput}
 	></textarea>
 	<div class="notes-footer">
-		{#if isSaving}
-			<span class="save-status">Saving...</span>
-		{:else if lastSaved}
-			<span class="save-status">Saved</span>
-		{/if}
+		<span class="save-status" aria-live="polite">
+			{#if saveState === 'saving'}Saving…{:else if saveState === 'saved'}Saved{/if}
+		</span>
 	</div>
 </div>
 
@@ -70,6 +59,7 @@
 
 	.notes-input {
 		flex: 1;
+		min-height: 0;
 		width: 100%;
 		padding: 0;
 		border: none;
@@ -91,12 +81,16 @@
 
 	.notes-footer {
 		display: flex;
-		justify-content: flex-end;
-		min-height: 1rem;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: var(--space-sm);
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
 	}
 
 	.save-status {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
+		min-height: 1em;
 	}
 </style>

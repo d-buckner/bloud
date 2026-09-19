@@ -16,26 +16,43 @@
 	let app = $derived($visibleApps.find((a) => a.catalog_id === itemId));
 	let displayName = $derived(app?.display_name ?? itemId);
 	let status = $derived(app?.status ?? null);
-	let isInstalling = $derived(
-		app ? status === 'installing' || status === 'starting' : !$loading
-	);
+	let isInstalling = $derived(app ? status === 'installing' || status === 'starting' : !$loading);
 	let isFailed = $derived(status === 'failed');
 	let isDegraded = $derived(status === 'error');
-	let isStopped = $derived(status === 'stopped');
 	// While installing, the tile shows only the app name; the icon itself
 	// carries the loading animation (a spinning accent ring). Live phase
 	// detail lives in the install detail modal, not on the tile.
+	let isStopped = $derived(status === 'stopped');
+
+	let stateLabel = $derived(isFailed ? 'Failed' : isDegraded ? 'Degraded' : '');
+	let ariaState = $derived(
+		[isInstalling ? 'installing' : '', stateLabel.toLowerCase()].filter(Boolean).join(' ')
+	);
+
+	function activate(event: MouseEvent | KeyboardEvent) {
+		if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
+		if (!app) return;
+		event.preventDefault();
+		onAppClick?.(app);
+	}
 </script>
 
-<!-- Tiles stay clickable in every state: installing/failed open the install
-     detail modal (investigation is the point), running opens the app. -->
-<button
-	class="app-slot"
+<!-- Tiles stay activatable in every state: installing/failed open the install
+     detail modal (investigation is the point), running opens the app. The
+     element is a div rather than a button so GridStack's drag handler does not
+     skip it (it ignores mousedowns that land on buttons). -->
+<div
+	class="app-slot app-tile grid-drag-handle"
 	class:installing={isInstalling}
 	class:failed={isFailed}
 	class:degraded={isDegraded}
 	class:stopped={isStopped}
-	onclick={() => app && onAppClick?.(app)}
+	role="button"
+	tabindex="0"
+	aria-label={ariaState ? `${displayName} — ${ariaState}` : displayName}
+	title={displayName}
+	onclick={activate}
+	onkeydown={activate}
 	oncontextmenu={(e) => app && onAppContextMenu?.(e, app)}
 >
 	<div class="app-icon-wrapper">
@@ -45,65 +62,82 @@
 		{/if}
 	</div>
 	<span class="app-label">{displayName}</span>
-	{#if isFailed}
-		<span class="phase-label failed">Failed</span>
-	{:else if isDegraded}
-		<span class="phase-label degraded">Degraded</span>
+	{#if stateLabel}
+		<span class="phase-label" class:failed={isFailed} class:degraded={isDegraded}>{stateLabel}</span>
 	{/if}
-</button>
+</div>
 
 <style>
-	.app-slot {
+	.app-tile {
 		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: var(--space-xs);
+		gap: 6px;
 		padding: var(--space-sm);
-		background: transparent;
-		border: none;
-		cursor: pointer;
-		transition: transform 0.1s ease;
 		width: 100%;
 		height: 100%;
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		color: var(--color-text);
+		text-align: center;
+		transition:
+			border-color 0.15s ease,
+			box-shadow 0.15s ease,
+			transform 0.15s ease;
 	}
 
-	.app-slot:hover {
-		transform: scale(1.05);
+	.app-tile:hover {
+		border-color: var(--color-border-strong);
+		box-shadow: var(--shadow-sm);
+		transform: translateY(-1px);
 	}
 
-	.app-slot:active {
-		transform: scale(0.95);
+	.app-tile:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
 	}
 
-	.app-slot.installing {
-		opacity: 0.85;
-	}
-
-	.app-slot.stopped {
-		opacity: 0.5;
+	.app-tile.stopped {
+		opacity: 0.55;
 	}
 
 	.app-icon-wrapper {
 		position: relative;
-		width: 52px;
-		height: 52px;
-		border-radius: 50%;
+		width: 48px;
+		height: 48px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	.app-slot.failed .app-icon-wrapper {
+	.app-icon-wrapper :global(.app-icon.size-lg) {
+		width: 48px;
+		height: 48px;
+		border-radius: 12px;
+	}
+
+	.app-icon-wrapper :global(.app-icon.size-lg img) {
+		width: 38px;
+		height: 38px;
+	}
+
+	.app-tile.failed .app-icon-wrapper {
 		box-shadow: 0 0 0 2px var(--color-error);
+		border-radius: 12px;
 	}
 
-	.app-slot.degraded .app-icon-wrapper {
-		box-shadow: 0 0 0 2px var(--color-warning, #d97706);
+	.app-tile.degraded .app-icon-wrapper {
+		box-shadow: 0 0 0 2px var(--color-warning);
+		border-radius: 12px;
 	}
 
 	.install-spinner {
 		position: absolute;
-		inset: -5px;
-		border: 3px solid var(--color-border);
+		inset: -4px;
+		border: 2px solid var(--color-border);
 		border-top-color: var(--color-accent);
 		border-radius: 50%;
 		animation: spin 0.9s linear infinite;
@@ -115,39 +149,27 @@
 		}
 	}
 
-	.app-icon-wrapper :global(.app-icon.size-lg) {
-		width: 52px;
-		height: 52px;
-	}
-
-	.app-icon-wrapper :global(.app-icon.size-lg img) {
-		width: 38px;
-		height: 38px;
-	}
-
 	.app-label {
 		font-family: var(--font-sans);
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 500;
-		line-height: 1.2;
+		line-height: 1.25;
 		color: var(--color-text);
-		text-align: center;
-		max-width: 80px;
-		white-space: nowrap;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
 		overflow: hidden;
-		text-overflow: ellipsis;
+		overflow-wrap: anywhere;
+		width: 100%;
 	}
 
 	.phase-label {
-		font-size: 9px;
+		font-family: var(--font-sans);
+		font-size: 10px;
 		font-weight: 500;
 		line-height: 1.2;
 		color: var(--color-text-muted);
-		text-align: center;
-		max-width: 80px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 
 	.phase-label.failed {
@@ -155,7 +177,6 @@
 	}
 
 	.phase-label.degraded {
-		color: var(--color-warning, #d97706);
+		color: var(--color-warning);
 	}
-
 </style>

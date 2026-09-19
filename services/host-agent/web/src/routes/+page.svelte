@@ -14,13 +14,15 @@
 	import ShareModal from '$lib/components/ShareModal.svelte';
 	import AppInstallModal from '$lib/components/AppInstallModal.svelte';
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import { AppStatus, type App, type RemoteApp } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
+	import { enabledWidgetIds } from '$lib/stores/grid';
 	import { installApp, uninstallApp, renameApp } from '$lib/clients/appFacade';
 	import { getAppUrl } from '$lib/utils/appUrl';
 	import { getRemoteAppUrl } from '$lib/utils/appUrl';
 	import { fetchRemoteApps, removeRemoteApp } from '$lib/clients/remoteAppClient';
-	import { gridElements } from '$lib/stores/grid';
 
 	// Clicking an in-flight or unhealthy tile opens the live install view
 	// (investigation is the point); clicking a running tile opens the app.
@@ -56,6 +58,16 @@
 	let remoteApps = $state<RemoteApp[]>([]);
 
 	let mounted = $state(false);
+
+	/** One-line summary of what is on the grid, shown under the title. */
+	let subtitle = $derived.by(() => {
+		if (!mounted || $loading) return 'Loading…';
+		if ($error) return 'Could not reach the host agent';
+		const appCount = $apps.length;
+		const widgetCount = $enabledWidgetIds.length;
+		const noun = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+		return [noun(appCount, 'app'), noun(widgetCount, 'widget')].join(' · ');
+	});
 
 	onMount(async () => {
 		mounted = true;
@@ -141,16 +153,25 @@
 	}
 
 	// Derived state for empty check
-	let isEmpty = $derived(
-		$apps.length === 0 && remoteApps.length === 0 && $gridElements.filter((i) => i.type === 'widget').length === 0
-	);
+	let isEmpty = $derived($apps.length === 0 && remoteApps.length === 0 && $enabledWidgetIds.length === 0);
 </script>
 
 <svelte:head>
-	<title>Apps · Bloud</title>
+	<title>Home · Bloud</title>
 </svelte:head>
 
-<div class="launcher">
+<div class="page">
+	<header class="page-header">
+		<div class="header-content">
+			<h1>Home</h1>
+			<p class="subtitle">{subtitle}</p>
+		</div>
+		<Button variant="secondary" size="sm" onclick={() => (showWidgetPicker = true)}>
+			<Icon name="plus" size={15} />
+			Add widget
+		</Button>
+	</header>
+
 	{#if !mounted || $loading}
 		<LoadingGrid />
 	{:else if $error}
@@ -158,15 +179,11 @@
 	{:else if isEmpty}
 		<EmptyState />
 	{:else}
-		<GridStackGrid
-			onAppClick={handleAppClick}
-			onAppContextMenu={handleContextMenu}
-			onAddWidget={() => (showWidgetPicker = true)}
-		/>
+		<GridStackGrid onAppClick={handleAppClick} onAppContextMenu={handleContextMenu} />
 
 		{#if remoteApps.length > 0}
 			<section class="remote-apps-section">
-				<h2 class="section-title">Shared Apps</h2>
+				<h2 class="section-title">Shared apps</h2>
 				<div class="remote-apps-grid">
 					{#each remoteApps as app (app.id)}
 						<RemoteAppCard {app} onclick={() => handleRemoteAppClick(app)} onremove={handleRemoveRemoteApp} />
@@ -218,11 +235,36 @@
 <WidgetPicker open={showWidgetPicker} onclose={() => (showWidgetPicker = false)} />
 
 <style>
-	.launcher {
+	.page {
+		width: 100%;
+		/* Wide enough for six comfortable columns, narrow enough that tiles
+		   stay tile-sized on a large display. */
+		max-width: 1300px;
+		margin: 0 auto;
+		padding: var(--space-2xl) var(--space-xl);
+	}
+
+	.page-header {
 		display: flex;
-		flex-direction: column;
-		min-height: 100vh;
-		padding: var(--space-2xl);
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: var(--space-lg);
+		margin-bottom: var(--space-xl);
+		padding-bottom: var(--space-lg);
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.header-content h1 {
+		margin: 0;
+		font-size: 1.75rem;
+		font-weight: 500;
+	}
+
+	.subtitle {
+		margin: var(--space-xs) 0 0;
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		color: var(--color-text-muted);
 	}
 
 	.remote-apps-section {
@@ -232,21 +274,30 @@
 	}
 
 	.section-title {
-		margin: 0 0 var(--space-lg) 0;
-		font-size: 1rem;
+		margin: 0 0 var(--space-md);
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
 		font-weight: 500;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
 		color: var(--color-text-muted);
 	}
 
 	.remote-apps-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 		gap: var(--space-md);
 	}
 
 	@media (max-width: 768px) {
-		.launcher {
-			padding: var(--space-xl);
+		.page {
+			padding: var(--space-xl) var(--space-md);
+		}
+
+		.page-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--space-md);
 		}
 
 		.remote-apps-grid {
