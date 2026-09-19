@@ -6,14 +6,18 @@
 > findings live in the review snapshot itself (see below).
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-19 (first-ranked item re-scoped and re-ranked: the
-loopback admin exemption is remotely forgeable, not merely a local-process
+**Last updated:** 2026-09-19 (item 5 re-observed on a post-PR-4 redeploy,
+adding a fifth member to the silent-failure class: the lost write is a `WARN`
+nobody sees; prior same-day updates: first-ranked item re-scoped and re-ranked
+— the loopback admin exemption is remotely forgeable, not merely a local-process
 concern; a new second-ranked class records the engine's silent-failure paths;
 prior update 2026-09-17: route-generation purity landed, plus versioned
 migrations + durable operation state)
 
 Source for this revision: [`docs/specs/review-2026-09-19.md`](../specs/review-2026-09-19.md)
-(9 parallel subsystem audits, high-severity findings re-verified at source).
+(9 parallel subsystem audits, high-severity findings re-verified at source),
+plus a live runtime observation on 2026-09-19 (item 5's lost write, captured
+during a normal convergence pass; see the silent-failure class below).
 Frontend (SSE fallback poller, toast on first observation, dead `sso_launch_path`),
 CLI/validation (`--app` inert, `**` glob makes "medium confidence" dead, `reset`
 wipes every Podman container) and CI/hook findings (no PR gate, `check:app-http`
@@ -112,8 +116,10 @@ pre-fix tree.
 ## Second: the appliance fails silently
 
 Four independent defects share one property — the system stops working and
-reports nothing. This is now a ranked class, not a footnote, because each one
-converts an ordinary bug into an unnoticeable outage.
+reports nothing — and item 5 (below) reaches the same end from a fifth
+direction: a write that is dropped, logged at `WARN`, and otherwise ignored.
+This is now a ranked class, not a footnote, because each one converts an
+ordinary bug into an unnoticeable outage.
 
 - **`SyncContainerState` nil-deref kills the process.** 
   `internal/engine/orchestrator/orchestrator_containers.go:41-45` dereferences
@@ -135,6 +141,48 @@ converts an ordinary bug into an unnoticeable outage.
   (`internal/api/server.go:157-167`) is `db.Ping()` plus `orch == nil → nil`; a
   host with no working Podman socket boots "healthy" with no orchestrator, and a
   dead intent loop is indistinguishable from an idle one.
+- **Operation-ledger writes are lost to lock contention on one row (item 5,
+  re-observed 2026-09-19).** On a normal convergence pass during a redeploy,
+  `recordOpPhase` → `OperationStore.AdvancePhase` lost the write:
+
+  ```
+  WARN operation recorder: phase failed  app=authentik phase=prestart
+       error="advance operation authentik to prestart: database is locked (5) (SQLITE_BUSY)"
+  ```
+
+  The collision is structural, not a rare interleaving. Every phase record keys
+  on `owner := o.ownerApp(id)` (`orchestrator.go:1023,1054,1066,1091`, …) — one
+  row per *app* — while the scheduler dispatches *nodes*, and nodes in one
+  topological level run concurrently. So for a multi-container app, N nodes
+  issue `UPDATE operations … WHERE app_name='authentik'` against a **single row**
+  at the same time. The same log window shows the reproduction exactly:
+
+  ```
+  level work collected              nodes=2 work=2
+  dispatching full lifecycle        app=apps-authentik-worker
+  dispatching full lifecycle        app=apps-authentik-server
+  lifecycle phase: EnsureContainer  app=apps-authentik-worker
+  lifecycle phase: PreStart         app=apps-authentik-server
+  operation recorder: phase failed  app=authentik phase=prestart SQLITE_BUSY
+  ```
+
+  This is item 5 firing, not a separate defect: `db.InitDB` sets
+  `PRAGMA busy_timeout=5000` with `db.Exec` on **one** pooled connection, so
+  every other connection has `busy_timeout=0` and fails immediately instead of
+  waiting for the lock. The recorder is the highest-frequency writer in the
+  system, so it is simply the first to lose. `recordOpPhase` logs and returns
+  (`operation_recorder.go:85`) — by design it must never change lifecycle
+  behavior, which also means nothing downstream notices: the row keeps whatever
+  write landed last, and since the operations row is *authoritative for failure
+  context*, the dashboard's diagnostic surface can show a phase that is stale or
+  not the one the drive actually reached, with no visible error. (Container nodes
+  frequently write the same phase value, so many of these losses are
+  value-identical — but each still takes the write lock, and where the nodes'
+  phases differ the surviving value is arbitrary.) The other half of item 5 is
+  worse and fully silent: `foreign_keys=OFF` on those same connections means
+  cascades stop firing and orphan `shares` / `user_app_positions` rows
+  accumulate with no log line at all. Fix scheduled as repayment PR 7 (pragmas
+  in the DSN).
 
 ## Open inventory (ranked)
 
@@ -146,7 +194,7 @@ Ranked by risk×cheapness. Severity is the review's, not a guess.
 | 2 | `SyncContainerState` nil-deref → process death | P1 | `orchestrator_containers.go:41-45` |
 | 3 | `MemoryCache` data race → unrecoverable fatal | P1 | `catalog/cache.go:12-14,26-34` |
 | 4 | Intent queue exits permanently on a stale token | P1 | `queue.go:34-38,75-114` |
-| 5 | SQLite pragmas applied per-call, not per-connection: FK cascades and `busy_timeout` are off on every pooled connection but one; tests mask it with `SetMaxOpenConns(1)`. **Observed live** during the PR 4 deploy: repeated `WARN operation recorder: … database is locked (5) (SQLITE_BUSY)` during a normal convergence pass | P1 | `db/db.go:29-39`; `testdb/testdb.go:29` |
+| 5 | SQLite pragmas applied per-call, not per-connection: FK cascades and `busy_timeout` are off on every pooled connection but one; tests mask it with `SetMaxOpenConns(1)`. **Observed live twice**: during the PR 4 deploy, and again 2026-09-19 on a post-PR-4 redeploy — `WARN operation recorder: … database is locked (5) (SQLITE_BUSY)` on a normal convergence pass, i.e. a phase advance is dropped with a log line as its only trace (see the silent-failure class above) | P1 | `db/db.go:29-39`; `testdb/testdb.go:29`; `operation_recorder.go:85` |
 | 6 | `appclient.Call.Timeout()` is a no-op and `WaitPolicy` has no consumers → declared 5-minute first-boot waits silently run on `DefaultRetry` (30 s) and land nodes in terminal ERROR | P1 | `appclient/call.go:31,119,382`; `retry.go:43-51`; `apps/immich/api.go:33-34`; `apps/affine/api.go:31-32,58-59` |
 | 7 | Home Assistant asset `SkipIf` compares the release tag to the manifest version (`"v1.2.1"` vs `"1.2.1"`, verified against the real artifact) → re-download and destructive container recreate on every full lifecycle pass | P1 | `apps/homeassistant/configurator.go:44,304-318`; `pkg/appasset/manifest.go:15-24` |
 | 8 | Container drift is never repaired at runtime: the store flips to `stopped` while the in-memory graph stays `RUNNING`, so `Reconcile` never re-drives; multi-container apps are skipped entirely | P1 | `orchestrator_containers.go:41-61`; `pipeline.go:664-670` |
