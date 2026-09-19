@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -158,12 +159,21 @@ func isDirectAgentRequest(r *http.Request, selfPort int) bool {
 	return err == nil && port == selfPort
 }
 
-// oauthBaseURL returns the base URL used for OAuth redirects: the base URL of
-// the host the browser used, but only when that host is one of the configured
-// hosts (port-insensitive). An unknown host falls back to the primary host, so a
-// request can never introduce a new redirect target. Returns "" when no host set
-// is configured — callers must then refuse rather than fall back to the
-// request's Host header.
+// oauthBaseURL returns the base URL used for OAuth redirects: the base URL the
+// browser used, but only when it is one of the URLs already registered with the
+// identity provider — hostset.AllBaseURLs, i.e. the configured hosts plus the
+// host's detected local IPs, which is exactly what initAuthHelper registers
+// (EnsureBloudOAuthApp). Anything else falls back to the primary host, so neither
+// the request nor a spoofed X-Forwarded-Host can introduce a redirect target.
+//
+// Matching the registered set rather than only the hostname list is what keeps
+// IP access working: the box's IPs are published as base URLs but are not
+// hostnames in the set, and bouncing an IP visitor to the primary host would
+// break login, because the OAuth state cookie is host-scoped — the callback would
+// arrive on a different host than the one that set it.
+//
+// Returns "" when no host set is configured; callers must then refuse rather than
+// fall back to the request's Host header.
 func (m *authModule) oauthBaseURL(r *http.Request) string {
 	if m.hosts == nil {
 		return ""
@@ -172,8 +182,17 @@ func (m *authModule) oauthBaseURL(r *http.Request) string {
 	if len(hs.Hosts()) == 0 {
 		return ""
 	}
-	if host := hostOnly(r.Host); host != "" && hs.Contains(host) {
-		return hs.BaseURLFor(host)
+
+	if host := hostOnly(r.Host); host != "" {
+		for _, base := range hs.AllBaseURLs() {
+			u, err := url.Parse(base)
+			if err != nil {
+				continue
+			}
+			if strings.EqualFold(u.Hostname(), host) {
+				return strings.TrimSuffix(base, "/")
+			}
+		}
 	}
 	return hs.PrimaryBaseURL()
 }

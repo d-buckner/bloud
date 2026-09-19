@@ -15,6 +15,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -266,4 +267,27 @@ func TestAuthModule_LogoutDoesNotRedirectToRequestSuppliedHost(t *testing.T) {
 
 	loc := w.Header().Get("Location")
 	require.NotContains(t, loc, "evil.example", "logout must not bounce through a request-supplied host")
+}
+
+// Reaching the UI by IP must keep working. initAuthHelper registers every base
+// URL in hostset.AllBaseURLs with the identity provider — including the host's
+// detected local IPs — so the login may use whichever one the browser used.
+// Falling back to the primary host instead breaks login, because the OAuth state
+// cookie is host-scoped: the callback would arrive on a different host than the
+// one that set it, and the state check would fail with "missing state cookie".
+func TestAuthModule_IPAccessKeepsTheRequestedBaseURL(t *testing.T) {
+	ips := netutil.DetectLocalIPs()
+	if len(ips) == 0 {
+		t.Skip("no non-loopback IPv4 on this host")
+	}
+	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
+
+	ip := ips[0]
+	req := httptest.NewRequest(http.MethodGet, "http://"+ip+":8080/auth/login", nil)
+	req.Host = ip + ":8080"
+	w := httptest.NewRecorder()
+	mod.LoginHandler()(w, req)
+
+	require.Equal(t, "http://"+ip+":8080/auth/callback", loginRedirectURI(t, w, nil),
+		"an IP published in the host set's base URLs must keep its own redirect URI")
 }
