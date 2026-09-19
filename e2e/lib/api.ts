@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
-// API calls go directly to the host-agent (loopback bypass, no auth needed).
+//
+// API calls go directly to the host-agent. Being loopback/trusted is a *scope*,
+// not a credential: admin calls must present the runtime's API token, which the
+// secrets manager writes next to secrets.json (host-agent-api-token).
+import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+
+const run = promisify(execFile);
+
 function delay(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -8,6 +18,37 @@ function delay(ms: number): Promise<void> {
 }
 
 const BASE_URL = process.env.BLOUD_API_URL ?? 'http://localhost:3000';
+
+/**
+ * Resolves the host-agent API token, in order of cost:
+ *   1. BLOUD_API_TOKEN, exported by `./bloud e2e …` and `./bloud e2e app`.
+ *   2. the runtime data dir, when a runner passed BLOUD_E2E_RUNTIME_DIR.
+ *   3. `./bloud token`, which reads it through the backend (dev VMs).
+ * Cached: the token does not change for the lifetime of a run.
+ */
+let tokenPromise: Promise<string> | undefined;
+function apiToken(): Promise<string> {
+  tokenPromise ??= (async () => {
+    if (process.env.BLOUD_API_TOKEN) return process.env.BLOUD_API_TOKEN;
+
+    const runtimeDir = process.env.BLOUD_E2E_RUNTIME_DIR;
+    if (runtimeDir) {
+      return (await readFile(join(runtimeDir, 'data', 'host-agent-api-token'), 'utf8')).trim();
+    }
+
+    const { stdout } = await run('../bloud', ['token']);
+    const token = stdout.trim();
+    if (!token) throw new Error('./bloud token produced no output');
+    return token;
+  })().catch((err: unknown) => {
+    tokenPromise = undefined; // let a later call retry with a clearer failure
+    throw new Error(
+      `host-agent API credential unavailable (set BLOUD_API_TOKEN, BLOUD_E2E_RUNTIME_DIR, ` +
+        `or run ./bloud token): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+  return tokenPromise;
+}
 
 interface InstalledApp {
   catalog_id: string;
@@ -26,7 +67,11 @@ async function getApp(name: string): Promise<InstalledApp | null> {
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${await apiToken()}`,
+      ...init?.headers,
+    },
   });
   if (!resp.ok) {
     throw new Error(`${init?.method ?? 'GET'} ${path} → ${resp.status}`);

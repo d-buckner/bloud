@@ -249,3 +249,15 @@ func TestIsAvailable(t *testing.T) {
 		})
 	}
 }
+
+// TestIsAvailable_NilClientIsUnavailable covers the typed-nil case: callers hold
+// this client behind an interface (api.AuthentikUserManagerInterface), where a
+// nil *Client is not a nil interface, so the nil-receiver method is reachable.
+// The public /api/setup/status handler does exactly that, so it must report
+// "unavailable" rather than panicking into a 500.
+func TestIsAvailable_NilClientIsUnavailable(t *testing.T) {
+	var c *Client
+	if c.IsAvailable(context.Background()) {
+		t.Fatal("a nil client must report unavailable")
+	}
+}

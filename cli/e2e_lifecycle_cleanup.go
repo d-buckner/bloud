@@ -37,7 +37,8 @@ func (r *lifecycle) collectLogs() {
 }
 
 func (r *lifecycle) cleanupRemoteDeployment() {
-	script := `curl -fsS -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null 2>&1 || true
+	script := `tok="$(cat ${3}/data/host-agent-api-token)"
+curl -fsS -X POST -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null 2>&1 || true
 podman rm -f apps-jellyfin >/dev/null 2>&1 || true
 systemctl --user disable --now "$1" >/dev/null 2>&1 || true
 rm -f "$2/.config/systemd/user/$1"
@@ -50,11 +51,12 @@ systemctl --user daemon-reload >/dev/null 2>&1 || true`
 	}
 }
 
-var remoteUninstallScript = `http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
+var remoteUninstallScript = `tok="$(cat ${1}/data/host-agent-api-token)"
+http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall)"
 printf 'uninstall response: %%s\n' "$http_code"
 test "$http_code" -ge 200 && test "$http_code" -lt 300
 deadline=$((SECONDS + 300))
-until ! curl -sS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'; do
+until ! curl -sS -H "Authorization: Bearer $tok" http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'; do
   if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin removal"; exit 1; fi
   sleep 2
 done

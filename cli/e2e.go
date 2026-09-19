@@ -50,7 +50,7 @@ func cmdE2E(args []string) int {
 	return 0
 }
 
-func runPlaywright(root, username, password string) error {
+func runPlaywright(root, username, password, apiToken string) error {
 	args := []string{"playwright", "test"}
 	if filter := os.Getenv("BLOUD_E2E_PLAYWRIGHT_FILTER"); filter != "" {
 		args = append(args, "--grep", filter)
@@ -69,6 +69,12 @@ func runPlaywright(root, username, password string) error {
 		"BLOUD_E2E_USERNAME="+username,
 		"BLOUD_E2E_PASSWORD="+password,
 	)
+	// The API helpers authenticate admin calls with the runtime credential. The
+	// caller reads it from the runtime it deployed (see lifecycle.apiTokenPath);
+	// e2e/lib/api.ts keeps its own fallback chain for manual runs.
+	if apiToken != "" {
+		env = append(env, "BLOUD_API_TOKEN="+apiToken)
+	}
 	cmd.Env = env
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run Playwright tests: %w", err)

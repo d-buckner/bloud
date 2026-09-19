@@ -239,7 +239,7 @@ func TestSettingsHTTP_DeleteTailnet_Valid(t *testing.T) {
 func TestSettingsHTTP_SetupStatus_NoUsers(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/setup/status", nil)
 	w := httptest.NewRecorder()
@@ -259,7 +259,7 @@ func TestSettingsHTTP_SetupStatus_AuthReadyReflectsSharedRef(t *testing.T) {
 	mod := newSettingsModule(t, &AuthConfig{})
 	mod.authConfig = ref
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	getAuthReady := func() bool {
 		req := httptest.NewRequest("GET", "/setup/status", nil)
@@ -284,7 +284,7 @@ func TestSettingsHTTP_SetupStatus_WithUsers(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	_ = mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	req := httptest.NewRequest("GET", "/setup/status", nil)
 	w := httptest.NewRecorder()
@@ -301,7 +301,7 @@ func TestSettingsHTTP_CreateFirstUser_AlreadySetup(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	_ = mod.prefsStore.(*FakePreferencesStore).EnsureUser("alice")
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
 	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
@@ -316,7 +316,7 @@ func TestSettingsHTTP_CreateFirstUser_NoAuthentik(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	mod.authentikClient = nil
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
 	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
@@ -330,7 +330,7 @@ func TestSettingsHTTP_CreateFirstUser_NoAuthentik(t *testing.T) {
 func TestSettingsHTTP_CreateFirstUser_InvalidUsername(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	body := `{"username":"ab","password":"password123"}`
 	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
@@ -344,7 +344,7 @@ func TestSettingsHTTP_CreateFirstUser_InvalidUsername(t *testing.T) {
 func TestSettingsHTTP_CreateFirstUser_ShortPassword(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	body := `{"username":"bob","password":"short"}`
 	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
@@ -359,7 +359,7 @@ func TestSettingsHTTP_CreateFirstUser_Success(t *testing.T) {
 	mod := newSettingsModule(t, nil)
 	fake := mod.authentikClient.(*FakeSettingsAuthentikClient)
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	body := `{"username":"admin","password":"securepass123"}`
 	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
@@ -388,7 +388,7 @@ func TestSettingsHTTP_CreateFirstUser_AdoptsExistingUser(t *testing.T) {
 	fake.userIDCounter++
 	fake.failCreateUsername = "admin"
 	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
+	NewSetupRouter(mod, r)
 
 	body := `{"username":"admin","password":"password"}`
 	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
@@ -627,8 +627,6 @@ func TestSettingsRouter_RegistersRoutes(t *testing.T) {
 		{"GET", "/settings/tailnet"},
 		{"POST", "/settings/tailnet"},
 		{"DELETE", "/settings/tailnet"},
-		{"GET", "/setup/status"},
-		{"POST", "/setup/create-user"},
 		{"GET", "/admin/users"},
 		{"POST", "/admin/users"},
 		{"DELETE", "/admin/users/alice"},
@@ -649,6 +647,46 @@ func TestSettingsRouter_RegistersRoutes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSetupRouter_IsSeparateFromAdminRouter pins the security split: the
+// bootstrap pair is public, and it is NOT also mounted on the admin router
+// (duplicate registration made the effective middleware depend on chi's
+// last-registration-wins order, which had silently made /setup/status admin-only
+// and broken first-run for every non-loopback client).
+func TestSetupRouter_IsSeparateFromAdminRouter(t *testing.T) {
+	mod := newSettingsModule(t, nil)
+
+	public := chi.NewRouter()
+	NewSetupRouter(mod, public)
+	admin := chi.NewRouter()
+	NewSettingsRouter(mod, admin)
+
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/setup/status"},
+		{"POST", "/setup/create-user"},
+	} {
+		t.Run("public "+route.path, func(t *testing.T) {
+			req := httptest.NewRequest(route.method, route.path, nil)
+			w := httptest.NewRecorder()
+			public.ServeHTTP(w, req)
+			assert.NotEqual(t, http.StatusNotFound, w.Code, "bootstrap route must be registered publicly")
+		})
+		t.Run("absent from admin router "+route.path, func(t *testing.T) {
+			req := httptest.NewRequest(route.method, route.path, nil)
+			w := httptest.NewRecorder()
+			admin.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusNotFound, w.Code,
+				"bootstrap route must not be registered a second time on the admin router")
+		})
+	}
+
+	t.Run("admin routes are absent from the public router", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/settings/hosts", nil)
+		w := httptest.NewRecorder()
+		public.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "the public bootstrap router must expose only the setup pair")
+	})
 }
 
 // ---- Interface contract ----

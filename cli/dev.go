@@ -401,7 +401,14 @@ func cmdUninstall(args []string) int {
 func installApp(apiPort int, appName string) int {
 	log(fmt.Sprintf("Installing %s...", appName))
 
-	curlCmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/install`, apiPort, appName)
+	token, err := readAPIToken(context.Background())
+	if err != nil {
+		errorf("Could not read the host-agent API token: %v", err)
+		return 1
+	}
+
+	curlCmd := fmt.Sprintf(`curl -s -X POST %s -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/install`,
+		authHeader(token), apiPort, appName)
 	output, err := LocalExec(curlCmd)
 	if err != nil {
 		errorf("Failed to call install API: %v", err)
@@ -600,7 +607,14 @@ func cmdDev() int {
 func uninstallApp(apiPort int, appName string) int {
 	log(fmt.Sprintf("Uninstalling %s...", appName))
 
-	curlCmd := fmt.Sprintf(`curl -s -X POST -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/uninstall`, apiPort, appName)
+	token, err := readAPIToken(context.Background())
+	if err != nil {
+		errorf("Could not read the host-agent API token: %v", err)
+		return 1
+	}
+
+	curlCmd := fmt.Sprintf(`curl -s -X POST %s -w "\n%%{http_code}" http://localhost:%d/api/apps/%s/uninstall`,
+		authHeader(token), apiPort, appName)
 	output, err := LocalExec(curlCmd)
 	if err != nil {
 		errorf("Failed to call uninstall API: %v", err)

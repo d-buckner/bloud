@@ -48,6 +48,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -175,6 +176,77 @@ func runCmd(t *testing.T, name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// --- Authenticated host-agent client ---
+
+// Admin API calls require a credential even from a trusted position (loopback /
+// BLOUD_TRUSTED_LOCAL_NETS): position is a scope, not a credential. The
+// credential is the runtime's API token, written by the secrets manager next to
+// secrets.json; these tests run inside the runtime, so they read it directly.
+type tokenTransport struct {
+	base  http.RoundTripper
+	token string
+}
+
+func (t tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(req.URL.String(), hostAgentURL) {
+		req = req.Clone(req.Context())
+		req.Header.Set("Authorization", "Bearer "+t.token)
+	}
+	return t.base.RoundTrip(req)
+}
+
+var agentClientOnce = sync.OnceValues(func() (*http.Client, error) {
+	token, err := readRuntimeAPIToken()
+	if err != nil {
+		return nil, err
+	}
+	return &http.Client{Transport: tokenTransport{base: http.DefaultTransport, token: token}}, nil
+})
+
+// agentClient returns a client that authenticates to the host-agent.
+func agentClient(t *testing.T) *http.Client {
+	t.Helper()
+	c, err := agentClientOnce()
+	if err != nil {
+		t.Fatalf("host-agent API credential unavailable: %v", err)
+	}
+	return c
+}
+
+// readRuntimeAPIToken reads the host-agent API token from the runtime data dir
+// (mirrors cli/executor.DataDirs.APITokenPath; the filename is pinned by
+// internal/secrets.TestAPITokenFileNameIsStable).
+func readRuntimeAPIToken() (string, error) {
+	path := filepath.Join(dataDir(), "host-agent-api-token")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("%s is empty", path)
+	}
+	return token, nil
+}
+
+func agentGet(t *testing.T, url string) *http.Response {
+	t.Helper()
+	resp, err := agentClient(t).Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	return resp
+}
+
+func agentPost(t *testing.T, url, contentType string, body io.Reader) *http.Response {
+	t.Helper()
+	resp, err := agentClient(t).Post(url, contentType, body)
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	return resp
+}
+
 // waitHTTP polls url until it returns 200 or the deadline passes.
 
 // waitHTTP polls url until it returns 200 or the deadline passes.
@@ -215,10 +287,7 @@ type installedApp struct {
 
 func getInstalledApps(t *testing.T) []installedApp {
 	t.Helper()
-	resp, err := http.Get(hostAgentURL + "/api/apps/installed")
-	if err != nil {
-		t.Fatalf("GET /api/apps/installed: %v", err)
-	}
+	resp := agentGet(t, hostAgentURL+"/api/apps/installed")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -309,7 +378,12 @@ func TestMain(m *testing.M) {
 }
 
 func fetchInstalled() ([]installedApp, error) {
-	resp, err := http.Get(hostAgentURL + "/api/apps/installed")
+	// Called from TestMain too, so it cannot depend on *testing.T.
+	client, err := agentClientOnce()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Get(hostAgentURL + "/api/apps/installed")
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +401,11 @@ func fetchInstalled() ([]installedApp, error) {
 }
 
 func postUninstall(catalogID string) error {
-	resp, err := http.Post(fmt.Sprintf("%s/api/apps/%s/uninstall", hostAgentURL, catalogID),
+	client, err := agentClientOnce()
+	if err != nil {
+		return err
+	}
+	resp, err := client.Post(fmt.Sprintf("%s/api/apps/%s/uninstall", hostAgentURL, catalogID),
 		"application/json", strings.NewReader(`{"clearData":true}`))
 	if err != nil {
 		return err
@@ -345,10 +423,7 @@ func postUninstall(catalogID string) error {
 // postJSON POSTs a JSON body and asserts the expected status code.
 func postJSON(t *testing.T, url string, body string, wantStatus int) {
 	t.Helper()
-	resp, err := http.Post(url, "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST %s: %v", url, err)
-	}
+	resp := agentPost(t, url, "application/json", strings.NewReader(body))
 	defer resp.Body.Close()
 	if resp.StatusCode != wantStatus {
 		data, _ := io.ReadAll(resp.Body)

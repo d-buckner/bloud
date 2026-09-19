@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"github.com/go-chi/chi/v5"
@@ -92,10 +92,14 @@ func (r *authConfigRef) Ensure() {
 	}
 }
 
-// isLocalRequest returns true if the request originates from localhost.
-// Requests from localhost have implicit CLI-level trust. trustedNets lists
-// additional CIDRs/IPs treated as local (e.g. a dev VM's slirp NAT gateway,
-// where host-forwarded connections arrive from a non-loopback source).
+// isLocalRequest reports whether the request's source address is a trusted
+// position: loopback, or an address in trustedNets (e.g. a dev VM's slirp NAT
+// gateway, where host-forwarded connections arrive from a non-loopback source).
+//
+// This is a *scope*, not an authorization decision. It says where the API token
+// is accepted, never that the caller is trusted. The address is the real TCP
+// peer address: host-agent deliberately does not run middleware.RealIP, because
+// letting a header rewrite RemoteAddr made this check forgeable.
 func isLocalRequest(r *http.Request, trustedNets []string) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -131,10 +135,12 @@ func getUserFromContext(ctx context.Context) *store.User {
 	return user
 }
 
+// requestHost returns the request's Host header.
+//
+// Deliberately not X-Forwarded-Host: that header is client-controlled
+// (Traefik forwards it verbatim with forwardedHeaders.insecure), and the value
+// used to become an OAuth redirect URI registered in the identity provider.
 func requestHost(r *http.Request) string {
-	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
-		return fwdHost
-	}
 	return r.Host
 }
 
@@ -152,21 +158,32 @@ func isDirectAgentRequest(r *http.Request, selfPort int) bool {
 	return err == nil && port == selfPort
 }
 
-// requestBaseURL derives the base URL (scheme + host) from the incoming request.
-func requestBaseURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
+// oauthBaseURL returns the base URL used for OAuth redirects: the base URL of
+// the host the browser used, but only when that host is one of the configured
+// hosts (port-insensitive). An unknown host falls back to the primary host, so a
+// request can never introduce a new redirect target. Returns "" when no host set
+// is configured — callers must then refuse rather than fall back to the
+// request's Host header.
+func (m *authModule) oauthBaseURL(r *http.Request) string {
+	if m.hosts == nil {
+		return ""
 	}
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
+	hs := m.hosts.Get()
+	if len(hs.Hosts()) == 0 {
+		return ""
 	}
+	if host := hostOnly(r.Host); host != "" && hs.Contains(host) {
+		return hs.BaseURLFor(host)
+	}
+	return hs.PrimaryBaseURL()
+}
 
-	u := &url.URL{
-		Scheme: scheme,
-		Host:   requestHost(r),
+// hostOnly returns the hostname of a Host header, dropping any port.
+func hostOnly(hostHeader string) string {
+	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+		return h
 	}
-	return u.String()
+	return hostHeader
 }
 
 // generateState creates a cryptographically secure random state parameter.
@@ -190,7 +207,6 @@ type sessionStoreInterface interface {
 // mock it in tests.
 type AuthentikClientInterface interface {
 	IsAvailable(ctx context.Context) bool
-	AddRedirectURI(ctx context.Context, providerID int, uri string) error
 	EnsureBloudOAuthApp(ctx context.Context, baseURLs []string, clientSecret string) (*authentik.OIDCConfig, error)
 	ExchangeCode(ctx context.Context, code, redirectURI, clientID, clientSecret string) (*authentik.TokenResponse, error)
 	GetUserInfo(ctx context.Context, accessToken string) (*authentik.UserInfo, error)
@@ -234,11 +250,6 @@ func NewFakeAuthentikClient() *FakeAuthentikClient {
 }
 
 func (f *FakeAuthentikClient) IsAvailable(ctx context.Context) bool { return f.available }
-
-func (f *FakeAuthentikClient) AddRedirectURI(ctx context.Context, providerID int, uri string) error {
-	f.redirectURIs[providerID] = append(f.redirectURIs[providerID], uri)
-	return nil
-}
 
 func (f *FakeAuthentikClient) EnsureBloudOAuthApp(ctx context.Context, baseURLs []string, clientSecret string) (*authentik.OIDCConfig, error) {
 	f.oauthAppBaseURLs = append(f.oauthAppBaseURLs, baseURLs)
@@ -291,17 +302,28 @@ func (f *fakeSessionStore) Delete(sessionID string) error {
 }
 
 type authModule struct {
-	authentikClient   AuthentikClientInterface
-	authConfig        *authConfigRef
-	prefsStore        store.PreferencesStoreInterface
-	sessionStore      sessionStoreInterface
-	logger            *slog.Logger
-	selfPort          int
-	knownRedirectURIs sync.Map // tracks redirect URIs already registered in Authentik
+	authentikClient AuthentikClientInterface
+	authConfig      *authConfigRef
+	prefsStore      store.PreferencesStoreInterface
+	sessionStore    sessionStoreInterface
+	logger          *slog.Logger
+	selfPort        int
+	// hosts is the live host set (built-ins + admin custom hosts). OAuth
+	// redirect and logout URLs are derived from it, never from the request:
+	// LoginHandler registers those URLs in the identity provider, so honouring
+	// a request header let any caller add redirect URIs to the OAuth client.
+	//
+	// There is deliberately no second URL source here (e.g. BLOUD_SSO_BASE_URL):
+	// hostset.Resolve already seeds that env var into the set as a per-host URL
+	// override, and duplicating it would give one URL two owners.
+	hosts *hostset.State
 }
 
 // NewAuthModule creates a new AuthModule. selfPort is host-agent's own bind
-// port (0 disables the direct-access check, e.g. in tests).
+// port (0 disables the direct-access check, e.g. in tests). hosts supplies the
+// OAuth base URL; nil (or an empty host set) means auth is unconfigured, and the
+// login/callback handlers refuse to build a URL rather than falling back to the
+// request's Host header.
 func NewAuthModule(
 	client AuthentikClientInterface,
 	cfg *authConfigRef,
@@ -309,6 +331,7 @@ func NewAuthModule(
 	sessStore sessionStoreInterface,
 	logger *slog.Logger,
 	selfPort int,
+	hosts *hostset.State,
 ) *authModule {
 	return &authModule{
 		authentikClient: client,
@@ -317,6 +340,7 @@ func NewAuthModule(
 		sessionStore:    sessStore,
 		logger:          logger,
 		selfPort:        selfPort,
+		hosts:           hosts,
 	}
 }
 
@@ -361,20 +385,18 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 			SameSite: http.SameSiteLaxMode,
 		})
 
-		baseURL := requestBaseURL(r)
-		redirectURI := baseURL + "/auth/callback"
-
-		// Lazily register this redirect URI in Authentik if we haven't seen this host before.
-		if _, known := m.knownRedirectURIs.Load(redirectURI); !known {
-			if m.authentikClient != nil && cfg.OIDCConfig.ProviderID > 0 {
-				if err := m.authentikClient.AddRedirectURI(r.Context(), cfg.OIDCConfig.ProviderID, redirectURI); err != nil {
-					m.logger.Warn("failed to register redirect URI lazily", "uri", redirectURI, "error", err)
-				} else {
-					m.logger.Info("lazily registered redirect URI", "uri", redirectURI)
-				}
-				m.knownRedirectURIs.Store(redirectURI, true)
-			}
+		baseURL := m.oauthBaseURL(r)
+		if baseURL == "" {
+			m.logger.Error("cannot build OAuth redirect URI: no host set or SSO base URL configured")
+			http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
+			return
 		}
+		// Redirect URIs are registered for every configured host up front
+		// (initAuthHelper → EnsureBloudOAuthApp). Nothing is registered from a
+		// request: an unauthenticated caller must not be able to widen the OAuth
+		// client's redirect-URI allowlist, which is what the previous lazy
+		// AddRedirectURI call allowed via a spoofed Host/X-Forwarded-Host.
+		redirectURI := baseURL + "/auth/callback"
 
 		authURL, err := url.Parse(baseURL + cfg.OIDCConfig.AuthURL)
 		if err != nil {
@@ -446,7 +468,13 @@ func (m *authModule) CallbackHandler() http.HandlerFunc {
 			return
 		}
 
-		redirectURI := requestBaseURL(r) + "/auth/callback"
+		baseURL := m.oauthBaseURL(r)
+		if baseURL == "" {
+			m.logger.Error("cannot build OAuth redirect URI: no host set or SSO base URL configured")
+			http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
+			return
+		}
+		redirectURI := baseURL + "/auth/callback"
 
 		tokenResp, err := m.authentikClient.ExchangeCode(
 			r.Context(),
@@ -531,8 +559,8 @@ func (m *authModule) LogoutHandler() http.HandlerFunc {
 
 		// Redirect to Authentik's native invalidation flow to end the SSO session.
 		cfg := m.getAuthConfig()
-		if cfg != nil && cfg.OIDCConfig != nil {
-			baseURL := requestBaseURL(r)
+		if cfg != nil && cfg.OIDCConfig != nil && m.oauthBaseURL(r) != "" {
+			baseURL := m.oauthBaseURL(r)
 			logoutURL := baseURL + "/if/flow/default-invalidation-flow/?redirect=" + url.QueryEscape(baseURL+"/")
 			http.Redirect(w, r, logoutURL, http.StatusFound)
 			return

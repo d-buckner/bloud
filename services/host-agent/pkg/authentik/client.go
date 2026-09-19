@@ -173,8 +173,15 @@ func (c *Client) DeleteAppSSO(ctx context.Context, appName, displayName, ssoStra
 	return nil
 }
 
-// IsAvailable checks if Authentik is available and the token is valid
+// IsAvailable checks if Authentik is available and the token is valid.
+//
+// A nil client reports unavailable. Callers hold this type behind an interface
+// (api.AuthentikUserManagerInterface), where a nil *Client is not a nil
+// interface — so the guard must live here rather than only at call sites.
 func (c *Client) IsAvailable(ctx context.Context) bool {
+	if c == nil || c.cl == nil {
+		return false
+	}
 	_, err := c.cl.GET("/api/v3/core/applications/").Do(ctx)
 	return err == nil
 }
@@ -1234,47 +1241,6 @@ func (c *Client) createBloudOAuth2Provider(ctx context.Context, redirectURIs []s
 	return result.PK, nil
 }
 
-// AddRedirectURI adds a redirect URI to an OAuth2 provider if it's not already registered.
-// This is called lazily on first request from an unknown host.
-func (c *Client) AddRedirectURI(ctx context.Context, providerID int, redirectURI string) error {
-	// Fetch current provider to get existing redirect URIs
-	reqPath := fmt.Sprintf("/api/v3/providers/oauth2/%d/", providerID)
-	var provider struct {
-		RedirectURIs []struct {
-			MatchingMode string `json:"matching_mode"`
-			URL          string `json:"url"`
-		} `json:"redirect_uris"`
-	}
-	if err := c.cl.GET(reqPath).OK(http.StatusOK).DoInto(ctx, &provider); err != nil {
-		return fmt.Errorf("fetching provider: %w", err)
-	}
-
-	// Check if already registered
-	for _, uri := range provider.RedirectURIs {
-		if uri.URL == redirectURI {
-			return nil // Already registered
-		}
-	}
-
-	// Build updated list with new URI appended
-	var uriEntries []map[string]string
-	for _, uri := range provider.RedirectURIs {
-		uriEntries = append(uriEntries, map[string]string{
-			"matching_mode": uri.MatchingMode,
-			"url":           uri.URL,
-		})
-	}
-	uriEntries = append(uriEntries, map[string]string{
-		"matching_mode": "strict",
-		"url":           redirectURI,
-	})
-
-	if err := c.cl.PATCH(reqPath).JSON(map[string]interface{}{"redirect_uris": uriEntries}).OK(http.StatusOK).Exec(ctx); err != nil {
-		return fmt.Errorf("patching redirect URIs: %w", err)
-	}
-
-	return nil
-}
 
 // updateBloudOAuth2ProviderRedirectURIs patches the redirect URIs on an existing provider
 func (c *Client) updateBloudOAuth2ProviderRedirectURIs(ctx context.Context, providerID int, redirectURIs []string) error {

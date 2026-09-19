@@ -303,6 +303,16 @@ func (m *settingsModule) SetupStatusHandler() http.HandlerFunc {
 
 // authentikClientIsAvailable checks whether the Authentik client is ready.
 func (m *settingsModule) authentikClientIsAvailable(ctx context.Context, client AuthentikUserManagerInterface) bool {
+	if client == nil {
+		return false
+	}
+	// A nil *authentik.Client stored in this interface is not a nil interface,
+	// so the assertion below would succeed and call a nil receiver. Public
+	// handlers reach this path before setup completes, where no Authentik client
+	// exists yet — return false instead of panicking.
+	if c, ok := client.(*authentik.Client); ok && c == nil {
+		return false
+	}
 	if ac, ok := client.(interface{ IsAvailable(context.Context) bool }); ok {
 		return ac.IsAvailable(ctx)
 	}
@@ -634,7 +644,19 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 
 // ---- Router ----
 
-// NewSettingsRouter registers all settings-related routes on the given router.
+// NewSetupRouter registers the first-run bootstrap routes. They MUST be public:
+// before setup completes there is no user, so no admin can exist to authorize
+// them. They are self-limiting instead — CreateFirstUserHandler refuses once any
+// user exists (409), which is what makes unauthenticated registration safe.
+func NewSetupRouter(mod *settingsModule, r chi.Router) {
+	r.Get("/setup/status", mod.SetupStatusHandler())
+	r.Post("/setup/create-user", mod.CreateFirstUserHandler())
+}
+
+// NewSettingsRouter registers the admin-only settings surface. Bootstrap routes
+// deliberately live in NewSetupRouter (public) rather than here: registering the
+// same pattern on two routers leaves the effective middleware up to chi's
+// last-registration-wins order.
 func NewSettingsRouter(mod *settingsModule, r chi.Router) {
 	r.Get("/settings/hosts", mod.GetHostsHandler())
 	r.Put("/settings/hosts", mod.SetHostsHandler())
@@ -642,9 +664,6 @@ func NewSettingsRouter(mod *settingsModule, r chi.Router) {
 	r.Get("/settings/tailnet", mod.GetTailnetHandler())
 	r.Post("/settings/tailnet", mod.SetTailnetHandler())
 	r.Delete("/settings/tailnet", mod.DeleteTailnetHandler())
-
-	r.Get("/setup/status", mod.SetupStatusHandler())
-	r.Post("/setup/create-user", mod.CreateFirstUserHandler())
 
 	r.Get("/admin/users", mod.ListUsersHandler())
 	r.Post("/admin/users", mod.CreateManagedUserHandler())

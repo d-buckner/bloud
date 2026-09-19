@@ -276,7 +276,9 @@ func (m *appsModule) IconHandler() http.HandlerFunc {
 	}
 }
 
-// NewAppsRouter registers all app-related routes on the given router.
+// NewAppsRouter registers all app-related routes on the given router. It is
+// mounted on the member router; admin-only app routes (refresh-catalog) are
+// registered by the caller on the admin router so the two sets cannot collide.
 func NewAppsRouter(mod *appsModule, r chi.Router) {
 	r.Get("/apps", mod.GetCatalogHandler())
 	r.Get("/apps/installed", mod.GetInstalledHandler())
@@ -285,7 +287,6 @@ func NewAppsRouter(mod *appsModule, r chi.Router) {
 	r.Post("/apps/{name}/install", mod.InstallHandler())
 	r.Post("/apps/{name}/uninstall", mod.UninstallHandler())
 	r.Patch("/apps/{name}/rename", mod.RenameHandler())
-	r.Post("/apps/refresh-catalog", mod.RefreshCatalogHandler())
 }
 
 // GetCatalogHandler returns all user-facing apps from the catalog.

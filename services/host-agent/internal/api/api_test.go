@@ -26,6 +26,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// testAPIToken is the credential the test servers accept from a trusted
+// position. Production reads it from the secrets manager under
+// BLOUD_DATA_DIR; tests pin it so the CLI-equivalent request path (position +
+// bearer token) is exercised rather than bypassed.
+const testAPIToken = "test-api-token"
+
 // FakeAppStore implements store.AppStoreInterface and appStoreHelper for testing.
 type FakeAppStore struct {
 	mu       sync.RWMutex
@@ -444,6 +450,7 @@ tags:
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	// Create a fake catalog cache with the test app
@@ -544,6 +551,14 @@ func initTestDB(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS user_preferences (
 			username TEXT PRIMARY KEY
 		)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id         TEXT PRIMARY KEY,
+			user_id    TEXT NOT NULL,
+			username   TEXT NOT NULL,
+			role       TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL
+		)`,
 	}
 	for _, tbl := range tables {
 		if _, err := db.Exec(tbl); err != nil {
@@ -574,6 +589,7 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -658,6 +674,7 @@ tags:
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -687,7 +704,10 @@ tags:
 }
 
 // serverRequest is a test helper that sends an HTTP request to the test server.
-// If noAuth is true, the request will not be treated as a local request (no auto-auth).
+// If noAuth is true, the request will not be authenticated at all.
+//
+// Trusted position alone is not a credential (PR 4): to act as the CLI the
+// request must also present the configured API token, exactly like ./bloud does.
 func serverRequest(t *testing.T, server *Server, method, path string, body *strings.Reader, noAuth ...bool) *httptest.ResponseRecorder {
 	t.Helper()
 	var req *http.Request
@@ -697,9 +717,10 @@ func serverRequest(t *testing.T, server *Server, method, path string, body *stri
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
-	// Simulate localhost request for auth middleware to auto-authenticate as admin
+	// Simulate a CLI request: trusted position plus the API token.
 	if len(noAuth) == 0 || !noAuth[0] {
 		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	}
 	w := httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)

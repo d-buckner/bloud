@@ -9,17 +9,18 @@ import ()
 // browser flow (unless --host-only) to prove the lifecycle survives restarts.
 func (r *lifecycle) verifyAfterRestart() error {
 	r.step("Restarting Jellyfin and host-agent")
-	if err := r.remoteRun(remoteRestartScript, lifecycleHostAgentUnit); err != nil {
+	if err := r.remoteRun(remoteRestartScript, lifecycleHostAgentUnit, r.cfg.remoteDir); err != nil {
 		return err
 	}
 	if !r.cfg.hostOnly {
 		r.step("Verifying browser flow after service restarts")
-		return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password)
+		return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password, r.apiTokenBestEffort())
 	}
 	return nil
 }
 
-var remoteRestartScript = `podman restart apps-jellyfin
+var remoteRestartScript = `tok="$(cat ${2}/data/host-agent-api-token)"
+podman restart apps-jellyfin
 deadline=$((SECONDS + 300))
 until curl -fsS http://localhost:8096/health >/dev/null; do
   if ((SECONDS >= deadline)); then exit 1; fi
@@ -32,4 +33,4 @@ until curl -fsS http://localhost:3000/api/health >/dev/null; do
   sleep 2
 done
 test "$(podman inspect -f '{{ .State.Running }}' apps-jellyfin)" = true
-curl -fsS http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'`
+curl -fsS -H "Authorization: Bearer $tok" http://localhost:3000/api/apps/installed | grep -q '"catalog_id":"jellyfin"'`

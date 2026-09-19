@@ -351,28 +351,37 @@ postgres, compose service naming, no graph ordering).
 cleanup assertions). The Playwright suite (`e2e/tests/*.spec.ts`) remains the
 mandatory regression gate for changes to install/reconcile behavior.
 
-## Known debt (re-verified 2026-09-17)
+## Known debt (re-verified 2026-09-19)
 
 The ledger is the source of truth; the notes below are a pointer, not a
 mirror. Full backend-debt ledger with the repayment plan:
 [`docs/operations/tech-debt.md`](docs/operations/tech-debt.md). Top open
-items: route-generation side effects (gateway startup + remote proxy
-reconciliation inside `RegenerateRoutes`), credentialless loopback admin,
-duplicated orchestrator wiring (CLI vs router). Recently paid: durable
-lifecycle operation state (`store/operations.go` + orchestrator recorder,
-plan archived) and versioned schema migrations including the
-`user_app_positions` fork fix. Review findings:
-[`docs/specs/review.md`](docs/specs/review.md) (e.g. §C2 in-memory
-`MapRepository`, which the 2026-09-16 re-audit reframes: HKDF-derived
-credentials make restart reconstruction work, so only ERROR-terminal
-semantics is lost. §C1's inert install path is fixed: the router wires the
-catalog graph). Highlights:
+items: the **auth bypass is remotely forgeable**, not just a local-process
+concern (`middleware.RealIP` + Traefik `forwardedHeaders.insecure: true` +
+loopback=admin), so a single `True-Client-IP: 127.0.0.1` header grants admin —
+that is the shipping blocker; the engine's silent-failure paths (catalog
+nil-deref, lock-free `MemoryCache`, an intent queue that can exit permanently);
+per-connection SQLite pragmas; `appclient.Call.Timeout` being a no-op; container
+drift never repaired while the process is alive; duplicated orchestrator wiring
+(CLI vs router). Recently paid: durable lifecycle operation state
+(`store/operations.go` + orchestrator recorder, plan archived), versioned schema
+migrations, and route-generation purity (PR #88). Two earlier claims are
+corrected in the ledger: the `user_app_positions` fork fix is a no-op (the grid
+shape already existed), and the derived OAuth client secret *is* currently
+persisted. Review findings:
+[`docs/specs/review.md`](docs/specs/review.md) and the newer
+[`docs/specs/review-2026-09-19.md`](docs/specs/review-2026-09-19.md) (e.g. §C2
+in-memory `MapRepository`, which the 2026-09-16 re-audit reframes:
+HKDF-derived credentials make restart reconstruction work, so only
+ERROR-terminal semantics is lost. §C1's inert install path is fixed: the router
+wires the catalog graph). Highlights:
 
 - Sharing/guest API handlers write stores directly: a deliberate, documented
   boundary (pure store writes, synchronous invite tokens), not intent-queue drift.
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
   is fallible with no static fallback (env > `secrets.json` > error). Still open:
-  loopback requests are granted admin without a credential.
+  one literal fallback survives in `sso.DeriveSecret`, and loopback requests are
+  granted admin — and that rule is forgeable from any client (see above).
 - Keep the `apps:` registry in `validation.yaml` in sync with `apps/` when apps
   are added/removed (the changed tier infers affected apps from it).
 
@@ -399,5 +408,6 @@ to the right doc — when a doc moves, update it in both places.
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 | Backend debt + repayment plan | [operations/tech-debt.md](docs/operations/tech-debt.md) |
 | Sharing/federation (in progress) | [features/sharing.md](docs/features/sharing.md) |
-| Dated review findings | [specs/review.md](docs/specs/review.md) |
+| Dated review findings|[specs/review.md](docs/specs/review.md)|
+| Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|
 | In-flight designs | [plans/](docs/plans/) |

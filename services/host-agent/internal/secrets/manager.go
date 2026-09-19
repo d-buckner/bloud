@@ -40,6 +40,11 @@ type Secrets struct {
 	// Master secret for deriving per-app OAuth client secrets
 	SSOHostSecret string `json:"ssoHostSecret"`
 
+	// APIToken is the bearer credential for the admin API surface from a
+	// trusted position (loopback / BLOUD_TRUSTED_LOCAL_NETS). It is the
+	// CLI's and e2e's credential; browsers use sessions instead.
+	APIToken string `json:"apiToken"`
+
 	// Per-app secrets (generated during install)
 	AppSecrets map[string]AppSecrets `json:"appSecrets,omitempty"`
 }
@@ -55,6 +60,15 @@ type AppSecrets struct {
 	// App-specific database password (if different from shared postgres)
 	DatabasePassword string `json:"databasePassword,omitempty"`
 }
+
+// APITokenFileName is the standalone file (owner-only, next to secrets.json)
+// holding APIToken: the host-agent's own admin credential. The CLI and e2e
+// helpers read it directly so they never have to parse secrets.json.
+//
+// Deliberately not "api-token": <dataDir>/authentik/api-token already holds the
+// *Authentik* API token, and two credentials one directory apart should not
+// share a name.
+const APITokenFileName = "host-agent-api-token"
 
 // NewManager creates a new secrets manager that uses the given file path.
 func NewManager(path string) *Manager {
@@ -119,6 +133,10 @@ func (m *Manager) Load() error {
 		secrets.SSOHostSecret = generateSecret(64)
 		updated = true
 	}
+	if secrets.APIToken == "" {
+		secrets.APIToken = generateSecret(48)
+		updated = true
+	}
 
 	m.secrets = &secrets
 
@@ -140,6 +158,7 @@ func (m *Manager) generateAndSave() error {
 		LDAPOutpostToken:           generateSecret(48),
 		LDAPBindPassword:           generateSecret(32),
 		SSOHostSecret:              generateSecret(64),
+		APIToken:                   generateSecret(48),
 		AppSecrets:                 make(map[string]AppSecrets),
 	}
 
@@ -162,6 +181,13 @@ func (m *Manager) saveLocked() error {
 	// Write JSON with restrictive permissions (owner read/write only)
 	if err := os.WriteFile(m.path, data, 0600); err != nil {
 		return fmt.Errorf("writing secrets file: %w", err)
+	}
+
+	// Write the API token as a standalone owner-only file. The CLI reads it with
+	// a plain `cat` inside the guest, so it never has to parse secrets.json or
+	// carry the other secrets around.
+	if err := os.WriteFile(filepath.Join(dir, APITokenFileName), []byte(m.secrets.APIToken+"\n"), 0600); err != nil {
+		return fmt.Errorf("writing api token file: %w", err)
 	}
 
 	// Write environment files consumed by app containers
@@ -301,6 +327,8 @@ func (m *Manager) Get(name string) string {
 		return m.secrets.LDAPBindPassword
 	case "ssoHostSecret":
 		return m.secrets.SSOHostSecret
+	case "apiToken":
+		return m.secrets.APIToken
 	default:
 		return ""
 	}
@@ -339,6 +367,11 @@ func (m *Manager) GetLDAPBindPassword() string {
 // GetSSOHostSecret returns the master secret for OAuth client secret derivation.
 func (m *Manager) GetSSOHostSecret() string {
 	return m.Get("ssoHostSecret")
+}
+
+// GetAPIToken returns the admin API bearer credential.
+func (m *Manager) GetAPIToken() string {
+	return m.Get("apiToken")
 }
 
 // GetAppSecret returns a specific secret for an app.
