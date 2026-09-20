@@ -15,6 +15,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Backend debt + repayment plan | [operations/tech-debt.md](operations/tech-debt.md) |
 | Sharing/federation (in progress) | [features/sharing.md](features/sharing.md) |
 | Dated review findings | [specs/review.md](specs/review.md) |
+| Latest architecture/code review (2026-09-19) | [specs/review-2026-09-19.md](specs/review-2026-09-19.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections
