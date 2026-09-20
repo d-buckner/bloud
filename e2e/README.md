@@ -6,19 +6,19 @@ already-provisioned Bloud host.
 ## Tests
 
 Each app spec is a behavior ladder: one test case per observable stage,
-declared via `describeApp` (`lib/app-suite.ts`) — a real `test.describe`
+declared via `describeApp` (`lib/app-suite.ts`): a real `test.describe`
 that supplies a shared authenticated page and runs the block serially, so
 the first failed case skips the rest and the report names the stage that
 broke. Convergence runs as a named first case (`converges to running`);
 only the sign-in case is app-specific (`jellyfin.spec.ts` is the
 reference).
 
-- **Jellyfin** — converges to running, appears in catalog/home, opens from
+- **Jellyfin**: converges to running, appears in catalog/home, opens from
   the home tile, and logs in via LDAP to reach the dashboard.
-- **Navidrome** — converges to running, appears in catalog/home, is gated by
+- **Navidrome**: converges to running, appears in catalog/home, is gated by
   forward-auth (the popup lands on the Authentik prompt), then completes that
   login and verifies the Navidrome UI renders.
-- **Immich** — completes the native-oidc SSO round-trip (auto-launched from
+- **Immich**: completes the native-oidc SSO round-trip (auto-launched from
   the login page), walks first-login onboarding, and verifies the photos
   page renders.
 
@@ -57,7 +57,7 @@ install/verify/uninstall cycle.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BLOUD_URL` | `http://localhost:8080` | Public ingress (Traefik) — browser tests go through this port |
+| `BLOUD_URL` | `http://localhost:8080` | Public ingress (Traefik): browser tests go through this port |
 | `BLOUD_API_URL` | `http://localhost:3000` | Internal host-agent API used by the test helpers |
 | `BLOUD_E2E_USERNAME` | `e2etest` | Authentik test user |
 | `BLOUD_E2E_PASSWORD` | `e2etest123` | Authentik test password |

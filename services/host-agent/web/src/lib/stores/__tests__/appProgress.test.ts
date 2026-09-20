@@ -89,12 +89,12 @@ describe('mergePullEvent', () => {
 		let m = mergeNodeEvent({}, node('jellyfin', 'apps-jellyfin', 'queued'), NOW);
 		m = mergePullEvent(
 			m,
-			{ app: 'jellyfin', image: 'jellyfin:10', phase: 'pulling', percent: 34, detail: '34% — 340.0 MiB of 1.0 GiB' },
+			{ app: 'jellyfin', image: 'jellyfin:10', phase: 'pulling', percent: 34, detail: '34% (340.0 MiB of 1.0 GiB)' },
 			NOW + 100
 		);
 		expect(m.jellyfin.phase).toBe('pulling');
 		expect(m.jellyfin.percent).toBe(34);
-		expect(m.jellyfin.phaseDetail).toBe('34% — 340.0 MiB of 1.0 GiB');
+		expect(m.jellyfin.phaseDetail).toBe('34% (340.0 MiB of 1.0 GiB)');
 	});
 
 	it('does not regress a later phase back to pulling', () => {
@@ -106,7 +106,7 @@ describe('mergePullEvent', () => {
 	it('clears the detail on done so the progress bar hides', () => {
 		let m = mergePullEvent(
 			{},
-			{ app: 'jellyfin', image: 'jellyfin:10', phase: 'pulling', percent: 100, detail: '100% — …' },
+			{ app: 'jellyfin', image: 'jellyfin:10', phase: 'pulling', percent: 100, detail: '100% (…)' },
 			NOW
 		);
 		m = mergePullEvent(m, { app: 'jellyfin', image: 'jellyfin:10', phase: 'done' }, NOW + 100);

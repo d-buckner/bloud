@@ -16,13 +16,13 @@ import (
 )
 
 // Client provides access to the Authentik API. It wraps a single
-// *appclient.Client — one appclient spec carries the base URL, the
+// *appclient.Client: one appclient spec carries the base URL, the
 // management-token bearer, the Accept header, and the (single-shot)
-// retry/timeout policy — so every method below reads as declared intent
+// retry/timeout policy, so every method below reads as declared intent
 // over a shared transport instead of hand-rolling http.NewRequest.
 type Client struct {
 	baseURL     string
-	cl        *appclient.Client
+	cl          *appclient.Client
 	emailDomain string
 }
 
@@ -90,7 +90,7 @@ type PaginatedResponse struct {
 // DeleteApplication deletes an Authentik application by slug
 func (c *Client) DeleteApplication(ctx context.Context, slug string) error {
 	// 204 No Content = success, 404 = already deleted (acceptable)
-	return c.cl.DELETE("/api/v3/core/applications/" + url.PathEscape(slug) + "/").
+	return c.cl.DELETE("/api/v3/core/applications/"+url.PathEscape(slug)+"/").
 		OK(http.StatusNoContent, http.StatusNotFound).
 		Exec(ctx)
 }
@@ -177,7 +177,7 @@ func (c *Client) DeleteAppSSO(ctx context.Context, appName, displayName, ssoStra
 //
 // A nil client reports unavailable. Callers hold this type behind an interface
 // (api.AuthentikUserManagerInterface), where a nil *Client is not a nil
-// interface — so the guard must live here rather than only at call sites.
+// interface, so the guard must live here rather than only at call sites.
 func (c *Client) IsAvailable(ctx context.Context) bool {
 	if c == nil || c.cl == nil {
 		return false
@@ -254,7 +254,7 @@ func (c *Client) findEmbeddedOutpost(ctx context.Context) (*OutpostResponse, err
 
 // EnsureEmbeddedOutpostHost sets the authentik_host config on the embedded outpost so the
 // embedded outpost generates browser-accessible authorize redirect URLs (e.g. via Traefik)
-// rather than the server's internal bind address. Safe to call repeatedly — only patches
+// rather than the server's internal bind address. Safe to call repeatedly: only patches
 // when the value differs.
 func (c *Client) EnsureEmbeddedOutpostHost(ctx context.Context, baseURL string) error {
 	outpost, err := c.findEmbeddedOutpost(ctx)
@@ -296,7 +296,7 @@ func (c *Client) EnsureEmbeddedOutpostHost(ctx context.Context, baseURL string) 
 
 // updateOutpostProviders updates the providers list for an outpost
 func (c *Client) updateOutpostProviders(ctx context.Context, outpostPK string, providers []int) error {
-	return c.cl.PATCH("/api/v3/outposts/instances/"+outpostPK+"/").
+	return c.cl.PATCH("/api/v3/outposts/instances/" + outpostPK + "/").
 		JSON(map[string]interface{}{"providers": providers}).
 		OK(http.StatusOK).
 		Exec(ctx)
@@ -348,7 +348,7 @@ func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword 
 	}
 
 	// 6. Set the service account's password for LDAP direct bind.
-	// The app_password token alone is not sufficient — Authentik's LDAP outpost
+	// The app_password token alone is not sufficient: Authentik's LDAP outpost
 	// in direct bind mode requires the user's actual password.
 	if err := c.setUserPassword(ctx, serviceAccountID, ldapBindPassword); err != nil {
 		return fmt.Errorf("setting service account password: %w", err)
@@ -417,7 +417,7 @@ func (c *Client) ensureLDAPApplication(ctx context.Context, providerID int) erro
 		return nil // Already exists
 	}
 	if appclient.StatusOf(err) == 0 {
-		return err // transport error — don't attempt create on an unreachable server
+		return err // transport error: don't attempt create on an unreachable server
 	}
 
 	// Create the application
@@ -522,7 +522,7 @@ func (c *Client) GetLDAPServiceTokenKey(ctx context.Context) (string, error) {
 	var result struct {
 		Key string `json:"key"`
 	}
-	if err := c.cl.GET("/api/v3/core/tokens/" + url.PathEscape(ldapServiceTokenID) + "/view_key/").
+	if err := c.cl.GET("/api/v3/core/tokens/"+url.PathEscape(ldapServiceTokenID)+"/view_key/").
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
 		return "", fmt.Errorf("getting LDAP service token key: %w", err)
@@ -548,7 +548,7 @@ func (c *Client) GetLDAPOutpostToken(ctx context.Context) (string, error) {
 	var result struct {
 		Key string `json:"key"`
 	}
-	if err := c.cl.GET("/api/v3/core/tokens/" + url.PathEscape(tokenIdentifier) + "/view_key/").
+	if err := c.cl.GET("/api/v3/core/tokens/"+url.PathEscape(tokenIdentifier)+"/view_key/").
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
 		return "", fmt.Errorf("getting token key: %w", err)
@@ -562,7 +562,7 @@ func (c *Client) findFlowID(ctx context.Context, slug string) (string, error) {
 	var result struct {
 		PK string `json:"pk"`
 	}
-	if err := c.cl.GET("/api/v3/flows/instances/" + url.PathEscape(slug) + "/").
+	if err := c.cl.GET("/api/v3/flows/instances/"+url.PathEscape(slug)+"/").
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
 		return "", fmt.Errorf("flow %s not found: %w", slug, err)
@@ -830,7 +830,7 @@ func (c *Client) getAdminGroupMembers(ctx context.Context) (map[int]bool, error)
 	var group struct {
 		Users []int `json:"users"`
 	}
-	if err := c.cl.GET("/api/v3/core/groups/" + groupID + "/").
+	if err := c.cl.GET("/api/v3/core/groups/"+groupID+"/").
 		OK(http.StatusOK).
 		DoInto(ctx, &group); err != nil {
 		return nil, fmt.Errorf("fetching group: %w", err)
@@ -863,12 +863,12 @@ func (c *Client) DeleteUser(ctx context.Context, username string) error {
 // EnsureLoginConfiguration applies Bloud-specific login page settings:
 // - Sets the authentication flow title to "Sign in to Bloud"
 // - Configures the identification stage to only accept username (not email)
-// This is idempotent — safe to call on every PostStart.
+// This is idempotent: safe to call on every PostStart.
 //
 // Authentik creates default flows asynchronously via blueprints after the health endpoint
 // returns ready, so we retry until our changes stick. The blueprint for the default
 // authentication flow runs during startup and can overwrite a patch applied just before it
-// completes. We detect this by re-reading the flow title 3 seconds after patching — if a
+// completes. We detect this by re-reading the flow title 3 seconds after patching: if a
 // blueprint reset it, the outer loop retries, eventually patching after all blueprints finish.
 //
 // Refs:
@@ -939,7 +939,7 @@ func (c *Client) getFlowTitle(ctx context.Context, slug string) (string, error) 
 	var result struct {
 		Title string `json:"title"`
 	}
-	if err := c.cl.GET("/api/v3/flows/instances/" + url.PathEscape(slug) + "/").
+	if err := c.cl.GET("/api/v3/flows/instances/"+url.PathEscape(slug)+"/").
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
 		return "", fmt.Errorf("fetching flow: %w", err)
@@ -971,7 +971,7 @@ func (c *Client) getIdentificationStageUserFields(ctx context.Context, stageName
 }
 
 // ensureFlowTitle PATCHes the title of a flow by slug.
-// API: PATCH /api/v3/flows/instances/:slug/ — slug is the URL path parameter.
+// API: PATCH /api/v3/flows/instances/:slug/ (slug is the URL path parameter).
 func (c *Client) ensureFlowTitle(ctx context.Context, slug, title string) error {
 	return c.cl.PATCH("/api/v3/flows/instances/" + url.PathEscape(slug) + "/").
 		JSON(map[string]string{"title": title}).
@@ -1019,7 +1019,7 @@ func (c *Client) ensureIdentificationStageUsernameOnly(ctx context.Context, stag
 // EnsureBranding updates the default Authentik brand with the provided CSS.
 // The CSS is pushed inline because Authentik uses Constructable Stylesheets
 // which forbid @import rules in branding_custom_css.
-// This is idempotent — safe to call on every PostStart.
+// This is idempotent: safe to call on every PostStart.
 //
 // The default brand is created by an Authentik migration, which can lag
 // behind the server readiness probe on slow hosts (cold CI runners). A
@@ -1052,7 +1052,7 @@ func (c *Client) EnsureBranding(ctx context.Context, css string) error {
 		return lastErr
 	}
 
-	return c.cl.PATCH("/api/v3/core/brands/"+brandPK+"/").
+	return c.cl.PATCH("/api/v3/core/brands/" + brandPK + "/").
 		JSON(map[string]string{"branding_custom_css": css}).
 		OK(http.StatusOK).
 		Exec(ctx)
@@ -1125,7 +1125,7 @@ type UserInfo struct {
 // Returns the OIDC configuration needed for the login flow.
 // baseURLs contains the external host URLs (e.g., ["http://bloud.local", "http://192.168.1.50:8080"]).
 // A redirect URI is registered for each base URL so OAuth works regardless of which host the user accesses.
-// The returned OIDCConfig contains path templates (no host) — callers derive full URLs from the request Host.
+// The returned OIDCConfig contains path templates (no host); callers derive full URLs from the request Host.
 func (c *Client) EnsureBloudOAuthApp(ctx context.Context, baseURLs []string, clientSecret string) (*OIDCConfig, error) {
 	// Build redirect URIs for all base URLs
 	var redirectURIs []string
@@ -1146,7 +1146,7 @@ func (c *Client) EnsureBloudOAuthApp(ctx context.Context, baseURLs []string, cli
 			return nil, fmt.Errorf("creating OAuth2 provider: %w", err)
 		}
 	} else {
-		// Provider exists — update redirect URIs to include any new IPs
+		// Provider exists: update redirect URIs to include any new IPs
 		if err := c.updateBloudOAuth2ProviderRedirectURIs(ctx, providerID, redirectURIs); err != nil {
 			return nil, fmt.Errorf("updating redirect URIs: %w", err)
 		}
@@ -1240,7 +1240,6 @@ func (c *Client) createBloudOAuth2Provider(ctx context.Context, redirectURIs []s
 
 	return result.PK, nil
 }
-
 
 // updateBloudOAuth2ProviderRedirectURIs patches the redirect URIs on an existing provider
 func (c *Client) updateBloudOAuth2ProviderRedirectURIs(ctx context.Context, providerID int, redirectURIs []string) error {
@@ -1423,7 +1422,7 @@ func (c *Client) ensureProviderEmailScopeMapping(ctx context.Context, providerID
 		mappings = append(mappings, bloudEmail)
 	}
 
-	// No drift — avoid churning the provider on every reconciliation pass.
+	// No drift: avoid churning the provider on every reconciliation pass.
 	if len(mappings) == len(provider.PropertyMappings) {
 		same := true
 		for i := range mappings {
@@ -1575,7 +1574,7 @@ func (c *Client) ensureProxyOutpost(ctx context.Context, providerID int) error {
 		return err
 	}
 	if outpost != nil {
-		// Outpost exists — ensure the provider is attached.
+		// Outpost exists: ensure the provider is attached.
 		for _, pid := range outpost.Providers {
 			if pid == providerID {
 				return nil
@@ -1617,7 +1616,7 @@ func (c *Client) GetProxyOutpostToken(ctx context.Context) (string, error) {
 	var result struct {
 		Key string `json:"key"`
 	}
-	if err := c.cl.GET("/api/v3/core/tokens/" + url.PathEscape(tokenIdentifier) + "/view_key/").
+	if err := c.cl.GET("/api/v3/core/tokens/"+url.PathEscape(tokenIdentifier)+"/view_key/").
 		OK(http.StatusOK).
 		DoInto(ctx, &result); err != nil {
 		return "", fmt.Errorf("getting token key: %w", err)
@@ -1716,7 +1715,7 @@ func (c *Client) ensureProxyApplication(ctx context.Context, slug, displayName s
 		return nil // Already exists
 	}
 	if appclient.StatusOf(err) == 0 {
-		return err // transport error — don't attempt create on an unreachable server
+		return err // transport error: don't attempt create on an unreachable server
 	}
 
 	// Create application
@@ -1834,7 +1833,7 @@ func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, cli
 
 // ensureOIDCApplication creates the Authentik application for an OIDC provider
 // if it doesn't exist. An existing application is left untouched (provider
-// drift is not reconciled — the provider is the source of auth behavior).
+// drift is not reconciled; the provider is the source of auth behavior).
 func (c *Client) ensureOIDCApplication(ctx context.Context, slug, displayName string, providerID int, launchURL string) error {
 	appPath := "/api/v3/core/applications/" + url.PathEscape(slug) + "/"
 	_, err := c.cl.GET(appPath).Do(ctx)
@@ -1842,7 +1841,7 @@ func (c *Client) ensureOIDCApplication(ctx context.Context, slug, displayName st
 		return nil // Already exists
 	}
 	if appclient.StatusOf(err) == 0 {
-		return err // transport error — don't attempt create on an unreachable server
+		return err // transport error: don't attempt create on an unreachable server
 	}
 
 	payload := map[string]interface{}{

@@ -21,7 +21,7 @@ drag-and-drop grid.
   columns (4 below ~820px of grid width, 2 below ~560px) as a *read-only
   preview*: drag and resize are disabled, the preview is laid out densely from
   scratch, and nothing is persisted. Widening returns to the stored layout
-  exactly, because the store — not the compressed view — stays authoritative.
+  exactly, because the store, not the compressed view, stays authoritative.
 - **New widgets open a block below the app tiles** rather than filling the first
   gap among them (`firstFreeSlot` in `src/lib/utils/gridPlacement.ts`), so apps
   and widgets do not interleave into a staircase. GridStack may still pack the
@@ -35,7 +35,7 @@ drag-and-drop grid.
 
 `running` opens the app; `installing`/`starting`/`failed`/`error` open the
 install detail modal, because investigation is the point. The tile shows only
-the app name while installing — the icon carries the spinner, and live phase
+the app name while installing; the icon carries the spinner, and live phase
 detail lives in the modal.
 
 ## Files

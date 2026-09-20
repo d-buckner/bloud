@@ -25,7 +25,7 @@ export async function ensureSignedIn(page: Page): Promise<void> {
     .then(() => true)
     .catch(() => false);
 
-  // Fail fast if the setup wizard is showing — the VM hasn't been configured.
+  // Fail fast if the setup wizard is showing: the VM hasn't been configured.
   const isSetupWizard = await page
     .getByRole('heading', { name: 'Welcome to Bloud' })
     .isVisible();

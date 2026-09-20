@@ -72,7 +72,7 @@ jobs:
           # files for the apps module, linking a stale binary. The journal
           # proves it: "PostStart: checking setup wizard status" followed
           # immediately by "PostStart failed ... 503" with NO "waiting for
-          # Jellyfin API" retry lines — the fix's log string is absent from
+          # Jellyfin API" retry lines: the fix's log string is absent from
           # the running binary. Purge the build cache BEFORE any go build
           # (CLI or host-agent) so both compile from clean source.
           go clean -cache
@@ -87,7 +87,7 @@ jobs:
           # --keep (BLOUD_E2E_KEEP=1) suppresses the post-run cleanup so the
           # failure-debug step can inspect the deployment. If the runner's
           # /var/tmp is reused across jobs, a previous run's app data dir would
-          # survive into this run's "fresh install" — exercising the post-init
+          # survive into this run's "fresh install", exercising the post-init
           # path instead of first-run init. Wipe first.
           sudo rm -rf /var/tmp/bloud-e2e-runtime
           sudo chown -R "$USER" /var/tmp

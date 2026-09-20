@@ -157,7 +157,7 @@ func TestRouter_SpoofedForwardingHeadersGrantNoAccess(t *testing.T) {
 	}
 }
 
-// Position alone is not a credential — the defect this PR exists to fix.
+// Position alone is not a credential: the defect this PR exists to fix.
 func TestRouter_LoopbackPositionIsNotEnough(t *testing.T) {
 	server := newAuthTestServer(t, func(c *ServerConfig) { c.APIToken = "s3cret-token" })
 
@@ -185,7 +185,7 @@ func TestRouter_SessionSurvivesLoopbackPosition(t *testing.T) {
 		w := do(t, server, http.MethodGet, "/api/apps/installed", "127.0.0.1:44444", nil, cookie)
 		require.Equal(t, http.StatusOK, w.Code, "a member session from loopback still authenticates")
 
-		// Admin surface must be forbidden for a member — proving the session's
+		// Admin surface must be forbidden for a member, proving the session's
 		// role was used rather than the loopback admin shortcut.
 		w = do(t, server, http.MethodGet, "/api/settings/hosts", "127.0.0.1:44444", nil, cookie)
 		require.Equal(t, http.StatusForbidden, w.Code,
@@ -270,8 +270,8 @@ func TestAuthModule_LogoutDoesNotRedirectToRequestSuppliedHost(t *testing.T) {
 }
 
 // Reaching the UI by IP must keep working. initAuthHelper registers every base
-// URL in hostset.AllBaseURLs with the identity provider — including the host's
-// detected local IPs — so the login may use whichever one the browser used.
+// URL in hostset.AllBaseURLs with the identity provider, including the host's
+// detected local IPs, so the login may use whichever one the browser used.
 // Falling back to the primary host instead breaks login, because the OAuth state
 // cookie is host-scoped: the callback would arrive on a different host than the
 // one that set it, and the state check would fail with "missing state cookie".

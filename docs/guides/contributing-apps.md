@@ -1,6 +1,6 @@
 # Contributing Apps to Bloud
 
-Welcome! Adding an app is the most valuable contribution you can make to Bloud.
+Welcome. Adding an app is the most valuable contribution you can make to Bloud.
 This guide gives you the full picture: how the pieces fit together, what each
 file does, and where to find a working example close to your app's shape.
 
@@ -241,7 +241,7 @@ err := c.api.POST("/things").JSON(payload).
 ```
 
 That `.AlreadyDone(...)` pattern pairs beautifully with the idempotent-cycle
-design: on the first reconciliation it creates, on every one after it it
+design: on the first reconciliation it creates, on every one after that it
 reports "already done" without treating the 409 as an error.
 
 Readiness polling is built in, so waiting for a service to come up is one

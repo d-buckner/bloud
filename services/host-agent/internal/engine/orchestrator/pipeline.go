@@ -59,7 +59,7 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 	// An explicit install intent is the user's "retry": reset any of the
 	// app's nodes stuck in the terminal ERROR state so the convergence pass
 	// re-runs their full lifecycle. collectWorkForLevel never retries ERROR
-	// nodes on its own — without this reset, retrying a failed/degraded app
+	// nodes on its own: without this reset, retrying a failed/degraded app
 	// would leave it stuck at "installing" forever.
 	o.resetErroredNodes(appName)
 
@@ -504,7 +504,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 		o.catalogGraph.SetInstalled(installed)
 	}
 
-	// Step 6: Run reconcile pass — drives per-app lifecycle phases and regenerates routes.
+	// Step 6: Run reconcile pass, which drives per-app lifecycle phases and regenerates routes.
 	o.logger.Info("convergence step", "step", "reconcile")
 	o.recordActivity("converge_step", "reconcile")
 	if err := o.Reconcile(ctx); err != nil {
@@ -656,7 +656,7 @@ func (o *Orchestrator) containerDefsFor(appName string) ([]catalog.ContainerDef,
 	return catalogApp.ContainerDefs(), true
 }
 
-// Pass 1: create nodes — one per container def for multi-container apps,
+// Pass 1: create one node per container def for multi-container apps, and
 // one with the catalog ID for legacy/no-container apps.
 func (o *Orchestrator) createGraphNodes(appMap map[string]*store.InstalledApp) {
 	for appName := range appMap {

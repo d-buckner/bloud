@@ -11,7 +11,7 @@ import type { GridElement } from '$lib/types';
 
 /**
  * Save the full settled layout to the backend.
- * Errors are swallowed — layout saves are best-effort; the next user interaction
+ * Errors are swallowed: layout saves are best-effort; the next user interaction
  * will retry. Unauthorized responses are silently ignored (login redirect
  * is handled at the app level).
  */
@@ -23,6 +23,6 @@ export async function saveLayout(elements: GridElement[]): Promise<void> {
 			body: JSON.stringify(elements),
 		});
 	} catch {
-		// Silently ignore — transient network error
+		// Silently ignore: transient network error
 	}
 }

@@ -18,8 +18,11 @@ jobs:
     container:
       image: golang:1.25-alpine
     steps:
-      - name: Install Node.js
-        run: apk add --no-cache nodejs npm git
+      # build-base carries the C toolchain: the prose lint builds Vale from
+      # source (pinned via `go run`), and its tree-sitter dependency needs cgo.
+      # The alpine image ships no compiler once its own build stage is discarded.
+      - name: Install Node.js and a C toolchain
+        run: apk add --no-cache nodejs npm git build-base
 
       - name: Checkout
         uses: actions/checkout@v4

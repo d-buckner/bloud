@@ -461,7 +461,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenInterfacesNil(t *testing.T) {
 		ID: "tn-1", Name: "T", Type: "tailscale", AuthKey: "k", Status: "active",
 	})
 
-	// forwardDomainSSO is nil (default) — should not panic.
+	// forwardDomainSSO is nil (default): should not panic.
 	h.orch.converge(context.Background(), nil)
 }
 
@@ -485,7 +485,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
 // ── Stub behaviour when appStore is nil ───────────────────────────────────
 
 func TestConverge_NilAppStore_StubBehavior(t *testing.T) {
-	// Orchestrator with no converge config — converge should be a no-op.
+	// Orchestrator with no converge config: converge should be a no-op.
 	g := graph.New(graph.NewMapRepository())
 	registry := new(MockConfiguratorRegistry)
 	orch := NewOrchestrator(g, registry, nil, "/tmp/bloud-test", newTestLogger(), OrchestratorConfig{})

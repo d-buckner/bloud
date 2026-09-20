@@ -19,7 +19,7 @@ const (
 	appName = "jellyfin"
 	// bootstrapUsername is the managed admin account used for setup and
 	// subsequent reconciliation. Its password is generated per-deployment and
-	// persisted by the secrets manager — never hardcoded here.
+	// persisted by the secrets manager, never hardcoded here.
 	bootstrapUsername = "bloud-bootstrap-admin"
 
 	// LDAP plugin GUID - this is the standard ID for the Jellyfin LDAP-Auth plugin

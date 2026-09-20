@@ -309,7 +309,7 @@ func (m *settingsModule) authentikClientIsAvailable(ctx context.Context, client 
 	// A nil *authentik.Client stored in this interface is not a nil interface,
 	// so the assertion below would succeed and call a nil receiver. Public
 	// handlers reach this path before setup completes, where no Authentik client
-	// exists yet — return false instead of panicking.
+	// exists yet: return false instead of panicking.
 	if c, ok := client.(*authentik.Client); ok && c == nil {
 		return false
 	}
@@ -646,7 +646,7 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 
 // NewSetupRouter registers the first-run bootstrap routes. They MUST be public:
 // before setup completes there is no user, so no admin can exist to authorize
-// them. They are self-limiting instead — CreateFirstUserHandler refuses once any
+// them. They are self-limiting instead: CreateFirstUserHandler refuses once any
 // user exists (409), which is what makes unauthenticated registration safe.
 func NewSetupRouter(mod *settingsModule, r chi.Router) {
 	r.Get("/setup/status", mod.SetupStatusHandler())

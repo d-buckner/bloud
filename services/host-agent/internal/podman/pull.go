@@ -55,7 +55,7 @@ type pullStreamEvent struct {
 
 // pullDefinitiveError marks a pull failure reported by podman itself (bad
 // reference, registry error). Definitive failures are not retried via the
-// CLI fallback — the retry would hit the same error.
+// CLI fallback: the retry would hit the same error.
 type pullDefinitiveError struct{ err error }
 
 func (e pullDefinitiveError) Error() string { return e.err.Error() }

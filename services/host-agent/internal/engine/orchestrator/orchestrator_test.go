@@ -96,7 +96,7 @@ func TestOrchestrator_RemoveApp_ClearData_PassedToRemove(t *testing.T) {
 
 func TestOrchestrator_Reconcile_NoRouteGenerator_NoError(t *testing.T) {
 	to := newTestOrchestrator()
-	// No traefikGen set — RegenerateRoutes is a no-op, should not error.
+	// No traefikGen set: RegenerateRoutes is a no-op, should not error.
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 }
 
@@ -369,7 +369,7 @@ func TestOrchestrator_Staleness_NoRerun_WhenDepErrors(t *testing.T) {
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
-	// B's PostStart should NOT be called — A is not in changedIDs.
+	// B's PostStart should NOT be called: A is not in changedIDs.
 	to.registry.AssertNotCalled(t, "Get", "b")
 }
 
@@ -426,7 +426,7 @@ func TestOrchestrator_ErrorIsTerminal_DependentAlsoSkipped(t *testing.T) {
 
 	nodeB, err := to.g.GetNode("b")
 	require.NoError(t, err)
-	assert.Equal(t, graph.StatusInitializing, nodeB.ActualStatus, "b should stay INITIALIZING — dep is in ERROR")
+	assert.Equal(t, graph.StatusInitializing, nodeB.ActualStatus, "b should stay INITIALIZING: dep is in ERROR")
 	to.registry.AssertNotCalled(t, "Get", "b")
 }
 
@@ -435,7 +435,7 @@ func TestOrchestrator_ErrorIsTerminal_DependentAlsoSkipped(t *testing.T) {
 // ============================================================================
 
 // TestOrchestrator_RunningDeferredUntilAfterReconcile verifies that a node is
-// not promoted to RUNNING during its lifecycle phases — only after Reconcile
+// not promoted to RUNNING during its lifecycle phases: only after Reconcile
 // has finished (i.e. after route generation). The UI must not show "installed"
 // prematurely.
 func TestOrchestrator_RunningDeferredUntilAfterReconcile(t *testing.T) {
@@ -448,7 +448,7 @@ func TestOrchestrator_RunningDeferredUntilAfterReconcile(t *testing.T) {
 	to.registry.On("Get", "app").Return(mockCfg)
 	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
 
-	// Capture the node's actual status at the moment PostStart runs — this is
+	// Capture the node's actual status at the moment PostStart runs: this is
 	// the last lifecycle phase, so if RUNNING were set eagerly it would already
 	// be visible here.
 	var statusDuringPostStart graph.NodeStatus
@@ -462,7 +462,7 @@ func TestOrchestrator_RunningDeferredUntilAfterReconcile(t *testing.T) {
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
 	assert.Equal(t, graph.StatusPostStartConfig, statusDuringPostStart,
-		"node must not be RUNNING during lifecycle — RUNNING is deferred until after route generation")
+		"node must not be RUNNING during lifecycle: RUNNING is deferred until after route generation")
 
 	node, err := to.g.GetNode("app")
 	require.NoError(t, err)
@@ -507,7 +507,7 @@ func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
 	assert.Equal(t, graph.StatusPostStartConfig, aStatusWhenBStarted,
-		"A must not be at RUNNING when B starts — RUNNING is deferred until after route generation")
+		"A must not be at RUNNING when B starts: RUNNING is deferred until after route generation")
 
 	mockB.AssertCalled(t, "PreStart", mock.Anything, mock.Anything)
 
@@ -812,7 +812,7 @@ func TestOrchestrator_PostStart_ApppliesBudgetDeadline(t *testing.T) {
 
 // TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError asserts a
 // shutdown cancellation of the pass context during a running PostStart is an
-// interruption, not a fault: the node is NOT parked in terminal ERROR — it is
+// interruption, not a fault: the node is NOT parked in terminal ERROR; it is
 // left at POSTSTART_CONFIG to re-converge on the next start (R3).
 func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing.T) {
 	to := newTestOrchestrator()

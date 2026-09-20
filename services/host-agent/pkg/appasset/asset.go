@@ -35,7 +35,7 @@ type Source struct {
 	Embed fs.FS
 	// Name is the file name within Embed (required with Embed).
 	Name string
-	// Local is a host path (transitional — prefer Embed).
+	// Local is a host path (transitional: prefer Embed).
 	Local string
 }
 

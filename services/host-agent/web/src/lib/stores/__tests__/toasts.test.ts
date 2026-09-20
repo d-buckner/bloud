@@ -36,7 +36,7 @@ describe('detectToasts', () => {
 	it('toasts when an app enters failed', () => {
 		const prev = new Map([['jellyfin', 'starting']]);
 		const toasts = detectToasts(prev, [app('jellyfin', 'failed', 'Jellyfin')]);
-		expect(toasts).toEqual([{ message: 'Jellyfin failed — view details', tone: 'error' }]);
+		expect(toasts).toEqual([{ message: 'Jellyfin failed: view details', tone: 'error' }]);
 	});
 
 	it('does not re-toast while the app stays failed', () => {
@@ -62,7 +62,7 @@ describe('detectToasts', () => {
 		]);
 		expect(toasts).toEqual([
 			{ message: 'jellyfin is ready', tone: 'success' },
-			{ message: 'navidrome failed — view details', tone: 'error' }
+			{ message: 'navidrome failed: view details', tone: 'error' }
 		]);
 	});
 });

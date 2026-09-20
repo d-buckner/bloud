@@ -84,13 +84,13 @@ freely. Reads don't cause inconsistency; the dangerous thing is concurrent write
 effects, which the reconciler serializes.
 
 Stores affected:
-- `AppStoreInterface` (`store/interfaces.go`) — all write methods
-- `TailnetStoreInterface` (`store/interfaces.go`) — Create, Delete
-- `RemoteAppStoreInterface` (`store/interfaces.go`) — Create, Delete, SetCredential, SetStatus
-- `ShareStoreInterface` (`store/interfaces.go`) — Create, Revoke
+- `AppStoreInterface` (`store/interfaces.go`): all write methods
+- `TailnetStoreInterface` (`store/interfaces.go`): Create, Delete
+- `RemoteAppStoreInterface` (`store/interfaces.go`): Create, Delete, SetCredential, SetStatus
+- `ShareStoreInterface` (`store/interfaces.go`): Create, Revoke
 
 Stores **not** affected (remain directly writable):
-- `PreferencesStoreInterface` — user layout preferences have no side effects and no
+- `PreferencesStoreInterface`: user layout preferences have no side effects and no
   interaction with the reconciler
 
 ### 3. Intent Types
@@ -124,7 +124,7 @@ uninstall.
 ### 8. Intent Tracking
 
 Intent IDs exist for logging and debugging. They are returned in the 202 response and
-logged throughout processing. The frontend does **not** use intent IDs — it continues
+logged throughout processing. The frontend does **not** use intent IDs; it continues
 watching app status via SSE as it does today. Intent status is queryable via API for
 troubleshooting but is not part of the primary UX flow.
 
@@ -135,7 +135,7 @@ Each cycle has two phases:
 ### Phase 1: Drain Queue (Apply Intents to Stores)
 
 Pull all pending intents from the FIFO queue. For each intent, apply the corresponding
-store mutations. No side effects — no containers, no config files, no API calls. Just
+store mutations. No side effects: no containers, no config files, no API calls. Just
 store writes that represent what the world *should* look like.
 
 Examples:
@@ -157,7 +157,7 @@ Read all stores. Read runtime state. Diff. Execute idempotent steps:
 2. **Resolve dependencies.** For each app marked `installing`, resolve its dependency
    graph from the catalog. If dependencies aren't installed, create store records for
    them. This handles the case where `InstallAppIntent{radarr}` implicitly requires
-   qBittorrent — the reconciler figures this out and installs both.
+   qBittorrent; the reconciler figures this out and installs both.
 
 3. **Ensure apps (dependency-ordered).** Compute execution levels (leaf nodes first). For
    each app at each level:
@@ -257,18 +257,18 @@ type ClearAppDataIntent struct {
 | `handleDeleteTailnet` | Store delete, sync stop/purge sidecars + gateway + proxies | Enqueue `DeleteTailnetIntent`, return 202 |
 | `handleAddRemoteApp` | Validate, store write, `RegenerateRoutes()` | Validate, enqueue `AddRemoteAppIntent`, return 202 |
 | `handleDeleteRemoteApp` | Store delete, `RegenerateRoutes()` | Enqueue `DeleteRemoteAppIntent`, return 202 |
-| `handleCreateInvite` | Validate, store write, generate token | **Stays direct** — token must return synchronously (no intent; see Open Q2) |
-| `handleRevokeShare` | `shareStore.Revoke()` | **Stays direct** — pure store write (no intent; see Open Q2) |
+| `handleCreateInvite` | Validate, store write, generate token | **Stays direct**: token must return synchronously (no intent; see Open Q2) |
+| `handleRevokeShare` | `shareStore.Revoke()` | **Stays direct**: pure store write (no intent; see Open Q2) |
 | `handlePlanInstall` | Read-only dependency planning | **Removed** |
 | `handlePlanRemove` | Read-only removal impact analysis | **Removed** |
 
 ### Orchestrator Interface
 
 The `AppOrchestrator` interface (`orchestrator/interface.go`) changes significantly.
-`EnqueueInstall`/`EnqueueUninstall` are removed — the reconciler owns enqueueing. The
+`EnqueueInstall`/`EnqueueUninstall` are removed; the reconciler owns enqueueing. The
 orchestrator becomes a lower-level runtime that the reconciler calls for container
 lifecycle operations (ensure container, remove container, regenerate routes). The
-`operationMu` mutex is removed — serialization is handled by the reconciler's single-
+`operationMu` mutex is removed; serialization is handled by the reconciler's single-
 threaded processing loop.
 
 ### Server Wiring
@@ -279,9 +279,9 @@ call `queue.Enqueue(intent)` instead of calling the orchestrator directly. The
 debounced wake-up).
 
 Helper methods on Server that perform side effects are removed:
-- `ensureSidecarsForRunningApps()` — moves into reconciler convergence
-- `ensureGatewayAndProxies()` — moves into reconciler convergence
-- `stopAllSidecarsAndPurge()` — moves into reconciler convergence
+- `ensureSidecarsForRunningApps()`: moves into reconciler convergence
+- `ensureGatewayAndProxies()`: moves into reconciler convergence
+- `stopAllSidecarsAndPurge()`: moves into reconciler convergence
 
 ### Startup Sequence
 
@@ -300,7 +300,7 @@ regenerating routes, ensuring sidecars for the active tailnet connection.
   to SSE subscribers. The frontend receives status updates exactly as it does today.
 - **User preferences.** Layout reads/writes (`handleGetLayout`, `handleSetLayout`) remain
   direct. They have no side effects and no interaction with the reconciler.
-- **Auth endpoints.** Login, logout, callback, setup — unchanged.
+- **Auth endpoints.** Login, logout, callback, setup: unchanged.
 - **Configurator interface.** `PreStart`, `HealthCheck`, `PostStart` remain the same.
   They are called by the reconciler during convergence, same as today.
 - **Catalog.** Read-only, unchanged.
@@ -419,7 +419,7 @@ leaves the system in a working state. No big-bang cutover.
 ### Phase 1: Intent Types + Queue
 
 **What:** Define all typed intent structs. Build the FIFO queue with debounce wake-up.
-Pure infrastructure — nothing calls it yet, no behavior changes.
+Pure infrastructure: nothing calls it yet, no behavior changes.
 
 **Auto-verify:**
 - Unit tests: enqueue/drain ordering is FIFO
@@ -436,7 +436,7 @@ Pure infrastructure — nothing calls it yet, no behavior changes.
 ### Phase 2: Reconciler Loop Skeleton
 
 **What:** New reconciler struct with the two-phase cycle (drain + converge). The converge
-phase is a no-op stub initially — it just logs "convergence pass complete." Wire the
+phase is a no-op stub initially; it just logs "convergence pass complete." Wire the
 queue's debounce wake-up to trigger the reconciler. The reconciler starts on server boot
 and stops on shutdown.
 
@@ -457,7 +457,7 @@ Split into two sub-phases to avoid a risky cutover.
 
 #### Phase 3a: Convergence Handles App Lifecycle
 
-**What:** Implement the convergence logic for app lifecycle — dependency resolution,
+**What:** Implement the convergence logic for app lifecycle: dependency resolution,
 `ensureApp` (PreStart, container creation, health check, PostStart, sidecar), uninstall
 (stop sidecar, remove container, delete from store). The reconciler calls into the
 existing orchestrator's lower-level methods, not reimplementing them.
@@ -469,13 +469,13 @@ The old path still works. Nothing calls the new path in production yet.
   to "running"
 - Unit tests: convergence sees an app in "uninstalling" status, removes container, deletes
   from store
-- Unit tests: dependency resolution — install intent for Radarr creates qBittorrent record
-  in store, converges both in level order
-- Unit tests: batching — two installs that share a dependency produce one install of the
-  shared dep
+- Unit tests: dependency resolution (install intent for Radarr creates qBittorrent record
+  in store, converges both in level order)
+- Unit tests: batching (two installs that share a dependency produce one install of the
+  shared dep)
 - Existing tests still pass
 
-**Manual:** Not yet — the new path is tested in isolation, the old path still serves
+**Manual:** Not yet. The new path is tested in isolation, the old path still serves
 traffic.
 
 #### Phase 3b: Cut Over Install/Uninstall Handlers
@@ -486,7 +486,7 @@ the result. Remove `handlePlanInstall` and `handlePlanRemove` endpoints.
 
 **Auto-verify:**
 - `./bloud validate --tier fast` passes (unit tests updated for new handler behavior)
-- `./bloud e2e lifecycle` passes — full install/uninstall lifecycle through the real
+- `./bloud e2e lifecycle` passes: full install/uninstall lifecycle through the real
   system. This is the critical gate.
 
 **Manual:**
@@ -556,7 +556,7 @@ Then cleanup:
 - Remove `Install`/`Uninstall` public methods (reconciler calls lower-level methods
   directly)
 - Remove `triggerReconcile()` from Server
-- Remove old reconciler (`reconcile.go`) — replaced by the new one
+- Remove old reconciler (`reconcile.go`): replaced by the new one
 - Delete `ROUTING_RECONCILER_PLAN.md` (superseded)
 
 **Auto-verify:**

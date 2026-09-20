@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 /**
- * Developer graph layout — pure mapping from a DeveloperGraph to xyflow
+ * Developer graph layout: pure mapping from a DeveloperGraph to xyflow
  * Node/Edge arrays. Extracted from the developer page so the coordinate math
  * is unit-testable. The only environment dependency (the browser hostname used
  * to decide which connection the operator reaches through) is injected as a

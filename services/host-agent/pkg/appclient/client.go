@@ -16,7 +16,7 @@ type Spec struct {
 	Name string
 	// BaseURL is the fixed base URL, e.g. "http://localhost:8096".
 	BaseURL string
-	// BaseURLFn overrides BaseURL when set — for host-set-aware callers
+	// BaseURLFn overrides BaseURL when set, for host-set-aware callers
 	// (same reason Deps.PrimaryBaseURL is a func today).
 	BaseURLFn func() string
 

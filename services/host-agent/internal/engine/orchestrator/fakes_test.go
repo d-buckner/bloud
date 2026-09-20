@@ -569,7 +569,7 @@ var _ catalog.AppGraphInterface = (*FakeAppGraph)(nil)
 var _ catalog.CacheInterface = (*FakeCatalogCache)(nil)
 
 // ============================================================================
-// FakeTailnetStore — in-memory implementation of store.TailnetStoreInterface
+// FakeTailnetStore: in-memory implementation of store.TailnetStoreInterface
 // ============================================================================
 
 type FakeTailnetStore struct {
@@ -634,7 +634,7 @@ func (f *FakeTailnetStore) ActiveConnection() *store.TailnetConnection {
 var _ store.TailnetStoreInterface = (*FakeTailnetStore)(nil)
 
 // ============================================================================
-// FakeRemoteAppStore — in-memory implementation of store.RemoteAppStoreInterface
+// FakeRemoteAppStore: in-memory implementation of store.RemoteAppStoreInterface
 // ============================================================================
 
 type FakeRemoteAppStore struct {
@@ -717,7 +717,7 @@ func (f *FakeRemoteAppStore) Apps() []*store.RemoteApp {
 var _ store.RemoteAppStoreInterface = (*FakeRemoteAppStore)(nil)
 
 // ============================================================================
-// FakeTailnetNodeManager — records EnsureRunning/StopAndPurge calls
+// FakeTailnetNodeManager: records EnsureRunning/StopAndPurge calls
 // ============================================================================
 
 type FakeTailnetNodeManager struct {
@@ -764,7 +764,7 @@ func (f *FakeTailnetNodeManager) PurgedApps() []string {
 var _ TailnetNodeEnsurer = (*FakeTailnetNodeManager)(nil)
 
 // ============================================================================
-// FakeGatewayManager — records StopAndPurge/EnsureRunning/GetTailnetDomain calls
+// FakeGatewayManager: records StopAndPurge/EnsureRunning/GetTailnetDomain calls
 // ============================================================================
 
 type FakeGatewayManager struct {
@@ -825,7 +825,7 @@ func (f *FakeGatewayManager) WasDomainCalled() bool {
 var _ GatewayManager = (*FakeGatewayManager)(nil)
 
 // ============================================================================
-// FakeRemoteProxy — records StopAll and Reconcile calls
+// FakeRemoteProxy: records StopAll and Reconcile calls
 // ============================================================================
 
 type FakeRemoteProxy struct {
@@ -860,7 +860,7 @@ func (f *FakeRemoteProxy) WasStopCalled() bool {
 var _ RemoteProxyManager = (*FakeRemoteProxy)(nil)
 
 // ============================================================================
-// FakeForwardDomainProvisioner — records EnsureForwardDomainAuth calls
+// FakeForwardDomainProvisioner: records EnsureForwardDomainAuth calls
 // ============================================================================
 
 type FakeForwardDomainProvisioner struct {
@@ -891,7 +891,7 @@ func (f *FakeForwardDomainProvisioner) CalledDomain() string {
 var _ ForwardDomainProvisioner = (*FakeForwardDomainProvisioner)(nil)
 
 // ============================================================================
-// FakeProxyOutpost — records EnsureRunning/Stop calls
+// FakeProxyOutpost: records EnsureRunning/Stop calls
 // ============================================================================
 
 type FakeProxyOutpost struct {

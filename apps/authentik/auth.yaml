@@ -6,7 +6,7 @@
 #
 # The only change from the upstream default is user_fields: [username] instead of
 # [email, username]. Everything else is identical to the Authentik upstream file.
-# Flow title is intentionally left as "Welcome to authentik!" — PostStart sets it
+# Flow title is intentionally left as "Welcome to authentik!"; PostStart sets it
 # to "Sign in to Bloud" via API, which serves as the smoke test synchronization signal
 # (CSS is applied before the title is set).
 version: 1

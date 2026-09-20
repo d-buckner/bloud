@@ -8,7 +8,7 @@ export interface AppSuite {
   readonly name: string;
   /**
    * Signed-in Bloud page on the Traefik origin, shared by every test in
-   * the block. Assigned while the `beforeAll` hook runs — read `app.page`
+   * the block. Assigned while the `beforeAll` hook runs: read `app.page`
    * inside test callbacks, never at collection time.
    */
   page: Page;
@@ -25,7 +25,7 @@ export interface AppSuite {
  *    mutated mid-suite and the Authentik login happens exactly once.
  *
  * Test cases stay explicit. Order them so the rungs a broken install
- * invalids come first — the convention is a "converges to running" test
+ * invalids come first: the convention is a "converges to running" test
  * (via `ensureInstalled`) first, then UI behavior:
  *
  *   describeApp('jellyfin', (app) => {

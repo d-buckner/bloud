@@ -36,7 +36,7 @@ func (a *affineAPI) waitServer(ctx context.Context) error {
 
 // ensureOwner creates the first-run owner account. AFFiNE only accepts the
 // call before any user exists and answers 403 "First user already created"
-// otherwise — the idempotency signal for later reconciliation passes.
+// otherwise: the idempotency signal for later reconciliation passes.
 func (a *affineAPI) ensureOwner(ctx context.Context, name, email, password string) (bool, error) {
 	return a.cl.POST("/api/setup/create-admin-user").
 		JSON(map[string]string{"name": name, "email": email, "password": password}).

@@ -297,14 +297,14 @@ application support contract must distinguish browser shared login from native-c
 
 #### Domain-Agnostic Traefik Routing
 
-Traefik routes are **domain-agnostic** — they work from any origin (localhost, tailnet FQDN,
+Traefik routes are **domain-agnostic**: they work from any origin (localhost, tailnet FQDN,
 tailnet IP, custom domain) without configuration changes.
 
 **App routes** use `HostRegexp('^{appId}\\.')` with priority 200. This matches any host
 starting with the app's subdomain prefix: `jellyfin.localhost`, `jellyfin.bloud.co`,
 `jellyfin.<tailnet-fqdn>`, etc.
 
-**Base routes** (dashboard, API, auth, UI catch-all) use `PathPrefix` only — no Host
+**Base routes** (dashboard, API, auth, UI catch-all) use `PathPrefix` only: no Host
 constraint. Their priorities (1–96) are lower than app routes (200), so app subdomain routes
 always win when a subdomain prefix matches.
 
@@ -320,7 +320,7 @@ priority 300, higher than app routes so they take precedence for their specific 
 
 **Subdomain access by network:**
 
-- **LAN (`*.localhost`):** Works out of the box — browsers resolve `*.localhost` to
+- **LAN (`*.localhost`):** Works out of the box: browsers resolve `*.localhost` to
   `127.0.0.1` per RFC 6761.
 - **Custom domain:** Configure wildcard DNS (`*.bloud.co → host IP`). Subdomains work
   immediately via HostRegexp.
@@ -328,7 +328,7 @@ priority 300, higher than app routes so they take precedence for their specific 
   (`TS_SERVE_CONFIG`), serving HTTPS on port 443 with Tailscale-issued TLS certs, proxying
   to Traefik on localhost. Dashboard and embedded apps work at the gateway FQDN. App
   subdomain access over tailnet (e.g., `jellyfin.<tailnet-fqdn>`) requires wildcard DNS
-  resolution — a future change will add self-hosted CoreDNS with Tailscale split DNS.
+  resolution; a future change will add self-hosted CoreDNS with Tailscale split DNS.
 
 ### Developer Graph
 
@@ -466,7 +466,7 @@ Sharing uses two independent layers of Tailscale instances:
 | **Gateway** (`bloud`) | Network connectivity for consuming remote apps (LAN proxy) + dashboard access | One per tailnet connection | Orchestrator via `RegenerateRoutes()` |
 
 Both layers run on the **host network** and proxy upstream to Traefik. This keeps Traefik
-as the single routing/middleware layer for all traffic — local, tailnet, and remote.
+as the single routing/middleware layer for all traffic: local, tailnet, and remote.
 
 ```text
 Upstream topology (per-app tailnet node):
@@ -492,7 +492,7 @@ runs in userspace mode on the host network. It serves two purposes:
    reach remote tailnet nodes. Traefik routes to `http://localhost:{proxyPort}` instead of
    directly to tailnet URLs. This means devices on the local network (TVs, phones, game
    consoles) can access remote apps through normal subdomain URLs without needing
-   Tailscale installed — the gateway handles the tailnet hop on their behalf.
+   Tailscale installed: the gateway handles the tailnet hop on their behalf.
 
 The `tailnet_connections` store in Settings is the single source of truth for both layers.
 Each connection entry provides the auth key for app tailnet nodes (outbound sharing) and the
@@ -510,10 +510,10 @@ gateway connectivity for remote apps (inbound consumption to LAN).
 #### Remote App Flow (Guest Side)
 
 1. Guest opens "Add Shared App" modal (defaults to token paste mode).
-2. Guest pastes the invite token — modal decodes it and shows confirmation:
+2. Guest pastes the invite token; modal decodes it and shows confirmation:
    "{hostLabel} wants to share {appName}".
 3. Guest clicks the Tailscale share link to accept network access.
-4. Guest clicks "Add" — Bloud creates a remote app record in the `remote_apps` table with
+4. Guest clicks "Add"; Bloud creates a remote app record in the `remote_apps` table with
    a monotonically assigned `proxy_port` (starting from 10100, never reused).
 5. `RegenerateRoutes()` ensures the gateway container is running, then reconciles
    reverse proxies: each remote app gets a localhost listener on its assigned port
@@ -538,16 +538,16 @@ Browser → Traefik (:8080)
 
 #### Data Model
 
-- **`remote_apps`** — Stores remote app records: app identity, host label, tailnet node
+- **`remote_apps`**: Stores remote app records: app identity, host label, tailnet node
   address, proxy port, status. Each record generates a Traefik route. The `proxy_port` is
   monotonically assigned at creation time (`MAX(proxy_port) + 1`, starting from 10100) and
   never reused, ensuring stable port assignments across restarts.
-- **`guests`** — Contact book of people the host shares apps with. Each guest has a name
+- **`guests`**: Contact book of people the host shares apps with. Each guest has a name
   and UUID. The `shares` table references guests by ID, enabling "who has access to what"
   queries.
-- **`shares`** — Stores outbound share records: which local apps are shared and to whom.
+- **`shares`**: Stores outbound share records: which local apps are shared and to whom.
   References `guests.id` via `guest_id`.
-- **`tailnet_connections`** — Stores tailnet connection config: auth key, control URL, type
+- **`tailnet_connections`**: Stores tailnet connection config: auth key, control URL, type
   (Tailscale or Headscale). Used for app tailnet nodes (outbound sharing) and the gateway
   (inbound remote app consumption on LAN).
 
@@ -556,25 +556,25 @@ integration configs, dependency graph participation, and SSO provisioning. Remot
 a tailnet address, a proxy port, and an access binding. These are fundamentally different
 lifecycles, and merging them would require type-discriminator guards on every query touching
 local app state. Route generation in `RegenerateRoutes()` queries both tables and derives
-routes at generation time — no separate routes table is needed.
+routes at generation time: no separate routes table is needed.
 
 Auth keys are never exposed through the API. The frontend receives only a boolean
 `hasAuthKey` indicating whether a key is configured.
 
 #### Not Yet Implemented
 
-- **Persistent proxy port on `remote_apps`** — The `proxy_port` column needs to be added
+- **Persistent proxy port on `remote_apps`**: The `proxy_port` column needs to be added
   to the `remote_apps` table schema. Currently, proxy ports are assigned ephemerally by
   `RemoteProxyManager` at reconciliation time and may shift when apps are added or removed.
-- **Standalone proxy outpost for tailnet forward-auth** — A dedicated Authentik outpost
+- **Standalone proxy outpost for tailnet forward-auth**: A dedicated Authentik outpost
   container for tailnet auth, separate from the embedded outpost that handles local auth.
   This enables remote users to log in via `bloud.{tailnet_domain}` instead of being
   redirected to unreachable `localhost:8080`. In active development.
-- **Multiple tailnet connections** — The data model supports multiple entries, but the UI
+- **Multiple tailnet connections**: The data model supports multiple entries, but the UI
   and runtime currently handle only one active connection.
-- **SSO identity model** — Guest Bloud accounts backed by Authentik, per-app auth
+- **SSO identity model**: Guest Bloud accounts backed by Authentik, per-app auth
   provisioning via OIDC/SAML/LDAP/header auth.
-- **Guest management UI** — Dedicated view showing guests and their active shares.
+- **Guest management UI**: Dedicated view showing guests and their active shares.
 
 ### Reconciliation Flow
 
@@ -587,13 +587,13 @@ Each orchestrator cycle has two phases:
 **Phase 1: Drain Queue (Apply Intents to Stores)**
 
 Pull all pending intents from the FIFO queue. For each intent, apply the corresponding
-store mutations. No side effects — just store writes that represent desired state.
+store mutations. No side effects: just store writes that represent desired state.
 
 **Phase 2: Converge (Make Actual Match Desired)**
 
 ```text
-1. Sync container state — reconcile DB status with actual container reality
-2. Resolve dependencies — auto-install required providers for installing apps
+1. Sync container state: reconcile DB status with actual container reality
+2. Resolve dependencies: auto-install required providers for installing apps
 3. Ensure apps in dependency order:
    a. PreStart configuration (dirs, config files, credentials)
    b. Ensure container (via Podman API)
@@ -601,10 +601,10 @@ store mutations. No side effects — just store writes that represent desired st
    d. PostStart configuration (API calls, integration setup)
    e. SSO provisioning
    f. Tailnet node management (if tailnet active)
-4. Handle uninstalls — stop tailnet node, remove container, delete from store
-5. Routing convergence — ensure gateway, reconcile remote proxies, regenerate Traefik routes
-6. Optional dependency dispatch — reconfigure apps when optional providers become healthy
-7. Tailnet teardown — if tailnet deleted, stop and purge all nodes and gateway
+4. Handle uninstalls: stop tailnet node, remove container, delete from store
+5. Routing convergence: ensure gateway, reconcile remote proxies, regenerate Traefik routes
+6. Optional dependency dispatch: reconfigure apps when optional providers become healthy
+7. Tailnet teardown: if tailnet deleted, stop and purge all nodes and gateway
 ```
 
 Intents are debounced (~5 seconds) so rapid mutations coalesce into a single convergence
@@ -620,7 +620,7 @@ pending until reconciliation succeeds or the relationship is removed.
 
 An integration is `configured` only after every required phase succeeds. Durable failure
 state identifies the application, provider, integration type, phase, retryability, and cause.
-Restarting the host agent or host must resume reconciliation rather than lose progress.
+Restarting the host-agent or host must resume reconciliation rather than lose progress.
 
 ## Architecture Principles
 
@@ -704,26 +704,26 @@ Reconciliation against an already-correct system must make no changes.
 Each managed app reports exactly one status: `installing`, `running`, `stopped`,
 `failed`, `error`, or `uninstalling`. The state machine:
 
-- `installing → running | failed` — the install lifecycle converged, or a
+- `installing → running | failed`: the install lifecycle converged, or a
   step (pull, configuration, startup) failed terminally.
-- `running → error` — degraded: a container stopped or went unhealthy.
+- `running → error`: degraded: a container stopped or went unhealthy.
   The graph's ERROR state is terminal for the reconciler: the convergence
   pass never retries an errored node on its own, so recovery is an explicit
   user action (Retry install or uninstall/reinstall).
-- `failed → installing` — user retry re-runs the lifecycle; the install
+- `failed → installing`: user retry re-runs the lifecycle; the install
   intent resets any of the app's errored nodes before the pass runs, and
   `last_error` is cleared when the retry is accepted.
-- `running → stopped` — the container is gone but the app had previously
+- `running → stopped`: the container is gone but the app had previously
   completed its full lifecycle, so recovery is a re-create, not a re-install.
   (If the container comes back on its own, the app returns to `running`
   without a lifecycle re-run.)
-- `* → uninstalling` — explicit user action; the row is removed once its
+- `* → uninstalling`: explicit user action; the row is removed once its
   containers are gone.
 
 `failed` and `error` are deliberately distinct: `failed` is a terminal
 install outcome, while `error` is a degraded but previously working app.
 Both carry the most recent failure detail in `last_error` and both recover
-the same way — an explicit retry (a new install intent) resets the errored
+the same way: an explicit retry (a new install intent) resets the errored
 nodes and re-runs the lifecycle. Status transitions are written by the
 orchestrator from graph node events (the single authoritative path); API
 handlers never set lifecycle status directly.
@@ -937,9 +937,9 @@ Using fake adapters and configurators:
 
 ### Layer 5: E2E Lifecycle Tests
 
-The `./bloud e2e lifecycle` command builds the host-agent, deploys it to a runtime —
-Lima VM (default), QEMU VM, or the local machine (`BLOUD_BACKEND=native`) — and runs
-the full install/restart/uninstall lifecycle with Playwright browser tests for SSO
+The `./bloud e2e lifecycle` command builds the host-agent, deploys it to a runtime
+(Lima VM by default, QEMU VM, or the local machine via `BLOUD_BACKEND=native`), and
+runs the full install/restart/uninstall lifecycle with Playwright browser tests for SSO
 verification. `./bloud e2e app` runs a single app's spec on a self-contained runtime
 (used by CI, one runtime per app in parallel).
 
@@ -1060,7 +1060,7 @@ implemented. Old `EnqueueInstall`/`EnqueueUninstall` paths removed.
 ### Phase 3: Implement the Engine
 
 - Implement filesystem and Podman adapters.
-- Run the host agent as a systemd user service.
+- Run the host-agent as a systemd user service.
 - Prove create, health, reboot, reconcile, and remove with real services.
 
 Gate:

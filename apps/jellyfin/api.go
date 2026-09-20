@@ -151,7 +151,7 @@ func (a *jellyfinAPI) awaitWizardCompletion(ctx context.Context, info *SystemInf
 // waitForStartupWizardReady waits for the wizard API itself to be reachable.
 // Jellyfin may answer 503 with HTML during init even after /health is OK. In
 // 10.11.9+ the endpoint moves behind auth and returns 401 when the wizard is
-// already complete — declared via AlreadyDone so the wait converges on it.
+// already complete, declared via AlreadyDone so the wait converges on it.
 func (a *jellyfinAPI) waitForStartupWizardReady(ctx context.Context) error {
 	return a.cl.GET("/Startup/Configuration").
 		WithRetry(wizardReadyPolicy).

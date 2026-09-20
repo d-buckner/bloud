@@ -18,7 +18,7 @@ import (
 )
 
 // Contract (docs/operations/tech-debt.md, "route-generation side
-// effects"): RegenerateRoutes is pure with respect to the runtime — it
+// effects"): RegenerateRoutes is pure with respect to the runtime; it
 // starts nothing and mutates no proxies; all runtime-shaped inputs are
 // passed in. SyncRoutes owns the explicit ordering: gateway up, proxies
 // reconciled, domain resolved, THEN config written.
@@ -62,7 +62,7 @@ type orderGenerator struct {
 }
 
 func (g *orderGenerator) Generate(_ []*catalog.App) error { return nil }
-func (g *orderGenerator) SetAuthentikEnabled(_ bool)     {}
+func (g *orderGenerator) SetAuthentikEnabled(_ bool)      {}
 func (g *orderGenerator) Preview(_ []*catalog.App) string { return "" }
 func (g *orderGenerator) GenerateAll(apps []*catalog.App, remoteApps []traefikgen.RemoteAppRoute, tailnetDomain string) error {
 	g.tr.add("generate-all")
@@ -135,7 +135,7 @@ func TestRoutePurity_SyncRoutesOrderAndPiping(t *testing.T) {
 }
 
 // No tailnet: the gateway is not started or queried, the domain is
-// empty, and the config still writes — local apps need routes regardless.
+// empty, and the config still writes: local apps need routes regardless.
 func TestRoutePurity_InactiveTailnetSkipsGateway(t *testing.T) {
 	orch, tr := newRouteSyncOrchestrator("")
 

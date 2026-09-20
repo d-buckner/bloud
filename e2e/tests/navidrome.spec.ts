@@ -14,7 +14,7 @@ import { LoginPage } from '../lib/loginPage';
 // means the first failure skips the rungs behind it. Navidrome uses
 // forward-auth: every request to the app origin is checked against
 // Authentik before it reaches the container, so the popup opens on the
-// Authentik prompt — the prompt appearing is itself the observable
+// Authentik prompt: the prompt appearing is itself the observable
 // behavior of the auth rung, and completing it is the sign-in rung.
 describeApp('navidrome', (app) => {
   test('converges to running', async () => {

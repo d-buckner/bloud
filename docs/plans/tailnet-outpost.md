@@ -7,7 +7,7 @@
 When a remote user accesses a shared app via tailnet (e.g. `navidrome.tail12756a.ts.net`),
 the Authentik embedded outpost redirects the browser to `http://localhost:8080` for login.
 This is unreachable from a remote device. The embedded outpost has a single `authentik_host`
-config that controls browser redirects for ALL providers — it can't serve both
+config that controls browser redirects for ALL providers; it can't serve both
 `localhost:8080` (local) and `https://bloud.{tailnet_domain}` (remote) simultaneously.
 
 ## Solution
@@ -39,12 +39,12 @@ Browser → navidrome.tail12756a.ts.net (with cookie)
   → forward-auth succeeds → proxied to app
 ```
 
-Local auth (`navidrome.localhost:8080`) is completely unchanged — existing routers at
+Local auth (`navidrome.localhost:8080`) is completely unchanged; existing routers at
 priority 200 with the embedded outpost handle it.
 
 ## Implementation Steps
 
-### Step 1: Authentik Client — Create/Ensure Proxy Outpost
+### Step 1: Authentik Client (Create/Ensure Proxy Outpost)
 
 **File: `services/host-agent/pkg/authentik/client.go`**
 
@@ -58,14 +58,14 @@ func (c *Client) EnsureForwardDomainAuth(cookieDomain string) (token string, err
 Changes:
 - After creating/finding the forward_domain provider and application (unchanged)
 - Replace `AddProviderToEmbeddedOutpost` with `ensureProxyOutpost` (new method)
-- `ensureProxyOutpost`: follows the `ensureLDAPOutpost` pattern — creates a proxy-type
+- `ensureProxyOutpost`: follows the `ensureLDAPOutpost` pattern: creates a proxy-type
   outpost named "Bloud Tailnet Proxy Outpost" with the forward_domain provider attached
 - Retrieve the outpost token via `GetProxyOutpostToken` (follows `GetLDAPOutpostToken` pattern)
 - Return the token
 
 New methods:
-- `ensureProxyOutpost(providerID int) error` — creates outpost if not exists
-- `GetProxyOutpostToken() (string, error)` — retrieves auto-generated `ak-outpost-{pk}-api` token
+- `ensureProxyOutpost(providerID int) error`: creates outpost if not exists
+- `GetProxyOutpostToken() (string, error)`: retrieves auto-generated `ak-outpost-{pk}-api` token
 
 ### Step 2: Update ForwardDomainProvisioner Interface
 
@@ -155,7 +155,7 @@ func (g *Generator) GenerateAll(apps []*catalog.App, remoteApps []RemoteAppRoute
 
 When `tailnetDomain` is non-empty AND authentik is enabled, generate additional routes:
 
-**a) Per forward-auth app — tailnet-specific router (priority 250):**
+**a) Per forward-auth app: tailnet-specific router (priority 250):**
 ```yaml
 navidrome-tailnet:
   rule: "Host(`navidrome.{tailnetDomain}`)"
@@ -170,7 +170,7 @@ navidrome-tailnet-outpost:
   service: tailnet-outpost
 ```
 
-**b) Gateway domain routes — Authentik login + outpost callback:**
+**b) Gateway domain routes: Authentik login + outpost callback:**
 ```yaml
 tailnet-outpost-callback:
   rule: "Host(`bloud.{tailnetDomain}`) && PathPrefix(`/outpost.goauthentik.io/`)"
@@ -229,24 +229,24 @@ This requires the orchestrator to hold a reference to the gateway (it already do
 
 ### Step 7: Update Tests
 
-- `traefikgen/generator_test.go` — test tailnet route generation
-- `reconciler/converge_test.go` — test provisionTailnetSSO starts outpost container
-- `reconciler/fakes_test.go` — add FakeProxyOutpost, update ForwardDomainProvisioner fake
-- `authentik/client.go` — test proxy outpost creation and token retrieval
-- `sharing/proxy_outpost_test.go` — test container spec generation
+- `traefikgen/generator_test.go`: test tailnet route generation
+- `reconciler/converge_test.go`: test provisionTailnetSSO starts outpost container
+- `reconciler/fakes_test.go`: add FakeProxyOutpost, update ForwardDomainProvisioner fake
+- `authentik/client.go`: test proxy outpost creation and token retrieval
+- `sharing/proxy_outpost_test.go`: test container spec generation
 
 ## Design Decisions
 
 1. **Port 9002** for the standalone outpost (9001 is Authentik server, 9000 is internal)
-2. **`apps-net` network** — outpost reaches Authentik via container name
+2. **`apps-net` network**: outpost reaches Authentik via container name
    (`apps-authentik-server:9000`), matches LDAP outpost pattern
 3. **Same Authentik version** (`2025.10.3`) for proxy outpost image to avoid
    version skew
-4. **Per-app tailnet routers** rather than a catch-all — gives correct Traefik
+4. **Per-app tailnet routers** rather than a catch-all: gives correct Traefik
    service routing per app and limits scope to forward-auth apps only
-5. **Outpost lifecycle coupled to tailnet** — starts in `provisionTailnetSSO`,
+5. **Outpost lifecycle coupled to tailnet**: starts in `provisionTailnetSSO`,
    stops in `convergeTailnet` teardown
-6. **`GenerateAll` gains a `tailnetDomain` parameter** — cleanest way to pass the
+6. **`GenerateAll` gains a `tailnetDomain` parameter**: cleanest way to pass the
    domain down to route generation without adding state to the Generator struct
 
 ## Files Changed
@@ -255,7 +255,7 @@ This requires the orchestrator to hold a reference to the gateway (it already do
 |------|--------|
 | `pkg/authentik/client.go` | New `ensureProxyOutpost`, `GetProxyOutpostToken`; modify `EnsureForwardDomainAuth` return type |
 | `internal/reconciler/converge.go` | Update `ForwardDomainProvisioner` interface; add `ProxyOutpost` to Config; update `provisionTailnetSSO` |
-| `internal/sharing/proxy_outpost.go` | **New file** — `ProxyOutpostManager` container lifecycle |
+| `internal/sharing/proxy_outpost.go` | **New file**: `ProxyOutpostManager` container lifecycle |
 | `internal/traefikgen/generator.go` | Tailnet router/middleware/service generation |
 | `internal/traefikgen/interfaces.go` | Update `GeneratorInterface` if it exists |
 | `internal/orchestrator/orchestrator_portable.go` | Pass tailnet domain to `GenerateAll`; hold gateway ref for domain lookup |

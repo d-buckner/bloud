@@ -2,7 +2,7 @@
 
 # Plan: QEMU Backend (Parallel, Selectable)
 
-**Status:** Implementing — phases 1-3 (transport, QEMUBackend, CLI wiring) are done on
+**Status:** Implementing. Phases 1-3 (transport, QEMUBackend, CLI wiring) are done on
 `qemu-backend`; remaining: e2e integration, real-VM smoke test, plan doc cleanup.
 **Last updated:** 2026-06-24
 
@@ -11,7 +11,7 @@
 ## Summary
 
 Add a second `backend.Backend` implementation that provisions and manages a QEMU VM
-directly (`qemu-img` + `qemu-system-x86_64`), reachable over real SSH — in parallel with
+directly (`qemu-img` + `qemu-system-x86_64`), reachable over real SSH, in parallel with
 the existing Lima backend. The backend is selected via env var/flag; Lima stays the
 default. The executor layer is generalized behind a `Transport` abstraction so both
 backends share one `SSHHost`/`SSHExecutor` path.
@@ -20,9 +20,9 @@ Decisions (confirmed with owner):
 
 - **Backend role:** QEMU is a parallel, selectable backend; Lima remains default.
 - **Platform split:** Lima is the backend **for macOS** generally; QEMU is the backend
-  **for Linux** generally. Each host uses its native accelerator — Lima uses vz (Apple
+  **for Linux** generally. Each host uses its native accelerator: Lima uses vz (Apple
   Virtualization) on macOS; QEMU uses **KVM** (`-accel kvm`) on Linux.
-- **Executor scope:** generalize the shared transport — Lima uses `limactl shell`,
+- **Executor scope:** generalize the shared transport: Lima uses `limactl shell`,
   QEMU uses real `ssh -p <port>`.
 - **Guest arch:** `x86_64`, matching the typical Linux host and an amd64 Debian 13
   cloud image.
@@ -61,9 +61,9 @@ ports host-agent 3000 / postgres 5432 / traefik 8080 / jellyfin 8096 / authentik
 
 One `SSHHost` + `SSHExecutor` path that works for both transports:
 
-- **Lima transport** — shells via `limactl shell --start <instance> bash -c`, copies via
+- **Lima transport**: shells via `limactl shell --start <instance> bash -c`, copies via
   `limactl copy`, interactive via `limactl shell`, ready via `limactl list --json`.
-- **QEMU transport** — shells via `ssh -p <port> -i <key> <user>@127.0.0.1 bash -c`, copies
+- **QEMU transport**: shells via `ssh -p <port> -i <key> <user>@127.0.0.1 bash -c`, copies
   via `rsync` (matches e2e precedent), interactive via `ssh -t`, ready via
   `ssh ... true`.
 
@@ -89,10 +89,10 @@ type SSHExecutor struct {
     ready    func() bool                                         // guest reachability
 }
 
-// NewLimactlExecutor — existing Lima behavior (limactl shell/copy/list).
+// NewLimactlExecutor: existing Lima behavior (limactl shell/copy/list).
 func NewLimactlExecutor(instance string) *SSHExecutor
 
-// NewSSHExecutor — real ssh/rsync transport for a QEMU (or any) guest.
+// NewSSHExecutor: real ssh/rsync transport for a QEMU (or any) guest.
 func NewSSHExecutor(conn SSHConn) *SSHExecutor
 ```
 
@@ -112,7 +112,7 @@ both transports (`bash -c <script>`).
 
 ### `executor/host.go`
 
-Drop the `local`/`instance` fields — readiness moves onto the transport:
+Drop the `local`/`instance` fields; readiness moves onto the transport:
 
 ```go
 type SSHHost struct {
@@ -126,13 +126,13 @@ func (h *SSHHost) Executor() Executor { return h.remote } // Transport satisfies
 func (h *SSHHost) Ready() bool        { return h.remote.Ready() }
 ```
 
-`IsVMNameRunning` / `IsVMNamePresent` / `vmStatus` stay in `host.go` — still used by
+`IsVMNameRunning` / `IsVMNamePresent` / `vmStatus` stay in `host.go`: still used by
 `LimaBackend.Create` and the Lima transport's `Ready()`.
 
 ### Caller updates
 
 - `LimaBackend.Host()` → `executor.NewSSHHost(executor.NewLimactlExecutor(b.instance), ports, dataDirs)`.
-- `cmdAttach` keeps its `*executor.SSHExecutor` type-assert — both backends return that concrete type.
+- `cmdAttach` keeps its `*executor.SSHExecutor` type-assert: both backends return that concrete type.
 
 ---
 
@@ -166,7 +166,7 @@ type QEMUBackend struct {
 func NewQEMUBackend(instance, projectDir string) *QEMUBackend
 ```
 
-**Create(ctx)** — idempotent, four steps:
+**Create(ctx)**: idempotent, four steps:
 
 1. **Ensure disk image.** If `.qcow2` missing: download
    `debian-13-genericcloud-amd64.qcow2` from
@@ -209,16 +209,16 @@ func NewQEMUBackend(instance, projectDir string) *QEMUBackend
      -display none -daemonize -pidfile bloud-qemu.pid
    ```
 
-   `-accel kvm` requires access to `/dev/kvm` (add a preflight check — see §5). On
+   `-accel kvm` requires access to `/dev/kvm` (add a preflight check; see §5). On
    hosts without `/dev/kvm`, fall back to TCG (`-accel tcg`), which is slow but works.
 
    Guest gets slirp DHCP (`10.0.2.15`); NoCloud needs no external metadata server.
 
 4. **Wait for ready.** Poll SSH readiness (`ssh -p 2222 -i key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 bloud@127.0.0.1 true`) until up (bounded retry). Return error if the guest never comes up.
 
-**Destroy(ctx)** — kill the qemu process via the pidfile (`kill $(cat pid)` then `rm -f pid`), and remove the runtime dir. Matches Lima's `delete --force` semantics (full teardown).
+**Destroy(ctx)**: kill the qemu process via the pidfile (`kill $(cat pid)` then `rm -f pid`), and remove the runtime dir. Matches Lima's `delete --force` semantics (full teardown).
 
-**Host()** — returns the shared SSH host over the QEMU transport:
+**Host()**: returns the shared SSH host over the QEMU transport:
 
 ```go
 func (b *QEMUBackend) Host() executor.Host {
@@ -241,11 +241,11 @@ Ports and `devRemoteDir` mirror Lima exactly (same guest runtime, same host-agen
 
 ### Provisioning split
 
-- **First boot (cloud-init seed, one-shot):** packages + user + lingering — the analogue
-  of Lima's `provision` block.
+- **First boot (cloud-init seed, one-shot):** packages + user + lingering (the analogue
+  of Lima's `provision` block).
 - **After SSH up:** the CLI's `cmdDev` builds the host-agent and frontend locally,
   deploys them into the guest runtime dir, and runs the host-agent in the
-  foreground — there is no static compose stack, the orchestrator brings up
+  foreground; there is no static compose stack, the orchestrator brings up
   system infrastructure from the catalog. Secrets are generated by
   `host-agent init-secrets` (idempotent); no manual bootstrap script is needed.
 
@@ -339,15 +339,15 @@ provision:
 ## 7. E2E Integration
 
 - e2e already supports `BLOUD_E2E_SSH_TARGET` (generic `ssh <target> bash -se --` +
-  `rsync`). With QEMU, point e2e at the guest via that variable (e.g. `bloud@127.0.0.1`)
-  — or extend `sshTarget` to accept an optional port/key once QEMU SSH is stable.
-- Default e2e path stays Lima (`BLOUD_E2E_LIMA_INSTANCE`) — unchanged.
+  `rsync`). With QEMU, point e2e at the guest via that variable (e.g. `bloud@127.0.0.1`),
+  or extend `sshTarget` to accept an optional port/key once QEMU SSH is stable.
+- Default e2e path stays Lima (`BLOUD_E2E_LIMA_INSTANCE`): unchanged.
 
 ---
 
 ## 8. Tests
 
-- `cli/backend/qemu_test.go` — mirror `lima_test.go`: fake `qemu-img`/`qemu-system-x86_64`
+- `cli/backend/qemu_test.go`: mirror `lima_test.go`: fake `qemu-img`/`qemu-system-x86_64`
   and record invocations. Cover:
   - Create when image+seed+guest already running (no-op).
   - Create when guest stopped → relaunch qemu + wait for ready.
@@ -355,15 +355,15 @@ provision:
   - Create when seed missing → ssh-keygen + mkisofs.
   - Destroy → kill pidfile process, rm runtime dir.
   - Host() → ports/dataDirs match Lima's map.
-- `cli/executor/ssh_test.go` — update for the generalized `SSHExecutor`:
+- `cli/executor/ssh_test.go`: update for the generalized `SSHExecutor`:
   - `NewLimactlExecutor` builds `limactl shell --start` (existing expectations).
   - `NewSSHExecutor` builds `ssh -p 2222 -i key -o StrictHostKeyChecking=accept-new ...`
     for Run/RunStream, `rsync -a` for CopyTo/CopyFrom, `ssh -t` for InteractiveShell, and
     `ssh ... true` for Ready().
-- `cli/executor/sshhost_test.go` — update `SSHHost` for the new constructor
+- `cli/executor/sshhost_test.go`: update `SSHHost` for the new constructor
   (transport instead of instance/local/remote).
-- `cli/executor/host.go` `IsVMNameRunning` helpers — unchanged (Lima-only), keep tests.
-- `cli/backend/lima_test.go` — update `fakeLimaBackend` `Host()` expectation if the
+- `cli/executor/host.go` `IsVMNameRunning` helpers: unchanged (Lima-only), keep tests.
+- `cli/backend/lima_test.go`: update `fakeLimaBackend` `Host()` expectation if the
   constructor signature changed (ports/dataDirs assertions unchanged).
 
 ---
@@ -411,10 +411,10 @@ can land alone. (2) builds the VM lifecycle on top. (3) flips selection.
 ## Verification
 
 ```bash
-# After (1) — transport refactor, no behavior change:
+# After (1): transport refactor, no behavior change:
 cd cli && go test ./... -count=1
 
-# After (2) — QEMU backend:
+# After (2): QEMU backend:
 #   BLOUD_BACKEND=qemu ./bloud dev        → creates .bloud/qemu/bloud-qemu/, boots VM
 #   qemu-img info .bloud/qemu/bloud-qemu/bloud-qemu.qcow2   → 30GiB, backing file set
 #   ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1 \
@@ -422,7 +422,7 @@ cd cli && go test ./... -count=1
 #   ./bloud status                          → VM running + host-agent running (qemu branch)
 #   ./bloud attach                          → interactive ssh shell into guest
 
-# After (3) — selection:
+# After (3): selection:
 #   default ./bloud dev                     → Lima (unchanged)
 #   BLOUD_BACKEND=qemu ./bloud dev          → QEMU
 #   BLOUD_BACKEND=qemu ./bloud destroy      → kills qemu, rm .bloud/qemu

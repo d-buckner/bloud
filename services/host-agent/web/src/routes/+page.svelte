@@ -74,7 +74,7 @@
 		try {
 			remoteApps = await fetchRemoteApps();
 		} catch {
-			// Remote apps are optional — don't block the page
+			// Remote apps are optional: don't block the page
 		}
 	});
 

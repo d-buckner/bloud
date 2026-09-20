@@ -12,11 +12,11 @@
 Three related changes to the sharing/gateway infrastructure, each building on the
 previous:
 
-1. **Persistent proxy ports** — Store `proxy_port` on the `remote_apps` table so ports
+1. **Persistent proxy ports**: Store `proxy_port` on the `remote_apps` table so ports
    survive restarts and don't shift when apps are added/removed.
-2. **Gateway FQDN discovery** — After the gateway joins the tailnet, discover and persist
+2. **Gateway FQDN discovery**: After the gateway joins the tailnet, discover and persist
    its FQDN (e.g. `ts-gateway.tail1275sa.ts.net`) on the `tailnet_connections` record.
-3. **Owner remote access** — The gateway exposes local Traefik via Tailscale Serve so the
+3. **Owner remote access**: The gateway exposes local Traefik via Tailscale Serve so the
    owner can access the full dashboard and app subdomains remotely.
 These are the "Not Yet Implemented" items from specs/spec.md §Sharing.
 
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS remote_apps (
 );
 ```
 
-Not a migration — this is pre-release, so the table definition changes directly.
+Not a migration: this is pre-release, so the table definition changes directly.
 
 #### Store Changes (`store/remote_apps.go`)
 
@@ -144,12 +144,12 @@ CREATE TABLE IF NOT EXISTS tailnet_connections (
 
 The gateway needs a way to discover its FQDN. Two approaches:
 
-**Option A — Exec into container:** Add a `GetFQDN(ctx) (string, error)` method that runs
+**Option A (Exec into container):** Add a `GetFQDN(ctx) (string, error)` method that runs
 `tailscale status --json` inside the container and parses the `Self.DNSName` field. This
 requires the `ContainerExec` interface (already used by `SidecarManager`).
 
-**Option B — Poll from outside:** The orchestrator calls `tailscale status --json` from
-outside and matches the gateway node by hostname. Less clean — requires the orchestrator
+**Option B (Poll from outside):** The orchestrator calls `tailscale status --json` from
+outside and matches the gateway node by hostname. Less clean: requires the orchestrator
 to know container exec details.
 
 **Recommendation: Option A.** The gateway manager already owns the container lifecycle;
@@ -193,7 +193,7 @@ if o.gateway != nil && o.tailnetStore != nil {
 }
 ```
 
-This is idempotent — if the FQDN hasn't changed, no write. If the gateway isn't ready
+This is idempotent: if the FQDN hasn't changed, no write. If the gateway isn't ready
 yet, the error is logged and we proceed without it.
 
 #### Tests
@@ -220,7 +220,7 @@ yet, the error is logged and we proceed without it.
 
 The owner wants to access their Bloud dashboard and app subdomains remotely (away from
 the LAN) through the tailnet, without installing Tailscale on every device. The gateway
-container is already on the tailnet — it just needs to serve traffic.
+container is already on the tailnet; it just needs to serve traffic.
 
 ### Design
 
@@ -243,7 +243,7 @@ App containers (local) or remote proxies
 
 #### DNS for App Subdomains (Open Question)
 
-The dashboard at `https://ts-gateway.tail1275sa.ts.net` works immediately — Tailscale
+The dashboard at `https://ts-gateway.tail1275sa.ts.net` works immediately; Tailscale
 Serve handles the TLS cert and proxies to Traefik. But app subdomains like
 `jellyfin.bloud.local` won't resolve from outside the LAN.
 
@@ -349,7 +349,7 @@ apps under `/embed/` paths, so all apps are accessible through the gateway FQDN.
 - `GenerateAll()` accepts an optional `gatewayFQDN string` parameter (or it's added to the
   struct as config). When non-empty, the dashboard router adds the gateway FQDN as an
   alternative Host match.
-- No per-app route changes needed for Option A — apps are embedded.
+- No per-app route changes needed for Option A: apps are embedded.
 
 #### Settings API Changes
 
@@ -361,7 +361,7 @@ apps under `/embed/` paths, so all apps are accessible through the gateway FQDN.
 
 - Settings page: show the gateway FQDN as a read-only field when available (with a label
   like "Remote Access URL").
-- No other UI changes for Option A — the existing embedded app routing handles everything.
+- No other UI changes for Option A: the existing embedded app routing handles everything.
 
 #### Tests
 
@@ -409,19 +409,19 @@ Items 1 and 2 can be implemented in parallel. Item 3 depends on 2.
 # After each item, all existing tests must pass:
 cd services/host-agent && go build ./... && go test ./... -count=1
 
-# Item 1 — persistent ports:
+# Item 1: persistent ports:
 #   - Create two remote apps, note their proxy_ports (10100, 10101)
 #   - Delete the first, create a third
-#   - Third app gets 10102 (not 10100 — never reuse)
-#   - Restart host-agent — ports unchanged
+#   - Third app gets 10102 (not 10100: never reuse)
+#   - Restart host-agent: ports unchanged
 
-# Item 2 — gateway FQDN:
+# Item 2: gateway FQDN:
 #   - Save tailnet connection, add a remote app (triggers gateway start)
 #   - After gateway joins: GET /api/settings/tailnet → gatewayFqdn populated
 #   - limactl shell bloud-dev podman exec ts-gateway tailscale status --json
 #     → Self.DNSName matches stored FQDN
 
-# Item 3 — owner remote access:
+# Item 3: owner remote access:
 #   - From a tailnet-connected device, curl https://<gateway-fqdn>
 #   - Should return the Bloud dashboard HTML
 #   - Embedded apps (/embed/jellyfin/) should work through the gateway

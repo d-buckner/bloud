@@ -49,9 +49,9 @@ export interface PhaseHistoryEntry {
 export interface AppProgress {
 	/** Current user-facing phase (see PHASE_ORDER); null until first event. */
 	phase: string | null;
-	/** Last phase before a failure — the timeline marks it as the failed step. */
+	/** Last phase before a failure: the timeline marks it as the failed step. */
 	lastPhase: string | null;
-	/** Pull progress detail, e.g. "34% — 340.0 MiB of 1.0 GiB". */
+	/** Pull progress detail, e.g. "34% (340.0 MiB of 1.0 GiB)". */
 	phaseDetail: string;
 	/** Pull percentage 0-100 when known. */
 	percent: number | null;

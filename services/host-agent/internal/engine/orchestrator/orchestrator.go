@@ -328,11 +328,11 @@ func (o *Orchestrator) setupPullEvents() {
 }
 
 // pullDetail renders a user-facing pull progress detail, e.g.
-// "34% — 356.5 MiB of 1.0 GiB", falling back to the raw status line when no
+// "34% (356.5 MiB of 1.0 GiB)", falling back to the raw status line when no
 // sizes are known.
 func pullDetail(p containerruntime.PullProgress) string {
 	if p.Total > 0 {
-		return fmt.Sprintf("%d%% — %s of %s", p.Percent, humanBytes(p.Current), humanBytes(p.Total))
+		return fmt.Sprintf("%d%% (%s of %s)", p.Percent, humanBytes(p.Current), humanBytes(p.Total))
 	}
 	return p.Detail
 }
@@ -474,7 +474,7 @@ func (o *Orchestrator) Submit(intent Intent) {
 
 // recordInstallNow upserts the app row with status "installing" (clearing
 // last_error) before reconciliation picks the intent up. It is a plain
-// catalog-based upsert — the drain pass's recordIntent re-upserts the row
+// catalog-based upsert: the drain pass's recordIntent re-upserts the row
 // with the resolved integration config, so both writes are idempotent and
 // the reconciler sees no behavior change.
 func (o *Orchestrator) recordInstallNow(appName string) {
@@ -722,7 +722,7 @@ func (o *Orchestrator) Reconcile(ctx context.Context) error {
 
 	// Sync routes now that all lifecycle phases are complete: the
 	// runtime steps (gateway, remote proxies) run first, then the pure
-	// config write. Deferring this — and the RUNNING promotion below —
+	// config write. Deferring this, and the RUNNING promotion below,
 	// ensures the UI never shows an app as "installed" before its
 	// Traefik routes are live.
 	if err := o.SyncRoutes(); err != nil {
@@ -793,7 +793,7 @@ func (o *Orchestrator) collectWorkForLevel(nodeIDs []string, changedIDs map[stri
 			continue
 		}
 
-		// ERROR is terminal — never retry without an explicit status reset.
+		// ERROR is terminal: never retry without an explicit status reset.
 		if node.ActualStatus == graph.StatusError {
 			o.logger.Info("skipping node in ERROR status", "app", id, "error", node.Error)
 			continue
@@ -897,8 +897,8 @@ func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 // runPostStart invokes a configurator's PostStart bounded by the framework's
 // PostStartBudget (DefaultPostStartBudget when unset). The budget ctx is
 // derived from the pass ctx, so a Stop()-cancellation propagates immediately
-// while the budget independently caps a hung finalization. The framework — not
-// the app — owns this ceiling; apps use the ctx they are given directly.
+// while the budget independently caps a hung finalization. The framework, not
+// the app, owns this ceiling; apps use the ctx they are given directly.
 func (o *Orchestrator) runPostStart(ctx context.Context, cfg configurator.NodeLifecycle, state *configurator.AppState) error {
 	budget := o.config.PostStartBudget
 	if budget <= 0 {
@@ -934,7 +934,7 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 
 // ensureNetworksForContainer creates every user-defined network the
 // container references ("host" mode needs no creation). Failures are
-// logged, not fatal — Ensure() surfaces the real error later.
+// logged, not fatal: Ensure() surfaces the real error later.
 func (o *Orchestrator) ensureNetworksForContainer(ctx context.Context, def *catalog.ContainerDef) {
 	var networks []string
 	if def.Network != "" {
@@ -973,7 +973,7 @@ func (o *Orchestrator) applyIssuerExtraHost(spec *containerruntime.Spec, appCata
 }
 
 // ensureMountDirs creates the source directory for each directory mount.
-// File mounts (.yml/.yaml/.json/.conf) are skipped — their parents are
+// File mounts (.yml/.yaml/.json/.conf) are skipped: their parents are
 // created by whoever generates the file.
 func (o *Orchestrator) ensureMountDirs(containerName string, spec containerruntime.Spec) {
 	for _, mount := range spec.Mounts {
@@ -1011,7 +1011,7 @@ func hasExtraHost(entries []string, want string) bool {
 // runFullLifecycle executes all lifecycle phases for a node that has not yet
 // reached its target status.
 func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *graph.Node) bool {
-	// Target INITIALIZING means "unmanage" — snap actual to match and stop.
+	// Target INITIALIZING means "unmanage": snap actual to match and stop.
 	if node.TargetStatus == graph.StatusInitializing {
 		_ = o.graph.SetActualStatus(id, graph.StatusInitializing, "")
 		return false
@@ -1101,7 +1101,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 		o.logger.Info("lifecycle phase: HealthCheck complete", "app", id)
 	}
 
-	// Phase 4: PostStart — run under the framework's PostStartBudget so the
+	// Phase 4: PostStart runs under the framework's PostStartBudget so the
 	// finalization wait is bounded and Stop() can interrupt it (apps no longer
 	// detach their own contexts). A failure whose cause is the cancelled pass
 	// context is an interruption, not a fault: leave the node where it is so the

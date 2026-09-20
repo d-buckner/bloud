@@ -212,7 +212,7 @@ func (g *Generator) appNeedsMiddleware(app *catalog.App) bool {
 
 // writeRouter writes the router configuration for an app.
 // Uses HostRegexp for domain-agnostic subdomain matching: matches jellyfin.localhost,
-// jellyfin.bloud.co, jellyfin.<anything> — any host starting with the app's subdomain.
+// jellyfin.bloud.co, jellyfin.<anything>: any host starting with the app's subdomain.
 func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikEnabled bool) {
 	fmt.Fprintf(b, "    %s:\n", app.CatalogID)
 	fmt.Fprintf(b, "      rule: \"HostRegexp(`^%s\\\\.`)\"\n", app.CatalogID)
@@ -358,13 +358,13 @@ func (g *Generator) writeTailnetOutpostRouter(b *strings.Builder, app *catalog.A
 // Routes Authentik-specific paths needed for the OAuth login flow; all other paths
 // on the gateway domain fall through to lower-priority routers (e.g. the dashboard).
 func (g *Generator) writeTailnetGatewayRouters(b *strings.Builder, tailnetDomain string) {
-	// Outpost callback router — must be higher priority to intercept /outpost.goauthentik.io/
+	// Outpost callback router: must be higher priority to intercept /outpost.goauthentik.io/
 	b.WriteString("    tailnet-gateway-outpost:\n")
 	fmt.Fprintf(b, "      rule: \"Host(`bloud.%s`) && PathPrefix(`/outpost.goauthentik.io/`)\"\n", tailnetDomain)
 	b.WriteString("      priority: 300\n")
 	b.WriteString("      service: tailnet-outpost\n")
 
-	// Authentik UI/API — only match paths Authentik needs for the OAuth flow:
+	// Authentik UI/API. Only match paths Authentik needs for the OAuth flow:
 	// /if/ (frontend), /api/v3/ (Authentik API), /static/ (assets), /-/ (internal)
 	// Uses /api/v3/ (not /api/) to avoid conflicting with the Bloud API at /api/.
 	b.WriteString("    tailnet-gateway-authentik:\n")
@@ -372,7 +372,7 @@ func (g *Generator) writeTailnetGatewayRouters(b *strings.Builder, tailnetDomain
 	b.WriteString("      priority: 250\n")
 	b.WriteString("      service: authentik-web\n")
 
-	// Dashboard catch-all — proxies everything else on the gateway domain to
+	// Dashboard catch-all: proxies everything else on the gateway domain to
 	// the host-agent (Bloud dashboard + API).
 	b.WriteString("    tailnet-gateway-dashboard:\n")
 	fmt.Fprintf(b, "      rule: \"Host(`bloud.%s`)\"\n", tailnetDomain)

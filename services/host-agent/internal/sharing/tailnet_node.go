@@ -44,7 +44,7 @@ type TailnetNodeManager struct {
 	exec        ContainerExec
 	authKeyFn   func() string // called at creation time to get the current auth key
 	traefikPort int
-	dataDir     string // root data dir — serve configs go under {dataDir}/{appName}/ts-serve/
+	dataDir     string // root data dir: serve configs go under {dataDir}/{appName}/ts-serve/
 	logger      *slog.Logger
 }
 
@@ -82,7 +82,7 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 
 	name := TailnetNodeContainerName(appName)
 
-	// Write serve config file for Tailscale — proxy to Traefik.
+	// Write serve config file for Tailscale: proxy to Traefik.
 	configDir := filepath.Join(m.dataDir, appName, "ts-serve")
 	configFile := filepath.Join(configDir, "serve.json")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -161,7 +161,7 @@ func (m *TailnetNodeManager) GetAddr(ctx context.Context, appName string) (strin
 func (m *TailnetNodeManager) Stop(ctx context.Context, appName string) error {
 	name := TailnetNodeContainerName(appName)
 	if err := m.containers.Remove(ctx, name); err != nil {
-		// Ignore "not found" — container may already be gone.
+		// Ignore "not found": container may already be gone.
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such") {
 			return nil
 		}

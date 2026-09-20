@@ -221,7 +221,7 @@ func (b *QEMUBackend) ensureRunning(ctx context.Context) error {
 		return nil
 	}
 	// Not alive: (re)launch. A reachable guest without a launch record is
-	// externally managed (legacy/manual) — do not spawn a duplicate.
+	// externally managed (legacy/manual): do not spawn a duplicate.
 	if ready && !b.hasLaunchRecord() {
 		return nil
 	}

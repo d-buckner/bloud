@@ -1,4 +1,4 @@
-> Status: accepted (in progress) — PRs 1-3 landed (#85 migrations, #86 operation
+> Status: accepted (in progress). PRs 1-3 landed (#85 migrations, #86 operation
 > state, #88 route purity). **PR 4 implemented 2026-09-19** (revised first: its
 > original design was insufficient against a forgeable forwarding header) and
 > verified live against a deployed host-agent. PRs 6-11 added 2026-09-19 from
@@ -15,14 +15,14 @@ PRs, ordered so each one builds only on what already landed.
 **Merge discipline (applies to every PR below):** one contract test for the new
 boundary, a crash/retry or partial-failure test where applicable, no new
 app-specific branch in shared orchestration, and the replaced code deleted in the
-same PR — no shims, no aliases. `./bloud validate --tier fast` green. Anything
+same PR: no shims, no aliases. `./bloud validate --tier fast` green. Anything
 touching auth also runs the PR 4 router-classification test.
 
 ---
 
 ## Landed
 
-### PR 1 — Versioned migration ledger ✅ (#85)
+### PR 1: Versioned migration ledger ✅ (#85)
 
 `schema_migrations` + `BaselineVersion` + ordered `Migration`s, one transaction
 per entry, a failing migration aborts boot. `db.go`'s hand-rolled `runMigrations`
@@ -30,12 +30,12 @@ deleted whole. Baseline bump rule: any `schema.sql` change for fresh DBs must
 bump `BaselineVersion` and add the matching migration for upgraded DBs.
 
 *Post-hoc correction (2026-09-19):* the `user_app_positions` fork fix in ledger
-entry 6 cannot fire — the grid shape already existed before the ledger ran, so
+entry 6 cannot fire: the grid shape already existed before the ledger ran, so
 that migration is a permanent no-op. The ledger mechanism is still the
 improvement this PR claimed; the fork fix is not evidence of one. No code change
 implied.
 
-### PR 2 — Durable lifecycle operation state ✅ (#86)
+### PR 2: Durable lifecycle operation state ✅ (#86)
 
 `operations` table (one current-or-last row per app), `OperationRecorder` at
 phase boundaries, "last entered phase, never last completed", startup orphan
@@ -45,7 +45,7 @@ sweep to `failed/retryable`, read surface via the `GET` LEFT JOIN. Design:
 *Still open from this area:* the health surface cannot see a dead orchestrator
 (PR 11).
 
-### PR 3 — Route generation no longer owns runtime side effects ✅ (#88)
+### PR 3: Route generation no longer owns runtime side effects ✅ (#88)
 
 `RegenerateRoutes(remoteRoutes, tailnetDomain)` is pure; `SyncRoutes()` owns the
 explicit ordering (`ensureGateway` → `reconcileRemoteProxies` →
@@ -56,7 +56,7 @@ RUNNING is unconditional; the generated YAML is never validated (PR 10).
 
 ---
 
-## PR 4 — Close the auth bypass (rewritten 2026-09-19) — IMPLEMENTED
+## PR 4: Close the auth bypass (rewritten 2026-09-19), IMPLEMENTED
 
 **Status: implemented in the working tree, pending commit + the Playwright
 suites.** Shipped: `RealIP` removed; admin requires `Bearer <apiToken>` **from**
@@ -70,7 +70,7 @@ input and no lazy redirect-URI registration (`AddRedirectURI` deleted);
 router-classification table test + spoof cases + ordering test added, and
 `serverRequest` now authenticates with the token instead of by position.
 
-**Not done from the sketch:** binding `:3000` to loopback (decision 8 below —
+**Not done from the sketch:** binding `:3000` to loopback (decision 8 below,
 rejected for QEMU), and `BLOUD_TRUSTED_LOCAL_NETS` still exists as the scope
 list.
 
@@ -88,7 +88,7 @@ second factor for *where* the token may be used. That design is now known to be
 insufficient, because the position check is client-controlled:
 
 - `middleware.RealIP` (`internal/api/router.go:236`) sets `r.RemoteAddr` from
-  `True-Client-IP` / `X-Real-IP` / `X-Forwarded-For` — chi checks
+  `True-Client-IP` / `X-Real-IP` / `X-Forwarded-For`; chi checks
   `True-Client-IP` first and never strips it.
 - Traefik runs `network: host` (`apps/traefik/metadata.yaml:15-16`) with
   `forwardedHeaders: insecure: true` (`internal/appconfig/traefik.go:76-80`),
@@ -100,7 +100,7 @@ insufficient, because the position check is client-controlled:
 
 A token requirement does neutralize the spoof (the attacker has no token), but
 only if the check is *ordered* correctly, and the "trusted net = second factor"
-rationale is dead — the net is forgeable, so it is not a factor at all.
+rationale is dead: the net is forgeable, so it is not a factor at all.
 
 ### Design decisions
 
@@ -111,7 +111,7 @@ rationale is dead — the net is forgeable, so it is not a factor at all.
    else if session := sessionFromCookie(r); session != nil { member/admin from session }
    else { 401 }
    ```
-   **Not** `if isLoopbackOrTrustedNet(r) { if !tokenValid(r) { 401 } ... }` — every
+   **Not** `if isLoopbackOrTrustedNet(r) { if !tokenValid(r) { 401 } ... }`: every
    browser request through Traefik arrives from Traefik's loopback connection, so
    that form forces the entire dashboard through the token path and locks the UI
    out. This ordering bug is the one way to ship this PR broken while the token
@@ -127,7 +127,7 @@ rationale is dead — the net is forgeable, so it is not a factor at all.
    anything on its own; it gates whether the token is honoured at all (defence in
    depth, not the credential). Keep `BLOUD_TRUSTED_LOCAL_NETS` for the QEMU slirp
    case, but document it as a scoping hint, not a security boundary.
-4. **Token generation and distribution** — as originally planned and still
+4. **Token generation and distribution**, as originally planned and still
    correct: `api_token` in `internal/secrets`; CLI gains `ReadRuntimeFile(path)`
    across native/lima/qemu; new `bloud token` command; e2e's Playwright helpers
    shell out to `bloud token` in one helper in `e2e/lib/`, not per spec.
@@ -146,7 +146,7 @@ rationale is dead — the net is forgeable, so it is not a factor at all.
 7. **`GET /api/setup/status` must be genuinely public** (see PR 10). It is
    registered twice and chi's last-registration-wins currently makes it
    admin-only (`router.go:271` vs `:288`). Today first-run setup works *only*
-   because of the bypass being closed here — so this fix is a hard prerequisite
+   because of the bypass being closed here. So this fix is a hard prerequisite
    for PR 4, not a nice-to-have: without it, a fresh install is unreachable for
    any non-loopback browser.
 8. **Rejected: binding host-agent to loopback only.** The 2026-09-19 review
@@ -163,7 +163,7 @@ rationale is dead — the net is forgeable, so it is not a factor at all.
   **non-loopback** `RemoteAddr` and no credential, and assert the exact status
   class (200/401/403) per route. The current helper forces
   `RemoteAddr = 127.0.0.1:1234` (`api_test.go:699-703`), which auto-authenticates
-  as admin and hides every middleware regression — that default must go.
+  as admin and hides every middleware regression; that default must go.
 - Spoofed `True-Client-IP: 127.0.0.1` / `X-Real-IP: 127.0.0.1` / `X-Forwarded-For:
   127.0.0.1` → 401 without a token, admin with a valid token.
 - Session-cookie request + loopback `RemoteAddr` + no token → authenticated as the
@@ -188,11 +188,11 @@ must not be merged before item 7 is fixed.**
 
 ---
 
-## PR 5 — Single orchestrator builder
+## PR 5: Single orchestrator builder
 
 **Two `NewOrchestrator` sites with divergent config** (`cmd/host-agent/configure.go:214-260`
 CLI-reconcile vs `internal/api/router.go:395-470` product path) is duplicated
-"how to wire the system core" knowledge — and the CLI copy is worse than
+"how to wire the system core" knowledge; and the CLI copy is worse than
 divergent, it is inert: it configures only `LDAPOutput` (no `AppStore`, no
 `Containers`, no `CatalogGraph`) and builds a **different graph shape**
 (per-`CatalogID` nodes with edges from `IntegrationConfig`, versus the product
@@ -205,10 +205,10 @@ nothing.
   CLI path calls it with the **same** subsystems (an explicit profile if a
   difference is ever genuinely required; the default is the product path).
 - Graph construction moves into the builder too. Decide explicitly whether the
-  CLI keeps a per-app-node graph or gets the per-container one — the product
+  CLI keeps a per-app-node graph or gets the per-container one; the product
   shape wins unless there is a reason, and then the difference is a named profile.
 - Fold the duplicate `AppState` builder in as well: `orchestrator.buildAppState`
-  (`:1214`) vs `cmd/host-agent/configure.go:295` disagree on SSO — the CLI reads
+  (`:1214`) vs `cmd/host-agent/configure.go:295` disagree on SSO: the CLI reads
   the legacy `appCfg.SSOBaseURL` and ignores admin-set hosts.
 
 ### Tests
@@ -223,10 +223,10 @@ nothing.
 
 ---
 
-## PR 6 — Stop the engine's silent failures (new, 2026-09-19)
+## PR 6: Stop the engine's silent failures (new, 2026-09-19)
 
 Three independent defects that each convert a bug into an unnoticeable outage.
-Each fix is small; each test is cheap. They are independent — parallelizable.
+Each fix is small; each test is cheap. They are independent and parallelizable.
 
 ### 6a. Nil-guard the catalog lookup (process death)
 
@@ -241,7 +241,7 @@ anywhere in host-agent, so this kills the daemon.
   without panicking.
 - Fix: `if err != nil || catalogApp == nil { continue }` before the deref, then
   audit the other `.ContainerDefs()` call sites for the same shape
-  (`orchestrator.go:1141`, `pipeline.go:656,735` are guarded today — keep them so).
+  (`orchestrator.go:1141`, `pipeline.go:656,735` are guarded today; keep them so).
 
 ### 6b. Make `MemoryCache` concurrency-safe (unrecoverable fatal)
 
@@ -273,13 +273,13 @@ later `Submit` returns 202 and nothing reconciles again.
 
 ---
 
-## PR 7 — SQLite pragmas belong in the DSN (new, 2026-09-19)
+## PR 7: SQLite pragmas belong in the DSN (new, 2026-09-19)
 
 `db.InitDB` (`:29-39`) applies `PRAGMA foreign_keys=ON` and
 `PRAGMA busy_timeout=5000` with `db.Exec`, i.e. to **one** pooled connection;
 both are per-connection settings in SQLite, and production never caps the pool
 (the only `SetMaxOpenConns` in the tree is `internal/testdb/testdb.go:29`, which
-pins `1` for `:memory:` — which is exactly why tests cannot see this). Result: on
+pins `1` for `:memory:`, which is exactly why tests cannot see this). Result: on
 every other connection `foreign_keys=OFF` (cascades silently stop firing →
 orphan `shares` / `user_app_positions` rows) and `busy_timeout=0` (writes fail
 `SQLITE_BUSY` immediately instead of waiting).
@@ -297,7 +297,7 @@ orphan `shares` / `user_app_positions` rows) and `busy_timeout=0` (writes fail
 
 ---
 
-## PR 8 — Make declared intent real (new, 2026-09-19)
+## PR 8: Make declared intent real (new, 2026-09-19)
 
 ### 8a. `appclient.Call.Timeout()` is a no-op; `WaitPolicy` has no consumers
 
@@ -313,7 +313,7 @@ only because `policies.go` sets explicit `RetryPolicy` overrides.
 - Fix: honour `timeoutOverride` in `effectivePolicy`/the attempt loop, and make
   `Wait()` use `WaitPolicy` as its default when no override is set. If either is
   genuinely not wanted, **delete the accessor** so an unsupported option fails
-  loudly instead of degrading — silently weakening a declared timeout is the
+  loudly instead of degrading: silently weakening a declared timeout is the
   defect, not the missing feature.
 - Test: a call declaring `Timeout(2s)` against a handler that responds at 500 ms
   and 4 s proves the override is honoured; a `Ready()` wait with no override uses
@@ -327,7 +327,7 @@ only because `policies.go` sets explicit `RetryPolicy` overrides.
 `"version": "1.2.1"` (verified by fetching it), so `SkipIf` is always false:
 every full lifecycle pass re-downloads the component, reports `changed`, and
 makes the orchestrator destroy and recreate the HA container
-(`orchestrator.go:1041-1045`) — invariant 2 broken, plus a network dependency in
+(`orchestrator.go:1041-1045`): invariant 2 broken, plus a network dependency in
 the boot path.
 
 - Fix: compare against the manifest value (`"1.2.1"`); keep the tag only in the
@@ -342,7 +342,7 @@ the boot path.
 
 ---
 
-## PR 9 — Make reality match intent (new, 2026-09-19)
+## PR 9: Make reality match intent (new, 2026-09-19)
 
 ### 9a. Container drift is never repaired while the process is alive
 
@@ -378,22 +378,22 @@ Independent of PRs 4-8.
 
 ---
 
-## PR 10 — Honest surfaces and dead code (new, 2026-09-19)
+## PR 10: Honest surfaces and dead code (new, 2026-09-19)
 
-Small, mostly deletions — but each one is currently a lie in an API or a doc.
+Small, mostly deletions. But each one is currently a lie in an API or a doc.
 
 1. **System apps leak into the user catalog.** The user-facing filter is
    `SystemCategories[app.Category] == "infrastructure"` and **no
    `metadata.yaml` sets it** (traefik is `network`, authentik is `security`, both
    `isSystem: true`), so `GET /api/apps` offers Traefik and Authentik as
-   installable apps — contradicting invariant 5. Fix: filter on `IsSystem`;
+   installable apps, contradicting invariant 5. Fix: filter on `IsSystem`;
    delete `SystemCategories` / `IsSystemAppByName` (no production caller) or
    re-point them at `IsSystem`. Test: the catalog API excludes both.
 2. **Delete the dead clear-data path.** `ClearAppDataIntent` is dropped by the
    `applyIntents` switch (`pipeline.go:31-49`) despite being declared, mapped in
    `intentTypeName` and compile-asserted; `appsModule.ClearData` is unreachable
    (no route) **and** its `os.RemoveAll(filepath.Join(m.appsDir, name))` targets
-   the **catalog** directory rather than the data directory — a latent destroyer
+   the **catalog** directory rather than the data directory: a latent destroyer
    of `apps/<name>/` if ever wired. Delete the intent, the method, and the vacuous
    test that asserts 404 on a nonexistent route (`api_test.go:924-927`). If
    clear-data returns, it comes back as an orchestrator intent with the data-dir
@@ -405,10 +405,10 @@ Small, mostly deletions — but each one is currently a lie in an API or a doc.
    silently downgrades it. The router-classification test from PR 4 pins this.
 5. **Persist the primary host.** `applySetHostsIntent` leaves `storedPrimary`
    empty for a built-in primary, so an admin who selects `bloud.local` as primary
-   silently reverts to `localhost` on the next boot — changing the OIDC issuer
+   silently reverts to `localhost` on the next boot, changing the OIDC issuer
    and re-provisioning SSO. Fix: persist the primary unconditionally; test
    boot-resolve after a built-in-primary change.
-6. **`sso.DeriveSecret`'s literal fallback** (`blueprint.go:293-297`) — delete it
+6. **`sso.DeriveSecret`'s literal fallback** (`blueprint.go:293-297`): delete it
    and make an empty master secret an error, since every live path already guards
    it. In the same pass, delete the persisted-but-never-read
    `oauthClientSecret` write (`:284-287`), which contradicts the ledger's explicit
@@ -417,14 +417,14 @@ Small, mostly deletions — but each one is currently a lie in an API or a doc.
    `nil` for the sharing module's tailnet node and the system module's graph and
    orchestrator, so `POST /api/sharing/invites` always returns 503. Either wire
    them from the same objects the orchestrator owns, or remove the endpoints that
-   can only ever fail — an endpoint that cannot succeed is worse than a 404.
+   can only ever fail: an endpoint that cannot succeed is worse than a 404.
 8. **Validate what we generate and what we load.** Parse the generated Traefik
    YAML before writing it (or emit it via `yaml.Marshal` rather than
    `fmt.Fprintf` with unquoted app names), and add strict decoding + field
    validation at catalog load (unknown keys, port range, pinned image tag,
    container-name shape, SSO strategy). Pin the `primaryContainerNode` = last-def
    convention in the app spec, or replace it with an explicit
-   `primary: true` marker — it currently decides inter-app edges and which node
+   `primary: true` marker: it currently decides inter-app edges and which node
    owns SSO provisioning.
 
 **Files:** `internal/catalog/cache.go`, `internal/api/{apps_module.go,router.go,api_test.go}`,
@@ -433,13 +433,13 @@ Small, mostly deletions — but each one is currently a lie in an API or a doc.
 
 ---
 
-## PR 11 — Make the health surface able to see this system (new, 2026-09-19)
+## PR 11: Make the health surface able to see this system (new, 2026-09-19)
 
 `CheckSystemHealth` is `db.Ping()` plus `orch == nil → nil` (`server.go:157-167`),
 so a host with no working Podman socket boots **"healthy" with no orchestrator**
 (installs then 503), a dead intent loop is indistinguishable from an idle one, and
 any system-app failure or the 10-minute timeout `os.Exit(1)`s the entire control
-plane — including the dashboard that would explain what is broken
+plane, including the dashboard that would explain what is broken
 (`main.go:227-241`).
 
 - Fix: extend the health payload with orchestrator liveness (`Ready()` plus a
@@ -448,7 +448,7 @@ plane — including the dashboard that would explain what is broken
 - Fix: deepen the *startup* gate to the system apps it actually gates on
   (Traefik, Authentik, LDAP outpost) instead of SQLite.
 - Decide explicitly: does a failed system-app convergence block serving the API,
-  or serve a degraded dashboard? Recommended: serve, with a loud banner — the
+  or serve a degraded dashboard? Recommended: serve, with a loud banner: the
   dashboard is the only tool an owner has to diagnose the box.
 - Test: nil orchestrator → health reports degraded (not healthy); stale
   convergence stamp → degraded; a stub that never converges → API still serves.
@@ -462,7 +462,7 @@ signal.
 ## Sequencing
 
 ```
-PR 4  (auth bypass: token + drop RealIP + public setup/status)   FIRST — P0
+PR 4  (auth bypass: token + drop RealIP + public setup/status)   FIRST: P0
       └─ PR 10.4 (route registration) rides along; PR 10.1 (public setup/status) is a prerequisite
 
 PR 6  (engine silent failures: nil guard, cache lock, queue)     parallel with 7, 8, 9
@@ -474,24 +474,24 @@ PR 10 (honest surfaces, dead code)                               after 4
 PR 11 (health surface)                                           after 6
 ```
 
-**File-contention rules:** `internal/api/router.go` has one owner at a time —
+**File-contention rules:** `internal/api/router.go` has one owner at a time:
 PR 4 → PR 5/PR 10. `internal/engine/orchestrator/` is touched by PR 6, 9 and 10.2;
 PR 6 first (it is the crash-class), then 9, then the deletion in 10.
 
 ## Decisions to confirm before implementation
 
-1. **Loopback credential carrier** — per-boot token in the runtime data dir read
+1. **Loopback credential carrier**: per-boot token in the runtime data dir read
    through `ReadRuntimeFile` (as PR 4 plans), versus a unix socket that only local
    callers can reach. Recommended: the token; the seam already exists for all
    three backends. The socket is cleaner but is a fourth backend-specific path.
-2. **`BLOUD_TRUSTED_LOCAL_NETS` after PR 4** — keep as a scoping hint (recommended,
+2. **`BLOUD_TRUSTED_LOCAL_NETS` after PR 4**: keep as a scoping hint (recommended,
    QEMU needs it), or delete the config surface entirely once the token works
    everywhere. Note the CLI sets it in `dev.go:584`, `e2e_lifecycle_exec.go:52`,
    `validate_integration.go:86`.
-3. **`RealIP`** — delete outright (recommended; nothing consumes client IP) or
+3. **`RealIP`**: delete outright (recommended; nothing consumes client IP) or
    keep with `trustedIPs` for future access logs.
-4. **Health on failed system convergence** — degrade-and-serve (recommended) or
+4. **Health on failed system convergence**: degrade-and-serve (recommended) or
    keep exit-on-failure.
-5. **`primaryContainerNode`** — keep the positional convention (document it) or
+5. **`primaryContainerNode`**: keep the positional convention (document it) or
    add an explicit `primary: true` to the container schema (a metadata change,
    touching every multi-container app).

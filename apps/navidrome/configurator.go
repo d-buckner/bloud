@@ -124,7 +124,7 @@ func (c *Configurator) ensureAdminAndLogin(ctx context.Context) (string, error) 
 		return token, nil
 	}
 
-	// No admin yet — bootstrap the first admin user.
+	// No admin yet: bootstrap the first admin user.
 	c.logger.Info("bootstrapping admin user")
 	token, err := c.navi.createAdmin(ctx, bootstrapAdminUsername, password)
 	if err != nil {

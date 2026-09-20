@@ -129,7 +129,7 @@ func vmLabel(name string) string {
 	}
 }
 
-// cmdStart prints usage guidance — the real dev loop is ./bloud dev.
+// cmdStart prints usage guidance: the real dev loop is ./bloud dev.
 func cmdStart() int {
 	name, err := backendName()
 	if err != nil {
@@ -305,7 +305,7 @@ func cmdReset() int {
 	dirs := host.DataDirs()
 
 	fmt.Printf("This will stop all services and wipe all app data in '%s'.\n", inst)
-	fmt.Printf("The VM itself is kept — only data, containers, and the database are removed.\n")
+	fmt.Printf("The VM itself is kept: only data, containers, and the database are removed.\n")
 	fmt.Print("Continue? [y/N] ")
 	resp, _ := stdinReader.ReadString('\n')
 	if strings.ToLower(strings.TrimSpace(resp)) != "y" {
@@ -355,7 +355,7 @@ podman system prune -f 2>/dev/null || true
 		return 1
 	}
 
-	log("Reset complete — run ./bloud dev to start fresh")
+	log("Reset complete: run ./bloud dev to start fresh")
 	return 0
 }
 
@@ -485,7 +485,7 @@ func cmdDev() int {
 	// Clean slate: remove managed containers before the host-agent takes over.
 	// Also remove any stale legacy dev containers (bloud-dev-postgres,
 	// bloud-dev-redis, dev_* compose names) that predate the host-agent
-	// self-bootstrap. There is no shared postgres/redis compose stack anymore —
+	// self-bootstrap. There is no shared postgres/redis compose stack anymore;
 	// apps own their infra containers (e.g. apps-authentik-postgres) via
 	// metadata.yaml containers blocks, so the host-agent is the single manager.
 	// apps-traefik is included because it uses host network and holds port 8080.

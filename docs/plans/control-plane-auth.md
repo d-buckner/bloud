@@ -1,19 +1,19 @@
-> Status: accepted
+> Status: draft
 
-# Plan: Auth Federation — bloud + headscale Control Plane
+# Plan: Auth Federation (bloud + headscale Control Plane)
 
-> **Status: PROPOSED — not reviewed, not accepted, not aligned with product direction.**
+> **Status: PROPOSED (not reviewed, not accepted, not aligned with product direction).**
 > Do not implement from this document.
 
 ## Problem
 
 Three identity tiers exist in the bloud + headscale control plane model:
 
-1. **Control plane** — headscale SSO, fleet management, canonical user store
-2. **Per-host bloud instances** — local app SSO (Jellyfin, Navidrome), web UI auth, tailnet sharing
-3. **Guests** — remote users accessing shared apps via tailnet
+1. **Control plane**: headscale SSO, fleet management, canonical user store
+2. **Per-host bloud instances**: local app SSO (Jellyfin, Navidrome), web UI auth, tailnet sharing
+3. **Guests**: remote users accessing shared apps via tailnet
 
-The naive approach — host Authentik proxies all auth to the control plane — violates the
+The naive approach (host Authentik proxies all auth to the control plane) violates the
 core constraint:
 
 > **Local auth must work when the control plane is unreachable.**
@@ -40,7 +40,7 @@ source of truth at runtime, revocation ambiguity, conflicts when instances diver
    plane can be verified cryptographically without calling home.
 
 5. **The local admin account is always local.** The bloud owner always has one account
-   that exists purely in the host's Authentik — set during enrollment, with a password
+   that exists purely in the host's Authentik: set during enrollment, with a password
    known only to them. No dependency on the control plane, ever.
 
 ---
@@ -248,14 +248,14 @@ flowchart TD
 
 Passwords are never synced. A user can independently set local credentials on each host
 they have access to. For most users, the SSO path covers initial login and the session
-TTL covers the rest — a local password is optional but available.
+TTL covers the rest; a local password is optional but available.
 
 ---
 
 ## Inter-node API Auth
 
 When the control plane calls a managed host's API (config push, install trigger,
-status query). Uses machine-to-machine JWT — no user session involved.
+status query). Uses machine-to-machine JWT: no user session involved.
 
 ```mermaid
 sequenceDiagram
@@ -284,7 +284,7 @@ reach Host A cannot be replayed against Host B.
 ---
 
 ## Guest / Sharing Auth
-Remote users accessing shared apps via tailnet. Integrates with [plans/tailnet-outpost.md](plans/tailnet-outpost.md).
+Remote users accessing shared apps via tailnet. Integrates with [tailnet-outpost.md](tailnet-outpost.md).
 The standalone proxy outpost is the auth boundary; host Authentik is the identity provider.
 
 ```mermaid
@@ -329,7 +329,7 @@ sequenceDiagram
 
 The guest's SSO path uses the same JWKS verification that user logins use. If the
 control plane is down, guests with local host accounts can still authenticate.
-Guests who have only ever used SSO cannot log in fresh during a control plane outage —
+Guests who have only ever used SSO cannot log in fresh during a control plane outage:
 the same trade-off as for regular users.
 
 ---
@@ -383,12 +383,12 @@ the same trade-off as for regular users.
 
 - Host Authentik configured with control plane Authentik as OIDC source
 - Login page shows "Sign in via Control Plane" option alongside local credentials
-- `id_token` verified locally via cached JWKS — no network call to control plane
+- `id_token` verified locally via cached JWKS: no network call to control plane
 - Local user record upserted from token claims on first SSO login
 - **Validates**: single password works across control plane UI and host (when online); falls back cleanly to local when offline
 
 ### Phase 6: Guest sharing auth
-- Standalone proxy outpost running on host ([plans/tailnet-outpost.md](plans/tailnet-outpost.md))
+- Standalone proxy outpost running on host ([tailnet-outpost.md](tailnet-outpost.md))
 - Guest login through host Authentik; SSO path available via control plane
 - Cookie scoped to tailnet domain
 - **Validates**: remote guests can access shared apps with proper auth; local auth fallback works for guests with host accounts

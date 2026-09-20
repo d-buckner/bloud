@@ -97,7 +97,7 @@ func (o *Orchestrator) SyncRoutes() error {
 // ensureGateway brings up the tailnet gateway when a tailnet is active.
 // The gateway provides the SOCKS5 proxy that lets remote apps (shared
 // from other hosts) be proxied through Traefik to the LAN. Best-effort:
-// an unavailable gateway is logged, not fatal — routes for local apps
+// an unavailable gateway is logged, not fatal: routes for local apps
 // are still written.
 func (o *Orchestrator) ensureGateway() {
 	if o.gateway == nil || !o.tailnetActive() {
@@ -124,8 +124,8 @@ func (o *Orchestrator) resolveTailnetDomain() string {
 
 // RegenerateRoutes writes the Traefik dynamic config for all installed
 // apps. Pure with respect to the runtime: it starts nothing and mutates
-// no proxies. Everything runtime-shaped that the config depends on —
-// remote proxy port assignments, the tailnet domain — is passed in by
+// no proxies. Everything runtime-shaped that the config depends on
+// (remote proxy port assignments, the tailnet domain) is passed in by
 // the caller (see SyncRoutes). No-op when traefikGen is not configured.
 func (o *Orchestrator) RegenerateRoutes(remoteRoutes []traefikgen.RemoteAppRoute, tailnetDomain string) error {
 	if o.traefikGen == nil {
@@ -150,7 +150,7 @@ func (o *Orchestrator) RegenerateRoutes(remoteRoutes []traefikgen.RemoteAppRoute
 }
 
 // reconcileRemoteProxies reconciles the reverse proxies for remote
-// (shared) apps — a runtime mutation — and translates the resulting
+// (shared) apps (a runtime mutation) and translates the resulting
 // port assignments into Traefik routes. Returns nil when no remote app
 // store is configured.
 func (o *Orchestrator) reconcileRemoteProxies() []traefikgen.RemoteAppRoute {
@@ -176,7 +176,7 @@ func (o *Orchestrator) reconcileRemoteProxies() []traefikgen.RemoteAppRoute {
 		return nil
 	}
 
-	// Reconcile reverse proxies — returns port assignments. With no
+	// Reconcile reverse proxies: returns port assignments. With no
 	// targets this stops all proxies.
 	portMap := o.remoteProxy.Reconcile(targets)
 	var remoteRoutes []traefikgen.RemoteAppRoute

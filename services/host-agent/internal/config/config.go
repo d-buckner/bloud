@@ -27,10 +27,10 @@ type Config struct {
 	// host-forwarded connections arrive from the gateway, not loopback).
 	TrustedLocalNets []string
 	// SSO configuration
-	SSOHostSecret   string // Master secret for deriving client secrets
+	SSOHostSecret string // Master secret for deriving client secrets
 	// APIToken is the bearer credential for the admin API surface from a trusted
 	// position (loopback / TrustedLocalNets). Empty disables that path.
-	APIToken string
+	APIToken        string
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
 	SSOAuthentikURL string // Authentik external URL for discovery (e.g., "http://localhost:8080")
 	SSOIssuerURL    string // OIDC issuer base URL reachable from app containers (e.g., "http://sso.localhost:8080"); empty falls back to SSOAuthentikURL
@@ -100,8 +100,8 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		return nil, err
 	}
 	// The admin API credential for trusted-position callers (CLI, e2e). An empty
-	// value disables the position-based admin path entirely — see
-	// api.authMiddlewareFn — so a resolution failure fails closed.
+	// value disables the position-based admin path entirely (see
+	// api.authMiddlewareFn), so a resolution failure fails closed.
 	apiToken, err := getSecret("BLOUD_API_TOKEN", secretsMgr.GetAPIToken())
 	if err != nil {
 		return nil, err
@@ -171,7 +171,7 @@ func splitNets(raw string) []string {
 		_, _, err := net.ParseCIDR(part)
 		if err != nil {
 			if ip := net.ParseIP(part); ip == nil {
-				continue // neither CIDR nor bare IP — drop
+				continue // neither CIDR nor bare IP: drop
 			}
 		}
 		nets = append(nets, part)
@@ -188,7 +188,7 @@ func getEnv(key, defaultValue string) string {
 
 // getSecret resolves a required secret from the environment or the generated
 // store. Priority: env var > generated secret. An empty resolution is a fatal
-// configuration fault — there is no static fallback.
+// configuration fault: there is no static fallback.
 func getSecret(envKey, secretValue string) (string, error) {
 	if value := os.Getenv(envKey); value != "" {
 		return value, nil

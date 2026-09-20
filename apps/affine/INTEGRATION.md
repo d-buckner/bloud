@@ -5,7 +5,7 @@
 AFFiNE (https://github.com/toeverything/AFFiNE) is an AI-native knowledge base
 that unifies docs, databases, and whiteboards. Bloud installs it as three
 containers, wires its built-in OIDC client to the Bloud identity provider
-(Authentik), and bootstraps the first-run owner account — so users reach a
+(Authentik), and bootstraps the first-run owner account, so users reach a
 sign-in button, not a setup wizard.
 
 - Image: `ghcr.io/toeverything/affine:0.27.4` (pinned)
@@ -42,7 +42,7 @@ node ./scripts/self-host-predeploy.js && exec node ./dist/main.js
 
 The script is idempotent (safe to run on every reconciliation), and chaining
 preserves the ordering guarantee (migrations complete before the HTTP
-listener opens) within a single graph node. First boot is slow — the
+listener opens) within a single graph node. First boot is slow: the
 healthcheck (node `fetch` against `/info`; the slim image has no curl) allows
 a long startup window (`retries: 90` × 5s).
 
@@ -73,13 +73,13 @@ unchanged config never churns the file across reconciliation cycles.
   callback path) or the browser round-trip fails.
 - `allowPrivateNetwork: true` lets the server reach the issuer by the
   in-container name `sso.localhost` (mapped to the host gateway via
-  `extraHosts`) — the same name browsers use, so no second URL is needed.
+  `extraHosts`): the same name browsers use, so no second URL is needed.
 - Client ID/secret are derived deterministically by the host-agent (the app
   and the IdP agree without a shared store).
 
 ### OIDC login flow
 
-1. User opens `http://affine.localhost:8080/` — AFFiNE renders the workspace
+1. User opens `http://affine.localhost:8080/`; AFFiNE renders the workspace
    read-only with a **Sign in and enable** button (local accounts are not
    part of the Bloud story).
 2. Clicking it opens the sign-in modal; **Continue with OIDC** starts the
@@ -98,9 +98,9 @@ unchanged config never churns the file across reconciliation cycles.
 Authentik's managed `scope-email` property mapping hardcodes
 `email_verified: false`, and AFFiNE's OIDC provider **rejects logins with
 `email_verified: false` or a missing/invalid email claim**. Bloud therefore
-creates a custom scope mapping —
+creates a custom scope mapping:
 `Bloud OIDC: OpenID 'email' (verified)`
-(`pkg/authentik.Client.ensureBloudEmailScopeMapping`) — that returns
+(`pkg/authentik.Client.ensureBloudEmailScopeMapping`); that returns
 `email_verified: true`, and every native-oidc provider is reconciled to use
 it (`ensureProviderEmailScopeMapping`, idempotent: no PATCH without drift).
 
@@ -114,7 +114,7 @@ AFFiNE validates the `email` claim with an RFC-style email regex that rejects
 single-label domains. Bloud accordingly gives every managed user a valid
 identity email:
 
-- New users (`CreateUser`): `username@<baseDomain>` — with the dev default
+- New users (`CreateUser`): `username@<baseDomain>`, with the dev default
   base domain `localhost` mapped to `localhost.local`
   (`authentik.UserEmailDomain`).
 - Adopted users (setup wizard adopts the bootstrap admin): email is repaired
@@ -132,7 +132,7 @@ which would block all end users. PostStart therefore calls
 (`Bloud Admin` / `bloud-admin@affine.localhost`, password generated from the
 secrets provider and never exposed). The endpoint accepts the call only
 before any user exists and answers `403 First user already created`
-otherwise — that response is the idempotency signal for later reconciliation
+otherwise: that response is the idempotency signal for later reconciliation
 passes. End users never use this account; they authenticate via SSO.
 
 ## Files
@@ -177,7 +177,7 @@ dir, routes).
 | Symptom | Cause / fix |
 |---------|-------------|
 | `Missing valid email claim in OIDC response` | The provider lost the verified-email scope mapping (or the user has no email). Reconcile re-applies it on the next PostStart; check the provider's `property_mappings` for the `Bloud OIDC: OpenID 'email' (verified)` mapping. |
-| `Email for this account is not verified` | Same mapping missing — `email_verified` came back false. |
+| `Email for this account is not verified` | Same mapping missing: `email_verified` came back false. |
 | `Invalid OAuth response` with an email complaint | The user's identity email lacks a TLD (e.g. legacy `admin@localhost`). Upgrade path self-heals it; set `BLOUD_AUTHENTIK_ADMIN_EMAIL` explicitly otherwise. |
-| Stuck at `/admin/setup` | Owner bootstrap did not run (PostStart failed earlier) — check host-agent logs for `bootstrapping owner account`. |
+| Stuck at `/admin/setup` | Owner bootstrap did not run (PostStart failed earlier); check host-agent logs for `bootstrapping owner account`. |
 | Slow first boot | Expected: image pull + prisma migrations run before the listener opens. The healthcheck window covers ~7.5 minutes. |

@@ -11,7 +11,7 @@ import (
 )
 
 // retiredFallbacks are the static credentials that used to be reachable from
-// config.Load's fallback path. They must never appear as a resolved value again —
+// config.Load's fallback path. They must never appear as a resolved value again:
 // their presence in the resolution table would be a downgrade-to-known-creds bug.
 var retiredFallbacks = []string{
 	"testpass123",
@@ -72,7 +72,7 @@ func TestLoad_MissingSecretsAutoGenerates(t *testing.T) {
 }
 
 // TestLoad_CorruptSecretsFailsAndPreservesFile is the security property: a
-// corrupt secrets.json must be fatal, not silently regenerated over — the
+// corrupt secrets.json must be fatal, not silently regenerated over; the
 // original bytes are left intact so the operator can recover them.
 func TestLoad_CorruptSecretsFailsAndPreservesFile(t *testing.T) {
 	dir := t.TempDir()

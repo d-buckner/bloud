@@ -46,14 +46,14 @@ test.describe('live install state (install streaming)', () => {
     await page.locator('.app-card', { hasText: 'Jellyfin' }).first().click();
     await page.getByRole('button', { name: 'Get' }).click();
 
-    // The tile must appear on the home grid immediately — the install 202
+    // The tile must appear on the home grid immediately: the install 202
     // carries the app record, so no polling round-trip is needed.
     await page.goto('/');
     const tile = page.locator('.app-slot', { hasText: 'Jellyfin' }).first();
     await expect(tile).toBeVisible({ timeout: 5_000 });
 
     // The icon spinner is visible while installing (the tile itself shows
-    // no phase text — live phase detail lives in the install modal).
+    // no phase text; live phase detail lives in the install modal).
     await expect(tile.locator('.install-spinner')).toBeVisible({
       timeout: 2_000,
     });

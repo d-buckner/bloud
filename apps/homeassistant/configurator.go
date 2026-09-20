@@ -23,7 +23,7 @@ const appName = "homeassistant"
 
 const (
 	// bootstrapUsername is the HA owner account created by headless onboarding.
-	// Unlike Jellyfin's bootstrap admin, an HA owner cannot be deleted — this is
+	// Unlike Jellyfin's bootstrap admin, an HA owner cannot be deleted; this is
 	// the documented break-glass account. Its password lives in secrets.json and
 	// is never shared; end users authenticate via SSO.
 	bootstrapUsername = "bloud-bootstrap-admin"
@@ -155,14 +155,14 @@ func (c *Configurator) baseURL() string {
 // release into custom_components/, and merges Bloud's auth_oidc block into
 // configuration.yaml. Returns changed=true when anything was written, which
 // signals the orchestrator to (re)start the container so HA loads the new
-// configuration — HA never hot-reloads auth providers.
+// configuration; HA never hot-reloads auth providers.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
 	configDir := filepath.Join(state.DataPath, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return false, fmt.Errorf("failed to create config dir: %w", err)
 	}
 
-	// Reverse-proxy trust is required whenever HA sits behind Traefik — every
+	// Reverse-proxy trust is required whenever HA sits behind Traefik: every
 	// proxied request needs it, independent of SSO (see ensureReverseProxy).
 	rpChanged, err := c.ensureReverseProxy(configDir)
 	if err != nil {
@@ -171,12 +171,12 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 	// Self-heal a stale running process: the trust patch is on disk but the
 	// live HA still rejects forwarded headers (an in-place restart was issued
-	// on an earlier pass and never actually reloaded — see CI evidence where
+	// on an earlier pass and never actually reloaded; see CI evidence where
 	// the forward-rejection persisted ~100s after the restart call).
 	// Reporting a change makes the orchestrator recreate the container; the
 	// cold boot loads the patched entry with no admin token required. A
 	// refused probe means HA is simply not reachable yet (fresh install /
-	// crash recovery), which the normal start path handles — do NOT force.
+	// crash recovery), which the normal start path handles; do NOT force.
 	staleForce := false
 	if !rpChanged && storedProxyTrusted(configDir) {
 		if live, reachable, status, _ := c.probeProxyTrust(ctx); reachable && !live {
@@ -251,7 +251,7 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 	// `homeassistant.restart` service: under the official Container image that
 	// soft restart (exit-code 100 re-exec by s6) is unreliable and can accept
 	// without ever reloading (see INTEGRATION.md). A podman stop+start is a
-	// real process re-exec and needs no admin token — so it works on a retried
+	// real process re-exec and needs no admin token, so it works on a retried
 	// install too, where onboarding is already done and no token is available.
 	changed, err := c.ensureReverseProxy(configDir)
 	if err != nil {
@@ -264,16 +264,16 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 			// keeps rejecting Traefik's forwarded headers (OIDC callback 400s)
 			// until some later restart. Fail the pass instead: the node lands in
 			// ERROR, and the PreStart stale-check (or a retry install's reset)
-			// recreates the container — which loads the patched entry.
+			// recreates the container, which loads the patched entry.
 			c.logger.Warn("container restart unavailable; failing so a recreate applies the patched trust", "error", err)
 			return fmt.Errorf("reverse-proxy trust written but the container could not be restarted (%v); the next recreate applies it", err)
 		}
 	}
 	// Verify the RUNNING process actually honours forwarded headers before the
-	// node can be marked RUNNING — but only when there is trust on disk to
+	// node can be marked RUNNING, but only when there is trust on disk to
 	// verify (just-patched or already-trusted). When HA has not written its
 	// http entry yet (early onboarding) there is nothing to check and the wait
-	// is skipped. The restart call returns long before HA has reloaded — and can
+	// is skipped. The restart call returns long before HA has reloaded, and can
 	// return without reloading at all (CI showed the forward-rejection persisting
 	// ~100s after the restart while the API was already answering 200). The
 	// on-disk patch proves nothing about the live process; the probe does.
@@ -288,7 +288,7 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 			// The OIDC provider registers at HA startup and its /auth/oidc/welcome
 			// view answers only once setup + discovery succeed. A fresh container can
 			// still be mid-boot (or mid first-run onboarding) when this probe runs, so
-			// a timeout is usually transient — but the orchestrator treats PostStart
+			// a timeout is usually transient, but the orchestrator treats PostStart
 			// errors as terminal ERROR (only an explicit install intent resets them),
 			// so word this as a recoverable retry rather than a hard failure.
 			return fmt.Errorf("OIDC provider not yet live (%v); retry the install to reconcile and re-check it", err)
@@ -320,12 +320,12 @@ func (c *Configurator) ensureOIDCComponent(ctx context.Context, configDir string
 
 // managedBlock renders the desired auth_oidc block. Fixed key order and always
 // double-quoted values keep the rendering deterministic across reconciliation
-// cycles. discovery_url must be the full well-known URL — the integration
+// cycles. discovery_url must be the full well-known URL; the integration
 // fetches it verbatim (verified against v1.2.1 source).
 func managedBlock(oidc *configurator.OIDCOutput) string {
 	discovery := strings.TrimSuffix(oidc.IssuerURL, "/") + "/.well-known/openid-configuration"
 	return strings.Join([]string{
-		managedBegin + " (Bloud-managed — do not edit)",
+		managedBegin + " (Bloud-managed: do not edit)",
 		componentDomain + ":",
 		"  client_id: " + yamlQuote(oidc.ClientID),
 		"  client_secret: " + yamlQuote(oidc.ClientSecret),
@@ -355,11 +355,11 @@ var trustedProxies = []string{"10.0.0.0/8"}
 // fails with 400.
 //
 // The entry HA writes (schema version 2) holds its live settings under
-// data.stable — that is where the two keys are merged; every other field HA
+// data.stable: that is where the two keys are merged; every other field HA
 // set is preserved. It never creates the file: a hand-written config entry is
 // rejected by HA's strict schema validation on first boot (which would take
 // down the entire http integration, and with it auth/onboarding/everything
-// else). When the entry is absent — or carries no data.stable block yet — this
+// else). When the entry is absent (or carries no data.stable block yet), this
 // is a no-op; the caller (PostStart) calls it again once HA has written its
 // own entry, then restarts Home Assistant to apply it.
 // Returns changed=true only when the on-disk content actually changed.
@@ -457,7 +457,7 @@ func (c *Configurator) waitForAPI(ctx context.Context) error {
 
 // probeProxyTrust reports whether the RUNNING Home Assistant process currently
 // accepts forwarded (X-Forwarded-For-bearing) requests. Single-shot, three
-// states (trusted / reachable-but-stale / unreachable) — the contract the
+// states (trusted / reachable-but-stale / unreachable): the contract the
 // PreStart stale-check consumes. See haAPI.probeProxyTrust for the mapping.
 func (c *Configurator) probeProxyTrust(ctx context.Context) (trusted, reachable bool, status int, perr error) {
 	return c.api.probeProxyTrust(ctx)
@@ -560,7 +560,7 @@ func (c *Configurator) createFirstRunOwner(ctx context.Context) (string, error) 
 	}
 	// Close the steps that follow "user" with the owner token. The integration
 	// step exists to hand the browser an auth_code; we complete it with the
-	// built-in my.home-assistant.io redirect that nobody redeems — the point is
+	// built-in my.home-assistant.io redirect that nobody redeems; the point is
 	// that HA then reports the instance onboarded, so the user's first visit
 	// lands on the sign-in page and goes straight through OIDC instead of the
 	// half-raced wizard.
@@ -587,8 +587,8 @@ func (c *Configurator) finishFirstRunSteps(ctx context.Context, token string) er
 	return nil
 }
 
-// ownerOnDisk reports whether Home Assistant's auth store — read the same way
-// ensureReverseProxy reads the http store — already holds an owner user. That
+// ownerOnDisk reports whether Home Assistant's auth store (read the same way
+// ensureReverseProxy reads the http store) already holds an owner user. That
 // distinguishes the permanent 404 of /api/onboarding (endpoint deregistered
 // once every step is closed) from the transient 404 of a booting instance.
 func ownerOnDisk(configDir string) bool {

@@ -20,7 +20,7 @@ import (
 // .bloud/preferences.yaml (gitignored).
 type Preferences struct {
 	// Backend is the runtime backend: "lima" (macOS VM), "qemu" (Linux VM),
-	// or "native" (Linux, no VM — runs directly on the host).
+	// or "native" (Linux, no VM: runs directly on the host).
 	Backend string `yaml:"backend,omitempty"`
 }
 
@@ -126,7 +126,7 @@ var stdinReader = bufio.NewReader(os.Stdin)
 // the user).
 func promptBackend(r *bufio.Reader, path string, options []string) (string, error) {
 	fmt.Println()
-	fmt.Println("  No backend preference set — pick a runtime for this machine")
+	fmt.Println("  No backend preference set: pick a runtime for this machine")
 	fmt.Printf("  (stored in %s):\n\n", path)
 	for i, name := range options {
 		fmt.Printf("   %d) %-8s %s\n", i+1, name, backendDescription(name))
@@ -155,14 +155,14 @@ func promptBackend(r *bufio.Reader, path string, options []string) (string, erro
 		if readErr == io.EOF {
 			return "", noPreferenceError(options)
 		}
-		fmt.Printf("  %sInvalid choice %q — enter 1-%d or a backend name%s\n", colorYellow, answer, len(options), colorReset)
+		fmt.Printf("  %sInvalid choice %q: enter 1-%d or a backend name%s\n", colorYellow, answer, len(options), colorReset)
 	}
 }
 
 // noPreferenceError is the user-facing error for "no backend known and none
 // could be asked for".
 func noPreferenceError(options []string) error {
-	return fmt.Errorf("no backend preference set — run './bloud setup' or set BLOUD_BACKEND (%s)", strings.Join(options, " | "))
+	return fmt.Errorf("no backend preference set: run './bloud setup' or set BLOUD_BACKEND (%s)", strings.Join(options, " | "))
 }
 
 // resolveBackend determines the runtime backend for a checkout rooted at
@@ -253,7 +253,7 @@ func setupBackend(root string) (string, error) {
 		if err := savePreferences(root, Preferences{Backend: available[0]}); err != nil {
 			return "", fmt.Errorf("saving backend preference: %w", err)
 		}
-		fmt.Printf("  Backend: %s (automatic — the only backend for this host)\n", available[0])
+		fmt.Printf("  Backend: %s (chosen automatically, as the only backend for this host)\n", available[0])
 		return available[0], nil
 	}
 	name, err := promptBackend(stdinReader, preferencesFile(root), available)

@@ -243,7 +243,7 @@ func NewRouter(
 	r.Use(middleware.RequestID)
 	// NOTE: no middleware.RealIP. It rewrites r.RemoteAddr from client-supplied
 	// True-Client-IP / X-Real-IP / X-Forwarded-For, and RemoteAddr is the input
-	// to the trusted-position check below — trusting it made admin reachable by
+	// to the trusted-position check below: trusting it made admin reachable by
 	// anyone who could set a header (see authMiddlewareFn). The client address
 	// is not used for anything else in host-agent.
 	r.Use(middleware.Logger)
@@ -256,7 +256,7 @@ func NewRouter(
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	// NOTE: no global request timeout here — SSE streams (below) must
+	// NOTE: no global request timeout here: SSE streams (below) must
 	// outlive a single request. Non-streaming routes opt into the timeout
 	// explicitly via With(requestTimeout).
 	requestTimeout := middleware.Timeout(60 * time.Second)
@@ -271,14 +271,14 @@ func NewRouter(
 
 	r.Route("/api", func(api chi.Router) {
 		// SSE streaming routes: authenticated, but exempt from the request
-		// timeout — these are long-lived streams, not single requests.
+		// timeout: these are long-lived streams, not single requests.
 		stream := api.With(authMiddleware)
 		NewEventsRouter(eventsMod, stream)
 		stream.Get("/apps/{name}/logs", logsMod.StreamLogsHandler())
 		stream.Get("/system/status/stream", logsMod.SystemStatusStreamHandler())
 
 		// Non-streaming public routes. The setup pair must be reachable before
-		// any credential exists — first-run has no user to authenticate as.
+		// any credential exists: first-run has no user to authenticate as.
 		npub := api.With(requestTimeout)
 		npub.Get("/health", systemMod.HealthHandler())
 		NewSetupRouter(settingsMod, npub)

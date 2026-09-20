@@ -24,7 +24,7 @@ import (
 
 // ---------------------------------------------------------------------------
 // Shared auth primitives: cookie names, the thread-safe AuthConfig reference,
-// and request-derivation helpers. This is the auth module's shared half — read
+// and request-derivation helpers. This is the auth module's shared half, read
 // by the Server and the settings module too, not just authModule below.
 // ---------------------------------------------------------------------------
 const (
@@ -161,7 +161,7 @@ func isDirectAgentRequest(r *http.Request, selfPort int) bool {
 
 // oauthBaseURL returns the base URL used for OAuth redirects: the base URL the
 // browser used, but only when it is one of the URLs already registered with the
-// identity provider — hostset.AllBaseURLs, i.e. the configured hosts plus the
+// identity provider: hostset.AllBaseURLs, i.e. the configured hosts plus the
 // host's detected local IPs, which is exactly what initAuthHelper registers
 // (EnsureBloudOAuthApp). Anything else falls back to the primary host, so neither
 // the request nor a spoofed X-Forwarded-Host can introduce a redirect target.
@@ -169,7 +169,7 @@ func isDirectAgentRequest(r *http.Request, selfPort int) bool {
 // Matching the registered set rather than only the hostname list is what keeps
 // IP access working: the box's IPs are published as base URLs but are not
 // hostnames in the set, and bouncing an IP visitor to the primary host would
-// break login, because the OAuth state cookie is host-scoped — the callback would
+// break login, because the OAuth state cookie is host-scoped: the callback would
 // arrive on a different host than the one that set it.
 //
 // Returns "" when no host set is configured; callers must then refuse rather than

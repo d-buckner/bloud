@@ -9,8 +9,8 @@
 
 ## Summary
 
-`main` already merged a third `backend.Backend` implementation — `NativeBackend`
-(`cli/backend/native.go`, from #60/#61) — that runs `./bloud dev` directly on the current
+`main` already merged a third `backend.Backend` implementation, `NativeBackend`
+(`cli/backend/native.go`, from #60/#61), that runs `./bloud dev` directly on the current
 machine instead of provisioning a Lima or QEMU VM, plus an interactive backend-preference
 system (`cli/preferences.go`, `.bloud/preferences.yaml`). **The architectural piece of
 this plan is done and does not need to be redesigned.** This revision replaces an earlier
@@ -20,26 +20,26 @@ What's left is narrower: the native backend is wired up but **broken for the int
 CLI path**, and the dependency-auto-install tooling that was the other half of the
 original ask was never added. Concretely:
 
-1. **`executor.LocalExecutor` doesn't shell-wrap commands** — every non-trivial `RunSpec`
+1. **`executor.LocalExecutor` doesn't shell-wrap commands**: every non-trivial `RunSpec`
    in `cli/dev.go` is a shell script (`;`, `2>/dev/null`, `$(...)`, pipes), but
    `LocalExecutor.buildLocalCommand` passes `spec.Command` straight to `exec.CommandContext`
    as a literal argv0. Confirmed by reproduction (see §1): a PATH lookup on the exact
    string `cmdStop` sends fails immediately. `BLOUD_BACKEND=native ./bloud dev` fails on
    its first non-trivial step today. It only "works" in CI because
    `cli/e2e_lifecycle.go`/`e2e_app.go` have their own separate, correctly shell-wrapped
-   `remoteRun`/`remoteCommand` plumbing that bypasses `Host().Executor()` entirely — the
+   `remoteRun`/`remoteCommand` plumbing that bypasses `Host().Executor()` entirely: the
    interactive path was never actually exercised.
 2. **`LocalExecutor.CopyTo`/`CopyFrom` only copy single files**, but `cmdDev` copies a
    whole directory (`web/build`) through the same call.
 3. **No apt-based dependency auto-install exists anywhere in `cli/`** (verified: zero
    `apt-get` references in the tree). `cmdSetup()` only checks `go`/`node`/`podman` via a
-   PATH scan and reports pass/fail — this was the explicit, primary ask and is still
+   PATH scan and reports pass/fail; this was the explicit, primary ask and is still
    entirely unaddressed.
-4. **`cmdReset` unconditionally wipes `$HOME/.local/share/bloud`** — safe cleanup on a
+4. **`cmdReset` unconditionally wipes `$HOME/.local/share/bloud`**: safe cleanup on a
    disposable Lima/QEMU guest, but now a live data-loss footgun on native, where `$HOME`
    is the contributor's real home and that path is host-agent's real default
    `BLOUD_DATA_DIR` fallback.
-5. **README.md's "Local development" section is stale** — still says only "Development
+5. **README.md's "Local development" section is stale**: still says only "Development
    runs inside a Lima VM," with no mention of `native`/QEMU. `AGENTS.md` documents `native`
    correctly and doesn't need changes.
 
@@ -67,7 +67,7 @@ Command: `pkill -f 'host-agent$' 2>/dev/null; systemctl --user stop apps-*.servi
 ```
 
 with no `Args`. `exec.CommandContext` resolves a bare name (no `/`) via `exec.LookPath`,
-which searches `PATH` for a file with that *exact* name — it does not invoke a shell or
+which searches `PATH` for a file with that *exact* name; it does not invoke a shell or
 split on whitespace. Simulating that resolution:
 
 ```bash
@@ -105,7 +105,7 @@ func buildLocalCommand(ctx context.Context, spec RunSpec) *exec.Cmd {
 
 This also makes the separate `spec.Env`/`spec.Dir`/`spec.AsRoot` handling in
 `buildLocalCommand` redundant with what `BuildRemoteScript` already renders into the
-script (it exports env vars, `cd`s, and prefixes `sudo` inside the script string) — drop
+script (it exports env vars, `cd`s, and prefixes `sudo` inside the script string); drop
 the now-duplicated `cmd.Dir`/manual env handling once `BuildRemoteScript` is doing that
 work, so env/dir/sudo semantics stay identical across all three transports instead of
 being handled twice, inconsistently. Verify against `cli/executor/ssh_test.go`'s existing
@@ -119,7 +119,7 @@ runs instead of failing on PATH lookup.
 
 ## 3. Fix: directory-recursive `CopyTo`/`CopyFrom`
 
-Current implementation is `os.Open`/`os.Create`/`io.Copy` — single files only. Replace
+Current implementation is `os.Open`/`os.Create`/`io.Copy`: single files only. Replace
 with `cp -a`, matching the semantics `SSHExecutor.CopyTo` already documents (directories
 copied recursively, matching `limactl copy -r`/rsync-with-trailing-slash behavior):
 
@@ -136,7 +136,7 @@ Confirmed against `cmdDev`'s two call shapes: `CopyTo(binaryPath, dirs.HostAgent
 (file→file) and `CopyTo(webBuildDir, dirs.HostAgentDir+"/web/build")` (dir→new-dir, called
 right after `mkdir -p .../web`, so `cp -a src dst` where `dst` doesn't yet exist correctly
 places `src`'s contents at `dst`). The unused `copyFile` helper can be deleted once nothing
-calls it — check `envSlice` still has other callers before removing that too, or clean up
+calls it; check `envSlice` still has other callers before removing that too, or clean up
 whatever becomes dead code.
 
 **Test**: extend the executor test file with a directory-copy case containing nested
@@ -157,7 +157,7 @@ rm -f %s/bloud.db
 `, dirs.DataDir, dirs.DataDir),
 ```
 
-Exclude the `$HOME/.local/share/bloud` line when the backend is `native` — that path is
+Exclude the `$HOME/.local/share/bloud` line when the backend is `native`: that path is
 host-agent's real default `BLOUD_DATA_DIR` fallback on a contributor's actual machine, not
 a disposable guest home. `cmdReset` already receives `name` from `devBackend()`, so gate
 on `name == "native"`:
@@ -169,7 +169,7 @@ if name != "native" {
 }
 ```
 
-(exact string assembly is a style choice — the important part is the conditional, not the
+(exact string assembly is a style choice; the important part is the conditional, not the
 formatting).
 
 **Test**: not easily unit-testable (shells a script); cover in the manual checklist (§7).
@@ -198,7 +198,7 @@ Add, gated on `bkName == "native"` and running on an apt host
    keeps today's check-and-report-only behavior unchanged.
 2. After prereqs pass on `native`, add a small `configureNativePodman()` step (this
    overlaps with what `NativeBackend.Create()` already does for linger/`podman.socket`,
-   so keep it additive, not duplicated — `Create()` already runs on every `./bloud dev`,
+   so keep it additive, not duplicated; `Create()` already runs on every `./bloud dev`,
    so `setup` only needs to add the one thing `Create()` doesn't check):
    - Verify `/etc/subuid`/`/etc/subgid` have an entry for the current user (common gap on
      accounts created before podman was installed); if missing, run
@@ -211,7 +211,7 @@ Add, gated on `bkName == "native"` and running on an apt host
    guest provisioning) works around Lima-guest-specific cgroup delegation quirks; a real
    Debian 13 host has proper cgroup v2 delegation and should use Podman's default
    `systemd` cgroup manager. Silently rewriting a contributor's real container config
-   would be a surprising side effect on their actual machine — leave this as a manual
+   would be a surprising side effect on their actual machine; leave this as a manual
    troubleshooting note in README instead, not an automatic step.
 
 **Test**: `cli/setup_test.go` (new) covering the missing-package→apt-package-name mapping
@@ -232,19 +232,19 @@ as a pure function; do not unit-test the actual `sudo apt-get`/`usermod` invocat
   ```
 
   Include the manual `cgroup_manager` fallback recipe as a troubleshooting note (§5.3).
-- `AGENTS.md` already documents `native` correctly — no changes needed there.
+- `AGENTS.md` already documents `native` correctly; no changes needed there.
 
 ---
 
 ## Build order
 
-1. `cli/executor/local.go`: shell-wrap fix (§2) + directory-copy fix (§3) — these are the
+1. `cli/executor/local.go`: shell-wrap fix (§2) + directory-copy fix (§3): these are the
    blocking correctness bugs; nothing else matters until `./bloud dev` can actually run on
    `native`.
-2. `cli/dev.go`: `cmdReset` footgun fix (§4) — small, independent.
-3. `cli/setup.go`: apt auto-install + subuid check (§5) — independent of 1–2, can be done
+2. `cli/dev.go`: `cmdReset` footgun fix (§4): small, independent.
+3. `cli/setup.go`: apt auto-install + subuid check (§5): independent of 1–2, can be done
    in parallel.
-4. `README.md` update (§6) — last, once behavior is settled.
+4. `README.md` update (§6): last, once behavior is settled.
 
 ---
 
@@ -255,22 +255,22 @@ directory-copy regression per §2/§3); new `cli/setup_test.go` (apt package-nam
 per §5). Run `go test ./...` from `cli/` alongside existing `lima_test.go`/`qemu_test.go`/
 `ssh_test.go` to confirm no regressions.
 
-**Manual end-to-end checklist** (needs a real or throwaway Debian 13 box — this can't be
+**Manual end-to-end checklist** (needs a real or throwaway Debian 13 box; this can't be
 verified from a Mac dev machine):
 
-1. Fresh Debian 13, nothing installed. `BLOUD_BACKEND=native ./bloud setup` — confirm apt
+1. Fresh Debian 13, nothing installed. `BLOUD_BACKEND=native ./bloud setup`: confirm apt
    auto-installs podman/golang-go/nodejs/npm, fixes subuid/subgid, builds `./bloud`.
-2. Re-run `./bloud setup` — confirm idempotent.
-3. `BLOUD_BACKEND=native ./bloud dev` — confirm build, deploy to
+2. Re-run `./bloud setup`: confirm idempotent.
+3. `BLOUD_BACKEND=native ./bloud dev`: confirm build, deploy to
    `/var/tmp/bloud-native-runtime/host-agent`, `curl localhost:3000/api/health` succeeds.
-   (This is the step that fails outright today — the primary thing this plan fixes.)
-4. `./bloud install jellyfin` — confirm it starts under Podman's default systemd cgroup
+   (This is the step that fails outright today: the primary thing this plan fixes.)
+4. `./bloud install jellyfin`: confirm it starts under Podman's default systemd cgroup
    manager.
-5. `./bloud status`/`services`/`logs` — confirm they work (currently broken per §1).
-6. `./bloud stop` then `./bloud dev` again — clean restart (currently broken per §1).
-7. `./bloud reset` (with a decoy file first at `~/.local/share/bloud`) — confirm data
+5. `./bloud status`/`services`/`logs`: confirm they work (currently broken per §1).
+6. `./bloud stop` then `./bloud dev` again: clean restart (currently broken per §1).
+7. `./bloud reset` (with a decoy file first at `~/.local/share/bloud`): confirm data
    wiped but that real path is untouched (validates §4's fix).
-8. `./bloud destroy` — confirm `/var/tmp/bloud-native-runtime` gone, project checkout
+8. `./bloud destroy`: confirm `/var/tmp/bloud-native-runtime` gone, project checkout
    untouched.
 
 ---
@@ -282,17 +282,17 @@ surfaced additional bugs beyond the original scope, all fixed:
 
 - **`buildContainerSpec` hardcoded `"cgroups_mode": "disabled"`**
   (`services/host-agent/internal/podman/client.go`), which `runc` rejects
-  (`NoCgroups: invalid argument`) — every container create failed on a real host with
+  (`NoCgroups: invalid argument`): every container create failed on a real host with
   proper cgroup v2 delegation. Removed; Podman's default cgroup handling works on native,
   Lima, and QEMU alike.
-- **`./bloud install`/`uninstall` always reported failure** — the API correctly returns
+- **`./bloud install`/`uninstall` always reported failure**: the API correctly returns
   `202 Accepted` for the async intent queue; the CLI only accepted `200`/`201` (install)
   or `200` (uninstall). Fixed to accept `202` too.
-- **`./bloud services` always printed 0 units** — leftover from the pre-#39 Quadlet
+- **`./bloud services` always printed 0 units**: leftover from the pre-#39 Quadlet
   architecture (`systemctl --user list-units 'apps-*'`); apps have been plain Podman
   containers since. Switched to `podman ps`.
 - **Login redirect loop when accessed on host-agent's own port (`:3000`) instead of
-  Traefik's (`:8080`)** — the OIDC authorize URL is built from the request's own
+  Traefik's (`:8080`)**: the OIDC authorize URL is built from the request's own
   host/port, which only resolves to Authentik when proxied through Traefik. Hitting
   `:3000` directly built a dead authorize URL that fell through to the SPA's static
   fallback, looping forever with no login form ever shown. `LoginHandler` now detects a
@@ -302,7 +302,7 @@ surfaced additional bugs beyond the original scope, all fixed:
 
 **host-agent binds `0.0.0.0:<port>`, not `127.0.0.1`.** On native this means the
 dashboard/API is reachable from the whole LAN over plain HTTP, bypassing Traefik's TLS
-and local CA entirely — and since cookies aren't port-scoped, a `bloud_session` cookie
+and local CA entirely, and since cookies aren't port-scoped, a `bloud_session` cookie
 set while browsing through Traefik is also honored on the raw port. Traefik itself
 reaches host-agent via `http://localhost:3000` (host networking), so a loopback-only
 bind wouldn't break routing on native.
@@ -311,6 +311,6 @@ This can't be fixed by just changing the bind address unconditionally, though: t
 backend's CLI depends on `0.0.0.0` inside the guest, since QEMU's slirp NAT forwards
 host→guest connections to the guest's real interface, not its loopback (see the
 `10.0.2.2` comment in `cli/dev.go`). That exposure is contained inside the VM's NAT, so
-it's low-risk there — native has no such boundary. A real fix needs the bind address to
+it's low-risk there; native has no such boundary. A real fix needs the bind address to
 be backend-aware (loopback-only on native, unchanged on Lima/QEMU), which is out of
 scope for this pass.

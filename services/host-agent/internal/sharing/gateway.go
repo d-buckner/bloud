@@ -34,7 +34,7 @@ type GatewayManager struct {
 	authKeyFn   func() string // called at container-creation time for the current auth key
 	socksPort   int           // SOCKS5 proxy port (default 1055)
 	traefikPort int           // Traefik entrypoint port for TS_SERVE_CONFIG proxy target
-	dataDir     string        // root data dir — state stored under {dataDir}/ts-gateway/state/
+	dataDir     string        // root data dir: state stored under {dataDir}/ts-gateway/state/
 	logger      *slog.Logger
 }
 

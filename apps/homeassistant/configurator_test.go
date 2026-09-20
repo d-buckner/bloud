@@ -229,7 +229,7 @@ type apiServer struct {
 	// Proxy-trust lifecycle (models HA's forwarded middleware). trustLive
 	// mirrors what the RUNNING process has loaded: false answers any
 	// X-Forwarded-For-bearing request with 400 ("not set-up for reverse
-	// proxies") — the CI failure; a restart with a valid token flips it
+	// proxies"), the CI failure; a restart with a valid token flips it
 	// (after trustFlipDelay, simulating reload latency) when
 	// restartAppliesTrust. xffRejected records the probe addresses seen
 	// while stale, so tests can assert the wait actually held.
@@ -250,7 +250,7 @@ func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 			// X-Forwarded-For is rejected 400 until the running process has
 			// the trust loaded. Once trust is live the forward check passes and
 			// the (unauthenticated) request falls through to the auth layer,
-			// which answers 401 Bearer — the live-trust signal is "not 400".
+			// which answers 401 Bearer: the live-trust signal is "not 400".
 			// An unforwarded (no-XFF) request always answers 200 here, so the
 			// plain wait still sees the listener up.
 			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -423,7 +423,7 @@ func TestPostStartCompletesOnboardingAndVerifiesOIDC(t *testing.T) {
 
 // A fully-onboarded HA *deregisters* GET /api/onboarding: the endpoint 404s
 // forever. The old code read that as "still booting", burned the whole
-// postStart timeout into an ERROR — and since PostStart re-runs on every
+// postStart timeout into an ERROR, and since PostStart re-runs on every
 // reconcile, the app could never reach 'running'. With a non-system owner in
 // the auth store, the permanent 404 now means "already onboarded" (no token
 // needed) and the probe never blocks.
@@ -451,7 +451,7 @@ func TestPostStartSkipsWhenAlreadyOnboarded(t *testing.T) {
 }
 
 // writeOwnerFile drops a minimal .storage/auth document holding a
-// non-system-generated owner user — exactly what ownerOnDisk reads.
+// non-system-generated owner user, exactly what ownerOnDisk reads.
 func writeOwnerFile(t *testing.T, cfgDir string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(cfgDir, ".storage"), 0o755))
@@ -588,7 +588,7 @@ func TestPreStartRejectsCorruptConfigFile(t *testing.T) {
 }
 
 // End-to-end through the POST path: with the stored entry untrusted,
-// PostStart must patch it AND restart the Home Assistant CONTAINER — that
+// PostStart must patch it AND restart the Home Assistant CONTAINER: that
 // restart is what makes proxied OIDC callbacks work. The restart is a
 // host-runtime container restart (via the injected callback), not HA's own
 // soft restart service, so it needs no admin token.
@@ -626,7 +626,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 
 // Regression: HA hands out an authorization CODE, never an access_token (core
 // 2026.9 onboarding/views.py). The old code parsed "access_token" straight off
-// the onboarding response and always got "" — so the post-trust restart died
+// the onboarding response and always got "", so the post-trust restart died
 // with "no access token". Onboard → exchange → restart must use the exchanged
 // token, and the exchange must actually hit /auth/token.
 func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
@@ -648,7 +648,7 @@ func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 }
 
 // Regression for the reported failure, now fixed: on a RETRY (owner already
-// created), HA never re-issues an auth code, so there is no admin token — the
+// created), HA never re-issues an auth code, so there is no admin token; the
 // old API-restart path died there and had to surface a self-healing ERROR. A
 // container restart needs no token, so PostStart now succeeds on the retry: it
 // patches the on-disk trust and restarts the container, which re-execs HA to
@@ -737,7 +737,7 @@ func TestPostStartWaitsForTrustReloadAfterRestart(t *testing.T) {
 }
 
 // Restart accepted but never reloads (the ~100s-stale CI state): the wait
-// must time out into an ERROR naming the reload failure — never a silent
+// must time out into an ERROR naming the reload failure, never a silent
 // success that marks a stale, proxy-rejecting process RUNNING.
 func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
 	srv := newAPIServer(t, true)
@@ -770,7 +770,7 @@ func TestPostStartFailsWhenRestartNeverAppliesTrust(t *testing.T) {
 // Steady-state self-heal wiring: the disk entry is trusted but the RUNNING
 // process still rejects forwarded requests (restart fired on an earlier
 // pass and never took). PreStart must report changed=true with no file
-// rewrite, forcing the orchestrator's container-recreate — a cold boot
+// rewrite, forcing the orchestrator's container-recreate; a cold boot
 // applies the patch with no admin token needed.
 func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
 	srv := newAPIServer(t, true)
@@ -799,7 +799,7 @@ func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
 	assert.NotEmpty(t, srv.xffRejected, "the staleness check must probe the running process")
 }
 
-// A refused probe (fresh install / mid-crash — process not up yet) must NOT
+// A refused probe (fresh install / mid-crash, process not up yet) must NOT
 // force a recreate: the normal start path handles that; forcing would churn
 // containers during recovery.
 func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {

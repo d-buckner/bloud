@@ -13,7 +13,7 @@ import (
 // The static config decides whether Traefik trusts client-supplied
 // X-Forwarded-* headers. `forwardedHeaders.insecure: true` made Traefik skip
 // its own DeleteXForwardedHeaders, so a client could assert any source address
-// it liked — which is how the host-agent's loopback-admin rule became
+// it liked, which is how the host-agent's loopback-admin rule became
 // remotely forgeable (PR 4 removed the rule; this pins the other half).
 func TestTraefikStaticConfig_DoesNotTrustClientForwardedHeaders(t *testing.T) {
 	c := NewTraefikConfigurator(nil, 8080, 3000, 9001, t.TempDir())

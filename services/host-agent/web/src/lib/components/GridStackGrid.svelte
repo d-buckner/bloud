@@ -22,7 +22,7 @@
 
 	/**
 	 * Columns the layout is authored at. Narrower viewports get fewer columns
-	 * as a read-only preview — see handleGridChange.
+	 * as a read-only preview: see handleGridChange.
 	 */
 	const DESKTOP_COLUMNS = 6;
 	/** Row height in px, so a 1x1 app tile is one cell. */
@@ -232,7 +232,7 @@
 
 	/**
 	 * Whether this diff is only the stored layout being drawn for the first
-	 * time — an empty grid where every element already carries a position —
+	 * time (an empty grid where every element already carries a position)
 	 * rather than a change worth saving back.
 	 */
 	function isReplayingStoredLayout(diff: GridDiff, elements: GridElement[]): boolean {
@@ -273,7 +273,7 @@
 
 		// A structural change (install, uninstall, widget toggle) *is* the new
 		// layout. GridStack announces it only via a 'change' event, and it
-		// swallows that while a batch is open — so persist it here rather than
+		// swallows that while a batch is open. Persist it here rather than
 		// waiting for the event that never comes.
 		// A narrow viewport is a preview of the desktop layout: never persist.
 		const persist = diff.structural && !isReplayingStoredLayout(diff, elements);
@@ -283,7 +283,7 @@
 	/**
 	 * Dense reading-order layout for a narrow (preview) viewport. Compressing
 	 * the stored desktop positions into fewer columns leaves holes and pushes
-	 * items down, so the preview is laid out from scratch instead — and it is
+	 * items down, so the preview is laid out from scratch instead, and it is
 	 * never saved back.
 	 */
 	function previewElements(elements: GridElement[]): GridElement[] {
@@ -467,7 +467,7 @@
 		border-radius: var(--radius-lg);
 	}
 
-	/* Resize grip — hidden until the widget is hovered (gridstack autohide) */
+	/* Resize grip: hidden until the widget is hovered (gridstack autohide) */
 	.gridstack-container :global(.grid-stack-item > .ui-resizable-se) {
 		width: 26px;
 		height: 26px;

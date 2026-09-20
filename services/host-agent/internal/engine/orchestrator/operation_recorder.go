@@ -16,7 +16,7 @@ import (
 // The drive path reports phase boundaries through these helpers; the
 // operations row is authoritative for failure context and
 // user-intent outcome, never for convergence control. Every helper is
-// best-effort: a recorder failure logs and returns — it must never
+// best-effort: a recorder failure logs and returns; it must never
 // change lifecycle behavior.
 
 // newOperationID returns a fresh operation identifier.

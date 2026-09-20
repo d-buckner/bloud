@@ -792,7 +792,7 @@ func TestConfigurator_PostStart_ToleratesTransient503(t *testing.T) {
 func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
 	// The first retry loop succeeds (200, StartupWizardCompleted=false),
 	// entering the second retry loop (wizard check). The second loop's
-	// calls must also tolerate 503 "Server is loading" — before the fix,
+	// calls must also tolerate 503 "Server is loading"; before the fix,
 	// the first 503 in the wizard loop was fatal. Serve: 1st call 200 with
 	// wizard incomplete, 2nd-3rd calls 503, 4th call 200 with wizard done.
 	var infoCalls int32
@@ -845,8 +845,8 @@ func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
 func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T) {
 	// Regression: on a cold install the API answered the health check with
 	// 200 (wizard pending), then stayed on 503 "Server is loading" past
-	// the old 5-attempt cap, and the loop's leftover error failed PostStart
-	// — a terminal node ERROR the reconciler never retries, so the install
+	// the old 5-attempt cap, and the loop's leftover error failed PostStart:
+	// a terminal node ERROR the reconciler never retries, so the install
 	// hung until the e2e timeout. The 503s must instead fall through to
 	// completeStartupWizard, which waits on /Startup/Configuration itself.
 	// Here the wizard reports ready via 401 (complete), so PostStart

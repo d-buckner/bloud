@@ -17,7 +17,7 @@ import (
 // It is a value type and the zero value is usable: ClientFactory{}.New(spec)
 // falls back to the process-shared transport, the appclient default retry
 // policy, and slog.Default(). This keeps the "tolerate nil deps in CLI/test
-// contexts" contract intact — a client never panics on a zero Deps.
+// contexts" contract intact: a client never panics on a zero Deps.
 type ClientFactory struct {
 	// Transport is the shared *http.Transport. nil → appclient.DefaultTransport().
 	Transport *http.Transport

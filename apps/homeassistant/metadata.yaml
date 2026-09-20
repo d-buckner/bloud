@@ -22,7 +22,7 @@ integrations:
 
 # SSO via the community hass-oidc-auth auth provider (fetched at PreStart by
 # the configurator). Callback route is the provider's fixed
-# /auth/oidc/callback — see INTEGRATION.md.
+# /auth/oidc/callback; see INTEGRATION.md.
 sso:
   strategy: native-oidc
   callbackPath: /auth/oidc/callback

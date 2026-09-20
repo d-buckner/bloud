@@ -12,7 +12,7 @@ import { LoginPage } from '../lib/loginPage';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Immich uses
-// native-oidc: unlike forward-auth, the gate lives inside the app — the
+// native-oidc: unlike forward-auth, the gate lives inside the app; the
 // login page auto-launches the OIDC flow, which round-trips through
 // Authentik on the issuer host (sso.localhost), where this context has no
 // session, so the flow settles on the login prompt.
@@ -43,8 +43,8 @@ describeApp('immich', (app) => {
     try {
       // With SSO enabled, Immich redirects to its OIDC provider without
       // any user interaction. The context is signed in to Bloud on
-      // localhost:8080, but the issuer is sso.localhost — a different
-      // cookie scope — so the flow must land on the Authentik prompt.
+      // localhost:8080, but the issuer is sso.localhost, a different
+      // cookie scope, so the flow must land on the Authentik prompt.
       const loginPage = new LoginPage(immich);
       await loginFormVisible(loginPage, immich);
       expect(immich.url()).toContain('sso.localhost');

@@ -19,7 +19,7 @@ import (
 )
 
 // orchestratorStatusCaller is the minimal interface needed for the system
-// module — it extends orchestratorCaller with a Status() method and the
+// module: it extends orchestratorCaller with a Status() method and the
 // per-node lifecycle phases the developer graph renders.
 type orchestratorStatusCaller interface {
 	Enqueue(intent orchestrator.Intent)
@@ -243,8 +243,8 @@ func (m *systemModule) buildDeveloperGraph(
 	}
 }
 
-// appNodes builds one node per installed app — plus one child node per
-// container that app declares — and collects the tailnet/apps bookkeeping
+// appNodes builds one node per installed app, plus one child node per
+// container that app declares, and collects the tailnet/apps bookkeeping
 // (unique tailnet IDs, the tunnel-node list, traefik presence) plus each
 // app's integration edges.
 func (m *systemModule) appNodes(

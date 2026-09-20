@@ -111,7 +111,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), web vitest + svelte-check, license header check |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), web vitest + svelte-check, license header check, prose lint (Vale), em dash check, docs link check |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
@@ -126,13 +126,18 @@ cd services/host-agent && go test -race ./internal/engine/orchestrator/...
 cd apps && go test ./...                          # configurator tests
 cd cli && go test ./...
 npm run lint:go                                 # golangci-lint v2 / cyclop (all three Go modules; pinned v2.13.2 via go run)
+npm run lint:prose                              # Vale: tracked *.md, *.go, *.ts, *.js, *.svelte, *.yml, *.yaml, *.css, *.html, *.sql
+npm run check:no-emdash                         # em dashes anywhere in tracked files (covers what Vale cannot read)
+npm run check:docs-links                        # relative links and their #anchors
 npm run test --workspace=@bloud/host-agent-web    # vitest
 npm run check --workspace=@bloud/host-agent-web   # svelte-check (typecheck)
 cd e2e && npx playwright test                     # browser e2e (see below)
 ```
 
 **Pre-commit hook (husky) runs `npm run test:precommit`** = license header check
-+ Go lint (`npm run lint:go`) + host-agent + apps Go tests + web TS tests. Don't commit without it passing;
++ Go lint (`npm run lint:go`) + prose lint (`npm run lint:prose`) + the em dash
+and docs-link checks + host-agent
++ apps Go tests + web TS tests. Don't commit without it passing;
 don't disable the hook.
 
 License headers: every source file starts with `// SPDX-License-Identifier: AGPL-3.0-only`
@@ -140,6 +145,46 @@ License headers: every source file starts with `// SPDX-License-Identifier: AGPL
 `npm run license:check` verifies, `npm run license:fix` stamps. Excluded: JSON,
 go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
 `apps-routes.yml` (see `scripts/license-header.mjs`).
+
+### Prose lint (`npm run lint:prose`)
+
+Vale checks everything in the repository that is written for humans: every
+tracked `*.md` file, plus the comments, YAML text, and markup inside `*.go`,
+`*.ts`, `*.js`, `*.svelte`, `*.yml`/`*.yaml`, `*.css`, `*.html`, and `*.sql`.
+It is pinned in
+`package.json` and run through `go run`, so there is no install step;
+`npm run lint:prose:sync` re-installs the pinned style package after a bump.
+
+- `.vale.ini` is the rule manifest: the styles in use, the Google rules switched
+  off (each with its reason), the rules pinned to `error`, and the source-file
+  sections (only the house `Bloud` style, plus the vocabulary-backed
+  `Vale.Avoid` guard, runs on code).
+- `.vale/styles/config/vocabularies/Bloud/accept.txt` is the domain vocabulary.
+  Add an unknown word there (product name, host-agent internal, container term)
+  rather than weakening a rule for a file. Its comments cover the `(?i)`
+  convention and the exact-case entries that enforce a product's spelling.
+  `reject.txt` is the opposite list: identifiers of removed components
+  (`front-proxy`, `internal/mdns`, `compose.yml`, `.air.toml`, `front.service`).
+  `.vale.ini` switches that rule off for whole files, not for individual lines:
+  AGENTS.md, every archived plan, and the dated 2026-09-19 review, which are the
+  record of the removals and therefore quote the retired names legitimately.
+  Vale matches vocabulary entries against
+  whole words, so an entry must start and end on a word character and must not
+  contain a word that `accept.txt` already accepts.
+- `.vale/styles/Bloud/` holds the house rules. `Bloud.EmDash` rejects em dashes;
+  write a colon, semicolon, comma, or parentheses instead.
+- Vale exits nonzero only on `error`-severity alerts, which is why a rule can
+  gate CI only when its level is `error` (see the pinning note in `.vale.ini`).
+
+Two things Vale cannot do, both covered by standalone checks:
+
+- It cannot read string literals or `.mjs`, so `npm run check:no-emdash`
+  (`scripts/no-emdash.mjs`) enforces the em dash ban over every tracked file,
+  including the code fences inside docs.
+- It cannot resolve links, so `npm run check:docs-links`
+  (`scripts/docs-links.mjs`) checks that every relative link and its `#anchor`
+  points at something that exists. Plans move between `plans/` and
+  `plans/archive/`, which is what breaks these.
 
 ### Playwright e2e (`e2e/`)
 
@@ -248,7 +293,7 @@ combined with instance/SSH-target env vars). Instance overrides:
    re-provisions Authentik (redirect URIs, outpost browser URL) and rewrites
    app configs, then re-ensure the dashboard OAuth app. Traefik routes stay
    domain-agnostic (`HostRegexp`), so they match every host without changes.
-10. **Port-80 reach-by-name is deferred — no front proxy, no mDNS.** Bloud
+10. **Port-80 reach-by-name is deferred: no front proxy, no mDNS.** Bloud
     no longer ships the root port-80 front proxy (`front-proxy` subcommand +
     `bloud-front.service`) or the `.local` mDNS announcer (`internal/mdns`);
     both were removed because the proxy still needed privilege anyway and the
@@ -358,8 +403,8 @@ mirror. Full backend-debt ledger with the repayment plan:
 [`docs/operations/tech-debt.md`](docs/operations/tech-debt.md). Top open
 items: the **auth bypass is remotely forgeable**, not just a local-process
 concern (`middleware.RealIP` + Traefik `forwardedHeaders.insecure: true` +
-loopback=admin), so a single `True-Client-IP: 127.0.0.1` header grants admin —
-that is the shipping blocker; the engine's silent-failure paths (catalog
+loopback=admin), so a single `True-Client-IP: 127.0.0.1` header grants admin.
+That is the shipping blocker; the engine's silent-failure paths (catalog
 nil-deref, lock-free `MemoryCache`, an intent queue that can exit permanently);
 per-connection SQLite pragmas; `appclient.Call.Timeout` being a no-op; container
 drift never repaired while the process is alive; duplicated orchestrator wiring
@@ -381,7 +426,7 @@ wires the catalog graph). Highlights:
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
   is fallible with no static fallback (env > `secrets.json` > error). Still open:
   one literal fallback survives in `sso.DeriveSecret`, and loopback requests are
-  granted admin — and that rule is forgeable from any client (see above).
+  granted admin, and that rule is forgeable from any client (see above).
 - Keep the `apps:` registry in `validation.yaml` in sync with `apps/` when apps
   are added/removed (the changed tier infers affected apps from it).
 
@@ -397,7 +442,7 @@ wires the catalog graph). Highlights:
 
 `docs/` is the documentation tree; [`docs/README.md`](docs/README.md) is the
 canonical index. The routes below are mirrored here so the guide links straight
-to the right doc — when a doc moves, update it in both places.
+to the right doc. When a doc moves, update it in both places.
 
 | Question | Read |
 |---|---|

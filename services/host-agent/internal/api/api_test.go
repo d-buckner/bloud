@@ -895,7 +895,7 @@ func TestAPI_AppMetadata_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestAPI_AppIcon removed — no icon handler exists in the current apps module.
+// TestAPI_AppIcon removed: no icon handler exists in the current apps module.
 
 func TestAPI_Install_NoReconciler(t *testing.T) {
 	server, _ := setupTestServer(t) // default has nil orchestrator
@@ -1014,7 +1014,7 @@ func TestAPI_Logout_ClearsCookie(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	req.Host = "localhost:8080"
-	// No session cookie — handler just redirects to /
+	// No session cookie: handler just redirects to /
 	w := httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
 
