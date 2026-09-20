@@ -57,8 +57,8 @@ Completed:
   manages the container lifecycle directly through Podman.
 - Domain-agnostic Traefik routing with HostRegexp patterns is implemented. Apps are
   accessible via any origin (localhost, tailnet FQDN, custom domain).
-- Developer graph API and frontend visualization are implemented with app nodes, connection
-  nodes, and integration edges.
+- Developer graph API and frontend visualization are implemented with app boxes holding
+  container nodes, connection nodes, and integration edges.
 - Two-layer Tailscale sharing architecture is implemented: per-app tailnet nodes for
   outbound sharing, gateway with SOCKS5 proxy for inbound remote app consumption on LAN.
 - Sharing data model is implemented: remote_apps, guests, shares, tailnet_connections
@@ -333,15 +333,24 @@ priority 300, higher than app routes so they take precedence for their specific 
 ### Developer Graph
 
 The developer graph is a live dependency visualization exposed at `/api/system/developer`
-and rendered in the dashboard. It shows installed applications, their integration edges,
-and external connection points.
+and rendered in the dashboard. It shows installed applications with their containers,
+their integration edges, and external connection points.
 
 #### Node Types
 
-The graph contains two node types:
+The graph contains three node types:
 
 - **App nodes** represent installed applications (both user-facing and system
   infrastructure). Each carries identity, display name, runtime status, and a system flag.
+- **Container nodes** represent the containers an app declares in its catalog entry
+  (`containers:` in `metadata.yaml`), one node per entry, named by the container's runtime
+  name (`apps-immich-postgres`). Each is parented to its app node via `parentId` and
+  carries its own lifecycle phase (`queued`, `configuring`, `starting`, `finalizing`,
+  `running`, `failed`) from the orchestrator's lifecycle graph, falling back to the app's
+  stored status when the orchestrator reports no node for it. An app with no `containers:`
+  entry gets a single container node keyed by its catalog ID, mirroring the lifecycle
+  graph. Within-app `dependsOn` relationships are unlabeled container edges (the box
+  already scopes them to one app; the dependency sits below).
 - **Connection nodes** represent ingress points through which users reach applications.
   Connection nodes sit outside the app subgraph and have edges pointing inward to the
   applications they serve.
@@ -364,14 +373,22 @@ exceptions:
 - **Proxy edges** have reversed direction: the proxy (e.g., Traefik) is the source and
   the proxied app is the target.
 
+Integration, connection, and tunnel edges connect app nodes (the app is the unit of
+integration). Container edges stay inside one app box and encode that app's own
+`dependsOn` graph.
+
 Connection edges use the connection type as the label (`route` for local, `tailnet` for
 tailnet connections). Connection nodes are always the edge source; apps are the target.
 
 #### Subgraph Layout
 
-App nodes are grouped in a single subgraph. Connection nodes are positioned outside and
-above the subgraph. The frontend uses dagre for deterministic layout of app nodes within
-the subgraph, and manual positioning for connection nodes.
+App nodes are grouped in a single outer subgraph. Each app that has containers is drawn as
+a box: the app node is the parent, sized to fit its container nodes, and the containers are
+laid out inside it with their own dagre pass (top-down `dependsOn`). Apps without
+containers, and synthetic nodes (tunnels, tailnet gateway), stay flat. Connection nodes are
+positioned outside and above the subgraph. The frontend uses dagre for deterministic
+layout of the app boxes within the subgraph, and manual positioning for connection nodes.
+
 
 #### Future Direction: Connection Subgraphs
 

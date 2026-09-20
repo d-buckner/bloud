@@ -431,6 +431,26 @@ func (o *Orchestrator) Status() OrchestratorStatus {
 	}
 }
 
+// NodePhases returns the user-facing phase (see phaseForStatus) of every
+// lifecycle graph node, keyed by node ID: the container name for
+// multi-container apps, the catalog ID for single-container apps. Read-only
+// snapshot for the developer dashboard; nil when the graph is unavailable.
+func (o *Orchestrator) NodePhases() map[string]string {
+	if o.graph == nil {
+		return nil
+	}
+	nodes, err := o.graph.Nodes()
+	if err != nil {
+		o.logger.Warn("failed to read graph nodes", "error", err)
+		return nil
+	}
+	phases := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		phases[node.ID] = phaseForStatus(node.ActualStatus)
+	}
+	return phases
+}
+
 // Enqueue adds an intent to the orchestrator's queue for processing.
 func (o *Orchestrator) Enqueue(intent Intent) {
 	o.logger.Info("intent enqueued", "type", intentTypeName(intent), "id", intent.IntentID())
