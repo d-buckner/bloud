@@ -37,7 +37,7 @@ func (a *immichAPI) waitServer(ctx context.Context) error {
 }
 
 // createAdmin registers the first admin. Only works while no admin exists;
-// Immich rejects it with 400 otherwise (which is fine — an admin is present).
+// Immich rejects it with 400 otherwise (which is fine: an admin is present).
 func (a *immichAPI) createAdmin(ctx context.Context, name, email, password string) error {
 	_, err := a.cl.POST("/api/auth/admin-sign-up").
 		JSON(map[string]string{"name": name, "email": email, "password": password}).

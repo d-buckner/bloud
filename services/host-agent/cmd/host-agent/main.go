@@ -67,7 +67,7 @@ func runServer() {
 		os.Exit(1)
 	}
 
-	// Initialize SQLite database (instant — no postgres dependency)
+	// Initialize SQLite database (instant: no postgres dependency)
 	database, err := db.InitDB(cfg.DataDir)
 	if err != nil {
 		logger.Error("failed to initialize database", "error", err)
@@ -181,7 +181,7 @@ func runServer() {
 // resolveHostSet computes the effective host set from stored admin hosts and the
 // legacy env fallbacks, and returns it with the host store the caller wires into
 // the API. Resolution failures degrade to the built-in set rather than aborting
-// boot — the instance must still come up reachable on localhost.
+// boot; the instance must still come up reachable on localhost.
 func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (hostset.HostSet, *store.HostStore) {
 	hostStore := store.NewHostStore(database)
 	var storedHosts []hostset.StoredHost

@@ -19,7 +19,7 @@ const (
 )
 
 // Operation phase values: the phases runFullLifecycle records on entry.
-// Routing and sharing are deliberately absent — route generation is not
+// Routing and sharing are deliberately absent: route generation is not
 // recorded as an operation phase (that step is its own open debt; see
 // docs/operations/tech-debt.md).
 const (
@@ -161,7 +161,7 @@ func (s *OperationStore) Get(appName string) (*Operation, error) {
 // ResolveFailed clears a stale failure: when a staleness re-run
 // succeeds for an app whose last recorded operation was a failed
 // reconcile drive, the old failure is no longer the app's last word.
-// Only failed *reconcile* rows resolve this way — a failed install
+// Only failed *reconcile* rows resolve this way: a failed install
 // keeps its failure until an explicit new drive replaces it.
 func (s *OperationStore) ResolveFailed(appName string) error {
 	_, err := s.db.Exec(`

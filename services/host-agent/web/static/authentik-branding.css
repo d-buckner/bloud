@@ -79,7 +79,7 @@ h1, h2, h3, .pf-c-title, .pf-v5-c-title {
   letter-spacing: -0.02em;
 }
 
-/* Hide the brand area entirely — title comes from flow title "Sign in to Bloud" */
+/* Hide the brand area entirely: title comes from flow title "Sign in to Bloud" */
 .ak-brand {
   display: none !important;
 }

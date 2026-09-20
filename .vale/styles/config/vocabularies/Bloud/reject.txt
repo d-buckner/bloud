@@ -1,0 +1,25 @@
+# Rejected terms for the Bloud docs (`Vocab = Bloud` in .vale.ini).
+
+# One entry per line, each a regular expression whose every occurrence is an
+# error (Vale.Avoid). Use this file for text that is wrong, not merely
+# inconsistent: for casing and spelling preferences, add the correct form to
+# `accept.txt` instead.
+
+# Vale matches these against whole words, so two forms never fire and are not
+# used: an entry that begins with punctuation (`.air.toml`), and an entry whose
+# text contains a word accepted in `accept.txt` (an accept entry exempts every
+# match containing it, which is why the systemd unit is rejected by its
+# distinctive `front\.service` half rather than its full name). Interior
+# punctuation needs escaping (`air\.toml`).
+
+# Removed components. Naming one of these means the document describes an
+# architecture that no longer exists (AGENTS.md invariants 10 and 11): the
+# port-80 front proxy and the `.local` mDNS announcer were deleted, the Compose
+# stack was retired in favour of the catalog planner, and Go hot reload is gone.
+# The concept words stay allowed ("the front proxy was removed" is a valid
+# sentence); only the identifiers are rejected.
+front\.service
+front-proxy
+internal/mdns
+compose.yml
+air\.toml

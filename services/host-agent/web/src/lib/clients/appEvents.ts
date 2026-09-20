@@ -14,7 +14,7 @@
  * sleep/wake, a stream killed mid-rollout), the adaptive poller starts on its
  * own. Any live event (SSE or a successful poll) suspends it again. The
  * snapshot-on-connect contract on the server side means reconnects simply
- * re-apply full state — no Last-Event-ID replay needed.
+ * re-apply full state: no Last-Event-ID replay needed.
  */
 
 import { get } from 'svelte/store';

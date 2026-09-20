@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Daniel Buckner
 
 // Package slug provides URL-safe slug generation for subdomain routing.
-// This is the single canonical implementation — the frontend has a mirrored
+// This is the single canonical implementation; the frontend has a mirrored
 // version in web/src/lib/utils/appUrl.ts that must produce identical output.
 package slug
 

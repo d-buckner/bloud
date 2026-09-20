@@ -143,7 +143,7 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 }
 
 // PostStart verifies the server answers, creates the first-run owner
-// account when the instance is uninitialized, and — when SSO is configured —
+// account when the instance is uninitialized, and (when SSO is configured)
 // verifies the OIDC provider is live: a preflight request must return the
 // authorization URL, which proves config.json loaded, issuer discovery
 // succeeded, and the PKCE flow is ready. Idempotent on every reconciliation.

@@ -58,7 +58,7 @@ func buildLocalCommand(ctx context.Context, spec RunSpec) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch {
 	case len(spec.Args) > 0:
-		// Command names a program and Args are its literal arguments — exec
+		// Command names a program and Args are its literal arguments: exec
 		// it directly, no shell involved.
 		name, args := spec.Command, spec.Args
 		if spec.AsRoot {

@@ -1,6 +1,6 @@
 # Multi-Container App Spec
 
-**Status:** Complete — All phases done; legacy interface removed; all apps on `containers:` format
+**Status:** Complete (all phases done; legacy interface removed; all apps on `containers:` format)
 
 > This is the multi-container model design document. The canonical metadata field
 > reference is `services/host-agent/internal/catalog/models.go`; to add an app, follow
@@ -8,16 +8,16 @@
 
 ## Implementation Status
 
-- **Phase 1-2:** Multi-container metadata parsing and orchestrator lifecycle — implemented
-- **Phase 3:** New `NodeLifecycle` interface — implemented (legacy removed in Phase 6)
-- **Phase 4:** Immich multi-container — metadata.yaml written, container lifecycle working, E2E validation pending
-- **Phase 5:** Authentik migration — metadata.yaml and per-container configurators done, E2E validation pending
-- **Phase 6:** Jellyfin/Navidrome migration + legacy cleanup — complete
+- **Phase 1-2:** Multi-container metadata parsing and orchestrator lifecycle (implemented)
+- **Phase 3:** New `NodeLifecycle` interface (implemented; legacy removed in Phase 6)
+- **Phase 4:** Immich multi-container (metadata.yaml written, container lifecycle working, E2E validation pending)
+- **Phase 5:** Authentik migration (metadata.yaml and per-container configurators done, E2E validation pending)
+- **Phase 6:** Jellyfin/Navidrome migration + legacy cleanup (complete)
 
 ## Core Idea
 
 An app can declare multiple containers in its `metadata.yaml`. Each container
-becomes a node in the orchestrator's graph — same as today's single-container
+becomes a node in the orchestrator's graph, same as today's single-container
 apps. The orchestrator doesn't know or care that several nodes "belong to" one
 logical app. It just sees nodes with dependency edges and converges them.
 
@@ -38,11 +38,11 @@ concept in the orchestrator.
 
 The shared-postgres model (one instance for all apps) doesn't work because:
 
-1. **Version coupling** — App A needs postgres 16, App B needs 17, App C needs
+1. **Version coupling**: App A needs postgres 16, App B needs 17, App C needs
    pgvector. Can't serve all from one instance.
-2. **Upgrade risk** — Upgrading for one app risks breaking others.
-3. **Failure blast radius** — Shared crash takes everything down.
-4. **Extension conflicts** — pgvector, timescaledb, etc. can't coexist cleanly.
+2. **Upgrade risk**: Upgrading for one app risks breaking others.
+3. **Failure blast radius**: Shared crash takes everything down.
+4. **Extension conflicts**: pgvector, timescaledb, etc. can't coexist cleanly.
 
 New model: apps that need postgres declare their own postgres container node
 with whatever image/version/extensions they need. Each is isolated.
@@ -54,13 +54,13 @@ dependencies) **before** the orchestrator starts. This is intentional:
 
 - System infra must be running before the HTTP listener opens
 - System infra startup is sequential and fail-fast (if traefik can't start,
-  exit immediately — don't try to converge user apps)
+  exit immediately: don't try to converge user apps)
 - The orchestrator's value is dependency-aware convergence for user apps,
   not booting the system
 
 **The orchestrator** manages user app nodes. It sees nodes with edges and
 converges them in topological order. It doesn't know if a node is "part of
-authentik" or "standalone jellyfin" — irrelevant to its algorithm.
+authentik" or "standalone jellyfin", irrelevant to its algorithm.
 
 **Shared utilities** (container runtime, health polling, spec hashing) are used
 by both bootstrap and orchestrator so the code stays DRY without coupling
@@ -68,7 +68,7 @@ concerns.
 
 ## metadata.yaml Changes
 
-The `container:` block becomes `containers:` (plural) — a list of container
+The `container:` block becomes `containers:` (plural): a list of container
 definitions with explicit dependency edges. Single-container apps still work
 (list of one).
 
@@ -213,7 +213,7 @@ containers:
 ```
 
 Five containers, five graph nodes, explicit `dependsOn` edges between them.
-The orchestrator sees these as five independent nodes — same algorithm, same
+The orchestrator sees these as five independent nodes: same algorithm, same
 convergence, same staleness propagation.
 
 ### App With pgvector (Immich)
@@ -289,22 +289,22 @@ Immich uses pgvector, Authentik uses plain postgres:16-alpine. No conflict.
 
 ## Orchestrator Changes
 
-### Minimal — the orchestrator barely changes
+### Minimal: the orchestrator barely changes
 
 The orchestrator already processes nodes in topological order. The only changes:
 
-1. **Multiple nodes per "installed app"** — When an app is installed, the
+1. **Multiple nodes per "installed app"**: When an app is installed, the
    orchestrator adds N nodes (one per container) instead of 1. The `dependsOn`
    edges within the app are registered as graph edges. The inter-app edges
    (from `integrations:`) connect from the dependent app's entry-point nodes
    to the provider app's container nodes that those entry-points actually need.
 
-2. **Container-level health checks** — Each node has its own health check
+2. **Container-level health checks**: Each node has its own health check
    defined in metadata (the `healthCheck` block on each container). The
    orchestrator runs these directly rather than delegating to a configurator
    `HealthCheck()` method.
 
-3. **Status rollup** — The API/UI derives app-level status from container
+3. **Status rollup**: The API/UI derives app-level status from container
    nodes: all RUNNING → "running", any ERROR → "error", otherwise
    "installing". This is a read-path concern, not orchestrator logic.
 
@@ -335,15 +335,15 @@ type NodeLifecycle interface {
 }
 ```
 
-- **PreStart** — Before this container starts. Config file generation,
+- **PreStart**: Before this container starts. Config file generation,
   directory creation, secret provisioning, template variable writes.
-- **PostStart** — After this container's health check passes. API calls,
+- **PostStart**: After this container's health check passes. API calls,
   user sync, infrastructure setup in running services.
-- **Remove** — Before this container is torn down. Cleanup external state.
+- **Remove**: Before this container is torn down. Cleanup external state.
 
-`EnsureContainer` is gone — the orchestrator manages all containers from
-metadata specs. `HealthCheck` is gone — declared in metadata, run by the
-orchestrator. The `changed bool` return from PreStart is gone — the
+`EnsureContainer` is gone: the orchestrator manages all containers from
+metadata specs. `HealthCheck` is gone: declared in metadata, run by the
+orchestrator. The `changed bool` return from PreStart is gone: the
 orchestrator diffs spec hashes to decide container recreation.
 
 ### Per-Node Lifecycle
@@ -359,7 +359,7 @@ The orchestrator runs this sequence for every node, in dependency order:
 6. Mark node RUNNING
 ```
 
-Most containers don't need a configurator. Postgres, redis, workers — they
+Most containers don't need a configurator. Postgres, redis, workers: they
 start from their spec and their health check is sufficient. Only containers
 that need imperative runtime configuration register one.
 
@@ -422,7 +422,7 @@ func (c *LDAPConfigurator) PreStart(ctx context.Context, state *AppState) error 
 ```
 
 No configurator needed for `apps-authentik-postgres`, `apps-authentik-redis`,
-or `apps-authentik-worker` — they're pure spec-driven containers.
+or `apps-authentik-worker`: they're pure spec-driven containers.
 
 ### Example: Jellyfin Configurator
 
@@ -463,18 +463,18 @@ declares the template variable. On first boot, the variable is empty and
 the container starts with a placeholder. PostStart obtains the real value,
 writes it to the secret store, and the orchestrator recreates the container
 with the resolved value on the next convergence pass. This avoids any
-"deferred container" concept — all containers start in dependency order,
+"deferred container" concept: all containers start in dependency order,
 some just need a second convergence pass to get their final config.
 
 ## Networking
 
 ### Two scopes
 
-- **App-internal network** (`{appName}-internal`) — created per app. Internal
+- **App-internal network** (`{appName}-internal`): created per app. Internal
   services (postgres, redis, workers) communicate here by container name.
   Not reachable from other apps.
 
-- **`apps-net`** (shared) — containers that need to be routed by Traefik or
+- **`apps-net`** (shared): containers that need to be routed by Traefik or
   reached by other apps join this network. A container can be on both networks.
 
 ### Traefik routing
@@ -510,7 +510,7 @@ The orchestrator handles everything else including multi-container system apps
 like Authentik.
 
 **Shared utilities** between bootstrap and orchestrator:
-- Container runtime (`container.Runtime` — Ensure, Remove, Inspect)
+- Container runtime (`container.Runtime`: Ensure, Remove, Inspect)
 - Health polling (`configurator.WaitForHTTP`, container health checks)
 - Spec hashing (for idempotent container creation)
 - Network management (`EnsureNetwork`)
@@ -598,7 +598,7 @@ Add `Containers []ContainerDef` field to the existing `App` struct.
 - [x] Existing `Container *ContainerSpec` field is unchanged
 - [x] `./bloud validate --tier fast` passes (no existing tests break)
 
-**Parallel:** Yes — no dependencies on other tasks.
+**Parallel:** Yes (no dependencies on other tasks).
 
 ---
 
@@ -695,7 +695,7 @@ Handles both `Network` (single) and `Networks` (multi) fields.
 - [x] Unit tests cover: basic spec, template resolution, empty optional
       fields, multi-network
 
-**Parallel:** Yes — can be worked on while 2.2/2.3 are in progress.
+**Parallel:** Yes (can be worked on while 2.2/2.3 are in progress).
 
 ---
 
@@ -733,7 +733,7 @@ so that `apps-authentik-server` resolves to `~/bloud-data/authentik/` not
       `ownerApp()` returns correct app ID for each
 - [x] Unit test: unregistered node returns itself
 
-**Parallel:** Yes — can be worked on while 2.1/2.3 are in progress.
+**Parallel:** Yes (can be worked on while 2.1/2.3 are in progress).
 
 ---
 
@@ -808,7 +808,7 @@ health check and no configurator, the node succeeds after EnsureContainer.
       multi-container nodes
 - [x] `runFullLifecycle()` still uses `cfg.HealthCheck()` for
       single-container nodes (backward compat)
-- [x] Unit test: health check passes on 3rd attempt → success
+- [x] Unit test: health check passes on the third attempt → success
 - [x] Unit test: health check exceeds retries → error
 - [x] Unit test: context cancelled mid-poll → returns context error
 
@@ -923,7 +923,7 @@ type NodeLifecycle interface {
 ```
 
 Rename the existing interface to `LegacyNodeLifecycle` (or keep the old
-name as an alias — whatever avoids a flag-day rename).
+name as an alias, whatever avoids a flag-day rename).
 
 Add `LegacyAdapter` struct that wraps a `LegacyNodeLifecycle` and
 implements the new `NodeLifecycle`, discarding `EnsureContainer`,
@@ -938,11 +938,11 @@ func (a *LegacyAdapter) PreStart(ctx, state) error {
 
 **Success criteria:**
 - [x] New `NodeLifecycle` interface defined (4 methods: Name + PreStart + PostStart + Remove)
-- [x] Old interface removed (no LegacyNodeLifecycle needed — all apps migrated in Phase 6)
+- [x] Old interface removed (no LegacyNodeLifecycle needed: all apps migrated in Phase 6)
 - [x] `Configurator` type alias points to new interface
 - [x] `./bloud validate --tier fast` passes
 
-**Parallel:** Yes — no dependencies on other Phase 3 tasks.
+**Parallel:** Yes (no dependencies on other Phase 3 tasks).
 
 ---
 
@@ -992,7 +992,7 @@ Verify it works correctly and remove any remaining dependency on the
 - [x] Unit test: same spec → no recreation
 - [x] Unit test: changed env var → recreation
 
-**Parallel:** Yes — can be worked alongside 3.1/3.2 (merged after 3.2).
+**Parallel:** Yes (can be worked alongside 3.1/3.2; merged after 3.2).
 
 ---
 
@@ -1024,7 +1024,7 @@ vars, volume mounts.
       `go test ./internal/catalog/... -run TestLoadAll`
 - [x] `ContainerDefs()` returns 4 entries with correct relationships
 
-**Parallel:** Yes — pure metadata, no Go code changes.
+**Parallel:** Yes (pure metadata, no Go code changes).
 
 ---
 
@@ -1054,7 +1054,7 @@ Rules:
 - [ ] Unit test: mix of RUNNING + STARTING → "installing"
 - [ ] `./bloud services` CLI shows Immich as one app with rollup status
 
-**Parallel:** Yes — can be done alongside Task 4.1.
+**Parallel:** Yes (can be done alongside Task 4.1).
 
 ---
 
@@ -1130,7 +1130,7 @@ health checks, environment variables with template vars.
 > `/-/health/ready/`, 60 retries) and volumes for `media`, `templates`, and
 > the auth-flow blueprint. Worker has the same volumes.
 
-**Parallel:** Yes — pure metadata change.
+**Parallel:** Yes (pure metadata change).
 
 ---
 
@@ -1159,7 +1159,7 @@ health checks, environment variables with template vars.
 **Success criteria:**
 - [x] Two new configurator structs implementing `NodeLifecycle`
 - [x] Server configurator's `PostStart` writes LDAP token (to shared
-      templateVars map — see implementation note below)
+      templateVars map: see implementation note below)
 - [x] LDAP token is available as template variable when LDAP container
       spec is resolved
 - [x] No container management code in either configurator (no
@@ -1174,11 +1174,11 @@ health checks, environment variables with template vars.
 > `templateVars` map in `ServerConfigurator.PostStart()`. Since
 > `apps-authentik-ldap` depends on `apps-authentik-server` via metadata
 > `dependsOn`, the server's full lifecycle (including PostStart) completes
-> before the LDAP container spec is resolved — so `{{authentikLdapToken}}`
+> before the LDAP container spec is resolved, so `{{authentikLdapToken}}`
 > is already populated in the map by the time it is needed. No secret-store
 > write or second convergence pass is required.
 
-**Parallel:** Yes — can be done alongside Task 5.1.
+**Parallel:** Yes (can be done alongside Task 5.1).
 
 ---
 
@@ -1202,7 +1202,7 @@ were for the shared-instance model).
 - [x] `./bloud validate --tier fast` passes
 - [x] No compilation errors
 
-> **Note:** `apps-authentik-ldap` has no configurator (none needed — it is
+> **Note:** `apps-authentik-ldap` has no configurator (none needed: it is
 > a pure spec-driven container whose only dynamic value, the LDAP token, is
 > resolved via the shared templateVars map written by the server PostStart).
 
@@ -1337,7 +1337,7 @@ Phase 6:  6.1 ─┐
 
 | Phase | Max parallel implementers | Parallel tasks |
 |-------|--------------------------|----------------|
-| 1     | 1 (sequential chain)     | —              |
+| 1     | 1 (sequential chain)     | none           |
 | 2     | 3                        | 2.1, 2.2, 2.7  |
 | 3     | 2                        | 3.1, 3.3       |
 | 4     | 2                        | 4.1, 4.2       |
@@ -1346,12 +1346,12 @@ Phase 6:  6.1 ─┐
 
 ## Open Questions
 
-- **Postgres major version upgrades** — Changing the image tag from `pg16` to
+- **Postgres major version upgrades**: Changing the image tag from `pg16` to
   `pg17` requires `pg_upgrade`, not just a container recreate. This needs
   app-specific migration logic, likely in a configurator's PreStart. Not
   addressed by this spec.
 
-- **Crash detection between convergence passes** — The orchestrator only
+- **Crash detection between convergence passes**: The orchestrator only
   converges on intents or startup. If a container crashes between passes,
   nothing detects it until the next convergence. Options: periodic health
   poll, podman events subscription, or accept that `restartPolicy: always`

@@ -1,19 +1,19 @@
 # Architecture
 
 Bloud manages apps (Jellyfin, Immich, etc.) on a single Linux host. The heart of it is
-the **engine** — a reconciliation control loop, directly inspired by how Kubernetes
+the **engine**: a reconciliation control loop, directly inspired by how Kubernetes
 controllers work. You declare intent (the apps you want, plus what each app *provides*
 and *consumes*); the engine continuously drives reality to match, converging the
 dependency graph level by level and re-converging after every crash or reboot.
 
 The engine ships inside a single Go binary, the `host-agent`, alongside a small HTTP API
-that only submits intents. Everything the engine reconciles — containers, routes, SSO
-clients, secrets — it reaches through the Podman API and the per-app configurators
+that only submits intents. Everything the engine reconciles (containers, routes, SSO
+clients, secrets) it reaches through the Podman API and the per-app configurators
 described below.
 
 > **Naming note:** earlier docs called this component the *reconciler*. It was refactored
 > into the **orchestrator**, and the orchestrator together with its dependency-graph
-> package is now grouped under `internal/engine/` — the name for the whole reconciliation
+> package is now grouped under `internal/engine/`: the name for the whole reconciliation
 > loop. `docs/specs/reconciler-spec.md` describes that architecture as implemented.
 
 ## Component Diagram
@@ -104,17 +104,17 @@ Resolution happens through `catalog.AppGraph.PlanInstall` during the install int
 - Multiple / none for a required integration → produces an integration *choice*.
 - Optional integrations with no compatible provider → no binding.
 > Note: an earlier standalone integration resolver (`internal/integration/`) was
-> removed — dependency resolution is owned by the planner + orchestrator. Apps that
+> removed; dependency resolution is owned by the planner + orchestrator. Apps that
 > need databases (Immich, Authentik) declare their own postgres and redis containers
 > in `containers:`; each app gets its own isolated database.
 
 ### The Engine (`internal/engine/`)
 
 The engine is Bloud's differentiator: a reconciliation control loop directly inspired by
-Kubernetes controllers. It lives in two packages — `orchestrator/` (the typed intent queue
+Kubernetes controllers. It lives in two packages: `orchestrator/` (the typed intent queue
 and the loop that drains it) and `graph/` (the lifecycle DAG whose `targetStatus` vs
 `actualStatus` the loop converges). You declare the desired state; the engine observes the
-actual state and runs the actions needed to close the gap — then keeps running them, so a
+actual state and runs the actions needed to close the gap, then keeps running them, so a
 crash or reboot simply triggers another convergence pass.
 
 All mutations flow through a typed intent queue with debounce. The orchestrator is the
@@ -123,15 +123,15 @@ owner of the lifecycle graph (`graph.Graph`) that tracks desired (`targetStatus`
 observed (`actualStatus`) per node.
 
 Intent types (`intent.go`):
-- **InstallAppIntent** — install an app by name
-- **UninstallAppIntent** — remove an app (with optional `clearData`)
-- **RenameAppIntent** — change an app's display name
-- **SetTailnetIntent / DeleteTailnetIntent** — tailnet configuration changes
-- **AddRemoteAppIntent / DeleteRemoteAppIntent** — remote app management
-- **ClearAppDataIntent** — wipe app data
+- **InstallAppIntent**: install an app by name
+- **UninstallAppIntent**: remove an app (with optional `clearData`)
+- **RenameAppIntent**: change an app's display name
+- **SetTailnetIntent / DeleteTailnetIntent**: tailnet configuration changes
+- **AddRemoteAppIntent / DeleteRemoteAppIntent**: remote app management
+- **ClearAppDataIntent**: wipe app data
 - *(Share/guest records are not intents by design: pure store writes with no
-  lifecycle side effects, and invite creation returns its token synchronously —
-  the sharing API writes them directly; see docs/specs/review.md §C3)*
+  lifecycle side effects, and invite creation returns its token synchronously.
+  The sharing API writes them directly; see docs/specs/review.md §C3)*
 
 The orchestrator drains the intent queue, applies intents to stores (desired state), then
 converges actual state toward desired: sync container state, handle uninstalls, populate
@@ -172,10 +172,10 @@ type AppState struct {
 ```
 
 **Implementations:**
-- **Authentik** — sets admin password, ensures API token, creates LDAP infrastructure
-- **Jellyfin** — completes setup wizard, creates libraries, configures LDAP plugin
-- **Navidrome** — SSO/config wiring
-- **AFFiNE** — writes the OIDC config file (public URL + provider), bootstraps the
+- **Authentik**: sets admin password, ensures API token, creates LDAP infrastructure
+- **Jellyfin**: completes setup wizard, creates libraries, configures LDAP plugin
+- **Navidrome**: SSO/config wiring
+- **AFFiNE**: writes the OIDC config file (public URL + provider), bootstraps the
   first-run owner account, verifies the OIDC preflight round-trip
 
 
@@ -184,7 +184,7 @@ type AppState struct {
 The framework layer every configurator runs its integration through, so app
 code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
 
-- **`pkg/appclient`** — a typed HTTP surface. A `Client` (built from `deps.HTTP`,
+- **`pkg/appclient`**: a typed HTTP surface. A `Client` (built from `deps.HTTP`,
   a shared-transport factory) issues `Call`s with a verb and exactly one
   terminal: `Do` (raw body), `DoInto` (JSON decode), `Ensure` (idempotent
   create-or-verify), or `Wait` (poll a readiness predicate until ready/deadline).
@@ -194,7 +194,7 @@ code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
   each app. A PostStart finalization is bounded by the orchestrator's
   `PostStartBudget` (default 150s); configurators use the passed ctx directly
   and never detach with `context.Background()`/`WithoutCancel`.
-- **`pkg/appasset`** — static-file install. `deps.Assets.Install(ctx, Asset{…})`
+- **`pkg/appasset`**: static-file install. `deps.Assets.Install(ctx, Asset{…})`
   sources bytes remotely, from `go:embed`, or locally into a content-addressed
   cache under `BLOUD_DATA_DIR`; a required `SHA256` guards the payload (a
   mismatch deletes the poisoned cache entry and fails rather than installing a
@@ -203,7 +203,7 @@ code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
   app's `INTEGRATION.md` under **Verified constants**.
 
 A pre-commit guard (`npm run check:app-http`) keeps `apps/**/*.go` free of
-`http.NewRequest`, `http.DefaultClient`, and `client.Do(request)` — the
+`http.NewRequest`, `http.DefaultClient`, and `client.Do(request)`: the
 sanctioned terminal is appclient's `.Do(ctx)`.
 
 ### Authentik Client (`pkg/authentik/`)
@@ -239,13 +239,13 @@ User clicks "Install Jellyfin"
       → records dependency providers + target app in the store
   → Convergence pass:
       1. SyncContainerState (align DB with reality)
-      2. populateGraphNodes — build DAG from installed store records
-      3. Reconcile — for each container node (topological order):
+      2. populateGraphNodes: build DAG from installed store records
+      3. Reconcile each container node in topological order:
          a. PreStart (configurator, if registered)
          b. Ensure container (create/start, idempotent)
          c. Health check (from container metadata)
          d. PostStart (configurator, if registered)
-      4. RegenerateRoutes (Traefik dynamic config) — then promote nodes to RUNNING
+      4. RegenerateRoutes (Traefik dynamic config); then promote nodes to RUNNING
   → All apps healthy, SSO/LDAP/login works
 ```
 
@@ -266,12 +266,11 @@ Three interchangeable runtimes, selected per checkout via
 use; `BLOUD_BACKEND` overrides): `lima` is automatic on macOS, Linux picks
 `qemu` (VM) or `native` (no VM):
 
-Lima VM (Debian, Apple Virtualization) — macOS:
+Lima VM (Debian, Apple Virtualization), macOS:
 
 ```
 macOS host
   └── Lima VM "bloud-dev"
-        ├── bloud-front.service (root, :80 → :8080, "starting up" page)
         ├── Podman (rootless)
         │   ├── Authentik + LDAP Outpost
         │   ├── Traefik  :8080
@@ -279,7 +278,7 @@ macOS host
         └── host-agent binary (:3000, systemd user service)
 ```
 
-QEMU VM (Debian, KVM) — Linux (default backend after `./bloud setup`):
+QEMU VM (Debian, KVM), Linux (default backend after `./bloud setup`):
 
 ```
 Linux host
@@ -289,6 +288,6 @@ Linux host
         └── host-agent binary (:3000)
 ```
 
-Ports 3000, 8080, 8443, and each app's direct port are forwarded to the host
-localhost by `./bloud dev`. The native backend needs no forwarding — everything
+Ports 3000, 8080, and each app's direct port are forwarded to the host
+localhost by `./bloud dev`. The native backend needs no forwarding; everything
 already runs on the host.

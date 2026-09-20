@@ -145,7 +145,7 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 	bus.Publish(eventbus.Event{
 		Type: eventbus.TypePull,
 		Pull: &eventbus.PullInfo{App: "immich", Image: "ghcr.io/immich-app/immich-server:v1",
-			Phase: "pulling", Detail: "34% — 340.0 MiB of 1.0 GiB"},
+			Phase: "pulling", Detail: "34% (340.0 MiB of 1.0 GiB)"},
 	})
 	evt, payload = stream.next(t)
 	assert.Equal(t, "pull", evt)
@@ -153,7 +153,7 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payload, &pull))
 	assert.Equal(t, "immich", pull.App)
 	assert.Equal(t, "pulling", pull.Phase)
-	assert.Equal(t, "34% — 340.0 MiB of 1.0 GiB", pull.Detail)
+	assert.Equal(t, "34% (340.0 MiB of 1.0 GiB)", pull.Detail)
 
 	// apps-changed triggers a fresh snapshot.
 	bus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
@@ -211,7 +211,7 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/apps/events", nil)
 	require.NoError(t, err)
-	// The client connects over loopback, which is only a trusted *position* —
+	// The client connects over loopback, which is only a trusted *position*:
 	// the credential is the API token (PR 4).
 	req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	resp, err := http.DefaultClient.Do(req)

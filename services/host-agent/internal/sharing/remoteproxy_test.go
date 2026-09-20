@@ -148,7 +148,7 @@ func TestRemoteProxy_ProxiesHTTPRequest(t *testing.T) {
 	defer backend.Close()
 
 	// Create a proxy manager pointing directly to the backend (no real SOCKS5
-	// needed since the SOCKS5 dial will fail — we test the proxy wiring by
+	// needed since the SOCKS5 dial will fail; we test the proxy wiring by
 	// using a target that resolves to localhost). For a true integration test
 	// we'd need a SOCKS5 server, but we can still verify the proxy starts and
 	// the HTTP handler is wired correctly by checking the listener is up.
@@ -162,7 +162,7 @@ func TestRemoteProxy_ProxiesHTTPRequest(t *testing.T) {
 	result := mgr.Reconcile(targets)
 	require.Contains(t, result, "test-app")
 
-	// The proxy is listening — making a request will fail at SOCKS5 dial
+	// The proxy is listening; making a request will fail at SOCKS5 dial
 	// (no SOCKS5 server on 19999), but the listener being up proves the
 	// proxy infrastructure works.
 	port := result["test-app"]

@@ -13,7 +13,7 @@
 //   max-lines   ≤ 450 for lib/*.svelte  (worst lib component was 425).
 //   max-lines   ≤ 900 for routes/*.svelte  (worst route page was 867).
 //
-// Ratchet: all thresholds pass at the CURRENT worst (cyclop semantics — the
+// Ratchet: all thresholds pass at the CURRENT worst (cyclop semantics: the
 // gate blocks anything worse than today). Lower them as the debt is repaid:
 //   - routes/+page.svelte (settings 867, developer 778) → split, then drop
 //     the routes cap toward 500.

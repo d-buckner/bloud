@@ -1,6 +1,6 @@
 > Status: landed
 
-# Plan: Layout Refactor — Server-Owned Positions + Polling
+# Plan: Layout Refactor: Server-Owned Positions + Polling
 
 ## Problem
 
@@ -32,7 +32,7 @@ what is ultimately a polling problem: "what apps are installed and where are the
 
 ### Backend: `user_app_positions` table
 
-New join table — keeps positions separate from the app record (apps are global,
+New join table: keeps positions separate from the app record (apps are global,
 positions are per-user).
 
 ```sql
@@ -100,12 +100,12 @@ Apps with `x: null` get `autoPosition: true` in GridStack. After GridStack settl
 the client writes back the full layout.
 
 Apps installed via the backend (CLI, dependency) appear here with `x: null` on the
-next poll. They show up on the grid automatically — no frontend reconciliation needed.
+next poll. They show up on the grid automatically: no frontend reconciliation needed.
 
 ### `PUT /api/user/layout`
 
-Called by `handleGridChange` after GridStack settles. Sends the **full settled layout**
-— all items GridStack currently knows about, not just the one that moved. This is
+Called by `handleGridChange` after GridStack settles. Sends the **full settled layout**:
+all items GridStack currently knows about, not just the one that moved. This is
 correct because a single drag can reflow the entire grid (float: false compaction).
 
 ```json
@@ -117,13 +117,13 @@ correct because a single drag can reflow the entire grid (float: false compactio
 ```
 
 Server replaces all `user_app_positions` rows for this user. One write per completed
-drag/resize — GridStack's `change` event fires on mouseup, not during the drag.
+drag/resize: GridStack's `change` event fires on mouseup, not during the drag.
 
 ---
 
 ## Install / Uninstall Lifecycle
 
-### Install (any path — UI, CLI, orchestrator)
+### Install (any path: UI, CLI, orchestrator)
 
 1. `appStore.Install()` creates the app record with status `installing`
 2. Insert a `user_app_positions` row with `x: null, y: null` for all users
@@ -166,7 +166,7 @@ function isTransitioning(app): boolean {
 ### `appFacade.ts` changes
 
 - Remove `connectSSE` / `disconnectSSE`
-- Remove `pendingInstalls` — server status is authoritative
+- Remove `pendingInstalls`: server status is authoritative
 - `initApps()` → fetch `GET /api/user/home`, then `startPolling()`
 - `disconnectApps()` → `stopPolling()`
 
@@ -177,7 +177,7 @@ function isTransitioning(app): boolean {
 - `addGridStackItem` → add `autoPosition: true` when `x == null || y == null`
 - `suppressStoreSync` flag stays (still needed to prevent the `$effect` feedback loop)
 
-### `layout.ts` store — deleted
+### `layout.ts` store: deleted
 
 Position state lives in the server response. No local store, no localStorage,
 no debounced saves, no migration logic, no `findNextAvailablePosition`.
@@ -212,7 +212,7 @@ no debounced saves, no migration logic, no `findNextAvailablePosition`.
 | `findNextAvailablePosition` | Frontend had to manage positions | GridStack + autoPosition |
 | Layout migration code | Old format compat | Fresh schema, no migration needed |
 
-`suppressStoreSync` stays — it prevents the GridStack↔`$effect` feedback loop which
+`suppressStoreSync` stays: it prevents the GridStack↔`$effect` feedback loop which
 exists regardless of where positions are stored.
 
 ---

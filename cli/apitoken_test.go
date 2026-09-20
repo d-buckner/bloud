@@ -6,7 +6,7 @@ package main
 import "testing"
 
 // The API credential is now required for admin calls from a trusted position,
-// so every generated curl invocation must carry it — and it must be quoted, or
+// so every generated curl invocation must carry it. It must be quoted, or
 // a token containing shell metacharacters would break the command (or worse).
 func TestAuthHeaderQuotesTheToken(t *testing.T) {
 	cases := []struct {

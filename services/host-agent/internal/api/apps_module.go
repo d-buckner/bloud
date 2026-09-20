@@ -214,7 +214,7 @@ func (m *appsModule) ClearData(name string) (*IntentRef, error) {
 
 	app, _ := m.appStore.GetByCatalogID(name)
 	if app != nil {
-		// App is installed — enqueue uninstall with clearData
+		// App is installed: enqueue uninstall with clearData
 		if m.orch == nil {
 			return nil, fmt.Errorf("orchestrator not available")
 		}

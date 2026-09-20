@@ -67,7 +67,7 @@ func (q *IntentQueue) PendingCount() int {
 // WaitAndDrain blocks until an intent is available, then returns a batch:
 //
 //   - If the queue is empty on entry it blocks until the first intent arrives
-//     and drains immediately — a lone intent is processed without any delay.
+//     and drains immediately: a lone intent is processed without any delay.
 //   - If intents are already queued (they arrived while the orchestrator was
 //     processing a previous batch) it waits out the debounce window, resetting
 //     on each new arrival, so a burst of intents coalesces into one batch.
@@ -96,18 +96,18 @@ func (q *IntentQueue) WaitAndDrain(ctx context.Context) []Intent {
 	for {
 		select {
 		case <-q.signal:
-			// New intent arrived — reset the debounce timer.
+			// New intent arrived: reset the debounce timer.
 			if !timer.Stop() {
 				<-timer.C
 			}
 			timer.Reset(q.debounce)
 
 		case <-timer.C:
-			// Coalescing window expired — drain and return.
+			// Coalescing window expired: drain and return.
 			return q.Drain()
 
 		case <-ctx.Done():
-			// Context cancelled — return whatever we have.
+			// Context cancelled: return whatever we have.
 			return q.Drain()
 		}
 	}

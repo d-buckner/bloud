@@ -39,16 +39,16 @@ Install Bloud on a Debian box and get:
 - One account and a shared login across every app
 - One-click app installation, dependencies included
 - Automatic inter-app configuration: API keys, OIDC clients, LDAP setup
-- Automatic routing through Traefik, over HTTP and HTTPS (Bloud generates its own local CA)
+- Automatic routing through Traefik over HTTP (TLS is a planned follow-up)
 - Reliable reconciliation after failures and reboot
 - Per-app databases, isolated from each other
 - Your server reachable on `localhost` or your own domain (reach-by-name via real DNS or Tailscale is a planned follow-up)
 - Sharing with people who don't need to manage anything
 
-Bloud's differentiator isn't container installation — anyone can run `podman run`.
+Bloud's differentiator isn't container installation; anyone can run `podman run`.
 It's the **engine**: the reconciliation layer that reads what each app declares,
 works out the wiring (API keys, OIDC clients, LDAP, databases, routes), and keeps
-those relationships correct forever — on install, after a crash, and on every reboot.
+those relationships correct forever: on install, after a crash, and on every reboot.
 
 ## How it works
 
@@ -65,7 +65,7 @@ Level 1: immich             ← Self-contained: postgres + redis + server + ML
 
 ### The engine
 
-The heart of Bloud is the **engine** — a reconciliation control loop, directly
+The heart of Bloud is the **engine**: a reconciliation control loop, directly
 inspired by how Kubernetes controllers work. You declare intent (the apps you
 want, plus what each app *provides* and *consumes*); the engine continuously
 drives reality to match, converging the dependency graph level by level and
@@ -73,11 +73,11 @@ re-converging on every crash or reboot.
 
 Concretely: every change is pushed onto a typed **intent queue**. The engine drains
 it, resolves the dependency graph, and runs each node through its lifecycle
-(`INITIALIZING → PRESTART → STARTING → POSTSTART → RUNNING`) — creating containers,
-generating Traefik routes, and provisioning SSO clients and secrets — until the
+(`INITIALIZING → PRESTART → STARTING → POSTSTART → RUNNING`), creating containers,
+generating Traefik routes, and provisioning SSO clients and secrets, until the
 observed state matches the declared state. Like a k8s controller, it's idempotent:
 when reality already matches intent, it does nothing. And the engine is the *single
-writer* — the HTTP API only submits intents; it never mutates state directly.
+writer*: the HTTP API only submits intents; it never mutates state directly.
 
 This is what makes Bloud self-healing rather than a one-shot installer: the same loop
 that installed your apps is the loop that brings them back after a power cut.
@@ -138,7 +138,7 @@ While the high level technical design and architecture are done by me personally
 ## Local development
 
 Everything goes through the `./bloud` CLI. `npm run setup` picks your runtime
-backend, checks prerequisites, and builds the CLI; `./bloud dev` is the whole loop — it builds host-agent and the
+backend, checks prerequisites, and builds the CLI; `./bloud dev` is the whole loop: it builds host-agent and the
 frontend, deploys them to the runtime, and runs the agent (Ctrl-C to stop).
 There is no hot reload: re-run `./bloud dev` after any code change.
 
@@ -151,7 +151,7 @@ command prompts and saves the answer) into gitignored
 
 | Backend | Platform | Chosen as | Prerequisites |
 |---|---|---|---|
-| **Lima** | macOS | automatic — the only applicable backend | `brew install lima` |
+| **Lima** | macOS | automatic: the only applicable backend | `brew install lima` |
 | **QEMU** | Linux | the default choice | `qemu-system-x86_64` |
 | **Native** | Linux (CI) | a prompt choice, or `BLOUD_BACKEND=native` | podman + user-level systemd |
 
@@ -159,9 +159,9 @@ command prompts and saves the answer) into gitignored
 npm run setup            # Choose backend, check prereqs, build ./bloud
 ```
 
-Every backend provisions itself on first run — `./bloud dev` creates the Lima
+Every backend provisions itself on first run: `./bloud dev` creates the Lima
 VM from `dev/lima.yaml`, provisions the QEMU VM under `.bloud/qemu/`, or sets
-up the native runtime in `/var/tmp/bloud-native-runtime` — then builds,
+up the native runtime in `/var/tmp/bloud-native-runtime`, then builds,
 deploys, and starts the agent. No separate create/start step.
 
 ### Daily development
@@ -215,7 +215,7 @@ bloud/
 │   │   ├── secrets/               # Per-instance generated keys
 │   │   ├── traefikgen/            # Route generation from the graph
 │   │   ├── store/                 # SQLite persistence
-│   │   └── api/                   # HTTP API — submits intents, never writes state
+│   │   └── api/                   # HTTP API: submits intents, never writes state
 │   ├── pkg/
 │   │   ├── authentik/             # Authentik REST API client
 │   │   └── configurator/          # Configurator interface + helpers

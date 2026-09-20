@@ -177,7 +177,7 @@ func TestOrchestrator_PullProgressPublishedWithOwningApp(t *testing.T) {
 		assert.Equal(t, "immich", evt.Pull.App)
 		assert.Equal(t, "ghcr.io/immich-app/immich-server:v1.126.2", evt.Pull.Image)
 		assert.Equal(t, "pulling", evt.Pull.Phase)
-		assert.Equal(t, "34% — 340.0 MiB of 1.0 GiB", evt.Pull.Detail)
+		assert.Equal(t, "34% (340.0 MiB of 1.0 GiB)", evt.Pull.Detail)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for pull event")
 	}
@@ -214,7 +214,7 @@ func TestOrchestrator_PullProgressUnknownContainerFallsBackToNodeID(t *testing.T
 }
 
 func TestPullDetail(t *testing.T) {
-	assert.Equal(t, "34% — 340.0 MiB of 1.0 GiB",
+	assert.Equal(t, "34% (340.0 MiB of 1.0 GiB)",
 		pullDetail(containerruntime.PullProgress{Percent: 34, Current: 356515806, Total: 1073741824}))
 	assert.Equal(t, "Copying blob sha256:abc",
 		pullDetail(containerruntime.PullProgress{Detail: "Copying blob sha256:abc"}))

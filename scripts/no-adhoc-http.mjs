@@ -14,8 +14,8 @@
 // any such call in apps/**/*.go (excluding _test.go) fails pre-commit unless
 // it is explicitly allowlisted with a documented reason.
 //
-// appclient's own Call.Do(ctx) is the sanctioned terminal — it takes a
-// context, not a request — so `.Do(ctx)` is deliberately NOT flagged.
+// appclient's own Call.Do(ctx) is the sanctioned terminal (it takes a
+// context, not a request), so `.Do(ctx)` is deliberately NOT flagged.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';

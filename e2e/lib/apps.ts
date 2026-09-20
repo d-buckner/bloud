@@ -5,7 +5,7 @@ import { expect, type Page } from '@playwright/test';
 /**
  * Click an installed app's tile on the Bloud home screen and wait for the
  * app tab it opens (apps launch in a popup). The caller asserts on the
- * returned page — login screen or dashboard, depending on the app's auth
+ * returned page: login screen or dashboard, depending on the app's auth
  * strategy and this context's cookie state.
  */
 export async function openAppFromHome(page: Page, label: string): Promise<Page> {

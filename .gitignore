@@ -72,3 +72,14 @@ services/host-agent/internal/api/traefik/
 # AI agent data
 .claude/
 .playwright-mcp/
+
+# Vale: `vale sync` installs the styles pinned in .vale.ini into
+# .vale/styles/. Our own style and vocabulary live there too, so the directory
+# is ignored selectively (same pattern as the docs recommend).
+.vale/styles/*
+!.vale/styles/Bloud/
+!.vale/styles/config/
+.vale/styles/config/*
+!.vale/styles/config/vocabularies/
+.vale/styles/config/vocabularies/*
+!.vale/styles/config/vocabularies/Bloud/

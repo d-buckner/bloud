@@ -38,10 +38,10 @@ describe('deriveTimeline', () => {
 	});
 
 	it('pulling at 34%: pulling current with detail', () => {
-		const steps = deriveTimeline('installing', progress('pulling', { percent: 34, phaseDetail: '34% — 340.0 MiB of 1.0 GiB' }));
+		const steps = deriveTimeline('installing', progress('pulling', { percent: 34, phaseDetail: '34% (340.0 MiB of 1.0 GiB)' }));
 		const pulling = steps.find((s) => s.id === 'pulling');
 		expect(pulling?.state).toBe('current');
-		expect(pulling?.detail).toBe('34% — 340.0 MiB of 1.0 GiB');
+		expect(pulling?.detail).toBe('34% (340.0 MiB of 1.0 GiB)');
 		expect(steps.find((s) => s.id === 'planned')?.state).toBe('done');
 		expect(steps.find((s) => s.id === 'starting')?.state).toBe('pending');
 	});

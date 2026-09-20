@@ -1,6 +1,6 @@
 # Bloud Sharing
 
-**Status:** In progress — core sharing implemented (sharing gateway, remote-apps
+**Status:** In progress: core sharing implemented (sharing gateway, remote-apps
 store + API, tailnet node, proxied outpost); tailnet outpost auth in development  
 **Last updated:** 2026-09-02
 
@@ -11,7 +11,7 @@ store + API, tailnet node, proxied outpost); tailnet outpost auth in development
 Bloud sharing makes self-hosting federated. A server owner can invite another Bloud user
 to access a specific app on their server. The invited user's Bloud instance proxies that
 app locally, so dumb clients (TVs, game consoles, etc.) can reach it through a familiar
-local endpoint — as if the app were installed on the guest's own machine.
+local endpoint, as if the app were installed on the guest's own machine.
 
 The network layer is built on [Tailscale](https://tailscale.com/) or a self-hosted
 [Headscale](https://github.com/juanfont/headscale) instance, providing encrypted
@@ -39,7 +39,7 @@ peer-to-peer tunnels without port forwarding or exposing services to the public 
 ## Network Architecture
 
 Every non-system user app gets a dedicated Tailscale sidecar container that starts and
-stops with the app. The sidecar is always running whenever the app is running — it is
+stops with the app. The sidecar is always running whenever the app is running; it is
 not created or removed when shares are created or revoked. This sidecar:
 
 - Joins the tailnet as its own node (e.g. `ts-navidrome`)
@@ -76,7 +76,7 @@ a given app's sidecar.
   Bob's Subsonic client / TV / phone
 ```
 
-The guest's host-agent uses a single `tsnet` node for **outbound dialing only** — it has
+The guest's host-agent uses a single `tsnet` node for **outbound dialing only**; it has
 no listening ports on the tailnet. This is simpler than per-app sidecars on the guest side
 while still providing the full per-app isolation guarantee on the host side.
 
@@ -84,13 +84,13 @@ while still providing the full per-app isolation guarantee on the host side.
 
 Bloud does not prescribe which control plane is used. The owner configures one of:
 
-- **Tailscale** (commercial, easiest) — authenticate with a Tailscale auth key
-- **Self-hosted Headscale** — run your own Headscale instance on a VPS
-- **Community Headscale** — a community member runs a Headscale instance for a group
+- **Tailscale** (commercial, easiest): authenticate with a Tailscale auth key
+- **Self-hosted Headscale**: run your own Headscale instance on a VPS
+- **Community Headscale**: a community member runs a Headscale instance for a group
 
 In all cases, Bloud only needs a `TS_AUTHKEY` (reusable). The control plane choice is an
 operator concern. Headscale's control plane sees node registrations and coordinates key
-exchange, but all data traffic is direct peer-to-peer WireGuard — the control plane
+exchange, but all data traffic is direct peer-to-peer WireGuard; the control plane
 operator cannot read app traffic.
 
 ---
@@ -179,7 +179,7 @@ The sidecar keeps running with the app. Bloud should also reconcile downstream s
 ```
 1. OWNER CREATES INVITE
    Owner clicks Share in Bloud UI.
-   → Sidecar is already running (started with the app) — no wait
+   → Sidecar is already running (started with the app): no wait
    → Bloud reads the sidecar's tailnet address (podman exec ts-{appName} tailscale ip)
    → Bloud generates a signed invite token containing:
        - shareId
@@ -228,7 +228,7 @@ the app also supports browser sharing through trusted header auth or native SSO.
 
 For clients capable of connecting directly to the tailnet, the guest can retrieve the
 sidecar's tailnet address from the Bloud UI and configure the client to connect directly.
-This avoids the proxy hop and reduces latency — relevant for high-bitrate video.
+This avoids the proxy hop and reduces latency, relevant for high-bitrate video.
 
 ### Offline / Host Unreachable
 
@@ -243,7 +243,7 @@ is cached. The guest's Bloud UI marks the app as offline.
 - Share record marked revoked
 - Downstream authorization and app-local users/secrets are disabled where supported
 - Guest discovers revocation on next proxy request (returns 403)
-- Sidecar keeps running — it is tied to app lifecycle, not share lifecycle
+- Sidecar keeps running; it is tied to app lifecycle, not share lifecycle
 
 **Guest-initiated:**
 - Guest removes the shared app from their Bloud UI
@@ -260,20 +260,20 @@ The owner can re-invite to restore access.
 
 | Property | Mechanism |
 |---|---|
-| Only invited users reach the app | Per-app sidecar — each shared app has its own tailnet node; no other apps are reachable through it |
+| Only invited users reach the app | Per-app sidecar: each shared app has its own tailnet node; no other apps are reachable through it |
 | Traffic is encrypted in transit | WireGuard (Tailscale/Headscale) end-to-end |
 | Control plane can't read traffic | P2P WireGuard; Headscale operator sees node list only |
 | Invites do not expose app passwords | Token creates or binds a Bloud user; downstream users are provisioned by adapters |
 | Header auth is not forgeable by clients | Proxy strips inbound identity headers and injects trusted headers only after auth |
 | Invites are single-use and time-limited | HMAC-signed token, 1-hour TTL, server-side consumed flag |
 | No transitive sharing | Guest cannot produce invite tokens for apps they don't own |
-| Revocation is immediate | Share marked revoked — proxy returns 403 on next request |
+| Revocation is immediate | Share marked revoked; proxy returns 403 on next request |
 
 ---
 
 ## Data Model
 
-### Host side — `shares` table
+### Host side: `shares` table
 
 ```sql
 CREATE TABLE IF NOT EXISTS shares (
@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS shares (
 Note: status starts as `active` because the sidecar is always already running when the
 invite is created.
 
-### Guest side — `remote_apps` table
+### Guest side: `remote_apps` table
 
 ```sql
 CREATE TABLE IF NOT EXISTS remote_apps (
@@ -316,14 +316,14 @@ In scope:
 - [ ] Per-app Tailscale sidecar started/stopped with every non-system app (orchestrator)
 - [ ] DB schema: `shares` and `remote_apps` tables
 - [ ] Signed invite token generation (stdlib HMAC-SHA256, no external JWT dep)
-- [ ] `POST /api/sharing/invites` — read sidecar tailnet addr, generate token, create share
-- [ ] `GET /api/sharing/shares` — list active shares (owner view)
-- [ ] `DELETE /api/sharing/shares/{id}` — mark revoked (sidecar unaffected)
-- [ ] `POST /api/remote-apps/accept` — redeem token and create/bind host Bloud user
-- [ ] `GET /api/remote-apps` — list remote apps (guest dashboard)
-- [ ] `DELETE /api/remote-apps/{id}` — guest removes (local only)
+- [ ] `POST /api/sharing/invites`: read sidecar tailnet addr, generate token, create share
+- [ ] `GET /api/sharing/shares`: list active shares (owner view)
+- [ ] `DELETE /api/sharing/shares/{id}`: mark revoked (sidecar unaffected)
+- [ ] `POST /api/remote-apps/accept`: redeem token and create/bind host Bloud user
+- [ ] `GET /api/remote-apps`: list remote apps (guest dashboard)
+- [ ] `DELETE /api/remote-apps/{id}`: guest removes (local only)
 - [ ] `tsnet` node in guest host-agent for outbound dialing
-- [ ] `/embed/{appId}@{hostSlug}/*` — reverse proxy via tsnet using declared app auth contract
+- [ ] `/embed/{appId}@{hostSlug}/*`: reverse proxy via tsnet using declared app auth contract
 - [ ] UI: `ShareModal.svelte`, `AcceptInviteModal.svelte`, `RemoteAppTile.svelte`
 - [ ] UI: Share option in app context menu, "Add shared app" in sidebar
 
@@ -380,10 +380,10 @@ Connections are managed via the Settings page (`/settings`) or auto-migrated fro
 
 ## Open Questions
 
-1. **Sidecar auth key management** — MVP uses a single reusable `TS_AUTHKEY` for all
+1. **Sidecar auth key management**: MVP uses a single reusable `TS_AUTHKEY` for all
    sidecars. Follow-on: generate ephemeral per-sidecar keys via Headscale/Tailscale API.
 
-2. **Sidecar node naming** — `ts-{appName}` is the proposed format. Unique per app on a
+2. **Sidecar node naming**: `ts-{appName}` is the proposed format. Unique per app on a
    given host. If two Bloud hosts are on the same tailnet, node names will conflict.
    Follow-on: incorporate a host identifier (e.g. `ts-{appName}-{hostId[:8]}`).
 
@@ -416,7 +416,7 @@ mock API responses while backend phases are in progress.
 
 ---
 
-### Phase 1 — Sidecar spike (gate)
+### Phase 1: Sidecar spike (gate)
 
 **Goal:** Prove the per-app Tailscale sidecar approach works inside the Lima VM before
 building anything else. If the sidecar can't join the tailnet from inside a rootless
@@ -426,7 +426,7 @@ The sidecar uses Tailscale's userspace networking mode (`TS_USERSPACE=true`) so 
 not need `NET_ADMIN` capabilities, and Tailscale Serve to forward tailnet connections to
 the app container.
 
-**Manual spike — run by hand in Lima, no code committed until it passes:**
+**Manual spike (run by hand in Lima, no code committed until it passes):**
 ```bash
 # 1. Start a sidecar alongside the running Navidrome container
 podman run -d \
@@ -467,7 +467,7 @@ podman rm -f ts-navidrome-spike
 
 ---
 
-### Phase 2 — Orchestrator: sidecar lifecycle
+### Phase 2: Orchestrator sidecar lifecycle
 
 **Files:** `internal/engine/orchestrator/orchestrator.go` (the lifecycle loop),
 `internal/sharing/sidecar.go` (new)
@@ -563,7 +563,7 @@ echo "PASS"
 
 ---
 
-### Phase 3 — Schema + store
+### Phase 3: Schema + store
 
 **Files:** `internal/db/schema.sql`, `internal/testdb/testdb.go`,
 `internal/store/shares.go`, `internal/store/remote_apps.go`
@@ -616,12 +616,12 @@ go test ./internal/db/... ./internal/store/...
 
 ---
 
-### Phase 4 — Invite generation
+### Phase 4: Invite generation
 
 **Files:** `internal/sharing/token.go`, `internal/api/sharing.go`,
 `internal/api/routes.go`
 
-**Token format** — no external JWT dependency. A self-contained signed string:
+**Token format**: no external JWT dependency. A self-contained signed string:
 ```
 base64url(json_payload) + "." + base64url(hmac_sha256(base64url(json_payload), secret))
 ```
@@ -688,7 +688,7 @@ go test ./internal/sharing/... ./internal/api/...
 
 ---
 
-### Phase 5 — Guest accept and identity provisioning
+### Phase 5: Guest accept and identity provisioning
 
 **Files:** `internal/api/remote_apps.go`, `internal/sharing/provisioning.go`
 
@@ -738,7 +738,7 @@ go test ./internal/sharing/... ./internal/api/...
 
 ---
 
-### Phase 6 — Proxy
+### Phase 6: Proxy
 
 **Files:** `internal/sharing/tsnode.go`, `internal/api/proxy.go`
 
@@ -752,7 +752,7 @@ func (n *Node) Dial(ctx context.Context, network, addr string) (net.Conn, error)
 ```
 
 Started in `cmd/host-agent/main.go` when `BLOUD_TS_AUTHKEY` is set. Used only for
-outbound dialing — no listening ports.
+outbound dialing; no listening ports.
 
 **Proxy route:** `/embed/{appId}@{hostSlug}/*`
 
@@ -823,17 +823,17 @@ echo "PASS"
 
 ---
 
-### Phase 7 — Revocation
+### Phase 7: Revocation
 
 **Files:** `internal/api/sharing.go` (complete the revocation handler)
 
 `DELETE /api/sharing/shares/{id}`:
-1. Look up share — 404 if not found
+1. Look up share: 404 if not found
 2. Mark share revoked in DB
 3. Remove or disable downstream authorization where the app adapter supports it
 4. Return `{ status: "revoked", cleanupStatus: string }`
 
-The sidecar is not touched — it keeps running with the app. The guest's proxy returns
+The sidecar is not touched; it keeps running with the app. The guest's proxy returns
 403 on the next request because the share row is revoked.
 
 #### Validation
@@ -872,21 +872,21 @@ echo "PASS"
 
 ---
 
-### Phase 8 — UI
+### Phase 8: UI
 
 **New files:**
-- `web/src/lib/components/ShareModal.svelte` — owner shares an app; shows the invite
+- `web/src/lib/components/ShareModal.svelte`: owner shares an app; shows the invite
   token string (copy-to-clipboard), guest label input, list of active shares with revoke
   buttons and cleanup status
-- `web/src/lib/components/AcceptInviteModal.svelte` — paste token, create or bind the
+- `web/src/lib/components/AcceptInviteModal.svelte`: paste token, create or bind the
   host Bloud user, submit
-- `web/src/lib/components/RemoteAppTile.svelte` — extends `AppTile.svelte`; shows
+- `web/src/lib/components/RemoteAppTile.svelte`: extends `AppTile.svelte`; shows
   "Hosted by X" badge, offline/revoked states
 
 **Modified files:**
-- `AppContextMenu.svelte` — add "Share" option (installed, non-system apps only)
-- `+page.svelte` — fetch `/api/remote-apps`, render in dashboard grid
-- `Sidebar.svelte` — "Add shared app" entry point
+- `AppContextMenu.svelte`: add "Share" option (installed, non-system apps only)
+- `+page.svelte`: fetch `/api/remote-apps`, render in dashboard grid
+- `Sidebar.svelte`: "Add shared app" entry point
 
 #### Validation
 
@@ -895,7 +895,7 @@ echo "PASS"
 // TestShareFlow:
 //   Right-click Navidrome tile → Share → guest label input, token string appears
 //   Copy token button → clipboard contains the token string
-//   Share list shows "bob — active"
+//   Share list shows "bob: active"
 
 // TestAcceptFlow:
 //   (Invite token seeded via API before test)
@@ -906,7 +906,7 @@ echo "PASS"
 
 // TestRevokeFlow_ForwardAuth:
 //   (Share seeded via API before test)
-//   ShareModal → share list shows "bob — active"
+//   ShareModal → share list shows "bob: active"
 //   Click Revoke → confirm dialog summarizes downstream cleanup
 //   Confirm → row gone, toast "Access revoked."
 

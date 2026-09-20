@@ -7,7 +7,8 @@
 #
 # The fast tier covers: host-agent tests, orchestrator race tests, apps tests,
 # cli tests, golangci-lint (cyclop), web unit tests, svelte-check, ESLint,
-# the static production build, and the license-header check.
+# the static production build, the license-header check, the prose lint (Vale,
+# docs plus source comments), the em dash check, and the docs link check.
 name: CI
 
 on:

@@ -94,7 +94,7 @@ func TestWithRetry_FactorUnset_KeepsDeclaredInterval(t *testing.T) {
 	// Initial/MaxInterval must poll at the declared cadence. When
 	// effectivePolicy returned the WithRetry override without applying
 	// withDefaults, the zero Factor collapsed every delay past the first
-	// attempt to 0 — the 60×1s wizard wait burned its whole budget in ~1s
+	// attempt to 0; the 60×1s wizard wait burned its whole budget in ~1s
 	// and went terminal-error while Jellyfin was still legitimately loading.
 	var slept []time.Duration
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

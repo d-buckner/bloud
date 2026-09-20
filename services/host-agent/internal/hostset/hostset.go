@@ -4,9 +4,9 @@
 // Package hostset models the collection of hostnames a Bloud instance is
 // reachable under and derives every URL that depends on them:
 //
-//   - SSO base URLs (one per host) — drive the OAuth redirect URIs
+//   - SSO base URLs (one per host): drive the OAuth redirect URIs
 //     registered in Authentik for the dashboard and each app;
-//   - the OIDC issuer base URL — baked into app configs and used for
+//   - the OIDC issuer base URL: baked into app configs and used for
 //     discovery by browsers and app containers alike;
 //   - the extraHosts entry app containers need so the issuer hostname
 //     resolves to the machine running Traefik.
@@ -153,7 +153,7 @@ func (h HostSet) IsBuiltin(host string) bool {
 // BaseURLFor returns the base URL for one host: localhost keeps the
 // http://localhost:8080 convention (dev/e2e parity), every other host uses
 // the bare host on port 80. Port 80 is aspirational until a reach-by-name +
-// TLS layer (real-domain ACME and/or Tailscale Serve) ships — see AGENTS
+// TLS layer (real-domain ACME and/or Tailscale Serve) ships: see AGENTS
 // invariant 10.
 func (h HostSet) BaseURLFor(host string) string {
 	if u, ok := h.urlOverrides[host]; ok {

@@ -44,7 +44,7 @@ describeApp('homeassistant', (app) => {
       // A fresh popup has no Home Assistant session. Between the popup
       // and the dashboard sit the Authentik identifier-first login (when
       // the IdP session did not carry over) and the hass-oidc-auth
-      // provider welcome screen ("Login with Bloud") — either is proof
+      // provider welcome screen ("Login with Bloud"); either is proof
       // the gate held. An unauthenticated browser can never reach the
       // Lovelace shell, so failing to render it while an auth screen
       // renders is the assertion.
@@ -67,7 +67,7 @@ describeApp('homeassistant', (app) => {
     // Measured against a live instance: the whole flow is ~20 s. The previous
     // 6-minute budget existed because this test polled `ha-panel-lovelace,
     // lovelace-ui` as its "we are in" marker, and neither element exists on the
-    // current Overview dashboard — so the loop could only ever exit through its
+    // current Overview dashboard, so the loop could only ever exit through its
     // deadline. Keep the budget tight enough that a future selector rot fails
     // fast instead of hiding as slowness.
     test.setTimeout(120_000);
@@ -110,7 +110,7 @@ describeApp('homeassistant', (app) => {
     }
 
     // Terminal state: the authenticated dashboard. <hui-view> is the stable
-    // marker — it survives Home Assistant renaming the panel element around it.
+    // marker: it survives Home Assistant renaming the panel element around it.
     await expect(view).toBeVisible({ timeout: 60_000 });
     expect(ha.url()).not.toMatch(/onboarding/);
     await expect(ha).toHaveURL(/^http:\/\/homeassistant\.localhost:8080\/(?!auth\/)/, {

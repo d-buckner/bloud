@@ -470,7 +470,7 @@ func TestGenerator_Generate_ForwardAuth_BypassPaths_AuthentikDisabled(t *testing
 	}
 
 	g := NewGenerator(configPath)
-	// Authentik disabled — no forward-auth active, so bypass routers are unnecessary
+	// Authentik disabled: no forward-auth active, so bypass routers are unnecessary
 
 	if err := g.Generate(apps); err != nil {
 		t.Fatalf("Generate failed: %v", err)

@@ -13,7 +13,7 @@ import (
 )
 
 // openRawDB returns an empty in-memory SQLite DB with production
-// pragmas but NO schema applied — the pre-migration starting point.
+// pragmas but NO schema applied: the pre-migration starting point.
 func openRawDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")

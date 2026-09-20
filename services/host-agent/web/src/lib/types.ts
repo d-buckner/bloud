@@ -113,7 +113,7 @@ export interface IntentResponse {
 	app?: App;
 }
 
-// Grid element — null x/y means autoPosition (GridStack picks the cell)
+// Grid element: null x/y means autoPosition (GridStack picks the cell)
 export interface GridElement {
 	type: 'app' | 'widget';
 	id: string;

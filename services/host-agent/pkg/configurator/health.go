@@ -14,7 +14,7 @@ import (
 // WaitForSSOReady waits for an app's SSO integration to be ready: the
 // Authentik OpenID Connect discovery endpoint for the app must return a valid
 // configuration (one carrying an "issuer" field), proving the provider and
-// application have been fully created — not merely that Authentik is answering.
+// application have been fully created, not merely that Authentik is answering.
 //
 // This is the one health helper with a live caller (the CLI configure path). Its
 // former hand-rolled siblings (WaitForHTTP / WaitForHTTPWithAuth / WaitForTCP /

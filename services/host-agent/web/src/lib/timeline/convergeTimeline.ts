@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 /**
- * Converge timeline derivation — pure mapping from the orchestrator activity
+ * Converge timeline derivation: pure mapping from the orchestrator activity
  * log to the ordered converge-step view. Extracted from the developer page so
  * the scan/assign logic is testable without SvelteKit. The activity log is
  * newest-first (backend order preserved); scanning it for converge markers is

@@ -19,7 +19,7 @@ export interface TimelineStep {
 	state: 'done' | 'current' | 'pending' | 'failed';
 	/** Epoch ms when this step's phase was first observed, if known. */
 	at?: number;
-	/** Pull progress detail for the pulling step, e.g. "34% — …". */
+	/** Pull progress detail for the pulling step, e.g. "34% (…)". */
 	detail?: string;
 }
 

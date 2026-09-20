@@ -24,7 +24,7 @@ export type { RenameResult };
 let initialized = false;
 
 /**
- * Initialize the app system — open the SSE event stream (primary source)
+ * Initialize the app system: open the SSE event stream (primary source)
  * with the adaptive poller kept as a watchdog-armed safety net.
  * Called once when the app starts (in +layout.svelte).
  */
@@ -50,7 +50,7 @@ export function disconnectApps(): void {
  * the orchestrator handles the rest.
  *
  * The 202 response carries the installing app record (the orchestrator
- * records it at submit time), which is applied to the stores immediately —
+ * records it at submit time), which is applied to the stores immediately:
  * the tile appears without waiting for the next snapshot. If the record is
  * missing (store write failed server-side), a synthetic installing entry is
  * inserted as an optimistic fallback.

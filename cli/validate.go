@@ -181,7 +181,7 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 		if !flags.json {
 			fmt.Println("No testable commands triggered by changed files.")
 			if len(result.RiskAreas) > 0 {
-				fmt.Printf("Risk areas detected: %s — consider running a higher tier.\n", strings.Join(result.RiskAreas, ", "))
+				fmt.Printf("Risk areas detected: %s. Consider running a higher tier.\n", strings.Join(result.RiskAreas, ", "))
 			}
 		}
 		result.ExitCode = 0

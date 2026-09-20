@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+#
+# House rule: no em dashes in prose. The repository's documents use one of
+# these instead:
+#
+#   - a colon, when the clause after the dash explains the one before it
+#   - a semicolon or a full stop, between two independent clauses
+#   - a comma pair or parentheses, for a parenthetical aside
+#
+# Code blocks, inline code, and diagrams are not linted, so anything inside a
+# fence keeps whatever punctuation it has.
+#
+# Google.EmDash stays switched on alongside this rule as a second detector:
+# Vale's inline-code masking can drop a bare punctuation token on a line whose
+# code span is long (seen on `- `path/to/Component.svelte` - prose`), while that
+# rule anchors on the spaces around the dash and still matches.
+# The em dash is written as a regex escape rather than the literal character:
+# this file is itself tracked YAML, and `.vale/styles` is inside the tree that
+# `npm run check:no-emdash` scans.
+extends: existence
+message: "Replace the em dash: use a colon, semicolon, comma, or parentheses."
+level: error
+nonword: true
+tokens:
+  - '\x{2014}'
+  - '&mdash;'

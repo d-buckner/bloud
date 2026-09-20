@@ -112,7 +112,7 @@ export async function waitForApp(
     if (app?.status === 'error') {
       // Terminal by design: the orchestrator records `error` only on a
       // node failure and never recovers without a new install intent.
-      // Keep waiting can never converge — fail now with the recorded
+      // Keep waiting can never converge: fail now with the recorded
       // cause so the report names the real failure instead of a timeout.
       throw new Error(
         `${name} reached terminal "error" state: ${app.last_error || '(no error recorded)'}`,
@@ -130,7 +130,7 @@ export async function ensureInstalled(name: string): Promise<void> {
   const status = await getAppStatus(name);
   if (status === 'running') return;
   // Missing, errored, or mid-transition: submit an install intent (the
-  // orchestrator's reset of ERROR nodes makes install idempotent — it is
+  // orchestrator's reset of ERROR nodes makes install idempotent: it is
   // the "Retry install" recovery path) and wait for convergence.
   await installApp(name);
   await waitForApp(name, 'running');

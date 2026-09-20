@@ -11,7 +11,7 @@
 // lookup. This file wires only the system configurators (Traefik, Authentik
 // server), which are always needed and runtime-dependent.
 //
-// Adding an app therefore touches apps/registry.go only — never this file.
+// Adding an app therefore touches apps/registry.go only: never this file.
 package appconfig
 
 import (

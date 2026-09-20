@@ -66,8 +66,8 @@ func (a *haAPI) waitAPI(ctx context.Context, iv time.Duration) error {
 // waitProxyTrust polls the forwarded-header probe until the running process
 // accepts forwarded requests. A 400 (stale process that has not reloaded) is
 // NOT ready and keeps being polled; a 5xx / refused connection (still booting /
-// mid-restart) is retried; any other answer — 401 Bearer once trust is loaded,
-// or a 2xx/3xx — means the forward middleware let the request through.
+// mid-restart) is retried; any other answer (401 Bearer once trust is loaded,
+// or a 2xx/3xx) means the forward middleware let the request through.
 // Returning nil guarantees the node never goes RUNNING on a proxy-rejecting
 // process.
 func (a *haAPI) waitProxyTrust(ctx context.Context, iv time.Duration) error {
@@ -97,7 +97,7 @@ func (a *haAPI) waitOIDCReady(ctx context.Context, iv time.Duration) error {
 //	trusted=true                 → a 2xx/3xx/4xx other than 400: the forward
 //	                              middleware passed the forwarded request.
 //	trusted=false, reachable=true→ 400 (stale, forward-rejecting) or 5xx
-//	                              (still booting) — the process answered but
+//	                              (still booting): the process answered but
 //	                              does not yet honour forwarded headers.
 //	reachable=false              → never connected (down / mid-restart).
 func (a *haAPI) probeProxyTrust(ctx context.Context) (trusted, reachable bool, status int, perr error) {
@@ -131,7 +131,7 @@ func (a *haAPI) probeProxyTrust(ctx context.Context) (trusted, reachable bool, s
 // During boot the HTTP listener is already up (waitAPI passes on any <500)
 // while this route still 404s, so a bare 404 (owner not yet on disk) keeps
 // being retried. This needs the response body and the two distinct 404
-// meanings at once — a body the Wait primitive does not surface — so it is a
+// meanings at once (a body the Wait primitive does not surface), so it is a
 // thin loop over the framework's Do rather than a Wait.
 func (a *haAPI) onboardingStatus(ctx context.Context, iv time.Duration, ownerPresent func() bool) ([]byte, bool, error) {
 	for {
@@ -199,8 +199,8 @@ func (a *haAPI) exchangeAuthCode(ctx context.Context, authCode string) (string, 
 }
 
 // finishStep closes one onboarding step that follows "user" with the owner
-// bearer token. A 403 means a previous reconciliation already closed the step
-// — declared AlreadyDone so the idempotent replay is a no-op, not a string
+// bearer token. A 403 means a previous reconciliation already closed the step:
+// declared AlreadyDone so the idempotent replay is a no-op, not a string
 // match on the body.
 func (a *haAPI) finishStep(ctx context.Context, path, body, token string) error {
 	return a.cl.POST(path).

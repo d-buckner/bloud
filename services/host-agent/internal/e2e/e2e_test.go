@@ -53,7 +53,7 @@ import (
 	"time"
 )
 
-// Service endpoints — published by the catalog to localhost inside the VM.
+// Service endpoints: published by the catalog to localhost inside the VM.
 var (
 	hostAgentURL = getEnvDefault("BLOUD_E2E_HOST_AGENT_URL", "http://localhost:3000")
 	jellyfinURL  = getEnvDefault("BLOUD_E2E_JELLYFIN_URL", "http://localhost:8096")
@@ -75,10 +75,10 @@ func expectedLDAPHost() string {
 	return "apps-authentik-ldap"
 }
 
-// LDAP expected values — must match config.Load defaults and
+// LDAP expected values: must match config.Load defaults and
 // apps/jellyfin/configurator.go desiredLDAPConfig.
 
-// LDAP expected values — must match config.Load defaults and
+// LDAP expected values: must match config.Load defaults and
 // apps/jellyfin/configurator.go desiredLDAPConfig.
 const (
 	expectedLDAPPort     = 3389
@@ -86,10 +86,10 @@ const (
 	expectedLDAPBindUser = "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io"
 )
 
-// Jellyfin managed bootstrap admin — the username matches apps/jellyfin; the
+// Jellyfin managed bootstrap admin: the username matches apps/jellyfin; the
 // password is generated per-deployment and read from secrets.json (never hardcoded).
 
-// Jellyfin managed bootstrap admin — the username matches apps/jellyfin; the
+// Jellyfin managed bootstrap admin: the username matches apps/jellyfin; the
 // password is generated per-deployment and read from secrets.json (never hardcoded).
 const (
 	bootstrapUsername = "bloud-bootstrap-admin"

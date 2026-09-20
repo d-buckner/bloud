@@ -49,7 +49,7 @@
 	class:stopped={isStopped}
 	role="button"
 	tabindex="0"
-	aria-label={ariaState ? `${displayName} — ${ariaState}` : displayName}
+	aria-label={ariaState ? `${displayName}: ${ariaState}` : displayName}
 	title={displayName}
 	onclick={activate}
 	onkeydown={activate}

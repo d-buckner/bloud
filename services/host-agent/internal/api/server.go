@@ -145,7 +145,7 @@ func (s *Server) OrchestratorReady() <-chan struct{} {
 // database connectivity and that the orchestrator is initialized.
 func (s *Server) CheckSystemHealth() error {
 	if s.orch == nil {
-		return nil // no orchestrator — skip health check
+		return nil // no orchestrator: skip health check
 	}
 	if err := s.db.Ping(); err != nil {
 		return fmt.Errorf("database connection failed: %w", err)
@@ -157,7 +157,7 @@ func (s *Server) CheckSystemHealth() error {
 // At construction time Authentik is usually still booting, so initAuthHelper
 // returns nil and auth stays disabled; this method lets main.go re-run the
 // OIDC bootstrap after OrchestratorReady so AuthReady becomes true. Safe to
-// call multiple times — EnsureBloudOAuthApp is idempotent.
+// call multiple times: EnsureBloudOAuthApp is idempotent.
 func (s *Server) InitAuth() {
 	if s.authConfig == nil {
 		return

@@ -56,7 +56,7 @@ describe('detectUserConnection', () => {
 	});
 });
 
-describe('layoutGraph — apps present', () => {
+describe('layoutGraph: apps present', () => {
 	const graph: DeveloperGraph = {
 		nodes: [
 			node('a'),
@@ -110,7 +110,7 @@ describe('layoutGraph — apps present', () => {
 	});
 });
 
-describe('layoutGraph — app boxes', () => {
+describe('layoutGraph: app boxes', () => {
 	const graph: DeveloperGraph = {
 		nodes: [
 			node('immich'),
@@ -178,7 +178,7 @@ describe('layoutGraph — app boxes', () => {
 	});
 });
 
-describe('layoutGraph — container whose app is missing', () => {
+describe('layoutGraph: container whose app is missing', () => {
 	const graph: DeveloperGraph = {
 		nodes: [
 			node('jellyfin'),
@@ -197,7 +197,7 @@ describe('layoutGraph — container whose app is missing', () => {
 	});
 });
 
-describe('layoutGraph — connections only (no apps)', () => {
+describe('layoutGraph: connections only (no apps)', () => {
 	const graph: DeveloperGraph = {
 		nodes: [conn('conn:local'), conn('conn:tailnet:z')],
 		edges: []

@@ -36,6 +36,20 @@ tiers:
       - id: license-headers
         cwd: .
         run: npm run license:check
+      # Prose lint: Markdown docs plus the comments in source files (Vale; rules
+      # and vocabulary in .vale.ini + .vale/styles).
+      - id: prose-lint
+        cwd: .
+        run: npm run lint:prose
+      # Vale cannot read string literals or .mjs, so the em dash ban is also
+      # enforced over every tracked file.
+      - id: no-emdash
+        cwd: .
+        run: npm run check:no-emdash
+      # Relative links and their anchors; Vale cannot resolve links.
+      - id: docs-links
+        cwd: .
+        run: npm run check:docs-links
 
   integration:
     # Commands run inside the guest against the validation runtime deployed
@@ -62,7 +76,9 @@ inference:
       triggers: []
       riskAreas: [playwright]
     - pattern: "**"
-      triggers: [license-headers]
+      # These ride the catch-all: any change can invalidate a doc, and the
+      # matcher has no recursive `**/*.md` form (see pathMatches in cli).
+      triggers: [license-headers, prose-lint, no-emdash, docs-links]
 
 apps:
   affine:

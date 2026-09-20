@@ -8,116 +8,100 @@ Go service that manages app installation, system monitoring, and provides a web 
 ## Architecture
 
 - **Backend**: Go HTTP server with SQLite database
-- **Frontend**: SvelteKit with SSR/SSG (embedded in Go binary)
-- **Deployment**: Single static binary managed by systemd; standalone during development
+- **Frontend**: SvelteKit built as a static site by `@sveltejs/adapter-static` into `web/build/`; host-agent serves that directory at `/`. There is no server-side rendering: the browser runs the app and talks to the API.
+- **Deployment**: One Go binary, run in the foreground during development and under systemd in a deployment
 
 ## Prerequisites
 
-- **Go 1.21+** - [Install Go](https://go.dev/doc/install)
+- **Go 1.25** (the version in `go.mod`) - [Install Go](https://go.dev/doc/install)
 - **Node.js 18+** - [Install Node](https://nodejs.org/)
-- **npm** or **pnpm**
+- **npm** (the frontend is the npm workspace `@bloud/host-agent-web`)
+- Rootless **Podman** with an API socket host-agent can reach (`BLOUD_PODMAN_SOCKET`, defaulting to the Podman socket for the current user)
 
-## Quick Start (Local Development on macOS)
+## Development
 
-### 1. Install Dependencies
+### Install dependencies
 
 ```bash
-# From project root
+# From the repo root (npm workspaces)
 npm install
 
-# Install Go dependencies (will be downloaded on first build)
-cd services/host-agent
-go mod download
+# Go modules are downloaded on the first build; pre-fetch them explicitly with:
+cd services/host-agent && go mod download
 ```
 
-### 2. Run Development Servers
+### Full loop (recommended)
 
-**Option A: Run them separately (recommended for active development)**
+From the repo root:
 
-Terminal 1 — Go Backend:
 ```bash
-cd services/host-agent
-npm run dev
+./bloud dev
 ```
 
-Terminal 2 — Frontend:
-```bash
-cd services/host-agent/web
-npm run dev
-```
+One command provisions the development VM if needed, builds host-agent (`CGO_ENABLED=0 GOOS=linux`)
+and the frontend, deploys both into the VM, and runs host-agent in the foreground (Ctrl-C stops it).
+Ports are forwarded to host localhost. **There is no back-end hot reload: re-run `./bloud dev`
+after any Go change.**
 
-The frontend dev server (port 5173) proxies API requests to the Go backend (port 8080).
+- **Dashboard (user-facing, through Traefik)**: http://localhost:8080
+- **Host-agent API**: http://localhost:3000/api/health
+- **Host-agent direct**: http://localhost:3000
 
-**Option B: Run Go with embedded frontend**
+### Frontend only
 
 ```bash
 cd services/host-agent/web
+npm run dev    # Vite dev server on port 5173, with HMR
+npm run build  # static build into web/build/
+```
+
+`vite.config.ts` declares no `server.proxy`, and the frontend code issues relative `/api/...`
+requests, so the 5173 dev server renders the UI but does not serve the API. Use `./bloud dev`
+for a loop that includes the backend, or let host-agent serve the built output itself. Front-end
+HMR in `npm run dev` is live, so component work does not need a redeploy.
+
+### Backend directly
+
+```bash
+cd services/host-agent
+
+# Run host-agent on this machine (needs a reachable Podman socket)
+npm run dev
+
+# Build a production-style binary
 npm run build
 ```
 
-Then:
-```bash
-cd services/host-agent
-npm run dev
-```
-
-This builds the SvelteKit app into `web/build/` and the Go binary serves it at `/`.
-
-### 3. Access the Application
-
-- **Frontend (dev)**: http://localhost:5173
-- **Backend API**: http://localhost:8080/api/health
-- **Backend direct**: http://localhost:8080
-
-## Development Workflow
-
-### Frontend
-
-The SvelteKit app supports SSR/SSG and hot reload during development. Build output
-lands in `web/build/` for embedding into the Go binary.
-
-```bash
-cd services/host-agent/web
-npm run dev    # Dev server with hot reload
-npm run build  # Production build → web/build/
-```
-
-### Backend
-
-The Go binary serves the REST API and optionally embeds the built frontend at `/`.
-
-```bash
-cd services/host-agent
-
-# Run with hot reload (requires air: go install github.com/cosmtrek/air@latest)
-air
-
-# Run directly
-npm run dev
-
-# Build production binary (embeds web/build/ if present)
-go build -o bin/host-agent ./cmd/host-agent
-```
+host-agent serves the frontend from `web/build` **relative to its working directory**, so run it
+from `services/host-agent` after building the frontend. When that directory is missing it logs a
+warning and serves the small embedded developer dashboard instead, without the real UI.
 
 ### Environment Variables
 
 ```bash
-export BLOUD_PORT=8080                          # HTTP port (default: 8080)
-export BLOUD_DATA_DIR=$HOME/.local/share/bloud  # Data directory
+export BLOUD_PORT=3000                          # HTTP port (default: 3000)
+export BLOUD_DATA_DIR=$HOME/.local/share/bloud  # Data directory (default shown)
+export BLOUD_APPS_DIR="$(pwd)/../../apps"       # Catalog directory (default)
 ```
 
-### Database
+Configuration is env var first, then `secrets.json`, then an error: there is no hardcoded fallback
+(see AGENTS.md invariant 8 for the full key list).
 
-SQLite database is automatically created at:
-```
-$BLOUD_DATA_DIR/state/bloud.db
-```
+### Data Directory
 
-Schema is initialized on first run from `internal/db/schema.sql`.
+Everything host-agent persists lives under `$BLOUD_DATA_DIR`:
+
+- `bloud.db`: the SQLite database, created on first run and opened in WAL mode with foreign keys on
+- `secrets.json`: generated secrets (Postgres password, SSO host secret, LDAP bind password, admin API token). It is created on first run and migrated on load; a corrupt file is a fatal error rather than a silent regeneration.
+- `host-agent-api-token`: the admin API token as a standalone file, written next to `secrets.json` so the CLI and tests never parse the secrets file
+
+The schema comes from the embedded `internal/schema/schema.sql`, applied through the versioned
+migration ledger in `internal/schema/migrations.go` on every start. Both the production database and
+test databases run that same ledger, so they cannot drift apart.
 
 ## Building for Production
 
-### 1. Build Frontend
+### 1. Build the frontend
 
 ```bash
 cd services/host-agent/web
@@ -125,18 +109,21 @@ npm run build
 # Creates: web/build/
 ```
 
-### 2. Build Go Binary (with embedded frontend)
+### 2. Build the Go binary
 
 ```bash
 cd services/host-agent
 go build -o bin/host-agent ./cmd/host-agent
+# Creates: bin/host-agent
 ```
 
-The Go binary will embed the `web/build/` directory and serve it at `/`.
+The binary does not embed the frontend. It serves `<working directory>/web/build` at `/`, so ship
+`web/build` next to the binary and start the process from that directory.
 
-### 3. Run Production Binary
+### 3. Run the binary
 
 ```bash
+cd services/host-agent
 ./bin/host-agent
 ```
 
@@ -149,85 +136,110 @@ export BLOUD_APPS_DIR="$(pwd)/../../apps"
 ./bin/host-agent
 ```
 
-Bloud owns managed application containers and networks, creating
-and starting them directly through the Podman API. It refuses to remove or adopt
-containers that were not created by Bloud.
+Bloud owns managed application containers and networks, creating and starting them directly through
+the Podman API. Containers carry the label `io.bloud.managed=true`, and host-agent refuses to remove
+a container that lacks it.
 
 ## Project Structure
 
 ```
 services/host-agent/
-├── cmd/host-agent/            # Entry point, bootstrap
+├── cmd/host-agent/            # Entry point, bootstrap, `configure` and `init-secrets` subcommands
 ├── internal/
-│   ├── api/                   # HTTP server & routes (chi router)
+│   ├── api/                   # HTTP server, routes, auth, one module per domain
 │   ├── appconfig/             # Configurator registration
-│   ├── catalog/               # App discovery from metadata.yaml
-│   ├── config/                # Runtime configuration
-│   ├── container/             # Container runtime abstraction
-│   ├── db/                    # SQLite database + schema
-│   ├── e2e/                   # Integration test helpers
-│   ├── graph/                 # Dependency graph
-│   ├── integration/           # Typed integration resolver
-│   ├── logbuffer/             # Log buffering
-│   ├── logfile/               # Log file management
+│   ├── catalog/               # App discovery from metadata.yaml, planning, dependency graph
+│   ├── config/                # Runtime configuration and secrets resolution
+│   ├── container/             # Container runtime abstraction and managed-label checks
+│   ├── db/                    # SQLite connection, pragmas, migration entry point
+│   ├── e2e/                   # In-guest integration test helpers
+│   ├── engine/
+│   │   ├── graph/             # Dependency graph repository
+│   │   └── orchestrator/      # Intent queue, reconciliation, install/uninstall
+│   ├── eventbus/              # In-process event bus behind the SSE streams
+│   ├── hostset/               # Live host-set state for multi-host SSO
 │   ├── netutil/               # Network utilities
-│   ├── orchestrator/          # Install/uninstall, intent queue, container management
-│   ├── podman/                # Podman client
-│   ├── secrets/               # Secrets manager
+│   ├── podman/                # Podman API client
+│   ├── schema/                # Embedded schema.sql + versioned migration ledger
+│   ├── secrets/               # Secrets manager and env-file generation
 │   ├── sharing/               # Sharing & remote apps
 │   ├── sso/                   # SSO/Authentik integration
 │   ├── store/                 # SQLite persistence
-│   ├── system/                # System state
+│   ├── system/                # Cached system metrics (CPU, memory, disk)
 │   ├── testdb/                # Test database helpers
 │   └── traefikgen/            # Traefik route generation
 ├── pkg/
+│   ├── appasset/              # Static/downloaded asset install (fetch, sha256 verify, atomic commit)
+│   ├── appclient/             # Resilient HTTP client for app APIs (retries, token refresh)
 │   ├── authentik/             # Authentik REST API client
 │   ├── configurator/          # Configurator interface + helpers
-│   ├── managedfile/           # Managed file abstraction
-│   ├── slug/                  # URL-safe slugs
-│   └── xmlutil/               # XML utilities
+│   ├── managedfile/           # Marker-delimited managed regions in user-owned files
+│   ├── slug/                  # URL-safe slug generation for subdomain routing
+│   └── xmlutil/               # Utilities for reading and modifying XML config files
 └── web/                       # SvelteKit frontend
 ```
 
 Key runtime concepts:
-- **Catalog** reads `apps/*/metadata.yaml` at startup, caches in SQLite
-- **Integration Resolver** binds provider apps to consumer requirements (database, SSO, proxy)
-- **Intent queue** — all mutations flow through typed intents with debounce; the orchestrator is the single writer
-- **Configurators** implement `PreStart`/`PostStart`/`Remove` per container node; container lifecycle is metadata-driven
-- **App Store** (`internal/store/`) — SQLite persistence for installed apps, status, integration bindings
-- **Container Runtime** — Podman containers created and managed directly by the orchestrator
+- **Catalog** reads `apps/*/metadata.yaml` at startup and caches the result in SQLite
+- **Dependency graph**: each `containers:` entry is one node, `dependsOn` builds the DAG, and the orchestrator converges nodes in topological order
+- **Intent queue**: all mutations flow through typed intents with a 750 ms debounce window; the orchestrator is the single writer
+- **Configurators** implement `PreStart`/`PostStart`/`Remove` per container node and must be idempotent, since they run on every reconciliation cycle; container lifecycle is metadata-driven
+- **App Store** (`internal/store/`): SQLite persistence for installed apps, lifecycle status, operations, sessions, hosts, shares, guests, remote apps, and dashboard layout positions
+- **Container Runtime**: Podman containers created and managed directly by the orchestrator
 
 ## API Endpoints
 
-### Health & System
+Authentication is a session cookie or the admin API token presented from a trusted position
+(loopback or a `BLOUD_TRUSTED_LOCAL_NETS` address). Status codes below are the documented contract;
+lifecycle mutations are accepted as intents, so they answer `202 Accepted` with an intent id and the
+result arrives on the event stream or by polling.
 
-- `GET /api/health` — Health check
-- `GET /api/system/status` — System metrics (CPU, memory, disk)
+### Health & System (public)
 
-### Apps
+- `GET /health`: Health check, no `/api` prefix
+- `GET /api/health`: Health check
+- `GET /api/system/status`: System metrics (CPU, memory, disk)
+- `GET /api/system/storage`: Storage breakdown
+- `GET /api/system/developer`: Developer graph visualization (app nodes, connection nodes, edges)
+- `GET /api/system/status/stream`: Server-sent stream of system status (authenticated)
 
-- `GET /api/apps` — List available apps from catalog
-- `GET /api/apps/installed` — List installed apps with status
-- `POST /api/apps/:name/install` — Install an app
-- `POST /api/apps/:name/uninstall` — Uninstall an app (with optional `clearData`)
-- `PUT /api/apps/:name/rename` — Rename an app
+### Authentication & Setup (public)
 
-### Sharing
+- `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`: Authentik login flow, no `/api` prefix
+- `GET /api/auth/me`: Current user
+- `GET /api/setup/status`, `POST /api/setup/create-user`: First-run bootstrap, reachable before any credential exists
 
-- `GET /sharing/shares` — List active shares
-- `DELETE /sharing/shares/:id` — Revoke a share
-- `GET /sharing/remote-apps` — List remote apps (from sharing guests)
-- `POST /sharing/remote-apps` — Add a remote app
-- `DELETE /sharing/remote-apps/:id` — Remove a remote app
+### Apps (authenticated)
 
-### Integration Graph
+- `GET /api/apps`: List available apps from the catalog
+- `GET /api/apps/installed`: List installed apps with status
+- `GET /api/apps/:name/metadata`: Full metadata for one catalog app
+- `GET /api/apps/:name/icon`: App icon
+- `GET /api/apps/events`: Server-sent app status stream
+- `GET /api/apps/:name/logs`: Server-sent container log stream
+- `POST /api/apps/:name/install`: Install an app (`202`)
+- `POST /api/apps/:name/uninstall`: Uninstall an app (`202`, optional `clearData` in the body)
+- `PATCH /api/apps/:name/rename`: Rename an app (`202`)
 
-- `GET /api/graph` — Developer graph visualization (app nodes, connection nodes, edges)
+### Dashboard (authenticated)
 
-### Configuration
+- `GET /api/user/home`: Home layout
+- `PUT /api/user/layout`: Persist the home layout (called after every drag/resize)
 
-- `GET /api/settings` — Host settings
-- `PUT /api/settings` — Update settings
+### Admin
+
+- `POST /api/apps/refresh-catalog`: Reload the catalog from disk
+- `GET /api/system/rebuild/stream`: Server-sent frontend rebuild stream
+- `GET /api/settings/hosts`, `PUT /api/settings/hosts`: Host settings (the host set is a first-class setting; see AGENTS.md invariant 9)
+- `GET /api/settings/tailnet`, `POST /api/settings/tailnet`, `DELETE /api/settings/tailnet`: Tailnet connection for sharing
+- `GET /api/admin/users`, `POST /api/admin/users`, `DELETE /api/admin/users/:username`, `PUT /api/admin/users/:username/role`: User management
+
+### Sharing (admin)
+
+- `GET /api/sharing/community`, `POST /api/sharing/invites`: Community graph and invites
+- `GET /api/sharing/shares`, `DELETE /api/sharing/shares/:id`: List and revoke shares
+- `GET /api/sharing/guests`, `POST /api/sharing/guests`: List and create guests
+- `GET /api/sharing/remote-apps`, `POST /api/sharing/remote-apps`, `DELETE /api/sharing/remote-apps/:id`: Remote apps from sharing guests
 
 ## Testing
 
@@ -235,11 +247,19 @@ Key runtime concepts:
 # Unit tests only
 ./bloud validate --tier fast
 
-# Integration tests (requires Lima VM)
+# Integration tests (requires the VM)
 ./bloud validate --tier integration
 
 # E2E lifecycle (deploy + test + uninstall)
 ./bloud e2e lifecycle
+```
+
+Run a suite directly when iterating on one package:
+
+```bash
+cd services/host-agent && go test ./...
+npm run test --workspace=@bloud/host-agent-web    # vitest
+cd e2e && npx playwright test                     # browser e2e
 ```
 
 ```bash
@@ -250,34 +270,30 @@ curl http://localhost:3000/api/apps/installed
 
 ## Deployment
 
-The first-release target is a Debian package that installs the host-agent binary and a
-systemd service. Local development can run the binary directly.
+There is no packaged release yet: a `.deb` package and a `bloud init` preflight command are part of
+the first-release plan in [docs/specs/spec.md](../../docs/specs/spec.md), not something you can run
+today. Right now the supported way to run Bloud is the development VM, driven by the CLI:
 
 ```bash
-# Initialize a packaged installation
-sudo bloud init
-
-# Check service status
-systemctl status bloud
-
-# View logs
-journalctl -u bloud -f
-
-# Restart service
-sudo systemctl restart bloud
+./bloud dev      # build, deploy, run host-agent in the foreground (Ctrl-C to stop)
+./bloud status   # VM + host-agent health (GET :3000/api/health)
+./bloud logs     # stream host-agent logs
+./bloud stop     # stop host-agent
+./bloud reset    # wipe runtime data, keep the VM
+./bloud destroy  # delete the VM
 ```
 
 ## Troubleshooting
 
-**Frontend not loading in production?**
-- Make sure you ran `npm run build` in the `web/` directory before building the Go binary
-- The Go binary embeds `web/build/` using `go:embed`
+**The dashboard shows the developer placeholder instead of the app?**
+- host-agent logged "frontend build directory not found, serving fallback HTML", which means `web/build` was absent when it started
+- Build the frontend (`npm run build` in `web/`) or run `./bloud dev`, which builds it for you
 
 **Database errors?**
-- Check that `$BLOUD_DATA_DIR/state/` exists and is writable
-- Database is auto-created on first run
+- Check that `$BLOUD_DATA_DIR` exists and is writable. `bloud.db` is created on first run, and a corrupt `secrets.json` makes startup fail rather than regenerating it
+
+**Admin API calls return 401 or 403?**
+- Send the token from `$BLOUD_DATA_DIR/host-agent-api-token` as a bearer credential from loopback or a `BLOUD_TRUSTED_LOCAL_NETS` address; the token is only honoured from a trusted position
 
 **Port already in use?**
-- Change the port: `export BLOUD_PORT=3000`
-
-
+- Change the port: `export BLOUD_PORT=3001`

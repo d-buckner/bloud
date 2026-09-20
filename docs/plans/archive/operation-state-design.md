@@ -2,7 +2,7 @@
 
 # Design: Durable Lifecycle Operation State
 
-**Issue:** `docs/operations/tech-debt.md` — "Missing lifecycle operation state"
+**Issue:** `docs/operations/tech-debt.md`: "Missing lifecycle operation state"
 **Depends on:** versioned migration ledger (`docs/plans/tech-debt-repayment.md` PR 1)
 **Decision needed before implementation: yes (this doc)**
 
@@ -14,10 +14,10 @@
 → SSO provisioning. When it fails, the only durable facts are
 `apps.status='error'` and one string (`last_error`). Lost:
 
-- **Phase** — did it die in prestart, health, or poststart?
-- **Retryability** — is this a transient wait failure or a broken config?
-- **Crash visibility** — if the host-agent died mid-phase, nothing shows it.
-- **Operation identity** — the user's install and the background reconcile are
+- **Phase**: did it die in prestart, health, or poststart?
+- **Retryability**: is this a transient wait failure or a broken config?
+- **Crash visibility**: if the host-agent died mid-phase, nothing shows it.
+- **Operation identity**: the user's install and the background reconcile are
   indistinguishable in the error record.
 
 The spec (`docs/specs/spec.md`) requires phase-specific failure records and
@@ -48,7 +48,7 @@ keep writer) but nothing in this design requires append semantics.
 
 ## 3. Core Model
 
-One row per app — **current-or-last operation**, upserted. Not append-only.
+One row per app: **current-or-last operation**, upserted. Not append-only.
 
 ```sql
 CREATE TABLE operations (
@@ -103,7 +103,7 @@ WHERE status='running'
 ```
 
 Everything was running-but-incomplete (per 3.2 ordering). These are then
-re-driven by normal convergence — which is safe by invariant 2. The row is
+re-driven by normal convergence, which is safe by invariant 2. The row is
 diagnostic continuity ("your install was interrupted at prestart; it's
 resuming as a reconcile drive"), not a cursor.
 
@@ -123,7 +123,7 @@ user-intent outcome. No consumer reads both to decide one thing.**
 The two are written in the *same* drive path (phase boundary updates both), so
 they can lag each other by microseconds but never diverge structurally. If a
 future change makes anything read `operations` to gate the reconcile loop,
-that is a design violation — flag it. Operations is downstream of control,
+that is a design violation; flag it. Operations is downstream of control,
 upstream of display.
 
 **Rejected alternative:** enrich `NodeStatus` with failed-phase variants
@@ -144,7 +144,7 @@ place for operation identity or retryability.
 
 ## 6. Interaction with Existing Semantics
 
-- `apps.status` — unchanged. Still the 4-value user projection ("error").
+- `apps.status`: unchanged. Still the 4-value user projection ("error").
   Operations explains the error. The eventual narrowing of `apps.status` is
   a separate future PR that migrates consumers one at a time.
 - **ERROR-terminal stays.** The operations row is the explainer: when a node
@@ -154,13 +154,13 @@ place for operation identity or retryability.
   operations row is added alongside it, same call site.
 - `runPostStartOnly` (staleness re-run) updates the row as
   `type=reconcile, phase=poststart` only if it fails or was previously
-  failed — same no-silent-writes rule as 3.1.
+  failed: same no-silent-writes rule as 3.1.
 
 ## 7. Read Surfaces (minimal this PR)
 
 - `apps.{name}` payloads and the SSE home snapshot gain an `operation` field:
   `{type, phase, status, retryable, cause, updated_at}`.
-- Dashboard tile detail: "install failed at poststart — retryable" replaces
+- Dashboard tile detail: "install failed at poststart: retryable" replaces
   the raw `last_error` string blob (UI change optional in this PR; the API
   contract lands regardless).
 - `./bloud status` can show last-operation per app.
@@ -189,7 +189,7 @@ place for operation identity or retryability.
 
 ## 10. Open Questions for Review
 
-1. **Reconfigure type:** `rename`/`SetHostsIntent` flows re-drive apps — do
+1. **Reconfigure type:** `rename`/`SetHostsIntent` flows re-drive apps. Do
    they create `reconfigure` rows, or is their failure context carried by
    the reconcile row? (Recommend: SetHosts resets SSO apps → those get
    `reconcile` rows; only deliberate per-app reconfigure actions create

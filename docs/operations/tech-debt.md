@@ -8,8 +8,8 @@
 **Status:** Active debt inventory  
 **Last updated:** 2026-09-19 (item 5 re-observed on a post-PR-4 redeploy,
 adding a fifth member to the silent-failure class: the lost write is a `WARN`
-nobody sees; prior same-day updates: first-ranked item re-scoped and re-ranked
-— the loopback admin exemption is remotely forgeable, not merely a local-process
+nobody sees; prior same-day updates: first-ranked item re-scoped and re-ranked:
+the loopback admin exemption is remotely forgeable, not merely a local-process
 concern; a new second-ranked class records the engine's silent-failure paths;
 prior update 2026-09-17: route-generation purity landed, plus versioned
 migrations + durable operation state)
@@ -24,7 +24,7 @@ wipes every Podman container) and CI/hook findings (no PR gate, `check:app-http`
 absent from CI, post-commit timestamp rewriting, `cli` tests absent from
 precommit) are recorded there and are **not** duplicated here.
 
-## Biggest Debt: the auth bypass was remote and forgeable — fixed 2026-09-19
+## Biggest Debt: the auth bypass was remote and forgeable (fixed 2026-09-19)
 
 > **Status: closed** (working tree; PR 4 of the repayment plan). Kept here as the
 > record of what the rule costs, because the fix is a set of small constraints
@@ -40,7 +40,7 @@ That framing was too generous to the system. Network position was not required:
 | 2 | `internal/appconfig/traefik.go:76-80` | entrypoint `web` sets `forwardedHeaders: insecure: true` |
 | 3 | `internal/appconfig/traefik.go:109` | upstream is `http://localhost:<hostAgentPort>` |
 | 4 | `internal/appconfig/traefik.go:118-121` | router `host-api` exposes `PathPrefix('/api')` on the public entrypoint |
-| 5 | `internal/api/router.go:236` | `r.Use(middleware.RealIP)` — global, before the `/api` subtree |
+| 5 | `internal/api/router.go:236` | `r.Use(middleware.RealIP)`: global, before the `/api` subtree |
 | 6 | `internal/api/auth_module.go:99-124` | `isLocalRequest` → `ip.IsLoopback()` → `true` |
 | 7 | `internal/api/router.go:546-550` | loopback ⇒ `User{"_cli", RoleAdmin}`, no credential |
 
@@ -64,7 +64,7 @@ app container can reach the host gateway.
 host-agent, both inside `isLocalRequest` (`auth_module.go:100,102`); the
 forwarded-header surface is three reads total, all in the same file
 (`:135` `X-Forwarded-Host`, `:161` `X-Forwarded-Proto`). Nothing else uses
-client IP — no rate limiting, no source-keyed audit log. The bypass can
+client IP: no rate limiting, no source-keyed audit log. The bypass can
 therefore be removed with no behavioural regression beyond the bypass itself.
 
 **This was a shipping blocker**, and the cheapest high-impact change in the
@@ -75,7 +75,7 @@ repo. **What closed it (2026-09-19):**
   readers, both inside `isLocalRequest`).
 - The trusted position is now a *scope*, not a credential: admin requires
   `Authorization: Bearer <apiToken>` **and** a trusted position, checked before
-  the session path (`authMiddlewareFn`). Order matters — a position-first check
+  the session path (`authMiddlewareFn`). Order matters: a position-first check
   would force every Traefik-proxied browser request through the token path and
   lock the dashboard out (Traefik's backend connection is loopback).
 - An empty configured token disables the position path entirely (fail closed).
@@ -115,8 +115,8 @@ pre-fix tree.
 
 ## Second: the appliance fails silently
 
-Four independent defects share one property — the system stops working and
-reports nothing — and item 5 (below) reaches the same end from a fifth
+Four independent defects share one property (the system stops working and
+reports nothing), and item 5 (below) reaches the same end from a fifth
 direction: a write that is dropped, logged at `WARN`, and otherwise ignored.
 This is now a ranked class, not a footnote, because each one converts an
 ordinary bug into an unnoticeable outage.
@@ -151,8 +151,8 @@ ordinary bug into an unnoticeable outage.
   ```
 
   The collision is structural, not a rare interleaving. Every phase record keys
-  on `owner := o.ownerApp(id)` (`orchestrator.go:1023,1054,1066,1091`, …) — one
-  row per *app* — while the scheduler dispatches *nodes*, and nodes in one
+  on `owner := o.ownerApp(id)` (`orchestrator.go:1023,1054,1066,1091`, …), one
+  row per *app*, while the scheduler dispatches *nodes*, and nodes in one
   topological level run concurrently. So for a multi-container app, N nodes
   issue `UPDATE operations … WHERE app_name='authentik'` against a **single row**
   at the same time. The same log window shows the reproduction exactly:
@@ -171,13 +171,13 @@ ordinary bug into an unnoticeable outage.
   every other connection has `busy_timeout=0` and fails immediately instead of
   waiting for the lock. The recorder is the highest-frequency writer in the
   system, so it is simply the first to lose. `recordOpPhase` logs and returns
-  (`operation_recorder.go:85`) — by design it must never change lifecycle
+  (`operation_recorder.go:85`); by design it must never change lifecycle
   behavior, which also means nothing downstream notices: the row keeps whatever
   write landed last, and since the operations row is *authoritative for failure
   context*, the dashboard's diagnostic surface can show a phase that is stale or
   not the one the drive actually reached, with no visible error. (Container nodes
   frequently write the same phase value, so many of these losses are
-  value-identical — but each still takes the write lock, and where the nodes'
+  value-identical, but each still takes the write lock, and where the nodes'
   phases differ the surviving value is arbitrary.) The other half of item 5 is
   worse and fully silent: `foreign_keys=OFF` on those same connections means
   cascades stop firing and orphan `shares` / `user_app_positions` rows
@@ -194,7 +194,7 @@ Ranked by risk×cheapness. Severity is the review's, not a guess.
 | 2 | `SyncContainerState` nil-deref → process death | P1 | `orchestrator_containers.go:41-45` |
 | 3 | `MemoryCache` data race → unrecoverable fatal | P1 | `catalog/cache.go:12-14,26-34` |
 | 4 | Intent queue exits permanently on a stale token | P1 | `queue.go:34-38,75-114` |
-| 5 | SQLite pragmas applied per-call, not per-connection: FK cascades and `busy_timeout` are off on every pooled connection but one; tests mask it with `SetMaxOpenConns(1)`. **Observed live twice**: during the PR 4 deploy, and again 2026-09-19 on a post-PR-4 redeploy — `WARN operation recorder: … database is locked (5) (SQLITE_BUSY)` on a normal convergence pass, i.e. a phase advance is dropped with a log line as its only trace (see the silent-failure class above) | P1 | `db/db.go:29-39`; `testdb/testdb.go:29`; `operation_recorder.go:85` |
+| 5 | SQLite pragmas applied per-call, not per-connection: FK cascades and `busy_timeout` are off on every pooled connection but one; tests mask it with `SetMaxOpenConns(1)`. **Observed live twice**: during the PR 4 deploy, and again 2026-09-19 on a post-PR-4 redeploy, where the log read `WARN operation recorder: … database is locked (5) (SQLITE_BUSY)` on a normal convergence pass, i.e. a phase advance is dropped with a log line as its only trace (see the silent-failure class above) | P1 | `db/db.go:29-39`; `testdb/testdb.go:29`; `operation_recorder.go:85` |
 | 6 | `appclient.Call.Timeout()` is a no-op and `WaitPolicy` has no consumers → declared 5-minute first-boot waits silently run on `DefaultRetry` (30 s) and land nodes in terminal ERROR | P1 | `appclient/call.go:31,119,382`; `retry.go:43-51`; `apps/immich/api.go:33-34`; `apps/affine/api.go:31-32,58-59` |
 | 7 | Home Assistant asset `SkipIf` compares the release tag to the manifest version (`"v1.2.1"` vs `"1.2.1"`, verified against the real artifact) → re-download and destructive container recreate on every full lifecycle pass | P1 | `apps/homeassistant/configurator.go:44,304-318`; `pkg/appasset/manifest.go:15-24` |
 | 8 | Container drift is never repaired at runtime: the store flips to `stopped` while the in-memory graph stays `RUNNING`, so `Reconcile` never re-drives; multi-container apps are skipped entirely | P1 | `orchestrator_containers.go:41-61`; `pipeline.go:664-670` |
@@ -205,10 +205,10 @@ Ranked by risk×cheapness. Severity is the review's, not a guess.
 | 13 | An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer | P2 | `pipeline.go:~292-300`; `hostset.go:239-283` |
 | 14 | System-app hiding keys off `category == "infrastructure"`, which no `metadata.yaml` sets (traefik is `network`, authentik is `security`) → both appear as installable user apps, contradicting invariant 5 | P2 | `catalog/cache.go:70-103`; `api/apps_module.go:101` |
 | 15 | Sharing module and system module are wired with `nil` (tailnet node, graph, orchestrator) → `POST /api/sharing/invites` always 503 | P2 | `router.go:224-229`; `sharing_module.go:227-229` |
-| 16 | `ClearAppDataIntent` is dropped by the drain switch (logged "unhandled"), and `appsModule.ClearData` is unreachable **and** targets `<appsDir>/<name>` (the catalog dir) instead of the data dir — a latent destroyer of `apps/<name>/` | P2 | `intent.go:132-142`; `pipeline.go:31-49`; `apps_module.go:209-245` |
+| 16 | `ClearAppDataIntent` is dropped by the drain switch (logged "unhandled"), and `appsModule.ClearData` is unreachable **and** targets `<appsDir>/<name>` (the catalog dir) instead of the data dir: a latent destroyer of `apps/<name>/` | P2 | `intent.go:132-142`; `pipeline.go:31-49`; `apps_module.go:209-245` |
 | 17 | `sso.DeriveSecret` still contains a literal fallback secret; unreachable behind current guards, so invariant 8 now survives only by caller discipline | P2 | `sso/blueprint.go:293-297` |
 | 18 | Generated Traefik YAML is hand-assembled with app names unquoted and never parsed before the write; no strict YAML decode or metadata validation at load (port, image pin, container name, SSO strategy) | P2 | `traefikgen/generator.go:44-60,216-224`; `catalog/loader.go:110-130` |
-| 19 | `PlanInstall` never sets `CanInstall=false`/`Blockers`, so the consumer's blocker guard is unreachable; user integration choices are still dropped (`buildIntegrationConfig(nil, …)`) — `review.md` §H3 remains open | P2 | `pipeline.go:76-80` |
+| 19 | `PlanInstall` never sets `CanInstall=false`/`Blockers`, so the consumer's blocker guard is unreachable; user integration choices are still dropped (`buildIntegrationConfig(nil, …)`); `review.md` §H3 remains open | P2 | `pipeline.go:76-80` |
 | 20 | `primaryContainerNode` = the **last** container def: an order-dependent, undocumented convention that decides inter-app edges and which node owns SSO provisioning | P2 | `pipeline.go:730-737` |
 | 21 | `IconHandler` rejects `/` and `\` but not `..`, and never re-checks the joined path | P2 | `apps_module.go:262-276` |
 | 22 | App networks and orphaned containers are never removed or swept; `ListContainers` is test-only | P2 | no `RemoveNetwork` in tree |
@@ -224,14 +224,14 @@ a deliberate boundary, and **no new direct-write domain should be added**.
 
 Two claims in the history below do not hold up against the code:
 
-- **"Persist only externally-issued artifacts"** — the direction is right, but
+- **"Persist only externally issued artifacts"**: the direction is right, but
   the claim that integration credentials are *not* stored is already violated:
   `sso/blueprint.go:284-287` persists the HKDF-derived OAuth client secret via
   `secrets.SetAppSecret(app, "oauthClientSecret", …)`, and the field's own
   comment in `secrets/manager.go:52-53` says "derived from SSOHostSecret".
   Nothing reads it back, so today it is dead persisted state, not a split brain.
   Delete the write, or make the derivation authoritative and drop the field.
-- **"Versioned migrations + the `user_app_positions` schema fork"** — the ledger
+- **"Versioned migrations + the `user_app_positions` schema fork"**: the ledger
   itself is correct and worth keeping, but entry 6 cannot fire: the grid table
   shape already existed before the ledger ran, so the "fork fix" is a permanent
   no-op. The migration path is still an improvement; the described bug fix is
@@ -241,8 +241,8 @@ Two claims in the history below do not hold up against the code:
 
 ### Route generation no longer owns runtime side effects (2026-09-17)
 
-The "Biggest Debt" of the previous version — a route config step that
-silently started gateways and mutated proxies — is closed:
+The "Biggest Debt" of the previous version, a route config step that
+silently started gateways and mutated proxies, is closed:
 
 - `RegenerateRoutes(remoteRoutes, tailnetDomain)`
   (`internal/engine/orchestrator/orchestrator_containers.go`) is pure
@@ -261,8 +261,8 @@ RUNNING is unconditional, and the generated YAML is never validated (item 18).
 
 ### Durable lifecycle operation state (2026-09-17)
 
-The "Biggest Debt" of the 2026-09-16 version — no readable state behind the
-orchestrator's phases — is closed for the backend:
+The "Biggest Debt" of the 2026-09-16 version, no readable state behind the
+orchestrator's phases, is closed for the backend:
 
 - `store/operations.go`: one row per app, the current-or-last drive:
   `{id, type, phase, status, retryable, cause, timestamps}`, migrated as
@@ -281,7 +281,7 @@ orchestrator's phases — is closed for the backend:
   or fail the row without resurrecting completed drives.
 - Read surface: `GET` payloads embed `operation` on each installed app
   (LEFT JOIN in `store/apps.go`); the SSE home snapshot carries it
-  unchanged. `apps.status` remains the narrowed user projection — the
+  unchanged. `apps.status` remains the narrowed user projection: the
   operation row is authoritative for failure context only, so the
   three-vocabulary overload on `apps.status` is broken.
 - Tests: `store/operations_test.go` (transition matrix),
@@ -297,14 +297,14 @@ Design doc: `docs/plans/archive/operation-state-design.md` (landed).
 only in a comment) is replaced by the ordered, checked ledger in
 `internal/schema/migrations.go`: a `schema_migrations` table records each
 applied version; a failing migration aborts boot instead of half-migrating
-durable state. The fork itself — v6's dead
+durable state. The fork itself, v6's dead
 `(user_id, app_id, position)` shape silently shadowing the grid schema via
-`CREATE TABLE IF NOT EXISTS` — is migrated by ledger entry 6
+`CREATE TABLE IF NOT EXISTS`, is migrated by ledger entry 6
 (`fix: user_app_positions shape fork`). The landmine the previous version of
 this doc flagged as first-ranked is defused; every future migration inherits
 the checked path instead of the ad hoc one.
 
-*Correction 2026-09-19:* entry 6 is a permanent no-op in practice — see
+*Correction 2026-09-19:* entry 6 is a permanent no-op in practice: see
 "Corrections" above. The migration ledger itself stands.
 
 ### Earlier (since 2026-09-14)
@@ -317,7 +317,7 @@ the checked path instead of the ad hoc one.
   owns transport, retry policy, readiness polling, and asset provenance. All
   five user apps adopted it uniformly with a typed `api.go`. No second
   integration idiom. *(The retry-policy surface has since been found partly
-  inert — item 6.)*
+  inert; see item 6.)*
 - Hardcoded fallback secrets: `config.Load` is fallible
   (env > `secrets.json` > error); the corrupt-file fault-downgrade is closed;
   Jellyfin's bootstrap password moved to the secrets manager.
@@ -329,13 +329,13 @@ plan with per-slice acceptance criteria is
 [`docs/plans/tech-debt-repayment.md`](../plans/tech-debt-repayment.md) (PRs 1-3
 landed; PR 4 revised, PRs 6-11 added 2026-09-19).
 
-### 1. Close the auth bypass (P0) — DONE 2026-09-19
+### 1. Close the auth bypass (P0): DONE 2026-09-19
 
 Shipped as described in "Biggest Debt" above, with the router-level table test
 and live verification. Two deviations from the original sketch: host-agent is
 **not** bound to loopback (QEMU's slirp presents forwarded connections from
 `10.0.2.2`, so a loopback-only bind breaks the qemu dev loop and the CLI/e2e API
-path — the credential is the control, the bind address is not); and a
+path: the credential is the control, the bind address is not); and a
 per-invocation token read replaced the proposed `ReadRuntimeFile` seam, because
 the CLI's curl runs host-side while the token file lives in the guest, so
 `./bloud token` reads it through the existing executor instead.
@@ -349,7 +349,7 @@ exactly once. Then make the health surface able to see a dead orchestrator
 
 ### 3. Make declared intent real (P1, items 6-7)
 
-Honour `Call.Timeout` and wire `WaitPolicy` as the ready-path default — or delete
+Honour `Call.Timeout` and wire `WaitPolicy` as the ready-path default, or delete
 both and fail loudly on an unsupported option. Fix the Home Assistant version
 comparison and make its test fixture use the real manifest value.
 
@@ -373,13 +373,13 @@ the product path impossible, and collapses the duplicate `AppState` builder.
 (With operation state landed, the recorder wiring is one more field that would
 otherwise fork.)
 
-### 7. Persist Only Externally-Issued Artifacts (item 18, as corrected)
+### 7. Persist Only Externally Issued Artifacts (item 18, as corrected)
 
 Integration credentials are derived, not stored: `DeriveSecret`
 (HKDF-SHA256 from the host secret) and `OIDCInputsForApp` compute client
 credentials, redirect URIs, and issuer/launch URLs as a pure function of
 host secret and host set. Persisting derived state creates a second source of
-truth and every disagreement becomes a reconciliation bug — so delete the
+truth and every disagreement becomes a reconciliation bug, so delete the
 `oauthClientSecret` write (and the literal fallback in `DeriveSecret`). What is
 genuinely worth persisting is state we do not derive because something else
 issued it: remote proxy port assignments, the tailnet domain, gateway state.
@@ -406,7 +406,7 @@ Filter system apps by `IsSystem`; persist the primary host; delete
   consumer needs them.
 - Do not block small product fixes, but avoid adding new lifecycle side
   effects to route generation or API handlers. (Route generation is now a
-  pure config step; keep it that way — see the `route_sync_test.go` contract.)
+  pure config step; keep it that way: see the `route_sync_test.go` contract.)
 
 ## Validation Bar
 
@@ -442,4 +442,4 @@ The CLI failure is environment-dependent: `TestResolveBackendPrecedence`
 auto-resolves to its single available backend, so it passes on the Linux CI and
 fails on the platform `AGENTS.md` calls the default dev platform. It is also
 invisible to the pre-commit hook, which omits cli tests. Do not paper over it by
-re-pinning the test — fix the expectation for single-backend hosts.
+re-pinning the test; fix the expectation for single-backend hosts.

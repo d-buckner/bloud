@@ -36,7 +36,7 @@ export function pushToast(message: string, tone: ToastTone = 'info'): void {
 /**
  * Detect user-visible transitions between two snapshots:
  *  - app reached 'running' from a non-running status → "X is ready"
- *  - app entered 'failed' → "X failed — view details"
+ *  - app entered 'failed' → "X failed: view details"
  * 'error' (degraded, auto-retrying) deliberately produces no toast; the tile
  * shows the state without interrupting.
  */
@@ -51,7 +51,7 @@ export function detectToasts(
 			result.push({ message: `${app.display_name} is ready`, tone: 'success' });
 		}
 		if (app.status === 'failed' && before !== 'failed') {
-			result.push({ message: `${app.display_name} failed — view details`, tone: 'error' });
+			result.push({ message: `${app.display_name} failed: view details`, tone: 'error' });
 		}
 	}
 	return result;

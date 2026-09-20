@@ -83,7 +83,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// Immich v3.1 crash-loops at startup when a .immich mount marker is
 	// missing: the startup check only re-verifies (reads) markers whose pass
 	// was already recorded in its database and never recreates missing ones.
-	// Ensure them here — PreStart runs on every reconciliation cycle, so
+	// Ensure them here: PreStart runs on every reconciliation cycle, so
 	// this is idempotent and self-healing after any data-dir wipe.
 	if err := ensureMountMarkers(state.DataPath, c.logger); err != nil {
 		return false, err

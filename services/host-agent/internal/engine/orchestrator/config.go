@@ -51,7 +51,7 @@ type ProxyOutpostEnsurer interface {
 }
 
 // SSOProvisioner provisions per-app SSO in the identity provider (e.g. Authentik).
-// Implementations must be idempotent — called on every ensureApp, not just first install.
+// Implementations must be idempotent: called on every ensureApp, not just first install.
 type SSOProvisioner interface {
 	// EnsureForwardAuth creates or verifies the proxy provider + application for a
 	// forward-auth app, and adds it to the embedded outpost.

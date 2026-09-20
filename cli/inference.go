@@ -227,7 +227,7 @@ func pathMatches(file, pattern string) bool {
 		return strings.HasPrefix(file, prefix+"/") || file == prefix
 	}
 	if strings.Contains(pattern, "**") {
-		// pattern like "a/**/b" — split and check prefix/suffix
+		// pattern like "a/**/b": split and check prefix/suffix
 		parts := strings.SplitN(pattern, "**", 2)
 		return strings.HasPrefix(file, parts[0]) && strings.HasSuffix(file, strings.TrimPrefix(parts[1], "/"))
 	}

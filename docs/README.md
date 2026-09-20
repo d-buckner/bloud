@@ -21,12 +21,12 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 
 ## Sections
 
-- **specs/** — authoritative references: the release plan, the reconciler spec,
+- **specs/**: authoritative references: the release plan, the reconciler spec,
   the app spec, and the dated review snapshot.
-- **architecture/** — system design overview and data flows.
-- **guides/** — how-to documentation.
-- **features/** — per-feature documentation.
-- **operations/** — maintenance and devOps, including the backend debt ledger.
-- **plans/** — design plans. Every `plans/*.md` starts with
+- **architecture/**: system design overview and data flows.
+- **guides/**: how-to documentation.
+- **features/**: per-feature documentation.
+- **operations/**: maintenance and devOps, including the backend debt ledger.
+- **plans/**: design plans. Every `plans/*.md` starts with
   `> Status: draft | accepted | landed | dropped`; landed plans move to
   `plans/archive/`.

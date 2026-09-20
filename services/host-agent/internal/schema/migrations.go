@@ -13,7 +13,7 @@ import (
 // The ledger records each applied version in schema_migrations, so an
 // upgrade runs only the entries newer than the database's applied
 // version. A failing migration aborts with a wrapped error and its
-// version is NOT stamped, so the next boot retries it — the agent
+// version is NOT stamped, so the next boot retries it; the agent
 // refuses to run on half-migrated durable state.
 type Migration struct {
 	Version int
@@ -191,7 +191,7 @@ const gridPositionsDDL = `CREATE TABLE user_app_positions (
 //
 // Repair: drop the dead table, create the grid shape, and rebuild
 // positions from the recoverable source (user_preferences.layout JSON)
-// when empty. Data repair is best-effort per user — one user's
+// when empty. Data repair is best-effort per user: one user's
 // malformed layout row must not block the boot of the whole
 // appliance; the layout is re-derivable in the UI.
 func fixUserAppPositionsShape(tx *sql.Tx) error {

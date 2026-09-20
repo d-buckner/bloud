@@ -34,7 +34,7 @@ func DetectLocalIPs() []string {
 
 // GetPrimaryIP returns the IP address used for outbound traffic to the internet.
 // This is the host's primary non-loopback IP (i.e. eth0, not container bridges).
-// It works by connecting a UDP socket to an external address — no traffic is sent.
+// It works by connecting a UDP socket to an external address; no traffic is sent.
 func GetPrimaryIP() string {
 	conn, err := net.Dial("udp", "1.1.1.1:80")
 	if err != nil {

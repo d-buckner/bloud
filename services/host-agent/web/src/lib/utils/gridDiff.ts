@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 /**
- * Grid layout diff — pure comparison between the store's element list and the
+ * Grid layout diff: pure comparison between the store's element list and the
  * grid's current node state. Extracted from GridStackGrid so the
  * remove/add/update/skip rules are unit-testable without a GridStack instance;
  * the component turns the returned plan into DOM operations.
@@ -19,11 +19,11 @@ export interface GridNodeState {
 }
 
 export interface GridDiff {
-	/** Store items no longer present in the store (ids) — remove from grid. */
+	/** Store items no longer present in the store (ids): remove from grid. */
 	remove: string[];
-	/** Store items not yet on the grid — add (autoPosition when x/y null). */
+	/** Store items not yet on the grid: add (autoPosition when x/y null). */
 	add: GridElement[];
-	/** Existing items whose geometry changed — move/resize to the store's. */
+	/** Existing items whose geometry changed: move/resize to the store's. */
 	update: GridElement[];
 	/** True when membership changed (add or remove), i.e. a layout PUT is due. */
 	structural: boolean;

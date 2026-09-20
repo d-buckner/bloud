@@ -228,7 +228,7 @@ func printLifecycleUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `Usage: ./bloud e2e lifecycle [--host-only] [--keep]
 
 Required environment:
-  None — the VM instance defaults from the backend preference
+  None: the VM instance defaults from the backend preference
   (.bloud/preferences.yaml, set by ./bloud setup).
 
 Optional environment:

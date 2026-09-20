@@ -20,7 +20,7 @@ import (
 // real host store (in-memory DB), and a catalog/app store containing:
 //
 //	immich (native-oidc, multi-container), navidrome (forward-auth),
-//	jellyfin (ldap), authentik (system) — all present and RUNNING.
+//	jellyfin (ldap), authentik (system): all present and RUNNING.
 func setupSetHostsTest(t *testing.T, changed *bool) (*Orchestrator, *hostset.State, *store.HostStore, *graph.Graph) {
 	t.Helper()
 

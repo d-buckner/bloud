@@ -51,7 +51,7 @@ describeApp('jellyfin', (app) => {
     test.setTimeout(300_000);
     const jellyfin = await openAppFromHome(app.page, 'Jellyfin');
 
-    // LDAP users don't appear in the public user list — use manual login.
+    // LDAP users don't appear in the public user list: use manual login.
     const manualLoginBtn = jellyfin.locator('.btnManualLogin');
     if (
       await manualLoginBtn.isVisible({ timeout: 5_000 }).catch(() => false)

@@ -23,7 +23,7 @@ func StatusNot(code int) ReadyFunc {
 	return func(status int, _ []byte) bool { return status != code }
 }
 
-// StatusLT returns a ReadyFunc true when the status is below code — "anything
+// StatusLT returns a ReadyFunc true when the status is below code: "anything
 // under 500 means the listener is up".
 func StatusLT(code int) ReadyFunc {
 	return func(status int, _ []byte) bool { return status < code }
@@ -44,8 +44,8 @@ func DecodeInto(out any, cond func() bool) ReadyFunc {
 }
 
 // JSONHas returns a ReadyFunc true when the body is a JSON object containing
-// key — e.g. a discovery document with a "url" field proving a provider is
-// live.
+// key (e.g. a discovery document with a "url" field proving a provider is
+// live).
 func JSONHas(key string) ReadyFunc {
 	return func(_ int, body []byte) bool {
 		if len(body) == 0 {
@@ -60,6 +60,6 @@ func JSONHas(key string) ReadyFunc {
 	}
 }
 
-// JSONValid returns a ReadyFunc true when the body is valid JSON — e.g. a
+// JSONValid returns a ReadyFunc true when the body is valid JSON. For example, a
 // JSON endpoint that answers HTML while an app is still booting is "not ready".
 func JSONValid(_ int, body []byte) bool { return json.Valid(bytes.TrimSpace(body)) }

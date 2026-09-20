@@ -13,7 +13,7 @@ const AFFINE_URL = 'http://affine.localhost:8080';
 // means the first failure skips the rungs behind it. AFFiNE uses
 // native-oidc with a user-initiated flow: unlike Immich (whose login
 // page auto-launches OIDC), unauthenticated AFFiNE renders its editor
-// with a "Sign in and enable" affordance — the observable gate is that
+// with a "Sign in and enable" affordance: the observable gate is that
 // this sign-in path launches Bloud's OIDC provider on sso.localhost and
 // settles on the Authentik prompt. The auth rungs open their own fresh
 // browser contexts: AFFiNE's pre-sign-in workspace state lives in the

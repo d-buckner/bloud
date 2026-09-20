@@ -3,7 +3,7 @@
 
 // Package appclient is the shared HTTP transport for Bloud app configurators.
 //
-// It knows HTTP, retry classification, timeouts, token plumbing, and waits —
+// It knows HTTP, retry classification, timeouts, token plumbing, and waits,
 // and nothing about any particular app. A configurator builds a Client from a
 // Spec, then expresses each call as a small chain of declared intent
 // (verb + path + expected outcome), so the transport mechanics live in exactly

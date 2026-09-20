@@ -34,7 +34,7 @@ func TestWaitAndDrain_FirstIntentIsImmediate(t *testing.T) {
 		assert.Equal(t, intent.IntentID(), batch[0].IntentID())
 		assert.Less(t, time.Since(start), time.Second, "lone intent must not wait for the debounce window")
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out — lone intent was not drained immediately")
+		t.Fatal("timed out: lone intent was not drained immediately")
 	}
 }
 
@@ -44,7 +44,7 @@ func TestWaitAndDrain_FirstIntentIsImmediate(t *testing.T) {
 func TestWaitAndDrain_CoalescesIntentsFromProcessing(t *testing.T) {
 	q := NewIntentQueue(300 * time.Millisecond)
 	intent := NewInstallAppIntent("jellyfin")
-	// Enqueued "during processing" — before WaitAndDrain is called.
+	// Enqueued "during processing": before WaitAndDrain is called.
 	q.Enqueue(intent)
 
 	start := time.Now()
@@ -84,7 +84,7 @@ func TestWaitAndDrain_ResetsOnNewArrival(t *testing.T) {
 	// fired yet (earliest possible is last arrival + window).
 	select {
 	case <-done:
-		t.Fatalf("drained after %v — coalescing window should still be open", time.Since(start))
+		t.Fatalf("drained after %v: coalescing window should still be open", time.Since(start))
 	case <-time.After(50 * time.Millisecond):
 	}
 

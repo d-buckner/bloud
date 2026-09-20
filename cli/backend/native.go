@@ -41,14 +41,14 @@ func NewNativeBackend(projectDir string) *NativeBackend {
 
 // Create ensures the native runtime environment is ready: the user-level
 // systemd manager is available, the podman API socket is enabled, and the
-// runtime directory exists. Idempotent — safe to call on every dev/e2e run.
+// runtime directory exists. Idempotent: safe to call on every dev/e2e run.
 func (b *NativeBackend) Create(ctx context.Context) error {
 	// On GitHub Actions runners (and other headless systemd hosts) the user
 	// session may not have a runtime dir yet. loginctl enable-linger makes
 	// the user systemd manager available without a login session. This is a
 	// no-op on interactive desktops where the user is already logged in.
 	if _, err := b.run(ctx, "sh", "-c", "test -d \"$XDG_RUNTIME_DIR\" && test -S \"$XDG_RUNTIME_DIR/systemd/private\""); err != nil {
-		// No user systemd yet — try to enable linger (needs root or the
+		// No user systemd yet: try to enable linger (needs root or the
 		// user's own session). On GH runners the runner user can sudo.
 		if _, err := b.run(ctx, "sudo", "-n", "loginctl", "enable-linger", currentUsername()); err != nil {
 			// Linger may already be enabled or sudo unavailable; fall back
@@ -90,7 +90,7 @@ func (b *NativeBackend) Destroy(ctx context.Context) error {
 	return nil
 }
 
-// SyncProject is a no-op for the native backend — the project is already on
+// SyncProject is a no-op for the native backend: the project is already on
 // the same filesystem, no copy needed.
 func (b *NativeBackend) SyncProject(_ context.Context) error { return nil }
 
@@ -99,15 +99,14 @@ func (b *NativeBackend) Host() executor.Host {
 	return executor.NewLocalHost(
 		&executor.LocalExecutor{},
 		map[string]string{
-			"host-agent":  "3000",
-			"traefik":     "8080",
-			"traefik-tls": "8443",
-			"ldap":        "3389",
-			"jellyfin":    "8096",
-			"authentik":   "9001",
-			"immich":      "2283",
-			"navidrome":   "4533",
-			"affine":      "3010",
+			"host-agent": "3000",
+			"traefik":    "8080",
+			"ldap":       "3389",
+			"jellyfin":   "8096",
+			"authentik":  "9001",
+			"immich":     "2283",
+			"navidrome":  "4533",
+			"affine":     "3010",
 		},
 		executor.DataDirs{
 			HostAgentDir: nativeRemoteDir + "/host-agent",

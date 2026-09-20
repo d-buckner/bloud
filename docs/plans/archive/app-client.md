@@ -1,9 +1,9 @@
 > Status: landed
 
-# Design: App Client — structured HTTP, assets, and retries for configurators
+# Design: App Client: structured HTTP, assets, and retries for configurators
 
-**Issue:** [#70 — Add app client into framework](https://github.com/d-buckner/bloud/issues/70)
-**Status:** Landed — S1–S10 shipped; `--tier fast` green (incl. the new `check:app-http`
+**Issue:** [#70: Add app client into framework](https://github.com/d-buckner/bloud/issues/70)
+**Status:** Landed: S1–S10 shipped; `--tier fast` green (incl. the new `check:app-http`
 guard). Remaining VM-gated confirmations: `--tier integration` and `./bloud e2e lifecycle`.
 **Date:** 2026-09-13
 **Scope:** `services/host-agent/pkg/*`, `apps/*/configurator.go`, `services/host-agent/pkg/authentik`, wiring in `pkg/configurator/factory.go` + `internal/appconfig`.
@@ -39,7 +39,7 @@ Measured per-function before/after cost of the abstraction (real pairs from this
 |`jellyfin.getSystemInfo`|31 lines|3 lines|
 |`jellyfin.waitForStartupWizardReady`|36 lines|8 lines|
 |`jellyfin.ensureLDAPPlugin` (download+verify+unpack)|105 lines|~14 lines|
-|`homeassistant.ensureOIDCComponent` (same shape, a 2nd copy)|122 lines|~16 lines|
+|`homeassistant.ensureOIDCComponent` (same shape, a second copy)|122 lines|~16 lines|
 |`homeassistant.waitForProxyTrust`|24 lines|7 lines|
 |`immich.waitForServer` / `affine.waitForServer`|29 / 29 lines (near-identical)|4 lines each|
 
@@ -47,7 +47,7 @@ Measured per-function before/after cost of the abstraction (real pairs from this
 
 1. **One transient failure bricks an install.** `collectWorkForLevel`
    (`internal/orchestrator/orchestrator.go:728`) treats `ERROR` as terminal: *"ERROR is
-   terminal — never retry without an explicit status reset."* A single `503 Server is
+   terminal: never retry without an explicit status reset."* A single `503 Server is
    loading` outliving an app's hand-rolled attempt cap lands the node in `ERROR` until the
    user reinstalls. Configurators have compensated with oversized defensive retry loops
    (jellyfin has three separate ones in one function, `configurator.go:315-376`), each with
@@ -60,7 +60,7 @@ Measured per-function before/after cost of the abstraction (real pairs from this
    `context.WithBackground`-equivalent (`configurator.go:291`, `context.Background()`), HA
    with `context.WithoutCancel` (`configurator.go:200`). Both **silently defeat shutdown**:
    `orchestrator.Stop()` cannot cancel an in-flight `PostStart`. Meanwhile the stated reason
-   for the detach — "the pass context is cancelled when the pass completes" — is **not true
+   for the detach, "the pass context is cancelled when the pass completes", is **not true
    in the current code**: the pass context comes from `Start()`'s context
    (`orchestrator.go:471-489`) and is only cancelled by `Stop()`.
 4. **Idempotency is a string match.** `strings.Contains(strings.ToLower(b), "already has an
@@ -78,7 +78,7 @@ Measured per-function before/after cost of the abstraction (real pairs from this
    `RemoveAll` + `Rename`. Two copies today; both drift independently.
 7. **The existing helper package already failed this test.** `pkg/configurator/health.go`
    ships `WaitForHTTP`, `WaitForHTTPWithAuth`, `WaitForTCP`, `WaitForOpenIDConfig`,
-   `ShouldWaitForSSO` — **zero call sites anywhere in the repo, tests included**. Only
+   `ShouldWaitForSSO`: **zero call sites anywhere in the repo, tests included**. Only
    `WaitForSSOReady` is used (one CLI path). Configurators rolled their own waits instead of
    using the helper because the helper could not express "retry 5xx, 401 means already done,
    keep the last good read". That is the design brief.
@@ -106,10 +106,10 @@ must cover these and nothing more.
 
 Two extras worth naming because the framework should own them, not the app:
 
-- **Container exec** — authentik shells `podman exec … ak shell -c <script>`
+- **Container exec**: authentik shells `podman exec … ak shell -c <script>`
   (`apps/authentik/configurator.go:23-40`) instead of using the injected
   `container.Runtime.Exec` (`internal/container/runtime.go:68`).
-- **Cross-service calls** — navidrome reads the Authentik API token from disk
+- **Cross-service calls**: navidrome reads the Authentik API token from disk
   (`configurator.go:303`) and calls Authentik directly.
 
 ---
@@ -118,31 +118,31 @@ Two extras worth naming because the framework should own them, not the app:
 
 **Goals**
 
-- G1 — A call site reads as *intent* (verb, path, expected outcome), not transport mechanics.
-- G2 — One retry policy, one classifier, one error format, one logger shape — testable in
+- G1: A call site reads as *intent* (verb, path, expected outcome), not transport mechanics.
+- G2: One retry policy, one classifier, one error format, one logger shape, testable in
   isolation from any app.
-- G3 — Idempotency is *declared* (status set / predicate), never string-guessed unless the
+- G3: Idempotency is *declared* (status set / predicate), never string-guessed unless the
   upstream API gives no other signal, in which case the escape hatch is explicit and
   documented.
-- G4 — Every request has a timeout, respects ctx cancellation, and can be fast-forwarded in
+- G4: Every request has a timeout, respects ctx cancellation, and can be fast-forwarded in
   tests (injectable sleeper).
-- G5 — Static assets are declarative: source + checksum + destination + sentinel. One
+- G5: Static assets are declarative: source + checksum + destination + sentinel. One
   hardened implementation for the download/verify/unpack/atomic-install path.
-- G6 — Apps stay self-contained: app-specific wire types and vendor quirks stay in `apps/<name>/`.
+- G6: Apps stay self-contained: app-specific wire types and vendor quirks stay in `apps/<name>/`.
   The framework does **not** learn what a Jellyfin library or an AFFiNE owner account is.
-- G7 — Cheaper to add the next app than the last one.
+- G7: Cheaper to add the next app than the last one.
 
 **Non-goals**
 
-- N1 — No generic workflow/retry engine (explicit tech-debt non-goal,
+- N1: No generic workflow/retry engine (explicit tech-debt non-goal,
   `docs/operations/tech-debt.md:135`).
-- N2 — No data-driven app API description (`metadata.yaml: api:` blocks). The quirks are
+- N2: No data-driven app API description (`metadata.yaml: api:` blocks). The quirks are
   code-shaped; Go stays the modeling language. Revisit only if we ever need to render app
   APIs in the UI.
-- N3 — No third-party HTTP/retry dependency. Stdlib only.
-- N4 — Not a client for *Bloud's own* API (the :3000 surface) — different consumers,
+- N3: No third-party HTTP/retry dependency. Stdlib only.
+- N4: Not a client for *Bloud's own* API (the :3000 surface); different consumers,
   different contract.
-- N5 — No behavioral change to install/reconcile semantics beyond making existing behavior
+- N5: No behavioral change to install/reconcile semantics beyond making existing behavior
   consistent and correctly bounded.
 
 ---
@@ -166,16 +166,16 @@ configurator.Deps ─────────── framework injection: shared 
 (host-agent → factories)      shared asset cache, PostStart budget
 ```
 
-- **`apps/<name>/api.go`** — split from `configurator.go`: the typed surface for that app
+- **`apps/<name>/api.go`**: split from `configurator.go`: the typed surface for that app
   (`GetSystemInfo`, `CreateAdmin`, `SetLDAPConfig`), each method 2–6 lines of declared
   intent. The configurator keeps the *orchestration* of those calls.
-- **`pkg/appclient`** — lives in the host-agent module so the `apps` module can import it
+- **`pkg/appclient`**: lives in the host-agent module so the `apps` module can import it
   exactly as it imports `pkg/xmlutil` today (module cycle already solved by `replace`).
-- **`pkg/appasset`** — same placement; depends on `appclient` only for the fetch+retry.
+- **`pkg/appasset`**: same placement; depends on `appclient` only for the fetch+retry.
 
 ---
 
-## 5. `pkg/appclient` — API
+## 5. `pkg/appclient`: API
 
 ### 5.1 Construction
 
@@ -186,7 +186,7 @@ package appclient
 type Spec struct {
     Name    string // node/log identity, e.g. "jellyfin"
     BaseURL string // "http://localhost:8096"
-    // BaseURLFn overrides BaseURL when set — for host-set-aware callers
+    // BaseURLFn overrides BaseURL when set, for host-set-aware callers
     // (same reason Deps.PrimaryBaseURL is a func today).
     BaseURLFn func() string
 
@@ -209,7 +209,7 @@ type Spec struct {
 func New(spec Spec) *Client
 
 // Sleeper lets tests collapse backoff to zero (HA currently does this by hand
-// with a pollInterval field — same lever, one place).
+// with a pollInterval field: same lever, one place).
 func (c *Client) WithSleeper(fn func(time.Duration)) *Client
 ```
 
@@ -245,7 +245,7 @@ func (x *Call) Ensure(ctx context.Context) (changed bool, err error) // changed 
 ```
 
 Default outcome rule when nothing is declared: **2xx is success, everything else is an
-error** — same as today's code, so migration is a no-op for the happy path.
+error**, same as today's code, so migration is a no-op for the happy path.
 
 ### 5.3 Retry policy + classification
 
@@ -275,8 +275,8 @@ Transient classification (retried under any policy unless `NoRetry()`):
 | transport error (refused, reset, EOF, DNS) | yes |
 | `408 Request Timeout`, `425`, `429 Too Many Requests` | yes (honors `Retry-After`) |
 | `500`, `502`, `503`, `504` | yes |
-| any other status | no — fail fast with `HTTPError` |
-| `ctx` cancelled/deadline | no — return immediately, wrapped |
+| any other status | no: fail fast with `HTTPError` |
+| `ctx` cancelled/deadline | no: return immediately, wrapped |
 
 `Retry-After` on 429/503 overrides the computed backoff (delta-seconds and HTTP-date both
 parsed; clamped to `MaxInterval × 3`).
@@ -329,7 +329,7 @@ This one type covers all four observed auth header dialects:
 | jellyfin | `Authorization`, `` `MediaBrowser Client="Bloud", Device="Host-Agent", DeviceId="bloud-host-agent", Version="1.0.0", Token="%s"` `` |
 
 Behavior: the token is fetched lazily once, attached to every non-`Anonymous()` call, and on
-`401` the client calls `Invalidate()`, refetches **once**, and retries — the behavior no
+`401` the client calls `Invalidate()`, refetches **once**, and retries: the behavior no
 configurator has today. The login call itself is `.Anonymous()`.
 
 ### 5.6 Waits (shape 1 + 3)
@@ -406,7 +406,7 @@ One record per call at `Debug` level:
 On error: `Warn` with attempt count and the capped body. Wait completion logs
 `waited N attempts / Xs`.
 
-**Rule: no `DBG`-style inline logging in app packages** — the client emits the trace, so
+**Rule: no `DBG`-style inline logging in app packages**; the client emits the trace, so
 jellyfin's 14 diagnostic lines (`apps/jellyfin/configurator.go:300-437`) are deleted, not
 rewritten.
 
@@ -416,10 +416,10 @@ already funnel through one place.
 
 ### 5.9 Test hooks
 
-- `WithSleeper(noop)` — collapses all backoff; tests run in milliseconds.
+- `WithSleeper(noop)`: collapses all backoff; tests run in milliseconds.
 - `RetryPolicy.Deadline` small + `MaxAttempts` explicit → deterministic.
 - Tests point the client at `httptest.Server` via `Spec.BaseURL`. **Keep the existing
-  httptest style** (all five app test files already do this) — no fake-interface layer, which
+  httptest style** (all five app test files already do this): no fake-interface layer, which
   would test less than a real socket does.
 - Optional recorder for behavior assertions ("converged install makes **zero** mutating
   calls"): `appclient.WithRecorder(&rec)`, `rec.Calls(method, path)`. Lives in
@@ -471,11 +471,11 @@ transport := &http.Transport{
 ```
 
 **Why shared:** today `homeassistant.apiGet` allocates a fresh `http.Client` on every call
-(`configurator.go:677,744,911,975,1038`) and others use `http.DefaultClient` — connection
+(`configurator.go:677,744,911,975,1038`) and others use `http.DefaultClient`; connection
 reuse across reconciliation cycles is accidental. One transport gives pooling, one dial
 timeout, and one place to change keep-alive behavior for the whole runtime.
 
-**Nil-tolerance:** `ClientFactory{}.New(...)` must work (lazy defaults) — the existing
+**Nil-tolerance:** `ClientFactory{}.New(...)` must work (lazy defaults); the existing
 factory contract is "tolerate nil deps in CLI/test contexts" (`factory.go:20-22`), and a
 client that panics there would regress `bloud configure prestart`.
 
@@ -499,16 +499,16 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 }
 ```
 
-Tests override by constructing their own client against `httptest` and injecting it — no
+Tests override by constructing their own client against `httptest` and injecting it; no
 `baseURL`/`baseURLOverride` string fields left in five configurators
 (`jellyfin:43`, `homeassistant:74`, plus affine/immich/navidrome URL funcs).
 
 ---
 
-## 7. `pkg/appasset` — static files in PreStart
+## 7. `pkg/appasset`: static files in PreStart
 
 Issue text: *"I'm sure there's a similar challenge with static files in prestart
-configurators, but I haven't looked into that."* There is — 227 lines duplicated across two
+configurators, but I haven't looked into that."* There is: 227 lines duplicated across two
 archive installers, plus four hand-rolled config-render-and-detect paths.
 
 ### 7.1 Asset spec
@@ -537,7 +537,7 @@ type Asset struct {
 type Source struct {
     URL   string             // remote fetch (retry + cache by SHA256)
     Embed fs.FS              // go:embed in the app package
-    Local string             // host path (transitional — see 7.4)
+    Local string             // host path (transitional: see 7.4)
 }
 
 type Installer struct{ CacheDir string; Retry appclient.RetryPolicy }
@@ -555,9 +555,9 @@ func (in Installer) Install(ctx context.Context, a Asset) (changed bool, err err
 3. Verify digest **before** touching the destination. Mismatch → error, temp removed, cache
    poisoned entry deleted.
 4. Zip: unpack into `staging` (temp dir in the destination's parent) with the zip-slip guard
-   (`filepath.Clean(dest)` must stay under staging — the guard both copies already have).
+   (`filepath.Clean(dest)` must stay under staging, the guard both copies already have).
    Preserve modes, default `0644` when the archive says `0000`.
-5. `Verify(staging)` — sentinel + content assertions.
+5. `Verify(staging)`: sentinel + content assertions.
 6. `RemoveAll(dest)` → `Rename(staging, dest)`. A failed install never leaves a half tree
    (the property both current copies deliberately implement).
 7. Return `(true, nil)`.
@@ -589,7 +589,7 @@ and drops the merge machinery.
 
 `authentik.ServerConfigurator` reads its blueprint from a host path (`c.appsDir`,
 `server_configurator.go:69`). It already uses `go:embed` for its python scripts
-(`configurator.go:14-18`) — the blueprint should be embedded too. Effect: the app package
+(`configurator.go:14-18`); the blueprint should be embedded too. Effect: the app package
 becomes self-contained; `Deps` loses a host-path dependency; and the packaged release's
 "Required static assets" line (`specs/spec.md:778`) is satisfied by the binary, not by
 directory layout luck.
@@ -597,7 +597,7 @@ directory layout luck.
 ### 7.5 Provenance
 
 Every pinned remote asset must record, in `apps/<name>/INTEGRATION.md` under **Verified
-constants** (convention already exists — `homeassistant/INTEGRATION.md`): upstream URL,
+constants** (convention already exists: `homeassistant/INTEGRATION.md`): upstream URL,
 version, sha256, verification date, upstream commit/tag, and the command used
 (`curl -sL <url> | sha256sum`). Make it a checklist item in the contributing guide. The
 content-addressed cache means a re-verified asset with a new sha simply re-downloads; a
@@ -674,7 +674,7 @@ func (c *affineAPI) ensureOwner(ctx context.Context, email, password string) (bo
 }
 ```
 
-The string match survives because AFFiNE gives no better signal — but it is now *declared in
+The string match survives because AFFiNE gives no better signal, but it is now *declared in
 the outcome contract*, logged as `already converged`, testable, and confined to one line
 with a comment. Immich's 400-string case gets the same treatment.
 
@@ -729,14 +729,14 @@ Home Assistant's variant adds a version-aware skip and a manifest-domain check:
 | # | Decision | Rationale / rejected alternative |
 |---|---|---|
 | D1 | Client lives in `services/host-agent/pkg/appclient`, injected via `Deps` | `apps` already imports host-agent `pkg` packages via the existing `replace` cycle. Rejected: a new module (more wiring for no isolation gain); putting it in `apps` (host-agent's own Authentik client couldn't use it). |
-| D2 | Stdlib only; hand-rolled exponential backoff + jitter + `Retry-After` | Repo has no retry dependency; the policy is ~80 LoC and fully testable. Rejected: `hashicorp/retry`, `cenkalti/backoff` — a dependency whose whole job is one function we must be able to reason about at the call site. |
+| D2 | Stdlib only; hand-rolled exponential backoff + jitter + `Retry-After` | Repo has no retry dependency; the policy is ~80 LoC and fully testable. Rejected: `hashicorp/retry`, `cenkalti/backoff`; a dependency whose whole job is one function we must be able to reason about at the call site. |
 | D3 | **Verb retry policy:** `GET` retries by default; mutating verbs retry **only** when the call declares `OK(...)`/`AlreadyDone(...)`, is a `Wait`, or opts in explicitly | Blindly retrying a non-idempotent `POST` risks double-created admins/libraries/providers. The type-level nudge forces the author to state the outcome contract, which is the whole point of the abstraction. Cost: slightly more verbose mutations. |
-| D4 | `Client` is a concrete struct; no per-app interface | The repo's `interfaces.go` mock pattern (configurator, authentik) exists to break cycles, not for polymorphism. Apps test against `httptest` over a real socket — strictly more real than a mock. |
+| D4 | `Client` is a concrete struct; no per-app interface | The repo's `interfaces.go` mock pattern (configurator, authentik) exists to break cycles, not for polymorphism. Apps test against `httptest` over a real socket, strictly more real than a mock. |
 | D5 | Outcome contract is a **status set + predicate**, string matching only via declared `AlreadyDoneFunc` | Fixes the class of bug (silent wording drift) while remaining honest about upstream APIs that lack distinct codes. |
 | D6 | Per-request timeout default 15s; waits carry an explicit `Timeout` | Kills the `http.DefaultClient`-with-no-timeout failure mode (§1.2) without per-app knobs. |
-| D7 | **Delete the per-app detach dance.** Framework guarantees (verified: `orchestrator.go:471-489`) the pass context is *not* cancelled at pass end and *is* cancelled at `Stop()`; apps just use `ctx` | `context.Background()`/`WithoutCancel` in `PostStart` make shutdown uncancellable. Their stated premise is false in current code. Jellyfin's claim that `WithoutCancel` "did not prevent cancellation on Go 1.25" is recorded as an open question (§13 Q1) — with the pass ctx being process-scoped, apps don't need either. |
+| D7 | **Delete the per-app detach dance.** Framework guarantees (verified: `orchestrator.go:471-489`) the pass context is *not* cancelled at pass end and *is* cancelled at `Stop()`; apps just use `ctx` | `context.Background()`/`WithoutCancel` in `PostStart` make shutdown uncancellable. Their stated premise is false in current code. Jellyfin's claim that `WithoutCancel` "did not prevent cancellation on Go 1.25" is recorded as an open question (§13 Q1); with the pass ctx being process-scoped, apps don't need either. |
 | D8 | `Ensure[T]` generic helper, not an app-by-app interface | Same 5-line shape ~25×; one implementation, one log line, one test. |
-| D9 | Vendor quirks stay in `apps/<name>/api.go`; the framework never learns app semantics | Prevents the client becoming a per-app switchboard. `pkg/authentik` stays the only host-owned service client (Bloud owns that integration) — but it gets **rebuilt on** `appclient` rather than hand-rolling 60 requests (§12 R4). |
+| D9 | Vendor quirks stay in `apps/<name>/api.go`; the framework never learns app semantics | Prevents the client becoming a per-app switchboard. `pkg/authentik` stays the only host-owned service client (Bloud owns that integration), but it gets **rebuilt on** `appclient` rather than hand-rolling 60 requests (§12 R4). |
 | D10 | Content-addressed asset cache under `BLOUD_DATA_DIR` | Repeat installs/reinstalls skip re-download; a broken cache entry is self-deleting (digest mismatch). Enables the air-gapped bundle path later without changing the API. |
 | D11 | No `metadata.yaml` API/asset declarations (N2) | Tech-debt non-goal: "no speculative provider abstractions before a concrete consumer needs them" (`tech-debt.md:136`). |
 | D12 | `container.Exec` becomes a `Deps` capability so authentik stops shelling `podman` directly | Keeps the orchestrator the only container-effect executor (invariant #1). Transitional slice (§11 S6). |
@@ -763,16 +763,16 @@ Each slice is independently shippable, keeps `go test ./...` green in `apps` and
 
 | Slice | Change | Prove |
 |---|---|---|
-| **S1** — `pkg/appclient` core | `New/Spec/Call`, verbs, `OK`/`AlreadyDone`/`RetryStatus`, `RetryPolicy` + jitter + `Retry-After`, `HTTPError` + `StatusOf`/`BodyOf`, `WithSleeper`. Zero call sites. | Unit tests: 503→200 succeeds in N attempts; `429 + Retry-After: 2` honored; non-transient 400 fails immediately; ctx cancel returns wrapped `context.Canceled` without extra attempts; `DoInto` decode error carries body; jitter bounds asserted. |
-| **S2** — Auth + waits | `CachedToken`, `TokenSpec` (header + format), 401→invalidate→refetch→retry-once; `Ready`/`Wait`/`Stable`/`TolerateFailures` + predicates; `Ensure[T]`. | 401 refreshes exactly once then surfaces the error; `Stable(2)` doesn't return on oscillating body; `TolerateFailures` returns nil after a good read then timeout; `Ensure` performs **no** Apply when equal (asserted via recorder). |
-| **S3** — Framework wiring | `Deps.HTTP` + `Deps.Assets`; shared transport built in `internal/appconfig.AppDeps`; zero-value `ClientFactory` usable. | `bloud configure prestart` (nil-deps path) still runs; a test asserts all clients from one factory share the transport pointer. |
-| **S4** — Migrate the two cheapest apps | immich, affine (3 requests each, both already httptest-covered). | Existing httptest suites pass unchanged in intent; `./bloud validate --tier fast`; measured diff in the PR. |
-| **S5** — `pkg/appasset` + `managedfile.Block` | Asset install (fetch/cache/verify/stage/commit, zip-slip guard), `Render`, `Block`/`RemoveBlock`, `ManifestVersionEq`/`ManifestFieldEq`. | Table test: sentinel skip makes zero network calls; checksum mismatch aborts with destination untouched; zip-slip entry rejected; commit is atomic (crash-simulated mid-unpack leaves no partial tree); `Block` handles missing/empty/unterminated regions and reports `changed` correctly. |
-| **S6** — Migrate jellyfin + navidrome | jellyfin: split `api.go`, kill `DBG` logs, three retry loops → `Wait`, plugin installer → `appasset`. navidrome: dual-client (own API + Authentik with token header). | Existing 1178-line jellyfin suite passes against `appclient`; cold-start scenario from issue #71 re-verified via `./bloud e2e app BLOUD_E2E_APP=jellyfin`. |
-| **S7** — Migrate homeassistant | The hardest: onboarding poll with `AlreadyDoneFunc` (404 + `ownerOnDisk`), trust probe, no-follow-redirects spec, asset install, `Block`. Keep `ownerOnDisk`/`storedProxyTrusted` in the app (disk facts, not HTTP). | 853-line HA suite passes with `WithSleeper(noop)`; stale-process force-recreate behavior (`PreStart:157-163`) preserved and asserted. |
-| **S8** — Rebuild `pkg/authentik` on `appclient` | Replace 60 request blocks; add `ctx` propagation (today: `http.NewRequest`, no context → uncancellable); `Ensure*` semantics unchanged. | `client_test.go` + `client_email_test.go` + `client_scope_mapping_test.go` pass; `ensureSSO` install path verified in the integration tier. |
-| **S9** — Kill the detach dance + fold `health.go` | Remove `context.Background()`/`WithoutCancel` from `PostStart`; framework-provided `PostStartBudget` (default 150s) wrapped around the call by the orchestrator; deletion of `WaitForHTTP`/`WaitForHTTPWithAuth`/`WaitForTCP`/`WaitForOpenIDConfig`/`ShouldWaitForSSO` (all zero-call-site); re-home `WaitForSSOReady` on `Wait`. | Regression test asserting a pass end does not cancel a running `PostStart`, and `Stop()` does; shutdown mid-`PostStart` is recorded as *interrupted*, not terminal `ERROR` (see §12 R3). |
-| **S10** — Guardrail + docs | `scripts/no-adhoc-http.mjs` wired into `npm run test:precommit`: fails on `http.NewRequest` / `http.DefaultClient` / `.Do(req)` in `apps/**/*.go` (non-test); allowlist empty at end of S8. Rewrite `docs/guides/contributing-apps.md` Step 2 (which today documents a **stale interface** — `PreStart(…) error` and a `HealthCheck` hook that no longer exists); add "Verified constants" provenance checklist; add the client to `docs/architecture/overview.md`. | Pre-commit fails on a deliberately non-compliant file; guide example compiles against the real interface. |
+| **S1**: `pkg/appclient` core | `New/Spec/Call`, verbs, `OK`/`AlreadyDone`/`RetryStatus`, `RetryPolicy` + jitter + `Retry-After`, `HTTPError` + `StatusOf`/`BodyOf`, `WithSleeper`. Zero call sites. | Unit tests: 503→200 succeeds in N attempts; `429 + Retry-After: 2` honored; non-transient 400 fails immediately; ctx cancel returns wrapped `context.Canceled` without extra attempts; `DoInto` decode error carries body; jitter bounds asserted. |
+| **S2**: Auth + waits | `CachedToken`, `TokenSpec` (header + format), 401→invalidate→refetch→retry-once; `Ready`/`Wait`/`Stable`/`TolerateFailures` + predicates; `Ensure[T]`. | 401 refreshes exactly once then surfaces the error; `Stable(2)` doesn't return on oscillating body; `TolerateFailures` returns nil after a good read then timeout; `Ensure` performs **no** Apply when equal (asserted via recorder). |
+| **S3**: Framework wiring | `Deps.HTTP` + `Deps.Assets`; shared transport built in `internal/appconfig.AppDeps`; zero-value `ClientFactory` usable. | `bloud configure prestart` (nil-deps path) still runs; a test asserts all clients from one factory share the transport pointer. |
+| **S4**: Migrate the two cheapest apps | immich, affine (3 requests each, both already httptest-covered). | Existing httptest suites pass unchanged in intent; `./bloud validate --tier fast`; measured diff in the PR. |
+| **S5**: `pkg/appasset` + `managedfile.Block` | Asset install (fetch/cache/verify/stage/commit, zip-slip guard), `Render`, `Block`/`RemoveBlock`, `ManifestVersionEq`/`ManifestFieldEq`. | Table test: sentinel skip makes zero network calls; checksum mismatch aborts with destination untouched; zip-slip entry rejected; commit is atomic (crash-simulated mid-unpack leaves no partial tree); `Block` handles missing/empty/unterminated regions and reports `changed` correctly. |
+| **S6**: Migrate jellyfin + navidrome | jellyfin: split `api.go`, kill `DBG` logs, three retry loops → `Wait`, plugin installer → `appasset`. navidrome: dual-client (own API + Authentik with token header). | Existing 1178-line jellyfin suite passes against `appclient`; cold-start scenario from issue #71 re-verified via `./bloud e2e app BLOUD_E2E_APP=jellyfin`. |
+| **S7**: Migrate homeassistant | The hardest: onboarding poll with `AlreadyDoneFunc` (404 + `ownerOnDisk`), trust probe, no-follow-redirects spec, asset install, `Block`. Keep `ownerOnDisk`/`storedProxyTrusted` in the app (disk facts, not HTTP). | 853-line HA suite passes with `WithSleeper(noop)`; stale-process force-recreate behavior (`PreStart:157-163`) preserved and asserted. |
+| **S8**: Rebuild `pkg/authentik` on `appclient` | Replace 60 request blocks; add `ctx` propagation (today: `http.NewRequest`, no context → uncancellable); `Ensure*` semantics unchanged. | `client_test.go` + `client_email_test.go` + `client_scope_mapping_test.go` pass; `ensureSSO` install path verified in the integration tier. |
+| **S9**: Kill the detach dance + fold `health.go` | Remove `context.Background()`/`WithoutCancel` from `PostStart`; framework-provided `PostStartBudget` (default 150s) wrapped around the call by the orchestrator; deletion of `WaitForHTTP`/`WaitForHTTPWithAuth`/`WaitForTCP`/`WaitForOpenIDConfig`/`ShouldWaitForSSO` (all zero-call-site); re-home `WaitForSSOReady` on `Wait`. | Regression test asserting a pass end does not cancel a running `PostStart`, and `Stop()` does; shutdown mid-`PostStart` is recorded as *interrupted*, not terminal `ERROR` (see §12 R3). |
+| **S10**: Guardrail + docs | `scripts/no-adhoc-http.mjs` wired into `npm run test:precommit`: fails on `http.NewRequest` / `http.DefaultClient` / `.Do(req)` in `apps/**/*.go` (non-test); allowlist empty at end of S8. Rewrite `docs/guides/contributing-apps.md` Step 2 (which today documents a **stale interface**: `PreStart(…) error` and a `HealthCheck` hook that no longer exists); add "Verified constants" provenance checklist; add the client to `docs/architecture/overview.md`. | Pre-commit fails on a deliberately non-compliant file; guide example compiles against the real interface. |
 
 Order rationale: build and prove the primitives before any app depends on them (S1–S3), take
 the two cheapest wins to validate ergonomics (S4), build the asset layer before the app that
@@ -787,9 +787,9 @@ battle-tested, and land the guardrail last so it lands with an empty allowlist.
 |---|---|---|
 | R1 | Over-retry masks real failures; installs get slow instead of failing visibly | Every retry logs the attempt count; deadlines are explicit per call; `MaxAttempts` explicit for mutations; non-transient statuses fail immediately (D3/§5.3). |
 | R2 | Retrying a non-idempotent `POST` double-creates resources | Verb retry policy (D3): mutations retry only with a declared outcome contract; the double-create window is bounded and logged. |
-| R3 | Removing the detach makes shutdown cancel mid-`PostStart` → node lands in `ERROR` (terminal, §1.1) | In S9, cancellation-caused failures are recorded as interrupted: `ctx.Err()` in the error chain means "leave actual status where it is; re-converge on start" — the graph is in-memory anyway (`tech-debt.md:27-29`), so a restart re-converges from stores. |
+| R3 | Removing the detach makes shutdown cancel mid-`PostStart` → node lands in `ERROR` (terminal, §1.1) | In S9, cancellation-caused failures are recorded as interrupted: `ctx.Err()` in the error chain means "leave actual status where it is; re-converge on start"; the graph is in-memory anyway (`tech-debt.md:27-29`), so a restart re-converges from stores. |
 | R4 | Touching the 2,872-line Authentik client risks the SSO critical path | S8 is mechanical and last-but-one; its three existing test files are the safety net; SSO provisioning is separately exercised in the integration tier (`./bloud validate --tier integration` installs Jellyfin through the real graph). |
-| R5 | Abstraction leak: an app whose API doesn't fit the outcome contract | Escape hatches are first-class: `AlreadyDoneFunc`, `Ready` arbitrary predicate, `Body(...)` raw bodies, and a per-app `Client` override. Last resort: an app bypasses `appclient` for one call with a comment — the guardrail allowlist makes that visible rather than silent. |
+| R5 | Abstraction leak: an app whose API doesn't fit the outcome contract | Escape hatches are first-class: `AlreadyDoneFunc`, `Ready` arbitrary predicate, `Body(...)` raw bodies, and a per-app `Client` override. Last resort: an app bypasses `appclient` for one call with a comment; the guardrail allowlist makes that visible rather than silent. |
 | R6 | Framework accretes app knowledge over time | G6/D9 enforced in review: `pkg/appclient` and `pkg/appasset` must not contain app names. Guard: a test asserting those packages' source contains no app identifier strings. |
 | R7 | Asset cache poisoned / disk growth | Digest-verified on every read from cache; mismatch deletes the entry. Cache capped (`MaxBytes`) with an LRU purge of `<data>/asset-cache` under a size limit (deferred; a few MB per asset today). |
 | R8 | Migration churn delays product work | Each slice is one app or one package; nothing blocks the next feature. S1–S4 land value (jellyfin/HA duplication starts shrinking) before the risky S7/S8. |
@@ -801,18 +801,18 @@ battle-tested, and land the guardrail last so it lands with an empty allowlist.
 | # | Question | Leaning |
 |---|---|---|
 | Q1 | Jellyfin's comment claims `context.WithoutCancel` "did not prevent the cancellation on Go 1.25 linux/amd64" (`configurator.go:288-290`). Current code shows the pass context is process-scoped, so there should be nothing to prevent. Was the real cause a request-scoped context in an older install path? | Reproduce with a focused test in S9 before deleting; if it reproduces, fix the cause rather than keeping the workaround. Either way the outcome (framework-owned budget) removes the app's need to care. |
-| Q2 | Should `PostStart` budgets move into `metadata.yaml` (`sso`/`installBudget`) instead of a framework default? | No for now — an orchestrator `PostStartTimeout` default with an override knob is enough; per-app budgets are only needed if real apps exceed 150s. |
-| Q3 | Does the Authentik client stay host-owned (`pkg/authentik`) or become an "app client" like the others? | Keep host-owned — Bloud provisions the IdP itself and multiple subsystems (SSO provisioning, sharing, remote apps) use it. Only its *transport layer* changes (S8). |
+| Q2 | Should `PostStart` budgets move into `metadata.yaml` (`sso`/`installBudget`) instead of a framework default? | No for now: an orchestrator `PostStartTimeout` default with an override knob is enough; per-app budgets are only needed if real apps exceed 150s. |
+| Q3 | Does the Authentik client stay host-owned (`pkg/authentik`) or become an "app client" like the others? | Keep host-owned: Bloud provisions the IdP itself and multiple subsystems (SSO provisioning, sharing, remote apps) use it. Only its *transport layer* changes (S8). |
 | Q4 | Should cross-service calls (navidrome → Authentik) keep reading the token from disk (`navidrome/configurator.go:303`)? | Out of scope here, but the client makes the follow-up cheap: a `Secrets`-backed `TokenSource` would replace the file read with a managed source. Track as a follow-on to the durable-integration-state debt (`tech-debt.md:120-124`). |
 | Q5 | Operator-visible call log? | Deferred. `WithRecorder` makes it a ~100-line follow-on (`GET /api/debug/configurator-calls`) once someone actually needs it in the field. |
-| Q6 | Should `configurator.AppState` carry a per-call client so apps don't hold one? | No — the client is stateless per node with a stable base URL; holding it is cheaper and keeps call sites short. `BaseURLFn` covers host-set changes. |
+| Q6 | Should `configurator.AppState` carry a per-call client so apps don't hold one? | No: the client is stateless per node with a stable base URL; holding it is cheaper and keeps call sites short. `BaseURLFn` covers host-set changes. |
 
 ---
 
 ## 14. Acceptance criteria (design-level)
 
 1. `apps/**/*.go` (non-test) contains zero `http.NewRequest`, `http.DefaultClient`, and
-   direct `.Do(req)` — enforced by pre-commit (S10).
+   direct `.Do(req)`: enforced by pre-commit (S10).
 2. Every configurator HTTP call declares its outcome; no ad-hoc `strings.Contains` on
    response bodies outside a declared `AlreadyDoneFunc` with a documented reason.
 3. Exactly one download/verify/unpack implementation in the tree (`pkg/appasset`), used by
@@ -830,7 +830,7 @@ battle-tested, and land the guardrail last so it lands with an empty allowlist.
 
 ---
 
-## Appendix A — Evidence index
+## Appendix A: Evidence index
 
 | Claim | Location |
 |---|---|
@@ -846,7 +846,7 @@ battle-tested, and land the guardrail last so it lands with an empty allowlist.
 | Duplicate wait loops | `apps/immich/configurator.go:202-230`, `apps/affine/configurator.go:249-277` |
 | Revert-resistant ensure (blueprint race) | `pkg/authentik/client.go:1324-1392` |
 | Migration-lag retry | `pkg/authentik/client.go:1561-1620` |
-| Dead helpers (zero call sites) | `pkg/configurator/health.go` — `WaitForHTTP`, `WaitForHTTPWithAuth`, `WaitForTCP`, `WaitForOpenIDConfig`, `ShouldWaitForSSO` |
+| Dead helpers (zero call sites) | `pkg/configurator/health.go`: `WaitForHTTP`, `WaitForHTTPWithAuth`, `WaitForTCP`, `WaitForOpenIDConfig`, `ShouldWaitForSSO` |
 | Authentik bypasses `Runtime.Exec` | `apps/authentik/configurator.go:23-40` vs `internal/container/runtime.go:64-68` |
 | Existing correct primitive to extend | `pkg/managedfile/write.go` (atomic write + change detection) |
-| Doc drift to fix | `docs/guides/contributing-apps.md:96-110` (`PreStart(…) error`, `HealthCheck` hook — neither exists) |
+| Doc drift to fix | `docs/guides/contributing-apps.md:96-110` (`PreStart(…) error`, `HealthCheck` hook: neither exists) |
