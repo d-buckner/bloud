@@ -6,56 +6,68 @@ import Storage from './Storage.svelte';
 import QuickNotes from './QuickNotes.svelte';
 
 /**
- * Widget size in grid units
- * Grid is 6 columns, rows are fixed height
+ * Widget size in grid units. The dashboard grid is 6 columns wide and rows
+ * are a fixed height, so `cols: 2, rows: 2` is roughly 360x260 at desktop
+ * width.
  */
 export interface WidgetSize {
-	/** Width in columns (1-3 in a 6-col grid) */
-	cols: 1 | 2 | 3;
-	/** Height in rows */
-	rows: 1 | 2 | 3;
+	/** Width in columns (1-6 in a 6-col grid). */
+	cols: number;
+	/** Height in rows. */
+	rows: number;
 }
 
 /**
- * Definition for a widget that can be displayed on the home page
+ * Definition for a widget that can be displayed on the home page.
  */
 export interface WidgetDefinition {
-	/** Unique identifier for the widget */
+	/** Unique identifier for the widget. */
 	id: string;
-	/** Display name shown in the widget header */
+	/** Display name shown in the widget header and picker. */
 	name: string;
-	/** Description shown in the widget picker */
+	/** One-line description shown in the widget picker. */
 	description: string;
-	/** The Svelte component to render */
+	/** Icon name under `static/icons` used by the picker. */
+	icon: string;
+	/** The Svelte component to render. */
 	component: Component;
-	/** Widget size in grid units (cols x rows) */
+	/** Size the widget starts at, and its minimum when resized. */
 	size: WidgetSize;
+	/** Largest size the widget can be resized to. */
+	maxSize: WidgetSize;
 }
 
 /**
- * Registry of all available widgets
+ * Registry of all available widgets. Sizes are grid-unit defaults, not
+ * ceilings: the user can drag a widget larger up to `maxSize`.
  */
 export const widgetRegistry: WidgetDefinition[] = [
 	{
 		id: 'system-stats',
 		name: 'System',
-		description: 'CPU, memory, and disk usage',
+		description: 'Live CPU, memory, and disk load',
+		icon: 'activity',
 		component: SystemStats,
-		size: { cols: 2, rows: 3 },
+		size: { cols: 2, rows: 2 },
+		maxSize: { cols: 4, rows: 3 },
 	},
 	{
 		id: 'storage',
 		name: 'Storage',
-		description: 'Disk space breakdown',
+		description: 'Disk capacity and free space',
+		icon: 'hard-drive',
 		component: Storage,
 		size: { cols: 2, rows: 2 },
+		maxSize: { cols: 4, rows: 3 },
 	},
 	{
 		id: 'quick-notes',
 		name: 'Notes',
-		description: 'Quick notes and reminders',
+		description: 'A scratchpad that stays in this browser',
+		icon: 'note',
 		component: QuickNotes,
 		size: { cols: 2, rows: 2 },
+		maxSize: { cols: 4, rows: 4 },
 	},
 ];
 

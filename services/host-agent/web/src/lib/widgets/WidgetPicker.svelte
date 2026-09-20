@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Daniel Buckner
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import { widgetRegistry } from './registry';
 	import { gridElements, enabledWidgetIds } from '$lib/stores/grid';
 
@@ -16,10 +17,6 @@
 	function isEnabled(widgetId: string): boolean {
 		return $enabledWidgetIds.includes(widgetId);
 	}
-
-	function handleToggle(widgetId: string): void {
-		gridElements.toggleWidget(widgetId);
-	}
 </script>
 
 <Modal {open} {onclose}>
@@ -27,32 +24,35 @@
 		<header class="picker-header">
 			<h2 class="picker-title">Widgets</h2>
 			<button class="close-btn" onclick={onclose} aria-label="Close">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M18 6L6 18M6 6l12 12" />
-				</svg>
+				<Icon name="close" size={18} />
 			</button>
 		</header>
 
 		<div class="picker-body">
-			<p class="picker-description">Choose which widgets to show on your home screen.</p>
+			<p class="picker-description">
+				Widgets live on your home screen next to your apps. Drag a widget by its header to move
+				it, or by its corner to resize.
+			</p>
 
 			<div class="widget-list">
 				{#each widgetRegistry as widget (widget.id)}
 					{@const enabled = isEnabled(widget.id)}
-					<button
-						class="widget-item"
-						class:enabled
-						onclick={() => handleToggle(widget.id)}
-					>
-						<div class="widget-info">
-							<span class="widget-name">{widget.name}</span>
+					<button class="widget-item" class:enabled onclick={() => gridElements.toggleWidget(widget.id)}>
+						<span class="widget-icon">
+							<Icon name={widget.icon} size={18} />
+						</span>
+						<span class="widget-info">
+							<span class="widget-name">
+								{widget.name}
+								<span class="widget-size">{widget.size.cols} × {widget.size.rows}</span>
+							</span>
 							<span class="widget-description">{widget.description}</span>
-						</div>
-						<div class="widget-toggle" class:active={enabled}>
-							<div class="toggle-track">
-								<div class="toggle-thumb"></div>
-							</div>
-						</div>
+						</span>
+						<span class="widget-toggle" class:active={enabled}>
+							<span class="toggle-track">
+								<span class="toggle-thumb"></span>
+							</span>
+						</span>
 					</button>
 				{/each}
 			</div>
@@ -111,7 +111,7 @@
 	.picker-description {
 		margin: 0 0 var(--space-lg);
 		color: var(--color-text-secondary);
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 	}
 
 	.widget-list {
@@ -123,7 +123,6 @@
 	.widget-item {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
 		gap: var(--space-md);
 		padding: var(--space-md);
 		background: var(--color-bg);
@@ -136,24 +135,47 @@
 	}
 
 	.widget-item:hover {
-		border-color: var(--color-border);
 		background: var(--color-bg-subtle);
 	}
 
 	.widget-item.enabled {
-		border-color: var(--color-accent);
-		background: rgba(28, 25, 23, 0.02);
+		border-color: var(--color-border-strong);
+		background: var(--color-bg-elevated);
+	}
+
+	.widget-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		flex-shrink: 0;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-elevated);
+		color: var(--color-text-secondary);
 	}
 
 	.widget-info {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: 2px;
+		min-width: 0;
 	}
 
 	.widget-name {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-sm);
 		font-weight: 500;
 		font-size: 0.9375rem;
+	}
+
+	.widget-size {
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.widget-description {
@@ -162,10 +184,12 @@
 	}
 
 	.widget-toggle {
+		margin-left: auto;
 		flex-shrink: 0;
 	}
 
 	.toggle-track {
+		display: block;
 		width: 44px;
 		height: 24px;
 		background: var(--color-border);
@@ -179,6 +203,7 @@
 	}
 
 	.toggle-thumb {
+		display: block;
 		width: 20px;
 		height: 20px;
 		background: white;

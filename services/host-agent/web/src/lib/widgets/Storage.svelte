@@ -1,6 +1,8 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
+	import { clampPercent, formatBytes, formatPercent } from '$lib/utils/format';
+
 	interface StorageStats {
 		used: number;
 		total: number;
@@ -9,115 +11,133 @@
 		path: string;
 	}
 
+	const REFRESH_MS = 30_000;
+
 	let storage = $state<StorageStats | null>(null);
-	let error = $state<string | null>(null);
-	let loading = $state(true);
+	let failed = $state(false);
 
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-	}
-
-	async function fetchStorage() {
+	async function refresh() {
 		try {
 			const response = await fetch('/api/system/storage');
-			if (!response.ok) {
-				throw new Error('Failed to fetch storage stats');
-			}
+			if (!response.ok) throw new Error('request failed');
 			storage = await response.json();
-			error = null;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Unknown error';
-		} finally {
-			loading = false;
+			failed = false;
+		} catch {
+			failed = true;
 		}
 	}
 
 	$effect(() => {
-		fetchStorage();
-		const interval = setInterval(fetchStorage, 30000); // Refresh every 30 seconds
+		refresh();
+		const interval = setInterval(refresh, REFRESH_MS);
 		return () => clearInterval(interval);
 	});
+
+	/** Capacity is usually fine; only high usage is worth colour. */
+	function tone(value: number): string {
+		return value >= 90 ? 'var(--color-error)' : 'var(--color-accent)';
+	}
+
+	let used = $derived(storage ? clampPercent(storage.percentage) : 0);
 </script>
 
-<div class="storage-widget">
-	{#if loading}
-		<div class="loading">Loading...</div>
-	{:else if error}
-		<div class="error">{error}</div>
-	{:else if storage}
-		<div class="storage-info">
-			<div class="storage-bar-container">
-				<div class="storage-bar" style="width: {storage.percentage}%"></div>
-			</div>
-			<div class="storage-details">
-				<span class="storage-used">{formatBytes(storage.used)} used</span>
-				<span class="storage-total">of {formatBytes(storage.total)}</span>
-			</div>
-			<div class="storage-free">
-				{formatBytes(storage.free)} free
-			</div>
+<div class="storage">
+	{#if failed}
+		<p class="notice error">Storage metrics unavailable</p>
+	{:else if !storage}
+		<p class="notice">Reading…</p>
+	{:else}
+		<div class="headline">
+			<span class="used">{formatBytes(storage.used)}</span>
+			<span class="total">of {formatBytes(storage.total)}</span>
 		</div>
+		<div
+			class="bar"
+			role="meter"
+			aria-label="Disk usage"
+			aria-valuenow={Math.round(used)}
+			aria-valuemin="0"
+			aria-valuemax="100"
+		>
+			<div class="fill" style="width: {used}%; background: {tone(used)}"></div>
+		</div>
+		<div class="details">
+			<span>{formatPercent(used)} used</span>
+			<span>{formatBytes(storage.free)} free</span>
+		</div>
+		{#if storage.path}
+			<span class="path" title={storage.path}>{storage.path}</span>
+		{/if}
 	{/if}
 </div>
 
 <style>
-	.storage-widget {
-		min-height: 60px;
-	}
-
-	.loading,
-	.error {
-		color: var(--color-text-muted);
-		font-size: 0.875rem;
-		text-align: center;
-		padding: var(--space-md);
-	}
-
-	.error {
-		color: var(--color-error, #dc2626);
-	}
-
-	.storage-info {
+	.storage {
 		display: flex;
 		flex-direction: column;
+		justify-content: center;
+		gap: var(--space-sm);
+		height: 100%;
+	}
+
+	.headline {
+		display: flex;
+		align-items: baseline;
 		gap: var(--space-sm);
 	}
 
-	.storage-bar-container {
+	.used {
+		font-family: var(--font-sans);
+		font-size: 1.25rem;
+		font-weight: 600;
+		color: var(--color-text);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.total {
+		font-size: 0.875rem;
+		color: var(--color-text-muted);
+	}
+
+	.bar {
 		height: 8px;
 		background: var(--color-bg-subtle);
 		border-radius: 4px;
 		overflow: hidden;
 	}
 
-	.storage-bar {
+	.fill {
 		height: 100%;
-		background: var(--color-accent);
 		border-radius: 4px;
-		transition: width 0.3s ease;
+		transition: width 0.4s ease;
 	}
 
-	.storage-details {
+	.details {
 		display: flex;
 		justify-content: space-between;
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		color: var(--color-text-secondary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.path {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.notice {
+		margin: 0;
+		text-align: center;
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
-	.storage-used {
-		font-weight: 500;
-		color: var(--color-text);
-	}
-
-	.storage-total {
-		color: var(--color-text-muted);
-	}
-
-	.storage-free {
-		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
+	.notice.error {
+		color: var(--color-error);
 	}
 </style>

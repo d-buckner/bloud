@@ -3,16 +3,19 @@
 /**
  * Grid store - In-memory source of truth for grid element positions.
  *
- * Positions are owned by the server. This store is populated by the poller
- * (GET /api/user/home) and updated locally only for widget add/remove
- * before the next PUT /api/user/layout confirms the change.
+ * Positions are owned by the server. This store is populated by the home
+ * snapshot (SSE, or the adaptive poller fallback) and updated locally only for
+ * widget add/remove before the next PUT /api/user/layout confirms the change.
  */
 
 import { writable, derived } from 'svelte/store';
-import { getWidgetById, isValidWidgetId } from '$lib/widgets/registry';
+import { getWidgetById } from '$lib/widgets/registry';
 import type { GridElement, HomeData } from '$lib/types';
 
 export type { GridElement };
+
+/** App tiles are uniform: one grid cell, not resizable. */
+const APP_SIZE = 1;
 
 function createGridStore() {
 	const { subscribe, set, update } = writable<GridElement[]>([]);
@@ -30,43 +33,26 @@ function createGridStore() {
 					id: app.catalog_id,
 					x: app.x,
 					y: app.y,
-					w: app.w || 1,
-					h: app.h || 1,
+					w: app.w || APP_SIZE,
+					h: app.h || APP_SIZE,
 				});
 			}
 			for (const widget of data.widgets) {
 				const def = getWidgetById(widget.id);
 				if (!def) continue;
+				// The registry size is the default; the stored size is the
+				// user's own resize and must win, or the next snapshot would
+				// undo it.
 				elements.push({
 					type: 'widget',
 					id: widget.id,
 					x: widget.x,
 					y: widget.y,
-					w: def.size.cols,
-					h: def.size.rows,
+					w: Math.max(widget.w || 0, def.size.cols),
+					h: Math.max(widget.h || 0, def.size.rows),
 				});
 			}
 			set(elements);
-		},
-
-		/** Add a widget with null position so GridStack auto-places it. */
-		addWidget(widgetId: string): void {
-			if (!isValidWidgetId(widgetId)) return;
-			update((elements) => {
-				if (elements.some((el) => el.type === 'widget' && el.id === widgetId)) return elements;
-				const widget = getWidgetById(widgetId);
-				return [
-					...elements,
-					{
-						type: 'widget',
-						id: widgetId,
-						x: null,
-						y: null,
-						w: widget?.size.cols ?? 2,
-						h: widget?.size.rows ?? 2,
-					},
-				];
-			});
 		},
 
 		removeWidget(widgetId: string): void {
@@ -83,26 +69,19 @@ function createGridStore() {
 				if (elements.some((el) => el.type === 'app' && el.id === appId)) return elements;
 				return [
 					...elements,
-					{
-						type: 'app',
-						id: appId,
-						x: null,
-						y: null,
-						w: 1,
-						h: 1,
-					},
+					{ type: 'app', id: appId, x: null, y: null, w: APP_SIZE, h: APP_SIZE },
 				];
 			});
 		},
 
+		/** Turn a widget on at its registry default size, or off. */
 		toggleWidget(widgetId: string): void {
-			if (!isValidWidgetId(widgetId)) return;
+			const def = getWidgetById(widgetId);
+			if (!def) return;
 			update((elements) => {
-				const exists = elements.some((el) => el.type === 'widget' && el.id === widgetId);
-				if (exists) {
+				if (elements.some((el) => el.type === 'widget' && el.id === widgetId)) {
 					return elements.filter((el) => !(el.type === 'widget' && el.id === widgetId));
 				}
-				const widget = getWidgetById(widgetId);
 				return [
 					...elements,
 					{
@@ -110,8 +89,8 @@ function createGridStore() {
 						id: widgetId,
 						x: null,
 						y: null,
-						w: widget?.size.cols ?? 2,
-						h: widget?.size.rows ?? 2,
+						w: def.size.cols,
+						h: def.size.rows,
 					},
 				];
 			});
