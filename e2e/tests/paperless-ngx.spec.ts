@@ -11,7 +11,7 @@ import {
 import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
 
-const PAPERLESS_URL = 'http://paperless.localhost:8080';
+const PAPERLESS_NGX_URL = 'http://paperless-ngx.localhost:8080';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Paperless-ngx uses
@@ -19,14 +19,14 @@ const PAPERLESS_URL = 'http://paperless.localhost:8080';
 // app's own sign-in page, whose "Bloud SSO" button is a form that posts the
 // authorization request, and the Authentik login happens on the issuer
 // origin, where this context has no session.
-describeApp('paperless', (app) => {
+describeApp('paperless-ngx', (app) => {
   test('converges to running', async () => {
     // Infrastructure rung: fresh-VM image pull of five containers (webserver,
     // postgres, redis, gotenberg, tika) + first-run migrations. When this
     // fails, the UI rungs below are skipped, which distinguishes a broken
     // install from a misbehaving app.
     test.setTimeout(15 * 60_000);
-    await ensureInstalled('paperless');
+    await ensureInstalled('paperless-ngx');
   });
 
   test('appears in the catalog as installed', async () => {
@@ -40,27 +40,33 @@ describeApp('paperless', (app) => {
     await expectRunningTile(app.page, 'Paperless-ngx');
   });
 
-  test('SSO gates the app: the sign-in page offers the provider and reaches the prompt', async () => {
+  test('SSO gates the app: unauthenticated visitors land on the provider', async () => {
     test.setTimeout(180_000);
     const paperless = await openAppFromHome(app.page, 'Paperless-ngx');
     try {
-      // Unauthenticated requests are redirected to the app's sign-in page,
-      // which renders one button per configured allauth provider.
-      await expect(paperless).toHaveURL(/\/accounts\/login\//, {
-        timeout: 60_000,
-      });
-      await expect(paperless.locator('input#inputUsername')).toBeVisible();
-
-      await startOidcLogin(paperless);
-
-      // The flow leaves the app origin for the issuer, where this context has
-      // no session, so it must settle on the Authentik prompt.
+      // An unauthenticated visitor is handed straight to the issuer: the app
+      // disables its own password form and redirects to the provider, so the
+      // first thing the tab shows is Authentik's prompt.
       await paperless.waitForURL(/sso\.localhost/, { timeout: 60_000 });
       const loginPage = new LoginPage(paperless);
       await loginPage.usernameField.waitFor({
         state: 'visible',
         timeout: 30_000,
       });
+
+      // The sign-in page itself is only observable with the app's own
+      // "just logged out" flag, which suppresses the automatic redirect. It
+      // must offer the provider and no password form of its own.
+      await paperless.goto(`${PAPERLESS_NGX_URL}/accounts/login/?loggedout=1`);
+      await expect(paperless).toHaveURL(/\/accounts\/login\//);
+      await expect(
+        paperless.locator('#social-login button[type="submit"]'),
+      ).toBeVisible();
+      await expect(paperless.locator('input#inputUsername')).toHaveCount(0);
+
+      // The button still starts the flow by hand.
+      await startOidcLogin(paperless);
+      await paperless.waitForURL(/sso\.localhost/, { timeout: 60_000 });
     } finally {
       await paperless.close();
     }
@@ -70,7 +76,7 @@ describeApp('paperless', (app) => {
     test.setTimeout(360_000);
     const paperless = await app.page.context().newPage();
     try {
-      await paperless.goto(PAPERLESS_URL);
+      await paperless.goto(PAPERLESS_NGX_URL);
 
       await startOidcLogin(paperless);
 
@@ -95,7 +101,7 @@ describeApp('paperless', (app) => {
       // app redirects to its dashboard. That URL is the session check: the
       // dashboard is only served to an authenticated session, and the
       // sign-in page is where an unauthenticated one lands.
-      await expect(paperless).toHaveURL(/paperless\.localhost:8080\/dashboard/, {
+      await expect(paperless).toHaveURL(/paperless-ngx\.localhost:8080\/dashboard/, {
         timeout: 120_000,
       });
       await expect(paperless.locator('input#inputUsername')).toHaveCount(0);
@@ -127,11 +133,19 @@ describeApp('paperless', (app) => {
 /**
  * Start the authorization-code flow from the app's sign-in page. allauth
  * renders one button per configured provider, and that button submits a form
- * (the POST is what hands the browser to the issuer), so the spec clicks it
- * the way a user does.
+ * (the POST is what hands the browser to the issuer).
+ *
+ * The app redirects to the issuer on its own (PAPERLESS_REDIRECT_LOGIN_TO_SSO),
+ * so normally the button is never clickable: the page submits its own form as
+ * soon as it renders. The click below is for the sign-in page that does show it
+ * (after a logout, when the app suppresses the redirect), and a click that
+ * loses the race against the automatic submission is not a failure.
  */
 async function startOidcLogin(paperless: Page): Promise<void> {
   const providerButton = paperless.locator('#social-login button[type="submit"]');
-  await providerButton.waitFor({ state: 'visible', timeout: 60_000 });
-  await providerButton.click();
+  try {
+    await providerButton.click({ timeout: 5_000 });
+  } catch {
+    // Already on its way to the issuer.
+  }
 }

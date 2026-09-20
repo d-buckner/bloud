@@ -471,7 +471,7 @@ top to bottom.
 | `apps/affine` | Own postgres+redis, OIDC config file, first-run owner bootstrap (see `INTEGRATION.md`) |
 | `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app |
 | `apps/homeassistant` | native-oidc via a pinned custom component: `pkg/appasset` remote install + sha256 provenance, marker-based YAML config merge, `Deps.RestartContainer`-driven reload |
-| `apps/paperless` | Own postgres+redis plus gotenberg/tika sidecars, dotenv config file generated for django-allauth OIDC, internal admin account |
+| `apps/paperless-ngx` | Own postgres+redis plus gotenberg/tika sidecars, dotenv config file generated for django-allauth OIDC, internal admin account |
 
 Stuck or unsure? The best place to start is `INTEGRATION.md` in whichever
 reference app shares your SSO strategy; each one documents its own

@@ -5,7 +5,7 @@
 // configuration file before the container starts (public URL, secret key,
 // internal admin, OIDC client) and verifies after start that the running app
 // actually picked it up.
-package paperless
+package paperlessngx
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
-const appName = "paperless"
+const appName = "paperless-ngx"
 
 // providerID names the OpenID Connect provider inside Paperless-ngx. It is the
 // middle segment of both the callback path registered with the identity
@@ -76,11 +76,11 @@ const adminGroupClaim = "authentik Admins"
 // first start from PAPERLESS_ADMIN_USER/PAPERLESS_ADMIN_PASSWORD. It gives the
 // Django admin and the REST API a way in that does not depend on the identity
 // provider; end users sign in through SSO and never use it. The email must
-// carry a TLD (paperless.localhost is the app's own unroutable domain) so it
+// carry a TLD (paperless-ngx.localhost is the app's own unroutable domain) so it
 // is a valid address for password resets and notification mail.
 const (
 	adminUser  = "bloud-admin"
-	adminEmail = "bloud-admin@paperless.localhost"
+	adminEmail = "bloud-admin@paperless-ngx.localhost"
 )
 
 // confFileName is the configuration file written in PreStart, mounted
@@ -99,7 +99,7 @@ type Configurator struct {
 	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)
 	secrets    configurator.AppSecretsProvider
 	logger     *slog.Logger
-	api        *paperlessAPI
+	api        *paperlessNgxAPI
 
 	// baseURL is a test seam: when set, the API client resolves to it instead
 	// of localhost:port. Never used to build request URLs by hand.
@@ -109,7 +109,7 @@ type Configurator struct {
 // NewConfigurator creates a Paperless-ngx configurator from the host Deps.
 // deps.PrimaryBaseURL supplies the current Bloud base URL (e.g.
 // "http://localhost:8080"); the app's public URL is derived from it the same
-// way routes and OIDC redirect URIs are (paperless.<host>). It is a function
+// way routes and OIDC redirect URIs are (paperless-ngx.<host>). It is a function
 // so host changes made in the UI take effect without re-registering.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
@@ -135,11 +135,11 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 }
 
 func (c *Configurator) Name() string {
-	return "apps-paperless"
+	return "apps-paperless-ngx"
 }
 
 // appExternalURL returns the public URL the browser uses to reach
-// Paperless-ngx, e.g. "http://paperless.localhost:8080". It must match the
+// Paperless-ngx, e.g. "http://paperless-ngx.localhost:8080". It must match the
 // OIDC redirect URI base registered by the host-agent (app subdomain +
 // callbackPath) or the browser round-trip fails.
 func (c *Configurator) appExternalURL() string {
@@ -148,11 +148,11 @@ func (c *Configurator) appExternalURL() string {
 		baseURL = c.ssoBaseURL()
 	}
 	if baseURL == "" {
-		return "http://paperless.localhost:8080"
+		return "http://paperless-ngx.localhost:8080"
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" {
-		return "http://paperless.localhost:8080"
+		return "http://paperless-ngx.localhost:8080"
 	}
 	parsed.Host = appName + "." + parsed.Host
 	parsed.Path = ""
@@ -428,6 +428,16 @@ func renderConf(s publicSettings) (string, error) {
 			// superusers.
 			[2]string{"PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS", baselineGroup},
 			[2]string{"PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP", adminGroupClaim},
+			// With the provider wired, the app's own password form is a second
+			// credential path Bloud does not manage, and the sign-in is one
+			// hop instead of two. Neither setting touches the Django admin
+			// login or the API credential login, which is what keeps the
+			// internal admin (and this configurator) working; that pair is the
+			// break-glass path if the provider is ever unreachable. Signup
+			// stays available, so a fresh install still bootstraps its admin
+			// account through that form.
+			[2]string{"PAPERLESS_DISABLE_REGULAR_LOGIN", "true"},
+			[2]string{"PAPERLESS_REDIRECT_LOGIN_TO_SSO", "true"},
 			[2]string{"PAPERLESS_LOGOUT_REDIRECT_URL", endpointURL(s.oidc.IssuerURL, "end-session/")},
 		)
 	}

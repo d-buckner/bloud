@@ -13,18 +13,18 @@ account.
 - Sidecars: `postgres:18`, `redis:7-alpine`, `gotenberg/gotenberg:8.37`,
   `apache/tika:3.3.1.0` (all pinned)
 - SSO strategy: `native-oidc` (callback `/accounts/oidc/bloud/login/callback/`)
-- Public URL: `http://paperless.localhost:8080` (app subdomain on the Bloud
-  base domain; `paperless.<host>:8000` direct for debugging)
+- Public URL: `http://paperless-ngx.localhost:8080` (app subdomain on the Bloud
+  base domain; `paperless-ngx.<host>:8000` direct for debugging)
 
 ## Architecture
 
 ### Container graph
 
 ```
-apps-paperless-postgres  (postgres 18)      ─┐
-apps-paperless-redis     (redis 7)          ─┼─> apps-paperless (webserver, :8000)
-apps-paperless-gotenberg (gotenberg 8.37)   ─┤   dependsOn postgres + redis
-apps-paperless-tika      (tika 3.3.1.0)     ─┘
+apps-paperless-ngx-postgres  (postgres 18)      ─┐
+apps-paperless-ngx-redis     (redis 7)          ─┼─> apps-paperless-ngx (webserver, :8000)
+apps-paperless-ngx-gotenberg (gotenberg 8.37)   ─┤   dependsOn postgres + redis
+apps-paperless-ngx-tika      (tika 3.3.1.0)     ─┘
 ```
 
 Apps own their infrastructure (repo invariant): Paperless-ngx declares its own
@@ -52,7 +52,7 @@ per-install:
 
 | Key | Why it is generated |
 |-----|---------------------|
-| `PAPERLESS_URL` | The app's public URL (`paperless.<host>:<port>`), host-set aware |
+| `PAPERLESS_URL` | The app's public URL (`paperless-ngx.<host>:<port>`), host-set aware |
 | `PAPERLESS_ACCOUNT_DEFAULT_HTTP_PROTOCOL` | The scheme of that URL. allauth builds the OIDC redirect URI with it and defaults to `https`, which would not match the URI Bloud registers with the identity provider (`http://<app>.<host>:8080` today) |
 | `PAPERLESS_SECRET_KEY` | Django's signing key. Required in v3: the app refuses to start without it |
 | `PAPERLESS_ADMIN_USER` / `_MAIL` / `_PASSWORD` | The internal admin (see below) |
@@ -61,6 +61,7 @@ per-install:
 | `PAPERLESS_SOCIAL_AUTO_SIGNUP` / `PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS` | First-login account creation |
 | `PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS` | Puts every social signup in the group Bloud declares (`bloud-users`). Without it a signed-in user has no permissions at all and the API rejects the web app's own requests (see [Permissions](#permissions)) |
 | `PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP` | Makes members of the identity provider's `authentik Admins` group superusers, the same membership that grants admin in Jellyfin and in Bloud itself |
+| `PAPERLESS_DISABLE_REGULAR_LOGIN` / `PAPERLESS_REDIRECT_LOGIN_TO_SSO` | Hides the app's own password form and hands visitors to the issuer: the provider is the only user-facing way in, while `/admin/` and the API keep the internal admin as the break-glass path (see [Internal admin account](#internal-admin-account)) |
 | `PAPERLESS_LOGOUT_REDIRECT_URL` | Ends the session at the issuer instead of the app's sign-in page |
 
 Notes that shaped the implementation:
@@ -71,7 +72,7 @@ Notes that shaped the implementation:
   deterministic, so an unchanged config never churns the file, and the
   orchestrator only recreates the container when the content actually changes.
 - **The file is mode 0644 and the mount is read-only.** Under rootless Podman
-  the container's `paperless` user (uid 1000) is a *subuid* on the host, so a
+  the container's `paperless-ngx` user (uid 1000) is a *subuid* on the host, so a
   host-written 0600 file (owner uid 501 in the dev VM) is unreadable inside the
   container. The file lives in `<appDataDir>/config`, which the app never
   chowns, so the host-agent can keep rewriting it. The app's own data
@@ -86,12 +87,16 @@ Notes that shaped the implementation:
 ### OIDC login flow
 
 1. An unauthenticated request is redirected to `/accounts/login/`, which
-   renders the username/password form plus one button per configured allauth
-   provider (`Bloud SSO`).
-2. That button submits a form whose action is `/accounts/oidc/bloud/login/?process=`;
+   renders one button per configured allauth provider (`Bloud SSO`) and no
+   password form, then hands the browser to the issuer on load
+   (`PAPERLESS_REDIRECT_LOGIN_TO_SSO`): the user journey is a single hop.
+   The app skips that hop when the request carries `?loggedout=1`, which is
+   how a deliberate logout avoids bouncing straight back into a new session
+   (and how the browser journey observes the page itself).
+2. The button submits a form whose action is `/accounts/oidc/bloud/login/?process=`;
    allauth renders a form rather than a link because the POST is what starts the
-   flow (login CSRF protection; `SOCIALACCOUNT_LOGIN_ON_GET` is off). The user
-   journey is therefore a single click.
+   flow (login CSRF protection; `SOCIALACCOUNT_LOGIN_ON_GET` is off). The
+   redirect submits that form for the visitor.
 3. The app redirects to the issuer's authorization endpoint. allauth fetches
    `http://sso.localhost:8080/application/o/paperless/.well-known/openid-configuration`
    from inside the container (the `sso.localhost:host-gateway` extra host makes
@@ -163,19 +168,25 @@ arrives through SSO. It exists so `/admin/` and the REST API are reachable
 without the identity provider, and so the sign-in page stops forwarding to the
 (closed) signup page, which would otherwise hide the SSO button.
 
-Local username/password login stays enabled (upstream default): it is the way
-in if the identity provider is unavailable.
+The app's own username/password form is disabled once the provider is wired
+(`PAPERLESS_DISABLE_REGULAR_LOGIN`, with `PAPERLESS_REDIRECT_LOGIN_TO_SSO`
+handing visitors to the issuer immediately), so the provider is the only
+user-facing way in. Neither setting covers the Django admin login or the API
+credential login, which is what keeps `bloud-admin` (and this configurator)
+working: if the identity provider is unreachable, an operator signs in at
+`/admin/` or calls the API with the generated password instead. Signup itself
+stays open on a fresh install, because the bootstrap above depends on it.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `apps/paperless/metadata.yaml` | Five containers, native-oidc SSO, port 8000, static connection settings |
-| `apps/paperless/configurator.go` | Config file generation (secret key, admin, OIDC provider document), PostStart verification, baseline-group declaration |
-| `apps/paperless/api.go` | Typed client: sign-in page, provider flow, signup, API token login, group declaration |
-| `apps/paperless/configurator_test.go` | Unit tests: rendering, secret-key persistence, admin bootstrap, group declaration, provider verification |
+| `apps/paperless-ngx/metadata.yaml` | Five containers, native-oidc SSO, port 8000, static connection settings |
+| `apps/paperless-ngx/configurator.go` | Config file generation (secret key, admin, OIDC provider document), PostStart verification, baseline-group declaration |
+| `apps/paperless-ngx/api.go` | Typed client: sign-in page, provider flow, signup, API token login, group declaration |
+| `apps/paperless-ngx/configurator_test.go` | Unit tests: rendering, secret-key persistence, admin bootstrap, group declaration, provider verification |
 | `services/host-agent/internal/e2e/paperless_test.go` | Go integration tests (install, configure, baseline-group access, ingest, uninstall) |
-| `e2e/tests/paperless.spec.ts` | Playwright user journey (home tile → SSO → dashboard → API) |
+| `e2e/tests/paperless-ngx.spec.ts` | Playwright user journey (home tile → SSO → dashboard → API) |
 
 ## Key API endpoints (webserver, :8000)
 
@@ -216,14 +227,15 @@ data directory, and the routes are gone.
 | Symptom | Cause / fix |
 |---------|-------------|
 | Container exits with `django.core.exceptions.ImproperlyConfigured: PAPERLESS_SECRET_KEY is not set` | The generated config file is missing or unreadable: check `<appDataDir>/config/paperless.conf` exists, is mode 0644, and that `PAPERLESS_CONFIGURATION_PATH` points at its in-container path. |
-| Container exits with `password authentication failed for user "paperless"` | The database password did not reach the app. Paperless-ngx reads `PAPERLESS_DBPASS` (not `PAPERLESS_DBPASSWORD`); the manifest must keep using `{{postgresPassword}}` for both containers. |
+| Container exits with `password authentication failed for user "paperless-ngx"` | The database password did not reach the app. Paperless-ngx reads `PAPERLESS_DBPASS` (not `PAPERLESS_DBPASSWORD`); the manifest must keep using `{{postgresPassword}}` for both containers. |
 | Sign-in page has no SSO button | The provider document did not load. Check `PAPERLESS_APPS` and `PAPERLESS_SOCIALACCOUNT_PROVIDERS` in the generated file, then the container log for a JSON parse error. |
 | Login fails with `invalid redirect_uri` at the issuer | The redirect URI the app sent does not match the registered one. Check `PAPERLESS_ACCOUNT_DEFAULT_HTTP_PROTOCOL` matches the scheme of `PAPERLESS_URL` (both are generated), and that `sso.callbackPath` in `metadata.yaml` still matches allauth's path for the provider id. |
 | Sign-in page says "Sign Up Closed" and shows no SSO button | No user exists yet, so `FIRST_INSTALL` forwards to the signup page while signups are open only on a fresh install. The bootstrap did not run: look for `internal admin account created` in the host-agent log. |
 | The dashboard loads but every screen is empty and the browser console shows `403` on `/api/ui_settings/` | The signed-in account has no permissions: the baseline group is missing or empty, or the account predates it. Check the host-agent log for `declared the SSO baseline group` and that the account is in `bloud-users` (Settings > Users & Groups). |
 | `declaring the SSO baseline group` fails the reconciliation | The app rejected a permission codename, which means the pinned image changed its models. Update `baselinePermissions` in `configurator.go` and the image pin together. |
+| The sign-in page shows a username/password form | Either the install has no provider wired (the settings above are generated only with an OIDC output, so an install without one keeps its local login on purpose), or the request carried `?loggedout=1`, which the app uses to suppress the redirect. |
 | Login fails with `invalid_client` at the callback | The issuer rejected the client credentials or the token endpoint auth method. Add `settings.token_auth_method` (`client_secret_basic` or `client_secret_post`) to `PAPERLESS_SOCIALACCOUNT_PROVIDERS`. |
 | `403 Forbidden` on login after repeated attempts | allauth's login rate limiting sees the proxy as the client. `PAPERLESS_ALLAUTH_TRUSTED_PROXY_COUNT=1` (already set) must stay, or set `PAPERLESS_TRUSTED_PROXIES`. |
-| Uploaded `.docx` or `.eml` never finishes consuming | Tika or Gotenberg is not up. Check `apps-paperless-tika` and `apps-paperless-gotenberg` (`podman logs`), then the webserver's `PAPERLESS_TIKA_*` settings. |
+| Uploaded `.docx` or `.eml` never finishes consuming | Tika or Gotenberg is not up. Check `apps-paperless-ngx-tika` and `apps-paperless-ngx-gotenberg` (`podman logs`), then the webserver's `PAPERLESS_TIKA_*` settings. |
 | `PostStart failed: ... sign-in page` | The generated config file did not reach the running app; the previous reconciliation may have failed before writing it. Re-run (uninstall/install or restart) and watch for `wrote Paperless-ngx config file` in the host-agent log. |
 | Data directory survives a `clearData` uninstall | The app's data volumes are emptied from inside the container before removal, so an app whose containers are stopped cannot release them. Start the app once, then uninstall again. |

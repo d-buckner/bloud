@@ -97,6 +97,7 @@ well.
 | **Photos** | Immich | Private photo and video management |
 | **Productivity** | Home Assistant | Open-source home automation platform |
 | **Productivity** | AFFiNE | AI-native knowledge base: docs, databases, whiteboards |
+| **Productivity** | Paperless-ngx | Document management: scans and PDFs become a searchable archive |
 
 ## One login everywhere
 
@@ -106,7 +107,7 @@ Apps get SSO automatically, using whatever strategy fits them:
 |---|---|---|
 | **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
 | **Forward Auth** | Traefik asks Authentik before reaching the app | Navidrome |
-| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Home Assistant, Immich, AFFiNE |
+| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Home Assistant, Immich, AFFiNE, Paperless-ngx |
 
 Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) have
 their own documented login path.
@@ -202,7 +203,7 @@ bloud/
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
 │   ├── affine/                    # + authentik/, immich/,
-│   └── traefik/                   #   navidrome/, paperless/
+│   └── traefik/                   #   navidrome/, paperless-ngx/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap
