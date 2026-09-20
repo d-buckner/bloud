@@ -25,6 +25,9 @@ jobs:
         run: apk add --no-cache nodejs npm git build-base
 
       - name: Checkout
+        # Stays on v4 on purpose: the Node 20 deprecation notice comes from the
+        # GitHub runner, and this job runs on the Forgejo runner, which controls
+        # its own action runtime. Bump it when that runtime ships Node 24.
         uses: actions/checkout@v4
 
       - name: Install dependencies

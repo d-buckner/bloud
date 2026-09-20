@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-
 // ReadyFunc decides whether an observed response means "ready".
 type ReadyFunc func(status int, body []byte) bool
 

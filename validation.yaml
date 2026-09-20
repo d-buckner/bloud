@@ -18,6 +18,11 @@ tiers:
       - id: go-lint
         cwd: .
         run: npm run lint:go
+      # gofmt owns Go layout, and nothing enforced it before, so the tree had
+      # drifted (20 files when this command landed).
+      - id: gofmt
+        cwd: .
+        run: npm run check:gofmt
       - id: web-unit
         cwd: .
         run: npm run test --workspace=@bloud/host-agent-web
@@ -66,12 +71,12 @@ inference:
     - pattern: "services/host-agent/web/**"
       triggers: [web-unit, web-check-host-agent, web-lint, web-build]
     - pattern: "services/host-agent/**"
-      triggers: [go-host-agent, go-host-agent-race, go-lint]
+      triggers: [go-host-agent, go-host-agent-race, go-lint, gofmt]
     - pattern: "apps/**"
-      triggers: [go-apps, go-lint]
+      triggers: [go-apps, go-lint, gofmt]
       riskAreas: [app-install, embed]
     - pattern: "cli/**"
-      triggers: [go-cli, go-lint]
+      triggers: [go-cli, go-lint, gofmt]
     - pattern: "e2e/**"
       triggers: []
       riskAreas: [playwright]

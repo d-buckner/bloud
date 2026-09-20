@@ -86,6 +86,7 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 	c.pollInterval = 10 * time.Millisecond
 	return c
 }
+
 // testCtx bounds a PostStart wait the way the orchestrator now does: a deadline
 // on the pass context. Configurators no longer carry their own post-start timeout;
 // the framework's PostStartBudget is the ceiling and tests reproduce it here.

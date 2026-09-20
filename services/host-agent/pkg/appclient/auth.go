@@ -57,12 +57,12 @@ func (ts *TokenSpec) apply(req *http.Request) error {
 // cachedToken memoizes a fetch func with single-flight so concurrent callers
 // share one login. Invalidate clears the cache so the next Token refetches.
 type cachedToken struct {
-	mu      sync.Mutex
-	fetch   func(ctx context.Context) (string, error)
-	value   string
-	hasVal  bool
+	mu       sync.Mutex
+	fetch    func(ctx context.Context) (string, error)
+	value    string
+	hasVal   bool
 	fetching bool
-	waiters chan struct{}
+	waiters  chan struct{}
 }
 
 // CachedToken wraps a fetch func with memoization + single-flight.

@@ -78,7 +78,7 @@ type Configurator struct {
 	// baseURLOverride redirects API calls in tests (httptest servers).
 	baseURLOverride string
 
-	pollInterval     time.Duration
+	pollInterval time.Duration
 
 	// api is the typed HTTP surface (transport + retry + redirect policy live
 	// behind it). Built in the constructor from Deps.HTTP.

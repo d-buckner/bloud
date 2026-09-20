@@ -77,7 +77,7 @@ func (p RetryPolicy) withDefaults() RetryPolicy {
 func isTransientStatus(status int) bool {
 	switch status {
 	case http.StatusRequestTimeout, // 408
-		425, // Too Early
+		425,                        // Too Early
 		http.StatusTooManyRequests, // 429
 		http.StatusInternalServerError,
 		http.StatusBadGateway,

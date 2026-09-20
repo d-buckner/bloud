@@ -6,7 +6,7 @@
 # command to validation.yaml instead, so local runs and CI stay identical.
 #
 # The fast tier covers: host-agent tests, orchestrator race tests, apps tests,
-# cli tests, golangci-lint (cyclop), web unit tests, svelte-check, ESLint,
+# cli tests, golangci-lint (cyclop), gofmt, web unit tests, svelte-check, ESLint,
 # the static production build, the license-header check, the prose lint (Vale,
 # docs plus source comments), the em dash check, and the docs link check.
 name: CI
@@ -17,13 +17,15 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`: the label migrates to Ubuntu 26 in
+    # October 2026, and the runner image is part of this job's contract.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           cache-dependency-path: |
@@ -31,8 +33,15 @@ jobs:
             apps/go.sum
             cli/go.sum
 
+      # setup-go v7 exports GOTOOLCHAIN=local, which stops Go from downloading a
+      # newer toolchain on demand. The fast tier needs that switch: golangci-lint
+      # v2.13.2 requires Go >= 1.26, while this job installs 1.25 for the tests.
+      # Written after setup-go so it wins over the action's own export.
+      - name: Allow the lint toolchain switch
+        run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
+
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
