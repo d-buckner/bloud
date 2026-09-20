@@ -19,9 +19,12 @@ Tailscale
 # --- Products, projects, and infrastructure ----------------------------
 # Written both ways in the docs -- capitalized as the product name, lowercase
 # as the app id, container name, or binary -- so `(?i)` accepts both.
+(?i)allauth
+(?i)allauth's
 (?i)authentik
 (?i)authentik's
 (?i)bloud
+(?i)gotenberg
 (?i)headscale
 (?i)headscale's
 (?i)homeassistant
@@ -44,6 +47,7 @@ Tailscale
 (?i)tailnet
 (?i)tailnet's
 (?i)timescaledb
+(?i)tika
 (?i)traefik
 (?i)tsnet
 (?i)vitest
@@ -81,6 +85,9 @@ Tailscale
 (?i)cgroup
 (?i)chan
 (?i)checksummed
+(?i)chown
+(?i)chowned
+(?i)chowns
 (?i)cleardata
 (?i)cli
 (?i)cli's
@@ -113,6 +120,7 @@ Tailscale
 (?i)devdependency
 (?i)devops
 (?i)dirs
+(?i)dotenv
 (?i)effectful
 (?i)enqueued
 (?i)enqueueing
@@ -186,6 +194,7 @@ Tailscale
 (?i)parallelization
 (?i)param
 (?i)passwordless
+(?i)pdfs
 (?i)phase_detail
 (?i)pidfile
 (?i)pnpm
@@ -228,6 +237,8 @@ Tailscale
 (?i)serializable
 (?i)sev
 (?i)sha
+(?i)signup
+(?i)signups
 (?i)sonarr
 (?i)spa's
 (?i)spoofable
@@ -256,9 +267,12 @@ Tailscale
 (?i)tooltip
 (?i)traefik's
 (?i)traefikgen
+(?i)uid
+(?i)uisettings
 (?i)uncancellable
 (?i)unforgeable
 (?i)unix
+(?i)unmangled
 (?i)unmarshal
 (?i)unpatched
 (?i)unserved
@@ -275,6 +289,7 @@ Tailscale
 (?i)vm's
 (?i)vz
 (?i)walkthrough
+(?i)webserver
 (?i)websocket
 (?i)wirings
 (?i)yaml

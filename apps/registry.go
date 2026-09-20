@@ -27,6 +27,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/immich"
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
+	_ "codeberg.org/d-buckner/bloud/apps/paperless"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -46,6 +47,7 @@ func NodeNames() []string {
 		"apps-immich-server",
 		"apps-jellyfin",
 		"apps-navidrome",
+		"apps-paperless",
 	}
 }
 

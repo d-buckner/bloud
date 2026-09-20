@@ -1,0 +1,165 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+name: paperless
+displayName: Paperless-ngx
+description: Document management system that turns scans and PDFs into a searchable archive
+category: productivity
+port: 8000
+estimatedSizeMB: 2400
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# SSO via django-allauth's generic OpenID Connect provider, which Paperless-ngx
+# ships (PAPERLESS_APPS + PAPERLESS_SOCIALACCOUNT_PROVIDERS). Both settings
+# carry per-install client credentials, so they are generated into
+# <appDataDir>/config/paperless.conf by the configurator rather than declared
+# here; the provider id "bloud" is also the callback path segment below.
+sso:
+  strategy: native-oidc
+  callbackPath: /accounts/oidc/bloud/login/callback/
+  userCreation: true
+
+containers:
+  - name: apps-paperless-postgres
+    image: docker.io/library/postgres:18
+    network: paperless-internal
+    restartPolicy: always
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: paperless
+      POSTGRES_PASSWORD: "{{postgresPassword}}"
+    volumes:
+      # PostgreSQL 18 keeps its cluster in a versioned subdirectory of
+      # /var/lib/postgresql, which is therefore the volume path (not
+      # /var/lib/postgresql/data as in earlier images).
+      - source: "{{appDataDir}}/postgres"
+        destination: /var/lib/postgresql
+    healthCheck:
+      test: ["CMD-SHELL", "pg_isready -U paperless -d paperless"]
+      interval: 5
+      timeout: 5
+      retries: 10
+
+  # Celery broker. Paperless only needs the Redis protocol, so the broker is
+  # the same redis:7-alpine the other multi-container apps use (Valkey is a
+  # drop-in if the license ever matters here).
+  - name: apps-paperless-redis
+    image: docker.io/redis:7-alpine
+    network: paperless-internal
+    restartPolicy: always
+    healthCheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5
+      timeout: 5
+      retries: 5
+
+  # Gotenberg converts Office documents and .eml to PDF before Paperless
+  # parses them. The chromium route is used for .eml, so scripts and external
+  # content are switched off and file access is restricted (upstream defaults).
+  - name: apps-paperless-gotenberg
+    image: docker.io/gotenberg/gotenberg:8.37
+    network: paperless-internal
+    restartPolicy: always
+    command:
+      - gotenberg
+      - --chromium-disable-javascript=true
+      - --chromium-allow-list=file:///tmp/.*
+    healthCheck:
+      test: ["CMD-SHELL", "curl -fsS --max-time 5 -o /dev/null http://localhost:3000/health"]
+      interval: 5
+      timeout: 10
+      retries: 30
+
+  # Tika extracts text from the PDFs Gotenberg produces.
+  - name: apps-paperless-tika
+    image: docker.io/apache/tika:3.3.1.0
+    network: paperless-internal
+    restartPolicy: always
+    environment:
+      # The JVM sizes its default heap from the host's memory, not from a
+      # container limit (the container runtime sets none), so it is bounded
+      # explicitly: Tika parses one document at a time and does not need more.
+      # JAVA_TOOL_OPTIONS, not JAVA_OPTS: the image's entrypoint does not
+      # forward the latter, while the JVM itself picks up the former.
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx1g
+    healthCheck:
+      # The image ships no curl or wget (only bash and the JVM), so the probe
+      # opens the socket itself; Tika answers 200 on /tika once it is serving.
+      test:
+        - CMD-SHELL
+        - "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9998 && printf \"GET /tika HTTP/1.0\\r\\n\\r\\n\" >&3 && head -c 20 <&3 | grep -q 200'"
+      interval: 5
+      timeout: 10
+      retries: 30
+
+  - name: apps-paperless
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.2.0
+    networks:
+      - paperless-internal
+      - apps-net
+    restartPolicy: always
+    ports:
+      - host: 8000
+        container: 8000
+    environment:
+      TZ: Etc/UTC
+      PAPERLESS_DBENGINE: postgresql
+      PAPERLESS_DBHOST: apps-paperless-postgres
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: paperless
+      PAPERLESS_DBPASS: "{{postgresPassword}}"
+      PAPERLESS_REDIS: redis://apps-paperless-redis:6379
+      PAPERLESS_TIKA_ENABLED: "true"
+      PAPERLESS_TIKA_ENDPOINT: http://apps-paperless-tika:9998
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://apps-paperless-gotenberg:3000
+      # Traefik is the app's only proxy hop. Without this, allauth reads the
+      # proxy's address as every client's address and its login rate limiter
+      # answers 403 once the shared bucket is spent.
+      PAPERLESS_ALLAUTH_TRUSTED_PROXY_COUNT: "1"
+      # Per-install settings (public URL, secret key, admin credentials, OIDC
+      # client) are generated into this file by the configurator: the app has
+      # no config volume of its own and these values cannot be expressed in a
+      # static manifest.
+      PAPERLESS_CONFIGURATION_PATH: /usr/src/paperless/conf/paperless.conf
+    # sso.localhost resolves to the host gateway inside the VM, letting the
+    # server reach the OIDC provider (traefik) by the same name browsers use
+    # (any *.localhost resolves to 127.0.0.1 on the host, port-forwarded).
+    extraHosts:
+      - sso.localhost:host-gateway
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /usr/src/paperless/data
+      - source: "{{appDataDir}}/media"
+        destination: /usr/src/paperless/media
+      - source: "{{appDataDir}}/consume"
+        destination: /usr/src/paperless/consume
+      - source: "{{appDataDir}}/export"
+        destination: /usr/src/paperless/export
+      - source: "{{appDataDir}}/config"
+        destination: /usr/src/paperless/conf
+        options: [ro]
+    healthCheck:
+      # /accounts/login/ is the sign-in page every unauthenticated request is
+      # redirected to; the image ships curl (its own HEALTHCHECK uses it).
+      test: ["CMD-SHELL", "curl -fsS --max-time 5 -o /dev/null http://localhost:8000/accounts/login/"]
+      interval: 5
+      timeout: 10
+      retries: 90
+    dependsOn:
+      # Only the boot-time dependencies: Tika and Gotenberg are called per
+      # document, and Paperless starts fine without them (the first Office
+      # document would fail until they are up).
+      - apps-paperless-postgres
+      - apps-paperless-redis

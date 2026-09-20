@@ -38,6 +38,11 @@ type Spec struct {
 	Transport *http.Transport
 	// Logger is the structured logger. nil → slog.Default().
 	Logger *slog.Logger
+	// Jar persists cookies between calls. Needed by apps whose login is
+	// cookie-bound (e.g. a Django CSRF token: the token from a GET must be
+	// presented back with the cookie it was issued against). nil means no
+	// cookie storage, like a bare http.Client.
+	Jar http.CookieJar
 
 	// FollowRedirects defaults true. HA's trust/redirect probes need
 	// ErrUseLastResponse; set *FollowRedirects=false to see the 3xx itself.
@@ -81,6 +86,7 @@ func New(spec Spec) *Client {
 	c.http = &http.Client{
 		Transport: transport,
 		Timeout:   c.timeout,
+		Jar:       spec.Jar,
 	}
 	if spec.FollowRedirects != nil && !*spec.FollowRedirects {
 		c.http.CheckRedirect = func(*http.Request, []*http.Request) error {

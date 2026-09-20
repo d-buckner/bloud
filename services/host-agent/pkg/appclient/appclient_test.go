@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -203,4 +204,33 @@ func TestAlreadyDone_ChangedFalse(t *testing.T) {
 		Ensure(context.Background())
 	require.NoError(t, err)
 	assert.False(t, changed, "AlreadyDoneFunc → changed=false")
+}
+
+func TestJar_PresentsCookieOnLaterCalls(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/issue":
+			http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "token-value", Path: "/"})
+			_, _ = w.Write([]byte("issued"))
+		case "/verify":
+			cookie, err := r.Cookie("csrftoken")
+			if err != nil || cookie.Value != "token-value" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := New(Spec{Name: "test", BaseURL: srv.URL, Jar: jar})
+
+	_, err = c.GET("/issue").Do(context.Background())
+	require.NoError(t, err)
+	body, err := c.GET("/verify").Do(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(body), "the cookie issued by the first call must be sent with the next")
 }
