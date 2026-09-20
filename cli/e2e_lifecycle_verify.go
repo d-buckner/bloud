@@ -24,7 +24,7 @@ func (r *lifecycle) runInstallFlow() error {
 		return err
 	}
 	r.step("Running Jellyfin browser install and login flow")
-	return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password)
+	return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password, r.apiTokenBestEffort())
 }
 
 // verifyAfterRestart restarts Jellyfin and the host-agent and re-runs the

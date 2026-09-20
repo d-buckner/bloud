@@ -14,7 +14,7 @@ func (r *lifecycle) verifyAfterRestart() error {
 	}
 	if !r.cfg.hostOnly {
 		r.step("Verifying browser flow after service restarts")
-		return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password)
+		return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password, r.apiTokenBestEffort())
 	}
 	return nil
 }

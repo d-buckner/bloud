@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/cli/executor"
@@ -55,6 +57,42 @@ func readAPIToken(ctx context.Context) (string, error) {
 // value is shell-quoted: the command runs through a shell inside the guest.
 func authHeader(token string) string {
 	return "-H " + shellQuote("Authorization: Bearer "+token)
+}
+
+// apiTokenPath returns the credential path for the runtime this lifecycle
+// deployed. The e2e runners choose their own --runtime-dir (default
+// /var/tmp/bloud-e2e-runtime), which is not the native backend's default dir,
+// so the path must come from the deployment rather than from devBackend().
+func (r *lifecycle) apiTokenPath() string {
+	return filepath.Join(r.cfg.remoteDir, "data", "host-agent-api-token")
+}
+
+// readAPITokenInRuntime reads the credential from the runtime this lifecycle
+// deployed, through the same remote execution seam as every other guest command.
+func (r *lifecycle) readAPITokenInRuntime() (string, error) {
+	out, err := r.remoteOutput("cat " + shellQuote(r.apiTokenPath()))
+	if err != nil {
+		return "", fmt.Errorf("reading API token (%s): %w", r.apiTokenPath(), err)
+	}
+	token := strings.TrimSpace(out)
+	if token == "" {
+		return "", fmt.Errorf("API token is empty (%s) — is host-agent running?", r.apiTokenPath())
+	}
+	return token, nil
+}
+
+// apiTokenBestEffort reads this runtime's credential, warning (not failing) when
+// it is unavailable: the e2e API helpers have their own fallback chain, and a
+// Playwright-only run against an already-running runtime must not be blocked by
+// a missing token file.
+func (r *lifecycle) apiTokenBestEffort() string {
+	token, err := r.readAPITokenInRuntime()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not read the host-agent API token (%v); "+
+			"e2e API helpers will fall back to BLOUD_E2E_RUNTIME_DIR or ./bloud token\n", err)
+		return ""
+	}
+	return token
 }
 
 // cmdToken prints the runtime's host-agent API token, so other tooling (the
