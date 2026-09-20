@@ -183,3 +183,15 @@ func TestLocalRunStream(t *testing.T) {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), "err")
 	}
 }
+
+// The CLI must present the host-agent API credential, which the secrets manager
+// writes next to secrets.json in the runtime data dir (see
+// services/host-agent/internal/secrets.APITokenFileName — the two modules are
+// separate Go modules, so the name is mirrored here and pinned by a test on the
+// host-agent side).
+func TestDataDirs_APITokenPath(t *testing.T) {
+	d := DataDirs{DataDir: "/var/tmp/bloud-dev-runtime/data"}
+	if got, want := d.APITokenPath(), "/var/tmp/bloud-dev-runtime/data/host-agent-api-token"; got != want {
+		t.Errorf("APITokenPath() = %q, want %q", got, want)
+	}
+}

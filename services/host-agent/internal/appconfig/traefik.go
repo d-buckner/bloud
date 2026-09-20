@@ -87,11 +87,15 @@ func (c *TraefikConfigurator) Remove(ctx context.Context, _ *configurator.AppSta
 }
 
 func (c *TraefikConfigurator) staticConfig() string {
+	// No forwardedHeaders block on purpose. Traefik's default is to discard
+	// client-supplied X-Forwarded-* / X-Real-Ip from untrusted peers and set
+	// them itself; `insecure: true` disabled that, letting any client assert an
+	// arbitrary source address. host-agent no longer reads client IP at all
+	// (PR 4 dropped middleware.RealIP), and the forward-auth middlewares trust
+	// the values Traefik sets, so the secure default is the whole config.
 	return `entryPoints:
   web:
     address: ":` + strconv.Itoa(c.traefikPort) + `"
-    forwardedHeaders:
-      insecure: true
 providers:
   file:
     directory: "/dynamic"

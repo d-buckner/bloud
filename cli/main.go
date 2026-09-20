@@ -93,6 +93,7 @@ func dispatch(cmd string, args []string) int {
 		"e2e":       cmdE2E,
 		"validate":  cmdValidate,
 		"depgraph":  func([]string) int { return cmdDepGraph() },
+		"token":     func([]string) int { return cmdToken() },
 	}
 	if h, ok := handlers[cmd]; ok {
 		return h(args)
@@ -142,6 +143,7 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Other:")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
+	fmt.Println("  token           Print the host-agent API token (for ad-hoc curl / e2e)")
 	fmt.Println()
 	switch usageBackend() {
 	case "qemu":

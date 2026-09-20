@@ -269,7 +269,7 @@ func (r *lifecycle) run() (runErr error) {
 	}
 
 	r.step("Resetting prior managed Jellyfin state")
-	if err := r.remoteRun(remoteResetJellyfinScript); err != nil {
+	if err := r.remoteRun(remoteResetJellyfinScript, r.cfg.remoteDir); err != nil {
 		return err
 	}
 
@@ -278,7 +278,7 @@ func (r *lifecycle) run() (runErr error) {
 	}
 
 	r.step("Asserting installed Jellyfin host state")
-	if err := r.remoteRun(remoteAssertInstalledScript, r.cfg.traefikDir); err != nil {
+	if err := r.remoteRun(remoteAssertInstalledScript, r.cfg.traefikDir, r.cfg.remoteDir); err != nil {
 		return err
 	}
 

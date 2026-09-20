@@ -179,6 +179,7 @@ func newEventsTestRouterMux(t *testing.T) (http.Handler, *FakeAppStore) {
 		DataDir:           tmpDir,
 		TraefikDynamicDir: tmpDir,
 		Port:              8080,
+		APIToken:          testAPIToken,
 	}
 
 	fCatalog := NewFakeCatalogCache()
@@ -197,7 +198,8 @@ func newEventsTestRouterMux(t *testing.T) (http.Handler, *FakeAppStore) {
 }
 
 // TestEventsHTTP_StreamSnapshotAndResync verifies the full router path:
-// loopback auth, snapshot on connect, and resnapshot after a store change.
+// authenticated CLI request, snapshot on connect, and resnapshot after a store
+// change.
 func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 	router, fAppStore := newEventsTestRouterMux(t)
 	fAppStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin", Status: "running"})
@@ -209,6 +211,9 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/apps/events", nil)
 	require.NoError(t, err)
+	// The client connects over loopback, which is only a trusted *position* —
+	// the credential is the API token (PR 4).
+	req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()

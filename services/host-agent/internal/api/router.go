@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
@@ -208,7 +209,7 @@ func NewRouter(
 		})
 	}
 
-	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port)
+	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port, cfg.Hosts)
 
 	homeMod := NewHomeModule(positionStore, appStore, launchPathsFn, logger)
 	eventsMod := NewEventsModule(eventsBus, homeMod.GetLayout, logger)
@@ -233,7 +234,11 @@ func NewRouter(
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// NOTE: no middleware.RealIP. It rewrites r.RemoteAddr from client-supplied
+	// True-Client-IP / X-Real-IP / X-Forwarded-For, and RemoteAddr is the input
+	// to the trusted-position check below — trusting it made admin reachable by
+	// anyone who could set a header (see authMiddlewareFn). The client address
+	// is not used for anything else in host-agent.
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
@@ -248,7 +253,7 @@ func NewRouter(
 	// outlive a single request. Non-streaming routes opt into the timeout
 	// explicitly via With(requestTimeout).
 	requestTimeout := middleware.Timeout(60 * time.Second)
-	authMiddleware := authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets)
+	authMiddleware := authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets, cfg.APIToken)
 
 	// Public routes
 	pub := r.With(requestTimeout)
@@ -265,10 +270,11 @@ func NewRouter(
 		stream.Get("/apps/{name}/logs", logsMod.StreamLogsHandler())
 		stream.Get("/system/status/stream", logsMod.SystemStatusStreamHandler())
 
-		// Non-streaming public routes
+		// Non-streaming public routes. The setup pair must be reachable before
+		// any credential exists — first-run has no user to authenticate as.
 		npub := api.With(requestTimeout)
 		npub.Get("/health", systemMod.HealthHandler())
-		npub.Get("/setup/status", settingsMod.SetupStatusHandler())
+		NewSetupRouter(settingsMod, npub)
 		npub.Get("/auth/me", authMod.GetCurrentUserHandler())
 
 		// System info (public, no auth required)
@@ -540,10 +546,29 @@ func rebuildStreamHandler() http.HandlerFunc {
 
 // ---- Middleware ----
 
-func authMiddlewareFn(sessionStore store.SessionStoreInterface, logger *slog.Logger, trustedNets []string) func(http.Handler) http.Handler {
+// authMiddlewareFn authenticates a request by one of two credentials:
+//
+//  1. The API token, honoured only from a trusted position (loopback or
+//     TrustedLocalNets). This is the CLI/automation credential and yields
+//     RoleAdmin.
+//  2. A session cookie, which carries its own role.
+//
+// Position is a *scope*, never a credential. Before PR 4 the trusted position
+// alone granted admin, and because the position was derived from
+// client-controlled forwarding headers (chi's RealIP reads True-Client-IP,
+// X-Real-IP, X-Forwarded-For) any client could claim loopback and become
+// admin. Two consequences are load-bearing here:
+//
+//   - The token check must not short-circuit the session path. Every browser
+//     request arrives through Traefik, whose backend connection is loopback,
+//     so a position-first implementation would force the dashboard through
+//     the token path and lock users out.
+//   - An empty configured token disables the position path entirely (fail
+//     closed) rather than authenticating everything.
+func authMiddlewareFn(sessionStore store.SessionStoreInterface, logger *slog.Logger, trustedNets []string, apiToken string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isLocalRequest(r, trustedNets) {
+			if tokenGrantsAdmin(r, trustedNets, apiToken) {
 				user := &store.User{Username: "_cli", Role: store.RoleAdmin}
 				ctx := context.WithValue(r.Context(), userContextKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -587,6 +612,31 @@ func authMiddlewareFn(sessionStore store.SessionStoreInterface, logger *slog.Log
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// tokenGrantsAdmin reports whether the request presents the API token from a
+// trusted position. Both halves are required: the token is the credential, the
+// position only bounds where the credential is accepted.
+func tokenGrantsAdmin(r *http.Request, trustedNets []string, apiToken string) bool {
+	if apiToken == "" || !isLocalRequest(r, trustedNets) {
+		return false
+	}
+	presented := bearerToken(r)
+	if presented == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(apiToken)) == 1
+}
+
+// bearerToken extracts the credential from an "Authorization: Bearer <token>"
+// header, returning "" when the header is absent or uses another scheme.
+func bearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(header[len(prefix):])
 }
 
 func adminMiddlewareFn(next http.Handler) http.Handler {

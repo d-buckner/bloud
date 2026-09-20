@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"github.com/go-chi/chi/v5"
@@ -27,7 +28,8 @@ func newAuthModule(t *testing.T, cfg *AuthConfig) (*authModule, *FakeAuthentikCl
 	prefsStore := NewFakePreferencesStore()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	mod := NewAuthModule(client, newAuthConfigRef(cfg), prefsStore, sessStore, logger, 0)
+	mod := NewAuthModule(client, newAuthConfigRef(cfg), prefsStore, sessStore, logger, 0,
+		hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
 	return mod, client, sessStore
 }
 
@@ -190,7 +192,7 @@ func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 
 func TestAuthHTTP_Login_DirectAgentPort(t *testing.T) {
 	client := NewFakeAuthentikClient()
-	mod := NewAuthModule(client, newAuthConfigRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000)
+	mod := NewAuthModule(client, newAuthConfigRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000, hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
 	r := chi.NewRouter()
 	NewAuthRouter(mod, r)
 

@@ -133,6 +133,7 @@ func runServer() {
 		TSAuthKey:             cfg.TSAuthKey,
 		HostLabel:             cfg.HostLabel,
 		TrustedLocalNets:      cfg.TrustedLocalNets,
+		APIToken:              cfg.APIToken,
 		Hosts:                 hosts,
 		EventsBus:             eventsBus,
 		HostStore:             hostStore,

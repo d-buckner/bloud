@@ -323,3 +323,95 @@ func TestManager_FilePermissions(t *testing.T) {
 		t.Errorf("expected permissions 0600, got %o", perm)
 	}
 }
+
+// The API token is the credential the CLI and e2e helpers present to reach the
+// admin surface from a trusted position (PR 4). It must exist on every install,
+// including ones whose secrets.json predates the field.
+func TestManager_APITokenGeneratedAndPersisted(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretsPath := filepath.Join(tmpDir, "secrets.json")
+
+	m := NewManager(secretsPath)
+	if err := m.Load(); err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+	token := m.GetAPIToken()
+	if token == "" {
+		t.Fatal("apiToken not generated")
+	}
+	if len(token) < 32 {
+		t.Errorf("apiToken too short to be a credential: %d chars", len(token))
+	}
+
+	// The token must survive a reload with the same value, or every running
+	// CLI invocation would be invalidated by a host-agent restart.
+	again := NewManager(secretsPath)
+	if err := again.Load(); err != nil {
+		t.Fatalf("failed to reload: %v", err)
+	}
+	if again.GetAPIToken() != token {
+		t.Error("apiToken changed across reload")
+	}
+}
+
+func TestManager_APITokenBackfilledOnLegacyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretsPath := filepath.Join(tmpDir, "secrets.json")
+
+	// A file written before the field existed.
+	legacy := `{"postgresPassword":"p","authentikSecretKey":"a","authentikBootstrapPassword":"b",` +
+		`"authentikBootstrapToken":"c","ldapOutpostToken":"d","ldapBindPassword":"e","ssoHostSecret":"f"}`
+	if err := os.WriteFile(secretsPath, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(secretsPath)
+	if err := m.Load(); err != nil {
+		t.Fatalf("failed to load legacy file: %v", err)
+	}
+	if m.GetAPIToken() == "" {
+		t.Fatal("apiToken was not backfilled into an existing secrets file")
+	}
+	if m.GetPostgresPassword() != "p" {
+		t.Error("backfill must not rotate existing secrets")
+	}
+}
+
+// The token file is the CLI's read path (a plain cat, so the CLI never parses
+// JSON or holds the whole secrets file). It must be owner-only, like
+// secrets.json.
+func TestManager_WritesAPITokenFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretsPath := filepath.Join(tmpDir, "secrets.json")
+
+	m := NewManager(secretsPath)
+	if err := m.Load(); err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+
+	tokenPath := filepath.Join(tmpDir, APITokenFileName)
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("API token file missing: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("API token file mode = %o, want 600", perm)
+	}
+	data, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != m.GetAPIToken()+"\n" {
+		t.Errorf("API token file content mismatch: %q", got)
+	}
+}
+
+// The CLI (a separate Go module) mirrors this filename in
+// cli/executor.DataDirs.APITokenPath, and e2e/lib/api.ts reads the same file.
+// Renaming it here means updating both.
+func TestAPITokenFileNameIsStable(t *testing.T) {
+	if APITokenFileName != "host-agent-api-token" {
+		t.Fatalf("APITokenFileName changed to %q: update cli/executor.DataDirs.APITokenPath "+
+			"and e2e/lib/api.ts, then this guard", APITokenFileName)
+	}
+}

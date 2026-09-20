@@ -5,6 +5,7 @@ package executor
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 )
 
@@ -25,6 +26,14 @@ type DataDirs struct {
 	HostAgentDir string // where the host-agent binary lives
 	DataDir      string // app data, secrets, traefik config
 	AppsDir      string // mounted apps directory
+}
+
+// APITokenPath returns the path of the host-agent API credential file. The
+// secrets manager writes it (mode 0600) next to secrets.json; the host-agent
+// module is a separate Go module from the CLI, so the filename is mirrored here
+// and pinned from the host-agent side (secrets.APITokenFileName).
+func (d DataDirs) APITokenPath() string {
+	return filepath.Join(d.DataDir, "host-agent-api-token")
 }
 
 // SSHHost is a Host reached through a Transport (Lima VM via limactl, QEMU

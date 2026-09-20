@@ -532,7 +532,11 @@ func TestAppsHTTP_Icon_Missing(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestAppsHTTP_RefreshCatalog(t *testing.T) {
+// TestAppsHTTP_RefreshCatalogIsNotOnTheMemberRouter pins that refresh-catalog is
+// admin-only. It used to be registered on the member router and then
+// re-registered on the admin router, leaving the effective middleware to depend
+// on chi's last-registration-wins order.
+func TestAppsHTTP_RefreshCatalogIsNotOnTheMemberRouter(t *testing.T) {
 	cache := NewFakeCatalogCache()
 	appStore := NewFakeAppStore()
 	orch := newFakeOrchestrator()
@@ -549,5 +553,6 @@ func TestAppsHTTP_RefreshCatalog(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"refresh-catalog must be registered on the admin router only")
 }

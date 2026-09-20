@@ -28,6 +28,9 @@ type Config struct {
 	TrustedLocalNets []string
 	// SSO configuration
 	SSOHostSecret   string // Master secret for deriving client secrets
+	// APIToken is the bearer credential for the admin API surface from a trusted
+	// position (loopback / TrustedLocalNets). Empty disables that path.
+	APIToken string
 	SSOBaseURL      string // Base URL for callbacks (e.g., "http://localhost:8080")
 	SSOAuthentikURL string // Authentik external URL for discovery (e.g., "http://localhost:8080")
 	SSOIssuerURL    string // OIDC issuer base URL reachable from app containers (e.g., "http://sso.localhost:8080"); empty falls back to SSOAuthentikURL
@@ -96,6 +99,13 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The admin API credential for trusted-position callers (CLI, e2e). An empty
+	// value disables the position-based admin path entirely — see
+	// api.authMiddlewareFn — so a resolution failure fails closed.
+	apiToken, err := getSecret("BLOUD_API_TOKEN", secretsMgr.GetAPIToken())
+	if err != nil {
+		return nil, err
+	}
 
 	// Authentik token priority: env var > api-token file (created by configurator) > secrets.json bootstrap token.
 	// The api-token file is created by the Authentik configurator via Django shell and is always valid,
@@ -132,6 +142,7 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		TSAuthKey:              getEnv("BLOUD_TS_AUTHKEY", ""),
 		HostLabel:              getEnv("BLOUD_HOST_LABEL", hostname()),
 		PostgresPassword:       postgresPassword,
+		APIToken:               apiToken,
 		Secrets:                secretsMgr,
 	}
 

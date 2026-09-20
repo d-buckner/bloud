@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,6 +70,16 @@ func runPlaywright(root, username, password string) error {
 		"BLOUD_E2E_USERNAME="+username,
 		"BLOUD_E2E_PASSWORD="+password,
 	)
+	// The API helpers authenticate admin calls with the runtime credential.
+	// Best-effort: e2e/lib/api.ts has its own resolution order, so a missing
+	// token here is a warning rather than a hard failure (a Playwright-only run
+	// against an already-running runtime still works).
+	if token, err := readAPIToken(context.Background()); err == nil {
+		env = append(env, "BLOUD_API_TOKEN="+token)
+	} else {
+		fmt.Fprintf(os.Stderr, "warning: could not read the host-agent API token (%v); "+
+			"e2e API helpers will fall back to the runtime data dir\n", err)
+	}
 	cmd.Env = env
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run Playwright tests: %w", err)
