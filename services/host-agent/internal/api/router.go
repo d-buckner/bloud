@@ -228,7 +228,14 @@ func NewRouter(
 		cfg.HostLabel, cfg.SSOHostSecret, logger,
 	)
 
-	systemMod := NewSystemModule(appStore, catalogCache, nil, gateway, tailnetStore, nil, logger)
+	// The developer graph renders each app's containers with their live
+	// lifecycle phase, so the system module needs the real orchestrator.
+	// (Typed-nil would make a non-nil interface holding a nil pointer.)
+	var systemOrch orchestratorStatusCaller
+	if deps.realOrch != nil {
+		systemOrch = deps.realOrch
+	}
+	systemMod := NewSystemModule(appStore, catalogCache, nil, gateway, tailnetStore, systemOrch, logger)
 
 	// ---- Wire middleware and routes ----
 

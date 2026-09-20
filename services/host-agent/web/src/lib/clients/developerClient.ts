@@ -7,7 +7,9 @@ export interface GraphNode {
 	displayName: string;
 	status: string;
 	isSystem: boolean;
-	nodeType: string; // "app" | "connection"
+	nodeType: string; // "app" | "container" | "connection"
+	/** Owning app's node ID; set on container nodes, which render inside the app's box. */
+	parentId?: string;
 }
 
 export interface GraphEdge {

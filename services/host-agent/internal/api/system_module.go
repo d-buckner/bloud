@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
@@ -18,10 +19,12 @@ import (
 )
 
 // orchestratorStatusCaller is the minimal interface needed for the system
-// module — it extends orchestratorCaller with a Status() method.
+// module — it extends orchestratorCaller with a Status() method and the
+// per-node lifecycle phases the developer graph renders.
 type orchestratorStatusCaller interface {
 	Enqueue(intent orchestrator.Intent)
 	Status() orchestrator.OrchestratorStatus
+	NodePhases() map[string]string
 }
 
 // SystemModule encapsulates system-level operations: health check, system
@@ -103,7 +106,10 @@ type graphNode struct {
 	DisplayName string `json:"displayName"`
 	Status      string `json:"status"`
 	IsSystem    bool   `json:"isSystem"`
-	NodeType    string `json:"nodeType"` // "app" or "connection"
+	NodeType    string `json:"nodeType"` // "app", "container", or "connection"
+	// ParentID is the owning app's node ID for container nodes; the dashboard
+	// draws those inside the app's box.
+	ParentID string `json:"parentId,omitempty"`
 }
 
 type graphEdge struct {
@@ -237,9 +243,10 @@ func (m *systemModule) buildDeveloperGraph(
 	}
 }
 
-// appNodes builds one node per installed app and collects the tailnet/apps
-// bookkeeping (unique tailnet IDs, the tunnel-node list, traefik presence)
-// plus each app's integration edges.
+// appNodes builds one node per installed app — plus one child node per
+// container that app declares — and collects the tailnet/apps bookkeeping
+// (unique tailnet IDs, the tunnel-node list, traefik presence) plus each
+// app's integration edges.
 func (m *systemModule) appNodes(
 	apps []*store.InstalledApp,
 	graphDefs map[string]*catalog.AppDefinition,
@@ -249,6 +256,7 @@ func (m *systemModule) appNodes(
 	tailnetIDs := make(map[string]bool)
 	hasTraefik := false
 	var tailnetApps []tailnetNodeInfo
+	phases := m.nodePhases()
 
 	for _, app := range apps {
 		nodes = append(nodes, graphNode{
@@ -258,6 +266,10 @@ func (m *systemModule) appNodes(
 			IsSystem:    app.IsSystem,
 			NodeType:    "app",
 		})
+
+		containerNodes, containerEdges := m.containerNodes(app, phases)
+		nodes = append(nodes, containerNodes...)
+		edges = append(edges, containerEdges...)
 
 		if app.CatalogID == "traefik" {
 			hasTraefik = true
@@ -281,6 +293,83 @@ func (m *systemModule) appNodes(
 	}
 
 	return nodes, edges, tailnetApps, tailnetIDs, hasTraefik
+}
+
+// nodePhases returns the live lifecycle phase of every graph node, keyed by
+// node ID. Nil when no orchestrator is wired (containers then fall back to
+// their app's stored status).
+func (m *systemModule) nodePhases() map[string]string {
+	if m.orch == nil {
+		return nil
+	}
+	return m.orch.NodePhases()
+}
+
+// containerNodes builds the container child nodes for an installed app plus
+// the within-app dependsOn edges between them. The app's catalog entry is the
+// source; an app that declares no containers (legacy entry, or a cache miss)
+// is represented by a single node keyed by the catalog ID, mirroring how the
+// lifecycle graph names it.
+func (m *systemModule) containerNodes(app *store.InstalledApp, phases map[string]string) ([]graphNode, []graphEdge) {
+	defs := m.containerDefs(app.CatalogID)
+	if len(defs) == 0 {
+		return []graphNode{{
+			ID:          app.CatalogID,
+			DisplayName: app.DisplayName,
+			Status:      app.Status,
+			IsSystem:    app.IsSystem,
+			NodeType:    "container",
+			ParentID:    app.CatalogID,
+		}}, nil
+	}
+
+	nodes := make([]graphNode, 0, len(defs))
+	edges := make([]graphEdge, 0)
+	for _, def := range defs {
+		status := phases[def.Name]
+		if status == "" {
+			status = app.Status
+		}
+		nodes = append(nodes, graphNode{
+			ID:          def.Name,
+			DisplayName: containerLabel(def.Name, app.CatalogID),
+			Status:      status,
+			IsSystem:    app.IsSystem,
+			NodeType:    "container",
+			ParentID:    app.CatalogID,
+		})
+		for _, dep := range def.DependsOn {
+			// Unlabeled: the box scopes the edge to one app, and every
+			// within-app edge is a dependsOn (dependency drawn below).
+			edges = append(edges, graphEdge{Source: def.Name, Target: dep})
+		}
+	}
+	return nodes, edges
+}
+
+// containerDefs returns the container definitions an app declares in the
+// catalog, or nil when the cache has no entry for it.
+func (m *systemModule) containerDefs(appName string) []catalog.ContainerDef {
+	if m.catalog == nil {
+		return nil
+	}
+	app, err := m.catalog.Get(appName)
+	if err != nil || app == nil {
+		return nil
+	}
+	return app.ContainerDefs()
+}
+
+// containerLabel shortens a runtime container name ("apps-immich-postgres")
+// to the part naming the component ("postgres"), falling back to the app name
+// for the app's own single container ("apps-traefik").
+func containerLabel(containerName, appID string) string {
+	short := strings.TrimPrefix(strings.TrimPrefix(containerName, "apps-"+appID), "-")
+	short = strings.TrimPrefix(short, "apps-")
+	if short == "" {
+		return appID
+	}
+	return short
 }
 
 // resolveTailnetDomain asks the gateway for the active tailnet domain, if

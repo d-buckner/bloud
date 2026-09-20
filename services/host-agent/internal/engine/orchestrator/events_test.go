@@ -249,3 +249,20 @@ func TestPhaseForStatus(t *testing.T) {
 	}
 	assert.Equal(t, "WEIRD", phaseForStatus(graph.NodeStatus("WEIRD")))
 }
+
+// TestNodePhases_KeyedByNodeID pins the contract the developer graph depends
+// on: phases are keyed by graph node ID (the container name for multi-container
+// apps), not by owning app.
+func TestNodePhases_KeyedByNodeID(t *testing.T) {
+	to := newTestOrchestrator()
+
+	require.NoError(t, to.g.AddNode("apps-immich-postgres"))
+	require.NoError(t, to.g.AddNode("apps-immich-server"))
+	require.NoError(t, to.g.SetActualStatus("apps-immich-postgres", graph.StatusRunning, ""))
+	require.NoError(t, to.g.SetActualStatus("apps-immich-server", graph.StatusStarting, ""))
+
+	assert.Equal(t, map[string]string{
+		"apps-immich-postgres": "running",
+		"apps-immich-server":   "starting",
+	}, to.orch.NodePhases())
+}

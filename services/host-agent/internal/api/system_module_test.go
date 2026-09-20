@@ -30,10 +30,11 @@ import (
 type fakeSystemOrchestrator struct {
 	mu     sync.Mutex
 	status orchestrator.OrchestratorStatus
+	phases map[string]string
 }
 
 func newFakeSystemOrchestrator() *fakeSystemOrchestrator {
-	return &fakeSystemOrchestrator{}
+	return &fakeSystemOrchestrator{phases: make(map[string]string)}
 }
 
 func (f *fakeSystemOrchestrator) Enqueue(intent orchestrator.Intent) {
@@ -46,6 +47,12 @@ func (f *fakeSystemOrchestrator) Status() orchestrator.OrchestratorStatus {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.status
+}
+
+func (f *fakeSystemOrchestrator) NodePhases() map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.phases
 }
 
 // FakeGateway is a fake gateway manager for testing.
@@ -238,8 +245,90 @@ func TestSystemHTTP_DeveloperGraph_WithTailnetNodes(t *testing.T) {
 	assert.True(t, hasTSNode, "should have ts:jellyfin tunnel node")
 }
 
-// ---- Router registration ----
+func TestSystemHTTP_DeveloperGraph_ContainerNodes(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	appStore := mod.appStore.(*FakeAppStore)
+	appStore.AddApp(&store.InstalledApp{
+		CatalogID: "immich", DisplayName: "Immich", Status: "running",
+	})
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:   "immich",
+		DisplayName: "Immich",
+		Containers: []catalog.ContainerDef{
+			{Name: "apps-immich-postgres"},
+			{Name: "apps-immich-server", DependsOn: []string{"apps-immich-postgres"}},
+		},
+	})
+	mod.orch.(*fakeSystemOrchestrator).phases = map[string]string{
+		"apps-immich-postgres": "running",
+		"apps-immich-server":   "starting",
+	}
 
+	r := chi.NewRouter()
+	NewSystemRouter(mod, r)
+	req := httptest.NewRequest("GET", "/system/developer", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp developerGraph
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	containers := map[string]graphNode{}
+	for _, n := range resp.Nodes {
+		if n.ParentID == "immich" {
+			containers[n.ID] = n
+		}
+	}
+	require.Len(t, containers, 2)
+	assert.Equal(t, "container", containers["apps-immich-server"].NodeType)
+	assert.Equal(t, "server", containers["apps-immich-server"].DisplayName)
+	assert.Equal(t, "starting", containers["apps-immich-server"].Status)
+	assert.Equal(t, "postgres", containers["apps-immich-postgres"].DisplayName)
+	assert.Equal(t, "running", containers["apps-immich-postgres"].Status)
+
+	assert.Contains(t, resp.Edges, graphEdge{
+		Source: "apps-immich-server", Target: "apps-immich-postgres",
+	})
+}
+
+func TestSystemHTTP_DeveloperGraph_ContainersWithoutCatalogEntry(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID: "legacy", DisplayName: "Legacy", Status: "running",
+	})
+
+	r := chi.NewRouter()
+	NewSystemRouter(mod, r)
+	req := httptest.NewRequest("GET", "/system/developer", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp developerGraph
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	withParent := 0
+	for _, n := range resp.Nodes {
+		if n.ParentID != "legacy" {
+			continue
+		}
+		withParent++
+		assert.Equal(t, "legacy", n.ID)
+		assert.Equal(t, "container", n.NodeType)
+		assert.Equal(t, "running", n.Status)
+	}
+	assert.Equal(t, 1, withParent, "a container-less app still gets one node inside its box")
+}
+
+func TestContainerLabel(t *testing.T) {
+	assert.Equal(t, "postgres", containerLabel("apps-immich-postgres", "immich"))
+	assert.Equal(t, "traefik", containerLabel("apps-traefik", "traefik"))
+	assert.Equal(t, "homeassistant", containerLabel("apps-homeassistant", "homeassistant"))
+	assert.Equal(t, "custom", containerLabel("custom", "traefik"))
+}
+
+// ---- Router registration ----
 func TestSystemRouter_RegistersRoutes(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
 	r := chi.NewRouter()

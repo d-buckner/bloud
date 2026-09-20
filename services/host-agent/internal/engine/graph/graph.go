@@ -120,6 +120,11 @@ func (g *Graph) GetDependencies(nodeID string) ([]string, error) {
 	return g.repo.GetDependencies(nodeID)
 }
 
+// Nodes returns a snapshot of every node in the graph.
+func (g *Graph) Nodes() ([]Node, error) {
+	return g.repo.GetNodes()
+}
+
 // DeleteNode removes a node and all its edges from the graph.
 // Returns an error if the node does not exist.
 func (g *Graph) DeleteNode(id string) error {

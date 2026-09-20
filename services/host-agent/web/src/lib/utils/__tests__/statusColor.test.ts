@@ -9,19 +9,23 @@ describe('statusColor', () => {
 		expect(statusColor('active')).toBe('#16a34a');
 	});
 
-	it('maps error, exited and dead to red', () => {
+	it('maps error, exited, dead and failed to red', () => {
 		expect(statusColor('error')).toBe('#dc2626');
 		expect(statusColor('exited')).toBe('#dc2626');
 		expect(statusColor('dead')).toBe('#dc2626');
+		expect(statusColor('failed')).toBe('#dc2626');
 	});
 
-	it('maps healthcheck to yellow', () => {
+	it('maps healthcheck and starting to yellow', () => {
 		expect(statusColor('healthcheck')).toBe('#eab308');
+		expect(statusColor('starting')).toBe('#eab308');
 	});
 
-	it('maps prestart and poststart to blue', () => {
+	it('maps the config phases to blue', () => {
 		expect(statusColor('prestart')).toBe('#3b82f6');
 		expect(statusColor('poststart')).toBe('#3b82f6');
+		expect(statusColor('configuring')).toBe('#3b82f6');
+		expect(statusColor('finalizing')).toBe('#3b82f6');
 	});
 
 	it('maps queued and installing to the idle gray', () => {

@@ -12,6 +12,8 @@
 	} from '$lib/clients/developerClient';
 	import { parseTimeline } from '$lib/timeline/convergeTimeline';
 	import AppNode from './AppNode.svelte';
+	import AppBox from './AppBox.svelte';
+	import ContainerNode from './ContainerNode.svelte';
 	import UserNode from './UserNode.svelte';
 	import FitView from '$lib/components/FitView.svelte';
 
@@ -19,6 +21,8 @@
 
 	const nodeTypes: NodeTypes = {
 		app: AppNode as any,
+		appBox: AppBox as any,
+		container: ContainerNode as any,
 		user: UserNode as any
 	};
 

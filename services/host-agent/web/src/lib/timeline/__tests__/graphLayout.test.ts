@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 import { describe, expect, it } from 'vitest';
-import { detectUserConnection, layoutGraph, NODE_WIDTH, USER_NODE_SIZE } from '../graphLayout';
+import {
+	BOX_HEADER,
+	BOX_PADDING,
+	CONTAINER_HEIGHT,
+	CONTAINER_WIDTH,
+	detectUserConnection,
+	layoutGraph,
+	NODE_WIDTH,
+	USER_NODE_SIZE
+} from '../graphLayout';
 import type { DeveloperGraph, GraphEdge, GraphNode } from '$lib/clients/developerClient';
 
 const node = (id: string, over: Partial<GraphNode> = {}): GraphNode => ({
@@ -98,6 +107,93 @@ describe('layoutGraph — apps present', () => {
 	it('adds an animated You→connection edge by the connection status', () => {
 		const youEdge = edges.find((e) => e.id === 'e-you');
 		expect(youEdge).toMatchObject({ source: '__you__', target: 'conn:tailnet:z', animated: true });
+	});
+});
+
+describe('layoutGraph — app boxes', () => {
+	const graph: DeveloperGraph = {
+		nodes: [
+			node('immich'),
+			node('apps-immich-postgres', { nodeType: 'container', parentId: 'immich' }),
+			node('apps-immich-server', { nodeType: 'container', parentId: 'immich' }),
+			node('jellyfin'),
+			node('apps-jellyfin', { nodeType: 'container', parentId: 'jellyfin' }),
+			node('sys:gateway'),
+			conn('conn:local')
+		],
+		edges: [
+			edge('apps-immich-server', 'apps-immich-postgres'),
+			edge('immich', 'jellyfin')
+		]
+	};
+	const { nodes } = layoutGraph(graph, 'bloud.local');
+	const boxSize = (id: string) => {
+		const style = byId(nodes, id)!.style as string;
+		return {
+			width: Number(/width: (\d+)px/.exec(style)?.[1]),
+			height: Number(/height: (\d+)px/.exec(style)?.[1])
+		};
+	};
+
+	it('renders an app with containers as a box under the apps group', () => {
+		expect(byId(nodes, 'immich')).toMatchObject({ type: 'appBox', parentId: '__apps_group' });
+		expect(byId(nodes, 'jellyfin')).toMatchObject({ type: 'appBox', parentId: '__apps_group' });
+	});
+
+	it('parents containers to their app box and lists the parent first', () => {
+		for (const id of ['apps-immich-postgres', 'apps-immich-server', 'apps-jellyfin']) {
+			const idx = nodes.findIndex((n) => n.id === id);
+			expect(nodes[idx]).toMatchObject({ type: 'container' });
+			expect(nodes.findIndex((n) => n.id === nodes[idx].parentId!)).toBeLessThan(idx);
+		}
+	});
+
+	it('keeps every container inside its box bounds', () => {
+		const immich = boxSize('immich');
+		for (const id of ['apps-immich-postgres', 'apps-immich-server']) {
+			const pos = byId(nodes, id)!.position;
+			expect(pos.x).toBeGreaterThanOrEqual(BOX_PADDING);
+			expect(pos.y).toBeGreaterThanOrEqual(BOX_HEADER);
+			expect(pos.x + CONTAINER_WIDTH).toBeLessThanOrEqual(immich.width - BOX_PADDING);
+			expect(pos.y + CONTAINER_HEIGHT).toBeLessThanOrEqual(immich.height - BOX_PADDING);
+		}
+	});
+
+	it('sizes the box to stack its containers', () => {
+		expect(boxSize('immich').height).toBeGreaterThan(2 * CONTAINER_HEIGHT);
+	});
+
+	it('draws a dependsOn edge below the container that declares it', () => {
+		expect(byId(nodes, 'apps-immich-server')!.position.y).toBeLessThan(
+			byId(nodes, 'apps-immich-postgres')!.position.y
+		);
+	});
+
+	it('sizes a single-container box to one container row', () => {
+		expect(boxSize('jellyfin').height).toBe(BOX_HEADER + CONTAINER_HEIGHT + BOX_PADDING * 2);
+	});
+
+	it('leaves apps without containers as flat nodes', () => {
+		expect(byId(nodes, 'sys:gateway')).toMatchObject({ type: 'app', parentId: '__apps_group' });
+	});
+});
+
+describe('layoutGraph — container whose app is missing', () => {
+	const graph: DeveloperGraph = {
+		nodes: [
+			node('jellyfin'),
+			node('apps-jellyfin', { nodeType: 'container', parentId: 'jellyfin' }),
+			node('apps-ghost-server', { nodeType: 'container', parentId: 'ghost' })
+		],
+		edges: []
+	};
+	const { nodes } = layoutGraph(graph, 'bloud.local');
+
+	it('lays the orphan out under the group instead of dropping it', () => {
+		expect(byId(nodes, 'apps-ghost-server')).toMatchObject({
+			type: 'container',
+			parentId: '__apps_group'
+		});
 	});
 });
 
