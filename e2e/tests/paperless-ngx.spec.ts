@@ -101,7 +101,7 @@ describeApp('paperless-ngx', (app) => {
       // app redirects to its dashboard. That URL is the session check: the
       // dashboard is only served to an authenticated session, and the
       // sign-in page is where an unauthenticated one lands.
-      await expect(paperless).toHaveURL(/paperless\.localhost:8080\/dashboard/, {
+      await expect(paperless).toHaveURL(/paperless-ngx\.localhost:8080\/dashboard/, {
         timeout: 120_000,
       });
       await expect(paperless.locator('input#inputUsername')).toHaveCount(0);
