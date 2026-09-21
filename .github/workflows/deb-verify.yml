@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Verifies the .deb's dependency model against a real Debian 13 package index.
+#
+# The unit tests in cli/package_test.go check the rendered control fields.
+# This job checks the built artifact where the packages actually live: inside
+# debian:trixie it confirms every declared dependency exists in the release,
+# the podman floor holds against the release candidate, apt resolves the set
+# and pulls podman, and dpkg reports the set as unmet on a system without it.
+#
+# packaging/scripts/verify-deps.sh is the local equivalent of this job; see
+# the header of that script for the container command to run by hand.
+name: Deb dependencies
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - 'cli/package.go'
+      - 'cli/package_test.go'
+      - 'cli/main.go'
+      - '.github/workflows/deb-verify.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packaging/**'
+      - 'cli/package.go'
+      - 'cli/package_test.go'
+      - 'cli/main.go'
+      - '.github/workflows/deb-verify.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache-dependency-path: |
+            services/host-agent/go.sum
+            apps/go.sum
+            cli/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the bloud CLI
+        run: npm run cli:build
+
+      - name: Build the .deb
+        run: ./bloud package --arch amd64
+
+      - name: Verify the dependency model on Debian 13
+        run: |
+          deb="$(ls dist/*.deb | head -n 1)"
+          echo "verifying ${deb}"
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}/dist:/deb:ro" \
+            -v "${GITHUB_WORKSPACE}/packaging/scripts:/scripts:ro" \
+            debian:trixie \
+            /bin/sh /scripts/verify-deps.sh "/deb/$(basename "${deb}")"
