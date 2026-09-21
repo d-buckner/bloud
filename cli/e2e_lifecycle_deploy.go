@@ -138,3 +138,28 @@ if printf '%s' "$status" | grep -q '"setupRequired":true'; then
   done
   curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" http://localhost:3000/api/setup/create-user | grep -q '"success":true'
 fi`
+
+// ingressCanonicalPort is the port Traefik serves the public surface on: 80 on
+// the VMs, 8080 on native (unprivileged, so it cannot bind :80).
+func (r *lifecycle) ingressCanonicalPort() string {
+	if r.cfg.native {
+		return "8080"
+	}
+	return "80"
+}
+
+// assertIngressEntrypoints proves the deployed ingress serves on its canonical
+// entrypoint and on the always-present 8080 compat entrypoint that app
+// containers use to resolve `sso.localhost` for OIDC discovery. The 200 from
+// /api/health on each proves requests are routed through to host-agent, not
+// just that Traefik is alive. Runs after buildAndDeploy, which waits for the
+// API, so the system apps have converged.
+func (r *lifecycle) assertIngressEntrypoints() error {
+	r.step("Asserting ingress entrypoints (" + r.ingressCanonicalPort() + " canonical, 8080 compat)")
+	return r.remoteRun(remoteAssertIngressScript, r.ingressCanonicalPort())
+}
+
+var remoteAssertIngressScript = `for port in "$1" 8080; do
+  curl -fsS "http://localhost:$port/ping" | grep -qi ok
+  test "$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port/api/health")" = 200
+done`

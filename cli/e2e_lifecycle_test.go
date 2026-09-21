@@ -115,6 +115,7 @@ func TestLifecycleRemoteScriptsAreValidBash(t *testing.T) {
 		remoteInstallJellyfinScript,
 		remoteEnsureUserScript,
 		remoteAssertInstalledScript,
+		remoteAssertIngressScript,
 		remoteRestartScript,
 		remoteUninstallScript,
 	}
@@ -158,6 +159,21 @@ func TestLifecycleDefaultsToQEMU(t *testing.T) {
 	}
 	if cfg.sshTarget != "bloud@127.0.0.1" || !strings.HasSuffix(cfg.sshKeyFile, filepath.Join(".bloud", "qemu", "bloud-qemu", "id_ed25519")) {
 		t.Fatalf("expected derived SSH target/key, got %+v", cfg)
+	}
+}
+
+func TestLifecycleIngressCanonicalPort(t *testing.T) {
+	for _, tc := range []struct {
+		native bool
+		want   string
+	}{
+		{native: false, want: "80"},
+		{native: true, want: "8080"},
+	} {
+		r := &lifecycle{cfg: lifecycleConfig{native: tc.native}}
+		if got := r.ingressCanonicalPort(); got != tc.want {
+			t.Errorf("ingressCanonicalPort(native=%v) = %q, want %q", tc.native, got, tc.want)
+		}
 	}
 }
 
