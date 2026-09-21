@@ -267,6 +267,9 @@ func (r *lifecycle) run() (runErr error) {
 	if err := r.buildAndDeploy(); err != nil {
 		return err
 	}
+	if err := r.assertIngressEntrypoints(); err != nil {
+		return err
+	}
 
 	r.step("Resetting prior managed Jellyfin state")
 	if err := r.remoteRun(remoteResetJellyfinScript, r.cfg.remoteDir); err != nil {

@@ -1,7 +1,9 @@
 # Traefik - Bloud Integration
 
 ## Port & Network
-- **Port:** 8080
+- **Ports:** `:80` (canonical `web` entrypoint) and `:8080` (`web-local`, which
+  app containers use to resolve `sso.localhost` for OIDC discovery). The dev
+  VMs expose guest `:80` on the host as `:8080`
 - **Network:** `host` (accesses all services on localhost)
 
 ## Configuration Storage

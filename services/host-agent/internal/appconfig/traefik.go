@@ -86,6 +86,14 @@ func (c *TraefikConfigurator) Remove(ctx context.Context, _ *configurator.AppSta
 	return c.runtime.Remove(ctx, "apps-traefik")
 }
 
+// traefikCompatPort is always bound alongside Config.TraefikPort. The dev VMs
+// expose Config.TraefikPort (80) on the host as 8080 and resolve
+// `sso.localhost` to the guest, so app containers reach Traefik on 8080 for
+// OIDC discovery. Binding it everywhere keeps that path working, and lets a
+// deployment that cannot bind a privileged port (native, CI) run on 8080
+// alone by setting BLOUD_TRAEFIK_PORT=8080.
+const traefikCompatPort = 8080
+
 func (c *TraefikConfigurator) staticConfig() string {
 	// No forwardedHeaders block on purpose. Traefik's default is to discard
 	// client-supplied X-Forwarded-* / X-Real-Ip from untrusted peers and set
@@ -93,17 +101,22 @@ func (c *TraefikConfigurator) staticConfig() string {
 	// arbitrary source address. host-agent no longer reads client IP at all
 	// (PR 4 dropped middleware.RealIP), and the forward-auth middlewares trust
 	// the values Traefik sets, so the secure default is the whole config.
+	entrypoints := "  web:\n    address: \":" + strconv.Itoa(c.traefikPort) + "\"\n"
+	if c.traefikPort != traefikCompatPort {
+		entrypoints += "  web-local:\n    address: \":" + strconv.Itoa(traefikCompatPort) + "\"\n"
+	}
 	return `entryPoints:
-  web:
-    address: ":` + strconv.Itoa(c.traefikPort) + `"
-providers:
+` + entrypoints + `providers:
   file:
     directory: "/dynamic"
     watch: true
 api:
   dashboard: true
+# manualRouting keeps the ping@internal service but drops Traefik's default
+# ping router, so base.yml can route /ping on every entrypoint (the container
+# health check probes the compat port, which is not always the canonical one).
 ping:
-  entryPoint: web
+  manualRouting: true
 log:
   level: INFO
 `
@@ -113,6 +126,13 @@ func (c *TraefikConfigurator) baseDynamicConfig() string {
 	agentURL := "http://localhost:" + strconv.Itoa(c.hostAgentPort)
 	return `http:
   routers:
+    # Liveness probe, served by Traefik itself on every entrypoint (the static
+    # config enables ping.manualRouting so this router can own /ping).
+    traefik-ping:
+      rule: "PathPrefix(` + "`" + `/ping` + "`" + `)"
+      service: ping@internal
+      priority: 96
+
     # Traefik dashboard (access via /dashboard/)
     traefik-dashboard:
       rule: "PathPrefix(` + "`" + `/dashboard` + "`" + `)"

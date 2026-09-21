@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // fakeQEMUBackend builds a QEMUBackend with a faked command factory. sshReadyResults
@@ -161,6 +163,29 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 	if !strings.Contains(string(userData), "chown bloud:bloud") {
 		t.Errorf("user-data missing project dir ownership")
 	}
+
+	// The rootless Traefik container binds :80 in the guest's host network
+	// namespace, so cloud-init must permit unprivileged low ports (and the
+	// document must stay valid cloud-config YAML).
+	var doc struct {
+		WriteFiles []struct {
+			Path    string `yaml:"path"`
+			Content string `yaml:"content"`
+		} `yaml:"write_files"`
+	}
+	if err := yaml.Unmarshal(userData, &doc); err != nil {
+		t.Fatalf("user-data is not valid cloud-config YAML: %v", err)
+	}
+	allowed := false
+	for _, f := range doc.WriteFiles {
+		if f.Path == "/etc/sysctl.d/99-bloud-unprivileged-ports.conf" &&
+			strings.Contains(f.Content, "net.ipv4.ip_unprivileged_port_start=0") {
+			allowed = true
+		}
+	}
+	if !allowed {
+		t.Error("user-data must let the rootless Traefik container bind :80")
+	}
 }
 
 func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
@@ -181,7 +206,7 @@ func TestQEMUBackendCreateLaunchArgs(t *testing.T) {
 	joined := strings.Join(launch, " ")
 	for _, wantArg := range []string{"q35,accel=kvm", "-cpu max", "-m 4G", "-smp 4",
 		"-daemonize", "-pidfile", "hostfwd=tcp::2222-:22", "hostfwd=tcp::3000-:3000",
-		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:8080", "hostfwd=tcp::8096-:8096",
+		"hostfwd=tcp::3389-:3389", "hostfwd=tcp::8080-:80", "hostfwd=tcp::8096-:8096",
 		"hostfwd=tcp::9001-:9001", "hostfwd=tcp::2283-:2283", "hostfwd=tcp::4533-:4533",
 		"hostfwd=tcp::3010-:3010", "seed.iso", "virtio-net-pci", "-virtfs", "mount_tag=host0"} {
 		if !strings.Contains(joined, wantArg) {

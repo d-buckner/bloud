@@ -76,7 +76,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 
 | Port | What | Audience |
 |---|---|---|
-| **8080** | **Traefik: the public-facing port.** Users hit apps here (`jellyfin.localhost:8080`, `immich.localhost:8080`, …). Browser/e2e user journeys must go through this. | end users |
+| **8080** | **Traefik: the user-facing port on the host.** Traefik's canonical entrypoint is `:80` inside the runtime; the dev VMs forward guest `:80` to host `:8080`, so browser/e2e journeys stay on `http://localhost:8080` (`jellyfin.localhost:8080`, `immich.localhost:8080`, …). A real deployment serves `:80` directly. | end users |
 | **3000** | **host-agent internal API** (install/uninstall/status, session auth with loopback/trusted-net bypass). Operator/automation surface, not the user surface. | ops, CLI, e2e API helpers |
 | 8096 | Jellyfin container (direct) | debugging |
 | 9001 | Authentik server (direct) | debugging |
@@ -84,6 +84,15 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
 | 8000 | Paperless-ngx (direct) | debugging |
+
+Inside the runtime Traefik also binds `:8080` (the `web-local` entrypoint), for
+two reasons: app containers resolve `sso.localhost` to the guest and reach the
+OIDC issuer there, and the native backend (which runs unprivileged and cannot
+bind `:80`) sets `BLOUD_TRAEFIK_PORT=8080` and serves on that entrypoint alone.
+
+An existing dev VM keeps its old port forwards and guest sysctls (both are
+provisioning-time settings), so recreate it once after pulling this change:
+`./bloud destroy && ./bloud dev`.
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
 (10.0.2.2), so `./bloud dev` sets `BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24` for the
@@ -269,8 +278,11 @@ combined with instance/SSH-target env vars). Instance overrides:
 5. **Catalog is disk-driven.** Apps are discovered from `apps/*/metadata.yaml`
    into an in-memory cache; `POST /api/apps/refresh-catalog` or restart to pick
    up changes. System apps set `isSystem: true` (hidden from the user catalog).
-   Bootstrap (system infra: Traefik + deps) runs **before** the HTTP listener
-   opens; the orchestrator manages user apps only.
+   Bootstrap (system infra: Traefik + deps) converges **before the API is
+   usable**: the listener opens at process start but serves a static loading
+   page (and 503 for `/api`) until the orchestrator reports ready, so a browser
+   hitting Traefik during bootstrap sees the page instead of a 502. The
+   orchestrator manages user apps only.
 6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`
    (Immich + AFFiNE + Hermes + Paperless-ngx: native-oidc, Jellyfin: ldap,
    Navidrome: forward-auth). `none` means the app does not join the identity
@@ -294,6 +306,8 @@ combined with instance/SSH-target env vars). Instance overrides:
    or by `host-agent init-secrets`) > **error**: there is no hardcoded fallback. Key env:
    `BLOUD_DATA_DIR`, `BLOUD_APPS_DIR`, `BLOUD_TRAEFIK_DYNAMIC_DIR`,
    `BLOUD_PODMAN_SOCKET`, `BLOUD_PORT` (3000), `BLOUD_BASE_DOMAIN`,
+   `BLOUD_TRAEFIK_PORT` (80; the dev VMs expose it on the host as 8080, and
+   `native` sets 8080),
    `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`,
    `BLOUD_TRUSTED_LOCAL_NETS`.
 9. **Hosts are a first-class setting.** The instance is reachable under a set
@@ -315,17 +329,19 @@ combined with instance/SSH-target env vars). Instance overrides:
    re-provisions Authentik (redirect URIs, outpost browser URL) and rewrites
    app configs, then re-ensure the dashboard OAuth app. Traefik routes stay
    domain-agnostic (`HostRegexp`), so they match every host without changes.
-10. **Port-80 reach-by-name is deferred: no front proxy, no mDNS.** Bloud
-    no longer ships the root port-80 front proxy (`front-proxy` subcommand +
-    `bloud-front.service`) or the `.local` mDNS announcer (`internal/mdns`);
-    both were removed because the proxy still needed privilege anyway and the
-    announcer couldn't cross the dev VM, fought the host's own responder, and
-    served only http/LAN. Port 80 is unserved today: the user-facing surface
-    is Traefik on `:8080`, and custom domains rely on real DNS. A
-    reach-by-name + TLS story (real-domain Let's Encrypt on Traefik, and/or
-    Tailscale Serve) is the planned follow-up. `hostset`'s `http://<host>`
-    (port 80) mapping for non-localhost hosts is aspirational until that
-    lands.
+10. **Traefik owns port 80; reach-by-name services stay deferred.** Traefik's
+    canonical entrypoint is `:80` (a real deployment serves it directly), so
+    custom domains with real DNS reach the instance at `http://<host>`. The dev
+    VMs map guest `:80` to host `:8080` (dev/e2e parity), and Traefik also binds
+    a `:8080` convenience entrypoint (`web-local`) that app containers use to
+    resolve `sso.localhost` for OIDC discovery, and that the unprivileged native
+    backend runs on alone. `hostset`'s `http://<host>` (port 80) mapping for
+    non-localhost hosts is therefore real, not aspirational. Bloud still ships
+    no `.local` mDNS announcer (`internal/mdns`) or root front proxy
+    (`front-proxy` subcommand + `bloud-front.service`): both were removed
+    because the announcer couldn't cross the dev VM, fought the host's own
+    responder, and served only http/LAN. A TLS story (real-domain Let's Encrypt
+    on Traefik, and/or Tailscale Serve) remains the planned follow-up.
 11. **Frontend is a static build** served by host-agent from
     `<host-agent-dir>/web/build` (embedded `dev_dashboard.html` is only the
     missing-build fallback). Rebuild the frontend before deploying.

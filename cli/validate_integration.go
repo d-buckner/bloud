@@ -80,10 +80,13 @@ until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do
   sleep 5
 done`
 
-func renderIntegrationHostAgentUnit(rt string, qemu bool) string {
+func renderIntegrationHostAgentUnit(rt, backend string) string {
 	var extraEnv string
-	if qemu {
+	if backend == "qemu" {
 		extraEnv = "Environment=BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24\n"
+	}
+	if port := traefikPortEnv(backend); port != "" {
+		extraEnv += "Environment=BLOUD_TRAEFIK_PORT=" + port + "\n"
 	}
 	return fmt.Sprintf(`[Unit]
 Description=Bloud integration validation host agent
@@ -219,8 +222,8 @@ func integrationDeploy(ctx context.Context, ex executor.Executor, root, hostAgen
 
 // integrationInstallService installs the validation host-agent systemd user
 // unit in the guest and starts it.
-func integrationInstallService(ctx context.Context, ex executor.Executor, rt string, qemu bool, tmpDir string) error {
-	unit := renderIntegrationHostAgentUnit(rt, qemu)
+func integrationInstallService(ctx context.Context, ex executor.Executor, rt, backend, tmpDir string) error {
+	unit := renderIntegrationHostAgentUnit(rt, backend)
 	unitPath := filepath.Join(tmpDir, integrationHostAgentUnit)
 	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
 		errorf("failed to write unit file: %v", err)
