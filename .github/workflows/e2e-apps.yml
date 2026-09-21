@@ -22,20 +22,19 @@ on:
 # e2e (jellyfin) matrix leg. The debug-status-labels spec is excluded:
 # it is a manual debugging tool, not a regression gate.
 jobs:
+  affected:
+    uses: ./.github/workflows/e2e-affected.yml
+
   e2e:
+    needs: affected
+    # An empty list means a markdown-only push: no leg to run.
+    if: needs.affected.outputs.apps != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        app:
-          - jellyfin
-          - navidrome
-          - immich
-          - affine
-          - homeassistant
-          - paperless-ngx
-          - hermes
+        app: ${{ fromJSON(needs.affected.outputs.apps) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7

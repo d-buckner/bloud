@@ -7,7 +7,15 @@ on:
   push:
 
 jobs:
+  affected:
+    uses: ./.github/workflows/e2e-affected.yml
+
   jellyfin-lifecycle:
+    needs: affected
+    # The lifecycle run exercises install/reconcile through Jellyfin, so run it
+    # only when Jellyfin or the framework changed. A markdown-only push yields
+    # an empty list.
+    if: needs.affected.outputs.apps != '' && contains(fromJSON(needs.affected.outputs.apps), 'jellyfin')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

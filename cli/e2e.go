@@ -34,6 +34,14 @@ func cmdE2E(args []string) int {
 		return 0
 	}
 
+	if len(args) > 0 && args[0] == "affected" {
+		if err := runE2EAffected(root, args[1:]); err != nil {
+			errorf("Could not resolve affected e2e apps: %v", err)
+			return 1
+		}
+		return 0
+	}
+
 	playwrightArgs := []string{"playwright", "test"}
 	playwrightArgs = append(playwrightArgs, args...)
 

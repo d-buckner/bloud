@@ -141,6 +141,8 @@ func printUsage() {
 	fmt.Println("    --json             Output JSON ledger only")
 	fmt.Println("    --since <ref>      Git ref for diff base (default: HEAD)")
 	fmt.Println("  e2e lifecycle [flags] Run full lifecycle E2E")
+	fmt.Println("  e2e affected [--since <ref>] [--json]")
+	fmt.Println("                       Print the e2e projects a change set needs")
 	fmt.Println()
 	fmt.Println("Release:")
 	fmt.Println("  package              Build the host-agent, frontend, and catalog into a .deb")

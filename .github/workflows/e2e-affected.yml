@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+#
+# Reusable: resolves the Playwright projects a push actually needs. A markdown
+# change runs nothing; a change confined to apps/<name>/ runs only that app's
+# project; anything else (the framework, shared system apps) runs every
+# project. The selection logic lives in validation.yaml + cli/e2e_affected.go
+# and is exposed as `./bloud e2e affected`; this workflow is a thin wrapper.
+name: E2E affected
+
+on:
+  workflow_call:
+    outputs:
+      apps:
+        description: JSON array of Playwright projects to run
+        value: ${{ jobs.detect.outputs.apps }}
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    outputs:
+      apps: ${{ steps.detect.outputs.apps }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The diff base (the previous branch tip) must be present.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache-dependency-path: cli/go.sum
+
+      - name: Build the bloud CLI
+        run: cd cli && go build -o ../bloud .
+
+      - name: Detect affected apps
+        id: detect
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # `before` is empty on workflow_dispatch and all-zero on a first
+          # push of a branch; with no diff base, run every app.
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            apps=$(./bloud e2e affected --since "$BEFORE" --json)
+          else
+            apps=$(./bloud e2e affected --json)
+          fi
+          echo "apps=$apps" >> "$GITHUB_OUTPUT"
+          echo "Affected e2e apps: $apps"
