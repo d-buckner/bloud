@@ -28,6 +28,11 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
 	_ "codeberg.org/d-buckner/bloud/apps/paperless-ngx"
+	_ "codeberg.org/d-buckner/bloud/apps/prowlarr"
+	_ "codeberg.org/d-buckner/bloud/apps/qbittorrent"
+	_ "codeberg.org/d-buckner/bloud/apps/radarr"
+	_ "codeberg.org/d-buckner/bloud/apps/seerr"
+	_ "codeberg.org/d-buckner/bloud/apps/sonarr"
 	_ "codeberg.org/d-buckner/bloud/apps/vaultwarden"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
@@ -50,6 +55,11 @@ func NodeNames() []string {
 		"apps-jellyfin",
 		"apps-navidrome",
 		"apps-paperless-ngx",
+		"apps-prowlarr",
+		"apps-qbittorrent",
+		"apps-radarr",
+		"apps-seerr",
+		"apps-sonarr",
 		"apps-vaultwarden",
 	}
 }

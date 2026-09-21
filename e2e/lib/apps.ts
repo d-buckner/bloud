@@ -29,10 +29,18 @@ export async function expectRunningTile(page: Page, label: string): Promise<void
 
 /**
  * Assert the catalog lists the app and marks it installed.
+ *
+ * The match is scoped to the card's title, not to the card's whole text: a
+ * string `hasText` match searches the description too, and a description may
+ * name another app (Prowlarr's mentions the PVRs it syncs to), which would
+ * resolve to that app's card instead.
  */
 export async function expectInstalledInCatalog(page: Page, label: string): Promise<void> {
   await page.goto('/catalog');
-  const card = page.locator('.app-card', { hasText: label }).first();
+  const card = page
+    .locator('.app-card')
+    .filter({ has: page.locator('.app-title', { hasText: label }) })
+    .first();
   await expect(card).toBeVisible({ timeout: 15_000 });
   await expect(card).toHaveClass(/installed/);
 }

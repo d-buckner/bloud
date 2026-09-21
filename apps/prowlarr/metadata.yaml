@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: prowlarr
+displayName: Prowlarr
+description: Indexer manager that syncs indexers to Sonarr, Radarr, and other PVRs
+category: media
+port: 9696
+estimatedSizeMB: 250
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+  # Optional: Prowlarr syncs its indexers into whichever PVRs are installed.
+  # Declaring the link (rather than hardcoding the two apps) is what makes the
+  # graph order Prowlarr after them and re-run its PostStart when a PVR appears.
+  pvr:
+    required: false
+    multi: true
+    compatible:
+      - app: sonarr
+        category: tv
+      - app: radarr
+        category: movies
+
+# SSO via Authentik forward-auth. Prowlarr has no trusted-header mode, so the
+# configurator puts it into Servarr's built-in "External" authentication
+# (AuthenticationMethod=External, AuthenticationRequired=Enabled in
+# config.xml). External installs the app's NoAuthenticationHandler: it reads
+# no username header at all and treats every request as authenticated.
+#
+# Consequence, stated plainly: the published host port (9696) is
+# UNAUTHENTICATED. Traefik's forward-auth middleware is the only gate, so the
+# port must never be reachable from an untrusted host. Bloud's dev VM does not
+# port-forward it off the machine, and no deployment should.
+#
+# Forward-auth does not interfere with Prowlarr's own job: indexer sync is
+# configured with the target's container address (apps-sonarr:8989,
+# apps-radarr:7878), which the container resolves on apps-net and which never
+# traverses Traefik.
+sso:
+  strategy: forward-auth
+
+containers:
+  - name: apps-prowlarr
+    image: lscr.io/linuxserver/prowlarr:2.6.5.5623-ls161
+    network: apps-net
+    restartPolicy: always
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+    ports:
+      - host: 9696
+        container: 9696
+    volumes:
+      # Prowlarr manages indexers only; it moves no files, so there is no
+      # library or download mount.
+      - source: "{{appDataDir}}/config"
+        destination: /config
+    healthCheck:
+      # /ping is the one route the app leaves anonymous and answers 503 with
+      # "is starting up" until the database and web host are ready.
+      test: ["CMD-SHELL", "curl -sf http://localhost:9696/ping"]
+      interval: 5
+      timeout: 10
+      retries: 24
