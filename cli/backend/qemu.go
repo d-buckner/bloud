@@ -131,6 +131,7 @@ func (b *QEMUBackend) Host() executor.Host {
 			"immich":     "2283",
 			"navidrome":  "4533",
 			"affine":     "3010",
+			"paperless":  "8000",
 		},
 		executor.DataDirs{
 			HostAgentDir: qemuRemoteDir + "/host-agent",

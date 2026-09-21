@@ -83,6 +83,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 3389 | LDAP outpost (direct) | debugging |
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
+| 8000 | Paperless-ngx (direct) | debugging |
 
 QEMU note: slirp NAT presents host-forwarded connections from the gateway
 (10.0.2.2), so `./bloud dev` sets `BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24` for the
@@ -376,7 +377,10 @@ combined with instance/SSH-target env vars). Instance overrides:
    postgres+redis, native-oidc), `apps/affine` (own postgres+redis, OIDC
    config file, first-run owner bootstrap), `apps/navidrome` (forward-auth),
    `apps/homeassistant` (pinned remote asset via `pkg/appasset` + provenance,
-   YAML marker merge, `RestartContainer`-driven config reload).
+   YAML marker merge, `RestartContainer`-driven config reload),
+   `apps/paperless` (own postgres+redis plus gotenberg/tika sidecars,
+   generated dotenv config file for django-allauth OIDC, internal admin
+   bootstrap).
 
 ## Integration validation runs the real dependency-graph path
 

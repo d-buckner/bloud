@@ -120,3 +120,10 @@ apps:
     files:
       - apps/homeassistant/**
     e2e-project: homeassistant
+
+  paperless:
+    auth: native-oidc
+    validation-level: embed
+    files:
+      - apps/paperless/**
+    e2e-project: paperless

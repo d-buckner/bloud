@@ -31,6 +31,7 @@ portForwards:
   - guestPort: 2283   # immich
   - guestPort: 4533   # navidrome
   - guestPort: 3010   # affine
+  - guestPort: 8000   # paperless
 
 containerd:
   system: false

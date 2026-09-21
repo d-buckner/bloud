@@ -21,6 +21,11 @@ reference).
 - **Immich**: completes the native-oidc SSO round-trip (auto-launched from
   the login page), walks first-login onboarding, and verifies the photos
   page renders.
+- **Paperless-ngx**: converges to running, appears in catalog/home, offers
+  the SSO button on its own sign-in page (native-oidc through
+  django-allauth, which requires the confirmation POST), and after the
+  Authentik login reaches the dashboard with the session authenticating the
+  app's API.
 
 ## Running
 
