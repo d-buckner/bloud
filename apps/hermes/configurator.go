@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
 const (
@@ -157,14 +158,14 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return false, nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
-		return false, fmt.Errorf("creating config dir: %w", err)
-	}
-	if err := os.WriteFile(cfgPath, want, 0o644); err != nil {
+	changed, err := managedfile.Write(cfgPath, want, 0o644)
+	if err != nil {
 		return false, fmt.Errorf("writing %s: %w", cfgPath, err)
 	}
-	c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive)
-	return true, nil
+	if changed {
+		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive)
+	}
+	return changed, nil
 }
 
 // PostStart waits for the dashboard to serve and then, when SSO is

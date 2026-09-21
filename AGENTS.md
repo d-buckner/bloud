@@ -162,10 +162,14 @@ It is pinned in
   off (each with its reason), the rules pinned to `error`, and the source-file
   sections (only the house `Bloud` style, plus the vocabulary-backed
   `Vale.Avoid` guard, runs on code).
-- `.vale/styles/config/vocabularies/Bloud/accept.txt` is the domain vocabulary.
-  Add an unknown word there (product name, host-agent internal, container term)
-  rather than weakening a rule for a file. Its comments cover the `(?i)`
-  convention and the exact-case entries that enforce a product's spelling.
+- `.vale/styles/config/vocabularies/Bloud/accept.txt` is deliberately small.
+  `Vale.Spelling` -- the built-in dictionary spell-checker -- is disabled in
+  `.vale.ini`: with no domain dictionary it flags every technical word and
+  product name, forcing an unbounded allowlist treadmill. So a new word is
+  normally *not* added to `accept.txt`. What the list keeps is the exact-case
+  `Vale.Terms` set (`Forgejo`, `OAuth`, `PostgreSQL`, `Tailscale`), which
+  enforces a product's canonical spelling, plus a couple of deliberate
+  exemptions another rule would clobber (e.g. `break-glass` vs `Google.Jargon`).
   `reject.txt` is the opposite list: identifiers of removed components
   (`front-proxy`, `internal/mdns`, `compose.yml`, `.air.toml`, `front.service`).
   `.vale.ini` switches that rule off for whole files, not for individual lines:

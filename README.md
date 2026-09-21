@@ -88,16 +88,17 @@ The catalog is deliberately small. Each app ships a verified support contract co
 install, shared login, persistence, reboot, and removal. We'd rather support fewer apps
 well.
 
-| Category | App | What it gives you |
+| App | Category | What it gives you |
 |---|---|---|
-| **Infrastructure** | Traefik | Reverse proxy and routing (system) |
-| **Infrastructure** | Authentik | Identity provider (one login everywhere) |
-| **Media** | Jellyfin | Movies, TV, and music streaming |
-| **Media** | Navidrome | Your music library with Subsonic-compatible clients |
-| **Photos** | Immich | Private photo and video management |
-| **Productivity** | Home Assistant | Open-source home automation platform |
-| **Productivity** | AFFiNE | AI-native knowledge base: docs, databases, whiteboards |
-| **Productivity** | Paperless-ngx | Document management: scans and PDFs become a searchable archive |
+| Traefik | Infrastructure | Reverse proxy and routing (system) |
+| Authentik | Infrastructure | Identity provider (one login everywhere) |
+| Jellyfin | Media | Movies, TV, and music streaming |
+| Navidrome | Media | Your music library with Subsonic-compatible clients |
+| Immich | Photos | Private photo and video management |
+| Home Assistant | Productivity | Open-source home automation platform |
+| AFFiNE | Productivity | AI-native knowledge base: docs, databases, whiteboards |
+| Hermes | Productivity | Self-improving AI agent with persistent memory and scheduled automations |
+| Paperless-ngx | Productivity | Document management: scans and PDFs become a searchable archive |
 
 ## One login everywhere
 
@@ -107,7 +108,7 @@ Apps get SSO automatically, using whatever strategy fits them:
 |---|---|---|
 | **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
 | **Forward Auth** | Traefik asks Authentik before reaching the app | Navidrome |
-| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Home Assistant, Immich, AFFiNE, Paperless-ngx |
+| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Home Assistant, Immich, AFFiNE, Hermes, Paperless-ngx |
 
 Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) have
 their own documented login path.
@@ -203,7 +204,7 @@ bloud/
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
 │   ├── affine/                    # + authentik/, immich/,
-│   └── traefik/                   #   navidrome/, paperless-ngx/
+│   └── traefik/                   #   hermes/, navidrome/, paperless-ngx/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap
