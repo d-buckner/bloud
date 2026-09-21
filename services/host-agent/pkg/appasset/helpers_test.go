@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func atomicInc(p *int32) int32 { return atomic.AddInt32(p, 1) }
+func atomicInc(p *int32) int32  { return atomic.AddInt32(p, 1) }
 func atomicLoad(p *int32) int32 { return atomic.LoadInt32(p) }
 
 // singleFileFS is a tiny in-memory fs.FS with one file, for embed-source tests.
@@ -35,11 +35,11 @@ func (f *singleFile) Close() error               { return nil }
 
 type fakeInfo struct{}
 
-func (fakeInfo) Name() string      { return "file" }
-func (fakeInfo) Size() int64      { return 0 }
-func (fakeInfo) Mode() fs.FileMode { return 0644 }
+func (fakeInfo) Name() string       { return "file" }
+func (fakeInfo) Size() int64        { return 0 }
+func (fakeInfo) Mode() fs.FileMode  { return 0644 }
 func (fakeInfo) ModTime() time.Time { return time.Time{} }
-func (fakeInfo) IsDir() bool      { return false }
-func (fakeInfo) Sys() any         { return nil }
+func (fakeInfo) IsDir() bool        { return false }
+func (fakeInfo) Sys() any           { return nil }
 
 var _ io.Closer = (*singleFile)(nil)

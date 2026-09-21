@@ -111,7 +111,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), web vitest + svelte-check, license header check, prose lint (Vale), em dash check, docs link check |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, prose lint (Vale), em dash check, docs link check |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
@@ -126,6 +126,7 @@ cd services/host-agent && go test -race ./internal/engine/orchestrator/...
 cd apps && go test ./...                          # configurator tests
 cd cli && go test ./...
 npm run lint:go                                 # golangci-lint v2 / cyclop (all three Go modules; pinned v2.13.2 via go run)
+npm run check:gofmt                             # gofmt over every tracked *.go
 npm run lint:prose                              # Vale: tracked *.md, *.go, *.ts, *.js, *.svelte, *.yml, *.yaml, *.css, *.html, *.sql
 npm run check:no-emdash                         # em dashes anywhere in tracked files (covers what Vale cannot read)
 npm run check:docs-links                        # relative links and their #anchors
@@ -135,7 +136,8 @@ cd e2e && npx playwright test                     # browser e2e (see below)
 ```
 
 **Pre-commit hook (husky) runs `npm run test:precommit`** = license header check
-+ Go lint (`npm run lint:go`) + prose lint (`npm run lint:prose`) + the em dash
++ Go lint (`npm run lint:go`) + Go formatting (`npm run check:gofmt`) + prose lint
+(`npm run lint:prose`) + the em dash
 and docs-link checks + host-agent
 + apps Go tests + web TS tests. Don't commit without it passing;
 don't disable the hook.

@@ -27,7 +27,7 @@ type Configurator struct {
 	secrets      configurator.AppSecretsProvider
 	logger       *slog.Logger
 	navi         *navidromeAPI
-	ak         *authentikAPI
+	ak           *authentikAPI
 
 	// baseURL is a test seam: when set, the own-API client resolves to it
 	// instead of localhost:port.

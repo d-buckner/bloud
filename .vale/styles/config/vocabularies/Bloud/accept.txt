@@ -133,6 +133,7 @@ Tailscale
 (?i)funcs
 (?i)gatekeeping
 (?i)gitignored
+(?i)gofmt
 (?i)goroutine
 (?i)goroutines
 (?i)greppable
