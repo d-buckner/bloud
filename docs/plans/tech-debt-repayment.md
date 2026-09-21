@@ -1,5 +1,6 @@
 > Status: accepted (in progress). PRs 1-3 landed (#85 migrations, #86 operation
-> state, #88 route purity). **PR 4 implemented 2026-09-19** (revised first: its
+> state, #88 route purity); PR 7 landed 2026-09-20 (SQLite pragmas in the DSN).
+> **PR 4 implemented 2026-09-19** (revised first: its
 > original design was insufficient against a forgeable forwarding header) and
 > verified live against a deployed host-agent. PRs 6-11 added 2026-09-19 from
 > `docs/specs/review-2026-09-19.md` and are proposals until each one is started.
@@ -274,6 +275,18 @@ later `Submit` returns 202 and nothing reconciles again.
 ---
 
 ## PR 7: SQLite pragmas belong in the DSN (new, 2026-09-19)
+
+**Status: implemented 2026-09-20.** `db.InitDB` opens through a `file:`
+URL whose `_pragma` query the modernc driver executes at every
+connection open (busy_timeout first); `db.MemoryDSN()` hands the same
+query to `internal/testdb`, so test and production configs are built
+from one source. The one-off `Exec` loop is deleted.
+`internal/db/pragmas_test.go` opens the real production path with the
+pool widened and pins (a) per-connection `foreign_keys=1` and
+`busy_timeout=5000`, (b) FK rejection and cascading delete for
+`shares` on a fresh connection, (c) a contended write waiting in the
+busy handler instead of failing instantly. All three fail against the
+pre-fix tree; the full `-race` suite is clean.
 
 `db.InitDB` (`:29-39`) applies `PRAGMA foreign_keys=ON` and
 `PRAGMA busy_timeout=5000` with `db.Exec`, i.e. to **one** pooled connection;

@@ -415,11 +415,12 @@ concern (`middleware.RealIP` + Traefik `forwardedHeaders.insecure: true` +
 loopback=admin), so a single `True-Client-IP: 127.0.0.1` header grants admin.
 That is the shipping blocker; the engine's silent-failure paths (catalog
 nil-deref, lock-free `MemoryCache`, an intent queue that can exit permanently);
-per-connection SQLite pragmas; `appclient.Call.Timeout` being a no-op; container
+`appclient.Call.Timeout` being a no-op; container
 drift never repaired while the process is alive; duplicated orchestrator wiring
 (CLI vs router). Recently paid: durable lifecycle operation state
 (`store/operations.go` + orchestrator recorder, plan archived), versioned schema
-migrations, and route-generation purity (PR #88). Two earlier claims are
+migrations, route-generation purity (PR #88), and per-connection SQLite pragmas
+moved into the DSN (PR 7). Two earlier claims are
 corrected in the ledger: the `user_app_positions` fork fix is a no-op (the grid
 shape already existed), and the derived OAuth client secret *is* currently
 persisted. Review findings:
