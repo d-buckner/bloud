@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -64,16 +65,28 @@ type fakeApp struct {
 	tokenCookies    []string
 	providerCookies []string
 
+	// The group API: what the app holds, what the configurator wrote, and the
+	// credential each call presented.
+	groups      map[string]*group
+	nextGroupID int
+	groupWrites []string
+	groupTokens []string
+
 	// Knobs for the failure cases.
 	signupClosed     bool
 	signupRejected   bool
 	providerHidden   bool
 	providerError    bool
 	signupPageStatus int
+	groupWriteStatus int
 }
 
+// fakeAPIToken is the token the fake issues and demands, so a call that
+// forgets to present the admin's credential fails instead of passing.
+const fakeAPIToken = "api-token"
+
 func newFakeApp() *fakeApp {
-	return &fakeApp{users: map[string]string{}, csrf: "csrf-token-value"}
+	return &fakeApp{users: map[string]string{}, csrf: "csrf-token-value", groups: map[string]*group{}}
 }
 
 // ServeHTTP routes the fake's small surface. Each handler holds one flow, so
@@ -93,6 +106,12 @@ func (f *fakeApp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.serveProviderLogin(w, r)
 	case r.URL.Path == "/api/token/":
 		f.serveToken(w, r)
+	case r.URL.Path == "/api/groups/" && r.Method == http.MethodGet:
+		f.serveGroupList(w, r)
+	case r.URL.Path == "/api/groups/" && r.Method == http.MethodPost:
+		f.serveGroupCreate(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/groups/") && r.Method == http.MethodPatch:
+		f.serveGroupPatch(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -180,11 +199,98 @@ func (f *fakeApp) serveToken(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&creds)
 	if password, ok := f.users[creds.Username]; ok && password == creds.Password {
-		_, _ = w.Write([]byte(`{"token":"api-token"}`))
+		writeJSON(w, http.StatusOK, map[string]string{"token": fakeAPIToken})
 		return
 	}
 	w.WriteHeader(http.StatusBadRequest)
 	_, _ = w.Write([]byte(`{"non_field_errors":["Unable to log in with provided credentials."]}`))
+}
+
+// serveGroupList answers the group list, filtered by name the way the app's
+// filter set does.
+func (f *fakeApp) serveGroupList(w http.ResponseWriter, r *http.Request) {
+	if !f.requireToken(w, r) {
+		return
+	}
+	name := r.URL.Query().Get("name")
+	results := []group{}
+	for _, g := range f.groups {
+		if g.Name == name {
+			results = append(results, *g)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(results), "results": results})
+}
+
+// serveGroupCreate stores the group the configurator declares.
+func (f *fakeApp) serveGroupCreate(w http.ResponseWriter, r *http.Request) {
+	if !f.requireToken(w, r) {
+		return
+	}
+	if f.groupWriteStatus != 0 {
+		w.WriteHeader(f.groupWriteStatus)
+		return
+	}
+	var body groupWrite
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	f.nextGroupID++
+	g := &group{ID: f.nextGroupID, Name: body.Name, Permissions: body.Permissions}
+	f.groups[body.Name] = g
+	f.groupWrites = append(f.groupWrites, "POST "+body.Name)
+	writeJSON(w, http.StatusCreated, g)
+}
+
+// serveGroupPatch replaces a group's permissions, as the app does.
+func (f *fakeApp) serveGroupPatch(w http.ResponseWriter, r *http.Request) {
+	if !f.requireToken(w, r) {
+		return
+	}
+	if f.groupWriteStatus != 0 {
+		w.WriteHeader(f.groupWriteStatus)
+		return
+	}
+	id, err := strconv.Atoi(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/groups/"), "/"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	for _, g := range f.groups {
+		if g.ID != id {
+			continue
+		}
+		var body groupPermissionsWrite
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		g.Permissions = body.Permissions
+		f.groupWrites = append(f.groupWrites, "PATCH "+g.Name)
+		writeJSON(w, http.StatusOK, g)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// requireToken enforces the app's authentication on the group API and records
+// what each call presented, so a call without the admin's token fails here.
+func (f *fakeApp) requireToken(w http.ResponseWriter, r *http.Request) bool {
+	auth := r.Header.Get("Authorization")
+	f.groupTokens = append(f.groupTokens, auth)
+	if auth != "Token "+fakeAPIToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"detail": "Authentication credentials were not provided."})
+		return false
+	}
+	return true
+}
+
+// writeJSON answers with a JSON body.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // testConfigurator builds a configurator whose API clients point at a fake app
@@ -331,6 +437,11 @@ func TestRenderConf_OIDCProviderContract(t *testing.T) {
 	assert.Equal(t, oidcApps, conf["PAPERLESS_APPS"])
 	assert.Equal(t, "true", conf["PAPERLESS_SOCIAL_AUTO_SIGNUP"])
 	assert.Equal(t, "true", conf["PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS"])
+	// An SSO account lands in the group Bloud declares, and a member of the
+	// instance's admin group becomes a superuser: without either, a signed-in
+	// user's first API call answers 403.
+	assert.Equal(t, baselineGroup, conf["PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS"])
+	assert.Equal(t, adminGroupClaim, conf["PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP"])
 	// Logging out must end the session at the issuer rather than landing on
 	// the app's own sign-in page.
 	assert.Equal(t, "http://sso.localhost:8080/application/o/paperless/end-session/", conf["PAPERLESS_LOGOUT_REDIRECT_URL"])
@@ -370,7 +481,13 @@ func TestRenderConf_WithoutOIDC_OmitsProviderSettings(t *testing.T) {
 
 	assert.Equal(t, "http://paperless.localhost:8080", conf["PAPERLESS_URL"])
 	assert.NotEmpty(t, conf["PAPERLESS_SECRET_KEY"])
-	for _, key := range []string{"PAPERLESS_APPS", "PAPERLESS_SOCIALACCOUNT_PROVIDERS", "PAPERLESS_LOGOUT_REDIRECT_URL"} {
+	for _, key := range []string{
+		"PAPERLESS_APPS",
+		"PAPERLESS_SOCIALACCOUNT_PROVIDERS",
+		"PAPERLESS_LOGOUT_REDIRECT_URL",
+		"PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS",
+		"PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP",
+	} {
 		_, ok := conf[key]
 		assert.False(t, ok, "%s must be absent without SSO", key)
 	}
@@ -493,6 +610,75 @@ func TestPostStart_FailsWhenProviderProbeErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "authorization redirect")
 }
 
+func TestPostStart_DeclaresBaselineGroupOnFreshInstall(t *testing.T) {
+	app := newFakeApp()
+	c, dataPath := testConfigurator(t, app)
+
+	require.NoError(t, c.PostStart(context.Background(), appState(dataPath, testOIDC())))
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	assert.Equal(t, []string{"POST " + baselineGroup}, app.groupWrites, "a fresh install must declare the group")
+	created := app.groups[baselineGroup]
+	require.NotNil(t, created, "the group an SSO account joins must exist before the first signup")
+	// UISettings is the permission whose absence broke the dashboard: the web
+	// app's own first request is GET /api/ui_settings/.
+	assert.Contains(t, created.Permissions, "view_uisettings")
+	assert.Contains(t, created.Permissions, "view_document")
+	for _, auth := range app.groupTokens {
+		assert.Equal(t, "Token "+fakeAPIToken, auth, "declaring the group must present the admin's token")
+	}
+	assert.Equal(t, 1, app.tokenPosts, "the admin token must be reused, not re-fetched")
+}
+
+func TestPostStart_LeavesConvergedBaselineGroupAlone(t *testing.T) {
+	app := newFakeApp()
+	app.groups[baselineGroup] = &group{ID: 1, Name: baselineGroup, Permissions: baselinePermissions()}
+	c, dataPath := testConfigurator(t, app)
+
+	require.NoError(t, c.PostStart(context.Background(), appState(dataPath, testOIDC())))
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	assert.Empty(t, app.groupWrites, "a converged group must not be rewritten")
+}
+
+func TestPostStart_RepairsDriftedBaselineGroup(t *testing.T) {
+	app := newFakeApp()
+	app.groups[baselineGroup] = &group{ID: 7, Name: baselineGroup, Permissions: []string{"view_document"}}
+	c, dataPath := testConfigurator(t, app)
+
+	require.NoError(t, c.PostStart(context.Background(), appState(dataPath, testOIDC())))
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	assert.Equal(t, []string{"PATCH " + baselineGroup}, app.groupWrites)
+	assert.Contains(t, app.groups[baselineGroup].Permissions, "view_uisettings")
+}
+
+func TestPostStart_FailsWhenTheBaselineGroupIsRejected(t *testing.T) {
+	// The group is what makes an SSO session usable, so a rejected declaration
+	// must fail the reconciliation rather than leave users answering 403.
+	app := newFakeApp()
+	app.groupWriteStatus = http.StatusBadRequest
+	c, dataPath := testConfigurator(t, app)
+
+	err := c.PostStart(context.Background(), appState(dataPath, testOIDC()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "baseline group")
+}
+
+func TestSamePermissions_ComparesAsASet(t *testing.T) {
+	// The app returns codenames sorted, and the declared list is ordered by
+	// model: differing order is not drift, or every reconciliation would
+	// rewrite the group. A duplicate in the declared list must not read as
+	// drift either.
+	assert.True(t, samePermissions([]string{"view_tag", "add_tag"}, []string{"add_tag", "view_tag"}))
+	assert.True(t, samePermissions([]string{"view_tag"}, []string{"view_tag", "view_tag"}))
+	assert.False(t, samePermissions([]string{"view_tag"}, []string{"view_tag", "add_tag"}))
+	assert.False(t, samePermissions([]string{"view_tag", "add_tag"}, []string{"view_tag"}))
+}
+
 func TestPostStart_WithoutSSOSkipsProviderChecks(t *testing.T) {
 	app := newFakeApp()
 	app.providerHidden = true
@@ -503,6 +689,7 @@ func TestPostStart_WithoutSSOSkipsProviderChecks(t *testing.T) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	assert.Zero(t, app.providerPosts, "no provider probe without an OIDC output")
+	assert.Empty(t, app.groupWrites, "no SSO accounts means no group to declare")
 	assert.Len(t, app.signupPosts, 1, "the admin bootstrap runs regardless of SSO")
 }
 

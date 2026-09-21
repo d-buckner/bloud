@@ -181,3 +181,100 @@ func (a *paperlessAPI) signup(ctx context.Context, username, email, password str
 
 // csrfTokenRe finds the hidden CSRF input Django renders in a form.
 var csrfTokenRe = regexp.MustCompile(`name="csrfmiddlewaretoken"\s+value="([^"]+)"`)
+
+// group is a Paperless-ngx permission group. Permissions are Django permission
+// codenames, which is what the API's serializer resolves.
+type group struct {
+	ID          int      `json:"id"`
+	Name        string   `json:"name"`
+	Permissions []string `json:"permissions"`
+}
+
+// groupWrite is the create body: name plus the permissions to grant.
+type groupWrite struct {
+	Name        string   `json:"name"`
+	Permissions []string `json:"permissions"`
+}
+
+// groupPermissionsWrite is the update body. The name is deliberately absent so
+// a rename in the app is not silently reverted.
+type groupPermissionsWrite struct {
+	Permissions []string `json:"permissions"`
+}
+
+// ensureGroup makes the named group exist with exactly the given permission
+// set, creating it when absent and replacing a drifted set otherwise. It is the
+// declaration step for state the app keeps in its database rather than in its
+// config file.
+func (a *paperlessAPI) ensureGroup(ctx context.Context, token, name string, permissions []string) (bool, error) {
+	existing, found, err := a.findGroup(ctx, token, name)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		err := a.cl.POST("/api/groups/").
+			Header("Authorization", "Token "+token).
+			JSON(groupWrite{Name: name, Permissions: permissions}).
+			OK(http.StatusCreated).
+			NoRetry().
+			Exec(ctx)
+		return true, err
+	}
+	if samePermissions(existing.Permissions, permissions) {
+		return false, nil
+	}
+	err = a.cl.PATCH(fmt.Sprintf("/api/groups/%d/", existing.ID)).
+		Header("Authorization", "Token "+token).
+		JSON(groupPermissionsWrite{Permissions: permissions}).
+		OK(http.StatusOK).
+		NoRetry().
+		Exec(ctx)
+	return true, err
+}
+
+// findGroup returns the group with this exact name, if the app has one. The
+// list endpoint filters by name, but its lookup semantics are the app's, so the
+// result is matched exactly here.
+func (a *paperlessAPI) findGroup(ctx context.Context, token, name string) (group, bool, error) {
+	body, err := a.cl.GET("/api/groups/").
+		Query("name", name).
+		Header("Authorization", "Token "+token).
+		OK(http.StatusOK).
+		NoRetry().
+		Do(ctx)
+	if err != nil {
+		return group{}, false, err
+	}
+	var page struct {
+		Results []group `json:"results"`
+	}
+	if err := json.Unmarshal(body, &page); err != nil {
+		return group{}, false, fmt.Errorf("decoding the group list: %w", err)
+	}
+	for _, g := range page.Results {
+		if g.Name == name {
+			return g, true, nil
+		}
+	}
+	return group{}, false, nil
+}
+
+// samePermissions reports whether two codename lists name the same set. Order
+// is the app's business (it returns codenames sorted), and a duplicate in the
+// declared list must not read as drift, or every reconciliation would rewrite
+// the group.
+func samePermissions(current, desired []string) bool {
+	set := make(map[string]struct{}, len(desired))
+	for _, p := range desired {
+		set[p] = struct{}{}
+	}
+	if len(set) != len(current) {
+		return false
+	}
+	for _, p := range current {
+		if _, ok := set[p]; !ok {
+			return false
+		}
+	}
+	return true
+}

@@ -53,6 +53,25 @@ const providerLoginPath = "/accounts/oidc/" + providerID + "/login/"
 // first account (there is no admin API).
 const signupPath = "/accounts/signup/"
 
+// baselineGroup is the Paperless-ngx group every SSO account is created into.
+// Paperless-ngx grants new users no permissions of their own ("By default, new
+// users are not granted any permissions"), while its REST API is guarded by
+// model permissions, so an account with none cannot load the web app at all:
+// the dashboard's first calls, GET /api/ui_settings/ and GET /api/saved_views/,
+// answer 403 and the app is unusable. PostStart declares the group (creating it
+// or restoring its declared permission set) and
+// PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS adds every social signup to it.
+const baselineGroup = "bloud-users"
+
+// adminGroupClaim is the Authentik group whose members become Paperless-ngx
+// superusers, via PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP: Authentik's
+// profile scope carries the `groups` claim, which allauth exposes to the app as
+// the social account's extra data, and the app syncs superuser status from it on
+// every login. It is the same membership that grants admin in Jellyfin
+// (apps/jellyfin's LDAP admin filter) and Bloud's own admin role, so app admin
+// rights follow the instance's role boundary instead of being granted per app.
+const adminGroupClaim = "authentik Admins"
+
 // adminUser is the internal-only Django superuser the container creates on
 // first start from PAPERLESS_ADMIN_USER/PAPERLESS_ADMIN_PASSWORD. It gives the
 // Django admin and the REST API a way in that does not depend on the identity
@@ -200,12 +219,16 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("waiting for paperless webserver: %w", err)
 	}
 
-	if err := c.ensureBootstrapAdmin(ctx); err != nil {
+	adminToken, err := c.ensureBootstrapAdmin(ctx)
+	if err != nil {
 		return err
 	}
 
 	if state.OIDC == nil {
 		return nil
+	}
+	if err := c.ensureBaselineGroup(ctx, adminToken); err != nil {
+		return fmt.Errorf("declaring the SSO baseline group: %w", err)
 	}
 	if err := c.api.waitProviderAdvertised(ctx); err != nil {
 		return fmt.Errorf("verifying OIDC provider on the sign-in page: %w", err)
@@ -217,7 +240,12 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	return nil
 }
 
-// ensureBootstrapAdmin makes sure the instance has its internal admin account.
+// ensureBootstrapAdmin makes sure the instance has its internal admin account
+// and returns that account's API token, which later steps use to declare
+// instance state (the SSO baseline group). An empty token with a nil error
+// means the credential could not be proven (no secrets provider, or the token
+// endpoint rejected or throttled the check), which callers report rather than
+// fail on: the next reconciliation re-checks.
 //
 // Paperless-ngx has no admin API: the account that owns the instance is the one
 // its signup form creates, which the account adapter promotes to superuser
@@ -226,30 +254,30 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // unreachable. Bloud therefore drives that form once per fresh install with the
 // password from the secrets provider; every later pass finds signup closed and
 // only verifies that the account still authenticates.
-func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) error {
+func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) (string, error) {
 	password, err := c.adminPassword()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if password == "" {
 		c.logger.Warn("admin bootstrap skipped: no secrets provider")
-		return nil
+		return "", nil
 	}
 
 	open, err := c.api.signupOpen(ctx)
 	if err != nil {
-		return fmt.Errorf("checking the signup state: %w", err)
+		return "", fmt.Errorf("checking the signup state: %w", err)
 	}
 	if open {
 		if err := c.api.signup(ctx, adminUser, adminEmail, password); err != nil {
-			return fmt.Errorf("creating the internal admin account: %w", err)
+			return "", fmt.Errorf("creating the internal admin account: %w", err)
 		}
 		c.logger.Info("internal admin account created", "user", adminUser)
 	}
 
 	token, err := c.api.login(ctx, adminUser, password)
 	if err != nil {
-		return fmt.Errorf("verifying internal admin account: %w", err)
+		return "", fmt.Errorf("verifying internal admin account: %w", err)
 	}
 	if token == "" {
 		// The credentials were rejected (another account owns the instance) or
@@ -257,10 +285,87 @@ func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) error {
 		// unusable for SSO users, so it is reported rather than failed, and the
 		// next reconciliation re-checks.
 		c.logger.Warn("internal admin account not verified", "user", adminUser)
-		return nil
+		return "", nil
 	}
 	c.logger.Info("internal admin account verified", "user", adminUser)
+	return token, nil
+}
+
+// ensureBaselineGroup declares the group every SSO account is created into, so
+// that a signed-in user can actually use the app. Paperless-ngx grants new
+// users nothing and gates every REST endpoint on model permissions, so without
+// this the dashboard's own requests answer 403 (see baselineGroup).
+//
+// An empty adminToken means the internal admin could not authenticate; the
+// group is then reported as undeclared rather than failed, matching how an
+// unverified admin is treated, and the next reconciliation retries.
+func (c *Configurator) ensureBaselineGroup(ctx context.Context, adminToken string) error {
+	if adminToken == "" {
+		c.logger.Warn("baseline group not declared: no internal admin API token")
+		return nil
+	}
+	permissions := baselinePermissions()
+	changed, err := c.api.ensureGroup(ctx, adminToken, baselineGroup, permissions)
+	if err != nil {
+		return err
+	}
+	if changed {
+		c.logger.Info("declared the SSO baseline group", "group", baselineGroup, "permissions", len(permissions))
+	}
 	return nil
+}
+
+// baselinePermissions is the declared permission set of baselineGroup, named by
+// Django permission codename. It is the whole document domain: every verb on
+// every model of the documents and paperless_mail apps, which is the set
+// Paperless-ngx's own "Global permissions" table describes for a user who works
+// with documents, including UISettings (which the web app requires at least
+// view on). It adds read-only access to the instance configuration and
+// statistics the app renders. Instance administration (changing Application
+// Configuration, managing users and groups) is deliberately absent: that is
+// what the adminGroupClaim superuser mapping is for.
+//
+// The image is pinned in metadata.yaml, so an image bump is where this list is
+// reviewed: a model added upstream needs its codenames added here.
+func baselinePermissions() []string {
+	models := []string{
+		"correspondent",
+		"customfield",
+		"customfieldinstance",
+		"document",
+		"documenttype",
+		"mailaccount",
+		"mailrule",
+		"note",
+		"paperlesstask",
+		"processedmail",
+		"savedview",
+		"savedviewfilterrule",
+		"sharelink",
+		"sharelinkbundle",
+		"storagepath",
+		"tag",
+		"uisettings",
+		"workflow",
+		"workflowaction",
+		"workflowactionemail",
+		"workflowactionwebhook",
+		"workflowrun",
+		"workflowtrigger",
+	}
+	permissions := make([]string, 0, len(models)*4+2)
+	for _, model := range models {
+		// Every model carries all four; the API rejects a codename that does
+		// not exist, so a list that drifts from the app fails loudly here
+		// rather than leaving users without access.
+		for _, verb := range []string{"add", "change", "delete", "view"} {
+			permissions = append(permissions, verb+"_"+model)
+		}
+	}
+	return append(permissions,
+		"view_applicationconfiguration",
+		"view_global_statistics",
+	)
 }
 
 // Remove is a no-op for the Paperless-ngx configurator; container and data
@@ -317,6 +422,12 @@ func renderConf(s publicSettings) (string, error) {
 			[2]string{"PAPERLESS_SOCIALACCOUNT_PROVIDERS", providers},
 			[2]string{"PAPERLESS_SOCIAL_AUTO_SIGNUP", "true"},
 			[2]string{"PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS", "true"},
+			// Every social signup joins the baseline group, so an SSO user
+			// reaches the app with the permissions it needs (see
+			// baselineGroup); adminGroupClaim's members additionally become
+			// superusers.
+			[2]string{"PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS", baselineGroup},
+			[2]string{"PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP", adminGroupClaim},
 			[2]string{"PAPERLESS_LOGOUT_REDIRECT_URL", endpointURL(s.oidc.IssuerURL, "end-session/")},
 		)
 	}

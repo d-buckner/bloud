@@ -268,6 +268,7 @@ Tailscale
 (?i)traefik's
 (?i)traefikgen
 (?i)uid
+(?i)uisettings
 (?i)uncancellable
 (?i)unforgeable
 (?i)unix

@@ -99,9 +99,25 @@ describeApp('paperless', (app) => {
         timeout: 120_000,
       });
       await expect(paperless.locator('input#inputUsername')).toHaveCount(0);
-      // No API probe here: a freshly auto-created account has no document
-      // permissions yet, so the REST API answers 403 for it by design. The Go
-      // integration test covers the API path with the internal admin.
+
+      // Rendering the shell is not enough: the dashboard's own first calls are
+      // API calls, and Paperless-ngx grants a new account no permissions, so an
+      // account Bloud did not put in its baseline group gets 403 from every one
+      // of them. These two are the endpoints a signed-in but permissionless
+      // account fails on, which is what this asserts against.
+      const statuses = await paperless.evaluate(async () => {
+        const paths = ['/api/ui_settings/', '/api/saved_views/'];
+        const codes: Record<string, number> = {};
+        for (const path of paths) {
+          const res = await fetch(path, { credentials: 'include' });
+          codes[path] = res.status;
+        }
+        return codes;
+      });
+      expect(statuses).toEqual({
+        '/api/ui_settings/': 200,
+        '/api/saved_views/': 200,
+      });
     } finally {
       await paperless.close();
     }

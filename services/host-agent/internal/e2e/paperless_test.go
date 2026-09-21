@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,11 +28,13 @@ var paperlessURL = getEnvDefault("BLOUD_E2E_PAPERLESS_URL", "http://localhost:80
 
 // Paperless-ngx integration values. They must match apps/paperless: the
 // provider id allauth registers, the admin username the container creates
-// from the generated config file.
+// from the generated config file, and the group Bloud declares for SSO
+// accounts.
 const (
 	paperlessAdminUser        = "bloud-admin"
 	paperlessProviderLogin    = "/accounts/oidc/bloud/login/"
 	paperlessProviderCallback = "/accounts/oidc/bloud/login/callback/"
+	paperlessBaselineGroup    = "bloud-users"
 )
 
 // paperlessNodes are the app's graph nodes, one container each.
@@ -91,6 +94,105 @@ func TestPaperlessConfiguredByConfigurator(t *testing.T) {
 	}
 	token := paperlessToken(t, password)
 	paperlessIngestsUploadedDocument(t, token)
+}
+
+// TestPaperlessBaselineGroupGrantsWebAppAccess asserts what a signed-in SSO
+// account can do, which is the part membership alone does not prove:
+// Paperless-ngx grants a new user no permissions and gates every REST endpoint
+// on model permissions, so the web app's own first calls (/api/ui_settings/,
+// /api/saved_views/) answer 403 for an account without them, and the dashboard
+// renders but never works. Bloud declares the group social signups join; this
+// places a user in that group through the app's API and checks the API accepts
+// the session.
+func TestPaperlessBaselineGroupGrantsWebAppAccess(t *testing.T) {
+	waitAppRunning(t, "paperless", 2*time.Minute)
+
+	adminToken := paperlessToken(t, readSecrets(t).AppSecrets["paperless"].AdminPassword)
+	groupID := paperlessBaselineGroupID(t, adminToken)
+	memberToken := paperlessCreateMemberInGroup(t, adminToken, groupID)
+
+	for _, path := range []string{"/api/ui_settings/", "/api/saved_views/"} {
+		paperlessGet(t, path, memberToken)
+	}
+	t.Log("a member of the baseline group can use the API")
+}
+
+// paperlessBaselineGroupID returns the id of the group SSO accounts join and
+// fails if it is missing or carries no permissions: a group that exists but
+// grants nothing satisfies membership and still answers 403.
+func paperlessBaselineGroupID(t *testing.T, adminToken string) int {
+	t.Helper()
+	body := paperlessGet(t, "/api/groups/?name="+url.QueryEscape(paperlessBaselineGroup), adminToken)
+	var list struct {
+		Results []struct {
+			ID          int      `json:"id"`
+			Name        string   `json:"name"`
+			Permissions []string `json:"permissions"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("decoding the group list: %v (%s)", err, body)
+	}
+	for _, g := range list.Results {
+		if g.Name != paperlessBaselineGroup {
+			continue
+		}
+		if len(g.Permissions) == 0 {
+			t.Fatalf("group %s grants no permissions: an SSO session would answer 403", paperlessBaselineGroup)
+		}
+		return g.ID
+	}
+	t.Fatalf("group %s does not exist: SSO signups would land with no permissions", paperlessBaselineGroup)
+	return 0
+}
+
+// paperlessCreateMemberInGroup creates an account in the baseline group, which
+// is the state PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS produces at signup, and
+// returns its API token.
+func paperlessCreateMemberInGroup(t *testing.T, adminToken string, groupID int) string {
+	t.Helper()
+	const (
+		username = "bloud-member"
+		password = "bloud-member-password-1"
+	)
+	body := fmt.Sprintf(`{"username":%q,"password":%q,"groups":[%d]}`, username, password, groupID)
+	payload := paperlessPostJSON(t, "/api/users/", adminToken, body)
+
+	var created struct {
+		ID     int   `json:"id"`
+		Groups []int `json:"groups"`
+	}
+	if err := json.Unmarshal(payload, &created); err != nil {
+		t.Fatalf("decoding the created user: %v (%s)", err, payload)
+	}
+	if !slices.Contains(created.Groups, groupID) {
+		t.Fatalf("the created user is not in group %d: %s", groupID, payload)
+	}
+	return paperlessTokenFor(t, username, password)
+}
+
+// paperlessPostJSON posts a JSON body to the app with an API token and fails
+// the test on anything but 201.
+func paperlessPostJSON(t *testing.T, path, token, body string) []byte {
+	t.Helper()
+	req, err := http.NewRequest("POST", paperlessURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("building request for %s: %v", path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Token "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST %s: status %d: %s", path, resp.StatusCode, truncateBody(payload))
+	}
+	return payload
 }
 
 // TestPaperlessUninstallCleanup uninstalls Paperless-ngx through the API and
@@ -188,8 +290,14 @@ func paperlessProviderRedirect(t *testing.T) string {
 // file: a missing user or password answers 401.
 func paperlessToken(t *testing.T, password string) string {
 	t.Helper()
+	return paperlessTokenFor(t, paperlessAdminUser, password)
+}
+
+// paperlessTokenFor exchanges an account's credentials for an API token.
+func paperlessTokenFor(t *testing.T, username, password string) string {
+	t.Helper()
 	body, _ := json.Marshal(map[string]string{
-		"username": paperlessAdminUser,
+		"username": username,
 		"password": password,
 	})
 	resp, err := http.Post(paperlessURL+"/api/token/", "application/json", bytes.NewReader(body))
@@ -199,7 +307,7 @@ func paperlessToken(t *testing.T, password string) string {
 	payload, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /api/token/ for %s: status %d: %s", paperlessAdminUser, resp.StatusCode, payload)
+		t.Fatalf("POST /api/token/ for %s: status %d: %s", username, resp.StatusCode, payload)
 	}
 	var out struct {
 		Token string `json:"token"`
