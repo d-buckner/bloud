@@ -122,12 +122,6 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	return pluginInstalled || networkChanged, nil
 }
 
-// Remove is a no-op for the Jellyfin configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
 //
 // It runs under the framework's PostStartBudget: the orchestrator bounds the

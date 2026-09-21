@@ -18,12 +18,54 @@ version: "2"
 linters:
   enable:
     - cyclop
+    - forbidigo
   settings:
     cyclop:
       # Fail any function with cyclomatic complexity > 20.
       max-complexity: 20
       # Fail any package whose average function complexity > 7.0.
       package-average: 7.0
+    forbidigo:
+      # App configurators integrate with their app through sanctioned helpers:
+      # pkg/managedfile for generated files, pkg/appclient for HTTP, and
+      # Deps.Exec / Deps.RestartContainer for commands inside containers.
+      # Direct stdlib shortcuts reintroduce the failure modes those helpers
+      # exist to remove (non-atomic writes, missing timeouts, uncancellable
+      # exec), so they are forbidden in the apps module. The exclusions below
+      # scope forbidigo to apps/**/*.go: host-agent and cli legitimately write
+      # files and spawn processes. A single-site exception is a
+      # `//nolint:forbidigo // reason` on the line.
+      #
+      # analyze-types resolves the called package, so the rule still fires when
+      # an import is aliased and can distinguish http.Client.Do from
+      # appclient's Call.Do.
+      analyze-types: true
+      forbid:
+        # Generated config files go through pkg/managedfile.Write (atomic,
+        # change-detecting, parent-dir creating).
+        - pattern: '^os\.(WriteFile|Create|CreateTemp|OpenFile)$'
+          msg: 'write generated files through pkg/managedfile.Write'
+        - pattern: '^ioutil\.(WriteFile|TempFile)$'
+          msg: 'write generated files through pkg/managedfile.Write'
+        # Commands inside containers go through Deps.Exec (output + env) or
+        # Deps.RestartContainer; the configurator holds no podman handle.
+        - pattern: '^exec\.Command(Context)?$'
+          msg: 'run commands through Deps.Exec / Deps.RestartContainer'
+        # App HTTP goes through pkg/appclient (typed requests, retries,
+        # readiness waits); its Call.Do(ctx) is the sanctioned terminal.
+        - pattern: '^http\.(NewRequest|DefaultClient|Client)$'
+          msg: 'call app HTTP through pkg/appclient'
+        - pattern: '^http\.Client\.Do$'
+          msg: 'call app HTTP through pkg/appclient'
+  exclusions:
+    rules:
+      # forbidigo targets app configurators: tests and the host-agent/cli
+      # modules legitimately write files and spawn processes. Paths are
+      # module-relative (apps/, services/host-agent/, cli/).
+      - path: '_test\.go$'
+        linters: [forbidigo]
+      - path: '^(services|cli)/'
+        linters: [forbidigo]
 
 issues:
   # Report the full totality of issues: never cap per linter or collapse

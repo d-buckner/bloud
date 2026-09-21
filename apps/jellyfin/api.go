@@ -178,18 +178,16 @@ func (a *jellyfinAPI) setStartupConfiguration(ctx context.Context) error {
 
 // setStartupUser waits for Jellyfin's auto-created initial user to become
 // available (GET /Startup/User returns 200), then updates it with the managed
-// credentials. The availability wait is best-effort; a not-ready user only logs.
+// credentials.
 func (a *jellyfinAPI) setStartupUser(ctx context.Context, username, password string) error {
-	// Wait for the initial user to be available (Jellyfin creates it async).
-	err := a.cl.GET("/Startup/User").
+	// Best-effort wait for the async initial user to appear. A slow cold start
+	// must not fail PostStart (the node would land in terminal ERROR), and the
+	// POST below is the authoritative, idempotent step, so the wait's terminal
+	// error is deliberately ignored.
+	_ = a.cl.GET("/Startup/User").
 		WithRetry(startupUserPolicy).
 		Ready(appclient.StatusIs(http.StatusOK)).
 		Wait(ctx)
-	if err != nil && ctx.Err() == nil {
-		// Only surface the "not ready" as a soft note; the POST below is the
-		// authoritative step.
-		return fmt.Errorf("waiting for initial user: %w", err)
-	}
 	return a.cl.POST("/Startup/User").
 		JSON(map[string]string{"Name": username, "Password": password}).
 		OK(http.StatusOK, http.StatusNoContent).

@@ -4,7 +4,6 @@
 package immich
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
 const appName = "immich"
@@ -95,28 +95,17 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	}
 
 	dir := filepath.Join(state.DataPath, "config")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return false, fmt.Errorf("creating config directory: %w", err)
-	}
-
 	path := filepath.Join(dir, configFileName)
 	content := renderConfigFile(state.OIDC)
 
-	existing, _ := os.ReadFile(path)
-	if bytes.Equal(existing, []byte(content)) {
-		return false, nil
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	changed, err := managedfile.Write(path, []byte(content), 0644)
+	if err != nil {
 		return false, fmt.Errorf("writing config file: %w", err)
 	}
-	c.logger.Info("wrote Immich OAuth config file", "path", path)
-	return true, nil
-}
-
-// Remove is a no-op for the Immich configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
+	if changed {
+		c.logger.Info("wrote Immich OAuth config file", "path", path)
+	}
+	return changed, nil
 }
 
 // PostStart bootstraps the server admin. Immich shows a first-admin
@@ -163,6 +152,8 @@ func ensureMountMarkers(dataPath string, logger *slog.Logger) error {
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("checking mount marker %s: %w", marker, err)
 		}
+		//nolint:forbidigo // create-only-if-absent marker; managedfile.Write
+		// compares content and would rewrite (and report a change) every pass.
 		if err := os.WriteFile(marker, []byte(strconv.FormatInt(time.Now().UnixMilli(), 10)), 0644); err != nil {
 			return fmt.Errorf("writing mount marker %s: %w", marker, err)
 		}

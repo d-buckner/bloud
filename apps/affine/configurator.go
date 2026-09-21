@@ -4,17 +4,14 @@
 package affine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
 const appName = "affine"
@@ -92,24 +89,7 @@ func (c *Configurator) Name() string {
 // e.g. "http://affine.localhost:8080". It must match the OIDC redirect URI
 // base registered by the host-agent (app subdomain + callbackPath).
 func (c *Configurator) appExternalURL() string {
-	baseURL := ""
-	if c.ssoBaseURL != nil {
-		baseURL = c.ssoBaseURL()
-	}
-	if baseURL == "" {
-		return "http://affine.localhost:8080"
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Host == "" {
-		return "http://affine.localhost:8080"
-	}
-	parsed.Host = appName + "." + parsed.Host
-	parsed.Path = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.RawPath = ""
-	parsed.User = nil
-	return strings.TrimSuffix(parsed.String(), "/")
+	return configurator.AppExternalURL(c.ssoBaseURL, appName)
 }
 
 // PreStart writes the AFFiNE config file so the server comes up with the
@@ -117,29 +97,19 @@ func (c *Configurator) appExternalURL() string {
 // configChanged=true when the file content changed so the orchestrator
 // recreates the container.
 func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
-	dir := filepath.Join(state.DataPath, "config")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return false, fmt.Errorf("creating config directory: %w", err)
+	path := filepath.Join(state.DataPath, "config", configFileName)
+	content, err := renderConfigFile(c.appExternalURL(), state.OIDC)
+	if err != nil {
+		return false, err
 	}
-
-	path := filepath.Join(dir, configFileName)
-	content := renderConfigFile(c.appExternalURL(), state.OIDC)
-
-	existing, _ := os.ReadFile(path)
-	if bytes.Equal(existing, []byte(content)) {
-		return false, nil
-	}
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+	changed, err := managedfile.Write(path, []byte(content), 0600)
+	if err != nil {
 		return false, fmt.Errorf("writing config file: %w", err)
 	}
-	c.logger.Info("wrote AFFiNE config file", "path", path, "sso", state.OIDC != nil)
-	return true, nil
-}
-
-// Remove is a no-op for the AFFiNE configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
+	if changed {
+		c.logger.Info("wrote AFFiNE config file", "path", path, "sso", state.OIDC != nil)
+	}
+	return changed, nil
 }
 
 // PostStart verifies the server answers, creates the first-run owner
@@ -193,7 +163,7 @@ func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) error {
 
 // renderConfigFile renders the AFFiNE config.json. Only keys that override
 // defaults are set; AFFiNE merges the file over its built-in defaults.
-func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) string {
+func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) (string, error) {
 	cfg := map[string]any{
 		"server": map[string]any{
 			"externalUrl": externalURL,
@@ -216,7 +186,7 @@ func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) string 
 	// reconciliation cycles.
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return "" // unreachable: all values are marshalable
+		return "", fmt.Errorf("rendering config file: %w", err)
 	}
-	return string(out) + "\n"
+	return string(out) + "\n", nil
 }

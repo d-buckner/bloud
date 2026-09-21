@@ -42,6 +42,15 @@ type Deps struct {
 	// factories that require a restart must treat nil as "cannot apply now".
 	RestartContainer func(ctx context.Context, name string) error
 
+	// Exec runs a command inside a running container and returns its combined
+	// output. env entries are set in the container process, never on the command
+	// line, so secrets do not leak into an argv. Like RestartContainer, the call
+	// goes through the host runtime the orchestrator provides, so the
+	// orchestrator stays the single writer of container side effects. Nil when
+	// no runtime is available (CLI/tests); callers that require it must treat
+	// nil as "cannot apply now".
+	Exec ExecFunc
+
 	// HTTP builds app HTTP clients for this process: shared transport,
 	// default retry policy, shared logger. The zero value is usable (lazy
 	// defaults), so a configurator can always call deps.HTTP.New(...).
@@ -64,6 +73,10 @@ func (d Deps) LocalTraefikURL() string {
 // It returns an error when the configurator cannot be built with the given
 // dependencies (e.g. a required dependency is missing in this mode).
 type Factory func(deps Deps) (NodeLifecycle, error)
+
+// ExecFunc runs a command inside a named container and returns its combined
+// output. It is the shape of Deps.Exec (see there for the nil contract).
+type ExecFunc func(ctx context.Context, containerName string, env map[string]string, cmd []string) ([]byte, error)
 
 var (
 	factoryMu     sync.RWMutex

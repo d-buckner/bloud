@@ -109,8 +109,8 @@ func runServer() {
 		}
 		return client.StartContainer(ctx, name)
 	}
-	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, hosts, restartContainer))
-	appconfig.RegisterSystem(registry, cfg, runtime, logger, templateVars, hosts)
+	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv))
+	appconfig.RegisterSystem(cfg, runtime, templateVars)
 
 	// Event bus: shared between the API (SSE streams) and background consumers.
 	eventsBus := eventbus.New()
