@@ -13,6 +13,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | How to add an app | [guides/contributing-apps.md](guides/contributing-apps.md) |
 | Multi-container app model | [specs/app-spec.md](specs/app-spec.md) |
 | Backend debt + repayment plan | [operations/tech-debt.md](operations/tech-debt.md) |
+| Build the .deb release package | [operations/packaging.md](operations/packaging.md) |
 | Sharing/federation (in progress) | [features/sharing.md](features/sharing.md) |
 | Dashboard layout + widgets | [features/dashboard.md](features/dashboard.md) |
 | Dated review findings | [specs/review.md](specs/review.md) |
