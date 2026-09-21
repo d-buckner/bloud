@@ -18,16 +18,18 @@ import (
 type OIDCInputs struct {
 	ClientID     string
 	ClientSecret string
+	ClientType   string // "public" (PKCE, no secret) or "confidential"
 	IssuerURL    string
 	RedirectURIs []string
 	LaunchURL    string
 }
 
 // OIDCInputsForApp computes the deterministic OIDC inputs for a native-oidc app.
-// The client secret is derived from the host secret so every Bloud host derives
-// the same value without a shared store. A redirect URI is registered for every
-// base URL (host + detected IPs) so login works from any of them, plus a
-// direct-port URI on the primary base URL for debugging.
+// A confidential client's secret is derived from the host secret so every Bloud
+// host derives the same value without a shared store; a public PKCE client
+// (app.SSO.clientType: public) carries no secret. A redirect URI is registered
+// for every base URL (host + detected IPs) so login works from any of them,
+// plus a direct-port URI on the primary base URL for debugging.
 // Returns nil when the app does not use the native-oidc strategy.
 func (g *BlueprintGenerator) OIDCInputsForApp(app *catalog.App) *OIDCInputs {
 	if app == nil || app.SSO.Strategy != "native-oidc" {
@@ -35,7 +37,19 @@ func (g *BlueprintGenerator) OIDCInputsForApp(app *catalog.App) *OIDCInputs {
 	}
 
 	clientID := g.generateClientID(app.CatalogID)
-	clientSecret := g.generateClientSecret(app.CatalogID)
+	public := app.SSO.PublicClient()
+	clientType := "confidential"
+	var clientSecret string
+	if public {
+		// Public PKCE clients are browser-facing and carry no client secret;
+		// some apps (the Hermes dashboard) reject a confidential client.
+		clientType = "public"
+	} else {
+		// Confidential clients carry a deterministic secret derived from the
+		// host secret, so every Bloud host derives the same value without a
+		// shared store.
+		clientSecret = g.generateClientSecret(app.CatalogID)
+	}
 
 	var redirectURIs []string
 	for _, baseURL := range g.baseURLs {
@@ -55,6 +69,7 @@ func (g *BlueprintGenerator) OIDCInputsForApp(app *catalog.App) *OIDCInputs {
 	return &OIDCInputs{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
+		ClientType:   clientType,
 		IssuerURL:    strings.TrimSuffix(g.issuerBaseURL(), "/") + "/application/o/" + app.CatalogID + "/",
 		RedirectURIs: redirectURIs,
 		LaunchURL:    appSubdomainURL(g.primaryBaseURL(), app.CatalogID),

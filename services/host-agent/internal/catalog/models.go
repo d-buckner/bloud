@@ -3,6 +3,8 @@
 
 package catalog
 
+import "strings"
+
 // App represents an application in the catalog
 type App struct {
 	CatalogID   string   `yaml:"name" json:"catalogId"`
@@ -88,7 +90,20 @@ type SSO struct {
 	ProviderName string   `yaml:"providerName" json:"providerName"`                   // e.g. "Bloud SSO"
 	UserCreation bool     `yaml:"userCreation" json:"userCreation"`                   // Auto-create users on first login
 	LaunchPath   string   `yaml:"launchPath" json:"launchPath,omitempty"`             // Initial path to open when launching the app (overrides root)
-	Env          SSOEnv   `yaml:"env" json:"env"`                                     // Environment variable mappings
+	// ClientType is the OAuth2 client type for native-oidc apps: "public"
+	// (authorization-code + PKCE, no client secret) or "confidential"
+	// (the default). Public clients are required by apps whose OIDC
+	// integration rejects a client_secret (e.g. the Hermes dashboard).
+	// Empty is treated as "confidential".
+	ClientType string `yaml:"clientType,omitempty" json:"clientType,omitempty"`
+	Env        SSOEnv `yaml:"env" json:"env"` // Environment variable mappings
+}
+
+// PublicClient reports whether this app's native-oidc client is a public
+// PKCE client (no client secret). Anything other than "public", including
+// the empty default, is confidential.
+func (s SSO) PublicClient() bool {
+	return strings.EqualFold(strings.TrimSpace(s.ClientType), "public")
 }
 
 // SSOEnv maps SSO config values to app-specific environment variable names

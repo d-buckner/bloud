@@ -111,10 +111,6 @@ Template variables available in `containers[].environment` and
 - `{{dataDir}}`: the shared Bloud data directory (for things like media libraries)
 - `{{postgresPassword}}`: a per-app PostgreSQL password, generated and
   stored by the host for apps that bundle their own postgres container
-- `{{appAdminPassword}}`: the app's own generated admin credential
-  (`appSecrets.<app>.adminPassword`), generated on first use and stored by
-  the host. Rendered only if your container def references it — use it for
-  apps that enforce their own login (see `apps/hermes` for the pattern).
 
 A few friendly defaults worth knowing:
 

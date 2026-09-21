@@ -80,10 +80,6 @@ type ServerConfig struct {
 	Registry              configurator.RegistryInterface
 	ContainerRuntime      containerruntime.Runtime
 	TemplateVars          map[string]string
-	// AppAdminPassword returns the per-app generated admin password used
-	// by the orchestrator to render {{appAdminPassword}} in container
-	// specs (generate-and-persist). Wired from the secrets manager.
-	AppAdminPassword func(appName string) (string, error)
 	// EventsBus is the shared event bus (SSE streams + app-change
 	// publishing). Nil creates one internally.
 	EventsBus *eventbus.Bus

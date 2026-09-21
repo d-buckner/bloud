@@ -14,18 +14,26 @@ integrations:
     compatible:
       - app: traefik
         default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
 
-# No Authentik SSO. The Hermes dashboard enforces its own auth gate on
-# non-loopback binds and accepts only two upstream providers: a bundled
-# username/password provider or Nous Portal OAuth (a vendor IDP — there is
-# no generic OIDC config). Bloud satisfies the gate with the password
-# provider using a per-deployment generated credential rendered from
-# secrets.json (appSecrets.hermes.adminPassword), so the app carries its
-# own managed credential instead of joining the identity provider.
-# Login: username "bloud", password via
-#   bloud shell "cat \$BLOUD_DATA_DIR/secrets.json"
+# SSO joins Authentik through the Hermes dashboard's bundled self-hosted
+# OIDC provider (public authorization-code + PKCE client). Hermes enforces
+# its own auth gate on the non-loopback bind Bloud reaches it through, and
+# that gate is satisfied by the self-hosted provider rather than a password.
+# The provider's issuer/client_id and the dashboard public URL are written
+# into Hermes' config.yaml by the configurator (the container spec cannot
+# carry per-install OIDC values), so none are declared here.
 sso:
-  strategy: none
+  strategy: native-oidc
+  clientType: public
+  callbackPath: /auth/callback
+  providerName: Bloud SSO
+  userCreation: true
 
 containers:
   - name: apps-hermes
@@ -35,7 +43,7 @@ containers:
     # The image is an s6-overlay stack: the web dashboard runs as a
     # supervised service when HERMES_DASHBOARD=1 (per-profile messaging
     # gateways register dynamically under it). The container's main
-    # program is a parked sleep — the interactive `hermes` TUI the
+    # program is a parked sleep: the interactive `hermes` TUI the
     # empty CMD would start needs a TTY and would exit immediately
     # headless. Dashboard chat runs in-process; no gateway required.
     command: ["sleep", "infinity"]
@@ -45,10 +53,10 @@ containers:
     environment:
       HERMES_DASHBOARD: "1"
       HERMES_DASHBOARD_PORT: "9119"
-      # Bundled dashboard_auth/basic provider: satisfies the non-loopback
-      # auth gate fail-closed (empty password ⇒ gate refuses to start).
-      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: bloud
-      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "{{appAdminPassword}}"
+      # The dashboard binds non-loopback (reached through Traefik), which
+      # engages Hermes' auth gate. The gate is backed by the self-hosted
+      # OIDC provider the configurator writes into config.yaml; no
+      # bundled username/password is set.
     volumes:
       - source: "{{appDataDir}}/data"
         destination: /opt/data

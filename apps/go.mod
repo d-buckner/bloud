@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	codeberg.org/d-buckner/bloud/services/host-agent v0.0.0
 	github.com/stretchr/testify v1.11.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -16,7 +17,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace codeberg.org/d-buckner/bloud/services/host-agent => ../services/host-agent
