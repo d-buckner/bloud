@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Daniel Buckner
 #
-# Release packaging: builds the production .deb. This is not a validation check
+# Release packaging: builds the production .deb and publishes it as a GitHub
+# pre-release, tagged deb-<UTC timestamp> (a .deb build, distinct from the ISO
+# image releases).
+# Runs on pushes to main, plus manual dispatch. This is not a validation check
 # (those live in validation.yaml and run through ./bloud validate); it produces
 # the artifact a release is cut from. The local equivalent is ./bloud package.
 name: Release
@@ -11,6 +14,10 @@ on:
   push:
     branches:
       - main
+
+# gh release create needs to write releases and tags.
+permissions:
+  contents: write
 
 jobs:
   package:
@@ -46,9 +53,23 @@ jobs:
       - name: Package the .deb
         run: ./bloud package --arch amd64
 
-      - name: Upload the .deb
+      # Kept alongside the release so the raw build is inspectable from the run.
+      - name: Upload the .deb as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: bloud-deb
           path: dist/*.deb
           if-no-files-found: error
+
+      - name: Publish a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stamp="$(date -u +%Y%m%d-%H%M%S)"
+          day="$(date -u +%Y-%m-%d)"
+          sha="$(git rev-parse --short HEAD)"
+          gh release create "deb-${stamp}" dist/*.deb \
+            --title "bloud ${day} (${sha})" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --notes "Automated build of the Bloud .deb from ${GITHUB_SHA}."

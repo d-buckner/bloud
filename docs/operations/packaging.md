@@ -20,7 +20,9 @@ static bundle, stages the on-disk catalog, and hands the payload to
 output is `dist/bloud_<version>_<arch>.deb`.
 
 `.github/workflows/release.yml` runs the same command on every push to `main`
-(and on manual dispatch) and uploads the `.deb` as a workflow artifact.
+(and on manual dispatch). It uploads the `.deb` as a workflow artifact and
+publishes a GitHub pre-release tagged `deb-<UTC timestamp>` (titled
+`bloud <date> (<sha>)`) with the `.deb` attached.
 
 ## Install layout
 
