@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 #
 # Thin CI shell. Every check is defined once, in validation.yaml, and executed
 # by ./bloud validate. Do NOT add test, lint, or build steps here -- add a

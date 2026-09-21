@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 //
 // no-emdash: fail if any tracked file contains an em dash (U+2014).
 //

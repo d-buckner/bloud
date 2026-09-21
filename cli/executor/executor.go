@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package executor abstracts command execution and file transfer to a
 // runtime host (local machine, SSH/Lima VM, etc.).

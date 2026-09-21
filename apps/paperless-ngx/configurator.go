@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package paperless configures Paperless-ngx: it generates the app's
 // configuration file before the container starts (public URL, secret key,

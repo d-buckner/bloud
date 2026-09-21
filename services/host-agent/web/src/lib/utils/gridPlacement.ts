@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 /**
  * Grid placement: where a newly added element goes. Pure (no GridStack
  * instance), so the free-slot scan is unit-testable.

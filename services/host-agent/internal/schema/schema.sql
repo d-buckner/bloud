@@ -1,5 +1,4 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Copyright (c) 2026 Daniel Buckner
 -- Bloud Host Agent Database Schema (SQLite)
 
 CREATE TABLE IF NOT EXISTS apps (

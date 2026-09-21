@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 #
 # Thin CI shell -- the Forgejo mirror of .github/workflows/ci.yml. Same
 # contract: all validation logic lives in validation.yaml and runs through

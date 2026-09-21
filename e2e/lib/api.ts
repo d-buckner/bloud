@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 //
 // API calls go directly to the host-agent. Being loopback/trusted is a *scope*,
 // not a credential: admin calls must present the runtime's API token, which the

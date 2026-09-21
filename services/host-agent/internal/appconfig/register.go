@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package appconfig wires system-infrastructure configurators with the
 // registry and links in the app catalog's self-registering configurators.

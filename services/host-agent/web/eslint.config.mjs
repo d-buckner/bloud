@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 //
 // Flat ESLint config for the host-agent web frontend. This is the frontend
 // counterpart to the repo-root .golangci.yml: a focused set of size/branch

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 /**
  * Node status → color mapping for the developer graph. Extracted from
  * AppNode.svelte so the mapping is a plain lookup (no branch fan-out) and

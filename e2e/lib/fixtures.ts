@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 import { test as base, expect, type Page } from '@playwright/test';
 import { ensureSignedIn } from './auth';
 import * as api from './api';

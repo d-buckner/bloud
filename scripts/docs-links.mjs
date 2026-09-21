@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 //
 // docs-links: fail when a relative link in a Markdown file is broken, either
 // because the target file does not exist or because a `#fragment` names a

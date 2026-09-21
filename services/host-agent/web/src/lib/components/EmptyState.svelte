@@ -1,6 +1,5 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 	import { resolve } from '$app/paths';
 	import type { RouteId } from '$app/types';
 	import Icon from './Icon.svelte';

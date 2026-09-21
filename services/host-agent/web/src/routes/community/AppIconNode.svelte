@@ -1,6 +1,5 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 	import { Handle, Position } from '@xyflow/svelte';
 	import AppIcon from '$lib/components/AppIcon.svelte';
 

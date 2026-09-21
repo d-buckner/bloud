@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 /**
  * Grid layout diff: pure comparison between the store's element list and the
  * grid's current node state. Extracted from GridStackGrid so the
