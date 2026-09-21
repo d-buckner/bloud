@@ -6,12 +6,15 @@
 > findings live in the review snapshot itself (see below).
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-19 (item 5 re-observed on a post-PR-4 redeploy,
-adding a fifth member to the silent-failure class: the lost write is a `WARN`
-nobody sees; prior same-day updates: first-ranked item re-scoped and re-ranked:
-the loopback admin exemption is remotely forgeable, not merely a local-process
-concern; a new second-ranked class records the engine's silent-failure paths;
-prior update 2026-09-17: route-generation purity landed, plus versioned
+**Last updated:** 2026-09-20 (PR 7 landed: the SQLite per-connection
+pragmas travel in the DSN, so every pooled connection opens with
+`foreign_keys=ON` and `busy_timeout=5000`; the lost-cascade and
+lost-write halves of item 5 are closed and pinned by multi-connection
+tests. Prior same-day update 2026-09-19: item 5 re-observed on a
+post-PR-4 redeploy; the loopback admin exemption is remotely forgeable,
+not merely a local-process concern; a new second-ranked class records
+the engine's silent-failure paths; prior update 2026-09-17:
+route-generation purity landed, plus versioned
 migrations + durable operation state)
 
 Source for this revision: [`docs/specs/review-2026-09-19.md`](../specs/review-2026-09-19.md)
@@ -181,8 +184,9 @@ ordinary bug into an unnoticeable outage.
   phases differ the surviving value is arbitrary.) The other half of item 5 is
   worse and fully silent: `foreign_keys=OFF` on those same connections means
   cascades stop firing and orphan `shares` / `user_app_positions` rows
-  accumulate with no log line at all. Fix scheduled as repayment PR 7 (pragmas
-  in the DSN).
+  accumulate with no log line at all. **Fixed by repayment PR 7
+  (2026-09-20):** the pragmas now ride the DSN and are applied by the
+  driver at every connection open; see "Already Paid" below.
 
 ## Open inventory (ranked)
 
@@ -194,7 +198,7 @@ Ranked by risk×cheapness. Severity is the review's, not a guess.
 | 2 | `SyncContainerState` nil-deref → process death | P1 | `orchestrator_containers.go:41-45` |
 | 3 | `MemoryCache` data race → unrecoverable fatal | P1 | `catalog/cache.go:12-14,26-34` |
 | 4 | Intent queue exits permanently on a stale token | P1 | `queue.go:34-38,75-114` |
-| 5 | SQLite pragmas applied per-call, not per-connection: FK cascades and `busy_timeout` are off on every pooled connection but one; tests mask it with `SetMaxOpenConns(1)`. **Observed live twice**: during the PR 4 deploy, and again 2026-09-19 on a post-PR-4 redeploy, where the log read `WARN operation recorder: … database is locked (5) (SQLITE_BUSY)` on a normal convergence pass, i.e. a phase advance is dropped with a log line as its only trace (see the silent-failure class above) | P1 | `db/db.go:29-39`; `testdb/testdb.go:29`; `operation_recorder.go:85` |
+| 5 | ~~SQLite pragmas applied per-call, not per-connection~~ **FIXED 2026-09-20 (PR 7)**: pragmas travel in the DSN (`db.InitDB` / `db.MemoryDSN`), applied at every connection open; multi-connection tests pin FK cascade enforcement and the busy-wait | P1→closed | `db/db.go` (`dsn`, `pragmaQuery`); `db/pragmas_test.go` |
 | 6 | `appclient.Call.Timeout()` is a no-op and `WaitPolicy` has no consumers → declared 5-minute first-boot waits silently run on `DefaultRetry` (30 s) and land nodes in terminal ERROR | P1 | `appclient/call.go:31,119,382`; `retry.go:43-51`; `apps/immich/api.go:33-34`; `apps/affine/api.go:31-32,58-59` |
 | 7 | Home Assistant asset `SkipIf` compares the release tag to the manifest version (`"v1.2.1"` vs `"1.2.1"`, verified against the real artifact) → re-download and destructive container recreate on every full lifecycle pass | P1 | `apps/homeassistant/configurator.go:44,304-318`; `pkg/appasset/manifest.go:15-24` |
 | 8 | Container drift is never repaired at runtime: the store flips to `stopped` while the in-memory graph stays `RUNNING`, so `Reconcile` never re-drives; multi-container apps are skipped entirely | P1 | `orchestrator_containers.go:41-61`; `pipeline.go:664-670` |
@@ -238,6 +242,37 @@ Two claims in the history below do not hold up against the code:
   not evidence of one.
 
 ## Already Paid
+
+### SQLite pragmas travel in the DSN (2026-09-20, PR 7)
+
+`db.InitDB` no longer applies `journal_mode` / `busy_timeout` /
+`foreign_keys` with a one-off `db.Exec`: that configured exactly one
+pooled connection, leaving every other connection with cascades off and
+`busy_timeout=0` (the observed `SQLITE_BUSY` phase-loss and the silent
+orphan accumulation). The settings now ride in the SQLite DSN, which
+the modernc driver executes at every connection open (busy_timeout
+first, per the driver's own ordering requirement). `db.MemoryDSN()`
+hands the same DSN query to `internal/testdb`, so the test and
+production configurations are built from one source and cannot drift;
+testdb keeps its single-connection pinning, which is still correct for
+per-connection `:memory:` databases.
+
+Contract tests (`internal/db/pragmas_test.go`; all three fail against
+the pre-fix Exec-loop tree):
+
+- every connection in a widened pool reports `foreign_keys=1` and
+  `busy_timeout=5000` (not just the boot connection);
+- a fresh connection rejects an orphan `shares` insert and the
+  `guests` DELETE actually cascades to the dependent share;
+- a write contended by a held RESERVED lock blocks in the busy handler
+  and succeeds after the commit, instead of failing instantly with
+  `SQLITE_BUSY`.
+
+The recorder keeps its log-and-return contract: with a real busy-wait
+the lost-write window narrows to >5 s lock starvation, and the
+multi-container single-row contention (nodes of one app racing one
+`operations` row) remains a design constraint, not a correctness bug:
+the surviving phase value is last-writer-wins by ledger semantics.
 
 ### Route generation no longer owns runtime side effects (2026-09-17)
 
@@ -353,11 +388,11 @@ Honour `Call.Timeout` and wire `WaitPolicy` as the ready-path default, or delete
 both and fail loudly on an unsupported option. Fix the Home Assistant version
 comparison and make its test fixture use the real manifest value.
 
-### 4. Durability substrate (P1, item 5)
+### 4. Durability substrate (P1, item 5): DONE 2026-09-20 (PR 7)
 
-Move the pragmas into the DSN so every connection gets `foreign_keys` and
-`busy_timeout`; add a test that opens 2+ connections and asserts cascade and
-busy-wait actually work.
+Pragmas moved into the DSN; the `Exec` loop deleted. Tests open the
+real `InitDB` path with 2+ connections and assert the cascade fires
+and the contended write waits. See "Already Paid" above.
 
 ### 5. Make reality match intent (P1, items 8-9)
 

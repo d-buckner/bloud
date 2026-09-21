@@ -81,6 +81,7 @@ Tailscale
 (?i)binduser
 (?i)boolean
 (?i)break-glass
+(?i)busy_timeout
 (?i)catalog_id
 (?i)cgroup
 (?i)chan
@@ -176,6 +177,7 @@ Tailscale
 (?i)middlewares
 (?i)miniflux
 (?i)mkisofs
+(?i)modernc
 (?i)modernc's
 (?i)mouseup
 (?i)mutex
