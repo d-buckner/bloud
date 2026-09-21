@@ -133,3 +133,10 @@ apps:
     files:
       - apps/paperless-ngx/**
     e2e-project: paperless-ngx
+
+  vaultwarden:
+    auth: native-oidc
+    validation-level: embed
+    files:
+      - apps/vaultwarden/**
+    e2e-project: vaultwarden

@@ -30,6 +30,9 @@ reference).
   appears in catalog/home, has its own auth gate on (an unauthenticated
   visitor is handed to a sign-in surface, never the dashboard), and completes
   the Authentik round-trip to land back authenticated on the Hermes origin.
+- **Vaultwarden**: converges to running, appears in catalog/home, and offers only
+  "Use single sign-on" on its sign-in page (`SSO_ONLY`). The browser sign-in is not
+  covered until Bloud serves HTTPS (`apps/vaultwarden/INTEGRATION.md`).
 
 ## Running
 

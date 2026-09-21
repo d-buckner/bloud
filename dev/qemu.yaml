@@ -34,5 +34,6 @@ portForwards:
   - guestPort: 4533   # navidrome
   - guestPort: 3010   # affine
   - guestPort: 8000   # paperless-ngx
+  - guestPort: 8222   # vaultwarden
 provision:
   - mode: cloud-init  # NoCloud seed: packages + bloud user + lingering + 9p mount

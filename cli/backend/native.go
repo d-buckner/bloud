@@ -107,6 +107,7 @@ func (b *NativeBackend) Host() executor.Host {
 			"navidrome":     "4533",
 			"affine":        "3010",
 			"paperless-ngx": "8000",
+			"vaultwarden":   "8222",
 		},
 		executor.DataDirs{
 			HostAgentDir: nativeRemoteDir + "/host-agent",

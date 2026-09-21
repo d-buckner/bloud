@@ -92,6 +92,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
 | 8000 | Paperless-ngx (direct) | debugging |
+| 8222 | Vaultwarden (direct) | debugging |
 
 Inside the runtime Traefik also binds `:8080` (the `web-local` entrypoint), for
 two reasons: app containers resolve `sso.localhost` to the guest and reach the
@@ -445,7 +446,9 @@ combined with instance/SSH-target env vars). Instance overrides:
    YAML marker merge, `RestartContainer`-driven config reload),
    `apps/paperless-ngx` (own postgres+redis plus gotenberg/tika sidecars,
    generated dotenv config file for django-allauth OIDC, internal admin
-   bootstrap).
+   bootstrap), `apps/vaultwarden` (single container, generated dotenv file for
+   built-in OIDC with `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`; see its
+   `INTEGRATION.md`).
 
 ## Integration validation runs the real dependency-graph path
 
