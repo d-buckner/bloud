@@ -68,6 +68,14 @@ host-agent in the foreground (Ctrl-C stops it). **There is no hot reload:
 re-run `./bloud dev` after any code change** (`./bloud rebuild` is a no-op; the
 Nix runtime was removed).
 
+Startup takes a minute or more: the host-agent brings every installed app up
+(first convergence pass) before it reports ready. Port 3000 is open from the
+start but serves a loading page (and `503 {"error":"starting"}` for `/api`, also
+through Traefik on :8080) until that pass ends (invariant 5). `./bloud dev`
+prints a progress line every ~15s and finally
+`==> Bloud is ready: http://localhost:8080 ...`; the terminal then stays in the
+foreground by design.
+
 VM data lives in `/var/tmp/bloud-dev-runtime` (Lima), `/var/tmp/bloud-qemu-runtime`
 (QEMU), or `/var/tmp/bloud-native-runtime` (native): `<dir>/host-agent` (binary + `web/build`), `<dir>/data` (BLOUD_DATA_DIR,
 SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
@@ -378,6 +386,10 @@ combined with instance/SSH-target env vars). Instance overrides:
 - Public: `GET /health`, `GET /auth/login`, `GET /auth/callback`,
   `POST /auth/logout`, `GET /api/health`, `GET /api/setup/status`,
   `GET /api/auth/me`, plus the public system-info router.
+- Until the first convergence pass finishes, `/api/*` (health included) answers
+  503 (`bootstrapGate`, `internal/api/loading.go`). So a 200 from
+  `GET /api/health` means "ready", not merely "listening"; poll it for readiness
+  (`./bloud dev` does).
 - Authenticated (session cookie, or loopback/`BLOUD_TRUSTED_LOCAL_NETS` bypass):
   `GET /api/apps` (catalog), `GET /api/apps/installed`,
   `GET /api/apps/{name}/metadata`, `POST /api/apps/{name}/install`,
