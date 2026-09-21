@@ -86,7 +86,7 @@ func runPackage(cfg packageConfig) error {
 	build := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w",
 		"-o", filepath.Join(stageDir, "host-agent"), "./cmd/host-agent")
 	build.Dir = hostAgentDir
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+cfg.arch)
+	build.Env = withEnv(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+cfg.arch)
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
@@ -124,6 +124,10 @@ func runPackage(cfg packageConfig) error {
 	pack := exec.Command("go", "run", "github.com/goreleaser/nfpm/v2/cmd/nfpm@"+nfpmVersion,
 		"package", "--config", configPath, "--target", target)
 	pack.Dir = cfg.root
+	// nfpm may require a newer Go than the host toolchain (setup-go exports
+	// GOTOOLCHAIN=local, which would refuse the switch), so allow it to fetch
+	// the toolchain its go.mod asks for.
+	pack.Env = withEnv(os.Environ(), "GOTOOLCHAIN=auto")
 	pack.Stdout = os.Stdout
 	pack.Stderr = os.Stderr
 	if err := pack.Run(); err != nil {
@@ -241,6 +245,24 @@ func copyFile(src, dst string) error {
 	defer func() { _ = out.Close() }()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// withEnv returns base with each KEY=value applied, replacing any inherited
+// value for that key. Child processes treat duplicate keys ambiguously, so an
+// override must remove the existing entry rather than append a second one.
+func withEnv(base []string, kv ...string) []string {
+	for _, pair := range kv {
+		key, _, _ := strings.Cut(pair, "=")
+		prefix := key + "="
+		filtered := make([]string, 0, len(base)+1)
+		for _, e := range base {
+			if !strings.HasPrefix(e, prefix) {
+				filtered = append(filtered, e)
+			}
+		}
+		base = append(filtered, pair)
+	}
+	return base
 }
 
 // packageVersion derives a Debian version from git describe, ensuring it
