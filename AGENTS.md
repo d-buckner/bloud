@@ -126,7 +126,7 @@ cd services/host-agent && go test -race ./internal/engine/orchestrator/...
 cd apps && go test ./...                          # configurator tests
 cd cli && go test ./...
 npm run lint:go                                 # golangci-lint v2 / cyclop (all three Go modules; pinned v2.13.2 via go run)
-npm run check:gofmt                             # gofmt over every tracked *.go
+npm run check:gofmt                             # gofmt over every tracked *.go (the Go version CI installs stays authoritative)
 npm run lint:prose                              # Vale: tracked *.md, *.go, *.ts, *.js, *.svelte, *.yml, *.yaml, *.css, *.html, *.sql
 npm run check:no-emdash                         # em dashes anywhere in tracked files (covers what Vale cannot read)
 npm run check:docs-links                        # relative links and their #anchors
