@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 /**
  * Install timeline derivation - pure mapping from (app status, live progress)
  * to the ordered step list shown in the install modal.

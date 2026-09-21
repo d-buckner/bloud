@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package eventbus provides a small in-process pub/sub hub for broadcasting
 // host-agent state changes (app lifecycle, orchestrator activity) to

@@ -152,10 +152,15 @@ and docs-link checks + host-agent
 + apps Go tests + web TS tests. Don't commit without it passing;
 don't disable the hook.
 
-License headers: every source file starts with `// SPDX-License-Identifier: AGPL-3.0-only`
-+ copyright line (syntax per language; `.svelte` files carry it inside `<script>`).
-`npm run license:check` verifies, `npm run license:fix` stamps. Excluded: JSON,
-go.mod/go.sum, docs, binaries, `*.golden.yml` testdata, and the runtime-managed
+License headers: every source file starts with a single
+`SPDX-License-Identifier: AGPL-3.0-only` comment line (syntax per language;
+`.svelte` files carry it inside `<script>`). No per-file copyright line:
+a notice is informational, and a name there would claim sole authorship of
+files contributors wrote; attribution comes from the git history, and
+`LICENSE` stays the verbatim AGPL-3.0 text.
+`npm run license:check` verifies, `npm run license:fix` stamps (and strips
+retired per-file copyright lines). Excluded: JSON, go.mod/go.sum, docs,
+binaries, `*.golden.yml` testdata, and the runtime-managed
 `apps-routes.yml` (see `scripts/license-header.mjs`).
 
 ### Prose lint (`npm run lint:prose`)

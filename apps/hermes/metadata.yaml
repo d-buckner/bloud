@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 name: hermes
 displayName: Hermes
 description: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard

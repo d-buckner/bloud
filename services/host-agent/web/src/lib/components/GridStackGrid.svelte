@@ -1,6 +1,5 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 	import { onMount, onDestroy, mount, unmount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { GridStack } from 'gridstack';

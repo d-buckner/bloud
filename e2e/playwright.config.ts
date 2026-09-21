@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = process.env.BLOUD_URL ?? 'http://localhost:8080';

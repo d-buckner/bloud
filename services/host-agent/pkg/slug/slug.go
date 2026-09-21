@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package slug provides URL-safe slug generation for subdomain routing.
 // This is the single canonical implementation; the frontend has a mirrored

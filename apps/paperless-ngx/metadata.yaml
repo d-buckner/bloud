@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 name: paperless-ngx
 displayName: Paperless-ngx
 description: Document management system that turns scans and PDFs into a searchable archive

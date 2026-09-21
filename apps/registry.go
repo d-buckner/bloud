@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package apps is the Bloud user-app catalog. Importing it links every
 // user-app configurator into the configurator registry: each app package

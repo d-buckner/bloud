@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 import { describe, expect, it } from 'vitest';
 import { buildSteps, scanConverge, CONVERGE_STEPS, type ConvergeScan } from '../convergeTimeline';
 import type { OrchestratorActivity } from '$lib/clients/developerClient';

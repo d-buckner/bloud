@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 import type { Component } from 'svelte';
 import SystemStats from './SystemStats.svelte';
 import Storage from './Storage.svelte';

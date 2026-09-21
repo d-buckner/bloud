@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 import { describe, it, expect } from 'vitest';
 import { deriveTimeline } from '../installTimeline';
 import type { AppProgress } from '$lib/stores/appProgress';

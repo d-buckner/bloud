@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package appasset installs static and downloaded files into an app's data
 // directory with one hardened implementation: fetch (with retry) → verify

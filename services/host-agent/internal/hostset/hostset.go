@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 
 // Package hostset models the collection of hostnames a Bloud instance is
 // reachable under and derives every URL that depends on them:

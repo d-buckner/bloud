@@ -1,6 +1,5 @@
 <script lang="ts">
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (c) 2026 Daniel Buckner
 	import Icon from './Icon.svelte';
 	import { toasts } from '$lib/stores/toasts';
 
