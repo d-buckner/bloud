@@ -19,8 +19,8 @@ static bundle, stages the on-disk catalog, and hands the payload to
 [nfpm](https://nfpm.goreleaser.com/) through `packaging/nfpm.yaml.tmpl`. The
 output is `dist/bloud_<version>_<arch>.deb`.
 
-`.github/workflows/release.yml` runs the same command on every push and uploads
-the `.deb` as a workflow artifact.
+`.github/workflows/release.yml` runs the same command on every push to `main`
+(and on manual dispatch) and uploads the `.deb` as a workflow artifact.
 
 ## Install layout
 
