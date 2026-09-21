@@ -1,113 +1,154 @@
 # Bloud
 
-An open-source home server. You add an app; the reverse proxy, SSO, and app-to-app integrations happen automatically.
+An open-source home server. You add an app; the reverse proxy, SSL, SSO, and the wiring between apps happen automatically.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
 
----
+Bloud is for people who want to own their data without becoming a sysadmin. Install it on
+a Debian box, add apps from the catalog, and the parts nobody enjoys happen on their own:
+routing, logins, databases, API keys, and the connections between apps. It keeps them
+working after a crash or a reboot.
 
 ## The problem
 
-Self-hosting is kind of unreasonably hard. Installing one service is manageable.
-Everything around it is not. Every service needs its own reverse proxy rules, SSO
-wiring, configurations, and keeping it all connected and running is a pile of manual,
-easy-to-forget glue.
+Self-hosting one service is manageable. Everything around it is not. Every app needs its
+own reverse proxy rules, its own login story, its own database, and its own way of talking
+to the other apps, so most of the work is manual glue that is easy to forget.
 
-To connect services together, you typically have to:
+To connect two services, you usually have to:
 
 - Generate an API key in one service and paste it into the other
-- Create an OAuth client in your identity provider (client ID, secret, callback URL)
-  and paste those back into the first service
+- Create an OAuth client in your identity provider, then paste the client ID, secret, and
+  callback URL back into the first service
 - Register each service with the reverse proxy separately
-- Provision and wire up a database for each
+- Provision a database and wire it up
 - Remember all of it when you reinstall or migrate
 
-On every other platform, you are the integration layer. Bloud flips this. Apps declare
-what they provide and what they consume. Bloud holds that integration knowledge and does
-the wiring itself, on install and on every restart.
+On every other platform, you are the integration layer. Bloud moves that job into the
+software. Apps declare what they provide and what they consume; Bloud holds the knowledge,
+works out the API keys, OIDC clients, LDAP wiring, database credentials, and routes, and
+keeps all of it correct on install, after a crash, and on every reboot.
 
-The broader goal is that digital ownership and control shouldn't be reserved for people
-who enjoy being their own sysadmin. Owning your photos, music, and data should be
-accessible to more than the self-hosting crowd. Sharing them should be too.
+The larger goal is that owning your photos, music, and documents shouldn't be reserved for
+people who enjoy being their own sysadmin. Sharing them shouldn't be either.
 
 ## What you get
 
 Install Bloud on a Debian box and get:
 
 - One dashboard for all your services
-- One account and a shared login across every app
+- One account, shared across every app
 - One-click app installation, dependencies included
-- Automatic inter-app configuration: API keys, OIDC clients, LDAP setup
-- Automatic routing through Traefik over HTTP (TLS is a planned follow-up)
-- Reliable reconciliation after failures and reboot
-- Per-app databases, isolated from each other
-- Your server reachable on `localhost` or your own domain (reach-by-name via real DNS or Tailscale is a planned follow-up)
-- Sharing with people who don't need to manage anything
+- Inter-app configuration handled for you: API keys, OIDC clients, LDAP, database credentials
+- Routing through Traefik over HTTP (TLS is a planned follow-up)
+- Reliable reconciliation after failures and reboots
+- A database per app, isolated from the others
+- Your server reachable at `localhost` or on your own domain (reach-by-name over real DNS
+  or Tailscale is a planned follow-up)
+- Sharing with people who don't want to manage anything
 
-Bloud's differentiator isn't container installation; anyone can run `podman run`.
-It's the **engine**: the reconciliation layer that reads what each app declares,
-works out the wiring (API keys, OIDC clients, LDAP, databases, routes), and keeps
-those relationships correct forever: on install, after a crash, and on every reboot.
+Anyone can run `podman run`, so the differentiator isn't container installation. It is the
+**engine**: the reconciliation layer that reads what each app declares, works out the wiring,
+and keeps those relationships correct forever.
 
 ## How it works
 
-Each app ships a declarative manifest declaring its integrations. When you install an app, Bloud resolves its dependency graph and starts everything in
-order. Apps that need storage (like Immich) declare their own PostgreSQL and Redis
-containers, each with its own isolated database. Apps that don't (like Jellyfin) just
-declare the integrations they use.
+Each app ships a declarative manifest that declares its integrations. Install an app and
+Bloud resolves its dependency graph, then starts everything in order.
 
-```
-Level 0: traefik          ← System infra, starts first
-Level 1: jellyfin          ← Proxy + SSO; no database of its own
-Level 1: immich             ← Self-contained: postgres + redis + server + ML
-```
+Apps that need storage declare their own containers: Immich brings PostgreSQL and Redis,
+AFFiNE brings Postgres and Redis, Paperless-ngx brings Postgres, Redis, Gotenberg, and Tika.
+Apps that don't, like Jellyfin, just declare what they consume.
 
 ### The engine
 
-The heart of Bloud is the **engine**: a reconciliation control loop, directly
-inspired by how Kubernetes controllers work. You declare intent (the apps you
-want, plus what each app *provides* and *consumes*); the engine continuously
-drives reality to match, converging the dependency graph level by level and
-re-converging on every crash or reboot.
+The heart of Bloud is a reconciliation control loop, built the way Kubernetes controllers
+are. You declare intent (the apps you want, plus what each app provides and consumes); the
+engine continuously drives reality toward it, converging the dependency graph level by level
+and re-converging on every crash or reboot.
 
-Concretely: every change is pushed onto a typed **intent queue**. The engine drains
-it, resolves the dependency graph, and runs each node through its lifecycle
-(`INITIALIZING → PRESTART → STARTING → POSTSTART → RUNNING`), creating containers,
-generating Traefik routes, and provisioning SSO clients and secrets, until the
-observed state matches the declared state. Like a k8s controller, it's idempotent:
-when reality already matches intent, it does nothing. And the engine is the *single
-writer*: the HTTP API only submits intents; it never mutates state directly.
+Every change is pushed onto a typed **intent queue**. The engine drains it, resolves the
+graph, and runs each node through its lifecycle
+(`INITIALIZING → PRESTART → STARTING → POSTSTART → RUNNING`), creating containers, generating
+Traefik routes, and provisioning SSO clients and secrets until what is running matches what
+you asked for. Like a Kubernetes controller, it is idempotent: when reality already matches
+intent, it does nothing. It is also the single writer. The HTTP API submits intents and never
+mutates state itself.
 
-This is what makes Bloud self-healing rather than a one-shot installer: the same loop
-that installed your apps is the loop that brings them back after a power cut.
+That is what makes Bloud self-healing rather than a one-shot installer. The same loop that
+installed your apps is the loop that brings them back after a power cut.
 
 ## App catalog
 
 The catalog is deliberately small. Each app ships a verified support contract covering
-install, shared login, persistence, reboot, and removal. We'd rather support fewer apps
+install, shared login, persistence, reboot, and removal. We would rather support fewer apps
 well.
 
 | App | Category | What it gives you |
 |---|---|---|
 | Traefik | Infrastructure | Reverse proxy and routing (system) |
-| Authentik | Infrastructure | Identity provider (one login everywhere) |
+| Authentik | Infrastructure | Identity provider for one login everywhere (system) |
 | Jellyfin | Media | Movies, TV, and music streaming |
-| Navidrome | Media | Your music library with Subsonic-compatible clients |
-| Immich | Photos | Private photo and video management |
-| Home Assistant | Productivity | Open-source home automation platform |
-| AFFiNE | Productivity | AI-native knowledge base: docs, databases, whiteboards |
-| Hermes | Productivity | Self-improving AI agent with persistent memory and scheduled automations |
-| Paperless-ngx | Productivity | Document management: scans and PDFs become a searchable archive |
+| Navidrome | Media | Your music library, with Subsonic-compatible clients |
+| Immich | Media | Private photo and video management |
+| Sonarr | Media | TV series library |
+| Radarr | Media | Movie library |
+| Prowlarr | Media | Indexer manager, syncing indexers to the PVRs |
+| qBittorrent | Media | BitTorrent client with a web interface |
+| Seerr | Media | Request and discovery front end for the media server |
+| Home Assistant | Productivity | Open-source home automation |
+| AFFiNE | Productivity | Knowledge base: docs, databases, whiteboards |
+| Hermes | Productivity | AI agent with persistent memory and scheduled automations |
+| Paperless-ngx | Productivity | Scans and PDFs become a searchable archive |
+| Vaultwarden | Security | Bitwarden-compatible password manager |
+
+### The media stack
+
+Sonarr, Radarr, Prowlarr, qBittorrent, and Seerr are five separate projects that only become
+useful once they talk to each other. Bloud wires them:
+
+- Sonarr and Radarr get qBittorrent as a download client, with their own categories and
+  library folders (`/shows`, `/movies`).
+- Prowlarr syncs your indexers into Sonarr and Radarr, so you configure them in one place.
+- Seerr becomes the request front end: someone in the house asks for a title and it lands in
+  the right PVR.
+- Seerr onboards to Jellyfin by itself, so people sign in with the account they already have.
+
+Where the media comes from is up to you. Bloud ships no media, indexers, or trackers, and
+takes no position on what you point it at. It is built for things you have the right to use:
+
+- **Public-domain and freely licensed archives.** The [Internet Archive](https://archive.org)
+  is the natural fit: feature films, television, and radio that are free to download and
+  share, alongside a growing set of other public-domain and Creative Commons collections.
+  Jellyfin plays them, the PVRs organize them, and Seerr gives everyone else a way to ask
+  for them.
+- **Your own collection.** Movies and shows you have bought or already own, plus home video
+  and personal recordings.
+
+Whether a particular source is legal to use depends on where you live and what rights you
+hold, and that is your call to make.
+
+## One login everywhere
+
+Apps get SSO automatically, using whichever strategy fits them:
+
+| Strategy | How it works | Apps |
+|---|---|---|
+| **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
+| **Forward auth** | Traefik asks Authentik before reaching the app | Navidrome, Sonarr, Radarr, Prowlarr, qBittorrent |
+| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Home Assistant, Immich, AFFiNE, Hermes, Paperless-ngx, Vaultwarden |
+
+Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) keep their
+own documented login path.
 
 ## The full graph
 
-Every app in the catalog, the containers each one declares, and the edges that
-connect them. The diagram below is generated from the `metadata.yaml` files
-on every merge to `main`, so it is a view of the catalog rather than a
-picture someone has to remember to update. `./bloud depgraph` prints it, and
-`./bloud depgraph --write` refreshes this section; the same structure drives
-the developer graph in the dashboard.
+Every app in the catalog, the containers each one declares, and the edges that connect them.
+The diagram below is generated from the `metadata.yaml` files on every merge to `main`, so it
+is a view of the catalog rather than a picture someone has to remember to update.
+`./bloud depgraph` prints it and `./bloud depgraph --write` refreshes this section; the same
+structure drives the developer graph in the dashboard.
 
 <!-- BEGIN GENERATED DEPENDENCY GRAPH -->
 <!-- Generated by `./bloud depgraph --write` from `apps/*/metadata.yaml`. Do not edit by hand. -->
@@ -236,62 +277,43 @@ flowchart TD
 _Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._
 <!-- END GENERATED DEPENDENCY GRAPH -->
 
-
-
-
-
-
-
-## One login everywhere
-
-Apps get SSO automatically, using whatever strategy fits them:
-
-| Strategy | How it works | Apps |
-|---|---|---|
-| **LDAP** | Authentik supplies credentials for apps that don't speak OAuth2 | Jellyfin |
-| **Forward Auth** | Traefik asks Authentik before reaching the app | Navidrome |
-| **Native OIDC** | The app speaks OpenID Connect directly to Authentik | Home Assistant, Immich, AFFiNE, Hermes, Paperless-ngx |
-
-Native-protocol clients (a Subsonic music player, a TV app talking to Jellyfin) have
-their own documented login path.
-
 ## Sharing
 
-Self-hosting's other barrier: even if you can run software, your friends and family
-usually can't. Bloud's sharing is built on Tailscale or a self-hosted Headscale so the
-other person stays a guest, not a sysadmin.
+Self-hosting has a second barrier: even if you can run software, your friends and family
+usually can't. Bloud's sharing is built on Tailscale or a self-hosted Headscale, so the other
+person stays a guest rather than becoming a sysadmin.
 
-- **Per-app sharing.** Share Jellyfin with your parents without sharing the rest of
-  your server.
-- **Direct, revocable invites.** A single-use token for a specific person, revocable at
-  any time.
-- **Nothing to install on their side.** A friend's Bloud instance proxies your shared
-  app locally, so even a TV or game console can use it. Smart clients can connect
-  directly for lower latency.
+- **Per-app sharing.** Share Jellyfin with your parents without sharing the rest of your server.
+- **Direct, revocable invites.** A single-use token for a specific person, revocable at any
+  time.
+- **Nothing to install on their side.** A friend's Bloud instance proxies your shared app
+  locally, so even a TV or game console can use it. Smart clients can connect directly for
+  lower latency.
 
-Sharing work is in progress (Phase 6 of the [release plan](docs/specs/spec.md)).
+Sharing is in progress (Phase 6 of the [release plan](docs/specs/spec.md)).
 
 ## Status
 
-Alpha. We're working on the sharing and federation layer, then packaging for a
-one-command install on Debian 13.
+Alpha. The next milestones are the sharing and federation layer, then packaging for a
+one-command install on Debian 13. Known gaps and the plan to close them are tracked in
+[docs/operations/tech-debt.md](docs/operations/tech-debt.md).
 
-## AI Disclosure
+## AI disclosure
+
 While the high level technical design and architecture are done by me personally, much of the low level implementation is done by LLM. For me, this is done with local models hosted on my own infrastructure. If this does not align with the values you want your software to have, I understand, this project may not be for you.
 
 ## Local development
 
-Everything goes through the `./bloud` CLI. `npm run setup` picks your runtime
-backend, checks prerequisites, and builds the CLI; `./bloud dev` is the whole loop: it builds host-agent and the
-frontend, deploys them to the runtime, and runs the agent (Ctrl-C to stop).
-There is no hot reload: re-run `./bloud dev` after any code change.
+Everything goes through the `./bloud` CLI. `npm run setup` picks your runtime backend, checks
+prerequisites, and builds the CLI. `./bloud dev` is the whole loop: it builds host-agent and
+the frontend, deploys them to the runtime, and runs the agent (Ctrl-C to stop). There is no
+hot reload, so re-run `./bloud dev` after any code change.
 
 ### Backends
 
-The runtime is a Debian 13 environment with rootless Podman. Where it runs is
-a per-checkout preference: `./bloud setup` chooses it (or the first runtime
-command prompts and saves the answer) into gitignored
-`.bloud/preferences.yaml`, and `BLOUD_BACKEND` overrides it:
+The runtime is a Debian 13 environment with rootless Podman. Where it runs is a per-checkout
+preference: `./bloud setup` chooses it (or the first runtime command prompts and saves the
+answer) into the gitignored `.bloud/preferences.yaml`, and `BLOUD_BACKEND` overrides it:
 
 | Backend | Platform | Chosen as | Prerequisites |
 |---|---|---|---|
@@ -303,10 +325,10 @@ command prompts and saves the answer) into gitignored
 npm run setup            # Choose backend, check prereqs, build ./bloud
 ```
 
-Every backend provisions itself on first run: `./bloud dev` creates the Lima
-VM from `dev/lima.yaml`, provisions the QEMU VM under `.bloud/qemu/`, or sets
-up the native runtime in `/var/tmp/bloud-native-runtime`, then builds,
-deploys, and starts the agent. No separate create/start step.
+Every backend provisions itself on first run: `./bloud dev` creates the Lima VM from
+`dev/lima.yaml`, provisions the QEMU VM under `.bloud/qemu/`, or sets up the native runtime in
+`/var/tmp/bloud-native-runtime`, then builds, deploys, and starts the agent. There is no
+separate create or start step.
 
 ### Daily development
 
@@ -327,46 +349,47 @@ Apps are then served through Traefik at `http://<app>.localhost:8080`.
 
 ### Apps that need a dev switch
 
-Bloud serves apps over plain HTTP until it has a TLS layer. One app cannot work
-that way on its own: **Vaultwarden's web vault refuses any server whose URL is not
-`https://`**, so past its sign-in page nothing works (SSO, creating an account,
-opening the vault). To develop or test it, opt in when you start the runtime:
+Bloud serves apps over plain HTTP until it has a TLS layer. One app cannot work that way on
+its own: **Vaultwarden's web vault refuses any server whose URL is not `https://`**, so past
+its sign-in page nothing works (SSO, creating an account, opening the vault). To develop or
+test it, opt in when you start the runtime:
 
 ```bash
 BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1 ./bloud dev     # or `1` in your shell before ./bloud e2e
 ```
 
-The variable is forwarded to the host-agent on every backend. It is off by default,
-only honored for `localhost` names, and it weakens a security check in that one
-app's web client, so it is for development and browser tests only (CI sets it for
-the `vaultwarden` job). Without it Vaultwarden still installs and its server side
-works; only the browser flows past the sign-in page fail, and the Playwright spec
-skips its sign-in rung. See
-[`apps/vaultwarden/INTEGRATION.md`](apps/vaultwarden/INTEGRATION.md#plain-http)
-for what it does and why.
+The variable is forwarded to the host-agent on every backend. It is off by default, only
+honored for `localhost` names, and it weakens a security check in that one app's web client,
+so it is for development and browser tests only (CI sets it for the `vaultwarden` job).
+Without it Vaultwarden still installs and its server side works; only the browser flows past
+the sign-in page fail, and the Playwright spec skips its sign-in rung. See
+[`apps/vaultwarden/INTEGRATION.md`](apps/vaultwarden/INTEGRATION.md#plain-http) for what it
+does and why.
 
 ### Validation
 
 ```bash
 ./bloud validate                     # Changed-file-based (default)
 ./bloud validate --tier fast         # Unit tests only (~30s)
-./bloud validate --tier integration # Real install/reconcile flow on the runtime
-./bloud e2e                         # Playwright against a running ./bloud dev
-./bloud e2e lifecycle               # Full build → deploy → install → verify → uninstall
-./bloud e2e app                     # Single app's spec on its own runtime (CI)
+./bloud validate --tier integration  # Real install/reconcile flow on the runtime
+./bloud e2e                          # Playwright against a running ./bloud dev
+./bloud e2e lifecycle                # Full build → deploy → install → verify → uninstall
+./bloud e2e app                      # Single app's spec on its own runtime (CI)
 ```
 
 ## Project structure
 
 ```
 bloud/
-├── apps/                          # App catalog (one dir per app)
+├── apps/                          # App catalog, one directory per app
 │   ├── jellyfin/
 │   │   ├── metadata.yaml          # Integrations, SSO, port, container spec
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
-│   ├── affine/                    # + authentik/, immich/,
-│   └── traefik/                   #   hermes/, navidrome/, paperless-ngx/, vaultwarden/
+│   └── ...                        # affine, authentik, hermes, homeassistant,
+│                                  # immich, navidrome, paperless-ngx, prowlarr,
+│                                  # qbittorrent, radarr, seerr, sonarr, traefik,
+│                                  # vaultwarden
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap
@@ -382,19 +405,21 @@ bloud/
 │   │   └── api/                   # HTTP API: submits intents, never writes state
 │   ├── pkg/
 │   │   ├── authentik/             # Authentik REST API client
+│   │   ├── servarr/               # Sonarr / Radarr / Prowlarr API client
 │   │   └── configurator/          # Configurator interface + helpers
 │   └── web/                       # Svelte frontend
 │
 ├── cli/                           # ./bloud CLI (lima / qemu / native backends)
 ├── e2e/                           # Playwright browser tests
 ├── dev/                           # VM configs (lima.yaml, qemu.yaml)
-├── specs/                         # Release + subsystem specs
+├── docs/                          # Specs, architecture, guides, features, operations
 ├── validation.yaml                # ./bloud validate manifest
-└── docs/                          # Architecture and contribution guides
+└── .github/                       # CI and release workflows
 ```
 
 ## Further reading
 
+- [docs/README.md](docs/README.md): Index of all documentation
 - [docs/specs/spec.md](docs/specs/spec.md): Authoritative first-release plan
 - [docs/specs/reconciler-spec.md](docs/specs/reconciler-spec.md): Reconciler subsystem design
 - [docs/architecture/overview.md](docs/architecture/overview.md): Component overview
@@ -403,8 +428,8 @@ bloud/
 
 ## Contributing
 
-Contributions welcome, especially new apps with verified support contracts. Open an
-issue with a clear description before starting significant work.
+Contributions welcome, especially new apps with verified support contracts. Open an issue
+with a clear description before starting significant work.
 
 ## License
 
