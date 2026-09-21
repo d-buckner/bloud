@@ -31,7 +31,7 @@ sso:
 
 containers:
   - name: apps-navidrome
-    image: docker.io/deluan/navidrome:latest
+    image: docker.io/deluan/navidrome:0.64.0
     network: apps-net
     restartPolicy: always
     environment:

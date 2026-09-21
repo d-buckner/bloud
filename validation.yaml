@@ -54,6 +54,14 @@ tiers:
       - id: docs-links
         cwd: .
         run: npm run check:docs-links
+      # The README's dependency graph is generated from the catalog. A
+      # metadata change that leaves it alone leaves the README describing a
+      # graph that no longer exists, so the block is compared against what
+      # the catalog produces right now. `bloud depgraph --write` refreshes
+      # it, and the merge-to-main job commits the refresh.
+      - id: depgraph-check
+        cwd: .
+        run: ./bloud depgraph --check
 
   integration:
     # Commands run inside the guest against the validation runtime deployed
@@ -82,7 +90,7 @@ inference:
     - pattern: "**"
       # These ride the catch-all: any change can invalidate a doc, and the
       # matcher has no recursive `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links]
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, depgraph-check]
 
 apps:
   affine:
