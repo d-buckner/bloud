@@ -337,7 +337,8 @@ combined with instance/SSH-target env vars). Instance overrides:
    `BLOUD_TRAEFIK_PORT` (80; the dev VMs expose it on the host as 8080, and
    `native` sets 8080),
    `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`,
-   `BLOUD_TRUSTED_LOCAL_NETS`.
+   `BLOUD_TRUSTED_LOCAL_NETS` (host-agent admin position), and
+   `BLOUD_TRUSTED_PROXY_NETS` (Traefik forwarded headers, see invariant 10).
 9. **Hosts are a first-class setting.** The instance is reachable under a set
    of hostnames: built-ins `localhost` + `bloud.local`, plus admin-added
    custom domains (Settings → Hosts, `GET/PUT /api/settings/hosts`). One host
@@ -369,7 +370,15 @@ combined with instance/SSH-target env vars). Instance overrides:
     (`front-proxy` subcommand + `bloud-front.service`): both were removed
     because the announcer couldn't cross the dev VM, fought the host's own
     responder, and served only http/LAN. A TLS story (real-domain Let's Encrypt
-    on Traefik, and/or Tailscale Serve) remains the planned follow-up.
+    on Traefik, and/or Tailscale Serve) remains the planned follow-up. When a
+    TLS terminator sits in front of Traefik, `BLOUD_TRUSTED_PROXY_NETS` names
+    that proxy's address (IP or CIDR, as Traefik sees it) so Traefik accepts
+    its `X-Forwarded-*` and the original scheme reaches Authentik; without it
+    Traefik rewrites `X-Forwarded-Proto` to `http` and the Authentik login flow
+    stalls on mixed content. Trust is scoped to the source address only: the
+    generated config never emits `forwardedHeaders.insecure: true`, and an
+    empty list leaves the static config byte-identical to a build without the
+    setting. See [`docs/plans/upstream-proxy-headers.md`](docs/plans/upstream-proxy-headers.md).
 11. **Frontend is a static build** served by host-agent from
     `<host-agent-dir>/web/build` (embedded `dev_dashboard.html` is only the
     missing-build fallback). Rebuild the frontend before deploying.
