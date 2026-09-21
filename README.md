@@ -277,6 +277,7 @@ flowchart TD
 _Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._
 <!-- END GENERATED DEPENDENCY GRAPH -->
 
+
 ## Sharing
 
 Self-hosting has a second barrier: even if you can run software, your friends and family
