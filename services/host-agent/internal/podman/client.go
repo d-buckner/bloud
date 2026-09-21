@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -135,15 +136,38 @@ func defaultSocketPath() string {
 
 // Exec runs a command inside a running container and returns the output.
 func (c *Client) Exec(ctx context.Context, containerName string, cmd []string) ([]byte, error) {
+	return c.ExecWithEnv(ctx, containerName, nil, cmd)
+}
+
+// ExecWithEnv runs a command inside a running container with extra environment
+// variables and returns the output. env entries are passed as `-e KEY=VALUE`,
+// which keeps their values out of the command argv.
+func (c *Client) ExecWithEnv(ctx context.Context, containerName string, env map[string]string, cmd []string) ([]byte, error) {
 	if c.runner == nil {
 		c.runner = execRunner{}
 	}
-	args := append([]string{"exec", containerName}, cmd...)
+	args := []string{"exec"}
+	for _, key := range sortedKeys(env) {
+		args = append(args, "-e", key+"="+env[key])
+	}
+	args = append(args, containerName)
+	args = append(args, cmd...)
 	out, err := c.runner.Run(ctx, "podman", args...)
 	if err != nil {
 		return nil, fmt.Errorf("podman exec %s %v: %w: %s", containerName, cmd, err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// sortedKeys returns a map's keys in sorted order, so command arguments built
+// from a map are deterministic.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // EnsureNetwork creates a network if it does not already exist.

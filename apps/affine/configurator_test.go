@@ -81,7 +81,8 @@ func TestRenderConfigFile_WithOIDC(t *testing.T) {
 		ClientSecret: "secret-value",
 		IssuerURL:    "http://sso.localhost:8080/application/o/affine/",
 	}
-	content := renderConfigFile("http://affine.localhost:8080", oidc)
+	content, err := renderConfigFile("http://affine.localhost:8080", oidc)
+	require.NoError(t, err)
 
 	var cfg struct {
 		Server struct {
@@ -109,7 +110,8 @@ func TestRenderConfigFile_WithOIDC(t *testing.T) {
 }
 
 func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
-	content := renderConfigFile("http://affine.localhost:8080", nil)
+	content, err := renderConfigFile("http://affine.localhost:8080", nil)
+	require.NoError(t, err)
 
 	var cfg map[string]any
 	require.NoError(t, json.Unmarshal([]byte(content), &cfg))
@@ -196,11 +198,6 @@ func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
 	changed, err = c.PreStart(context.Background(), mkState("secret-two"))
 	require.NoError(t, err)
 	assert.True(t, changed, "rotated secret must trigger a container recreate")
-}
-
-func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
-	require.NoError(t, c.Remove(context.Background(), &configurator.AppState{}, true))
 }
 
 func TestEnsureBootstrapAdmin_CreatesOwnerOnFirstRun(t *testing.T) {

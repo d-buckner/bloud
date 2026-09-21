@@ -19,6 +19,8 @@ Tailscale
 # --- Products, projects, and infrastructure ----------------------------
 # Written both ways in the docs -- capitalized as the product name, lowercase
 # as the app id, container name, or binary -- so `(?i)` accepts both.
+(?i)affine
+(?i)affine's
 (?i)allauth
 (?i)allauth's
 (?i)authentik

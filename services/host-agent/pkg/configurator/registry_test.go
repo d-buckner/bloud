@@ -17,8 +17,7 @@ func (s *stubConfigurator) Name() string { return s.name }
 func (s *stubConfigurator) PreStart(context.Context, *AppState) (bool, error) {
 	return false, nil
 }
-func (s *stubConfigurator) PostStart(context.Context, *AppState) error    { return nil }
-func (s *stubConfigurator) Remove(context.Context, *AppState, bool) error { return nil }
+func (s *stubConfigurator) PostStart(context.Context, *AppState) error { return nil }
 
 // unregisterFactoryForTest removes a test factory from the global registry.
 func unregisterFactoryForTest(nodeName string) {

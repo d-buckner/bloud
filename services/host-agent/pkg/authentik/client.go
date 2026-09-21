@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // Client provides access to the Authentik API. It wraps a single
@@ -24,6 +25,7 @@ type Client struct {
 	baseURL     string
 	cl          *appclient.Client
 	emailDomain string
+	spec        appclient.Spec
 }
 
 // UserEmailDomain returns the domain used for managed users' identity
@@ -48,7 +50,7 @@ func NewClient(baseURL, token string) *Client {
 		baseURL:     baseURL,
 		emailDomain: UserEmailDomain(""),
 	}
-	c.cl = appclient.New(appclient.Spec{
+	c.spec = appclient.Spec{
 		Name:    "authentik",
 		BaseURL: baseURL,
 		Headers: map[string]string{"Accept": "application/json"},
@@ -57,7 +59,17 @@ func NewClient(baseURL, token string) *Client {
 		},
 		Timeout: 30 * time.Second,
 		Retry:   appclient.RetryPolicy{MaxAttempts: 1},
-	})
+	}
+	c.cl = appclient.New(c.spec)
+	return c
+}
+
+// WithClientFactory stamps the process-shared transport and logger into the
+// client's appclient spec, so the Authentik client reuses the host's connection
+// pool instead of owning one. Fields already set on the spec (retry, timeout,
+// auth) win over the factory defaults.
+func (c *Client) WithClientFactory(f configurator.ClientFactory) *Client {
+	c.cl = f.New(c.spec)
 	return c
 }
 

@@ -16,6 +16,7 @@ package appconfig
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 
@@ -30,65 +31,48 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/web/static"
 )
 
-// RegisterSystem registers the system configurators (Traefik, Authentik
-// server) with the registry. This should be called during host-agent startup.
-// hosts is the live host-set state (may be nil in tests/CLI mode);
-// configurators read the current base URL through it so UI host changes take
-// effect without restarts.
+// RegisterSystem registers the system configurators (Traefik, Authentik server)
+// as lazy factories, the same way the user app catalog registers its own, and
+// links the user-app factories.
+//
+// A factory is only instantiated on first lookup (see
+// configurator.RegisterFactory), so the Traefik configurator, which needs a
+// container runtime, is not built in a mode that has none, and both system
+// configurators receive the same Deps bundle the user apps do.
 func RegisterSystem(
-	registry *configurator.Registry,
 	cfg *config.Config,
 	runtime containerruntime.Runtime,
-	logger *slog.Logger,
 	templateVars map[string]string,
-	hosts *hostset.State,
 ) {
 	// Link every user-app configurator factory before wiring the system ones.
 	// Idempotent: the registration itself already ran in each app's init().
 	apps.RegisterAll()
 
-	// primaryBaseURLFn resolves the current primary host's base URL, falling
-	// back to the static env value when no host state is configured.
-	primaryBaseURLFn := func() string {
-		if hosts != nil {
-			return hosts.Get().PrimaryBaseURL()
+	configurator.RegisterFactory("apps-traefik", func(configurator.Deps) (configurator.NodeLifecycle, error) {
+		if runtime == nil {
+			return nil, fmt.Errorf("traefik configurator requires a container runtime")
 		}
-		return cfg.SSOBaseURL
-	}
-
-	// System configurators (only registered when runtime is available, i.e. server mode)
-	if runtime != nil {
-		registry.Register(NewTraefikConfigurator(
+		return NewTraefikConfigurator(
 			runtime,
 			cfg.TraefikPort,
 			cfg.Port,
 			cfg.AuthentikPort,
 			cfg.DataDir,
-		))
+		), nil
+	})
 
-		registry.Register(authentik.NewServerConfigurator(
-			cfg.AuthentikPort,
-			cfg.AuthentikAdminPassword,
-			cfg.AuthentikAdminEmail,
-			cfg.AuthentikToken,
-			cfg.LDAPBindPassword,
-			static.AuthentikBrandingCSS,
-			cfg.AppsDir,
-			templateVars,
-		).WithBaseURLFn(primaryBaseURLFn))
-	} else {
-		// CLI mode: authentik server configurator without runtime-dependent fields.
-		registry.Register(authentik.NewServerConfigurator(
-			cfg.AuthentikPort,
-			cfg.AuthentikAdminPassword,
-			cfg.AuthentikAdminEmail,
-			cfg.AuthentikToken,
-			cfg.LDAPBindPassword,
-			static.AuthentikBrandingCSS,
-			cfg.AppsDir,
-			nil, // no templateVars in CLI mode
-		).WithBaseURLFn(primaryBaseURLFn))
-	}
+	configurator.RegisterFactory("apps-authentik-server", func(deps configurator.Deps) (configurator.NodeLifecycle, error) {
+		return authentik.NewServerConfigurator(deps, authentik.Params{
+			Port:              cfg.AuthentikPort,
+			BootstrapPassword: cfg.AuthentikAdminPassword,
+			BootstrapEmail:    cfg.AuthentikAdminEmail,
+			TokenKey:          cfg.AuthentikToken,
+			LDAPBindPassword:  cfg.LDAPBindPassword,
+			BrandingCSS:       static.AuthentikBrandingCSS,
+			AppsDir:           cfg.AppsDir,
+			TemplateVars:      templateVars,
+		}), nil
+	})
 }
 
 // AppDeps builds the dependency set passed to app configurator factories.
@@ -97,7 +81,10 @@ func RegisterSystem(
 // restartContainer (may be nil in CLI/tests) is the host-runtime callback
 // configurators use to force a running container to re-exec and reload
 // on-disk config; it is plumbed straight into Deps.
-func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, restartContainer func(ctx context.Context, name string) error) configurator.Deps {
+// exec (may be nil in CLI/tests) is the host-runtime callback configurators use
+// to run a command inside a container and read its output; it is plumbed
+// straight into Deps.Exec.
+func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, restartContainer func(ctx context.Context, name string) error, exec configurator.ExecFunc) configurator.Deps {
 	primaryBaseURL := func() string {
 		if hosts != nil {
 			return hosts.Get().PrimaryBaseURL()
@@ -114,6 +101,7 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, rest
 		PrimaryBaseURL:   primaryBaseURL,
 		TraefikPort:      cfg.TraefikPort,
 		RestartContainer: restartContainer,
+		Exec:             exec,
 		HTTP: configurator.ClientFactory{
 			Transport: transport,
 			Retry:     appclient.DefaultRetry,

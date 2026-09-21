@@ -156,9 +156,13 @@ type NodeLifecycle interface {
     Name() string
     PreStart(ctx context.Context, state *AppState) (changed bool, err error)
     PostStart(ctx context.Context, state *AppState) error
-    Remove(ctx context.Context, state *AppState, clearData bool) error
 }
 ```
+
+Teardown is optional and separate: a configurator that owns removal implements
+`Remover` (`Remove(ctx context.Context, state *AppState, clearData bool) error`),
+which the orchestrator calls only when present. The orchestrator removes
+containers and app data itself, so most configurators do not.
 
 **`AppState`** carries typed integration outputs into each configurator:
 
@@ -202,9 +206,13 @@ code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
   installs idempotent. Every pinned remote asset records its provenance in the
   app's `INTEGRATION.md` under **Verified constants**.
 
-A pre-commit guard (`npm run check:app-http`) keeps `apps/**/*.go` free of
-`http.NewRequest`, `http.DefaultClient`, and `client.Do(request)`: the
-sanctioned terminal is appclient's `.Do(ctx)`.
+A `forbidigo` rule in `.golangci.yml` (run by `npm run lint:go`, so it gates the
+`fast` tier and CI) keeps `apps/**/*.go` free of raw `net/http`
+(`http.NewRequest`, `http.DefaultClient`, `http.Client`/`http.Client.Do`): the
+sanctioned terminal is appclient's `.Do(ctx)`. The same rule forbids direct file
+writes (`os.WriteFile` and friends, in favour of `pkg/managedfile.Write`) and
+`os/exec` (in favour of `Deps.Exec`/`Deps.RestartContainer`) in app
+configurators.
 
 ### Authentik Client (`pkg/authentik/`)
 

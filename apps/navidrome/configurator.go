@@ -77,12 +77,6 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	return false, nil
 }
 
-// Remove is a no-op for the Navidrome configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // PostStart syncs Authentik users into Navidrome so that forward-auth logins work.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	if !state.SSOEnabled {

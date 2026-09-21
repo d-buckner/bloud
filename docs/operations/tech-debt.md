@@ -10,12 +10,16 @@
 pragmas travel in the DSN, so every pooled connection opens with
 `foreign_keys=ON` and `busy_timeout=5000`; the lost-cascade and
 lost-write halves of item 5 are closed and pinned by multi-connection
-tests. Prior same-day update 2026-09-19: item 5 re-observed on a
-post-PR-4 redeploy; the loopback admin exemption is remotely forgeable,
-not merely a local-process concern; a new second-ranked class records
-the engine's silent-failure paths; prior update 2026-09-17:
-route-generation purity landed, plus versioned
-migrations + durable operation state)
+tests. Same day: a configurator-layer conformance inventory was added;
+its C1-C4, C8 and C13 shipped the same day, see "Closed 2026-09-20";
+the ranked P0/P1 list is otherwise unchanged. Prior update
+2026-09-19: item 5 re-observed on a post-PR-4 redeploy, adding a fifth member to
+the silent-failure class: the lost write is a `WARN` nobody sees; earlier
+same-day updates: first-ranked item re-scoped and re-ranked: the loopback admin
+exemption is remotely forgeable, not merely a local-process concern; a new
+second-ranked class records the engine's silent-failure paths; prior update
+2026-09-17: route-generation purity landed, plus versioned migrations + durable
+operation state)
 
 Source for this revision: [`docs/specs/review-2026-09-19.md`](../specs/review-2026-09-19.md)
 (9 parallel subsystem audits, high-severity findings re-verified at source),
@@ -23,9 +27,11 @@ plus a live runtime observation on 2026-09-19 (item 5's lost write, captured
 during a normal convergence pass; see the silent-failure class below).
 Frontend (SSE fallback poller, toast on first observation, dead `sso_launch_path`),
 CLI/validation (`--app` inert, `**` glob makes "medium confidence" dead, `reset`
-wipes every Podman container) and CI/hook findings (no PR gate, `check:app-http`
-absent from CI, post-commit timestamp rewriting, `cli` tests absent from
-precommit) are recorded there and are **not** duplicated here.
+wipes every Podman container) and CI/hook findings (no PR gate, post-commit
+timestamp rewriting, `cli` tests absent from precommit) are recorded there and
+are **not** duplicated here. The former `check:app-http` script was folded into
+the `forbidigo` rule in `.golangci.yml` on 2026-09-20, so the raw-HTTP guard now
+runs in the `fast` tier and CI instead of pre-commit only.
 
 ## Biggest Debt: the auth bypass was remote and forgeable (fixed 2026-09-19)
 
@@ -191,6 +197,8 @@ ordinary bug into an unnoticeable outage.
 ## Open inventory (ranked)
 
 Ranked by risk×cheapness. Severity is the review's, not a guess.
+Configurator-layer consistency items are collected in the conformance section
+below (C1-C14) rather than ranked here.
 
 | # | Item | Sev | Evidence |
 |---|---|---|---|
@@ -223,6 +231,118 @@ stores directly, bypassing the intent queue. Verified non-racing: the
 orchestrator has no share/guest dependency, so nothing else writes those tables.
 The dead `CreateShareIntent`/`RevokeShareIntent` types were deleted; this stays
 a deliberate boundary, and **no new direct-write domain should be added**.
+
+## Configurator-layer conformance debt (2026-09-20)
+
+The app configurator surface is eight apps under `apps/` plus Traefik under
+`internal/appconfig/`. It follows a strong shared contract; the items below are
+where implementations drift from it. Nothing here is a shipping blocker.
+The severity labels here are assigned by this note (P2 = hides behavior or
+breaks a stated invariant; P3 = consistency and duplication), not taken from a
+dated review.
+
+**Closed 2026-09-20:** C1, C2, C3, C4 (except its `templateVars` side channel,
+now C15), C8 and C13. Still open: C5, C6, C7, C9-C12, C14, C15. See "Closed
+2026-09-20" below.
+
+### The surface
+
+| App | Graph node | SSO strategy | Implementation | Go test |
+|---|---|---|---|---|
+| jellyfin | `apps-jellyfin` | ldap | `apps/jellyfin/` (7 files) | 35 KB |
+| navidrome | `apps-navidrome` | forward-auth | `apps/navidrome/` | 2 KB |
+| immich | `apps-immich-server` | native-oidc | `apps/immich/` | 1.7 KB |
+| affine | `apps-affine` | native-oidc | `apps/affine/` | 9.4 KB |
+| paperless-ngx | `apps-paperless-ngx` | native-oidc | `apps/paperless-ngx/` | 27 KB |
+| homeassistant | `apps-homeassistant` | native-oidc | `apps/homeassistant/` (one 643-line file) | 31 KB |
+| authentik | `apps-authentik-server` | system | `apps/authentik/` + `internal/appconfig/register.go` | none |
+| traefik | `apps-traefik` | system | `internal/appconfig/traefik.go`; `apps/traefik/` is metadata only | none |
+
+### Conventions the surface follows
+
+- Declarative and imperative split: `metadata.yaml` owns containers, volumes,
+  ports, health checks, the `dependsOn` DAG, and `sso.strategy`/`callbackPath`;
+  the configurator owns only what cannot be static
+  (`pkg/configurator/interface.go`).
+- A single node contract: `NodeLifecycle` = `Name`/`PreStart`/`PostStart`, all
+  idempotent. Teardown is the optional `Remover` interface. `PreStart` returns
+  `changed`, and the orchestrator removes and recreates the container when it is
+  true (`orchestrator.go:1070`).
+- Self-registration: each app's `registration.go` `init()` calls
+  `MustRegisterFactory`; `apps/registry.go` holds the import list and
+  `NodeNames()`, guarded by `TestRegisterAll`. System apps (Traefik, Authentik)
+  register as lazy factories from `internal/appconfig/register.go`.
+- A typed `api.go` per app over `pkg/appclient`; no raw HTTP in a configurator.
+- Host services injected through `Deps` (secrets, `PrimaryBaseURL` as a
+  function, `TraefikPort`, `RestartContainer`, `HTTP`, `Assets`), never global
+  state.
+- Config-file generation as render, compare bytes, write on change, return
+  `changed`; deterministic rendering so an unchanged config does not rewrite
+  itself on every reconciliation pass.
+- An internal bootstrap account whose password comes from
+  `Secrets.GenerateAppAdminPassword`, with a login fast path before a first-run
+  create.
+- Declared idempotency (`AlreadyDone`, `AlreadyDoneFunc`, `Ensure`) and
+  declared readiness (`Ready(...).WithRetry(...).Wait(ctx)`).
+- SSO knowledge split at the provider and consumer boundary: `internal/sso`
+  derives the client credentials and redirect URIs and provisions Authentik;
+  the configurator only consumes the typed `LDAPOutput`/`OIDCOutput` in
+  `AppState`.
+
+### Gaps
+
+| # | Item | Sev | Evidence |
+|---|---|---|---|
+| C1 | ~~No shared config-file helper; four apps hand-rolled `os.ReadFile` + `bytes.Equal` + `os.WriteFile`~~ **FIXED 2026-09-20**: affine, immich, paperless and authentik now use `managedfile.Write`, the existing atomic write-if-changed helper. | P3→closed | `apps/affine/configurator.go`; `apps/immich/configurator.go`; `apps/paperless-ngx/configurator.go`; `apps/authentik/server_configurator.go` |
+| C2 | ~~`appExternalURL` duplicated between affine and paperless~~ **FIXED 2026-09-20**: both call `configurator.AppExternalURL`. | P3→closed | `services/host-agent/pkg/configurator/urls.go` |
+| C3 | ~~`Remove` a no-op in all six user apps; `BaseNodeLifecycle` and the deprecated aliases had zero callers~~ **FIXED 2026-09-20**: teardown is the optional `configurator.Remover`; the six no-op `Remove` methods are deleted with `base.go`, and the orchestrator type-asserts before calling it. | P3→closed | `services/host-agent/pkg/configurator/interface.go`; `orchestrator.go:614,635` |
+| C4 | ~~authentik's `ServerConfigurator` bypassed the container runtime and the `Deps` injection~~ **FIXED 2026-09-20**: built from `Deps` (logger, `HTTP`, `Exec`), runs `ak shell` through `Deps.Exec` with no hardcoded podman, and registered as a lazy factory. The `templateVars` side channel remains as its own item (C15). | P2→closed | `apps/authentik/server_configurator.go`; `services/host-agent/internal/appconfig/register.go` |
+| C5 | Phase boundaries leak. Home Assistant runs a live network probe and can force a container recreate from `PreStart` (`staleForce`), and patches a disk file plus restarts the container from `PostStart`. `PreStart` is documented as config files and directories only. | P2 | `apps/homeassistant/configurator.go:170-186,255-290` |
+| C6 | The `changed` return conflates "a mounted file changed" with "recreate the container": Home Assistant returns `staleForce` when nothing changed on disk, a self-heal signal carried through a config-diff channel; jellyfin returns `pluginInstalled \|\| networkChanged`. | P3 | `apps/homeassistant/configurator.go:186,209`; `apps/jellyfin/configurator.go` |
+| C7 | Bootstrap-account logic is copy-pasted with divergent names and failure semantics: `bloud-admin` (navidrome, paperless) vs `bloud-bootstrap-admin` (jellyfin, homeassistant); paperless returns `("", nil)` when the admin cannot be verified, Home Assistant fails hard, jellyfin and immich create-or-skip. | P3 | `apps/paperless-ngx/configurator.go:262-300`; `apps/homeassistant/configurator.go`; `apps/immich/configurator.go:107-124`; `apps/jellyfin/configurator.go` |
+| C8 | ~~Transient-versus-terminal `PostStart` error handling inconsistent and undocumented~~ **FIXED 2026-09-20**: the contract is stated on `NodeLifecycle.PostStart` (an error is terminal; resolve transients inside). jellyfin's initial-user wait is now best-effort instead of returning a transient error, and affine's unreachable `return ""` is a real error return. | P2→closed | `services/host-agent/pkg/configurator/interface.go`; `apps/jellyfin/api.go`; `apps/affine/configurator.go` |
+| C9 | Test coverage is uneven for the same contract: none for authentik or traefik; immich is 1.7 KB against jellyfin's 35 KB and Home Assistant's 31 KB. | P3 | app package listings |
+| C10 | Cross-file constants are enforced only by comment: paperless' `callbackPath` must equal `metadata.yaml`'s `sso.callbackPath`, the provider id `bloud` appears three times, each `configFileName` must equal the mount destination in `metadata.yaml`, and each constructor's port default must equal `metadata.yaml`'s `port`. No test pins any of them. | P3 | `apps/paperless-ngx/configurator.go:34-40`; `apps/paperless-ngx/metadata.yaml` |
+| C11 | Registration style drifts: Home Assistant registers `NewConfigurator(8123, deps)` while every other app passes `0` and defaults inside the constructor; each app re-declares a `baseURL` test seam, and Home Assistant adds a `baseURL()` method the others lack. | P3 | `apps/homeassistant/registration.go`; `apps/*/registration.go` |
+| C12 | Cross-app coupling through a file path: navidrome's user sync reads `<dataDir>/authentik/api-token`, written by authentik's server configurator, and the two agree only because `ownerApp("apps-authentik-server")` is `authentik`. | P3 | `apps/navidrome/configurator.go` (`readAuthentikToken`); `apps/authentik/server_configurator.go:133` |
+| C13 | ~~Comment residue in `apps/jellyfin/network_config.go`: duplicated doc comments and an orphaned `Remove` comment~~ **FIXED 2026-09-20**. | P3→closed | `apps/jellyfin/network_config.go` |
+| C14 | File modes are ad hoc with per-app rationale: 0600 for affine, the Home Assistant `.storage` entry, and the authentik token; 0644 for immich, paperless, and the authentik blueprint. No policy for a new app to follow. | P3 | `apps/affine/configurator.go:132`; `apps/immich/configurator.go:109`; `apps/paperless-ngx/configurator.go:207` |
+| C15 | The LDAP outpost token reaches the orchestrator through a shared mutable `templateVars` map that both the authentik configurator writes and container spec rendering reads, instead of a typed value. | P3 | `apps/authentik/server_configurator.go`; `internal/appconfig/register.go`; `cmd/host-agent/main.go` |
+
+### Highest-value consolidations (shipped 2026-09-20)
+
+All four landed in one change:
+
+1. `managedfile.Write` (already the atomic write-if-changed helper) now backs
+   affine, immich, paperless and authentik, and `configurator.AppExternalURL`
+   replaces the duplicated host-URL derivation in affine and paperless (C1, C2).
+2. `Remove` left the app contract: it is the optional `configurator.Remover`,
+   the six no-op implementations and `pkg/configurator/base.go` are deleted, and
+   the orchestrator type-asserts before calling it (C3).
+3. authentik's `ServerConfigurator` is built from `Deps` (logger, `HTTP`,
+   `Exec`), runs `ak shell` through the host runtime instead of a hardcoded
+   `podman exec`, and registers as a lazy factory (C4; the `templateVars` side
+   channel is C15).
+4. The `PostStart` error contract is stated once on the interface, jellyfin's
+   initial-user wait tolerates a transient not-ready, and affine's unreachable
+   branch returns a real error (C8).
+
+### Closed 2026-09-20
+
+One change consolidated the configurator surface as described above, and added
+the enforcement the surface previously lacked: a `forbidigo` rule in
+`.golangci.yml` fails any `os.WriteFile`/`os.Create`/`os.CreateTemp`/
+`os.OpenFile`/`ioutil.*`, `exec.Command(Context)`, or raw `net/http` in
+`apps/**/*.go` (excluding tests), pointing at `pkg/managedfile.Write`,
+`Deps.Exec` and `pkg/appclient`. It replaces `scripts/no-adhoc-http.mjs`, so the
+raw-HTTP guard now runs under `lint:go` (in the `fast` tier and CI) instead of
+pre-commit only. `apps/authentik` writes its token through `managedfile.Write`;
+`apps/immich`'s marker that is written only when absent carries one
+`//nolint:forbidigo // reason`. New tests:
+`pkg/configurator/urls_test.go`, `apps/authentik/server_configurator_test.go`,
+and the orchestrator case proving a configurator with no `Remover` still has
+its node deleted on removal. Verified with `go test ./...` in all three Go
+modules, `npm run lint:go` (0 issues) and gofmt.
 
 ## Corrections to earlier "Already Paid" entries (2026-09-19)
 

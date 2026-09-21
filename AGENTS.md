@@ -357,16 +357,18 @@ combined with instance/SSH-target env vars). Instance overrides:
    `{{postgresPassword}}`.
 2. `apps/<name>/configurator.go`. Implements `NodeLifecycle`
    (`Name()`, `PreStart(ctx, *AppState) (changed bool, err error)`,
-   `PostStart(ctx, *AppState) error`, `Remove(ctx, *AppState, clearData bool)
-   error`) from `pkg/configurator`. `AppState` carries `DataPath`,
+   `PostStart(ctx, *AppState) error`) from `pkg/configurator`. Teardown is
+   optional: the orchestrator removes containers and data itself, and calls the
+   `configurator.Remover` method (`Remove(ctx, *AppState, clearData bool)
+   error`) only when a configurator implements it. `AppState` carries `DataPath`,
    `BloudDataPath`, `SSOEnabled`, typed `LDAP` / `OIDC` outputs. Self-register
    it: add `apps/<name>/registration.go` with an `init()` calling
    `configurator.MustRegisterFactory("<node-name>", ...)` (factory is
    instantiated lazily on first lookup), and add the blank import and node name
    to `apps/registry.go`; `TestRegisterAll` fails if the two drift apart.
    Host-agent's `internal/appconfig/register.go` is for system apps only
-   (Traefik, Authentik, eagerly registered in `RegisterSystem`); user apps
-   never touch it.
+   (Traefik, Authentik, registered as lazy factories in `RegisterSystem`); user
+   apps never touch it.
 3. Tests: unit tests in the app package; integration assertions in
    `services/host-agent/internal/e2e/e2e_test.go` (build tag `integration`);
    user-journey spec in `e2e/tests/`. **Test behavioral outcomes** (verify via

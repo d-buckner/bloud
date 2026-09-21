@@ -30,9 +30,6 @@ var jellyfinNetworkConfig = xmlutil.ConfigValues{
 
 // applyNetworkConfig applies jellyfinNetworkConfig to cfg if not already set.
 // Returns true if changes were made.
-
-// applyNetworkConfig applies jellyfinNetworkConfig to cfg if not already set.
-// Returns true if changes were made.
 func applyNetworkConfig(cfg *xmlutil.ConfigFile) bool {
 	if cfg.HasConfig(jellyfinNetworkConfig) {
 		return false
@@ -40,9 +37,6 @@ func applyNetworkConfig(cfg *xmlutil.ConfigFile) bool {
 	cfg.ApplyConfig(jellyfinNetworkConfig)
 	return true
 }
-
-// configureNetwork creates or updates network.xml with reverse proxy settings.
-// Returns true if the file content changed.
 
 // configureNetwork creates or updates network.xml with reverse proxy settings.
 // Returns true if the file content changed.
@@ -65,6 +59,3 @@ func (c *Configurator) configureNetwork(dataPath string) (bool, error) {
 	}
 	return changed, err
 }
-
-// Remove is a no-op for the Jellyfin configurator; container and data removal
-// are handled at a higher level by the orchestrator.

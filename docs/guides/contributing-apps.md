@@ -133,7 +133,8 @@ This is where you do the work that a static container definition can't: create
 config files the app expects, call its API to finish setup, register OIDC
 clients, import LDAP settings.
 
-Implement `configurator.NodeLifecycle`'s four methods:
+Implement `configurator.NodeLifecycle`'s three methods (teardown is optional,
+see below):
 
 ```go
 package yourapp
@@ -178,14 +179,14 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
     return nil
 }
-
-// Remove tears down app-owned state. clearData=true means persistent data
-// should go too. Container removal itself is the orchestrator's job; you
-// take care of the app's own leftovers.
-func (c *Configurator) Remove(ctx context.Context, state *configurator.AppState, clearData bool) error {
-    return nil
-}
 ```
+
+Teardown is the orchestrator's job: it removes the app's containers and, on a
+clear-data uninstall, the app data directory. A configurator only implements
+`configurator.Remover` (`Remove(ctx, state, clearData bool) error`) when it owns
+teardown the orchestrator cannot express; most apps do not. A `PostStart` that
+returns an error is terminal for the node, so resolve transient conditions
+(waits, retries) inside it and return an error only for a real fault.
 
 Readiness comes from the `healthCheck:` block you declared in `metadata.yaml`,
 which the orchestrator enforces between PreStart and PostStart. There is no
@@ -272,11 +273,12 @@ refresh) is a `TokenSpec` configured once on the client rather than
 per-call boilerplate. `apps/jellyfin/api.go` and `apps/homeassistant/api.go`
 show the real shapes.
 
-The repo routes all app HTTP through `appclient` (a small pre-commit check
-keeps raw `net/http` out of `apps/**/*.go`). If you ever hit a call that
-genuinely can't use it, add the file to the `ALLOWLIST` in
-`scripts/no-adhoc-http.mjs` with a short reason. That keeps the exception
-documented and easy to review.
+The repo routes all app HTTP through `appclient`: a `forbidigo` rule in
+`.golangci.yml` (run by `npm run lint:go`) fails on raw `net/http` in
+`apps/**/*.go`. The same rule requires `pkg/managedfile.Write` for generated
+files and `Deps.Exec`/`Deps.RestartContainer` for commands inside containers.
+If a call genuinely can't use the sanctioned helper, mark that one line
+`//nolint:forbidigo // reason`, so the exception sits next to the code.
 
 ### Pinned remote assets and provenance
 
@@ -350,7 +352,8 @@ func init() {
 
 `configurator.Deps` carries the host-side inputs a factory may need: `Logger`,
 `Secrets`, a `PrimaryBaseURL func()`, `TraefikPort`, a `RestartContainer`
-callback, `HTTP` (the `ClientFactory` for app HTTP calls, see above), and
+callback, an `Exec` callback (run a command inside a container and read its
+output), `HTTP` (the `ClientFactory` for app HTTP calls, see above), and
 `Assets` (the `appasset.Installer` for static/downloaded files).
 
 Then add your app to **`apps/registry.go`**, the single place that lists the
@@ -371,7 +374,7 @@ func NodeNames() []string {
 
 That's the whole registration story: you never touch host-agent's
 `internal/appconfig/register.go`, which belongs to the system apps (Traefik,
-Authentik) that are always needed and registered eagerly.
+Authentik) registered there as lazy factories.
 
 There is a safety net on your side too: `TestRegisterAll` in
 `apps/registry_test.go` asserts every `NodeNames()` entry has a registered

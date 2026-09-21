@@ -52,7 +52,7 @@ func runConfigure(args []string) int {
 	// managed by the orchestrator in server mode). App configurators are
 	// factory-registered and instantiate lazily on Get, so link them here.
 	apps.RegisterAll()
-	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, nil, nil))
+	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, nil, nil, nil))
 
 	// For prestart, always regenerate env files from secrets.json before starting any app
 	// This ensures secrets.json is always the source of truth
