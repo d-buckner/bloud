@@ -8,7 +8,6 @@
 package paperlessngx
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -21,6 +20,7 @@ import (
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
 const appName = "paperless-ngx"
@@ -143,24 +143,7 @@ func (c *Configurator) Name() string {
 // OIDC redirect URI base registered by the host-agent (app subdomain +
 // callbackPath) or the browser round-trip fails.
 func (c *Configurator) appExternalURL() string {
-	baseURL := ""
-	if c.ssoBaseURL != nil {
-		baseURL = c.ssoBaseURL()
-	}
-	if baseURL == "" {
-		return "http://paperless-ngx.localhost:8080"
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Host == "" {
-		return "http://paperless-ngx.localhost:8080"
-	}
-	parsed.Host = appName + "." + parsed.Host
-	parsed.Path = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	parsed.RawPath = ""
-	parsed.User = nil
-	return strings.TrimSuffix(parsed.String(), "/")
+	return configurator.AppExternalURL(c.ssoBaseURL, appName)
 }
 
 // PreStart writes the Paperless-ngx configuration file so the container comes
@@ -173,9 +156,6 @@ func (c *Configurator) appExternalURL() string {
 // every reconciliation would sign every user out.
 func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
 	dir := filepath.Join(state.DataPath, "config")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return false, fmt.Errorf("creating config directory: %w", err)
-	}
 	path := filepath.Join(dir, confFileName)
 
 	existing, _ := os.ReadFile(path)
@@ -197,18 +177,18 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return false, err
 	}
 
-	if bytes.Equal(existing, []byte(content)) {
-		return false, nil
-	}
 	// The file is read by the webserver process, which runs as the image's
 	// unprivileged paperless user. Under rootless podman that user is a
 	// subuid, not the host user that writes this file, so 0600 would be
 	// unreadable (see INTEGRATION.md).
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	changed, err := managedfile.Write(path, []byte(content), 0644)
+	if err != nil {
 		return false, fmt.Errorf("writing config file: %w", err)
 	}
-	c.logger.Info("wrote Paperless-ngx config file", "path", path, "sso", state.OIDC != nil)
-	return true, nil
+	if changed {
+		c.logger.Info("wrote Paperless-ngx config file", "path", path, "sso", state.OIDC != nil)
+	}
+	return changed, nil
 }
 
 // PostStart verifies against the running app that the configuration took
@@ -366,12 +346,6 @@ func baselinePermissions() []string {
 		"view_applicationconfiguration",
 		"view_global_statistics",
 	)
-}
-
-// Remove is a no-op for the Paperless-ngx configurator; container and data
-// removal are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
 }
 
 // adminPassword returns the internal admin password, generating and persisting

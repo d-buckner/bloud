@@ -22,7 +22,7 @@ type AppSecretsProvider interface {
 	GetAppSecret(appName, key string) string
 }
 
-// NodeLifecycle handles the full lifecycle of a single app node.
+// NodeLifecycle handles the lifecycle of a single app node.
 // All methods must be idempotent - safe to call repeatedly.
 type NodeLifecycle interface {
 	// Name returns the app name this configurator handles.
@@ -37,10 +37,25 @@ type NodeLifecycle interface {
 	// PostStart runs after container is healthy.
 	// Use for: API calls, integrations, runtime configuration.
 	// Called every reconciliation - must be idempotent.
+	//
+	// Error contract: PostStart has no retry of its own. The orchestrator treats
+	// any returned error as terminal for the node (it lands in ERROR until a new
+	// install intent re-drives it), so a configurator must resolve transient
+	// conditions itself - wait for readiness or tolerate the failure - and
+	// return an error only for a genuine, persistent fault. A best-effort check
+	// that cannot be proven now should log and return nil; the next pass
+	// re-checks it.
 	PostStart(ctx context.Context, state *AppState) error
+}
 
+// Remover is implemented by configurators that own teardown of their node. It is
+// optional and separate from NodeLifecycle: the orchestrator deletes containers
+// and app data itself, so only configurators with teardown the orchestrator
+// cannot express (a direct container-runtime call, for example) implement it.
+//
+// Must be idempotent.
+type Remover interface {
 	// Remove tears down the app and optionally removes all persistent data.
-	// Must be idempotent.
 	Remove(ctx context.Context, state *AppState, clearData bool) error
 }
 

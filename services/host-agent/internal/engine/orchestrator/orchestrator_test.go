@@ -18,6 +18,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // testOrchestrator groups a real Graph (in-memory) with a mock registry.
@@ -42,7 +43,7 @@ func newTestOrchestrator() *testOrchestrator {
 }
 
 // ============================================================================
-// Refactor Cycle 1: RemoveApp calls NodeLifecycle.Remove and deletes graph node
+// Refactor Cycle 1: RemoveApp calls the optional Remover and deletes the node
 // ============================================================================
 
 func TestOrchestrator_RemoveApp_CallsRemoveAndDeletesNode(t *testing.T) {
@@ -75,6 +76,29 @@ func TestOrchestrator_RemoveApp_NoConfigurator_DeletesNode(t *testing.T) {
 	node, err := to.g.GetNode("app1")
 	require.NoError(t, err)
 	assert.Nil(t, node, "node should be deleted from graph even without configurator")
+}
+
+// plainConfigurator implements NodeLifecycle but not Remover: the teardown hook
+// is optional, so RemoveApp must still delete the node without calling it.
+type plainConfigurator struct{}
+
+func (plainConfigurator) Name() string { return "plain" }
+func (plainConfigurator) PreStart(context.Context, *configurator.AppState) (bool, error) {
+	return false, nil
+}
+func (plainConfigurator) PostStart(context.Context, *configurator.AppState) error { return nil }
+
+func TestOrchestrator_RemoveApp_ConfiguratorWithoutRemover_DeletesNode(t *testing.T) {
+	to := newTestOrchestrator()
+
+	require.NoError(t, to.g.AddNode("app1"))
+	to.registry.On("Get", "app1").Return(plainConfigurator{})
+
+	require.NoError(t, to.orch.RemoveApp(context.Background(), "app1", false))
+
+	node, err := to.g.GetNode("app1")
+	require.NoError(t, err)
+	assert.Nil(t, node, "node should be deleted even when the configurator has no Remover")
 }
 
 func TestOrchestrator_RemoveApp_ClearData_PassedToRemove(t *testing.T) {

@@ -213,12 +213,6 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	return rpChanged || changed || ok || staleForce, nil
 }
 
-// Remove is a no-op for the Home Assistant configurator; container and data
-// removal are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // PostStart waits for the HTTP API, completes first-run onboarding headlessly,
 // and verifies the OIDC provider is registered.
 //

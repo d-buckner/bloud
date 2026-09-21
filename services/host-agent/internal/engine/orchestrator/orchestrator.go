@@ -579,8 +579,9 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 	o.recordActivity("converge_complete", fmt.Sprintf("%d intents, %s", len(intents), time.Since(start).Round(time.Millisecond)))
 }
 
-// RemoveApp calls NodeLifecycle.Remove for the named app (if a configurator is
-// registered), removes containers, then deletes graph node(s).
+// RemoveApp calls a configurator's optional Remover.Remove for the named app
+// (when one is registered and implements teardown), removes containers, then
+// deletes graph node(s).
 // For multi-container apps, all container nodes are removed.
 // The drive's terminal operation state is recorded here: the whole
 // removal is one uninstall phase from the row's point of view.
@@ -609,14 +610,14 @@ func (o *Orchestrator) removeApp(ctx context.Context, appName string, clearData 
 		}
 	}
 
-	// Single-container (or system) app: existing behavior.
-	nl := o.registry.Get(appName)
-	if nl != nil {
+	// Single-container (or system) app. Only a configurator that owns teardown
+	// gets a Remove call; container and data removal are the orchestrator's.
+	if r, ok := o.registry.Get(appName).(configurator.Remover); ok {
 		state, err := o.buildAppState(appName)
 		if err != nil {
 			return fmt.Errorf("build app state: %w", err)
 		}
-		if err := nl.Remove(ctx, state, clearData); err != nil {
+		if err := r.Remove(ctx, state, clearData); err != nil {
 			return fmt.Errorf("remove app %q: %w", appName, err)
 		}
 	}
@@ -632,12 +633,11 @@ func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName stri
 		if clearData {
 			o.releaseContainerOwnedData(ctx, appName, def)
 		}
-		nl := o.registry.Get(def.Name)
-		if nl != nil {
+		if r, ok := o.registry.Get(def.Name).(configurator.Remover); ok {
 			state, err := o.buildAppState(def.Name)
 			if err != nil {
 				o.logger.Warn("failed to build state for container removal", "container", def.Name, "error", err)
-			} else if err := nl.Remove(ctx, state, clearData); err != nil {
+			} else if err := r.Remove(ctx, state, clearData); err != nil {
 				o.logger.Warn("configurator remove failed", "container", def.Name, "error", err)
 			}
 		}
