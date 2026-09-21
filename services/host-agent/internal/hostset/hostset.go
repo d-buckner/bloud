@@ -151,10 +151,9 @@ func (h HostSet) IsBuiltin(host string) bool {
 }
 
 // BaseURLFor returns the base URL for one host: localhost keeps the
-// http://localhost:8080 convention (dev/e2e parity), every other host uses
-// the bare host on port 80. Port 80 is aspirational until a reach-by-name +
-// TLS layer (real-domain ACME and/or Tailscale Serve) ships: see AGENTS
-// invariant 10.
+// http://localhost:8080 convention (the dev VMs expose Traefik's canonical
+// :80 there, so browser and e2e URLs stay on 8080), every other host uses the
+// bare host on port 80, which Traefik serves directly.
 func (h HostSet) BaseURLFor(host string) string {
 	if u, ok := h.urlOverrides[host]; ok {
 		return u

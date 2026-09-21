@@ -103,6 +103,18 @@ func trustedLocalNetsEnv(name string) string {
 	return ""
 }
 
+// traefikPortEnv returns the BLOUD_TRAEFIK_PORT override for a backend. Traefik
+// defaults to its canonical :80 entrypoint; the native backend runs unprivileged
+// (no root, and port 80 may be occupied on the developer machine), so it keeps
+// the always-bound 8080 compat entrypoint. The VM backends serve :80 and expose
+// it on the host as 8080, so they leave the default in place.
+func traefikPortEnv(name string) string {
+	if name == "native" {
+		return "8080"
+	}
+	return ""
+}
+
 // ssoIssuerURL is the OIDC issuer base URL reachable from inside app
 // containers: the SSO subdomain of the base domain, mapped to the host
 // gateway via per-app extraHosts. An explicit BLOUD_SSO_ISSUER_URL wins.
@@ -488,7 +500,7 @@ func cmdDev() int {
 	// self-bootstrap. There is no shared postgres/redis compose stack anymore;
 	// apps own their infra containers (e.g. apps-authentik-postgres) via
 	// metadata.yaml containers blocks, so the host-agent is the single manager.
-	// apps-traefik is included because it uses host network and holds port 8080.
+	// apps-traefik is included because it uses host network and holds port 80.
 	log("Stopping managed app containers")
 	if err := ex.RunStream(context.Background(), executor.RunSpec{
 		Command: `podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; true`,
@@ -588,6 +600,7 @@ func cmdDev() int {
 		"BLOUD_DATA_DIR":            dirs.DataDir,
 		"BLOUD_APPS_DIR":            dirs.AppsDir,
 		"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
+		"BLOUD_TRAEFIK_PORT":        traefikPortEnv(name),
 		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(name),
 		"BLOUD_SSO_ISSUER_URL":      ssoIssuerURL(),
 	}

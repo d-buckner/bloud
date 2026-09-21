@@ -51,6 +51,10 @@ func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
 	if cfg.qemu != "" {
 		fmt.Fprintf(&extraEnv, "Environment=BLOUD_TRUSTED_LOCAL_NETS=10.0.2.0/24\n")
 	}
+	if cfg.native {
+		// The native backend runs unprivileged: keep Traefik on the compat port.
+		fmt.Fprintf(&extraEnv, "Environment=BLOUD_TRAEFIK_PORT=%s\n", traefikPortEnv("native"))
+	}
 	return fmt.Sprintf(`[Unit]
 Description=Bloud E2E host agent
 After=network-online.target podman.socket

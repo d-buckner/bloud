@@ -28,7 +28,7 @@ portForwards:
   - guestPort: 22     # ssh -> host 2222
   - guestPort: 3000   # host-agent
   - guestPort: 3389   # LDAP outpost (authentik)
-  - guestPort: 8080   # traefik
+  - guestPort: 80     # traefik: canonical entrypoint -> host 8080
   - guestPort: 8096   # jellyfin
   - guestPort: 9001   # authentik server
   - guestPort: 2283   # immich

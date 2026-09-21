@@ -36,8 +36,13 @@ type Config struct {
 	SSOIssuerURL    string // OIDC issuer base URL reachable from app containers (e.g., "http://sso.localhost:8080"); empty falls back to SSOAuthentikURL
 	AuthentikToken  string // Authentik API token for SSO cleanup
 	// Traefik configuration
-	BaseDomain  string // Base domain for subdomain routing (default: "localhost")
-	TraefikPort int    // Traefik entrypoint port (default: 8080)
+	BaseDomain string // Base domain for subdomain routing (default: "localhost")
+	// TraefikPort is the canonical public entrypoint. It defaults to 80 (the
+	// port a real deployment serves on); the dev VMs expose it on the host as
+	// 8080. Backends that cannot bind a privileged port (native, CI) set
+	// BLOUD_TRAEFIK_PORT=8080. See TraefikConfigurator.staticConfig for the
+	// always-present compat entrypoint on 8080.
+	TraefikPort int
 	// Authentik bootstrap configuration
 	AuthentikPort          int
 	AuthentikAdminPassword string
@@ -133,7 +138,7 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		SSOIssuerURL:           getEnv("BLOUD_SSO_ISSUER_URL", ""),
 		AuthentikToken:         authentikToken,
 		BaseDomain:             baseDomain,
-		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 8080),
+		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 80),
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
 		AuthentikAdminPassword: authentikAdminPassword,
 		AuthentikAdminEmail:    adminEmail,

@@ -305,11 +305,22 @@ func (b *QEMUBackend) launchArgs(pidFile string) []string {
 	// host port via BLOUD_QEMU_FWD_<guestport> (e.g. BLOUD_QEMU_FWD_9001=9101)
 	// so the VM can run on hosts that already occupy a default port. The guest
 	// ports themselves never change; only the host port QEMU binds changes.
+	// Traefik's canonical entrypoint is guest :80, exposed on the host as 8080
+	// so dev/e2e URLs stay on http://localhost:8080.
 	fwds := make([]string, 0, 9)
-	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort(strconv.Itoa(qemuSSHPort))))
-	for _, gp := range []string{"3000", "3389", "8080", "8096", "9001", "2283", "4533", "3010"} {
-		hp := hostForwardPort(gp)
-		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hp, gp))
+	fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:22", hostForwardPort("22", strconv.Itoa(qemuSSHPort))))
+	for _, f := range []struct{ guestPort, hostPort string }{
+		{"3000", "3000"},
+		{"3389", "3389"},
+		{"80", "8080"},
+		{"8096", "8096"},
+		{"9001", "9001"},
+		{"2283", "2283"},
+		{"4533", "4533"},
+		{"3010", "3010"},
+	} {
+		hp := hostForwardPort(f.guestPort, f.hostPort)
+		fwds = append(fwds, fmt.Sprintf("hostfwd=tcp::%s-:%s", hp, f.guestPort))
 	}
 	netdev := "user,id=net0," + strings.Join(fwds, ",")
 	return []string{
@@ -420,22 +431,30 @@ packages:
   - jq
   - rsync
   - ldap-utils
+write_files:
+  - path: /etc/sysctl.d/99-bloud-unprivileged-ports.conf
+    content: |
+      # Let the rootless Traefik container bind :80 (the canonical entrypoint)
+      # in its host network namespace.
+      net.ipv4.ip_unprivileged_port_start=0
 runcmd:
   - mkdir -p %s && chown bloud:bloud %s
   - loginctl enable-linger bloud
   - systemctl --user enable --now podman.socket
+  - sysctl -p /etc/sysctl.d/99-bloud-unprivileged-ports.conf
   - mkdir -p %s && chown bloud:bloud %s
   - touch %s
 `, hostUID, pubKey, projectDir, projectDir, qemuRemoteDir, qemuRemoteDir, qemuReadyMark)
 }
 
-// hostForwardPort returns the host-side port for a guest port, defaulting to the
-// guest port itself. BLOUD_QEMU_FWD_<guestport> overrides it for busy hosts.
-func hostForwardPort(guestPort string) string {
+// hostForwardPort returns the host-side port to bind for a guest port,
+// defaulting to defaultHostPort. BLOUD_QEMU_FWD_<guestport> overrides it for
+// hosts where the default port is already occupied.
+func hostForwardPort(guestPort, defaultHostPort string) string {
 	if v := os.Getenv("BLOUD_QEMU_FWD_" + guestPort); v != "" {
 		return v
 	}
-	return guestPort
+	return defaultHostPort
 }
 
 func (b *QEMUBackend) run(ctx context.Context, name string, args ...string) (string, error) {

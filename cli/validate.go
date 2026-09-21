@@ -251,7 +251,6 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		return fail("VM not reachable")
 	}
 	ex := host.Executor()
-	qemu := name == "qemu"
 	rt := integrationRuntimeDir
 
 	// Steps 2-3: guest preflight + take over port 3000. The validation
@@ -283,7 +282,7 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 
 	// Step 6: Install and start the host-agent systemd service.
 	step("Installing and starting " + integrationHostAgentUnit)
-	if err := integrationInstallService(ctx, ex, rt, qemu, tmpDir); err != nil {
+	if err := integrationInstallService(ctx, ex, rt, name, tmpDir); err != nil {
 		return fail(err.Error())
 	}
 

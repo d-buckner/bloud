@@ -25,7 +25,8 @@ mounts:
 portForwards:
   - guestPort: 3000   # host-agent
   - guestPort: 3389   # LDAP outpost (authentik)
-  - guestPort: 8080   # traefik
+  - guestPort: 80     # traefik: canonical entrypoint
+    hostPort: 8080    # exposed on the host as 8080 (dev/e2e parity)
   - guestPort: 8096   # jellyfin
   - guestPort: 9001   # authentik server
   - guestPort: 2283   # immich
@@ -46,6 +47,11 @@ provision:
       # Install podman and Go
       apt-get update -qq
       apt-get install -y -qq podman golang-go unzip curl jq ldap-utils
+
+      # Let the rootless Traefik container bind :80 (the canonical entrypoint)
+      # in its host network namespace.
+      sysctl -w net.ipv4.ip_unprivileged_port_start=0
+      echo 'net.ipv4.ip_unprivileged_port_start=0' > /etc/sysctl.d/99-bloud-unprivileged-ports.conf
 
       # Enable lingering for the default user so user-level podman services
       # persist after SSH logout

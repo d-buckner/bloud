@@ -281,7 +281,7 @@ macOS host
   └── Lima VM "bloud-dev"
         ├── Podman (rootless)
         │   ├── Authentik + LDAP Outpost
-        │   ├── Traefik  :8080
+        │   ├── Traefik  :80 (canonical) + :8080 (compat)
         │   └── App containers (Jellyfin, Immich w/ its own postgres+redis, etc.)
         └── host-agent binary (:3000, systemd user service)
 ```
@@ -296,6 +296,7 @@ Linux host
         └── host-agent binary (:3000)
 ```
 
-Ports 3000, 8080, and each app's direct port are forwarded to the host
-localhost by `./bloud dev`. The native backend needs no forwarding; everything
-already runs on the host.
+Traefik's canonical `:80` and each app's direct port are forwarded to the host
+localhost by `./bloud dev` (Traefik lands on host `:8080`, so browser and e2e
+URLs stay on `http://localhost:8080`). The native backend needs no forwarding;
+everything already runs on the host.

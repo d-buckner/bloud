@@ -142,6 +142,17 @@ func runServer() {
 		TemplateVars:          templateVars,
 	}, logger)
 
+	// Open the listener before convergence. Until the orchestrator reports
+	// ready the server answers with a static loading page (and 503 for /api),
+	// so a browser hitting Traefik during bootstrap sees the page instead of
+	// Traefik's 502. waitForSystemConvergence still gates the API surface.
+	go func() {
+		if err := server.Start(); err != nil {
+			logger.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
 	waitForSystemConvergence(server, logger)
 
 	// Setup graceful shutdown
@@ -153,14 +164,6 @@ func runServer() {
 
 	// Start background purge of expired sessions (SQLite has no TTL)
 	store.StartSessionPurger(ctx, store.NewSessionStore(database), logger)
-
-	// Start server in a goroutine
-	go func() {
-		if err := server.Start(); err != nil {
-			logger.Error("server failed", "error", err)
-			os.Exit(1)
-		}
-	}()
 
 	// Wait for shutdown signal
 	<-ctx.Done()
@@ -222,8 +225,10 @@ func buildTemplateVars(cfg *config.Config) map[string]string {
 
 // waitForSystemConvergence blocks until the orchestrator reports ready and the
 // system apps pass their health check, then initialises auth. It aborts the
-// process on a failed health check or a 10-minute timeout: the API must not open
-// before the system apps it depends on are actually running.
+// process on a failed health check or a 10-minute timeout. The listener is
+// already open here, but bootstrapGate keeps the API unavailable until this
+// returns: the API must not serve before the system apps it depends on are
+// running.
 func waitForSystemConvergence(server *api.Server, logger *slog.Logger) {
 	logger.Info("waiting for system apps to converge")
 	readyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

@@ -109,14 +109,21 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	return s
 }
 
-// Start starts the HTTP server
+// Start starts the HTTP server. While the orchestrator is still converging,
+// requests are answered by the bootstrap loading page (see bootstrapGate), so
+// Traefik never surfaces its own 502 for the catch-all UI during startup.
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.cfg.Port)
 	s.logger.Info("starting HTTP server", "addr", addr)
 
+	handler := http.Handler(s.router)
+	if s.orch != nil {
+		handler = bootstrapGate(s.orch.Ready(), handler)
+	}
+
 	server := &http.Server{
 		Addr:        addr,
-		Handler:     s.router,
+		Handler:     handler,
 		ReadTimeout: 15 * time.Second,
 		IdleTimeout: 60 * time.Second,
 	}
