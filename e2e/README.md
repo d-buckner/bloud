@@ -28,8 +28,8 @@ reference).
   the app's API.
 - **Hermes**: converges to running (as a native-oidc *public* PKCE client),
   appears in catalog/home, has its own auth gate on (an unauthenticated
-  visitor is bounced to the dashboard's sign-in), and completes the
-  Authentik round-trip to land back authenticated on the Hermes origin.
+  visitor is handed to a sign-in surface, never the dashboard), and completes
+  the Authentik round-trip to land back authenticated on the Hermes origin.
 
 ## Running
 

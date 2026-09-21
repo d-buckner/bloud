@@ -96,7 +96,16 @@ type SSO struct {
 	// integration rejects a client_secret (e.g. the Hermes dashboard).
 	// Empty is treated as "confidential".
 	ClientType string `yaml:"clientType,omitempty" json:"clientType,omitempty"`
-	Env        SSOEnv `yaml:"env" json:"env"` // Environment variable mappings
+	// LoopbackIssuer serves this app's OIDC issuer from the host loopback
+	// (http://localhost:<Traefik port>) instead of the shared issuer host
+	// (sso.localhost, or the primary host). An app sets it when its OIDC
+	// client accepts https anywhere but http only on a literal loopback
+	// hostname (the Hermes dashboard). Such an app runs with the host
+	// network namespace so localhost:<Traefik port> is Traefik, and browser
+	// access therefore works only from the machine running Bloud: the same
+	// reach the *.localhost issuer host has.
+	LoopbackIssuer bool   `yaml:"loopbackIssuer,omitempty" json:"loopbackIssuer,omitempty"`
+	Env            SSOEnv `yaml:"env" json:"env"` // Environment variable mappings
 }
 
 // PublicClient reports whether this app's native-oidc client is a public

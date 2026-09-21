@@ -198,7 +198,8 @@ Two things Vale cannot do, both covered by standalone checks:
 - Specs: `jellyfin.spec.ts` (LDAP SSO), `navidrome.spec.ts` (forward-auth),
   `immich.spec.ts` (native-oidc + onboarding), `affine.spec.ts`
   (native-oidc, login via issuer origin), `paperless-ngx.spec.ts` (native-oidc
-  through django-allauth). Fixtures: `lib/fixtures.ts`
+  through django-allauth), `hermes.spec.ts` (native-oidc over the loopback
+  issuer). Fixtures: `lib/fixtures.ts`
   (`authenticatedPage`, `api`); shared login: `lib/auth.ts`, `lib/loginPage.ts`.
 - Config: single worker, no retries, 10 min/test, trace/screenshot/video retained
   on failure. `./bloud e2e` runs the suite against a runtime started by
@@ -274,7 +275,12 @@ combined with instance/SSH-target env vars). Instance overrides:
    managed one reports `email_verified: false`, which apps like AFFiNE
    reject). Native-oidc clients are confidential by default; a `sso.clientType:
    public` app is registered as a public PKCE client with no `client_secret`
-   (the Hermes dashboard rejects a confidential client). See
+   (the Hermes dashboard rejects a confidential client). A `sso.loopbackIssuer:
+   true` app is served its issuer from the host loopback
+   (`http://localhost:8080`) instead of `sso.localhost`, and runs with the host
+   network namespace: its OIDC client accepts a plain http issuer only on a
+   literal loopback hostname (the Hermes dashboard), so the container needs
+   `localhost` to be Traefik. See
    `apps/hermes/INTEGRATION.md` and `apps/affine/INTEGRATION.md`.
 7. **Routing is regenerated after convergence.** The orchestrator rewrites the
    Traefik dynamic config (`BLOUD_TRAEFIK_DYNAMIC_DIR/apps-routes.yml`) before
@@ -296,7 +302,10 @@ combined with instance/SSH-target env vars). Instance overrides:
    `http://sso.localhost:8080` for a localhost primary
    (containers resolve `sso.localhost` via `extraHosts`), `http://<primary>`
    otherwise (the orchestrator injects `<primary>:host-gateway` into
-   native-oidc containers so the issuer resolves inside them). Host changes
+   native-oidc containers so the issuer resolves inside them). An app with
+   `sso.loopbackIssuer` instead takes `http://localhost:<Traefik port>` and gets
+   no `extraHosts` entry: it shares the host network namespace, where localhost
+   is already the host. Host changes
    flow through the orchestrator (`SetHostsIntent`): persist, update the live
    `hostset.State`, reset SSO apps + `apps-authentik-server` so the lifecycle
    re-provisions Authentik (redirect URIs, outpost browser URL) and rewrites
