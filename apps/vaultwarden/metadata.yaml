@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: vaultwarden
+displayName: Vaultwarden
+description: Lightweight, Bitwarden-compatible password manager
+category: security
+port: 8222
+estimatedSizeMB: 290
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# SSO via Vaultwarden's built-in OpenID Connect support (SSO_* settings), which
+# carry per-install client credentials and so are generated into
+# <appDataDir>/config/vaultwarden.env by the configurator rather than declared
+# here. A master password is still required to unlock the vault: SSO only
+# replaces the account login.
+#
+# Vaultwarden's callback path is fixed (/identity/connect/oidc-signin, derived
+# from its DOMAIN). Its OIDC login also needs the offline_access scope (the
+# app keeps its session alive with the provider's refresh token) and an access
+# token that outlives the Bitwarden web app's own 5 minute expiry check, so
+# both are declared here and applied to the provider by the host-agent.
+# scopes must stay in step with ssoScopes in configurator.go.
+sso:
+  strategy: native-oidc
+  callbackPath: /identity/connect/oidc-signin
+  userCreation: true
+  scopes:
+    - offline_access
+  accessTokenMinutes: 60
+
+containers:
+  - name: apps-vaultwarden
+    image: docker.io/vaultwarden/server:1.37.3
+    network: apps-net
+    restartPolicy: always
+    ports:
+      - host: 8222
+        container: 80
+    # Wraps the image's start script for the opt-in plain-HTTP dev switch
+    # (BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP on the host-agent; see INTEGRATION.md,
+    # "Plain HTTP"). Without the marker line in the generated env file this only
+    # runs /start.sh. With it, the web vault's build-time isDev() constant, which
+    # makes the Bitwarden client refuse any non-https:// server, is flipped in the
+    # container's own copy of the bundle. Restarts are safe (an already patched
+    # bundle is accepted), and if the constant is not found (an image bump changed
+    # the bundle) the container refuses to start rather than run unpatched.
+    command:
+      - sh
+      - -c
+      - |
+        if grep -qx "BLOUD_DEV_ALLOW_HTTP='true'" "$ENV_FILE" 2>/dev/null; then
+          set -- /web-vault/app/main.*.js
+          if grep -q 'isDev(){return!1}' "$@"; then
+            sed -i 's/isDev(){return!1}/isDev(){return!0}/' "$@"
+          elif ! grep -q 'isDev(){return!0}' "$@"; then
+            echo "bloud: plain-HTTP dev switch is on but the web vault has no isDev() constant to flip; refusing to start" >&2
+            exit 1
+          fi
+          echo "bloud: WARNING: web vault HTTPS enforcement is disabled (development only)" >&2
+        fi
+        exec /start.sh
+    environment:
+      TZ: Etc/UTC
+      # Per-install settings (public URL, SSO client, signup policy) cannot be
+      # expressed in a static manifest: the configurator generates them into
+      # this dotenv file, which the image loads at startup (and which its own
+      # healthcheck script sources too).
+      ENV_FILE: /config/vaultwarden.env
+    # sso.localhost resolves to the host gateway inside the VM, letting the
+    # server reach the OIDC provider (traefik) by the same name browsers use
+    # (any *.localhost resolves to 127.0.0.1 on the host, port-forwarded).
+    extraHosts:
+      - sso.localhost:host-gateway
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
+      - source: "{{appDataDir}}/config"
+        destination: /config
+        options: [ro]
+    healthCheck:
+      # The image's own healthcheck: GET /alive on the app's port, after
+      # sourcing ENV_FILE (the image declares no HEALTHCHECK metadata itself).
+      test: ["CMD-SHELL", "/healthcheck.sh"]
+      interval: 5
+      timeout: 10
+      retries: 12

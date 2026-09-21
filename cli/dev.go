@@ -466,6 +466,20 @@ func devBackend() (backend.Backend, string, error) {
 	}
 }
 
+// stopPreviousHostAgentCommand returns a shell command that stops a previous
+// dev host-agent: whatever holds the API port, and whatever is executing the
+// deployed binary. The binary match is what prevents "text file busy" when the
+// new build is copied over it, and unlike a name-based pkill (host-agent runs
+// as "./host-agent") it cannot hit an unrelated process. It waits, bounded,
+// for the binary to be released. Every step is best-effort: nothing running is
+// the normal first-run case.
+func stopPreviousHostAgentCommand(apiPort, binaryPath string) string {
+	return "fuser -k " + apiPort + "/tcp >/dev/null 2>&1 || true; " +
+		"fuser -k " + binaryPath + " >/dev/null 2>&1 || true; " +
+		"for i in 1 2 3 4 5 6 7 8 9 10; do fuser -s " + binaryPath + " >/dev/null 2>&1 || break; sleep 0.5; done; " +
+		"sleep 0.5"
+}
+
 func cmdDev() int {
 	root, err := getProjectRoot()
 	if err != nil {
@@ -541,6 +555,15 @@ func cmdDev() int {
 		return 1
 	}
 
+	// Stop any previous host-agent before deploying: copying over a running
+	// binary fails with "text file busy" (and by now its containers are gone).
+	if err := ex.RunStream(context.Background(), executor.RunSpec{
+		Command: stopPreviousHostAgentCommand("3000", dirs.HostAgentDir+"/host-agent"),
+	}, os.Stdout, os.Stderr); err != nil {
+		errorf("Failed to stop previous host-agent: %v", err)
+		return 1
+	}
+
 	// Deploy
 	log("Deploying to " + dirs.HostAgentDir)
 	if err := ex.RunStream(context.Background(), executor.RunSpec{
@@ -583,14 +606,6 @@ func cmdDev() int {
 		log("Frontend deployed")
 	}
 
-	// Kill anything on port 3000 and any previous dev host-agent
-	if err := ex.RunStream(context.Background(), executor.RunSpec{
-		Command: `fuser -k 3000/tcp 2>/dev/null || true; pkill -f '` + dirs.HostAgentDir + `/host-agent/host-a[g]ent' 2>/dev/null || true; sleep 0.5`,
-	}, os.Stdout, os.Stderr); err != nil {
-		errorf("Failed to stop previous host-agent: %v", err)
-		return 1
-	}
-
 	// Run foreground. The SSO issuer URL is derived (see ssoIssuerURL); all
 	// other configuration resolves through env vars, secrets.json, and the
 	// host-agent's dev fallbacks.
@@ -603,11 +618,19 @@ func cmdDev() int {
 		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(name),
 		"BLOUD_SSO_ISSUER_URL":      ssoIssuerURL(),
 	}
+	for k, v := range devPassthrough(os.Getenv) {
+		runEnv[k] = v
+	}
+	// The host-agent opens its API only after every installed app is up, so
+	// watch for that and say so instead of leaving the terminal silent.
+	readyCtx, stopReadyWatch := context.WithCancel(context.Background())
+	go announceHostAgentReady(readyCtx, ex, os.Stdout, host.Ports(), readyPollInterval, readyProgressInterval)
 	runErr := ex.RunStream(context.Background(), executor.RunSpec{
 		Command: "unset DATABASE_URL; exec ./host-agent",
 		Dir:     dirs.HostAgentDir,
 		Env:     runEnv,
 	}, os.Stdout, os.Stderr)
+	stopReadyWatch()
 	if runErr != nil && !isSignalExit(runErr) {
 		errorf("host-agent exited: %v", runErr)
 		return 1

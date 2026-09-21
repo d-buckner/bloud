@@ -30,6 +30,12 @@ reference).
   appears in catalog/home, has its own auth gate on (an unauthenticated
   visitor is handed to a sign-in surface, never the dashboard), and completes
   the Authentik round-trip to land back authenticated on the Hermes origin.
+- **Vaultwarden**: converges to running, appears in catalog/home, offers only
+  "Use single sign-on" on its sign-in page (`SSO_ONLY`), and signs in through
+  OIDC to the vault (setting or entering the master password). The web vault
+  refuses plain-HTTP servers, so that last step needs the opt-in dev switch
+  (`BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` on the host-agent and for Playwright) and
+  is skipped without it; CI sets it for the `vaultwarden` leg.
 
 ## Running
 

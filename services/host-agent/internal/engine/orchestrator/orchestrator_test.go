@@ -17,6 +17,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -745,10 +746,65 @@ func TestOrchestrator_EnsureSSO_SkipsNonPrimaryContainerNodes(t *testing.T) {
 
 	// The primary node provisions exactly once.
 	ssoMock.On("EnsureNativeOIDC", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	require.NoError(t, orch.ensureSSO(context.Background(), "apps-immich-server"))
 	ssoMock.AssertExpectations(t)
 }
+func TestOrchestrator_EnsureSSO_PassesDeclaredOIDCTuning(t *testing.T) {
+	g := graph.New(graph.NewMapRepository())
+	registry := new(MockConfiguratorRegistry)
+	catalogCache := new(MockCatalogCache)
+	ssoMock := new(MockSSOProvisioner)
+
+	orch := NewOrchestrator(
+		g,
+		registry,
+		catalogCache,
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{
+			SSO:             ssoMock,
+			SSOBaseURL:      "http://localhost:8080",
+			SSOHostSecret:   "test-secret",
+			SSOAuthentikURL: "http://localhost:9001",
+		},
+	)
+
+	// An app that declares sso.scopes / sso.accessTokenMinutes reaches the
+	// provisioner with exactly those values; one that declares nothing gets the
+	// zero tuning, i.e. the provider defaults.
+	catalogCache.On("Get", "vaultwarden").Return(&catalog.App{
+		CatalogID:   "vaultwarden",
+		DisplayName: "Vaultwarden",
+		Port:        8222,
+		SSO: catalog.SSO{
+			Strategy:           "native-oidc",
+			CallbackPath:       "/identity/connect/oidc-signin",
+			Scopes:             []string{"offline_access"},
+			AccessTokenMinutes: 60,
+		},
+		Containers: []catalog.ContainerDef{{Name: "apps-vaultwarden"}},
+	}, nil)
+	catalogCache.On("Get", "plain").Return(&catalog.App{
+		CatalogID:   "plain",
+		DisplayName: "Plain",
+		Port:        9000,
+		SSO:         catalog.SSO{Strategy: "native-oidc", CallbackPath: "/cb"},
+		Containers:  []catalog.ContainerDef{{Name: "apps-plain"}},
+	}, nil)
+	orch.registerContainerOwner("apps-vaultwarden", "vaultwarden")
+	orch.registerContainerOwner("apps-plain", "plain")
+
+	ssoMock.On("EnsureNativeOIDC", "vaultwarden", "Vaultwarden", mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		authentik.OIDCTuning{ExtraScopes: []string{"offline_access"}, AccessTokenMinutes: 60}).Return(nil).Once()
+	ssoMock.On("EnsureNativeOIDC", "plain", "Plain", mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		authentik.OIDCTuning{}).Return(nil).Once()
+
+	require.NoError(t, orch.ensureSSO(context.Background(), "apps-vaultwarden"))
+	require.NoError(t, orch.ensureSSO(context.Background(), "apps-plain"))
+	ssoMock.AssertExpectations(t)
+}
+
 func TestContainerSpecFromDef_CollectsAllNetworks(t *testing.T) {
 	def := catalog.ContainerDef{
 		Name:    "apps-authentik-ldap",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -89,6 +90,26 @@ func (l *Loader) validateApp(app *App) error {
 	}
 	if len(app.SSO.BypassPaths) > 0 && app.SSO.Strategy != "forward-auth" {
 		return fmt.Errorf("sso.bypassPaths is only valid for strategy: forward-auth (got %q)", app.SSO.Strategy)
+	}
+	if app.SSO.Strategy != "native-oidc" {
+		if len(app.SSO.Scopes) > 0 {
+			return fmt.Errorf("sso.scopes is only valid for strategy: native-oidc (got %q)", app.SSO.Strategy)
+		}
+		if app.SSO.AccessTokenMinutes != 0 {
+			return fmt.Errorf("sso.accessTokenMinutes is only valid for strategy: native-oidc (got %q)", app.SSO.Strategy)
+		}
+	}
+	if app.SSO.AccessTokenMinutes < 0 {
+		return fmt.Errorf("sso.accessTokenMinutes must not be negative (got %d)", app.SSO.AccessTokenMinutes)
+	}
+	for _, scope := range app.SSO.Scopes {
+		if strings.TrimSpace(scope) == "" || strings.ContainsAny(scope, " \t") {
+			return fmt.Errorf("sso.scopes entries must be single non-empty scope names (got %q)", scope)
+		}
+		switch scope {
+		case "openid", "profile", "email":
+			return fmt.Errorf("sso.scopes must not list %q: every native-oidc provider already carries it", scope)
+		}
 	}
 	// The loopback issuer is http://localhost:<Traefik port>, which reaches
 	// Traefik only from inside the host network namespace. Without it the

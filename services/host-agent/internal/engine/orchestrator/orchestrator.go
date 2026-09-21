@@ -25,6 +25,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -1408,7 +1409,8 @@ func (o *Orchestrator) ensureSSO(ctx context.Context, id string) error {
 			return fmt.Errorf("building OIDC inputs for %q", appID)
 		}
 		o.logger.Info("provisioning native-oidc SSO", "app", appID)
-		return o.sso.EnsureNativeOIDC(ctx, appID, catalogApp.DisplayName, inputs.ClientID, inputs.ClientSecret, inputs.RedirectURIs, inputs.LaunchURL)
+		return o.sso.EnsureNativeOIDC(ctx, appID, catalogApp.DisplayName, inputs.ClientID, inputs.ClientSecret, inputs.RedirectURIs, inputs.LaunchURL,
+			authentik.OIDCTuning{ExtraScopes: inputs.ExtraScopes, AccessTokenMinutes: inputs.AccessTokenMinutes})
 	}
 
 	return nil

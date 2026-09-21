@@ -54,6 +54,12 @@ func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
 		// The native backend runs unprivileged: keep Traefik on the compat port.
 		fmt.Fprintf(&extraEnv, "Environment=BLOUD_TRAEFIK_PORT=%s\n", traefikPortEnv("native"))
 	}
+	// Opt-in development switches (see devPassthroughEnv), in a stable order.
+	for _, key := range devPassthroughEnv {
+		if v, ok := cfg.devEnv[key]; ok {
+			fmt.Fprintf(&extraEnv, "Environment=%s=%s\n", key, v)
+		}
+	}
 	return fmt.Sprintf(`[Unit]
 Description=Bloud E2E host agent
 After=network-online.target podman.socket

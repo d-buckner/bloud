@@ -62,11 +62,26 @@ limactl start bloud-dev
 BLOUD_BACKEND=native ./bloud dev
 ```
 
+Opt-in development switches are environment variables named `BLOUD_DEV_<APP>_...`;
+the CLI forwards the ones listed in `devPassthroughEnv` (`cli/devenv.go`) to the
+host-agent on every backend, and each is off unless set. Today there is one:
+`BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1 ./bloud dev` lets the Vaultwarden web vault
+work over Bloud's plain HTTP (it refuses any non-`https://` server otherwise;
+localhost names only, see `apps/vaultwarden/INTEGRATION.md`).
+
 `./bloud dev` is the whole loop: provisions the VM if needed, builds host-agent
 (`CGO_ENABLED=0 GOOS=linux`) + frontend, deploys both into the VM, and runs
 host-agent in the foreground (Ctrl-C stops it). **There is no hot reload:
 re-run `./bloud dev` after any code change** (`./bloud rebuild` is a no-op; the
 Nix runtime was removed).
+
+Startup takes a minute or more: the host-agent brings every installed app up
+(first convergence pass) before it reports ready. Port 3000 is open from the
+start but serves a loading page (and `503 {"error":"starting"}` for `/api`, also
+through Traefik on :8080) until that pass ends (invariant 5). `./bloud dev`
+prints a progress line every ~15s and finally
+`==> Bloud is ready: http://localhost:8080 ...`; the terminal then stays in the
+foreground by design.
 
 VM data lives in `/var/tmp/bloud-dev-runtime` (Lima), `/var/tmp/bloud-qemu-runtime`
 (QEMU), or `/var/tmp/bloud-native-runtime` (native): `<dir>/host-agent` (binary + `web/build`), `<dir>/data` (BLOUD_DATA_DIR,
@@ -84,6 +99,7 @@ SQLite `bloud.db`, `secrets.json`), apps dir points at the repo's `apps/`.
 | 2283 / 4533 | Immich / Navidrome (direct) | debugging |
 | 3010 | AFFiNE (direct) | debugging |
 | 8000 | Paperless-ngx (direct) | debugging |
+| 8222 | Vaultwarden (direct) | debugging |
 
 Inside the runtime Traefik also binds `:8080` (the `web-local` entrypoint), for
 two reasons: app containers resolve `sso.localhost` to the guest and reach the
@@ -378,6 +394,10 @@ combined with instance/SSH-target env vars). Instance overrides:
 - Public: `GET /health`, `GET /auth/login`, `GET /auth/callback`,
   `POST /auth/logout`, `GET /api/health`, `GET /api/setup/status`,
   `GET /api/auth/me`, plus the public system-info router.
+- Until the first convergence pass finishes, `/api/*` (health included) answers
+  503 (`bootstrapGate`, `internal/api/loading.go`). So a 200 from
+  `GET /api/health` means "ready", not merely "listening"; poll it for readiness
+  (`./bloud dev` does).
 - Authenticated (session cookie, or loopback/`BLOUD_TRUSTED_LOCAL_NETS` bypass):
   `GET /api/apps` (catalog), `GET /api/apps/installed`,
   `GET /api/apps/{name}/metadata`, `POST /api/apps/{name}/install`,
@@ -433,7 +453,9 @@ combined with instance/SSH-target env vars). Instance overrides:
    YAML marker merge, `RestartContainer`-driven config reload),
    `apps/paperless-ngx` (own postgres+redis plus gotenberg/tika sidecars,
    generated dotenv config file for django-allauth OIDC, internal admin
-   bootstrap).
+   bootstrap), `apps/vaultwarden` (single container, generated dotenv file for
+   built-in OIDC with `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`, an
+   opt-in plain-HTTP dev switch; see its `INTEGRATION.md`).
 
 ## Integration validation runs the real dependency-graph path
 

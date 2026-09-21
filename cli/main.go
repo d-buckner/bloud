@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,7 +173,12 @@ func printUsage() {
 }
 
 func log(msg string) {
-	fmt.Printf("%s==>%s %s\n", colorGreen, colorReset, msg)
+	fprintLog(os.Stdout, msg)
+}
+
+// fprintLog writes a "==>" progress line to w.
+func fprintLog(w io.Writer, msg string) {
+	_, _ = fmt.Fprintf(w, "%s==>%s %s\n", colorGreen, colorReset, msg)
 }
 
 func errorf(format string, args ...any) {

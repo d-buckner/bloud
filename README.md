@@ -183,6 +183,26 @@ deploys, and starts the agent. No separate create/start step.
 
 Apps are then served through Traefik at `http://<app>.localhost:8080`.
 
+### Apps that need a dev switch
+
+Bloud serves apps over plain HTTP until it has a TLS layer. One app cannot work
+that way on its own: **Vaultwarden's web vault refuses any server whose URL is not
+`https://`**, so past its sign-in page nothing works (SSO, creating an account,
+opening the vault). To develop or test it, opt in when you start the runtime:
+
+```bash
+BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1 ./bloud dev     # or `1` in your shell before ./bloud e2e
+```
+
+The variable is forwarded to the host-agent on every backend. It is off by default,
+only honored for `localhost` names, and it weakens a security check in that one
+app's web client, so it is for development and browser tests only (CI sets it for
+the `vaultwarden` job). Without it Vaultwarden still installs and its server side
+works; only the browser flows past the sign-in page fail, and the Playwright spec
+skips its sign-in rung. See
+[`apps/vaultwarden/INTEGRATION.md`](apps/vaultwarden/INTEGRATION.md#plain-http)
+for what it does and why.
+
 ### Validation
 
 ```bash
@@ -204,7 +224,7 @@ bloud/
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
 │   ├── affine/                    # + authentik/, immich/,
-│   └── traefik/                   #   hermes/, navidrome/, paperless-ngx/
+│   └── traefik/                   #   hermes/, navidrome/, paperless-ngx/, vaultwarden/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap

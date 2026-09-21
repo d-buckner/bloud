@@ -21,6 +21,11 @@ type OIDCInputs struct {
 	IssuerURL    string
 	RedirectURIs []string
 	LaunchURL    string
+
+	// ExtraScopes and AccessTokenMinutes are the app's optional sso.scopes and
+	// sso.accessTokenMinutes; zero values keep the provider defaults.
+	ExtraScopes        []string
+	AccessTokenMinutes int
 }
 
 // OIDCInputsForApp computes the deterministic OIDC inputs for a native-oidc app.
@@ -72,5 +77,8 @@ func (g *BlueprintGenerator) OIDCInputsForApp(app *catalog.App) *OIDCInputs {
 		IssuerURL:    strings.TrimSuffix(g.issuerBaseURL(), "/") + "/application/o/" + app.CatalogID + "/",
 		RedirectURIs: redirectURIs,
 		LaunchURL:    appSubdomainURL(g.primaryBaseURL(), app.CatalogID),
+
+		ExtraScopes:        app.SSO.Scopes,
+		AccessTokenMinutes: app.SSO.AccessTokenMinutes,
 	}
 }
