@@ -270,9 +270,14 @@ curl http://localhost:3000/api/apps/installed
 
 ## Deployment
 
-There is no packaged release yet: a `.deb` package and a `bloud init` preflight command are part of
-the first-release plan in [docs/specs/spec.md](../../docs/specs/spec.md), not something you can run
-today. Right now the supported way to run Bloud is the development VM, driven by the CLI:
+Bloud ships as a Debian package. `./bloud package` builds
+`dist/bloud_<version>_<arch>.deb`; the layout, service model, and purge behavior
+are documented in [docs/operations/packaging.md](../../docs/operations/packaging.md).
+
+A `bloud init` preflight command and the clean-Debian acceptance run are still
+part of the first-release plan in [docs/specs/spec.md](../../docs/specs/spec.md).
+
+For development, the supported way to run Bloud is the development VM, driven by the CLI:
 
 ```bash
 ./bloud dev      # build, deploy, run host-agent in the foreground (Ctrl-C to stop)

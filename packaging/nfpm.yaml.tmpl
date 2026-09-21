@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+#
+# Package definition template for the Bloud host agent (.deb). `./bloud package`
+# renders this with the resolved version and architecture into dist/nfpm.yaml,
+# stages the payload under dist/payload/, and invokes nfpm from the repo root
+# (source paths below are resolved from the current directory).
+name: bloud
+arch: "{{ .Arch }}"
+platform: linux
+version: "{{ .Version }}"
+section: admin
+priority: optional
+maintainer: Daniel Buckner <51932404+d-buckner@users.noreply.github.com>
+vendor: Bloud
+homepage: https://github.com/d-buckner/bloud
+license: AGPL-3.0-only
+description: |
+  Bloud home server: a web dashboard that installs and integrates apps.
+
+  Bloud runs an intent-driven orchestrator that continuously reconciles the
+  declared app topology (reverse proxy, TLS, SSO, databases) using rootless
+  Podman. The bloud-host-agent user service runs as a dedicated unprivileged
+  system user and manages app containers through the user's Podman socket.
+depends:
+  - adduser
+  - podman
+  - systemd
+scripts:
+  postinstall: ./packaging/scripts/postinstall.sh
+  preremove: ./packaging/scripts/preremove.sh
+  postremove: ./packaging/scripts/postremove.sh
+contents:
+  - src: ./dist/payload/host-agent
+    dst: /usr/lib/bloud/host-agent
+    file_info:
+      mode: 0755
+  - src: ./dist/payload/web
+    dst: /usr/lib/bloud/web
+  - src: ./dist/payload/apps
+    dst: /usr/share/bloud/apps
+  - src: ./packaging/bloud-host-agent.service
+    dst: /usr/lib/systemd/user/bloud-host-agent.service
+    file_info:
+      mode: 0644
+  - src: ./packaging/99-bloud-unprivileged-ports.conf
+    dst: /etc/sysctl.d/99-bloud-unprivileged-ports.conf
+    file_info:
+      mode: 0644
+  - src: ./LICENSE
+    dst: /usr/share/doc/bloud/copyright
+  - src: ./services/host-agent/README.md
+    dst: /usr/share/doc/bloud/README.md

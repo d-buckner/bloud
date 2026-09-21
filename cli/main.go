@@ -92,6 +92,7 @@ func dispatch(cmd string, args []string) int {
 		"dev":       func([]string) int { return cmdDev() },
 		"e2e":       cmdE2E,
 		"validate":  cmdValidate,
+		"package":   cmdPackage,
 		"depgraph":  func([]string) int { return cmdDepGraph() },
 		"token":     func([]string) int { return cmdToken() },
 	}
@@ -140,6 +141,12 @@ func printUsage() {
 	fmt.Println("    --json             Output JSON ledger only")
 	fmt.Println("    --since <ref>      Git ref for diff base (default: HEAD)")
 	fmt.Println("  e2e lifecycle [flags] Run full lifecycle E2E")
+	fmt.Println()
+	fmt.Println("Release:")
+	fmt.Println("  package              Build the host-agent, frontend, and catalog into a .deb")
+	fmt.Println("    --arch <a>         Package architecture (default: host arch)")
+	fmt.Println("    --version <v>      Package version (default: git describe)")
+	fmt.Println("    --out <dir>        Output directory (default: dist)")
 	fmt.Println()
 	fmt.Println("Other:")
 	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")

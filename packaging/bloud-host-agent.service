@@ -1,0 +1,20 @@
+[Unit]
+Description=Bloud host agent
+Documentation=https://github.com/d-buckner/bloud
+After=network-online.target podman.socket
+Wants=network-online.target podman.socket
+
+[Service]
+Type=simple
+# web/build is resolved relative to the working directory (see
+# internal/api/router.go), so the frontend ships as a sibling of the binary.
+WorkingDirectory=/usr/lib/bloud
+Environment=BLOUD_DATA_DIR=/var/lib/bloud
+Environment=BLOUD_APPS_DIR=/usr/share/bloud/apps
+Environment=BLOUD_TRAEFIK_DYNAMIC_DIR=/var/lib/bloud/traefik/dynamic
+ExecStart=/usr/lib/bloud/host-agent
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

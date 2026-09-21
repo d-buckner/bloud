@@ -499,7 +499,8 @@ to the right doc. When a doc moves, update it in both places.
 | Component overview + data flows | [architecture/overview.md](docs/architecture/overview.md) |
 | How to add an app | [guides/contributing-apps.md](docs/guides/contributing-apps.md) |
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
-| Backend debt + repayment plan | [operations/tech-debt.md](docs/operations/tech-debt.md) |
+|Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
+|Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
 |Sharing/federation (in progress)|[features/sharing.md](docs/features/sharing.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Dated review findings|[specs/review.md](docs/specs/review.md)|
