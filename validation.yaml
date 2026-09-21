@@ -121,9 +121,9 @@ apps:
       - apps/homeassistant/**
     e2e-project: homeassistant
 
-  paperless:
+  paperless-ngx:
     auth: native-oidc
     validation-level: embed
     files:
-      - apps/paperless/**
-    e2e-project: paperless
+      - apps/paperless-ngx/**
+    e2e-project: paperless-ngx

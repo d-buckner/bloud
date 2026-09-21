@@ -197,7 +197,8 @@ Two things Vale cannot do, both covered by standalone checks:
   `http://localhost:3000`): loopback, no auth needed.
 - Specs: `jellyfin.spec.ts` (LDAP SSO), `navidrome.spec.ts` (forward-auth),
   `immich.spec.ts` (native-oidc + onboarding), `affine.spec.ts`
-  (native-oidc, login via issuer origin). Fixtures: `lib/fixtures.ts`
+  (native-oidc, login via issuer origin), `paperless-ngx.spec.ts` (native-oidc
+  through django-allauth). Fixtures: `lib/fixtures.ts`
   (`authenticatedPage`, `api`); shared login: `lib/auth.ts`, `lib/loginPage.ts`.
 - Config: single worker, no retries, 10 min/test, trace/screenshot/video retained
   on failure. `./bloud e2e` runs the suite against a runtime started by
@@ -378,7 +379,7 @@ combined with instance/SSH-target env vars). Instance overrides:
    config file, first-run owner bootstrap), `apps/navidrome` (forward-auth),
    `apps/homeassistant` (pinned remote asset via `pkg/appasset` + provenance,
    YAML marker merge, `RestartContainer`-driven config reload),
-   `apps/paperless` (own postgres+redis plus gotenberg/tika sidecars,
+   `apps/paperless-ngx` (own postgres+redis plus gotenberg/tika sidecars,
    generated dotenv config file for django-allauth OIDC, internal admin
    bootstrap).
 

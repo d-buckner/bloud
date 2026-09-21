@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 Daniel Buckner
-name: paperless
+name: paperless-ngx
 displayName: Paperless-ngx
 description: Document management system that turns scans and PDFs into a searchable archive
 category: productivity
@@ -32,7 +32,7 @@ sso:
   userCreation: true
 
 containers:
-  - name: apps-paperless-postgres
+  - name: apps-paperless-ngx-postgres
     image: docker.io/library/postgres:18
     network: paperless-internal
     restartPolicy: always
@@ -55,7 +55,7 @@ containers:
   # Celery broker. Paperless only needs the Redis protocol, so the broker is
   # the same redis:7-alpine the other multi-container apps use (Valkey is a
   # drop-in if the license ever matters here).
-  - name: apps-paperless-redis
+  - name: apps-paperless-ngx-redis
     image: docker.io/redis:7-alpine
     network: paperless-internal
     restartPolicy: always
@@ -68,7 +68,7 @@ containers:
   # Gotenberg converts Office documents and .eml to PDF before Paperless
   # parses them. The chromium route is used for .eml, so scripts and external
   # content are switched off and file access is restricted (upstream defaults).
-  - name: apps-paperless-gotenberg
+  - name: apps-paperless-ngx-gotenberg
     image: docker.io/gotenberg/gotenberg:8.37
     network: paperless-internal
     restartPolicy: always
@@ -83,7 +83,7 @@ containers:
       retries: 30
 
   # Tika extracts text from the PDFs Gotenberg produces.
-  - name: apps-paperless-tika
+  - name: apps-paperless-ngx-tika
     image: docker.io/apache/tika:3.3.1.0
     network: paperless-internal
     restartPolicy: always
@@ -104,7 +104,7 @@ containers:
       timeout: 10
       retries: 30
 
-  - name: apps-paperless
+  - name: apps-paperless-ngx
     image: ghcr.io/paperless-ngx/paperless-ngx:3.2.0
     networks:
       - paperless-internal
@@ -116,14 +116,14 @@ containers:
     environment:
       TZ: Etc/UTC
       PAPERLESS_DBENGINE: postgresql
-      PAPERLESS_DBHOST: apps-paperless-postgres
+      PAPERLESS_DBHOST: apps-paperless-ngx-postgres
       PAPERLESS_DBNAME: paperless
       PAPERLESS_DBUSER: paperless
       PAPERLESS_DBPASS: "{{postgresPassword}}"
-      PAPERLESS_REDIS: redis://apps-paperless-redis:6379
+      PAPERLESS_REDIS: redis://apps-paperless-ngx-redis:6379
       PAPERLESS_TIKA_ENABLED: "true"
-      PAPERLESS_TIKA_ENDPOINT: http://apps-paperless-tika:9998
-      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://apps-paperless-gotenberg:3000
+      PAPERLESS_TIKA_ENDPOINT: http://apps-paperless-ngx-tika:9998
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://apps-paperless-ngx-gotenberg:3000
       # Traefik is the app's only proxy hop. Without this, allauth reads the
       # proxy's address as every client's address and its login rate limiter
       # answers 403 once the shared bucket is spent.
@@ -161,5 +161,5 @@ containers:
       # Only the boot-time dependencies: Tika and Gotenberg are called per
       # document, and Paperless starts fine without them (the first Office
       # document would fail until they are up).
-      - apps-paperless-postgres
-      - apps-paperless-redis
+      - apps-paperless-ngx-postgres
+      - apps-paperless-ngx-redis

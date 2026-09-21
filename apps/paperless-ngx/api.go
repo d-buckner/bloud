@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 
-package paperless
+package paperlessngx
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 // successful signup) instead of chasing it into the page behind it.
 var noFollow = false
 
-// paperlessAPI is the typed surface over Paperless-ngx's HTTP API. Every
+// paperlessNgxAPI is the typed surface over Paperless-ngx's HTTP API. Every
 // method reads as declared intent; transport, retry, and timeouts live in
 // appclient.
 //
@@ -32,7 +32,7 @@ var noFollow = false
 // cookie, and presenting that session to the provider form or to /api/token/
 // makes Django demand a CSRF token it did not issue. Each cookie-bound flow
 // therefore gets its own jar, and the API client gets none.
-type paperlessAPI struct {
+type paperlessNgxAPI struct {
 	cl         *appclient.Client // no cookies: readiness, page reads, token login
 	forms      *appclient.Client // the sign-in page and its SSO button
 	signupForm *appclient.Client // the signup form, which leaves a session behind
@@ -40,7 +40,7 @@ type paperlessAPI struct {
 
 // newAPI builds the typed clients against a base-URL resolver using the shared
 // HTTP factory.
-func newAPI(f configurator.ClientFactory, baseURLFn func() string) *paperlessAPI {
+func newAPI(f configurator.ClientFactory, baseURLFn func() string) *paperlessNgxAPI {
 	newFormClient := func() *appclient.Client {
 		// The only error case is a nil cookie-jar option, which this call does
 		// not pass.
@@ -52,7 +52,7 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *paperlessAPI
 			FollowRedirects: &noFollow,
 		})
 	}
-	return &paperlessAPI{
+	return &paperlessNgxAPI{
 		cl:         f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn}),
 		forms:      newFormClient(),
 		signupForm: newFormClient(),
@@ -62,7 +62,7 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *paperlessAPI
 // waitServer polls the sign-in page until it answers 200. The first boot runs
 // database migrations before the webserver listener opens, so the window is
 // generous.
-func (a *paperlessAPI) waitServer(ctx context.Context) error {
+func (a *paperlessNgxAPI) waitServer(ctx context.Context) error {
 	return a.cl.GET(signInPath).
 		Interval(2 * time.Second).
 		WithRetry(appclient.WaitPolicy).
@@ -75,7 +75,7 @@ func (a *paperlessAPI) waitServer(ctx context.Context) error {
 // URL, so seeing the path proves the generated config file was read:
 // PAPERLESS_APPS put the provider into INSTALLED_APPS and
 // PAPERLESS_SOCIALACCOUNT_PROVIDERS configured it.
-func (a *paperlessAPI) waitProviderAdvertised(ctx context.Context) error {
+func (a *paperlessNgxAPI) waitProviderAdvertised(ctx context.Context) error {
 	return a.cl.GET(signInPath).
 		Interval(3 * time.Second).
 		WithRetry(appclient.WaitPolicy).
@@ -92,7 +92,7 @@ func (a *paperlessAPI) waitProviderAdvertised(ctx context.Context) error {
 // resolves. What it cannot see is the redirect URI itself, since that is a
 // response header and appclient reports status and body only: the Go
 // integration test and the browser journey assert it instead.
-func (a *paperlessAPI) probeProviderLogin(ctx context.Context) error {
+func (a *paperlessNgxAPI) probeProviderLogin(ctx context.Context) error {
 	page, err := a.forms.GET(signInPath).Anonymous().OK(http.StatusOK).NoRetry().Do(ctx)
 	if err != nil {
 		return err
@@ -114,7 +114,7 @@ func (a *paperlessAPI) probeProviderLogin(ctx context.Context) error {
 // empty token with a nil error means the endpoint accepted neither as a
 // credential: it rejected them (400) or throttled the request (429), which the
 // caller reports as "unverified" rather than as a node failure.
-func (a *paperlessAPI) login(ctx context.Context, username, password string) (string, error) {
+func (a *paperlessNgxAPI) login(ctx context.Context, username, password string) (string, error) {
 	body, err := a.cl.POST("/api/token/").
 		Anonymous().
 		JSON(map[string]string{"username": username, "password": password}).
@@ -136,7 +136,7 @@ func (a *paperlessAPI) login(ctx context.Context, username, password string) (st
 // it does only while no user exists (CustomAccountAdapter.is_open_for_signup).
 // The page renders the password fields when signup is open and "Sign Up
 // Closed" when it is not, so the probe looks for the form itself.
-func (a *paperlessAPI) signupOpen(ctx context.Context) (bool, error) {
+func (a *paperlessNgxAPI) signupOpen(ctx context.Context) (bool, error) {
 	body, err := a.cl.GET(signupPath).
 		Anonymous().
 		OK(http.StatusOK).
@@ -155,7 +155,7 @@ func (a *paperlessAPI) signupOpen(ctx context.Context) (bool, error) {
 // with the cookie it was issued against; the no-follow client is used so the
 // success redirect is observed rather than chased into the dashboard (a
 // rejected form re-renders the page with 200 instead).
-func (a *paperlessAPI) signup(ctx context.Context, username, email, password string) error {
+func (a *paperlessNgxAPI) signup(ctx context.Context, username, email, password string) error {
 	form, err := a.signupForm.GET(signupPath).Anonymous().OK(http.StatusOK).NoRetry().Do(ctx)
 	if err != nil {
 		return err
@@ -206,7 +206,7 @@ type groupPermissionsWrite struct {
 // set, creating it when absent and replacing a drifted set otherwise. It is the
 // declaration step for state the app keeps in its database rather than in its
 // config file.
-func (a *paperlessAPI) ensureGroup(ctx context.Context, token, name string, permissions []string) (bool, error) {
+func (a *paperlessNgxAPI) ensureGroup(ctx context.Context, token, name string, permissions []string) (bool, error) {
 	existing, found, err := a.findGroup(ctx, token, name)
 	if err != nil {
 		return false, err
@@ -235,7 +235,7 @@ func (a *paperlessAPI) ensureGroup(ctx context.Context, token, name string, perm
 // findGroup returns the group with this exact name, if the app has one. The
 // list endpoint filters by name, but its lookup semantics are the app's, so the
 // result is matched exactly here.
-func (a *paperlessAPI) findGroup(ctx context.Context, token, name string) (group, bool, error) {
+func (a *paperlessNgxAPI) findGroup(ctx context.Context, token, name string) (group, bool, error) {
 	body, err := a.cl.GET("/api/groups/").
 		Query("name", name).
 		Header("Authorization", "Token "+token).

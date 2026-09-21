@@ -203,7 +203,7 @@ bloud/
 │   │   ├── configurator.go        # PreStart/PostStart runtime hooks
 │   │   └── icon.png
 │   ├── affine/                    # + authentik/, immich/,
-│   └── traefik/                   #   navidrome/, paperless/
+│   └── traefik/                   #   navidrome/, paperless-ngx/
 │
 ├── services/host-agent/           # Go backend + Svelte frontend
 │   ├── cmd/host-agent/            # Entry point, bootstrap

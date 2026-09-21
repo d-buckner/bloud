@@ -24,51 +24,51 @@ import (
 	"time"
 )
 
-var paperlessURL = getEnvDefault("BLOUD_E2E_PAPERLESS_URL", "http://localhost:8000")
+var paperlessNgxURL = getEnvDefault("BLOUD_E2E_PAPERLESS_NGX_URL", "http://localhost:8000")
 
-// Paperless-ngx integration values. They must match apps/paperless: the
+// Paperless-ngx integration values. They must match apps/paperless-ngx: the
 // provider id allauth registers, the admin username the container creates
 // from the generated config file, and the group Bloud declares for SSO
 // accounts.
 const (
-	paperlessAdminUser        = "bloud-admin"
-	paperlessProviderLogin    = "/accounts/oidc/bloud/login/"
-	paperlessProviderCallback = "/accounts/oidc/bloud/login/callback/"
-	paperlessBaselineGroup    = "bloud-users"
+	paperlessNgxAdminUser        = "bloud-admin"
+	paperlessNgxProviderLogin    = "/accounts/oidc/bloud/login/"
+	paperlessNgxProviderCallback = "/accounts/oidc/bloud/login/callback/"
+	paperlessNgxBaselineGroup    = "bloud-users"
 )
 
-// paperlessNodes are the app's graph nodes, one container each.
-var paperlessNodes = []string{
-	"apps-paperless",
-	"apps-paperless-postgres",
-	"apps-paperless-redis",
-	"apps-paperless-gotenberg",
-	"apps-paperless-tika",
+// paperlessNgxNodes are the app's graph nodes, one container each.
+var paperlessNgxNodes = []string{
+	"apps-paperless-ngx",
+	"apps-paperless-ngx-postgres",
+	"apps-paperless-ngx-redis",
+	"apps-paperless-ngx-gotenberg",
+	"apps-paperless-ngx-tika",
 }
 
-// TestPaperlessInstallViaAPI installs Paperless-ngx through the API. The graph
+// TestPaperlessNgxInstallViaAPI installs Paperless-ngx through the API. The graph
 // spans five containers (webserver, postgres, redis, gotenberg, tika); first
 // boot runs Django migrations before the webserver listener opens.
-func TestPaperlessInstallViaAPI(t *testing.T) {
-	postJSON(t, hostAgentURL+"/api/apps/paperless/install", `{}`, http.StatusAccepted)
+func TestPaperlessNgxInstallViaAPI(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/paperless-ngx/install", `{}`, http.StatusAccepted)
 	// A fresh VM pulls five images (about 5 GB unpacked) and migrates on first
 	// boot; allow a generous deadline.
-	waitAppRunning(t, "paperless", 30*time.Minute)
-	waitHTTPOrFatal(t, 60*time.Second, paperlessURL+"/accounts/login/")
+	waitAppRunning(t, "paperless-ngx", 30*time.Minute)
+	waitHTTPOrFatal(t, 60*time.Second, paperlessNgxURL+"/accounts/login/")
 }
 
-// TestPaperlessConfiguredByConfigurator verifies the configurator's outcomes
+// TestPaperlessNgxConfiguredByConfigurator verifies the configurator's outcomes
 // behaviorally: the generated config file reaches the running app (the sign-in
 // page advertises the provider), the provider hands the browser to the issuer
 // with the registered callback, the internal admin account authenticates, and
 // an uploaded document travels the whole consume pipeline (redis -> celery ->
 // parser -> search index).
-func TestPaperlessConfiguredByConfigurator(t *testing.T) {
-	waitAppRunning(t, "paperless", 2*time.Minute)
+func TestPaperlessNgxConfiguredByConfigurator(t *testing.T) {
+	waitAppRunning(t, "paperless-ngx", 2*time.Minute)
 
-	signIn := paperlessGet(t, "/accounts/login/", "")
-	if !strings.Contains(signIn, paperlessProviderLogin) {
-		t.Errorf("sign-in page must advertise %s: the generated provider settings did not reach the app", paperlessProviderLogin)
+	signIn := paperlessNgxGet(t, "/accounts/login/", "")
+	if !strings.Contains(signIn, paperlessNgxProviderLogin) {
+		t.Errorf("sign-in page must advertise %s: the generated provider settings did not reach the app", paperlessNgxProviderLogin)
 	}
 
 	// allauth fetches the issuer's discovery document to build the
@@ -77,26 +77,26 @@ func TestPaperlessConfiguredByConfigurator(t *testing.T) {
 	// resolves. allauth derives the redirect URI from the host it is asked on,
 	// and Bloud registers one per base URL plus the direct-port debug URL, so
 	// the expectation is the callback on the URL this test probes.
-	location := paperlessProviderRedirect(t)
+	location := paperlessNgxProviderRedirect(t)
 	// Authentik's authorize endpoint is global (discovered from the
 	// application's discovery document), not per-application.
 	if !strings.Contains(location, "/application/o/authorize/") {
 		t.Errorf("provider redirect must point at the issuer's authorize endpoint, got %q", location)
 	}
-	wantCallback := paperlessURL + paperlessProviderCallback
+	wantCallback := paperlessNgxURL + paperlessNgxProviderCallback
 	if !strings.Contains(location, url.QueryEscape(wantCallback)) {
 		t.Errorf("provider redirect must carry redirect_uri %q, got %q", wantCallback, location)
 	}
 
-	password := readSecrets(t).AppSecrets["paperless"].AdminPassword
+	password := readSecrets(t).AppSecrets["paperless-ngx"].AdminPassword
 	if password == "" {
-		t.Fatal("no admin password for paperless in secrets.json")
+		t.Fatal("no admin password for paperless-ngx in secrets.json")
 	}
-	token := paperlessToken(t, password)
-	paperlessIngestsUploadedDocument(t, token)
+	token := paperlessNgxToken(t, password)
+	paperlessNgxIngestsUploadedDocument(t, token)
 }
 
-// TestPaperlessBaselineGroupGrantsWebAppAccess asserts what a signed-in SSO
+// TestPaperlessNgxBaselineGroupGrantsWebAppAccess asserts what a signed-in SSO
 // account can do, which is the part membership alone does not prove:
 // Paperless-ngx grants a new user no permissions and gates every REST endpoint
 // on model permissions, so the web app's own first calls (/api/ui_settings/,
@@ -104,25 +104,25 @@ func TestPaperlessConfiguredByConfigurator(t *testing.T) {
 // renders but never works. Bloud declares the group social signups join; this
 // places a user in that group through the app's API and checks the API accepts
 // the session.
-func TestPaperlessBaselineGroupGrantsWebAppAccess(t *testing.T) {
-	waitAppRunning(t, "paperless", 2*time.Minute)
+func TestPaperlessNgxBaselineGroupGrantsWebAppAccess(t *testing.T) {
+	waitAppRunning(t, "paperless-ngx", 2*time.Minute)
 
-	adminToken := paperlessToken(t, readSecrets(t).AppSecrets["paperless"].AdminPassword)
-	groupID := paperlessBaselineGroupID(t, adminToken)
-	memberToken := paperlessCreateMemberInGroup(t, adminToken, groupID)
+	adminToken := paperlessNgxToken(t, readSecrets(t).AppSecrets["paperless-ngx"].AdminPassword)
+	groupID := paperlessNgxBaselineGroupID(t, adminToken)
+	memberToken := paperlessNgxCreateMemberInGroup(t, adminToken, groupID)
 
 	for _, path := range []string{"/api/ui_settings/", "/api/saved_views/"} {
-		paperlessGet(t, path, memberToken)
+		paperlessNgxGet(t, path, memberToken)
 	}
 	t.Log("a member of the baseline group can use the API")
 }
 
-// paperlessBaselineGroupID returns the id of the group SSO accounts join and
+// paperlessNgxBaselineGroupID returns the id of the group SSO accounts join and
 // fails if it is missing or carries no permissions: a group that exists but
 // grants nothing satisfies membership and still answers 403.
-func paperlessBaselineGroupID(t *testing.T, adminToken string) int {
+func paperlessNgxBaselineGroupID(t *testing.T, adminToken string) int {
 	t.Helper()
-	body := paperlessGet(t, "/api/groups/?name="+url.QueryEscape(paperlessBaselineGroup), adminToken)
+	body := paperlessNgxGet(t, "/api/groups/?name="+url.QueryEscape(paperlessNgxBaselineGroup), adminToken)
 	var list struct {
 		Results []struct {
 			ID          int      `json:"id"`
@@ -134,29 +134,29 @@ func paperlessBaselineGroupID(t *testing.T, adminToken string) int {
 		t.Fatalf("decoding the group list: %v (%s)", err, body)
 	}
 	for _, g := range list.Results {
-		if g.Name != paperlessBaselineGroup {
+		if g.Name != paperlessNgxBaselineGroup {
 			continue
 		}
 		if len(g.Permissions) == 0 {
-			t.Fatalf("group %s grants no permissions: an SSO session would answer 403", paperlessBaselineGroup)
+			t.Fatalf("group %s grants no permissions: an SSO session would answer 403", paperlessNgxBaselineGroup)
 		}
 		return g.ID
 	}
-	t.Fatalf("group %s does not exist: SSO signups would land with no permissions", paperlessBaselineGroup)
+	t.Fatalf("group %s does not exist: SSO signups would land with no permissions", paperlessNgxBaselineGroup)
 	return 0
 }
 
-// paperlessCreateMemberInGroup creates an account in the baseline group, which
+// paperlessNgxCreateMemberInGroup creates an account in the baseline group, which
 // is the state PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS produces at signup, and
 // returns its API token.
-func paperlessCreateMemberInGroup(t *testing.T, adminToken string, groupID int) string {
+func paperlessNgxCreateMemberInGroup(t *testing.T, adminToken string, groupID int) string {
 	t.Helper()
 	const (
 		username = "bloud-member"
 		password = "bloud-member-password-1"
 	)
 	body := fmt.Sprintf(`{"username":%q,"password":%q,"groups":[%d]}`, username, password, groupID)
-	payload := paperlessPostJSON(t, "/api/users/", adminToken, body)
+	payload := paperlessNgxPostJSON(t, "/api/users/", adminToken, body)
 
 	var created struct {
 		ID     int   `json:"id"`
@@ -168,14 +168,14 @@ func paperlessCreateMemberInGroup(t *testing.T, adminToken string, groupID int) 
 	if !slices.Contains(created.Groups, groupID) {
 		t.Fatalf("the created user is not in group %d: %s", groupID, payload)
 	}
-	return paperlessTokenFor(t, username, password)
+	return paperlessNgxTokenFor(t, username, password)
 }
 
-// paperlessPostJSON posts a JSON body to the app with an API token and fails
+// paperlessNgxPostJSON posts a JSON body to the app with an API token and fails
 // the test on anything but 201.
-func paperlessPostJSON(t *testing.T, path, token, body string) []byte {
+func paperlessNgxPostJSON(t *testing.T, path, token, body string) []byte {
 	t.Helper()
-	req, err := http.NewRequest("POST", paperlessURL+path, strings.NewReader(body))
+	req, err := http.NewRequest("POST", paperlessNgxURL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("building request for %s: %v", path, err)
 	}
@@ -195,32 +195,32 @@ func paperlessPostJSON(t *testing.T, path, token, body string) []byte {
 	return payload
 }
 
-// TestPaperlessUninstallCleanup uninstalls Paperless-ngx through the API and
+// TestPaperlessNgxUninstallCleanup uninstalls Paperless-ngx through the API and
 // asserts the full cleanup: store entry, all five containers, data directory,
 // and routes.
-func TestPaperlessUninstallCleanup(t *testing.T) {
-	postJSON(t, hostAgentURL+"/api/apps/paperless/uninstall",
+func TestPaperlessNgxUninstallCleanup(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/paperless-ngx/uninstall",
 		`{"clearData":true}`, http.StatusAccepted)
 
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
-		if appStatus(t, "paperless") == "" {
+		if appStatus(t, "paperless-ngx") == "" {
 			break
 		}
 		time.Sleep(3 * time.Second)
 	}
-	if status := appStatus(t, "paperless"); status != "" {
-		t.Fatalf("paperless still listed as installed (status %q)", status)
+	if status := appStatus(t, "paperless-ngx"); status != "" {
+		t.Fatalf("paperless-ngx still listed as installed (status %q)", status)
 	}
 
-	for _, name := range paperlessNodes {
+	for _, name := range paperlessNgxNodes {
 		if _, err := exec.Command("podman", "container", "exists", name).CombinedOutput(); err == nil {
 			t.Errorf("%s container still exists after uninstall", name)
 		}
 	}
 
 	if os.Getenv("BLOUD_DATA_DIR") != "" {
-		dataPath := filepath.Join(dataDir(), "paperless")
+		dataPath := filepath.Join(dataDir(), "paperless-ngx")
 		if _, err := os.Stat(dataPath); err == nil {
 			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
 		}
@@ -233,17 +233,17 @@ func TestPaperlessUninstallCleanup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading %s: %v", routesPath, err)
 		}
-		if strings.Contains(string(routes), "paperless") {
-			t.Errorf("apps-routes.yml still references paperless after uninstall")
+		if strings.Contains(string(routes), "paperless-ngx") {
+			t.Errorf("apps-routes.yml still references paperless-ngx after uninstall")
 		}
 	}
-	t.Log("paperless fully uninstalled: store, containers, data, and routes cleaned up")
+	t.Log("paperless-ngx fully uninstalled: store, containers, data, and routes cleaned up")
 }
 
-// paperlessProviderRedirect starts the authorization-code flow the way the
+// paperlessNgxProviderRedirect starts the authorization-code flow the way the
 // browser does: fetch the provider login page (allauth's confirmation page,
 // which carries the CSRF token), then post the form and read the redirect.
-func paperlessProviderRedirect(t *testing.T) string {
+func paperlessNgxProviderRedirect(t *testing.T) string {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -256,14 +256,14 @@ func paperlessProviderRedirect(t *testing.T) string {
 		},
 	}
 
-	confirm, err := client.Get(paperlessURL + paperlessProviderLogin)
+	confirm, err := client.Get(paperlessNgxURL + paperlessNgxProviderLogin)
 	if err != nil {
-		t.Fatalf("GET %s: %v", paperlessProviderLogin, err)
+		t.Fatalf("GET %s: %v", paperlessNgxProviderLogin, err)
 	}
 	page, _ := io.ReadAll(confirm.Body)
 	confirm.Body.Close()
 	if confirm.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s: status %d: %s", paperlessProviderLogin, confirm.StatusCode, page)
+		t.Fatalf("GET %s: status %d: %s", paperlessNgxProviderLogin, confirm.StatusCode, page)
 	}
 
 	csrf := csrfTokenRe.FindSubmatch(page)
@@ -271,36 +271,36 @@ func paperlessProviderRedirect(t *testing.T) string {
 		t.Fatalf("no CSRF token in the provider confirmation page: %s", truncateBody(page))
 	}
 
-	resp, err := client.PostForm(paperlessURL+paperlessProviderLogin,
+	resp, err := client.PostForm(paperlessNgxURL+paperlessNgxProviderLogin,
 		url.Values{"csrfmiddlewaretoken": {string(csrf[1])}})
 	if err != nil {
-		t.Fatalf("POST %s: %v", paperlessProviderLogin, err)
+		t.Fatalf("POST %s: %v", paperlessNgxProviderLogin, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("POST %s: status %d, want a redirect to the issuer: %s",
-			paperlessProviderLogin, resp.StatusCode, truncateBody(body))
+			paperlessNgxProviderLogin, resp.StatusCode, truncateBody(body))
 	}
 	return resp.Header.Get("Location")
 }
 
-// paperlessToken authenticates as the internal admin account. It doubles as
+// paperlessNgxToken authenticates as the internal admin account. It doubles as
 // the check that the container created that account from the generated config
 // file: a missing user or password answers 401.
-func paperlessToken(t *testing.T, password string) string {
+func paperlessNgxToken(t *testing.T, password string) string {
 	t.Helper()
-	return paperlessTokenFor(t, paperlessAdminUser, password)
+	return paperlessNgxTokenFor(t, paperlessNgxAdminUser, password)
 }
 
-// paperlessTokenFor exchanges an account's credentials for an API token.
-func paperlessTokenFor(t *testing.T, username, password string) string {
+// paperlessNgxTokenFor exchanges an account's credentials for an API token.
+func paperlessNgxTokenFor(t *testing.T, username, password string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{
 		"username": username,
 		"password": password,
 	})
-	resp, err := http.Post(paperlessURL+"/api/token/", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(paperlessNgxURL+"/api/token/", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /api/token/: %v", err)
 	}
@@ -321,11 +321,11 @@ func paperlessTokenFor(t *testing.T, username, password string) string {
 	return out.Token
 }
 
-// paperlessIngestsUploadedDocument uploads a plain-text document through the
+// paperlessNgxIngestsUploadedDocument uploads a plain-text document through the
 // REST API and waits until it is searchable with its text extracted. That path
 // covers the broker (redis), the Celery worker, the document parser, and the
 // search index, which is what makes the app useful rather than merely running.
-func paperlessIngestsUploadedDocument(t *testing.T, token string) {
+func paperlessNgxIngestsUploadedDocument(t *testing.T, token string) {
 	t.Helper()
 	const marker = "bloud-integration-probe"
 
@@ -342,7 +342,7 @@ func paperlessIngestsUploadedDocument(t *testing.T, token string) {
 		t.Fatalf("building upload: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", paperlessURL+"/api/documents/post_document/", &upload)
+	req, err := http.NewRequest("POST", paperlessNgxURL+"/api/documents/post_document/", &upload)
 	if err != nil {
 		t.Fatalf("building upload request: %v", err)
 	}
@@ -361,8 +361,8 @@ func paperlessIngestsUploadedDocument(t *testing.T, token string) {
 	deadline := time.Now().Add(3 * time.Minute)
 	var last string
 	for time.Now().Before(deadline) {
-		for _, id := range paperlessDocumentIDs(t, token) {
-			content := paperlessGet(t, fmt.Sprintf("/api/documents/%s/", id), token)
+		for _, id := range paperlessNgxDocumentIDs(t, token) {
+			content := paperlessNgxGet(t, fmt.Sprintf("/api/documents/%s/", id), token)
 			var doc struct {
 				Content string `json:"content"`
 			}
@@ -379,10 +379,10 @@ func paperlessIngestsUploadedDocument(t *testing.T, token string) {
 	t.Fatalf("uploaded document was not consumed with its text extracted within the deadline (last: %s)", last)
 }
 
-// paperlessDocumentIDs lists the ids of the documents the API reports.
-func paperlessDocumentIDs(t *testing.T, token string) []string {
+// paperlessNgxDocumentIDs lists the ids of the documents the API reports.
+func paperlessNgxDocumentIDs(t *testing.T, token string) []string {
 	t.Helper()
-	body := paperlessGet(t, "/api/documents/?page_size=5", token)
+	body := paperlessNgxGet(t, "/api/documents/?page_size=5", token)
 	var list struct {
 		Results []struct {
 			ID int `json:"id"`
@@ -398,11 +398,11 @@ func paperlessDocumentIDs(t *testing.T, token string) []string {
 	return ids
 }
 
-// paperlessGet fetches a path from the app, optionally with an API token, and
+// paperlessNgxGet fetches a path from the app, optionally with an API token, and
 // fails the test on anything but 200.
-func paperlessGet(t *testing.T, path, token string) string {
+func paperlessNgxGet(t *testing.T, path, token string) string {
 	t.Helper()
-	req, err := http.NewRequest("GET", paperlessURL+path, nil)
+	req, err := http.NewRequest("GET", paperlessNgxURL+path, nil)
 	if err != nil {
 		t.Fatalf("building request for %s: %v", path, err)
 	}

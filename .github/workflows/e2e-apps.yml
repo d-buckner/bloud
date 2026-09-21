@@ -34,7 +34,7 @@ jobs:
           - immich
           - affine
           - homeassistant
-          - paperless
+          - paperless-ngx
     steps:
       - name: Checkout
         uses: actions/checkout@v7

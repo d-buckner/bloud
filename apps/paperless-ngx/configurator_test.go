@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Daniel Buckner
 
-package paperless
+package paperlessngx
 
 import (
 	"context"
@@ -324,19 +324,19 @@ func testOIDC() *configurator.OIDCOutput {
 		ClientID:     "paperless-client",
 		ClientSecret: "secret-value",
 		IssuerURL:    "http://sso.localhost:8080/application/o/paperless/",
-		RedirectURI:  "http://paperless.localhost:8080" + callbackPath,
+		RedirectURI:  "http://paperless-ngx.localhost:8080" + callbackPath,
 	}
 }
 
 func TestAppExternalURL_DerivesSubdomain(t *testing.T) {
 	cases := map[string]string{
-		"http://localhost:8080":            "http://paperless.localhost:8080",
-		"http://192.168.1.5:8080":          "http://paperless.192.168.1.5:8080",
-		"https://bloud.example.com":        "https://paperless.bloud.example.com",
-		"":                                 "http://paperless.localhost:8080",
-		"://nonsense":                      "http://paperless.localhost:8080",
-		"http://localhost:8080/":           "http://paperless.localhost:8080",
-		"http://localhost:8080/dashboard/": "http://paperless.localhost:8080",
+		"http://localhost:8080":            "http://paperless-ngx.localhost:8080",
+		"http://192.168.1.5:8080":          "http://paperless-ngx.192.168.1.5:8080",
+		"https://bloud.example.com":        "https://paperless-ngx.bloud.example.com",
+		"":                                 "http://paperless-ngx.localhost:8080",
+		"://nonsense":                      "http://paperless-ngx.localhost:8080",
+		"http://localhost:8080/":           "http://paperless-ngx.localhost:8080",
+		"http://localhost:8080/dashboard/": "http://paperless-ngx.localhost:8080",
 	}
 	for base, want := range cases {
 		c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL(base), Logger: quietLogger()})
@@ -361,7 +361,7 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 	assert.NotZero(t, info.Mode().Perm()&0o004, "config must be readable by others, got %v", info.Mode().Perm())
 
 	conf := readConf(t, path)
-	assert.Equal(t, "http://paperless.localhost:8080", conf["PAPERLESS_URL"])
+	assert.Equal(t, "http://paperless-ngx.localhost:8080", conf["PAPERLESS_URL"])
 	assert.NotEmpty(t, conf["PAPERLESS_SECRET_KEY"])
 
 	// Idempotent: an identical second run must not report a change (the
@@ -414,9 +414,9 @@ func TestRenderConf_RedirectProtocolFollowsPublicURL(t *testing.T) {
 	// the URL Bloud registers with the identity provider, so it is derived from
 	// the app's public URL rather than left at allauth's https default.
 	cases := map[string]string{
-		"http://paperless.localhost:8080": "http",
-		"https://paperless.example.com":   "https",
-		"://unparseable":                  "http",
+		"http://paperless-ngx.localhost:8080": "http",
+		"https://paperless-ngx.example.com":   "https",
+		"://unparseable":                      "http",
 	}
 	for publicURL, want := range cases {
 		content, err := renderConf(publicSettings{publicURL: publicURL, secretKey: "k"})
@@ -427,7 +427,7 @@ func TestRenderConf_RedirectProtocolFollowsPublicURL(t *testing.T) {
 
 func TestRenderConf_OIDCProviderContract(t *testing.T) {
 	content, err := renderConf(publicSettings{
-		publicURL: "http://paperless.localhost:8080",
+		publicURL: "http://paperless-ngx.localhost:8080",
 		secretKey: "secret-key",
 		oidc:      testOIDC(),
 	})
@@ -477,13 +477,13 @@ func TestRenderConf_OIDCProviderContract(t *testing.T) {
 
 func TestRenderConf_WithoutOIDC_OmitsProviderSettings(t *testing.T) {
 	content, err := renderConf(publicSettings{
-		publicURL: "http://paperless.localhost:8080",
+		publicURL: "http://paperless-ngx.localhost:8080",
 		secretKey: "secret-key",
 	})
 	require.NoError(t, err)
 	conf := parseConf(content)
 
-	assert.Equal(t, "http://paperless.localhost:8080", conf["PAPERLESS_URL"])
+	assert.Equal(t, "http://paperless-ngx.localhost:8080", conf["PAPERLESS_URL"])
 	assert.NotEmpty(t, conf["PAPERLESS_SECRET_KEY"])
 	for _, key := range []string{
 		"PAPERLESS_APPS",
@@ -503,7 +503,7 @@ func TestRenderConf_WithoutOIDC_OmitsProviderSettings(t *testing.T) {
 
 func TestRenderConf_IsDeterministic(t *testing.T) {
 	settings := publicSettings{
-		publicURL: "http://paperless.localhost:8080",
+		publicURL: "http://paperless-ngx.localhost:8080",
 		secretKey: "secret-key",
 		oidc:      testOIDC(),
 	}
@@ -515,7 +515,7 @@ func TestRenderConf_IsDeterministic(t *testing.T) {
 }
 
 func TestRenderConf_RejectsUnquotableValue(t *testing.T) {
-	_, err := renderConf(publicSettings{publicURL: "http://paperless.localhost:8080/it's", secretKey: "k"})
+	_, err := renderConf(publicSettings{publicURL: "http://paperless-ngx.localhost:8080/it's", secretKey: "k"})
 	require.Error(t, err, "a quote would silently truncate the value into the app's settings")
 }
 

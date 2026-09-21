@@ -11,7 +11,7 @@ import {
 import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
 
-const PAPERLESS_URL = 'http://paperless.localhost:8080';
+const PAPERLESS_NGX_URL = 'http://paperless-ngx.localhost:8080';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Paperless-ngx uses
@@ -19,14 +19,14 @@ const PAPERLESS_URL = 'http://paperless.localhost:8080';
 // app's own sign-in page, whose "Bloud SSO" button is a form that posts the
 // authorization request, and the Authentik login happens on the issuer
 // origin, where this context has no session.
-describeApp('paperless', (app) => {
+describeApp('paperless-ngx', (app) => {
   test('converges to running', async () => {
     // Infrastructure rung: fresh-VM image pull of five containers (webserver,
     // postgres, redis, gotenberg, tika) + first-run migrations. When this
     // fails, the UI rungs below are skipped, which distinguishes a broken
     // install from a misbehaving app.
     test.setTimeout(15 * 60_000);
-    await ensureInstalled('paperless');
+    await ensureInstalled('paperless-ngx');
   });
 
   test('appears in the catalog as installed', async () => {
@@ -57,7 +57,7 @@ describeApp('paperless', (app) => {
       // The sign-in page itself is only observable with the app's own
       // "just logged out" flag, which suppresses the automatic redirect. It
       // must offer the provider and no password form of its own.
-      await paperless.goto(`${PAPERLESS_URL}/accounts/login/?loggedout=1`);
+      await paperless.goto(`${PAPERLESS_NGX_URL}/accounts/login/?loggedout=1`);
       await expect(paperless).toHaveURL(/\/accounts\/login\//);
       await expect(
         paperless.locator('#social-login button[type="submit"]'),
@@ -76,7 +76,7 @@ describeApp('paperless', (app) => {
     test.setTimeout(360_000);
     const paperless = await app.page.context().newPage();
     try {
-      await paperless.goto(PAPERLESS_URL);
+      await paperless.goto(PAPERLESS_NGX_URL);
 
       await startOidcLogin(paperless);
 
