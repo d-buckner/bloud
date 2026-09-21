@@ -228,6 +228,11 @@ Two things Vale cannot do, both covered by standalone checks:
   (defaults `e2etest`/`e2etest123`), `BLOUD_E2E_TRAEFIK_DYNAMIC_DIR`.
   `./bloud e2e app` (used by `.github/workflows/e2e-apps.yml` on the native
   backend) adds `BLOUD_E2E_APP` (required) and `BLOUD_E2E_PLAYWRIGHT_FILTER`.
+- CI sizes the e2e runs to the change. The reusable
+  `.github/workflows/e2e-affected.yml` runs `./bloud e2e affected`, whose logic
+  reuses the `apps:` file globs and `e2e-project` in `validation.yaml`: an
+  `apps/<name>/`-only push runs just that app's spec, a markdown-only push runs
+  none, and any other change runs every app (and the Jellyfin lifecycle run).
 
 ## `./bloud` CLI reference
 
@@ -245,6 +250,8 @@ Validation:  validate [flags]     Tiered validation (default --tier changed)
             e2e app              Single app's spec (BLOUD_E2E_APP=jellyfin|navidrome|
                                  immich|affine|install-streaming) on a
                                  self-contained runtime; used by CI
+            e2e affected         Print the Playwright projects a change set needs
+                                 (sizes the CI e2e matrix)
 Other:       depgraph             Mermaid dependency graph from app metadata
 ```
 
