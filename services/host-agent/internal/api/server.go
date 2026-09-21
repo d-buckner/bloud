@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -141,11 +142,13 @@ func (s *Server) OrchestratorReady() <-chan struct{} {
 	return s.orch.Ready()
 }
 
-// CheckSystemHealth validates that the system is healthy by checking
-// database connectivity and that the orchestrator is initialized.
+// CheckSystemHealth validates that the system is healthy: the database is
+// reachable and, when an orchestrator is wired, its intent loop has not
+// exited. A dead loop is otherwise indistinguishable from an idle one:
+// every Submit keeps answering 202 while nothing reconciles.
 func (s *Server) CheckSystemHealth() error {
-	if s.orch == nil {
-		return nil // no orchestrator: skip health check
+	if s.orch != nil && s.orch.Stopped() {
+		return errors.New("orchestrator intent loop has exited; nothing is reconciling")
 	}
 	if err := s.db.Ping(); err != nil {
 		return fmt.Errorf("database connection failed: %w", err)

@@ -42,6 +42,13 @@ type OrchestratorStatus struct {
 	QueueDepth     int             `json:"queueDepth"`
 	IsConverging   bool            `json:"isConverging"`
 	RecentActivity []ActivityEvent `json:"recentActivity"`
+	// LoopStopped reports the intent loop has exited. A dead loop is
+	// otherwise indistinguishable from an idle one: every Submit answers
+	// 202 while nothing reconciles.
+	LoopStopped bool `json:"loopStopped"`
+	// LastConverged is when the most recent convergence pass completed
+	// (zero until the first one finishes).
+	LastConverged time.Time `json:"lastConverged"`
 }
 
 // ActivityEvent records a single orchestrator lifecycle event.
@@ -190,6 +197,11 @@ type Orchestrator struct {
 	activityBuf [maxOrchestratorEvents]ActivityEvent
 	activityPos int
 	converging  atomic.Bool
+	// lastConverged holds the completion time of the most recent
+	// convergence pass (nil until the first). Together with Stopped it
+	// lets the health and developer surfaces tell a dead loop from a
+	// healthy idle one.
+	lastConverged atomic.Pointer[time.Time]
 }
 
 // NewOrchestrator creates a fully-configured Orchestrator backed by the
@@ -428,6 +440,8 @@ func (o *Orchestrator) Status() OrchestratorStatus {
 		QueueDepth:     o.queue.PendingCount(),
 		IsConverging:   o.converging.Load(),
 		RecentActivity: recent,
+		LoopStopped:    o.Stopped(),
+		LastConverged:  o.LastConverged(),
 	}
 }
 
@@ -531,10 +545,16 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	close(o.ready)
 
 	for {
-		intents := o.queue.WaitAndDrain(ctx)
-		if intents == nil {
+		intents, live := o.queue.WaitAndDrain(ctx)
+		if !live {
 			o.logger.Info("orchestrator stopped")
 			return
+		}
+		if len(intents) == 0 {
+			// A stale signal token can wake the wait with an empty queue
+			// (see IntentQueue.WaitAndDrain). The loop survives; only a
+			// cancelled context stops it.
+			continue
 		}
 		o.converge(ctx, intents)
 	}
@@ -543,6 +563,28 @@ func (o *Orchestrator) Start(ctx context.Context) {
 // Ready returns a channel that is closed after the first convergence pass completes.
 func (o *Orchestrator) Ready() <-chan struct{} {
 	return o.ready
+}
+
+// Stopped reports whether the intent loop has exited. While Start runs
+// (idle or converging) it returns false; once Start has returned it
+// returns true, so the health surface can see a dead loop instead of
+// mistaking it for an idle one.
+func (o *Orchestrator) Stopped() bool {
+	select {
+	case <-o.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// LastConverged returns when the most recent convergence pass finished,
+// or the zero time if none has.
+func (o *Orchestrator) LastConverged() time.Time {
+	if t := o.lastConverged.Load(); t != nil {
+		return *t
+	}
+	return time.Time{}
 }
 
 // Stop cancels the intent processing loop and waits for it to finish.
@@ -576,6 +618,8 @@ func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
 	}
 
 	o.convergeFromStores(ctx, pendingClearData)
+	now := time.Now()
+	o.lastConverged.Store(&now)
 	o.recordActivity("converge_complete", fmt.Sprintf("%d intents, %s", len(intents), time.Since(start).Round(time.Millisecond)))
 }
 

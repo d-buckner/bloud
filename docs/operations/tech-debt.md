@@ -1,19 +1,25 @@
-# Backend Tech Debt
-
-> **This is the single debt ledger.** New backend findings go here, not into
-> `docs/specs/review.md`; that file is a dated review snapshot whose findings are
-> annotated against the statuses recorded here. Frontend, CLI and CI-tooling
-> findings live in the review snapshot itself (see below).
+> Status: accepted (in progress). PRs 1-3 landed (#85 migrations, #86 operation
+> state, #88 route purity); PR 7 landed 2026-09-20 (SQLite pragmas in the DSN).
+> **PR 6 landed 2026-09-20** (engine silent failures: nil guard, cache lock,
+> queue live-flag), with the orchestrator liveness substrate PR 11 depends on.
+> **PR 4 implemented 2026-09-19** (revised first: its
+> original design was insufficient against a forgeable forwarding header) and
+> verified live against a deployed host-agent.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-20 (PR 7 landed: the SQLite per-connection
+**Last updated:** 2026-09-20 (PR 6 landed: the engine's three silent-failure
+paths are closed: the catalog nil-deref is guarded, `MemoryCache` is
+lock-protected with a swap-on-refresh, and the intent loop can no longer
+exit on a stale signal token (`WaitAndDrain` returns a live flag; only
+cancellation stops `Start`). The health surface now sees a dead loop via
+`Orchestrator.Stopped()`, and `validation.yaml` runs `-race` over
+`internal/catalog`. Same day: PR 7 landed: the SQLite per-connection
 pragmas travel in the DSN, so every pooled connection opens with
 `foreign_keys=ON` and `busy_timeout=5000`; the lost-cascade and
 lost-write halves of item 5 are closed and pinned by multi-connection
 tests. Same day: a configurator-layer conformance inventory was added;
-its C1-C4, C8 and C13 shipped the same day, see "Closed 2026-09-20";
-the ranked P0/P1 list is otherwise unchanged. Prior update
-2026-09-19: item 5 re-observed on a post-PR-4 redeploy, adding a fifth member to
+its C1-C4, C8 and C13 shipped the same day, see "Closed 2026-09-20".
+Prior update 2026-09-19: item 5 re-observed on a post-PR-4 redeploy, adding a fifth member to
 the silent-failure class: the lost write is a `WARN` nobody sees; earlier
 same-day updates: first-ranked item re-scoped and re-ranked: the loopback admin
 exemption is remotely forgeable, not merely a local-process concern; a new
@@ -122,34 +128,49 @@ pre-fix tree.
 **Remaining verification gap:** the Playwright suites (`./bloud e2e lifecycle`,
 `./bloud e2e app`) have not been run since the change.
 
-## Second: the appliance fails silently
-
-Four independent defects share one property (the system stops working and
-reports nothing), and item 5 (below) reaches the same end from a fifth
+## Second: the appliance fails silently (closed 2026-09-20, PR 6)
+ 
+> **Status: closed** for the engine members; kept as the record of the class.
+> The four defects below are fixed as of PR 6; item 5's lost-write variant
+> was closed by PR 7 the same day. The health-surface bullet is half closed:
+> a dead intent loop is now visible (`Stopped()` + `LastConverged()` feed
+> `CheckSystemHealth` and `OrchestratorStatus`); the degraded-payload and
+> startup-gate work (PR 11) remains open.
+ 
+Four independent defects shared one property (the system stops working and
+reports nothing), and item 5 (below) reached the same end from a fifth
 direction: a write that is dropped, logged at `WARN`, and otherwise ignored.
-This is now a ranked class, not a footnote, because each one converts an
+This was a ranked class, not a footnote, because each one converted an
 ordinary bug into an unnoticeable outage.
 
-- **`SyncContainerState` nil-deref kills the process.** 
-  `internal/engine/orchestrator/orchestrator_containers.go:41-45` dereferences
-  the catalog result before checking the error; `MemoryCache.Get` returns
-  `(nil, err)` on a miss and `ContainerDefs()` has a pointer receiver. A miss is
-  reachable whenever an installed app's directory is removed or renamed
-  (`catalog/loader.go:43-45` skips dirs without `metadata.yaml`). There is **no
-  `recover()` anywhere in host-agent**, so the daemon dies.
-- **`MemoryCache` is lock-free across a live refresh.** `internal/catalog/cache.go:12-14,26-34`
-  has no mutex while orchestrator goroutines read the map from graph event
-  handlers and `applyIssuerExtraHost`; `POST /api/apps/refresh-catalog` races
-  them into an unrecoverable `fatal error: concurrent map read and map write`.
-- **The intent loop can exit permanently.** `internal/engine/orchestrator/queue.go`
-  leaves a stale `signal` token when the debounce timer wins the select; the next
-  `WaitAndDrain` consumes it, `Drain()` returns `nil`, and `Start` reads that as
-  shutdown (`orchestrator.go:520-526`). Every later `Submit` returns 202 and
-  nothing ever reconciles.
-- **The health surface cannot see any of it.** `CheckSystemHealth`
-  (`internal/api/server.go:157-167`) is `db.Ping()` plus `orch == nil → nil`; a
-  host with no working Podman socket boots "healthy" with no orchestrator, and a
-  dead intent loop is indistinguishable from an idle one.
+- **`SyncContainerState` nil-deref kills the process.** **FIXED (PR 6).**
+  The catalog result was dereferenced before checking the error;
+  `MemoryCache.Get` returns `(nil, err)` on a miss and `ContainerDefs()`
+  has a pointer receiver. A miss is reachable whenever an installed app's
+  directory is removed or renamed (`catalog/loader.go:43-45` skips dirs
+  without `metadata.yaml`), and the sync runs on every convergence pass.
+  There is **no `recover()` anywhere in host-agent**, so the daemon died.
+  Now: err/nil checked first, the app is skipped with a `WARN`, and
+  `orchestrator_containers_test.go` pins the skip and the repair path.
+- **`MemoryCache` was lock-free across a live refresh.** **FIXED (PR 6).**
+  All access goes through a `sync.RWMutex`; `Refresh` builds the new map
+  off-lock and swaps it in as one write-locked operation, so readers never
+  see a half-filled cache and the disk load does not block them.
+  `cache_test.go` hammers concurrent `Refresh` × readers under `-race`,
+  and the race tier now covers `./internal/catalog/...`.
+- **The intent loop could exit permanently.** **FIXED (PR 6).**
+  `WaitAndDrain` returns `([]Intent, bool)`; cancellation is the only
+  shutdown signal. The stale-token wake returns an empty live batch and
+  `Start` skips it (`orchestrator.go` `Start` loop). Pinned by
+  `TestWaitAndDrain_StaleTokenIsLiveEmptyBatch` and
+  `TestStart_LoopSurvivesStaleSignalTokens`.
+- **The health surface could not see any of it.** **HALF FIXED (PR 6):**
+  `Orchestrator.Stopped()` reports the loop has exited and
+  `LastConverged()` stamps every completed pass; `CheckSystemHealth` now
+  fails on a dead loop, and `OrchestratorStatus` carries both fields for
+  the developer surface. Still open (PR 11): the degraded payload for a
+  missing Podman socket, the startup-gate depth, and the exit-on-failure
+  policy.
 - **Operation-ledger writes are lost to lock contention on one row (item 5,
   re-observed 2026-09-19).** On a normal convergence pass during a redeploy,
   `recordOpPhase` → `OperationStore.AdvancePhase` lost the write:
@@ -203,15 +224,9 @@ below (C1-C14) rather than ranked here.
 | # | Item | Sev | Evidence |
 |---|---|---|---|
 | 1 | ~~Auth bypass via spoofable forwarding header~~ **FIXED 2026-09-19** (see above) | **P0→closed** | `router.go:236,546-550`; `traefik.go:76-80`; `auth_module.go:99-124` |
-| 2 | `SyncContainerState` nil-deref → process death | P1 | `orchestrator_containers.go:41-45` |
-| 3 | `MemoryCache` data race → unrecoverable fatal | P1 | `catalog/cache.go:12-14,26-34` |
-| 4 | Intent queue exits permanently on a stale token | P1 | `queue.go:34-38,75-114` |
-| 5 | ~~SQLite pragmas applied per-call, not per-connection~~ **FIXED 2026-09-20 (PR 7)**: pragmas travel in the DSN (`db.InitDB` / `db.MemoryDSN`), applied at every connection open; multi-connection tests pin FK cascade enforcement and the busy-wait | P1→closed | `db/db.go` (`dsn`, `pragmaQuery`); `db/pragmas_test.go` |
-| 6 | `appclient.Call.Timeout()` is a no-op and `WaitPolicy` has no consumers → declared 5-minute first-boot waits silently run on `DefaultRetry` (30 s) and land nodes in terminal ERROR | P1 | `appclient/call.go:31,119,382`; `retry.go:43-51`; `apps/immich/api.go:33-34`; `apps/affine/api.go:31-32,58-59` |
-| 7 | Home Assistant asset `SkipIf` compares the release tag to the manifest version (`"v1.2.1"` vs `"1.2.1"`, verified against the real artifact) → re-download and destructive container recreate on every full lifecycle pass | P1 | `apps/homeassistant/configurator.go:44,304-318`; `pkg/appasset/manifest.go:15-24` |
-| 8 | Container drift is never repaired at runtime: the store flips to `stopped` while the in-memory graph stays `RUNNING`, so `Reconcile` never re-drives; multi-container apps are skipped entirely | P1 | `orchestrator_containers.go:41-61`; `pipeline.go:664-670` |
-| 9 | `Ensure` force-removes the running container **before** pulling → a failed pull leaves the app with no container and no rollback; the recreate path also skips the `io.bloud.managed` guard `Remove` enforces | P1 | `internal/container/runtime.go:152-171` vs `:195-199` |
-| 10 | ~~`GET /api/setup/status` registered twice; chi's last-registration-wins made it admin-only~~ **FIXED 2026-09-19**: `NewSetupRouter` (public, self-limiting) + single registration for `refresh-catalog`; pinned by `TestSetupRouter_IsSeparateFromAdminRouter` | closed | `router.go:269-290`; `settings_module.go:639-652` |
+| 2 | ~~`SyncContainerState` nil-deref → process death~~ **FIXED 2026-09-20 (PR 6)**: err/nil checked before the deref, catalog-miss regression tests pin the skip and the repair path | P1→closed | `orchestrator_containers.go:41-56` |
+| 3 | ~~`MemoryCache` data race → unrecoverable fatal~~ **FIXED 2026-09-20 (PR 6)**: RWMutex guards all access; `Refresh` builds off-lock and swaps under the write lock; race test runs in the `fast` tier | P1→closed | `catalog/cache.go`; `catalog/cache_test.go`; `validation.yaml` (`go-host-agent-race`) |
+| 4 | ~~Intent queue exits permanently on a stale token~~ **FIXED 2026-09-20 (PR 6)**: `WaitAndDrain` returns `([]Intent, bool)`; `Start` exits only on cancellation; empty live batches are skipped; liveness exposed via `Stopped()`/`LastConverged()` | P1→closed | `queue.go:77-125`; `orchestrator.go` `Start` loop + loop-liveness tests |
 | 11 | Two orchestrator wirings: the CLI `reconcile` path builds a different graph shape (per-`CatalogID`) and configures no store/runtime/catalog-graph, so it reports success while doing nothing | P1 | `cmd/host-agent/configure.go:214-260` vs `internal/api/router.go:395-470` |
 | 12 | Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts | P2 | `orchestrator.go:1214` vs `configure.go:295` |
 | 13 | An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer | P2 | `pipeline.go:~292-300`; `hostset.go:239-283` |
@@ -363,6 +378,33 @@ Two claims in the history below do not hold up against the code:
 
 ## Already Paid
 
+### The engine's silent failures closed (2026-09-20, PR 6)
+
+The three crash/hang members of the silent-failure class, each with its
+contract test:
+
+- **Catalog nil-deref** (`orchestrator_containers.go`): err/nil checked
+  before the deref; a catalog miss skips the app with a `WARN` instead of
+  panicking the daemon on the next convergence pass. Tests pin the skip
+  (no runtime call, status untouched) and the single-container repair path.
+- **`MemoryCache` race** (`internal/catalog/cache.go`): `sync.RWMutex`
+  guards every read/write; `Refresh` builds off-lock, swaps once. New
+  concurrent `Refresh` × readers test under `-race`;
+  `validation.yaml`'s `go-host-agent-race` tier now runs
+  `./internal/engine/orchestrator/... ./internal/catalog/...` (the
+  2026-09-19 validation-bar ask: the old selection could not see this).
+- **Intent queue stale-token exit** (`queue.go`, `orchestrator.go`):
+  `WaitAndDrain` returns `([]Intent, bool)`; `live=false` only on
+  context cancellation, queued intents are returned even then. `Start`
+  treats an empty live batch as nothing-to-do. Tests: the deterministic
+  stale-token reproduction, loop-survives-tokens, and
+  `TestStart_ExposesLoopLivenessAndConvergenceStamp`.
+
+Plus the liveness substrate PR 11 needed: `Orchestrator.Stopped()`,
+`Orchestrator.LastConverged()`, both surfaced in `OrchestratorStatus`
+(`LoopStopped`, `LastConverged`), and `Server.CheckSystemHealth()` fails
+when the loop has exited.
+
 ### SQLite pragmas travel in the DSN (2026-09-20, PR 7)
 
 `db.InitDB` no longer applies `journal_mode` / `busy_timeout` /
@@ -497,10 +539,14 @@ the CLI's curl runs host-side while the token file lives in the guest, so
 
 ### 2. Stop the silent failures (P1, items 2-4, 10)
 
-Nil-guard the catalog lookup; give `MemoryCache` a lock or an atomic swap; make
-`WaitAndDrain` distinguish "empty" from "cancelled"; register each chi pattern
-exactly once. Then make the health surface able to see a dead orchestrator
-(`Ready()` plus a last-convergence stamp) instead of `db.Ping()` alone.
+### 2. Stop the silent failures (P1, items 2-4, 10): DONE 2026-09-20 (PR 6)
+
+Nil-guarded the catalog lookup; `MemoryCache` is lock-protected with an
+off-lock build + swap-on-refresh; `WaitAndDrain` distinguishes "empty"
+from "cancelled" and `Start` exits only on cancellation. The health
+surface can now see a dead orchestrator (`Stopped()` + `LastConverged()`
+feed `CheckSystemHealth`); the rest of PR 11's degraded-payload /
+startup-gate scope is still open.
 
 ### 3. Make declared intent real (P1, items 6-7)
 

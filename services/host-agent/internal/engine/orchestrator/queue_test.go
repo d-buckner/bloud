@@ -12,15 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// drained captures both WaitAndDrain results for goroutine handoff.
+type drained struct {
+	batch []Intent
+	live  bool
+}
+
 // TestWaitAndDrain_FirstIntentIsImmediate verifies the core M3 latency fix:
 // a lone intent arriving at an idle waiter is drained without waiting out
 // the debounce window.
 func TestWaitAndDrain_FirstIntentIsImmediate(t *testing.T) {
 	q := NewIntentQueue(10 * time.Second)
-	done := make(chan []Intent, 1)
+	done := make(chan drained, 1)
 	start := time.Now()
 	go func() {
-		done <- q.WaitAndDrain(context.Background())
+		batch, live := q.WaitAndDrain(context.Background())
+		done <- drained{batch, live}
 	}()
 
 	// Let the waiter block on the empty queue, then deliver the lone intent.
@@ -29,9 +36,10 @@ func TestWaitAndDrain_FirstIntentIsImmediate(t *testing.T) {
 	q.Enqueue(intent)
 
 	select {
-	case batch := <-done:
-		require.Len(t, batch, 1)
-		assert.Equal(t, intent.IntentID(), batch[0].IntentID())
+	case res := <-done:
+		require.True(t, res.live)
+		require.Len(t, res.batch, 1)
+		assert.Equal(t, intent.IntentID(), res.batch[0].IntentID())
 		assert.Less(t, time.Since(start), time.Second, "lone intent must not wait for the debounce window")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out: lone intent was not drained immediately")
@@ -48,9 +56,10 @@ func TestWaitAndDrain_CoalescesIntentsFromProcessing(t *testing.T) {
 	q.Enqueue(intent)
 
 	start := time.Now()
-	batch := q.WaitAndDrain(context.Background())
+	batch, live := q.WaitAndDrain(context.Background())
 	elapsed := time.Since(start)
 
+	require.True(t, live)
 	require.Len(t, batch, 1)
 	assert.GreaterOrEqual(t, elapsed, 250*time.Millisecond,
 		"pre-queued intents must wait out the coalescing window")
@@ -64,10 +73,11 @@ func TestWaitAndDrain_ResetsOnNewArrival(t *testing.T) {
 	q := NewIntentQueue(window)
 	q.Enqueue(NewInstallAppIntent("first"))
 
-	done := make(chan []Intent, 1)
+	done := make(chan drained, 1)
 	start := time.Now()
 	go func() {
-		done <- q.WaitAndDrain(context.Background())
+		batch, live := q.WaitAndDrain(context.Background())
+		done <- drained{batch, live}
 	}()
 
 	// Arrive a new intent every 100 ms for ~600 ms: each one resets the 300 ms
@@ -89,8 +99,9 @@ func TestWaitAndDrain_ResetsOnNewArrival(t *testing.T) {
 	}
 
 	select {
-	case batch := <-done:
-		assert.Len(t, batch, 7, "first intent plus six burst arrivals")
+	case res := <-done:
+		assert.True(t, res.live)
+		assert.Len(t, res.batch, 7, "first intent plus six burst arrivals")
 		// The window was honored after the final arrival (timer jitter is a
 		// few ms late, never early).
 		assert.GreaterOrEqual(t, time.Since(lastEnqueue), 280*time.Millisecond)
@@ -99,18 +110,21 @@ func TestWaitAndDrain_ResetsOnNewArrival(t *testing.T) {
 	}
 }
 
-// TestWaitAndDrain_CtxCancelledOnEmptyQueue returns nil when cancelled before
-// any intent arrives.
+// TestWaitAndDrain_CtxCancelledOnEmptyQueue reports live=false when
+// cancelled before any intent arrives. Cancellation is the only shutdown
+// signal WaitAndDrain gives.
 func TestWaitAndDrain_CtxCancelledOnEmptyQueue(t *testing.T) {
 	q := NewIntentQueue(time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	assert.Nil(t, q.WaitAndDrain(ctx))
+	batch, live := q.WaitAndDrain(ctx)
+	assert.Nil(t, batch)
+	assert.False(t, live, "cancellation must be reported as shutdown")
 }
 
 // TestWaitAndDrain_CtxCancelledDuringCoalesce returns the accumulated intents
-// instead of dropping them.
+// instead of dropping them, and reports shutdown.
 func TestWaitAndDrain_CtxCancelledDuringCoalesce(t *testing.T) {
 	q := NewIntentQueue(5 * time.Second)
 	q.Enqueue(NewInstallAppIntent("jellyfin"))
@@ -121,6 +135,33 @@ func TestWaitAndDrain_CtxCancelledDuringCoalesce(t *testing.T) {
 		cancel()
 	}()
 
-	batch := q.WaitAndDrain(ctx)
+	batch, live := q.WaitAndDrain(ctx)
 	require.Len(t, batch, 1)
+	assert.False(t, live, "cancellation must be reported as shutdown")
+}
+
+// TestWaitAndDrain_StaleTokenIsLiveEmptyBatch reproduces the exact state
+// that used to end reconciliation forever: a coalescing timer that won the
+// select while a signal token was still buffered (emulated here by draining
+// the items away under the race-free conditions the interleaving produces).
+// Waking on a token with nothing queued must be an empty LIVE batch, never
+// a shutdown report: under the old nil-means-stopped contract, one such
+// wake stopped the orchestrator forever while Submits kept answering 202.
+func TestWaitAndDrain_StaleTokenIsLiveEmptyBatch(t *testing.T) {
+	q := NewIntentQueue(50 * time.Millisecond)
+	q.Enqueue(NewInstallAppIntent("jellyfin"))
+	q.Drain() // items gone, token pending
+
+	// Must not block and must not report shutdown.
+	batch, live := q.WaitAndDrain(context.Background())
+	assert.Empty(t, batch, "woke on the stale token with an empty queue")
+	assert.True(t, live, "a stale token is not shutdown")
+
+	// The queue still delivers after the stale wake.
+	late := NewInstallAppIntent("navidrome")
+	q.Enqueue(late)
+	batch, live = q.WaitAndDrain(context.Background())
+	require.True(t, live)
+	require.Len(t, batch, 1)
+	assert.Equal(t, late.IntentID(), batch[0].IntentID())
 }
