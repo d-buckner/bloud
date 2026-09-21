@@ -1,9 +1,12 @@
 > Status: accepted (in progress). PRs 1-3 landed (#85 migrations, #86 operation
 > state, #88 route purity); PR 7 landed 2026-09-20 (SQLite pragmas in the DSN).
+> **PR 6 landed 2026-09-20** (engine silent failures: catalog nil guard,
+> `MemoryCache` lock, queue live-flag), together with the orchestrator
+> liveness substrate (`Stopped()` / `LastConverged()`) PR 11 depends on.
 > **PR 4 implemented 2026-09-19** (revised first: its
 > original design was insufficient against a forgeable forwarding header) and
-> verified live against a deployed host-agent. PRs 6-11 added 2026-09-19 from
-> `docs/specs/review-2026-09-19.md` and are proposals until each one is started.
+> verified live against a deployed host-agent. PRs 8-11 remain proposals
+> until each one is started.
 
 # Plan: Tech-Debt Repayment
 
@@ -224,53 +227,21 @@ nothing.
 
 ---
 
-## PR 6: Stop the engine's silent failures (new, 2026-09-19)
-
-Three independent defects that each convert a bug into an unnoticeable outage.
-Each fix is small; each test is cheap. They are independent and parallelizable.
-
-### 6a. Nil-guard the catalog lookup (process death)
-
-`orchestrator_containers.go:41-45` dereferences before checking the error;
-`MemoryCache.Get` returns `(nil, err)` on a miss and `ContainerDefs()` has a
-pointer receiver. Reachable whenever an installed app's directory is removed or
-renamed (`catalog/loader.go:43-45` skips dirs without `metadata.yaml`), and it
-runs on **every** convergence pass (`pipeline.go:455`). No `recover()` exists
-anywhere in host-agent, so this kills the daemon.
-
-- Test: store row present, catalog entry absent → `SyncContainerState` returns
-  without panicking.
-- Fix: `if err != nil || catalogApp == nil { continue }` before the deref, then
-  audit the other `.ContainerDefs()` call sites for the same shape
-  (`orchestrator.go:1141`, `pipeline.go:656,735` are guarded today; keep them so).
-
-### 6b. Make `MemoryCache` concurrency-safe (unrecoverable fatal)
-
-`catalog/cache.go:12-14` has no mutex; `Refresh` publishes then fills the map
-while orchestrator goroutines read it from graph event handlers and
-`applyIssuerExtraHost`. `POST /api/apps/refresh-catalog` races them into
-`fatal error: concurrent map read and map write`.
-
-- Fix: `sync.RWMutex` (simplest) or build-locally + `atomic.Pointer` swap.
-- Test: concurrent `Get` loop + `Refresh` loop under `-race`; add the package to
-  the `-race` set in `validation.yaml` (today only
-  `internal/engine/orchestrator` runs under `-race`).
-
-### 6c. `WaitAndDrain` must distinguish "empty" from "cancelled" (permanent, silent)
-
-`queue.go`: a stale `signal` token left by the debounce-timer branch
-(`:34-38`, `:75-114`) makes the next `WaitAndDrain` consume it, get `nil` from
-`Drain()`, and `Start` reads that as shutdown (`orchestrator.go:520-526`). Every
-later `Submit` returns 202 and nothing reconciles again.
-
-- Fix: return `([]Intent, bool)` (or a sentinel error); `Start` exits only on
-  cancellation.
-- Test: deterministic reproduction of the stale-token state (enqueue during the
-  debounce window, force the timer branch, then assert the next call does not
-  report shutdown); plus a "loop survives an empty drain" test.
-
-**Files:** `internal/catalog/cache.go`, `internal/engine/orchestrator/{queue.go,orchestrator.go,orchestrator_containers.go}`,
-`validation.yaml`. **~1 day.**
+## PR 6: Stop the engine's silent failures (new, 2026-09-19; implemented 2026-09-20)
+ 
+**Status: implemented.** All three fixes landed with their contract tests:
+the catalog lookup is err-guarded before the deref (skip + `WARN`, pinned
+with the single-container repair path in
+`orchestrator_containers_test.go`); `MemoryCache` is guarded by a
+`sync.RWMutex` with an off-lock build + swap-on-refresh
+(`cache_test.go` hammers it under `-race`, and `validation.yaml`'s
+`go-host-agent-race` tier now covers `./internal/catalog/...`);
+`WaitAndDrain` returns `([]Intent, bool)` so `Start` exits only on
+cancellation, and the deterministic stale-token reproduction plus
+loop-liveness tests pin it. Bonus: `Orchestrator.Stopped()` /
+`LastConverged()` now feed `OrchestratorStatus` and
+`Server.CheckSystemHealth`, giving PR 11 its truthful liveness signal.
+Record: "The engine's silent failures closed" in `docs/operations/tech-debt.md`.
 
 ---
 

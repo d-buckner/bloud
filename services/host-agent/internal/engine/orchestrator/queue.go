@@ -64,7 +64,8 @@ func (q *IntentQueue) PendingCount() int {
 	return len(q.items)
 }
 
-// WaitAndDrain blocks until an intent is available, then returns a batch:
+// WaitAndDrain blocks until an intent is available, then returns a batch
+// and a live flag:
 //
 //   - If the queue is empty on entry it blocks until the first intent arrives
 //     and drains immediately: a lone intent is processed without any delay.
@@ -72,9 +73,14 @@ func (q *IntentQueue) PendingCount() int {
 //     processing a previous batch) it waits out the debounce window, resetting
 //     on each new arrival, so a burst of intents coalesces into one batch.
 //
-// If ctx is cancelled before any intent arrives, returns nil. If ctx is
-// cancelled while coalescing, returns the accumulated intents.
-func (q *IntentQueue) WaitAndDrain(ctx context.Context) []Intent {
+// live is false only when ctx is cancelled; cancellation is the only shutdown
+// condition. On cancellation any intents already queued are returned, not
+// dropped. An empty batch with live=true is possible: the coalescing timer can
+// win the select while a signal token is still buffered, leaving that token to
+// wake a later empty wait. Callers MUST treat an empty live batch as "nothing
+// to do", never as shutdown: the old nil-means-stopped contract let one stale
+// token end reconciliation forever while every later Submit kept answering 202.
+func (q *IntentQueue) WaitAndDrain(ctx context.Context) ([]Intent, bool) {
 	q.mu.Lock()
 	pending := len(q.items) > 0
 	q.mu.Unlock()
@@ -83,10 +89,14 @@ func (q *IntentQueue) WaitAndDrain(ctx context.Context) []Intent {
 		// Wait for the first intent or cancellation, then drain right away.
 		select {
 		case <-q.signal:
+			// Possibly a stale token whose intents were drained elsewhere:
+			// an empty batch here is not shutdown.
+			return q.Drain(), true
 		case <-ctx.Done():
-			return nil
+			// Cancelled: hand back anything queued, and the only shutdown
+			// signal there is.
+			return q.Drain(), false
 		}
-		return q.Drain()
 	}
 
 	// Intents accumulated during processing: coalesce the burst before
@@ -103,12 +113,13 @@ func (q *IntentQueue) WaitAndDrain(ctx context.Context) []Intent {
 			timer.Reset(q.debounce)
 
 		case <-timer.C:
-			// Coalescing window expired: drain and return.
-			return q.Drain()
+			// Coalescing window expired: drain and return. A token may
+			// still be pending behind this batch; that is live, not death.
+			return q.Drain(), true
 
 		case <-ctx.Done():
 			// Context cancelled: return whatever we have.
-			return q.Drain()
+			return q.Drain(), false
 		}
 	}
 }

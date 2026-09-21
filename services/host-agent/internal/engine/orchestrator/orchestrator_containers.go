@@ -39,10 +39,20 @@ func (o *Orchestrator) SyncContainerState(ctx context.Context) {
 			continue
 		}
 		catalogApp, err := o.catalog.Get(app.CatalogID)
+		if err != nil || catalogApp == nil {
+			// An installed row with no catalog entry: the app's directory
+			// was removed or renamed (the loader skips dirs without
+			// metadata.yaml). There is no recover() anywhere in host-agent,
+			// so dereferencing the nil result here kills the daemon on the
+			// next convergence pass. Skip instead.
+			o.logger.Warn("installed app missing from catalog, skipping container sync",
+				"app", app.CatalogID, "error", err)
+			continue
+		}
 		defs := catalogApp.ContainerDefs()
 		// Skip apps with no container definitions or multi-container apps
 		// (multi-container lifecycle is tracked via graph events, not this path).
-		if err != nil || len(defs) != 1 {
+		if len(defs) != 1 {
 			continue
 		}
 
