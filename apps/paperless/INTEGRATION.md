@@ -61,6 +61,7 @@ per-install:
 | `PAPERLESS_SOCIAL_AUTO_SIGNUP` / `PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS` | First-login account creation |
 | `PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS` | Puts every social signup in the group Bloud declares (`bloud-users`). Without it a signed-in user has no permissions at all and the API rejects the web app's own requests (see [Permissions](#permissions)) |
 | `PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP` | Makes members of the identity provider's `authentik Admins` group superusers, the same membership that grants admin in Jellyfin and in Bloud itself |
+| `PAPERLESS_DISABLE_REGULAR_LOGIN` / `PAPERLESS_REDIRECT_LOGIN_TO_SSO` | Hides the app's own password form and hands visitors to the issuer: the provider is the only user-facing way in, while `/admin/` and the API keep the internal admin as the break-glass path (see [Internal admin account](#internal-admin-account)) |
 | `PAPERLESS_LOGOUT_REDIRECT_URL` | Ends the session at the issuer instead of the app's sign-in page |
 
 Notes that shaped the implementation:
@@ -86,12 +87,16 @@ Notes that shaped the implementation:
 ### OIDC login flow
 
 1. An unauthenticated request is redirected to `/accounts/login/`, which
-   renders the username/password form plus one button per configured allauth
-   provider (`Bloud SSO`).
-2. That button submits a form whose action is `/accounts/oidc/bloud/login/?process=`;
+   renders one button per configured allauth provider (`Bloud SSO`) and no
+   password form, then hands the browser to the issuer on load
+   (`PAPERLESS_REDIRECT_LOGIN_TO_SSO`): the user journey is a single hop.
+   The app skips that hop when the request carries `?loggedout=1`, which is
+   how a deliberate logout avoids bouncing straight back into a new session
+   (and how the browser journey observes the page itself).
+2. The button submits a form whose action is `/accounts/oidc/bloud/login/?process=`;
    allauth renders a form rather than a link because the POST is what starts the
-   flow (login CSRF protection; `SOCIALACCOUNT_LOGIN_ON_GET` is off). The user
-   journey is therefore a single click.
+   flow (login CSRF protection; `SOCIALACCOUNT_LOGIN_ON_GET` is off). The
+   redirect submits that form for the visitor.
 3. The app redirects to the issuer's authorization endpoint. allauth fetches
    `http://sso.localhost:8080/application/o/paperless/.well-known/openid-configuration`
    from inside the container (the `sso.localhost:host-gateway` extra host makes
@@ -163,8 +168,14 @@ arrives through SSO. It exists so `/admin/` and the REST API are reachable
 without the identity provider, and so the sign-in page stops forwarding to the
 (closed) signup page, which would otherwise hide the SSO button.
 
-Local username/password login stays enabled (upstream default): it is the way
-in if the identity provider is unavailable.
+The app's own username/password form is disabled once the provider is wired
+(`PAPERLESS_DISABLE_REGULAR_LOGIN`, with `PAPERLESS_REDIRECT_LOGIN_TO_SSO`
+handing visitors to the issuer immediately), so the provider is the only
+user-facing way in. Neither setting covers the Django admin login or the API
+credential login, which is what keeps `bloud-admin` (and this configurator)
+working: if the identity provider is unreachable, an operator signs in at
+`/admin/` or calls the API with the generated password instead. Signup itself
+stays open on a fresh install, because the bootstrap above depends on it.
 
 ## Files
 
@@ -222,6 +233,7 @@ data directory, and the routes are gone.
 | Sign-in page says "Sign Up Closed" and shows no SSO button | No user exists yet, so `FIRST_INSTALL` forwards to the signup page while signups are open only on a fresh install. The bootstrap did not run: look for `internal admin account created` in the host-agent log. |
 | The dashboard loads but every screen is empty and the browser console shows `403` on `/api/ui_settings/` | The signed-in account has no permissions: the baseline group is missing or empty, or the account predates it. Check the host-agent log for `declared the SSO baseline group` and that the account is in `bloud-users` (Settings > Users & Groups). |
 | `declaring the SSO baseline group` fails the reconciliation | The app rejected a permission codename, which means the pinned image changed its models. Update `baselinePermissions` in `configurator.go` and the image pin together. |
+| The sign-in page shows a username/password form | Either the install has no provider wired (the settings above are generated only with an OIDC output, so an install without one keeps its local login on purpose), or the request carried `?loggedout=1`, which the app uses to suppress the redirect. |
 | Login fails with `invalid_client` at the callback | The issuer rejected the client credentials or the token endpoint auth method. Add `settings.token_auth_method` (`client_secret_basic` or `client_secret_post`) to `PAPERLESS_SOCIALACCOUNT_PROVIDERS`. |
 | `403 Forbidden` on login after repeated attempts | allauth's login rate limiting sees the proxy as the client. `PAPERLESS_ALLAUTH_TRUSTED_PROXY_COUNT=1` (already set) must stay, or set `PAPERLESS_TRUSTED_PROXIES`. |
 | Uploaded `.docx` or `.eml` never finishes consuming | Tika or Gotenberg is not up. Check `apps-paperless-tika` and `apps-paperless-gotenberg` (`podman logs`), then the webserver's `PAPERLESS_TIKA_*` settings. |

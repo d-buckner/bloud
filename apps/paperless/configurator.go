@@ -428,6 +428,16 @@ func renderConf(s publicSettings) (string, error) {
 			// superusers.
 			[2]string{"PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS", baselineGroup},
 			[2]string{"PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP", adminGroupClaim},
+			// With the provider wired, the app's own password form is a second
+			// credential path Bloud does not manage, and the sign-in is one
+			// hop instead of two. Neither setting touches the Django admin
+			// login or the API credential login, which is what keeps the
+			// internal admin (and this configurator) working; that pair is the
+			// break-glass path if the provider is ever unreachable. Signup
+			// stays available, so a fresh install still bootstraps its admin
+			// account through that form.
+			[2]string{"PAPERLESS_DISABLE_REGULAR_LOGIN", "true"},
+			[2]string{"PAPERLESS_REDIRECT_LOGIN_TO_SSO", "true"},
 			[2]string{"PAPERLESS_LOGOUT_REDIRECT_URL", endpointURL(s.oidc.IssuerURL, "end-session/")},
 		)
 	}

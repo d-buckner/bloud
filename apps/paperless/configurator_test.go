@@ -442,6 +442,10 @@ func TestRenderConf_OIDCProviderContract(t *testing.T) {
 	// user's first API call answers 403.
 	assert.Equal(t, baselineGroup, conf["PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS"])
 	assert.Equal(t, adminGroupClaim, conf["PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP"])
+	// With SSO wired, the app's own password form is disabled and the sign-in
+	// redirects to the issuer, so the provider is the user-facing way in.
+	assert.Equal(t, "true", conf["PAPERLESS_DISABLE_REGULAR_LOGIN"])
+	assert.Equal(t, "true", conf["PAPERLESS_REDIRECT_LOGIN_TO_SSO"])
 	// Logging out must end the session at the issuer rather than landing on
 	// the app's own sign-in page.
 	assert.Equal(t, "http://sso.localhost:8080/application/o/paperless/end-session/", conf["PAPERLESS_LOGOUT_REDIRECT_URL"])
@@ -487,6 +491,10 @@ func TestRenderConf_WithoutOIDC_OmitsProviderSettings(t *testing.T) {
 		"PAPERLESS_LOGOUT_REDIRECT_URL",
 		"PAPERLESS_SOCIAL_ACCOUNT_DEFAULT_GROUPS",
 		"PAPERLESS_SOCIAL_ACCOUNT_SYNC_SUPERUSER_GROUP",
+		// An install without a provider keeps its local password login: it
+		// would otherwise have no user-facing way in at all.
+		"PAPERLESS_DISABLE_REGULAR_LOGIN",
+		"PAPERLESS_REDIRECT_LOGIN_TO_SSO",
 	} {
 		_, ok := conf[key]
 		assert.False(t, ok, "%s must be absent without SSO", key)
