@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: radarr
+displayName: Radarr
+description: Movie collection manager for Usenet and BitTorrent users
+category: media
+port: 7878
+estimatedSizeMB: 250
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+  downloadClient:
+    required: false
+    multi: false
+    compatible:
+      - app: qbittorrent
+        default: true
+
+# SSO via Authentik forward-auth. Radarr has no trusted-header mode, so the
+# configurator puts it into Servarr's built-in "External" authentication
+# (AuthenticationMethod=External, AuthenticationRequired=Enabled in
+# config.xml). External installs the app's NoAuthenticationHandler: it reads
+# no username header at all and treats every request as authenticated.
+#
+# Consequence, stated plainly: the published host port (7878) is
+# UNAUTHENTICATED. Traefik's forward-auth middleware is the only gate, so the
+# port must never be reachable from an untrusted host. Bloud's dev VM does not
+# port-forward it off the machine, and no deployment should.
+sso:
+  strategy: forward-auth
+
+containers:
+  - name: apps-radarr
+    image: lscr.io/linuxserver/radarr:6.4.4.10685-ls317
+    network: apps-net
+    restartPolicy: always
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+    ports:
+      - host: 7878
+        container: 7878
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /config
+      - source: "{{dataDir}}/media/movies"
+        destination: /movies
+      - source: "{{dataDir}}/downloads"
+        destination: /downloads
+    healthCheck:
+      # /ping is the one route the app leaves anonymous and answers 503 with
+      # "is starting up" until the database and web host are ready.
+      test: ["CMD-SHELL", "curl -sf http://localhost:7878/ping"]
+      interval: 5
+      timeout: 10
+      retries: 24

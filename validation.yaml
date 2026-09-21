@@ -148,3 +148,43 @@ apps:
     files:
       - apps/vaultwarden/**
     e2e-project: vaultwarden
+
+  # The Servarr trio plus qBittorrent delegate authentication to Authentik
+  # forward-auth (their web UIs have no SSO of their own), so they validate
+  # like navidrome: the browser journey is the regression gate.
+  sonarr:
+    auth: forward-auth
+    validation-level: full
+    files:
+      - apps/sonarr/**
+    e2e-project: sonarr
+
+  radarr:
+    auth: forward-auth
+    validation-level: full
+    files:
+      - apps/radarr/**
+    e2e-project: radarr
+
+  prowlarr:
+    auth: forward-auth
+    validation-level: full
+    files:
+      - apps/prowlarr/**
+    e2e-project: prowlarr
+
+  qbittorrent:
+    auth: forward-auth
+    validation-level: full
+    files:
+      - apps/qbittorrent/**
+    e2e-project: qbittorrent
+
+  # Seerr manages its own users (Jellyfin login), so it has no Bloud SSO
+  # strategy; the spec asserts its onboarding was wired by the configurator.
+  seerr:
+    auth: none
+    validation-level: full
+    files:
+      - apps/seerr/**
+    e2e-project: seerr

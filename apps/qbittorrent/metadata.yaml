@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: qbittorrent
+displayName: qBittorrent
+description: BitTorrent client with a web interface
+category: media
+port: 8081
+estimatedSizeMB: 90
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# qBittorrent has no external/header authentication mode: its WebUI either asks
+# for its own password or trusts a source subnet. Bloud therefore does not use
+# the WebUI login at all: the configurator's PreStart turns it off for the
+# proxy subnet (AuthSubnetWhitelistEnabled + 0.0.0.0/0 + LocalHostAuth=false)
+# and Traefik's forward-auth is the only gate. The published WebUI port is
+# consequently unauthenticated by the app itself and must stay on the host,
+# reachable only by the proxy.
+sso:
+  strategy: forward-auth
+
+containers:
+  - name: apps-qbittorrent
+    image: lscr.io/linuxserver/qbittorrent:5.2.3_v2.0.14-ls476
+    network: apps-net
+    restartPolicy: always
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      # LSIO's init runs `qbittorrent-nox --webui-port=${WEBUI_PORT}`, and
+      # --webui-port overwrites WebUI\Port in qBittorrent.conf. Both this value
+      # and the conf key must stay 8081 or the WebUI listens somewhere Traefik
+      # does not route to (see configurator.go).
+      WEBUI_PORT: "8081"
+      # Pins the BitTorrent peer port (5.x otherwise picks a random one). The
+      # env is migration-independent, so the conf's own port key is left alone.
+      TORRENTING_PORT: "6881"
+    ports:
+      # Published for Traefik (host network), which routes <id>.<host> to
+      # http://localhost:8081.
+      - host: 8081
+        container: 8081
+      # Peer port: inbound BitTorrent connections, tcp and udp (uTP).
+      - host: 6881
+        container: 6881
+      - host: 6881
+        container: 6881
+        protocol: udp
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /config
+      - source: "{{dataDir}}/downloads"
+        destination: /downloads
+    healthCheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8081/ || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 12

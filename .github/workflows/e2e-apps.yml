@@ -8,9 +8,10 @@ on:
 # One self-contained Bloud runtime per app, running in parallel.
 #
 # Each matrix leg provisions its own host on the runner (the native
-# backend), boots the full system stack (Traefik + Authentik), installs
-# exactly one app through the real host-agent API, and runs that app's
-# Playwright spec. Image pulls happen concurrently across runners
+# backend), boots the full system stack (Traefik + Authentik), installs the
+# app through the real host-agent API (plus any prerequisite its spec declares:
+# seerr's spec installs jellyfin, since Seerr's onboarding needs a media
+# server), and runs that app's Playwright spec. Image pulls happen concurrently across runners
 # instead of sequentially on one, so total wall time is the slowest
 # single app rather than the sum of all apps.
 #

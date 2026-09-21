@@ -36,6 +36,35 @@ reference).
   refuses plain-HTTP servers, so that last step needs the opt-in dev switch
   (`BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` on the host-agent and for Playwright) and
   is skipped without it; CI sets it for the `vaultwarden` leg.
+- **Sonarr / Radarr / Prowlarr**: gated by forward-auth (the popup lands on
+  the Authentik prompt), then the app's own UI renders with no login form of
+  its own, since Bloud provisions `AuthenticationMethod=External`.
+- **qBittorrent**: the same forward-auth ladder; its post-sign-in case also
+  proves the WebUI subnet whitelist took effect (qBittorrent's private UI
+  loads, not its login page).
+- **Seerr**: declares no SSO (`sso.strategy: none`), so the popup lands on
+  Seerr's own login page with a Jellyfin sign-in affordance and *not* on the
+  first-run setup wizard: the observable proof that Bloud's onboarding
+  (Jellyfin connection + `settings/initialize`) completed.
+
+The media-stack wiring (Sonarr/Radarr → qBittorrent, Prowlarr → the PVRs) is
+proven in the **integration tier** rather than here:
+`./bloud validate --tier integration` deploys a runtime and runs the
+`services/host-agent/internal/e2e` binary inside it, whose
+`media_stack_test.go` installs qBittorrent, Sonarr, Radarr and Prowlarr through
+the real API and then asserts through each app's own API (reading the
+instances' `X-Api-Key` from the runtime data dir the way the consumers do)
+that Sonarr and Radarr list a connectable `QBittorrent` download client, that
+their root folders (`/shows`, `/movies`) are registered, and that Prowlarr
+lists and can connect both PVRs. Seerr is deliberately absent from that tier
+(its onboarding is Jellyfin-bound and is asserted by the spec above), and its
+own PVR list is an admin-only page reachable only with the per-deployment
+account Bloud onboards, so Seerr → the PVRs is covered by the configurator's
+unit tests and by the spec above, and no tier asserts it end to end.
+
+The forward-auth ladders (Sonarr, Radarr, Prowlarr, qBittorrent) share
+`lib/forwardAuth.ts`; app-specific selectors and title patterns stay in each
+spec so a failure names the app and the rung.
 
 ## Running
 

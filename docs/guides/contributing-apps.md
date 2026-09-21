@@ -474,6 +474,9 @@ top to bottom.
 | App | Pattern |
 |---|---|
 | `apps/jellyfin` | LDAP SSO, setup wizard, plugin config, media libraries |
+| `apps/sonarr` / `apps/radarr` / `apps/prowlarr` | Servarr family (same codebase): `config.xml` auth pre-seed (`AuthenticationMethod=External`) plus the shared `pkg/servarr` config/API helpers |
+| `apps/qbittorrent` | forward-auth over an INI config the app itself also rewrites: managed-key merge, no blanket overwrite |
+| `apps/seerr` | `sso.strategy: none` and a first-run onboarding driven from a sibling app's generated admin credentials |
 | `apps/authentik` | Multi-container, LDAP infrastructure, API token management |
 | `apps/immich` | Database integration, OIDC SSO |
 | `apps/affine` | Own postgres+redis, OIDC config file, first-run owner bootstrap (see `INTEGRATION.md`) |

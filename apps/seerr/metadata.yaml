@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: seerr
+displayName: Seerr
+description: Request and discovery manager for your media server
+category: media
+port: 5055
+estimatedSizeMB: 350
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # Optional on purpose: a media server is what makes Seerr useful, but Bloud
+  # does not force-install one. The link is declared so the graph orders
+  # Jellyfin before Seerr and re-runs Seerr's onboarding when Jellyfin appears;
+  # until then Seerr's PostStart defers (see configurator.go).
+  mediaServer:
+    required: false
+    multi: false
+    compatible:
+      - app: jellyfin
+        default: true
+  # Optional: Seerr wires whichever PVRs are installed, so requests can be
+  # fulfilled instead of only recorded.
+  pvr:
+    required: false
+    multi: true
+    compatible:
+      - app: sonarr
+        category: tv
+      - app: radarr
+        category: movies
+
+# No sso integration is declared on purpose: Seerr cannot delegate
+# authentication. No stable release has OIDC (it exists only as an unmerged PR
+# in the v3.6.0 milestone) and there is no trusted-header/forward-auth mode at
+# all: the only credential paths are Seerr's own session cookie and the
+# X-API-Key header. End users sign in with their Jellyfin account (LDAP-backed
+# via Authentik, so the same identity the rest of the catalog uses) or with a
+# local Seerr account; the configurator uses X-API-Key for onboarding.
+sso:
+  strategy: none
+
+containers:
+  # One container, one volume: Seerr keeps everything (settings.json, the
+  # SQLite database, logs, cache) in /app/config. SQLite is the built-in
+  # default, so no database container is needed.
+  - name: apps-seerr
+    image: ghcr.io/seerr-team/seerr:v3.4.1
+    network: apps-net
+    restartPolicy: always
+    environment:
+      TZ: Etc/UTC
+      PORT: "5055"
+      LOG_LEVEL: info
+    ports:
+      - host: 5055
+        container: 5055
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /app/config
+    healthCheck:
+      # Upstream's own check. The image has busybox wget but no curl.
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/settings/public || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 24
