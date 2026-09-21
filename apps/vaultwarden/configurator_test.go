@@ -137,7 +137,7 @@ func readEnvFile(t *testing.T, dataPath string) string {
 // ---- rendering ----
 
 func TestRenderEnv_WithoutSSOOnlySetsDomain(t *testing.T) {
-	got, err := renderEnv("http://vaultwarden.localhost:8080", nil)
+	got, err := renderEnv("http://vaultwarden.localhost:8080", nil, false)
 	require.NoError(t, err)
 
 	assert.Contains(t, got, "DOMAIN='http://vaultwarden.localhost:8080'\n")
@@ -149,7 +149,7 @@ func TestRenderEnv_WithoutSSOOnlySetsDomain(t *testing.T) {
 }
 
 func TestRenderEnv_WithSSOWiresTheProvider(t *testing.T) {
-	got, err := renderEnv("http://vaultwarden.localhost:8080", testOIDC())
+	got, err := renderEnv("http://vaultwarden.localhost:8080", testOIDC(), false)
 	require.NoError(t, err)
 
 	for _, want := range []string{
@@ -178,7 +178,7 @@ func TestRenderEnv_RejectsSingleQuote(t *testing.T) {
 	oidc := testOIDC()
 	oidc.ClientSecret = "bad'secret"
 
-	_, err := renderEnv("http://vaultwarden.localhost:8080", oidc)
+	_, err := renderEnv("http://vaultwarden.localhost:8080", oidc, false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SSO_CLIENT_SECRET")
@@ -195,7 +195,7 @@ func TestRenderEnv_SurvivesBeingSourcedAsShell(t *testing.T) {
 	oidc := testOIDC()
 	oidc.ClientSecret = "a$b`c\"d\\e;f&g|h (i) $(touch pwned) #j"
 
-	content, err := renderEnv("http://vaultwarden.localhost:8080", oidc)
+	content, err := renderEnv("http://vaultwarden.localhost:8080", oidc, false)
 	require.NoError(t, err)
 	dir := t.TempDir()
 	path := filepath.Join(dir, envFileName)
@@ -378,6 +378,7 @@ type metadata struct {
 	} `yaml:"sso"`
 	Containers []struct {
 		Name        string            `yaml:"name"`
+		Command     []string          `yaml:"command"`
 		Environment map[string]string `yaml:"environment"`
 		Ports       []struct {
 			Host      int `yaml:"host"`
@@ -441,4 +442,202 @@ func TestMetadata_ContainerMatchesTheGeneratedFileLocation(t *testing.T) {
 
 	require.Len(t, ctr.Ports, 1)
 	assert.Equal(t, m.Port, ctr.Ports[0].Host, "the routed port must be the published host port")
+}
+
+// ---- the plain-HTTP dev switch ----
+
+// switchedConfigurator builds a configurator whose host-agent environment and
+// primary base URL are fixed by the test.
+func switchedConfigurator(t *testing.T, switchValue, baseURL string) *Configurator {
+	t.Helper()
+	c := NewConfigurator(0, configurator.Deps{
+		PrimaryBaseURL: staticBaseURL(baseURL),
+		Logger:         quietLogger(),
+	})
+	c.getenv = func(key string) string {
+		if key == devSwitchEnv {
+			return switchValue
+		}
+		return ""
+	}
+	return c
+}
+
+func TestRenderEnv_DevSwitchMarker(t *testing.T) {
+	on, err := renderEnv("http://vaultwarden.localhost:8080", testOIDC(), true)
+	require.NoError(t, err)
+	assert.Contains(t, on, devSwitchKey+"='true'\n")
+
+	off, err := renderEnv("http://vaultwarden.localhost:8080", testOIDC(), false)
+	require.NoError(t, err)
+	assert.NotContains(t, off, devSwitchKey)
+}
+
+func TestPreStart_DevSwitchIsOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		want        bool
+	}{
+		{"unset is off", "", false},
+		{"explicit off", "0", false},
+		{"garbage is off", "maybe", false},
+		{"1 is on", "1", true},
+		{"true is on", "true", true},
+		{"case and space are tolerated", " TRUE ", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := switchedConfigurator(t, tc.value, "http://localhost:8080")
+			dir := t.TempDir()
+
+			_, err := c.PreStart(context.Background(), appState(dir, testOIDC()))
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, strings.Contains(readEnvFile(t, dir), devSwitchKey+"='true'"))
+		})
+	}
+}
+
+func TestPreStart_DevSwitchIsRefusedOffLocalhost(t *testing.T) {
+	// A real LAN or domain install must never be switched into plain-HTTP mode by
+	// an environment variable, whatever its value.
+	for _, base := range []string{
+		"http://bloud.local",
+		"http://192.168.1.29:8080",
+		"https://home.example.com",
+		"http://evil-localhost:8080",
+		"http://localhost.example.com:8080",
+	} {
+		t.Run(base, func(t *testing.T) {
+			c := switchedConfigurator(t, "1", base)
+			dir := t.TempDir()
+
+			_, err := c.PreStart(context.Background(), appState(dir, testOIDC()))
+
+			require.NoError(t, err)
+			assert.NotContains(t, readEnvFile(t, dir), devSwitchKey)
+		})
+	}
+}
+
+func TestPreStart_TogglingTheSwitchRestartsTheContainer(t *testing.T) {
+	// The wrapper runs at container start, so a change must recreate the
+	// container: that is what makes turning the switch off restore the pristine
+	// bundle (a recreated container starts from the unmodified image).
+	dir := t.TempDir()
+	on := switchedConfigurator(t, "1", "http://localhost:8080")
+	off := switchedConfigurator(t, "", "http://localhost:8080")
+
+	changed, err := off.PreStart(context.Background(), appState(dir, testOIDC()))
+	require.NoError(t, err)
+	assert.True(t, changed)
+	changed, err = on.PreStart(context.Background(), appState(dir, testOIDC()))
+	require.NoError(t, err)
+	assert.True(t, changed, "turning the switch on must restart the container")
+	changed, err = on.PreStart(context.Background(), appState(dir, testOIDC()))
+	require.NoError(t, err)
+	assert.False(t, changed, "an unchanged switch must not churn it")
+	changed, err = off.PreStart(context.Background(), appState(dir, testOIDC()))
+	require.NoError(t, err)
+	assert.True(t, changed, "turning the switch off must restart the container")
+}
+
+// wrapperScript returns the shell script from the manifest's container command.
+func wrapperScript(t *testing.T) string {
+	t.Helper()
+	m := loadMetadata(t)
+	require.Len(t, m.Containers, 1)
+	cmd := m.Containers[0].Command
+	require.Len(t, cmd, 3, "the command must be: sh -c <script>")
+	require.Equal(t, []string{"sh", "-c"}, cmd[:2])
+	return cmd[2]
+}
+
+func TestMetadata_WrapperMatchesTheEnvFileMarker(t *testing.T) {
+	assert.Contains(t, wrapperScript(t), devSwitchKey+"='true'",
+		"the wrapper must look for exactly the line the configurator writes")
+	assert.Contains(t, wrapperScript(t), "exec /start.sh", "the wrapper must hand over to the image's own start script")
+}
+
+// runWrapper executes the manifest's wrapper against a fake web vault and a stub
+// /start.sh, with the container paths redirected into a temp dir. It returns the
+// bundle's content afterwards, whether the stub start script ran, the exit code
+// and stderr.
+func runWrapper(t *testing.T, bundle string, envFile string) (after string, started bool, exit int, stderr string) {
+	t.Helper()
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	root := t.TempDir()
+	appDir := filepath.Join(root, "web-vault", "app")
+	require.NoError(t, os.MkdirAll(appDir, 0o755))
+	bundlePath := filepath.Join(appDir, "main.abc123.js")
+	require.NoError(t, os.WriteFile(bundlePath, []byte(bundle), 0o644))
+	envPath := filepath.Join(root, "vaultwarden.env")
+	require.NoError(t, os.WriteFile(envPath, []byte(envFile), 0o644))
+	marker := filepath.Join(root, "started")
+	startStub := filepath.Join(root, "start.sh")
+	require.NoError(t, os.WriteFile(startStub, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755))
+
+	script := strings.ReplaceAll(wrapperScript(t), "/web-vault/", filepath.Join(root, "web-vault")+"/")
+	script = strings.ReplaceAll(script, "/start.sh", startStub)
+
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), "ENV_FILE="+envPath)
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	exit = 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		exit = ee.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := os.ReadFile(bundlePath)
+	require.NoError(t, readErr)
+	_, statErr := os.Stat(marker)
+	return string(got), statErr == nil, exit, errBuf.String()
+}
+
+const (
+	unpatchedBundle = "a();class P{isDev(){return!1}}b();"
+	patchedBundle   = "a();class P{isDev(){return!0}}b();"
+	switchOnEnv     = "DOMAIN='http://vaultwarden.localhost:8080'\n" + devSwitchKey + "='true'\n"
+	switchOffEnv    = "DOMAIN='http://vaultwarden.localhost:8080'\n"
+)
+
+func TestWrapper_OffLeavesTheBundleAloneAndStarts(t *testing.T) {
+	after, started, exit, _ := runWrapper(t, unpatchedBundle, switchOffEnv)
+
+	assert.Equal(t, unpatchedBundle, after, "without the marker the client must stay untouched")
+	assert.True(t, started)
+	assert.Equal(t, 0, exit)
+}
+
+func TestWrapper_OnFlipsTheConstantAndStarts(t *testing.T) {
+	after, started, exit, stderr := runWrapper(t, unpatchedBundle, switchOnEnv)
+
+	assert.Equal(t, patchedBundle, after)
+	assert.True(t, started)
+	assert.Equal(t, 0, exit)
+	assert.Contains(t, stderr, "WARNING", "an insecure start must say so")
+}
+
+func TestWrapper_OnIsSafeOnRestart(t *testing.T) {
+	// A container restart re-runs the wrapper against the already patched bundle.
+	after, started, exit, _ := runWrapper(t, patchedBundle, switchOnEnv)
+
+	assert.Equal(t, patchedBundle, after)
+	assert.True(t, started, "an already patched bundle must not stop a restart")
+	assert.Equal(t, 0, exit)
+}
+
+func TestWrapper_OnRefusesToStartWhenTheConstantIsGone(t *testing.T) {
+	// An image bump changed the bundle: the operator asked for the switch, so
+	// silently running an unpatched (HTTPS-only) client would be a lie.
+	after, started, exit, stderr := runWrapper(t, "a();class P{}b();", switchOnEnv)
+
+	assert.Equal(t, "a();class P{}b();", after)
+	assert.False(t, started, "must fail closed, not start unpatched")
+	assert.NotEqual(t, 0, exit)
+	assert.Contains(t, stderr, "refusing to start")
 }

@@ -10,6 +10,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -32,6 +34,15 @@ const envFileName = "vaultwarden.env"
 // provider (a test pins the two together).
 const ssoScopes = "email profile offline_access"
 
+// devSwitchEnv is the host-agent environment variable that opts a development
+// install into serving the web vault over plain HTTP (see devAllowHTTP).
+const devSwitchEnv = "BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP"
+
+// devSwitchKey is the line the generated env file carries when the switch is on.
+// metadata.yaml's container command greps for exactly this line, so the two must
+// agree (a test pins them together).
+const devSwitchKey = "BLOUD_DEV_ALLOW_HTTP"
+
 // Configurator handles Vaultwarden configuration.
 type Configurator struct {
 	port       int
@@ -42,6 +53,9 @@ type Configurator struct {
 	// baseURL is a test seam: when set, the API client resolves to it instead
 	// of localhost:port. Never used to build request URLs by hand.
 	baseURL string
+
+	// getenv reads the host-agent's environment (os.Getenv in production).
+	getenv func(string) string
 }
 
 // NewConfigurator creates a Vaultwarden configurator from the host Deps.
@@ -61,6 +75,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		port:       port,
 		ssoBaseURL: deps.PrimaryBaseURL,
 		logger:     logger.With("app", appName),
+		getenv:     os.Getenv,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -83,6 +98,37 @@ func (c *Configurator) appExternalURL() string {
 	return configurator.AppExternalURL(c.ssoBaseURL, appName)
 }
 
+// devAllowHTTP reports whether this install has opted into the plain-HTTP dev
+// switch: BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP is set on the host-agent AND the app's
+// public host is a localhost name.
+//
+// Why it exists: the Bitwarden web client refuses to talk to any server whose URL
+// is not https:// (unless its build-time isDev() is true), so a Bloud install
+// that serves apps over plain HTTP cannot use the web vault at all. The switch
+// makes the container flip that constant so development and browser tests can
+// proceed until Bloud serves HTTPS. It is a security downgrade for a password
+// manager, so it is off by default and refused for anything but localhost names:
+// a real LAN or domain install can never be switched into it by an environment
+// variable.
+func (c *Configurator) devAllowHTTP(publicURL string) bool {
+	switch strings.ToLower(strings.TrimSpace(c.getenv(devSwitchEnv))) {
+	case "1", "true", "yes":
+	default:
+		return false
+	}
+	parsed, err := url.Parse(publicURL)
+	host := ""
+	if err == nil {
+		host = parsed.Hostname()
+	}
+	if host != "localhost" && !strings.HasSuffix(host, ".localhost") {
+		c.logger.Warn("ignoring "+devSwitchEnv+": the plain-HTTP dev switch is only honored for localhost names",
+			"publicURL", publicURL)
+		return false
+	}
+	return true
+}
+
 // PreStart writes the environment file so the container comes up with the right
 // public URL, signup policy, and OIDC client on its very first boot. Returns
 // configChanged=true when the file content changed so the orchestrator
@@ -90,7 +136,9 @@ func (c *Configurator) appExternalURL() string {
 func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
 	path := filepath.Join(state.DataPath, "config", envFileName)
 
-	content, err := renderEnv(c.appExternalURL(), state.OIDC)
+	publicURL := c.appExternalURL()
+	allowHTTP := c.devAllowHTTP(publicURL)
+	content, err := renderEnv(publicURL, state.OIDC, allowHTTP)
 	if err != nil {
 		return false, err
 	}
@@ -106,6 +154,9 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return false, nil
 	}
 	c.logger.Info("wrote Vaultwarden env file", "path", path, "sso", state.OIDC != nil)
+	if allowHTTP {
+		c.logger.Warn("Vaultwarden web vault HTTPS enforcement is DISABLED by "+devSwitchEnv+" (development only)", "publicURL", publicURL)
+	}
 	return true, nil
 }
 
@@ -153,9 +204,13 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 // unaffected, and the master password still unlocks the vault on the client.
 // Without SSO there is no other way to get an account or sign in, so the app's
 // defaults (signups open, password login on) are kept.
-func renderEnv(publicURL string, oidc *configurator.OIDCOutput) (string, error) {
+func renderEnv(publicURL string, oidc *configurator.OIDCOutput, allowHTTP bool) (string, error) {
 	settings := [][2]string{
 		{"DOMAIN", publicURL},
+	}
+	if allowHTTP {
+		// Read by the container's command in metadata.yaml, not by Vaultwarden.
+		settings = append(settings, [2]string{devSwitchKey, "true"})
 	}
 	if oidc != nil {
 		settings = append(settings,

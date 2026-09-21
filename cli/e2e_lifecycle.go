@@ -31,6 +31,9 @@ type lifecycleConfig struct {
 	traefikDir string
 	hostOnly   bool
 	keep       bool
+	// devEnv holds the opt-in development switches to forward to the host-agent
+	// (see devPassthrough); empty unless the operator set one.
+	devEnv     map[string]string
 	remoteHome string
 }
 
@@ -99,6 +102,7 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 		username:   getenv("BLOUD_E2E_USERNAME"),
 		password:   getenv("BLOUD_E2E_PASSWORD"),
 		traefikDir: getenv("BLOUD_E2E_TRAEFIK_DYNAMIC_DIR"),
+		devEnv:     devPassthrough(getenv),
 	}
 	applyLifecycleDefaults(&cfg, backendName)
 

@@ -62,6 +62,13 @@ limactl start bloud-dev
 BLOUD_BACKEND=native ./bloud dev
 ```
 
+Opt-in development switches are environment variables named `BLOUD_DEV_<APP>_...`;
+the CLI forwards the ones listed in `devPassthroughEnv` (`cli/devenv.go`) to the
+host-agent on every backend, and each is off unless set. Today there is one:
+`BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1 ./bloud dev` lets the Vaultwarden web vault
+work over Bloud's plain HTTP (it refuses any non-`https://` server otherwise;
+localhost names only, see `apps/vaultwarden/INTEGRATION.md`).
+
 `./bloud dev` is the whole loop: provisions the VM if needed, builds host-agent
 (`CGO_ENABLED=0 GOOS=linux`) + frontend, deploys both into the VM, and runs
 host-agent in the foreground (Ctrl-C stops it). **There is no hot reload:
@@ -447,8 +454,8 @@ combined with instance/SSH-target env vars). Instance overrides:
    `apps/paperless-ngx` (own postgres+redis plus gotenberg/tika sidecars,
    generated dotenv config file for django-allauth OIDC, internal admin
    bootstrap), `apps/vaultwarden` (single container, generated dotenv file for
-   built-in OIDC with `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`; see its
-   `INTEGRATION.md`).
+   built-in OIDC with `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`, an
+   opt-in plain-HTTP dev switch; see its `INTEGRATION.md`).
 
 ## Integration validation runs the real dependency-graph path
 

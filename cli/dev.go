@@ -618,6 +618,9 @@ func cmdDev() int {
 		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(name),
 		"BLOUD_SSO_ISSUER_URL":      ssoIssuerURL(),
 	}
+	for k, v := range devPassthrough(os.Getenv) {
+		runEnv[k] = v
+	}
 	// The host-agent opens its API only after every installed app is up, so
 	// watch for that and say so instead of leaving the terminal silent.
 	readyCtx, stopReadyWatch := context.WithCancel(context.Background())

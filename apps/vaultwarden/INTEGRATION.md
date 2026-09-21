@@ -9,8 +9,8 @@ support to the Bloud identity provider (Authentik).
 
 **The caveat:** the Bitwarden web client refuses to talk to any server whose URL
 is not `https://`, and Bloud serves apps over plain HTTP today. Until Bloud
-serves HTTPS, the web vault does not work in a browser (see
-[Plain HTTP](#plain-http)). Everything server-side works.
+serves HTTPS, the web vault works only with an opt-in development switch
+(see [Plain HTTP](#plain-http)). Everything server-side works without it.
 
 - Image: `docker.io/vaultwarden/server:1.37.3` (pinned; bundles web vault 2026.7.0)
 - SSO strategy: `native-oidc` (callback `/identity/connect/oidc-signin`)
@@ -37,6 +37,7 @@ that verbatim; a test sources the rendered file to prove it).
 | `SSO_ENABLED`, `SSO_AUTHORITY`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_PKCE` | SSO wired | The provider. `SSO_AUTHORITY` is the issuer URL with its trailing slash: Vaultwarden compares it to the issuer claim exactly |
 | `SSO_SCOPES` | SSO wired | `email profile offline_access` (`openid` is implicit, so listing it would send it twice) |
 | `SSO_ONLY=true` | SSO wired | Turns off master-password login, and hides the "Other" login button and the "Create account" link |
+| `BLOUD_DEV_ALLOW_HTTP` | dev switch on | Read by the container command, not by Vaultwarden (see [Plain HTTP](#plain-http)) |
 
 The file is mode 0600 because it carries the OIDC client secret. Vaultwarden runs
 as root in the container, which under rootless Podman is the host user that
@@ -119,11 +120,45 @@ throughout `hostset`), the HTTPS callback URL registered with the provider, and 
 certificate the user's browser trusts (including over an SSH forward). That is the
 "reach-by-name and TLS layer" that `AGENTS.md` lists as planned work.
 
+**The dev switch (until then).** Set `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` on the
+host-agent, for example `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1 ./bloud dev`. The CLI
+forwards it to the host-agent (native, Lima, QEMU, and `./bloud e2e app`).
+
+- `PreStart` writes `BLOUD_DEV_ALLOW_HTTP='true'` into the env file. The
+  container's command in `metadata.yaml` looks for exactly that line and, if
+  present, flips `isDev(){return!1}` to `isDev(){return!0}` in the container's own
+  copy of the web vault before running `/start.sh`.
+- **Off by default.** With the variable unset the command only runs `/start.sh`.
+- **Localhost only.** The variable is ignored, with a warning, unless the app's
+  public host is `localhost` or `*.localhost`, so a LAN or real-domain install can
+  never be switched into it by an environment variable.
+- **Fail closed.** If the switch is on but the bundle no longer contains the
+  constant (an image bump changed it), the container refuses to start rather than
+  run an unpatched client that would fail confusingly in the browser.
+- **Restart safe.** An already patched bundle is accepted. Turning the switch off
+  changes the env file, so the container is recreated from the pristine image.
+- **Loud.** The host-agent logs a warning whenever it writes the file with the
+  switch on, and the container prints one at start.
+
+It is a security downgrade for a password manager (the vault's encrypted data and
+session tokens cross the LAN as plain text), and the patched client is not what
+upstream ships. It is for development and browser tests only. CI sets it for the
+`vaultwarden` leg of `e2e-apps.yml`; the Playwright spec skips the rung that needs
+it when the variable is not set.
+
 ## Verified constants
 
 Checked on 2026-09-21 against `docker.io/vaultwarden/server:1.37.3`.
 
 - Web vault: 2026.7.0 (`/api/config` reports it), bundled in the image at `/web-vault`.
+- The constant the dev switch flips: exactly one occurrence in
+  `/web-vault/app/main.<hash>.js`. Re-verify on every image bump:
+
+  ```bash
+  podman run --rm --entrypoint sh docker.io/vaultwarden/server:1.37.3 \
+    -c 'grep -o "isDev(){return!1}" /web-vault/app/main.*.js | wc -l'   # expect 1
+  ```
+
 - Image facts: the app listens on port 80 in the container (`ROCKET_PORT`), runs as
   root, ships `curl` and its own `/healthcheck.sh` (which sources `ENV_FILE`), and
   declares no `HEALTHCHECK` metadata.
@@ -142,13 +177,14 @@ Checked on 2026-09-21 against `docker.io/vaultwarden/server:1.37.3`.
   callers), not specific to Vaultwarden. Reinstalling reconciles the existing
   provider, including its scopes and token lifetime.
 - **Only the web vault was tested.** The other Bitwarden clients probably need HTTPS
-  as well. See [Plain HTTP](#plain-http).
+  as well, and the dev switch only patches the web vault. See [Plain HTTP](#plain-http).
 - **Recreating an identity provider user locks that email out.** Vaultwarden links
   an account to the provider's user ID (`iss` plus `sub`) on the first sign-in. If
   the Authentik user is deleted and recreated with the same email, the new ID is
   refused (`existing SSO user ... with same email` in the container log) rather
   than taking the account over. Use a different email, or clear the app's data,
-  to continue. It bites persistent dev instances, not a fresh CI runtime.
+  to continue. It bites persistent dev instances and the Playwright spec's fixed
+  test user, not a fresh CI runtime.
 - **Local account linking by email.** `SSO_SIGNUPS_MATCH_EMAIL` (default true)
   links a first SSO sign-in to an existing local account with the same email. With
   local signup closed and Authentik emails operator-managed, this is acceptable.
@@ -156,10 +192,12 @@ Checked on 2026-09-21 against `docker.io/vaultwarden/server:1.37.3`.
 ## Testing
 
 - `go test ./apps/vaultwarden`: rendering, the file's shell-safety, `PreStart`
-  and `PostStart` against a fake app, and the manifest and the constants agreeing.
+  and `PostStart` against a fake app, the manifest and the constants agreeing, and
+  the container command's shell wrapper run against a fake web vault.
 - `go test -tags integration ./internal/e2e -run Vaultwarden` (see
   `docs/guides/contributing-apps.md`): install, the full SSO login and account
   creation against real Authentik, master-password login refused, token refresh,
-  and uninstall cleanup. It talks to the server directly, so the HTTPS limit does not affect it.
-- `e2e/tests/vaultwarden.spec.ts` (Playwright): catalog, home tile, and the
-  SSO-only sign-in page. The browser sign-in cannot run until Bloud serves HTTPS.
+  and uninstall cleanup. It talks to the server directly, so it needs no switch.
+- `e2e/tests/vaultwarden.spec.ts` (Playwright): catalog, home tile, the
+  SSO-only sign-in page, and the browser sign-in through to the vault (skipped
+  unless `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP` is set).

@@ -480,7 +480,7 @@ top to bottom.
 | `apps/navidrome` | Forward-auth SSO with bypass paths, simple single-container app |
 | `apps/homeassistant` | native-oidc via a pinned custom component: `pkg/appasset` remote install + sha256 provenance, marker-based YAML config merge, `Deps.RestartContainer`-driven reload |
 | `apps/paperless-ngx` | Own postgres+redis plus gotenberg/tika sidecars, dotenv config file generated for django-allauth OIDC, internal admin account |
-| `apps/vaultwarden` | Single container, dotenv config file for built-in OIDC, extra OIDC scopes and token lifetime via `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY` |
+| `apps/vaultwarden` | Single container, dotenv config file for built-in OIDC, extra OIDC scopes and token lifetime via `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`, a container command wrapper behind an opt-in dev switch |
 
 Stuck or unsure? The best place to start is `INTEGRATION.md` in whichever
 reference app shares your SSO strategy; each one documents its own

@@ -11,6 +11,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Orchestrator/reconciler design | [specs/reconciler-spec.md](specs/reconciler-spec.md) |
 | Component overview + data flows | [architecture/overview.md](architecture/overview.md) |
 | How to add an app | [guides/contributing-apps.md](guides/contributing-apps.md) |
+| Run Vaultwarden in dev (needs `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` over plain HTTP) | [../apps/vaultwarden/INTEGRATION.md](../apps/vaultwarden/INTEGRATION.md#plain-http) |
 | Multi-container app model | [specs/app-spec.md](specs/app-spec.md) |
 | Backend debt + repayment plan | [operations/tech-debt.md](operations/tech-debt.md) |
 | Build the .deb release package | [operations/packaging.md](operations/packaging.md) |
