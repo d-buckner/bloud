@@ -91,6 +91,14 @@ func (l *Loader) validateApp(app *App) error {
 	if len(app.SSO.BypassPaths) > 0 && app.SSO.Strategy != "forward-auth" {
 		return fmt.Errorf("sso.bypassPaths is only valid for strategy: forward-auth (got %q)", app.SSO.Strategy)
 	}
+	// The loopback issuer is http://localhost:<Traefik port>, which reaches
+	// Traefik only from inside the host network namespace. Without it the
+	// dashboard's provider registers and the app looks healthy, yet every
+	// login fails when discovery cannot reach the issuer: catch that here.
+	if app.SSO.LoopbackIssuer && !app.HasHostNetworkedContainer() {
+		return fmt.Errorf("sso.loopbackIssuer requires a container with network: host " +
+			"(the issuer is http://localhost:<Traefik port>, which resolves to Traefik only in the host network namespace)")
+	}
 	return nil
 }
 

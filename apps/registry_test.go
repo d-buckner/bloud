@@ -34,6 +34,7 @@ func TestNodeNamesStable(t *testing.T) {
 	require.NotEmpty(t, names)
 	assert.Equal(t, []string{
 		"apps-affine",
+		"apps-hermes",
 		"apps-homeassistant",
 		"apps-immich-server",
 		"apps-jellyfin",

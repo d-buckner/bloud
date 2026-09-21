@@ -3,6 +3,8 @@
 
 package catalog
 
+import "strings"
+
 // App represents an application in the catalog
 type App struct {
 	CatalogID   string   `yaml:"name" json:"catalogId"`
@@ -59,6 +61,24 @@ func (a *App) ContainerDefs() []ContainerDef {
 	return a.Containers
 }
 
+// HasHostNetworkedContainer reports whether any container shares the host
+// network namespace. Only there does the loopback issuer
+// (http://localhost:<Traefik port>) resolve to Traefik, which is what
+// sso.loopbackIssuer depends on (enforced by Loader.validateApp).
+func (a *App) HasHostNetworkedContainer() bool {
+	for _, c := range a.Containers {
+		if c.Network == "host" {
+			return true
+		}
+		for _, n := range c.Networks {
+			if n == "host" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ContainerPort maps a host port to a container port.
 type ContainerPort struct {
 	Host      int    `yaml:"host" json:"host"`
@@ -88,7 +108,29 @@ type SSO struct {
 	ProviderName string   `yaml:"providerName" json:"providerName"`                   // e.g. "Bloud SSO"
 	UserCreation bool     `yaml:"userCreation" json:"userCreation"`                   // Auto-create users on first login
 	LaunchPath   string   `yaml:"launchPath" json:"launchPath,omitempty"`             // Initial path to open when launching the app (overrides root)
-	Env          SSOEnv   `yaml:"env" json:"env"`                                     // Environment variable mappings
+	// ClientType is the OAuth2 client type for native-oidc apps: "public"
+	// (authorization-code + PKCE, no client secret) or "confidential"
+	// (the default). Public clients are required by apps whose OIDC
+	// integration rejects a client_secret (e.g. the Hermes dashboard).
+	// Empty is treated as "confidential".
+	ClientType string `yaml:"clientType,omitempty" json:"clientType,omitempty"`
+	// LoopbackIssuer serves this app's OIDC issuer from the host loopback
+	// (http://localhost:<Traefik port>) instead of the shared issuer host
+	// (sso.localhost, or the primary host). An app sets it when its OIDC
+	// client accepts https anywhere but http only on a literal loopback
+	// hostname (the Hermes dashboard). Such an app runs with the host
+	// network namespace so localhost:<Traefik port> is Traefik, and browser
+	// access therefore works only from the machine running Bloud: the same
+	// reach the *.localhost issuer host has.
+	LoopbackIssuer bool   `yaml:"loopbackIssuer,omitempty" json:"loopbackIssuer,omitempty"`
+	Env            SSOEnv `yaml:"env" json:"env"` // Environment variable mappings
+}
+
+// PublicClient reports whether this app's native-oidc client is a public
+// PKCE client (no client secret). Anything other than "public", including
+// the empty default, is confidential.
+func (s SSO) PublicClient() bool {
+	return strings.EqualFold(strings.TrimSpace(s.ClientType), "public")
 }
 
 // SSOEnv maps SSO config values to app-specific environment variable names

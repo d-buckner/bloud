@@ -81,6 +81,8 @@ integrations:
 
 sso:
   strategy: native-oidc    # native-oidc, ldap, forward-auth, none
+  # loopbackIssuer: true   # only for OIDC clients that reject a non-loopback
+  #                        # http issuer (see apps/hermes)
 
 containers:
   - name: apps-your-app

@@ -206,6 +206,15 @@ func (h HostSet) IssuerBaseURL() string {
 	return h.BaseURLFor(h.primary)
 }
 
+// LoopbackIssuerBaseURL returns the OIDC issuer base URL reached through the
+// host's own loopback (http://localhost:8080). Apps whose OIDC client accepts
+// http only on a literal loopback hostname (catalog sso.loopbackIssuer) use
+// it: they run with the host network namespace, so localhost:<Traefik port>
+// inside the container is Traefik.
+func (h HostSet) LoopbackIssuerBaseURL() string {
+	return h.BaseURLFor("localhost")
+}
+
 // IssuerHost returns the hostname app containers must resolve to reach the
 // issuer (sso.localhost for the localhost primary, else the primary host).
 func (h HostSet) IssuerHost() string {

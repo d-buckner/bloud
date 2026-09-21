@@ -74,6 +74,100 @@ func TestGenerateOIDCBlueprint(t *testing.T) {
 	}
 }
 
+func TestGenerateOIDCBlueprint_PublicClient(t *testing.T) {
+	dir := t.TempDir()
+	gen := testBlueprintGenerator(t, dir)
+
+	app := &catalog.App{
+		CatalogID:   "hermes",
+		DisplayName: "Hermes",
+		Port:        9119,
+		SSO: catalog.SSO{
+			Strategy:     "native-oidc",
+			ClientType:   "public",
+			CallbackPath: "/auth/callback",
+		},
+	}
+
+	if err := gen.GenerateForApp(app); err != nil {
+		t.Fatalf("GenerateForApp failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "hermes.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	contentStr := string(content)
+	t.Logf("Generated blueprint:\n%s", contentStr)
+
+	// The provider is registered as a public client (PKCE, no secret).
+	if !strings.Contains(contentStr, "client_type: public") {
+		t.Error("Expected 'client_type: public' in the public-client blueprint")
+	}
+	// A secret line must NOT be rendered for a public client.
+	if strings.Contains(contentStr, "client_secret:") {
+		t.Error("Public-client blueprint must not carry a client_secret")
+	}
+	// The redirect URI (public callback) and client id are still registered.
+	expectedRedirectURI := "http://hermes.localhost:8080/auth/callback"
+	if !strings.Contains(contentStr, expectedRedirectURI) {
+		t.Errorf("Expected subdomain redirect URI %s not found in blueprint", expectedRedirectURI)
+	}
+	if !strings.Contains(contentStr, "hermes-client") {
+		t.Error("Expected client ID 'hermes-client' not found")
+	}
+}
+
+// TestOIDCInputsForApp_PublicClientNoSecret confirms the public-client
+// inputs carry an empty secret and the "public" type directly (the same
+// source the blueprint renders from), so the secret-less contract holds at
+// the inputs layer too, not just in template output.
+func TestOIDCInputsForApp_PublicClientNoSecret(t *testing.T) {
+	gen := testBlueprintGenerator(t, t.TempDir())
+	app := &catalog.App{
+		CatalogID: "hermes",
+		SSO: catalog.SSO{
+			Strategy:     "native-oidc",
+			ClientType:   "public",
+			CallbackPath: "/auth/callback",
+		},
+	}
+	inputs := gen.OIDCInputsForApp(app)
+	if inputs == nil {
+		t.Fatal("expected non-nil inputs for a native-oidc app")
+	}
+	if inputs.ClientType != "public" {
+		t.Errorf("ClientType = %q, want public", inputs.ClientType)
+	}
+	if inputs.ClientSecret != "" {
+		t.Error("public-client inputs must not carry a client secret")
+	}
+}
+
+// TestOIDCInputsForApp_ConfidentialDefault confirms the default (unset
+// ClientType) stays confidential with a derived secret, so existing apps are
+// unaffected by the new field.
+func TestOIDCInputsForApp_ConfidentialDefault(t *testing.T) {
+	gen := testBlueprintGenerator(t, t.TempDir())
+	app := &catalog.App{
+		CatalogID: "immich",
+		SSO: catalog.SSO{
+			Strategy:     "native-oidc",
+			CallbackPath: "/user/oauth/callback/launch",
+		},
+	}
+	inputs := gen.OIDCInputsForApp(app)
+	if inputs == nil {
+		t.Fatal("expected non-nil inputs for a native-oidc app")
+	}
+	if inputs.ClientType != "confidential" {
+		t.Errorf("ClientType = %q, want confidential (default)", inputs.ClientType)
+	}
+	if inputs.ClientSecret == "" {
+		t.Error("confidential-client inputs must carry a derived client secret")
+	}
+}
+
 func TestGenerateForwardAuthBlueprint(t *testing.T) {
 	dir := t.TempDir()
 	gen := testBlueprintGenerator(t, dir)

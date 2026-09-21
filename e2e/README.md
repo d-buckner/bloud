@@ -26,6 +26,10 @@ reference).
   django-allauth; its own sign-in page offers only the provider), and after
   the Authentik login reaches the dashboard with the session authenticating
   the app's API.
+- **Hermes**: converges to running (as a native-oidc *public* PKCE client),
+  appears in catalog/home, has its own auth gate on (an unauthenticated
+  visitor is handed to a sign-in surface, never the dashboard), and completes
+  the Authentik round-trip to land back authenticated on the Hermes origin.
 
 ## Running
 

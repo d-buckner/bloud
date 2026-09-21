@@ -957,13 +957,19 @@ func (o *Orchestrator) ensureNetworksForContainer(ctx context.Context, def *cata
 
 // applyIssuerExtraHost adds the OIDC issuer host-gateway mapping to native
 // OIDC app containers so they can reach the issuer by the same hostname
-// browsers use (token exchange happens inside the container).
+// browsers use (token exchange happens inside the container). Apps on the
+// loopback issuer (sso.loopbackIssuer) are skipped: they share the host
+// network namespace, where localhost already resolves to Traefik and the
+// shared issuer hostname is never used.
 func (o *Orchestrator) applyIssuerExtraHost(spec *containerruntime.Spec, appCatalogID string) {
 	if o.hosts == nil || o.catalog == nil {
 		return
 	}
 	catalogApp, err := o.catalog.Get(appCatalogID)
 	if err != nil || catalogApp == nil || catalogApp.SSO.Strategy != "native-oidc" {
+		return
+	}
+	if catalogApp.SSO.LoopbackIssuer {
 		return
 	}
 	ehost := o.hosts.Get().IssuerExtraHost()
@@ -1372,12 +1378,20 @@ func (o *Orchestrator) oidcInputsForApp(catalogApp *catalog.App, u ssoURLs) *sso
 	if len(u.baseURLs) == 0 || u.hostSecret == "" {
 		return nil
 	}
+	issuerURL := u.issuerURL
+	if catalogApp.SSO.LoopbackIssuer {
+		// The app's OIDC client refuses a non-loopback http issuer, so route
+		// its issuer through the host loopback rather than the shared issuer
+		// host. The app container shares the host network namespace, which
+		// makes localhost:<Traefik port> reach Traefik.
+		issuerURL = u.hostSet.LoopbackIssuerBaseURL()
+	}
 	gen := sso.NewBlueprintGenerator(
 		u.hostSecret,
 		"",
 		u.baseURLs,
 		u.authentikURL,
-		u.issuerURL,
+		issuerURL,
 		"", // no blueprints dir: provisioning goes through the identity provider API
 		nil,
 	)

@@ -92,6 +92,7 @@ Tailscale
 (?i)chowned
 (?i)chowns
 (?i)cleardata
+(?i)client_id
 (?i)cli
 (?i)cli's
 (?i)commit's
@@ -161,6 +162,7 @@ Tailscale
 (?i)hostnames
 (?i)hostset
 (?i)http
+(?i)https
 (?i)httptest
 (?i)idempotency
 (?i)idempotently
@@ -185,6 +187,7 @@ Tailscale
 (?i)mutex
 (?i)mux
 (?i)muxes
+(?i)namespace
 (?i)navidrome's
 (?i)npm
 (?i)nullable

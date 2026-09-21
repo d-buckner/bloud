@@ -99,7 +99,7 @@ func (g *BlueprintGenerator) generateOIDCBlueprint(app *catalog.App) error {
 		return fmt.Errorf("app %q does not use the native-oidc strategy", app.CatalogID)
 	}
 
-	blueprint, err := g.renderOIDCBlueprint(app, inputs.ClientID, inputs.ClientSecret, inputs.RedirectURIs, inputs.LaunchURL)
+	blueprint, err := g.renderOIDCBlueprint(app, inputs.ClientID, inputs.ClientSecret, inputs.ClientType, inputs.RedirectURIs, inputs.LaunchURL)
 	if err != nil {
 		return fmt.Errorf("rendering OIDC blueprint: %w", err)
 	}
@@ -225,7 +225,10 @@ func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
 
 	baseURL := g.primaryBaseURL()
 	clientID := g.generateClientID(app.CatalogID)
-	clientSecret := g.generateClientSecret(app.CatalogID)
+	var clientSecret string
+	if !app.SSO.PublicClient() {
+		clientSecret = g.generateClientSecret(app.CatalogID)
+	}
 	discoveryURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.CatalogID)
 	appURL := appSubdomainURL(baseURL, app.CatalogID)
 	redirectURL := appURL + app.SSO.CallbackPath
@@ -237,7 +240,7 @@ func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
 	if app.SSO.Env.ClientID != "" {
 		env[app.SSO.Env.ClientID] = clientID
 	}
-	if app.SSO.Env.ClientSecret != "" {
+	if app.SSO.Env.ClientSecret != "" && clientSecret != "" {
 		env[app.SSO.Env.ClientSecret] = clientSecret
 	}
 	if app.SSO.Env.DiscoveryURL != "" {
@@ -308,12 +311,16 @@ func DeriveSecret(masterSecret, context string, length int) string {
 	return base64.RawURLEncoding.EncodeToString(key)
 }
 
-func (g *BlueprintGenerator) renderOIDCBlueprint(app *catalog.App, clientID, clientSecret string, redirectURIs []string, launchURL string) (string, error) {
+func (g *BlueprintGenerator) renderOIDCBlueprint(app *catalog.App, clientID, clientSecret, clientType string, redirectURIs []string, launchURL string) (string, error) {
+	if clientType == "" {
+		clientType = "confidential"
+	}
 	data := struct {
 		AppName      string
 		DisplayName  string
 		ClientID     string
 		ClientSecret string
+		ClientType   string
 		RedirectURIs []string
 		LaunchURL    string
 	}{
@@ -321,6 +328,7 @@ func (g *BlueprintGenerator) renderOIDCBlueprint(app *catalog.App, clientID, cli
 		DisplayName:  app.DisplayName,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
+		ClientType:   clientType,
 		RedirectURIs: redirectURIs,
 		LaunchURL:    launchURL,
 	}
@@ -470,9 +478,11 @@ entries:
     attrs:
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
-      client_type: confidential
+      client_type: {{.ClientType}}
       client_id: {{.ClientID}}
+{{- if .ClientSecret}}
       client_secret: {{.ClientSecret}}
+{{- end}}
       redirect_uris:
 {{- range .RedirectURIs}}
         - url: "{{.}}"

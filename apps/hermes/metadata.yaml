@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Daniel Buckner
+name: hermes
+displayName: Hermes
+description: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard
+category: productivity
+port: 9119
+estimatedSizeMB: 5000
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# SSO joins Authentik through the Hermes dashboard's bundled self-hosted
+# OIDC provider (public authorization-code + PKCE client). That provider
+# accepts an https issuer anywhere, but a plain http issuer only on a literal
+# loopback hostname (localhost / 127.0.0.1 / ::1): Bloud's shared issuer host
+# (sso.localhost) is rejected, and the dashboard then fails closed at startup
+# with no provider registered. Hermes therefore takes the loopback issuer
+# (loopbackIssuer: http://localhost:8080, reached because the container shares
+# the host network namespace). The provider's issuer and client_id and the
+# dashboard public URL are per-install values written into Hermes' config.yaml
+# by the configurator (the container spec cannot render them), so none are
+# declared here.
+sso:
+  strategy: native-oidc
+  clientType: public
+  loopbackIssuer: true
+  callbackPath: /auth/callback
+  providerName: Bloud SSO
+  userCreation: true
+
+containers:
+  - name: apps-hermes
+    image: docker.io/nousresearch/hermes-agent:v2026.9.14
+    # Host networking is load-bearing: the dashboard's OIDC issuer is the
+    # host loopback (http://localhost:8080), and only inside the host network
+    # namespace does localhost reach Traefik. Traefik routes to this app at
+    # http://localhost:9119, which the loopback bind below satisfies. Host
+    # networking cannot publish ports, so none are declared.
+    network: host
+    restartPolicy: always
+    # The image is an s6-overlay stack: the web dashboard runs as a
+    # supervised service when HERMES_DASHBOARD=1 (per-profile messaging
+    # gateways register dynamically under it). The container's main
+    # program is a parked sleep: the interactive `hermes` TUI the
+    # empty CMD would start needs a TTY and would exit immediately
+    # headless. Dashboard chat runs in-process; no gateway required.
+    command: ["sleep", "infinity"]
+    environment:
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_PORT: "9119"
+      # Loopback bind: the dashboard is reachable only through Traefik (which
+      # shares the host network namespace), never directly from the network.
+      # The auth gate still engages because the configurator sets
+      # dashboard.public_url, and the self-hosted OIDC provider it writes into
+      # config.yaml satisfies it.
+      HERMES_DASHBOARD_HOST: "127.0.0.1"
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /opt/data
+    healthCheck:
+      # /api/health is the upstream public liveness path, exempt from the
+      # dashboard auth gate (safe for external probes by design).
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9119/api/health || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 90
