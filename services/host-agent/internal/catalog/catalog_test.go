@@ -295,36 +295,38 @@ func TestLoader_LoadGraph(t *testing.T) {
 	assert.Equal(t, "radarr", deps[0].Target)
 }
 
-func TestLoader_LoadGraph_WithRealCatalog(t *testing.T) {
-	// Test with actual apps directory (integration test)
-	// Try multiple possible paths
+// realCatalogDir resolves the repository's apps/ directory from the test's
+// working directory, skipping the test where it is absent (nested test runs).
+func realCatalogDir(t *testing.T) string {
+	t.Helper()
+
 	possiblePaths := []string{
 		"../../../../apps", // from internal/catalog
 		"../../apps",       // from deeper test runs
 		"apps",             // from project root
 	}
-
-	var appsDir string
 	for _, p := range possiblePaths {
-		// Check if path exists and has at least one app directory with metadata.yaml
-		if entries, err := os.ReadDir(p); err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() {
-					if _, err := os.Stat(filepath.Join(p, entry.Name(), "metadata.yaml")); err == nil {
-						appsDir = p
-						break
-					}
-				}
+		entries, err := os.ReadDir(p)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(p, entry.Name(), "metadata.yaml")); err == nil {
+				return p
 			}
 		}
-		if appsDir != "" {
-			break
-		}
 	}
 
-	if appsDir == "" {
-		t.Skip("apps directory not found, skipping integration test")
-	}
+	t.Skip("apps directory not found, skipping integration test")
+	return ""
+}
+
+func TestLoader_LoadGraph_WithRealCatalog(t *testing.T) {
+	// Test with actual apps directory (integration test)
+	appsDir := realCatalogDir(t)
 
 	loader := NewLoader(appsDir)
 	graph, err := loader.LoadGraph()

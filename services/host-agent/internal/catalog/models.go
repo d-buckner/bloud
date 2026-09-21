@@ -61,6 +61,24 @@ func (a *App) ContainerDefs() []ContainerDef {
 	return a.Containers
 }
 
+// HasHostNetworkedContainer reports whether any container shares the host
+// network namespace. Only there does the loopback issuer
+// (http://localhost:<Traefik port>) resolve to Traefik, which is what
+// sso.loopbackIssuer depends on (enforced by Loader.validateApp).
+func (a *App) HasHostNetworkedContainer() bool {
+	for _, c := range a.Containers {
+		if c.Network == "host" {
+			return true
+		}
+		for _, n := range c.Networks {
+			if n == "host" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ContainerPort maps a host port to a container port.
 type ContainerPort struct {
 	Host      int    `yaml:"host" json:"host"`
