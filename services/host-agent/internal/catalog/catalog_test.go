@@ -219,6 +219,70 @@ func TestLoader_ValidateApp(t *testing.T) {
 	}
 }
 
+func TestLoader_ValidateApp_OIDCTuning(t *testing.T) {
+	loader := NewLoader("")
+	base := func(sso SSO) *App {
+		return &App{CatalogID: "t", DisplayName: "T", Description: "d", Category: "c", SSO: sso}
+	}
+
+	tests := []struct {
+		name    string
+		app     *App
+		wantErr string
+	}{
+		{
+			name: "scopes and token lifetime on native-oidc",
+			app:  base(SSO{Strategy: "native-oidc", Scopes: []string{"offline_access"}, AccessTokenMinutes: 60}),
+		},
+		{
+			name: "no tuning is the default",
+			app:  base(SSO{Strategy: "native-oidc"}),
+		},
+		{
+			name:    "scopes rejected for forward-auth",
+			app:     base(SSO{Strategy: "forward-auth", Scopes: []string{"offline_access"}}),
+			wantErr: "sso.scopes is only valid for strategy: native-oidc",
+		},
+		{
+			name:    "token lifetime rejected for ldap",
+			app:     base(SSO{Strategy: "ldap", AccessTokenMinutes: 60}),
+			wantErr: "sso.accessTokenMinutes is only valid for strategy: native-oidc",
+		},
+		{
+			name:    "negative token lifetime",
+			app:     base(SSO{Strategy: "native-oidc", AccessTokenMinutes: -1}),
+			wantErr: "must not be negative",
+		},
+		{
+			name:    "blank scope",
+			app:     base(SSO{Strategy: "native-oidc", Scopes: []string{" "}}),
+			wantErr: "single non-empty scope names",
+		},
+		{
+			name:    "built-in scope is redundant (and email would swap in the unverified mapping)",
+			app:     base(SSO{Strategy: "native-oidc", Scopes: []string{"email"}}),
+			wantErr: "already carries it",
+		},
+		{
+			name:    "scope with a space (a scope list, not a scope)",
+			app:     base(SSO{Strategy: "native-oidc", Scopes: []string{"offline_access profile"}}),
+			wantErr: "single non-empty scope names",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := loader.validateApp(tt.app)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
 // setupTestGraphCatalog creates a catalog with AppDefinition format
 func setupTestGraphCatalog(t *testing.T) string {
 	tmpDir := t.TempDir()

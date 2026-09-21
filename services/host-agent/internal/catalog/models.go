@@ -107,6 +107,13 @@ type SSO struct {
 	ProviderName string   `yaml:"providerName" json:"providerName"`                   // e.g. "Bloud SSO"
 	UserCreation bool     `yaml:"userCreation" json:"userCreation"`                   // Auto-create users on first login
 	LaunchPath   string   `yaml:"launchPath" json:"launchPath,omitempty"`             // Initial path to open when launching the app (overrides root)
+	// Scopes lists OIDC scopes the app needs beyond the openid, profile and email
+	// every native-oidc provider carries (e.g. offline_access for apps that
+	// refresh tokens). native-oidc only.
+	Scopes []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
+	// AccessTokenMinutes overrides the provider's access token lifetime (the
+	// default is 5 minutes). native-oidc only; 0 keeps the default.
+	AccessTokenMinutes int `yaml:"accessTokenMinutes,omitempty" json:"accessTokenMinutes,omitempty"`
 	// ClientType is the OAuth2 client type for native-oidc apps: "public"
 	// (authorization-code + PKCE, no client secret) or "confidential"
 	// (the default). Public clients are required by apps whose OIDC

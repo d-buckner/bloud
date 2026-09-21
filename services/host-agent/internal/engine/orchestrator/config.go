@@ -11,6 +11,7 @@ import (
 	"context"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
 // ── Dependency interfaces ─────────────────────────────────────────────────
@@ -58,6 +59,7 @@ type SSOProvisioner interface {
 
 	// EnsureNativeOIDC creates or verifies the OAuth2 provider + application for a
 	// native-oidc app. redirectURIs must cover every URL the app may use as its
-	// callback (all base URLs plus the direct-port debug URL).
-	EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error
+	// callback (all base URLs plus the direct-port debug URL). tuning carries the
+	// app's optional extra scopes and access token lifetime (zero = defaults).
+	EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string, tuning authentik.OIDCTuning) error
 }

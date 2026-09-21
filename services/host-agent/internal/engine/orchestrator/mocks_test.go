@@ -12,6 +12,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -311,8 +312,8 @@ func (m *MockSSOProvisioner) EnsureForwardAuth(ctx context.Context, appName, dis
 	return args.Error(0)
 }
 
-func (m *MockSSOProvisioner) EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
-	args := m.Called(appName, displayName, clientID, clientSecret, redirectURIs, launchURL)
+func (m *MockSSOProvisioner) EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string, tuning authentik.OIDCTuning) error {
+	args := m.Called(appName, displayName, clientID, clientSecret, redirectURIs, launchURL, tuning)
 	return args.Error(0)
 }
 

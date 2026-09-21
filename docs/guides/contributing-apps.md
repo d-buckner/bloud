@@ -81,6 +81,9 @@ integrations:
 
 sso:
   strategy: native-oidc    # native-oidc, ldap, forward-auth, none
+  # callbackPath: /oauth/callback   # native-oidc: where the app receives the code
+  # scopes: [offline_access]        # native-oidc: scopes beyond openid/profile/email
+  # accessTokenMinutes: 60          # native-oidc: access token lifetime (default 5)
   # loopbackIssuer: true   # only for OIDC clients that reject a non-loopback
   #                        # http issuer (see apps/hermes)
 

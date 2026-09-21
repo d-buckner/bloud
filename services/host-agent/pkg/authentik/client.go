@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
@@ -1289,17 +1290,9 @@ func (c *Client) getFirstCertificateUUID(ctx context.Context) (string, error) {
 
 // getScopePropertyMappings retrieves the UUIDs of scope property mappings by scope name
 func (c *Client) getScopePropertyMappings(ctx context.Context, scopes []string) ([]string, error) {
-	var result struct {
-		Results []struct {
-			PK        string `json:"pk"`
-			ScopeName string `json:"scope_name"`
-		} `json:"results"`
-	}
-	if err := c.cl.GET("/api/v3/propertymappings/provider/scope/").
-		Query("page_size", "50").
-		OK(http.StatusOK).
-		DoInto(ctx, &result); err != nil {
-		return nil, fmt.Errorf("listing scope mappings: %w", err)
+	all, err := c.listScopeMappings(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build a set of requested scopes for quick lookup
@@ -1310,13 +1303,64 @@ func (c *Client) getScopePropertyMappings(ctx context.Context, scopes []string) 
 
 	// Find matching mappings
 	var mappings []string
-	for _, mapping := range result.Results {
+	for _, mapping := range all {
 		if scopeSet[mapping.ScopeName] {
 			mappings = append(mappings, mapping.PK)
 		}
 	}
 
 	return mappings, nil
+}
+
+// scopeMapping is one of Authentik's OAuth2 scope property mappings.
+type scopeMapping struct {
+	PK        string `json:"pk"`
+	ScopeName string `json:"scope_name"`
+}
+
+// listScopeMappings returns every OAuth2 scope property mapping.
+func (c *Client) listScopeMappings(ctx context.Context) ([]scopeMapping, error) {
+	var result struct {
+		Results []scopeMapping `json:"results"`
+	}
+	if err := c.cl.GET("/api/v3/propertymappings/provider/scope/").
+		Query("page_size", "50").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return nil, fmt.Errorf("listing scope mappings: %w", err)
+	}
+	return result.Results, nil
+}
+
+// extraScopeMappings resolves the given scope names to their mapping UUIDs, in
+// the order requested. Unlike getScopePropertyMappings it fails when a scope has
+// no mapping: an app that declares a scope (sso.scopes) needs it, and silently
+// dropping it would surface later as a confusing sign-in failure in the app.
+func (c *Client) extraScopeMappings(ctx context.Context, scopes []string) ([]string, error) {
+	if len(scopes) == 0 {
+		return nil, nil
+	}
+	all, err := c.listScopeMappings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byScope := make(map[string]string, len(all))
+	for _, m := range all {
+		byScope[m.ScopeName] = m.PK
+	}
+	var pks, missing []string
+	for _, scope := range scopes {
+		pk, ok := byScope[scope]
+		if !ok {
+			missing = append(missing, scope)
+			continue
+		}
+		pks = append(pks, pk)
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("authentik has no scope mapping for %s", strings.Join(missing, ", "))
+	}
+	return pks, nil
 }
 
 // bloudEmailScopeMappingName identifies the custom scope mapping Bloud
@@ -1742,13 +1786,42 @@ func (c *Client) ensureProxyApplication(ctx context.Context, slug, displayName s
 	return nil
 }
 
+// defaultAccessTokenValidity is the access token lifetime of a native-oidc
+// provider that does not declare sso.accessTokenMinutes.
+const defaultAccessTokenValidity = "minutes=5"
+
+// OIDCTuning holds the optional per-app OAuth2 provider settings an app declares
+// under sso: in metadata.yaml. The zero value keeps every default, so apps that
+// declare nothing are provisioned exactly as before.
+type OIDCTuning struct {
+	// ExtraScopes are scope names added to the provider on top of openid,
+	// profile and email (e.g. "offline_access").
+	ExtraScopes []string
+	// AccessTokenMinutes overrides the access token lifetime; 0 keeps the default.
+	AccessTokenMinutes int
+}
+
+func (t OIDCTuning) isZero() bool {
+	return len(t.ExtraScopes) == 0 && t.AccessTokenMinutes == 0
+}
+
+// accessTokenValidity renders the lifetime in Authentik's duration syntax.
+func (t OIDCTuning) accessTokenValidity() string {
+	if t.AccessTokenMinutes > 0 {
+		return fmt.Sprintf("minutes=%d", t.AccessTokenMinutes)
+	}
+	return defaultAccessTokenValidity
+}
+
 // EnsureNativeOIDC creates or verifies the Authentik OAuth2 provider and
 // application for an app using the native-oidc SSO strategy. The provider uses
 // a confidential client with the exact client ID/secret derived by the
 // host-agent (so the app and the identity provider agree without a shared
 // store). redirectURIs must cover every URL the app may use as its callback.
 // launchURL, when non-empty, is set as the application's meta launch URL.
-func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string) error {
+// tuning carries the app's optional extra scopes and token lifetime; it is
+// applied on creation and reconciled on an existing provider.
+func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string, tuning OIDCTuning) error {
 	providerName := fmt.Sprintf("%s OAuth2 Provider", displayName)
 
 	// Check if provider already exists
@@ -1768,6 +1841,11 @@ func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, cli
 		// reports email_verified: False, which apps like AFFiNE reject).
 		if err := c.ensureProviderEmailScopeMapping(ctx, providerID); err != nil {
 			return fmt.Errorf("updating email scope mapping: %w", err)
+		}
+		if !tuning.isZero() {
+			if err := c.ensureProviderTuning(ctx, providerID, tuning); err != nil {
+				return fmt.Errorf("applying provider tuning: %w", err)
+			}
 		}
 	} else {
 		// Find required flows
@@ -1799,6 +1877,11 @@ func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, cli
 			return fmt.Errorf("ensuring email scope mapping: %w", err)
 		}
 		scopeMappings = append(scopeMappings, bloudEmail)
+		extraMappings, err := c.extraScopeMappings(ctx, tuning.ExtraScopes)
+		if err != nil {
+			return err
+		}
+		scopeMappings = append(scopeMappings, extraMappings...)
 
 		var uriEntries []map[string]string
 		for _, uri := range redirectURIs {
@@ -1821,7 +1904,7 @@ func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, cli
 			"sub_mode":                   "hashed_user_id",
 			"include_claims_in_id_token": true,
 			"access_code_validity":       "minutes=1",
-			"access_token_validity":      "minutes=5",
+			"access_token_validity":      tuning.accessTokenValidity(),
 			"refresh_token_validity":     "days=30",
 		}
 
@@ -1839,6 +1922,55 @@ func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, cli
 		return fmt.Errorf("ensuring OAuth2 application: %w", err)
 	}
 
+	return nil
+}
+
+// ensureProviderTuning brings an existing OAuth2 provider in line with the
+// app's declared extra scopes and access token lifetime. It only adds scope
+// mappings (never removes one) and only writes when something drifted, so a
+// steady-state reconciliation pass issues no PATCH.
+func (c *Client) ensureProviderTuning(ctx context.Context, providerID int, tuning OIDCTuning) error {
+	extra, err := c.extraScopeMappings(ctx, tuning.ExtraScopes)
+	if err != nil {
+		return err
+	}
+
+	reqPath := fmt.Sprintf("/api/v3/providers/oauth2/%d/", providerID)
+	var provider struct {
+		PropertyMappings    []string `json:"property_mappings"`
+		AccessTokenValidity string   `json:"access_token_validity"`
+	}
+	if err := c.cl.GET(reqPath).OK(http.StatusOK).DoInto(ctx, &provider); err != nil {
+		return fmt.Errorf("fetching provider: %w", err)
+	}
+
+	patch := map[string]interface{}{}
+
+	mappings := append([]string(nil), provider.PropertyMappings...)
+	have := make(map[string]bool, len(mappings))
+	for _, m := range mappings {
+		have[m] = true
+	}
+	for _, pk := range extra {
+		if !have[pk] {
+			mappings = append(mappings, pk)
+			have[pk] = true
+		}
+	}
+	if len(mappings) != len(provider.PropertyMappings) {
+		patch["property_mappings"] = mappings
+	}
+
+	if tuning.AccessTokenMinutes > 0 && provider.AccessTokenValidity != tuning.accessTokenValidity() {
+		patch["access_token_validity"] = tuning.accessTokenValidity()
+	}
+
+	if len(patch) == 0 {
+		return nil
+	}
+	if err := c.cl.PATCH(reqPath).JSON(patch).OK(http.StatusOK).Exec(ctx); err != nil {
+		return fmt.Errorf("patching provider: %w", err)
+	}
 	return nil
 }
 
