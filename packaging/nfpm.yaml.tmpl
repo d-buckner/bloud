@@ -22,9 +22,38 @@ description: |
   declared app topology (reverse proxy, TLS, SSO, databases) using rootless
   Podman. The bloud-host-agent user service runs as a dedicated unprivileged
   system user and manages app containers through the user's Podman socket.
+# Runtime dependencies, modeled as Debian relationships so a plain
+# `apt install ./bloud.deb` pulls everything the runtime needs and `dpkg -i`
+# reports what is missing. Every entry is something host-agent or its
+# maintainer scripts invoke directly. Nothing here is inherited: podman's own
+# Recommends (uidmap, dbus-user-session, passt, slirp4netns,
+# ca-certificates) are exactly what an `--no-install-recommends` install drops,
+# and a rootless runtime missing them fails after install instead of at it.
 depends:
+  # The container runtime. The floor is the libpod API the host agent calls:
+  # internal/podman/client.go requests /v5.0.0/... paths, which podman 4.x
+  # (what Debian 12 ships) does not serve.
+  - podman (>= 5.0.0)
+  # Rootless Podman maps the bloud user into a user namespace through
+  # newuidmap/newgidmap; without them no rootless container starts.
+  - uidmap
+  # Rootless networking. pasta (the `passt` binary) is podman 5's default
+  # rootless backend, and slirp4netns is the fallback netavark selects when
+  # pasta is absent, so either one satisfies the runtime: one alternative
+  # dependency, not two hard ones.
+  - passt | slirp4netns
+  # The per-user D-Bus session bus that rootless podman's systemd
+  # integration expects.
+  - dbus-user-session
+  # App images come from docker.io and ghcr.io over TLS, which validates them
+  # against the system trust store.
+  - ca-certificates
+  # postinst and postrm create and remove the dedicated bloud user with
+  # adduser and deluser.
   - adduser
-  - podman
+  # The user-level systemd instance runs bloud-host-agent.service, and linger
+  # (loginctl, also systemd) keeps it and the podman socket alive across
+  # logout and reboot.
   - systemd
 scripts:
   postinstall: ./packaging/scripts/postinstall.sh
