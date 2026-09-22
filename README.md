@@ -280,6 +280,7 @@ _Each box is one app; the nodes inside it are that app's containers, with an arr
 
 
 
+
 ## Sharing
 
 Self-hosting has a second barrier: even if you can run software, your friends and family
