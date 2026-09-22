@@ -454,6 +454,7 @@ func initOrchestratorHelper(
 			LDAPOutput:       cfg.LDAPOutput,
 			Containers:       runtime,
 			TemplateVars:     cfg.TemplateVars,
+			Secrets:          cfg.Secrets,
 			AppStore:         appStore,
 			Operations:       store.NewOperationStore(db),
 			Events:           eventsBus,

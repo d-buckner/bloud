@@ -58,6 +58,15 @@ type AppSecrets struct {
 
 	// App-specific database password (if different from shared postgres)
 	DatabasePassword string `json:"databasePassword,omitempty"`
+
+	// Published holds the credentials an app generated for itself and stored
+	// through SetAppSecret: the names it declares under a contract's `secrets`
+	// in its catalog metadata, handed to that contract's consumers as the
+	// payload field they read (the Servarr ApiKey, Authentik's API token).
+	// They are deliberately not part of the env files written below: a
+	// published credential reaches a consumer through a binding, never
+	// through a container's environment.
+	Published map[string]string `json:"published,omitempty"`
 }
 
 // APITokenFileName is the standalone file (owner-only, next to secrets.json)
@@ -395,11 +404,17 @@ func (m *Manager) GetAppSecret(appName, key string) string {
 	case "databasePassword":
 		return appSecrets.DatabasePassword
 	default:
-		return ""
+		return appSecrets.Published[key]
 	}
 }
 
 // SetAppSecret sets a specific secret for an app and saves to file.
+//
+// A key outside the known set above is stored in the app's published bag; the
+// app is expected to have declared it under a contract's `secrets` in its
+// catalog metadata, which is what puts it in that contract's binding payload. Writing a value that is already stored is a no-op: configurators
+// publish on every reconciliation, and rewriting secrets.json (and every
+// generated env file with it) on each pass would be pure churn.
 func (m *Manager) SetAppSecret(appName, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -414,15 +429,33 @@ func (m *Manager) SetAppSecret(appName, key, value string) error {
 
 	appSecrets := m.secrets.AppSecrets[appName]
 
+	// A value that is already stored is a no-op: configurators publish on
+	// every reconciliation, and rewriting secrets.json (and every generated
+	// env file with it) on each pass would be pure churn.
 	switch key {
 	case "adminPassword":
+		if appSecrets.AdminPassword == value {
+			return nil
+		}
 		appSecrets.AdminPassword = value
 	case "oauthClientSecret":
+		if appSecrets.OAuthClientSecret == value {
+			return nil
+		}
 		appSecrets.OAuthClientSecret = value
 	case "databasePassword":
+		if appSecrets.DatabasePassword == value {
+			return nil
+		}
 		appSecrets.DatabasePassword = value
 	default:
-		return fmt.Errorf("unknown secret key: %s", key)
+		if appSecrets.Published[key] == value {
+			return nil
+		}
+		if appSecrets.Published == nil {
+			appSecrets.Published = make(map[string]string, 1)
+		}
+		appSecrets.Published[key] = value
 	}
 
 	m.secrets.AppSecrets[appName] = appSecrets
@@ -458,6 +491,13 @@ func (m *Manager) GetAllSecrets() *Secrets {
 	if m.secrets.AppSecrets != nil {
 		copy.AppSecrets = make(map[string]AppSecrets, len(m.secrets.AppSecrets))
 		for k, v := range m.secrets.AppSecrets {
+			if v.Published != nil {
+				published := make(map[string]string, len(v.Published))
+				for name, value := range v.Published {
+					published[name] = value
+				}
+				v.Published = published
+			}
 			copy.AppSecrets[k] = v
 		}
 	}

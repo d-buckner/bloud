@@ -54,6 +54,36 @@ Two upstream behaviours drive that rule:
   through `pkg/xmlutil`.
 - A `config.xml` that does not parse makes the app refuse to boot.
 
+## The ApiKey this instance publishes
+
+`apps/radarr/metadata.yaml` declares `provides: {pvr: {secrets: [apiKey]}}`: a
+provider's offer is keyed by the contract it satisfies, and what that contract
+requires is defined once in `internal/catalog/contracts.go`. A declaration that
+does not match it fails the catalog load, so a wrong or missing secret name
+surfaces at startup rather than as a binding that is quietly half-empty.
+
+The provider side of that rule is narrow on purpose: `apiKey` is the only secret
+this app publishes under its `pvr` offer, and a name the contract does not carry
+is a load failure rather than an extra secret, because a consumer can only
+require what the contract names, so anything else could never reach one.
+
+`PreStart` publishes the instance's own key with
+`secrets.SetAppSecret(appName, servarr.SecretAPIKey, key)`, where
+`servarr.SecretAPIKey` is the `"apiKey"` name the declaration and the publisher
+agree on. Prowlarr and Seerr consume it as `PVRBinding.APIKey` through their
+`pvr` binding (`AppState.Integrations.PVRs`), each only because it declares
+`requires: [apiKey]` in its own `integrations.pvr` metadata: the declaration is
+what makes the resolver hand that key over. Neither ever opens this instance's
+`config.xml`.
+
+The published value is adopted from the instance's own `config.xml`, never
+generated here: that file is what the running instance authenticates with, and
+the app itself can rewrite the key (a settings save in the UI). Publishing runs
+on every `PreStart` and is idempotent, so a key the app regenerated is
+re-published on the next pass. An empty `ApiKey` after the External-auth write is
+an error, because `EnsureExternalAuth` generates one whenever the element is
+absent.
+
 ## API calls
 
 Base URL `http://localhost:7878`, every request carrying the key from
@@ -74,8 +104,9 @@ Info.
 ## Media-stack wiring: root folder and download client
 
 Two further steps run in `PostStart`, after the auth verification. They are the
-app-side half of the media stack: no orchestrator, engine or store change is
-involved, and the host never learns that these apps know about each other.
+app-side half of the media stack: the orchestrator hands this configurator a
+resolved binding for the provider, and the wiring itself is then written through
+the two apps' own APIs.
 
 ### 1. Library root folder (needs no sibling)
 
@@ -91,23 +122,31 @@ what a request manager (Seerr) resolves `activeDirectory` against. This step is
 unconditional (it runs whether or not any other media app is installed) and
 idempotent: an instance that already has the path is left alone.
 
-### 2. qBittorrent download client (provider discovered by probe)
+### 2. qBittorrent download client (provider from the integration binding)
 
-The provider is discovered the same way `apps/seerr` discovers Jellyfin: the
-consumer asks the **host's published port** whether the provider is there.
+The provider is resolved, not discovered: nothing is probed and no provider file
+is read. `apps/radarr/metadata.yaml` declares `downloadClient`, and the
+orchestrator puts a `configurator.DownloadClientBinding` for `qbittorrent` in
+`AppState.Integrations.DownloadClients`. That contract carries address and
+reachability only, so the binding has no payload beyond the provider reference:
+the consumer stores the address. `binding.Node`, `binding.Port`,
+`binding.LocalURL` (`http://localhost:8081`, where the configurator's own
+category write goes from the host) and `binding.Installed` all come from the
+embedded `ProviderRef`, so their names are unchanged, and `binding.Installed`
+decides wire versus prune.
 
 | Call | Purpose |
 |------|---------|
-| `GET http://localhost:8081/api/v2/app/version` | Availability probe. `200` → the provider is installed and up; anything else (connection refused, timeout, non-2xx) → skip and prune. |
-| `POST http://localhost:8081/api/v2/torrents/createCategory`: form `category=movie-radarr` | Create the category the client stores. `409 Conflict` (already exists) is accepted as already-done. |
+| `POST http://localhost:8081/api/v2/torrents/createCategory`: form `category=movie-radarr` | Create the category the client stores, at the binding's `LocalURL`. `409 Conflict` (already exists) is accepted as already-done. |
 | `GET /api/v3/downloadclient` | Read the configured clients. |
 | `POST /api/v3/downloadclient/test` | Validate the document against qBittorrent; must succeed. |
-| `POST /api/v3/downloadclient` | Only when no entry has `implementation == "QBittorrent"`; stores exactly the document that passed the test. |
+| `POST /api/v3/downloadclient` | Only when no entry points at the binding's node and port; stores exactly the document that passed the test. |
+| `DELETE /api/v3/downloadclient/<id>` | Only when `binding.Installed` is false: remove the entry Bloud wrote. |
 
-Both the probe and the category write go to the host-published WebUI port,
-which qBittorrent leaves unauthenticated by design (its own configurator
-whitelists the proxy subnet via `AuthSubnetWhitelistEnabled`); they are
-host-local calls and carry no credentials.
+The category write goes to the host-published WebUI port, which qBittorrent
+leaves unauthenticated by design (its own configurator whitelists the proxy
+subnet via `AuthSubnetWhitelistEnabled`); it is a host-local call and carries no
+credentials.
 
 The create body (the field set read from the pinned image's
 `/downloadclient/schema`; `movieCategory` is the only per-app field name,
@@ -125,9 +164,13 @@ which Sonarr spells `tvCategory`):
            {"name":"movieCategory","value":"movie-radarr"}]}
 ```
 
-`host` is the provider's container name (`apps-qbittorrent`; container names are
-`apps-<catalogID>`, and a single-container node's container *is* the node name),
-so Radarr resolves the provider over the shared `apps-net` network.
+`host` is the binding's `Node`, the provider's container name
+(`apps-qbittorrent`; container names are `apps-<catalogID>`, and a
+single-container node's container *is* the node name), and `port` is its `Port`.
+Both come from the provider's catalog metadata through the binding, not from a
+constant in this package, so Radarr resolves the provider over the shared
+`apps-net` network and a port change in `apps/qbittorrent/metadata.yaml` needs no
+edit here.
 
 `POST /api/v3/downloadclient/test` is the proof the link works, and it runs
 **before** the create: that order is load-bearing. The endpoint runs the
@@ -142,14 +185,14 @@ credentials have to authenticate, and the create then stores exactly what
 passed. A test failure fails the node, naming the sibling and the status, and
 stores nothing.
 
-Presence is decided on the entry's **host and port** (the coordinates Bloud
-writes) and never on `implementation` alone: several qBittorrent clients can
-live on one instance (a seedbox, a second daemon), and the implementation is
-shared by all of them. Comparing stored field values is still not done: a
-create requires a unique `name`, but the entry Bloud already owns is identified
-by where it points, and `GET /api/v3/downloadclient` masks every
-`PrivacyLevel.Password` field (`"********"`), so a stored secret could never be
-diffed verbatim anyway.
+Presence is decided on the entry's **host and port** (the binding's node and
+port, the coordinates Bloud writes) and never on `implementation` alone: several
+qBittorrent clients can live on one instance (a seedbox, a second daemon), and
+the implementation is shared by all of them. Comparing stored field values is
+still not done: a create requires a unique `name`, but the entry Bloud already
+owns is identified by where it points, and `GET /api/v3/downloadclient` masks
+every `PrivacyLevel.Password` field (`"********"`), so a stored secret could
+never be diffed verbatim anyway.
 
 **Why the category is created before the client.** qBittorrent never creates a
 category by itself: `TorrentImpl::setCategory` returns false when the category
@@ -163,13 +206,23 @@ for an existing category as already-done:
 (`src/base/bittorrent/sessionimpl.cpp`), and `webapplication.cpp` maps that to
 HTTP 409. Any other failure is surfaced as an error.
 
-**Pruning.** When the probe fails, `PostStart` removes the entry at Bloud's own
-address (`GET /api/v3/downloadclient`, then `DELETE
+**Pruning.** When `binding.Installed` is false, `PostStart` removes the entry at
+Bloud's own address (`GET /api/v3/downloadclient`, then `DELETE
 /api/v3/downloadclient/<id>`) and logs `pruned stale download client` at Info. A
 provider that was uninstalled must not leave a stored hostname behind that no
-longer resolves; every grab would fail against a dead target. Clients the
-operator added point somewhere else and are left alone: the provider being gone
-says nothing about them.
+longer resolves; every grab would fail against a dead target. The binding still
+carries the provider's node and port from its catalog metadata, which is how the
+prune recognises the entry Bloud wrote. Clients the operator added point
+somewhere else and are left alone: the provider being gone says nothing about
+them.
+
+A provider that is installed but not answering is a transient failure, not an
+uninstall: the entry is kept, a warning is logged, and the next reconciliation
+retries. `Installed` is what decides between wiring and pruning, and a probe
+cannot stand in for it, because a probe could not tell "not installed" from
+"restarting": pruning on a probe verdict deleted wiring that was still wanted.
+ERROR is terminal in the orchestrator, so a restarting provider must not erase
+the wiring.
 
 The prune only runs when this configurator's `PostStart` runs: a full lifecycle
 pass, or a staleness re-run. Uninstalling qBittorrent deletes its node, and a
@@ -178,28 +231,31 @@ Radarr next runs its phases (a reboot, `./bloud dev`, or a reinstall). Making th
 framework invalidate consumers when a provider is removed is the open
 desired-state item in `docs/plans/media-stack-integration.md` §9 (F2).
 
-A missing provider is never an error: the instance works without a download
-client, and a later reconciliation (or the provider's own staleness trigger)
-wires the link. A provider that *answers and then rejects* the call is a real
-fault and fails the node; a provider that is merely restarting or briefly 5xx-ing
-is logged and retried on the next reconciliation, because ERROR is terminal in
-the orchestrator.
+A provider that is not installed is never an error: the instance works without a
+download client, and a later reconciliation (or the provider's own staleness
+trigger) wires the link. A provider that *answers and then rejects* the call is a
+real fault and fails the node.
 
 ### What makes the link appear: a stacked install
 
 The `downloadClient` integration in `apps/radarr/metadata.yaml` is optional, so
 `computeAppDeps` only creates the edge once qBittorrent is installed, and the
 level ordering then runs the provider before its consumer: a stacked install
-(qBittorrent **first**) wires the client in the same pass. Installing
-qBittorrent later re-runs Radarr's `PostStart` through the framework's existing
-staleness path, which adds the client then.
+(qBittorrent **first**) wires the client in the same pass. `binding.Installed`
+mirrors that same edge, so the configurator wires the client exactly while the
+provider is wired to run before it. Installing qBittorrent later re-runs Radarr's
+`PostStart` through the framework's existing staleness path, which adds the
+client then.
 
-### Port constant coupling
+### Where the provider's address comes from
 
-`qbittorrentAppID`/`qbittorrentPort` in `apps/radarr/configurator.go` mirror the
-provider's `apps/qbittorrent/metadata.yaml`. That duplication is the accepted
-cost of wiring the link app-side; a port change in the qBittorrent catalog entry
-must be mirrored here (grep `qbittorrentPort`).
+Nothing about the provider is duplicated here. `apps/qbittorrent/metadata.yaml`
+declares its container (`apps-qbittorrent`) and its port (`8081`), the
+orchestrator resolves the `downloadClient` binding from that metadata, and the
+configurator reads the node, port and URLs off the binding. A port change in the
+qBittorrent catalog entry therefore needs no consumer edit; `qbittorrentAppID` in
+`apps/radarr/configurator.go` only names the provider the label is matched
+against.
 
 ## Security consequence (read this)
 
@@ -226,7 +282,7 @@ regardless of the port.
 | File | Purpose |
 |------|---------|
 | `apps/radarr/metadata.yaml` | Container, volume, healthcheck, forward-auth SSO declaration |
-| `apps/radarr/configurator.go` | Directory creation, `config.xml` pre-seed, API verification, root folder, download-client wiring |
+| `apps/radarr/configurator.go` | Directory creation, `config.xml` pre-seed, ApiKey publication, API verification, root folder, download-client wiring |
 | `apps/radarr/registration.go` | Registers the `apps-radarr` factory |
 | `apps/radarr/configurator_test.go` | Paths/ports/wiring for this app |
 | `services/host-agent/pkg/servarr/config.go` | Shared `config.xml` reader/writer |
@@ -246,9 +302,9 @@ cd apps && go test ./radarr/...
 | Symptom | Cause / fix |
 |---------|-------------|
 | Instance asks for a username/password | `AuthenticationMethod` was flipped back to a forms mode (or the key is duplicated). Reconcile: PostStart re-reads `/api/v3/config/host` and repairs it. |
-| `401` from the API in host-agent logs | The `ApiKey` in `config.xml` does not match what the app has loaded (usually a stale container). Reconcile restarts the container on config change; check for a duplicated `ApiKey` element. |
+| `401` from the API in host-agent logs | The `ApiKey` in `config.xml` does not match what the app has loaded (usually a stale container). Reconcile restarts the container on config change; check for a duplicated `ApiKey` element. Consumers do not read this file: they take the key from the host secret store. |
 | Container never becomes healthy | `/ping` only turns 200 once the database and web host are up; first boot on a slow disk can use most of the 24 × 5 s window. |
-| No download client in the UI | qBittorrent was not installed (or not answering `localhost:8081`) when `PostStart` last ran. Install/start it: the dependency edge plus the staleness re-run adds the client on the next pass. |
+| No download client in the UI | qBittorrent is not installed, so the `downloadClient` binding reports `Installed: false`: Bloud never wrote the client, or pruned the entry it had. Install qBittorrent: the dependency edge plus the staleness re-run wires the client on the next pass. |
 | Grabs land uncategorised | The `movie-radarr` category does not exist in qBittorrent. qBittorrent never creates categories by itself; `PostStart` creates it, so a reconcile fixes it. |
 | `qBittorrent download client test failed` in the log | The provider cannot be reached from the Radarr container at `apps-qbittorrent:8081`, or its WebUI subnet whitelist was reset by a config edit. |
 | root folder missing (`/api/v3/rootfolder` empty) | `PostStart` has not run since the volume was created, or `POST /api/v3/rootfolder` failed (check the API key). A reconcile re-runs it. |

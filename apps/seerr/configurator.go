@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
 )
 
@@ -21,24 +21,15 @@ const (
 	// appName is the node/secrets/log identity for Seerr.
 	appName = "seerr"
 
-	// jellyfinAppName is the secrets key that holds the Jellyfin bootstrap
-	// admin password. apps/jellyfin generates it from the same key and never
-	// deletes that account; Seerr's first admin can only be created from a
-	// Jellyfin administrator login, so that password is the credential this
-	// configurator onboards with.
+	// jellyfinAppName is the catalog id of the media-server provider Seerr
+	// onboards against. Its address, port and bootstrap admin password all come
+	// from the resolved `mediaServer` binding; the password is the credential
+	// apps/jellyfin publishes, and that account is never deleted.
 	jellyfinAppName = "jellyfin"
 
 	// jellyfinAdminUsername is the Jellyfin account apps/jellyfin creates for
 	// Bloud (apps/jellyfin/configurator.go: bootstrapUsername).
 	jellyfinAdminUsername = "bloud-bootstrap-admin"
-
-	// jellyfinHostname is how the Seerr container reaches Jellyfin: both join
-	// apps-net, so the container name resolves. jellyfinPort is Jellyfin's
-	// published host port, which is also how the host-side probe below reaches
-	// it.
-	jellyfinHostname  = "apps-jellyfin"
-	jellyfinPort      = 8096
-	jellyfinProbePath = "/System/Info/Public"
 
 	// configDirName holds Seerr's settings.json, SQLite database, logs and
 	// cache; it is mounted at /app/config.
@@ -55,32 +46,13 @@ const (
 	// creates from our Jellyfin login during onboarding.
 	adminEmail = "bloud-admin@localhost"
 
-	// probeTimeout bounds the sibling probes below: a sibling that is not
-	// installed must delay onboarding by seconds, not by the request default.
-	probeTimeout = 5 * time.Second
-
 	// PVR discovery. Seerr fulfils requests by handing them to a PVR, which it
 	// stores as a DVR entry in one of two lists (settings.radarr,
-	// settings.sonarr). The probe runs on the host like the Jellyfin one
-	// above; the hostname stored in the entry is how the *Seerr container*
-	// reaches the PVR, i.e. the container name on apps-net.
-	//
-	// The ports below duplicate the providers' catalog ports on purpose:
-	// apps/radarr/metadata.yaml (port 7878), apps/sonarr/metadata.yaml
-	// (port 8989). The framework does not hand a configurator its provider's
-	// address, so each consumer keeps the constant next to a note naming the
-	// metadata file, which makes a provider port change a greppable edit (see
-	// INTEGRATION.md).
-	radarrAppName  = "radarr"
-	sonarrAppName  = "sonarr"
-	radarrHostname = "apps-radarr"
-	sonarrHostname = "apps-sonarr"
-	radarrPort     = 7878
-	sonarrPort     = 8989
-
-	// pvrProbePath is the Servarr health endpoint: the same check the apps'
-	// own container healthchecks use, so a 200 means the instance is serving.
-	pvrProbePath = "/ping"
+	// settings.sonarr). Which PVRs to wire, where each one is and what its API
+	// key is come from the resolved `pvr` bindings; the two catalog ids below
+	// only select Seerr's own DVR vocabulary for each.
+	radarrAppName = "radarr"
+	sonarrAppName = "sonarr"
 
 	// qualityProfilePath lists a PVR's quality profiles. A DVR entry names its
 	// profile by id *and* name, and the ids are not a stable contract (the
@@ -94,9 +66,9 @@ const (
 	// profiles falls back to the first one.
 	preferredQualityProfile = "HD-1080p"
 
-	// servarrAPIKeyHeader authenticates a Servarr API call; the key itself is
-	// read from the sibling's config.xml (pkg/servarr: X-Api-Key, camelCase
-	// JSON, string enums).
+	// servarrAPIKeyHeader authenticates a Servarr API call; the key itself
+	// comes from the PVR's binding (pkg/servarr: X-Api-Key, camelCase JSON,
+	// string enums).
 	servarrAPIKeyHeader = "X-Api-Key"
 
 	// showsDirectory and moviesDirectory are the root folders of the shares
@@ -114,25 +86,21 @@ const (
 	minimumAvailabilityReleased = "released"
 )
 
-// pvrTarget is one PVR Seerr can fulfil requests through, paired with the
-// client that probes it. Seerr keeps DVR entries in two lists (one per
-// Servarr app type), so a target maps 1:1 onto one entry in service's list.
+// pvrTarget is one PVR Seerr can fulfil requests through: the resolved binding
+// that says where it is and what its API key is, plus Seerr's own vocabulary
+// for it. Seerr keeps DVR entries in two lists (one per Servarr app type), so a
+// target maps 1:1 onto one entry in service's list.
 type pvrTarget struct {
+	// binding is the resolved provider: the catalog knows from
+	// metadata.yaml which PVRs integrate with Seerr, where they live and what
+	// their API key is, so nothing about a provider is restated here.
+	binding configurator.PVRBinding
+
 	// service is the Seerr list this PVR's entry belongs to.
 	service dvrService
 
-	// appID is the sibling's catalog id: its data directory name, the client
-	// identity its own API calls log under, and its container name suffix.
-	appID string
-
 	// name is the display name Seerr's own UI gives the entry.
 	name string
-
-	// hostname is how the Seerr container reaches the PVR (apps-net DNS), and
-	// port is the PVR's published host port (the same inside the container,
-	// because Bloud publishes ports 1:1).
-	hostname string
-	port     int
 
 	// activeDirectory is the PVR's root folder: the path of Bloud's shared
 	// media mount for that kind of media, created by the PVR itself before
@@ -145,32 +113,47 @@ type pvrTarget struct {
 	// schema does not accept the field.
 	minimumAvailability string
 
-	// client probes the PVR on the host and reads its quality profiles.
+	// client reads the PVR's quality profiles from the host.
 	client *appclient.Client
 }
 
-// pvrTargets returns the PVRs Bloud wires into Seerr. The order is stable so a
-// reconciliation always makes the same calls in the same order.
-func pvrTargets() []pvrTarget {
-	return []pvrTarget{
-		{
-			service:         dvrSonarr,
-			appID:           sonarrAppName,
-			name:            "Sonarr",
-			hostname:        sonarrHostname,
-			port:            sonarrPort,
-			activeDirectory: showsDirectory,
-		},
-		{
-			service:             dvrRadarr,
-			appID:               radarrAppName,
-			name:                "Radarr",
-			hostname:            radarrHostname,
-			port:                radarrPort,
-			activeDirectory:     moviesDirectory,
-			minimumAvailability: minimumAvailabilityReleased,
-		},
+// pvrTargets resolves the PVRs Bloud wires into Seerr from the bindings the
+// orchestrator handed this app. The order is stable (the order metadata.yaml
+// declares the compatible apps), so a reconciliation always makes the same
+// calls in the same order; what is per-PVR here is Seerr's own vocabulary for
+// that PVR (its DVR list, its display name, its root folder), not its address.
+func pvrTargets(state *configurator.AppState) ([]pvrTarget, []configurator.PVRBinding) {
+	var (
+		targets   []pvrTarget
+		unhandled []configurator.PVRBinding
+	)
+	for _, binding := range state.Integrations.PVRs {
+		var target pvrTarget
+		switch binding.App {
+		case sonarrAppName:
+			target = pvrTarget{
+				service:         dvrSonarr,
+				name:            "Sonarr",
+				activeDirectory: showsDirectory,
+			}
+		case radarrAppName:
+			target = pvrTarget{
+				service:             dvrRadarr,
+				name:                "Radarr",
+				activeDirectory:     moviesDirectory,
+				minimumAvailability: minimumAvailabilityReleased,
+			}
+		default:
+			// A PVR the catalog declares compatible but Seerr has no DVR
+			// settings for cannot be wired: the settings are Seerr's, not the
+			// provider's, so this is where they have to exist.
+			unhandled = append(unhandled, binding)
+			continue
+		}
+		target.binding = binding
+		targets = append(targets, target)
 	}
+	return targets, unhandled
 }
 
 // Configurator handles Seerr's Bloud integration. PreStart makes the config
@@ -180,21 +163,18 @@ func pvrTargets() []pvrTarget {
 // a usable request UI instead of a setup form. Every method is idempotent and
 // runs on every reconciliation.
 type Configurator struct {
-	port     int
-	secrets  configurator.AppSecretsProvider
-	logger   *slog.Logger
-	api      *seerrAPI
-	jellyfin *appclient.Client
-	pvrs     []pvrTarget
+	port    int
+	secrets configurator.AppSecretsProvider
+	logger  *slog.Logger
+	api     *seerrAPI
+	// clients builds the host-side clients for the resolved providers. A
+	// provider's address is only known once its binding is resolved, so they
+	// are built per reconciliation rather than in the constructor.
+	clients configurator.ClientFactory
 
 	// baseURL is a test seam: when set, the API client resolves to it instead
 	// of localhost:port. Never used to build request URLs by hand.
 	baseURL string
-	// jellyfinBaseURL is the matching seam for the Jellyfin probe.
-	jellyfinBaseURL string
-	// pvrBaseURLs is the matching seam for the per-PVR probe and quality
-	// profile client, keyed by catalog id.
-	pvrBaseURLs map[string]string
 }
 
 // NewConfigurator creates a new Seerr configurator from the host Deps.
@@ -210,6 +190,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		port:    port,
 		secrets: deps.Secrets,
 		logger:  logger.With("app", appName),
+		clients: deps.HTTP,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -217,27 +198,28 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		}
 		return fmt.Sprintf("http://localhost:%d", c.port)
 	})
-	// The probe leaves the Seerr container: it asks the host's published
-	// Jellyfin port whether a media server exists yet.
-	c.jellyfin = deps.HTTP.New(appclient.Spec{Name: jellyfinAppName, BaseURLFn: func() string {
-		if c.jellyfinBaseURL != "" {
-			return c.jellyfinBaseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", jellyfinPort)
-	}})
-	// Each PVR gets its own client: the same probe-and-read shape as Jellyfin,
-	// but the credentials and the profile list come from the sibling itself.
-	c.pvrs = pvrTargets()
-	for i := range c.pvrs {
-		pvr := &c.pvrs[i]
-		pvr.client = deps.HTTP.New(appclient.Spec{Name: pvr.appID, BaseURLFn: func() string {
-			if override := c.pvrBaseURLs[pvr.appID]; override != "" {
-				return override
-			}
-			return fmt.Sprintf("http://localhost:%d", pvr.port)
-		}})
-	}
 	return c
+}
+
+// providerClient builds the client a configurator uses to reach a provider
+// *from the host* (its own API calls): the binding's LocalURL, never the
+// address stored for the app's containers.
+func (c *Configurator) providerClient(ref configurator.ProviderRef) *appclient.Client {
+	return c.clients.New(appclient.Spec{Name: ref.App, BaseURLFn: func() string {
+		return ref.LocalURL
+	}})
+}
+
+// mediaServerBinding returns the installed media-server provider, or false when
+// the catalog declares none or it is not installed yet, which is the state that
+// defers onboarding.
+func mediaServerBinding(state *configurator.AppState) (configurator.MediaServerBinding, bool) {
+	for _, binding := range state.Integrations.MediaServers {
+		if binding.App == jellyfinAppName && binding.Installed {
+			return binding, true
+		}
+	}
+	return configurator.MediaServerBinding{}, false
 }
 
 // Name returns the node name this configurator manages.
@@ -256,7 +238,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	if err := os.MkdirAll(dir, configDirPerm); err != nil {
 		return false, fmt.Errorf("creating Seerr config directory: %w", err)
 	}
-	if err := os.Chmod(dir, configDirPerm); err != nil {
+	if err := managedfile.EnsureWritable(dir, configDirPerm); err != nil {
 		return false, fmt.Errorf("making Seerr config directory writable: %w", err)
 	}
 	return false, nil
@@ -283,13 +265,15 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		// the Jellyfin coupling is what can have *broken* since; nothing else
 		// notices when the media server is replaced (see
 		// reconcileJellyfinCoupling).
-		c.reconcileJellyfinCoupling(ctx, settingsPath)
+		if jellyfin, ok := mediaServerBinding(state); ok {
+			c.reconcileJellyfinCoupling(ctx, settingsPath, c.providerClient(jellyfin.ProviderRef), jellyfin)
+		}
 		return c.reconcilePVRsWithStoredKey(ctx, state)
 	}
 
 	// Seerr's only non-interactive onboarding path starts with a Jellyfin
 	// administrator login, so without Jellyfin there is nothing to do. A
-	// missing sibling is never an error: a later reconciliation re-runs
+	// missing provider is never an error: a later reconciliation re-runs
 	// PostStart once Jellyfin is installed. (PVR wiring is deferred with it:
 	// it needs the admin user the login below creates.)
 	//
@@ -300,9 +284,20 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	// operator has to know. The node is deliberately left RUNNING rather than
 	// ERROR: ERROR is terminal, so a Seerr installed before its media server
 	// would never converge once Jellyfin appeared.
-	if !c.jellyfinAvailable(ctx) {
+	jellyfin, ok := mediaServerBinding(state)
+	if !ok {
 		c.logger.Warn("No media server is installed, so Seerr's onboarding is deferred; until one is, the instance is unconfigured and its setup wizard is reachable by anyone who can reach it",
-			"jellyfin", jellyfinHostname)
+			"mediaServer", jellyfinAppName)
+		return nil
+	}
+	password := jellyfin.AdminPassword
+	if password == "" {
+		// The provider is installed but has not published its bootstrap
+		// password yet (its PreStart has not run, or it is still converging):
+		// onboarding is deferred rather than failed, and the next
+		// reconciliation finds it.
+		c.logger.Warn("the media server has not published its bootstrap admin password yet; Seerr onboarding is deferred",
+			"mediaServer", jellyfin.App)
 		return nil
 	}
 
@@ -311,16 +306,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return err
 	}
 
-	password, err := c.jellyfinAdminPassword()
-	if err != nil {
-		return err
-	}
-
 	if err := c.api.loginWithJellyfin(ctx, jellyfinLogin{
 		Username:   jellyfinAdminUsername,
 		Password:   password,
-		Hostname:   jellyfinHostname,
-		Port:       jellyfinPort,
+		Hostname:   jellyfin.Node,
+		Port:       jellyfin.Port,
 		UseSSL:     false,
 		URLBase:    "",
 		Email:      adminEmail,
@@ -384,14 +374,19 @@ type pvrQualityProfile struct {
 // shared mount is what both apps see.
 //
 // Every step is best-effort in the same way the Jellyfin library sync is: a PVR
-// that is not installed, a PVR whose key or profile list is not readable yet,
-// or a PVR that is still booting leaves the instance usable (requests simply
-// cannot be fulfilled yet) and is retried on the next reconciliation. The one
-// case that fails the node is a PVR that answers the probe and then rejects us:
-// that is a misconfiguration an operator has to see.
+// that is not installed, a PVR whose key is not published yet, or a PVR that is
+// still booting leaves the instance usable (requests simply cannot be fulfilled
+// yet) and is retried on the next reconciliation. The one case that fails the
+// node is a PVR that is up and rejects us: that is a misconfiguration an
+// operator has to see.
 func (c *Configurator) reconcilePVRs(ctx context.Context, state *configurator.AppState, seerrKey string) error {
-	for _, pvr := range c.pvrs {
-		if err := c.reconcilePVR(ctx, pvr, state, seerrKey); err != nil {
+	targets, unhandled := pvrTargets(state)
+	for _, binding := range unhandled {
+		c.logger.Warn("no Seerr DVR settings for this PVR; skipping it", "pvr", binding.App)
+	}
+	for _, pvr := range targets {
+		pvr.client = c.providerClient(pvr.binding.ProviderRef)
+		if err := c.reconcilePVR(ctx, pvr, seerrKey); err != nil {
 			return err
 		}
 	}
@@ -414,35 +409,33 @@ func (c *Configurator) reconcilePVRsWithStoredKey(ctx context.Context, state *co
 }
 
 // reconcilePVR brings one PVR's DVR entry in line with the running stack.
-func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, state *configurator.AppState, seerrKey string) error {
-	configPath := servarr.SiblingConfigPath(state.BloudDataPath, pvr.appID)
-
-	if !c.pvrAvailable(ctx, pvr) {
-		return c.prunePVR(ctx, pvr, configPath, seerrKey)
+func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, seerrKey string) error {
+	pvrID := pvr.binding.App
+	if !pvr.binding.Installed {
+		return c.prunePVR(ctx, pvr, seerrKey)
 	}
 
-	key, err := servarr.APIKey(configPath)
-	if err != nil || key == "" {
-		// The PVR answers but its key is not on disk (yet): wire nothing. The
-		// entry would have to be written blind, and a half-readable sibling is
-		// a retry rather than a misconfiguration: the next reconciliation
-		// picks it up.
-		c.logger.Warn("PVR is running but its API key is not readable yet; skipping it",
-			"pvr", pvr.appID, "path", configPath, "error", err)
+	key := pvr.binding.APIKey
+	if key == "" {
+		// The PVR is installed but has not published its key yet (its PreStart
+		// has not run, or it is still converging): wire nothing. Writing an
+		// entry with an empty key would only have to be corrected later, and
+		// the next reconciliation picks the key up.
+		c.logger.Warn("PVR has not published its API key yet; skipping it", "pvr", pvrID)
 		return nil
 	}
 
 	profile, err := c.pvrQualityProfile(ctx, pvr, key)
 	if err != nil {
-		// A key the PVR rejects is a real misconfiguration (the sibling's own
-		// config.xml is the source of truth for it) and is surfaced with the
-		// sibling and the status. Anything else (a profile list that is not
+		// A key the PVR rejects is a real misconfiguration (the key the PVR
+		// published is the source of truth for it) and is surfaced with the
+		// provider and the status. Anything else (a profile list that is not
 		// there yet while the instance finishes booting) is a retry.
 		if status := appclient.StatusOf(err); status >= 400 && status < 500 {
-			return fmt.Errorf("wiring Seerr to %s: %w", pvr.appID, err)
+			return fmt.Errorf("wiring Seerr to %s: %w", pvrID, err)
 		}
 		c.logger.Warn("PVR quality profiles are not listable yet; skipping it",
-			"pvr", pvr.appID, "error", err)
+			"pvr", pvrID, "error", err)
 		return nil
 	}
 
@@ -450,12 +443,12 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, state *c
 	if err != nil {
 		// The PVR is up, so this is not the "not installed" case: a Seerr that
 		// cannot be read or written here is a real problem, not a retry.
-		return fmt.Errorf("wiring Seerr to %s: reading Seerr's %s settings: %w", pvr.appID, pvr.service, err)
+		return fmt.Errorf("wiring Seerr to %s: reading Seerr's %s settings: %w", pvrID, pvr.service, err)
 	}
 
 	desired := dvrSettingsFor(pvr, key, profile)
 	for _, entry := range existing {
-		if entry.Hostname != pvr.hostname {
+		if entry.Hostname != pvr.binding.Node {
 			// Not ours: an entry an admin added by hand (Seerr's own UI
 			// defaults to localhost) is theirs to keep, and matching it by
 			// name would make two different targets look like one.
@@ -470,24 +463,24 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, state *c
 		if err := c.api.updateDVR(ctx, pvr.service, seerrKey, desired); err != nil {
 			if servarr.TransientFailure(err) {
 				c.logger.Warn("Seerr did not answer while repairing the PVR entry; retrying on the next reconciliation",
-					"pvr", pvr.appID, "error", err)
+					"pvr", pvrID, "error", err)
 				return nil
 			}
-			return fmt.Errorf("wiring Seerr to %s: repairing its %s entry: %w", pvr.appID, pvr.service, err)
+			return fmt.Errorf("wiring Seerr to %s: repairing its %s entry: %w", pvrID, pvr.service, err)
 		}
-		c.logger.Info("repaired the Seerr PVR entry", "pvr", pvr.appID, "id", entry.ID)
+		c.logger.Info("repaired the Seerr PVR entry", "pvr", pvrID, "id", entry.ID)
 		return nil
 	}
 
 	if err := c.api.createDVR(ctx, pvr.service, seerrKey, desired); err != nil {
 		if servarr.TransientFailure(err) {
 			c.logger.Warn("Seerr did not answer while adding the PVR entry; retrying on the next reconciliation",
-				"pvr", pvr.appID, "error", err)
+				"pvr", pvrID, "error", err)
 			return nil
 		}
-		return fmt.Errorf("wiring Seerr to %s: %w", pvr.appID, err)
+		return fmt.Errorf("wiring Seerr to %s: %w", pvrID, err)
 	}
-	c.logger.Info("added the PVR to Seerr", "pvr", pvr.appID, "hostname", pvr.hostname)
+	c.logger.Info("added the PVR to Seerr", "pvr", pvrID, "hostname", pvr.binding.Node)
 	return nil
 }
 
@@ -495,34 +488,29 @@ func (c *Configurator) reconcilePVR(ctx context.Context, pvr pvrTarget, state *c
 // installed, so Seerr does not keep handing requests to a hostname that no
 // longer resolves.
 //
-// The sibling's config.xml is what tells "was installed and is now gone" from
-// "was never installed": without that trace nothing can have been wired: a
-// stack with no PVR installed makes no Seerr call at all here, which is what
-// keeps this step invisible to a Seerr that has no PVRs. Uninstalling without a
-// purge (or just stopping the app) leaves the file behind; a purge leaves no
-// trace and the entry is left alone (see INTEGRATION.md).
+// The entry is identified by the address Bloud wrote (the provider's container
+// name on apps-net), which is what distinguishes it from an entry an admin
+// added by hand: Seerr's own UI defaults to localhost, so a foreign entry does
+// not collide. The binding still carries that address when the provider is
+// gone, because it comes from the provider's catalog metadata, which outlives
+// its installation.
 //
 // Best effort by design: the PVR is gone, so a Seerr that cannot be read here is
 // a warning for the next reconciliation, never a node failure.
-func (c *Configurator) prunePVR(ctx context.Context, pvr pvrTarget, configPath, seerrKey string) error {
-	if _, err := os.Stat(configPath); err != nil {
-		c.logger.Info("PVR is not installed; Seerr will not fulfil through it", "pvr", pvr.appID)
-		return nil
-	}
-
+func (c *Configurator) prunePVR(ctx context.Context, pvr pvrTarget, seerrKey string) error {
 	existing, err := c.api.listDVRs(ctx, pvr.service, seerrKey)
 	if err != nil {
-		c.logger.Warn("could not read Seerr's PVR settings to prune a stale entry", "pvr", pvr.appID, "error", err)
+		c.logger.Warn("could not read Seerr's PVR settings to prune a stale entry", "pvr", pvr.binding.App, "error", err)
 		return nil
 	}
 	for _, entry := range existing {
-		if entry.Hostname != pvr.hostname {
+		if entry.Hostname != pvr.binding.Node {
 			continue
 		}
 		if err := c.api.deleteDVR(ctx, pvr.service, seerrKey, entry.ID); err != nil {
-			return fmt.Errorf("wiring Seerr to %s: pruning its stale %s entry: %w", pvr.appID, pvr.service, err)
+			return fmt.Errorf("wiring Seerr to %s: pruning its stale %s entry: %w", pvr.binding.App, pvr.service, err)
 		}
-		c.logger.Info("removed the stale Seerr PVR entry", "pvr", pvr.appID, "id", entry.ID)
+		c.logger.Info("removed the stale Seerr PVR entry", "pvr", pvr.binding.App, "id", entry.ID)
 	}
 	return nil
 }
@@ -533,8 +521,8 @@ func (c *Configurator) prunePVR(ctx context.Context, pvr pvrTarget, configPath, 
 func dvrSettingsFor(pvr pvrTarget, apiKey string, profile pvrQualityProfile) dvrSettings {
 	dvr := dvrSettings{
 		Name:              pvr.name,
-		Hostname:          pvr.hostname,
-		Port:              pvr.port,
+		Hostname:          pvr.binding.Node,
+		Port:              pvr.binding.Port,
 		APIKey:            apiKey,
 		UseSSL:            false,
 		BaseURL:           "",
@@ -559,40 +547,21 @@ func dvrSettingsFor(pvr pvrTarget, apiKey string, profile pvrQualityProfile) dvr
 	return dvr
 }
 
-// pvrAvailable reports whether a PVR answers on its published host port. Any
-// failure (connection refused, timeout, a non-200 status) means "not
-// installed (any more)", including a PVR that is installed but still booting.
-func (c *Configurator) pvrAvailable(ctx context.Context, pvr pvrTarget) bool {
-	// The probes bound themselves with a deadline rather than a per-call client
-	// timeout, so a sibling that is not installed costs seconds, not the
-	// request default.
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
-	return pvr.client.GET(pvrProbePath).
-		OK(http.StatusOK).
-		NoRetry().
-		Exec(probeCtx) == nil
-}
-
 // pvrQualityProfile picks the profile a DVR entry should use: the one named
 // preferredQualityProfile when the PVR has it, the first one otherwise. An
 // empty list is an error (the entry cannot be built without an id), which the
 // caller treats as "not ready yet" rather than a node failure.
 func (c *Configurator) pvrQualityProfile(ctx context.Context, pvr pvrTarget, apiKey string) (pvrQualityProfile, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
 	var profiles []pvrQualityProfile
 	if err := pvr.client.GET(qualityProfilePath).
 		Header(servarrAPIKeyHeader, apiKey).
 		OK(http.StatusOK).
 		NoRetry().
-		DoInto(probeCtx, &profiles); err != nil {
+		DoInto(ctx, &profiles); err != nil {
 		return pvrQualityProfile{}, err
 	}
 	if len(profiles) == 0 {
-		return pvrQualityProfile{}, fmt.Errorf("%s: %s returned no quality profiles", pvr.appID, qualityProfilePath)
+		return pvrQualityProfile{}, fmt.Errorf("%s: %s returned no quality profiles", pvr.binding.App, qualityProfilePath)
 	}
 	for _, profile := range profiles {
 		if profile.Name == preferredQualityProfile {
@@ -606,38 +575,6 @@ func (c *Configurator) pvrQualityProfile(ctx context.Context, pvr pvrTarget, api
 // handled at a higher level by the orchestrator.
 func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
 	return nil
-}
-
-// jellyfinAvailable reports whether Bloud's Jellyfin answers on the host. Any
-// failure (connection refused, timeout, a non-200 status) means "not usable
-// yet", including Jellyfin being installed but still booting.
-func (c *Configurator) jellyfinAvailable(ctx context.Context) bool {
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
-	err := c.jellyfin.GET(jellyfinProbePath).
-		OK(http.StatusOK).
-		NoRetry().
-		Exec(probeCtx)
-	if err != nil {
-		c.logger.Info("Jellyfin is not installed yet; Seerr onboarding is deferred", "error", err)
-		return false
-	}
-	return true
-}
-
-// jellyfinAdminPassword returns the durable, per-deployment Jellyfin bootstrap
-// admin password from the secrets manager (generated on first call, then stable
-// across reconciliations).
-func (c *Configurator) jellyfinAdminPassword() (string, error) {
-	if c.secrets == nil {
-		return "", fmt.Errorf("no secrets provider for the Jellyfin bootstrap admin password")
-	}
-	password, err := c.secrets.GenerateAppAdminPassword(jellyfinAppName)
-	if err != nil {
-		return "", fmt.Errorf("generating Jellyfin admin password: %w", err)
-	}
-	return password, nil
 }
 
 // readAPIKey reads the API key Seerr generated for itself into settings.json

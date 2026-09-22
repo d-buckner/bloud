@@ -16,6 +16,9 @@ integrations:
   sso:
     required: false
     multi: false
+    # The Authentik API token, which is what the user sync reads. Declaring the
+    # contract alone does not hand out a credential.
+    requires: [apiToken]
     compatible:
       - app: authentik
         default: true

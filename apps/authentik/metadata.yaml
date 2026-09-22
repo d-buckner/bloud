@@ -15,6 +15,15 @@ integrations:
       - app: traefik
         default: true
 
+# Authentik's API token, offered to the apps that integrate with it as their
+# identity provider: Navidrome receives it in its `sso` binding to mirror
+# Authentik's users, so it never opens <dataDir>/authentik/api-token (the file
+# stays for the host's own tooling: config.getAuthentikToken and the CLI/e2e
+# helpers read it there).
+provides:
+  sso:
+    secrets: [apiToken]
+
 containers:
   - name: apps-authentik-postgres
     image: docker.io/postgres:16-alpine

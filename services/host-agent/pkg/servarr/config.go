@@ -34,7 +34,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
 )
@@ -42,6 +41,12 @@ import (
 const (
 	// rootElement is the single root element of every Servarr config.xml.
 	rootElement = "Config"
+
+	// SecretAPIKey is the name under which a Servarr instance publishes its own
+	// ApiKey for its consumers (its `provides.secrets` metadata), and the key a
+	// consumer reads it back under from an integration binding. It lives here
+	// so the provider and its consumers cannot drift apart.
+	SecretAPIKey = "apiKey"
 
 	// apiKeyElement holds the instance API key. Servarr generates 32
 	// lowercase hex characters and honours whatever is present exactly once
@@ -115,18 +120,6 @@ func EnsureExternalAuth(configPath string) (bool, error) {
 		return false, fmt.Errorf("servarr: write %s: %w", configPath, err)
 	}
 	return changed, nil
-}
-
-// SiblingConfigPath returns the config.xml path of another Bloud app's Servarr
-// instance: <bloudDataDir>/<appID>/config/config.xml.
-//
-// Every Servarr app's metadata.yaml mounts <appDataDir>/config at /config, so
-// this is where a consuming app reads a sibling instance's ApiKey from (the
-// same file-convention approach apps/navidrome uses to read Authentik's API
-// token). It is how one app wires itself to another without the host having to
-// hand it the provider's address or credentials.
-func SiblingConfigPath(bloudDataDir, appID string) string {
-	return filepath.Join(bloudDataDir, appID, "config", "config.xml")
 }
 
 // generateAPIKey returns a fresh 32-hex-character API key. Servarr does not

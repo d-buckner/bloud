@@ -15,6 +15,17 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
+// appName is the catalog ID this node belongs to. It is the name the host
+// stores this app's secrets under, which is also the catalog ID a consumer's
+// integration binding resolves them by (ownerApp("apps-authentik-server") is
+// "authentik").
+const appName = "authentik"
+
+// secretAPIToken is the name under which this app publishes its API token,
+// mirroring `provides.sso.secrets` in metadata.yaml. apps/navidrome reads it back
+// from its `sso` binding.
+const secretAPIToken = "apiToken"
+
 // Params are the Authentik-specific values the system configurator needs. They
 // come from the host-agent config (and the shared templateVars map) rather than
 // from Deps, which carries only the generic host services.
@@ -88,7 +99,7 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 		if err := os.MkdirAll(dir, 0777); err != nil {
 			return false, fmt.Errorf("create dir %s: %w", dir, err)
 		}
-		if err := os.Chmod(dir, 0777); err != nil {
+		if err := managedfile.EnsureWritable(dir, 0777); err != nil {
 			return false, fmt.Errorf("chmod dir %s: %w", dir, err)
 		}
 	}
@@ -129,6 +140,16 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 	tokenPath := filepath.Join(state.DataPath, "api-token")
 	if _, err := managedfile.Write(tokenPath, []byte(c.params.TokenKey), 0600); err != nil {
 		return fmt.Errorf("write token file: %w", err)
+	}
+
+	// Publish the same token for the apps that integrate with Authentik
+	// (Navidrome mirrors its users): they read it from their `sso` binding, so
+	// no app has to open the file above. The file stays because the host's own
+	// tooling reads it (config.getAuthentikToken, the CLI and e2e helpers).
+	if c.deps.Secrets != nil {
+		if err := c.deps.Secrets.SetAppSecret(appName, secretAPIToken, c.params.TokenKey); err != nil {
+			return fmt.Errorf("publish API token: %w", err)
+		}
 	}
 
 	client := authentikClient.NewClient(fmt.Sprintf("http://localhost:%d", c.params.Port), c.params.TokenKey).

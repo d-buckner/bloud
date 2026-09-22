@@ -13,6 +13,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
 
 const appName = "qbittorrent"
@@ -165,18 +166,21 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	//     qBittorrent cannot write it.
 	//
 	// 0777, not the sticky 1777: abc has to be able to replace and unlink files
-	// Bloud or the operator owns.
+	// Bloud or the operator owns. A path a container has already taken over
+	// cannot be chmodded from the host at all (EPERM against a subordinate
+	// uid), so the mode is applied only where it is still missing: see
+	// pkg/managedfile.EnsureWritable.
 	configDir := filepath.Join(state.DataPath, "config")
-	if err := os.Chmod(configDir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(configDir, 0o777); err != nil {
 		return false, fmt.Errorf("qbittorrent: make %s writable: %w", configDir, err)
 	}
 	confPath := filepath.Join(state.DataPath, confRelPath)
 	confDir := filepath.Dir(confPath)
-	if err := os.Chmod(confDir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(confDir, 0o777); err != nil {
 		return false, fmt.Errorf("qbittorrent: make %s writable: %w", confDir, err)
 	}
 	if _, err := os.Stat(confPath); err == nil {
-		if err := os.Chmod(confPath, 0o666); err != nil {
+		if err := managedfile.EnsureWritable(confPath, 0o666); err != nil {
 			return false, fmt.Errorf("qbittorrent: make %s writable: %w", confPath, err)
 		}
 	}
@@ -184,7 +188,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		filepath.Join(state.BloudDataPath, "downloads"),
 		filepath.Join(state.BloudDataPath, "downloads", "incomplete"),
 	} {
-		if err := os.Chmod(dir, 0o777); err != nil {
+		if err := managedfile.EnsureWritable(dir, 0o777); err != nil {
 			return false, fmt.Errorf("qbittorrent: make %s writable: %w", dir, err)
 		}
 	}

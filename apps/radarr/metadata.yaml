@@ -40,6 +40,13 @@ integrations:
 sso:
   strategy: forward-auth
 
+# This instance's ApiKey, offered to the apps that integrate with it as a PVR:
+# Prowlarr (indexer sync) and Seerr (request fulfilment) receive it in their
+# `pvr` binding, so neither ever opens this instance's config.xml.
+provides:
+  pvr:
+    secrets: [apiKey]
+
 containers:
   - name: apps-radarr
     image: lscr.io/linuxserver/radarr:6.4.4.10685-ls317

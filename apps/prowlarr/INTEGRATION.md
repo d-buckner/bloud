@@ -87,26 +87,43 @@ ensures exactly one entry in Prowlarr's application-sync list.
 
 ### Discovery
 
-Two facts come from outside Prowlarr, and the framework deliberately does not
-supply either:
+Everything Prowlarr needs about a PVR comes from the binding the orchestrator
+resolves for the `pvr` integration: `state.Integrations.PVRs` holds one
+`configurator.PVRBinding` per declared provider, so nothing here probes a port
+or opens another app's files.
 
-| Fact | How Bloud gets it |
-|------|-------------------|
-| Is the PVR installed? | Probe `http://localhost:<port>/ping` on the host: Servarr's anonymous readiness route (`200` up, `503` while booting). Same approach as `apps/seerr`'s Jellyfin probe. |
-| What is the PVR's API key? | `pkg/servarr.SiblingConfigPath(BLOUD_DATA_DIR, "<app>")` → `<BLOUD_DATA_DIR>/<app>/config/config.xml`, then its `<ApiKey>` (the file-convention approach `apps/navidrome` uses for Authentik's token). |
+| Fact | Where the binding carries it |
+|------|------------------------------|
+| Is the PVR installed? | `binding.Installed`, the same condition as the dependency edge. It decides wire (`true`) from prune (`false`). |
+| Where does Prowlarr reach it? | `binding.BaseURL` (`http://<Node>:<Port>`, composed from the provider's catalog metadata): the address the application document stores as `baseUrl` and the one an existing entry is identified by. `binding.Node` is the container name it is built from, `apps-<catalog id>`, which is the entry Bloud owns. |
+| What is the PVR's API key? | `binding.APIKey`, the key the provider published under its own `pvr` offer in `metadata.yaml` (stored by its configurator). Empty has two causes: the PVR has not published the key yet (wait for its configurator), or this consumer did not declare it in `requires`. |
 
-The ports are constants in this package, because a `pvr` integration carries no
-addresses. Each one names its provider:
+`binding.APIKey` is populated because `apps/prowlarr/metadata.yaml` declares
+`integrations.pvr.requires: [apiKey]`: only a declared requirement is resolved
+into the binding, so declaring the contract alone would hand this app the
+address and no key. The name has to be one the contract carries, and a
+`requires` entry the contract does not name fails the catalog load, so a typo
+surfaces at startup rather than as a key that is quietly empty at runtime.
 
-| PVR | Provider metadata | Probe | Container address |
-|-----|-------------------|-------|-------------------|
-| Sonarr | `apps/sonarr/metadata.yaml` (`port: 8989`) | `http://localhost:8989/ping` | `http://apps-sonarr:8989` |
-| Radarr | `apps/radarr/metadata.yaml` (`port: 7878`) | `http://localhost:7878/ping` | `http://apps-radarr:7878` |
+What is per-PVR here is Prowlarr's own vocabulary for the contract, plus the
+catalog id that names it:
 
-A provider port change is therefore a greppable edit in two places. The
-`pvr:` integration is what makes the graph order Prowlarr after an installed PVR
-and re-run this `PostStart` when that PVR changes state: it is the ordering and
-retry mechanism, not the addressing.
+| PVR | Catalog id | Prowlarr `implementation` / `configContract` |
+|-----|------------|---------------------------------------------|
+| Sonarr | `sonarr` (`apps/sonarr/metadata.yaml` holds the port) | `Sonarr` / `SonarrSettings` |
+| Radarr | `radarr` (`apps/radarr/metadata.yaml` holds the port too) | `Radarr` / `RadarrSettings` |
+
+A provider port change therefore reaches this app through the binding and needs
+no edit here. The `pvr:` integration is what makes the graph order Prowlarr after
+an installed PVR and re-run this `PostStart` when that PVR changes state: it is
+the ordering and retry mechanism. Prowlarr consumes `pvr` and publishes nothing
+of its own (`metadata.yaml` has no `provides`), because its own `ApiKey` is the
+credential Bloud uses to talk *to* it, not one another app consumes. What a
+contract requires is one registry, not a private agreement between two apps: the
+secret names and values a provider must offer live in
+`internal/catalog/contracts.go`, and a `provides` declaration that does not match
+its contract fails the catalog load, so an offer that would reach a consumer
+half-empty never loads.
 
 The wiring addresses containers on `apps-net`, never the host: the calls stay
 inside the container network and never traverse Traefik, so forward-auth is not
@@ -119,7 +136,7 @@ in the path.
  "syncLevel":"fullSync","tags":[],
  "fields":[{"name":"prowlarrUrl","value":"http://apps-prowlarr:9696"},
            {"name":"baseUrl","value":"http://apps-sonarr:8989"},
-           {"name":"apiKey","value":"<Sonarr config.xml ApiKey>"}]}
+           {"name":"apiKey","value":"<binding.APIKey>"}]}
 ```
 
 Radarr is identical with `Radarr (Bloud)` / `Radarr` / `RadarrSettings` /
@@ -153,19 +170,23 @@ creates its own entry beside it.
 
 ### Idempotency, repair, and the masked API key
 
-- The reconcile is `GET` → compare → write only on difference. A new or drifted
-  entry is **tested before it is created**: `POST /api/v1/applications/test`
-  validates the document and the connection to the PVR without saving anything,
-  so a PVR that is unreachable or rejects the key fails the node (the error
-  names the PVR and the HTTP status) and leaves **no half-written entry**
-  behind. Prowlarr runs the same test again inside the create, which is why a
-  rejection can also surface there.
+- The reconcile is `GET` → compare → write only on difference. A new entry is
+  **tested before it is created**: `POST /api/v1/applications/test` validates
+  the document and the connection to the PVR without saving anything, so a
+  rejection fails the node with the PVR and the HTTP status named and leaves
+  **no half-written entry** behind. The connection test runs inside the Prowlarr
+  container, which is the only place the sibling's key is exercised: this
+  configurator never calls a PVR, and the `/ping` probe it used to make was its
+  only direct call. Prowlarr runs the same test again inside the create, which is
+  why a rejection can also surface there. A sibling that is merely still booting
+  is a transient failure, not a rejection (see "Pruning").
 - That order is not a preference, it is a constraint: `/applications/test` runs
   the resource's shared validator, which rejects a document whose `name` another
   entry already holds (`400 Should be unique`). Testing after the create
   therefore always fails against a real instance (verified on the pinned image).
 - **Identity is the address.** `GET` → `findApplication` matches the entry on
-  `implementation` **and** `baseUrl` (the PVR's container address Bloud writes).
+  `implementation` **and** `baseUrl` (the PVR's container address Bloud writes,
+  `binding.BaseURL`).
   The name is not part of the identity (it is the field the operator changes in
   Prowlarr's UI, so a renamed entry is not drift and is not rewritten), and
   neither is the implementation alone: an operator may keep their own entry for
@@ -185,7 +206,7 @@ creates its own entry beside it.
   the instance test the entries it holds and answers `{id, isValid}` per entry.
   An entry the instance reports unreachable (a PVR that was purged and
   reinstalled keeps its address but mints a fresh key) is re-pushed in place
-  with the key its `config.xml` holds now. A *readable* key (empty or absent) is
+  with the key its binding publishes now. A *readable* key (empty or absent) is
   compared verbatim, so a keyless entry is repaired. Without the verdict (an
   instance that cannot answer) the masked match is accepted for that pass rather
   than rewritten on every reconciliation.
@@ -197,24 +218,30 @@ creates its own entry beside it.
 
 ### Pruning
 
-A PVR that does not answer its `/ping` probe is not installed (or not up yet):
-Bloud skips that link and logs at Info. When Bloud had wired that PVR before, it
-also deletes the application entry: an uninstall must not leave Prowlarr pushing
-indexers at a hostname that no longer resolves, and the key left behind in
-`<BLOUD_DATA_DIR>/<app>/config/config.xml` must not be able to resurrect the
-link. The prune names the removed application in the log. It deletes the entry at
-Bloud's own address only: an operator's entry for the same implementation points
-elsewhere and is theirs. The prune runs when `PostStart` runs, so an uninstall
-alone leaves the entry until Prowlarr's next full lifecycle pass: the framework
-does not re-queue consumers when a provider's node is removed
+A PVR whose binding reports `Installed == false` is gone, so Bloud deletes the
+application entry it wired for it: an uninstall must not leave Prowlarr pushing
+indexers at a hostname that no longer resolves. The binding still carries the
+address Bloud wrote (`BaseURL`, from the provider's catalog metadata, which
+outlives its installation), and that address is what identifies the entry, so a
+prune never needs the provider to be reachable. An installed PVR that is merely
+not answering is a different case and is never pruned: its binding still says
+`Installed`, so the link is kept and retried. The prune names the removed
+application in the log. It deletes the entry at Bloud's own address only: an
+operator's entry for the same implementation points elsewhere and is theirs. The
+prune runs when `PostStart` runs, so an uninstall alone leaves the entry until
+Prowlarr's next full lifecycle pass: the framework does not re-queue consumers
+when a provider's node is removed
 (`docs/plans/media-stack-integration.md` §9 F2).
 
-A sibling that answers on its port but has no `ApiKey` on disk is a different
-case: it cannot be wired at all, and that is a misconfiguration rather than a
-race, so it is an error. A sibling that answers and then fails *transiently* (a
-5xx, a connection reset mid-call) is logged and retried on the next
-reconciliation instead; ERROR is terminal in the orchestrator, so a restarting
-PVR must not park this app in `failed`.
+A PVR that is installed but has published no key yet is a third case:
+`binding.APIKey` stays empty until the provider's own configurator has run and
+published it, and a keyless entry would only have to be corrected later, so the
+link is skipped with a warning and the next reconciliation picks the key up. A
+*transient* failure of Prowlarr or of the sibling (a connection failure, a 5xx, a
+429) is logged and retried on the next reconciliation instead; ERROR is terminal
+in the orchestrator, so a restarting PVR must not park this app in `failed`. A
+4xx (a key the PVR rejects, an invalid document) is a real fault and does fail
+the node.
 
 ## Security consequence (read this)
 
@@ -241,12 +268,12 @@ regardless of the port.
 
 | File | Purpose |
 |------|---------|
-| `apps/prowlarr/metadata.yaml` | Container, volume, healthcheck, forward-auth SSO declaration, optional `pvr` integration |
+| `apps/prowlarr/metadata.yaml` | Container, volume, healthcheck, forward-auth SSO declaration, optional `pvr` integration, no `provides` |
 | `apps/prowlarr/configurator.go` | Directory creation, `config.xml` pre-seed, auth verification, PVR application reconcile |
 | `apps/prowlarr/api.go` | Typed surface over `/api/v1/applications` (list/create/delete/test) |
 | `apps/prowlarr/registration.go` | Registers the `apps-prowlarr` factory |
-| `apps/prowlarr/configurator_test.go` | Paths/ports/wiring for this app, with `httptest` fakes for Prowlarr and the PVR probes |
-| `services/host-agent/pkg/servarr/config.go` | Shared `config.xml` reader/writer, `SiblingConfigPath` |
+| `apps/prowlarr/configurator_test.go` | Wiring for this app against an `httptest` fake Prowlarr, with the PVRs supplied as `pvr` bindings |
+| `services/host-agent/pkg/servarr/config.go` | Shared `config.xml` reader/writer and `SecretAPIKey` (the name a PVR publishes its own key under) |
 | `services/host-agent/pkg/servarr/client.go` | Shared `X-Api-Key` client and auth verification |
 | `services/host-agent/pkg/servarr/config_test.go`, `client_test.go` | The shared behaviour's test matrix (create/idempotence/preserve/repair) |
 
@@ -274,9 +301,10 @@ and `baseUrl: http://apps-<pvr>:<port>`; the `apiKey` field always reads back as
 |---------|-------------|
 | Instance asks for a username/password | `AuthenticationMethod` was flipped back to a forms mode (or the key is duplicated). Reconcile: PostStart re-reads `/api/v1/config/host` and repairs it. |
 | `401` from the API in host-agent logs | The `ApiKey` in `config.xml` does not match what the app has loaded (usually a stale container). Reconcile restarts the container on config change; check for a duplicated `ApiKey` element. |
-| `GET /api/v1/applications` is empty although a PVR is installed | The PVR's `/ping` did not answer: it is not installed, is still booting, or its published port moved (update the constant in `configurator.go`). The skip is logged at Info with the probe error. |
+| `GET /api/v1/applications` is empty although a PVR is installed | The PVR has not published its API key yet, so its link is skipped (logged at Warn as `PVR has not published its API key yet; skipping its Prowlarr application`); the key appears once that PVR's own configurator has run, so reconcile again. A compatible PVR this app has no application contract for is skipped too (`no Prowlarr application contract for this PVR`). |
 | An application entry keeps being replaced on every reconciliation | Its `baseUrl`/`prowlarrUrl` are not the container addresses: most often Prowlarr's own `http://localhost:*` defaults, which inside the container mean Prowlarr itself. |
 | Sync to Sonarr/Radarr fails with an auth error | Prowlarr is configured with the public URL (through Traefik, so forward-auth intercepts) instead of the container address, or the PVR rejected Prowlarr's key. Use `apps-sonarr:8989` / `apps-radarr:7878` and re-test the connection in Prowlarr's UI. |
-| `prowlarr: testing the Sonarr application → 400 ... API Key is invalid` in host-agent logs | The PVR rejected the key read from its own `config.xml`: the running container has not picked that key up (the file was rewritten after the app booted) or it was edited by hand. Restart the PVR; Bloud re-reads the file on every pass. |
+| `prowlarr: testing the Sonarr application → 400 ... API Key is invalid` in host-agent logs | The PVR rejected the key it published (the test runs inside the Prowlarr container, against the sibling's container address): the running container has not picked that key up (its `config.xml` was rewritten after the app booted) or it was edited by hand. Restart the PVR; Bloud re-reads the key from the binding on every pass. |
+| `... did not answer the Prowlarr application test` or `... did not answer while updating the application` at Warn | The sibling or Prowlarr itself was mid-restart (a 5xx, a 429, a connection failure). The entry is left as it is and the next reconciliation retries it; nothing to do. |
 | `prowlarr: testing the Sonarr application → 400 ... Should be unique` | Another entry in Prowlarr already uses the name, and it is not the PVR entry Bloud manages (a different implementation renamed to `Sonarr`). Rename or remove it; Bloud will not overwrite an entry it cannot identify. |
 | Container never becomes healthy | `/ping` only turns 200 once the database and web host are up; first boot on a slow disk can use most of the 24 × 5 s window. |

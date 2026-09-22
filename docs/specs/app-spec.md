@@ -299,6 +299,21 @@ The orchestrator already processes nodes in topological order. The only changes:
    (from `integrations:`) connect from the dependent app's entry-point nodes
    to the provider app's container nodes that those entry-points actually need.
 
+   The same declaration also resolves into the consumer's configurator input:
+   each contract becomes a typed slice of bindings in `AppState.Integrations`
+   (`PVRs`, `MediaServers`, `DownloadClients`, `MCPServers`, `SSO`), each
+   provider contributing its catalog id, container name, port, a `BaseURL` (what
+   the app stores) and a `LocalURL` (how the configurator reaches it from the
+   host), plus that contract's payload from the provider's `provides` metadata
+   (credentials from the host store, values such as an MCP path from the
+   metadata). A consumer also declares which of the contract's secrets it reads
+   (`integrations.<contract>.requires`), and only those are resolved, so
+   integrating with a provider never hands an app a credential it did not ask
+   for. The bindings mirror the edges `computeAppDeps` builds, so they never
+   describe a provider the graph does not order, and `Installed` is the same
+   condition as the edge. Consumers therefore never read a provider's files
+   or probe its port; see invariant 15 in `AGENTS.md`.
+
 2. **Container-level health checks**: Each node has its own health check
    defined in metadata (the `healthCheck` block on each container). The
    orchestrator runs these directly rather than delegating to a configurator

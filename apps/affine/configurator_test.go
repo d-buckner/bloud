@@ -41,6 +41,8 @@ func (f *fakeSecrets) GenerateAppAdminPassword(_ string) (string, error) {
 
 func (f *fakeSecrets) GetAppSecret(_, _ string) string { return "" }
 
+func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+
 // configuratorForServer points a configurator at an httptest server so the
 // PostStart admin-bootstrap flow can be exercised without a real server.
 func configuratorForServer(t *testing.T, handler http.Handler, secrets configurator.AppSecretsProvider) *Configurator {

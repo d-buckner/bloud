@@ -57,6 +57,20 @@ On the initialized path Bloud therefore verifies the stored key by *using* it (
 | C4 | `POST /api/v1/settings/jellyfin` with `{"apiKey": …}` | `X-API-Key` | Store it. Seerr tests the key against Jellyfin before persisting, so a key Jellyfin rejects is refused rather than saved |
 | C5 | Library sync (step 4's calls) | `X-API-Key` | Re-fetch and re-enable the libraries, which were fetched with the dead key |
 
+Both the check and the repair reach Jellyfin at the `mediaServer` binding's
+`LocalURL` (the host vantage point), and the repair's admin login sends
+`binding.AdminPassword`, the same credential onboarding uses: the media server's
+address and password come from the binding, not from a probe or another app's
+file.
+
+The password is in the binding because `apps/seerr/metadata.yaml` declares
+`integrations.mediaServer.requires: [adminPassword]`: only a declared
+requirement is resolved into the binding, so declaring the contract alone would
+hand this app Jellyfin's address and no password. The name has to be one the
+contract carries, and a `requires` entry the contract does not name fails the
+catalog load, so a typo in this app's metadata surfaces at startup rather than as
+a password that never arrives.
+
 Failure is a warning, not a node error: Seerr itself keeps working (its own
 login, requests and PVR links are unaffected), so a repair that cannot complete (
 Jellyfin unreachable, the admin password changed) is logged and retried on the
@@ -71,7 +85,7 @@ requests (all paths are described once, in `api.go`):
 | # | Request | Auth | Purpose |
 |---|---------|------|---------|
 | 1 | `GET /api/v1/settings/public` | none | Read `initialized`. `true` → the wizard is done: the Jellyfin connection is re-checked (see "The Jellyfin connection after onboarding"), then jump to step 6. |
-| 2 | `GET http://localhost:8096/System/Info/Public` | none | Guard: is a media server installed? |
+| 2 | the resolved `mediaServer` binding (`state.Integrations.MediaServers`, one `configurator.MediaServerBinding` per declared provider) | n/a | Guard: is a media server installed and has it published its bootstrap admin password? Not installed (`binding.Installed` false), or an empty `binding.AdminPassword`, defers onboarding. |
 | 3 | `POST /api/v1/auth/jellyfin` | none | Verify the Jellyfin admin credentials **and** create admin user id 1 |
 | 4 | `GET /api/v1/settings/jellyfin/library?sync=true`, then `GET /api/v1/settings/jellyfin/library?enable=<ids>`, then `POST /api/v1/settings/jellyfin/sync` | `X-API-Key` | Enable every library and start the scan (best-effort) |
 | 5 | `POST /api/v1/settings/initialize`, then `GET /api/v1/settings/public` | `X-API-Key` | Mark setup complete and confirm the flag flipped |
@@ -83,9 +97,15 @@ Details that matter:
   created from a Jellyfin *administrator* login, so with no Jellyfin there is
   nothing to do: PostStart logs a warning (`No media server is installed, so
   Seerr's onboarding is deferred…`) and returns `nil`. A later reconciliation
-  re-runs PostStart once Jellyfin is installed. The probe is unauthenticated and
-  unretried (a 5 s timeout) because "not installed", "still booting" and
-  "unreachable" are all the same answer here.
+  re-runs PostStart once Jellyfin is installed. Nothing is probed: the guard is
+  the resolved `mediaServer` binding, so a media server that is not part of the
+  stack (`binding.Installed` false) and one that is installed but has not
+  published its bootstrap admin password yet are the same answer, each with its
+  own warning (`the media server has not published its bootstrap admin password
+  yet`), and both are retried. An empty `binding.AdminPassword` has two causes:
+  the media server has not published it yet (a wait), or this app did not
+  declare `requires: [adminPassword]` under `integrations.mediaServer` (a
+  metadata mistake the next reconciliation cannot fix).
   The node stays RUNNING rather than ERROR on purpose: ERROR is terminal, so an
   app installed before its provider would never converge once the provider
   appeared. The cost is stated plainly: an instance that has never finished
@@ -103,9 +123,9 @@ Details that matter:
   ```json
   {
     "username": "bloud-bootstrap-admin",
-    "password": "<deps.Secrets.GenerateAppAdminPassword(\"jellyfin\")>",
-    "hostname": "apps-jellyfin",
-    "port": 8096,
+    "password": "<binding.AdminPassword>",
+    "hostname": "<binding.Node>",
+    "port": <binding.Port>,
     "useSsl": false,
     "urlBase": "",
     "email": "bloud-admin@localhost",
@@ -113,11 +133,19 @@ Details that matter:
   }
   ```
 
-  `username`/`password` are Jellyfin's Bloud-managed bootstrap admin
-  (`apps/jellyfin/configurator.go` creates it, never deletes it, and derives
-  its password from the same secrets key). `hostname` must be the container
-  DNS name (`localhost` would resolve *inside* the Seerr container) and
-  `serverType: 2` is `MediaServerType.JELLYFIN` (`server/constants/server.ts`).
+  `username`/`password` are Jellyfin's Bloud-managed bootstrap admin:
+  `apps/jellyfin/configurator.go` creates the account, never deletes it, and
+  publishes that same password as the `adminPassword` secret its `mediaServer`
+  offer declares (`provides: {mediaServer: {secrets: [adminPassword]}}`), which
+  is where the binding carries it. A contract's required secrets and values are
+  defined once in `internal/catalog/contracts.go`, and a declaration that does
+  not match them fails the catalog load, so the offer cannot reach a consumer
+  half-empty. Seerr no longer calls `GenerateAppAdminPassword` (the host still
+  does, for Jellyfin itself).
+  `hostname` is the provider's container name (`binding.Node`; `localhost` would
+  resolve *inside* the Seerr container) and `port` its published port
+  (`binding.Port`), so no address is assumed here, and `serverType: 2` is
+  `MediaServerType.JELLYFIN` (`server/constants/server.ts`).
   In the same call Seerr also mints its own Jellyfin API key and stores the
   server id, so no separate media-server configuration step is needed.
   **Re-runs are handled explicitly:** once Jellyfin is configured, Seerr
@@ -147,7 +175,7 @@ Details that matter:
   still reconciles the PVRs, which is what makes a PVR installed *after*
   Seerr work: the optional `pvr` integration in `metadata.yaml` creates the
   graph edge once the provider is installed, and the staleness path re-runs
-  Seerr's PostStart, which now finds the new sibling. Whenever onboarding is
+  Seerr's PostStart, which now sees that PVR's binding. Whenever onboarding is
   deferred (no Jellyfin), the PVR step is deferred with it: the DVR write
   needs the admin user step 3 creates.
 
@@ -160,15 +188,15 @@ entry** in one of two lists (`settings.radarr`, `settings.sonarr`:
 
 | # | Request | Auth | Purpose |
 |---|---------|------|---------|
-| 1 | `GET http://localhost:<port>/ping` | none | Is this PVR installed? (`<port>`: 8989 Sonarr, 7878 Radarr) |
-| 2 | `<BloudDataPath>/<pvr>/config/config.xml` (file read) | n/a | The sibling's `ApiKey` (`pkg/servarr.SiblingConfigPath` + `APIKey`) |
-| 3 | `GET http://localhost:<port>/api/v3/qualityprofile` | `X-Api-Key: <sibling key>` | Pick the profile the entry names |
-| 4 | `GET /api/v1/settings/<radarr\|sonarr>` | `X-API-Key` | Does an entry for `apps-<pvr>` exist, and is it current? |
-| 5 | `POST /api/v1/settings/<pvr>` (create) or `PUT /api/v1/settings/<pvr>/<id>` (repair) | `X-API-Key` | Store the entry |
-| 6 | `DELETE /api/v1/settings/<pvr>/<id>` | `X-API-Key` | Prune the entry of a PVR that is gone |
+| 1 | the resolved `pvr` binding (`state.Integrations.PVRs`, one `configurator.PVRBinding` per declared provider) | n/a | Is this PVR installed (`binding.Installed`), where does the DVR entry point (`binding.Node`, `binding.Port`) and what key did the PVR publish (`binding.APIKey`)? Nothing is probed and no sibling file is read. |
+| 2 | `GET <binding.LocalURL>/api/v3/qualityprofile` | `X-Api-Key: <the PVR's published key>` | Pick the profile the entry names. The read leaves Seerr's container, so it uses the host vantage point (`http://localhost:<binding.Port>`), not the address the app stores |
+| 3 | `GET /api/v1/settings/<radarr\|sonarr>` | `X-API-Key` | Does an entry for `<binding.Node>` exist, and is it current? |
+| 4 | `POST /api/v1/settings/<pvr>` (create) or `PUT /api/v1/settings/<pvr>/<id>` (repair) | `X-API-Key` | Store the entry |
+| 5 | `DELETE /api/v1/settings/<pvr>/<id>` | `X-API-Key` | Prune the entry of a PVR that is gone |
 
-The entry Bloud creates (Sonarr shown; Radarr is the same body with
-`hostname: apps-radarr`, `port: 7878`, `activeDirectory: "/movies"` and **no**
+The entry Bloud creates (Sonarr shown, where `hostname`/`port` are the
+binding's `Node`/`Port`; Radarr is the same body with `hostname: apps-radarr`,
+`port: 7878`, `activeDirectory: "/movies"` and **no**
 `seriesType`/`animeSeriesType`/`enableSeasonFolders`; `RadarrSettings` has no
 such fields, so sending them would be a shape Seerr never stores itself):
 
@@ -177,7 +205,7 @@ such fields, so sending them would be a shape Seerr never stores itself):
   "name": "Sonarr",
   "hostname": "apps-sonarr",
   "port": 8989,
-  "apiKey": "<Sonarr config.xml ApiKey>",
+  "apiKey": "<binding.APIKey>",
   "useSsl": false,
   "baseUrl": "",
   "activeProfileId": 4,
@@ -195,15 +223,20 @@ such fields, so sending them would be a shape Seerr never stores itself):
 
 Details that matter:
 
-- **Ports and container names are duplicated from the providers' catalog
-  entries.** `apps/sonarr/metadata.yaml` (8989) and `apps/radarr/metadata.yaml`
-  (7878) publish the ports held as constants in `configurator.go`, and
-  container names are `apps-<catalog id>` by invariant. Bloud does not hand a
-  configurator its provider's address, so this coupling is the accepted cost of
-  keeping cross-app wiring app-side: a provider port change is a greppable edit
-  in `apps/seerr` and `apps/prowlarr` (which holds the same constants for the
-  same PVRs). The probe runs on the host's published port; the DVR entry stores
-  the container name, because inside `apps-net` that is what resolves.
+- **The address and the key come from the `pvr` binding.** `binding.Node`
+  (`apps-<catalog id>`) and `binding.Port` are the fields the DVR entry stores,
+  and `binding.APIKey` is the key the PVR published under its own `pvr` offer.
+  `apps/seerr/metadata.yaml` declares `integrations.pvr.requires: [apiKey]`,
+  which is what puts that key in the binding at all: only a declared requirement
+  is resolved, so declaring the contract alone would hand Seerr the address and
+  no key. The name has to be one the contract carries, and a `requires` entry
+  the contract does not name fails the catalog load.
+  The host-side profile read uses `binding.LocalURL`
+  (`http://localhost:<binding.Port>`), because a configurator's own calls leave
+  Seerr's container, while the entry stores the container name: inside
+  `apps-net` that is what resolves. The ports themselves live in each provider's
+  `metadata.yaml` (`apps/sonarr`: 8989, `apps/radarr`: 7878) and the orchestrator
+  resolves them once, so no port is restated here.
 - **Ordering is the DAG's, not luck.** `metadata.yaml` declares the optional
   `pvr` integration, so `computeAppDeps` brings each installed PVR up before
   Seerr, and the PVR's own configurator created its root folder, `/shows`
@@ -217,36 +250,40 @@ Details that matter:
   ids 1-6 with `HD-1080p` = 4, but an admin can add profiles, and a DVR entry
   stores both the id and the name: a hardcoded 4 would be wrong for a PVR
   whose profile set was edited.
-- **An entry is identified by its hostname.** `hostname: apps-sonarr` means
-  Bloud wrote it and may repair it; anything else (Seerr's own UI defaults to
-  `localhost`) belongs to the admin and is left alone. Matching by name instead
-  would make a hand-added entry look like Bloud's.
+- **An entry is identified by its hostname.** `hostname: <binding.Node>` (for
+  Sonarr, `apps-sonarr`) means Bloud wrote it and may repair it; anything else
+  (Seerr's own UI defaults to `localhost`) belongs to the admin and is left
+  alone. Matching by name instead would make a hand-added entry look like
+  Bloud's.
 - **Drift is repaired with `PUT`, not `POST`.** `POST /settings/<pvr>` *always*
   appends with a fresh id (`server/routes/settings/radarr.ts:15-37`), so using
   it for an update would add a second entry for the same PVR on every
   reconciliation that saw drift. Create is POST (answered `201`); repair is
   `PUT /settings/<pvr>/<id>` (answered `200`, `:77-108`).
-- **An unreadable key is required on the host, not guessed.** The
-  `<ApiKey>` element the PVR wrote into its own `config.xml` is the source of
-  truth (`pkg/servarr.SiblingConfigPath`/`APIKey`, the same convention
-  `apps/navidrome` uses for Authentik's token). A PVR that answers but has no
-  readable key yet is skipped with a warning: writing an entry with an empty
-  key would only have to be corrected later.
-- **Prune rule.** A PVR that does not answer its probe gets its entry
-  (`hostname: apps-<pvr>`) deleted, so requests do not keep pointing at a
-  hostname that no longer resolves. The sibling's `config.xml` is the trace
-  that separates "was installed and is gone" from "was never installed":
-  without it nothing can have been wired, and a stack with no PVR installed
-  makes **no** Seerr call at all. Consequence: a PVR uninstalled *with* a data
-  purge leaves no trace and its entry stays; remove it in Seerr → Settings →
-  Services.
-- **Failure policy.** Missing PVR → Info, skip (and prune when traced), never
-  an error: the instance stays healthy and the next reconciliation retries.
-  Present but not ready (key unreadable, profile list returning 5xx or
-  unreachable) → Warn, skip. Present and *rejecting* (the PVR answers
-  `4xx` to the profile read with the key from its own config, or Seerr rejects
-  the DVR list/write) → an error naming the sibling and the status, because
-  that is a misconfiguration an operator has to see.
+- **A key that has not been published yet is not guessed.** A PVR the
+  orchestrator reports as installed can still be mid-startup: its binding
+  carries no `APIKey` until that PVR's own configurator has run and published
+  it, and such a PVR is skipped with a warning, because writing an entry with an
+  empty key would only have to be corrected later. The next reconciliation picks
+  the key up. An empty `APIKey` has two causes, and only one of them is a wait:
+  the PVR has not published the key yet, or this app did not declare
+  `requires: [apiKey]` under `integrations.pvr` (a metadata mistake, which this
+  skip would otherwise disguise as a slow provider).
+- **Prune rule.** The binding is the trace: a PVR whose `binding.Installed` is
+  false is gone, and the entry whose `hostname` is `binding.Node` is deleted, so
+  requests do not keep pointing at a hostname that no longer resolves. That
+  address outlives the uninstall because it comes from the provider's catalog
+  metadata, so the prune always recognises what Bloud wrote, whether or not the
+  provider's data was purged along with it. Pruning still asks Seerr for its PVR
+  list (one read per declared PVR), so a stack with no PVR installed makes no
+  write unless it finds a stale entry to delete.
+- **Failure policy.** PVR not installed → prune (when an entry for its address
+  exists), never an error: the instance stays healthy and the next reconciliation
+  retries. Installed but not ready (no published key, profile list returning 5xx
+  or unreachable) → Warn, skip. Installed and *rejecting* (the PVR answers `4xx`
+  to the profile read with its published key, or Seerr rejects the DVR
+  list/write) → an error naming the sibling and the status, because that is a
+  misconfiguration an operator has to see.
 - **Updates are compared field by field.** Only the fields Bloud writes are
   compared (`dvrSettings.sameWiring`), and a matching entry means no write at
   all: ids and `tags` are Seerr's, and an admin's edits to the rest are not
@@ -328,7 +365,8 @@ relevant for correct client IPs behind a proxy).
 |------|---------|
 | `apps/seerr/metadata.yaml` | Container, port 5055, volume, healthcheck, `sso.strategy: none`, the optional `mediaServer` and `pvr` integrations |
 | `apps/seerr/api.go` | Typed client for the onboarding and DVR endpoints (paths/payloads, with v3.4.1 source citations) |
-| `apps/seerr/configurator.go` | PreStart (config dir only) and PostStart (onboarding + PVR wiring, sibling discovery) |
+| `apps/seerr/configurator.go` | PreStart (config dir only) and PostStart (onboarding + PVR wiring from the resolved `mediaServer`/`pvr` bindings) |
+| `apps/seerr/jellyfin.go` | The Jellyfin coupling: verify the stored key by use, mint a new one with the binding's bootstrap password, push it into Seerr |
 | `apps/seerr/configurator_test.go` | Fake Seerr, fake Jellyfin and fake PVRs; flow, guard, PVR payload/idempotency/drift/prune tests |
 | `apps/seerr/registration.go` | Registers the `apps-seerr` node |
 
@@ -349,14 +387,15 @@ not flip, and PreStart: the config dir exists as `0777`, `settings.json` is
 across runs.
 
 For the PVR step: the exact create payload for both PVRs (Radarr without the
-Sonarr-only fields), `X-API-Key` on the DVR calls and the sibling's key on the
-profile read, creation after `settings/initialize`, no Seerr call at all when no
-PVR is installed, a PVR installed after onboarding being wired on a PostStart
-re-run, nothing written on a second reconcile, drift repaired with `PUT` on the
-existing id (never a second `POST`), the stale entry pruned when the probe fails
-while an admin's own entry is left alone, the `HD-1080p` → first-profile
-fallback, a 5xx profile list skipped without failing, and a 4xx profile list
-failing with the sibling named.
+Sonarr-only fields), `X-API-Key` on the DVR calls and the PVR's published key on
+the profile read, creation after `settings/initialize`, no DVR write and no
+profile read for a PVR whose binding is not installed, a PVR installed after
+onboarding being wired on a PostStart re-run, nothing written on a second
+reconcile, drift repaired with `PUT` on the existing id (never a second `POST`),
+the stale entry pruned when its binding is not installed while an admin's own
+entry is left alone, the entry kept when the PVR is installed but not answering,
+the `HD-1080p` → first-profile fallback, a 5xx profile list skipped without
+failing, and a 4xx profile list failing with the sibling named.
 
 ## Troubleshooting
 
@@ -364,9 +403,9 @@ failing with the sibling named.
 |---------|-------------|
 | Stuck on the setup wizard | PostStart did not complete: check host-agent logs for `settings/initialize did not mark the instance initialized` or for the auth step. |
 | Container restart-loops at ~1 s with `SQLITE_ERROR: no such table: migrations` | `settings.json` was pre-seeded with a partial file, so `main` lost its defaults and `checkOverseerrMerge` treated the fresh DB as a legacy Overseerr install. Bloud must never write that file (see above); delete it and let Seerr regenerate it. |
-| `Jellyfin is not installed yet; Seerr onboarding is deferred` on every reconcile | Expected while Jellyfin is absent; install Jellyfin and reconcile again. |
+| `No media server is installed, so Seerr's onboarding is deferred` on every reconcile | Expected while no media server is part of the stack (the `mediaServer` binding is not installed); install Jellyfin and reconcile again. If Jellyfin is installed, the same deferral instead reads `the media server has not published its bootstrap admin password yet`: its configurator has not run yet, so reconcile again. |
 | `<path> has no main.apiKey; Seerr onboarding cannot authenticate` | `settings.json` is missing or was replaced without a key: the container has not completed a boot (Seerr writes that file before it starts listening). Check the container's logs; Bloud never writes this file. |
-| Requests stay "Requested" and never move to the download queue | No PVR wired: look for `PVR is not installed; Seerr will not fulfil through it` (install Sonarr/Radarr), `PVR is running but its API key is not readable yet` (the sibling's `config.xml` is missing; check its container), or an error naming the sibling and a status (its key was rejected). The PVR also needs its root folder registered and a download client: `apps/sonarr`/`apps/radarr` own that. |
-| Seerr keeps a services entry for a PVR that is gone | The PVR was uninstalled with a data purge, so its entry could not be pruned automatically (see the prune rule); delete it in Seerr → Settings → Services. |
+| Requests stay "Requested" and never move to the download queue | No PVR wired: look for `PVR has not published its API key yet; skipping it` (the PVR is installed but its configurator has not run yet; check its container), `removed the stale Seerr PVR entry` (Bloud pruned the entry of a PVR that is no longer installed), `no Seerr DVR settings for this PVR; skipping it` (a compatible PVR Seerr has no DVR vocabulary for), or an error naming the sibling and a status (its published key was rejected). The PVR also needs its root folder registered and a download client: `apps/sonarr`/`apps/radarr` own that. |
+| Seerr keeps a services entry for a PVR that is gone | Either the entry's hostname is not the one Bloud writes (`binding.Node`), so it is treated as an admin's own entry, or no reconciliation has run since the uninstall: the prune happens in PostStart, and the framework does not re-queue consumers when a provider's node is removed. Reconcile, or delete the entry in Seerr → Settings → Services. |
 | Users can see no libraries | Library sync is best-effort and failed (logged as a warning); enable libraries in Seerr → Settings → Jellyfin, or check the Jellyfin connection. |
 | Container reports unhealthy / permission denied in logs | The config directory is not writable by uid 1000: PreStart's `0777` was not applied (check the mount source path). |

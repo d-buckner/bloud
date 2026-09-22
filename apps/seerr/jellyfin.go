@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // Seerr's Jellyfin coupling: the API key Seerr mints *into Jellyfin* while it
@@ -95,15 +96,12 @@ func readJellyfinKey(path string) (string, error) {
 // definitive "no"; any other failure (Jellyfin unreachable, a 5xx) is returned
 // as an error so the caller can leave the coupling alone rather than conclude
 // that a reachable Jellyfin rejected the key.
-func (c *Configurator) jellyfinKeyValid(ctx context.Context, key string) (bool, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
-	err := c.jellyfin.GET(jellyfinKeyPath).
+func (c *Configurator) jellyfinKeyValid(ctx context.Context, jellyfin *appclient.Client, key string) (bool, error) {
+	err := jellyfin.GET(jellyfinKeyPath).
 		Header(jellyfinKeyHeader, key).
 		OK(http.StatusOK).
 		NoRetry().
-		Exec(probeCtx)
+		Exec(ctx)
 	if err == nil {
 		return true, nil
 	}
@@ -119,11 +117,11 @@ func (c *Configurator) jellyfinKeyValid(ctx context.Context, key string) (bool, 
 // session token the key-minting call authenticates with. It is the same
 // credential Seerr's onboarding logs in with (bloud-bootstrap-admin, the
 // account apps/jellyfin creates and never deletes).
-func (c *Configurator) jellyfinAdminToken(ctx context.Context, password string) (string, error) {
+func (c *Configurator) jellyfinAdminToken(ctx context.Context, jellyfin *appclient.Client, password string) (string, error) {
 	var login struct {
 		AccessToken string `json:"AccessToken"`
 	}
-	if err := c.jellyfin.POST(jellyfinAuthPath).
+	if err := jellyfin.POST(jellyfinAuthPath).
 		Anonymous().
 		Header("Authorization", jellyfinDeviceAuth).
 		JSON(map[string]string{"Username": jellyfinAdminUsername, "Pw": password}).
@@ -141,8 +139,8 @@ func (c *Configurator) jellyfinAdminToken(ctx context.Context, password string) 
 // POST /Auth/Keys answers 204 with no body, so the key is read back from the
 // collection (Jellyfin returns tokens in clear there), newest first for the
 // app name Seerr mints under, in case an earlier one survived.
-func (c *Configurator) mintJellyfinKey(ctx context.Context, adminToken string) (string, error) {
-	if err := c.jellyfin.POST(jellyfinKeysPath).
+func (c *Configurator) mintJellyfinKey(ctx context.Context, jellyfin *appclient.Client, adminToken string) (string, error) {
+	if err := jellyfin.POST(jellyfinKeysPath).
 		Query("App", jellyfinKeyApp).
 		Header(jellyfinKeyHeader, adminToken).
 		OK(http.StatusNoContent).
@@ -151,7 +149,7 @@ func (c *Configurator) mintJellyfinKey(ctx context.Context, adminToken string) (
 	}
 
 	var keys jellyfinKeyList
-	if err := c.jellyfin.GET(jellyfinKeysPath).
+	if err := jellyfin.GET(jellyfinKeysPath).
 		Header(jellyfinKeyHeader, adminToken).
 		OK(http.StatusOK).
 		DoInto(ctx, &keys); err != nil {
@@ -194,7 +192,12 @@ func (c *Configurator) pushJellyfinKey(ctx context.Context, seerrKey, jellyfinKe
 // keeps working (its own login, requests, and the PVR links are unaffected), so
 // a failure here is logged and retried on the next reconciliation instead of
 // parking the node in the terminal ERROR state.
-func (c *Configurator) reconcileJellyfinCoupling(ctx context.Context, settingsPath string) {
+func (c *Configurator) reconcileJellyfinCoupling(
+	ctx context.Context,
+	settingsPath string,
+	jellyfin *appclient.Client,
+	binding configurator.MediaServerBinding,
+) {
 	seerrKey, err := readAPIKey(settingsPath)
 	if err != nil {
 		c.logger.Warn("cannot read Seerr's API key; skipping the Jellyfin connection check", "error", err)
@@ -213,7 +216,7 @@ func (c *Configurator) reconcileJellyfinCoupling(ctx context.Context, settingsPa
 		return
 	}
 
-	valid, err := c.jellyfinKeyValid(ctx, storedKey)
+	valid, err := c.jellyfinKeyValid(ctx, jellyfin, storedKey)
 	if err != nil {
 		c.logger.Warn("cannot verify Seerr's Jellyfin API key", "error", err)
 		return
@@ -224,17 +227,17 @@ func (c *Configurator) reconcileJellyfinCoupling(ctx context.Context, settingsPa
 
 	c.logger.Info("Seerr's Jellyfin API key is no longer accepted (the media server was reinstalled or its data was purged); issuing a new one")
 
-	password, err := c.jellyfinAdminPassword()
-	if err != nil {
-		c.logger.Warn("cannot repair the Jellyfin connection: no bootstrap admin password", "error", err)
+	password := binding.AdminPassword
+	if password == "" {
+		c.logger.Warn("cannot repair the Jellyfin connection: the media server has not published its bootstrap admin password")
 		return
 	}
-	adminToken, err := c.jellyfinAdminToken(ctx, password)
+	adminToken, err := c.jellyfinAdminToken(ctx, jellyfin, password)
 	if err != nil {
 		c.logger.Warn("cannot repair the Jellyfin connection", "error", err)
 		return
 	}
-	freshKey, err := c.mintJellyfinKey(ctx, adminToken)
+	freshKey, err := c.mintJellyfinKey(ctx, jellyfin, adminToken)
 	if err != nil {
 		c.logger.Warn("cannot repair the Jellyfin connection", "error", err)
 		return

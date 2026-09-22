@@ -124,10 +124,20 @@ image's init chowns `/config` **recursively** but `/downloads` only at its mount
 root, non-recursively and only when it is a mount point, so neither the conf
 file nor the subdirectories Bloud pre-creates are normalised to the daemon's
 user, and both identities have to be able to write them. `PreStart` therefore
-chmods the conf file `0666` and the directories `0777` (see the row above), which
-is what keeps the merge working after the first boot: `INIFile.Save` rewrites the
-conf in place, so a file the container owns would otherwise make the next repair
-fail with EACCES and take the node to ERROR.
+asks for the conf file `0666` and the directories `0777` (see the row above),
+which is what keeps the merge working after the first boot: `INIFile.Save`
+rewrites the conf in place, so a file the container owns would otherwise make the
+next repair fail with EACCES and take the node to ERROR.
+
+The mode is only applied where it is still missing
+(`pkg/managedfile.EnsureWritable`). The daemon is free to recreate its own
+config subdirectory and conf file as `abc` with a narrower mode (0755 and 0644):
+the host cannot chmod a path a subordinate uid owns, and does not need to, since
+the owner is the process that writes there. Nothing is written in that case
+either, because `PreStart` returns as soon as the managed keys already hold their
+values, so a restart converges on the file the daemon left behind. It is only a
+*drifted* conf the host cannot rewrite, and that fails with EACCES naming the
+file rather than with a puzzling chmod error.
 
 ## Files
 

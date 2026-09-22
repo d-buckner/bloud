@@ -23,26 +23,24 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
 )
 
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// fakeSecrets implements configurator.AppSecretsProvider with a fixed password
-// so the Jellyfin-credential path is exercised without a real store.
+// fakeSecrets implements configurator.AppSecretsProvider. The credentials Seerr
+// onboards and repairs with come from the bindings the orchestrator resolves,
+// so this only has to satisfy the dependency the configurator is built with.
 type fakeSecrets struct {
 	password string
-	apps     []string
 }
 
-func (f *fakeSecrets) GenerateAppAdminPassword(app string) (string, error) {
-	f.apps = append(f.apps, app)
-	return f.password, nil
-}
+func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return f.password, nil }
 
 func (f *fakeSecrets) GetAppSecret(string, string) string { return "" }
+
+func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
 
 // recordedRequest is one request the fake Seerr received.
 type recordedRequest struct {
@@ -311,11 +309,12 @@ func (f *fakeSeerr) serveDVR(w http.ResponseWriter, r *http.Request, body []byte
 	}
 }
 
-// fakeJellyfin serves Jellyfin's public info endpoint and counts probes, so
-// tests can prove the availability guard ran (or did not). It also models the
-// credential side: which API keys it accepts, the admin login, and minting a
-// key (POST /Auth/Keys answers 204, the token is read back from the list: the
-// shape the pinned server really has).
+// fakeJellyfin is a stand-in for the media server Seerr onboards against and
+// keeps its connection to: it validates the API keys Bloud checks (GET
+// /System/Info answers 401 for one it does not know), the admin login, and
+// minting a key (POST /Auth/Keys answers 204, the token is read back from the
+// list: the shape the pinned server really has). hits counts every request, so
+// a test can prove a pass reached the media server, or did not.
 type fakeJellyfin struct {
 	server *httptest.Server
 	hits   atomic.Int32
@@ -335,7 +334,7 @@ type fakeJellyfin struct {
 	checked []string
 }
 
-func newFakeJellyfin(t *testing.T, healthy bool) *fakeJellyfin {
+func newFakeJellyfin(t *testing.T) *fakeJellyfin {
 	t.Helper()
 	f := &fakeJellyfin{
 		validKeys: map[string]bool{},
@@ -344,13 +343,6 @@ func newFakeJellyfin(t *testing.T, healthy bool) *fakeJellyfin {
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.hits.Add(1)
 		switch {
-		case r.URL.Path == jellyfinProbePath:
-			if !healthy {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			writeJSON(w, map[string]any{"ServerName": "jellyfin"})
-
 		case r.URL.Path == jellyfinKeyPath:
 			key := r.Header.Get(jellyfinKeyHeader)
 			f.mu.Lock()
@@ -421,22 +413,17 @@ func (f *fakeJellyfin) mintedApps() []string {
 	return append([]string(nil), f.minted...)
 }
 
-// newConfigurator wires a configurator to the fake Seerr (via the baseURL test
-// seam) and to the Jellyfin probe target. The PVR seams point at a closed
-// listener, so an onboarding test neither depends on nor talks to a real
-// PVR on localhost:7878/8989; tests that need a PVR override the seam.
-func newConfigurator(t *testing.T, fake *fakeSeerr, jellyfinURL string, secrets configurator.AppSecretsProvider) *Configurator {
+// newConfigurator wires a configurator to the fake Seerr through the baseURL
+// test seam. The providers are not wired here: their address and credentials
+// reach the configurator as the bindings the orchestrator resolves into
+// AppState, which is what newState builds.
+func newConfigurator(t *testing.T, fake *fakeSeerr, secrets configurator.AppSecretsProvider) *Configurator {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
 	t.Cleanup(server.Close)
 
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: secrets})
 	c.baseURL = server.URL
-	c.jellyfinBaseURL = jellyfinURL
-	c.pvrBaseURLs = map[string]string{
-		radarrAppName: deadURL(t),
-		sonarrAppName: deadURL(t),
-	}
 	return c
 }
 
@@ -449,9 +436,96 @@ func deadURL(t *testing.T) string {
 	return url
 }
 
-// fakePVR is an httptest-backed stand-in for one Servarr instance: it answers
-// the /ping probe, serves the quality profile list, and records the API key
-// the profile read carried.
+// newState returns an AppState in the test's own temp dir carrying the
+// integration bindings the orchestrator resolves. It is the only place a test
+// says where a provider lives: a configurator discovers nothing itself.
+func newState(t *testing.T, integrations configurator.Integrations) *configurator.AppState {
+	t.Helper()
+	return &configurator.AppState{
+		DataPath:     filepath.Join(t.TempDir(), "seerr"),
+		Integrations: integrations,
+	}
+}
+
+// stateWithJellyfin is newState for the common stack: Seerr plus the installed
+// Jellyfin it onboards against.
+func stateWithJellyfin(t *testing.T, binding configurator.MediaServerBinding) *configurator.AppState {
+	t.Helper()
+	return newState(t, configurator.Integrations{
+		MediaServers: []configurator.MediaServerBinding{binding},
+	})
+}
+
+// jellyfinBinding is the `mediaServer` binding the orchestrator resolves for an
+// installed Jellyfin: the node and port Seerr stores for the media server, the
+// bootstrap admin password Jellyfin published, and the address this
+// configurator reaches it at from the host (here, the fake). An empty password
+// is the provider that has not published one yet, which defers onboarding.
+func jellyfinBinding(localURL, password string) configurator.MediaServerBinding {
+	return configurator.MediaServerBinding{
+		ProviderRef: configurator.ProviderRef{
+			App:       jellyfinAppName,
+			Installed: true,
+			Node:      "apps-jellyfin",
+			Port:      8096,
+			BaseURL:   "http://apps-jellyfin:8096",
+			LocalURL:  localURL,
+		},
+		AdminPassword: password,
+	}
+}
+
+// radarrBinding and sonarrBinding are the `pvr` bindings for the two PVRs Seerr
+// can fulfil requests through, with the address and the key each published. An
+// empty key is the provider that has not published one yet, which leaves its
+// DVR entry alone.
+func radarrBinding(localURL, apiKey string) configurator.PVRBinding {
+	return configurator.PVRBinding{
+		ProviderRef: configurator.ProviderRef{
+			App:       radarrAppName,
+			Installed: true,
+			Node:      "apps-radarr",
+			Port:      7878,
+			BaseURL:   "http://apps-radarr:7878",
+			LocalURL:  localURL,
+		},
+		APIKey: apiKey,
+	}
+}
+
+func sonarrBinding(localURL, apiKey string) configurator.PVRBinding {
+	return configurator.PVRBinding{
+		ProviderRef: configurator.ProviderRef{
+			App:       sonarrAppName,
+			Installed: true,
+			Node:      "apps-sonarr",
+			Port:      8989,
+			BaseURL:   "http://apps-sonarr:8989",
+			LocalURL:  localURL,
+		},
+		APIKey: apiKey,
+	}
+}
+
+// notInstalledPVR is the binding of a PVR the stack does not include. Only the
+// edge changes: the address survives, because it comes from the provider's
+// catalog metadata, which outlives its installation, and that is what lets a
+// consumer recognise - and here, prune - the entry it wrote for it.
+func notInstalledPVR(binding configurator.PVRBinding) configurator.PVRBinding {
+	binding.Installed = false
+	return binding
+}
+
+// notInstalledMediaServer is notInstalledPVR for the media server: the provider
+// is not part of the stack, so Seerr's onboarding defers on it.
+func notInstalledMediaServer(binding configurator.MediaServerBinding) configurator.MediaServerBinding {
+	binding.Installed = false
+	return binding
+}
+
+// fakePVR is an httptest-backed stand-in for one Servarr instance: it serves the
+// quality profile list (the one call Seerr's configurator makes to a PVR) and
+// records the API key that read carried.
 type fakePVR struct {
 	server *httptest.Server
 
@@ -461,7 +535,6 @@ type fakePVR struct {
 	profiles      []map[string]any
 
 	mu          sync.Mutex
-	pings       int
 	profileKeys []string
 }
 
@@ -471,11 +544,6 @@ func newFakePVR(t *testing.T, profiles []map[string]any) *fakePVR {
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case pvrProbePath:
-			f.mu.Lock()
-			f.pings++
-			f.mu.Unlock()
-			writeJSON(w, map[string]any{"status": "ok"})
 		case qualityProfilePath:
 			f.mu.Lock()
 			f.profileKeys = append(f.profileKeys, r.Header.Get(servarrAPIKeyHeader))
@@ -507,19 +575,11 @@ func (f *fakePVR) profileKey() string {
 	return f.profileKeys[len(f.profileKeys)-1]
 }
 
-// writeSiblingConfig writes <bloudDataDir>/<appID>/config/config.xml the way a
-// booted Servarr instance leaves it (pkg/servarr: the ApiKey element is what a
-// consumer reads to authenticate against the sibling's API).
-func writeSiblingConfig(t *testing.T, bloudDataDir, appID, apiKey string) {
-	t.Helper()
-	path := servarr.SiblingConfigPath(bloudDataDir, appID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	doc := "<Config><ApiKey>" + apiKey + "</ApiKey></Config>"
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+// profileReads returns how many times the profile list was asked for.
+func (f *fakePVR) profileReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.profileKeys)
 }
 
 // appAPIKey is the key a booted Seerr instance mints for itself
@@ -537,8 +597,8 @@ func writeAppSettings(t *testing.T, state *configurator.AppState) {
 }
 
 // writeAppSettingsWithJellyfinKey is writeAppSettings for an instance that has
-// completed onboarding: settings.jellyfin.apiKey is the key Seerr minted into
-// Jellyfin, which is what the media-server connection check verifies.
+// completed onboarding: settings.jellyfin records the media server's address
+// and the key Seerr minted into it, which is what the connection check verifies.
 func writeAppSettingsWithJellyfinKey(t *testing.T, state *configurator.AppState, jellyfinAPIKey string) {
 	t.Helper()
 	dir := filepath.Join(state.DataPath, configDirName)
@@ -554,8 +614,8 @@ func writeAppSettingsWithJellyfinKey(t *testing.T, state *configurator.AppState,
 	if jellyfinAPIKey != "" {
 		doc["jellyfin"] = map[string]any{
 			"name":     "jellyfin",
-			"ip":       jellyfinHostname,
-			"port":     jellyfinPort,
+			"ip":       "apps-jellyfin",
+			"port":     8096,
 			"apiKey":   jellyfinAPIKey,
 			"useSsl":   false,
 			"serverId": "jellyfin-server-id",
@@ -652,41 +712,51 @@ func TestPreStart_LeavesAnAppWrittenSettingsFileAlone(t *testing.T) {
 func TestPostStart_ReturnsEarlyWhenAlreadyInitialized(t *testing.T) {
 	fake := newFakeSeerr()
 	fake.initialized = true
-	jellyfin := newFakeJellyfin(t, true)
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
+	jellyfin := newFakeJellyfin(t)
+	c := newConfigurator(t, fake, &fakeSecrets{})
 
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	// No settings.json: an instance that has not written one has no stored key
+	// to check and no PVR list to wire, so the pass is the initialization read
+	// alone.
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, "pw"))
 	if err := c.PostStart(context.Background(), state); err != nil {
 		t.Fatalf("PostStart() error = %v", err)
 	}
 
 	if got := fake.all(); len(got) != 1 || got[0].Path != "/api/v1/settings/public" {
-		t.Errorf("requests = %+v, want only GET /api/v1/settings/public", got)
+		t.Errorf("requests = %s, want only GET /api/v1/settings/public", requestSummary(got))
 	}
-	if got := fake.requestsFor(http.MethodPost, "/api/v1/auth/jellyfin"); len(got) != 0 {
-		t.Errorf("auth/jellyfin calls = %d, want 0", len(got))
+	for _, path := range []string{"/api/v1/auth/jellyfin", "/api/v1/settings/initialize"} {
+		if got := fake.requestsFor(http.MethodPost, path); len(got) != 0 {
+			t.Errorf("%s calls = %d, want 0: the wizard is not re-run", path, len(got))
+		}
 	}
 	if got := jellyfin.hits.Load(); got != 0 {
-		t.Errorf("Jellyfin probes = %d, want 0 (initialized instances are left alone)", got)
+		t.Errorf("media server calls = %d, want 0: with no settings.json there is no key to verify", got)
 	}
 }
 
-func TestPostStart_DefersWhenJellyfinIsNotAvailable(t *testing.T) {
+func TestPostStart_DefersWhenTheMediaServerIsNotUsable(t *testing.T) {
+	// Seerr's only non-interactive onboarding path starts with a Jellyfin
+	// login, so it needs a Jellyfin that is part of the stack and has published
+	// its bootstrap admin password. Neither a media server the stack does not
+	// include nor one that has not published a password yet is an error: the
+	// node stays up (its setup wizard is reachable) and the next
+	// reconciliation picks the media server up.
 	tests := []struct {
-		name     string
-		jellyfin func(t *testing.T) (url string, hits *atomic.Int32)
+		name    string
+		binding func(jellyfinURL string) configurator.MediaServerBinding
 	}{
 		{
 			name: "not installed",
-			jellyfin: func(t *testing.T) (string, *atomic.Int32) {
-				return deadURL(t), nil
+			binding: func(string) configurator.MediaServerBinding {
+				return notInstalledMediaServer(jellyfinBinding("", "pw"))
 			},
 		},
 		{
-			name: "installed but not ready",
-			jellyfin: func(t *testing.T) (string, *atomic.Int32) {
-				f := newFakeJellyfin(t, false)
-				return f.server.URL, &f.hits
+			name: "installed but its password is not published yet",
+			binding: func(jellyfinURL string) configurator.MediaServerBinding {
+				return jellyfinBinding(jellyfinURL, "")
 			},
 		},
 	}
@@ -694,23 +764,28 @@ func TestPostStart_DefersWhenJellyfinIsNotAvailable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeSeerr()
-			url, hits := tt.jellyfin(t)
-			c := newConfigurator(t, fake, url, &fakeSecrets{password: "pw"})
+			// The media server answers any call, so a call it must not receive
+			// is visible rather than a connection error.
+			jellyfin := newFakeJellyfin(t)
+			c := newConfigurator(t, fake, &fakeSecrets{})
 
-			// No PreStart: the availability guard runs before the API key is
-			// needed, so onboarding must not depend on the config file here.
-			state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+			// No PreStart and no settings.json: deferral is decided before the
+			// API key is needed, so it must not depend on the config file.
+			state := newState(t, configurator.Integrations{
+				MediaServers: []configurator.MediaServerBinding{tt.binding(jellyfin.server.URL)},
+			})
 			if err := c.PostStart(context.Background(), state); err != nil {
-				t.Fatalf("PostStart() error = %v, want nil (missing Jellyfin defers onboarding)", err)
+				t.Fatalf("PostStart() error = %v, want nil (no usable media server defers onboarding)", err)
 			}
 
-			for _, path := range []string{"/api/v1/auth/jellyfin", "/api/v1/settings/initialize"} {
-				if got := fake.requestsFor(http.MethodPost, path); len(got) != 0 {
-					t.Errorf("made %d POST %s call(s) with no usable Jellyfin, want 0", len(got), path)
-				}
+			if got := fake.all(); len(got) != 1 || got[0].Path != "/api/v1/settings/public" {
+				t.Errorf("seerr requests = %s, want only the initialization read", requestSummary(got))
 			}
-			if hits != nil && hits.Load() == 0 {
-				t.Error("Jellyfin was never probed")
+			if writes := dvrWrites(fake); len(writes) != 0 {
+				t.Errorf("DVR writes = %+v, want none (PVR wiring is deferred with the wizard)", writes)
+			}
+			if got := jellyfin.hits.Load(); got != 0 {
+				t.Errorf("media server calls = %d, want 0 (nothing is attempted with no usable media server)", got)
 			}
 		})
 	}
@@ -721,11 +796,10 @@ func TestPostStart_OnboardsThroughJellyfinAndInitializes(t *testing.T) {
 	const jellyfinPassword = "jellyfin-admin-pw"
 
 	fake := newFakeSeerr()
-	jellyfin := newFakeJellyfin(t, true)
-	secrets := &fakeSecrets{password: jellyfinPassword}
-	c := newConfigurator(t, fake, jellyfin.server.URL, secrets)
+	jellyfin := newFakeJellyfin(t)
+	c := newConfigurator(t, fake, &fakeSecrets{password: jellyfinPassword})
 
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, jellyfinPassword))
 	if _, err := c.PreStart(ctx, state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
@@ -737,13 +811,10 @@ func TestPostStart_OnboardsThroughJellyfinAndInitializes(t *testing.T) {
 		t.Fatalf("PostStart() error = %v", err)
 	}
 
-	seededKey := appAPIKey
-
-	assertJellyfinLoginPayload(t, fake, jellyfinPassword)
+	assertJellyfinLoginPayload(t, fake, "apps-jellyfin", 8096, jellyfinPassword)
 	assertLibrarySync(t, fake)
-	assertAdminCallsCarryKey(t, fake, seededKey)
+	assertAdminCallsCarryKey(t, fake, appAPIKey)
 	assertInitializeOrder(t, fake)
-	assertJellyfinProbedOnce(t, jellyfin, secrets)
 
 	// A second reconciliation is a no-op.
 	before := len(fake.all())
@@ -756,8 +827,9 @@ func TestPostStart_OnboardsThroughJellyfinAndInitializes(t *testing.T) {
 }
 
 // assertJellyfinLoginPayload asserts the admin account was created from the
-// Jellyfin bootstrap admin with exactly the payload Seerr's own wizard sends.
-func assertJellyfinLoginPayload(t *testing.T, fake *fakeSeerr, password string) {
+// Jellyfin bootstrap admin, at the media server's address, with exactly the
+// payload Seerr's own wizard sends.
+func assertJellyfinLoginPayload(t *testing.T, fake *fakeSeerr, hostname string, port int, password string) {
 	t.Helper()
 	logins := fake.requestsFor(http.MethodPost, "/api/v1/auth/jellyfin")
 	if len(logins) != 1 {
@@ -770,8 +842,8 @@ func assertJellyfinLoginPayload(t *testing.T, fake *fakeSeerr, password string) 
 	want := map[string]any{
 		"username":   "bloud-bootstrap-admin",
 		"password":   password,
-		"hostname":   "apps-jellyfin",
-		"port":       float64(8096),
+		"hostname":   hostname,
+		"port":       float64(port),
 		"useSsl":     false,
 		"urlBase":    "",
 		"email":      "bloud-admin@localhost",
@@ -807,7 +879,7 @@ func assertLibrarySync(t *testing.T, fake *fakeSeerr) {
 }
 
 // assertAdminCallsCarryKey asserts every ADMIN-only call was authenticated with
-// the API key PreStart seeded, and that there are exactly the expected four.
+// the API key Seerr stores, and that there are exactly the expected four.
 func assertAdminCallsCarryKey(t *testing.T, fake *fakeSeerr, key string) {
 	t.Helper()
 	var admin []recordedRequest
@@ -819,7 +891,7 @@ func assertAdminCallsCarryKey(t *testing.T, fake *fakeSeerr, key string) {
 	}
 	for _, call := range admin {
 		if got := call.Header.Get(apiKeyHeader); got != key {
-			t.Errorf("%s %s %s = %q, want the seeded key", call.Method, call.Path, apiKeyHeader, got)
+			t.Errorf("%s %s %s = %q, want the instance's own key", call.Method, call.Path, apiKeyHeader, got)
 		}
 	}
 }
@@ -844,8 +916,6 @@ func assertInitializeOrder(t *testing.T, fake *fakeSeerr) {
 	}
 }
 
-// assertJellyfinProbedOnce asserts the availability guard ran once and that the
-// credential came from the Jellyfin secrets key.
 // A key Jellyfin no longer accepts (the media server was purged and reinstalled)
 // leaves every Jellyfin-backed Seerr feature failing with 401 and nothing in
 // the UI explaining why. Seerr only mints a key while it onboards, so an
@@ -858,13 +928,16 @@ func TestPostStart_RepairsAStaleJellyfinKey(t *testing.T) {
 	)
 	fake := newFakeSeerr()
 	fake.setInitialized(true)
-	jellyfin := newFakeJellyfin(t, true)
+	jellyfin := newFakeJellyfin(t)
 	jellyfin.adminPassword = "jellyfin-admin-pw"
 	jellyfin.validKeys = map[string]bool{} // the reinstalled server knows no key
 	jellyfin.mintKey = freshKey
 
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: jellyfin.adminPassword})
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	// The password the repair logs in with is the one the media server
+	// published in its binding; the secrets store holds something else, which
+	// this Jellyfin rejects.
+	c := newConfigurator(t, fake, &fakeSecrets{password: "not-the-bootstrap-password"})
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, jellyfin.adminPassword))
 	writeAppSettingsWithJellyfinKey(t, state, staleKey)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -898,7 +971,7 @@ func TestPostStart_RepairsAStaleJellyfinKey(t *testing.T) {
 	}
 	// ...and the library list was fetched again with the working credential.
 	if got := len(fake.requestsFor(http.MethodGet, "/api/v1/settings/jellyfin/library")); got == 0 {
-		t.Errorf("library calls = 0, want the library list re-fetched after the repair; seerr requests: %s; jellyfin hits: %d",
+		t.Errorf("library calls = 0, want the library list re-fetched after the repair; seerr requests: %s; media server calls: %d",
 			requestSummary(fake.all()), jellyfin.hits.Load())
 	}
 }
@@ -917,11 +990,11 @@ func TestPostStart_LeavesAValidJellyfinKeyAlone(t *testing.T) {
 	const goodKey = "33333333333333333333333333333333"
 	fake := newFakeSeerr()
 	fake.setInitialized(true)
-	jellyfin := newFakeJellyfin(t, true)
+	jellyfin := newFakeJellyfin(t)
 	jellyfin.validKeys = map[string]bool{goodKey: true}
 
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	c := newConfigurator(t, fake, &fakeSecrets{})
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, "pw"))
 	writeAppSettingsWithJellyfinKey(t, state, goodKey)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -944,8 +1017,8 @@ func TestPostStart_UnreachableJellyfinLeavesTheCouplingAlone(t *testing.T) {
 	fake := newFakeSeerr()
 	fake.setInitialized(true)
 
-	c := newConfigurator(t, fake, deadURL(t), &fakeSecrets{password: "pw"})
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	c := newConfigurator(t, fake, &fakeSecrets{})
+	state := stateWithJellyfin(t, jellyfinBinding(deadURL(t), "pw"))
 	writeAppSettingsWithJellyfinKey(t, state, "44444444444444444444444444444444")
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -956,16 +1029,6 @@ func TestPostStart_UnreachableJellyfinLeavesTheCouplingAlone(t *testing.T) {
 	}
 }
 
-func assertJellyfinProbedOnce(t *testing.T, jellyfin *fakeJellyfin, secrets *fakeSecrets) {
-	t.Helper()
-	if got := jellyfin.hits.Load(); got != 1 {
-		t.Errorf("Jellyfin probes = %d, want 1", got)
-	}
-	if len(secrets.apps) == 0 || secrets.apps[0] != jellyfinAppName {
-		t.Errorf("secrets requested for %v, want the %q app", secrets.apps, jellyfinAppName)
-	}
-}
-
 func TestPostStart_ResumesWhenJellyfinIsAlreadyConfigured(t *testing.T) {
 	// A crash between the login and settings/initialize leaves Jellyfin
 	// configured with the admin already created. Seerr then rejects the
@@ -973,10 +1036,10 @@ func TestPostStart_ResumesWhenJellyfinIsAlreadyConfigured(t *testing.T) {
 	// must read as already done rather than block onboarding forever.
 	fake := newFakeSeerr()
 	fake.jellyfinAlreadyConfigured = true
-	jellyfin := newFakeJellyfin(t, true)
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
+	jellyfin := newFakeJellyfin(t)
+	c := newConfigurator(t, fake, &fakeSecrets{})
 
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, "pw"))
 	writeAppSettings(t, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -990,10 +1053,10 @@ func TestPostStart_ResumesWhenJellyfinIsAlreadyConfigured(t *testing.T) {
 func TestPostStart_ErrorsWhenInitializeDoesNotFlipInitialized(t *testing.T) {
 	fake := newFakeSeerr()
 	fake.initializeFlips = false
-	jellyfin := newFakeJellyfin(t, true)
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
+	jellyfin := newFakeJellyfin(t)
+	c := newConfigurator(t, fake, &fakeSecrets{})
 
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, "pw"))
 	writeAppSettings(t, state)
 
 	err := c.PostStart(context.Background(), state)
@@ -1007,10 +1070,10 @@ func TestPostStart_ErrorsWhenInitializeDoesNotFlipInitialized(t *testing.T) {
 
 func TestPostStart_ErrorsWhenAPIKeyIsMissing(t *testing.T) {
 	fake := newFakeSeerr()
-	jellyfin := newFakeJellyfin(t, true)
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
+	jellyfin := newFakeJellyfin(t)
+	c := newConfigurator(t, fake, &fakeSecrets{})
 
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, "pw"))
 	err := c.PostStart(context.Background(), state)
 	if err == nil {
 		t.Fatal("PostStart() error = nil, want an error naming the missing settings.json")
@@ -1022,10 +1085,10 @@ func TestPostStart_ErrorsWhenAPIKeyIsMissing(t *testing.T) {
 
 func TestPostStart_ErrorsWhenSettingsFileHasNoAPIKey(t *testing.T) {
 	fake := newFakeSeerr()
-	jellyfin := newFakeJellyfin(t, true)
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
+	jellyfin := newFakeJellyfin(t)
+	c := newConfigurator(t, fake, &fakeSecrets{})
 
-	state := &configurator.AppState{DataPath: filepath.Join(t.TempDir(), "seerr")}
+	state := stateWithJellyfin(t, jellyfinBinding(jellyfin.server.URL, "pw"))
 	dir := filepath.Join(state.DataPath, configDirName)
 	if err := os.MkdirAll(dir, configDirPerm); err != nil {
 		t.Fatal(err)
@@ -1050,38 +1113,31 @@ func TestRemove_IsNoOp(t *testing.T) {
 	}
 }
 
-// The API keys the PVR fixtures carry: 32 hex characters, the shape
+// The API keys the `pvr` bindings carry: 32 hex characters, the shape
 // pkg/servarr generates and Servarr accepts.
 const (
 	radarrAPIKey = "11111111111111111111111111111111"
 	sonarrAPIKey = "22222222222222222222222222222222"
 )
 
-// pvrFixture is a Seerr instance mid-onboarding with both PVRs running: the
-// fake Seerr has empty DVR lists, each fake PVR answers /ping and serves a
-// quality profile list, and each sibling's config.xml holds its API key.
+// pvrFixture is a Seerr instance mid-onboarding with both PVRs installed: the
+// fake Seerr has empty DVR lists, each fake PVR serves a quality profile list,
+// and each `pvr` binding carries the address and the key Seerr stores.
 type pvrFixture struct {
-	c      *Configurator
-	fake   *fakeSeerr
-	radarr *fakePVR
-	sonarr *fakePVR
-	state  *configurator.AppState
+	c             *Configurator
+	fake          *fakeSeerr
+	radarr        *fakePVR
+	sonarr        *fakePVR
+	radarrBinding configurator.PVRBinding
+	sonarrBinding configurator.PVRBinding
+	state         *configurator.AppState
 }
 
 func newPVRFixture(t *testing.T) *pvrFixture {
 	t.Helper()
 	fake := newFakeSeerr()
-	jellyfin := newFakeJellyfin(t, true)
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
-
-	state := &configurator.AppState{
-		DataPath:      filepath.Join(t.TempDir(), "seerr"),
-		BloudDataPath: t.TempDir(),
-	}
-	if _, err := c.PreStart(context.Background(), state); err != nil {
-		t.Fatalf("PreStart() error = %v", err)
-	}
-	writeAppSettings(t, state)
+	jellyfin := newFakeJellyfin(t)
+	c := newConfigurator(t, fake, &fakeSecrets{})
 
 	// Radarr ships an extra profile besides HD-1080p, so the tests that read
 	// the entry also prove the preferred profile is chosen over the first.
@@ -1090,12 +1146,32 @@ func newPVRFixture(t *testing.T) *pvrFixture {
 		{"id": 4, "name": "HD-1080p"},
 	})
 	sonarr := newFakePVR(t, []map[string]any{{"id": 4, "name": "HD-1080p"}})
-	c.pvrBaseURLs[radarrAppName] = radarr.server.URL
-	c.pvrBaseURLs[sonarrAppName] = sonarr.server.URL
-	writeSiblingConfig(t, state.BloudDataPath, radarrAppName, radarrAPIKey)
-	writeSiblingConfig(t, state.BloudDataPath, sonarrAppName, sonarrAPIKey)
 
-	return &pvrFixture{c: c, fake: fake, radarr: radarr, sonarr: sonarr, state: state}
+	radarrIntegration := radarrBinding(radarr.server.URL, radarrAPIKey)
+	sonarrIntegration := sonarrBinding(sonarr.server.URL, sonarrAPIKey)
+	state := newState(t, configurator.Integrations{
+		MediaServers: []configurator.MediaServerBinding{jellyfinBinding(jellyfin.server.URL, "pw")},
+		PVRs:         []configurator.PVRBinding{radarrIntegration, sonarrIntegration},
+	})
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart() error = %v", err)
+	}
+	// The container writes settings.json (with its own API key) while booting;
+	// PostStart then reads that key for the admin-only calls.
+	writeAppSettings(t, state)
+
+	return &pvrFixture{
+		c: c, fake: fake, radarr: radarr, sonarr: sonarr,
+		radarrBinding: radarrIntegration, sonarrBinding: sonarrIntegration,
+		state: state,
+	}
+}
+
+// setPVRBindings re-resolves the `pvr` integration, so a test can hand Seerr a
+// different stack than the fixture's default (a PVR that is gone, or one that
+// has not published its key yet) without building the whole fixture again.
+func (f *pvrFixture) setPVRBindings(bindings ...configurator.PVRBinding) {
+	f.state.Integrations.PVRs = bindings
 }
 
 // setProfiles replaces the profile list the fake PVR serves.
@@ -1143,36 +1219,44 @@ func dvrWrites(fake *fakeSeerr) []recordedRequest {
 	return out
 }
 
-// radarrEntry is the entry Bloud keeps for Radarr, as Seerr stores it (the
-// posted payload plus the id the route assigns).
-func radarrEntry(profileID int, profileName string) map[string]any {
+// radarrPayload is the body Seerr receives for a Radarr entry: the address,
+// port and API key the `pvr` binding resolves, and the profile the PVR lists.
+func radarrPayload(profileID int, profileName string) map[string]any {
 	return map[string]any{
-		"id": 0, "name": "Radarr", "hostname": "apps-radarr", "port": 7878,
-		"apiKey": radarrAPIKey, "useSsl": false, "baseUrl": "",
-		"activeProfileId": profileID, "activeProfileName": profileName,
-		"activeDirectory": "/movies", "isDefault": true, "is4k": false,
-		"syncEnabled": true, "tags": []any{},
+		"name":              "Radarr",
+		"hostname":          "apps-radarr",
+		"port":              float64(7878),
+		"apiKey":            radarrAPIKey,
+		"useSsl":            false,
+		"baseUrl":           "",
+		"activeProfileId":   float64(profileID),
+		"activeProfileName": profileName,
+		"activeDirectory":   "/movies",
+		"isDefault":         true,
+		"is4k":              false,
+		"syncEnabled":       true,
+		"tags":              []any{},
 		// Required by RadarrSettings (seerr-api.yml).
 		"minimumAvailability": minimumAvailabilityReleased,
 	}
 }
 
-// sonarrEntry is the Seerr-side entry for Sonarr, which carries the three
-// Sonarr-only fields on top of the shared ones.
-func sonarrEntry() map[string]any {
-	entry := radarrEntry(4, "HD-1080p")
-	entry["name"] = "Sonarr"
-	entry["hostname"] = "apps-sonarr"
-	entry["port"] = 8989
-	entry["apiKey"] = sonarrAPIKey
-	entry["activeDirectory"] = "/shows"
-	entry["seriesType"] = "standard"
-	entry["animeSeriesType"] = "standard"
-	entry["enableSeasonFolders"] = true
+// sonarrPayload is that body for Sonarr, which carries the three
+// SonarrSettings-only fields on top of the shared ones.
+func sonarrPayload() map[string]any {
+	payload := radarrPayload(4, "HD-1080p")
+	payload["name"] = "Sonarr"
+	payload["hostname"] = "apps-sonarr"
+	payload["port"] = float64(8989)
+	payload["apiKey"] = sonarrAPIKey
+	payload["activeDirectory"] = "/shows"
+	payload["seriesType"] = "standard"
+	payload["animeSeriesType"] = "standard"
+	payload["enableSeasonFolders"] = true
 	// RadarrSettings-only: Sonarr's own schema has no such property, and Bloud
 	// omits it from a Sonarr payload.
-	delete(entry, "minimumAvailability")
-	return entry
+	delete(payload, "minimumAvailability")
+	return payload
 }
 
 func TestPostStart_CreatesPVREntries(t *testing.T) {
@@ -1184,49 +1268,17 @@ func TestPostStart_CreatesPVREntries(t *testing.T) {
 
 	// Radarr: the shared payload, with the profile picked out of its own list
 	// (HD-1080p is not the first entry there).
-	assertDVRRequest(t, f.fake, http.MethodPost, "/api/v1/settings/radarr", map[string]any{
-		"name":                "Radarr",
-		"hostname":            "apps-radarr",
-		"port":                float64(7878),
-		"apiKey":              radarrAPIKey,
-		"useSsl":              false,
-		"baseUrl":             "",
-		"activeProfileId":     float64(4),
-		"activeProfileName":   "HD-1080p",
-		"activeDirectory":     "/movies",
-		"isDefault":           true,
-		"is4k":                false,
-		"syncEnabled":         true,
-		"tags":                []any{},
-		"minimumAvailability": minimumAvailabilityReleased,
-	})
+	assertDVRRequest(t, f.fake, http.MethodPost, "/api/v1/settings/radarr", radarrPayload(4, "HD-1080p"))
 
 	// Sonarr: the same plus the three SonarrSettings-only fields.
-	assertDVRRequest(t, f.fake, http.MethodPost, "/api/v1/settings/sonarr", map[string]any{
-		"name":                "Sonarr",
-		"hostname":            "apps-sonarr",
-		"port":                float64(8989),
-		"apiKey":              sonarrAPIKey,
-		"useSsl":              false,
-		"baseUrl":             "",
-		"activeProfileId":     float64(4),
-		"activeProfileName":   "HD-1080p",
-		"activeDirectory":     "/shows",
-		"isDefault":           true,
-		"is4k":                false,
-		"syncEnabled":         true,
-		"tags":                []any{},
-		"seriesType":          "standard",
-		"animeSeriesType":     "standard",
-		"enableSeasonFolders": true,
-	})
+	assertDVRRequest(t, f.fake, http.MethodPost, "/api/v1/settings/sonarr", sonarrPayload())
 
-	// The profile read authenticated with the sibling's own key, not Seerr's.
+	// The profile read authenticated with the PVR's own key, not Seerr's.
 	if got := f.radarr.profileKey(); got != radarrAPIKey {
-		t.Errorf("radarr profile read %s = %q, want the sibling's key", servarrAPIKeyHeader, got)
+		t.Errorf("radarr profile read %s = %q, want the PVR's key", servarrAPIKeyHeader, got)
 	}
 	if got := f.sonarr.profileKey(); got != sonarrAPIKey {
-		t.Errorf("sonarr profile read %s = %q, want the sibling's key", servarrAPIKeyHeader, got)
+		t.Errorf("sonarr profile read %s = %q, want the PVR's key", servarrAPIKeyHeader, got)
 	}
 
 	// Both entries are stored, and the DVR writes came after the instance was
@@ -1263,24 +1315,99 @@ func assertDVRWiringAfterInitialize(t *testing.T, fake *fakeSeerr) {
 	}
 }
 
-func TestPostStart_SkipsAbsentPVRs(t *testing.T) {
-	// Both seams point at closed listeners (see newConfigurator): a stack of
-	// Seerr + Jellyfin only must onboard without a single DVR write.
+// A provider's address and credentials come from the binding the orchestrator
+// resolves: nothing is probed and nothing is read out of a provider's own files.
+// Values no code could have hardcoded prove the payloads Seerr receives are
+// exactly what its bindings hold.
+func TestPostStart_UsesTheBindingsAddressAndSecrets(t *testing.T) {
+	const (
+		jellyfinNode     = "media.internal"
+		jellyfinPort     = 8097
+		jellyfinPassword = "binding-bootstrap-pw"
+		radarrNode       = "pvr.internal"
+		radarrPort       = 17878
+		radarrKey        = "99999999999999999999999999999999"
+	)
 	fake := newFakeSeerr()
-	jellyfin := newFakeJellyfin(t, true)
-	c := newConfigurator(t, fake, jellyfin.server.URL, &fakeSecrets{password: "pw"})
+	jellyfin := newFakeJellyfin(t)
+	radarr := newFakePVR(t, []map[string]any{{"id": 4, "name": "HD-1080p"}})
+	c := newConfigurator(t, fake, &fakeSecrets{})
 
-	state := &configurator.AppState{
-		DataPath:      filepath.Join(t.TempDir(), "seerr"),
-		BloudDataPath: t.TempDir(),
-	}
+	state := newState(t, configurator.Integrations{
+		MediaServers: []configurator.MediaServerBinding{{
+			ProviderRef: configurator.ProviderRef{
+				App:       jellyfinAppName,
+				Installed: true,
+				Node:      jellyfinNode,
+				Port:      jellyfinPort,
+				BaseURL:   "http://media.internal:8097",
+				LocalURL:  jellyfin.server.URL,
+			},
+			AdminPassword: jellyfinPassword,
+		}},
+		PVRs: []configurator.PVRBinding{{
+			ProviderRef: configurator.ProviderRef{
+				App:       radarrAppName,
+				Installed: true,
+				Node:      radarrNode,
+				Port:      radarrPort,
+				BaseURL:   "http://pvr.internal:17878",
+				LocalURL:  radarr.server.URL,
+			},
+			APIKey: radarrKey,
+		}},
+	})
 	writeAppSettings(t, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
-		t.Fatalf("PostStart() error = %v, want nil (a missing PVR is not an error)", err)
+		t.Fatalf("PostStart() error = %v", err)
 	}
-	if writes := dvrWrites(fake); len(writes) != 0 {
+
+	// Seerr onboards against the media server the binding names, with the
+	// password the binding carries...
+	assertJellyfinLoginPayload(t, fake, jellyfinNode, jellyfinPort, jellyfinPassword)
+
+	// ...and stores the PVR address and key it was handed.
+	stored := fake.dvrList("radarr")
+	if len(stored) != 1 {
+		t.Fatalf("stored radarr entries = %d, want 1", len(stored))
+	}
+	if got := stored[0]["hostname"]; got != radarrNode {
+		t.Errorf("stored hostname = %v, want the binding's %q", got, radarrNode)
+	}
+	if got := stored[0]["port"]; got != float64(radarrPort) {
+		t.Errorf("stored port = %v, want the binding's %d", got, radarrPort)
+	}
+	if got := stored[0]["apiKey"]; got != radarrKey {
+		t.Errorf("stored apiKey = %v, want the binding's %q", got, radarrKey)
+	}
+	// The key Seerr stores is the one the PVR was read with.
+	if got := radarr.profileKey(); got != radarrKey {
+		t.Errorf("radarr profile read %s = %q, want the binding's key", servarrAPIKeyHeader, got)
+	}
+}
+
+func TestPostStart_SkipsUninstalledPVRs(t *testing.T) {
+	// Bindings for PVRs the stack does not include: onboarding must not touch
+	// them at all (no profile read, no DVR write) and must not fail over them.
+	f := newPVRFixture(t)
+	f.setPVRBindings(notInstalledPVR(f.radarrBinding), notInstalledPVR(f.sonarrBinding))
+
+	if err := f.c.PostStart(context.Background(), f.state); err != nil {
+		t.Fatalf("PostStart() error = %v, want nil (an uninstalled PVR is not an error)", err)
+	}
+	if writes := dvrWrites(f.fake); len(writes) != 0 {
 		t.Errorf("DVR writes = %+v, want none with no PVR installed", writes)
+	}
+	if got := f.radarr.profileReads(); got != 0 {
+		t.Errorf("radarr profile reads = %d, want 0", got)
+	}
+	if got := f.sonarr.profileReads(); got != 0 {
+		t.Errorf("sonarr profile reads = %d, want 0", got)
+	}
+	// Onboarding itself still completed.
+	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/initialize"); len(got) != 1 {
+		t.Errorf("settings/initialize calls = %d, want 1", len(got))
 	}
 }
 
@@ -1339,7 +1466,7 @@ func TestReconcilePVRs_RepairsDriftedEntry(t *testing.T) {
 	f := newPVRFixture(t)
 	// The entry Bloud added earlier, after the PVR changed port and key and
 	// someone picked a different profile.
-	drifted := radarrEntry(1, "Any")
+	drifted := radarrPayload(1, "Any")
 	drifted["id"] = 3
 	drifted["port"] = 1
 	drifted["apiKey"] = "stale-key"
@@ -1352,35 +1479,22 @@ func TestReconcilePVRs_RepairsDriftedEntry(t *testing.T) {
 	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/radarr"); len(got) != 0 {
 		t.Errorf("radarr POST calls = %d, want 0 (an update must not append a second entry)", len(got))
 	}
-	assertDVRRequest(t, f.fake, http.MethodPut, "/api/v1/settings/radarr/3", map[string]any{
-		"id":                  float64(3),
-		"name":                "Radarr",
-		"hostname":            "apps-radarr",
-		"port":                float64(7878),
-		"apiKey":              radarrAPIKey,
-		"useSsl":              false,
-		"baseUrl":             "",
-		"activeProfileId":     float64(4),
-		"activeProfileName":   "HD-1080p",
-		"activeDirectory":     "/movies",
-		"isDefault":           true,
-		"is4k":                false,
-		"syncEnabled":         true,
-		"tags":                []any{},
-		"minimumAvailability": minimumAvailabilityReleased,
-	})
+	want := radarrPayload(4, "HD-1080p")
+	want["id"] = float64(3)
+	assertDVRRequest(t, f.fake, http.MethodPut, "/api/v1/settings/radarr/3", want)
 }
 
-func TestPostStart_PrunesStaleEntryWhenProbeFails(t *testing.T) {
+func TestPostStart_PrunesStaleEntryWhenPVRIsGone(t *testing.T) {
+	// The PVRs are uninstalled and the bindings say so: the entry Bloud wrote
+	// for one is pruned, identified by the address the binding still carries,
+	// while an entry an admin added by hand through the UI is left alone.
 	f := newPVRFixture(t)
-	f.c.pvrBaseURLs[sonarrAppName] = deadURL(t)
+	f.setPVRBindings(notInstalledPVR(f.radarrBinding), notInstalledPVR(f.sonarrBinding))
 
-	// Ours (hostname apps-sonarr) plus one an admin added by hand through the
-	// UI, which Bloud must leave alone.
-	stale := sonarrEntry()
+	stale := sonarrPayload()
 	stale["id"] = 7
 	f.fake.seedDVR("sonarr", stale)
-	manual := sonarrEntry()
+	manual := sonarrPayload()
 	manual["id"] = 8
 	manual["hostname"] = "localhost"
 	manual["name"] = "Sonarr (manual)"
@@ -1402,6 +1516,38 @@ func TestPostStart_PrunesStaleEntryWhenProbeFails(t *testing.T) {
 	stored := f.fake.dvrList("sonarr")
 	if len(stored) != 1 || stored[0]["id"] != 8 {
 		t.Errorf("stored sonarr entries = %+v, want only the manual one", stored)
+	}
+	// A PVR that is gone is not asked anything.
+	if got := f.sonarr.profileReads(); got != 0 {
+		t.Errorf("sonarr profile reads = %d, want 0", got)
+	}
+}
+
+func TestPostStart_KeepsTheEntryOfAPVRThatIsNotAnswering(t *testing.T) {
+	// Not answering is not the same as gone: only an uninstalled PVR has its
+	// entry pruned, so a 5xx (still booting, or a crashed instance) leaves the
+	// stored entry untouched and the next reconciliation retries it.
+	f := newPVRFixture(t)
+	f.radarr.setProfileStatus(http.StatusServiceUnavailable)
+	existing := radarrPayload(4, "HD-1080p")
+	existing["id"] = 5
+	f.fake.seedDVR("radarr", existing)
+
+	if err := f.c.PostStart(context.Background(), f.state); err != nil {
+		t.Fatalf("PostStart() error = %v, want nil (a PVR whose profiles are not listable yet is a retry)", err)
+	}
+	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/radarr"); len(got) != 0 {
+		t.Errorf("radarr POST calls = %d, want 0", len(got))
+	}
+	if got := len(f.fake.dvrList("radarr")); got != 1 {
+		t.Errorf("stored radarr entries = %d, want the existing entry kept", got)
+	}
+	if got := f.fake.requestsFor(http.MethodDelete, "/api/v1/settings/radarr/5"); len(got) != 0 {
+		t.Errorf("DELETE /api/v1/settings/radarr/5 calls = %d, want 0 (an installed PVR is never pruned)", len(got))
+	}
+	// The other PVR is unaffected.
+	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/sonarr"); len(got) != 1 {
+		t.Errorf("sonarr POST calls = %d, want 1", len(got))
 	}
 }
 
@@ -1429,22 +1575,6 @@ func TestPostStart_FallsBackToFirstProfile(t *testing.T) {
 	}
 }
 
-func TestPostStart_ToleratesUnlistableProfiles(t *testing.T) {
-	f := newPVRFixture(t)
-	f.radarr.setProfileStatus(http.StatusInternalServerError)
-
-	if err := f.c.PostStart(context.Background(), f.state); err != nil {
-		t.Fatalf("PostStart() error = %v, want nil (a PVR whose profiles are not listable yet is a retry)", err)
-	}
-	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/radarr"); len(got) != 0 {
-		t.Errorf("radarr POST calls = %d, want 0", len(got))
-	}
-	// The other PVR is unaffected.
-	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/sonarr"); len(got) != 1 {
-		t.Errorf("sonarr POST calls = %d, want 1", len(got))
-	}
-}
-
 func TestPostStart_ErrorsWhenPVRRejectsTheAPIKey(t *testing.T) {
 	f := newPVRFixture(t)
 	f.radarr.setProfileStatus(http.StatusUnauthorized)
@@ -1460,19 +1590,24 @@ func TestPostStart_ErrorsWhenPVRRejectsTheAPIKey(t *testing.T) {
 	}
 }
 
-func TestPostStart_SkipsPVRWithUnreadableKey(t *testing.T) {
+func TestPostStart_SkipsPVRWithUnpublishedKey(t *testing.T) {
+	// The PVR is installed but has not published its API key yet (its own
+	// PreStart has not run, or it is still converging): the binding's key is
+	// empty, so wire nothing rather than writing an entry with an empty key,
+	// and leave the rest alone.
 	f := newPVRFixture(t)
-	// The PVR answers but its config.xml is gone (removed data, or read too
-	// early): wire nothing rather than writing an entry with an empty key.
-	if err := os.Remove(servarr.SiblingConfigPath(f.state.BloudDataPath, radarrAppName)); err != nil {
-		t.Fatal(err)
-	}
+	unpublished := f.radarrBinding
+	unpublished.APIKey = ""
+	f.setPVRBindings(unpublished, f.sonarrBinding)
 
 	if err := f.c.PostStart(context.Background(), f.state); err != nil {
 		t.Fatalf("PostStart() error = %v, want nil", err)
 	}
 	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/radarr"); len(got) != 0 {
 		t.Errorf("radarr POST calls = %d, want 0", len(got))
+	}
+	if got := f.radarr.profileReads(); got != 0 {
+		t.Errorf("radarr profile reads = %d, want 0 (nothing is asked of a PVR with no key)", got)
 	}
 	if got := f.fake.requestsFor(http.MethodPost, "/api/v1/settings/sonarr"); len(got) != 1 {
 		t.Errorf("sonarr POST calls = %d, want 1", len(got))

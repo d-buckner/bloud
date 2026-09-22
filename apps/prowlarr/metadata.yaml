@@ -26,6 +26,8 @@ integrations:
   pvr:
     required: false
     multi: true
+    # The PVR's API key: the only thing this consumer reads out of the contract.
+    requires: [apiKey]
     compatible:
       - app: sonarr
         category: tv

@@ -3,7 +3,7 @@
 // Package prowlarr wires the Prowlarr indexer manager into Bloud: it
 // pre-seeds the instance's config.xml so the app never offers its own login
 // form, verifies through the app's API that external authentication is still
-// in effect, and pushes Prowlarr's indexers into the PVR siblings that are
+// in effect, and pushes Prowlarr's indexers into the PVR providers that are
 // installed.
 package prowlarr
 
@@ -11,13 +11,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
 )
 
@@ -42,18 +40,12 @@ const (
 )
 
 const (
-	// The PVRs Prowlarr syncs its indexers into. Each catalog id is also the
-	// sibling's data directory under BloudDataPath and its container-name
-	// suffix on apps-net; each port is the one the sibling publishes:
-	// apps/sonarr/metadata.yaml (`port: 8989`) and apps/radarr/metadata.yaml
-	// (`port: 7878`). The duplication is the accepted cost of wiring two
-	// catalog entries from an app: the framework does not hand a consumer its
-	// providers' addresses, so a provider port change is a greppable edit in
-	// both the provider's metadata.yaml and here (see INTEGRATION.md).
+	// The PVRs Prowlarr syncs its indexers into, by catalog id. Each id maps
+	// onto Prowlarr's own name for that PVR's application contract, which is
+	// this consumer's vocabulary; everything else about a provider (its
+	// address, port and API key) comes from the resolved `pvr` binding.
 	sonarrAppID = "sonarr"
-	sonarrPort  = 8989
 	radarrAppID = "radarr"
-	radarrPort  = 7878
 
 	// sonarrImplementation/radarrImplementation are Prowlarr's own names for
 	// the two PVR contracts; the config contracts are what its applications
@@ -68,27 +60,12 @@ const (
 	// that also removes an indexer from the PVR again.
 	syncLevelFullSync = "fullSync"
 
-	// siblingURLTemplate is how one container on apps-net addresses another:
-	// every node is named "apps-<catalog id>". "localhost" resolves to the
-	// Prowlarr container itself, which is exactly the trap Prowlarr's own
-	// schema defaults fall into.
-	siblingURLTemplate = "http://apps-%s:%d"
-
 	// fieldProwlarrURL/fieldBaseURL/fieldAPIKey are the PVR settings fields
 	// Bloud owns in an application document. The rest of the document keeps
 	// whatever Prowlarr's schema defaults are.
 	fieldProwlarrURL = "prowlarrUrl"
 	fieldBaseURL     = "baseUrl"
 	fieldAPIKey      = "apiKey"
-
-	// pvrProbePath is Servarr's anonymous readiness route, the same one the
-	// container healthchecks use: 200 once the web host is up, 503 while it
-	// boots.
-	pvrProbePath = "/ping"
-
-	// probeTimeout bounds a sibling probe: a PVR that is not installed must
-	// delay the reconciliation by seconds, not by the request default.
-	probeTimeout = 5 * time.Second
 )
 
 // Configurator handles Prowlarr configuration.
@@ -103,32 +80,19 @@ type Configurator struct {
 	// ownURL resolves the instance's own base URL (localhost:<port>, or the
 	// test seam).
 	ownURL func() string
-	// targets are the PVR siblings, each with a probe pointed at the sibling's
-	// published host port.
-	targets []pvrTarget
 
 	// baseURL is a test seam: when set, the own-API clients resolve to it
 	// instead of localhost:port.
 	baseURL string
-	// sonarrBaseURL/radarrBaseURL are the matching seams for the sibling
-	// probes.
-	sonarrBaseURL string
-	radarrBaseURL string
 }
 
-// pvrTarget is one PVR sibling Bloud wires Prowlarr to.
+// pvrTarget is one PVR provider Bloud wires Prowlarr to: the resolved `pvr`
+// binding that says where the provider is and what its API key is, plus
+// Prowlarr's own names for the provider's application contract.
 type pvrTarget struct {
-	// appID is the catalog id: the sibling's data directory under
-	// BloudDataPath and its container-name suffix on apps-net.
-	appID string
-	// port is the port the sibling's metadata.yaml publishes.
-	port int
-	// implementation/configContract are Prowlarr's names for the sibling's
-	// application contract.
+	binding        configurator.PVRBinding
 	implementation string
 	configContract string
-	// probe asks the sibling's published host port whether it is installed.
-	probe *appclient.Client
 }
 
 // NewConfigurator creates a new Prowlarr configurator from the host Deps.
@@ -152,36 +116,37 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		return fmt.Sprintf("http://localhost:%d", c.port)
 	}
 	c.api = servarr.NewClient(deps.HTTP, appName, apiPath, c.ownURL)
-
-	// The probes leave the Prowlarr container: they ask the host's published
-	// ports whether a PVR exists yet.
-	c.targets = []pvrTarget{
-		{
-			appID:          sonarrAppID,
-			port:           sonarrPort,
-			implementation: sonarrImplementation,
-			configContract: sonarrConfigContract,
-			probe: deps.HTTP.New(appclient.Spec{Name: sonarrAppID, BaseURLFn: func() string {
-				if c.sonarrBaseURL != "" {
-					return c.sonarrBaseURL
-				}
-				return fmt.Sprintf("http://localhost:%d", sonarrPort)
-			}}),
-		},
-		{
-			appID:          radarrAppID,
-			port:           radarrPort,
-			implementation: radarrImplementation,
-			configContract: radarrConfigContract,
-			probe: deps.HTTP.New(appclient.Spec{Name: radarrAppID, BaseURLFn: func() string {
-				if c.radarrBaseURL != "" {
-					return c.radarrBaseURL
-				}
-				return fmt.Sprintf("http://localhost:%d", radarrPort)
-			}}),
-		},
-	}
 	return c
+}
+
+// pvrTargets resolves the PVR providers to wire from the bindings the
+// orchestrator handed this app. The catalog knows which PVRs integrate with
+// Prowlarr and where they live, so nothing here re-states a port or a path.
+//
+// A binding for a PVR this consumer has no application contract for is skipped:
+// the contract names are Prowlarr's own, so a new PVR enters the catalog only
+// when its contract is known.
+func (c *Configurator) pvrTargets(state *configurator.AppState) []pvrTarget {
+	var targets []pvrTarget
+	for _, binding := range state.Integrations.PVRs {
+		switch binding.App {
+		case sonarrAppID:
+			targets = append(targets, pvrTarget{
+				binding:        binding,
+				implementation: sonarrImplementation,
+				configContract: sonarrConfigContract,
+			})
+		case radarrAppID:
+			targets = append(targets, pvrTarget{
+				binding:        binding,
+				implementation: radarrImplementation,
+				configContract: radarrConfigContract,
+			})
+		default:
+			c.logger.Warn("no Prowlarr application contract for this PVR; skipping it", "pvr", binding.App)
+		}
+	}
+	return targets
 }
 
 func (c *Configurator) Name() string {
@@ -225,11 +190,11 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	//     PVRs do: whoever mounts it last owns its mode, and the container that
 	//     ends up running the import has to be able to write it.
 	configDir := filepath.Join(state.DataPath, "config")
-	if err := os.Chmod(configDir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(configDir, 0o777); err != nil {
 		return false, fmt.Errorf("making the config directory writable: %w", err)
 	}
 	downloadsDir := filepath.Join(state.BloudDataPath, "downloads")
-	if err := os.Chmod(downloadsDir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(downloadsDir, 0o777); err != nil {
 		return false, fmt.Errorf("making the downloads directory writable: %w", err)
 	}
 
@@ -249,7 +214,7 @@ func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ boo
 // PostStart verifies through Prowlarr's own API that external authentication
 // is in effect, repairing it when a settings save (from the UI or an API
 // client) rewrote config.xml, then reconciles the application-sync list so
-// Prowlarr's indexers reach the PVR siblings that are installed. Idempotent on
+// Prowlarr's indexers reach the PVR providers that are installed. Idempotent on
 // every reconciliation.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	configPath := c.configPath(state)
@@ -273,10 +238,10 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 }
 
 // syncPvrApplications reconciles the instance's application-sync list with the
-// PVR siblings that are installed, so Prowlarr's indexers reach whatever PVRs
+// PVR providers that are installed, so Prowlarr's indexers reach whatever PVRs
 // exist without the user configuring each one by hand. Every link is optional:
-// a sibling that does not answer is skipped (and pruned when Bloud had wired it
-// before), and the step is a read, a compare, and a write only on difference.
+// a provider that is not installed is skipped and the entry Bloud wrote for it
+// pruned, and the step is a read, a compare, and a write only on difference.
 func (c *Configurator) syncPvrApplications(ctx context.Context, state *configurator.AppState, apiKey string) error {
 	apps := newApplicationsAPI(c.clients, c.ownURL, apiKey)
 	existing, err := apps.listApplications(ctx)
@@ -301,18 +266,18 @@ func (c *Configurator) syncPvrApplications(ctx context.Context, state *configura
 		return verdicts, verdictsErr
 	}
 
-	for _, target := range c.targets {
-		if err := c.reconcilePvrApplication(ctx, apps, existing, testStored, target, state); err != nil {
+	for _, target := range c.pvrTargets(state) {
+		if err := c.reconcilePvrApplication(ctx, apps, existing, testStored, target); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// reconcilePvrApplication wires one PVR into Prowlarr, or skips it when that
-// PVR is not installed.
+// reconcilePvrApplication wires one PVR into Prowlarr, prunes the entry of one
+// that is gone, and skips a PVR that is bound but has not published its key yet.
 //
-// The one failure policy worth stating: a *transient* failure of the sibling or
+// The one failure policy worth stating: a *transient* failure of the provider or
 // of Prowlarr itself (a connection failure, a 5xx, a 429; see
 // servarr.TransientFailure) leaves the link as it is and returns nil, because
 // ERROR is terminal in the orchestrator: failing the node over a provider that
@@ -325,16 +290,15 @@ func (c *Configurator) reconcilePvrApplication(
 	existing []application,
 	testStored func() (map[int]bool, error),
 	target pvrTarget,
-	state *configurator.AppState,
 ) error {
-	current, found := findApplication(existing, target.implementation, target.baseURL())
+	current, found := findApplication(existing, target.implementation, target.binding.BaseURL)
 
-	// Provider discovery. A PVR that does not answer on its published port is
-	// not installed (or not up yet), so this link is skipped rather than
-	// failed; a later reconciliation picks it up. An entry Bloud wired for a
-	// PVR that is now gone is pruned, so an uninstall does not leave Prowlarr
-	// pushing indexers at a hostname that no longer resolves.
-	if !c.pvrAvailable(ctx, target) {
+	// Provider state. A PVR that is not installed has no binding to wire, and
+	// an entry Bloud wired for it is pruned so an uninstall does not leave
+	// Prowlarr pushing indexers at a hostname that no longer resolves. The
+	// binding still names the address Bloud wrote, which is what identifies
+	// the entry: the provider's catalog metadata outlives its installation.
+	if !target.binding.Installed {
 		if !found {
 			return nil
 		}
@@ -344,16 +308,21 @@ func (c *Configurator) reconcilePvrApplication(
 				return nil
 			}
 			return fmt.Errorf("pruning the %s application (id %d) after %s disappeared: %w",
-				target.implementation, current.ID, target.appID, err)
+				target.implementation, current.ID, target.binding.App, err)
 		}
 		c.logger.Info("pruned the Prowlarr application for an uninstalled PVR",
-			"pvr", target.appID, "application", current.Name, "id", current.ID)
+			"pvr", target.binding.App, "application", current.Name, "id", current.ID)
 		return nil
 	}
 
-	siblingKey, err := c.siblingAPIKey(state, target)
-	if err != nil {
-		return err
+	siblingKey := target.binding.APIKey
+	if siblingKey == "" {
+		// The PVR is installed but has not published its key yet (its PreStart
+		// has not run, or it is still converging): wire nothing. Writing an
+		// entry with an empty key would only have to be corrected later, and
+		// the next reconciliation picks the key up.
+		c.logger.Warn("PVR has not published its API key yet; skipping its Prowlarr application", "pvr", target.binding.App)
+		return nil
 	}
 	desired := c.desiredApplication(target, siblingKey)
 
@@ -374,7 +343,7 @@ func (c *Configurator) reconcilePvrApplication(
 			return nil
 		}
 		c.logger.Info("Prowlarr reports its stored application as unreachable; re-pushing it",
-			"pvr", target.appID, "application", current.Name, "id", current.ID)
+			"pvr", target.binding.App, "application", current.Name, "id", current.ID)
 	}
 
 	if found {
@@ -389,7 +358,7 @@ func (c *Configurator) reconcilePvrApplication(
 				"Prowlarr or the PVR did not answer while updating the application")
 		}
 		c.logger.Info("updated the Prowlarr application",
-			"pvr", target.appID, "application", document.Name, "id", document.ID)
+			"pvr", target.binding.App, "application", document.Name, "id", document.ID)
 		return nil
 	}
 
@@ -406,7 +375,7 @@ func (c *Configurator) reconcilePvrApplication(
 			// theirs to keep, and not a fault: Bloud's link is reported as
 			// unwired instead of failing the node.
 			c.logger.Warn("another Prowlarr application already holds this name; leaving it in place",
-				"pvr", target.appID, "application", desired.Name)
+				"pvr", target.binding.App, "application", desired.Name)
 			return nil
 		}
 		return c.transientOrError(err, target,
@@ -424,10 +393,10 @@ func (c *Configurator) reconcilePvrApplication(
 		// match it, so it is not at Bloud's address), so it is left alone and
 		// the miss is logged instead of claimed as a wiring.
 		c.logger.Warn("another Prowlarr application already holds this name; leaving it in place",
-			"pvr", target.appID, "application", desired.Name)
+			"pvr", target.binding.App, "application", desired.Name)
 		return nil
 	}
-	c.logger.Info("wired the PVR into Prowlarr", "pvr", target.appID, "application", desired.Name)
+	c.logger.Info("wired the PVR into Prowlarr", "pvr", target.binding.App, "application", desired.Name)
 	return nil
 }
 
@@ -448,8 +417,8 @@ func (c *Configurator) desiredApplication(target pvrTarget, siblingAPIKey string
 		SyncLevel:      syncLevelFullSync,
 		Tags:           []int{},
 		Fields: []applicationField{
-			{Name: fieldProwlarrURL, Value: fmt.Sprintf(siblingURLTemplate, appName, c.port)},
-			{Name: fieldBaseURL, Value: target.baseURL()},
+			{Name: fieldProwlarrURL, Value: fmt.Sprintf("http://%s:%d", nodeName, c.port)},
+			{Name: fieldBaseURL, Value: target.binding.BaseURL},
 			{Name: fieldAPIKey, Value: siblingAPIKey},
 		},
 	}
@@ -475,12 +444,6 @@ func mergeApplication(current, desired application) application {
 // Entries Bloud wrote before, and entries the operator renamed, are recognized
 // by their address instead (see findApplication) and keep their name.
 const managedNameSuffix = " (Bloud)"
-
-// baseURL is the address Bloud stores for a sibling: its container name on
-// apps-net and the port its metadata publishes.
-func (t pvrTarget) baseURL() string {
-	return fmt.Sprintf(siblingURLTemplate, t.appID, t.port)
-}
 
 // findApplication returns the entry Bloud owns for one PVR: the one whose
 // implementation *and* base address are the ones Bloud writes. The address has
@@ -540,45 +503,6 @@ func (c *Configurator) transientOrError(err error, target pvrTarget, message str
 	if !servarr.TransientFailure(err) {
 		return err
 	}
-	c.logger.Warn(message, "pvr", target.appID, "error", err)
+	c.logger.Warn(message, "pvr", target.binding.App, "error", err)
 	return nil
-}
-
-// pvrAvailable reports whether a sibling PVR answers on the host. The probe
-// leaves the Prowlarr container: it asks the host's published port whether the
-// PVR exists yet. Any failure (connection refused, timeout, a non-200 status)
-// means "not usable yet", including a PVR that is installed but still booting.
-func (c *Configurator) pvrAvailable(ctx context.Context, target pvrTarget) bool {
-	// The probe bounds itself with a deadline rather than a per-call client
-	// timeout, so an absent sibling costs seconds, not the request default.
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
-	err := target.probe.GET(pvrProbePath).
-		OK(http.StatusOK).
-		NoRetry().
-		Exec(probeCtx)
-	if err != nil {
-		c.logger.Info("PVR is not installed; skipping its Prowlarr application",
-			"pvr", target.appID, "error", err)
-		return false
-	}
-	return true
-}
-
-// siblingAPIKey reads a PVR's own API key from the config.xml its PreStart
-// wrote (<BloudDataPath>/<app>/config/config.xml, the same file convention
-// apps/navidrome uses to read Authentik's token). A sibling that answers on its
-// port but has no key on disk cannot be wired, and that is a misconfiguration
-// rather than a race, so it is an error instead of a skip.
-func (c *Configurator) siblingAPIKey(state *configurator.AppState, target pvrTarget) (string, error) {
-	path := servarr.SiblingConfigPath(state.BloudDataPath, target.appID)
-	key, err := servarr.APIKey(path)
-	if err != nil {
-		return "", fmt.Errorf("reading the %s API key: %w", target.appID, err)
-	}
-	if key == "" {
-		return "", fmt.Errorf("no ApiKey in %s; %s answers but its PreStart has not run", path, target.appID)
-	}
-	return key, nil
 }

@@ -27,6 +27,7 @@ type App struct {
 	Tags            []string               `yaml:"tags" json:"tags"`
 	Routing         *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`
 	Integrations    map[string]Integration `yaml:"integrations" json:"integrations"`
+	Provides        Provides               `yaml:"provides,omitempty" json:"provides,omitempty"`
 	Containers      []ContainerDef         `yaml:"containers,omitempty" json:"containers,omitempty"`
 }
 

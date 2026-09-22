@@ -30,6 +30,8 @@ type fakeSecrets struct{ pw string }
 func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return f.pw, nil }
 func (f *fakeSecrets) GetAppSecret(string, string) string              { return "" }
 
+func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+
 func testOIDC() *configurator.OIDCOutput {
 	return &configurator.OIDCOutput{
 		ClientID:     "cid123",

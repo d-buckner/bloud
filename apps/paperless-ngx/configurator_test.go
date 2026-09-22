@@ -44,6 +44,8 @@ func (f *fakeSecrets) GenerateAppAdminPassword(_ string) (string, error) {
 
 func (f *fakeSecrets) GetAppSecret(_, _ string) string { return "" }
 
+func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+
 // fakeApp stands in for the app's HTTP surface: the sign-in page, the signup
 // form (open only while no user exists, as Paperless-ngx's account adapter
 // decides), the provider flow, and the token endpoint. It records what the
