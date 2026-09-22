@@ -68,12 +68,18 @@ var mediaStackApps = []mediaStackApp{
 func TestMediaStackWiring(t *testing.T) {
 	installMediaStack(t)
 
-	// Read the credentials the consumers themselves read
-	// (pkg/servarr.SiblingConfigPath): the test authenticates exactly the way
-	// Sonarr, Radarr and Prowlarr do.
-	sonarrKey := appAPIKey(t, "sonarr")
-	radarrKey := appAPIKey(t, "radarr")
-	prowlarrKey := appAPIKey(t, "prowlarr")
+	// The test authenticates as a client with each instance's own key, and
+	// checks that the PVRs published exactly that key for their consumers: the
+	// publication is what Prowlarr and Seerr wire themselves with.
+	sonarrKey := apiKey(t, "sonarr")
+	radarrKey := apiKey(t, "radarr")
+	prowlarrKey := apiKey(t, "prowlarr")
+	for appID, key := range map[string]string{"sonarr": sonarrKey, "radarr": radarrKey} {
+		if published := publishedAPIKey(t, appID); published != key {
+			t.Errorf("%s published %q for its pvr consumers, but its own config.xml holds %q",
+				appID, published, key)
+		}
+	}
 
 	links := []stackLink{
 		{
@@ -282,8 +288,8 @@ func checkProwlarrApplications(baseURL, apiKey string) error {
 	}
 
 	// Each wired application must actually reach its PVR: Prowlarr's test
-	// action performs the connect with the API key Bloud copied out of the
-	// PVR's config.xml.
+	// action performs the connect with the API key Bloud published for the PVR
+	// and stored in the application document.
 	for _, name := range want {
 		status, body, err := apiCall(http.MethodPost, baseURL, "/api/v1/applications/test", apiKey, string(configured[name]))
 		if err != nil {
@@ -296,11 +302,11 @@ func checkProwlarrApplications(baseURL, apiKey string) error {
 	return nil
 }
 
-// appAPIKey reads an app's own API key from the runtime data dir. Every
-// Servarr instance keeps it in <dataDir>/<app>/config/config.xml (the same
-// file pkg/servarr.SiblingConfigPath hands the consumers that wire themselves
-// to a sibling), so the test authenticates the way the product does.
-func appAPIKey(t *testing.T, appID string) string {
+// apiKey returns an instance's own API key from its config.xml, which every
+// Servarr keeps next to its database. The test authenticates as a client, so
+// this is its own credential; publishedAPIKey below checks the same value is the
+// one the consumers are handed.
+func apiKey(t *testing.T, appID string) string {
 	t.Helper()
 	path := filepath.Join(dataDir(), appID, "config", "config.xml")
 	data, err := os.ReadFile(path)
@@ -317,6 +323,27 @@ func appAPIKey(t *testing.T, appID string) string {
 		t.Fatalf("%s has no <ApiKey>: %s has not completed a PreStart", path, appID)
 	}
 	return cfg.APIKey
+}
+
+// publishedAPIKey returns the key a consumer is handed for appID through its
+// integration binding: what the provider published in the host secret store
+// under the secret its contract names.
+func publishedAPIKey(t *testing.T, appID string) string {
+	t.Helper()
+	path := filepath.Join(dataDir(), "secrets.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	var doc struct {
+		AppSecrets map[string]struct {
+			Published map[string]string `json:"published"`
+		} `json:"appSecrets"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
+	return doc.AppSecrets[appID].Published["apiKey"]
 }
 
 // apiCall performs one request against an app's own API with the instance's

@@ -36,10 +36,8 @@ func TestLDAPAuth_ServiceAccountCanBind(t *testing.T) {
 }
 
 // TestLDAPAuth_AuthentikAdminCanBind verifies the LDAP outpost serves real
-// user data by binding as the authentik admin user.
-
-// TestLDAPAuth_AuthentikAdminCanBind verifies the LDAP outpost serves real
-// user data by binding as the authentik admin user.
+// user data by binding as a real Authentik user (the admin account the
+// configurator creates), not just the service account.
 func TestLDAPAuth_AuthentikAdminCanBind(t *testing.T) {
 	adminPassword := readSecrets(t).AuthentikBootstrapPassword
 	if adminPassword == "" {

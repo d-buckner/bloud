@@ -29,10 +29,6 @@ func TestJellyfinInstallViaAPI(t *testing.T) {
 // TestJellyfinConfiguredByConfigurator verifies the PostStart outcomes
 // behaviorally through the Jellyfin API: wizard completed, libraries created,
 // LDAP plugin configured with the typed LDAPOutput values.
-
-// TestJellyfinConfiguredByConfigurator verifies the PostStart outcomes
-// behaviorally through the Jellyfin API: wizard completed, libraries created,
-// LDAP plugin configured with the typed LDAPOutput values.
 func TestJellyfinConfiguredByConfigurator(t *testing.T) {
 	waitAppRunning(t, "jellyfin", 2*time.Minute)
 
@@ -96,16 +92,10 @@ func TestJellyfinConfiguredByConfigurator(t *testing.T) {
 
 // TestJellyfinLDAPLogin exercises the full LDAP auth chain:
 // Jellyfin → LDAP bind (sAMAccountName lookup) → Authentik LDAP outpost.
-
-// TestJellyfinLDAPLogin exercises the full LDAP auth chain:
-// Jellyfin → LDAP bind (sAMAccountName lookup) → Authentik LDAP outpost.
 func TestJellyfinLDAPLogin(t *testing.T) {
 	waitAppRunning(t, "jellyfin", 2*time.Minute)
 	jellyfinLDAPLoginAs(t, "admin", readSecrets(t).AuthentikBootstrapPassword)
 }
-
-// jellyfinLDAPLoginAs authenticates to Jellyfin over LDAP and asserts the
-// admin role is applied via LdapAdminFilter.
 
 // jellyfinLDAPLoginAs authenticates to Jellyfin over LDAP and asserts the
 // admin role is applied via LdapAdminFilter.
@@ -206,9 +196,6 @@ func getJellyfinSystemInfo(t *testing.T) jellyfinPublicInfo {
 	}
 	return info
 }
-
-// authenticateJellyfin logs in as the managed bootstrap admin and returns an
-// access token.
 
 // authenticateJellyfin logs in as the managed bootstrap admin and returns an
 // access token.

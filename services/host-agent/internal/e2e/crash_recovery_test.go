@@ -5,6 +5,7 @@
 package e2e
 
 import (
+	"net/http"
 	"os"
 	"os/exec"
 	"testing"
@@ -20,7 +21,15 @@ func TestCrashRecoveryViaReconcile(t *testing.T) {
 	if unit == "" {
 		t.Skip("BLOUD_E2E_HOST_AGENT_UNIT not set; skipping crash recovery test")
 	}
-	waitAppRunning(t, "jellyfin", 2*time.Minute)
+
+	// Install the app this test crashes, rather than waiting for another test
+	// to install it: Go runs tests in file order, and
+	// crash_recovery_test.go sorts before jellyfin_test.go, so the wait used
+	// to run against an app that was not installed yet and time out with an
+	// empty status.
+	postJSON(t, hostAgentURL+"/api/apps/jellyfin/install", `{}`, http.StatusAccepted)
+	waitAppRunning(t, "jellyfin", 5*time.Minute)
+	waitHTTPOrFatal(t, 60*time.Second, jellyfinURL+"/health")
 
 	// Fault injection: simulate the Jellyfin container crashing.
 	out, err := exec.Command("podman", "stop", "apps-jellyfin").CombinedOutput()

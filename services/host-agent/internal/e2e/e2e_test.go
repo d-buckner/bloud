@@ -63,10 +63,6 @@ var (
 // expectedLDAPHost is the LDAP host the Jellyfin configurator must be given.
 // It matches config.Load's BLOUD_LDAP_HOST default (the catalog container
 // name), overridable for exotic deployments.
-
-// expectedLDAPHost is the LDAP host the Jellyfin configurator must be given.
-// It matches config.Load's BLOUD_LDAP_HOST default (the catalog container
-// name), overridable for exotic deployments.
 func expectedLDAPHost() string {
 	if h := os.Getenv("BLOUD_E2E_LDAP_HOST"); h != "" {
 		return h
@@ -77,8 +73,6 @@ func expectedLDAPHost() string {
 // LDAP expected values: must match config.Load defaults and
 // apps/jellyfin/configurator.go desiredLDAPConfig.
 
-// LDAP expected values: must match config.Load defaults and
-// apps/jellyfin/configurator.go desiredLDAPConfig.
 const (
 	expectedLDAPPort     = 3389
 	expectedLDAPBaseDN   = "dc=ldap,dc=goauthentik,dc=io"
@@ -88,8 +82,6 @@ const (
 // Jellyfin managed bootstrap admin: the username matches apps/jellyfin; the
 // password is generated per-deployment and read from secrets.json (never hardcoded).
 
-// Jellyfin managed bootstrap admin: the username matches apps/jellyfin; the
-// password is generated per-deployment and read from secrets.json (never hardcoded).
 const (
 	bootstrapUsername = "bloud-bootstrap-admin"
 	ldapPluginID      = "958aad6637844d2ab89aa7b6fab6e25c"
@@ -103,10 +95,6 @@ type secretsFile struct {
 		AdminPassword string `json:"adminPassword"`
 	} `json:"appSecrets"`
 }
-
-// dataDir returns the runtime data directory (secrets.json, api-token, app
-// data). The deployer sets BLOUD_DATA_DIR; the standard default is the
-// fallback for direct runs.
 
 // dataDir returns the runtime data directory (secrets.json, api-token, app
 // data). The deployer sets BLOUD_DATA_DIR; the standard default is the
@@ -137,11 +125,6 @@ func readSecrets(t *testing.T) secretsFile {
 // using the same priority as config.getAuthentikToken: the api-token file
 // written by the Authentik server PostStart (always valid), then the
 // one-shot bootstrap token from secrets.json (first boot only).
-
-// authentikToken returns the host-agent's long-lived Authentik API token,
-// using the same priority as config.getAuthentikToken: the api-token file
-// written by the Authentik server PostStart (always valid), then the
-// one-shot bootstrap token from secrets.json (first boot only).
 func authentikToken(t *testing.T) string {
 	t.Helper()
 	if data, err := os.ReadFile(filepath.Join(dataDir(), "authentik", "api-token")); err == nil {
@@ -162,8 +145,6 @@ func getEnvDefault(key, def string) string {
 	}
 	return def
 }
-
-// runCmd executes a local command and returns its combined output.
 
 // runCmd executes a local command and returns its combined output.
 func runCmd(t *testing.T, name string, args ...string) string {
@@ -247,8 +228,6 @@ func agentPost(t *testing.T, url, contentType string, body io.Reader) *http.Resp
 }
 
 // waitHTTP polls url until it returns 200 or the deadline passes.
-
-// waitHTTP polls url until it returns 200 or the deadline passes.
 func waitHTTP(timeout time.Duration, url string) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -277,7 +256,6 @@ func waitHTTPOrFatal(t *testing.T, timeout time.Duration, url string) {
 
 // installedApp is one entry of GET /api/apps/installed.
 
-// installedApp is one entry of GET /api/apps/installed.
 type installedApp struct {
 	CatalogID string `json:"catalog_id"`
 	Status    string `json:"status"`
@@ -312,8 +290,6 @@ func appStatus(t *testing.T, catalogID string) string {
 }
 
 // waitAppRunning polls until the app reaches "running" status.
-
-// waitAppRunning polls until the app reaches "running" status.
 func waitAppRunning(t *testing.T, catalogID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -326,9 +302,6 @@ func waitAppRunning(t *testing.T, catalogID string, timeout time.Duration) {
 	t.Fatalf("timed out after %s waiting for %s to reach running (last status %q)",
 		timeout, catalogID, appStatus(t, catalogID))
 }
-
-// resetUserApps uninstalls every installed user app through the API so the
-// suite always starts from a clean slate, regardless of prior state.
 
 // resetUserApps uninstalls every installed user app through the API so the
 // suite always starts from a clean slate, regardless of prior state.
@@ -417,7 +390,49 @@ func postUninstall(catalogID string) error {
 	return nil
 }
 
-// postJSON POSTs a JSON body and asserts the expected status code.
+// ensureAppUninstalled uninstalls catalogID when the runtime still has it, and
+// waits for the record to disappear. A test that asserts on a *fresh* install
+// calls this first: Go runs tests in file order, so "nothing installed this app
+// yet" is a precondition the test must establish, not one it may inherit from
+// whichever file happened to run before it.
+func ensureAppUninstalled(t *testing.T, catalogID string) {
+	t.Helper()
+	installed := func() (bool, error) {
+		apps, err := fetchInstalled()
+		if err != nil {
+			return false, err
+		}
+		for _, app := range apps {
+			if app.CatalogID == catalogID {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	present, err := installed()
+	if err != nil {
+		t.Fatalf("reading installed apps: %v", err)
+	}
+	if !present {
+		return
+	}
+	if err := postUninstall(catalogID); err != nil {
+		t.Fatalf("uninstalling %s: %v", catalogID, err)
+	}
+
+	deadline := time.Now().Add(4 * time.Minute)
+	for {
+		present, err := installed()
+		if err == nil && !present {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s is still installed after %s (last error: %v)", catalogID, 4*time.Minute, err)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
 
 // postJSON POSTs a JSON body and asserts the expected status code.
 func postJSON(t *testing.T, url string, body string, wantStatus int) {
