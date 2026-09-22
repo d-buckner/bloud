@@ -140,6 +140,36 @@ A few friendly defaults worth knowing:
   `services/host-agent/internal/catalog/models.go`. It is the source of
   truth if this guide ever drifts.
 
+### Pin every image to a specific version
+
+`npm run check:image-pins` fails the build when a container image names a
+rolling channel instead of a version. A rolling tag is republished upstream, so
+`:release` today and `:release` next month are different bytes: a crash stops
+being reproducible, a version bump stops being reviewable, and one bad upstream
+push lands on every Bloud install at once.
+
+Pinned means a version tag in whatever shape that registry uses (`1.2.3`, `v3.4`,
+`7-alpine`, `pg16`, `2.6.5.5623-ls161`), or an `@sha256:` digest. Rejected: no
+tag at all (the runtime reads an untagged image as `:latest`), `:latest`, and the
+rolling channels (`stable`, `release`, `staging`, `edge`, `nightly`, `main`,
+`dev`, `canary`, `beta`, and prefixed variants like `release-cuda`).
+
+If you inherited a floating tag, ask the image which version it is before you
+write the pin:
+
+```bash
+podman pull --quiet ghcr.io/immich-app/immich-server:release
+podman inspect ghcr.io/immich-app/immich-server:release \
+  --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
+# -> v3.2.2, which is what apps/immich pins today
+```
+
+If an image genuinely has to float (a VPN client that must track its own network
+is the live example), add it to `EXCEPTIONS` in `scripts/pinned-images.mjs` with
+the reason. The check prints every accepted exception on every run, and fails an
+exception that matches nothing, so an exception cannot quietly outlive its
+justification.
+
 ## Step 2: configurator.go
 
 This is where you do the work that a static container definition can't: create

@@ -137,7 +137,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, prose lint (Vale), em dash check, docs link check |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, prose lint (Vale), em dash check, docs link check |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
@@ -156,6 +156,7 @@ npm run check:gofmt                             # gofmt over every tracked *.go 
 npm run lint:prose                              # Vale: tracked *.md, *.go, *.ts, *.js, *.svelte, *.yml, *.yaml, *.css, *.html, *.sql
 npm run check:no-emdash                         # em dashes anywhere in tracked files (covers what Vale cannot read)
 npm run check:docs-links                        # relative links and their #anchors
+npm run check:image-pins                        # every container image names a specific version (see "Image pins" below)
 npm run test --workspace=@bloud/host-agent-web    # vitest
 npm run check --workspace=@bloud/host-agent-web   # svelte-check (typecheck)
 cd e2e && npx playwright test                     # browser e2e (see below)
@@ -163,10 +164,27 @@ cd e2e && npx playwright test                     # browser e2e (see below)
 
 **Pre-commit hook (husky) runs `npm run test:precommit`** = license header check
 + Go lint (`npm run lint:go`) + Go formatting (`npm run check:gofmt`) + prose lint
-(`npm run lint:prose`) + the em dash
-and docs-link checks + host-agent
+(`npm run lint:prose`) + the em dash, docs-link, and image pin checks + host-agent
 + apps Go tests + web TS tests. Don't commit without it passing;
 don't disable the hook.
+
+Image pins: every container image Bloud runs must name a specific version
+(`npm run check:image-pins`, `scripts/pinned-images.mjs`). A rolling tag is
+republished upstream, so `:release` today and `:release` next month are different
+bytes: a crash stops being reproducible, a bump stops being reviewable, and one bad
+upstream push lands on every install at once. Pinned means a version tag in any
+registry shape (`1.2.3`, `v3.4`, `7-alpine`, `pg16`, `2.6.5.5623-ls161`) or an
+`@sha256:` digest. It rejects no tag at all (the runtime reads that as `:latest`),
+`:latest`, and the rolling channels (`stable`, `release`, `staging`, `edge`,
+`nightly`, `main`, `dev`, `canary`, `beta`, and friends, including prefixed
+variants like `release-cuda`). The check reads `containers[].image` in
+`apps/*/metadata.yaml` and registry-qualified image literals in non-test Go under
+`apps/` and `services/`. Exceptions are declared in the `EXCEPTIONS` table in that
+script with a reason; the check prints them on every run so a floating tag is never
+invisible, and it fails an exception that matches nothing, so the list cannot rot.
+The one live exception is the Tailscale sidecar: a pinned Tailscale client drifts
+from its coordination server and its peers, and that failure shows up as broken
+transport rather than as a version mismatch, so it tracks `:stable` on purpose.
 
 License headers: every source file starts with a single
 `SPDX-License-Identifier: AGPL-3.0-only` comment line (syntax per language;
@@ -473,7 +491,8 @@ combined with instance/SSH-target env vars). Instance overrides:
    compatible: [{app, default}]}`), `provides` (per contract: the `secrets` this
    app publishes and the `values` it declares for the apps that integrate with
    it, see invariant 15), `containers[]`
-   (`name`, `image` (**pin versions**), `command`, `network`/`networks`,
+   (`name`, `image` (**pin versions**; a rolling tag fails `npm run
+   check:image-pins`), `command`, `network`/`networks`,
    `restartPolicy`, `environment`, `extraHosts`, `ports`, `volumes`,
    `dependsOn`, `healthCheck {test, interval, timeout, retries}`).
    Template vars in environment/volumes: `{{appDataDir}}`, `{{dataDir}}`, and

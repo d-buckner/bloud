@@ -55,7 +55,7 @@ containers:
       retries: 5
 
   - name: apps-immich-ml
-    image: ghcr.io/immich-app/immich-machine-learning:release
+    image: ghcr.io/immich-app/immich-machine-learning:v3.2.2
     network: immich-internal
     restartPolicy: always
     environment:
@@ -65,7 +65,7 @@ containers:
         destination: /cache
 
   - name: apps-immich-server
-    image: ghcr.io/immich-app/immich-server:release
+    image: ghcr.io/immich-app/immich-server:v3.2.2
     networks:
       - immich-internal
       - apps-net
