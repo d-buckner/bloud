@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 #
 # Release packaging: builds the production .deb and publishes it as a GitHub
 # pre-release, tagged deb-<UTC timestamp> (a .deb build, distinct from the ISO

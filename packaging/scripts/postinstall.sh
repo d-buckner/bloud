@@ -1,6 +1,5 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 #
 # Debian postinst: provision the dedicated unprivileged user, its rootless
 # Podman ranges, the data directory, and the user-level host-agent service.

@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 #
 # Reusable: resolves the Playwright projects a push actually needs. A markdown
 # change runs nothing; a change confined to apps/<name>/ runs only that app's
