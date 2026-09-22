@@ -436,7 +436,7 @@ podman run -d \
   --env TS_HOSTNAME=navidrome-spike \
   --env TS_USERSPACE=true \
   --env TS_EXTRA_ARGS="--accept-routes" \
-  docker.io/tailscale/tailscale:latest
+  docker.io/tailscale/tailscale:stable
 
 # 2. Wait for it to join the tailnet, then get its address
 podman exec ts-navidrome-spike tailscale ip --4
@@ -500,7 +500,10 @@ func sidecarContainerName(appName string) string {
 ```
 
 Sidecar container spec:
-- Image: `docker.io/tailscale/tailscale:latest`
+- Image: `docker.io/tailscale/tailscale:stable` (the one image Bloud does not pin to a
+  patch version: a Tailscale client that drifts from its tailnet breaks transport in
+  ways a version bump cannot preview, so it tracks the stable channel. Declared as an
+  exception in `scripts/pinned-images.mjs`.)
 - Name: `ts-{appName}`
 - Network: `apps-net`
 - Env: `TS_AUTHKEY`, `TS_HOSTNAME=ts-{appName}`, `TS_USERSPACE=true`
