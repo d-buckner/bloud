@@ -82,20 +82,16 @@
 				max-width: 26rem;
 			}
 
-			/* The cloud mark, same path as static/favicon.svg, breathing while
-			   the system comes up. */
-			.mark {
-				width: 56px;
-				height: 56px;
+			/* Indeterminate spinner: the same recipe as the dashboard's
+			   .step-spinner, at hero size. */
+			.spinner {
+				width: 40px;
+				height: 40px;
 				margin-bottom: var(--space-lg);
-				color: var(--color-text);
-				animation: breathe 2.4s ease-in-out infinite;
-			}
-
-			.mark svg {
-				display: block;
-				width: 100%;
-				height: 100%;
+				border: 3px solid var(--color-border);
+				border-top-color: var(--color-text);
+				border-radius: 50%;
+				animation: spin 1s linear infinite;
 			}
 
 			.wordmark {
@@ -139,64 +135,30 @@
 				animation: slide 1.6s ease-in-out infinite;
 			}
 
-			@keyframes breathe {
-				0%,
-				100% {
-					opacity: 1;
-					transform: scale(1);
-				}
-				50% {
-					opacity: 0.55;
-					transform: scale(0.96);
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
 				}
 			}
 
-			@keyframes slide {
-				0% {
-					transform: translateX(-100%);
-				}
-				100% {
-					transform: translateX(250%);
-				}
-			}
-
-			/* Once the dashboard is reachable the animation settles before the
-			   reload, so the page reads as finished rather than still working. */
-			.ready .mark {
-				animation: none;
-				opacity: 1;
-			}
-
-			.ready .progress span {
-				animation: none;
-				width: 100%;
-				transition: width 0.5s ease;
-			}
-
+			/* With motion off the spinner becomes a plain ring: a frozen spinner
+			   reads as broken, a ring does not. */
 			@media (prefers-reduced-motion: reduce) {
-				.mark,
-				.progress span {
+				.spinner {
 					animation: none;
+					border-top-color: var(--color-border);
 				}
 			}
 		</style>
 	</head>
 	<body>
 		<main class="boot">
-			<div class="mark" aria-hidden="true">
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-					<path
-						d="M26 16.5c0-2.8-2.3-5-5-5-0.4 0-0.8 0.1-1.2 0.2C19 9.1 16.5 7 13.5 7 9.9 7 7 9.9 7 13.5c0 0.3 0 0.5 0.1 0.8C4.7 14.8 3 16.8 3 19.2c0 2.9 2.4 5.3 5.3 5.3h15.4c2.4 0 4.3-1.9 4.3-4.3 0-2-1.4-3.7-3.2-4.2 0.1-0.2 0.2-0.3 0.2-0.5z"
-						fill="currentColor"
-					/>
-				</svg>
-			</div>
+			<div class="spinner" aria-hidden="true"></div>
 			<p class="wordmark">Bloud</p>
 			<h1>Getting your home cloud ready</h1>
 			<p class="message" id="boot-message" role="status" aria-live="polite">
-				This can take a few minutes. Your dashboard opens on its own.
+				This can take a few minutes.
 			</p>
-			<div class="progress" aria-hidden="true"><span></span></div>
 		</main>
 		<script>
 			(function () {
@@ -241,7 +203,6 @@
 					if (finished) return;
 					finished = true;
 					stop();
-					document.documentElement.className += " ready";
 					message.textContent = "All set. Opening your dashboard\u2026";
 					// Reload rather than navigate, so a deep link survives the wait.
 					setTimeout(function () {
