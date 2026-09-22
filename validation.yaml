@@ -40,6 +40,14 @@ tiers:
       - id: license-headers
         cwd: .
         run: npm run license:check
+      # Every container image Bloud runs has to name a specific version. A
+      # rolling tag (`:latest`, `:release`, `:stable`) is republished upstream,
+      # so an install is not reproducible and a bump is not reviewable. The
+      # check reads the catalog and the Go image constants, and prints its
+      # declared exceptions on every run.
+      - id: image-pins
+        cwd: .
+        run: npm run check:image-pins
       # Prose lint: Markdown docs plus the comments in source files (Vale; rules
       # and vocabulary in .vale.ini + .vale/styles).
       - id: prose-lint
@@ -90,7 +98,7 @@ inference:
     - pattern: "**"
       # These ride the catch-all: any change can invalidate a doc, and the
       # matcher has no recursive `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links, depgraph-check]
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, depgraph-check]
 
 apps:
   affine:
