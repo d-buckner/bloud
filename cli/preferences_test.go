@@ -77,23 +77,27 @@ func TestResolveBackendPrecedence(t *testing.T) {
 	envSet := func(string) string { return "native" }
 	getenv := func(string) string { return "" }
 	ask := func(opts []string) (string, error) { return opts[0], nil }
+	// The stored value has to be applicable to this host, or storedBackend
+	// discards it as stale (TestStoredBackendIgnoresStaleValue): "qemu" is
+	// stale on macOS and "lima" on Linux. Derive it from this host's
+	// available backends instead of hardcoding one.
+	available := availableBackends()
 
 	// 1. BLOUD_BACKEND overrides the stored preference.
 	root := t.TempDir()
-	if err := savePreferences(root, Preferences{Backend: "qemu"}); err != nil {
+	if err := savePreferences(root, Preferences{Backend: available[0]}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := resolveBackend(root, envSet, false, ask); err != nil || got != "native" {
 		t.Fatalf("env override = %q, %v; want native", got, err)
 	}
 	// 2. The stored preference wins when no env override is set.
-	if got, err := resolveBackend(root, getenv, false, ask); err != nil || got != "qemu" {
-		t.Fatalf("stored preference = %q, %v; want qemu", got, err)
+	if got, err := resolveBackend(root, getenv, false, ask); err != nil || got != available[0] {
+		t.Fatalf("stored preference = %q, %v; want %s", got, err, available[0])
 	}
 	// 3. No preference: single-option hosts auto-resolve, multi-option
 	// hosts error when not interactive.
 	empty := t.TempDir()
-	available := availableBackends()
 	got, err := resolveBackend(empty, getenv, false, ask)
 	if len(available) == 1 {
 		if err != nil || got != available[0] {
