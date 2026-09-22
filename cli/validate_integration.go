@@ -132,10 +132,6 @@ func integrationPrepareGuest(ctx context.Context, ex executor.Executor, step fun
 // integrationBuildArtifacts builds the host-agent binary, the frontend, and
 // the integration test binary locally into tmpDir. The error message is the
 // ledger confidence reason for the failing build.
-
-// integrationBuildArtifacts builds the host-agent binary, the frontend, and
-// the integration test binary locally into tmpDir. The error message is the
-// ledger confidence reason for the failing build.
 func integrationBuildArtifacts(root, hostAgentSrc, tmpDir string, step func(string)) (string, string, error) {
 	step("Building host-agent for linux/" + runtime.GOARCH)
 	binaryPath := filepath.Join(tmpDir, "host-agent")
@@ -159,10 +155,15 @@ func integrationBuildArtifacts(root, hostAgentSrc, tmpDir string, step func(stri
 		return "", "", errors.New("frontend build failed")
 	}
 
-	step("Building integration test binary")
+	step("Building integration test binary for linux/" + runtime.GOARCH)
 	testBinary := filepath.Join(tmpDir, "bloud-integration.test")
 	testBuild := exec.Command("go", "test", "-tags", "integration", "-c", "-o", testBinary, "./internal/e2e")
 	testBuild.Dir = hostAgentSrc
+	// The binary runs *in the guest*, so it needs the same target as the
+	// host-agent build above. Without it Go builds for the host (darwin/arm64
+	// on a macOS developer machine), the deployment succeeds, and the test run
+	// dies with "cannot execute binary file: Exec format error".
+	testBuild.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
 	testBuild.Stdout = os.Stdout
 	testBuild.Stderr = os.Stderr
 	if err := testBuild.Run(); err != nil {
