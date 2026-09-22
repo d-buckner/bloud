@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Keeps the README's dependency graph current. On every merge to main it
+# regenerates the mermaid block from apps/*/metadata.yaml and commits the
+# result, so the README is a view of the catalog rather than a picture
+# someone has to remember to update.
+#
+# The PR-time gate is `./bloud depgraph --check`, a command in the fast
+# validation tier; this job is the safety net that leaves main correct even
+# when a PR forgot to regenerate. The commit is marked [skip ci] so the
+# generated commit does not kick off another full validation pass.
+name: Dependency graph
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dependency-graph-main
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The branch tip, not a detached commit: this job commits back.
+          ref: refs/heads/main
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache-dependency-path: cli/go.sum
+
+      - name: Build the bloud CLI
+        run: npm run cli:build
+
+      - name: Regenerate the README dependency graph
+        run: ./bloud depgraph --write
+
+      - name: Commit the refresh
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- README.md; then
+            echo "README dependency graph already current; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs(readme): refresh the dependency graph [skip ci]"
+          git push origin HEAD:main

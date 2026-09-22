@@ -93,7 +93,7 @@ func dispatch(cmd string, args []string) int {
 		"e2e":       cmdE2E,
 		"validate":  cmdValidate,
 		"package":   cmdPackage,
-		"depgraph":  func([]string) int { return cmdDepGraph() },
+		"depgraph":  cmdDepGraph,
 		"token":     func([]string) int { return cmdToken() },
 	}
 	if h, ok := handlers[cmd]; ok {
@@ -151,7 +151,9 @@ func printUsage() {
 	fmt.Println("    --out <dir>        Output directory (default: dist)")
 	fmt.Println()
 	fmt.Println("Other:")
-	fmt.Println("  depgraph        Generate Mermaid dependency graph from app metadata")
+	fmt.Println("  depgraph        Generate the full Mermaid dependency graph from app metadata")
+	fmt.Println("    --write          Embed it in README.md (between the generated markers)")
+	fmt.Println("    --check          Exit 1 when README.md's graph is stale")
 	fmt.Println("  token           Print the host-agent API token (for ad-hoc curl / e2e)")
 	fmt.Println()
 	switch usageBackend() {

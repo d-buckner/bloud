@@ -273,7 +273,14 @@ Validation:  validate [flags]     Tiered validation (default --tier changed)
                                  self-contained runtime; used by CI
             e2e affected         Print the Playwright projects a change set needs
                                  (sizes the CI e2e matrix)
-Other:       depgraph             Mermaid dependency graph from app metadata
+Other:       depgraph             Full Mermaid dependency graph from app metadata
+                                 (no flag: print to stdout)
+            depgraph --write     Embed that graph in README.md between the
+                                 generated markers
+            depgraph --check     Exit 1 when README.md's graph is not what the
+                                 catalog produces (the fast-tier gate; the
+                                 merge-to-main job commits the refresh)
+            depgraph --target F  File to write or check (default README.md)
 ```
 
 The CLI resolves the project root from cwd using the `rootMarkers` list in
@@ -540,6 +547,7 @@ to the right doc. When a doc moves, update it in both places.
 | What are we building / release plan | [specs/spec.md](docs/specs/spec.md) |
 | Orchestrator/reconciler design | [specs/reconciler-spec.md](docs/specs/reconciler-spec.md) |
 | Component overview + data flows | [architecture/overview.md](docs/architecture/overview.md) |
+| The full app + container graph (generated) | [README.md#the-full-graph](README.md#the-full-graph) |
 | How to add an app | [guides/contributing-apps.md](docs/guides/contributing-apps.md) |
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
