@@ -152,13 +152,19 @@ func TestRenderGraphIntegrationEdgeLabels(t *testing.T) {
 	if strings.Contains(rendered, "app_widget_app -->|sso|") {
 		t.Errorf("sso edge kept the generic label:\n%s", rendered)
 	}
-	// The proxy edge is drawn from the proxy to the app it routes, and the
-	// required marker is kept.
-	if !strings.Contains(rendered, "app_traefik -->|proxy*| app_widget_app") {
-		t.Errorf("missing reversed required proxy edge:\n%s", rendered)
+	// The proxy edge is drawn from the proxy to the app it routes.
+	if !strings.Contains(rendered, "app_traefik -->|proxy| app_widget_app") {
+		t.Errorf("missing reversed proxy edge:\n%s", rendered)
 	}
-	if strings.Contains(rendered, "app_widget_app -->|proxy*| app_traefik") {
+	if strings.Contains(rendered, "app_widget_app -->|proxy| app_traefik") {
 		t.Errorf("proxy edge left in the app-to-proxy direction:\n%s", rendered)
+	}
+	// Required integrations carry no marker: the star notation is gone, so no
+	// edge label in the diagram body carries one. (Scoped to the fence: the
+	// "apps/*/metadata.yaml" glob in the generated note is not a marker.)
+	fence := rendered[strings.Index(rendered, "```mermaid"):strings.LastIndex(rendered, "```")]
+	if strings.Contains(fence, "*") {
+		t.Errorf("a required-integration marker leaked into the diagram:\n%s", fence)
 	}
 }
 

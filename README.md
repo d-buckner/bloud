@@ -187,20 +187,21 @@ flowchart TD
     app_jellyfin -->|ldap| app_authentik
     app_navidrome -->|forward-auth| app_authentik
     app_paperless_ngx -->|native-oidc| app_authentik
-    app_traefik -->|proxy*| app_affine
-    app_traefik -->|proxy*| app_authentik
-    app_traefik -->|proxy*| app_hermes
-    app_traefik -->|proxy*| app_homeassistant
-    app_traefik -->|proxy*| app_immich
-    app_traefik -->|proxy*| app_jellyfin
-    app_traefik -->|proxy*| app_navidrome
-    app_traefik -->|proxy*| app_paperless_ngx
-    app_traefik -->|proxy*| app_vaultwarden
+    app_traefik -->|proxy| app_affine
+    app_traefik -->|proxy| app_authentik
+    app_traefik -->|proxy| app_hermes
+    app_traefik -->|proxy| app_homeassistant
+    app_traefik -->|proxy| app_immich
+    app_traefik -->|proxy| app_jellyfin
+    app_traefik -->|proxy| app_navidrome
+    app_traefik -->|proxy| app_paperless_ngx
+    app_traefik -->|proxy| app_vaultwarden
     app_vaultwarden -->|native-oidc| app_authentik
 ```
 
-_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. Arrows between boxes are integrations: `proxy*` is the required reverse-proxy integration, drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`). A `*` marks a required integration._
+_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._
 <!-- END GENERATED DEPENDENCY GRAPH -->
+
 
 
 ## One login everywhere

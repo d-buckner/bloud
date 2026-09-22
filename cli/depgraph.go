@@ -335,8 +335,7 @@ func renderDependencyGraph(apps map[string]*AppMetadata) string {
 // graphLegend explains the notation, because the diagram is generated and no
 // prose around it is written by whoever changed the metadata.
 const graphLegend = "_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. " +
-	"Arrows between boxes are integrations: `proxy*` is the required reverse-proxy integration, drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy " +
-	"(`ldap`, `forward-auth`, `native-oidc`). A `*` marks a required integration._"
+	"Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._"
 
 // renderAppBox renders one app: its titled box, a node per container, and
 // the dependsOn arrows between them.
@@ -451,9 +450,6 @@ func integrationEdges(apps map[string]*AppMetadata) []graphEdge {
 			label := integrationName
 			if integrationName == "sso" {
 				label = ssoEdgeLabel(app)
-			}
-			if integration.Required {
-				label += "*"
 			}
 
 			from, to := appBoxID(appName), appBoxID(provider)
