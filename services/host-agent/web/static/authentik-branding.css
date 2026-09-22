@@ -139,7 +139,12 @@ form.pf-c-form > p {
   display: none !important;
 }
 
-.pf-c-button.pf-m-primary {
+/* Login-card submit button only. Authentik's flow chrome also uses
+ * `.pf-c-button.pf-m-primary` (the `.inspector-toggle` button in the flow
+ * drawer), and the blanket selector turned that icon button into a
+ * full-height "Sign in" slab pinned to the right edge: `position: relative`
+ * overrode the toggle's own `position: absolute`. */
+.pf-c-login__main .pf-c-button.pf-m-primary {
   background-color: #1C1917 !important;
   border-color: #1C1917 !important;
   border-radius: 8px !important;
@@ -147,7 +152,7 @@ form.pf-c-form > p {
   position: relative !important;
 }
 
-.pf-c-button.pf-m-primary::after {
+.pf-c-login__main .pf-c-button.pf-m-primary::after {
   content: 'Sign in';
   color: #FFFFFF;
   position: absolute;
@@ -158,7 +163,7 @@ form.pf-c-form > p {
   font-size: 1rem;
 }
 
-.pf-c-button.pf-m-primary:hover {
+.pf-c-login__main .pf-c-button.pf-m-primary:hover {
   background-color: #292524 !important;
   border-color: #292524 !important;
 }
