@@ -1,6 +1,5 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Daniel Buckner
 #
 # Debian prerm: stop the host-agent before the package is removed. An upgrade
 # leaves the running service alone; postinst restarts it with the new binary.
