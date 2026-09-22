@@ -148,18 +148,46 @@ func (s *Server) OrchestratorReady() <-chan struct{} {
 	return s.orch.Ready()
 }
 
+// reconcilingLoop is the slice of the orchestrator the health check needs:
+// whether the intent loop is still running.
+type reconcilingLoop interface {
+	Stopped() bool
+}
+
+// checkSystemHealth is the single implementation behind both
+// Server.CheckSystemHealth and the HTTP health endpoint, so the two can never
+// disagree. A dead intent loop is invisible to a DB ping: every Submit keeps
+// answering 202 while nothing reconciles, so both surfaces have to look at the
+// loop, not just at the database.
+func checkSystemHealth(orch reconcilingLoop, db *sql.DB) error {
+	if orch != nil && orch.Stopped() {
+		return errors.New("orchestrator intent loop has exited; nothing is reconciling")
+	}
+	if db == nil {
+		return errors.New("no database connection")
+	}
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("database connection failed: %w", err)
+	}
+	return nil
+}
+
 // CheckSystemHealth validates that the system is healthy: the database is
 // reachable and, when an orchestrator is wired, its intent loop has not
 // exited. A dead loop is otherwise indistinguishable from an idle one:
 // every Submit keeps answering 202 while nothing reconciles.
 func (s *Server) CheckSystemHealth() error {
-	if s.orch != nil && s.orch.Stopped() {
-		return errors.New("orchestrator intent loop has exited; nothing is reconciling")
+	return checkSystemHealth(orchAsReconcilingLoop(s.orch), s.db)
+}
+
+// orchAsReconcilingLoop avoids the typed-nil trap: a nil *orchestrator.Orchestrator
+// assigned straight to the interface would arrive as a non-nil interface holding
+// a nil pointer, and the Stopped() call would dereference it.
+func orchAsReconcilingLoop(o *orchestrator.Orchestrator) reconcilingLoop {
+	if o == nil {
+		return nil
 	}
-	if err := s.db.Ping(); err != nil {
-		return fmt.Errorf("database connection failed: %w", err)
-	}
-	return nil
+	return o
 }
 
 // InitAuth re-attempts auth initialization once system apps have converged.

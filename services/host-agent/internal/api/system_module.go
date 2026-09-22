@@ -35,7 +35,11 @@ type systemModule struct {
 	gateway      sharing.GatewayManagerInterface
 	tailnetStore store.TailnetStoreInterface
 	orch         orchestratorStatusCaller
-	logger       *slog.Logger
+	// healthCheck reports whether the system is actually working (database
+	// reachable, orchestrator intent loop alive). Wired by the router; nil
+	// leaves the endpoint as a liveness echo.
+	healthCheck func() error
+	logger      *slog.Logger
 }
 
 // NewSystemModule creates a new SystemModule.
@@ -61,9 +65,31 @@ func NewSystemModule(
 
 // ---- Health ----
 
-// HealthHandler returns the basic health check.
+// SetHealthCheck wires the system health check behind the health endpoint, so
+// the HTTP answer and Server.CheckSystemHealth come from one implementation.
+func (m *systemModule) SetHealthCheck(check func() error) {
+	m.healthCheck = check
+}
+
+// HealthHandler answers the health probe. 200 means the instance is up and
+// reconciling. 503 with status "unhealthy" means the process answers but
+// something it depends on is broken; the reason goes to the log, not the wire,
+// because this endpoint is public and a driver error can name a path.
+//
+// That body is also what separates this 503 from the bootstrap gate's
+// 503 {"error":"starting"}: "starting" means still coming up, "unhealthy"
+// means up and broken. The bootstrap page keys off the difference.
 func (m *systemModule) HealthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if m.healthCheck == nil {
+			respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
+		if err := m.healthCheck(); err != nil {
+			m.logger.Warn("health check failed", "error", err)
+			respondJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy"})
+			return
+		}
 		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }

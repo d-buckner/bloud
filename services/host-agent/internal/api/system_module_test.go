@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -87,12 +88,17 @@ func newSystemModule(t *testing.T, opts systemModuleOpts) *systemModule {
 		gateway:      gateway,
 		tailnetStore: tailnetStore,
 		orch:         orch,
+		healthCheck:  opts.healthCheck,
 		logger:       logger,
 	}
 }
 
 // systemModuleOpts lets tests customize the module.
-type systemModuleOpts struct{}
+type systemModuleOpts struct {
+	// healthCheck wires the system health check the health endpoint answers
+	// from. Left nil, the endpoint stays a liveness echo.
+	healthCheck func() error
+}
 
 // FakeAppGraph is a fake catalog.AppGraphInterface for testing.
 type FakeAppGraph struct {
@@ -119,6 +125,49 @@ func (f *FakeAppGraph) GetApps() map[string]*catalog.AppDefinition {
 
 func TestSystemHTTP_Health(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
+	r := chi.NewRouter()
+	NewSystemRouter(mod, r)
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", resp["status"])
+}
+
+// A failing check is 503 {"status":"unhealthy"}. That body is what the bootstrap
+// page reads as "up and broken", as opposed to the gate's 503
+// {"error":"starting"}. The reason itself stays in the log: this endpoint is
+// public, and a driver error can name a path.
+func TestSystemHTTP_Health_Unhealthy(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		healthCheck: func() error {
+			return errors.New("database connection failed: /var/lib/bloud/bloud.db: no such file")
+		},
+	})
+	r := chi.NewRouter()
+	NewSystemRouter(mod, r)
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	var resp map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, "unhealthy", resp["status"])
+	assert.NotContains(t, w.Body.String(), "bloud.db", "the reason must not reach the wire")
+}
+
+// With no check wired the endpoint answers as it always did: the process is up.
+func TestSystemHTTP_Health_UnwiredCheck(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	mod.healthCheck = nil
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 

@@ -153,6 +153,19 @@ type Intent interface {
 }
 ```
 
+**Bootstrap and readiness.** The listener opens at process start so Traefik has
+an upstream, but `bootstrapGate` (`internal/api/loading.go`) answers 503
+`{"error":"starting"}` for the API surface and the root `/health` probe until
+the first convergence pass finishes, and serves the customer-facing "Getting
+your home cloud ready" page everywhere else. Opening the gate is not a health
+verdict: `close(o.ready)` runs after `converge` returns, and `converge` reports
+no error, so it opens on a failed bootstrap too. The waiting page therefore
+polls twice, `/api/health` for the gate and then `/api/setup/status` for a live
+identity-provider check, and reloads on the latter. Once the gate is open,
+health answers on its own merits from `checkSystemHealth`
+(`internal/api/server.go`): database reachable and the intent loop alive, else
+503 `{"status":"unhealthy"}`.
+
 ### Configurator Framework (`pkg/configurator/`)
 
 Generic interface for app-specific runtime configuration that can't be expressed in

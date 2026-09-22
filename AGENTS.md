@@ -315,8 +315,9 @@ combined with instance/SSH-target env vars). Instance overrides:
    up changes. System apps set `isSystem: true` (hidden from the user catalog).
    Bootstrap (system infra: Traefik + deps) converges **before the API is
    usable**: the listener opens at process start but serves a static loading
-   page (and 503 for `/api`) until the orchestrator reports ready, so a browser
-   hitting Traefik during bootstrap sees the page instead of a 502. The
+   page (and 503 for `/api` and `/health`) until the orchestrator reports
+   ready, so a browser hitting Traefik during bootstrap sees the page instead
+   of a 502. The
    orchestrator manages user apps only.
 6. **SSO strategies** are exactly: `native-oidc`, `ldap`, `forward-auth`, `none`
    (Immich + AFFiNE + Hermes + Paperless-ngx: native-oidc, Jellyfin: ldap,
@@ -410,10 +411,20 @@ combined with instance/SSH-target env vars). Instance overrides:
 - Public: `GET /health`, `GET /auth/login`, `GET /auth/callback`,
   `POST /auth/logout`, `GET /api/health`, `GET /api/setup/status`,
   `GET /api/auth/me`, plus the public system-info router.
-- Until the first convergence pass finishes, `/api/*` (health included) answers
-  503 (`bootstrapGate`, `internal/api/loading.go`). So a 200 from
-  `GET /api/health` means "ready", not merely "listening"; poll it for readiness
-  (`./bloud dev` does).
+- Until the first convergence pass finishes, `/api/*` and the root `/health`
+  probe answer 503 `{"error":"starting"}` (`bootstrapGate`,
+  `internal/api/loading.go`); `/fonts/` and `/favicon.*` pass through so the
+  waiting page renders in the brand. A 200 from `GET /api/health` means the
+  gate is open, **not** that SSO came up: `close(o.ready)` fires when the first
+  convergence pass *returns*, and `converge` reports no error. Confirm with
+  `GET /api/setup/status`, whose `authentikReady` is a live probe of the
+  identity provider.
+- Once the gate is open, health answers on its own merits. `checkSystemHealth`
+  (`internal/api/server.go`) is the single implementation behind both
+  `Server.CheckSystemHealth` and the HTTP handler: database reachable and the
+  orchestrator intent loop alive. Failure is 503 `{"status":"unhealthy"}`, with
+  the reason logged and never put on the wire (the endpoint is public). That body
+  is how a client tells "up and broken" apart from the gate's "starting".
 - Authenticated (session cookie, or loopback/`BLOUD_TRUSTED_LOCAL_NETS` bypass):
   `GET /api/apps` (catalog), `GET /api/apps/installed`,
   `GET /api/apps/{name}/metadata`, `POST /api/apps/{name}/install`,
