@@ -25,6 +25,15 @@ type Config struct {
 	// for host-agent API requests. Used by dev VMs (e.g. QEMU slirp NAT where
 	// host-forwarded connections arrive from the gateway, not loopback).
 	TrustedLocalNets []string
+	// TrustedProxyNets lists the addresses, as seen from Traefik, of the reverse
+	// proxy sitting directly in front of Bloud (a TLS terminator such as nginx
+	// proxy manager, Caddy, or a Cloudflare Tunnel). Traefik trusts
+	// X-Forwarded-* from these sources only, so the original scheme reaches
+	// Authentik instead of Traefik's own "http". It is a source-scope setting,
+	// never blanket trust: Traefik keeps overwriting X-Forwarded-* from any peer
+	// outside the list. Distinct from TrustedLocalNets, which is a host-agent
+	// admin-position scope and grants nothing to Traefik.
+	TrustedProxyNets []string
 	// SSO configuration
 	SSOHostSecret string // Master secret for deriving client secrets
 	// APIToken is the bearer credential for the admin API surface from a trusted
@@ -131,6 +140,7 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		AppsDir:                appsDir,
 		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
 		TrustedLocalNets:       splitNets(getEnv("BLOUD_TRUSTED_LOCAL_NETS", "")),
+		TrustedProxyNets:       splitNets(getEnv("BLOUD_TRUSTED_PROXY_NETS", "")),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),

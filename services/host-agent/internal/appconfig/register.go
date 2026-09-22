@@ -57,6 +57,7 @@ func RegisterSystem(
 			cfg.Port,
 			cfg.AuthentikPort,
 			cfg.DataDir,
+			cfg.TrustedProxyNets,
 		), nil
 	})
 

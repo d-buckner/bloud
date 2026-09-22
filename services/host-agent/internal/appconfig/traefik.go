@@ -16,27 +16,33 @@ import (
 
 // TraefikConfigurator manages the Traefik reverse proxy lifecycle.
 type TraefikConfigurator struct {
-	runtime       containerruntime.Runtime
-	traefikPort   int
-	hostAgentPort int
-	authentikPort int
-	dataDir       string
+	runtime          containerruntime.Runtime
+	traefikPort      int
+	hostAgentPort    int
+	authentikPort    int
+	dataDir          string
+	trustedProxyNets []string
 }
 
-// NewTraefikConfigurator creates a new Traefik configurator.
+// NewTraefikConfigurator creates a new Traefik configurator. trustedProxyNets
+// is the set of addresses (IP or CIDR, as seen from Traefik) of the reverse
+// proxy directly in front of Bloud; see TraefikConfigurator.staticConfig for
+// what the list does and an empty list for the default behaviour.
 func NewTraefikConfigurator(
 	runtime containerruntime.Runtime,
 	traefikPort int,
 	hostAgentPort int,
 	authentikPort int,
 	dataDir string,
+	trustedProxyNets []string,
 ) *TraefikConfigurator {
 	return &TraefikConfigurator{
-		runtime:       runtime,
-		traefikPort:   traefikPort,
-		hostAgentPort: hostAgentPort,
-		authentikPort: authentikPort,
-		dataDir:       dataDir,
+		runtime:          runtime,
+		traefikPort:      traefikPort,
+		hostAgentPort:    hostAgentPort,
+		authentikPort:    authentikPort,
+		dataDir:          dataDir,
+		trustedProxyNets: trustedProxyNets,
 	}
 }
 
@@ -94,15 +100,16 @@ func (c *TraefikConfigurator) Remove(ctx context.Context, _ *configurator.AppSta
 const traefikCompatPort = 8080
 
 func (c *TraefikConfigurator) staticConfig() string {
-	// No forwardedHeaders block on purpose. Traefik's default is to discard
-	// client-supplied X-Forwarded-* / X-Real-Ip from untrusted peers and set
-	// them itself; `insecure: true` disabled that, letting any client assert an
-	// arbitrary source address. host-agent no longer reads client IP at all
-	// (PR 4 dropped middleware.RealIP), and the forward-auth middlewares trust
-	// the values Traefik sets, so the secure default is the whole config.
-	entrypoints := "  web:\n    address: \":" + strconv.Itoa(c.traefikPort) + "\"\n"
+	// Traefik's default is to discard client-supplied X-Forwarded-* / X-Real-Ip
+	// from untrusted peers and set them itself. That default stays unless the
+	// operator names an upstream proxy in trustedProxyNets, which adds
+	// forwardedHeaders.trustedIPs so the original scheme survives one more hop
+	// (see entrypointYaml). `insecure: true` is never emitted: it disabled the
+	// discard entirely, letting any client assert an arbitrary source address
+	// (PR 4 removed the host-agent rule that made that exploitable).
+	entrypoints := c.entrypointYaml("web", c.traefikPort)
 	if c.traefikPort != traefikCompatPort {
-		entrypoints += "  web-local:\n    address: \":" + strconv.Itoa(traefikCompatPort) + "\"\n"
+		entrypoints += c.entrypointYaml("web-local", traefikCompatPort)
 	}
 	return `entryPoints:
 ` + entrypoints + `providers:
@@ -119,6 +126,30 @@ ping:
 log:
   level: INFO
 `
+}
+
+// entrypointYaml renders one entrypoint block. With no trusted proxy nets it is
+// just the address, which keeps the emitted config byte-identical to a build
+// without the setting. With them it adds forwardedHeaders.trustedIPs, so
+// Traefik accepts X-Forwarded-* from the proxy directly in front of it and
+// passes the original scheme on: without that, a TLS terminator leaves the
+// hop to Traefik in plain HTTP, Traefik rewrites X-Forwarded-Proto to "http",
+// and Authentik reads an HTTPS request as HTTP and generates http:// URLs the
+// browser then blocks as mixed content, stalling the login flow.
+//
+// Trust is scoped to the source address, not the header: a peer outside the
+// list keeps the secure default, and its X-Forwarded-* is overwritten. Each
+// entry is quoted so YAML reads it as a string whatever it contains.
+func (c *TraefikConfigurator) entrypointYaml(name string, port int) string {
+	block := "  " + name + ":\n    address: \":" + strconv.Itoa(port) + "\"\n"
+	if len(c.trustedProxyNets) == 0 {
+		return block
+	}
+	block += "    forwardedHeaders:\n      trustedIPs:\n"
+	for _, proxy := range c.trustedProxyNets {
+		block += "        - " + strconv.Quote(proxy) + "\n"
+	}
+	return block
 }
 
 func (c *TraefikConfigurator) baseDynamicConfig() string {
