@@ -9,11 +9,31 @@ import { expect, type Page } from '@playwright/test';
  */
 export async function openAppFromHome(page: Page, label: string): Promise<Page> {
   await page.goto('/');
-  const popupPromise = page.waitForEvent('popup');
-  await page.locator('.app-slot', { hasText: label }).first().click();
-  const appPage = await popupPromise;
-  await appPage.waitForLoadState();
-  return appPage;
+  const tile = page.locator('.app-slot', { hasText: label }).first();
+  await expect(tile).toBeVisible({ timeout: 15_000 });
+
+  // The tile opens the app through its own click handler: it is a div with
+  // role="button" rather than a link (GridStack's drag handler ignores
+  // buttons), so a click that lands before SvelteKit hydrates the handler, or
+  // one GridStack takes for a drag, does nothing at all. Retry until a popup
+  // actually appears instead of failing the rung on the first attempt.
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const popupPromise = page
+      .waitForEvent('popup', { timeout: 5_000 })
+      .catch(() => null);
+    await tile.click();
+    const popup = await popupPromise;
+    if (popup) {
+      await popup.waitForLoadState();
+      return popup;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `clicking the ${label} tile did not open the app popup`,
+      );
+    }
+  }
 }
 
 /**

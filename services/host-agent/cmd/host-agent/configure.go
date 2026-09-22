@@ -250,6 +250,8 @@ func runReconcile(ctx context.Context, registry *configurator.Registry, appStore
 		logger,
 		orchestrator.OrchestratorConfig{
 			LDAPOutput: appCfg.LDAPOutput(),
+			AppStore:   appStore,
+			Secrets:    appCfg.Secrets,
 		},
 	)
 

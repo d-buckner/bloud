@@ -34,17 +34,19 @@ app-side, following the precedents already in the tree:
 
 | Need | App-side mechanism | Precedent |
 |---|---|---|
-| "Is my provider installed?" | probe the provider's host-published port (every app publishes `metadata.yaml: port`) | `apps/seerr` probes `localhost:8096` for Jellyfin today |
-| Provider base URL to *store* in config | `http://apps-<id>:<port>`: container names are `apps-<name>` (invariant 12); single-container node == container name | `apps/seerr` stores `apps-jellyfin`; Immich/AFFiNE use container DNS in env |
-| Provider credentials | documented file conventions: `<BloudDataPath>/<id>/config/config.xml` (`<ApiKey>`), `<BloudDataPath>/seerr/config/settings.json` (`main.apiKey`) | `apps/navidrome` reads `<BloudDataPath>/authentik/api-token` |
+| "Is my provider installed?" | the resolved `integrations:` binding (`binding.Installed`) | see the landed follow-up below: the port probes this plan was written with were replaced in the same release |
+| Provider base URL to *store* in config | the same binding's `BaseURL` (`http://<node>:<port>`); container names are `apps-<name>` (invariant 12) | `apps/seerr` stores `apps-jellyfin`; Immich/AFFiNE use container DNS in env |
+| Provider credentials | the contract payload's credential field, from the provider's `provides.<contract>.secrets` declaration plus `AppSecretsProvider.SetAppSecret` | `apps/hermes` reads affine-mcp's generated token from the host store |
 | Ordering + retries after a provider appears | declarative `integrations:` metadata → `computeAppDeps` builds the edge for an **optional** integration once the provider is installed; the existing staleness re-run re-runs the consumer's `PostStart` when its provider transitions | `pipeline.go:699-756`, `orchestrator.go:803-835` |
 
-The one cost of staying app-side: each consumer holds its provider's catalog port as a
-documented constant (`qbittorrent = 8081`), coupling two catalog entries. Each consumer's
-`INTEGRATION.md` names that coupling so a provider port change is a greppable edit.
+The "one cost of staying app-side" this plan originally accepted (each consumer holding its
+provider's catalog port as a documented constant, and reading a sibling's config.xml for its
+key) was paid off in the follow-up below: bindings carry the address, so no consumer holds a
+port, and credentials travel through the host secret store, so no consumer reads a sibling's
+file.
 
-Two **candidate framework changes are deliberately out of scope** and need a separate
-decision (§9).
+The two **candidate framework changes** §9 listed were deliberately out of scope here; F1
+(bindings) has since landed as its own change.
 
 ## Target graph
 
@@ -236,7 +238,9 @@ Phases 1-4 are independent; 4 depends on 1 only at runtime (guaranteed by the DA
 1. **Empty qBittorrent credentials through the Servarr client**: the single real unknown.
   Mitigated by requiring `/downloadclient/test` to pass, with the documented PBKDF2 fallback.
 2. **Per-consumer provider constants** (port numbers) duplicate catalog metadata. Mitigation:
-  documented in each `INTEGRATION.md`; removed by F1 if that framework change is ever approved.
+  documented in each `INTEGRATION.md`; removed by F1 if that framework change is ever approved
+  (**resolved**: F1 landed 2026-09-21, so the constants are gone and the address comes from the
+  binding).
 3. **Half-wired stacks look healthy**: a node with no provider runs fine and shows no "not wired
   yet" signal. Consider surfacing it in a follow-up (UI/status), not here.
 4. **API surface drift**: Sonarr/Radarr `/api/v3`, Prowlarr `/api/v1`; pinned image tags keep the
@@ -261,7 +265,7 @@ change to the automations above. What a bundle needs (separate design):
 
 | # | Change | Why it would help | Why this plan does not need it | Cost |
 |---|---|---|---|---|
-| F1 | Pass resolved provider addresses/bindings into `configurator.AppState` (`pkg/configurator` + orchestrator resolver) | removes per-consumer port constants; one source of truth for "where is my provider" | probes + `apps-<id>:<port>` already work and are precedented; constants are static and documented | contract change + resolver + tests |
+| F1 | Pass resolved provider addresses/bindings into `configurator.AppState` (`pkg/configurator` + orchestrator resolver) | removes per-consumer port constants; one source of truth for "where is my provider" | probes + `apps-<id>:<port>` already work and are precedented; constants are static and documented | contract change + resolver + tests | **LANDED 2026-09-21** (see "Follow-up" below) |
 | F2 | Desired-state invalidation: store a per-app digest (catalog metadata + bindings + SSO strategy) and reset nodes when it changes | new wiring activates automatically on existing installs instead of needing a manual full-lifecycle pass | rollout is solved by the existing `./bloud dev` recreate path (§5) and by provider-driven staleness | store migration + digest + reset path + tests |
 | F3 | A bind address on `catalog.ContainerPort` (and a `hostIP` in `podman.PortMapping`), so a published port can be bound to loopback instead of `0.0.0.0` | these apps have **no app-side authentication** (Servarr `External` mode, qBittorrent's subnet whitelist), so the published port is an unauthenticated admin surface on every interface of the machine running host-agent; verified live: `podman port apps-qbittorrent` → `8081/tcp -> 0.0.0.0:8081`, `ss` → `*:8081`. Traefik runs on the host network and reaches apps through `localhost:<port>`, so a loopback bind would keep the product path working | the dev VM forwards published ports to host loopback only, so the exposure is invisible there and inherent to real deployments | catalog + engine + podman client fields + docs |
 | F4 | Make `appclient.Call.Timeout` real (it is a write-only field today, so a per-call override never reaches the request) | four sibling probes ask for a 5 s ceiling and silently get the client's 15 s default; the tech-debt ledger already records it | the probes now bound themselves with a context deadline instead | small fix + test in `pkg/appclient` |
@@ -341,9 +345,64 @@ install, through the full suite, and from the trusted side. All of them are fixe
    and the download-client create is no longer retried (the Servarr validator makes a retry a
    `400 Should be unique`), and a `null` list is rejected rather than treated as empty.
 
-Still open, unchanged: F1–F6 above (F3–F6 were added *by* this review: the unauthenticated
-published ports, the no-op per-call timeout, the unvalidated `sso.strategy` enum, and the
-fail-open coupling), plus the rollout note above. The reviewer's sticky-bit suggestion was
-considered and declined: `1777` would stop the container from replacing files the operator
-copied into the library by hand, and the shared ownership is what makes the temp-file rename
-work at all.
+## Follow-up landed 2026-09-21: integration bindings (F1)
+
+The two mechanisms this plan accepted as its app-side cost are gone, both replaced by F1.
+
+**What changed.** Integration contracts are first class. `internal/catalog/contracts.go` defines
+each one: the label a consumer declares, the secret names a provider must publish for it and the
+values it must declare. A provider offers a contract in its metadata
+(`provides: {pvr: {secrets: [apiKey]}}`) and the catalog loader rejects a declaration that does not
+match; the orchestrator resolves each declared contract into a *typed slice* in
+`configurator.AppState.Integrations` (`PVRs`, `MediaServers`, `DownloadClients`, `MCPServers`,
+`SSO`), each binding embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`, `BaseURL` as
+`http://apps-<id>:<port>` for what the app stores, and `LocalURL` as `http://localhost:<port>` for
+the configurator's own calls) plus that contract's payload (`PVRBinding.APIKey`,
+`MediaServerBinding.AdminPassword`, `MCPBinding.URL`, ...). Credentials travel through the host
+secret store (`AppSecretsProvider.SetAppSecret`); endpoint facts travel in the metadata. A
+consumer declares what it reads (`integrations.<contract>.requires`), and only that is resolved: a
+contract's credentials are not handed to every app that integrates with it, so declaring `sso` no
+longer delivers the identity provider's admin API token to apps that only needed to be
+authenticated. The
+bindings for a contract mirror `computeAppDeps`, so they never describe a provider the graph does
+not order.
+
+Replaced by it:
+
+| Was | Now |
+|---|---|
+| `pkg/servarr.SiblingConfigPath` + `APIKey`: Prowlarr and Seerr read `<dataDir>/<pvr>/config/config.xml` for the PVR's key | `PVRBinding.APIKey`; `apps/sonarr`/`apps/radarr` publish it under their `pvr` contract from `PreStart` (adopted from their own config.xml, so a UI-regenerated key is re-published) |
+| `apps/navidrome` read `<dataDir>/authentik/api-token` (ledger item C12) | `SSOBinding.APIToken`; `apps/authentik` publishes it under its `sso` contract. The file stays, because the host's own tooling reads it (`config.getAuthentikToken`, the CLI and e2e helpers) |
+| Seerr logged into Jellyfin with `GenerateAppAdminPassword("jellyfin")`, hardcoding the provider id | `MediaServerBinding.AdminPassword`; `apps/jellyfin` declares it under its `mediaServer` contract and the value is the password the host already generates for it |
+| Per-consumer provider port constants (`qbittorrentPort`, `sonarrPort`, `radarrPort`) and `apps-<id>` built by hand | `ProviderRef.Port` / `.Node` / `.BaseURL` |
+| Availability by port probe (`/ping`, `/api/v2/app/version`, `/System/Info/Public`), where a failed probe meant "not installed" and pruned the wiring | `binding.Installed`, the same condition as the dependency edge. A provider that is installed but not answering is a *transient* failure: the entry is kept and the next reconciliation retries. A probe could not tell "not installed" from "restarting", so it deleted wiring that was still wanted |
+| Seerr's prune used a sibling `config.xml` existence check as the "was installed" trace | `Installed: false` prunes, identified by the address Bloud wrote (which the binding still carries from the provider's catalog metadata) |
+
+**Upgrade rollout.** The credentials a consumer reads are published by the provider's `PreStart`,
+so on an upgrade an already-RUNNING provider has not published yet: a consumer wired in the same
+window sees the binding, logs that the key is not published, and wires nothing until the provider
+runs a full lifecycle. This plan's existing rollout note covers it (`./bloud dev` recreates the
+managed containers, which re-runs every `PreStart`); the stale-entry repair paths in Prowlarr and
+Seerr then converge on their next pass, as they do for any other drift.
+
+**Why the mechanism generalizes.** A contract is the unit: the vocabulary lives once, in
+`internal/catalog/contracts.go`, with the label a consumer declares, the secret names a provider
+must publish for it and the values it must declare, all validated at catalog load. Providers offer
+contracts in their metadata; the orchestrator resolves each into a *typed* slice in
+`AppState.Integrations` (`PVRs`, `MediaServers`, `DownloadClients`, `MCPServers`, `SSO`), so a
+provider of an existing contract is metadata only, a consumer reads its own payload fields with no
+nil checks, and no binding struct grows a field for every capability (the frozen, already-merged
+revision had `Secrets map[string]string` plus `MCP *MCPEndpoint` on one struct, which is the shape
+this replaced). Adding a contract is a registry entry, a payload type and one resolver arm; the
+MCP edge (an MCP server an agent app registers, handed over as `MCPServers[i].URL` with the token
+the same provider publishes) is the first contract that carries a non-credential value.
+
+**Consequences for the docs above.** Where §2 says "provider discovery: probe ...", §7 risk 2 or
+the post-review notes reference per-consumer constants, or a consumer is said to read a sibling's
+config file, the binding mechanism is what shipped. The tables in §1 (integration vocabulary) and
+the target graph still describe reality.
+
+**Still open** (unchanged by this): F2–F6, and the rollout note above. F1's own resolver is
+covered by `internal/engine/orchestrator/integration_bindings_test.go`, the declaration by
+`internal/catalog/provides_test.go`, and the store half (publish, idempotence, no env-file leak)
+by `internal/secrets/published_test.go`.

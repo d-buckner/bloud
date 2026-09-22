@@ -51,15 +51,37 @@ function originPattern(origin: string): RegExp {
 }
 
 /**
- * Assert the app is gated: a popup opened against the app origin has no
- * app session, so forward-auth intercepts it and the popup round-trips
- * to Authentik's flow *on the app's origin* instead of serving the app.
- * The flow page is a React app that renders its form after document
- * load, so wait on the form itself (redirect included).
+ * Assert the app is gated: the popup never received the app document, it
+ * is sitting in Authentik's flow on the app's behalf.
+ *
+ * Which stage that flow shows depends on the session the browser
+ * already carries. A visitor without one gets the identification form;
+ * a browser that signed into Authentik earlier (the suite's `beforeAll`
+ * does, since Bloud's own login goes through the IdP) gets the password
+ * re-prompt with identification skipped, and a run that waited for the
+ * username field sat there for its whole timeout. Both stages are the
+ * IdP asking, and the app's own login form is never served from these
+ * paths, so the assertion is scoped by the flow's URL rather than by
+ * one field's name.
  */
 export async function expectForwardAuthPrompt(popup: Page): Promise<void> {
-  const loginPage = new LoginPage(popup);
-  await loginPage.usernameField.waitFor({ state: 'visible', timeout: 60_000 });
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    const url = popup.url();
+    const inIdPFlow =
+      url.includes('/if/flow/') || url.includes('outpost.goauthentik.io');
+    const prompt = popup
+      .locator('input[name="uidField"], input[name="password"]')
+      .first();
+    if (inIdPFlow && (await prompt.isVisible().catch(() => false))) return;
+
+    if (Date.now() > deadline) {
+      throw new Error(
+        `forward-auth did not prompt: the popup is at ${url}, not on the IdP's flow`,
+      );
+    }
+    await popup.waitForTimeout(500);
+  }
 }
 
 /**

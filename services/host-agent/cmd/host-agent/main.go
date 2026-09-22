@@ -139,6 +139,7 @@ func runServer() {
 		LDAPOutput:            cfg.LDAPOutput(),
 		Registry:              registry,
 		TemplateVars:          templateVars,
+		Secrets:               cfg.Secrets,
 	}, logger)
 
 	// Open the listener before convergence. Until the orchestrator reports

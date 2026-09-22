@@ -79,6 +79,14 @@ integrations:
     required: true
     compatible: [{ app: authentik }]
 
+# What your app offers to the consumers that integrate with it (optional),
+# keyed by the contract names those consumers put in their `integrations:`.
+# Credentials listed here are published to the host secret store; values travel
+# in this file. See "Publishing for other apps" below.
+provides:
+  pvr:
+    secrets: [apiKey]
+
 sso:
   strategy: native-oidc    # native-oidc, ldap, forward-auth, none
   # callbackPath: /oauth/callback   # native-oidc: where the app receives the code
@@ -360,10 +368,154 @@ you never have to discover provider details yourself:
 | `state.SSOEnabled` | Whether SSO integration is active for this app |
 | `state.LDAP` | Typed LDAP output (host, port, baseDN, bindUser, bindPassword); populated for `sso.strategy: ldap`, nil otherwise |
 | `state.OIDC` | Typed native-oidc output (`ClientID`, `ClientSecret`, `IssuerURL`, `RedirectURI`); populated for `sso.strategy: native-oidc`, nil otherwise |
+| `state.Integrations` | Resolved providers per contract, one typed slice each, see below |
 
 Both provider outputs are guaranteed complete when non-nil: if `SSOEnabled`
 is true and your strategy is `ldap`, `state.LDAP` has everything you need;
 same for `state.OIDC` with `native-oidc`.
+
+### Integrating with another app
+
+An app that wires itself to a *catalog* provider (anything you declare under
+`integrations:`) reads that provider from `state.Integrations`, which holds one
+typed slice per contract. It also declares which of the contract's credentials it
+actually reads:
+
+```yaml
+integrations:
+  pvr:
+    required: false
+    multi: true
+    requires: [apiKey]        # only this is resolved into the binding
+    compatible:
+      - app: sonarr
+      - app: radarr
+```
+
+```go
+for _, pvr := range state.Integrations.PVRs {
+    if !pvr.Installed {
+        // Not installed (or uninstalled): prune any entry you wrote for it.
+        continue
+    }
+    host, port := pvr.Node, pvr.Port   // "apps-sonarr", 8989
+    // pvr.BaseURL  ("http://apps-sonarr:8989") is what the APP stores.
+    // pvr.LocalURL ("http://localhost:8989") is how your configurator
+    // reaches the same provider from the host.
+    // pvr.APIKey is the key the provider published for this contract.
+}
+```
+
+| Slice | Payload beyond the address |
+|---|---|
+| `PVRs` (`pvr`) | `APIKey`, the key the provider's API authenticates with |
+| `MediaServers` (`mediaServer`) | `AdminPassword`, the provider's bootstrap admin password |
+| `DownloadClients` (`downloadClient`) | nothing: the consumer stores the address |
+| `SSO` (`sso`) | `APIToken`, to read the provider's users |
+| `MCPServers` (`mcp`) | `ServerName`, `URL`, `Token` |
+
+Every binding embeds `ProviderRef`, the part that is the same for all of them:
+
+| Field | Description |
+|---|---|
+| `App` | The provider's catalog id |
+| `Installed` | Whether it is installed this pass (the same condition as the dependency edge). `false` is what a prune path keys off |
+| `Node` | Its container name on the app network, `apps-<id>` |
+| `Port` | Its published port, from its metadata |
+| `BaseURL` / `LocalURL` | `http://<Node>:<Port>` (what your app stores) and `http://localhost:<Port>` (what your configurator calls) |
+
+A contract holds **one binding per provider**: for an optional contract that is
+every declared compatible app in the catalog, and for a required contract it is
+the provider chosen at install time. `Installed` distinguishes the ones that are
+actually there, and a payload the provider has not published yet is empty, which
+means "not ready", never "use this empty credential".
+
+`requires` is what keeps a payload least privilege: declaring a contract gets an
+app the provider's address, and nothing more. Only the credentials you list are
+resolved, so an app that integrates with the identity provider to authenticate
+its users does not receive that provider's admin API token unless it says it
+reads it. A name the contract does not carry fails the catalog load, and so does
+a `requires` against a contract the framework does not know.
+
+That also gives an empty payload field two causes, and they are worth telling
+apart before you debug a provider: it has not published the value yet (wait), or
+you did not declare it in `requires` (fix your metadata).
+
+Two rules follow from this, and they are not stylistic:
+
+- **Never read or write another app's files.** A provider's data directory,
+  its config files and their internal format are private to it. If you need
+  something a provider owns, it publishes it (below); if it owns nothing you
+  need, use its API.
+- **Never probe a provider's port to find out whether it is installed.**
+  `Installed` answers that, and it is the same answer the dependency graph
+  used to order your app after the provider. A probe cannot tell "not
+  installed" from "restarting", so it makes you prune wiring that is still
+  wanted. Probe only if you need a *readiness* signal beyond `Installed`; then
+  treat failure as transient, never as removal.
+
+### Publishing for other apps
+
+An app's offer is declared per contract, using the same contract names consumers
+put in their `integrations:`. Two kinds of things travel that way.
+
+**Credentials.** A name in `secrets` is published to the host secret store:
+
+```yaml
+provides:
+  pvr:
+    secrets: [apiKey]
+```
+
+```go
+if c.secrets != nil { // nil in degraded contexts: skip, don't fail
+    if err := c.secrets.SetAppSecret(appName, "apiKey", key); err != nil {
+        return err
+    }
+}
+```
+
+A consumer of `pvr` that declares `requires: [apiKey]` receives it as
+`PVRBinding.APIKey`. Only the names you declare are offered, and a name your
+contract does not define fails the catalog load, so an offer can never carry a
+credential no consumer could ask for. Anything else the app stores stays
+private. `SetAppSecret`
+is idempotent (re-publishing an unchanged value does not rewrite the store), so
+calling it from `PreStart` on every reconciliation is fine. A published
+credential never reaches a container's environment; the generated `<app>.env`
+files carry only the host's own per-app values.
+
+A value the *host* already generates needs no publishing code: declaring it is
+enough, because the host is the one that stored it (jellyfin declares
+`adminPassword`, the password `GenerateAppAdminPassword` handed it).
+
+**Endpoint facts.** Static values travel in the metadata, so nothing has to be
+published at runtime. An MCP server declares where it serves and what it calls
+itself:
+
+```yaml
+port: 3011
+provides:
+  mcp:
+    secrets: [httpToken]
+    values: {path: /mcp, serverName: affine}
+```
+
+An agent app declaring the `mcp` contract receives `ServerName` and a ready
+`URL` (`http://apps-affine-mcp:3011/mcp`, the same resolved address as
+`BaseURL`) plus the token, and registers it through its own API.
+
+**What a contract requires is defined once**, in
+`internal/catalog/contracts.go`: its name, the secret names a provider must
+publish, and the values it must declare. A declaration that does not match fails
+the catalog load, so mistakes surface at startup rather than as a binding that is
+quietly half-empty. The orchestrator reads the required secret names from there
+too, which is why no consumer ever writes a secret name.
+
+Adding a **provider of an existing contract** is metadata only. Adding a new
+contract is three small edits: an entry in that registry, a payload type in
+`pkg/configurator`, and one arm in the orchestrator's `bindContract`. Do not
+invent a private convention between two apps for something a contract can carry.
 
 ### Register your configurator (self-registering)
 

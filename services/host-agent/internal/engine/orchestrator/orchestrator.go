@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,6 +112,12 @@ type OrchestratorConfig struct {
 	TraefikGen       traefikgen.GeneratorInterface
 	ActiveTailnetID  func() string // returns the active tailnet connection ID (empty if none)
 
+	// Secrets is the host secret store. Integration bindings resolve a
+	// provider's published credentials from it (configurator.AppSecretsProvider),
+	// so a consumer never reads a provider's files. Nil disables publishing:
+	// bindings still carry the provider's identity and address.
+	Secrets configurator.AppSecretsProvider
+
 	// Hosts is the live host-set state (multi-host SSO). When non-nil it
 	// supersedes the SSOBaseURL/SSOAuthentikURL/SSOIssuerURL strings above.
 	Hosts *hostset.State
@@ -154,6 +161,9 @@ type Orchestrator struct {
 	dataDir  string
 	logger   *slog.Logger
 	config   OrchestratorConfig
+	// secrets resolves a provider's published credentials into an integration
+	// binding. Nil when no store is configured.
+	secrets configurator.AppSecretsProvider
 
 	// Intent processing fields
 	queue            *IntentQueue
@@ -224,6 +234,7 @@ func NewOrchestrator(
 		logger:           logger,
 		config:           config,
 		appStore:         config.AppStore,
+		secrets:          config.Secrets,
 		catalogGraph:     config.CatalogGraph,
 		tailnetStore:     config.TailnetStore,
 		remoteAppStore:   config.RemoteAppStore,
@@ -1320,7 +1331,174 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 		}
 	}
 
+	state.Integrations = o.buildIntegrations(catalogApp.CatalogID, catalogApp)
+
 	return state, nil
+}
+
+// buildIntegrations resolves an app's integration contracts into typed
+// bindings, so a consumer is handed its providers' identity, address and
+// contract payload instead of discovering any of it itself (probing a port,
+// reading a sibling's config file).
+//
+// A contract binds every provider the app's metadata declares for it: the
+// choice recorded in the app's integration config, plus the compatible apps in
+// the app's own metadata (which is what the graph ordered for the same set in
+// computeAppDeps). Providers that are not installed are bound too, with
+// Installed false: a consumer needs their address to prune the entry Bloud wrote
+// for them.
+func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) configurator.Integrations {
+	var out configurator.Integrations
+	if o.appStore == nil || len(catalogApp.Integrations) == 0 {
+		return out
+	}
+	installedApps, err := o.appStore.GetAll()
+	if err != nil {
+		o.logger.Warn("cannot resolve integration bindings; configurators run without them", "app", app, "error", err)
+		return out
+	}
+	installed := make(map[string]bool, len(installedApps))
+	for _, a := range installedApps {
+		installed[a.CatalogID] = true
+	}
+
+	choices := map[string]string{}
+	for _, a := range installedApps {
+		if a.CatalogID == app {
+			choices = a.IntegrationConfig
+			break
+		}
+	}
+
+	for contract, integration := range catalogApp.Integrations {
+		for _, providerID := range resolveProviders(integration, choices[contract]) {
+			// An app cannot be its own provider: a self-edge would also make
+			// the graph order the node after itself.
+			if providerID == app {
+				continue
+			}
+			provider, err := o.catalog.Get(providerID)
+			if err != nil || provider == nil {
+				continue
+			}
+			o.bindContract(&out, contract, o.providerRef(providerID, provider, installed[providerID]), provider.Provides[contract], providerID, integration.Requires)
+		}
+	}
+	return out
+}
+
+// bindContract appends one provider's binding for one contract. The payload it
+// builds is the only contract-specific code in the resolver: a provider of an
+// existing contract is pure metadata, and adding a contract means adding an arm
+// here plus its payload type and its registry entry.
+//
+// Required secret names come from the registry rather than being repeated here,
+// so the name a provider publishes and the name the payload reads cannot drift,
+// and a secret is resolved only when the consumer declared it in
+// `integrations.<contract>.requires`. That is what keeps the payload least
+// privilege: an app that integrates with the identity provider for SSO is not
+// handed the provider's API token unless it says it reads it.
+func (o *Orchestrator) bindContract(
+	out *configurator.Integrations,
+	contract string,
+	ref configurator.ProviderRef,
+	offer catalog.ContractProvides,
+	providerID string,
+	requires []string,
+) {
+	switch contract {
+	case "pvr":
+		out.PVRs = append(out.PVRs, configurator.PVRBinding{ProviderRef: ref, APIKey: o.publishedSecret(providerID, contract, offer, requires)})
+	case "mediaServer":
+		out.MediaServers = append(out.MediaServers, configurator.MediaServerBinding{ProviderRef: ref, AdminPassword: o.publishedSecret(providerID, contract, offer, requires)})
+	case "sso":
+		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(providerID, contract, offer, requires)})
+	case "downloadClient":
+		out.DownloadClients = append(out.DownloadClients, configurator.DownloadClientBinding{ProviderRef: ref})
+	case "mcp":
+		out.MCPServers = append(out.MCPServers, configurator.MCPBinding{
+			ProviderRef: ref,
+			ServerName:  offer.Values["serverName"],
+			URL:         ref.BaseURL + offer.Values["path"],
+			Token:       o.publishedSecret(providerID, contract, offer, requires),
+		})
+	default:
+		// Contracts with no payload (proxy, database) need no consumer input
+		// beyond the address, which the graph edge already encodes. A contract
+		// that *does* carry a payload and lands here is a bug in this switch,
+		// and silence would look exactly like "the provider published nothing",
+		// so say so.
+		if spec, known := catalog.ContractFor(contract); known && (len(spec.Secrets) > 0 || len(spec.Values) > 0) {
+			o.logger.Warn("integration contract carries a payload but has no binding here; consumers of it receive nothing",
+				"contract", contract, "provider", providerID)
+		}
+	}
+}
+
+// publishedSecret returns the secret a single-secret contract carries, or "" when
+// the consumer did not require it or the provider has not published it yet. The
+// two are the same empty field on purpose: a consumer has to tell "not ready"
+// from an empty credential, and "I did not ask for it" is a metadata mistake it
+// can see in its own `requires`.
+func (o *Orchestrator) publishedSecret(providerID, contract string, offer catalog.ContractProvides, requires []string) string {
+	spec, ok := catalog.ContractFor(contract)
+	if !ok || len(spec.Secrets) != 1 {
+		return ""
+	}
+	if o.secrets == nil || len(offer.Secrets) == 0 {
+		return ""
+	}
+	if !slices.Contains(requires, spec.Secrets[0]) {
+		return ""
+	}
+	return o.secrets.GetAppSecret(providerID, spec.Secrets[0])
+}
+
+// providerRef resolves where a provider is reachable: its node on the app
+// network, its published port, and the two URLs a consumer needs (what its app
+// stores, and what its configurator calls).
+func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installed bool) configurator.ProviderRef {
+	node := o.primaryContainerNode(appID)
+	ref := configurator.ProviderRef{
+		App:       appID,
+		Installed: installed,
+		Node:      node,
+		Port:      provider.Port,
+	}
+	if provider.Port > 0 {
+		ref.BaseURL = fmt.Sprintf("http://%s:%d", node, provider.Port)
+		ref.LocalURL = fmt.Sprintf("http://localhost:%d", provider.Port)
+	}
+	return ref
+}
+
+// resolveProviders returns the provider catalog IDs an integration binds, in
+// declaration order, whichever of them are installed.
+//
+// The set mirrors the dependency edges computeAppDeps builds for the same
+// contract: the recorded choice, plus, for an *optional* contract, every
+// compatible app the metadata declares. A required contract binds only what was
+// chosen, so a binding can never describe a provider the graph does not order.
+func resolveProviders(integration catalog.Integration, choice string) []string {
+	var out []string
+	add := func(appID string) {
+		for _, existing := range out {
+			if existing == appID {
+				return
+			}
+		}
+		out = append(out, appID)
+	}
+
+	if choice != "" {
+		add(choice)
+	}
+	if !integration.Required {
+		for _, compatible := range integration.Compatible {
+			add(compatible.App)
+		}
+	}
+	return out
 }
 
 // ssoURLs is the resolved set of SSO URLs for one provisioning pass.

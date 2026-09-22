@@ -3,7 +3,6 @@
 package navidrome
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -14,6 +13,10 @@ import (
 )
 
 const appName = "navidrome"
+
+// authentikAppName is the identity provider this app's user sync speaks to: the
+// provider bound to its `sso` contract.
+const authentikAppName = "authentik"
 
 // bootstrapAdminUsername is the internal-only admin used by the configurator.
 // It never appears in Authentik and is not meant for end users.
@@ -87,10 +90,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("navidrome: admin bootstrap: %w", err)
 	}
 
-	// Read the Authentik API token from disk (written by the Authentik configurator).
-	authentikToken, err := c.readAuthentikToken(state)
+	// The Authentik API token comes from the binding Authentik publishes it
+	// through, so this app reads no other app's files.
+	authentikToken, err := authentikToken(state)
 	if err != nil {
-		c.logger.Warn("cannot read Authentik token, skipping user sync", "error", err)
+		c.logger.Warn("cannot read the Authentik API token, skipping user sync", "error", err)
 		return nil
 	}
 
@@ -127,18 +131,21 @@ func (c *Configurator) ensureAdminAndLogin(ctx context.Context) (string, error) 
 	return token, nil
 }
 
-// readAuthentikToken reads the Authentik API token from disk.
-func (c *Configurator) readAuthentikToken(state *configurator.AppState) (string, error) {
-	tokenPath := filepath.Join(state.BloudDataPath, "authentik", "api-token")
-	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		return "", err
+// authentikToken returns the API token Authentik publishes under its `sso`
+// contract, the credential this app authenticates its user sync with. Authentik
+// publishes it while it converges, so a missing token is "not ready yet" rather
+// than a fault: the caller skips the sync and the next reconciliation retries.
+func authentikToken(state *configurator.AppState) (string, error) {
+	for _, binding := range state.Integrations.SSO {
+		if binding.App != authentikAppName {
+			continue
+		}
+		if binding.APIToken != "" {
+			return binding.APIToken, nil
+		}
+		return "", fmt.Errorf("%s has not published its API token yet", authentikAppName)
 	}
-	token := string(bytes.TrimSpace(data))
-	if token == "" {
-		return "", fmt.Errorf("empty token file")
-	}
-	return token, nil
+	return "", fmt.Errorf("no %s provider is bound to this app", authentikAppName)
 }
 
 // --- Sync logic ---

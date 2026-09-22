@@ -80,6 +80,10 @@ type ServerConfig struct {
 	Registry              configurator.RegistryInterface
 	ContainerRuntime      containerruntime.Runtime
 	TemplateVars          map[string]string
+	// Secrets is the host secret store, handed to the orchestrator so
+	// integration bindings can resolve a provider's published credentials.
+	// Nil disables that half of a binding.
+	Secrets configurator.AppSecretsProvider
 	// EventsBus is the shared event bus (SSE streams + app-change
 	// publishing). Nil creates one internally.
 	EventsBus *eventbus.Bus

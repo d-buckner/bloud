@@ -23,11 +23,6 @@ var affineURL = getEnvDefault("BLOUD_E2E_AFFINE_URL", "http://localhost:3010")
 // three containers (postgres, redis, server); the server node chains the
 // one-shot migration job into its startup command, so first boot runs
 // prisma migrations before the HTTP listener opens.
-
-// TestAffineInstallViaAPI installs AFFiNE through the API. The graph spans
-// three containers (postgres, redis, server); the server node chains the
-// one-shot migration job into its startup command, so first boot runs
-// prisma migrations before the HTTP listener opens.
 func TestAffineInstallViaAPI(t *testing.T) {
 	postJSON(t, hostAgentURL+"/api/apps/affine/install", `{}`, http.StatusAccepted)
 	// Fresh VMs pull a large image and run migrations on first boot; allow
@@ -35,12 +30,6 @@ func TestAffineInstallViaAPI(t *testing.T) {
 	waitAppRunning(t, "affine", 20*time.Minute)
 	waitHTTPOrFatal(t, 60*time.Second, affineURL+"/info")
 }
-
-// TestAffineConfiguredByConfigurator verifies the configurator's outcomes
-// behaviorally through the app's own API: the server reports its version,
-// the first-run owner account exists (the setup endpoint refuses a second
-// first-user call), and the OIDC preflight returns an authorization URL
-// whose redirect_uri is the app's public callback.
 
 // TestAffineConfiguredByConfigurator verifies the configurator's outcomes
 // behaviorally through the app's own API: the server reports its version,
@@ -81,10 +70,6 @@ func TestAffineConfiguredByConfigurator(t *testing.T) {
 		t.Errorf("preflight url should carry redirect_uri %q, got: %s", expectedAffineCallbackURL(), data)
 	}
 }
-
-// TestAffineUninstallCleanup uninstalls AFFiNE through the API and asserts
-// the full cleanup: store entry, all three containers, data directory, and
-// routes.
 
 // TestAffineUninstallCleanup uninstalls AFFiNE through the API and asserts
 // the full cleanup: store entry, all three containers, data directory, and
@@ -131,9 +116,6 @@ func TestAffineUninstallCleanup(t *testing.T) {
 	}
 	t.Log("affine fully uninstalled: store, containers, data, and routes cleaned up")
 }
-
-// expectedAffineCallbackURL mirrors apps/affine's configurator derivation:
-// the Bloud base URL with the app subdomain, plus the app's callback path.
 
 // expectedAffineCallbackURL mirrors apps/affine's configurator derivation:
 // the Bloud base URL with the app subdomain, plus the app's callback path.

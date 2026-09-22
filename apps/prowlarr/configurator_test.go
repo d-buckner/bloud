@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
@@ -31,10 +32,19 @@ const (
 	// hostPath is the /config/host resource under Prowlarr's api/v1 root.
 	hostPath = "/api/v1/config/host"
 
-	// sonarrAPIKey/radarrAPIKey stand in for the keys the sibling PVRs
-	// generate into their own config.xml.
+	// sonarrAPIKey/radarrAPIKey stand in for the keys the sibling PVRs publish
+	// as their APIKey, which is where a binding carries one.
 	sonarrAPIKey = "11111111111111111111111111111111"
 	radarrAPIKey = "22222222222222222222222222222222"
+
+	// sonarrNode/sonarrPort and radarrNode/radarrPort are the catalog's address
+	// for each PVR: what the orchestrator resolves into a binding's Node, Port
+	// and BaseURL. The configurator re-states none of this; the values are here
+	// because the documents Bloud writes are pinned literally.
+	sonarrNode = "apps-sonarr"
+	sonarrPort = 8989
+	radarrNode = "apps-radarr"
+	radarrPort = 7878
 )
 
 var apiKeyPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -44,7 +54,9 @@ func quietLogger() *slog.Logger {
 }
 
 // appState returns the state a reconciliation passes for one install:
-// <tmp>/appdata is the app's own data dir, <tmp>/data the shared Bloud one.
+// <tmp>/appdata is the app's own data dir, <tmp>/data the shared Bloud one. Its
+// integration bindings are left empty, so a test that wires a PVR seeds them
+// itself with withPvrs and a test that does not sees no PVR traffic at all.
 func appState(t *testing.T) *configurator.AppState {
 	t.Helper()
 	root := t.TempDir()
@@ -64,36 +76,50 @@ func writeConfig(t *testing.T, path, content string) {
 	}
 }
 
-// writeSiblingConfig writes the config.xml a PVR's own PreStart leaves behind:
-// the instance's own API key, at the path a consumer reads it from.
-func writeSiblingConfig(t *testing.T, state *configurator.AppState, appID, apiKey string) {
+// pvrBinding is one binding the orchestrator resolves for a PVR: the catalog's
+// address for it, plus the key it published. Installed is the whole of the "is
+// this PVR there" question now (nothing here probes a PVR's port to find out),
+// and an empty apiKey stands for a PVR that is installed but has not published
+// its secret yet.
+func pvrBinding(t *testing.T, appID string, installed bool, apiKey string) configurator.PVRBinding {
 	t.Helper()
-	writeConfig(t, servarr.SiblingConfigPath(state.BloudDataPath, appID),
-		"<Config>\n  <ApiKey>"+apiKey+"</ApiKey>\n</Config>")
-}
 
-// siblingProbe points one PVR probe at a server that answers Servarr's
-// anonymous /ping, standing in for an installed PVR.
-func siblingProbe(t *testing.T, c *Configurator, appID string) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != pvrProbePath {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"status":"OK"}`)
-	}))
-	t.Cleanup(server.Close)
-
+	var node string
+	var port int
 	switch appID {
 	case sonarrAppID:
-		c.sonarrBaseURL = server.URL
+		node, port = sonarrNode, sonarrPort
 	case radarrAppID:
-		c.radarrBaseURL = server.URL
+		node, port = radarrNode, radarrPort
 	default:
 		t.Fatalf("unknown PVR %q", appID)
 	}
+
+	return configurator.PVRBinding{
+		ProviderRef: configurator.ProviderRef{
+			App:       appID,
+			Installed: installed,
+			Node:      node,
+			Port:      port,
+			// BaseURL is how the Prowlarr container reaches the PVR, which is
+			// what Bloud stores; LocalURL is the host vantage point. They
+			// differ on purpose: a document that stored the host address would
+			// fail here.
+			BaseURL:  "http://" + node + ":" + strconv.Itoa(port),
+			LocalURL: "http://localhost:" + strconv.Itoa(port),
+		},
+		// The binding carries the key as a field, empty when the PVR has not
+		// published one yet: no consumer names the secret.
+		APIKey: apiKey,
+	}
+}
+
+// withPvrs seeds the `pvr` contract with the bindings the orchestrator hands
+// over. The slice carries an entry for every declared-compatible PVR, installed
+// or not: that flag is what tells the reconcile "wire this PVR" from "the PVR
+// is gone, so prune the entry Bloud wrote for it".
+func withPvrs(state *configurator.AppState, bindings ...configurator.PVRBinding) {
+	state.Integrations.PVRs = bindings
 }
 
 // --- fake Prowlarr ---
@@ -126,6 +152,9 @@ type fakeProwlarr struct {
 	// the endpoint received.
 	testFails bool
 	tested    []application
+	// testStatus overrides the status /applications/test answers (0 → 200), for
+	// the instance failing in its own right rather than rejecting the document.
+	testStatus int
 
 	// invalid marks stored entries POST /applications/testall reports as
 	// unreachable: the verdict a real instance gives for an entry whose stored
@@ -327,7 +356,15 @@ func (f *fakeProwlarr) serveTest(w http.ResponseWriter, body []byte) {
 	f.mu.Lock()
 	f.tested = append(f.tested, app)
 	fails := f.testFails
+	status := f.testStatus
 	f.mu.Unlock()
+
+	// The instance failing in its own right: no verdict about the document, just
+	// a status the caller has to classify (see servarr.TransientFailure).
+	if status != 0 {
+		http.Error(w, "the application test did not run", status)
+		return
+	}
 
 	// The endpoint runs the resource's shared validator, so a name another
 	// entry already holds is rejected before the connection is attempted. This
@@ -475,23 +512,28 @@ func (f *fakeProwlarr) testedApplications() []application {
 }
 
 // configuratorForServer points a configurator at an httptest Prowlarr so the
-// whole PostStart path runs without a real instance. Both PVR probes default to
-// a server that answers 503, so no test depends on a PVR being installed on the
-// machine running it; a test that needs one calls siblingProbe.
+// whole PostStart path runs without a real instance. The PVRs a test wires come
+// from the state's integration bindings alone: nothing here reaches one.
 func configuratorForServer(t *testing.T, fake *fakeProwlarr) *Configurator {
+	t.Helper()
+	return configuratorForServerWith(t, fake, appclient.RetryPolicy{})
+}
+
+// configuratorForServerWith is configuratorForServer with the clients' retry
+// policy chosen by the caller. The one use is a test that drives a failure it
+// expects to be classified transient: collapsing the policy to a single attempt
+// skips the default backoff, and the classification (a 5xx is transient) is the
+// same either way.
+func configuratorForServerWith(t *testing.T, fake *fakeProwlarr, retry appclient.RetryPolicy) *Configurator {
 	t.Helper()
 	server := httptest.NewServer(fake.handler())
 	t.Cleanup(server.Close)
 
-	absent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "is starting up", http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(absent.Close)
-
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	c := NewConfigurator(0, configurator.Deps{
+		HTTP:   configurator.ClientFactory{Retry: retry},
+		Logger: quietLogger(),
+	})
 	c.baseURL = server.URL
-	c.sonarrBaseURL = absent.URL
-	c.radarrBaseURL = absent.URL
 	return c
 }
 
@@ -657,8 +699,8 @@ func TestPostStart_AlreadyExternal(t *testing.T) {
 	if puts := fake.putRequests(); len(puts) != 0 {
 		t.Errorf("PUT count = %d, want 0 for an already-external instance", len(puts))
 	}
-	// With no PVR answering, the only other traffic is reading the (empty)
-	// application list.
+	// No PVR is bound to this state, so the only other traffic is reading the
+	// (empty) application list.
 	want := []string{hostPath, applicationsPath}
 	if paths := fake.paths(); !reflect.DeepEqual(paths, want) {
 		t.Errorf("request paths = %v, want %v", paths, want)
@@ -752,10 +794,10 @@ func TestPostStart_WiresInstalledPvrs(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	siblingProbe(t, c, sonarrAppID)
-	writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
-	siblingProbe(t, c, radarrAppID)
-	writeSiblingConfig(t, state, radarrAppID, radarrAPIKey)
+	withPvrs(state,
+		pvrBinding(t, sonarrAppID, true, sonarrAPIKey),
+		pvrBinding(t, radarrAppID, true, radarrAPIKey),
+	)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
 		t.Fatalf("PostStart() error = %v", err)
@@ -831,10 +873,10 @@ func TestPostStart_SecondRunIsNoOp(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	siblingProbe(t, c, sonarrAppID)
-	writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
-	siblingProbe(t, c, radarrAppID)
-	writeSiblingConfig(t, state, radarrAppID, radarrAPIKey)
+	withPvrs(state,
+		pvrBinding(t, sonarrAppID, true, sonarrAPIKey),
+		pvrBinding(t, radarrAppID, true, radarrAPIKey),
+	)
 
 	ctx := context.Background()
 	if err := c.PostStart(ctx, state); err != nil {
@@ -886,8 +928,7 @@ func TestPostStart_LeavesAnEntryAtAnotherAddressAlone(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	siblingProbe(t, c, sonarrAppID)
-	writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
+	withPvrs(state, pvrBinding(t, sonarrAppID, true, sonarrAPIKey))
 
 	if err := c.PostStart(context.Background(), state); err != nil {
 		t.Fatalf("PostStart() error = %v, want nil: someone else's entry is not a failure", err)
@@ -926,7 +967,10 @@ func TestPostStart_LeavesAnEntryAtAnotherAddressAlone(t *testing.T) {
 	}
 }
 
-func TestPostStart_RepairsEntryWithoutSiblingKey(t *testing.T) {
+// An entry whose apiKey field is empty is readable drift (Prowlarr masks only
+// the keys it holds, so an empty one reads back empty) and must be repaired with
+// the key the binding published, in place.
+func TestPostStart_RepairsEntryWithoutStoredKey(t *testing.T) {
 	fake := &fakeProwlarr{mode: "external"}
 	// The addresses are right but the key is empty. Prowlarr masks only the
 	// keys it holds, so an empty one reads back as empty: a readable drift the
@@ -951,8 +995,7 @@ func TestPostStart_RepairsEntryWithoutSiblingKey(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	siblingProbe(t, c, radarrAppID)
-	writeSiblingConfig(t, state, radarrAppID, radarrAPIKey)
+	withPvrs(state, pvrBinding(t, radarrAppID, true, radarrAPIKey))
 
 	if err := c.PostStart(context.Background(), state); err != nil {
 		t.Fatalf("PostStart() error = %v", err)
@@ -982,7 +1025,7 @@ func TestPostStart_RepairsEntryWithoutSiblingKey(t *testing.T) {
 // A PVR that was purged and reinstalled keeps its address but mints a fresh
 // key, and Prowlarr's copy of the old one reads back masked, so nothing in the
 // document comparison can see it. The instance's own test of the entry is what
-// catches it, and the repair is a re-push with the key the sibling has now.
+// catches it, and the repair is a re-push with the key the binding now publishes.
 func TestPostStart_RepushesAnApplicationTheInstanceCannotReach(t *testing.T) {
 	const staleKey = "ffffffffffffffffffffffffffffffff"
 
@@ -1010,8 +1053,7 @@ func TestPostStart_RepushesAnApplicationTheInstanceCannotReach(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	siblingProbe(t, c, sonarrAppID)
-	writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
+	withPvrs(state, pvrBinding(t, sonarrAppID, true, sonarrAPIKey))
 
 	if err := c.PostStart(context.Background(), state); err != nil {
 		t.Fatalf("PostStart() error = %v", err)
@@ -1067,8 +1109,7 @@ func TestPostStart_KeepsAnAdminRename(t *testing.T) {
 		if _, err := c.PreStart(context.Background(), state); err != nil {
 			t.Fatalf("PreStart() error = %v", err)
 		}
-		siblingProbe(t, c, sonarrAppID)
-		writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
+		withPvrs(state, pvrBinding(t, sonarrAppID, true, sonarrAPIKey))
 		if err := c.PostStart(context.Background(), state); err != nil {
 			t.Fatalf("PostStart() error = %v", err)
 		}
@@ -1130,8 +1171,7 @@ func TestPostStart_StoredEntryVerdictFailurePolicy(t *testing.T) {
 		if _, err := c.PreStart(context.Background(), state); err != nil {
 			t.Fatalf("PreStart() error = %v", err)
 		}
-		siblingProbe(t, c, sonarrAppID)
-		writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
+		withPvrs(state, pvrBinding(t, sonarrAppID, true, sonarrAPIKey))
 		return c.PostStart(context.Background(), state)
 	}
 
@@ -1193,11 +1233,15 @@ func TestPostStart_PrunesApplicationsForUninstalledPvrs(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	// Neither sibling answers on its published port: both were uninstalled.
-	// Their keys are still on disk, which is precisely the case that must not
-	// leave Prowlarr pointing at hostnames that no longer resolve.
-	writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
-	writeSiblingConfig(t, state, radarrAppID, radarrAPIKey)
+	// Neither PVR is installed. Their bindings say so and still carry the
+	// address Bloud wrote for them, which is what identifies the entries to
+	// prune: nothing else has to be reachable, and no key is involved. This is
+	// the signal that replaced a probe of the PVR's published port, so it is
+	// the only thing that decides a prune.
+	withPvrs(state,
+		pvrBinding(t, sonarrAppID, false, ""),
+		pvrBinding(t, radarrAppID, false, ""),
+	)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
 		t.Fatalf("PostStart() error = %v", err)
@@ -1219,6 +1263,36 @@ func TestPostStart_PrunesApplicationsForUninstalledPvrs(t *testing.T) {
 	}
 }
 
+// A failure of the instance's own connection test is transient when the instance
+// itself is failing (a 5xx): the link waits for the next reconciliation instead
+// of failing the node, and because the document is tested before it is stored,
+// nothing half-written is left behind.
+func TestPostStart_TransientTestFailureIsRetried(t *testing.T) {
+	fake := &fakeProwlarr{mode: "external", testStatus: http.StatusServiceUnavailable}
+	// One attempt: the failure is the expected outcome, so the default backoff
+	// would only slow the test down.
+	c := configuratorForServerWith(t, fake, appclient.RetryPolicy{MaxAttempts: 1})
+	state := appState(t)
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart() error = %v", err)
+	}
+	withPvrs(state, pvrBinding(t, sonarrAppID, true, sonarrAPIKey))
+
+	if err := c.PostStart(context.Background(), state); err != nil {
+		t.Fatalf("PostStart() error = %v, want nil: a 5xx from the instance is retried, not fatal", err)
+	}
+
+	if got := len(fake.testedApplications()); got != 1 {
+		t.Errorf("test count = %d, want 1: the link was attempted, not skipped", got)
+	}
+	if got := len(fake.requestsFor(http.MethodPost, applicationsPath)); got != 0 {
+		t.Errorf("create count = %d, want 0: the failed test wrote nothing", got)
+	}
+	if stored := fake.applications(); len(stored) != 0 {
+		t.Errorf("stored applications = %v, want none", stored)
+	}
+}
+
 func TestPostStart_TestFailureNamesTheStatus(t *testing.T) {
 	fake := &fakeProwlarr{mode: "external", testFails: true}
 	c := configuratorForServer(t, fake)
@@ -1226,8 +1300,7 @@ func TestPostStart_TestFailureNamesTheStatus(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	siblingProbe(t, c, sonarrAppID)
-	writeSiblingConfig(t, state, sonarrAppID, sonarrAPIKey)
+	withPvrs(state, pvrBinding(t, sonarrAppID, true, sonarrAPIKey))
 
 	err := c.PostStart(context.Background(), state)
 	if err == nil {
@@ -1252,25 +1325,100 @@ func TestPostStart_TestFailureNamesTheStatus(t *testing.T) {
 	}
 }
 
-func TestPostStart_PvrWithoutKeyErrors(t *testing.T) {
+// A PVR that is installed but has not published its key yet (its PreStart has
+// not run, or it is still converging) is neither a fault nor an uninstall: the
+// binding carries no secret, so nothing is written (a keyless entry would only
+// have to be corrected later) and nothing is pruned, because the PVR is still
+// installed. The entry a previous install left behind waits for the key.
+func TestPostStart_PvrWithoutPublishedKeyIsSkipped(t *testing.T) {
+	fake := &fakeProwlarr{mode: "external"}
+	fake.appsList = []application{{
+		ID:             3,
+		Name:           sonarrImplementation + managedNameSuffix,
+		Implementation: sonarrImplementation,
+		ConfigContract: sonarrConfigContract,
+		SyncLevel:      syncLevelFullSync,
+		Tags:           []int{},
+		Fields: []applicationField{
+			{Name: fieldProwlarrURL, Value: "http://apps-prowlarr:9696"},
+			{Name: fieldBaseURL, Value: "http://apps-sonarr:8989"},
+			{Name: fieldAPIKey, Value: ""},
+		},
+	}}
+	fake.nextID = 3
+
+	c := configuratorForServer(t, fake)
+	state := appState(t)
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart() error = %v", err)
+	}
+	// Installed, but the provider's secret is absent (not empty): the
+	// orchestrator only sets the key once the PVR has published one.
+	withPvrs(state, pvrBinding(t, sonarrAppID, true, ""))
+
+	if err := c.PostStart(context.Background(), state); err != nil {
+		t.Fatalf("PostStart() error = %v, want nil: a key that is not published yet is not a failure", err)
+	}
+
+	if got := len(fake.requestsFor(http.MethodPost, applicationTestPath)); got != 0 {
+		t.Errorf("test count = %d, want 0 without a published key", got)
+	}
+	if got := len(fake.requestsFor(http.MethodPost, applicationsPath)); got != 0 {
+		t.Errorf("create count = %d, want 0 without a published key", got)
+	}
+	if got := len(fake.requestsFor(http.MethodPut, applicationsPath+"/3")); got != 0 {
+		t.Errorf("PUT count = %d, want 0: the entry waits for the key instead of being rewritten", got)
+	}
+	if got := len(fake.requestsFor(http.MethodDelete, applicationsPath+"/3")); got != 0 {
+		t.Errorf("DELETE count = %d, want 0: only an uninstalled PVR is pruned", got)
+	}
+	if stored := fake.applications(); len(stored) != 1 {
+		t.Errorf("stored applications = %d, want the existing entry left as it is", len(stored))
+	}
+}
+
+// What Prowlarr is told about a PVR is what the orchestrator resolved for it:
+// the document carries the binding's BaseURL, i.e. the address the Prowlarr
+// container reaches the PVR at (not the binding's LocalURL, which is only good
+// from the host), and the key the binding published. Nothing here could have
+// derived either.
+func TestPostStart_StoresTheResolvedBinding(t *testing.T) {
+	const (
+		baseURL = "http://apps-sonarr:9999"
+		apiKey  = "33333333333333333333333333333333"
+	)
+
 	fake := &fakeProwlarr{mode: "external"}
 	c := configuratorForServer(t, fake)
 	state := appState(t)
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	// Sonarr is up but has no config.xml yet: nothing Bloud could authenticate
-	// with, so the link errors instead of writing a keyless application.
-	siblingProbe(t, c, sonarrAppID)
+	binding := pvrBinding(t, sonarrAppID, true, apiKey)
+	binding.BaseURL = baseURL
+	binding.Port = 9999
+	binding.LocalURL = "http://localhost:9999"
+	withPvrs(state, binding)
 
-	err := c.PostStart(context.Background(), state)
-	if err == nil {
-		t.Fatal("PostStart() error = nil, want an error when the PVR has no ApiKey on disk")
+	if err := c.PostStart(context.Background(), state); err != nil {
+		t.Fatalf("PostStart() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), sonarrAppID) {
-		t.Errorf("error %q does not name %q", err, sonarrAppID)
+
+	creates := fake.requestsFor(http.MethodPost, applicationsPath)
+	if len(creates) != 1 {
+		t.Fatalf("create count = %d, want 1", len(creates))
 	}
-	if got := len(fake.requestsFor(http.MethodPost, applicationsPath)); got != 0 {
-		t.Errorf("create count = %d, want 0 without a sibling key", got)
+	assertSameJSON(t, "create body", creates[0].body,
+		wantApplicationJSON(sonarrImplementation, sonarrConfigContract, baseURL, apiKey))
+
+	stored := fake.applications()
+	if len(stored) != 1 {
+		t.Fatalf("stored applications = %d, want 1", len(stored))
+	}
+	if got := stored[0].field(fieldBaseURL); got != baseURL {
+		t.Errorf("stored baseUrl = %q, want the binding's BaseURL %q", got, baseURL)
+	}
+	if got := stored[0].field(fieldAPIKey); got != apiKey {
+		t.Errorf("stored apiKey = %q, want the binding's published key %q", got, apiKey)
 	}
 }

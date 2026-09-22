@@ -17,10 +17,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/servarr"
 )
 
@@ -51,32 +51,23 @@ const (
 	rootFolderResource = "/" + apiPath + "/rootfolder"
 	rootFolderMount    = "/shows"
 
-	// qbittorrentAppID and qbittorrentPort mirror the provider entry in
-	// apps/qbittorrent/metadata.yaml. The download-client link is wired
-	// app-side (see INTEGRATION.md), so this consumer holds the provider's
-	// catalog id and published port as documented constants: a port change in
-	// the qBittorrent catalog entry must be mirrored here.
+	// qbittorrentAppID is the download-client provider this consumer wires, as
+	// named in apps/qbittorrent/metadata.yaml. The provider's address, port and
+	// category all come from the resolved downloadClient binding: nothing about
+	// the provider is duplicated here.
 	qbittorrentAppID = "qbittorrent"
-	qbittorrentPort  = 8081
 
-	// qbittorrentProbePath is qBittorrent's version route, the one the WebUI
-	// answers without credentials, so a 200 means the provider is installed
-	// and up. qbittorrentCategoryResource creates the category the download
-	// client below stores: qBittorrent never creates one by itself, and
+	// qbittorrentCategoryResource creates the category the download client
+	// below stores: qBittorrent never creates one by itself, and
 	// TorrentImpl::setCategory returns false for a category it does not have
 	// (src/base/bittorrent/torrentimpl.cpp), so a torrent added with an
 	// unknown category silently ends up uncategorised.
-	qbittorrentProbePath        = "/api/v2/app/version"
 	qbittorrentCategoryResource = "/api/v2/torrents/createCategory"
 
 	// downloadCategoryField and downloadCategory are Sonarr's slot in the
 	// QBittorrentSettings contract and the value it stores there.
 	downloadCategoryField = "tvCategory"
 	downloadCategory      = "tv-sonarr"
-
-	// probeTimeout bounds the qBittorrent availability probe: an absent
-	// sibling must cost seconds, not the request default.
-	probeTimeout = 5 * time.Second
 )
 
 // Configurator handles Sonarr configuration.
@@ -90,16 +81,19 @@ type Configurator struct {
 	// download-client list).
 	own *appclient.Client
 
-	// qbittorrent probes the download-client provider on its host-published
-	// port and writes the download category into it. Those are the consumer's
-	// business: the host never learns that a sibling exists.
-	qbittorrent *appclient.Client
+	// clients builds the provider client. The provider's address is only known
+	// once the binding is resolved, so the client is built per reconciliation
+	// rather than in the constructor.
+	clients configurator.ClientFactory
+
+	// secrets is where this instance publishes its own ApiKey for its
+	// consumers. Nil in degraded contexts (no secret store), which only skips
+	// the publication.
+	secrets configurator.AppSecretsProvider
 
 	// baseURL is a test seam: when set, the own-API clients resolve to it
 	// instead of localhost:port.
 	baseURL string
-	// qbittorrentBaseURL is the matching seam for the qBittorrent client.
-	qbittorrentBaseURL string
 }
 
 // NewConfigurator creates a new Sonarr configurator from the host Deps.
@@ -112,19 +106,13 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	c := &Configurator{
-		port:   port,
-		logger: logger.With("app", appName),
+		port:    port,
+		logger:  logger.With("app", appName),
+		clients: deps.HTTP,
+		secrets: deps.Secrets,
 	}
 	c.api = servarr.NewClient(deps.HTTP, appName, apiPath, c.ownBaseURL)
 	c.own = deps.HTTP.New(appclient.Spec{Name: appName, BaseURLFn: c.ownBaseURL})
-	// The probe leaves the Sonarr container: it asks the host's published
-	// qBittorrent port whether a download client provider exists yet.
-	c.qbittorrent = deps.HTTP.New(appclient.Spec{Name: qbittorrentAppID, BaseURLFn: func() string {
-		if c.qbittorrentBaseURL != "" {
-			return c.qbittorrentBaseURL
-		}
-		return fmt.Sprintf("http://localhost:%d", qbittorrentPort)
-	}})
 	return c
 }
 
@@ -183,17 +171,20 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	//
 	// The container's own /config and /downloads are chowned by the LSIO init
 	// script (for /downloads that is the qBittorrent container's init, which
-	// mounts it), so only these dirs need the mode.
+	// mounts it), so only these dirs need the mode. A directory a container has
+	// already taken over cannot be chmodded from the host at all (EPERM against
+	// a subordinate uid), so the mode is applied only where it is still
+	// missing: see pkg/managedfile.EnsureWritable.
 	configDir := filepath.Join(state.DataPath, "config")
-	if err := os.Chmod(configDir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(configDir, 0o777); err != nil {
 		return false, fmt.Errorf("making the config directory writable: %w", err)
 	}
 	mediaDir := filepath.Join(state.BloudDataPath, "media", "shows")
-	if err := os.Chmod(mediaDir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(mediaDir, 0o777); err != nil {
 		return false, fmt.Errorf("making the media library writable: %w", err)
 	}
 	downloadsDir := filepath.Join(state.BloudDataPath, "downloads")
-	if err := os.Chmod(downloadsDir, 0o777); err != nil {
+	if err := managedfile.EnsureWritable(downloadsDir, 0o777); err != nil {
 		return false, fmt.Errorf("making the downloads directory writable: %w", err)
 	}
 
@@ -201,7 +192,37 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	if err != nil {
 		return false, fmt.Errorf("failed to configure %s: %w", appName, err)
 	}
+	if err := c.publishAPIKey(state); err != nil {
+		return false, err
+	}
 	return changed, nil
+}
+
+// publishAPIKey stores the instance's own ApiKey in the host secret store under
+// the name this app declares in `provides.pvr.secrets`. Consumers (Prowlarr,
+// Seerr) receive it through their integration binding, so no app ever reads
+// this instance's config.xml.
+//
+// Publishing is idempotent, and the value is adopted from config.xml rather
+// than generated here: config.xml is what the running instance authenticates
+// with, and the app itself may rewrite the key (a settings save in the UI).
+func (c *Configurator) publishAPIKey(state *configurator.AppState) error {
+	if c.secrets == nil {
+		return nil
+	}
+	key, err := servarr.APIKey(c.configPath(state))
+	if err != nil {
+		return fmt.Errorf("%s: reading the API key to publish: %w", appName, err)
+	}
+	if key == "" {
+		// EnsureExternalAuth generates a key when the file has none, so an
+		// empty one here means the file did not take the write.
+		return fmt.Errorf("%s: no ApiKey in %s to publish", appName, c.configPath(state))
+	}
+	if err := c.secrets.SetAppSecret(appName, servarr.SecretAPIKey, key); err != nil {
+		return fmt.Errorf("%s: publishing the API key: %w", appName, err)
+	}
+	return nil
 }
 
 // Remove is a no-op for the Sonarr configurator; container and data removal
@@ -236,11 +257,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	if err := c.ensureRootFolder(ctx, key); err != nil {
 		return err
 	}
-	return c.ensureDownloadClient(ctx, key)
+	return c.ensureDownloadClient(ctx, key, state)
 }
 
 // ensureRootFolder registers the instance's library mount (/shows) as a root
-// folder. It needs no sibling, so it runs on every reconciliation whatever
+// folder. It needs no provider, so it runs on every reconciliation whatever
 // else is installed, and it is idempotent: an instance that already has the
 // path is left alone.
 func (c *Configurator) ensureRootFolder(ctx context.Context, apiKey string) error {
@@ -276,22 +297,29 @@ func (c *Configurator) ensureRootFolder(ctx context.Context, apiKey string) erro
 }
 
 // ensureDownloadClient keeps the download-client link in line with the
-// provider: when qBittorrent answers its published port it creates the category
-// Sonarr's client stores and then adds the client, and when the provider is
-// gone it prunes the client it left behind. An absent provider is never an
-// error; Sonarr works without a download client, and a later reconciliation
-// (or the provider's own staleness trigger) wires the link.
-func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string) error {
+// resolved provider: while qBittorrent is installed it makes the category
+// Sonarr's client stores and adds the client, and once the provider is gone it
+// prunes the client Bloud left behind. An absent provider is never an error;
+// Sonarr works without a download client, and a later reconciliation (or the
+// provider's own staleness trigger) wires the link.
+func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string, state *configurator.AppState) error {
+	binding, ok := downloadClientBinding(state)
+	if !ok {
+		// The catalog does not declare this provider: nothing to wire and
+		// nothing Bloud could have written.
+		return nil
+	}
+
 	spec := servarr.DownloadClientSpec{
 		APIPath:       apiPath,
 		APIKey:        apiKey,
-		Host:          "apps-" + qbittorrentAppID,
-		Port:          qbittorrentPort,
+		Host:          binding.Node,
+		Port:          binding.Port,
 		CategoryField: downloadCategoryField,
 		Category:      downloadCategory,
 	}
 
-	if !c.qbittorrentAvailable(ctx) {
+	if !binding.Installed {
 		pruned, err := servarr.RemoveDownloadClient(ctx, c.own, spec)
 		if err != nil {
 			if servarr.TransientFailure(err) {
@@ -306,7 +334,10 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string) 
 		return nil
 	}
 
-	if err := c.ensureDownloadCategory(ctx); err != nil {
+	qbittorrent := c.clients.New(appclient.Spec{Name: qbittorrentAppID, BaseURLFn: func() string {
+		return binding.LocalURL
+	}})
+	if err := c.ensureDownloadCategory(ctx, qbittorrent); err != nil {
 		// A provider that is mid-restart, overloaded or briefly 5xx-ing must not
 		// fail this node: ERROR is terminal, so the app would stay "failed" over
 		// a condition the next reconciliation fixes by itself. Only a failure
@@ -333,6 +364,17 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string) 
 	return nil
 }
 
+// downloadClientBinding returns the downloadClient provider Bloud wires, or
+// false when the catalog declares no such provider.
+func downloadClientBinding(state *configurator.AppState) (configurator.DownloadClientBinding, bool) {
+	for _, binding := range state.Integrations.DownloadClients {
+		if binding.App == qbittorrentAppID {
+			return binding, true
+		}
+	}
+	return configurator.DownloadClientBinding{}, false
+}
+
 // ensureDownloadCategory creates the category the download client stores.
 // qBittorrent never creates a category by itself and refuses to tag a torrent
 // with one it does not know, so the category has to exist first; only this
@@ -341,8 +383,8 @@ func (c *Configurator) ensureDownloadClient(ctx context.Context, apiKey string) 
 // second-run outcome and not an error: qBittorrent answers 409 Conflict for it
 // (TorrentsController::createCategoryAction → SessionImpl::addCategory returns
 // false for a known name, src/base/bittorrent/sessionimpl.cpp).
-func (c *Configurator) ensureDownloadCategory(ctx context.Context) error {
-	created, err := c.qbittorrent.POST(qbittorrentCategoryResource).
+func (c *Configurator) ensureDownloadCategory(ctx context.Context, qbittorrent *appclient.Client) error {
+	created, err := qbittorrent.POST(qbittorrentCategoryResource).
 		Form(url.Values{"category": {downloadCategory}}).
 		OK(http.StatusOK).
 		AlreadyDone(http.StatusConflict).
@@ -354,24 +396,4 @@ func (c *Configurator) ensureDownloadCategory(ctx context.Context) error {
 		c.logger.Info("created qBittorrent category", "category", downloadCategory)
 	}
 	return nil
-}
-
-// qbittorrentAvailable reports whether Bloud's qBittorrent answers on its
-// published host port. Any failure (connection refused, timeout, a non-200
-// status) means "not usable yet", including an install that is still booting.
-func (c *Configurator) qbittorrentAvailable(ctx context.Context) bool {
-	// The probe bounds itself with a deadline rather than a per-call client
-	// timeout, so an absent sibling costs seconds, not the request default.
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
-	err := c.qbittorrent.GET(qbittorrentProbePath).
-		OK(http.StatusOK).
-		NoRetry().
-		Exec(probeCtx)
-	if err != nil {
-		c.logger.Info("qBittorrent is not installed yet; the download client link is skipped", "error", err)
-		return false
-	}
-	return true
 }

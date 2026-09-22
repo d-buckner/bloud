@@ -44,6 +44,40 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// secretWrite is one credential a configurator published for an app.
+type secretWrite struct {
+	app   string
+	key   string
+	value string
+}
+
+// fakeSecrets implements configurator.AppSecretsProvider and records what this
+// instance publishes. Radarr generates its own admin credential (it never asks
+// the store for one) and owns exactly one secret: its ApiKey, which its
+// consumers receive through their integration bindings instead of reading
+// config.xml.
+type fakeSecrets struct {
+	mu      sync.Mutex
+	publish []secretWrite
+}
+
+func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return "", nil }
+func (f *fakeSecrets) GetAppSecret(string, string) string              { return "" }
+
+func (f *fakeSecrets) SetAppSecret(app, key, value string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.publish = append(f.publish, secretWrite{app: app, key: key, value: value})
+	return nil
+}
+
+// published returns the credentials written so far, oldest first.
+func (f *fakeSecrets) published() []secretWrite {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]secretWrite{}, f.publish...)
+}
+
 // appState returns the state a reconciliation passes for one install:
 // <tmp>/appdata is the app's own data dir, <tmp>/data the shared Bloud one.
 func appState(t *testing.T) *configurator.AppState {
@@ -315,15 +349,21 @@ func (f *fakeInstance) deletedPaths() []string {
 
 // --- fake qBittorrent ---
 
-// fakeQBittorrent stands in for the provider on its published port: it answers
-// the version probe and models createCategory, including the 409 Conflict a
-// repeated creation gets.
+// fakeQBittorrent stands in for the provider on its published port: it models
+// createCategory, including the 409 Conflict a repeated creation gets. It has
+// nothing else to answer, because nothing else about the provider is discovered
+// any more: whether it is installed, where it lives and whether it is ready
+// arrive in the integration binding, so no consumer probes the provider to find
+// out. It still records every request, which is how the tests observe that a
+// reconciliation that had no business calling the provider did not call it.
 type fakeQBittorrent struct {
 	mu       sync.Mutex
-	probe    int // probe status (0 → 200)
 	create   int // createCategory status (0 → 200/409 from state)
 	category []string
 	requests []recordedRequest
+	// baseURL is this fake's own server, set by configuratorFor: the binding's
+	// LocalURL (how the configurator reaches the provider from the host).
+	baseURL string
 }
 
 func newFakeQBittorrent() *fakeQBittorrent {
@@ -340,17 +380,10 @@ func (f *fakeQBittorrent) handler() http.Handler {
 			path:   r.URL.Path,
 			body:   []byte(r.PostForm.Encode()),
 		})
-		probe, create := f.probe, f.create
+		create := f.create
 		f.mu.Unlock()
 
 		switch r.URL.Path {
-		case qbittorrentProbePath:
-			if probe != 0 {
-				w.WriteHeader(probe)
-				_, _ = io.WriteString(w, "unavailable")
-				return
-			}
-			_, _ = io.WriteString(w, "v5.2.3")
 		case qbittorrentCategoryResource:
 			if create != 0 {
 				w.WriteHeader(create)
@@ -400,7 +433,8 @@ func (f *fakeQBittorrent) categoriesNow() []string {
 
 // configuratorFor points a configurator at an httptest-backed Radarr instance
 // and a controlled qBittorrent provider, so PostStart's whole path runs
-// without a real stack.
+// without a real stack. The provider's reachability travels through the
+// binding withDownloadClient seeds, never through a constructor argument.
 func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) *Configurator {
 	t.Helper()
 	server := httptest.NewServer(instance.handler())
@@ -416,9 +450,31 @@ func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) 
 	if qb != nil {
 		qbServer := httptest.NewServer(qb.handler())
 		t.Cleanup(qbServer.Close)
-		c.qbittorrentBaseURL = qbServer.URL
+		qb.baseURL = qbServer.URL
 	}
 	return c
+}
+
+// withDownloadClient seeds the integration binding the orchestrator hands a
+// reconciliation for the downloadClient contract: the qBittorrent provider at
+// its catalog coordinates (Node and Port are what Radarr stores, so they are
+// also what identifies the entry Bloud wrote) and, as LocalURL, the fake's own
+// server (how the configurator itself reaches the provider from the host).
+//
+// installed=false is how the orchestrator reports an uninstalled provider: it
+// is the signal to prune. The provider's address stays in the binding either
+// way, which is exactly what a prune needs to recognise the stale entry.
+func withDownloadClient(state *configurator.AppState, qb *fakeQBittorrent, installed bool) {
+	state.Integrations.DownloadClients = []configurator.DownloadClientBinding{{
+		ProviderRef: configurator.ProviderRef{
+			App:       qbittorrentAppID,
+			Installed: installed,
+			Node:      "apps-qbittorrent",
+			Port:      8081,
+			BaseURL:   "http://apps-qbittorrent:8081",
+			LocalURL:  qb.baseURL,
+		},
+	}}
 }
 
 // withConfig runs PreStart, which is what gives PostStart an ApiKey and makes
@@ -526,6 +582,49 @@ func TestPreStart_PreservesExistingAPIKey(t *testing.T) {
 	}
 }
 
+// The instance's ApiKey is what this app's consumers (Prowlarr, Seerr)
+// authenticate with, and they receive it through their integration bindings, so
+// PreStart has to put it in the secret store. The value must be the key the
+// running instance actually uses - the one in config.xml - rather than one
+// generated here: the instance rewrites its own key when its settings are saved
+// from the UI, and a published key that no longer matches would leave every
+// consumer with a 401.
+func TestPreStart_PublishesTheInstanceStateKey(t *testing.T) {
+	secrets := &fakeSecrets{}
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: secrets})
+	state := appState(t)
+	writeConfig(t, c.configPath(state), "<Config>\n  <ApiKey>"+existingAPIKey+"</ApiKey>\n</Config>")
+
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart() error = %v", err)
+	}
+
+	writes := secrets.published()
+	if len(writes) != 1 {
+		t.Fatalf("SetAppSecret calls = %d, want 1", len(writes))
+	}
+	want := secretWrite{app: appName, key: servarr.SecretAPIKey, value: existingAPIKey}
+	if writes[0] != want {
+		t.Errorf("published secret = %+v, want %+v", writes[0], want)
+	}
+
+	// The instance rewrote config.xml from its own settings page: the next
+	// reconciliation publishes the key it now authenticates with.
+	rotated := "fedcba9876543210fedcba9876543210"
+	writeConfig(t, c.configPath(state), "<Config>\n  <ApiKey>"+rotated+"</ApiKey>\n</Config>")
+
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("second PreStart() error = %v", err)
+	}
+	writes = secrets.published()
+	if len(writes) != 2 {
+		t.Fatalf("SetAppSecret calls after the rotation = %d, want 2", len(writes))
+	}
+	if got := writes[1]; got != (secretWrite{app: appName, key: servarr.SecretAPIKey, value: rotated}) {
+		t.Errorf("published secret after the rotation = %+v, want the rotated key %q", got, rotated)
+	}
+}
+
 func TestRemove_IsNoOp(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
 	if err := c.Remove(context.Background(), appState(t), true); err != nil {
@@ -535,8 +634,10 @@ func TestRemove_IsNoOp(t *testing.T) {
 
 func TestPostStart_AlreadyExternal(t *testing.T) {
 	instance := newFakeInstance("external")
-	c := configuratorFor(t, instance, newFakeQBittorrent())
+	qb := newFakeQBittorrent()
+	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -552,8 +653,10 @@ func TestPostStart_AlreadyExternal(t *testing.T) {
 
 func TestPostStart_RepairsAfterUIEdit(t *testing.T) {
 	instance := newFakeInstance("forms")
-	c := configuratorFor(t, instance, newFakeQBittorrent())
+	qb := newFakeQBittorrent()
+	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 	key, err := servarr.APIKey(c.configPath(state))
 	if err != nil {
@@ -594,8 +697,10 @@ func TestPostStart_MissingAPIKeyErrors(t *testing.T) {
 
 func TestPostStart_CreatesRootFolderOnce(t *testing.T) {
 	instance := newFakeInstance("external")
-	c := configuratorFor(t, instance, newFakeQBittorrent())
+	qb := newFakeQBittorrent()
+	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -617,8 +722,10 @@ func TestPostStart_CreatesRootFolderOnce(t *testing.T) {
 func TestPostStart_KeepsExistingRootFolder(t *testing.T) {
 	instance := newFakeInstance("external")
 	instance.folders = []string{rootFolderMount}
-	c := configuratorFor(t, instance, newFakeQBittorrent())
+	qb := newFakeQBittorrent()
+	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -634,6 +741,7 @@ func TestPostStart_WiresCategoryAndDownloadClient(t *testing.T) {
 	qb := newFakeQBittorrent()
 	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -715,13 +823,19 @@ func TestPostStart_WiresCategoryAndDownloadClient(t *testing.T) {
 	}
 }
 
+// An uninstalled provider is pruned, and pruned through the coordinates the
+// binding carries: the entry Bloud wrote is identified by node and port, so a
+// mismatch between what the orchestrator resolves and what Radarr stores would
+// leave a dead client behind. The provider itself is not contacted at all - an
+// app that is gone cannot answer, and nothing needs its opinion to remove what
+// Bloud wrote for it.
 func TestPostStart_PrunesStaleDownloadClientWhenProviderIsGone(t *testing.T) {
 	instance := newFakeInstance("external")
 	instance.clients = []fakeClient{bloudClient(3)}
 	qb := newFakeQBittorrent()
-	qb.probe = http.StatusServiceUnavailable
 	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, false)
 	withConfig(t, c, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -734,7 +848,7 @@ func TestPostStart_PrunesStaleDownloadClientWhenProviderIsGone(t *testing.T) {
 		t.Errorf("DELETE paths = %v, want [%s/3]", deletes, downloadClientEndpoint)
 	}
 	if creates := qb.requestsTo(http.MethodPost, qbittorrentCategoryResource); len(creates) != 0 {
-		t.Errorf("createCategory count = %d, want 0: an unavailable provider must not be written to", len(creates))
+		t.Errorf("createCategory count = %d, want 0: an uninstalled provider must not be written to", len(creates))
 	}
 	if got := instance.foldersNow(); !reflect.DeepEqual(got, []string{rootFolderMount}) {
 		t.Errorf("root folders = %v, want [%s]: the root folder needs no provider", got, rootFolderMount)
@@ -749,9 +863,9 @@ func TestPostStart_LeavesForeignDownloadClientsAlone(t *testing.T) {
 		instance := newFakeInstance("external")
 		instance.clients = []fakeClient{foreignClient(7)}
 		qb := newFakeQBittorrent()
-		qb.probe = http.StatusServiceUnavailable
 		c := configuratorFor(t, instance, qb)
 		state := appState(t)
+		withDownloadClient(state, qb, false)
 		withConfig(t, c, state)
 
 		if err := c.PostStart(context.Background(), state); err != nil {
@@ -769,8 +883,10 @@ func TestPostStart_LeavesForeignDownloadClientsAlone(t *testing.T) {
 	t.Run("provider present: Bloud's client is added beside it", func(t *testing.T) {
 		instance := newFakeInstance("external")
 		instance.clients = []fakeClient{foreignClient(7)}
-		c := configuratorFor(t, instance, newFakeQBittorrent())
+		qb := newFakeQBittorrent()
+		c := configuratorFor(t, instance, qb)
 		state := appState(t)
+		withDownloadClient(state, qb, true)
 		withConfig(t, c, state)
 
 		if err := c.PostStart(context.Background(), state); err != nil {
@@ -809,8 +925,10 @@ func fakeField(c fakeClient, name string) string {
 func TestPostStart_RejectedDownloadClientContractSurfacesError(t *testing.T) {
 	instance := newFakeInstance("external")
 	instance.testStatus = http.StatusBadRequest
-	c := configuratorFor(t, instance, newFakeQBittorrent())
+	qb := newFakeQBittorrent()
+	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 
 	err := c.PostStart(context.Background(), state)
@@ -832,9 +950,9 @@ func TestPostStart_RejectedDownloadClientContractSurfacesError(t *testing.T) {
 func TestPostStart_ProviderGoneWithNothingToPruneIsANoOp(t *testing.T) {
 	instance := newFakeInstance("external")
 	qb := newFakeQBittorrent()
-	qb.probe = http.StatusServiceUnavailable
 	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, false)
 	withConfig(t, c, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
@@ -849,19 +967,33 @@ func TestPostStart_ProviderGoneWithNothingToPruneIsANoOp(t *testing.T) {
 	}
 }
 
-// A provider that is up but failing *transiently* must not fail the node: ERROR
-// is terminal in the orchestrator, so the app would stay "failed" over a
-// condition the next reconciliation fixes by itself.
+// An installed provider that is up but failing *transiently* must not fail the
+// node: ERROR is terminal in the orchestrator, so the app would stay "failed"
+// over a condition the next reconciliation fixes by itself. It must not be
+// mistaken for a provider that is gone either - the entry Bloud wrote is left
+// in place, because the provider is still installed and will answer again.
 func TestPostStart_TransientProviderFailureIsSkipped(t *testing.T) {
 	instance := newFakeInstance("external")
+	instance.clients = []fakeClient{bloudClient(3)}
 	qb := newFakeQBittorrent()
-	qb.create = http.StatusInternalServerError
+	qb.create = http.StatusServiceUnavailable
 	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 
 	if err := c.PostStart(context.Background(), state); err != nil {
 		t.Fatalf("PostStart() error = %v, want nil: a 5xx from the provider is retried, not fatal", err)
+	}
+	// The call went to the binding's address, from the host.
+	if creates := qb.requestsTo(http.MethodPost, qbittorrentCategoryResource); len(creates) != 1 {
+		t.Errorf("createCategory count = %d, want 1: the reconciliation has to try before giving up", len(creates))
+	}
+	if got := instance.clientsNow(); len(got) != 1 || got[0].ID != 3 {
+		t.Errorf("download clients = %v, want Bloud's entry kept while the provider only fails transiently", got)
+	}
+	if deletes := instance.deletedPaths(); len(deletes) != 0 {
+		t.Errorf("DELETE paths = %v, want none: an installed provider is never pruned", deletes)
 	}
 	if posts := instance.requestsTo(http.MethodPost, downloadClientEndpoint); len(posts) != 0 {
 		t.Errorf("POST %s count = %d, want 0: the client must not store a category that does not exist",
@@ -877,6 +1009,7 @@ func TestPostStart_RejectedCategorySurfacesError(t *testing.T) {
 	qb.create = http.StatusForbidden
 	c := configuratorFor(t, instance, qb)
 	state := appState(t)
+	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
 
 	err := c.PostStart(context.Background(), state)

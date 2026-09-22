@@ -21,9 +21,6 @@ type sseFrame struct {
 
 // readSSEFrames parses an SSE stream into {event, data} frames until the
 // stream closes. Comment lines (the ": ping" heartbeat) are skipped.
-
-// readSSEFrames parses an SSE stream into {event, data} frames until the
-// stream closes. Comment lines (the ": ping" heartbeat) are skipped.
 func readSSEFrames(body io.Reader, frames chan<- sseFrame) {
 	defer close(frames)
 	scanner := bufio.NewScanner(body)
@@ -51,20 +48,13 @@ func readSSEFrames(body io.Reader, frames chan<- sseFrame) {
 //  2. The /api/apps/events SSE stream delivers a snapshot before any node
 //     event, then node/pull updates, ending with the app node RUNNING.
 //
-// It must run before TestJellyfinInstallViaAPI (source order) so the install
-// it drives is the fresh one.
-
-// TestInstallLiveStateStream verifies the live-state contract:
-//
-//  1. The install 202 response carries the app record immediately (the
-//     orchestrator records it at submit time), so the UI can render the
-//     tile without polling.
-//  2. The /api/apps/events SSE stream delivers a snapshot before any node
-//     event, then node/pull updates, ending with the app node RUNNING.
-//
-// It must run before TestJellyfinInstallViaAPI (source order) so the install
-// it drives is the fresh one.
+// The install it drives has to be a fresh one, so it uninstalls jellyfin
+// first when an earlier test left it installed: a re-install reports the
+// existing record (status "running"), not the lifecycle this contract
+// covers.
 func TestInstallLiveStateStream(t *testing.T) {
+	ensureAppUninstalled(t, "jellyfin")
+
 	// Open the SSE stream before submitting so no event is missed.
 	sseResp := agentGet(t, hostAgentURL+"/api/apps/events")
 	defer sseResp.Body.Close()

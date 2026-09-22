@@ -63,7 +63,13 @@ containers:
         if grep -qx "BLOUD_DEV_ALLOW_HTTP='true'" "$ENV_FILE" 2>/dev/null; then
           set -- /web-vault/app/main.*.js
           if grep -q 'isDev(){return!1}' "$@"; then
-            sed -i 's/isDev(){return!1}/isDev(){return!0}/' "$@"
+            # Rewrite through a temp file rather than `sed -i`: the in-place
+            # flag takes its backup suffix as a separate argument on BSD sed
+            # (which is what the unit test runs the script with on macOS), so
+            # the portable form is what keeps the switch honest in both places.
+            for f in "$@"; do
+              sed 's/isDev(){return!1}/isDev(){return!0}/' "$f" >"$f.bloud-tmp" && mv "$f.bloud-tmp" "$f"
+            done
           elif ! grep -q 'isDev(){return!0}' "$@"; then
             echo "bloud: plain-HTTP dev switch is on but the web vault has no isDev() constant to flip; refusing to start" >&2
             exit 1

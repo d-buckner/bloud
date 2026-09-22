@@ -423,6 +423,34 @@ combined with instance/SSH-target env vars). Instance overrides:
     `store`/`config`/host-agent-internal machinery, so a future extraction to
     a shared `pkg/` or module is a move, not a surgery.
     `internal/sharing/token.go` (pure stdlib) is the exemplar.
+15. **Cross-app wiring goes through typed integration contracts.** A contract
+    (`internal/catalog/contracts.go`) is the one place the vocabulary lives: the
+    label a consumer declares under `integrations:`, the secret names a provider
+    must publish for it, and the values it must declare. Providers offer a
+    contract in their metadata (`provides: <contract>: {secrets, values}`) and
+    the catalog loader rejects a declaration that does not match it. A consumer
+    declares what it reads with `integrations.<contract>.requires` (a list of
+    secret names, validated against the contract), and **only those are
+    resolved**: declaring a contract gets an app the provider's address, never a
+    credential by default. The orchestrator resolves each declared contract into
+    `AppState.Integrations`, **one typed slice per contract** (`PVRs`,
+    `MediaServers`, `DownloadClients`, `MCPServers`, `SSO`), each binding
+    embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`, `BaseURL`,
+    `LocalURL` where `BaseURL` is what the app stores and `LocalURL` what the
+    configurator calls) plus that contract's payload. Credentials come from the
+    host store (`AppSecretsProvider.SetAppSecret`); values are static metadata.
+    Never add a field to a shared binding struct: a new capability is a contract
+    entry, a payload type in `pkg/configurator`, and one arm in
+    `bindContract`. An app **never** reads or writes another app's files: not
+    that app's data directory (`dataDir/<app>`), not a config file, whatever its
+    format. The shared trees Bloud owns for the whole stack (`media/`,
+    `downloads/`) are declared as volumes in metadata; they are not an app's
+    private state. It also **never** probes a provider's port to decide whether
+    it is installed: `Installed` is that answer, and it is the same condition as
+    the graph edge. A probe cannot separate "not installed" from "restarting",
+    so keying a prune off it deletes wiring that is still wanted. The bindings
+    for a contract mirror `computeAppDeps`, so they never describe a provider
+    the graph does not order.
 
 ## host-agent HTTP API (port 3000)
 
@@ -459,8 +487,10 @@ combined with instance/SSH-target env vars). Instance overrides:
    `name`, `displayName`, `description`, `category` (media | productivity |
    security | infrastructure), `port`, `isSystem`, `sso`
    (`strategy`, `callbackPath`, `userCreation`, `bypassPaths`, `env` mappings),
-   `integrations` (`proxy` / `sso` / `database`: `{required, multi,
-   compatible: [{app, default}]}`), `containers[]`
+   `integrations` (a contract name: `{required, multi,
+   compatible: [{app, default}]}`), `provides` (per contract: the `secrets` this
+   app publishes and the `values` it declares for the apps that integrate with
+   it, see invariant 15), `containers[]`
    (`name`, `image` (**pin versions**; a rolling tag fails `npm run
    check:image-pins`), `command`, `network`/`networks`,
    `restartPolicy`, `environment`, `extraHosts`, `ports`, `volumes`,

@@ -20,6 +20,9 @@ integrations:
   mediaServer:
     required: false
     multi: false
+    # The bootstrap admin password Seerr logs in with: the only thing it reads
+    # out of this contract.
+    requires: [adminPassword]
     compatible:
       - app: jellyfin
         default: true
@@ -28,6 +31,7 @@ integrations:
   pvr:
     required: false
     multi: true
+    requires: [apiKey]
     compatible:
       - app: sonarr
         category: tv

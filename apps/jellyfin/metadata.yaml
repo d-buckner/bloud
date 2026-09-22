@@ -19,7 +19,18 @@ integrations:
     compatible:
       - app: authentik
         default: true
-# Jellyfin is a source app - provides media server to Jellyseerr
+# Jellyfin is a source app: it provides the media server Seerr onboards
+# against.
+
+# The bootstrap admin password, offered to the apps that integrate with this one
+# as a media server. It is the password the host generates for this app
+# (GenerateAppAdminPassword, the account apps/jellyfin creates and never
+# deletes), so there is nothing to store separately: declaring the name is what
+# puts it in a consumer's binding. Seerr logs in with it to mint its own
+# Jellyfin API key.
+provides:
+  mediaServer:
+    secrets: [adminPassword]
 
 # LDAP SSO for TV apps, mobile clients, and other non-web interfaces
 # The web UI could also support OIDC in the future, but LDAP covers more use cases

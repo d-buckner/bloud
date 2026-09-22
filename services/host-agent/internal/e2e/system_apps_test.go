@@ -55,10 +55,6 @@ func TestAuthentikHealthCheck(t *testing.T) {
 // TestAuthentikLDAPOutpostCreated verifies that the LDAP outpost exists after
 // convergence: created by the authentik server PostStart as part of the
 // normal lifecycle, with no manual configurator invocation.
-
-// TestAuthentikLDAPOutpostCreated verifies that the LDAP outpost exists after
-// convergence: created by the authentik server PostStart as part of the
-// normal lifecycle, with no manual configurator invocation.
 func TestAuthentikLDAPOutpostCreated(t *testing.T) {
 	token := authentikToken(t)
 
@@ -93,9 +89,6 @@ func TestAuthentikLDAPOutpostCreated(t *testing.T) {
 	}
 	t.Logf("LDAP outpost present: %s (pk=%s)", outpostResp.Results[0].Name, outpostResp.Results[0].PK)
 }
-
-// TestAuthentikAdminLogin verifies real password authentication through the
-// Authentik flow executor (not just API health or token access).
 
 // TestAuthentikAdminLogin verifies real password authentication through the
 // Authentik flow executor (not just API health or token access).
