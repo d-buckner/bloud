@@ -3,69 +3,317 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
+		<link rel="icon" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="robots" content="noindex" />
-		<!-- Reload until the dashboard is ready; host-agent serves this page
-		     only while the orchestrator is still converging the system apps. -->
-		<meta http-equiv="refresh" content="2" />
-		<title>Bloud is starting</title>
+		<!-- Fallback for a browser with scripting off: it cannot poll, so it
+		     reloads blindly. With scripting on the script below reloads once,
+		     when the dashboard is actually there. -->
+		<noscript>
+			<meta http-equiv="refresh" content="5" />
+		</noscript>
+		<title>Bloud: Getting your home cloud ready</title>
 		<style>
+			/* The Bloud design tokens, copied from
+			   web/src/lib/styles/variables.css. This page is served before the
+			   frontend bundle is reachable, so it cannot import them. */
 			:root {
-				color-scheme: light dark;
+				--color-bg: #faf9f6;
+				--color-text: #1c1917;
+				--color-text-muted: #a8a29e;
+				--color-border: #e7e5e4;
+				--font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+				--font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				--space-sm: 0.5rem;
+				--space-lg: 1.5rem;
+				--space-xl: 2rem;
 			}
+
+			/* Self-hosted brand fonts, the same files the dashboard loads. */
+			@font-face {
+				font-family: "Inter";
+				font-style: normal;
+				font-weight: 400 700;
+				font-display: swap;
+				src: url("/fonts/inter-latin.woff2") format("woff2");
+			}
+			@font-face {
+				font-family: "Newsreader";
+				font-style: normal;
+				font-weight: 400 600;
+				font-display: swap;
+				src: url("/fonts/newsreader-latin.woff2") format("woff2");
+			}
+
+			*,
+			*::before,
+			*::after {
+				box-sizing: border-box;
+			}
+
+			html {
+				font-size: 17px;
+			}
+
 			html,
 			body {
 				height: 100%;
 			}
+
 			body {
 				margin: 0;
 				display: flex;
 				align-items: center;
 				justify-content: center;
-				background: #0f1115;
-				color: #e7e9ee;
-				font-family:
-					system-ui,
-					-apple-system,
-					'Segoe UI',
-					Roboto,
-					sans-serif;
+				background: var(--color-bg);
+				color: var(--color-text);
+				font-family: var(--font-serif);
+				line-height: 1.6;
+				-webkit-font-smoothing: antialiased;
+				-moz-osx-font-smoothing: grayscale;
 			}
-			main {
+
+			.boot {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
 				text-align: center;
-				padding: 2rem;
+				padding: var(--space-xl);
+				max-width: 26rem;
 			}
-			.spinner {
-				width: 40px;
-				height: 40px;
-				margin: 0 auto 1.5rem;
-				border: 3px solid rgba(231, 233, 238, 0.2);
-				border-top-color: #e7e9ee;
-				border-radius: 50%;
-				animation: spin 0.9s linear infinite;
+
+			/* The cloud mark, same path as static/favicon.svg, breathing while
+			   the system comes up. */
+			.mark {
+				width: 56px;
+				height: 56px;
+				margin-bottom: var(--space-lg);
+				color: var(--color-text);
+				animation: breathe 2.4s ease-in-out infinite;
 			}
-			@keyframes spin {
-				to {
-					transform: rotate(360deg);
+
+			.mark svg {
+				display: block;
+				width: 100%;
+				height: 100%;
+			}
+
+			.wordmark {
+				font-size: 1.375rem;
+				font-weight: 500;
+				letter-spacing: -0.02em;
+				margin: 0 0 var(--space-lg);
+			}
+
+			h1 {
+				margin: 0 0 var(--space-sm);
+				font-size: 1.25rem;
+				font-weight: 500;
+				line-height: 1.3;
+				letter-spacing: -0.01em;
+			}
+
+			.message {
+				margin: 0;
+				font-family: var(--font-sans);
+				font-size: 0.9375rem;
+				color: var(--color-text-muted);
+			}
+
+			/* Indeterminate progress, in the dashboard's palette. */
+			.progress {
+				width: 180px;
+				height: 2px;
+				margin-top: var(--space-xl);
+				background: var(--color-border);
+				border-radius: 999px;
+				overflow: hidden;
+			}
+
+			.progress span {
+				display: block;
+				width: 40%;
+				height: 100%;
+				background: var(--color-text);
+				border-radius: 999px;
+				animation: slide 1.6s ease-in-out infinite;
+			}
+
+			@keyframes breathe {
+				0%,
+				100% {
+					opacity: 1;
+					transform: scale(1);
+				}
+				50% {
+					opacity: 0.55;
+					transform: scale(0.96);
 				}
 			}
-			h1 {
-				margin: 0 0 0.5rem;
-				font-size: 1.25rem;
-				font-weight: 600;
+
+			@keyframes slide {
+				0% {
+					transform: translateX(-100%);
+				}
+				100% {
+					transform: translateX(250%);
+				}
 			}
-			p {
-				margin: 0;
-				opacity: 0.7;
-				font-size: 0.9rem;
+
+			/* Once the dashboard is reachable the animation settles before the
+			   reload, so the page reads as finished rather than still working. */
+			.ready .mark {
+				animation: none;
+				opacity: 1;
+			}
+
+			.ready .progress span {
+				animation: none;
+				width: 100%;
+				transition: width 0.5s ease;
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				.mark,
+				.progress span {
+					animation: none;
+				}
 			}
 		</style>
 	</head>
 	<body>
-		<main>
-			<div class="spinner" role="status" aria-label="Starting"></div>
-			<h1>Bloud is starting</h1>
-			<p>Bringing up the proxy, single sign-on, and databases. This page refreshes by itself.</p>
+		<main class="boot">
+			<div class="mark" aria-hidden="true">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+					<path
+						d="M26 16.5c0-2.8-2.3-5-5-5-0.4 0-0.8 0.1-1.2 0.2C19 9.1 16.5 7 13.5 7 9.9 7 7 9.9 7 13.5c0 0.3 0 0.5 0.1 0.8C4.7 14.8 3 16.8 3 19.2c0 2.9 2.4 5.3 5.3 5.3h15.4c2.4 0 4.3-1.9 4.3-4.3 0-2-1.4-3.7-3.2-4.2 0.1-0.2 0.2-0.3 0.2-0.5z"
+						fill="currentColor"
+					/>
+				</svg>
+			</div>
+			<p class="wordmark">Bloud</p>
+			<h1>Getting your home cloud ready</h1>
+			<p class="message" id="boot-message" role="status" aria-live="polite">
+				This can take a few minutes. Your dashboard opens on its own.
+			</p>
+			<div class="progress" aria-hidden="true"><span></span></div>
 		</main>
+		<script>
+			(function () {
+				"use strict";
+
+				// Two-stage readiness, because one status code is not enough.
+				//
+				// Stage one is the bootstrap gate. It answers 503 with
+				// {"error":"starting"} on every /api path until the first
+				// convergence pass finishes. That is not a verdict on whether
+				// Bloud works: the gate opens when converge() returns, and
+				// converge reports no error, so it opens on a failed bootstrap
+				// too.
+				//
+				// Stage two confirms the part the dashboard actually needs.
+				// /api/setup/status probes the identity provider live, so
+				// authentikReady means sign-in answers.
+				//
+				// A 503 carrying {"status":"unhealthy"} came from the health
+				// handler rather than the gate: the gate is open and something
+				// is broken. Reload on that anyway, so the user reaches the
+				// dashboard's own error state instead of an endless spinner.
+				var GATE_URL = "/api/health";
+				var STATUS_URL = "/api/setup/status";
+				var POLL_MS = 1500;
+				var CONFIRM_DEADLINE_MS = 180000;
+				var READY_HOLD_MS = 600;
+
+				var message = document.getElementById("boot-message");
+				var gateOpenedAt = 0;
+				var timer = null;
+				var finished = false;
+
+				function stop() {
+					if (timer) {
+						clearTimeout(timer);
+						timer = null;
+					}
+				}
+
+				function reload() {
+					if (finished) return;
+					finished = true;
+					stop();
+					document.documentElement.className += " ready";
+					message.textContent = "All set. Opening your dashboard\u2026";
+					// Reload rather than navigate, so a deep link survives the wait.
+					setTimeout(function () {
+						window.location.reload();
+					}, READY_HOLD_MS);
+				}
+
+				function schedule() {
+					if (!finished) {
+						timer = setTimeout(tick, POLL_MS);
+					}
+				}
+
+				// Resolve to {status, body}. status is null when the connection
+				// itself failed; body is {} when the response was not JSON.
+				function get(url) {
+					return fetch(url, { cache: "no-store", credentials: "same-origin" })
+						.then(function (res) {
+							return res
+								.json()
+								.then(function (body) {
+									return { status: res.status, body: body || {} };
+								})
+								.catch(function () {
+									return { status: res.status, body: {} };
+								});
+						})
+						.catch(function () {
+							return { status: null, body: {} };
+						});
+				}
+
+				function confirmSignIn() {
+					if (!gateOpenedAt) {
+						gateOpenedAt = new Date().getTime();
+					}
+					get(STATUS_URL).then(function (res) {
+						if (res.status === 200 && res.body.authentikReady) {
+							reload();
+							return;
+						}
+						// The gate is open, so a reload lands somewhere real. If
+						// sign-in never answers, stop waiting and let the
+						// dashboard report the failure itself.
+						if (new Date().getTime() - gateOpenedAt > CONFIRM_DEADLINE_MS) {
+							reload();
+							return;
+						}
+						schedule();
+					});
+				}
+
+				function tick() {
+					if (finished) return;
+					get(GATE_URL).then(function (gate) {
+						if (gate.status === 200) {
+							confirmSignIn();
+							return;
+						}
+						if (gate.body.status === "unhealthy") {
+							reload();
+							return;
+						}
+						// Still booting, or nothing listening yet. No deadline
+						// here: reloading while the gate is shut just renders
+						// this page again, so waiting is the only useful move.
+						schedule();
+					});
+				}
+
+				tick();
+			})();
+		</script>
 	</body>
 </html>

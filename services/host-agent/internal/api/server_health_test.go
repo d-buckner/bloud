@@ -62,3 +62,11 @@ func TestCheckSystemHealth_SeesDeadOrchestratorLoop(t *testing.T) {
 	require.Error(t, err, "a dead loop must fail the health check")
 	assert.Contains(t, err.Error(), "orchestrator")
 }
+
+// The shared check has to fail closed on a missing handle too: a nil database is
+// not a healthy instance, and the HTTP endpoint must not answer 200 for one.
+func TestCheckSystemHealth_NoDatabase(t *testing.T) {
+	err := checkSystemHealth(nil, nil)
+	require.Error(t, err, "a server with no database is not healthy")
+	assert.Contains(t, err.Error(), "no database connection")
+}
