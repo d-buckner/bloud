@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,8 +16,6 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
@@ -26,12 +23,10 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/google/uuid"
 )
 
 //go:embed dev_dashboard.html
@@ -47,7 +42,6 @@ type routerOptions struct {
 	remoteAppStore store.RemoteAppStoreInterface
 	tailnetStore   *store.TailnetStore
 	orch           interface{} // any orchestratorCaller implementation
-	noOrchestrator bool        // if true, skip creating a real orchestrator
 	authConfig     *AuthRef
 }
 
@@ -136,7 +130,10 @@ func buildRouterDeps(
 		d.authRef = NewAuthRef(d.authentik, d.sessionStore, cfg, logger)
 	}
 
-	// Orchestrator: use provided one if set, else create real (unless noOrchestrator is true).
+	// Orchestrator: supplied by the caller (main.go builds it in
+	// internal/wire) or by a test through the router options. The API cannot
+	// construct one. If nobody hands it over there is none, visibly, rather
+	// than a half-wired one conjured here.
 	if o, ok := options.orch.(orchestratorCaller); ok && o != nil {
 		d.orchCaller = o
 		if ro, isReal := o.(*orchestrator.Orchestrator); isReal {
@@ -145,11 +142,6 @@ func buildRouterDeps(
 	} else if cfg.Orchestrator != nil {
 		d.realOrch = cfg.Orchestrator
 		d.orchCaller = d.realOrch
-	} else if !options.noOrchestrator {
-		d.realOrch = initOrchestratorHelper(db, d.appStore, d.catalogCache, cfg, logger, d.tailnetStore, d.authentik, d.eventsBus, func() { d.authRef.Ensure() })
-		if d.realOrch != nil {
-			d.orchCaller = d.realOrch
-		}
 	}
 
 	return d
@@ -357,139 +349,6 @@ func setupFrontendHelper(r chi.Router, logger *slog.Logger) {
 
 		http.ServeFile(w, r, filePath)
 	})
-}
-
-// ---- Orchestrator initialization ----
-
-func initOrchestratorHelper(
-	db *sql.DB,
-	appStore store.AppStoreInterface,
-	catalogCache catalog.CacheInterface,
-	cfg ServerConfig,
-	logger *slog.Logger,
-	tailnetStore *store.TailnetStore,
-	authentikClient *authentik.Client,
-	eventsBus *eventbus.Bus,
-	onHostsChanged func(),
-) *orchestrator.Orchestrator {
-	traefikConfigPath := filepath.Join(cfg.TraefikDynamicDir, "apps-routes.yml")
-	logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
-
-	lifecycleGraph := graph.New(graph.NewMapRepository())
-
-	client, err := podman.NewClient()
-	if err != nil {
-		logger.Warn("podman client unavailable for API", "error", err)
-	}
-
-	runtime := cfg.ContainerRuntime
-	if runtime == nil {
-		if client == nil {
-			logger.Error("container runtime unavailable (no podman client)")
-			return nil
-		}
-		runtime = containerruntime.NewPodmanRuntime(client)
-	}
-
-	var ssoProvisioner orchestrator.SSOProvisioner
-	if authentikClient != nil {
-		ssoProvisioner = authentikClient
-	}
-
-	if cfg.TSAuthKey != "" {
-		active, _ := tailnetStore.GetActive()
-		if active == nil {
-			if err := tailnetStore.Create(store.TailnetConnection{
-				ID:      uuid.New().String(),
-				Name:    "Default",
-				Type:    "tailscale",
-				AuthKey: cfg.TSAuthKey,
-				Status:  "active",
-			}); err != nil {
-				logger.Error("failed to migrate BLOUD_TS_AUTHKEY to tailnet_connections store", "error", err)
-			} else {
-				logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
-			}
-		}
-	}
-
-	authKeyFn := func() string {
-		conn, err := tailnetStore.GetActive()
-		if err != nil || conn == nil {
-			return ""
-		}
-		return conn.AuthKey
-	}
-
-	var exec sharing.ContainerExec
-	if client != nil {
-		exec = client
-	}
-	tailnetNode := sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, cfg.TraefikPort, cfg.DataDir, logger)
-
-	gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
-
-	socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
-	remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, logger)
-
-	var forwardDomainSSO orchestrator.ForwardDomainProvisioner
-	if authentikClient != nil {
-		forwardDomainSSO = authentikClient
-	}
-
-	// Build the catalog dependency graph (planner) used by install/uninstall
-	// intents to resolve integrations and auto-install required providers.
-	// This is the missing wiring that made installs no-op in production.
-	catalogGraph, err := catalog.NewLoader(cfg.AppsDir).LoadGraph()
-	if err != nil {
-		logger.Error("failed to build catalog graph", "error", err)
-	} else {
-		logger.Info("catalog dependency graph built", "apps", len(catalogGraph.GetApps()))
-	}
-
-	orch := orchestrator.NewOrchestrator(
-		lifecycleGraph,
-		cfg.Registry,
-		catalogCache,
-		cfg.DataDir,
-		logger,
-		orchestrator.OrchestratorConfig{
-			LDAPOutput:       cfg.LDAPOutput,
-			Containers:       runtime,
-			TemplateVars:     cfg.TemplateVars,
-			Secrets:          cfg.Secrets,
-			AppStore:         appStore,
-			Operations:       store.NewOperationStore(db),
-			Events:           eventsBus,
-			CatalogGraph:     catalogGraph,
-			TailnetStore:     tailnetStore,
-			RemoteAppStore:   store.NewRemoteAppStore(db),
-			TailnetNode:      tailnetNode,
-			Gateway:          gateway,
-			RemoteProxy:      remoteProxy,
-			ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, logger),
-			ForwardDomainSSO: forwardDomainSSO,
-			SSO:              ssoProvisioner,
-			SSOBaseURL:       cfg.SSOBaseURL,
-			SSOHostSecret:    cfg.SSOHostSecret,
-			SSOAuthentikURL:  cfg.SSOAuthentikURL,
-			SSOIssuerURL:     cfg.SSOIssuerURL,
-			TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
-			ActiveTailnetID: func() string {
-				conn, err := tailnetStore.GetActive()
-				if err != nil || conn == nil {
-					return ""
-				}
-				return conn.ID
-			},
-			Hosts:          cfg.Hosts,
-			HostStore:      cfg.HostStore,
-			OnHostsChanged: onHostsChanged,
-		},
-	)
-	logger.Info("lifecycle orchestrator initialized")
-	go orch.Start(context.Background())
-	return orch
 }
 
 // ---- Auth initialization ----

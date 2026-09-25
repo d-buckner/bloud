@@ -468,7 +468,6 @@ tags:
 		o.catalog = fCatalog
 		o.appStore = fAppStore
 		o.remoteAppStore = fRemoteStore
-		o.noOrchestrator = true // modules get nil orchestrator
 	})
 	server := &Server{
 		cfg:            cfg,
@@ -599,11 +598,11 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 		o.catalog = fCatalog
 		o.appStore = fAppStore
 		o.remoteAppStore = fRemoteStore
-		// No real orchestrator: handler-level fakes are all these tests
-		// need. The real one starts a background convergence goroutine on
-		// context.Background() that outlives the test, races t.TempDir
-		// cleanup with sqlite writes, and errors on the closed DB.
-		o.noOrchestrator = true
+		// No orchestrator is supplied, so the modules get none. The API
+		// cannot construct one itself (main.go builds it in
+		// internal/wire), which is what keeps a live convergence
+		// goroutine from outliving the test and racing t.TempDir cleanup
+		// with sqlite writes.
 	})
 	server := &Server{
 		cfg:            cfg,

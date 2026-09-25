@@ -69,7 +69,6 @@ version: 1.0.0
 		o.catalog = fCatalog
 		o.appStore = NewFakeAppStore()
 		o.remoteAppStore = NewFakeRemoteAppStore()
-		o.noOrchestrator = true
 	})
 	return &Server{cfg: cfg, router: router, db: db, logger: logger}
 }
