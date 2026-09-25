@@ -5,6 +5,7 @@ package wire
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -78,6 +80,7 @@ func baseInput(t *testing.T) Input {
 		TraefikPort:       80,
 		LDAPOutput:        &configurator.LDAPOutput{Host: "127.0.0.1", Port: 3389},
 		TemplateVars:      map[string]string{"postgresPassword": "pw"},
+		Secrets:           secrets.NewManager(filepath.Join(t.TempDir(), "secrets.json")),
 		SSOBaseURL:        "http://localhost:8080",
 		SSOHostSecret:     "host-secret",
 		SSOAuthentikURL:   "http://sso.localhost:8080",
