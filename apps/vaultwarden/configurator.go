@@ -184,12 +184,6 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	return nil
 }
 
-// Remove is a no-op for the Vaultwarden configurator; container and data
-// removal are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // renderEnv renders vaultwarden.env. The image loads it as a dotenv file and its
 // own healthcheck script sources it as shell, so values are single-quoted: both
 // readers take that verbatim (no expansion, no escapes).

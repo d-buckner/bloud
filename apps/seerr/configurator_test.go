@@ -1106,13 +1106,6 @@ func TestPostStart_ErrorsWhenSettingsFileHasNoAPIKey(t *testing.T) {
 	}
 }
 
-func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
-	if err := c.Remove(context.Background(), &configurator.AppState{}, true); err != nil {
-		t.Errorf("Remove() error = %v, want nil", err)
-	}
-}
-
 // The API keys the `pvr` bindings carry: 32 hex characters, the shape
 // pkg/servarr generates and Servarr accepts.
 const (

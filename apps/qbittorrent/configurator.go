@@ -220,12 +220,6 @@ func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) 
 	return nil
 }
 
-// Remove is a no-op for the qBittorrent configurator; container and data
-// removal are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // waitWebUIReachable polls GET /api/v2/app/version until it answers 200.
 //
 // That endpoint is the honest test of the auth bypass: it returns 403 while the

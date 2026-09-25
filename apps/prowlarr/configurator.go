@@ -205,12 +205,6 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	return configurator.RestartIf(changed, appName+" external-auth config rewritten"), nil
 }
 
-// Remove is a no-op for the Prowlarr configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // PostStart verifies through Prowlarr's own API that external authentication
 // is in effect, repairing it when a settings save (from the UI or an API
 // client) rewrote config.xml, then reconciles the application-sync list so

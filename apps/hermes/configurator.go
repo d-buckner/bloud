@@ -186,12 +186,6 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	return nil
 }
 
-// Remove is a no-op for the Hermes configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // parseConfig decodes a Hermes config.yaml into a generic map. A missing or
 // empty file is an empty document (Hermes fills defaults at runtime).
 func parseConfig(raw []byte) (map[string]any, error) {

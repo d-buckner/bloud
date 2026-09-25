@@ -573,12 +573,6 @@ func (c *Configurator) pvrQualityProfile(ctx context.Context, pvr pvrTarget, api
 	return profiles[0], nil
 }
 
-// Remove is a no-op for the Seerr configurator; container and data removal are
-// handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // readAPIKey reads the API key Seerr generated for itself into settings.json
 // (server/lib/settings/index.ts: a missing key is minted during load and the
 // file is saved before the HTTP listener opens). Seerr honours a non-empty

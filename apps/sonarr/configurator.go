@@ -225,12 +225,6 @@ func (c *Configurator) publishAPIKey(state *configurator.AppState) error {
 	return nil
 }
 
-// Remove is a no-op for the Sonarr configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
-}
-
 // PostStart verifies through Sonarr's own API that external authentication is
 // in effect, repairing it when a settings save (from the UI or an API client)
 // rewrote config.xml. It then registers the instance's library root folder and,

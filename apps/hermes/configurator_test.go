@@ -310,13 +310,6 @@ func TestPostStartSkipsSSOCheckWhenSSOOff(t *testing.T) {
 	}
 }
 
-func TestRemoveIsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
-	if err := c.Remove(context.Background(), &configurator.AppState{}, true); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-}
-
 // TestHasSelfHostedProvider covers the two spellings the plugin exposes.
 func TestHasSelfHostedProvider(t *testing.T) {
 	if !hasSelfHostedProvider([]string{"nous", "self-hosted"}) {

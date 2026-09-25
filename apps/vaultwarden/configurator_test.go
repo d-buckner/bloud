@@ -358,12 +358,6 @@ func TestPostStart_ToleratesSlowBoot(t *testing.T) {
 	assert.GreaterOrEqual(t, alive, 3)
 }
 
-func TestRemove_IsANoOp(t *testing.T) {
-	c, dir := testConfigurator(t, nil)
-	assert.NoError(t, c.Remove(context.Background(), appState(dir, nil), true))
-	assert.Equal(t, "apps-vaultwarden", c.Name())
-}
-
 // ---- the manifest and the code must agree ----
 
 // metadata mirrors the fields of metadata.yaml the configurator's constants

@@ -599,13 +599,6 @@ func TestPreStart_PublishesTheInstanceAPIKey(t *testing.T) {
 	}
 }
 
-func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
-	if err := c.Remove(context.Background(), appState(t), true); err != nil {
-		t.Errorf("Remove() error = %v, want nil", err)
-	}
-}
-
 func TestPostStart_AlreadyExternal(t *testing.T) {
 	instance := newFakeInstance("external")
 	qb := newFakeQBittorrent()
