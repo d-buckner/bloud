@@ -10,7 +10,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | What are we building / release plan | [specs/spec.md](specs/spec.md) |
 | Orchestrator/reconciler design | [specs/reconciler-spec.md](specs/reconciler-spec.md) |
 | Component overview + data flows | [architecture/overview.md](architecture/overview.md) |
-| The full app + container graph (generated from the catalog) | [../README.md#the-full-graph](../README.md#the-full-graph) |
+| The full app + container graph (generated from the catalog) | [architecture/dependency-graph.md](architecture/dependency-graph.md) |
 | How to add an app | [guides/contributing-apps.md](guides/contributing-apps.md) |
 | Run Vaultwarden in dev (needs `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` over plain HTTP) | [../apps/vaultwarden/INTEGRATION.md](../apps/vaultwarden/INTEGRATION.md#plain-http) |
 | Multi-container app model | [specs/app-spec.md](specs/app-spec.md) |

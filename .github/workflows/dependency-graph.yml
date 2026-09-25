@@ -1,14 +1,26 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Keeps the README's dependency graph current. On every merge to main it
-# regenerates the mermaid block from apps/*/metadata.yaml and commits the
-# result, so the README is a view of the catalog rather than a picture
-# someone has to remember to update.
+# Keeps the README's graph picture current. On every merge to main it derives
+# the catalog graph from the app metadata, renders it in a headless browser,
+# and commits the result.
 #
-# The PR-time gate is `./bloud depgraph --check`, a command in the fast
+# The picture is the dashboard's own developer graph: the same Svelte
+# components and the same dagre layout, fed a snapshot of the whole catalog
+# (`bloud depgraph --json`, which emits the shape /api/system/developer
+# returns) instead of one instance's installed apps. Rendering it in a real
+# browser is what makes the README image and the dashboard the same drawing
+# rather than two descriptions of it.
+#
+# The PR-time gate is `./bloud depgraph --check` on the text form of the
+# graph (docs/architecture/dependency-graph.md), a command in the fast
 # validation tier; this job is the safety net that leaves main correct even
 # when a PR forgot to regenerate. The commit is marked [skip ci] so the
 # generated commit does not kick off another full validation pass.
+#
+# The trigger is scoped to the inputs of the picture: the catalog it depicts,
+# and the code that draws it. A push to main that touches neither leaves the
+# committed image alone, which is the point of rendering it once instead of
+# redrawing a text diagram on every merge.
 name: Dependency graph
 
 on:
@@ -16,6 +28,18 @@ on:
   push:
     branches:
       - main
+    paths:
+      # What the picture depicts: the catalog topology.
+      - 'apps/**/metadata.yaml'
+      # What draws the picture. A change here can change the pixels without
+      # changing the catalog, so the committed image has to follow it too.
+      - 'cli/depgraph.go'
+      - 'services/host-agent/web/src/routes/graph/**'
+      - 'services/host-agent/web/src/lib/graph/**'
+      - 'services/host-agent/web/src/lib/timeline/graphLayout.ts'
+      - 'services/host-agent/web/src/lib/utils/statusColor.ts'
+      - 'scripts/render-graph.mjs'
+      - '.github/workflows/dependency-graph.yml'
 
 permissions:
   contents: write
@@ -41,21 +65,54 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: cli/go.sum
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Build the bloud CLI
         run: npm run cli:build
 
-      - name: Regenerate the README dependency graph
+      - name: Refresh the text graph
         run: ./bloud depgraph --write
+
+      - name: Derive the catalog snapshot
+        run: |
+          set -euo pipefail
+          mkdir -p .bloud
+          ./bloud depgraph --json > .bloud/catalog-graph.json
+          node -e '
+            const g = JSON.parse(require("fs").readFileSync(".bloud/catalog-graph.json", "utf8"));
+            if (!g.nodes?.length) throw new Error("empty catalog snapshot");
+            console.log(`snapshot: ${g.nodes.length} nodes, ${g.edges.length} edges`);
+          '
+
+      - name: Build the frontend
+        run: npm run build --workspace=@bloud/host-agent-web
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Render the README image in a browser
+        run: |
+          set -euo pipefail
+          node scripts/render-graph.mjs \
+            --graph .bloud/catalog-graph.json \
+            --output docs/assets/dependency-graph.png
 
       - name: Commit the refresh
         run: |
           set -euo pipefail
-          if git diff --quiet -- README.md; then
-            echo "README dependency graph already current; nothing to commit"
+          if git diff --quiet -- README.md docs/architecture/dependency-graph.md docs/assets/dependency-graph.png; then
+            echo "graph already current; nothing to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git commit -m "docs(readme): refresh the dependency graph [skip ci]"
+          git add docs/architecture/dependency-graph.md docs/assets/dependency-graph.png
+          git commit -m "docs(graph): refresh the catalog graph [skip ci]"
           git push origin HEAD:main

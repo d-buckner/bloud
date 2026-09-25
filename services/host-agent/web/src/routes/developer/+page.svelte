@@ -10,9 +10,9 @@
 		type OrchestratorStatus
 	} from '$lib/clients/developerClient';
 	import { parseTimeline } from '$lib/timeline/convergeTimeline';
-	import AppNode from './AppNode.svelte';
-	import AppBox from './AppBox.svelte';
-	import ContainerNode from './ContainerNode.svelte';
+	import AppNode from '$lib/graph/AppNode.svelte';
+	import AppBox from '$lib/graph/AppBox.svelte';
+	import ContainerNode from '$lib/graph/ContainerNode.svelte';
 	import UserNode from './UserNode.svelte';
 	import FitView from '$lib/components/FitView.svelte';
 

@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,11 +53,22 @@ type ContainerMetadata struct {
 
 // The generated block in the target document. Everything between these two
 // markers is replaced by `bloud depgraph --write` and compared by
-// `--check`, so the rest of the file is untouched.
+// `--check`, so the rest of the file is untouched. The default target is the
+// docs page that holds the text form of the graph; the README embeds the
+// rendered image instead, so a catalog change moves the picture, not the
+// README's prose.
 const (
 	graphBeginMarker = "<!-- BEGIN GENERATED DEPENDENCY GRAPH -->"
 	graphEndMarker   = "<!-- END GENERATED DEPENDENCY GRAPH -->"
-	graphDefaultFile = "README.md"
+	graphDefaultFile = "docs/architecture/dependency-graph.md"
+)
+
+// Where the rendered picture lives. The README embeds the image instead of the
+// text diagram, so a catalog change moves the picture and leaves the README's
+// prose alone.
+const (
+	graphDefaultReadme = "README.md"
+	graphImage         = "docs/assets/dependency-graph.png"
 )
 
 // graphMode is what a `bloud depgraph` run does with the rendered diagram.
@@ -65,7 +78,15 @@ const (
 	graphModePrint graphMode = iota
 	graphModeWrite
 	graphModeCheck
+	// graphModeJSON emits the catalog in the shape the dashboard's
+	// developer graph consumes, which is what the browser renderer reads.
+	graphModeJSON
 )
+
+// catalogNodeStatus is the status a catalog snapshot carries. Nothing in the
+// snapshot is running, so the dashboard's status color falls back to the
+// neutral gray rather than implying a live state.
+const catalogNodeStatus = "catalog"
 
 func cmdDepGraph(args []string) int {
 	root, err := getProjectRoot()
@@ -82,6 +103,8 @@ func cmdDepGraph(args []string) int {
 			mode = graphModeWrite
 		case "--check":
 			mode = graphModeCheck
+		case "--json":
+			mode = graphModeJSON
 		case "--target":
 			if i+1 >= len(args) {
 				errorf("--target needs a path (usage: bloud depgraph [--write | --check] [--target FILE])")
@@ -115,6 +138,14 @@ func cmdDepGraph(args []string) int {
 		return writeGraphBlock(root, target, generated)
 	case graphModeCheck:
 		return checkGraphBlock(root, target, generated)
+	case graphModeJSON:
+		encoded, err := renderCatalogGraphJSON(apps)
+		if err != nil {
+			errorf("Failed to encode the catalog graph: %v", err)
+			return 1
+		}
+		fmt.Print(encoded)
+		return 0
 	default:
 		fmt.Print(generated)
 		return 0
@@ -129,7 +160,9 @@ func printDepGraphUsage() {
 	fmt.Println("  --write      Replace the generated block in the target file")
 	fmt.Println("  --check      Exit 1 when the target file's block is not what the")
 	fmt.Println("               catalog produces right now (the PR-time gate)")
-	fmt.Println("  --target     File to write or check (default: README.md)")
+	fmt.Println("  --json       Print the whole catalog as the developer-graph JSON")
+	fmt.Println("               the browser renderer consumes (nodes + edges)")
+	fmt.Println("  --target     File to write or check (default: " + graphDefaultFile + ")")
 }
 
 // graphTargetPath resolves --target against the repo root.
@@ -323,7 +356,7 @@ func renderDependencyGraph(apps map[string]*AppMetadata) string {
 
 	sb.WriteString("\n    %% Cross-app integration edges\n")
 	for _, edge := range integrationEdges(apps) {
-		fmt.Fprintf(&sb, "    %s -->|%s| %s\n", edge.from, edge.label, edge.to)
+		fmt.Fprintf(&sb, "    %s -->|%s| %s\n", appBoxID(edge.from), edge.label, appBoxID(edge.to))
 	}
 
 	sb.WriteString("```\n")
@@ -332,24 +365,136 @@ func renderDependencyGraph(apps map[string]*AppMetadata) string {
 	return sb.String()
 }
 
+// catalogGraphNode is one node of the catalog snapshot, in the shape the
+// dashboard's developer graph consumes (see
+// services/host-agent/internal/api/system_module.go). The browser renderer
+// feeds this straight into the same layout and node components the live
+// dashboard uses, so the README image and the dashboard cannot drift apart.
+type catalogGraphNode struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Status      string `json:"status"`
+	IsSystem    bool   `json:"isSystem"`
+	NodeType    string `json:"nodeType"` // "app" or "container"
+	ParentID    string `json:"parentId,omitempty"`
+	Category    string `json:"category,omitempty"`
+}
+
+// catalogGraphEdge is one edge of the catalog snapshot. Within-app
+// dependsOn edges carry no label, the same way the live graph leaves them
+// unlabeled inside a box.
+type catalogGraphEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Label  string `json:"label,omitempty"`
+}
+
+// catalogGraph is the whole catalog as one graph: every app, every container
+// each app declares, and every integration edge between them.
+type catalogGraph struct {
+	Nodes []catalogGraphNode `json:"nodes"`
+	Edges []catalogGraphEdge `json:"edges"`
+}
+
+// buildCatalogGraph turns the catalog into the dashboard-shaped snapshot.
+// It mirrors system_module's live graph builder, with two differences that
+// follow from having no running instance: every node carries the neutral
+// `catalog` status, and there are no connection or tunnel nodes.
+func buildCatalogGraph(apps map[string]*AppMetadata) catalogGraph {
+	nodes := make([]catalogGraphNode, 0, len(apps))
+	edges := make([]catalogGraphEdge, 0)
+
+	for _, appName := range sortedAppNames(apps) {
+		app := apps[appName]
+		nodes = append(nodes, catalogGraphNode{
+			ID:          appName,
+			DisplayName: appDisplayName(app),
+			Status:      catalogNodeStatus,
+			IsSystem:    app.IsSystem,
+			NodeType:    "app",
+			Category:    app.Category,
+		})
+		edges = append(edges, appContainerNodes(app, &nodes)...)
+	}
+
+	for _, edge := range integrationEdges(apps) {
+		edges = append(edges, catalogGraphEdge{Source: edge.from, Target: edge.to, Label: edge.label})
+	}
+	return catalogGraph{Nodes: nodes, Edges: edges}
+}
+
+// appContainerNodes appends one node per container the app declares and
+// returns the within-app dependsOn edges between them. An app that declares
+// no containers stays a single flat app node, the way the live graph renders
+// it. Edges to a container the app does not declare are dropped, so no arrow
+// points at a node that is not in the box.
+func appContainerNodes(app *AppMetadata, nodes *[]catalogGraphNode) []catalogGraphEdge {
+	declared := make(map[string]bool, len(app.Containers))
+	for _, container := range app.Containers {
+		declared[container.Name] = true
+		*nodes = append(*nodes, catalogGraphNode{
+			ID:          container.Name,
+			DisplayName: containerLabel(container.Name, app.Name),
+			Status:      catalogNodeStatus,
+			IsSystem:    app.IsSystem,
+			NodeType:    "container",
+			ParentID:    app.Name,
+			Category:    app.Category,
+		})
+	}
+
+	edges := make([]catalogGraphEdge, 0)
+	for _, container := range app.Containers {
+		for _, dep := range container.DependsOn {
+			if !declared[dep] {
+				continue
+			}
+			edges = append(edges, catalogGraphEdge{Source: container.Name, Target: dep})
+		}
+	}
+	return edges
+}
+
+// renderCatalogGraphJSON encodes the catalog snapshot. The output is
+// deterministic for a given catalog, so a CI render is reproducible.
+func renderCatalogGraphJSON(apps map[string]*AppMetadata) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(buildCatalogGraph(apps)); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
 // graphLegend explains the notation, because the diagram is generated and no
 // prose around it is written by whoever changed the metadata.
 const graphLegend = "_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. " +
 	"Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._"
 
+// appDisplayName is the app's display name, falling back to its catalog id.
+func appDisplayName(app *AppMetadata) string {
+	if app.DisplayName != "" {
+		return app.DisplayName
+	}
+	return app.Name
+}
+
+// appBoxTitle is the mermaid box title: the display name, with system apps
+// labelled so the infrastructure the rest depends on reads as infrastructure.
+func appBoxTitle(app *AppMetadata) string {
+	title := appDisplayName(app)
+	if app.IsSystem {
+		title += " (system)"
+	}
+	return title
+}
+
 // renderAppBox renders one app: its titled box, a node per container, and
 // the dependsOn arrows between them.
 func renderAppBox(app *AppMetadata, ids *containerIDs) string {
 	var sb strings.Builder
-
-	title := app.DisplayName
-	if title == "" {
-		title = app.Name
-	}
-	if app.IsSystem {
-		title += " (system)"
-	}
-	fmt.Fprintf(&sb, "\n    subgraph %s[\"%s\"]\n", appBoxID(app.Name), title)
+	fmt.Fprintf(&sb, "\n    subgraph %s[\"%s\"]\n", appBoxID(app.Name), appBoxTitle(app))
 
 	if len(app.Containers) == 0 {
 		// An app that declares no containers is one node, the way the
@@ -423,7 +568,9 @@ func (c *containerIDs) get(appName, containerName string) string {
 	return c.byContainer[containerKey(appName, containerName)]
 }
 
-// graphEdge is one rendered cross-app edge between two app boxes.
+// graphEdge is one cross-app edge between two apps, named by catalog id. The
+// mermaid renderer wraps both ends in their box ids; the JSON renderer emits
+// the ids as they are, which is what the dashboard's graph nodes are keyed by.
 type graphEdge struct {
 	from  string
 	to    string
@@ -452,7 +599,7 @@ func integrationEdges(apps map[string]*AppMetadata) []graphEdge {
 				label = ssoEdgeLabel(app)
 			}
 
-			from, to := appBoxID(appName), appBoxID(provider)
+			from, to := appName, provider
 			if integrationName == "proxy" {
 				from, to = to, from
 			}
