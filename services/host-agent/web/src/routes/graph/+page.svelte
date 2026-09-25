@@ -31,6 +31,22 @@
 		container: ContainerNode as any
 	};
 
+	/**
+	 * How the flow opens. The render harness asks for no fit and an explicit
+	 * zoom because Chromium rasterizes a transformed layer once and then scales
+	 * that bitmap: fit first, force zoom later, and the picture comes out of a
+	 * resampled raster instead of fresh type. Starting at the zoom that gets
+	 * captured is what keeps the text crisp.
+	 */
+	const opening = $derived.by(() => {
+		const params = new URLSearchParams(window.location.search);
+		const zoom = Number(params.get('zoom'));
+		return {
+			fit: params.get('fit') !== '0',
+			zoom: Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+		};
+	});
+
 	let nodes = $state<Node[]>([]);
 	let edges = $state<Edge[]>([]);
 	let error = $state('');
@@ -94,7 +110,8 @@
 				{nodes}
 				{edges}
 				{nodeTypes}
-				fitView
+				fitView={opening.fit}
+				viewport={{ x: 0, y: 0, zoom: opening.zoom }}
 				fitViewOptions={{ padding: 0.06, minZoom: 0.05, duration: 0 }}
 				colorMode="light"
 				nodesDraggable={false}
@@ -109,29 +126,6 @@
 				<FlowBridge />
 			</SvelteFlow>
 		</div>
-
-		<footer class="legend">
-			<div class="legend-item">
-				<span class="key box"></span>
-				<span>one box per app, one node inside it per container the app declares</span>
-			</div>
-			<div class="legend-item">
-				<span class="key system"></span>
-				<span>dashed: system app, the infrastructure Bloud runs underneath every other app</span>
-			</div>
-			<div class="legend-item">
-				<span class="key edge"></span>
-				<span>
-					edges are integrations: <code>proxy</code> from the proxy to what it routes,
-					<code>ldap</code> / <code>forward-auth</code> / <code>native-oidc</code> to the
-					identity provider
-				</span>
-			</div>
-			<div class="legend-item">
-				<span class="key status"></span>
-				<span>catalog entries, not live status: nothing here is running</span>
-			</div>
-		</footer>
 	{:else if !ready}
 		<p class="notice">Laying out the catalog graph...</p>
 	{:else}
@@ -156,65 +150,6 @@
 
 	.graph :global(.svelte-flow__attribution) {
 		display: none;
-	}
-
-	/* The legend is part of the picture, not an overlay on it: the renderer
-	   crops to the graph, and this strip is what makes the crop readable
-	   without the README having to explain the notation itself. */
-	.legend {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px 28px;
-		padding: 12px 20px;
-		border-top: 1px solid var(--color-border);
-		background: var(--color-bg-elevated);
-	}
-
-	.legend-item {
-		display: flex;
-		align-items: flex-start;
-		gap: 8px;
-		max-width: 420px;
-		font-size: 0.6875rem;
-		line-height: 1.4;
-		color: var(--color-text-secondary);
-	}
-
-	.legend code {
-		font-family: var(--font-mono);
-		font-size: 0.625rem;
-		color: var(--color-text);
-	}
-
-	.key {
-		flex-shrink: 0;
-		width: 14px;
-		height: 11px;
-		margin-top: 2px;
-		border: 1px solid var(--color-border-strong);
-		border-radius: 3px;
-		background: var(--color-bg-elevated);
-	}
-
-	.key.system {
-		border-style: dashed;
-		background: rgba(120, 113, 108, 0.06);
-	}
-
-	.key.edge {
-		height: 0;
-		margin-top: 7px;
-		border: 0;
-		border-top: 1.5px solid var(--color-border-strong);
-	}
-
-	.key.status {
-		width: 8px;
-		height: 8px;
-		margin-top: 4px;
-		border: 0;
-		border-radius: 50%;
-		background: #9ca3af;
 	}
 
 	.notice {

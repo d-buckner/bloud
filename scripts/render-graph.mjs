@@ -25,8 +25,10 @@
  *   --output <file>   PNG to write (required)
  *   --build <dir>     static build to serve
  *                     (default: services/host-agent/web/build)
- *   --width <px>     target image width in device pixels (default 3200)
- *   --scale <n>      device scale factor, for a crisp image (default 2)
+ *   --width <px>     downscale the picture to this device width; 0 (default)
+ *                    renders at the graph's natural size
+ *   --scale <n>      device scale factor (default 3: the text stays sharp when
+ *                    the picture is opened full size and zoomed)
  *   --max-zoom <n>   never scale the graph past this (default 1: natural size)
  *   --timeout <ms>   render wait budget (default 60000)
  */
@@ -72,8 +74,8 @@ function parseArgs(argv) {
 		graph: '',
 		output: '',
 		build: join(REPO, 'services/host-agent/web/build'),
-		width: 3200,
-		scale: 2,
+		width: 0,
+		scale: 3,
 		maxZoom: 1,
 		timeout: 60_000
 	};
@@ -188,6 +190,15 @@ async function isFile(path) {
 const PAD = 24;
 
 /**
+ * Fonts the picture is drawn in. If one of these is missing the browser
+ * substitutes something else and every label changes shape, which is a broken
+ * render rather than a stylistic choice. Only the self-hosted families are
+ * asserted: the graph draws its app names in Newsreader and its container
+ * chips in the mono stack, and Inter is not part of either.
+ */
+const REQUIRED_FONTS = ['Newsreader'];
+
+/**
  * Union box of everything drawn in the flow, in graph units. Call it with the
  * viewport at zoom 1 so the numbers are the graph's own, not a scaled copy.
  * Edges and their labels are included: a wide `native-oidc` label sticks out
@@ -239,68 +250,102 @@ async function main() {
 	const server = await startServer(opts.build);
 	const port = server.address().port;
 	const browser = await chromium.launch();
-	try {
-		const page = await browser.newPage({
-			// A starting frame only: the real size is set from the measured
-			// graph, so this just has to be big enough to lay out in.
-			viewport: { width: 1600, height: 900 },
+	const consoleErrors = [];
+
+	/** Open the graph at a fixed zoom with fit disabled, and wait for the draw. */
+	const openGraph = async (target, zoom) => {
+		await target.goto(`http://127.0.0.1:${port}/graph?fit=0&zoom=${zoom}`, { waitUntil: 'load' });
+		await target.waitForSelector('body[data-graph-ready="true"]', { timeout: opts.timeout });
+		const renderError = await target.evaluate(() => document.body.dataset.graphError || '');
+		if (renderError) throw new Error(`the graph page failed to render: ${renderError}`);
+	};
+
+	const newPage = async (viewport) => {
+		const target = await browser.newPage({
+			viewport,
 			deviceScaleFactor: opts.scale,
 			// The picture is static; a reduced-motion render is what we want,
 			// not whatever the host's media settings happen to be.
 			reducedMotion: 'reduce'
 		});
-
 		// The page reads the snapshot off window, so nothing has to be served
 		// from it and no generated file lands in the tree.
-		await page.addInitScript(`window.__BLOUD_CATALOG_GRAPH__ = ${JSON.stringify(parsed)};`);
-
-		const consoleErrors = [];
-		page.on('console', (msg) => {
+		await target.addInitScript(`window.__BLOUD_CATALOG_GRAPH__ = ${JSON.stringify(parsed)};`);
+		target.on('console', (msg) => {
 			if (msg.type() === 'error') consoleErrors.push(msg.text());
 		});
-		page.on('pageerror', (err) => consoleErrors.push(String(err)));
+		target.on('pageerror', (err) => consoleErrors.push(String(err)));
+		return target;
+	};
 
-		await page.goto(`http://127.0.0.1:${port}/graph`, { waitUntil: 'load' });
-		await page.waitForSelector('body[data-graph-ready="true"]', { timeout: opts.timeout });
+	/**
+	 * The picture is only the picture if the type is the dashboard's type. A
+	 * font that failed to load swaps in a fallback and quietly changes how every
+	 * box reads, so fail rather than ship a picture drawn in the wrong face.
+	 */
+	const assertFonts = async (target) => {
+		const fonts = await target.evaluate(async () => {
+			await document.fonts.ready;
+			const loaded = new Set();
+			document.fonts.forEach((f) => {
+				if (f.status === 'loaded') loaded.add(f.family.replace(/["']/g, ''));
+			});
+			return { status: document.fonts.status, loaded: [...loaded] };
+		});
+		for (const family of REQUIRED_FONTS) {
+			const usable = await target.evaluate((f) => document.fonts.check(`600 13px "${f}"`), family);
+			if (!fonts.loaded.includes(family) || !usable) {
+				throw new Error(
+					`font "${family}" did not load (status ${fonts.status}, loaded: ${fonts.loaded.join(', ') || 'none'})`
+				);
+			}
+		}
+	};
 
-		const renderError = await page.evaluate(() => document.body.dataset.graphError || '');
-		if (renderError) throw new Error(`the graph page failed to render: ${renderError}`);
-
-		const nodeCount = await page.locator('.svelte-flow__node').count();
+	try {
+		// Pass one: measure. The graph opens at zoom 1 with no fit, so the box
+		// it draws is the graph's own size, not a fitted copy.
+		let shot = await newPage({ width: 1600, height: 900 });
+		await openGraph(shot, 1);
+		const natural = await measureGraph(shot);
+		const nodeCount = await shot.locator('.svelte-flow__node').count();
 		if (nodeCount === 0) throw new Error('the graph rendered no nodes');
+		await assertFonts(shot);
 
-		// Fit the frame to the graph, not the other way round: at zoom 1 the
-		// measured box is in graph units, so the picture can be scaled to the
-		// width we want and cropped to exactly what is drawn. fitView alone
-		// leaves the graph floating in a viewport-sized image.
-		await page.evaluate(() => window.__BLOUD_GRAPH_VIEW__.setViewport({ x: 0, y: 0, zoom: 1 }));
-		await page.waitForTimeout(120);
-		const natural = await measureGraph(page);
-
-		const cssTargetWidth = opts.width / opts.scale;
-		const zoom = Math.min(opts.maxZoom, (cssTargetWidth - PAD * 2) / natural.width);
+		// Natural size by default: drawing the graph smaller than it is means
+		// rasterizing the text at a fraction of its design size, and no amount
+		// of device scale factor puts the crispness back.
+		let zoom = opts.maxZoom;
+		if (opts.width > 0) {
+			zoom = Math.min(opts.maxZoom, (opts.width / opts.scale - PAD * 2) / natural.width);
+		}
 		if (!(zoom > 0)) throw new Error(`computed a useless zoom (${zoom}) for a ${natural.width}px graph`);
 
-		// The legend reflows with the width, so its height is measured after
-		// the horizontal resize, not before.
-		await page.setViewportSize({ width: Math.round(natural.width * zoom + PAD * 2), height: 400 });
-		const legendHeight = await page.evaluate(() => {
-			const el = document.querySelector('.legend');
-			return el ? el.getBoundingClientRect().height : 0;
-		});
 		const frame = {
 			width: Math.round(natural.width * zoom + PAD * 2),
-			height: Math.round(natural.height * zoom + PAD * 2 + legendHeight)
+			height: Math.round(natural.height * zoom + PAD * 2)
 		};
-		await page.setViewportSize(frame);
-		await page.evaluate(
+
+		// A zoom change after the first paint makes Chromium scale the bitmap it
+		// already rasterized, which is how a 2x capture comes out pixelated. At
+		// natural size the pan is the only change and a pan does not resample;
+		// anything else has to be a fresh page that opens at that zoom.
+		if (Math.abs(zoom - 1) > 1e-6) {
+			await shot.close();
+			shot = await newPage(frame);
+			await openGraph(shot, zoom);
+		} else {
+			await shot.setViewportSize(frame);
+		}
+
+		await shot.evaluate(
 			({ x, y, zoom }) => window.__BLOUD_GRAPH_VIEW__.setViewport({ x, y, zoom }),
 			{ x: PAD - natural.x * zoom, y: PAD - natural.y * zoom, zoom }
 		);
-		await page.waitForTimeout(250);
+		await shot.waitForTimeout(250);
 
 		await mkdir(dirname(resolve(opts.output)), { recursive: true });
-		await page.screenshot({ path: opts.output });
+		await shot.screenshot({ path: opts.output });
 
 		console.log(
 			`rendered ${nodeCount} nodes to ${opts.output} ` +
