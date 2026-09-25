@@ -40,7 +40,7 @@ type settingsModule struct {
 	sessionStore    store.SessionStoreInterface
 	authentikClient AuthentikUserManagerInterface
 	orch            orchestratorCaller
-	authConfig      *authConfigRef
+	authConfig      *AuthRef
 	hostState       *hostset.State
 	hostStore       store.HostStoreInterface
 	logger          *slog.Logger
@@ -53,7 +53,7 @@ func NewSettingsModule(
 	sessionStore store.SessionStoreInterface,
 	authClient AuthentikUserManagerInterface,
 	orch orchestratorCaller,
-	authConfig *authConfigRef,
+	authConfig *AuthRef,
 	hostState *hostset.State,
 	hostStore store.HostStoreInterface,
 	logger *slog.Logger,

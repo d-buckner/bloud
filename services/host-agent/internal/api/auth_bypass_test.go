@@ -69,7 +69,6 @@ version: 1.0.0
 		o.catalog = fCatalog
 		o.appStore = NewFakeAppStore()
 		o.remoteAppStore = NewFakeRemoteAppStore()
-		o.noOrchestrator = true
 	})
 	return &Server{cfg: cfg, router: router, db: db, logger: logger}
 }
@@ -210,7 +209,7 @@ func newHostAwareAuthModule(t *testing.T, hosts *hostset.State) (*authModule, *F
 	t.Helper()
 	client := NewFakeAuthentikClient()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	mod := NewAuthModule(client, newAuthConfigRef(&AuthConfig{OIDCConfig: client.oidcConfig}),
+	mod := NewAuthModule(client, newAuthRef(&AuthConfig{OIDCConfig: client.oidcConfig}),
 		NewFakePreferencesStore(), newFakeSessionStore(), logger, 0, hosts)
 	return mod, client
 }

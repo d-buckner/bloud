@@ -83,8 +83,12 @@ Entry point. Runs as a systemd user service (API mode) or executes one-shot comm
 | Subcommand | Purpose |
 |---|---|
 | *(none)* | Start the REST API server on `:3000` |
-| `configure` | One-shot configure commands (prestart/poststart/etc.) |
 | `init-secrets` | Generate and persist initial secrets |
+
+There is no one-shot `configure` subcommand. The orchestrator runs every
+configurator on each reconciliation pass, so a manual prestart or poststart
+hook has nothing to do that the loop does not already do. The one that used to
+exist had no caller and could not have worked; see the tech-debt ledger.
 
 ### Catalog (`internal/catalog/`)
 

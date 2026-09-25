@@ -119,10 +119,6 @@ func (f *FakeBlueprintGenerator) DeleteBlueprint(appName string) error {
 	return nil
 }
 
-func (f *FakeBlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
-	return nil
-}
-
 func (f *FakeBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.ForwardAuthProvider) error {
 	return nil
 }

@@ -47,7 +47,28 @@ running host-agent directly on the host; needs podman + user-level systemd:
 `NativeBackend.Create` enables `podman.socket` and linger as needed). The
 backend preference is picked by `./bloud setup` (or prompted on first use of
 any runtime command) and stored in gitignored `.bloud/preferences.yaml`;
-`BLOUD_BACKEND` overrides it:
+`BLOUD_BACKEND` overrides it.
+
+> ### Never run the `native` backend on Fedora
+>
+> **`native` is forbidden on Fedora. Use `qemu`.** It runs host-agent
+> directly on the machine you invoked it from: systemd user units, real port
+> bindings, and containers on your own rootless podman, with no VM boundary.
+> A startup that fails partway leaves Bloud containers and systemd units
+> running against your real host, where nothing about them is disposable.
+> CI runs `native` only on a throwaway runner, which is the sole place that
+> trade-off is acceptable.
+>
+> The CLI enforces this, not just this document. On a Fedora host (detected
+> from `/etc/os-release` `ID` or `ID_LIKE`, so derivatives such as Bazzite
+> are covered too) `native` is dropped from the offered backends, a stored
+> `native` preference is discarded as inapplicable, and an explicit
+> `BLOUD_BACKEND=native` is refused with a nonzero exit rather than run. See
+> `cli/distro.go`. Do not work around that guard, and do not run the
+> host-agent binary by hand on a Fedora workstation to get the same effect.
+
+On a Fedora machine the choice is already made: `qemu` is the only backend
+the CLI offers.
 
 ```bash
 # Lima (macOS, default)
@@ -58,7 +79,8 @@ limactl start bloud-dev
 ./bloud dev                           # creates .bloud/qemu/bloud-qemu (gitignored)
 # manual SSH: ssh -p 2222 -i .bloud/qemu/bloud-qemu/id_ed25519 bloud@127.0.0.1
 
-# Native (Linux CI): no VM; runtime in /var/tmp/bloud-native-runtime
+# Native (Linux CI ONLY, never on a developer workstation, and refused on
+# Fedora): no VM; runtime in /var/tmp/bloud-native-runtime
 BLOUD_BACKEND=native ./bloud dev
 ```
 

@@ -23,3 +23,13 @@ front-proxy
 internal/mdns
 compose.yml
 air\.toml
+
+# Removed in the single-orchestrator-builder refactor. `bloud-agent configure`
+# was a one-shot prestart/poststart/reconcile entry point with no caller
+# anywhere in the repo, and it looked configurators up by catalog ID while the
+# registry keys on graph node names, so it configured nothing. The whole
+# `configure` subcommand and the env-var SSO chain that only it called are
+# gone; the orchestrator drives configurators instead. A document naming
+# either describes an architecture that no longer exists.
+bloud-agent
+WaitForSSOReady

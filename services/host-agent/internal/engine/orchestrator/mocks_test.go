@@ -229,14 +229,6 @@ func (m *MockBlueprintGenerator) DeleteBlueprint(appName string) error {
 	return args.Error(0)
 }
 
-func (m *MockBlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
-	args := m.Called(app)
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(map[string]string)
-}
-
 func (m *MockBlueprintGenerator) GenerateOutpostBlueprint(providers []sso.ForwardAuthProvider) error {
 	args := m.Called(providers)
 	return args.Error(0)

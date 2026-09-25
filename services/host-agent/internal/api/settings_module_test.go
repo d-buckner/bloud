@@ -40,7 +40,7 @@ func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
 		sessionStore:    sessionStore,
 		authentikClient: authClient,
 		orch:            orch,
-		authConfig:      newAuthConfigRef(authConfig),
+		authConfig:      newAuthRef(authConfig),
 		logger:          logger,
 	}
 }
@@ -254,7 +254,7 @@ func TestSettingsHTTP_SetupStatus_NoUsers(t *testing.T) {
 func TestSettingsHTTP_SetupStatus_AuthReadyReflectsSharedRef(t *testing.T) {
 	// A shared ref (as wired by NewRouter) starts disabled and flips to ready
 	// once Server.InitAuth runs post-convergence.
-	ref := newAuthConfigRef(nil)
+	ref := newAuthRef(nil)
 	mod := newSettingsModule(t, &AuthConfig{})
 	mod.authConfig = ref
 	r := chi.NewRouter()
