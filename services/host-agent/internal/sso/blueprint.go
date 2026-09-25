@@ -215,62 +215,6 @@ func (g *BlueprintGenerator) renderOutpostBlueprint(providers []ForwardAuthProvi
 	return buf.String(), nil
 }
 
-// GetSSOEnvVars returns the environment variables needed for an app's SSO config.
-// Uses the primary base URL for redirect/discovery URLs.
-func (g *BlueprintGenerator) GetSSOEnvVars(app *catalog.App) map[string]string {
-	if app.SSO.Strategy != "native-oidc" {
-		return nil
-	}
-
-	baseURL := g.primaryBaseURL()
-	clientID := g.generateClientID(app.CatalogID)
-	var clientSecret string
-	if !app.SSO.PublicClient() {
-		clientSecret = g.generateClientSecret(app.CatalogID)
-	}
-	discoveryURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.CatalogID)
-	appURL := appSubdomainURL(baseURL, app.CatalogID)
-	redirectURL := appURL + app.SSO.CallbackPath
-	serverHostname := appURL
-	issuerURL := fmt.Sprintf("%s/application/o/%s/", g.authentikURL, app.CatalogID)
-
-	env := make(map[string]string)
-
-	if app.SSO.Env.ClientID != "" {
-		env[app.SSO.Env.ClientID] = clientID
-	}
-	if app.SSO.Env.ClientSecret != "" && clientSecret != "" {
-		env[app.SSO.Env.ClientSecret] = clientSecret
-	}
-	if app.SSO.Env.DiscoveryURL != "" {
-		env[app.SSO.Env.DiscoveryURL] = discoveryURL
-	}
-	if app.SSO.Env.RedirectURL != "" {
-		env[app.SSO.Env.RedirectURL] = redirectURL
-	}
-	if app.SSO.Env.ServerHostname != "" {
-		env[app.SSO.Env.ServerHostname] = serverHostname
-	}
-	if app.SSO.Env.Issuer != "" {
-		env[app.SSO.Env.Issuer] = issuerURL
-	}
-	if app.SSO.Env.Provider != "" {
-		env[app.SSO.Env.Provider] = "oidc"
-	}
-	if app.SSO.Env.ProviderName != "" {
-		env[app.SSO.Env.ProviderName] = app.SSO.ProviderName
-	}
-	if app.SSO.Env.UserCreation != "" {
-		if app.SSO.UserCreation {
-			env[app.SSO.Env.UserCreation] = "1"
-		} else {
-			env[app.SSO.Env.UserCreation] = "0"
-		}
-	}
-
-	return env
-}
-
 func (g *BlueprintGenerator) generateClientID(appName string) string {
 	return fmt.Sprintf("%s-client", appName)
 }
