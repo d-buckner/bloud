@@ -1,4 +1,4 @@
-# Bloud
+# bloud
 
 An open-source home server. You add an app; the reverse proxy, the unified login, the database,
 and the wiring between apps happen automatically.
@@ -31,7 +31,7 @@ The script is short, and you should read it before piping it to a shell:
 [the releases page](https://github.com/d-buckner/bloud/releases) and run
 `sudo apt install ./bloud_*.deb`.
 
-**Please don't expose bloud to the public internet**. It's currently in alpha and uses plain HTTP at the moment. There is also no robust security update mechaism for apps or the system itself.
+**Please don't expose bloud to the public internet**. It's currently in alpha and uses plain HTTP at the moment. There is also no robust security update mechaism for apps or the system itself at this moment.
 
 ## what just happened
 
@@ -51,21 +51,18 @@ Step 6 is the point. The same loop that installed your apps is the loop that bri
 after a power cut. There is no recovery code, because a reboot is just a disturbance the loop
 reads and responds to like any other.
 
-## the one thing worth understanding
+## what makes this thing unlike the others?
 
-Anyone can run `podman run`. The differentiator is not container installation. It is the
-**engine**: a reconciliation control loop, built the way Kubernetes controllers are, that reads
-what each app declares, works out the wiring, and keeps those relationships correct forever.
+Anyone can run `podman run` and get great self-hosted apps up and running. The differentiator is not container installation. It is the **engine**: a reconciliation control loop, built the way Kubernetes controllers are, that reads what each app declares, works out the wiring, and keeps those relationships correct forever.
 
-Two rules make it trustworthy:
+Two rules make it work:
 
 - **Single writer.** Only the orchestrator authors lifecycle state or performs side effects.
   HTTP handlers submit intents and never mutate anything.
 - **Idempotent configurators.** `PreStart` and `PostStart` run on every cycle. A configurator
   that breaks when it runs twice is a bug, not a caveat.
 
-Generating a config file once is easy. Generating it correctly the ninety-seventh time, when the
-app is already half-running and nothing has changed, is the whole problem.
+Generating a config file once is easy. Generating a whole homelab's worth of config files and maintaining them indefinitely is not.
 
 ## the full graph
 
@@ -208,18 +205,23 @@ _Each box is one app; the nodes inside it are that app's containers, with an arr
 
 Thirteen apps, plus the two system ones Bloud needs to run itself. Each carries a verified
 support contract: install, shared login, persistence, reboot, removal. Small on purpose. A
-half-supported app is worse than no app.
+half-supported app is worse than no app in my opinion.
 
-| Media | Productivity | Security |
-|---|---|---|
-| Jellyfin | Home Assistant | Vaultwarden |
-| Navidrome | AFFiNE | Authentik *(system)* |
-| Immich | Hermes | |
-| Sonarr | Paperless-ngx | |
-| Radarr | | |
-| Prowlarr | | Traefik *(system, network)* |
-| qBittorrent | | |
-| Seerr | | |
+- AFFiNE
+- Hermes
+- Home Assistant
+- Immich
+- Jellyfin
+- Navidrome
+- Paperless-ngx
+- Prowlarr
+- qBittorrent
+- Radarr
+- Seerr
+- Sonarr
+- Vaultwarden
+
+Plus the system apps: Authentik (identity) and Traefik (network).
 
 The media stack is the clearest illustration of what the engine buys you. Sonarr, Radarr,
 Prowlarr, qBittorrent, and Seerr are five separate projects that become useful only once they
