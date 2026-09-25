@@ -2,7 +2,8 @@
 #
 # Release packaging: builds the production .deb and publishes it as a GitHub
 # pre-release, tagged deb-<UTC timestamp> (a .deb build, distinct from the ISO
-# image releases).
+# image releases), plus a rolling `latest` tag carrying the fixed-name asset
+# that install.sh downloads.
 # Runs on pushes to main, plus manual dispatch. This is not a validation check
 # (those live in validation.yaml and run through ./bloud validate); it produces
 # the artifact a release is cut from. The local equivalent is ./bloud package.
@@ -72,3 +73,18 @@ jobs:
             --target "$GITHUB_SHA" \
             --prerelease \
             --notes "Automated build of the Bloud .deb from ${GITHUB_SHA}."
+
+      # install.sh needs one URL that never changes. GitHub's releases/latest
+      # shortcut skips prereleases, and these builds stay prereleases while the
+      # project is alpha, so the rolling pointer is a fixed `latest` tag with a
+      # fixed asset name, clobbered on every push to main. The version-named
+      # build above stays the provenance record.
+      - name: Publish the rolling latest asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "$(ls dist/bloud_*.deb | head -n 1)" dist/bloud_latest_amd64.deb
+          gh release view latest >/dev/null 2>&1 ||
+            gh release create latest --title "bloud latest" --target "$GITHUB_SHA" \
+              --prerelease --notes "Rolling build of the Bloud .deb. install.sh downloads this."
+          gh release upload latest dist/bloud_latest_amd64.deb --clobber

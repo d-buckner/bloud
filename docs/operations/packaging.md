@@ -24,6 +24,34 @@ output is `dist/bloud_<version>_<arch>.deb`.
 publishes a GitHub pre-release tagged `deb-<UTC timestamp>` (titled
 `bloud <date> (<sha>)`) with the `.deb` attached.
 
+The same job also publishes a rolling `latest` tag carrying the fixed-name
+asset `bloud_latest_amd64.deb`, clobbered on every push. That is what
+`install.sh` downloads. GitHub's `releases/latest/download/...` shortcut skips
+prereleases, and these builds stay prereleases while the project is alpha, so
+the rolling pointer is a fixed tag rather than that shortcut. The version-named
+release above stays the provenance record.
+
+## Installing
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/d-buckner/bloud/main/install.sh | sudo sh
+```
+
+[`install.sh`](../../install.sh) is deliberately thin: it fetches the rolling
+asset and runs `apt-get install` on it. Everything a fresh install needs on
+disk (the `bloud` user, its subuid ranges, `/var/lib/bloud`, linger, the
+sysctl drop-in, the user service) is done by the package's own maintainer
+scripts, described under "Service model" below. Nothing of that is repeated in
+the installer on purpose: `install.sh` is not covered by the packaging tests,
+so any provisioning logic that lived there could drift from the package it
+installs.
+
+The manual path is the same thing with the download made by hand:
+
+```bash
+sudo apt install ./bloud_*.deb
+```
+
 ## Dependencies
 
 The package declares what the runtime needs as Debian relationships, so a
