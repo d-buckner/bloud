@@ -28,8 +28,6 @@ func main() {
 	// Check for subcommands
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "configure":
-			os.Exit(runConfigure(os.Args[2:]))
 		case "init-secrets":
 			os.Exit(runInitSecrets(os.Args[2:]))
 		}
