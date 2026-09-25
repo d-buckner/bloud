@@ -27,17 +27,17 @@ const appName = "authentik"
 const secretAPIToken = "apiToken"
 
 // Params are the Authentik-specific values the system configurator needs. They
-// come from the host-agent config (and the shared templateVars map) rather than
-// from Deps, which carries only the generic host services.
+// come from the host-agent config (and the shared template-variable store)
+// rather than from Deps, which carries only the generic host services.
 type Params struct {
 	Port              int
 	BootstrapPassword string
 	BootstrapEmail    string
-	TokenKey          string            // API token key for host-agent
-	LDAPBindPassword  string            // LDAP bind password for service account
-	BrandingCSS       string            // Inline CSS to push to Authentik brand API
-	AppsDir           string            // Path to the apps directory (for auth.yaml blueprint)
-	TemplateVars      map[string]string // Shared map; PostStart writes authentikLdapToken
+	TokenKey          string                     // API token key for host-agent
+	LDAPBindPassword  string                     // LDAP bind password for service account
+	BrandingCSS       string                     // Inline CSS to push to Authentik brand API
+	AppsDir           string                     // Path to the apps directory (for auth.yaml blueprint)
+	TemplateVars      *configurator.TemplateVars // Store; PostStart records the LDAP outpost token
 }
 
 // ServerConfigurator handles the apps-authentik-server container lifecycle.
@@ -76,19 +76,19 @@ func (c *ServerConfigurator) Name() string {
 //
 // The blueprint write goes through managedfile, so an unchanged file reports no
 // change and does not trigger a container recreate.
-func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	srcPath := filepath.Join(c.params.AppsDir, "authentik", "auth.yaml")
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
-		return false, fmt.Errorf("read auth.yaml: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("read auth.yaml: %w", err)
 	}
 
 	// The server container mounts this file read-only at
 	// /blueprints/default/flow-default-authentication-flow.yaml.
 	dstPath := filepath.Join(state.DataPath, "authentik-auth-flow.yaml")
-	blueprintChanged, err := managedfile.Write(dstPath, src, 0644)
+	blueprintChanged, err := managedfile.Write(dstPath, src, managedfile.ModeSharedConfig)
 	if err != nil {
-		return false, fmt.Errorf("write auth flow blueprint: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("write auth flow blueprint: %w", err)
 	}
 
 	// Authentik runs as a non-root user and needs write access to these dirs.
@@ -97,14 +97,14 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 		filepath.Join(state.DataPath, "templates"),
 	} {
 		if err := os.MkdirAll(dir, 0777); err != nil {
-			return false, fmt.Errorf("create dir %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("create dir %s: %w", dir, err)
 		}
 		if err := managedfile.EnsureWritable(dir, 0777); err != nil {
-			return false, fmt.Errorf("chmod dir %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("chmod dir %s: %w", dir, err)
 		}
 	}
 
-	return blueprintChanged, nil
+	return configurator.RestartIf(blueprintChanged, "auth flow blueprint rewritten"), nil
 }
 
 // PostStart configures Authentik after it is healthy:
@@ -138,7 +138,7 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 
 	// Write token to file for host-agent to read.
 	tokenPath := filepath.Join(state.DataPath, "api-token")
-	if _, err := managedfile.Write(tokenPath, []byte(c.params.TokenKey), 0600); err != nil {
+	if _, err := managedfile.Write(tokenPath, []byte(c.params.TokenKey), managedfile.ModeHostOnly); err != nil {
 		return fmt.Errorf("write token file: %w", err)
 	}
 
@@ -181,16 +181,18 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 		}
 	}
 
-	// Step 7: Get LDAP outpost token and write to shared template vars.
-	// The apps-authentik-ldap container spec uses {{authentikLdapToken}}; the
-	// orchestrator resolves this map at container spec build time, which happens
-	// after this PostStart (ldap depends on server via metadata dependsOn).
+	// Step 7: Get the LDAP outpost token and record it in the template-variable
+	// store. The apps-authentik-ldap container spec reads {{authentikLdapToken}};
+	// the orchestrator resolves the store at container-spec build time, which
+	// happens after this PostStart (ldap depends on server via metadata
+	// dependsOn). The store is locked, so this write and that read are safe
+	// whatever the schedule does.
 	ldapToken, err := client.GetLDAPOutpostToken(ctx)
 	if err != nil {
 		return fmt.Errorf("get LDAP outpost token: %w", err)
 	}
 	if c.params.TemplateVars != nil {
-		c.params.TemplateVars["authentikLdapToken"] = ldapToken
+		c.params.TemplateVars.SetLDAPOutpostToken(ldapToken)
 	}
 
 	return nil

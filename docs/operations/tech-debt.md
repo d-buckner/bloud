@@ -249,29 +249,42 @@ a deliberate boundary, and **no new direct-write domain should be added**.
 
 ## Configurator-layer conformance debt (2026-09-20)
 
-The app configurator surface is eight apps under `apps/` plus Traefik under
-`internal/appconfig/`. It follows a strong shared contract; the items below are
-where implementations drift from it. Nothing here is a shipping blocker.
+The app configurator surface is thirteen user apps under `apps/` plus the
+system apps under `internal/appconfig/`. It follows a strong shared contract;
+the items below are where implementations drifted from it. As of 2026-09-25
+the contract is enforced by a conformance harness rather than by convention,
+so the drift listed here is closed and a new app cannot reintroduce it.
 The severity labels here are assigned by this note (P2 = hides behavior or
 breaks a stated invariant; P3 = consistency and duplication), not taken from a
 dated review.
 
-**Closed 2026-09-20:** C1, C2, C3, C4 (except its `templateVars` side channel,
-now C15), C8 and C13. Still open: C5, C6, C7, C9-C12, C14, C15. See "Closed
-2026-09-20" below.
+**Closed 2026-09-20:** C1, C2, C4 (except its `templateVars` side channel,
+now C15), C8 and C13. **Closed 2026-09-25:** C3, C5, C6, C7, C10, C11, C14,
+C15. Still open: C9. See "Closed 2026-09-25" below.
 
 ### The surface
 
-| App | Graph node | SSO strategy | Implementation | Go test |
-|---|---|---|---|---|
-| jellyfin | `apps-jellyfin` | ldap | `apps/jellyfin/` (7 files) | 35 KB |
-| navidrome | `apps-navidrome` | forward-auth | `apps/navidrome/` | 2 KB |
-| immich | `apps-immich-server` | native-oidc | `apps/immich/` | 1.7 KB |
-| affine | `apps-affine` | native-oidc | `apps/affine/` | 9.4 KB |
-| paperless-ngx | `apps-paperless-ngx` | native-oidc | `apps/paperless-ngx/` | 27 KB |
-| homeassistant | `apps-homeassistant` | native-oidc | `apps/homeassistant/` (one 643-line file) | 31 KB |
-| authentik | `apps-authentik-server` | system | `apps/authentik/` + `internal/appconfig/register.go` | none |
-| traefik | `apps-traefik` | system | `internal/appconfig/traefik.go`; `apps/traefik/` is metadata only | none |
+Thirteen user apps plus the system apps. Every row is covered by the
+conformance harness (`apps/conformance_test.go`), which enumerates the
+registry rather than this table, so the table cannot hide an app.
+
+| App | Graph node | SSO strategy | Implementation |
+|---|---|---|---|
+| jellyfin | `apps-jellyfin` | ldap | `apps/jellyfin/` |
+| navidrome | `apps-navidrome` | forward-auth | `apps/navidrome/` |
+| immich | `apps-immich-server` | native-oidc | `apps/immich/` |
+| affine | `apps-affine` | native-oidc | `apps/affine/` |
+| paperless-ngx | `apps-paperless-ngx` | native-oidc | `apps/paperless-ngx/` |
+| homeassistant | `apps-homeassistant` | native-oidc | `apps/homeassistant/` |
+| hermes | `apps-hermes` | native-oidc (loopback issuer) | `apps/hermes/` |
+| vaultwarden | `apps-vaultwarden` | native-oidc | `apps/vaultwarden/` |
+| sonarr | `apps-sonarr` | forward-auth | `apps/sonarr/` (thin over `pkg/servarr`) |
+| radarr | `apps-radarr` | forward-auth | `apps/radarr/` (thin over `pkg/servarr`) |
+| prowlarr | `apps-prowlarr` | forward-auth | `apps/prowlarr/` |
+| qbittorrent | `apps-qbittorrent` | forward-auth | `apps/qbittorrent/` |
+| seerr | `apps-seerr` | forward-auth | `apps/seerr/` |
+| authentik | `apps-authentik-server` | system | `apps/authentik/` + `internal/appconfig/register.go` |
+| traefik | `apps-traefik` | system | `internal/appconfig/traefik.go`; `apps/traefik/` is metadata only |
 
 ### Conventions the surface follows
 
@@ -312,17 +325,17 @@ now C15), C8 and C13. Still open: C5, C6, C7, C9-C12, C14, C15. See "Closed
 | C2 | ~~`appExternalURL` duplicated between affine and paperless~~ **FIXED 2026-09-20**: both call `configurator.AppExternalURL`. | P3→closed | `services/host-agent/pkg/configurator/urls.go` |
 | C3 | ~~`Remove` a no-op in all six user apps; `BaseNodeLifecycle` and the deprecated aliases had zero callers~~ **FIXED 2026-09-20**: teardown is the optional `configurator.Remover`; the six no-op `Remove` methods are deleted with `base.go`, and the orchestrator type-asserts before calling it. | P3→closed | `services/host-agent/pkg/configurator/interface.go`; `orchestrator.go:614,635` |
 | C4 | ~~authentik's `ServerConfigurator` bypassed the container runtime and the `Deps` injection~~ **FIXED 2026-09-20**: built from `Deps` (logger, `HTTP`, `Exec`), runs `ak shell` through `Deps.Exec` with no hardcoded podman, and registered as a lazy factory. The `templateVars` side channel remains as its own item (C15). | P2→closed | `apps/authentik/server_configurator.go`; `services/host-agent/internal/appconfig/register.go` |
-| C5 | Phase boundaries leak. Home Assistant runs a live network probe and can force a container recreate from `PreStart` (`staleForce`), and patches a disk file plus restarts the container from `PostStart`. `PreStart` is documented as config files and directories only. | P2 | `apps/homeassistant/configurator.go:170-186,255-290` |
-| C6 | The `changed` return conflates "a mounted file changed" with "recreate the container": Home Assistant returns `staleForce` when nothing changed on disk, a self-heal signal carried through a config-diff channel; jellyfin returns `pluginInstalled \|\| networkChanged`. | P3 | `apps/homeassistant/configurator.go:186,209`; `apps/jellyfin/configurator.go` |
-| C7 | Bootstrap-account logic is copy-pasted with divergent names and failure semantics: `bloud-admin` (navidrome, paperless) vs `bloud-bootstrap-admin` (jellyfin, homeassistant); paperless returns `("", nil)` when the admin cannot be verified, Home Assistant fails hard, jellyfin and immich create-or-skip. | P3 | `apps/paperless-ngx/configurator.go:262-300`; `apps/homeassistant/configurator.go`; `apps/immich/configurator.go:107-124`; `apps/jellyfin/configurator.go` |
+| C5 | ~~Phase boundaries leak. Home Assistant runs a live network probe and can force a container recreate from `PreStart` (`staleForce`), and patches a disk file plus restarts the container from `PostStart`.~~ **FIXED 2026-09-25**: the probe stays in `PreStart` on purpose. A `PostStart` probe cannot tell "not installed" from "restarting", and moving it would delay the self-heal by a full cycle. What changed is the channel: the recreate request is now a typed signal with a reason instead of a bare bool leaking out of a config-diff. | P2→closed | `apps/homeassistant/configurator.go`; `services/host-agent/pkg/configurator/interface.go` |
+| C6 | ~~The `changed` return conflates "a mounted file changed" with "recreate the container".~~ **FIXED 2026-09-25**: `PreStart` returns `PreStartResult{RestartNeeded, Reason}`. The field is named for the orchestrator's side effect, so a self-heal signal and a config diff can no longer be mistaken for each other, and every recreate is traceable to the reason that caused it. Deliberately no `ConfigWritten` field: writing a file is not what the orchestrator acts on. | P3→closed | `services/host-agent/pkg/configurator/interface.go`; `orchestrator.go` |
+| C7 | ~~Bootstrap-account logic is copy-pasted with divergent names and failure semantics.~~ **FIXED 2026-09-25**: `pkg/bootstrap` owns the login-fast-path / create / verify sequence and one policy: an unverifiable admin is a reported condition (`Outcome`), never a terminal error, because SSO users do not depend on the internal account. Navidrome, Immich and Paperless-ngx map their APIs onto two callbacks and carry no policy of their own. The account names stay as shipped: renaming would orphan the credential in every existing install. | P3→closed | `services/host-agent/pkg/bootstrap/bootstrap.go`; `apps/navidrome/configurator.go`; `apps/immich/configurator.go`; `apps/paperless-ngx/configurator.go` |
 | C8 | ~~Transient-versus-terminal `PostStart` error handling inconsistent and undocumented~~ **FIXED 2026-09-20**: the contract is stated on `NodeLifecycle.PostStart` (an error is terminal; resolve transients inside). jellyfin's initial-user wait is now best-effort instead of returning a transient error, and affine's unreachable `return ""` is a real error return. | P2→closed | `services/host-agent/pkg/configurator/interface.go`; `apps/jellyfin/api.go`; `apps/affine/configurator.go` |
 | C9 | Test coverage is uneven for the same contract: none for authentik or traefik; immich is 1.7 KB against jellyfin's 35 KB and Home Assistant's 31 KB. | P3 | app package listings |
-| C10 | Cross-file constants are enforced only by comment: paperless' `callbackPath` must equal `metadata.yaml`'s `sso.callbackPath`, the provider id `bloud` appears three times, each `configFileName` must equal the mount destination in `metadata.yaml`, and each constructor's port default must equal `metadata.yaml`'s `port`. No test pins any of them. | P3 | `apps/paperless-ngx/configurator.go:34-40`; `apps/paperless-ngx/metadata.yaml` |
-| C11 | Registration style drifts: Home Assistant registers `NewConfigurator(8123, deps)` while every other app passes `0` and defaults inside the constructor; each app re-declares a `baseURL` test seam, and Home Assistant adds a `baseURL()` method the others lack. | P3 | `apps/homeassistant/registration.go`; `apps/*/registration.go` |
+| C10 | ~~Cross-file constants are enforced only by comment: the constructor's port default must equal `metadata.yaml`'s `port`, and nothing pinned any of them.~~ **FIXED 2026-09-25**: the conformance harness reads each `metadata.yaml` and asserts the configurator's default port matches, alongside name, idempotency, offline-`PreStart`, empty-`Deps` and honest-teardown checks. It caught two wrong port guesses (Hermes 9119, qBittorrent 8081) and one live version bug on its first run. | P3→closed | `apps/configtest/configtest.go`; `apps/conformance_test.go` |
+| C11 | ~~Registration style drifts: Home Assistant registers `NewConfigurator(8123, deps)` while every other app passes `0`.~~ **FIXED 2026-09-25**: every app declares one `nodeName` constant used by both `Name()` and `registration.go`, passes `0` for the port, and keeps its default as a named constant the harness checks against metadata. | P3→closed | `apps/*/registration.go`; `apps/configtest/configtest.go` |
 | C12 | ~~Cross-app coupling through a file path: navidrome's user sync reads `<dataDir>/authentik/api-token`, written by authentik's server configurator, and the two agree only because `ownerApp("apps-authentik-server")` is `authentik`.~~ **FIXED 2026-09-21**: authentik declares `provides.sso.secrets: [apiToken]` and publishes the token through `SetAppSecret`; navidrome reads it from its `sso` integration binding, so no app path name crosses a boundary. The same change removed the Servarr sibling reads (`pkg/servarr.SiblingConfigPath`, deleted) and the consumer-side provider port constants. See invariant 15. | P3→closed | `apps/navidrome/configurator.go` (`authentikToken`); `apps/authentik/server_configurator.go`; `services/host-agent/pkg/configurator/interface.go` |
 | C13 | ~~Comment residue in `apps/jellyfin/network_config.go`: duplicated doc comments and an orphaned `Remove` comment~~ **FIXED 2026-09-20**. | P3→closed | `apps/jellyfin/network_config.go` |
-| C14 | File modes are ad hoc with per-app rationale: 0600 for affine, the Home Assistant `.storage` entry, and the authentik token; 0644 for immich, paperless, and the authentik blueprint. No policy for a new app to follow. | P3 | `apps/affine/configurator.go:132`; `apps/immich/configurator.go:109`; `apps/paperless-ngx/configurator.go:207` |
-| C15 | The LDAP outpost token reaches the orchestrator through a shared mutable `templateVars` map that both the authentik configurator writes and container spec rendering reads, instead of a typed value. | P3 | `apps/authentik/server_configurator.go`; `internal/appconfig/register.go`; `cmd/host-agent/main.go` |
+| C14 | ~~File modes are ad hoc with per-app rationale and no policy for a new app to follow.~~ **FIXED 2026-09-25**: `managedfile.ModeHostOnly` (0600) and `managedfile.ModeSharedConfig` (0644), named by who has to read the file under rootless Podman rather than by a magic number. Every call site uses a named mode. | P3→closed | `services/host-agent/pkg/managedfile/write.go` |
+| C15 | ~~The LDAP outpost token reaches the orchestrator through a shared mutable `templateVars` map.~~ **FIXED 2026-09-25**: `configurator.TemplateVars` is a typed store. Static values are copied at construction, the token is written through a named `SetLDAPOutpostToken`, an `RWMutex` guards it, and `Snapshot()` hands the renderer a private copy. Tested for copy semantics, snapshot isolation, nil-store safety and concurrent write/snapshot. | P3→closed | `services/host-agent/pkg/configurator/templatevars.go` |
 
 ### Highest-value consolidations (shipped 2026-09-20)
 
@@ -341,6 +354,61 @@ All four landed in one change:
 4. The `PostStart` error contract is stated once on the interface, jellyfin's
    initial-user wait tolerates a transient not-ready, and affine's unreachable
    branch returns a real error (C8).
+
+### Closed 2026-09-25
+
+The whole configurator-conformance list (C3, C5, C6, C7, C10, C11, C14, C15)
+closed in one branch, with the enforcement built before the fixes so the fix
+list was a verified inventory rather than a recollection.
+
+**The harness came first.** `apps/configtest` runs six assertions per
+registered app, table-driven over the registry, so a new app is covered the
+moment it registers: `Name()` matches the registered node; `PreStart` makes
+no network call; `PreStart` converges so a second pass asks for no recreate;
+a configurator survives empty `Deps`; a `Remover` implementation must
+actually own teardown; and the constructor's default port equals the port
+`metadata.yaml` publishes. 78 subtests, one per app per assertion.
+
+It paid for itself immediately. Home Assistant compared the `hass-oidc-auth`
+manifest against `"v1.2.1"` while the shipped manifest reports `"1.2.1"`, so
+the skip never matched and **every reconciliation pass re-downloaded the
+component and requested a container recreate**. The existing unit test carried
+the same wrong version as the code, which is why the test passed and the bug
+did not. The harness used the real manifest and caught it.
+
+**What landed:**
+
+- `PreStartResult{RestartNeeded, Reason}` replaces the bare bool (C5, C6).
+  The field is named for the orchestrator's side effect, so a self-heal
+  signal and a config diff cannot be mistaken for each other.
+- The seven no-op `Remove` methods are deleted. A method that returns `nil`
+  while the orchestrator already owns teardown is a lie about who owns
+  teardown, and the harness now refuses the lie (C3).
+- One registration shape: a single `nodeName` constant feeds both `Name()`
+  and `registration.go`, every app passes `0` for the port, and the default
+  is a named constant checked against metadata (C10, C11).
+- `configurator.TemplateVars` replaces the shared mutable map: static values
+  copied at construction, the LDAP outpost token behind a named setter, an
+  `RWMutex` guarding it, `Snapshot()` returning a private copy (C15).
+- `managedfile.ModeHostOnly` and `ModeSharedConfig` replace magic modes,
+  named by who has to read the file under rootless Podman (C14).
+- `pkg/servarr.PVRConfigurator` is one lifecycle parameterised by `PVRApp`.
+  Sonarr and Radarr were 394 lines each and byte-identical apart from nine
+  values; they are now 45 lines each over one shared implementation.
+- `pkg/bootstrap` owns the admin-account sequence and one failure policy:
+  an unverifiable admin is reported, never terminal (C7).
+
+**What deliberately did not change.** The Home Assistant stale-trust probe
+stays in `PreStart`. Moving it to `PostStart` would put a probe on the far
+side of the container start, where it cannot separate "not installed" from
+"restarting", and would delay the self-heal by a full cycle. Only its
+reporting channel changed. The bootstrap account names stay as shipped: a
+rename would orphan the credential in every existing install for no gain the
+code could collect.
+
+Still open: C9 (test coverage is uneven per app). The harness closes the
+floor on that, since every app now gets six checks it did not choose, but
+the depth gap between, say, Immich and Jellyfin remains.
 
 ### Closed 2026-09-20
 

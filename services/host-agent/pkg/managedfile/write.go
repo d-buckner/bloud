@@ -10,6 +10,31 @@ import (
 	"path/filepath"
 )
 
+// Modes for Bloud-managed files. Every file Bloud writes into an app's data
+// directory picks one of these, so the choice is a named decision rather than a
+// per-app literal with a rationale comment beside it.
+//
+// The axis is who has to be able to read the file, not what is in it. Under
+// rootless podman an app's container runs as a subordinate uid that is not the
+// host uid that wrote the file, so a mode correct for a same-uid reader locks
+// the app out of its own configuration.
+const (
+	// ModeHostOnly is owner read/write. Use it when the readers are the host
+	// agent and a container process running as the same host uid (Vaultwarden
+	// runs as root inside, which under rootless podman *is* the writing host
+	// uid). This is the mode for a file carrying a credential whenever the
+	// app can still read it.
+	ModeHostOnly os.FileMode = 0o600
+
+	// ModeSharedConfig is world-readable. Use it when the app's own process
+	// reads the file and runs as a different uid than the host agent, where
+	// 0600 would leave the app unable to read its own configuration at all.
+	// A credential in such a file is bounded by the directory it lives in
+	// (the app's own data dir), not by the mode; prefer ModeHostOnly where
+	// the app's uid allows it.
+	ModeSharedConfig os.FileMode = 0o644
+)
+
 // Write atomically writes content to path with the given permissions.
 // It returns true if the file was created or its content changed, false if the
 // existing file already had the exact content. Partial writes never corrupt the

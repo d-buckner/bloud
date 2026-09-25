@@ -31,7 +31,7 @@ func TestServerConfigurator_PreStart_CopiesBlueprintOnlyWhenChanged(t *testing.T
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed, "first copy must report a change")
+	assert.True(t, changed.RestartNeeded, "first copy must report a change")
 
 	got, err := os.ReadFile(filepath.Join(dataPath, "authentik-auth-flow.yaml"))
 	require.NoError(t, err)
@@ -41,13 +41,13 @@ func TestServerConfigurator_PreStart_CopiesBlueprintOnlyWhenChanged(t *testing.T
 	// orchestrator would recreate the container every reconciliation pass.
 	changed, err = c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.False(t, changed, "unchanged blueprint must not report a change")
+	assert.False(t, changed.RestartNeeded, "unchanged blueprint must not report a change")
 
 	// A changed source blueprint is picked up.
 	writeBlueprint(t, appsDir, "version: 2\n")
 	changed, err = c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed, "changed blueprint must report a change")
+	assert.True(t, changed.RestartNeeded, "changed blueprint must report a change")
 }
 
 func TestServerConfigurator_RunDjangoShell_UsesDepsExec(t *testing.T) {

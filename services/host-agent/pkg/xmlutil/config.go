@@ -173,5 +173,5 @@ func (c *ConfigFile) Save() (bool, error) {
 	if _, err := c.doc.WriteTo(&buf); err != nil {
 		return false, err
 	}
-	return managedfile.Write(c.path, buf.Bytes(), 0644)
+	return managedfile.Write(c.path, buf.Bytes(), managedfile.ModeSharedConfig)
 }

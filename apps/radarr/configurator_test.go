@@ -26,6 +26,20 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
 )
 
+// rootFolderResource is the endpoint the fake serves, taken from the same
+// description the shared lifecycle calls, so the fake cannot drift from it.
+var rootFolderResource = app.RootFolderResource()
+
+// Aliases for the shared Servarr vocabulary, read off this app's own
+// description so the fakes cannot drift from what the lifecycle calls.
+var (
+	qbittorrentAppID            = servarr.QBittorrentAppID
+	qbittorrentCategoryResource = servarr.QBittorrentCategoryResource
+	rootFolderMount             = app.RootFolderMount
+	downloadCategory            = app.DownloadCategory
+	downloadCategoryField       = app.DownloadCategoryField
+)
+
 const (
 	// existingAPIKey is the 32-hex key an instance generates for itself; the
 	// configurator must never replace it.
@@ -446,7 +460,7 @@ func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) 
 		// failure path must not sleep through the retry backoff.
 		HTTP: configurator.ClientFactory{Retry: appclient.RetryPolicy{MaxAttempts: 1}},
 	})
-	c.baseURL = server.URL
+	c.SetBaseURL(server.URL)
 	if qb != nil {
 		qbServer := httptest.NewServer(qb.handler())
 		t.Cleanup(qbServer.Close)
@@ -496,10 +510,10 @@ func TestConfigurator_Name(t *testing.T) {
 }
 
 func TestNewConfigurator_Port(t *testing.T) {
-	if got := NewConfigurator(0, configurator.Deps{Logger: quietLogger()}).port; got != 7878 {
+	if got := NewConfigurator(0, configurator.Deps{Logger: quietLogger()}).Port(); got != 7878 {
 		t.Errorf("NewConfigurator(0).port = %d, want 7878", got)
 	}
-	if got := NewConfigurator(9000, configurator.Deps{Logger: quietLogger()}).port; got != 9000 {
+	if got := NewConfigurator(9000, configurator.Deps{Logger: quietLogger()}).Port(); got != 9000 {
 		t.Errorf("NewConfigurator(9000).port = %d, want 9000", got)
 	}
 }
@@ -512,7 +526,7 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Error("PreStart() changed = false, want true for a missing config.xml")
 	}
 
@@ -538,7 +552,7 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 		t.Errorf("media library mode = %o, want 0777", got)
 	}
 
-	cfg, err := xmlutil.Open(c.configPath(state), "Config")
+	cfg, err := xmlutil.Open(c.ConfigPath(state), "Config")
 	if err != nil {
 		t.Fatalf("open config.xml: %v", err)
 	}
@@ -556,7 +570,7 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second PreStart() error = %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Error("second PreStart() changed = true, want false (would restart the container every cycle)")
 	}
 }
@@ -564,13 +578,13 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 func TestPreStart_PreservesExistingAPIKey(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
 	state := appState(t)
-	writeConfig(t, c.configPath(state), "<Config>\n  <Port>7878</Port>\n  <ApiKey>"+existingAPIKey+"</ApiKey>\n</Config>")
+	writeConfig(t, c.ConfigPath(state), "<Config>\n  <Port>7878</Port>\n  <ApiKey>"+existingAPIKey+"</ApiKey>\n</Config>")
 
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
 
-	cfg, err := xmlutil.Open(c.configPath(state), "Config")
+	cfg, err := xmlutil.Open(c.ConfigPath(state), "Config")
 	if err != nil {
 		t.Fatalf("open config.xml: %v", err)
 	}
@@ -593,7 +607,7 @@ func TestPreStart_PublishesTheInstanceStateKey(t *testing.T) {
 	secrets := &fakeSecrets{}
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Secrets: secrets})
 	state := appState(t)
-	writeConfig(t, c.configPath(state), "<Config>\n  <ApiKey>"+existingAPIKey+"</ApiKey>\n</Config>")
+	writeConfig(t, c.ConfigPath(state), "<Config>\n  <ApiKey>"+existingAPIKey+"</ApiKey>\n</Config>")
 
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart() error = %v", err)
@@ -611,7 +625,7 @@ func TestPreStart_PublishesTheInstanceStateKey(t *testing.T) {
 	// The instance rewrote config.xml from its own settings page: the next
 	// reconciliation publishes the key it now authenticates with.
 	rotated := "fedcba9876543210fedcba9876543210"
-	writeConfig(t, c.configPath(state), "<Config>\n  <ApiKey>"+rotated+"</ApiKey>\n</Config>")
+	writeConfig(t, c.ConfigPath(state), "<Config>\n  <ApiKey>"+rotated+"</ApiKey>\n</Config>")
 
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("second PreStart() error = %v", err)
@@ -622,13 +636,6 @@ func TestPreStart_PublishesTheInstanceStateKey(t *testing.T) {
 	}
 	if got := writes[1]; got != (secretWrite{app: appName, key: servarr.SecretAPIKey, value: rotated}) {
 		t.Errorf("published secret after the rotation = %+v, want the rotated key %q", got, rotated)
-	}
-}
-
-func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
-	if err := c.Remove(context.Background(), appState(t), true); err != nil {
-		t.Errorf("Remove() error = %v, want nil", err)
 	}
 }
 
@@ -658,7 +665,7 @@ func TestPostStart_RepairsAfterUIEdit(t *testing.T) {
 	state := appState(t)
 	withDownloadClient(state, qb, true)
 	withConfig(t, c, state)
-	key, err := servarr.APIKey(c.configPath(state))
+	key, err := servarr.APIKey(c.ConfigPath(state))
 	if err != nil {
 		t.Fatalf("read generated key: %v", err)
 	}
@@ -690,8 +697,8 @@ func TestPostStart_MissingAPIKeyErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("PostStart() error = nil, want an error when config.xml has no ApiKey")
 	}
-	if !strings.Contains(err.Error(), c.configPath(state)) {
-		t.Errorf("error %q does not name the config path %q", err, c.configPath(state))
+	if !strings.Contains(err.Error(), c.ConfigPath(state)) {
+		t.Errorf("error %q does not name the config path %q", err, c.ConfigPath(state))
 	}
 }
 

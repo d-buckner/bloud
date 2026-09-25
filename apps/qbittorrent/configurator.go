@@ -125,8 +125,13 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-qbittorrent"
+
 func (c *Configurator) Name() string {
-	return "apps-qbittorrent"
+	return nodeName
 }
 
 // PreStart creates the directories the container mounts and merges Bloud's keys
@@ -135,7 +140,7 @@ func (c *Configurator) Name() string {
 // It reports changed=true only when the conf file's content actually changed:
 // qBittorrent rewrites the file itself, so a merge that adds nothing must not
 // bounce the container. Directory creation never counts as a change.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config", "qBittorrent"),
 		filepath.Join(state.BloudDataPath, "downloads"),
@@ -143,7 +148,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("qbittorrent: create directory %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("qbittorrent: create directory %s: %w", dir, err)
 		}
 	}
 
@@ -172,16 +177,16 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// pkg/managedfile.EnsureWritable.
 	configDir := filepath.Join(state.DataPath, "config")
 	if err := managedfile.EnsureWritable(configDir, 0o777); err != nil {
-		return false, fmt.Errorf("qbittorrent: make %s writable: %w", configDir, err)
+		return configurator.NoRestart(), fmt.Errorf("qbittorrent: make %s writable: %w", configDir, err)
 	}
 	confPath := filepath.Join(state.DataPath, confRelPath)
 	confDir := filepath.Dir(confPath)
 	if err := managedfile.EnsureWritable(confDir, 0o777); err != nil {
-		return false, fmt.Errorf("qbittorrent: make %s writable: %w", confDir, err)
+		return configurator.NoRestart(), fmt.Errorf("qbittorrent: make %s writable: %w", confDir, err)
 	}
 	if _, err := os.Stat(confPath); err == nil {
 		if err := managedfile.EnsureWritable(confPath, 0o666); err != nil {
-			return false, fmt.Errorf("qbittorrent: make %s writable: %w", confPath, err)
+			return configurator.NoRestart(), fmt.Errorf("qbittorrent: make %s writable: %w", confPath, err)
 		}
 	}
 	for _, dir := range []string{
@@ -189,25 +194,25 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		filepath.Join(state.BloudDataPath, "downloads", "incomplete"),
 	} {
 		if err := managedfile.EnsureWritable(dir, 0o777); err != nil {
-			return false, fmt.Errorf("qbittorrent: make %s writable: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("qbittorrent: make %s writable: %w", dir, err)
 		}
 	}
 
 	conf, err := configurator.LoadINI(confPath)
 	if err != nil {
-		return false, fmt.Errorf("qbittorrent: load %s: %w", confPath, err)
+		return configurator.NoRestart(), fmt.Errorf("qbittorrent: load %s: %w", confPath, err)
 	}
 
 	noticesChanged := conf.EnsureKeys(legalNoticeSection, legalNoticeKeys)
 	prefsChanged := conf.EnsureKeys(preferencesSection, managedPreferences)
 	if !noticesChanged && !prefsChanged {
-		return false, nil
+		return configurator.NoRestart(), nil
 	}
 
 	if err := conf.Save(confPath); err != nil {
-		return false, fmt.Errorf("qbittorrent: save %s: %w", confPath, err)
+		return configurator.NoRestart(), fmt.Errorf("qbittorrent: save %s: %w", confPath, err)
 	}
-	return true, nil
+	return configurator.MustRestart("qBittorrent managed INI keys rewritten"), nil
 }
 
 // PostStart verifies through qBittorrent's own API that the WebUI accepts
@@ -217,12 +222,6 @@ func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) 
 	if err := c.waitWebUIReachable(ctx); err != nil {
 		return fmt.Errorf("qbittorrent: WebUI auth bypass is not in effect: %w", err)
 	}
-	return nil
-}
-
-// Remove is a no-op for the qBittorrent configurator; container and data
-// removal are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
 	return nil
 }
 

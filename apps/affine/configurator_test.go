@@ -138,7 +138,7 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed, "first write must report a config change")
+	assert.True(t, changed.RestartNeeded, "first write must report a config change")
 
 	path := filepath.Join(dataPath, "config", configFileName)
 	content, err := os.ReadFile(path)
@@ -149,7 +149,7 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 	// orchestrator would otherwise recreate the container every cycle).
 	changed, err = c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.False(t, changed, "identical config must not trigger a recreate")
+	assert.False(t, changed.RestartNeeded, "identical config must not trigger a recreate")
 }
 
 func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
@@ -159,7 +159,7 @@ func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, changed.RestartNeeded)
 
 	content, err := os.ReadFile(filepath.Join(dataPath, "config", configFileName))
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func TestPreStart_WithoutOIDC_WritesServerConfigOnly(t *testing.T) {
 
 	changed, err = c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.False(t, changed)
+	assert.False(t, changed.RestartNeeded)
 }
 
 func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
@@ -189,16 +189,16 @@ func TestPreStart_SecretChangeTriggersRecreate(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), mkState("secret-one"))
 	require.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, changed.RestartNeeded)
 
 	changed, err = c.PreStart(context.Background(), mkState("secret-one"))
 	require.NoError(t, err)
-	assert.False(t, changed)
+	assert.False(t, changed.RestartNeeded)
 
 	// A rotated client secret must be picked up on the next cycle.
 	changed, err = c.PreStart(context.Background(), mkState("secret-two"))
 	require.NoError(t, err)
-	assert.True(t, changed, "rotated secret must trigger a container recreate")
+	assert.True(t, changed.RestartNeeded, "rotated secret must trigger a container recreate")
 }
 
 func TestEnsureBootstrapAdmin_CreatesOwnerOnFirstRun(t *testing.T) {

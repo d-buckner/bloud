@@ -50,7 +50,7 @@ type Configurator struct {
 // NewConfigurator creates a new Jellyfin configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 8096
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -74,8 +74,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 }
 
 // Name returns the node name this configurator manages.
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-jellyfin"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 8096
+
 func (c *Configurator) Name() string {
-	return "apps-jellyfin"
+	return nodeName
 }
 
 // resolveAdminPassword returns the durable, per-deployment bootstrap admin
@@ -94,7 +103,7 @@ func (c *Configurator) resolveAdminPassword() (string, error) {
 
 // PreStart ensures directories exist, installs the LDAP plugin, and
 // configures network settings.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
@@ -103,22 +112,23 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
 	if err != nil {
-		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
 	networkChanged, err := c.configureNetwork(state.DataPath)
 	if err != nil {
-		return false, fmt.Errorf("failed to configure network: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("failed to configure network: %w", err)
 	}
 
 	c.logger.Info("PreStart complete", "plugin_installed", pluginInstalled, "network_changed", networkChanged)
-	return pluginInstalled || networkChanged, nil
+	return configurator.RestartIf(pluginInstalled, "LDAP plugin installed").
+		Or(configurator.RestartIf(networkChanged, "network config rewritten")), nil
 }
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.

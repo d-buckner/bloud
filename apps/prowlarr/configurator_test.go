@@ -620,7 +620,7 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Error("PreStart() changed = false, want true for a missing config.xml")
 	}
 
@@ -652,7 +652,7 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second PreStart() error = %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Error("second PreStart() changed = true, want false (would restart the container every cycle)")
 	}
 }
@@ -675,13 +675,6 @@ func TestPreStart_PreservesExistingAPIKey(t *testing.T) {
 	}
 	if got := cfg.GetElement("Port"); got != "9696" {
 		t.Errorf("Port = %q, want %q (unrelated keys must survive)", got, "9696")
-	}
-}
-
-func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
-	if err := c.Remove(context.Background(), appState(t), true); err != nil {
-		t.Errorf("Remove() error = %v, want nil", err)
 	}
 }
 

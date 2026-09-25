@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/bootstrap"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
@@ -51,7 +52,7 @@ type Configurator struct {
 // NewConfigurator creates a new Immich configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 2283
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -71,69 +72,72 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-immich-server"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 2283
+
 func (c *Configurator) Name() string {
-	return "apps-immich-server"
+	return nodeName
 }
 
 // PreStart writes the Immich config file with the native-oidc OAuth settings
 // so OAuth is enabled from the very first boot. Returns configChanged=true
 // when the file content changed so the orchestrator recreates the container.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	// Immich v3.1 crash-loops at startup when a .immich mount marker is
 	// missing: the startup check only re-verifies (reads) markers whose pass
 	// was already recorded in its database and never recreates missing ones.
 	// Ensure them here: PreStart runs on every reconciliation cycle, so
 	// this is idempotent and self-healing after any data-dir wipe.
 	if err := ensureMountMarkers(state.DataPath, c.logger); err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
 
 	if state.OIDC == nil {
 		// SSO not configured for this app: leave Immich defaults in place.
-		return false, nil
+		return configurator.NoRestart(), nil
 	}
 
 	dir := filepath.Join(state.DataPath, "config")
 	path := filepath.Join(dir, configFileName)
 	content := renderConfigFile(state.OIDC)
 
-	changed, err := managedfile.Write(path, []byte(content), 0644)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeSharedConfig)
 	if err != nil {
-		return false, fmt.Errorf("writing config file: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}
 	if changed {
 		c.logger.Info("wrote Immich OAuth config file", "path", path)
 	}
-	return changed, nil
+	return configurator.RestartIf(changed, "Immich OAuth config rewritten"), nil
 }
 
 // PostStart bootstraps the server admin. Immich shows a first-admin
 // registration page until an admin exists, so SSO login would be unreachable
-// without this step. Idempotent: skips when the admin already logs in.
+// without this step. The sequence and the failure policy live in
+// pkg/bootstrap; this only maps them onto Immich's API, after the server is
+// reachable.
 func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
-	if c.secrets == nil {
-		return fmt.Errorf("no secrets provider")
-	}
-	password, err := c.secrets.GenerateAppAdminPassword(appName)
-	if err != nil {
-		return fmt.Errorf("generating admin password: %w", err)
-	}
-
 	if err := c.api.waitServer(ctx); err != nil {
 		return fmt.Errorf("waiting for immich server: %w", err)
 	}
 
-	// Fast path: admin already exists and the known password works.
-	if _, err := c.api.login(ctx, bootstrapAdminEmail, password); err == nil {
-		return nil
-	}
-
-	c.logger.Info("bootstrapping admin user")
-	if err := c.api.createAdmin(ctx, bootstrapAdminName, bootstrapAdminEmail, password); err != nil {
-		return fmt.Errorf("creating admin: %w", err)
-	}
-	c.logger.Info("admin user created")
-	return nil
+	_, _, err := bootstrap.Ensure(ctx, c.logger, appName, c.secrets,
+		bootstrap.Account{FullName: bootstrapAdminName, Email: bootstrapAdminEmail},
+		bootstrap.Ops{
+			Login: func(ctx context.Context, acct bootstrap.Account, password string) (string, error) {
+				return c.api.login(ctx, acct.Email, password)
+			},
+			Create: func(ctx context.Context, acct bootstrap.Account, password string) error {
+				return c.api.createAdmin(ctx, acct.FullName, acct.Email, password)
+			},
+		})
+	return err
 }
 
 // ensureMountMarkers creates the upload subfolders and .immich marker files

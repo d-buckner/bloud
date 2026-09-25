@@ -219,7 +219,7 @@ func TestPreStart_WritesEnvFileWithRestrictedMode(t *testing.T) {
 	changed, err := c.PreStart(context.Background(), appState(dir, testOIDC()))
 
 	require.NoError(t, err)
-	assert.True(t, changed, "a new file must restart the container")
+	assert.True(t, changed.RestartNeeded, "a new file must restart the container")
 	body := readEnvFile(t, dir)
 	assert.Contains(t, body, "DOMAIN='http://vaultwarden.localhost:8080'")
 	assert.Contains(t, body, "SSO_CLIENT_SECRET='secret-value'")
@@ -238,7 +238,7 @@ func TestPreStart_UnchangedConfigDoesNotRestart(t *testing.T) {
 	changed, err := c.PreStart(context.Background(), state)
 
 	require.NoError(t, err)
-	assert.False(t, changed, "an unchanged config must not churn the container")
+	assert.False(t, changed.RestartNeeded, "an unchanged config must not churn the container")
 }
 
 func TestPreStart_FollowsSSOAndHostChanges(t *testing.T) {
@@ -255,7 +255,7 @@ func TestPreStart_FollowsSSOAndHostChanges(t *testing.T) {
 	// changes and the container restarts.
 	changed, err := c.PreStart(ctx, appState(dir, testOIDC()))
 	require.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, changed.RestartNeeded)
 	assert.Contains(t, readEnvFile(t, dir), "SSO_ENABLED='true'")
 
 	// The primary host changes in the UI: DOMAIN follows it without a restart
@@ -263,7 +263,7 @@ func TestPreStart_FollowsSSOAndHostChanges(t *testing.T) {
 	base = "http://bloud.local"
 	changed, err = c.PreStart(ctx, appState(dir, testOIDC()))
 	require.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, changed.RestartNeeded)
 	assert.Contains(t, readEnvFile(t, dir), "DOMAIN='http://vaultwarden.bloud.local'")
 }
 
@@ -356,12 +356,6 @@ func TestPostStart_ToleratesSlowBoot(t *testing.T) {
 	require.NoError(t, c.PostStart(context.Background(), appState(dir, testOIDC())))
 
 	assert.GreaterOrEqual(t, alive, 3)
-}
-
-func TestRemove_IsANoOp(t *testing.T) {
-	c, dir := testConfigurator(t, nil)
-	assert.NoError(t, c.Remove(context.Background(), appState(dir, nil), true))
-	assert.Equal(t, "apps-vaultwarden", c.Name())
 }
 
 // ---- the manifest and the code must agree ----
@@ -529,16 +523,16 @@ func TestPreStart_TogglingTheSwitchRestartsTheContainer(t *testing.T) {
 
 	changed, err := off.PreStart(context.Background(), appState(dir, testOIDC()))
 	require.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, changed.RestartNeeded)
 	changed, err = on.PreStart(context.Background(), appState(dir, testOIDC()))
 	require.NoError(t, err)
-	assert.True(t, changed, "turning the switch on must restart the container")
+	assert.True(t, changed.RestartNeeded, "turning the switch on must restart the container")
 	changed, err = on.PreStart(context.Background(), appState(dir, testOIDC()))
 	require.NoError(t, err)
-	assert.False(t, changed, "an unchanged switch must not churn it")
+	assert.False(t, changed.RestartNeeded, "an unchanged switch must not churn it")
 	changed, err = off.PreStart(context.Background(), appState(dir, testOIDC()))
 	require.NoError(t, err)
-	assert.True(t, changed, "turning the switch off must restart the container")
+	assert.True(t, changed.RestartNeeded, "turning the switch off must restart the container")
 }
 
 // wrapperScript returns the shell script from the manifest's container command.

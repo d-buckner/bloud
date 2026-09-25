@@ -180,7 +180,7 @@ type Configurator struct {
 // NewConfigurator creates a new Seerr configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 5055
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -223,8 +223,17 @@ func mediaServerBinding(state *configurator.AppState) (configurator.MediaServerB
 }
 
 // Name returns the node name this configurator manages.
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-seerr"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 5055
+
 func (c *Configurator) Name() string {
-	return "apps-seerr"
+	return nodeName
 }
 
 // PreStart prepares the mounted config directory so the non-root container can
@@ -233,15 +242,17 @@ func (c *Configurator) Name() string {
 // merges shallowly per top-level key and erases the defaults that gate Seerr's
 // own startup). Nothing the container reads at boot is Bloud's to write, so
 // changed is always false.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dir := filepath.Join(state.DataPath, configDirName)
 	if err := os.MkdirAll(dir, configDirPerm); err != nil {
-		return false, fmt.Errorf("creating Seerr config directory: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("creating Seerr config directory: %w", err)
 	}
 	if err := managedfile.EnsureWritable(dir, configDirPerm); err != nil {
-		return false, fmt.Errorf("making Seerr config directory writable: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("making Seerr config directory writable: %w", err)
 	}
-	return false, nil
+	// Directories only; Seerr is configured entirely through its API in
+	// PostStart, so no recreate signal comes out of this phase.
+	return configurator.NoRestart(), nil
 }
 
 // PostStart drives Seerr's first-run wizard through its own API and keeps the
@@ -569,12 +580,6 @@ func (c *Configurator) pvrQualityProfile(ctx context.Context, pvr pvrTarget, api
 		}
 	}
 	return profiles[0], nil
-}
-
-// Remove is a no-op for the Seerr configurator; container and data removal are
-// handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
-	return nil
 }
 
 // readAPIKey reads the API key Seerr generated for itself into settings.json

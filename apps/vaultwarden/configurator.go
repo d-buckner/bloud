@@ -65,7 +65,7 @@ type Configurator struct {
 // so host changes made in the UI take effect without re-registering.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 8222
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -86,8 +86,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-vaultwarden"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 8222
+
 func (c *Configurator) Name() string {
-	return "apps-vaultwarden"
+	return nodeName
 }
 
 // appExternalURL returns the public URL the browser uses to reach Vaultwarden,
@@ -133,31 +142,31 @@ func (c *Configurator) devAllowHTTP(publicURL string) bool {
 // public URL, signup policy, and OIDC client on its very first boot. Returns
 // configChanged=true when the file content changed so the orchestrator
 // recreates the container.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	path := filepath.Join(state.DataPath, "config", envFileName)
 
 	publicURL := c.appExternalURL()
 	allowHTTP := c.devAllowHTTP(publicURL)
 	content, err := renderEnv(publicURL, state.OIDC, allowHTTP)
 	if err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
 
 	// Mode 0600: the file carries the OIDC client secret. Vaultwarden runs as
 	// root inside the container, which under rootless podman is the same host
 	// user that writes this file, so it can read it.
-	changed, err := managedfile.Write(path, []byte(content), 0600)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
 	if err != nil {
-		return false, fmt.Errorf("writing env file: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("writing env file: %w", err)
 	}
 	if !changed {
-		return false, nil
+		return configurator.NoRestart(), nil
 	}
 	c.logger.Info("wrote Vaultwarden env file", "path", path, "sso", state.OIDC != nil)
 	if allowHTTP {
 		c.logger.Warn("Vaultwarden web vault HTTPS enforcement is DISABLED by "+devSwitchEnv+" (development only)", "publicURL", publicURL)
 	}
-	return true, nil
+	return configurator.MustRestart("Vaultwarden env file rewritten"), nil
 }
 
 // PostStart verifies against the running app that the configuration took
@@ -181,12 +190,6 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("verifying OIDC authorization redirect: %w", err)
 	}
 	c.logger.Info("OIDC sign-in verified", "issuer", state.OIDC.IssuerURL)
-	return nil
-}
-
-// Remove is a no-op for the Vaultwarden configurator; container and data
-// removal are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
 	return nil
 }
 

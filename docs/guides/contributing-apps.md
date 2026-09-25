@@ -601,6 +601,43 @@ split, the non-lifecycle helpers move into `lib/` as part of that work.
 
 ## Step 3: Test
 
+### The conformance harness covers you before you write anything
+
+You do not opt in to the conformance harness. The moment your app registers a
+node, `apps/conformance_test.go` picks it up and holds it to the same six
+checks as every other app:
+
+| Check | What it proves |
+|---|---|
+| `name_matches_the_registered_node` | `Name()` returns the node you registered under |
+| `prestart_is_offline` | `PreStart` opens no socket. It is the filesystem-only phase |
+| `prestart_is_idempotent` | A second `PreStart` asks for no recreate. It must converge |
+| `survives_empty_deps` | A zero-valued `Deps` does not panic |
+| `teardown_is_not_a_lie` | If you implement `Remover`, it actually does something |
+| `port_matches_metadata` | Your constructor's default port equals `metadata.yaml`'s `port` |
+
+Run them with `cd apps && go test -run TestConformance ./...`.
+
+Two things this catches that per-app unit tests reliably miss, both found in
+practice:
+
+- **A version comparison that never matches.** Home Assistant compared the
+  `hass-oidc-auth` manifest against `"v1.2.1"` while the shipped manifest
+  reports `"1.2.1"`. The skip never fired, so every reconciliation pass
+  re-downloaded the component and recreated the container. The app's own test
+  fixture carried the same wrong version as the code, so the test was green
+  and the bug was live.
+- **A port default that drifted from metadata.** Two were wrong when the
+  harness first checked them against the catalog instead of against memory.
+
+If your app legitimately needs the network in `PreStart`, or needs to seed a
+file its own installer short-circuits on, the harness has a `Preseed` hook and
+an explicit network allowance. Declare them in your table row rather than
+exempting the check wholesale; Home Assistant uses `Preseed` so its pinned
+asset install does not reach the network.
+
+### Integration and e2e
+
 Add integration test assertions under
 `services/host-agent/internal/e2e/`, which is split per scenario
 (`system_apps_test.go`, `jellyfin_test.go`, `affine_test.go`,

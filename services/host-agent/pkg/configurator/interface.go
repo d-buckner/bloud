@@ -27,6 +27,63 @@ type AppSecretsProvider interface {
 	SetAppSecret(appName, key, value string) error
 }
 
+// PreStartResult is what a configurator reports when its PreStart pass ends.
+//
+// It replaces the bare boolean this contract used to return. That boolean was
+// documented as "mounted file contents were modified" and consumed as "delete
+// and re-create the container", which are not the same claim: a configurator
+// can need a recreate without writing anything (a running instance that never
+// picked up an earlier write), and a file write does not always mean the
+// container has to be replaced. One field carrying both meanings made every app
+// pick its own reading, and nothing could tell a self-heal signal from a config
+// diff.
+//
+// The field is therefore named for the side effect the orchestrator performs on
+// it, not for what the configurator did to the filesystem.
+type PreStartResult struct {
+	// RestartNeeded is true when the container must be removed and created
+	// again for reality to match intent. Report it when the running container
+	// cannot pick up the change by itself; do not report it for work that only
+	// touched directories, or for a file the app re-reads on its own.
+	RestartNeeded bool
+	// Reason is a short, human-readable clause saying why a restart is needed.
+	// It goes to the orchestrator's log, so the recreate is traceable to the
+	// signal that asked for it. Required when RestartNeeded is true; ignored
+	// otherwise.
+	Reason string
+}
+
+// NoRestart is the result of a pass that needs no container recreate.
+func NoRestart() PreStartResult { return PreStartResult{} }
+
+// MustRestart reports that the container has to be recreated, and why.
+func MustRestart(reason string) PreStartResult {
+	return PreStartResult{RestartNeeded: true, Reason: reason}
+}
+
+// RestartIf reports a recreate only when cond holds, so a configurator can
+// thread a condition through without an if-block per signal.
+func RestartIf(cond bool, reason string) PreStartResult {
+	if cond {
+		return MustRestart(reason)
+	}
+	return NoRestart()
+}
+
+// Or folds two independent signals together, keeping the first reason that
+// asked for a recreate. A configurator that checks several things combines them
+// with this so each signal keeps its own reason instead of being flattened into
+// a boolean OR.
+func (r PreStartResult) Or(other PreStartResult) PreStartResult {
+	if !other.RestartNeeded {
+		return r
+	}
+	if r.RestartNeeded {
+		return r
+	}
+	return other
+}
+
 // NodeLifecycle handles the lifecycle of a single app node.
 // All methods must be idempotent - safe to call repeatedly.
 type NodeLifecycle interface {
@@ -35,9 +92,10 @@ type NodeLifecycle interface {
 
 	// PreStart runs before the container starts.
 	// Use for: config files, directories, certificates, initial setup.
-	// Returns changed=true when mounted file contents were modified, signalling
-	// that the container must be restarted to pick up the new configuration.
-	PreStart(ctx context.Context, state *AppState) (changed bool, err error)
+	// Report RestartNeeded when the container must be recreated for reality to
+	// match intent, with the Reason that explains it. See PreStartResult for
+	// what does and does not qualify.
+	PreStart(ctx context.Context, state *AppState) (PreStartResult, error)
 
 	// PostStart runs after container is healthy.
 	// Use for: API calls, integrations, runtime configuration.

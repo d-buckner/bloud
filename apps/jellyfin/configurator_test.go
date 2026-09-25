@@ -94,7 +94,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	}
 
 	// Plugin already existed, but network.xml is new → changed should be true
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Error("PreStart() changed = false, want true (network.xml was created)")
 	}
 
@@ -157,7 +157,7 @@ func TestConfigurator_PreStart_FirstRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Error("PreStart() changed = false on first run, want true")
 	}
 
@@ -188,7 +188,7 @@ func TestConfigurator_PreStart_SecondRunSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first PreStart() error = %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Error("first PreStart() changed = false, want true")
 	}
 
@@ -197,7 +197,7 @@ func TestConfigurator_PreStart_SecondRunSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second PreStart() error = %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Error("second PreStart() changed = true, want false (idempotent)")
 	}
 }
@@ -236,7 +236,7 @@ func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Error("PreStart() changed = false, want true (plugin was installed)")
 	}
 	content, err := os.ReadFile(filepath.Join(state.DataPath, "config", "plugins", "LDAP-Auth", "LDAP-Auth.dll"))

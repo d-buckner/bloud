@@ -15,6 +15,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // Contract: the drive path reports phase boundaries into the operations
@@ -46,7 +47,7 @@ func TestRecorder_PreStartFailureFailsDriveRow(t *testing.T) {
 
 	cfg := new(MockConfigurator)
 	registry.On("Get", "app1").Return(cfg)
-	cfg.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("config error"))
+	cfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), errors.New("config error"))
 
 	require.NoError(t, orch.Reconcile(context.Background()))
 
@@ -70,7 +71,7 @@ func TestRecorder_RunningRowCompletesViaStatusSync(t *testing.T) {
 
 	cfg := new(MockConfigurator)
 	registry.On("Get", "app1").Return(cfg)
-	cfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	cfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	cfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	require.NoError(t, orch.Reconcile(context.Background()))
@@ -92,7 +93,7 @@ func TestRecorder_SteadyStateWritesNothing(t *testing.T) {
 
 	cfg := new(MockConfigurator)
 	registry.On("Get", "app1").Return(cfg)
-	cfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	cfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	cfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	require.NoError(t, orch.Reconcile(context.Background()))

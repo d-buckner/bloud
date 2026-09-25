@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/bootstrap"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
@@ -112,7 +113,7 @@ type Configurator struct {
 // so host changes made in the UI take effect without re-registering.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 8000
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -133,8 +134,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-paperless-ngx"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 8000
+
 func (c *Configurator) Name() string {
-	return "apps-paperless-ngx"
+	return nodeName
 }
 
 // appExternalURL returns the public URL the browser uses to reach
@@ -153,7 +163,7 @@ func (c *Configurator) appExternalURL() string {
 // The secret key is generated once and read back from the file on later runs:
 // Paperless-ngx signs sessions and API tokens with it, so a fresh value on
 // every reconciliation would sign every user out.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dir := filepath.Join(state.DataPath, "config")
 	path := filepath.Join(dir, confFileName)
 
@@ -162,7 +172,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	if secretKey == "" {
 		generated, err := newSecretKey()
 		if err != nil {
-			return false, fmt.Errorf("generating secret key: %w", err)
+			return configurator.NoRestart(), fmt.Errorf("generating secret key: %w", err)
 		}
 		secretKey = generated
 	}
@@ -173,21 +183,21 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		oidc:      state.OIDC,
 	})
 	if err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
 
 	// The file is read by the webserver process, which runs as the image's
 	// unprivileged paperless user. Under rootless podman that user is a
 	// subuid, not the host user that writes this file, so 0600 would be
 	// unreadable (see INTEGRATION.md).
-	changed, err := managedfile.Write(path, []byte(content), 0644)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeSharedConfig)
 	if err != nil {
-		return false, fmt.Errorf("writing config file: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}
 	if changed {
 		c.logger.Info("wrote Paperless-ngx config file", "path", path, "sso", state.OIDC != nil)
 	}
-	return changed, nil
+	return configurator.RestartIf(changed, "Paperless-ngx config rewritten"), nil
 }
 
 // PostStart verifies against the running app that the configuration took
@@ -234,39 +244,43 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 // password from the secrets provider; every later pass finds signup closed and
 // only verifies that the account still authenticates.
 func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) (string, error) {
-	password, err := c.adminPassword()
-	if err != nil {
-		return "", err
-	}
-	if password == "" {
+	// A degraded context with no secrets provider is a skip, not a failure:
+	// the config file is still written and the app still serves SSO users.
+	if c.secrets == nil {
 		c.logger.Warn("admin bootstrap skipped: no secrets provider")
 		return "", nil
 	}
 
-	open, err := c.api.signupOpen(ctx)
+	token, outcome, err := bootstrap.Ensure(ctx, c.logger, appName, c.secrets,
+		bootstrap.Account{Username: adminUser, Email: adminEmail},
+		bootstrap.Ops{
+			Login: func(ctx context.Context, acct bootstrap.Account, password string) (string, error) {
+				return c.api.login(ctx, acct.Username, password)
+			},
+			// Paperless-ngx creates an account only through its signup form,
+			// and only while no user exists. Once the instance is owned the form
+			// is closed, so Create becomes a no-op and the helper's verifying
+			// login is what reports the state.
+			Create: func(ctx context.Context, acct bootstrap.Account, password string) error {
+				open, err := c.api.signupOpen(ctx)
+				if err != nil {
+					return fmt.Errorf("checking the signup state: %w", err)
+				}
+				if !open {
+					return nil
+				}
+				return c.api.signup(ctx, acct.Username, acct.Email, password)
+			},
+		})
 	if err != nil {
-		return "", fmt.Errorf("checking the signup state: %w", err)
+		return "", err
 	}
-	if open {
-		if err := c.api.signup(ctx, adminUser, adminEmail, password); err != nil {
-			return "", fmt.Errorf("creating the internal admin account: %w", err)
-		}
-		c.logger.Info("internal admin account created", "user", adminUser)
+	if outcome == bootstrap.AlreadyPresent {
+		c.logger.Info("internal admin account verified", "user", adminUser)
 	}
-
-	token, err := c.api.login(ctx, adminUser, password)
-	if err != nil {
-		return "", fmt.Errorf("verifying internal admin account: %w", err)
-	}
-	if token == "" {
-		// The credentials were rejected (another account owns the instance) or
-		// the token endpoint throttled the check (5/min). Neither makes the app
-		// unusable for SSO users, so it is reported rather than failed, and the
-		// next reconciliation re-checks.
-		c.logger.Warn("internal admin account not verified", "user", adminUser)
-		return "", nil
-	}
-	c.logger.Info("internal admin account verified", "user", adminUser)
+	// An empty token means the account could not be verified. The helper
+	// already reported that; it is not an error, because SSO users are
+	// unaffected and the next reconciliation retries.
 	return token, nil
 }
 
@@ -345,20 +359,6 @@ func baselinePermissions() []string {
 		"view_applicationconfiguration",
 		"view_global_statistics",
 	)
-}
-
-// adminPassword returns the internal admin password, generating and persisting
-// it on first use. Empty with a nil error means no secrets provider is wired
-// (degraded CLI contexts), which callers report rather than treat as a value.
-func (c *Configurator) adminPassword() (string, error) {
-	if c.secrets == nil {
-		return "", nil
-	}
-	password, err := c.secrets.GenerateAppAdminPassword(appName)
-	if err != nil {
-		return "", fmt.Errorf("generating admin password: %w", err)
-	}
-	return password, nil
 }
 
 // publicSettings are the per-install values the generated config file carries.

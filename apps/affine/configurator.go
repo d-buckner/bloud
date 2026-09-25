@@ -59,7 +59,7 @@ type Configurator struct {
 // host changes made in the UI take effect without re-registering.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 3010
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -80,8 +80,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-affine"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 3010
+
 func (c *Configurator) Name() string {
-	return "apps-affine"
+	return nodeName
 }
 
 // appExternalURL returns the public URL the browser uses to reach AFFiNE,
@@ -95,20 +104,20 @@ func (c *Configurator) appExternalURL() string {
 // correct public URL and OIDC provider on the very first boot. Returns
 // configChanged=true when the file content changed so the orchestrator
 // recreates the container.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	path := filepath.Join(state.DataPath, "config", configFileName)
 	content, err := renderConfigFile(c.appExternalURL(), state.OIDC)
 	if err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
-	changed, err := managedfile.Write(path, []byte(content), 0600)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
 	if err != nil {
-		return false, fmt.Errorf("writing config file: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}
 	if changed {
 		c.logger.Info("wrote AFFiNE config file", "path", path, "sso", state.OIDC != nil)
 	}
-	return changed, nil
+	return configurator.RestartIf(changed, "AFFiNE config file rewritten"), nil
 }
 
 // PostStart verifies the server answers, creates the first-run owner

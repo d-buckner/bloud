@@ -70,7 +70,7 @@ func TestPreStartWritesOIDCConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart: %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Fatal("expected changed=true when writing SSO config to a fresh file")
 	}
 
@@ -120,7 +120,7 @@ func TestPreStartIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second PreStart: %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Fatal("expected changed=false when SSO config already matches")
 	}
 }
@@ -181,7 +181,7 @@ func TestPreStartSSOOffStripsOIDC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart: %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Fatal("expected changed=true when stripping a present OIDC block")
 	}
 	raw, _ := os.ReadFile(cfgPath)
@@ -212,7 +212,7 @@ func TestPreStartSSOOffNoWriteWhenNothingToDo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart: %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Fatal("expected changed=false with SSO off and no file")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "data", "config.yaml")); !os.IsNotExist(err) {
@@ -307,13 +307,6 @@ func TestPostStartSkipsSSOCheckWhenSSOOff(t *testing.T) {
 	c.baseURL = srv.URL
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
 		t.Fatalf("PostStart (SSO off): %v", err)
-	}
-}
-
-func TestRemoveIsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
-	if err := c.Remove(context.Background(), &configurator.AppState{}, true); err != nil {
-		t.Fatalf("Remove: %v", err)
 	}
 }
 

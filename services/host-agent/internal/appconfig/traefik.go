@@ -48,14 +48,14 @@ func NewTraefikConfigurator(
 
 func (c *TraefikConfigurator) Name() string { return "apps-traefik" }
 
-func (c *TraefikConfigurator) PreStart(_ context.Context, _ *configurator.AppState) (bool, error) {
+func (c *TraefikConfigurator) PreStart(_ context.Context, _ *configurator.AppState) (configurator.PreStartResult, error) {
 	traefikDir := filepath.Join(c.dataDir, "traefik")
 	dynamicDir := filepath.Join(traefikDir, "dynamic")
 	staticConfigPath := filepath.Join(traefikDir, "traefik.yml")
 
 	for _, dir := range []string{traefikDir, dynamicDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("create dir %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("create dir %s: %w", dir, err)
 		}
 	}
 
@@ -76,11 +76,11 @@ func (c *TraefikConfigurator) PreStart(_ context.Context, _ *configurator.AppSta
 			changed = true
 		}
 		if err := writeFileAtomic(f.path, f.content); err != nil {
-			return false, fmt.Errorf("write %s: %w", f.path, err)
+			return configurator.NoRestart(), fmt.Errorf("write %s: %w", f.path, err)
 		}
 	}
 
-	return changed, nil
+	return configurator.RestartIf(changed, "Traefik static or dynamic config rewritten"), nil
 }
 
 func (c *TraefikConfigurator) PostStart(_ context.Context, _ *configurator.AppState) error {

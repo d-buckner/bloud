@@ -83,8 +83,13 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 }
 
 // Name returns the node name this configurator manages.
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-hermes"
+
 func (c *Configurator) Name() string {
-	return "apps-hermes"
+	return nodeName
 }
 
 // appExternalURL returns the public URL the browser uses to reach Hermes,
@@ -122,12 +127,12 @@ func (c *Configurator) appExternalURL() string {
 // values produces no write (no churn across reconciliation cycles). When
 // SSO is disabled the managed keys are stripped instead, so a leftover
 // provider never points at a dead issuer.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	cfgPath := filepath.Join(state.DataPath, "data", configFileName)
 
 	existing, err := os.ReadFile(cfgPath)
 	if err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("reading %s: %w", cfgPath, err)
+		return configurator.NoRestart(), fmt.Errorf("reading %s: %w", cfgPath, err)
 	}
 
 	// The managed edit is measured against the parsed document, not the raw
@@ -135,11 +140,11 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// document, so only a real SSO change reports changed=true.
 	doc, err := parseConfig(existing)
 	if err != nil {
-		return false, fmt.Errorf("parsing %s: %w", cfgPath, err)
+		return configurator.NoRestart(), fmt.Errorf("parsing %s: %w", cfgPath, err)
 	}
 	base, err := yaml.Marshal(doc)
 	if err != nil {
-		return false, fmt.Errorf("serializing %s: %w", cfgPath, err)
+		return configurator.NoRestart(), fmt.Errorf("serializing %s: %w", cfgPath, err)
 	}
 
 	ssoActive := state != nil && state.SSOEnabled && state.OIDC != nil
@@ -151,20 +156,20 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 
 	want, err := yaml.Marshal(doc)
 	if err != nil {
-		return false, fmt.Errorf("serializing %s: %w", cfgPath, err)
+		return configurator.NoRestart(), fmt.Errorf("serializing %s: %w", cfgPath, err)
 	}
 	if bytes.Equal(base, want) {
-		return false, nil
+		return configurator.NoRestart(), nil
 	}
 
-	changed, err := managedfile.Write(cfgPath, want, 0o644)
+	changed, err := managedfile.Write(cfgPath, want, managedfile.ModeSharedConfig)
 	if err != nil {
-		return false, fmt.Errorf("writing %s: %w", cfgPath, err)
+		return configurator.NoRestart(), fmt.Errorf("writing %s: %w", cfgPath, err)
 	}
 	if changed {
 		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive)
 	}
-	return changed, nil
+	return configurator.RestartIf(changed, "Hermes config rewritten"), nil
 }
 
 // PostStart waits for the dashboard to serve and then, when SSO is
@@ -183,12 +188,6 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("verifying self-hosted OIDC provider: %w", err)
 	}
 	c.logger.Info("Hermes dashboard serving under Bloud SSO", "issuer", state.OIDC.IssuerURL)
-	return nil
-}
-
-// Remove is a no-op for the Hermes configurator; container and data removal
-// are handled at a higher level by the orchestrator.
-func (c *Configurator) Remove(_ context.Context, _ *configurator.AppState, _ bool) error {
 	return nil
 }
 

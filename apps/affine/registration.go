@@ -10,7 +10,7 @@ import (
 // this factory lazily on the first lookup of the node, so the configurator is
 // only built when AFFiNE is actually being reconciled.
 func init() {
-	configurator.MustRegisterFactory("apps-affine", func(deps configurator.Deps) configurator.NodeLifecycle {
+	configurator.MustRegisterFactory(nodeName, func(deps configurator.Deps) configurator.NodeLifecycle {
 		return NewConfigurator(0, deps)
 	})
 }

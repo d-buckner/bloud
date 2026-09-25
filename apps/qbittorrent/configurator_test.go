@@ -86,7 +86,7 @@ func TestPreStartFreshConfWritesManagedKeys(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed, "a fresh conf must report a change")
+	assert.True(t, changed.RestartNeeded, "a fresh conf must report a change")
 
 	for _, dir := range []string{
 		filepath.Join(state.DataPath, "config", "qBittorrent"),
@@ -170,7 +170,7 @@ WebUI\Username=someone
 	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed, "correcting drifted keys must report a change")
+	assert.True(t, changed.RestartNeeded, "correcting drifted keys must report a change")
 
 	prefs := readSection(t, confPath, preferencesSection)
 	// Drifted Bloud-owned keys are corrected, including the download path: it
@@ -204,13 +204,13 @@ func TestPreStartSecondRunReportsNoChange(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	require.True(t, changed)
+	require.True(t, changed.RestartNeeded)
 	first, err := os.ReadFile(confPath)
 	require.NoError(t, err)
 
 	changed, err = c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.False(t, changed, "an already-configured conf must not recreate the container")
+	assert.False(t, changed.RestartNeeded, "an already-configured conf must not recreate the container")
 
 	second, err := os.ReadFile(confPath)
 	require.NoError(t, err)

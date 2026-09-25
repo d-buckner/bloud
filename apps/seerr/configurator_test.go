@@ -652,7 +652,7 @@ func TestPreStart_CreatesWritableConfigDirOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Error("PreStart() changed = true, want false (nothing the container reads at boot is written here)")
 	}
 
@@ -696,7 +696,7 @@ func TestPreStart_LeavesAnAppWrittenSettingsFileAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PreStart() run %d error = %v", run, err)
 		}
-		if changed {
+		if changed.RestartNeeded {
 			t.Errorf("PreStart() run %d changed = true, want false", run)
 		}
 		after, err := os.ReadFile(path)
@@ -1103,13 +1103,6 @@ func TestPostStart_ErrorsWhenSettingsFileHasNoAPIKey(t *testing.T) {
 	}
 	if got := err.Error(); !regexp.MustCompile(regexp.QuoteMeta(settingsPath(state))).MatchString(got) {
 		t.Errorf("PostStart() error = %q, want it to name %s", got, settingsPath(state))
-	}
-}
-
-func TestRemove_IsNoOp(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
-	if err := c.Remove(context.Background(), &configurator.AppState{}, true); err != nil {
-		t.Errorf("Remove() error = %v, want nil", err)
 	}
 }
 

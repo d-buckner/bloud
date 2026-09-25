@@ -13,7 +13,7 @@ import (
 // Port 0 selects the default WebUI port (8081), which must match the port
 // published in metadata.yaml: Traefik routes <id>.<host> to it.
 func init() {
-	configurator.MustRegisterFactory("apps-qbittorrent", func(deps configurator.Deps) configurator.NodeLifecycle {
+	configurator.MustRegisterFactory(nodeName, func(deps configurator.Deps) configurator.NodeLifecycle {
 		return NewConfigurator(0, deps)
 	})
 }
