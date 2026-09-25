@@ -351,7 +351,7 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed, "first write must report a config change")
+	assert.True(t, changed.RestartNeeded, "first write must report a config change")
 
 	path := filepath.Join(dataPath, "config", confFileName)
 	info, err := os.Stat(path)
@@ -369,7 +369,7 @@ func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {
 	// orchestrator would otherwise recreate the container every cycle).
 	changed, err = c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.False(t, changed, "identical config must not trigger a recreate")
+	assert.False(t, changed.RestartNeeded, "identical config must not trigger a recreate")
 }
 
 func TestPreStart_WithoutSecretsProviderStillWritesConfig(t *testing.T) {
@@ -381,7 +381,7 @@ func TestPreStart_WithoutSecretsProviderStillWritesConfig(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), appState(dataPath, testOIDC()))
 	require.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, changed.RestartNeeded)
 
 	conf := readConf(t, filepath.Join(dataPath, "config", confFileName))
 	assert.NotEmpty(t, conf["PAPERLESS_SECRET_KEY"])
@@ -403,7 +403,7 @@ func TestPreStart_PreservesSecretKeyAcrossRuns(t *testing.T) {
 	rotated.ClientSecret = "rotated-secret"
 	changed, err := c.PreStart(context.Background(), appState(dataPath, rotated))
 	require.NoError(t, err)
-	assert.True(t, changed, "rotated client secret must trigger a container recreate")
+	assert.True(t, changed.RestartNeeded, "rotated client secret must trigger a container recreate")
 
 	conf := readConf(t, path)
 	assert.Equal(t, first, conf["PAPERLESS_SECRET_KEY"])

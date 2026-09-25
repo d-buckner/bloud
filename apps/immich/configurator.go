@@ -78,19 +78,19 @@ func (c *Configurator) Name() string {
 // PreStart writes the Immich config file with the native-oidc OAuth settings
 // so OAuth is enabled from the very first boot. Returns configChanged=true
 // when the file content changed so the orchestrator recreates the container.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	// Immich v3.1 crash-loops at startup when a .immich mount marker is
 	// missing: the startup check only re-verifies (reads) markers whose pass
 	// was already recorded in its database and never recreates missing ones.
 	// Ensure them here: PreStart runs on every reconciliation cycle, so
 	// this is idempotent and self-healing after any data-dir wipe.
 	if err := ensureMountMarkers(state.DataPath, c.logger); err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
 
 	if state.OIDC == nil {
 		// SSO not configured for this app: leave Immich defaults in place.
-		return false, nil
+		return configurator.NoRestart(), nil
 	}
 
 	dir := filepath.Join(state.DataPath, "config")
@@ -99,12 +99,12 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 
 	changed, err := managedfile.Write(path, []byte(content), 0644)
 	if err != nil {
-		return false, fmt.Errorf("writing config file: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}
 	if changed {
 		c.logger.Info("wrote Immich OAuth config file", "path", path)
 	}
-	return changed, nil
+	return configurator.RestartIf(changed, "Immich OAuth config rewritten"), nil
 }
 
 // PostStart bootstraps the server admin. Immich shows a first-admin

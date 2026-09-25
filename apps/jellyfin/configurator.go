@@ -94,7 +94,7 @@ func (c *Configurator) resolveAdminPassword() (string, error) {
 
 // PreStart ensures directories exist, installs the LDAP plugin, and
 // configures network settings.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.DataPath, "cache"),
@@ -103,22 +103,23 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	pluginInstalled, err := c.ensureLDAPPlugin(ctx, state.DataPath)
 	if err != nil {
-		return false, fmt.Errorf("failed to install LDAP plugin: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("failed to install LDAP plugin: %w", err)
 	}
 
 	networkChanged, err := c.configureNetwork(state.DataPath)
 	if err != nil {
-		return false, fmt.Errorf("failed to configure network: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("failed to configure network: %w", err)
 	}
 
 	c.logger.Info("PreStart complete", "plugin_installed", pluginInstalled, "network_changed", networkChanged)
-	return pluginInstalled || networkChanged, nil
+	return configurator.RestartIf(pluginInstalled, "LDAP plugin installed").
+		Or(configurator.RestartIf(networkChanged, "network config rewritten")), nil
 }
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.

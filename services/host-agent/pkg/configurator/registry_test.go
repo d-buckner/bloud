@@ -13,8 +13,8 @@ import (
 type stubConfigurator struct{ name string }
 
 func (s *stubConfigurator) Name() string { return s.name }
-func (s *stubConfigurator) PreStart(context.Context, *AppState) (bool, error) {
-	return false, nil
+func (s *stubConfigurator) PreStart(context.Context, *AppState) (PreStartResult, error) {
+	return NoRestart(), nil
 }
 func (s *stubConfigurator) PostStart(context.Context, *AppState) error { return nil }
 

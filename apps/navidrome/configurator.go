@@ -66,17 +66,19 @@ func (c *Configurator) Name() string {
 }
 
 // PreStart creates the required data and music directories before the container starts.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "data"),
 		filepath.Join(state.BloudDataPath, "media", "music"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
-	return false, nil
+	// Directories only: Navidrome reads no Bloud-written config file, so there
+	// is nothing here a running container would have to be replaced to pick up.
+	return configurator.NoRestart(), nil
 }
 
 // PostStart syncs Authentik users into Navidrome so that forward-auth logins work.

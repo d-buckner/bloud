@@ -76,11 +76,11 @@ func (c *ServerConfigurator) Name() string {
 //
 // The blueprint write goes through managedfile, so an unchanged file reports no
 // change and does not trigger a container recreate.
-func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	srcPath := filepath.Join(c.params.AppsDir, "authentik", "auth.yaml")
 	src, err := os.ReadFile(srcPath)
 	if err != nil {
-		return false, fmt.Errorf("read auth.yaml: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("read auth.yaml: %w", err)
 	}
 
 	// The server container mounts this file read-only at
@@ -88,7 +88,7 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 	dstPath := filepath.Join(state.DataPath, "authentik-auth-flow.yaml")
 	blueprintChanged, err := managedfile.Write(dstPath, src, 0644)
 	if err != nil {
-		return false, fmt.Errorf("write auth flow blueprint: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("write auth flow blueprint: %w", err)
 	}
 
 	// Authentik runs as a non-root user and needs write access to these dirs.
@@ -97,14 +97,14 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 		filepath.Join(state.DataPath, "templates"),
 	} {
 		if err := os.MkdirAll(dir, 0777); err != nil {
-			return false, fmt.Errorf("create dir %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("create dir %s: %w", dir, err)
 		}
 		if err := managedfile.EnsureWritable(dir, 0777); err != nil {
-			return false, fmt.Errorf("chmod dir %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("chmod dir %s: %w", dir, err)
 		}
 	}
 
-	return blueprintChanged, nil
+	return configurator.RestartIf(blueprintChanged, "auth flow blueprint rewritten"), nil
 }
 
 // PostStart configures Authentik after it is healthy:

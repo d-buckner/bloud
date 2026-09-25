@@ -1098,20 +1098,23 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	}
 
 	// Phase 1: PreStart
-	var configChanged bool
+	var prestart configurator.PreStartResult
 	if cfg != nil {
 		o.logger.Info("lifecycle phase: PreStart", "app", id)
 		o.recordOpPhase(owner, store.OpPhasePrestart)
 		_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
 		var err error
-		configChanged, err = cfg.PreStart(ctx, state)
+		prestart, err = cfg.PreStart(ctx, state)
 		if err != nil {
 			o.logger.Warn("PreStart failed", "app", id, "error", err)
 			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
 			o.recordOpFail(owner, store.OpPhasePrestart, opCause(id, owner, err), true)
 			return false
 		}
-		o.logger.Info("lifecycle phase: PreStart complete", "app", id, "config_changed", configChanged)
+		o.logger.Info("lifecycle phase: PreStart complete",
+			"app", id,
+			"restart_needed", prestart.RestartNeeded,
+			"restart_reason", prestart.Reason)
 	}
 
 	// SSO provisioning: ensure the forward-auth provider exists in Authentik before the
@@ -1124,11 +1127,12 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	}
 
 	// Phase 2: EnsureContainer
-	// If PreStart reported config changes to mounted files, remove the existing
-	// container first so Ensure() creates a fresh one that picks up the changes.
+	// If PreStart asked for a recreate, remove the existing container first so
+	// Ensure() creates a fresh one that picks up the change.
 	if def != nil {
-		if configChanged {
-			o.logger.Info("config changed, removing container before re-create", "app", id)
+		if prestart.RestartNeeded {
+			o.logger.Info("PreStart requires recreate, removing container",
+				"app", id, "reason", prestart.Reason)
 			_ = o.config.Containers.Remove(ctx, def.Name)
 		}
 		o.logger.Info("lifecycle phase: EnsureContainer", "app", id)

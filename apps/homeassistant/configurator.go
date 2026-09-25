@@ -152,20 +152,25 @@ func (c *Configurator) baseURL() string {
 
 // PreStart creates the data directories, fetches the pinned hass-oidc-auth
 // release into custom_components/, and merges Bloud's auth_oidc block into
-// configuration.yaml. Returns changed=true when anything was written, which
-// signals the orchestrator to (re)start the container so HA loads the new
-// configuration; HA never hot-reloads auth providers.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
+// configuration.yaml. Reports a recreate whenever anything it writes has to be
+// loaded, and for the one case where nothing was written and the container is
+// still wrong: HA never hot-reloads auth providers, so every signal here means
+// the running process has to be replaced.
+//
+// Each signal keeps its own reason. The stale-trust force is deliberately NOT a
+// config-diff claim: it reports a recreate because the live process disagrees
+// with the disk, which is the opposite of having just written something.
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	configDir := filepath.Join(state.DataPath, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return false, fmt.Errorf("failed to create config dir: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("failed to create config dir: %w", err)
 	}
 
 	// Reverse-proxy trust is required whenever HA sits behind Traefik: every
 	// proxied request needs it, independent of SSO (see ensureReverseProxy).
 	rpChanged, err := c.ensureReverseProxy(configDir)
 	if err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
 
 	// Self-heal a stale running process: the trust patch is on disk but the
@@ -192,24 +197,29 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		// a dead provider and would break HA startup. Strip it.
 		stripped, err := managedfile.RemoveBlock(cfgPath, marker)
 		if err != nil {
-			return false, err
+			return configurator.NoRestart(), err
 		}
-		return rpChanged || stripped || staleForce, nil
+		return configurator.RestartIf(rpChanged, "reverse-proxy trust entry rewritten").
+			Or(configurator.RestartIf(stripped, "stale auth_oidc block removed")).
+			Or(configurator.RestartIf(staleForce, "stored proxy trust not live in the running instance")), nil
 	}
 	if state.OIDC == nil {
-		return false, fmt.Errorf("OIDC output not available for native-oidc setup")
+		return configurator.NoRestart(), fmt.Errorf("OIDC output not available for native-oidc setup")
 	}
 
 	changed, err := c.ensureOIDCComponent(ctx, configDir)
 	if err != nil {
-		return false, fmt.Errorf("failed to provision hass-oidc-auth: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("failed to provision hass-oidc-auth: %w", err)
 	}
 	block := managedBlock(state.OIDC)
 	ok, err := managedfile.Block(cfgPath, marker, 0o600, func() string { return block })
 	if err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
-	return rpChanged || changed || ok || staleForce, nil
+	return configurator.RestartIf(rpChanged, "reverse-proxy trust entry rewritten").
+		Or(configurator.RestartIf(changed, "hass-oidc-auth component provisioned")).
+		Or(configurator.RestartIf(ok, "auth_oidc block rewritten")).
+		Or(configurator.RestartIf(staleForce, "stored proxy trust not live in the running instance")), nil
 }
 
 // PostStart waits for the HTTP API, completes first-run onboarding headlessly,

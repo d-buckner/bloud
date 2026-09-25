@@ -83,8 +83,8 @@ func TestOrchestrator_RemoveApp_NoConfigurator_DeletesNode(t *testing.T) {
 type plainConfigurator struct{}
 
 func (plainConfigurator) Name() string { return "plain" }
-func (plainConfigurator) PreStart(context.Context, *configurator.AppState) (bool, error) {
-	return false, nil
+func (plainConfigurator) PreStart(context.Context, *configurator.AppState) (configurator.PreStartResult, error) {
+	return configurator.NoRestart(), nil
 }
 func (plainConfigurator) PostStart(context.Context, *configurator.AppState) error { return nil }
 
@@ -167,7 +167,7 @@ func TestOrchestrator_PhaseStatusUpdates(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// Capture actual status transitions via event listener.
@@ -217,7 +217,7 @@ func TestOrchestrator_PreStartError_ErrorStatus_LaterPhasesSkipped(t *testing.T)
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "qbittorrent").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("config error"))
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), errors.New("config error"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background())) // reconcile itself doesn't fail
 
@@ -256,10 +256,10 @@ func TestOrchestrator_LevelOrdering_DependencyRunsFirst(t *testing.T) {
 		}
 	}
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Run(record("a-prestart")).Return(false, nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Run(record("a-prestart")).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Run(record("a-poststart")).Return(nil)
 
-	mockB.On("PreStart", mock.Anything, mock.Anything).Run(record("b-prestart")).Return(false, nil)
+	mockB.On("PreStart", mock.Anything, mock.Anything).Run(record("b-prestart")).Return(configurator.NoRestart(), nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Run(record("b-poststart")).Return(nil)
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
@@ -287,7 +287,7 @@ func TestOrchestrator_LevelOrdering_DepErrorPreventsDependent(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("a failed"))
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), errors.New("a failed"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
@@ -327,10 +327,10 @@ func TestOrchestrator_WithinLevel_ConcurrentExecution(t *testing.T) {
 		<-ready
 	}
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Run(postStartFn).Return(nil)
 
-	mockB.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockB.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Run(postStartFn).Return(nil)
 
 	// If not concurrent this deadlocks; use a timeout via context.
@@ -363,7 +363,7 @@ func TestOrchestrator_Staleness_AlreadyRunning_RerunPostStartWhenDepChanges(t *t
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// B should only re-run PostStart; no other phases.
@@ -389,7 +389,7 @@ func TestOrchestrator_Staleness_NoRerun_WhenDepErrors(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, errors.New("a failed"))
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), errors.New("a failed"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
@@ -470,7 +470,7 @@ func TestOrchestrator_RunningDeferredUntilAfterReconcile(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "app").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 
 	// Capture the node's actual status at the moment PostStart runs: this is
 	// the last lifecycle phase, so if RUNNING were set eagerly it would already
@@ -514,7 +514,7 @@ func TestOrchestrator_DepUnblockedByChangedIDsNotRunning(t *testing.T) {
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
 
-	mockA.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// When B's PreStart runs, A has completed its lifecycle phases but has NOT
@@ -585,7 +585,7 @@ func TestOrchestrator_PreStartChanged_TriggersContainerRemoveBeforeEnsure(t *tes
 	// Configurator: PreStart returns changed=true.
 	mockCfg := new(MockConfigurator)
 	registry.On("Get", containerName).Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(true, nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.MustRestart("test: restart requested"), nil)
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// Container runtime: expect Remove (config changed) then Ensure.
@@ -642,7 +642,7 @@ func TestOrchestrator_PreStartNotChanged_NoContainerRemove(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	registry.On("Get", containerName).Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	// Only Ensure should be called, not Remove.
@@ -867,7 +867,7 @@ func TestOrchestrator_PostStart_ApppliesBudgetDeadline(t *testing.T) {
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "app").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 
 	var hadDeadline bool
 	var remaining time.Duration
@@ -902,7 +902,7 @@ func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "app").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 
 	started := make(chan struct{})
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).
@@ -942,7 +942,7 @@ func TestOrchestrator_PostStart_BudgetExpiryWithLiveParentIsError(t *testing.T) 
 
 	mockCfg := new(MockConfigurator)
 	to.registry.On("Get", "app").Return(mockCfg)
-	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(false, nil)
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 
 	// Block until the budget ctx expires; the parent pass ctx stays live.
 	mockCfg.On("PostStart", mock.Anything, mock.Anything).

@@ -133,14 +133,14 @@ func (c *Configurator) devAllowHTTP(publicURL string) bool {
 // public URL, signup policy, and OIDC client on its very first boot. Returns
 // configChanged=true when the file content changed so the orchestrator
 // recreates the container.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	path := filepath.Join(state.DataPath, "config", envFileName)
 
 	publicURL := c.appExternalURL()
 	allowHTTP := c.devAllowHTTP(publicURL)
 	content, err := renderEnv(publicURL, state.OIDC, allowHTTP)
 	if err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
 
 	// Mode 0600: the file carries the OIDC client secret. Vaultwarden runs as
@@ -148,16 +148,16 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// user that writes this file, so it can read it.
 	changed, err := managedfile.Write(path, []byte(content), 0600)
 	if err != nil {
-		return false, fmt.Errorf("writing env file: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("writing env file: %w", err)
 	}
 	if !changed {
-		return false, nil
+		return configurator.NoRestart(), nil
 	}
 	c.logger.Info("wrote Vaultwarden env file", "path", path, "sso", state.OIDC != nil)
 	if allowHTTP {
 		c.logger.Warn("Vaultwarden web vault HTTPS enforcement is DISABLED by "+devSwitchEnv+" (development only)", "publicURL", publicURL)
 	}
-	return true, nil
+	return configurator.MustRestart("Vaultwarden env file rewritten"), nil
 }
 
 // PostStart verifies against the running app that the configuration took

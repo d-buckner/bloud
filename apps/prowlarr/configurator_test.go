@@ -620,7 +620,7 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if !changed {
+	if !changed.RestartNeeded {
 		t.Error("PreStart() changed = false, want true for a missing config.xml")
 	}
 
@@ -652,7 +652,7 @@ func TestPreStart_CreatesDirsAndConfigOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second PreStart() error = %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Error("second PreStart() changed = true, want false (would restart the container every cycle)")
 	}
 }

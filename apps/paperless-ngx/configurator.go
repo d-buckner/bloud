@@ -153,7 +153,7 @@ func (c *Configurator) appExternalURL() string {
 // The secret key is generated once and read back from the file on later runs:
 // Paperless-ngx signs sessions and API tokens with it, so a fresh value on
 // every reconciliation would sign every user out.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dir := filepath.Join(state.DataPath, "config")
 	path := filepath.Join(dir, confFileName)
 
@@ -162,7 +162,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	if secretKey == "" {
 		generated, err := newSecretKey()
 		if err != nil {
-			return false, fmt.Errorf("generating secret key: %w", err)
+			return configurator.NoRestart(), fmt.Errorf("generating secret key: %w", err)
 		}
 		secretKey = generated
 	}
@@ -173,7 +173,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		oidc:      state.OIDC,
 	})
 	if err != nil {
-		return false, err
+		return configurator.NoRestart(), err
 	}
 
 	// The file is read by the webserver process, which runs as the image's
@@ -182,12 +182,12 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// unreadable (see INTEGRATION.md).
 	changed, err := managedfile.Write(path, []byte(content), 0644)
 	if err != nil {
-		return false, fmt.Errorf("writing config file: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}
 	if changed {
 		c.logger.Info("wrote Paperless-ngx config file", "path", path, "sso", state.OIDC != nil)
 	}
-	return changed, nil
+	return configurator.RestartIf(changed, "Paperless-ngx config rewritten"), nil
 }
 
 // PostStart verifies against the running app that the configuration took

@@ -387,9 +387,10 @@ func (m *MockConfigurator) Name() string {
 	return args.String(0)
 }
 
-func (m *MockConfigurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
+func (m *MockConfigurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	args := m.Called(ctx, state)
-	return args.Bool(0), args.Error(1)
+	res, _ := args.Get(0).(configurator.PreStartResult)
+	return res, args.Error(1)
 }
 
 func (m *MockConfigurator) PostStart(ctx context.Context, state *configurator.AppState) error {

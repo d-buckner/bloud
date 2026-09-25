@@ -165,14 +165,14 @@ func (c *Configurator) configPath(state *configurator.AppState) string {
 // changed=true only when config.xml content actually changed, because that
 // flag recreates the container: directory creation alone must never report a
 // change.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dirs := []string{
 		filepath.Join(state.DataPath, "config"),
 		filepath.Join(state.BloudDataPath, "downloads"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return configurator.NoRestart(), fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
@@ -191,18 +191,18 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	//     ends up running the import has to be able to write it.
 	configDir := filepath.Join(state.DataPath, "config")
 	if err := managedfile.EnsureWritable(configDir, 0o777); err != nil {
-		return false, fmt.Errorf("making the config directory writable: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("making the config directory writable: %w", err)
 	}
 	downloadsDir := filepath.Join(state.BloudDataPath, "downloads")
 	if err := managedfile.EnsureWritable(downloadsDir, 0o777); err != nil {
-		return false, fmt.Errorf("making the downloads directory writable: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("making the downloads directory writable: %w", err)
 	}
 
 	changed, err := servarr.EnsureExternalAuth(c.configPath(state))
 	if err != nil {
-		return false, fmt.Errorf("failed to configure %s: %w", appName, err)
+		return configurator.NoRestart(), fmt.Errorf("failed to configure %s: %w", appName, err)
 	}
-	return changed, nil
+	return configurator.RestartIf(changed, appName+" external-auth config rewritten"), nil
 }
 
 // Remove is a no-op for the Prowlarr configurator; container and data removal

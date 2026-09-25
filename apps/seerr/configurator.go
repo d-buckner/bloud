@@ -233,15 +233,17 @@ func (c *Configurator) Name() string {
 // merges shallowly per top-level key and erases the defaults that gate Seerr's
 // own startup). Nothing the container reads at boot is Bloud's to write, so
 // changed is always false.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (bool, error) {
+func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	dir := filepath.Join(state.DataPath, configDirName)
 	if err := os.MkdirAll(dir, configDirPerm); err != nil {
-		return false, fmt.Errorf("creating Seerr config directory: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("creating Seerr config directory: %w", err)
 	}
 	if err := managedfile.EnsureWritable(dir, configDirPerm); err != nil {
-		return false, fmt.Errorf("making Seerr config directory writable: %w", err)
+		return configurator.NoRestart(), fmt.Errorf("making Seerr config directory writable: %w", err)
 	}
-	return false, nil
+	// Directories only; Seerr is configured entirely through its API in
+	// PostStart, so no recreate signal comes out of this phase.
+	return configurator.NoRestart(), nil
 }
 
 // PostStart drives Seerr's first-run wizard through its own API and keeps the

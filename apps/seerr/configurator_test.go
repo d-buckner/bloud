@@ -652,7 +652,7 @@ func TestPreStart_CreatesWritableConfigDirOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreStart() error = %v", err)
 	}
-	if changed {
+	if changed.RestartNeeded {
 		t.Error("PreStart() changed = true, want false (nothing the container reads at boot is written here)")
 	}
 
@@ -696,7 +696,7 @@ func TestPreStart_LeavesAnAppWrittenSettingsFileAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PreStart() run %d error = %v", run, err)
 		}
-		if changed {
+		if changed.RestartNeeded {
 			t.Errorf("PreStart() run %d changed = true, want false", run)
 		}
 		after, err := os.ReadFile(path)

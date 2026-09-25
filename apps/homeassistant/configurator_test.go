@@ -101,7 +101,7 @@ func TestPreStartCreatesDirs(t *testing.T) {
 	data := t.TempDir()
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
-	assert.False(t, changed)
+	assert.False(t, changed.RestartNeeded)
 	_, err = os.Stat(filepath.Join(data, "config"))
 	require.NoError(t, err)
 }
@@ -117,7 +117,7 @@ func TestPreStartInstallsComponentAndWritesBlock(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed, "first PreStart must report changed")
+	assert.True(t, changed.RestartNeeded, "first PreStart must report changed")
 
 	// component installed at the right path with the right manifest
 	manifest, err := os.ReadFile(filepath.Join(data, "config", "custom_components", "auth_oidc", "manifest.json"))
@@ -136,7 +136,7 @@ func TestPreStartInstallsComponentAndWritesBlock(t *testing.T) {
 	// second cycle is a no-op (no churn)
 	changed2, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.False(t, changed2, "unchanged config must not churn")
+	assert.False(t, changed2.RestartNeeded, "unchanged config must not churn")
 }
 
 func TestPreStartChecksumMismatchLeavesNoTree(t *testing.T) {
@@ -176,7 +176,7 @@ func TestPreStartPreservesUserConfigAndUpdatesOnDrift(t *testing.T) {
 	state.OIDC = rotated
 	changed, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
-	assert.True(t, changed)
+	assert.True(t, changed.RestartNeeded)
 
 	yaml, err := os.ReadFile(filepath.Join(cfgDir, "configuration.yaml"))
 	require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestPreStartRemovesBlockWhenSSODisabled(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data, SSOEnabled: false})
 	require.NoError(t, err)
-	assert.True(t, changed, "removing the leftover block is a change")
+	assert.True(t, changed.RestartNeeded, "removing the leftover block is a change")
 	yaml, err := os.ReadFile(filepath.Join(cfgDir, "configuration.yaml"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(yaml), managedBegin)
@@ -212,7 +212,7 @@ func TestPreStartRemovesBlockWhenSSODisabled(t *testing.T) {
 
 	changed2, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data, SSOEnabled: false})
 	require.NoError(t, err)
-	assert.False(t, changed2)
+	assert.False(t, changed2.RestartNeeded)
 }
 
 // apiServer is a fake Home Assistant for PostStart tests.
@@ -550,7 +550,7 @@ func TestPreStartDoesNotCreateConfigFile(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
-	assert.False(t, changed, "must not create the stored http config before HA does")
+	assert.False(t, changed.RestartNeeded, "must not create the stored http config before HA does")
 	assert.NoFileExists(t, filepath.Join(data, "config", ".storage", "http"))
 }
 
@@ -563,7 +563,7 @@ func TestPreStartPatchesStoredConfig(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
-	assert.True(t, changed, "enabling proxy trust in an existing file is a change")
+	assert.True(t, changed.RestartNeeded, "enabling proxy trust in an existing file is a change")
 
 	doc := readStoredJSON(t, path)
 	hcfg := configBlock(t, doc, "stable")
@@ -575,7 +575,7 @@ func TestPreStartPatchesStoredConfig(t *testing.T) {
 	// second cycle: already trusted, no churn
 	changed2, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
-	assert.False(t, changed2, "idempotent after first write")
+	assert.False(t, changed2.RestartNeeded, "idempotent after first write")
 }
 
 // A corrupt stored file must surface as an error, not be silently ignored.
@@ -789,7 +789,7 @@ func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
-	assert.True(t, changed, "stale live process against trusted disk entry must force a recreate")
+	assert.True(t, changed.RestartNeeded, "stale live process against trusted disk entry must force a recreate")
 
 	// the file is untouched (no rewrite churn)
 	doc := readStoredJSON(t, storedPath)
@@ -820,7 +820,7 @@ func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {
 
 	changed, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: data})
 	require.NoError(t, err)
-	assert.False(t, changed, "unreachable process must not force a recreate")
+	assert.False(t, changed.RestartNeeded, "unreachable process must not force a recreate")
 }
 
 // The probe itself: 400 on forwarded requests reads as not-live-but-
