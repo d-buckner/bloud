@@ -7,7 +7,14 @@
 > verified live against a deployed host-agent.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-20 (PR 6 landed: the engine's three silent-failure
+**Last updated:** 2026-09-26 (reconciliation audit against the working tree).
+The ranked inventory is whole again: items 5-10 are restored (the table
+previously jumped from 4 to 11, hiding the still-open P1 items 6, 8, 9 and
+10, plus the closed 5 and 7). Item 6's `WaitPolicy` note is corrected: it
+has two explicit consumers (paperless-ngx, vaultwarden) but is still not the
+ready-path default, and the Home Assistant `SkipIf` half is marked closed.
+Item 24 records a catalog-entry mutation race the PR 6 mutex does not cover.
+Prior update 2026-09-20 (PR 6 landed: the engine's three silent-failure
 paths are closed: the catalog nil-deref is guarded, `MemoryCache` is
 lock-protected with a swap-on-refresh, and the intent loop can no longer
 exit on a stale signal token (`WaitAndDrain` returns a live flag; only
@@ -227,6 +234,12 @@ below (C1-C14) rather than ranked here.
 | 2 | ~~`SyncContainerState` nil-deref → process death~~ **FIXED 2026-09-20 (PR 6)**: err/nil checked before the deref, catalog-miss regression tests pin the skip and the repair path | P1→closed | `orchestrator_containers.go:41-56` |
 | 3 | ~~`MemoryCache` data race → unrecoverable fatal~~ **FIXED 2026-09-20 (PR 6)**: RWMutex guards all access; `Refresh` builds off-lock and swaps under the write lock; race test runs in the `fast` tier | P1→closed | `catalog/cache.go`; `catalog/cache_test.go`; `validation.yaml` (`go-host-agent-race`) |
 | 4 | ~~Intent queue exits permanently on a stale token~~ **FIXED 2026-09-20 (PR 6)**: `WaitAndDrain` returns `([]Intent, bool)`; `Start` exits only on cancellation; empty live batches are skipped; liveness exposed via `Stopped()`/`LastConverged()` | P1→closed | `queue.go:77-125`; `orchestrator.go` `Start` loop + loop-liveness tests |
+| 5 | ~~SQLite pragmas applied with a one-off `db.Exec` reached exactly one pooled connection; every other connection ran `foreign_keys=OFF` (cascades stop) and `busy_timeout=0` (writes fail `SQLITE_BUSY` immediately)~~ **FIXED 2026-09-20 (PR 7)**: the pragmas ride the DSN so the modernc driver applies them at every connection open; multi-connection tests pin the cascade and the busy-wait | P1→closed | `db/db.go` `pragmaQuery`/`dsn`; `db/pragmas_test.go` |
+| 6 | `appclient.Call.Timeout()` is a no-op: `timeoutOverride` is written and never read, so immich's and affine's declared 5-minute and 3-minute first-boot waits silently run on the 15 s client default plus `DefaultRetry`'s 30 s deadline and can land a cold-boot node in terminal ERROR. `WaitPolicy` is documented as the ready-path default but is not wired as one: `Wait()` consults only `retryOverride`/`c.retry`, so each app must opt in explicitly (paperless-ngx and vaultwarden do; jellyfin, immich and affine do not) | P1 | `pkg/appclient/call.go:30,118`; `pkg/appclient/waits.go:57`; `pkg/appclient/retry.go:42-51`; `apps/immich/api.go:33`; `apps/affine/api.go:31,58` |
+| 7 | ~~Home Assistant's asset `SkipIf` never matched (release tag `v1.2.1` vs the manifest's bare `1.2.1`) → re-download plus destructive container recreate on every pass~~ **FIXED 2026-09-25**: the constant is now the bare-semver manifest value, and the conformance harness caught the mismatch against the real manifest | P1→closed | `apps/homeassistant/configurator.go:51` |
+| 8 | Container drift is never repaired while the process is alive: `SyncContainerState` flips the store to `stopped` but leaves the in-memory node `RUNNING`, so `collectWorkForLevel` never re-drives it, and multi-container apps are skipped entirely (`len(defs) != 1`) | P1 | `orchestrator_containers.go` `SyncContainerState`; `pipeline.go` `populateGraphNodes` |
+| 9 | `Ensure` force-removes the running container *before* pulling: a registry outage or digest mismatch leaves the app with no container and no rollback, and the recreate path skips `Remove`'s `io.bloud.managed` ownership guard | P1 | `internal/container/runtime.go` |
+| 10 | The health surface is still blind to the runtime: a dead loop is now visible (`Stopped()`/`LastConverged()`, PR 6), but an unavailable Podman socket has no degraded signal, the startup gate is SQLite-only, and a failed system-app convergence still `os.Exit(1)`s the control plane | P1 | `internal/api/server.go` `checkSystemHealth`; `cmd/host-agent/main.go` `waitForSystemConvergence` |
 | 11 | ~~Two orchestrator wirings: the CLI `reconcile` path builds a different graph shape (per-`CatalogID`) and configures no store/runtime/catalog-graph, so it reports success while doing nothing~~ **FIXED 2026-09-25**: the CLI path was deleted for having no caller at all, and `internal/wire` is now the only place a `NewOrchestrator` call happens. Guarded by a config-completeness test. | P1→closed | `cli/distro.go` era `cmd/host-agent/configure.go` (deleted); `internal/wire/wire.go`; `internal/wire/completeness_test.go` |
 | 12 | ~~Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts~~ **FIXED 2026-09-25**: the second builder went with the CLI path. `orchestrator.buildAppState` is the only one, and it resolves SSO through the live host set. | P2→closed | `orchestrator.go` `buildAppState` / `resolveSSOURLs` |
 | 13 | An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer | P2 | `pipeline.go:~292-300`; `hostset.go:239-283` |
@@ -240,6 +253,7 @@ below (C1-C14) rather than ranked here.
 | 21 | `IconHandler` rejects `/` and `\` but not `..`, and never re-checks the joined path | P2 | `apps_module.go:262-276` |
 | 22 | App networks and orphaned containers are never removed or swept; `ListContainers` is test-only | P2 | no `RemoveNetwork` in tree |
 | 23 | Health checks never reach Podman; the emulated loop reads `retries` as total attempts | P2 | `internal/container/runtime.go`; orchestrator health path |
+| 24 | `appsModule.GetCatalog` mutates cached catalog entries: it writes `app.EstimatedSizeMB` on the `*catalog.App` structs `GetUserApps` returns, which are the same pointers the cache map holds. PR 6's RWMutex guards the map, not the pointed-to structs, so concurrent `GET /api/apps` requests race on that field (and the catalog is no longer purely disk-driven) | P2 | `catalog/cache.go` `GetAll`; `api/apps_module.go` `GetCatalog` |
 
 **Documented exception (not debt).** Share/guest/preference handlers write their
 stores directly, bypassing the intent queue. Verified non-racing: the
@@ -605,8 +619,6 @@ per-invocation token read replaced the proposed `ReadRuntimeFile` seam, because
 the CLI's curl runs host-side while the token file lives in the guest, so
 `./bloud token` reads it through the existing executor instead.
 
-### 2. Stop the silent failures (P1, items 2-4, 10)
-
 ### 2. Stop the silent failures (P1, items 2-4, 10): DONE 2026-09-20 (PR 6)
 
 Nil-guarded the catalog lookup; `MemoryCache` is lock-protected with an
@@ -616,11 +628,15 @@ surface can now see a dead orchestrator (`Stopped()` + `LastConverged()`
 feed `CheckSystemHealth`); the rest of PR 11's degraded-payload /
 startup-gate scope is still open.
 
-### 3. Make declared intent real (P1, items 6-7)
+### 3. Make declared intent real (P1, items 6-7): half done 2026-09-25
 
-Honour `Call.Timeout` and wire `WaitPolicy` as the ready-path default, or delete
-both and fail loudly on an unsupported option. Fix the Home Assistant version
-comparison and make its test fixture use the real manifest value.
+The Home Assistant half is closed: `oidcComponentVersion` now carries the
+bare-semver manifest value (`1.2.1`), so `SkipIf` matches and the per-pass
+re-download plus destructive container recreate are gone (2026-09-25; the
+conformance harness caught the mismatch against the real manifest). Still
+open: honour `Call.Timeout` (the override is still written and never read)
+and wire `WaitPolicy` as the ready-path default, or delete both and fail
+loudly on an unsupported option.
 
 ### 4. Durability substrate (P1, item 5): DONE 2026-09-20 (PR 7)
 
@@ -666,7 +682,7 @@ The duplicate `AppState` builder went with the CLI path, so the orchestrator's
 own builder is the only answer to "what is this app's OIDC client", and it
 resolves through the live host set rather than the legacy single-host string.
 
-### 7. Persist Only Externally Issued Artifacts (item 18, as corrected)
+### 7. Persist Only Externally Issued Artifacts (item 17, as corrected)
 
 Integration credentials are derived, not stored: `DeriveSecret`
 (HKDF-SHA256 from the host secret) and `OIDCInputsForApp` compute client
@@ -677,7 +693,7 @@ truth and every disagreement becomes a reconciliation bug, so delete the
 genuinely worth persisting is state we do not derive because something else
 issued it: remote proxy port assignments, the tailnet domain, gateway state.
 
-### 8. Honest surfaces and dead code (items 13-17, 19-23)
+### 8. Honest surfaces and dead code (items 13-16, 18-23)
 
 Filter system apps by `IsSystem`; persist the primary host; delete
 `ClearAppDataIntent`, `appsModule.ClearData` and its vacuous 404 test, and
