@@ -62,11 +62,12 @@ tiers:
       - id: docs-links
         cwd: .
         run: npm run check:docs-links
-      # The README's dependency graph is generated from the catalog. A
-      # metadata change that leaves it alone leaves the README describing a
-      # graph that no longer exists, so the block is compared against what
-      # the catalog produces right now. `bloud depgraph --write` refreshes
-      # it, and the merge-to-main job commits the refresh.
+      # The generated graph doc must carry the graph the catalog produces. A
+      # metadata change that leaves it alone leaves the doc describing a graph
+      # that no longer exists, so the block is compared against what the
+      # catalog produces right now. `bloud depgraph --write` refreshes it, and
+      # the merge-to-main job commits the refresh (and re-renders the README
+      # image from the same snapshot).
       - id: depgraph-check
         cwd: .
         run: ./bloud depgraph --check

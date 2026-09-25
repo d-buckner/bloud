@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -295,6 +296,171 @@ func TestDefaultProviderPrefersDefaultFlag(t *testing.T) {
 	}
 }
 
+// The browser renderer feeds this JSON into the dashboard's own graph
+// components, so the shape has to match what /api/system/developer returns:
+// app nodes keyed by catalog id, container nodes keyed by container name and
+// parented to their app, integration edges between app ids.
+func TestBuildCatalogGraphShape(t *testing.T) {
+	graph := buildCatalogGraph(testCatalog())
+
+	byID := make(map[string]catalogGraphNode, len(graph.Nodes))
+	for _, node := range graph.Nodes {
+		byID[node.ID] = node
+	}
+
+	traefik := byID["traefik"]
+	if traefik.ID == "" || !traefik.IsSystem || traefik.NodeType != "app" {
+		t.Errorf("traefik node wrong: %+v", traefik)
+	}
+	if traefik.Status != catalogNodeStatus {
+		t.Errorf("catalog node status = %q, want %q", traefik.Status, catalogNodeStatus)
+	}
+
+	server := byID["apps-authentik-server"]
+	if server.NodeType != "container" || server.ParentID != "authentik" {
+		t.Errorf("container node wrong: %+v", server)
+	}
+	if server.DisplayName != "server" {
+		t.Errorf("container display name = %q, want the component name", server.DisplayName)
+	}
+	if !server.IsSystem {
+		t.Error("a system app's container lost the system flag")
+	}
+
+	widget := byID["widget-app"]
+	if widget.DisplayName != "Widget App" {
+		t.Errorf("display name = %q, want the catalog display name", widget.DisplayName)
+	}
+	if widget.Category != "media" {
+		t.Errorf("category = %q, want media", widget.Category)
+	}
+}
+
+func TestBuildCatalogGraphEdges(t *testing.T) {
+	graph := buildCatalogGraph(testCatalog())
+
+	has := func(source, target, label string) bool {
+		for _, e := range graph.Edges {
+			if e.Source == source && e.Target == target && e.Label == label {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Within-app dependsOn: drawn between container names, unlabeled, the
+	// same way the live graph leaves box-internal edges bare.
+	if !has("apps-authentik-server", "apps-authentik-postgres", "") {
+		t.Errorf("missing unlabeled within-app edge: %+v", graph.Edges)
+	}
+	// The sso edge carries the strategy, and the proxy edge points from the
+	// proxy to the app it routes.
+	if !has("widget-app", "authentik", "forward-auth") {
+		t.Errorf("missing strategy-labeled sso edge: %+v", graph.Edges)
+	}
+	if !has("traefik", "widget-app", "proxy") {
+		t.Errorf("missing reversed proxy edge: %+v", graph.Edges)
+	}
+	if has("widget-app", "traefik", "proxy") {
+		t.Errorf("proxy edge left in the app-to-proxy direction: %+v", graph.Edges)
+	}
+	// A dependsOn on a container the app does not declare draws nothing.
+	if has("apps-widget-app", "apps-someone-elses-db", "") {
+		t.Errorf("edge drawn to a container the app does not declare: %+v", graph.Edges)
+	}
+}
+
+// An app that declares no containers is one flat app node: emitting a
+// container node with the app's own id would collide with the app node.
+func TestBuildCatalogGraphContainerlessApp(t *testing.T) {
+	graph := buildCatalogGraph(map[string]*AppMetadata{
+		"flat": {Name: "flat", DisplayName: "Flat"},
+	})
+	if len(graph.Nodes) != 1 || graph.Nodes[0].NodeType != "app" {
+		t.Errorf("containerless app rendered as %+v", graph.Nodes)
+	}
+}
+
+func TestRenderCatalogGraphJSON(t *testing.T) {
+	encoded, err := renderCatalogGraphJSON(testCatalog())
+	if err != nil {
+		t.Fatalf("renderCatalogGraphJSON: %v", err)
+	}
+
+	var round catalogGraph
+	if err := json.Unmarshal([]byte(encoded), &round); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, encoded)
+	}
+	// testCatalog: 3 app nodes + 5 container nodes.
+	if len(round.Nodes) != 8 || len(round.Edges) == 0 {
+		t.Errorf("unexpected round-trip size: %d nodes, %d edges\n%s", len(round.Nodes), len(round.Edges), encoded)
+	}
+
+	// The renderer is what CI runs, and a non-deterministic snapshot would
+	// make every generated image differ from the last.
+	again, err := renderCatalogGraphJSON(testCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != encoded {
+		t.Error("two renders of the same catalog differ")
+	}
+}
+
+// The committed image must describe the catalog that is actually in the
+// tree, so every app directory shows up in the snapshot the image is
+// rendered from, with its containers.
+func TestRepoCatalogJSONCoversEveryApp(t *testing.T) {
+	root, err := getProjectRoot()
+	if err != nil {
+		t.Fatalf("project root: %v", err)
+	}
+	appsDir := filepath.Join(root, "apps")
+	apps, err := loadAppMetadata(appsDir)
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+
+	graph := buildCatalogGraph(apps)
+	appIDs := map[string]bool{}
+	containersByApp := map[string]int{}
+	for _, node := range graph.Nodes {
+		if node.NodeType == "app" {
+			appIDs[node.ID] = true
+		}
+		if node.NodeType == "container" {
+			containersByApp[node.ParentID]++
+		}
+	}
+
+	entries, err := os.ReadDir(appsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		meta := filepath.Join(appsDir, entry.Name(), "metadata.yaml")
+		if _, err := os.Stat(meta); err != nil {
+			continue
+		}
+		checked++
+		if !appIDs[entry.Name()] {
+			t.Errorf("app %s is missing from the catalog snapshot", entry.Name())
+			continue
+		}
+		if want := len(apps[entry.Name()].Containers); want > 0 && containersByApp[entry.Name()] != want {
+			t.Errorf("app %s snapshot has %d container nodes, metadata declares %d",
+				entry.Name(), containersByApp[entry.Name()], want)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no app metadata found to check")
+	}
+}
+
 func TestSpliceGraphBlockKeepsTheRestOfTheDocument(t *testing.T) {
 	original := "# Doc\n\nIntro text.\n\n" + graphBeginMarker + "\nold\n" + graphEndMarker + "\n\nOutro.\n"
 	generated := graphBeginMarker + "\nfresh content\n" + graphEndMarker + "\n"
@@ -378,10 +544,12 @@ func TestWriteAndCheckGraphBlock(t *testing.T) {
 	}
 }
 
-// The committed README must carry the graph the current catalog produces.
-// This is the same invariant `./bloud depgraph --check` enforces in the fast
-// tier, asserted here too so a `go test ./...` catches it.
-func TestRepoREADMEGraphIsCurrent(t *testing.T) {
+// The committed graph doc must carry what the current catalog produces. This is
+// the same invariant `./bloud depgraph --check` enforces in the fast tier,
+// asserted here too so a `go test ./...` catches it. The README is not part
+// of this check: it embeds the rendered image, and the image is regenerated
+// by CI rather than gated on every PR.
+func TestRepoGraphDocIsCurrent(t *testing.T) {
 	root, err := getProjectRoot()
 	if err != nil {
 		t.Fatalf("project root: %v", err)
@@ -391,7 +559,32 @@ func TestRepoREADMEGraphIsCurrent(t *testing.T) {
 		t.Fatalf("load catalog: %v", err)
 	}
 	if code := checkGraphBlock(root, graphDefaultFile, renderDependencyGraph(apps)); code != 0 {
-		t.Errorf("README.md dependency graph is stale: run ./bloud depgraph --write and commit it")
+		t.Errorf("%s is stale: run ./bloud depgraph --write and commit it", graphDefaultFile)
+	}
+}
+
+// The README must embed the rendered image and must not still carry a text
+// diagram: the README stops changing when the catalog does only if the
+// generated mermaid is out of it.
+func TestRepoREADMEEmbedsTheGraphImage(t *testing.T) {
+	root, err := getProjectRoot()
+	if err != nil {
+		t.Fatalf("project root: %v", err)
+	}
+	readme, err := os.ReadFile(filepath.Join(root, graphDefaultReadme))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	body := string(readme)
+
+	if !strings.Contains(body, "("+graphImage+")") {
+		t.Errorf("README does not embed %s", graphImage)
+	}
+	if strings.Contains(body, "```mermaid") {
+		t.Error("README still carries a mermaid diagram; the generated graph belongs in the docs page")
+	}
+	if _, err := os.Stat(filepath.Join(root, graphImage)); err != nil {
+		t.Errorf("the embedded image %s is missing: run npm run graph:image", graphImage)
 	}
 }
 

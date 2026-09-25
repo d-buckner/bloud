@@ -20,10 +20,11 @@ described below.
 
 This is the hand-written component map. For the catalog-derived view of every
 app, the containers it declares, and the integration edges between them, see
-the generated [dependency graph in the README](../../README.md#the-full-graph):
-`./bloud depgraph` prints it, `--write` refreshes the README section, and the
-merge-to-main job commits the refresh, so that view cannot drift from
-`apps/*/metadata.yaml`.
+the generated [dependency graph](dependency-graph.md) (rendered as the
+picture in [the README](../../README.md#the-full-graph)): `./bloud depgraph`
+prints it, `--write` refreshes the generated block, `--json` emits the
+snapshot the browser render uses, and the merge-to-main job commits both, so
+that view cannot drift from `apps/*/metadata.yaml`.
 
 ```mermaid
 graph TD

@@ -10,6 +10,8 @@
   "scripts": {
     "setup": "npm install && npm run cli:build && ./bloud setup",
     "cli:build": "cd cli && go build -o ../bloud .",
+    "graph:json": "./bloud depgraph --json > .bloud/catalog-graph.json",
+    "graph:image": "mkdir -p .bloud && npm run graph:json && npm run build --workspace=@bloud/host-agent-web && node scripts/render-graph.mjs --graph .bloud/catalog-graph.json --output docs/assets/dependency-graph.png",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "frontend:dev": "npm run dev --workspace=services/host-agent/web",
