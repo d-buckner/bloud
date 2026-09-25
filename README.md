@@ -201,6 +201,7 @@ _Each box is one app; the nodes inside it are that app's containers, with an arr
 
 
 
+
 ## catalog
 
 Thirteen apps, plus the two system ones Bloud needs to run itself. Each carries a verified
