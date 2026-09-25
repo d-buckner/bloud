@@ -227,8 +227,8 @@ below (C1-C14) rather than ranked here.
 | 2 | ~~`SyncContainerState` nil-deref → process death~~ **FIXED 2026-09-20 (PR 6)**: err/nil checked before the deref, catalog-miss regression tests pin the skip and the repair path | P1→closed | `orchestrator_containers.go:41-56` |
 | 3 | ~~`MemoryCache` data race → unrecoverable fatal~~ **FIXED 2026-09-20 (PR 6)**: RWMutex guards all access; `Refresh` builds off-lock and swaps under the write lock; race test runs in the `fast` tier | P1→closed | `catalog/cache.go`; `catalog/cache_test.go`; `validation.yaml` (`go-host-agent-race`) |
 | 4 | ~~Intent queue exits permanently on a stale token~~ **FIXED 2026-09-20 (PR 6)**: `WaitAndDrain` returns `([]Intent, bool)`; `Start` exits only on cancellation; empty live batches are skipped; liveness exposed via `Stopped()`/`LastConverged()` | P1→closed | `queue.go:77-125`; `orchestrator.go` `Start` loop + loop-liveness tests |
-| 11 | Two orchestrator wirings: the CLI `reconcile` path builds a different graph shape (per-`CatalogID`) and configures no store/runtime/catalog-graph, so it reports success while doing nothing | P1 | `cmd/host-agent/configure.go:214-260` vs `internal/api/router.go:395-470` |
-| 12 | Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts | P2 | `orchestrator.go:1214` vs `configure.go:295` |
+| 11 | ~~Two orchestrator wirings: the CLI `reconcile` path builds a different graph shape (per-`CatalogID`) and configures no store/runtime/catalog-graph, so it reports success while doing nothing~~ **FIXED 2026-09-25**: the CLI path was deleted for having no caller at all, and `internal/wire` is now the only place a `NewOrchestrator` call happens. Guarded by a config-completeness test. | P1→closed | `cli/distro.go` era `cmd/host-agent/configure.go` (deleted); `internal/wire/wire.go`; `internal/wire/completeness_test.go` |
+| 12 | ~~Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts~~ **FIXED 2026-09-25**: the second builder went with the CLI path. `orchestrator.buildAppState` is the only one, and it resolves SSO through the live host set. | P2→closed | `orchestrator.go` `buildAppState` / `resolveSSOURLs` |
 | 13 | An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer | P2 | `pipeline.go:~292-300`; `hostset.go:239-283` |
 | 14 | System-app hiding keys off `category == "infrastructure"`, which no `metadata.yaml` sets (traefik is `network`, authentik is `security`) → both appear as installable user apps, contradicting invariant 5 | P2 | `catalog/cache.go:70-103`; `api/apps_module.go:101` |
 | 15 | Sharing module and system module are wired with `nil` (tailnet node, graph, orchestrator) → `POST /api/sharing/invites` always 503 | P2 | `router.go:224-229`; `sharing_module.go:227-229` |
@@ -566,13 +566,37 @@ Reconcile container existence on every pass (or reset the node when a known
 container is gone), extend `SyncContainerState` to multi-container apps, and pull
 before removing in `Ensure`.
 
-### 6. Single Orchestrator Builder (P1, items 11-12)
+### 6. Single Orchestrator Builder (P1, items 11-12): DONE 2026-09-25
 
-One builder owns the orchestrator wiring; `configure.go` and `router.go` both
-call it with an explicit profile. Makes config drift between the CLI path and
-the product path impossible, and collapses the duplicate `AppState` builder.
-(With operation state landed, the recorder wiring is one more field that would
-otherwise fork.)
+One builder owns the orchestrator wiring: `internal/wire`. `main.go` is the
+composition root; it builds the shared stores, the auth ref, and the
+orchestrator, starts the intent loop under its own cancellable context, and
+hands the result to the API. The API cannot construct an orchestrator at all.
+
+**The profiled approach in the original plan was replaced by deletion, and
+the reason is worth keeping.** The plan said `configure.go` and `router.go`
+should both call one builder with an explicit profile. That framing is
+accurate about the code and wrong about the action, because it never asked
+whether the second site was reachable. It was not: a repo-wide search for
+`bloud-agent` found only the deleted file's own usage strings, and the path
+looked configurators up by catalog ID while the registry keys on graph node
+names, so it configured nothing even if invoked. You cannot unify two copies
+of nothing. Before unifying anything with a profile, ask who calls the second
+branch.
+
+Three guards keep it from forking again:
+
+- a completeness test reflects over the orchestrator config after a build and
+  fails on any field that is neither populated nor allowlisted with a reason,
+  and fails an allowlist entry that guards nothing
+- a node-shape test asserts every node the catalog planner creates for a
+  non-system app has a registered configurator, and that the registry's
+  declared list has no extras
+- the API has no construction path: no implicit fallback, no opt-out flag
+
+The duplicate `AppState` builder went with the CLI path, so the orchestrator's
+own builder is the only answer to "what is this app's OIDC client", and it
+resolves through the live host set rather than the legacy single-host string.
 
 ### 7. Persist Only Externally Issued Artifacts (item 18, as corrected)
 
