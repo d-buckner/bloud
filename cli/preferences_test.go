@@ -12,13 +12,16 @@ import (
 )
 
 func TestAvailableBackendsFor(t *testing.T) {
-	if got := strings.Join(availableBackendsFor("darwin"), ","); got != "lima" {
+	// A non-Fedora Linux host keeps both backends. Fedora drops native; see
+	// TestAvailableBackendsForFedoraDropsNative in distro_test.go.
+	useRelease(t, archOSRelease)
+	if got := strings.Join(availableBackendsFor("darwin", Release{}), ","); got != "lima" {
 		t.Fatalf("darwin backends = %q, want lima only", got)
 	}
-	if got := strings.Join(availableBackendsFor("linux"), ","); got != "qemu,native" {
+	if got := strings.Join(availableBackendsFor("linux", Release{ID: "arch"}), ","); got != "qemu,native" {
 		t.Fatalf("linux backends = %q, want qemu,native", got)
 	}
-	if got := strings.Join(availableBackendsFor("windows"), ","); got != "lima" {
+	if got := strings.Join(availableBackendsFor("windows", Release{}), ","); got != "lima" {
 		t.Fatalf("windows backends = %q, want lima (historical default)", got)
 	}
 }
@@ -77,6 +80,10 @@ func TestResolveBackendPrecedence(t *testing.T) {
 	envSet := func(string) string { return "native" }
 	getenv := func(string) string { return "" }
 	ask := func(opts []string) (string, error) { return opts[0], nil }
+	// These cases exercise the resolution order, not the Fedora refusal, so
+	// pin a host where native is available. Without this the test would fail
+	// or pass by accident depending on the machine it runs on.
+	useRelease(t, archOSRelease)
 	// The stored value has to be applicable to this host, or storedBackend
 	// discards it as stale (TestStoredBackendIgnoresStaleValue): "qemu" is
 	// stale on macOS and "lima" on Linux. Derive it from this host's
@@ -134,6 +141,7 @@ func TestResolveBackendPrecedence(t *testing.T) {
 }
 
 func TestBackendNameEnvOverride(t *testing.T) {
+	useRelease(t, archOSRelease)
 	t.Setenv("BLOUD_BACKEND", "native")
 	got, err := backendName()
 	if err != nil || got != "native" {

@@ -60,11 +60,16 @@ func savePreferences(root string, p Preferences) error {
 	return os.WriteFile(path, []byte(header+string(data)), 0644)
 }
 
-// availableBackendsFor returns the runtime backends applicable to a host OS:
-// macOS only supports Lima, Linux supports the QEMU VM and the native (no-VM)
-// backend. Other hosts fall back to the historical default.
-func availableBackendsFor(goos string) []string {
+// availableBackendsFor returns the runtime backends applicable to a host OS
+// and distribution: macOS only supports Lima; Linux supports the QEMU VM and
+// the native (no-VM) backend, except on Fedora, where native is refused
+// outright (see nativeBlockedOn). Other hosts fall back to the historical
+// default.
+func availableBackendsFor(goos string, rel Release) []string {
 	if goos == "linux" {
+		if blocked, _ := nativeBlockedOn(goos, rel); blocked {
+			return []string{"qemu"}
+		}
 		return []string{"qemu", "native"}
 	}
 	return []string{"lima"}
@@ -72,7 +77,7 @@ func availableBackendsFor(goos string) []string {
 
 // availableBackends returns the backends applicable to this host.
 func availableBackends() []string {
-	return availableBackendsFor(runtime.GOOS)
+	return availableBackendsFor(runtime.GOOS, hostRelease())
 }
 
 // backendDescription is the human-facing one-liner for a backend.
@@ -174,6 +179,9 @@ func noPreferenceError(options []string) error {
 // It errors when no preference can be determined without asking.
 func resolveBackend(root string, getenv func(string) string, interactive bool, ask func(options []string) (string, error)) (string, error) {
 	if v := getenv("BLOUD_BACKEND"); v != "" {
+		if err := checkBackend(v, hostRelease()); err != nil {
+			return "", err
+		}
 		return v, nil
 	}
 	if b := storedBackend(root); b != "" {
@@ -203,6 +211,9 @@ func resolveBackend(root string, getenv func(string) string, interactive bool, a
 // cannot be determined without asking.
 func backendName() (string, error) {
 	if v := os.Getenv("BLOUD_BACKEND"); v != "" {
+		if err := checkBackend(v, hostRelease()); err != nil {
+			return "", err
+		}
 		return v, nil
 	}
 	root, err := getProjectRoot()
@@ -219,6 +230,10 @@ func backendName() (string, error) {
 // returns "" when undetermined.
 func usageBackend() string {
 	if v := os.Getenv("BLOUD_BACKEND"); v != "" {
+		// A blocked override is not advertised: the command would refuse it.
+		if checkBackend(v, hostRelease()) != nil {
+			return ""
+		}
 		return v
 	}
 	root, err := getProjectRoot()
@@ -240,6 +255,9 @@ func usageBackend() string {
 // interactively.
 func setupBackend(root string) (string, error) {
 	if v := os.Getenv("BLOUD_BACKEND"); v != "" {
+		if err := checkBackend(v, hostRelease()); err != nil {
+			return "", err
+		}
 		fmt.Printf("  Backend: %s (from BLOUD_BACKEND)\n", v)
 		return v, nil
 	}
