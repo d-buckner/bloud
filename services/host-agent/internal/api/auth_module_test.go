@@ -27,7 +27,7 @@ func newAuthModule(t *testing.T, cfg *AuthConfig) (*authModule, *FakeAuthentikCl
 	prefsStore := NewFakePreferencesStore()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	mod := NewAuthModule(client, newAuthConfigRef(cfg), prefsStore, sessStore, logger, 0,
+	mod := NewAuthModule(client, newAuthRef(cfg), prefsStore, sessStore, logger, 0,
 		hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
 	return mod, client, sessStore
 }
@@ -124,7 +124,7 @@ func TestAuthHTTP_GetCurrentUser_NoSessionStore(t *testing.T) {
 
 	authMod := &authModule{
 		authentikClient: client,
-		authConfig:      newAuthConfigRef(cfg),
+		authConfig:      newAuthRef(cfg),
 		prefsStore:      prefsStore,
 		sessionStore:    nil,
 		logger:          logger,
@@ -191,7 +191,7 @@ func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 
 func TestAuthHTTP_Login_DirectAgentPort(t *testing.T) {
 	client := NewFakeAuthentikClient()
-	mod := NewAuthModule(client, newAuthConfigRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000, hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
+	mod := NewAuthModule(client, newAuthRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000, hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
 	r := chi.NewRouter()
 	NewAuthRouter(mod, r)
 
@@ -372,11 +372,11 @@ func TestAuthHTTP_Callback_FullFlow(t *testing.T) {
 	assert.NotEmpty(t, sessionCookie.Value)
 }
 
-// ---- authConfigRef shared holder ----
+// ---- AuthRef shared holder ----
 
 func TestAuthConfigRef_GetReturnsSetValue(t *testing.T) {
 	cfg := &AuthConfig{}
-	ref := newAuthConfigRef(cfg)
+	ref := newAuthRef(cfg)
 	assert.Same(t, cfg, ref.Get())
 
 	updated := &AuthConfig{OIDCConfig: &authentik.OIDCConfig{ClientID: "new-id"}}
@@ -385,15 +385,15 @@ func TestAuthConfigRef_GetReturnsSetValue(t *testing.T) {
 }
 
 func TestAuthConfigRef_GetNilWhenUnset(t *testing.T) {
-	ref := newAuthConfigRef(nil)
+	ref := newAuthRef(nil)
 	assert.Nil(t, ref.Get())
 
-	var nilRef *authConfigRef
+	var nilRef *AuthRef
 	assert.Nil(t, nilRef.Get())
 }
 
 func TestAuthConfigRef_EnsureRunsFactory(t *testing.T) {
-	ref := newAuthConfigRef(nil)
+	ref := newAuthRef(nil)
 
 	var calls int
 	cfg := &AuthConfig{OIDCConfig: &authentik.OIDCConfig{ClientID: "bootstrapped"}}
@@ -408,7 +408,7 @@ func TestAuthConfigRef_EnsureRunsFactory(t *testing.T) {
 }
 
 func TestAuthConfigRef_EnsureFactoryReturningNilKeepsDisabled(t *testing.T) {
-	ref := newAuthConfigRef(nil)
+	ref := newAuthRef(nil)
 	ref.SetEnsure(func() *AuthConfig {
 		return nil
 	})
@@ -418,14 +418,14 @@ func TestAuthConfigRef_EnsureFactoryReturningNilKeepsDisabled(t *testing.T) {
 }
 
 func TestAuthConfigRef_EnsureWithoutFactoryIsNoop(t *testing.T) {
-	ref := newAuthConfigRef(&AuthConfig{})
+	ref := newAuthRef(&AuthConfig{})
 	ref.Ensure()
 	assert.NotNil(t, ref.Get())
 }
 
 func TestServer_InitAuth_ReEnablesAuth(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	ref := newAuthConfigRef(nil)
+	ref := newAuthRef(nil)
 
 	cfg := &AuthConfig{OIDCConfig: &authentik.OIDCConfig{ClientID: "bootstrapped"}}
 	ref.SetEnsure(func() *AuthConfig { return cfg })

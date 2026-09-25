@@ -45,9 +45,10 @@ type routerOptions struct {
 	prefsStore     store.PreferencesStoreInterface
 	sessionStore   store.SessionStoreInterface
 	remoteAppStore store.RemoteAppStoreInterface
+	tailnetStore   *store.TailnetStore
 	orch           interface{} // any orchestratorCaller implementation
 	noOrchestrator bool        // if true, skip creating a real orchestrator
-	authConfig     *authConfigRef
+	authConfig     *AuthRef
 }
 
 // routerDeps bundles every store, client, and collaborator that NewRouter's
@@ -64,7 +65,7 @@ type routerDeps struct {
 	remoteAppStore store.RemoteAppStoreInterface
 	catalogCache   catalog.CacheInterface
 	authentik      *authentik.Client
-	authRef        *authConfigRef
+	authRef        *AuthRef
 	orchCaller     orchestratorCaller
 	realOrch       *orchestrator.Orchestrator
 }
@@ -101,10 +102,9 @@ func buildRouterDeps(
 		d.prefsStore = store.NewPreferencesStore(db)
 	}
 
-	if cfg.AuthentikToken != "" && cfg.AuthentikPort > 0 {
-		internalURL := fmt.Sprintf("http://localhost:%d", cfg.AuthentikPort)
-		d.authentik = authentik.NewClient(internalURL, cfg.AuthentikToken).
-			WithUserEmailDomain(cfg.BaseDomain)
+	d.authentik = cfg.Authentik
+	if d.authentik == nil {
+		d.authentik = NewAuthentikClient(cfg.AuthentikPort, cfg.AuthentikToken, cfg.BaseDomain)
 	}
 
 	d.sessionStore = options.sessionStore
@@ -112,7 +112,10 @@ func buildRouterDeps(
 		d.sessionStore = store.NewSessionStore(db)
 	}
 
-	d.tailnetStore = store.NewTailnetStore(db)
+	d.tailnetStore = options.tailnetStore
+	if d.tailnetStore == nil {
+		d.tailnetStore = store.NewTailnetStore(db)
+	}
 
 	d.catalogCache = options.catalog
 	if d.catalogCache == nil {
@@ -125,16 +128,13 @@ func buildRouterDeps(
 		d.remoteAppStore = store.NewRemoteAppStore(db)
 	}
 
-	// Auth config ref: created before the orchestrator because the
+	// Auth ref: supplied by the caller in production, built here for tests
+	// that do not supply one. It exists before the orchestrator because the
 	// orchestrator's OnHostsChanged hook re-ensures it after a host change.
 	d.authRef = options.authConfig
 	if d.authRef == nil {
-		d.authRef = newAuthConfigRef(nil)
+		d.authRef = NewAuthRef(d.authentik, d.sessionStore, cfg, logger)
 	}
-	d.authRef.SetEnsure(func() *AuthConfig {
-		return initAuthHelper(context.Background(), d.authentik, d.sessionStore, cfg, logger)
-	})
-	d.authRef.Set(initAuthHelper(context.Background(), d.authentik, d.sessionStore, cfg, logger))
 
 	// Orchestrator: use provided one if set, else create real (unless noOrchestrator is true).
 	if o, ok := options.orch.(orchestratorCaller); ok && o != nil {
@@ -142,6 +142,9 @@ func buildRouterDeps(
 		if ro, isReal := o.(*orchestrator.Orchestrator); isReal {
 			d.realOrch = ro
 		}
+	} else if cfg.Orchestrator != nil {
+		d.realOrch = cfg.Orchestrator
+		d.orchCaller = d.realOrch
 	} else if !options.noOrchestrator {
 		d.realOrch = initOrchestratorHelper(db, d.appStore, d.catalogCache, cfg, logger, d.tailnetStore, d.authentik, d.eventsBus, func() { d.authRef.Ensure() })
 		if d.realOrch != nil {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,25 +44,25 @@ type AuthConfig struct {
 	OIDCConfig *authentik.OIDCConfig
 }
 
-// authConfigRef is a shared, thread-safe reference to the AuthConfig.
+// AuthRef is a shared, thread-safe reference to the AuthConfig.
 // It is shared between the auth and settings modules (and the Server) so a
 // post-convergence re-initialization is visible to all consumers without
 // mutating module internals. The atomic pointer guards against concurrent
 // reads while InitAuth swaps in a fresh config.
-type authConfigRef struct {
+type AuthRef struct {
 	p      atomic.Pointer[AuthConfig]
 	ensure func() *AuthConfig // re-init factory; nil for static refs (tests)
 }
 
-// newAuthConfigRef creates a reference wrapping the given config.
-func newAuthConfigRef(cfg *AuthConfig) *authConfigRef {
-	ref := &authConfigRef{}
+// newAuthRef creates a reference wrapping the given config.
+func newAuthRef(cfg *AuthConfig) *AuthRef {
+	ref := &AuthRef{}
 	ref.p.Store(cfg)
 	return ref
 }
 
 // Get returns the current auth config, or nil if auth is not initialized.
-func (r *authConfigRef) Get() *AuthConfig {
+func (r *AuthRef) Get() *AuthConfig {
 	if r == nil {
 		return nil
 	}
@@ -69,7 +70,7 @@ func (r *authConfigRef) Get() *AuthConfig {
 }
 
 // Set swaps in a fresh auth config. Safe to call concurrently with Get.
-func (r *authConfigRef) Set(cfg *AuthConfig) {
+func (r *AuthRef) Set(cfg *AuthConfig) {
 	r.p.Store(cfg)
 }
 
@@ -77,19 +78,53 @@ func (r *authConfigRef) Set(cfg *AuthConfig) {
 // dependencies (Authentik client, session store, server config) in the scope
 // where they are available, so the Server can re-initialize without holding
 // them itself.
-func (r *authConfigRef) SetEnsure(fn func() *AuthConfig) {
+func (r *AuthRef) SetEnsure(fn func() *AuthConfig) {
 	r.ensure = fn
 }
 
 // Ensure re-runs the init factory and swaps in a fresh config if it succeeds.
 // Safe to call after system convergence (EnsureBloudOAuthApp is idempotent).
-func (r *authConfigRef) Ensure() {
+func (r *AuthRef) Ensure() {
 	if r == nil || r.ensure == nil {
 		return
 	}
 	if cfg := r.ensure(); cfg != nil {
 		r.Set(cfg)
 	}
+}
+
+// NewAuthentikClient builds the internal identity-provider client from the
+// settings the router uses. It returns nil when the instance is not
+// configured for Authentik: that is how "no SSO" is represented, rather
+// than an error.
+func NewAuthentikClient(authentikPort int, authentikToken, baseDomain string) *authentik.Client {
+	if authentikToken == "" || authentikPort <= 0 {
+		return nil
+	}
+	internalURL := fmt.Sprintf("http://localhost:%d", authentikPort)
+	return authentik.NewClient(internalURL, authentikToken).WithUserEmailDomain(baseDomain)
+}
+
+// NewAuthRef builds the live handle on the dashboard's OIDC config, with the
+// re-init factory attached and the initial load performed.
+//
+// It is exported because the handle is now built outside the router. main.go
+// constructs it, hands ref.Ensure to the orchestrator builder as the
+// host-change hook, and passes the same ref to the server. Leaving the router
+// to conjure it internally is what kept the orchestrator's construction
+// inside the HTTP layer.
+func NewAuthRef(
+	client *authentik.Client,
+	sessionStore store.SessionStoreInterface,
+	cfg ServerConfig,
+	logger *slog.Logger,
+) *AuthRef {
+	ref := newAuthRef(nil)
+	ref.SetEnsure(func() *AuthConfig {
+		return initAuthHelper(context.Background(), client, sessionStore, cfg, logger)
+	})
+	ref.Set(initAuthHelper(context.Background(), client, sessionStore, cfg, logger))
+	return ref
 }
 
 // isLocalRequest reports whether the request's source address is a trusted
@@ -321,7 +356,7 @@ func (f *fakeSessionStore) Delete(sessionID string) error {
 
 type authModule struct {
 	authentikClient AuthentikClientInterface
-	authConfig      *authConfigRef
+	authConfig      *AuthRef
 	prefsStore      store.PreferencesStoreInterface
 	sessionStore    sessionStoreInterface
 	logger          *slog.Logger
@@ -344,7 +379,7 @@ type authModule struct {
 // request's Host header.
 func NewAuthModule(
 	client AuthentikClientInterface,
-	cfg *authConfigRef,
+	cfg *AuthRef,
 	prefsStore store.PreferencesStoreInterface,
 	sessStore sessionStoreInterface,
 	logger *slog.Logger,

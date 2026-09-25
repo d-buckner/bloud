@@ -13,6 +13,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/api"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/appconfig"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
@@ -21,6 +22,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/wire"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -112,8 +114,20 @@ func runServer() {
 	// Event bus: shared between the API (SSE streams) and background consumers.
 	eventsBus := eventbus.New()
 
-	// Create HTTP server (orchestrator created + started inside)
-	server := api.NewServer(database, api.ServerConfig{
+	// The stores the orchestrator and the API share. They are built once, here,
+	// and the same pointers go to both: the catalog refresh endpoint has to
+	// refresh the cache the orchestrator reads, and app-status writes have to
+	// fire the change hook the SSE stream listens to.
+	appStore := store.NewAppStore(database)
+	catalogCache := catalog.NewMemoryCache()
+	if err := catalogCache.Refresh(catalog.NewLoader(cfg.AppsDir)); err != nil {
+		logger.Error("failed to load the app catalog", "apps_dir", cfg.AppsDir, "error", err)
+		os.Exit(1)
+	}
+	tailnetStore := store.NewTailnetStore(database)
+	remoteAppStore := store.NewRemoteAppStore(database)
+
+	serverCfg := api.ServerConfig{
 		RefreshAuthentikToken: func() string { return cfg.ReadAuthentikToken(logger) },
 		AppsDir:               cfg.AppsDir,
 		DataDir:               cfg.DataDir,
@@ -138,7 +152,61 @@ func runServer() {
 		Registry:              registry,
 		TemplateVars:          templateVars,
 		Secrets:               cfg.Secrets,
-	}, logger)
+		AppStore:              appStore,
+		CatalogCache:          catalogCache,
+		TailnetStore:          tailnetStore,
+		RemoteAppStore:        remoteAppStore,
+	}
+
+	// The auth ref exists before the orchestrator because the orchestrator's
+	// host-change hook re-ensures the dashboard OAuth app. The hook crosses
+	// into the builder as a plain func(), so wire never imports the API
+	// package.
+	authClient := api.NewAuthentikClient(cfg.AuthentikPort, cfg.AuthentikToken, cfg.BaseDomain)
+	authRef := api.NewAuthRef(authClient, store.NewSessionStore(database), serverCfg, logger)
+	serverCfg.Authentik = authClient
+	serverCfg.AuthRef = authRef
+
+	// One builder owns the orchestrator wiring. Nothing else constructs one.
+	out, err := wire.Build(wire.Input{
+		Logger:            logger,
+		DB:                database,
+		AppStore:          appStore,
+		CatalogCache:      catalogCache,
+		Registry:          registry,
+		ContainerRuntime:  runtime,
+		EventsBus:         eventsBus,
+		Authentik:         authClient,
+		TailnetStore:      tailnetStore,
+		HostStore:         hostStore,
+		Hosts:             hosts,
+		AppsDir:           cfg.AppsDir,
+		DataDir:           cfg.DataDir,
+		TraefikDynamicDir: cfg.TraefikDynamicDir,
+		TraefikPort:       cfg.TraefikPort,
+		TSAuthKey:         cfg.TSAuthKey,
+		LDAPOutput:        cfg.LDAPOutput(),
+		TemplateVars:      templateVars,
+		SSOBaseURL:        cfg.SSOBaseURL,
+		SSOHostSecret:     cfg.SSOHostSecret,
+		SSOAuthentikURL:   cfg.SSOAuthentikURL,
+		SSOIssuerURL:      cfg.SSOIssuerURL,
+		Secrets:           cfg.Secrets,
+		OnHostsChanged:    authRef.Ensure,
+	})
+	if err != nil {
+		logger.Error("failed to build the orchestrator", "error", err)
+		os.Exit(1)
+	}
+	serverCfg.Orchestrator = out.Orchestrator
+
+	// The intent loop runs under its own cancellable context so the shutdown
+	// path stops it deliberately instead of letting it outlive the process.
+	orchCtx, stopOrchestrator := context.WithCancel(context.Background())
+	defer stopOrchestrator()
+	go out.Orchestrator.Start(orchCtx)
+
+	server := api.NewServer(database, serverCfg, logger)
 
 	// Open the listener before convergence. Until the orchestrator reports
 	// ready the server answers with a static loading page (and 503 for /api),

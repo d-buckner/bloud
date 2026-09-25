@@ -17,6 +17,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
 )
@@ -32,7 +33,7 @@ type Server struct {
 	appStore       appStoreHelper
 	orch           *orchestrator.Orchestrator
 	remoteAppStore store.RemoteAppStoreInterface
-	authConfig     *authConfigRef
+	authConfig     *AuthRef
 	logger         *slog.Logger
 }
 
@@ -87,17 +88,59 @@ type ServerConfig struct {
 	// EventsBus is the shared event bus (SSE streams + app-change
 	// publishing). Nil creates one internally.
 	EventsBus *eventbus.Bus
+
+	// Orchestrator is the wired orchestrator the caller built (see
+	// internal/wire). When set the router uses it as-is and never constructs
+	// one, so the HTTP layer holds no orchestrator wiring knowledge.
+	Orchestrator *orchestrator.Orchestrator
+
+	// Authentik is the internal identity-provider client. When nil the
+	// router builds one from AuthentikToken and AuthentikPort, which is the
+	// path tests take.
+	Authentik *authentik.Client
+
+	// AuthRef is the live handle on the dashboard's OIDC config. main.go
+	// builds it before the orchestrator so the same ref backs both the
+	// host-change hook and the auth module. When nil the router builds one.
+	AuthRef *AuthRef
+
+	// The stores below are shared instances, not copies. The orchestrator and
+	// the API must read and write the same rows through the same objects: the
+	// catalog refresh endpoint has to refresh the cache the orchestrator
+	// reads, and app-status writes have to fire the change hook the SSE
+	// stream listens to. main.go builds them once and hands the same
+	// pointers to both. When nil the router constructs its own, which is the
+	// path tests take.
+	AppStore       store.AppStoreInterface
+	CatalogCache   catalog.CacheInterface
+	TailnetStore   *store.TailnetStore
+	RemoteAppStore store.RemoteAppStoreInterface
 }
 
 // NewServer creates a new HTTP server instance. It delegates dependency
 // initialization and route wiring to NewRouter, then returns a Server
 // with the necessary fields populated for main.go.
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
-	remoteAppStore := store.NewRemoteAppStore(db)
-	authRef := newAuthConfigRef(nil)
+	remoteAppStore := cfg.RemoteAppStore
+	if remoteAppStore == nil {
+		remoteAppStore = store.NewRemoteAppStore(db)
+	}
+
+	authClient := cfg.Authentik
+	if authClient == nil {
+		authClient = NewAuthentikClient(cfg.AuthentikPort, cfg.AuthentikToken, cfg.BaseDomain)
+	}
+	authRef := cfg.AuthRef
+	if authRef == nil {
+		authRef = NewAuthRef(authClient, store.NewSessionStore(db), cfg, logger)
+	}
+
 	router, orch := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.remoteAppStore = remoteAppStore
 		o.authConfig = authRef
+		o.appStore = cfg.AppStore
+		o.catalog = cfg.CatalogCache
+		o.tailnetStore = cfg.TailnetStore
 	})
 
 	s := &Server{
