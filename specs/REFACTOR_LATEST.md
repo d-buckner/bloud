@@ -137,7 +137,18 @@ minutes produces the error, and reverting it clears it.
    repayment-plan section 3 marked done.
    → verify: `npm run check:docs-links && npm run lint:prose`
 
-10. Run the fast tier and the race detector over the touched packages.
+10. Raise the startup convergence gate so it cannot be tripped by a single
+    node. Raising `DefaultPostStartBudget` to 10 minutes made the hardcoded
+    10-minute startup gate in `waitForSystemConvergence` smaller than one
+    node's own budget: a node that spent its full budget would trip the
+    startup timeout and `os.Exit(1)` the whole control plane, which is a
+    worse blast radius than the 150 seconds it replaced. The gate is now
+    `appclient.MaxWaitBudget + 5 * time.Minute`, derived from the same
+    constant so the two cannot drift, with a test that fails if the gate is
+    ever set at or below the per-node budget.
+    → verify: `cd services/host-agent && go test ./cmd/host-agent/... -run StartupGate`
+
+11. Run the fast tier and the race detector over the touched packages.
     → verify: `./bloud validate --tier fast` and
     `cd services/host-agent && go test -race ./pkg/appclient/... ./internal/engine/orchestrator/...`
 
@@ -165,6 +176,13 @@ minutes produces the error, and reverting it clears it.
   other way round would be an import cycle. The orchestrator's
   `DefaultPostStartBudget` is defined as `appclient.MaxWaitBudget`, so the
   two ceilings cannot drift.
+- The startup convergence gate is derived from the same constant
+  (`MaxWaitBudget + 5m`) rather than staying an independent literal. Raising
+  the per-node budget without touching the gate would have made the gate the
+  smallest number in the relationship, so one slow or hung node could trip
+  it and take the control plane down. Three timeouts that describe one
+  quantity now come from one place: the app's `Within`, the node's
+  `PostStartBudget`, and the startup gate.
 - An over-budget `Within()` fails at `Wait` time rather than being clamped.
   Clamping reproduces the original sin: a declared number that is not what
   actually happens.

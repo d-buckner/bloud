@@ -116,7 +116,7 @@ func TestWithin_AboveMaxWaitBudgetFailsAtWait(t *testing.T) {
 	c := New(Spec{Name: "test", BaseURL: "http://localhost"})
 	c.WithSleeper(func(time.Duration) {})
 
-	err := c.GET("/x").Within(MaxWaitBudget+time.Minute).
+	err := c.GET("/x").Within(MaxWaitBudget + time.Minute).
 		Ready(StatusIs(http.StatusOK)).
 		Wait(context.Background())
 

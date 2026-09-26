@@ -23,8 +23,21 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/wire"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
+
+// systemConvergenceTimeout bounds how long the control plane waits for the
+// first convergence pass before giving up on startup.
+//
+// It is derived from the per-node PostStart budget rather than picked
+// independently, because the two are coupled: the budget is
+// appclient.MaxWaitBudget, so a gate set at or below it would let a single
+// node spending its full budget trip the startup timeout and take the whole
+// control plane down. That is a worse failure than the per-node ERROR the
+// budget exists to produce. The margin is for the other levels that have to
+// converge in the same window.
+const systemConvergenceTimeout = appclient.MaxWaitBudget + 5*time.Minute
 
 func main() {
 	// Check for subcommands
@@ -291,13 +304,13 @@ func buildTemplateVars(cfg *config.Config) *configurator.TemplateVars {
 
 // waitForSystemConvergence blocks until the orchestrator reports ready and the
 // system apps pass their health check, then initialises auth. It aborts the
-// process on a failed health check or a 10-minute timeout. The listener is
-// already open here, but bootstrapGate keeps the API unavailable until this
-// returns: the API must not serve before the system apps it depends on are
-// running.
+// process on a failed health check or a systemConvergenceTimeout. The
+// listener is already open here, but bootstrapGate keeps the API unavailable
+// until this returns: the API must not serve before the system apps it depends
+// on are running.
 func waitForSystemConvergence(server *api.Server, logger *slog.Logger) {
 	logger.Info("waiting for system apps to converge")
-	readyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	readyCtx, cancel := context.WithTimeout(context.Background(), systemConvergenceTimeout)
 	defer cancel()
 	select {
 	case <-server.OrchestratorReady():
