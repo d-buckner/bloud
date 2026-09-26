@@ -21,12 +21,35 @@ const (
 	outcomeFatal
 )
 
+// requestContext derives this call's per-request deadline: the Timeout()
+// override when set, otherwise the client default. The caller's context is the
+// parent, so a caller cancellation always wins over the request deadline, and
+// the caller's context (not this derived one) is what decides whether a failure
+// is terminal.
+func (x *Call) requestContext(caller context.Context) (context.Context, context.CancelFunc) {
+	d := x.timeoutOverride
+	if d <= 0 {
+		d = x.c.timeout
+	}
+	if d <= 0 {
+		return caller, func() {}
+	}
+	return context.WithTimeout(caller, d)
+}
+
 // attemptOnce performs a single request and classifies it. On a transient or
 // fatal outcome it returns an *HTTPError; on success/alreadyDone it returns a
 // result. A 401 with a token source triggers invalidate + one refetch + retry
 // (the behavior no configurator has today) before surfacing the error.
+//
+// ctx is the caller's context. The per-request deadline is derived from it and
+// is never consulted for terminality: exceeding it is a transient failure, so a
+// slow attempt cannot end a readiness wait that still has budget left.
 func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
-	req, err := x.buildRequest(ctx)
+	reqCtx, cancel := x.requestContext(ctx)
+	defer cancel()
+
+	req, err := x.buildRequest(reqCtx)
 	if err != nil {
 		return result{}, err
 	}
@@ -117,7 +140,10 @@ func retryAfterOf(err error) time.Duration {
 // attemptStream performs one request and, on a 2xx outcome, streams the body
 // through consume. Classification is status-only (no body predicates).
 func (x *Call) attemptStream(ctx context.Context, attempt int, consume func(io.Reader) error) error {
-	req, err := x.buildRequest(ctx)
+	reqCtx, cancel := x.requestContext(ctx)
+	defer cancel()
+
+	req, err := x.buildRequest(reqCtx)
 	if err != nil {
 		return err
 	}

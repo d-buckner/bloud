@@ -84,8 +84,10 @@ func New(spec Spec) *Client {
 	c.transport = transport
 	c.http = &http.Client{
 		Transport: transport,
-		Timeout:   c.timeout,
-		Jar:       spec.Jar,
+		// No client-level Timeout: the per-request deadline is applied per
+		// attempt in requestContext, so a call's Timeout() can both shorten
+		// and extend past the default instead of being capped by it.
+		Jar: spec.Jar,
 	}
 	if spec.FollowRedirects != nil && !*spec.FollowRedirects {
 		c.http.CheckRedirect = func(*http.Request, []*http.Request) error {

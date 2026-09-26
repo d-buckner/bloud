@@ -31,7 +31,7 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *hermesAPI {
 func (a *hermesAPI) waitDashboard(ctx context.Context) error {
 	return a.cl.GET("/api/health").
 		Interval(2 * time.Second).
-		Timeout(5 * time.Minute).
+		Within(5 * time.Minute).
 		Ready(appclient.StatusIs(http.StatusOK)).
 		Wait(ctx)
 }
@@ -51,7 +51,7 @@ func (a *hermesAPI) waitSelfHostedProvider(ctx context.Context) error {
 	var st dashboardStatus
 	return a.cl.GET("/api/status").
 		Interval(2 * time.Second).
-		Timeout(5 * time.Minute).
+		Within(5 * time.Minute).
 		Ready(appclient.DecodeInto(&st, func() bool {
 			return st.AuthRequired && hasSelfHostedProvider(st.AuthProviders)
 		})).

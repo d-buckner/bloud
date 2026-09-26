@@ -13,10 +13,20 @@ import (
 type ReadyFunc func(status int, body []byte) bool
 
 // Ready switches the call into wait mode with the given readiness predicate.
+//
+// A wait defaults to WaitPolicy, not to the client's DefaultRetry: waiting out
+// an app's first-boot migrations is a different job from riding out a network
+// blip, and the short default attempt budget is what used to land a slow-booting
+// app in a terminal ERROR that the orchestrator never retries. An explicit
+// WithRetry, set before or after this call, still wins.
 func (x *Call) Ready(p ReadyFunc) *Call {
 	x.ready = p
 	if x.stable <= 0 {
 		x.stable = 1
+	}
+	if x.retryOverride == nil {
+		wp := WaitPolicy
+		x.retryOverride = &wp
 	}
 	return x
 }
@@ -51,6 +61,11 @@ func (x *Call) TolerateFailures() *Call {
 func (x *Call) Wait(ctx context.Context) error {
 	if x.ready == nil {
 		return fmt.Errorf("%s: Wait called without a Ready predicate", x.c.name)
+	}
+	// A declared budget the framework cannot honour is a caller bug, not a
+	// runtime condition to discover by truncation. Fail loudly here.
+	if x.budgetErr != nil {
+		return x.budgetErr
 	}
 	policy := x.effectivePolicy()
 	if x.interval > 0 {

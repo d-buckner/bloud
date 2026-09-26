@@ -39,6 +39,17 @@ var DefaultRetry = RetryPolicy{
 	Jitter:      0.2,
 }
 
+// MaxWaitBudget is the longest total readiness wait an app may declare with
+// Within. The orchestrator's default PostStart budget is this same value, so
+// a wait declared longer than it would be cancelled by the framework before
+// its own deadline could ever be reached: the declared budget would be a lie
+// again, which is the exact failure this package had before.
+//
+// The apps/configtest harness asserts every declared Within value against
+// this constant, so raising an app's wait past the ceiling fails CI instead
+// of silently truncating at runtime.
+const MaxWaitBudget = 10 * time.Minute
+
 // WaitPolicy is the default for calls marked with Ready(): long and generous,
 // because the job is "wait out an app boot", not "paper over a blip".
 var WaitPolicy = RetryPolicy{

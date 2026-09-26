@@ -7,7 +7,9 @@
 > verified live against a deployed host-agent.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-26 (reconciliation audit against the working tree).
+**Last updated:** 2026-09-25 (item 6 closed: the readiness/wait contract is
+now honoured, and the wait budget is single-sourced and harness-enforced).
+Prior update 2026-09-26 (reconciliation audit against the working tree).
 The ranked inventory is whole again: items 5-10 are restored (the table
 previously jumped from 4 to 11, hiding the still-open P1 items 6, 8, 9 and
 10, plus the closed 5 and 7). Item 6's `WaitPolicy` note is corrected: it
@@ -235,7 +237,7 @@ below (C1-C14) rather than ranked here.
 | 3 | ~~`MemoryCache` data race → unrecoverable fatal~~ **FIXED 2026-09-20 (PR 6)**: RWMutex guards all access; `Refresh` builds off-lock and swaps under the write lock; race test runs in the `fast` tier | P1→closed | `catalog/cache.go`; `catalog/cache_test.go`; `validation.yaml` (`go-host-agent-race`) |
 | 4 | ~~Intent queue exits permanently on a stale token~~ **FIXED 2026-09-20 (PR 6)**: `WaitAndDrain` returns `([]Intent, bool)`; `Start` exits only on cancellation; empty live batches are skipped; liveness exposed via `Stopped()`/`LastConverged()` | P1→closed | `queue.go:77-125`; `orchestrator.go` `Start` loop + loop-liveness tests |
 | 5 | ~~SQLite pragmas applied with a one-off `db.Exec` reached exactly one pooled connection; every other connection ran `foreign_keys=OFF` (cascades stop) and `busy_timeout=0` (writes fail `SQLITE_BUSY` immediately)~~ **FIXED 2026-09-20 (PR 7)**: the pragmas ride the DSN so the modernc driver applies them at every connection open; multi-connection tests pin the cascade and the busy-wait | P1→closed | `db/db.go` `pragmaQuery`/`dsn`; `db/pragmas_test.go` |
-| 6 | `appclient.Call.Timeout()` is a no-op: `timeoutOverride` is written and never read, so immich's and affine's declared 5-minute and 3-minute first-boot waits silently run on the 15 s client default plus `DefaultRetry`'s 30 s deadline and can land a cold-boot node in terminal ERROR. `WaitPolicy` is documented as the ready-path default but is not wired as one: `Wait()` consults only `retryOverride`/`c.retry`, so each app must opt in explicitly (paperless-ngx and vaultwarden do; jellyfin, immich and affine do not) | P1 | `pkg/appclient/call.go:30,118`; `pkg/appclient/waits.go:57`; `pkg/appclient/retry.go:42-51`; `apps/immich/api.go:33`; `apps/affine/api.go:31,58` |
+| 6 | ~~`appclient.Call.Timeout()` is a no-op: `timeoutOverride` is written and never read, so immich's and affine's declared 5-minute and 3-minute first-boot waits silently run on the 15 s client default plus `DefaultRetry`'s 30 s deadline and can land a cold-boot node in terminal ERROR. `WaitPolicy` is documented as the ready-path default but is not wired as one~~ **FIXED 2026-09-25**: `Timeout()` is now a real per-request deadline (applied per attempt, and able to extend past the client default because the client-level `http.Client.Timeout` is gone); `Ready()` now actually defaults to `WaitPolicy`; and the total wait budget moved to a new `Within(d)`, which is what the apps' long first-boot waits were always trying to say. A per-request timeout is transient, never terminal, so one slow probe cannot end a wait. `DefaultPostStartBudget` was raised to `MaxWaitBudget` (150 s cut the declared 5-minute waits short anyway). Enforced by a harness rule: no declared `Within()` may exceed `MaxWaitBudget`, and an unevaluable budget fails the check rather than skipping it | P1→closed | `pkg/appclient/call.go` (`Timeout`, `Within`); `pkg/appclient/attempt.go` (`requestContext`); `pkg/appclient/waits.go` (`Ready`, `Wait`); `pkg/appclient/retry.go` (`MaxWaitBudget`); `apps/configtest/waitbudget_test.go`; `pkg/appclient/wait_budget_test.go` |
 | 7 | ~~Home Assistant's asset `SkipIf` never matched (release tag `v1.2.1` vs the manifest's bare `1.2.1`) → re-download plus destructive container recreate on every pass~~ **FIXED 2026-09-25**: the constant is now the bare-semver manifest value, and the conformance harness caught the mismatch against the real manifest | P1→closed | `apps/homeassistant/configurator.go:51` |
 | 8 | Container drift is never repaired while the process is alive: `SyncContainerState` flips the store to `stopped` but leaves the in-memory node `RUNNING`, so `collectWorkForLevel` never re-drives it, and multi-container apps are skipped entirely (`len(defs) != 1`) | P1 | `orchestrator_containers.go` `SyncContainerState`; `pipeline.go` `populateGraphNodes` |
 | 9 | `Ensure` force-removes the running container *before* pulling: a registry outage or digest mismatch leaves the app with no container and no rollback, and the recreate path skips `Remove`'s `io.bloud.managed` ownership guard | P1 | `internal/container/runtime.go` |
@@ -628,15 +630,31 @@ surface can now see a dead orchestrator (`Stopped()` + `LastConverged()`
 feed `CheckSystemHealth`); the rest of PR 11's degraded-payload /
 startup-gate scope is still open.
 
-### 3. Make declared intent real (P1, items 6-7): half done 2026-09-25
+### 3. Make declared intent real (P1, items 6-7): DONE 2026-09-25
 
-The Home Assistant half is closed: `oidcComponentVersion` now carries the
-bare-semver manifest value (`1.2.1`), so `SkipIf` matches and the per-pass
-re-download plus destructive container recreate are gone (2026-09-25; the
-conformance harness caught the mismatch against the real manifest). Still
-open: honour `Call.Timeout` (the override is still written and never read)
-and wire `WaitPolicy` as the ready-path default, or delete both and fail
-loudly on an unsupported option.
+Both halves are closed. The Home Assistant half landed first:
+`oidcComponentVersion` now carries the bare-semver manifest value (`1.2.1`),
+so `SkipIf` matches and the per-pass re-download plus destructive container
+recreate are gone (the conformance harness caught the mismatch against the
+real manifest).
+
+The appclient half closed the same day. `Call.Timeout` is honoured as a
+per-request deadline, `Ready()` defaults to `WaitPolicy` as its own doc
+always claimed, and the total wait budget is a distinct `Within(d)`. The
+choice between "honour it" and "delete it and fail loudly" turned out not to
+be binary: honouring `Timeout` needed a second method anyway, because
+"how long one probe may take" and "how long the whole wait may take" are
+different numbers and the old single method was being used to mean the
+second one.
+
+The failure this was preventing is not a slow boot, it is a permanently dead
+app: a wait that gives up at 30 s returns an error from `PostStart`, the
+node goes to `ERROR`, and `collectWorkForLevel` skips `ERROR` nodes forever
+("ERROR is terminal: never retry without an explicit status reset"). Immich,
+AFFiNE and Hermes all declared a five-minute budget that did nothing about
+it. The ceiling is now single-sourced (`MaxWaitBudget` == the orchestrator's
+`DefaultPostStartBudget`) and the harness refuses a declared wait that could
+not run.
 
 ### 4. Durability substrate (P1, item 5): DONE 2026-09-20 (PR 7)
 
