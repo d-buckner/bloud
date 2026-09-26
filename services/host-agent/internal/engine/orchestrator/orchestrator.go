@@ -26,6 +26,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -35,7 +36,15 @@ const maxOrchestratorEvents = 20
 // DefaultPostStartBudget bounds a node's PostStart finalization when the
 // configured OrchestratorConfig.PostStartBudget is zero. It replaces the
 // per-app detach-and-timeout the apps used to implement themselves.
-const DefaultPostStartBudget = 150 * time.Second
+//
+// It is appclient.MaxWaitBudget rather than a smaller number of its own
+// choosing: an app's declared readiness wait (appclient.Within) has to fit
+// under this ceiling or the framework cancels it before its own deadline can
+// fire, which is the same silent-truncation failure the wait budget used to
+// have. The two constants are deliberately the same value, pinned by the
+// apps/configtest harness rule that checks every declared wait against
+// MaxWaitBudget.
+const DefaultPostStartBudget = appclient.MaxWaitBudget
 
 // OrchestratorStatus is a snapshot of the orchestrator's current state for
 // the developer API.

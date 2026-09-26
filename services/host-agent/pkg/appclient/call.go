@@ -28,9 +28,12 @@ type Call struct {
 	headers     map[string]string
 
 	timeoutOverride time.Duration
-	anonymous       bool
-	buildErr        error
-	tokenRetried    bool
+	// budgetErr records a declared wait budget the framework cannot honour.
+	// Wait surfaces it instead of letting the wait be truncated in silence.
+	budgetErr    error
+	anonymous    bool
+	buildErr     error
+	tokenRetried bool
 
 	// Outcome contract (where idempotency is declared).
 	okStatuses       []int
@@ -113,9 +116,37 @@ func (x *Call) Header(k, v string) *Call {
 	return x
 }
 
-// Timeout overrides the client's per-request timeout for this call.
+// Timeout sets the per-request deadline for this call: how long a single HTTP
+// exchange may take before it is written off. It is not a wait budget; for the
+// total time a readiness poll may spend, use Within.
+//
+// The deadline applies to each attempt separately. Exceeding it is a transient
+// failure, never a terminal one: the caller's own context owns whether the call
+// or wait is over, so one slow poll iteration cannot end a readiness wait.
 func (x *Call) Timeout(d time.Duration) *Call {
 	x.timeoutOverride = d
+	return x
+}
+
+// Within sets the total elapsed budget of a readiness wait, the wall-clock
+// ceiling across all of its polls. It is the counterpart to Timeout, which
+// bounds one request: `Timeout(10s) + Within(5m)` means "each probe may take
+// ten seconds, and the whole wait may take five minutes".
+//
+// It sets the policy Deadline, so it composes with WithRetry and Interval.
+// A value above MaxWaitBudget is reported at Wait time rather than being
+// silently truncated by the framework's own PostStart ceiling.
+func (x *Call) Within(d time.Duration) *Call {
+	if x.retryOverride == nil {
+		wp := WaitPolicy
+		x.retryOverride = &wp
+	}
+	x.retryOverride.Deadline = d
+	if d > MaxWaitBudget {
+		x.budgetErr = fmt.Errorf(
+			"%s: wait budget %s exceeds MaxWaitBudget %s: the framework cancels PostStart at that ceiling, so this wait could never expire on its own",
+			x.c.name, d, MaxWaitBudget)
+	}
 	return x
 }
 

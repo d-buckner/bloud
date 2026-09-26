@@ -30,7 +30,7 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *immichAPI {
 func (a *immichAPI) waitServer(ctx context.Context) error {
 	return a.cl.GET("/api/server/ping").
 		Interval(2 * time.Second).
-		Timeout(5 * time.Minute).
+		Within(5 * time.Minute).
 		Ready(appclient.StatusIs(http.StatusOK)).
 		Wait(ctx)
 }
