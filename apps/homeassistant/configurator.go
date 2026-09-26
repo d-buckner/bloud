@@ -40,9 +40,18 @@ const (
 // Pinned hass-oidc-auth release. INTEGRATION.md "Verified constants" records
 // the sha256 provenance. Fetched at PreStart; never vendored.
 const (
-	oidcComponentVersion = "v1.2.1"
-	oidcComponentURL     = "https://github.com/christiaangoossens/hass-oidc-auth/releases/download/v1.2.1/hass-oidc-auth.zip"
-	oidcComponentSHA256  = "e5badaaacaa63cfd6fe733924a05e76d75058836190398598fb24de57cd47ccd"
+	// oidcComponentTag is the GitHub release tag the asset URL points at.
+	oidcComponentTag = "v1.2.1"
+
+	// oidcComponentVersion is what the shipped manifest.json reports as its
+	// `version`, which is bare semver, not the tag. SkipIf compares against
+	// this value, so putting the tag here would never match: the component
+	// would re-download and PreStart would request a container recreate on
+	// every single reconciliation pass. The conformance harness caught this.
+	oidcComponentVersion = "1.2.1"
+
+	oidcComponentURL    = "https://github.com/christiaangoossens/hass-oidc-auth/releases/download/" + oidcComponentTag + "/hass-oidc-auth.zip"
+	oidcComponentSHA256 = "e5badaaacaa63cfd6fe733924a05e76d75058836190398598fb24de57cd47ccd"
 )
 
 // Marker comments delimiting Bloud's block inside the user-owned

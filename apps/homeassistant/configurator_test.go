@@ -107,8 +107,12 @@ func TestPreStartCreatesDirs(t *testing.T) {
 }
 
 func TestPreStartInstallsComponentAndWritesBlock(t *testing.T) {
+	// The fixture reports the version the real hass-oidc-auth manifest ships:
+	// bare semver, not the v-prefixed release tag. An earlier fixture used
+	// the tag, which matched the code's equally-wrong constant and hid the
+	// fact that the skip never fires against the real asset.
 	zipBody, sha := newZip(t, map[string]string{
-		"manifest.json": `{"domain":"auth_oidc","name":"OIDC Auth","version":"v1.2.1"}`,
+		"manifest.json": `{"domain":"auth_oidc","name":"OIDC Auth","version":"1.2.1"}`,
 		"__init__.py":   "# integration\n",
 	})
 	c := newTestConfigurator(t, zipBody, sha)
@@ -141,7 +145,7 @@ func TestPreStartInstallsComponentAndWritesBlock(t *testing.T) {
 
 func TestPreStartChecksumMismatchLeavesNoTree(t *testing.T) {
 	zipBody, _ := newZip(t, map[string]string{
-		"manifest.json": `{"domain":"auth_oidc","version":"v1.2.1"}`,
+		"manifest.json": `{"domain":"auth_oidc","version":"1.2.1"}`,
 	})
 	c := newTestConfigurator(t, zipBody, "000000000000000000000000000000000000000000000000000000000000000")
 	data := t.TempDir()
@@ -158,7 +162,7 @@ func TestPreStartChecksumMismatchLeavesNoTree(t *testing.T) {
 }
 
 func TestPreStartPreservesUserConfigAndUpdatesOnDrift(t *testing.T) {
-	zipBody, sha := newZip(t, map[string]string{"manifest.json": `{"domain":"auth_oidc","version":"v1.2.1"}`})
+	zipBody, sha := newZip(t, map[string]string{"manifest.json": `{"domain":"auth_oidc","version":"1.2.1"}`})
 	c := newTestConfigurator(t, zipBody, sha)
 	data := t.TempDir()
 	cfgDir := filepath.Join(data, "config")
@@ -191,7 +195,7 @@ func TestPreStartPreservesUserConfigAndUpdatesOnDrift(t *testing.T) {
 }
 
 func TestPreStartRemovesBlockWhenSSODisabled(t *testing.T) {
-	zipBody, sha := newZip(t, map[string]string{"manifest.json": `{"domain":"auth_oidc","version":"v1.2.1"}`})
+	zipBody, sha := newZip(t, map[string]string{"manifest.json": `{"domain":"auth_oidc","version":"1.2.1"}`})
 	c := newTestConfigurator(t, zipBody, sha)
 	data := t.TempDir()
 	cfgDir := filepath.Join(data, "config")
