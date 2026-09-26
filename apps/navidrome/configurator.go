@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/bootstrap"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -117,29 +118,26 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 
 // --- Admin bootstrap ---
 
-// ensureAdminAndLogin ensures the bootstrap admin exists and returns a valid token.
+// ensureAdminAndLogin ensures the internal admin account exists and returns a
+// valid token. The sequence and the failure policy live in pkg/bootstrap; this
+// only maps them onto Navidrome's API.
+//
+// An empty token means the account could not be verified. The caller must skip
+// the work that needs an admin rather than fail the node: SSO users do not
+// depend on this account, and ERROR here would be terminal.
 func (c *Configurator) ensureAdminAndLogin(ctx context.Context) (string, error) {
-	if c.secrets == nil {
-		return "", fmt.Errorf("no secrets provider")
-	}
-	password, err := c.secrets.GenerateAppAdminPassword(appName)
-	if err != nil {
-		return "", fmt.Errorf("generating admin password: %w", err)
-	}
-
-	// Fast path: try logging in with existing credentials.
-	if token, err := c.navi.login(ctx, bootstrapAdminUsername, password); err == nil {
-		return token, nil
-	}
-
-	// No admin yet: bootstrap the first admin user.
-	c.logger.Info("bootstrapping admin user")
-	token, err := c.navi.createAdmin(ctx, bootstrapAdminUsername, password)
-	if err != nil {
-		return "", fmt.Errorf("creating admin: %w", err)
-	}
-	c.logger.Info("admin user created")
-	return token, nil
+	token, _, err := bootstrap.Ensure(ctx, c.logger, appName, c.secrets,
+		bootstrap.Account{Username: bootstrapAdminUsername},
+		bootstrap.Ops{
+			Login: func(ctx context.Context, acct bootstrap.Account, password string) (string, error) {
+				return c.navi.login(ctx, acct.Username, password)
+			},
+			Create: func(ctx context.Context, acct bootstrap.Account, password string) error {
+				_, err := c.navi.createAdmin(ctx, acct.Username, password)
+				return err
+			},
+		})
+	return token, err
 }
 
 // authentikToken returns the API token Authentik publishes under its `sso`

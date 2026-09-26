@@ -564,7 +564,10 @@ func TestPostStart_FreshInstallCreatesAdminAndVerifiesProvider(t *testing.T) {
 	assert.Equal(t, form.Get("password1"), form.Get("password2"))
 	assert.Equal(t, app.csrf, form.Get("csrfmiddlewaretoken"), "the form token must be the one the page issued")
 	assert.True(t, app.csrfCookieSeen, "the token must travel with the cookie it was issued against")
-	assert.Equal(t, 1, app.tokenPosts, "the created account must be verified through the API")
+	// Two token requests on a fresh install: the bootstrap's opening probe
+	// (which is what discovers the account does not exist yet) and the
+	// verifying login after signup. Later passes cost the probe alone.
+	assert.Equal(t, 2, app.tokenPosts, "the created account must be verified through the API")
 	assert.Equal(t, 1, app.providerPosts, "the OIDC flow must be probed")
 	// The signup leaves a session behind; neither the provider form nor the API
 	// token request may carry it, or Django rejects both with a CSRF error.
@@ -637,7 +640,10 @@ func TestPostStart_DeclaresBaselineGroupOnFreshInstall(t *testing.T) {
 	for _, auth := range app.groupTokens {
 		assert.Equal(t, "Token "+fakeAPIToken, auth, "declaring the group must present the admin's token")
 	}
-	assert.Equal(t, 1, app.tokenPosts, "the admin token must be reused, not re-fetched")
+	// 2 = the bootstrap's opening probe plus the verifying login after
+	// signup. The point of the assertion holds: the group declaration reuses
+	// the token the bootstrap obtained rather than fetching one of its own.
+	assert.Equal(t, 2, app.tokenPosts, "the admin token must be reused, not re-fetched")
 }
 
 func TestPostStart_LeavesConvergedBaselineGroupAlone(t *testing.T) {

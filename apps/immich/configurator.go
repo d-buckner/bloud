@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/bootstrap"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
 )
@@ -118,31 +119,25 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 
 // PostStart bootstraps the server admin. Immich shows a first-admin
 // registration page until an admin exists, so SSO login would be unreachable
-// without this step. Idempotent: skips when the admin already logs in.
+// without this step. The sequence and the failure policy live in
+// pkg/bootstrap; this only maps them onto Immich's API, after the server is
+// reachable.
 func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
-	if c.secrets == nil {
-		return fmt.Errorf("no secrets provider")
-	}
-	password, err := c.secrets.GenerateAppAdminPassword(appName)
-	if err != nil {
-		return fmt.Errorf("generating admin password: %w", err)
-	}
-
 	if err := c.api.waitServer(ctx); err != nil {
 		return fmt.Errorf("waiting for immich server: %w", err)
 	}
 
-	// Fast path: admin already exists and the known password works.
-	if _, err := c.api.login(ctx, bootstrapAdminEmail, password); err == nil {
-		return nil
-	}
-
-	c.logger.Info("bootstrapping admin user")
-	if err := c.api.createAdmin(ctx, bootstrapAdminName, bootstrapAdminEmail, password); err != nil {
-		return fmt.Errorf("creating admin: %w", err)
-	}
-	c.logger.Info("admin user created")
-	return nil
+	_, _, err := bootstrap.Ensure(ctx, c.logger, appName, c.secrets,
+		bootstrap.Account{FullName: bootstrapAdminName, Email: bootstrapAdminEmail},
+		bootstrap.Ops{
+			Login: func(ctx context.Context, acct bootstrap.Account, password string) (string, error) {
+				return c.api.login(ctx, acct.Email, password)
+			},
+			Create: func(ctx context.Context, acct bootstrap.Account, password string) error {
+				return c.api.createAdmin(ctx, acct.FullName, acct.Email, password)
+			},
+		})
+	return err
 }
 
 // ensureMountMarkers creates the upload subfolders and .immich marker files
