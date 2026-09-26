@@ -192,10 +192,17 @@ func (r *PodmanRuntime) Remove(ctx context.Context, name string) error {
 	if err != nil || current == nil {
 		return err
 	}
-	if current.Labels[managedLabel] != "true" {
+	if !isManaged(current) {
 		return fmt.Errorf("refusing to remove unmanaged container %q", name)
 	}
 	return r.client.RemoveContainer(ctx, name, true)
+}
+
+// isManaged reports whether an inspected container carries Bloud's
+// ownership label. Every destructive path checks it, so a name collision
+// with a container Bloud did not create can never destroy it.
+func isManaged(details *podman.ContainerDetails) bool {
+	return details != nil && details.Labels[managedLabel] == "true"
 }
 
 func validateSpec(spec Spec) error {
