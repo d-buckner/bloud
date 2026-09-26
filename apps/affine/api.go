@@ -28,7 +28,7 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *affineAPI {
 func (a *affineAPI) waitServer(ctx context.Context) error {
 	return a.cl.GET("/info").
 		Interval(2 * time.Second).
-		Timeout(5 * time.Minute).
+		Within(5 * time.Minute).
 		Ready(appclient.StatusIs(http.StatusOK)).
 		Wait(ctx)
 }
@@ -55,7 +55,7 @@ func (a *affineAPI) waitForOIDCPreflight(ctx context.Context) error {
 		Anonymous().
 		JSON(map[string]string{"provider": "OIDC", "client": "web", "client_nonce": "bloud-poststart-check"}).
 		Interval(3 * time.Second).
-		Timeout(3 * time.Minute).
+		Within(3 * time.Minute).
 		Ready(func(s int, b []byte) bool {
 			return s == http.StatusOK && strings.Contains(string(b), "\"url\"")
 		}).
