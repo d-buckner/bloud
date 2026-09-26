@@ -7,7 +7,11 @@
 > verified live against a deployed host-agent.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-25 (item 6 closed: the readiness/wait contract is
+**Last updated:** 2026-09-27 (items 8 and 9 closed: drift is now written
+into the graph node instead of only into the store, so the reconciler acts
+on it, and `Ensure` pulls before it destroys. See "Already Paid" below and
+[`specs/REFACTOR_LATEST.md`](../../specs/REFACTOR_LATEST.md).)
+Prior update 2026-09-25 (item 6 closed: the readiness/wait contract is
 now honoured, and the wait budget is single-sourced and harness-enforced).
 Prior update 2026-09-26 (reconciliation audit against the working tree).
 The ranked inventory is whole again: items 5-10 are restored (the table
@@ -239,8 +243,8 @@ below (C1-C14) rather than ranked here.
 | 5 | ~~SQLite pragmas applied with a one-off `db.Exec` reached exactly one pooled connection; every other connection ran `foreign_keys=OFF` (cascades stop) and `busy_timeout=0` (writes fail `SQLITE_BUSY` immediately)~~ **FIXED 2026-09-20 (PR 7)**: the pragmas ride the DSN so the modernc driver applies them at every connection open; multi-connection tests pin the cascade and the busy-wait | P1→closed | `db/db.go` `pragmaQuery`/`dsn`; `db/pragmas_test.go` |
 | 6 | ~~`appclient.Call.Timeout()` is a no-op: `timeoutOverride` is written and never read, so immich's and affine's declared 5-minute and 3-minute first-boot waits silently run on the 15 s client default plus `DefaultRetry`'s 30 s deadline and can land a cold-boot node in terminal ERROR. `WaitPolicy` is documented as the ready-path default but is not wired as one~~ **FIXED 2026-09-25**: `Timeout()` is now a real per-request deadline (applied per attempt, and able to extend past the client default because the client-level `http.Client.Timeout` is gone); `Ready()` now actually defaults to `WaitPolicy`; and the total wait budget moved to a new `Within(d)`, which is what the apps' long first-boot waits were always trying to say. A per-request timeout is transient, never terminal, so one slow probe cannot end a wait. `DefaultPostStartBudget` was raised to `MaxWaitBudget` (150 s cut the declared 5-minute waits short anyway). Enforced by a harness rule: no declared `Within()` may exceed `MaxWaitBudget`, and an unevaluable budget fails the check rather than skipping it | P1→closed | `pkg/appclient/call.go` (`Timeout`, `Within`); `pkg/appclient/attempt.go` (`requestContext`); `pkg/appclient/waits.go` (`Ready`, `Wait`); `pkg/appclient/retry.go` (`MaxWaitBudget`); `apps/configtest/waitbudget_test.go`; `pkg/appclient/wait_budget_test.go` |
 | 7 | ~~Home Assistant's asset `SkipIf` never matched (release tag `v1.2.1` vs the manifest's bare `1.2.1`) → re-download plus destructive container recreate on every pass~~ **FIXED 2026-09-25**: the constant is now the bare-semver manifest value, and the conformance harness caught the mismatch against the real manifest | P1→closed | `apps/homeassistant/configurator.go:51` |
-| 8 | Container drift is never repaired while the process is alive: `SyncContainerState` flips the store to `stopped` but leaves the in-memory node `RUNNING`, so `collectWorkForLevel` never re-drives it, and multi-container apps are skipped entirely (`len(defs) != 1`) | P1 | `orchestrator_containers.go` `SyncContainerState`; `pipeline.go` `populateGraphNodes` |
-| 9 | `Ensure` force-removes the running container *before* pulling: a registry outage or digest mismatch leaves the app with no container and no rollback, and the recreate path skips `Remove`'s `io.bloud.managed` ownership guard | P1 | `internal/container/runtime.go` |
+| 8 | ~~Container drift is never repaired while the process is alive: `SyncContainerState` flips the store to `stopped` but leaves the in-memory node `RUNNING`, so `collectWorkForLevel` never re-drives it, and multi-container apps are skipped entirely (`len(defs) != 1`)~~ **FIXED 2026-09-27**: a node at `RUNNING` whose container is not running is reset to `INITIALIZING`, so `target != actual` and the normal path re-drives it in the same pass. The multi-container skip is gone; every declared container is inspected and each node is repaired independently. `ERROR` nodes are not touched (terminal by design), and uninstalling apps are excluded so drift repair cannot resurrect an app being removed | P1→closed | `orchestrator_containers.go` `SyncContainerState` / `repairDriftedNode`; `orchestrator_containers_test.go` |
+| 9 | ~~`Ensure` force-removes the running container *before* pulling: a registry outage or digest mismatch leaves the app with no container and no rollback, and the recreate path skips `Remove`'s `io.bloud.managed` ownership guard~~ **FIXED 2026-09-27**: the order is now `guard → pull → remove → create → start`, pinned by an explicit call-sequence assertion. The ownership check is extracted to one `isManaged` predicate that both destructive paths call, so no path can forget it | P1→closed | `internal/container/runtime.go` `Ensure` / `isManaged`; `runtime_test.go` |
 | 10 | The health surface is still blind to the runtime: a dead loop is now visible (`Stopped()`/`LastConverged()`, PR 6), but an unavailable Podman socket has no degraded signal, the startup gate is SQLite-only, and a failed system-app convergence still `os.Exit(1)`s the control plane | P1 | `internal/api/server.go` `checkSystemHealth`; `cmd/host-agent/main.go` `waitForSystemConvergence` |
 | 11 | ~~Two orchestrator wirings: the CLI `reconcile` path builds a different graph shape (per-`CatalogID`) and configures no store/runtime/catalog-graph, so it reports success while doing nothing~~ **FIXED 2026-09-25**: the CLI path was deleted for having no caller at all, and `internal/wire` is now the only place a `NewOrchestrator` call happens. Guarded by a config-completeness test. | P1→closed | `cli/distro.go` era `cmd/host-agent/configure.go` (deleted); `internal/wire/wire.go`; `internal/wire/completeness_test.go` |
 | 12 | ~~Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts~~ **FIXED 2026-09-25**: the second builder went with the CLI path. `orchestrator.buildAppState` is the only one, and it resolves SSO through the live host set. | P2→closed | `orchestrator.go` `buildAppState` / `resolveSSOURLs` |
@@ -462,6 +466,65 @@ Two claims in the history below do not hold up against the code:
 
 ## Already Paid
 
+### Reality matches intent for container drift and image pulls (2026-09-27, items 8-9)
+
+The invariant this closes: **a graph node must never claim `RUNNING` while
+its container is not running.** `collectWorkForLevel` drives all work off
+exactly one comparison, `TargetStatus != ActualStatus`, so any observation
+that contradicts a node's actual status has to be written into the node.
+Writing it into the store instead produces a system that knows something is
+wrong and can act on none of it.
+
+- **Drift is repaired, not just recorded** (`orchestrator_containers.go`).
+  `repairDriftedNode` resets a `RUNNING` node whose container is not
+  running to `INITIALIZING` with a reason, so the same convergence pass
+  re-dispatches the full lifecycle. Safety rests on invariant 2:
+  configurators are idempotent, so a re-drive is the normal case, not a
+  special one. `ERROR` is terminal and is deliberately not retried, and an
+  intermediate status means a drive is already in flight, so neither is a
+  drift candidate.
+- **Multi-container apps are covered.** The `len(defs) != 1` skip was
+  justified by a comment claiming their lifecycle was "tracked via graph
+  events, not this path". That division of labor did not exist, and the
+  skip excluded exactly the apps with sidecars (postgres, redis, ML) where
+  one dead container takes the app down. Each def is now inspected and each
+  node repaired independently; app-level status still aggregates through
+  the existing `allContainersRunning`.
+- **Uninstalling apps are excluded before any repair can fire**, so drift
+  detection cannot resurrect an app the user is removing, and an
+  uninspectable container is omitted rather than assumed gone, so a
+  transient runtime error cannot reset healthy nodes.
+- **`Ensure` pulls before it destroys** (`internal/container/runtime.go`).
+  The order is `guard → pull → remove → create → start`. A registry
+  outage, rate limit, or digest mismatch now fails while the previous
+  container is still running, instead of after it has been removed with
+  `force=true` and with no rollback.
+- **One ownership guard.** The `io.bloud.managed` check is extracted to
+  `isManaged` and called by both destructive paths. Previously `Remove`
+  enforced it and `Ensure` bypassed it, so the guard lived only where it
+  was not needed and a name collision outside Bloud was destroyed without
+  a look.
+
+Contract tests: drift on a single-container node, drift on one node of a
+multi-container app with the healthy node left untouched, `ERROR` not
+retried, uninstalling not re-driven, no reset when the container is
+genuinely running (so the repair cannot become a per-pass recreate loop),
+pull failure leaves the running container present and unremoved, unmanaged
+container refused on the recreate path, and the exact call sequence
+`pull, remove, create, start`.
+
+`TestSyncContainerState_MultiContainerSkipped` was deleted rather than
+adapted: it asserted the wrong contract, so preserving it in any form would
+have preserved the bug as a requirement.
+
+Plan: [`specs/REFACTOR_LATEST.md`](../../specs/REFACTOR_LATEST.md).
+
+*Still open from this area:* the live end-to-end check (`./bloud e2e
+lifecycle`, plus manually `podman rm -f apps-jellyfin` against a running
+host-agent and watching the next pass recreate it) has not been run; and
+item 10's visibility half remains, since a repaired drift is silent by
+design and an unavailable Podman socket still has no degraded signal.
+
 ### The engine's silent failures closed (2026-09-20, PR 6)
 
 The three crash/hang members of the silent-failure class, each with its
@@ -662,11 +725,17 @@ Pragmas moved into the DSN; the `Exec` loop deleted. Tests open the
 real `InitDB` path with 2+ connections and assert the cascade fires
 and the contended write waits. See "Already Paid" above.
 
-### 5. Make reality match intent (P1, items 8-9)
+### 5. Make reality match intent (P1, items 8-9): DONE 2026-09-27
 
-Reconcile container existence on every pass (or reset the node when a known
-container is gone), extend `SyncContainerState` to multi-container apps, and pull
-before removing in `Ensure`.
+Both halves landed. The reconciler now writes drift into the record the
+engine actually reads, and the container runtime no longer destroys a
+working container before it has the bytes to replace it.
+
+The framing that unlocked 9a is the invariant: `target != actual` is the
+only signal `collectWorkForLevel` consumes, so an observation stored
+anywhere else is an observation the system cannot act on. The old code
+noticed the drift and filed the notice in the database, which is the record
+the user reads and not the record the engine acts on.
 
 ### 6. Single Orchestrator Builder (P1, items 11-12): DONE 2026-09-25
 
