@@ -155,7 +155,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// Mode 0600: the file carries the OIDC client secret. Vaultwarden runs as
 	// root inside the container, which under rootless podman is the same host
 	// user that writes this file, so it can read it.
-	changed, err := managedfile.Write(path, []byte(content), 0600)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing env file: %w", err)
 	}

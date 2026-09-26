@@ -106,7 +106,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	path := filepath.Join(dir, configFileName)
 	content := renderConfigFile(state.OIDC)
 
-	changed, err := managedfile.Write(path, []byte(content), 0644)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeSharedConfig)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}

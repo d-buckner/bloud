@@ -221,7 +221,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return configurator.NoRestart(), fmt.Errorf("failed to provision hass-oidc-auth: %w", err)
 	}
 	block := managedBlock(state.OIDC)
-	ok, err := managedfile.Block(cfgPath, marker, 0o600, func() string { return block })
+	ok, err := managedfile.Block(cfgPath, marker, managedfile.ModeHostOnly, func() string { return block })
 	if err != nil {
 		return configurator.NoRestart(), err
 	}
@@ -420,7 +420,7 @@ func (c *Configurator) ensureReverseProxy(configDir string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal http config entry: %w", err)
 	}
-	return managedfile.Write(path, append(out, '\n'), 0600)
+	return managedfile.Write(path, append(out, '\n'), managedfile.ModeHostOnly)
 }
 
 // toStringSlice coerces a decoded JSON value to []string, returning nil for a

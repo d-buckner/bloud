@@ -162,7 +162,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return configurator.NoRestart(), nil
 	}
 
-	changed, err := managedfile.Write(cfgPath, want, 0o644)
+	changed, err := managedfile.Write(cfgPath, want, managedfile.ModeSharedConfig)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing %s: %w", cfgPath, err)
 	}

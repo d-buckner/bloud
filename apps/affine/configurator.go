@@ -110,7 +110,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	if err != nil {
 		return configurator.NoRestart(), err
 	}
-	changed, err := managedfile.Write(path, []byte(content), 0600)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}

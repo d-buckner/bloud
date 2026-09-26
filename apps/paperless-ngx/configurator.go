@@ -189,7 +189,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	// unprivileged paperless user. Under rootless podman that user is a
 	// subuid, not the host user that writes this file, so 0600 would be
 	// unreadable (see INTEGRATION.md).
-	changed, err := managedfile.Write(path, []byte(content), 0644)
+	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeSharedConfig)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
 	}

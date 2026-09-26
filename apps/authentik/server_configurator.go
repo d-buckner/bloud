@@ -86,7 +86,7 @@ func (c *ServerConfigurator) PreStart(_ context.Context, state *configurator.App
 	// The server container mounts this file read-only at
 	// /blueprints/default/flow-default-authentication-flow.yaml.
 	dstPath := filepath.Join(state.DataPath, "authentik-auth-flow.yaml")
-	blueprintChanged, err := managedfile.Write(dstPath, src, 0644)
+	blueprintChanged, err := managedfile.Write(dstPath, src, managedfile.ModeSharedConfig)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("write auth flow blueprint: %w", err)
 	}
@@ -138,7 +138,7 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 
 	// Write token to file for host-agent to read.
 	tokenPath := filepath.Join(state.DataPath, "api-token")
-	if _, err := managedfile.Write(tokenPath, []byte(c.params.TokenKey), 0600); err != nil {
+	if _, err := managedfile.Write(tokenPath, []byte(c.params.TokenKey), managedfile.ModeHostOnly); err != nil {
 		return fmt.Errorf("write token file: %w", err)
 	}
 
