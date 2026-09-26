@@ -59,7 +59,7 @@ type Configurator struct {
 // host changes made in the UI take effect without re-registering.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 3010
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -80,8 +80,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-affine"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 3010
+
 func (c *Configurator) Name() string {
-	return "apps-affine"
+	return nodeName
 }
 
 // appExternalURL returns the public URL the browser uses to reach AFFiNE,

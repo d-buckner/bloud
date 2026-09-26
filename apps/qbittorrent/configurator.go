@@ -125,8 +125,13 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-qbittorrent"
+
 func (c *Configurator) Name() string {
-	return "apps-qbittorrent"
+	return nodeName
 }
 
 // PreStart creates the directories the container mounts and merges Bloud's keys

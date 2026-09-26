@@ -83,8 +83,13 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 }
 
 // Name returns the node name this configurator manages.
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-hermes"
+
 func (c *Configurator) Name() string {
-	return "apps-hermes"
+	return nodeName
 }
 
 // appExternalURL returns the public URL the browser uses to reach Hermes,

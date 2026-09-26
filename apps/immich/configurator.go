@@ -51,7 +51,7 @@ type Configurator struct {
 // NewConfigurator creates a new Immich configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 2283
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -71,8 +71,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-immich-server"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 2283
+
 func (c *Configurator) Name() string {
-	return "apps-immich-server"
+	return nodeName
 }
 
 // PreStart writes the Immich config file with the native-oidc OAuth settings

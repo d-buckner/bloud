@@ -180,7 +180,7 @@ type Configurator struct {
 // NewConfigurator creates a new Seerr configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 5055
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -223,8 +223,17 @@ func mediaServerBinding(state *configurator.AppState) (configurator.MediaServerB
 }
 
 // Name returns the node name this configurator manages.
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-seerr"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 5055
+
 func (c *Configurator) Name() string {
-	return "apps-seerr"
+	return nodeName
 }
 
 // PreStart prepares the mounted config directory so the non-root container can

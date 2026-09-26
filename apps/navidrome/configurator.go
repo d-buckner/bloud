@@ -39,7 +39,7 @@ type Configurator struct {
 // NewConfigurator creates a new Navidrome configurator from the host Deps.
 func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	if port == 0 {
-		port = 4533
+		port = defaultPort
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -61,8 +61,17 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
+// nodeName is the graph node and container name the host-agent reconciles
+// this configurator under. Registration and Name() both read it, so the two
+// cannot drift apart.
+const nodeName = "apps-navidrome"
+
+// defaultPort is the app's own web port, the value the constructor uses
+// when registration passes 0. It matches metadata.yaml's `port`.
+const defaultPort = 4533
+
 func (c *Configurator) Name() string {
-	return "apps-navidrome"
+	return nodeName
 }
 
 // PreStart creates the required data and music directories before the container starts.
