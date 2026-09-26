@@ -159,13 +159,20 @@ func (r *PodmanRuntime) Ensure(ctx context.Context, spec Spec) (EnsureResult, er
 	}
 
 	result := EnsureResult{Created: current == nil, Recreated: current != nil}
+	if current != nil && !isManaged(current) {
+		return EnsureResult{}, fmt.Errorf("refusing to recreate unmanaged container %q", spec.Name)
+	}
+
+	// Pull before anything is destroyed. The old order removed the running
+	// container and then pulled, so a registry outage, a rate limit or a
+	// digest mismatch left the app with no container and no rollback.
+	if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
+		return EnsureResult{}, err
+	}
 	if current != nil {
 		if err := r.client.RemoveContainer(ctx, spec.Name, true); err != nil {
 			return EnsureResult{}, err
 		}
-	}
-	if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
-		return EnsureResult{}, err
 	}
 	if _, err := r.client.CreateContainer(ctx, toPodmanConfig(spec, revision)); err != nil {
 		return EnsureResult{}, err
