@@ -2,8 +2,24 @@
 #
 # Release packaging: builds the production .deb and publishes it as a GitHub
 # pre-release, tagged deb-<UTC timestamp> (a .deb build, distinct from the ISO
-# image releases), plus a rolling `latest` tag carrying the fixed-name asset
-# that install.sh downloads.
+# image releases).
+#
+# This repository has GitHub's release immutability setting enabled, so every
+# release published here is immutable: once published, its assets cannot be
+# added, replaced, or deleted, and its tag cannot be moved. That is the point,
+# and it is also why there is no rolling fixed-name asset on this workflow. A
+# rolling asset would have to be overwritten on every push, which immutability
+# forbids: the upload fails with HTTP 422, "Cannot upload assets to an
+# immutable release". The create-release API has no per-release opt-out, so the
+# setting cannot be worked around from here either.
+#
+# So each push publishes exactly one immutable release and nothing is ever
+# rewritten. install.sh resolves the newest one through the releases API at
+# install time, unauthenticated, and checks the downloaded bytes against the
+# SHA256SUMS asset published alongside it. That file exists because the API's
+# own digest field is awkward to pair to its asset without a JSON parser, and jq
+# is not installed on a stock Debian box.
+#
 # Runs on pushes to main, plus manual dispatch. This is not a validation check
 # (those live in validation.yaml and run through ./bloud validate); it produces
 # the artifact a release is cut from. The local equivalent is ./bloud package.
@@ -61,6 +77,14 @@ jobs:
           path: dist/*.deb
           if-no-files-found: error
 
+      # The installer verifies the .deb against this. A plain text file rather
+      # than the API's digest field so the check needs no JSON parser.
+      - name: Checksum the .deb
+        run: |
+          cd dist
+          sha256sum *.deb > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Publish a pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -68,23 +92,8 @@ jobs:
           stamp="$(date -u +%Y%m%d-%H%M%S)"
           day="$(date -u +%Y-%m-%d)"
           sha="$(git rev-parse --short HEAD)"
-          gh release create "deb-${stamp}" dist/*.deb \
+          gh release create "deb-${stamp}" dist/*.deb dist/SHA256SUMS \
             --title "bloud ${day} (${sha})" \
             --target "$GITHUB_SHA" \
             --prerelease \
             --notes "Automated build of the Bloud .deb from ${GITHUB_SHA}."
-
-      # install.sh needs one URL that never changes. GitHub's releases/latest
-      # shortcut skips prereleases, and these builds stay prereleases while the
-      # project is alpha, so the rolling pointer is a fixed `latest` tag with a
-      # fixed asset name, clobbered on every push to main. The version-named
-      # build above stays the provenance record.
-      - name: Publish the rolling latest asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cp "$(ls dist/bloud_*.deb | head -n 1)" dist/bloud_latest_amd64.deb
-          gh release view latest >/dev/null 2>&1 ||
-            gh release create latest --title "bloud latest" --target "$GITHUB_SHA" \
-              --prerelease --notes "Rolling build of the Bloud .deb. install.sh downloads this."
-          gh release upload latest dist/bloud_latest_amd64.deb --clobber
