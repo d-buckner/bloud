@@ -27,17 +27,17 @@ const appName = "authentik"
 const secretAPIToken = "apiToken"
 
 // Params are the Authentik-specific values the system configurator needs. They
-// come from the host-agent config (and the shared templateVars map) rather than
-// from Deps, which carries only the generic host services.
+// come from the host-agent config (and the shared template-variable store)
+// rather than from Deps, which carries only the generic host services.
 type Params struct {
 	Port              int
 	BootstrapPassword string
 	BootstrapEmail    string
-	TokenKey          string            // API token key for host-agent
-	LDAPBindPassword  string            // LDAP bind password for service account
-	BrandingCSS       string            // Inline CSS to push to Authentik brand API
-	AppsDir           string            // Path to the apps directory (for auth.yaml blueprint)
-	TemplateVars      map[string]string // Shared map; PostStart writes authentikLdapToken
+	TokenKey          string                     // API token key for host-agent
+	LDAPBindPassword  string                     // LDAP bind password for service account
+	BrandingCSS       string                     // Inline CSS to push to Authentik brand API
+	AppsDir           string                     // Path to the apps directory (for auth.yaml blueprint)
+	TemplateVars      *configurator.TemplateVars // Store; PostStart records the LDAP outpost token
 }
 
 // ServerConfigurator handles the apps-authentik-server container lifecycle.
@@ -181,16 +181,18 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 		}
 	}
 
-	// Step 7: Get LDAP outpost token and write to shared template vars.
-	// The apps-authentik-ldap container spec uses {{authentikLdapToken}}; the
-	// orchestrator resolves this map at container spec build time, which happens
-	// after this PostStart (ldap depends on server via metadata dependsOn).
+	// Step 7: Get the LDAP outpost token and record it in the template-variable
+	// store. The apps-authentik-ldap container spec reads {{authentikLdapToken}};
+	// the orchestrator resolves the store at container-spec build time, which
+	// happens after this PostStart (ldap depends on server via metadata
+	// dependsOn). The store is locked, so this write and that read are safe
+	// whatever the schedule does.
 	ldapToken, err := client.GetLDAPOutpostToken(ctx)
 	if err != nil {
 		return fmt.Errorf("get LDAP outpost token: %w", err)
 	}
 	if c.params.TemplateVars != nil {
-		c.params.TemplateVars["authentikLdapToken"] = ldapToken
+		c.params.TemplateVars.SetLDAPOutpostToken(ldapToken)
 	}
 
 	return nil

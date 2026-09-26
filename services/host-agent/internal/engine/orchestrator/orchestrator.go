@@ -85,9 +85,11 @@ type OrchestratorConfig struct {
 	// catalog specs. Nil disables catalog-driven container creation.
 	Containers containerruntime.Runtime
 
-	// TemplateVars are extra variables for container spec template rendering
-	// (e.g. "postgresPassword"). Passed to ContainerSpec.
-	TemplateVars map[string]string
+	// TemplateVars are the extra variables container-spec templates render
+	// with (postgresPassword and the authentik values). It is a store, not a
+	// bare map, because one of its values is written at runtime by the
+	// authentik configurator while the orchestrator reads the rest.
+	TemplateVars *configurator.TemplateVars
 
 	// ── Converge dependencies (nil = subsystem disabled) ─────────────────
 

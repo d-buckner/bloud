@@ -80,7 +80,7 @@ type ServerConfig struct {
 	LDAPOutput            *configurator.LDAPOutput
 	Registry              configurator.RegistryInterface
 	ContainerRuntime      containerruntime.Runtime
-	TemplateVars          map[string]string
+	TemplateVars          *configurator.TemplateVars
 	// Secrets is the host secret store, handed to the orchestrator so
 	// integration bindings can resolve a provider's published credentials.
 	// Nil disables that half of a binding.

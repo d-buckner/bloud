@@ -41,7 +41,7 @@ import (
 func RegisterSystem(
 	cfg *config.Config,
 	runtime containerruntime.Runtime,
-	templateVars map[string]string,
+	templateVars *configurator.TemplateVars,
 ) {
 	// Link every user-app configurator factory before wiring the system ones.
 	// Idempotent: the registration itself already ran in each app's init().

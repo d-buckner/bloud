@@ -90,8 +90,9 @@ func runServer() {
 	hostSet, hostStore := resolveHostSet(database, cfg, logger)
 	hosts := hostset.NewState(hostSet)
 
-	// templateVars is shared by reference with the authentik configurator, so the
-	// LDAP token its PostStart writes is visible to the orchestrator.
+	// One store, handed to both the orchestrator and the authentik
+	// configurator, so the LDAP token PostStart records is visible to the
+	// orchestrator without either of them holding a mutable map.
 	templateVars := buildTemplateVars(cfg)
 
 	// Configurator registry: system configurators are registered eagerly;
@@ -274,19 +275,18 @@ func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (
 	return hostSet, hostStore
 }
 
-// buildTemplateVars renders the shared template-variable map passed to the
-// orchestrator and the authentik configurator. authentikLdapToken is empty here
-// and written at runtime by apps-authentik-server's PostStart, so the same map
-// instance must be shared by both consumers.
-func buildTemplateVars(cfg *config.Config) map[string]string {
-	return map[string]string{
+// buildTemplateVars builds the template-variable store shared by the
+// orchestrator and the authentik configurator. The LDAP outpost token is not
+// in the static set: it is issued at runtime and recorded through the store's
+// named setter, which is what keeps that one mutable value guarded.
+func buildTemplateVars(cfg *config.Config) *configurator.TemplateVars {
+	return configurator.NewTemplateVars(map[string]string{
 		"postgresPassword":        cfg.PostgresPassword,
 		"authentikSecretKey":      cfg.Secrets.GetAuthentikSecretKey(),
 		"authentikBootstrapToken": cfg.Secrets.GetAuthentikBootstrapToken(),
 		"authentikAdminPassword":  cfg.AuthentikAdminPassword,
 		"authentikAdminEmail":     cfg.AuthentikAdminEmail,
-		"authentikLdapToken":      "",
-	}
+	})
 }
 
 // waitForSystemConvergence blocks until the orchestrator reports ready and the

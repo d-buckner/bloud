@@ -15,6 +15,7 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/slug"
 )
 
@@ -203,11 +204,15 @@ func (o *Orchestrator) reconcileRemoteProxies() []traefikgen.RemoteAppRoute {
 // ContainerSpecFromDef builds a container spec from a ContainerDef.
 // appCatalogID is the owning app's catalog ID, used for the io.bloud.app label
 // and for resolving {{appDataDir}}.
-// extraVars supplies additional template variables beyond {{dataDir}} and {{appDataDir}}.
-func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir string, extraVars map[string]string) (containerruntime.Spec, error) {
+// vars supplies the template variables beyond {{dataDir}} and {{appDataDir}};
+// nil means none. It is read once into a snapshot, so a value another
+// goroutine is still writing cannot change underneath the render.
+func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir string, vars *configurator.TemplateVars) (containerruntime.Spec, error) {
 	if def.Image == "" {
 		return containerruntime.Spec{}, fmt.Errorf("container %q has no image", def.Name)
 	}
+
+	extraVars := vars.Snapshot()
 
 	render := func(value string) string {
 		value = strings.ReplaceAll(value, "{{dataDir}}", dataDir)

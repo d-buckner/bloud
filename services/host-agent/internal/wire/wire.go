@@ -112,10 +112,10 @@ type Input struct {
 	LDAPOutput *configurator.LDAPOutput
 
 	// TemplateVars are the variables container-spec templates render with
-	// (postgresPassword and the authentik values). The map is shared by
-	// reference with the authentik configurator, which writes the LDAP
-	// outpost token into it at runtime.
-	TemplateVars map[string]string
+	// (postgresPassword and the authentik values). A store rather than a map
+	// because the authentik configurator writes the LDAP outpost token into it
+	// at runtime while the orchestrator reads the rest.
+	TemplateVars *configurator.TemplateVars
 
 	// SSOBaseURL, SSOHostSecret, SSOAuthentikURL, and SSOIssuerURL are the
 	// legacy single-host SSO settings. Hosts supersedes them when set.

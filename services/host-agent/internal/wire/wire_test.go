@@ -79,7 +79,7 @@ func baseInput(t *testing.T) Input {
 		TraefikDynamicDir: t.TempDir(),
 		TraefikPort:       80,
 		LDAPOutput:        &configurator.LDAPOutput{Host: "127.0.0.1", Port: 3389},
-		TemplateVars:      map[string]string{"postgresPassword": "pw"},
+		TemplateVars:      configurator.NewTemplateVars(map[string]string{"postgresPassword": "pw"}),
 		Secrets:           secrets.NewManager(filepath.Join(t.TempDir(), "secrets.json")),
 		SSOBaseURL:        "http://localhost:8080",
 		SSOHostSecret:     "host-secret",
