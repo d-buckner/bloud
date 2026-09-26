@@ -95,6 +95,41 @@ func TestLocalRunShellSyntax(t *testing.T) {
 	}
 }
 
+// The integration tier's preflight opens with `set -euo pipefail`. Under a
+// POSIX shell with no pipefail that line alone aborts the script with
+// "set: Illegal option -o pipefail", which surfaced as "integration
+// prerequisites missing" and hid the fact that the native backend could not
+// run its own tier. This asserts the bashism is accepted AND that pipefail
+// actually takes effect, so the test cannot pass by the option being silently
+// ignored.
+func TestLocalRunSupportsBashPipefail(t *testing.T) {
+	res, err := (&LocalExecutor{}).Run(context.Background(), RunSpec{
+		Command: "set -euo pipefail\nfalse | true\necho SHOULD_NOT_PRINT\n",
+	})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want the failing pipeline to propagate (pipefail not in effect)\nstdout: %s", res.Stdout)
+	}
+	if strings.Contains(res.Stdout, "SHOULD_NOT_PRINT") {
+		t.Fatalf("Stdout = %q, want the script aborted at the failing pipeline", res.Stdout)
+	}
+	if strings.Contains(res.Stderr, "Illegal option") {
+		t.Fatalf("the shell rejected pipefail (not bash): %s", res.Stderr)
+	}
+}
+
+// The positive half: a passing pipeline under pipefail still runs to the end.
+func TestLocalRunPassingPipelineUnderPipefail(t *testing.T) {
+	res, err := (&LocalExecutor{}).Run(context.Background(), RunSpec{
+		Command: "set -euo pipefail\necho marker | cat\necho reached_end\n",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v, stderr: %s", err, res.Stderr)
+	}
+	if !strings.Contains(res.Stdout, "marker") || !strings.Contains(res.Stdout, "reached_end") {
+		t.Fatalf("Stdout = %q, want both the piped marker and the line after it", res.Stdout)
+	}
+}
+
 func TestLocalCopyTo(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "src.txt")
 	dst := filepath.Join(t.TempDir(), "dst.txt")
