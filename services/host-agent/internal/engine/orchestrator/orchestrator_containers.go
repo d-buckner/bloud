@@ -13,16 +13,25 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/slug"
 )
 
-// SyncContainerState aligns DB state with actual container reality on startup.
-// If a container was killed externally while the host-agent was down, the DB
-// still shows "running". This method inspects each container and corrects the DB.
-// It is a no-op when the container runtime or app store is not configured.
+// SyncContainerState aligns DB state and the lifecycle graph with actual
+// container reality. It runs on every convergence pass, so a container
+// killed externally (OOM, `podman rm`) while host-agent was up is repaired
+// without a restart, not just one killed while it was down.
+//
+// Two corrections happen here, and the second is the one that matters. The
+// store correction records that the app is not up. The graph correction puts
+// the node back on the lifecycle path: without it the node still reads
+// RUNNING, target equals actual, `collectWorkForLevel` finds nothing to do,
+// and the app stays dead forever. It is a no-op when the container runtime
+// or app store is not configured.
 func (o *Orchestrator) SyncContainerState(ctx context.Context) {
 	if o.config.Containers == nil || o.appStore == nil || o.catalog == nil {
 		return
@@ -38,52 +47,131 @@ func (o *Orchestrator) SyncContainerState(ctx context.Context) {
 		if app.IsSystem {
 			continue
 		}
-		catalogApp, err := o.catalog.Get(app.CatalogID)
-		if err != nil || catalogApp == nil {
-			// An installed row with no catalog entry: the app's directory
-			// was removed or renamed (the loader skips dirs without
-			// metadata.yaml). There is no recover() anywhere in host-agent,
-			// so dereferencing the nil result here kills the daemon on the
-			// next convergence pass. Skip instead.
-			o.logger.Warn("installed app missing from catalog, skipping container sync",
-				"app", app.CatalogID, "error", err)
-			continue
-		}
-		defs := catalogApp.ContainerDefs()
-		// Skip apps with no container definitions or multi-container apps
-		// (multi-container lifecycle is tracked via graph events, not this path).
-		if len(defs) != 1 {
-			continue
-		}
-
-		containerName := defs[0].Name
-		state, err := o.config.Containers.Inspect(ctx, containerName)
-		if err != nil {
-			o.logger.Warn("failed to inspect container during sync", "app", app.CatalogID, "error", err)
-			continue
-		}
-
-		switch {
-		case app.Status == "uninstalling" && !state.Exists:
-			// Container gone + was uninstalling → clean up DB
-			o.logger.Info("cleaning up uninstalled app", "app", app.CatalogID)
-			_ = o.appStore.Uninstall(app.CatalogID)
-
-		case app.Status == "running" && !state.Exists:
-			// Container gone entirely → mark stopped so it can be re-created.
-			o.logger.Info("container gone, marking as stopped", "app", app.CatalogID)
-			_ = o.appStore.UpdateStatus(app.CatalogID, "stopped")
-
-		case app.Status == "stopped" && state.Running:
-			// Container recovered externally after a clean stop → mark running.
-			// "stopped" only applies to apps that previously completed full lifecycle,
-			// so no lifecycle re-run is needed.
-			o.logger.Info("container recovered, marking as running", "app", app.CatalogID)
-			_ = o.appStore.UpdateStatus(app.CatalogID, "running")
-		}
+		o.syncAppContainers(ctx, app)
 	}
 
 	o.logger.Info("container state sync completed")
+}
+
+// syncAppContainers aligns one installed app's store row and its graph
+// nodes with the containers it declares in the catalog.
+func (o *Orchestrator) syncAppContainers(ctx context.Context, app *store.InstalledApp) {
+	catalogApp, err := o.catalog.Get(app.CatalogID)
+	if err != nil || catalogApp == nil {
+		// An installed row with no catalog entry: the app's directory
+		// was removed or renamed (the loader skips dirs without
+		// metadata.yaml). There is no recover() anywhere in host-agent,
+		// so dereferencing the nil result here kills the daemon on the
+		// next convergence pass. Skip instead.
+		o.logger.Warn("installed app missing from catalog, skipping container sync",
+			"app", app.CatalogID, "error", err)
+		return
+	}
+	defs := catalogApp.ContainerDefs()
+	if len(defs) == 0 {
+		return
+	}
+
+	states := o.inspectContainers(ctx, app.CatalogID, defs)
+	if len(states) == 0 {
+		return
+	}
+
+	// An app being uninstalled is never re-driven: its containers are on
+	// the way out, and re-creating them here would fight the removal.
+	if app.Status == "uninstalling" {
+		if containersAllGone(states) {
+			o.logger.Info("cleaning up uninstalled app", "app", app.CatalogID)
+			_ = o.appStore.Uninstall(app.CatalogID)
+		}
+		return
+	}
+
+	switch {
+	case app.Status == "running" && !containersAllRunning(states):
+		// Reality disagrees with the store: the app is not up.
+		o.logger.Info("container gone, marking as stopped", "app", app.CatalogID)
+		_ = o.appStore.UpdateStatus(app.CatalogID, "stopped")
+
+	case app.Status == "stopped" && containersAllRunning(states):
+		// Container recovered externally after a clean stop → mark running.
+		// "stopped" only applies to apps that previously completed full lifecycle,
+		// so no lifecycle re-run is needed.
+		o.logger.Info("container recovered, marking as running", "app", app.CatalogID)
+		_ = o.appStore.UpdateStatus(app.CatalogID, "running")
+	}
+
+	for _, def := range defs {
+		if state, ok := states[def.Name]; ok {
+			o.repairDriftedNode(def.Name, state)
+		}
+	}
+}
+
+// inspectContainers reads the live state of every container an app declares,
+// keyed by container name. A container that cannot be inspected is left out
+// of the result rather than guessed at: an unknown state must not be treated
+// as either present or absent.
+func (o *Orchestrator) inspectContainers(ctx context.Context, appID string, defs []catalog.ContainerDef) map[string]containerruntime.State {
+	states := make(map[string]containerruntime.State, len(defs))
+	for _, def := range defs {
+		state, err := o.config.Containers.Inspect(ctx, def.Name)
+		if err != nil {
+			o.logger.Warn("failed to inspect container during sync",
+				"app", appID, "container", def.Name, "error", err)
+			continue
+		}
+		states[def.Name] = state
+	}
+	return states
+}
+
+func containersAllGone(states map[string]containerruntime.State) bool {
+	for _, state := range states {
+		if state.Exists {
+			return false
+		}
+	}
+	return true
+}
+
+func containersAllRunning(states map[string]containerruntime.State) bool {
+	for _, state := range states {
+		if !state.Running {
+			return false
+		}
+	}
+	return true
+}
+
+// repairDriftedNode puts a node whose recorded status disagrees with the
+// container runtime back on the lifecycle path. A node that claims RUNNING
+// while its container is not running is reset to INITIALIZING, which makes
+// target differ from actual so the normal path re-runs the full lifecycle
+// this pass. Safety rests on invariant 2: configurators are idempotent, so a
+// re-drive is always safe.
+//
+// Only a RUNNING node is a drift candidate. ERROR is terminal by design and
+// must not be silently retried, and any intermediate status means a drive is
+// already in flight. Returns true when a reset was issued.
+func (o *Orchestrator) repairDriftedNode(nodeID string, state containerruntime.State) bool {
+	if state.Running {
+		return false
+	}
+	node, err := o.graph.GetNode(nodeID)
+	if err != nil || node == nil {
+		// No node yet: populateGraphNodes creates it at INITIALIZING, which
+		// is already the state that gets driven.
+		return false
+	}
+	if node.ActualStatus != graph.StatusRunning {
+		return false
+	}
+	o.logger.Info("container drift detected, re-driving lifecycle",
+		"node", nodeID, "container_exists", state.Exists)
+	_ = o.graph.SetActualStatus(nodeID, graph.StatusInitializing,
+		"container not running while node was marked RUNNING")
+	return true
 }
 
 // tailnetActive reports whether a tailnet is currently connected.

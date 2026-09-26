@@ -159,13 +159,20 @@ func (r *PodmanRuntime) Ensure(ctx context.Context, spec Spec) (EnsureResult, er
 	}
 
 	result := EnsureResult{Created: current == nil, Recreated: current != nil}
+	if current != nil && !isManaged(current) {
+		return EnsureResult{}, fmt.Errorf("refusing to recreate unmanaged container %q", spec.Name)
+	}
+
+	// Pull before anything is destroyed. The old order removed the running
+	// container and then pulled, so a registry outage, a rate limit or a
+	// digest mismatch left the app with no container and no rollback.
+	if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
+		return EnsureResult{}, err
+	}
 	if current != nil {
 		if err := r.client.RemoveContainer(ctx, spec.Name, true); err != nil {
 			return EnsureResult{}, err
 		}
-	}
-	if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
-		return EnsureResult{}, err
 	}
 	if _, err := r.client.CreateContainer(ctx, toPodmanConfig(spec, revision)); err != nil {
 		return EnsureResult{}, err
@@ -192,10 +199,17 @@ func (r *PodmanRuntime) Remove(ctx context.Context, name string) error {
 	if err != nil || current == nil {
 		return err
 	}
-	if current.Labels[managedLabel] != "true" {
+	if !isManaged(current) {
 		return fmt.Errorf("refusing to remove unmanaged container %q", name)
 	}
 	return r.client.RemoveContainer(ctx, name, true)
+}
+
+// isManaged reports whether an inspected container carries Bloud's
+// ownership label. Every destructive path checks it, so a name collision
+// with a container Bloud did not create can never destroy it.
+func isManaged(details *podman.ContainerDetails) bool {
+	return details != nil && details.Labels[managedLabel] == "true"
 }
 
 func validateSpec(spec Spec) error {

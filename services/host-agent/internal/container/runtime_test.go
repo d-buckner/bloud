@@ -4,6 +4,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -20,14 +21,33 @@ type fakePodmanClient struct {
 	started  []string
 	removed  []string
 	networks []string
+
+	// pullErr, when set, makes every pull fail. Used to prove a failed pull
+	// cannot cost the container that is already running.
+	pullErr error
+	// events is the chronological log across all mutating calls, so a test
+	// can pin ordering and not just the final set of calls.
+	events []string
+}
+
+func (f *fakePodmanClient) record(event string) {
+	f.events = append(f.events, event)
 }
 
 func (f *fakePodmanClient) PullImage(_ context.Context, image string) error {
+	f.record("pull")
+	if f.pullErr != nil {
+		return f.pullErr
+	}
 	f.pulled = append(f.pulled, image)
 	return nil
 }
 
 func (f *fakePodmanClient) PullImageWithProgress(_ context.Context, image string, onProgress func(podman.PullProgress)) error {
+	f.record("pull")
+	if f.pullErr != nil {
+		return f.pullErr
+	}
 	f.pulled = append(f.pulled, image)
 	onProgress(podman.PullProgress{Phase: "pulling", Percent: 50, Detail: "Copying blob"})
 	onProgress(podman.PullProgress{Phase: "done"})
@@ -36,6 +56,7 @@ func (f *fakePodmanClient) PullImageWithProgress(_ context.Context, image string
 }
 
 func (f *fakePodmanClient) CreateContainer(_ context.Context, config podman.ContainerConfig) (string, error) {
+	f.record("create")
 	f.created = append(f.created, config)
 	f.current = &podman.ContainerDetails{
 		ID: "created", Name: config.Name, State: "created", Labels: config.Labels,
@@ -44,12 +65,14 @@ func (f *fakePodmanClient) CreateContainer(_ context.Context, config podman.Cont
 }
 
 func (f *fakePodmanClient) StartContainer(_ context.Context, name string) error {
+	f.record("start")
 	f.started = append(f.started, name)
 	f.current.State = "running"
 	return nil
 }
 
 func (f *fakePodmanClient) RemoveContainer(_ context.Context, name string, _ bool) error {
+	f.record("remove")
 	f.removed = append(f.removed, name)
 	f.current = nil
 	return nil
@@ -102,6 +125,63 @@ func TestPodmanRuntimeRemoveRefusesUnmanagedContainer(t *testing.T) {
 	err := runtime.Remove(context.Background(), "external")
 	require.ErrorContains(t, err, "unmanaged")
 	assert.Empty(t, client.removed)
+}
+
+// The recreate path must honour the same ownership guard Remove does. It
+// used to call the raw client directly, so a container that merely shared
+// a name with a Bloud spec was destroyed without any check.
+func TestPodmanRuntimeEnsureRefusesUnmanagedContainer(t *testing.T) {
+	client := &fakePodmanClient{
+		current: &podman.ContainerDetails{Name: "apps-jellyfin", State: "running"},
+	}
+	runtime := newPodmanRuntime(client)
+
+	_, err := runtime.Ensure(context.Background(), Spec{Name: "apps-jellyfin", Image: "jellyfin:2"})
+	require.ErrorContains(t, err, "unmanaged")
+	assert.Empty(t, client.removed, "an unmanaged container must never be removed")
+	assert.Empty(t, client.created)
+}
+
+// A registry outage during a spec change must leave the running container
+// exactly where it was. The old order removed first and pulled second, so
+// this was the scenario that took the app down with no rollback.
+func TestPodmanRuntimePullFailureLeavesExistingContainerUntouched(t *testing.T) {
+	client := &fakePodmanClient{
+		current: &podman.ContainerDetails{
+			ID:     "old",
+			Name:   "apps-jellyfin",
+			State:  "running",
+			Labels: map[string]string{managedLabel: "true"},
+		},
+		pullErr: errors.New("registry unreachable"),
+	}
+	runtime := newPodmanRuntime(client)
+
+	_, err := runtime.Ensure(context.Background(), Spec{Name: "apps-jellyfin", Image: "jellyfin:2"})
+	require.Error(t, err, "the pull failure must surface")
+	assert.Empty(t, client.removed, "a failed pull must not cost the running container")
+	assert.Empty(t, client.created)
+	require.NotNil(t, client.current, "the existing container must still be there")
+	assert.Equal(t, "running", client.current.State)
+}
+
+// The ordering itself is the contract, not just the absence of removal on
+// failure: pull, then remove, then create, then start.
+func TestPodmanRuntimeEnsurePullsBeforeRemoving(t *testing.T) {
+	client := &fakePodmanClient{
+		current: &podman.ContainerDetails{
+			ID:     "old",
+			Name:   "apps-jellyfin",
+			State:  "running",
+			Labels: map[string]string{managedLabel: "true"},
+		},
+	}
+	runtime := newPodmanRuntime(client)
+
+	result, err := runtime.Ensure(context.Background(), Spec{Name: "apps-jellyfin", Image: "jellyfin:2"})
+	require.NoError(t, err)
+	assert.True(t, result.Recreated)
+	assert.Equal(t, []string{"pull", "remove", "create", "start"}, client.events)
 }
 
 func TestRuntimeRejectsUnsafeContainerName(t *testing.T) {

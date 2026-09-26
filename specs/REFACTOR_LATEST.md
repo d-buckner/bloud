@@ -1,277 +1,358 @@
-# Refactor Plan: Make the Readiness Wait Budget Real
+# Refactor Plan: Make Reality Match Intent
 
-Target: tech-debt ledger item 6 (P1), the `appclient` readiness/wait
-contract. Driver: long-term maintainability plus product correctness. Status:
-**implemented** on branch `refactor/readiness-wait-budget`.
+Target: tech-debt ledger items 8 and 9 (both P1): container drift is never
+repaired while the process is alive, and `Ensure` destroys the running
+container before it pulls. Driver: the reconciler's core promise was not
+actually being kept. Status: **implemented** on
+`refactor/reality-match-intent`.
+
+## The Invariant
+
+One invariant governs this whole refactor, and everything else follows from it:
+
+> **A graph node's `actual` status must never claim `RUNNING` while the
+> container behind it is not running.**
+
+This is the single thing that makes the reconciler a reconciler. The whole
+engine drives work off exactly one comparison, in `collectWorkForLevel`:
+
+```go
+if node.TargetStatus != node.ActualStatus { /* this node needs work */ }
+```
+
+`target != actual` is the *only* signal that a node needs attention. So any
+observation that contradicts a node's `actual` status has to be written
+**into the node**. Writing it somewhere else (into the database, into a log
+line, into a dashboard field) produces a system that knows something is
+wrong and can act on none of it.
+
+Before this refactor that invariant was broken by design, and the previous
+code documented the break rather than fixing it.
 
 ## Problem Statement
 
-`appclient` lets an app declare how long it is willing to wait for the app it
-manages to come up. That declaration did nothing.
+### Item 8: the drift detector could detect and nothing else
 
-`Call.Timeout(d)` stored `timeoutOverride` and nothing in the package ever
-read it. Two occurrences in the file: the field declaration and the write.
-Meanwhile `WaitPolicy` carried a doc comment saying it was "the default for
-calls marked with `Ready()`", and `Ready()` never applied it. `Wait()` asked
-`effectivePolicy()`, which returned the client's `c.retry`, which for every
-app that did not pass an explicit `WithRetry` was `DefaultRetry`: five
-attempts, thirty seconds.
+`SyncContainerState` runs on **every** convergence pass (pipeline step 1).
+Its job is to notice that reality and the books disagree. It noticed. It
+then wrote the observation to the one place the reconciler never reads.
 
-So the three long first-boot waits in the catalog were fiction:
+The old repair path, in full:
 
-- `apps/immich/api.go` declared `Timeout(5 * time.Minute)` on the server ping
-- `apps/affine/api.go` declared `Timeout(5 * time.Minute)` and `Timeout(3 * time.Minute)`
-- `apps/hermes/api.go` declared `Timeout(5 * time.Minute)` twice
+```go
+case app.Status == "running" && !state.Exists:
+    // Container gone entirely → mark stopped so it can be re-created.
+    _ = o.appStore.UpdateStatus(app.CatalogID, "stopped")
+```
 
-Each one actually got thirty seconds and five tries.
+The comment says "so it can be re-created". Nothing re-created it. The
+store row went to `"stopped"`. The graph node kept `ActualStatus == RUNNING`
+and `TargetStatus == RUNNING`. `collectWorkForLevel` compared them, found
+them equal, and moved on. `populateGraphNodes` only *adds* missing nodes,
+and `SetTargetStatus` no-ops when the target is unchanged, so neither could
+correct it.
 
-The consequence is not a slow boot. It is a permanently dead app. The chain,
-each link verified in code:
+The observable failure: kill a container with `podman rm` or an OOM while
+host-agent is running, and the app stays dead indefinitely. The dashboard
+shows `stopped`. It heals only when host-agent restarts, because a restart
+rebuilds the graph from scratch at `INITIALIZING`. The detector fired every
+pass and accomplished nothing every pass.
 
-1. Immich's first boot runs database migrations before its HTTP listener answers.
-2. The wait gives up at thirty seconds: `wait ... did not become ready after 5 attempts`.
-3. `PostStart` returns that error (`apps/immich/configurator.go:126`).
-4. The orchestrator sets the node to `StatusError` and the app row to `"error"`.
-5. `collectWorkForLevel` skips it forever: *"ERROR is terminal: never retry
-   without an explicit status reset."*
+Worse, the multi-container case was excluded outright:
 
-The five-minute budget written to prevent exactly this did nothing to prevent it.
+```go
+// Skip apps with no container definitions or multi-container apps
+// (multi-container lifecycle is tracked via graph events, not this path).
+if len(defs) != 1 {
+    continue
+}
+```
 
-There was a second, larger ceiling stacked on top that made the declared number
-doubly unreachable: `DefaultPostStartBudget` was 150 seconds, so the
-framework cancelled every `PostStart` before a five-minute wait could expire
-even if the wait had been wired correctly. Two budgets, both smaller than what
-the app asked for, neither of them honest.
+That comment is false. Multi-container lifecycle is tracked via graph
+*nodes*, and this is the path that keeps those nodes honest. So Immich,
+Authentik, AFFiNE, Paperless-ngx and Home Assistant (every app that owns
+its own postgres or redis) never got drift detection at all. Which is the
+worst possible set of apps to skip, because a dead `*-postgres` sidecar takes
+the whole app down with it.
 
-No test covered any of it. `pkg/appclient` had twenty tests and not one of
-them asserted that a declared timeout did anything, or that a `Ready()` wait
-received the long policy its documentation promised. That is why this survived.
+### Item 9: `Ensure` destroyed the container, then asked for the image
+
+The old recreate sequence in the container runtime:
+
+```go
+if current != nil {
+    r.client.RemoveContainer(ctx, spec.Name, true)   // destructive, first
+}
+if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
+    return EnsureResult{}, err                        // failure, after
+}
+r.client.CreateContainer(...)
+```
+
+A registry outage, a rate limit, a revoked token, or a digest mismatch lands
+on the second statement, after the first has already destroyed the running
+container. The app is down, there is no rollback, and the next pass repeats
+the same failure until the registry comes back. Every spec change was a
+small game of chicken with the registry.
+
+The same path had a second defect: it called `client.RemoveContainer`
+directly, bypassing the ownership guard that `Remove` enforces two functions
+away:
+
+```go
+if current.Labels[managedLabel] != "true" {
+    return fmt.Errorf("refusing to remove unmanaged container %q", name)
+}
+```
+
+So `Remove` refused to touch a container Bloud did not create, and `Ensure`
+destroyed it without looking. The guard existed in exactly the one place it
+was not needed.
 
 ## Solution
 
-Split the one confused number into the two numbers that were always there, wire
-both, and make the relationship between them a checked invariant rather than a
-hope.
+Two fixes, both small, both resting on the invariant above.
 
-**`Timeout(d)` means per-request, and is now true.** The deadline is derived
-per attempt in `requestContext`, from the caller's context as parent. The
-client-level `http.Client.Timeout` was removed so a call can extend past the
-client default as well as shorten it; previously a `Timeout(30s)` on a client
-defaulting to 15s would have been silently capped at 15s.
+### 9a: write the drift into the node
 
-**`Within(d)` is the total wait budget.** It sets the policy `Deadline`.
-`Timeout(10s) + Within(5m)` reads as "each probe may take ten seconds, the
-whole wait may take five minutes", which is what the apps meant. It is
-order-independent with `Ready()` and composes with `WithRetry`.
+When a node claims `RUNNING` and its container is not running, reset the
+node's `actual` status to `INITIALIZING`. That makes `target != actual`,
+which puts the node back on the normal lifecycle path in the same pass.
+`runConfigurator` sees a non-RUNNING actual and dispatches
+`runFullLifecycle`, which re-runs `PreStart` → SSO → `EnsureContainer` →
+health → `PostStart` and converges the node back to `RUNNING`.
 
-**`Ready()` now actually defaults to `WaitPolicy`**, as its own documentation
-always claimed. An explicit `WithRetry` before or after still wins. This is
-the fix for every wait that never declared a policy at all and was silently
-running on the short default.
+Three properties make this safe rather than reckless:
 
-**A per-request timeout is transient, never terminal.** This is the subtle
-part. If the derived request context were consulted for terminality, a single
-slow probe would return `context.DeadlineExceeded` and `Wait` would treat it
-as the end of the wait. `attemptOnce` therefore checks the *caller's*
-context for terminality and treats the request's own deadline expiry as an
-ordinary transient failure. One slow poll cannot kill a wait that still has
-budget.
+- **Invariant 2 does the load-bearing work.** Configurators are idempotent
+  by contract; `PreStart`/`PostStart` run on every pass already. A re-drive
+  is not a special case, it is the normal case.
+- **`ERROR` is not touched.** `ERROR` is terminal by design ("never retry
+  without an explicit status reset"). Silently retrying it would turn a
+  deliberate stop into an infinite loop. Only a node that specifically
+  claims `RUNNING` is a drift candidate.
+- **Intermediate statuses are not touched.** `PRESTART_CONFIG` or `STARTING`
+  means a drive is already in flight. Resetting it would interrupt work that
+  is progressing.
 
-**The ceiling is single-sourced.** `appclient.MaxWaitBudget` is the longest
-wait an app may declare, and the orchestrator's `DefaultPostStartBudget` is
-defined as that same constant (raised from 150s to 10 minutes). An app's
-declared wait can no longer be shorter than the framework's patience and
-longer than its patience at the same time.
+The store correction is kept. It is the honest "at this instant" user-visible
+status, and the re-drive resolves it back to `running` in the same pass via
+`setupStatusSync`, which remains the single authoritative graph→DB path.
 
-**The harness holds the line.** `apps/configtest` gains a rule that AST-walks
-the app tree and asserts every declared `Within()` is at or under
-`MaxWaitBudget`. It fails on a budget it cannot evaluate rather than skipping
-it, so the rule cannot be dodged by writing the duration in a shape the
-checker does not understand. Verified to fail: setting Immich's wait to 15
-minutes produces the error, and reverting it clears it.
+The multi-container skip is removed. Every declared container is inspected,
+and each node is repaired independently: a dead `immich-machine-learning`
+resets its own node while `immich-server` is left alone, and the app-level
+store status aggregates through the existing `allContainersRunning`.
+
+### 9b: pull before you destroy
+
+Reorder `Ensure` to `guard → pull → remove → create → start`. The pull
+failure now happens while the old container is still running, so the app
+survives a registry outage with its previous version intact.
+
+The ownership check is extracted into one named predicate, `isManaged`, and
+both destructive paths call it. One check, one name, no path that forgot it.
 
 ## Commits
 
-1. Add `MaxWaitBudget` to `pkg/appclient/retry.go` as the single source for
-   the longest honourable readiness wait, documented with why it exists.
-   → verify: `cd services/host-agent && go build ./pkg/appclient/...`
+The ladder as executed. Each commit leaves the tree green.
 
-2. Make `Timeout(d)` a real per-request deadline: add `requestContext` to
-   `attempt.go`, derive the per-attempt deadline from it in `attemptOnce`
-   and `attemptStream`, and check the caller's context (not the derived one)
-   for terminality. Remove the client-level `http.Client.Timeout` from
-   `client.go` so the per-request value is authoritative in both directions.
-   → verify: `cd services/host-agent && go test ./pkg/appclient/...`
+1. **Extract the managed-container ownership check in the container
+   runtime.** Add `isManaged(details)` returning whether the
+   `io.bloud.managed` label is `"true"`, and make `Remove` call it instead
+   of inlining the label comparison. No behavior change; this exists so the
+   next commit has one guard to apply rather than a second copy of a
+   condition.
+   → verify: `cd services/host-agent && go test ./internal/container/...`
 
-3. Add `Within(d)` to `call.go` for the total wait budget, with the
-   `budgetErr` field that records a budget above `MaxWaitBudget`, and surface
-   it at the top of `Wait` so an unreachable wait fails loudly.
-   → verify: `cd services/host-agent && go test ./pkg/appclient/...`
+2. **Pull before destroying, and guard the recreate path.** In `Ensure`,
+   move `pullImage` ahead of `RemoveContainer`, and refuse the whole
+   operation when an existing container is not Bloud-managed. Give the test
+   fake a chronological event log and an injectable pull failure so ordering
+   and failure behavior are both assertable rather than inferred.
+   → verify: `cd services/host-agent && go test ./internal/container/... -run TestPodmanRuntime -v`
 
-4. Make `Ready()` default the call's policy to `WaitPolicy` when no explicit
-   policy is set, honouring the contract its doc comment already stated.
-   → verify: `cd services/host-agent && go test ./pkg/appclient/...`
+3. **Put drifted container nodes back on the lifecycle path.** In
+   `SyncContainerState`, add `repairDriftedNode`: a node at `RUNNING` whose
+   container is not running is reset to `INITIALIZING` with a reason.
+   Decompose the per-app work into `syncAppContainers`, `inspectContainers`,
+   `containersAllGone` and `containersAllRunning` to stay inside the
+   cyclomatic-complexity gate. Drop the `len(defs) != 1` skip so
+   multi-container apps are covered. Replace the test that pinned the old
+   skip with tests for the new contract.
+   → verify: `cd services/host-agent && go test ./internal/engine/orchestrator/... -run TestSyncContainerState -v`
 
-5. Add the wait-budget test file: per-request deadline fires and cancels
-   server-side, `Timeout` extends past the client default, `Ready` defaults
-   to `WaitPolicy`, `WithRetry` still wins, `Within` sets the deadline,
-   over-budget fails at `Wait`, a per-request timeout does not end a wait,
-   a wait polls past five attempts, and a cancelled caller is still terminal.
-   → verify: `cd services/host-agent && go test ./pkg/appclient/... -v`
+4. **Close ledger items 8 and 9 and record this plan.** Move both items to
+   "Already Paid" in the tech-debt ledger with the reasoning, and replace
+   the previous plan in `specs/REFACTOR_LATEST.md`.
+   → verify: `npm run check:docs-links`
 
-6. Raise the orchestrator's `DefaultPostStartBudget` to `appclient.MaxWaitBudget`
-   and document the coupling.
-   → verify: `cd services/host-agent && go test ./internal/engine/orchestrator/...`
+Full-suite gate after the ladder:
 
-7. Convert the five long first-boot waits from `Timeout` to `Within` in
-   immich, affine, and hermes. Home Assistant's `Timeout(10s)` stays as
-   `Timeout`: it is on a one-shot `Do()`, where per-request is the correct
-   meaning, and it now actually applies.
-   → verify: `cd apps && go test ./...`
-
-8. Add the harness rule to `apps/configtest`: walk the app tree, evaluate
-   every `Within()` budget, fail above the ceiling, fail on unevaluable.
-   → verify: `cd apps && go test ./configtest/... -run WaitBudget -v`
-
-9. Update the ledger: item 6 closed with the failure chain and the fix, and
-   repayment-plan section 3 marked done.
-   → verify: `npm run check:docs-links && npm run lint:prose`
-
-10. Raise the startup convergence gate so it cannot be tripped by a single
-    node. Raising `DefaultPostStartBudget` to 10 minutes made the hardcoded
-    10-minute startup gate in `waitForSystemConvergence` smaller than one
-    node's own budget: a node that spent its full budget would trip the
-    startup timeout and `os.Exit(1)` the whole control plane, which is a
-    worse blast radius than the 150 seconds it replaced. The gate is now
-    `appclient.MaxWaitBudget + 5 * time.Minute`, derived from the same
-    constant so the two cannot drift, with a test that fails if the gate is
-    ever set at or below the per-node budget.
-    → verify: `cd services/host-agent && go test ./cmd/host-agent/... -run StartupGate`
-
-11. Run the fast tier and the race detector over the touched packages.
-    → verify: `./bloud validate --tier fast` and
-    `cd services/host-agent && go test -race ./pkg/appclient/... ./internal/engine/orchestrator/...`
+```sh
+cd services/host-agent && go test ./...
+cd services/host-agent && go test -race ./internal/engine/orchestrator/... ./internal/catalog/...
+cd apps && go test ./...
+npm run lint:go && npm run check:gofmt
+```
 
 ## Decision Document
 
-- `Timeout` and `Within` are separate methods with separate meanings, not one
-  overloaded method. The alternative considered was letting `Timeout` mean
-  the wait budget when followed by `Wait()`; rejected because a method whose
-  meaning depends on which terminal verb closes the chain is a trap for the
-  next reader, and the chain is multi-line so the terminal verb is not even
-  visible at the call.
-- The per-request deadline is applied through a derived context, not through
-  `http.Client.Timeout`. This is what lets a call extend past the client
-  default instead of being capped by it, and it is what makes the value real
-  for every attempt rather than for the client's lifetime.
-- Terminality belongs to the caller's context. A request-level deadline
-  expiry is classified as transient so it participates in the wait's normal
-  retry budget. This was a deliberate choice against the more obvious
-  implementation, which would have made a slow probe fatal to the wait.
-- `Ready()` sets the default policy rather than `Wait()` choosing one at
-  terminal time, so the policy is visible on the call builder and an
-  explicit `WithRetry` in either order overrides it.
-- `MaxWaitBudget` lives in `pkg/appclient`, not in `pkg/configurator`,
-  because `pkg/configurator` already imports `pkg/appclient`; putting it the
-  other way round would be an import cycle. The orchestrator's
-  `DefaultPostStartBudget` is defined as `appclient.MaxWaitBudget`, so the
-  two ceilings cannot drift.
-- The startup convergence gate is derived from the same constant
-  (`MaxWaitBudget + 5m`) rather than staying an independent literal. Raising
-  the per-node budget without touching the gate would have made the gate the
-  smallest number in the relationship, so one slow or hung node could trip
-  it and take the control plane down. Three timeouts that describe one
-  quantity now come from one place: the app's `Within`, the node's
-  `PostStartBudget`, and the startup gate.
-- An over-budget `Within()` fails at `Wait` time rather than being clamped.
-  Clamping reproduces the original sin: a declared number that is not what
-  actually happens.
-- The harness rule reads source with `go/ast` rather than requiring each app
-  to re-declare its budget in a manifest. A second declaration site would be
-  a second thing that can drift from the first.
-- The AST evaluator fails loudly on a duration shape it cannot evaluate.
-  Skipping an unevaluable budget would make the check quietly incomplete,
-  which is how the original gap survived a suite of twenty tests.
+**Container runtime (`internal/container`).**
+
+- The ownership predicate `isManaged` is package-private and shared by every
+  destructive path. The rule is: no code removes a container without
+  passing through it.
+- `Ensure`'s ordering contract is now `guard → pull → remove → create →
+  start`. This is pinned by an explicit event-sequence assertion, not just
+  by the absence of a removal on failure, because the ordering is the
+  contract.
+- A pull failure is returned unchanged. It is not swallowed and not
+  retried here; the reconciler's next pass is the retry.
+- The unmanaged-container refusal on the recreate path is a hard error, not
+  a skip. A name collision means the desired state is ambiguous and
+  silently proceeding either way is wrong.
+
+**Orchestrator (`internal/engine/orchestrator`).**
+
+- `repairDriftedNode(nodeID, state)` is the single drift-repair primitive.
+  It returns whether it issued a reset, so callers and tests can observe
+  the decision.
+- Drift is defined narrowly: `state.Running == false` **and**
+  `node.ActualStatus == RUNNING`. Not "any mismatch". `ERROR` is terminal
+  and untouched; intermediate statuses mean a drive is in flight.
+- The reset target is `INITIALIZING`, not `STOPPED`. `INITIALIZING` with
+  target `RUNNING` dispatches the full lifecycle. A hypothetical
+  `STOPPED`-with-target-`RUNNING` would need a new dispatch rule, and the
+  graph already has the right state for "start over".
+- The reset carries a reason string on the node's `Error` field so the
+  recreate is traceable to its cause. This follows the `PreStartResult`
+  precedent: a recreate signal and its reason travel together.
+- The store-status corrections are deliberately kept. They are the
+  user-visible truth at the moment of sync, and existing tests pin them.
+  The node reset is additive, not a replacement.
+- Uninstalling apps are excluded from drift repair before any repair can
+  happen. Their containers are expected to be absent; treating that as drift
+  would resurrect an app the user is removing.
+- An uninspectable container is omitted from the state map rather than
+  assumed absent. Treating "could not inspect" as "gone" would reset nodes
+  on a transient runtime error.
+- Multi-container apps are now inspected per container def. App-level store
+  status continues to aggregate through the existing
+  `allContainersRunning`; no new aggregation path was added.
+
+**No schema change, no API change, no config change.** This is entirely
+inside the reconcile loop and the container runtime.
 
 ## Testing Decisions
 
-A good test here asserts what a caller observes, not how the deadline is
-implemented. The tests never inspect `timeoutOverride` or `budgetErr`
-directly except where the assertion is about the built policy itself.
+A good test here asserts a **state transition the reconciler can act on**,
+never an internal helper's return value. The tests ask: after a sync pass,
+is this node back on the lifecycle path, and is it distinguishable from a
+node that should not be?
 
-The per-request deadline test is behavioural in the strongest available sense:
-the test server watches its own `r.Context().Done()` and reports whether the
-client hung up before the handler finished. That distinguishes "the client
-really cancelled" from "the test merely saw an error", which a status-code
-assertion cannot do.
+Specifically, the drift tests assert three things together, because the bug
+was a three-way disagreement:
 
-The regression that matters most is `TestWait_PerRequestTimeoutIsTransientNotTerminal`:
-a first probe that blows its per-request deadline, followed by a good one,
-must converge rather than abort. This is the case a naive implementation of
-"wire the timeout" gets wrong, and it is the case that would have turned a
-fixed bug into a worse one.
+- the node's `actual` status moved to `INITIALIZING`
+- the node's `target` is still `RUNNING` (a reset that also lowered the
+  target would be a no-op dressed as a fix)
+- therefore `target != actual`, which is the condition the reconciler
+  consumes
 
-`TestWait_PollsPastFiveAttempts` pins the specific number that was the bug:
-a `Ready()` wait must exceed five attempts, because five was `DefaultRetry`'s
-cap and reaching it was what killed cold boots.
+Modules tested:
 
-The harness rule is a static check with a runtime guarantee: it was verified
-to fail by setting a budget above the ceiling and watching it fail, then
-reverted. A guard that has never been seen to fail is a rumour.
+- **Container runtime.** Pull failure leaves the existing running container
+  present and unremoved. The recreate path refuses an unmanaged container.
+  The call sequence is exactly `pull, remove, create, start`. Existing
+  idempotency and progress-reporting tests are untouched and still pass.
+- **Orchestrator container sync.** Drift on a single-container app is
+  repaired. Drift on one node of a multi-container app is repaired while
+  the healthy node is untouched. An `ERROR` node is not retried. An
+  uninstalling app is not re-driven. A container that is genuinely running
+  causes no reset, so the repair cannot become a per-pass recreate loop. The
+  catalog-miss guard from PR 6 is unchanged.
 
-Prior art in this repo, same shape:
+Prior art followed:
 
-- `apps/configtest/configtest.go` (from #121): the conformance harness that
-  turned configurator doc comments into assertions. This adds one more rule
-  to the same table.
-- `apps/vaultwarden/configurator_test.go`: loads its own `metadata.yaml` and
-  asserts the code matches it, the cross-file consistency pattern.
-- `npm run check:image-pins`: a cross-file rule promoted to a gate, including
-  the "fail on an exception that matches nothing" discipline that the
-  unevaluable-budget rule copies.
-- `services/host-agent/internal/wire/completeness_test.go`: pinning that a
-  wiring is complete rather than assumed.
+- `orchestrator_containers_test.go` already established the shape: a
+  `FakeAppStore`, a fake catalog cache, a `MockContainerRuntime`, and an
+  assertion about the resulting state rather than about calls made. The new
+  tests extend that file rather than introducing a new harness.
+- The `TestSyncContainerState_MultiContainerSkipped` test was **deleted,
+  not adapted**. It asserted the wrong contract, so keeping it in any form
+  would preserve the bug as a requirement. Replacing a test that pinned
+  wrong behavior is part of the fix, not collateral damage.
+- The runtime's ordering assertion follows the existing fake-client pattern
+  in `runtime_test.go`, extended with a chronological event log because
+  "which happened first" was previously unobservable.
+
+Deliberately not tested: the full end-to-end "kill container, watch it come
+back" journey. That is the `./bloud e2e lifecycle` suite's job, and it is
+listed under Further Notes as the outstanding verification step.
 
 ## Out of Scope
 
-- The other open P1 items: container drift never repaired while the process
-  is alive (item 8), `Ensure` force-removing before pull with no rollback
-  (item 9), and the health surface's blindness to the Podman socket
-  (item 10). Each is its own change; item 8 and 9 in particular touch the
-  reconcile loop and want live-Podman verification.
-- The P2 inventory: built-in primary host persistence, system-app hiding by
-  category, the nil-wired sharing and system modules, `ClearAppDataIntent`,
-  the `DeriveSecret` fallback, hand-assembled Traefik YAML, `PlanInstall`
-  blockers, `primaryContainerNode` ordering, the icon path traversal,
-  network and orphan sweeping, and the `GetCatalog` cached-struct race.
-- Changing any app's actual boot behaviour. No app is configured
-  differently; only the honesty of how long Bloud is willing to wait changes.
-- Home Assistant's stale-trust probe semantics, which came out of the #121
-  refactor unchanged and stay unchanged here. Its `Timeout(10s)` now applies
-  per request, which is what it always claimed to do.
-- Per-app configurable wait budgets from `metadata.yaml`. `MaxWaitBudget` is
-  a global ceiling; making it per-app is a larger contract change with no
-  current demand.
-- Frontend, CLI, and packaging.
+- **Item 10 (health surface).** A drifted-and-repaired container is now
+  self-healing, but a Podman socket that is unavailable entirely still has
+  no degraded signal, the startup gate is still SQLite-only, and a failed
+  system-app convergence still `os.Exit(1)`s the control plane. That is
+  PR 11's remaining scope and a different problem: visibility, not repair.
+- **The `operations` ledger single-row contention.** Multi-container nodes
+  of one app still race one `operations` row on phase writes. PR 7 made
+  that last-writer-wins-by-ledger-semantics rather than a lost write, and
+  the ledger records it as a design constraint, not a correctness bug.
+  Untouched here.
+- **`primaryContainerNode` ordering convention (item 20).** Which container
+  is "last" still decides inter-app edges and SSO ownership. Related to
+  multi-container handling but a separate decision with its own blast
+  radius.
+- **Graceful drain before recreate.** `Ensure` still removes with
+  `force=true`. A spec change still interrupts the container immediately;
+  this refactor changed *when* we destroy relative to *pulling*, not how
+  gently we destroy.
+- **Restart-policy interaction.** Containers with `restartPolicy: always`
+  are largely restarted by Podman itself before the reconciler notices.
+  Drift repair is the backstop for the cases Podman does not handle, not a
+  replacement for restart policies.
+- **Drift for system apps.** `SyncContainerState` skips `IsSystem` apps,
+  as before. Traefik and Authentik drift is out of scope for this path.
 
 ## Further Notes
 
-The instructive part is why twenty tests missed this. Every test in
-`pkg/appclient` tested the machinery that was wired. Nobody tested the
-modifier that was not. A method that accepts a value, stores it, and returns
-the receiver for chaining looks correct in a code review and passes every
-existing test, because passing a test requires the value to be read and it
-was read by nothing.
+**Why the old code was written that way, and why that is the actual lesson.**
+The store write in the drift path was not stupid. It was the natural move for
+someone reading the database as the system of record. The bug is that this
+system has two records, and only one of them is load-bearing for behavior.
+The store is what the user reads. The graph is what the engine acts on. A
+correction that updates only the readable record is a correction that
+changes nothing. Every future "sync reality with intent" feature has to
+answer one question first: *which record does the actor actually read?*
 
-That is the same failure shape as the C3 regression from the #121 work: the
-ledger recorded that seven no-op `Remove` methods were deleted, and seven
-came back within days in newly written apps, because the interface made the
-wrong thing look like the expected shape. The answer both times was the same:
-do not rely on the next author noticing, make a test notice.
+**The comment was the bug's hiding place.** Both defects were documented as
+if they were design decisions. "Mark stopped so it can be re-created"
+described an intention that no code fulfilled. "Multi-container lifecycle is
+tracked via graph events, not this path" described a division of labor that
+did not exist. A confident wrong comment is worse than no comment: it stops
+the next reader from checking. Both comments are gone, replaced with the
+reasoning for the new behavior.
 
-One thing this refactor does not fix, worth stating plainly: a wait that
-exhausts its budget still lands the app in `ERROR`, and `ERROR` is still
-terminal by design. This change makes the budget honest so the terminal state
-is reached only when the app genuinely failed to come up, rather than when it
-came up slowly. Whether `ERROR` should be retryable with backoff is a
-different and larger question about the reconciler, and it is not answered here.
+**Verification still outstanding.** The unit and race tiers are green, but
+the live behavior has not been observed end to end. Before this is treated
+as fully proven, run:
+
+```sh
+./bloud e2e lifecycle
+```
+
+and ideally the manual check it does not cover: with host-agent running,
+`podman rm -f apps-jellyfin`, then watch the next convergence pass recreate
+it without a restart. That is the exact scenario the old code could not
+handle, and it is worth watching once rather than trusting.
+
+**Note on the pre-existing red test.** `cd cli && go test ./...` fails on
+darwin at `TestResolveBackendPrecedence` for reasons unrelated to this
+change (macOS auto-resolves to its single available backend; the test
+expects a stored `qemu` preference). It is invisible to the pre-commit hook,
+which omits `cli` tests. The ledger already records it; fixing the
+expectation for single-backend hosts is a separate small change.
