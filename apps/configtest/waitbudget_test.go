@@ -34,8 +34,8 @@ func TestAssertWaitBudgetsReachable(t *testing.T) {
 	root := appsRoot(t)
 
 	type finding struct {
-		pos     string
-		budget  time.Duration
+		pos    string
+		budget time.Duration
 	}
 	var findings []finding
 
