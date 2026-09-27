@@ -1,0 +1,136 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Go integration tests. Like every other check, the tier is defined once in
+# validation.yaml and executed through ./bloud validate; this file only
+# provides the machine it runs on. Do not add test steps here.
+#
+# Why this job exists: the integration tier was defined in validation.yaml
+# but no workflow ever invoked it, so the tests under
+# services/host-agent/internal/e2e (install an app through the real
+# orchestrator, then assert behavior against the live app) were never run
+# by CI. Only --tier fast ran. The Playwright jobs do not cover them: they
+# drive the browser, not the Go behavioral assertions, and they do not
+# build with -tags integration.
+#
+# The tier runs on the native backend: a throwaway GitHub runner is the one
+# place the no-VM trade-off is acceptable (AGENTS.md). It deploys host-agent
+# and the catalog as a systemd user service in /var/tmp/bloud-validate-runtime
+# and installs Jellyfin through POST /api/apps/jellyfin/install.
+name: Integration
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "services/host-agent/**"
+      - "apps/**"
+      - "cli/**"
+      - "validation.yaml"
+      - ".github/workflows/integration.yml"
+
+jobs:
+  integration:
+    # Pinned rather than `ubuntu-latest`, for the same reason as ci.yml: the
+    # runner image is part of this job's contract, and the label migrates in
+    # October 2026.
+    runs-on: ubuntu-24.04
+    # Worst case is the sum of the pieces, not the test timeout alone:
+    # local builds (~5m) + deploy (~1m) + first-boot convergence, which the
+    # tier allows 20m for, + the 30m test timeout in validation.yaml.
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+          cache-dependency-path: |
+            services/host-agent/go.sum
+            apps/go.sum
+            cli/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install ldap-utils
+        run: |
+          # The integration tier's guest preflight requires ldapsearch, which
+          # the e2e lifecycle preflight does not. Without it the tier fails at
+          # the preflight step, before any test runs, and the failure looks
+          # like a broken VM rather than a missing package.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ldap-utils
+          command -v ldapsearch
+
+      - name: Enable user-level systemd (linger)
+        run: |
+          sudo loginctl enable-linger "$USER"
+          sleep 2
+          test -S "$XDG_RUNTIME_DIR/systemd/private"
+
+      - name: Purge stale Go build cache
+        run: |
+          # Same hazard as the e2e jobs: setup-go caches keyed on go.sum,
+          # which does not change when only .go source changes, so the build
+          # can link stale object files. The integration tier compiles both
+          # host-agent and the test binary from this cache, so a stale object
+          # silently tests old code.
+          go clean -cache
+
+      - name: Build the bloud CLI
+        run: npm run cli:build
+
+      - name: Wipe stale validation runtime
+        run: |
+          # A previous run's data dir surviving into this one would exercise
+          # the post-init path instead of first-run init.
+          sudo rm -rf /var/tmp/bloud-validate-runtime
+          sudo chown -R "$USER" /var/tmp
+
+      - name: Validate (integration tier)
+        env:
+          BLOUD_BACKEND: native
+        run: ./bloud validate --tier integration
+
+      - name: Show the validation ledger
+        if: always()
+        run: |
+          echo "=== .bloud/validation/latest.json ==="
+          cat .bloud/validation/latest.json 2>&1 || echo "(no ledger written)"
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          echo "=== Validation host-agent journal ==="
+          journalctl --user -u bloud-validate-host-agent.service --no-pager 2>&1 \
+            | grep -iE 'jellyfin|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|"level":"(error|warn)"' \
+            | tail -300 || true
+          echo "=== Full journal tail ==="
+          journalctl --user -u bloud-validate-host-agent.service --no-pager -n 120 2>&1 || true
+          echo "=== Podman containers ==="
+          podman ps -a 2>&1 || true
+          echo "=== Podman socket ==="
+          systemctl --user status podman.socket --no-pager 2>&1 || true
+          echo "=== Validation runtime dir ==="
+          ls -la /var/tmp/bloud-validate-runtime/ 2>&1 || true
+          ls -la /var/tmp/bloud-validate-runtime/bin/ 2>&1 || true
+          echo "=== Ports ==="
+          ss -tlnp 2>&1 || true
+
+      - name: Upload validation ledger
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-validation-ledger
+          path: .bloud/validation/
+          if-no-files-found: ignore
+          retention-days: 14
