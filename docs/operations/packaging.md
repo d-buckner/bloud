@@ -62,10 +62,11 @@ the installer on purpose: `install.sh` is not covered by the packaging tests,
 so any provisioning logic that lived there could drift from the package it
 installs.
 
-Resolving the newest release costs one unauthenticated GitHub API call per
-install, and that is capped at 60 requests per hour per IP. Export
-`GITHUB_TOKEN` (or `GH_TOKEN`) before running the installer to raise the
-ceiling when installing from a shared address.
+Resolving the newest release costs one GitHub API call per install, and the
+installer makes it unauthenticated on purpose: asking a first-time user for a
+token is a barrier to entry the install path should not have. Anonymous calls
+are capped at 60 per hour per IP, and one call per install sits well inside
+that.
 
 The manual path is the same thing with the download made by hand:
 

@@ -24,16 +24,16 @@ REPO="d-buckner/bloud"
 # deb-<UTC timestamp> prerelease instead, and the newest of those is resolved
 # here, at install time.
 #
-# Unauthenticated API calls are capped at 60 per hour per IP. Export
-# GITHUB_TOKEN (or GH_TOKEN) before running this to raise that ceiling when
-# installing from a shared address.
+# Resolution is unauthenticated on purpose. Asking a first-time user for a
+# GitHub token is a barrier to entry this install path should not have, and one
+# call per install sits well inside the anonymous ceiling of 60 requests per
+# hour per IP.
 api="https://api.github.com/repos/$REPO/releases?per_page=30"
-token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-if [ -n "$token" ]; then
-	json="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
-		-H "Authorization: Bearer $token" "$api")"
-else
-	json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$api")"
+if ! json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$api")"; then
+	printf 'bloud: could not read the release list from %s.\n' "$REPO" >&2
+	printf '       A 403 here means the anonymous limit was hit: 60 requests\n' >&2
+	printf '       per hour per IP. Wait a while and retry.\n' >&2
+	exit 1
 fi
 
 # The release list is newest first, so the first .deb asset is the current
@@ -47,8 +47,6 @@ url="$(printf '%s' "$json" |
 if [ -z "$url" ]; then
 	printf 'bloud: no published .deb found in %s\n' "$REPO" >&2
 	printf '       Browse https://github.com/%s/releases by hand.\n' "$REPO" >&2
-	printf '       A rate-limited API call fails this way too: 60 unauthenticated\n' >&2
-	printf '       requests per hour per IP. Set GITHUB_TOKEN and retry.\n' >&2
 	exit 1
 fi
 
