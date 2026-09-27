@@ -24,7 +24,14 @@ import (
 // blockingHandler sleeps up to sleepFor, but reports immediately if the
 // request's own context is cancelled first, so a test can tell "the server
 // was slow" apart from "the client's per-request deadline fired".
-func blockingHandler(sleepFor time.Duration, cancelled *atomic.Bool, calls *atomic.Int32) http.Handler {
+//
+// `cancelled` is a channel rather than a flag because the handler runs on its
+// own goroutine: the client is finished the instant its deadline fires, and
+// the scheduler owes the handler nothing, so a caller that reads a bool right
+// after Do() returns is racing a goroutine. A buffered channel lets the test
+// wait for the observation instead of guessing at its timing. Send is
+// non-blocking so a handler invoked more than once cannot wedge the test.
+func blockingHandler(sleepFor time.Duration, cancelled chan<- struct{}, calls *atomic.Int32) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls != nil {
 			calls.Add(1)
@@ -35,7 +42,10 @@ func blockingHandler(sleepFor time.Duration, cancelled *atomic.Bool, calls *atom
 			_, _ = w.Write([]byte("ready"))
 		case <-r.Context().Done():
 			if cancelled != nil {
-				cancelled.Store(true)
+				select {
+				case cancelled <- struct{}{}:
+				default:
+				}
 			}
 			// The client hung up; there is nothing to answer.
 			return
@@ -44,8 +54,8 @@ func blockingHandler(sleepFor time.Duration, cancelled *atomic.Bool, calls *atom
 }
 
 func TestTimeout_AppliesARealPerRequestDeadline(t *testing.T) {
-	var cancelled atomic.Bool
-	srv := httptest.NewServer(blockingHandler(2*time.Second, &cancelled, nil))
+	cancelled := make(chan struct{}, 1)
+	srv := httptest.NewServer(blockingHandler(2*time.Second, cancelled, nil))
 	t.Cleanup(srv.Close)
 
 	c := New(Spec{Name: "test", BaseURL: srv.URL})
@@ -56,10 +66,17 @@ func TestTimeout_AppliesARealPerRequestDeadline(t *testing.T) {
 	elapsed := time.Since(start)
 
 	require.Error(t, err, "a request that outlasts Timeout() must fail")
-	assert.True(t, cancelled.Load(),
-		"the per-request deadline must actually cancel the request (server never saw a client hang up)")
 	assert.Less(t, elapsed, 1*time.Second,
 		"must give up at the 50ms deadline, not wait out the 2s handler (took %s)", elapsed)
+
+	// Wait for the handler to report the hang-up. The bound is generous: if it
+	// is ever hit, the deadline genuinely did not cancel the request, which is
+	// the failure this test exists to catch.
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the per-request deadline must actually cancel the request (server never saw a client hang up)")
+	}
 }
 
 func TestTimeout_CanExtendPastTheClientDefault(t *testing.T) {
