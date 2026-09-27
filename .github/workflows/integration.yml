@@ -61,15 +61,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install ldap-utils
+      - name: Install ldap-utils and psmisc
         run: |
-          # The integration tier's guest preflight requires ldapsearch, which
-          # the e2e lifecycle preflight does not. Without it the tier fails at
-          # the preflight step, before any test runs, and the failure looks
-          # like a broken VM rather than a missing package.
+          # ldap-utils: the integration tier's guest preflight requires
+          # ldapsearch, which the e2e lifecycle preflight does not. Without it
+          # the tier fails at the preflight step, before any test runs, and the
+          # failure looks like a broken VM rather than a missing package.
+          #
+          # psmisc: integrationStopAgentScript kills whatever holds port 3000
+          # with fuser. fuser is absent from the ubuntu base image, so install
+          # it rather than depend on the runner image happening to carry it.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ldap-utils
+          sudo apt-get install -y -qq ldap-utils psmisc
           command -v ldapsearch
+          command -v fuser
 
       - name: Enable user-level systemd (linger)
         run: |

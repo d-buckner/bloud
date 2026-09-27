@@ -13,6 +13,24 @@ import (
 	"path/filepath"
 )
 
+// shellProgram resolves the shell that the local executor hands full command
+// lines to. It must be bash wherever bash exists, because the SSH and Lima
+// executors run their scripts under bash and the tier scripts are written
+// for bash: the integration preflight opens with `set -euo pipefail`, which
+// dash rejects outright with "set: Illegal option -o pipefail". Hardcoding
+// /bin/sh made the native backend fail its own preflight on any host where
+// sh is dash (Debian and Ubuntu, so every GitHub runner), while the
+// byte-identical script passed on Lima and QEMU. The two executors take the
+// same RunSpec and are expected to mean the same thing by it, so the shell is
+// aligned here rather than by writing every tier script down to the POSIX
+// intersection. Fall back to sh only where bash is genuinely absent.
+func shellProgram() string {
+	if path, err := exec.LookPath("bash"); err == nil {
+		return path
+	}
+	return "sh"
+}
+
 // LocalExecutor runs commands on the local machine.
 type LocalExecutor struct{}
 
@@ -65,13 +83,13 @@ func buildLocalCommand(ctx context.Context, spec RunSpec) *exec.Cmd {
 		}
 		cmd = exec.CommandContext(ctx, name, args...)
 	case spec.AsRoot:
-		cmd = exec.CommandContext(ctx, "sudo", "sh", "-c", spec.Command)
+		cmd = exec.CommandContext(ctx, "sudo", shellProgram(), "-c", spec.Command)
 	default:
 		// Command is a full shell command line (pipes, redirects, quoting,
 		// &&/;, etc.), matching the contract of the SSH/Lima executors, which
-		// hand it to a remote shell verbatim. Run it through "sh -c" here too,
+		// hand it to a remote shell verbatim. Run it through a shell here too,
 		// rather than treating spec.Command as a literal executable name.
-		cmd = exec.CommandContext(ctx, "sh", "-c", spec.Command)
+		cmd = exec.CommandContext(ctx, shellProgram(), "-c", spec.Command)
 	}
 	if len(spec.Env) > 0 {
 		cmd.Env = append(os.Environ(), envSlice(spec.Env)...)
