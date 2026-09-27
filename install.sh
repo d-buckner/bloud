@@ -50,9 +50,23 @@ if [ -z "$url" ]; then
 	exit 1
 fi
 
-# Test hook, used by .github/workflows/release.yml to assert that this resolver
-# picks the release it just published. Prints the URL and nothing else, and runs
-# unprivileged.
+# The checksum comes from the SHA256SUMS asset in the same release, not from
+# the JSON above. Pairing a digest with its asset out of that response means
+# depending on field order, and the response is pretty-printed with "digest"
+# before "browser_download_url", so adjacency guessing silently picks the wrong
+# release. jq would solve it and jq is not installed on a stock Debian box, so
+# the release carries a plain text file instead and sha256sum does the work.
+#
+# GitHub percent-encodes the "+" in the version in the URL; the asset name, and
+# so the SHA256SUMS entry, uses the literal character.
+asset="$(printf '%s' "${url##*/}" | sed 's/%2B/+/g')"
+want=""
+if sums="$(curl -fsSL "${url%/*}/SHA256SUMS")"; then
+	want="$(printf '%s\n' "$sums" | awk -v n="$asset" '$2 == n { print $1; exit }')"
+fi
+
+# Test hook, used to assert that this resolver picks a real published release.
+# Prints the URL and nothing else, and runs unprivileged.
 if [ "${BLOUD_INSTALL_URL_ONLY:-}" = "1" ]; then
 	printf '%s\n' "$url"
 	exit 0
@@ -65,6 +79,25 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 
 printf '==> Downloading %s\n' "$url"
 curl -fsSL -o "$tmp/bloud.deb" "$url"
+
+# A mismatch means the bytes we got are not the bytes the release lists: a
+# truncated or corrupted download. This is not a security boundary. The
+# checksum arrives from the same TLS origin as the file, so it cannot vouch for
+# provenance, and the .deb is unsigned. If the release carries no checksum we
+# carry on rather than block every install on a missing asset.
+if [ "${#want}" -eq 64 ]; then
+	if printf '%s  %s\n' "$want" "$tmp/bloud.deb" |
+		sha256sum -c - >/dev/null 2>&1; then
+		printf '==> Checksum verified\n'
+	else
+		printf 'bloud: the downloaded .deb does not match the published checksum.\n' >&2
+		printf '       Expected %s\n' "$want" >&2
+		printf '       Refusing to install it.\n' >&2
+		exit 1
+	fi
+else
+	printf '==> No published checksum to check against, skipping verification\n'
+fi
 
 printf '==> Installing (apt pulls podman, uidmap, and the rest)\n'
 apt-get install -y "$tmp/bloud.deb"

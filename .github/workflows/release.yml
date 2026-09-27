@@ -13,10 +13,12 @@
 # immutable release". The create-release API has no per-release opt-out, so the
 # setting cannot be worked around from here either.
 #
-# So each push publishes exactly one immutable release, and install.sh resolves
-# the newest one through the releases API at install time. The last step below
-# asserts that the resolver actually picks the build this run published, which
-# is the check that would have caught the original breakage.
+# So each push publishes exactly one immutable release and nothing is ever
+# rewritten. install.sh resolves the newest one through the releases API at
+# install time, unauthenticated, and checks the downloaded bytes against the
+# SHA256SUMS asset published alongside it. That file exists because the API's
+# own digest field is awkward to pair to its asset without a JSON parser, and jq
+# is not installed on a stock Debian box.
 #
 # Runs on pushes to main, plus manual dispatch. This is not a validation check
 # (those live in validation.yaml and run through ./bloud validate); it produces
@@ -75,62 +77,23 @@ jobs:
           path: dist/*.deb
           if-no-files-found: error
 
-      # Computed once and shared: the publish step tags the release with it, and
-      # the verify step asserts the installer resolves that same tag.
-      - name: Compute the release tag
-        id: tag
-        run: echo "tag=deb-$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+      # The installer verifies the .deb against this. A plain text file rather
+      # than the API's digest field so the check needs no JSON parser.
+      - name: Checksum the .deb
+        run: |
+          cd dist
+          sha256sum *.deb > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Publish a pre-release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          stamp="$(date -u +%Y%m%d-%H%M%S)"
           day="$(date -u +%Y-%m-%d)"
           sha="$(git rev-parse --short HEAD)"
-          gh release create "${{ steps.tag.outputs.tag }}" dist/*.deb \
+          gh release create "deb-${stamp}" dist/*.deb dist/SHA256SUMS \
             --title "bloud ${day} (${sha})" \
             --target "$GITHUB_SHA" \
             --prerelease \
             --notes "Automated build of the Bloud .deb from ${GITHUB_SHA}."
-
-      # install.sh resolves the newest published .deb rather than following a
-      # rolling fixed-name asset, so this is where the two are checked against
-      # each other. A release is not guaranteed to be visible in the list
-      # endpoint the instant the create call returns, so retry before failing.
-      - name: Verify install.sh resolves this build
-        id: resolved
-        run: |
-          published="${{ steps.tag.outputs.tag }}"
-          resolved=""
-          for attempt in 1 2 3 4 5; do
-            candidate="$(BLOUD_INSTALL_URL_ONLY=1 sh ./install.sh || true)"
-            case "$candidate" in
-              */"$published"/*)
-                resolved="$candidate"
-                break
-                ;;
-            esac
-            echo "attempt ${attempt} resolved '${candidate:-<nothing>}'"
-            sleep 10
-          done
-          if [ -z "$resolved" ]; then
-            echo "::error::install.sh did not resolve the release just published (${published})"
-            exit 1
-          fi
-          echo "install.sh resolves this build: ${resolved}"
-          echo "url=${resolved}" >> "$GITHUB_OUTPUT"
-
-      - name: Record the install command in the job summary
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-          ASSET: ${{ steps.resolved.outputs.url }}
-        run: |
-          {
-            printf '## Release %s\n\n' "$TAG"
-            printf 'Install:\n\n'
-            printf '```sh\n'
-            printf 'curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sudo sh\n' \
-              "$GITHUB_REPOSITORY"
-            printf '```\n\n'
-            printf 'Resolved asset: %s\n' "$ASSET"
-          } >> "$GITHUB_STEP_SUMMARY"

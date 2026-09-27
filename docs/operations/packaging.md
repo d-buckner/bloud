@@ -37,9 +37,7 @@ overwritten on every push, and immutability refuses the upload with
 `HTTP 422: Cannot upload assets to an immutable release`. So each push
 publishes exactly one immutable `deb-<UTC timestamp>` release, and
 `install.sh` resolves the newest one at install time through the releases
-API. The last step of the workflow runs that same resolver and asserts it
-picks the release the run just published, so the installer and the release
-cannot drift apart unnoticed.
+API.
 
 The old `latest` tag is retired for good. GitHub will not release a tag name
 that was attached to an immutable release, even after that release is
@@ -67,6 +65,28 @@ installer makes it unauthenticated on purpose: asking a first-time user for a
 token is a barrier to entry the install path should not have. Anonymous calls
 are capped at 60 per hour per IP, and one call per install sits well inside
 that.
+
+## Integrity
+
+Each release carries a `SHA256SUMS` asset, and `install.sh` verifies the
+downloaded `.deb` against it and refuses to install on a mismatch. That
+catches a truncated or corrupted download.
+
+The checksum lives in a plain text file rather than being read out of the
+releases API response. The API does publish a `digest` per asset, but pairing a
+digest with its asset in that response depends on field order, and the response
+is pretty-printed with `digest` before `browser_download_url`, so adjacency
+silently picks the wrong release. `jq` would make that a one-liner, and `jq` is
+not installed on a stock Debian box: the same barrier the installer refuses to
+add.
+
+Verification is not a security boundary. The checksum arrives over the same TLS
+origin as the file, so it cannot vouch for provenance, and the `.deb` is
+unsigned. There is no `debsig-verify` or `dpkg-sig` signature in the package,
+so `apt` establishes nothing about where the bytes came from, and immutability
+only prevents tampering after publication. It does not stop a malicious release
+from being published in the first place. Closing that gap means signing the
+package with a key the installer trusts, which is not built yet.
 
 The manual path is the same thing with the download made by hand:
 
