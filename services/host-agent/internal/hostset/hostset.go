@@ -364,6 +364,58 @@ func (h HostSet) WithURLOverride(host, raw string) HostSet {
 	return HostSet{hosts: h.hosts, primary: h.primary, urlOverrides: overrides, schemes: h.cloneSchemes()}
 }
 
+// ProxyConsistency reports the ways the deployment's declared scheme and the
+// settings that make that scheme real disagree with each other.
+//
+// Each issue names one layer of the proxy story, so a failed login points at one
+// setting instead of three candidates. The layers are independent, and the
+// original bug was that all three had to be right at once with nothing saying
+// so:
+//
+//	layer 1, trust scope: Traefik accepts X-Forwarded-* only from addresses in
+//	    trustedProxyNets. Without them it rewrites X-Forwarded-Proto to http,
+//	    and Authentik reads an HTTPS request as HTTP and generates http://
+//	    URLs the browser then blocks as mixed content.
+//	layer 2, derivation: the scheme carried by this HostSet is what every
+//	    derived URL inherits. Wrong here means wrong in the issuer, the
+//	    registered redirect URIs, the launch URLs, and the outpost's browser
+//	    URL, all at once.
+//	layer 3, dial plan: the container's host-gateway hop must speak the same
+//	    scheme as the issuer string, because OIDC requires that string to match
+//	    on every hop. See Deployability.
+//
+// trustedProxyNets is config.TrustedProxyNets, and tlsAtTraefik is whether TLS
+// terminates where the container's issuer pin actually lands.
+func (h HostSet) ProxyConsistency(trustedProxyNets []string, tlsAtTraefik bool) []Issue {
+	var issues []Issue
+	hasProxy := len(trustedProxyNets) > 0
+
+	switch h.PublicScheme() {
+	case SchemeHTTPS:
+		if !hasProxy {
+			issues = append(issues, Issue{
+				Code: "https_without_trusted_proxy_nets",
+				Message: "public scheme is https but BLOUD_TRUSTED_PROXY_NETS is empty, so Traefik rewrites " +
+					"X-Forwarded-Proto to http and Authentik reads an HTTPS request as HTTP. Name the proxy " +
+					"in BLOUD_TRUSTED_PROXY_NETS.",
+			})
+		}
+	case SchemeHTTP:
+		if hasProxy {
+			issues = append(issues, Issue{
+				Code: "proxy_present_but_scheme_is_http",
+				Message: "BLOUD_TRUSTED_PROXY_NETS names an upstream proxy but the public scheme is still http, " +
+					"so every derived URL (issuer, redirect URIs, launch URLs) is http while the proxy serves " +
+					"https. Set BLOUD_PUBLIC_SCHEME=https.",
+			})
+		}
+	}
+
+	// Layer 3 is independent of the trust scope: it is about the container hop.
+	issues = append(issues, h.Deployability(tlsAtTraefik)...)
+	return issues
+}
+
 // Issue is one reason the URLs derived from a HostSet cannot actually be
 // served. Codes are stable so tests and logs can key off them.
 type Issue struct {
