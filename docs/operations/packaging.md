@@ -24,12 +24,28 @@ output is `dist/bloud_<version>_<arch>.deb`.
 publishes a GitHub pre-release tagged `deb-<UTC timestamp>` (titled
 `bloud <date> (<sha>)`) with the `.deb` attached.
 
-The same job also publishes a rolling `latest` tag carrying the fixed-name
-asset `bloud_latest_amd64.deb`, clobbered on every push. That is what
-`install.sh` downloads. GitHub's `releases/latest/download/...` shortcut skips
-prereleases, and these builds stay prereleases while the project is alpha, so
-the rolling pointer is a fixed tag rather than that shortcut. The version-named
-release above stays the provenance record.
+## Why there is no rolling asset
+
+Every release this workflow publishes is immutable, because the repository has
+GitHub's release immutability setting enabled. Once an immutable release is
+published, its assets cannot be added, replaced, or deleted, and its tag
+cannot be moved. The create-release API has no per-release opt-out, so the
+workflow cannot override the setting for one release either.
+
+That rules out a rolling fixed-name asset. A rolling asset has to be
+overwritten on every push, and immutability refuses the upload with
+`HTTP 422: Cannot upload assets to an immutable release`. So each push
+publishes exactly one immutable `deb-<UTC timestamp>` release, and
+`install.sh` resolves the newest one at install time through the releases
+API. The last step of the workflow runs that same resolver and asserts it
+picks the release the run just published, so the installer and the release
+cannot drift apart unnoticed.
+
+The old `latest` tag is retired for good. GitHub will not release a tag name
+that was attached to an immutable release, even after that release is
+deleted, so no future build can take that name back. The `latest` release
+still on the releases page is empty: its `gh release create` succeeded and
+the asset upload that followed was the call that started failing.
 
 ## Installing
 
@@ -37,14 +53,19 @@ release above stays the provenance record.
 curl -fsSL https://raw.githubusercontent.com/d-buckner/bloud/main/install.sh | sudo sh
 ```
 
-[`install.sh`](../../install.sh) is deliberately thin: it fetches the rolling
-asset and runs `apt-get install` on it. Everything a fresh install needs on
+[`install.sh`](../../install.sh) is deliberately thin: it resolves the newest
+published `.deb` and runs `apt-get install` on it. Everything a fresh install needs on
 disk (the `bloud` user, its subuid ranges, `/var/lib/bloud`, linger, the
 sysctl drop-in, the user service) is done by the package's own maintainer
 scripts, described under "Service model" below. Nothing of that is repeated in
 the installer on purpose: `install.sh` is not covered by the packaging tests,
 so any provisioning logic that lived there could drift from the package it
 installs.
+
+Resolving the newest release costs one unauthenticated GitHub API call per
+install, and that is capped at 60 requests per hour per IP. Export
+`GITHUB_TOKEN` (or `GH_TOKEN`) before running the installer to raise the
+ceiling when installing from a shared address.
 
 The manual path is the same thing with the download made by hand:
 
