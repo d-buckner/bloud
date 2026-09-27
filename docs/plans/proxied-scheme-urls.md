@@ -1,4 +1,5 @@
-> Status: draft
+> Status: accepted. Parts A, B, and E are implemented. The TLS-at-Traefik work
+> that this plan pins down is still open and is a non-goal here.
 
 # Plan: Make derived URLs survive a TLS-terminating proxy
 
@@ -189,6 +190,21 @@ fix is worse than no test. Two permanent negative controls:
    undeployable pair. If a future change "fixes" this by quietly downgrading the
    issuer to http, the B assertion that browser-visible fields are https fails.
    The two tests together close off the wrong fix.
+
+## What is implemented
+
+| Part | Where |
+|---|---|
+| Scheme model, `SchemeFor`, `WithScheme`, `WithPublicScheme`, `Deployability`, `ProxyConsistency` | `services/host-agent/internal/hostset/hostset.go` |
+| A: derivation table, default-unchanged guard, builtin and override rules | `services/host-agent/internal/hostset/scheme_derivation_test.go` |
+| B: blueprint assertions for all three strategies, decoded from YAML | `services/host-agent/internal/sso/blueprint_scheme_test.go` |
+| E: four canaries plus the failure-signature table | `services/host-agent/internal/hostset/proxy_canary_test.go` |
+| Layer 1, already landed in #110 | `services/host-agent/internal/appconfig/traefik_test.go` |
+
+`BLOUD_PUBLIC_SCHEME` reaches `HostSet` through `Resolve.Input.PublicScheme` but is
+not yet wired into `config` or startup. A reachable knob without TLS at Traefik
+produces a broken deployment, and TLS at Traefik is a non-goal below. The model
+and its tests are the floor the real fix lands on.
 
 ## Non-goals
 
