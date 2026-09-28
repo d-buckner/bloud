@@ -43,6 +43,22 @@ func viteDevProxy(rawURL string, logger *slog.Logger) (http.Handler, error) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	// Present the dev server with its own host. `NewSingleHostReverseProxy`
+	// rewrites the URL but forwards the incoming Host header verbatim, and
+	// vite answers that header with its `allowedHosts` guard: a request for
+	// `home.thebloud.org` or a LAN address gets a 403 "Blocked request"
+	// while `localhost` works, which reads as a routing failure rather than
+	// a host check. Rewriting to the target host keeps vite out of the
+	// picture entirely; the browser still never leaves the origin it was
+	// issued OAuth redirects for, because that is set by the URL bar, not
+	// by this header.
+	originalDirector := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		originalDirector(r)
+		r.Host = target.Host
+	}
+
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, proxyErr error) {
 		// A dead dev server is a common and transient state: vite is still
 		// restarting, or was stopped while host-agent kept running. Say which,

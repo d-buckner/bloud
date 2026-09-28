@@ -53,6 +53,49 @@ func TestViteDevProxyForwardsRequests(t *testing.T) {
 	}
 }
 
+// TestViteDevProxyRewritesHost pins the fix for vite's allowedHosts guard.
+// The browser arrives with whatever host it typed -- a LAN address, a custom
+// domain -- and vite answers that header with a 403 "Blocked request" unless
+// the name is on its allow list. The proxy has to present vite's own host so
+// the guard never applies, while the browser stays on the origin its OAuth
+// redirects were issued for.
+func TestViteDevProxyRewritesHost(t *testing.T) {
+	var gotHosts []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHosts = append(gotHosts, r.Host)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	proxy, err := viteDevProxy(upstream.URL, discardLogger())
+	if err != nil {
+		t.Fatalf("viteDevProxy: %v", err)
+	}
+
+	wantHost, _, _ := strings.Cut(strings.TrimPrefix(upstream.URL, "http://"), "/")
+	for _, incoming := range []string{
+		"home.thebloud.org",
+		"10.0.0.210:8080",
+		"bloud.local",
+		"localhost:8080",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = incoming
+		proxy.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Host %q: status = %d, want 200", incoming, rec.Code)
+		}
+		if len(gotHosts) == 0 {
+			t.Fatalf("Host %q: upstream saw nothing", incoming)
+		}
+		if got := gotHosts[len(gotHosts)-1]; got != wantHost {
+			t.Errorf("Host %q: upstream saw Host %q, want the vite target %q", incoming, got, wantHost)
+		}
+	}
+}
+
 func TestViteDevProxyRejectsBadTargets(t *testing.T) {
 	cases := []string{
 		"://nope",
