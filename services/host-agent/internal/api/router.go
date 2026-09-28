@@ -315,6 +315,24 @@ func NewRouter(
 func setupFrontendHelper(r chi.Router, logger *slog.Logger) {
 	buildDir := filepath.Join("web", "build")
 
+	// Dev switch: serve the dashboard from a live `vite dev` server so a saved
+	// file reaches the browser without a rebuild. Everything else about the
+	// origin stays as it is in a real deployment, which is what keeps the OIDC
+	// round trip working (see DevViteURLEnv).
+	if proxy, configured, err := viteDevProxyFromEnv(logger); configured {
+		if err != nil {
+			logger.Error("ignoring unusable vite dev proxy target", "error", err)
+			r.Get("/*", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				http.Error(w, viteProxyErrorBody(err), http.StatusServiceUnavailable)
+			})
+			return
+		}
+		logger.Info("proxying frontend to the vite dev server", "env", DevViteURLEnv)
+		r.Get("/*", proxy.ServeHTTP)
+		return
+	}
+
 	if _, err := os.Stat(buildDir); os.IsNotExist(err) {
 		logger.Warn("frontend build directory not found, serving fallback HTML")
 		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {

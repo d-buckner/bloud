@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"codeberg.org/d-buckner/bloud/cli/backend"
 	"codeberg.org/d-buckner/bloud/cli/executor"
@@ -480,7 +482,35 @@ func stopPreviousHostAgentCommand(apiPort, binaryPath string) string {
 		"sleep 0.5"
 }
 
-func cmdDev() int {
+// devWatchRequested parses the dev command's flags. Hot reload is the default,
+// because the one-shot loop is the slow and destructive one; --no-watch asks
+// for it explicitly.
+func devWatchRequested(args []string) (bool, error) {
+	watch := true
+	for _, arg := range args {
+		switch arg {
+		case "--watch":
+			watch = true
+		case "--no-watch":
+			watch = false
+		default:
+			return false, fmt.Errorf("unknown dev flag %q (expected --watch or --no-watch)", arg)
+		}
+	}
+	return watch, nil
+}
+
+// cmdDev is the whole dev loop. By default it hot-reloads: the host-agent is
+// rebuilt and restarted on save while the containers it manages are left
+// running, and the dashboard is served by a vite dev server that hot-reloads
+// on save. --no-watch runs the old one-shot build-deploy-foreground instead.
+func cmdDev(args []string) int {
+	watch, err := devWatchRequested(args)
+	if err != nil {
+		errorf("%v", err)
+		return 1
+	}
+
 	root, err := getProjectRoot()
 	if err != nil {
 		errorf("Could not find project root: %v", err)
@@ -493,6 +523,89 @@ func cmdDev() int {
 		return 1
 	}
 
+	if watch {
+		// Hot reload needs the CLI to own the host-agent as a child process it
+		// can stop and start. That is only true on the native backend, where
+		// the CLI and the host-agent share a machine; over SSH the same loop
+		// means remote process supervision and a file copy per reload, which is
+		// not what was wired. Say so and fall through rather than silently
+		// running something different from what was asked for.
+		if name == "native" {
+			return runDevWatch(root, bk)
+		}
+		log("Hot reload is wired for the native backend only; running the one-shot dev loop on " + vmLabel(name) + ".")
+	}
+
+	return runDevOnce(root, bk, name)
+}
+
+// runDevWatch brings up the hot-reload loop on a native runtime.
+func runDevWatch(root string, bk backend.Backend) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	log("Provisioning " + vmLabel("native"))
+	if err := bk.Create(ctx); err != nil {
+		errorf("Failed to provision the runtime: %v", err)
+		return 1
+	}
+
+	dirs := bk.Host().DataDirs()
+
+	// A reload must never wipe the stack it is reloading, so the managed-
+	// container sweep the one-shot loop runs is deliberately absent here.
+	// Only the pre-catalog legacy names are cleared: nothing reconciles those,
+	// so a leftover from an old compose stack would squat on a port forever.
+	log("Clearing pre-catalog legacy containers")
+	if err := bk.Host().Executor().RunStream(ctx, executor.RunSpec{
+		Command: `podman rm -f bloud-dev-postgres bloud-dev-redis dev_authentik-worker_1 dev_authentik-proxy_1 2>/dev/null; true`,
+	}, os.Stdout, os.Stderr); err != nil && ctx.Err() == nil {
+		errorf("Failed to clear legacy containers: %v", err)
+		return 1
+	}
+
+	// Stop a host-agent left behind by an earlier run, or the new one cannot
+	// bind its port and the two fight over the same runtime dir.
+	log("Stopping any previous host-agent")
+	if err := bk.Host().Executor().RunStream(ctx, executor.RunSpec{
+		Command: stopPreviousHostAgentCommand("3000", dirs.HostAgentDir+"/host-agent"),
+	}, os.Stdout, os.Stderr); err != nil && ctx.Err() == nil {
+		errorf("Failed to stop the previous host-agent: %v", err)
+		return 1
+	}
+
+	env := devRunEnv(dirs, "native")
+	env["BLOUD_DEV_VITE_URL"] = fmt.Sprintf("http://localhost:%d", devVitePort)
+	env["BLOUD_DEV_FAST_GATE"] = "1"
+
+	return runHotReload(ctx, hotReloadOptions{
+		root:       root,
+		binaryPath: dirs.HostAgentDir + "/host-agent",
+		runDir:     dirs.HostAgentDir,
+		env:        env,
+	}, os.Stdout)
+}
+
+// devRunEnv is the host-agent's dev environment. The same map feeds the
+// one-shot and the hot-reload paths, so the two cannot drift into running with
+// different configuration.
+func devRunEnv(dirs executor.DataDirs, name string) map[string]string {
+	env := map[string]string{
+		"BLOUD_DATA_DIR":            dirs.DataDir,
+		"BLOUD_APPS_DIR":            dirs.AppsDir,
+		"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
+		"BLOUD_TRAEFIK_PORT":        traefikPortEnv(name),
+		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(name),
+		"BLOUD_SSO_ISSUER_URL":      ssoIssuerURL(),
+	}
+	for k, v := range devPassthrough(os.Getenv) {
+		env[k] = v
+	}
+	return env
+}
+
+// runDevOnce is the one-shot loop: build, deploy, run in the foreground.
+func runDevOnce(root string, bk backend.Backend, name string) int {
 	// Provision the VM if it is not already running. This is a no-op when the
 	// guest is already up (Lima: already created+started; QEMU: image+seed
 	// present and guest reachable), so it is safe for both backends.
@@ -610,17 +723,7 @@ func cmdDev() int {
 	// other configuration resolves through env vars, secrets.json, and the
 	// host-agent's dev fallbacks.
 	log("Starting host-agent (Ctrl-C to stop)")
-	runEnv := map[string]string{
-		"BLOUD_DATA_DIR":            dirs.DataDir,
-		"BLOUD_APPS_DIR":            dirs.AppsDir,
-		"BLOUD_TRAEFIK_DYNAMIC_DIR": dirs.DataDir + "/traefik/dynamic",
-		"BLOUD_TRAEFIK_PORT":        traefikPortEnv(name),
-		"BLOUD_TRUSTED_LOCAL_NETS":  trustedLocalNetsEnv(name),
-		"BLOUD_SSO_ISSUER_URL":      ssoIssuerURL(),
-	}
-	for k, v := range devPassthrough(os.Getenv) {
-		runEnv[k] = v
-	}
+	runEnv := devRunEnv(dirs, name)
 	// The host-agent opens its API only after every installed app is up, so
 	// watch for that and say so instead of leaving the terminal silent.
 	readyCtx, stopReadyWatch := context.WithCancel(context.Background())

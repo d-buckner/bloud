@@ -214,6 +214,27 @@ func runServer() {
 	}
 	serverCfg.Orchestrator = out.Orchestrator
 
+	// Dev fast gate: on a stack that is already up, open the API now instead of
+	// behind a full convergence pass. Falls back to the ordinary wait whenever
+	// the conditions are not met, so a cold boot is unchanged. See DevFastGateEnv
+	// for what this trades away and why it is opt-in.
+	fastGated := false
+	if devFastGateEnabled(os.Getenv) {
+		apps, catalogErr := catalogCache.GetAll()
+		report, warmErr := checkWarmStack(context.Background(), client, systemContainerNames(apps))
+		if catalogErr != nil {
+			warmErr = catalogErr
+		}
+		decision := decideDevFastGate(report, warmErr, authReady(authRef))
+		if decision.Open {
+			fastGated = true
+			serverCfg.Gate = closedGate()
+			logger.Info("dev fast gate: opening the API now, first convergence pass runs in the background", "why", decision.Reason)
+		} else {
+			logger.Info("dev fast gate: not opening early, waiting for full convergence", "why", decision.Reason)
+		}
+	}
+
 	// The intent loop runs under its own cancellable context so the shutdown
 	// path stops it deliberately instead of letting it outlive the process.
 	orchCtx, stopOrchestrator := context.WithCancel(context.Background())
@@ -233,7 +254,11 @@ func runServer() {
 		}
 	}()
 
-	waitForSystemConvergence(server, logger)
+	if fastGated {
+		watchConvergenceBehindFastGate(server, logger)
+	} else {
+		waitForSystemConvergence(server, logger)
+	}
 
 	// Setup graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -308,6 +333,33 @@ func buildTemplateVars(cfg *config.Config) *configurator.TemplateVars {
 // listener is already open here, but bootstrapGate keeps the API unavailable
 // until this returns: the API must not serve before the system apps it depends
 // on are running.
+// authReady reports whether the dashboard's OIDC client is initialized. The
+// fast gate requires it: opening the API without a working login would trade
+// one kind of broken dashboard for another.
+func authReady(ref *api.AuthRef) bool {
+	cfg := ref.Get()
+	return cfg != nil && cfg.OIDCConfig != nil
+}
+
+// watchConvergenceBehindFastGate finishes the startup duties the blocking path
+// would have done, but after the gate is already open. The API is live; this
+// only waits for the first pass to land so it can report the result.
+//
+// Unlike waitForSystemConvergence a failure here is a warning, not a fatal.
+// Killing a dev process for a background pass that finished badly would take
+// down the very editor loop the fast gate exists to keep fast.
+func watchConvergenceBehindFastGate(server *api.Server, logger *slog.Logger) {
+	go func() {
+		<-server.OrchestratorReady()
+		server.InitAuth()
+		if err := server.CheckSystemHealth(); err != nil {
+			logger.Warn("dev fast gate: background convergence finished with an unhealthy system", "error", err)
+			return
+		}
+		logger.Info("dev fast gate: background convergence finished cleanly")
+	}()
+}
+
 func waitForSystemConvergence(server *api.Server, logger *slog.Logger) {
 	logger.Info("waiting for system apps to converge")
 	readyCtx, cancel := context.WithTimeout(context.Background(), systemConvergenceTimeout)
