@@ -89,7 +89,7 @@ func dispatch(cmd string, args []string) int {
 		"services":  func([]string) int { return cmdServices() },
 		"attach":    func([]string) int { return cmdAttach() },
 		"rebuild":   func([]string) int { return cmdRebuild() },
-		"dev":       func([]string) int { return cmdDev() },
+		"dev":       cmdDev,
 		"e2e":       cmdE2E,
 		"validate":  cmdValidate,
 		"package":   cmdPackage,

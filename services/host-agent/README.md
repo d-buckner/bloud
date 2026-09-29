@@ -40,8 +40,17 @@ From the repo root:
 
 One command provisions the development VM if needed, builds host-agent (`CGO_ENABLED=0 GOOS=linux`)
 and the frontend, deploys both into the VM, and runs host-agent in the foreground (Ctrl-C stops it).
-Ports are forwarded to host localhost. **There is no back-end hot reload: re-run `./bloud dev`
-after any Go change.**
+Ports are forwarded to host localhost.
+
+On the native backend this is a hot-reload loop. A watched change (`services/host-agent/**/*.go`
+excluding tests, plus `apps/**/{*.go,metadata.yaml}`) rebuilds the binary incrementally and restarts
+**only the host-agent process**. Containers are never touched: they keep running and the next
+reconciliation pass simply executes against the new code. The dashboard is served by a vite dev
+server, proxied by host-agent so the browser stays on the Traefik origin and the OIDC round trip is
+unchanged. A failed build leaves the running process alone.
+
+`--no-watch` runs the one-shot build-deploy-foreground loop instead. Hot reload is native-only; on
+Lima and QEMU the command says so and falls back.
 
 - **Dashboard (user-facing, through Traefik)**: http://localhost:8080
 - **Host-agent API**: http://localhost:3000/api/health

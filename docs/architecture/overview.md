@@ -325,3 +325,13 @@ Traefik's canonical `:80` and each app's direct port are forwarded to the host
 localhost by `./bloud dev` (Traefik lands on host `:8080`, so browser and e2e
 URLs stay on `http://localhost:8080`). The native backend needs no forwarding;
 everything already runs on the host.
+
+The dev loop itself has two shapes. On the native backend `./bloud dev`
+hot-reloads: a watched Go or `metadata.yaml` change rebuilds the binary and
+restarts **only the host-agent process**, and the dashboard comes from a vite
+dev server that host-agent proxies so the browser never leaves the Traefik
+origin. App containers are never touched by a reload: the next reconciliation
+pass simply runs against the new code. On Lima and QEMU the same command is the
+one-shot build-deploy-run loop; `--no-watch` asks for that shape explicitly on
+any backend. Details: [`AGENTS.md`](../../AGENTS.md#daily-dev-loop) and
+[`services/host-agent/README.md`](../../services/host-agent/README.md#development).

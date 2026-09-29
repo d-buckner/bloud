@@ -91,16 +91,49 @@ host-agent on every backend, and each is off unless set. Today there is one:
 work over Bloud's plain HTTP (it refuses any non-`https://` server otherwise;
 localhost names only, see `apps/vaultwarden/INTEGRATION.md`).
 
-`./bloud dev` is the whole loop: provisions the VM if needed, builds host-agent
-(`CGO_ENABLED=0 GOOS=linux`) + frontend, deploys both into the VM, and runs
-host-agent in the foreground (Ctrl-C stops it). **There is no hot reload:
-re-run `./bloud dev` after any code change** (`./bloud rebuild` is a no-op; the
-Nix runtime was removed).
+`./bloud dev` is the hot-reload loop on the native backend: it builds host-agent
+(`CGO_ENABLED=0 GOOS=linux`), starts a vite dev server for the dashboard, and
+restarts only the host-agent process when a watched file changes. Containers are
+never touched by a reload, so the next reconciliation simply runs against the
+new binary. The frontend hot-reloads through vite; the browser stays on the
+Traefik origin, which is what keeps the OIDC round trip real.
 
-Startup takes a minute or more: the host-agent brings every installed app up
-(first convergence pass) before it reports ready. Port 3000 is open from the
-start but serves a loading page (and `503 {"error":"starting"}` for `/api`, also
-through Traefik on :8080) until that pass ends (invariant 5). `./bloud dev`
+Killing the dev loop takes the dev servers with it. Each child (vite and
+host-agent) starts in its own process group and the loop signals the group, not
+just the direct child: `npm run dev` runs a shell that runs vite, and npm
+exits on `SIGTERM` without forwarding it, so a signal sent only to the child
+leaked the `node` process holding 5173 and the next run could not bind it. A second
+`Ctrl-C` (or a second `SIGTERM`) forces both groups down with `SIGKILL`
+instead of waiting out the grace period. Containers are still left alone:
+stopping the dev loop never stops an app.
+
+Watched: `services/host-agent/**/*.go` (except `_test.go`) and
+`apps/**/{*.go,metadata.yaml}`. A failed build leaves the running host-agent
+alone, so a typo never takes the dashboard down.
+
+Two dev-only switches make the reload fast, both set by `./bloud dev` and both
+documented at their definition:
+
+- `BLOUD_DEV_VITE_URL` (host-agent) proxies the dashboard to vite instead of
+  the static build. See `internal/api/dev_vite_proxy.go`.
+- `BLOUD_DEV_FAST_GATE` (host-agent) opens the API as soon as the system
+  containers are already running, with the first convergence pass finishing in
+  the background. This is a deliberate, opt-in relaxation of invariant 5 for
+  the reload case only. See `cmd/host-agent/dev_gate.go`.
+
+Measured on a warm native stack: a backend reload is about 3s to a live API
+(1-2s incremental build plus a process restart), against ~160s for a cold
+start. The frontend reload is vite's own sub-second HMR.
+
+`--no-watch` runs the old one-shot loop: build, deploy, run in the foreground.
+Hot reload is wired for the native backend only; on Lima and QEMU `./bloud dev`
+says so and falls back to the one-shot loop, because the same loop over SSH
+needs remote process supervision and a file copy per reload.
+
+A cold start still takes a minute or more: the host-agent brings every installed
+app up (first convergence pass) before it reports ready. Port 3000 is open from
+the start but serves a loading page (and `503 {"error":"starting"}` for `/api`,
+also through Traefik on :8080) until that pass ends (invariant 5). `./bloud dev`
 prints a progress line every ~15s and finally
 `==> Bloud is ready: http://localhost:8080 ...`; the terminal then stays in the
 foreground by design.

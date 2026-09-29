@@ -153,7 +153,10 @@ npm run setup            # pick backend, check prereqs, build ./bloud
 ```
 
 Backends: Lima on macOS (automatic), QEMU on Linux (default), native on Linux CI
-(`BLOUD_BACKEND=native`). No hot reload; re-run `./bloud dev` after any change. Apps land at
+(`BLOUD_BACKEND=native`). On the native backend `./bloud dev` hot-reloads: save a
+Go file and the host-agent rebuilds and restarts in about 3s with the app containers
+left running, and the dashboard hot-reloads through vite. Use `--no-watch` for the
+one-shot build-deploy-run. Apps land at
 `http://<app>.localhost:8080`.
 
 The integration tier runs the real graph path rather than a shortcut: host-agent deployed as a

@@ -94,6 +94,14 @@ type ServerConfig struct {
 	// one, so the HTTP layer holds no orchestrator wiring knowledge.
 	Orchestrator *orchestrator.Orchestrator
 
+	// Gate overrides the channel that opens the bootstrap loading gate. Nil
+	// means "open when the orchestrator reports ready", which is the product
+	// path. A dev instance sets it to a channel that opens earlier, once the
+	// system containers are already running, so a hot reload does not put
+	// the dashboard behind the loading page for the length of a full
+	// convergence pass. See cmd/host-agent/dev_gate.go.
+	Gate <-chan struct{}
+
 	// Authentik is the internal identity-provider client. When nil the
 	// router builds one from AuthentikToken and AuthentikPort, which is the
 	// path tests take.
@@ -164,8 +172,12 @@ func (s *Server) Start() error {
 	s.logger.Info("starting HTTP server", "addr", addr)
 
 	handler := http.Handler(s.router)
-	if s.orch != nil {
-		handler = bootstrapGate(s.orch.Ready(), handler)
+	gate := s.cfg.Gate
+	if gate == nil && s.orch != nil {
+		gate = s.orch.Ready()
+	}
+	if gate != nil {
+		handler = bootstrapGate(gate, handler)
 	}
 
 	server := &http.Server{
