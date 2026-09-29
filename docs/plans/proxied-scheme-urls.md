@@ -228,6 +228,85 @@ not yet wired into `config` or startup. A reachable knob without TLS at Traefik
 produces a broken deployment, and TLS at Traefik is a non-goal below. The model
 and its tests are the floor the real fix lands on.
 
+> **Corrected after landing.** `BLOUD_PUBLIC_SCHEME` is wired through `config`
+> and startup now, and the per-host scheme is persisted and editable in Settings
+> to Hosts, both of which this section listed as follow-ups. Landing it is what
+> surfaced the LAN IP bug below: once https was actually expressible for a
+> stored host, the IP entries inherited it.
+
+## Follow-up: an address is not a name (landed)
+
+Making https real for a stored host broke plain LAN access, which is the path
+most installs use before they have a domain. Two regressions surfaced, one after
+the other, both from the same missing distinction.
+
+### Regression 1: the detected LAN entries inherited the public scheme
+
+`HostSet.AllBaseURLs()` built the detected local-IP entries from
+`PrimaryBaseURL()`, so they took **both** the primary's scheme and the primary's
+port. With `home.thebloud.org` stored as an https primary and Traefik on 8080,
+the IP entry became `https://10.0.0.210`:
+
+```
+browser   -> http://10.0.0.210:8080/auth/login
+host-agent -> 302 https://10.0.0.210/application/o/authorize/?redirect_uri=https://10.0.0.210/auth/callback
+            ^ scheme nothing serves on an address, port nothing listens on
+```
+
+### Regression 2: the adopted address rendered on port 80
+
+The first admin was created from `10.0.0.210:8080`, so first-run adoption made
+the address the **primary host**. `BaseURLFor` rendered any non-localhost host as
+the bare host on the scheme's default port, so the adopted address came out as
+`http://10.0.0.210` on port 80 while Traefik served 8080:
+
+```
+browser   -> http://10.0.0.210:8080/auth/login
+host-agent -> 302 http://10.0.0.210/application/o/authorize/?redirect_uri=http://10.0.0.210/auth/callback
+            ^ connection refused: nothing on 80
+```
+
+Adopting the address is the right call, incidentally: the primary host drives the
+OIDC issuer, and an address primary makes the issuer reachable by LAN browsers,
+which a `localhost` primary does not. The bug was only the rendering.
+
+### The rule
+
+A **name** derives its port from its scheme, because DNS is what makes the
+origin: `https://<host>` means 443 and something answers there. An **address**
+has no such contract. It means whatever port the socket was opened on, and it has
+no certificate story at all.
+
+`ValidHostname` accepts a dotted quad, because a dotted quad is a run of valid
+RFC 1123 labels, so an address can enter the set through the first-run adoption
+or the Settings UI. `HostSet.IsAddress` is what tells the two families apart,
+and `BaseURLFor` applies the rule to both of them, so the same address derives to
+the same URL whichever path a caller takes. Drawing the line in `BaseURLFor`
+rather than only in `AllBaseURLs` is what closes regression 2: the two functions
+cannot disagree about one host.
+
+| Piece | Where |
+|---|---|
+| `LANBaseURLs(port)` replaces `BuildBaseURLs(configuredURL)` | `services/host-agent/internal/netutil/ip.go` |
+| `PortSuffix(port)` (0/80 render as the http default) | `services/host-agent/internal/netutil/ip.go` |
+| `IsAddress`, address-aware `BaseURLFor`, `servedPort` on the set | `services/host-agent/internal/hostset/hostset.go` |
+| Served port in from the env | `Input.ServedPort` from `cfg.TraefikPort`, `cmd/host-agent/main.go` |
+| Served port into the orchestrator | `OrchestratorConfig.TraefikPort`, wired in `internal/wire/wire.go` |
+| Served port survives a host change | `applySetHostsIntent` re-applies it in `internal/engine/orchestrator/pipeline.go` |
+| Address/name derivation, port survival, scheme skip for addresses | `services/host-agent/internal/hostset/lan_base_urls_test.go` |
+| Login redirects for both regressions | `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme`, `TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort` |
+
+The served port has to survive every copy the set goes through (`WithSchemes`,
+`WithPublicScheme`, `WithURLOverride`, and the rebuild in `applySetHostsIntent`).
+A set that loses it renders an address host on port 80 again, which is regression
+2 returning through a different door, so `TestServedPortSurvivesCopies` pins each
+of them.
+
+Verified against the live install that reported both: the address primary now
+redirects to `http://10.0.0.210:8080/...` and completes the Authentik flow, and
+an https domain primary still redirects to `https://home.thebloud.org/...`
+unaffected.
+
 ## Non-goals
 
 - **TLS at Traefik.** No certificate resolver and no ACME story in this plan. It

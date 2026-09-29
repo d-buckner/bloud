@@ -132,6 +132,13 @@ Add a browser-facing scheme to the host set and derive every URL from it.
 - `IssuerBaseURL`, `BaseURLs`, `AllBaseURLs`, and the forward-auth
   `external_host` all follow automatically, since they already route through
   `BaseURLFor`.
+
+  > **Corrected.** `AllBaseURLs` does not follow. Its detected local-IP entries
+  > are deliberately not derived from the primary host: they stay plain http on
+  > the entrypoint port, because a LAN client reaching the box by address has no
+  > TLS terminator in front of it. See the "Follow-up: the LAN IP entries
+  > inherited the public scheme" section of
+  > [`proxied-scheme-urls.md`](proxied-scheme-urls.md).
 - The scheme is instance-wide, not per host. One instance is served one way: the
   same Traefik or the same upstream proxy serves every host in the set. Per-host
   schemes would allow a state no topology produces and would make `IssuerBaseURL`

@@ -278,7 +278,7 @@ func TestAuthModule_IPAccessKeepsTheRequestedBaseURL(t *testing.T) {
 	if len(ips) == 0 {
 		t.Skip("no non-loopback IPv4 on this host")
 	}
-	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
+	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hostset.New([]string{"localhost"}, "localhost").WithServedPort(8080)))
 
 	ip := ips[0]
 	req := httptest.NewRequest(http.MethodGet, "http://"+ip+":8080/auth/login", nil)
@@ -288,4 +288,73 @@ func TestAuthModule_IPAccessKeepsTheRequestedBaseURL(t *testing.T) {
 
 	require.Equal(t, "http://"+ip+":8080/auth/callback", loginRedirectURI(t, w, nil),
 		"an IP published in the host set's base URLs must keep its own redirect URI")
+}
+
+// The reported regression: an https primary host must not drag LAN IP access
+// into https.
+//
+// The primary host's URL describes the public origin, which behind a TLS
+// terminator is https on 443. A client on the LAN reaching the box by address
+// uses the socket the entrypoint actually opened, over plain http: Bloud serves
+// no certificate at the gateway and no CA issues one for a bare address. The
+// old derivation took both the scheme and the port from the primary, so
+// http://10.0.0.210:8080/auth/login redirected to https://10.0.0.210, a
+// scheme and port nothing answers on, and the dashboard was unreachable from
+// the LAN without going through the domain.
+func TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme(t *testing.T) {
+	ips := netutil.DetectLocalIPs()
+	if len(ips) == 0 {
+		t.Skip("no non-loopback IPv4 on this host")
+	}
+
+	hs := hostset.New([]string{"home.thebloud.org", "localhost"}, "home.thebloud.org").
+		WithScheme("home.thebloud.org", hostset.SchemeHTTPS).
+		WithServedPort(8080)
+	require.Equal(t, hostset.SchemeHTTPS, hs.PublicScheme())
+
+	ip := ips[0]
+	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hs))
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+ip+":8080/auth/login", nil)
+	req.Host = ip + ":8080"
+	w := httptest.NewRecorder()
+	mod.LoginHandler()(w, req)
+
+	loc := w.Header().Get("Location")
+	require.NotEmpty(t, loc, "login must redirect")
+	require.NotContains(t, loc, "https://", "a LAN IP request must never be redirected to https")
+	require.Equal(t, "http://"+ip+":8080/auth/callback", loginRedirectURI(t, w, nil),
+		"the LAN IP redirect URI must name the entrypoint port, not the primary host's 443")
+}
+
+// The second reported case: the first admin was created from the LAN address,
+// so the address itself became the primary host. The redirect has to keep the
+// port the browser used.
+//
+// BaseURLFor used to render any non-localhost host as the bare host on the
+// scheme's default port, so the adopted address came out as http://10.0.0.210
+// on port 80 while Traefik served 8080, and the browser got a connection
+// refused on the way to the authorize endpoint.
+func TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort(t *testing.T) {
+	ips := netutil.DetectLocalIPs()
+	if len(ips) == 0 {
+		t.Skip("no non-loopback IPv4 on this host")
+	}
+	ip := ips[0]
+
+	hs := hostset.New([]string{ip, "localhost"}, ip).
+		WithScheme(ip, hostset.SchemeHTTP).
+		WithServedPort(8080)
+	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hs))
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+ip+":8080/auth/login", nil)
+	req.Host = ip + ":8080"
+	w := httptest.NewRecorder()
+	mod.LoginHandler()(w, req)
+
+	loc := w.Header().Get("Location")
+	require.NotEmpty(t, loc, "login must redirect")
+	require.Equal(t, "http://"+ip+":8080/auth/callback", loginRedirectURI(t, w, nil),
+		"an address primary must redirect on the entrypoint port, not the http default")
+	require.Contains(t, loc, ":8080", "the authorize URL itself must carry the port too")
 }

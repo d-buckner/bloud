@@ -120,8 +120,12 @@ type OrchestratorConfig struct {
 	SSOHostSecret    string // master secret for deriving deterministic per-app OIDC client secrets
 	SSOAuthentikURL  string // browser-accessible Authentik URL for OIDC issuer/discovery
 	SSOIssuerURL     string // OIDC issuer base URL reachable from app containers (empty = SSOAuthentikURL)
-	TraefikGen       traefikgen.GeneratorInterface
-	ActiveTailnetID  func() string // returns the active tailnet connection ID (empty if none)
+	// TraefikPort is the port the public entrypoint listens on. LAN IP base URLs
+	// are built on it: the primary host's URL port describes the public origin,
+	// not the socket a client on the LAN reaches. See HostSet.AllBaseURLs.
+	TraefikPort     int
+	TraefikGen      traefikgen.GeneratorInterface
+	ActiveTailnetID func() string // returns the active tailnet connection ID (empty if none)
 
 	// Secrets is the host secret store. Integration bindings resolve a
 	// provider's published credentials from it (configurator.AppSecretsProvider),
@@ -1547,7 +1551,7 @@ func (o *Orchestrator) resolveSSOURLs() ssoURLs {
 	}
 	return ssoURLs{
 		hostSet:      hostset.New([]string{hostFromURL(o.ssoBaseURL)}, hostFromURL(o.ssoBaseURL)),
-		baseURLs:     netutil.BuildBaseURLs(o.ssoBaseURL),
+		baseURLs:     append([]string{o.ssoBaseURL}, netutil.LANBaseURLs(o.config.TraefikPort)...),
 		hostSecret:   o.ssoHostSecret,
 		authentikURL: o.ssoAuthentikURL,
 		issuerURL:    o.ssoIssuerURL,

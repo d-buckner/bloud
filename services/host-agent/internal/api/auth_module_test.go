@@ -28,7 +28,7 @@ func newAuthModule(t *testing.T, cfg *AuthConfig) (*authModule, *FakeAuthentikCl
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	mod := NewAuthModule(client, newAuthRef(cfg), prefsStore, sessStore, logger, 0,
-		hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
+		hostset.NewState(hostset.New([]string{"localhost"}, "localhost").WithServedPort(8080)))
 	return mod, client, sessStore
 }
 
@@ -191,7 +191,7 @@ func TestAuthHTTP_Login_NoConfig(t *testing.T) {
 
 func TestAuthHTTP_Login_DirectAgentPort(t *testing.T) {
 	client := NewFakeAuthentikClient()
-	mod := NewAuthModule(client, newAuthRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000, hostset.NewState(hostset.New([]string{"localhost"}, "localhost")))
+	mod := NewAuthModule(client, newAuthRef(&AuthConfig{OIDCConfig: &authentik.OIDCConfig{AuthURL: "/application/o/authorize/"}}), NewFakePreferencesStore(), newFakeSessionStore(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), 3000, hostset.NewState(hostset.New([]string{"localhost"}, "localhost").WithServedPort(8080)))
 	r := chi.NewRouter()
 	NewAuthRouter(mod, r)
 

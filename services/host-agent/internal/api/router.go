@@ -389,7 +389,7 @@ func initAuthHelper(
 	if cfg.Hosts != nil {
 		baseURLs = cfg.Hosts.Get().AllBaseURLs()
 	} else if cfg.SSOBaseURL != "" {
-		baseURLs = netutil.BuildBaseURLs(cfg.SSOBaseURL)
+		baseURLs = append([]string{cfg.SSOBaseURL}, netutil.LANBaseURLs(cfg.TraefikPort)...)
 	}
 	if len(baseURLs) == 0 {
 		logger.Info("authentication disabled (no SSO base URLs configured)")

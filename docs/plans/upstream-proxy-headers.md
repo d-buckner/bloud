@@ -88,6 +88,19 @@ entryPoints:
 Empty list emits no `forwardedHeaders` key, so the emitted config for every
 existing deployment is byte-identical to today.
 
+> **Superseded.** "Trust nobody by default" was the wrong default. A home
+> server's TLS terminator is on the LAN, and requiring the operator to name it
+> meant a proxied https install was broken out of the box. Measured on the real
+> deployment: 55 of 55 requests from the terminator arrived at Authentik as
+> `scheme: "http"`, and the authentication flow would not advance past the
+> identification stage.
+>
+> An empty list now selects the private-range default (`127.0.0.0/8`,
+> `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`), and an
+> explicit list replaces it rather than widening it. `insecure: true` is still
+> never emitted. See `defaultTrustedProxyNets` in
+> `internal/appconfig/traefik.go` for the trade this accepts.
+
 ## Implementation steps
 
 1. `services/host-agent/internal/config/config.go`: add the `TrustedProxyNets`

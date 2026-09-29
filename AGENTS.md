@@ -487,7 +487,26 @@ combined with instance/SSH-target env vars). Instance overrides:
    → Hosts. Precedence for a derived URL's scheme: per-host base-URL override
    (`BLOUD_SSO_BASE_URL` legacy path) > stored per-host scheme >
    `BLOUD_PUBLIC_SCHEME` > `http`. Built-ins keep their fixed mapping and ignore
-   stored/public schemes. Under a **https** issuer the orchestrator emits **no**
+   stored/public schemes. **An address is not a name.** `ValidHostname` accepts a
+   dotted quad (it is a run of valid RFC 1123 labels), so an IP literal can enter
+   the set through first-run adoption or Settings, and `HostSet.IsAddress` is what
+   tells the two families apart. A **name** derives its port from its scheme,
+   because DNS is what makes the origin: `https://<host>` means 443 and something
+   answers there. An **address** has no such contract: it means whatever port the
+   socket was opened on, and it has no certificate story at all. So
+   `BaseURLFor` renders an address host on the set's **served port**
+   (`BLOUD_TRAEFIK_PORT`, carried as `Input.ServedPort`; `0`/`80` render as the
+   http default) and never https, and the detected LAN entries in
+   `AllBaseURLs()` follow the same rule. Two regressions this closes: an `https`
+   primary made every LAN IP URL an unreachable `https://<ip>`, and adopting the
+   address an install was created from as primary rendered it as `http://<ip>` on
+   port 80 while Traefik served 8080, so the login redirect was refused. Pinned
+   by `internal/hostset/lan_base_urls_test.go`,
+   `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme`, and
+   `TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort`. The served port must
+   survive every copy of the set (`WithSchemes`, `WithPublicScheme`,
+   `WithURLOverride`, and `applySetHostsIntent`), or a host change drops it and
+   the address is back on port 80. Under a **https** issuer the orchestrator emits **no**
    `extraHosts` pin: the container resolves the issuer by real DNS and reaches
    the TLS terminator that serves it, because Bloud serves no certificate at the
    gateway and a pinned TLS dial lands on a port nothing answers. The pin stays
@@ -519,10 +538,22 @@ combined with instance/SSH-target env vars). Instance overrides:
     that proxy's address (IP or CIDR, as Traefik sees it) so Traefik accepts
     its `X-Forwarded-*` and the original scheme reaches Authentik; without it
     Traefik rewrites `X-Forwarded-Proto` to `http` and the Authentik login flow
-    stalls on mixed content. Trust is scoped to the source address only: the
-    generated config never emits `forwardedHeaders.insecure: true`, and an
-    empty list leaves the static config byte-identical to a build without the
-    setting. See [`docs/plans/upstream-proxy-headers.md`](docs/plans/upstream-proxy-headers.md).
+    stalls on mixed content. **An empty list is not "trust nobody": it selects
+    the private-range default** (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
+    `192.168.0.0/16`, `100.64.0.0/10`), because a home server's terminator is
+    on the LAN and naming it must not be a prerequisite for https. An explicit
+    list replaces the default rather than widening it, so naming one terminator
+    trusts exactly that one. The cost of the default: on a flat LAN the client is
+    also an internal address, so a device in those ranges can assert
+    `X-Forwarded-Proto`, `Host`, and `X-Forwarded-For` for requests it sends
+    itself. Accepted for a home deployment, but it means an Authentik IP-based
+    access policy is forgeable from inside those ranges, so do not write one that
+    matters. Trust is still scoped to the source address: the generated config
+    never emits `forwardedHeaders.insecure: true`. See
+    [`docs/plans/upstream-proxy-headers.md`](docs/plans/upstream-proxy-headers.md).
+    Measured on the real proxied install: before the default, 55 of 55 requests
+    from the terminator arrived at Authentik as `scheme: "http"`; after, the
+    same request arrives as `scheme: "https"`.
 11. **Frontend is a static build** served by host-agent from
     `<host-agent-dir>/web/build` (embedded `dev_dashboard.html` is only the
     missing-build fallback). Rebuild the frontend before deploying.

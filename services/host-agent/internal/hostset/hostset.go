@@ -17,6 +17,7 @@ package hostset
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -122,6 +123,11 @@ type Input struct {
 	// sets the deployment-wide default and Settings -> Hosts can still pin
 	// one host differently.
 	PublicScheme string
+	// ServedPort is the port the public entrypoint (Traefik) listens on,
+	// from BLOUD_TRAEFIK_PORT. It is what an address-hosted base URL renders
+	// on, because an address has no scheme-default port that means anything:
+	// the socket that was opened is the only truth. See HostSet.BaseURLFor.
+	ServedPort int
 }
 
 // HostSet is an immutable, ordered set of hosts: index 0 is the primary.
@@ -134,6 +140,12 @@ type HostSet struct {
 	// what every host means in every deployment that predates this field, so
 	// the zero value keeps derived URLs byte-identical.
 	schemes map[string]Scheme
+	// servedPort is the port the public entrypoint listens on. It is a
+	// property of the set rather than an argument at each call site because
+	// BaseURLFor needs it and is reached from the SSO provisioning and
+	// blueprint paths, none of which carry a port of their own. 0 means "not
+	// stated" and renders as the http default.
+	servedPort int
 }
 
 // New builds a HostSet with the given primary. Unknown/invalid hosts are
@@ -215,7 +227,27 @@ func (h HostSet) BaseURLFor(host string) string {
 	if host == "localhost" && scheme == SchemeHTTP {
 		return "http://localhost:8080"
 	}
+	// An address is not a name. A name's port comes from its scheme because
+	// DNS is what makes the origin: https://<host> means 443 and something
+	// answers there. An address has no such contract, it means whatever port
+	// the socket was opened on, so it renders on the entrypoint port. This
+	// is the same address/name split that keeps LAN IP base URLs plain http;
+	// before it was drawn, an adopted address came out as http://<ip> on port
+	// 80 while Traefik served 8080, and the login redirect was refused.
+	if IsAddress(host) {
+		return string(scheme) + "://" + host + netutil.PortSuffix(h.servedPort)
+	}
 	return string(scheme) + "://" + host
+}
+
+// IsAddress reports whether host is an IP literal rather than a hostname.
+// ValidHostname accepts an IPv4 address, because a dotted quad is a sequence
+// of valid RFC 1123 labels, so an address can enter the set through the
+// first-run adoption or the Settings UI. It is still not a name: it has no
+// certificate story and no scheme-default port, and the two families derive
+// their URLs differently.
+func IsAddress(host string) bool {
+	return net.ParseIP(Normalize(host)) != nil
 }
 
 // SchemeFor returns the scheme one host is served under. An explicit base-URL
@@ -261,6 +293,10 @@ func (h HostSet) WithScheme(host string, scheme Scheme) HostSet {
 // reason those names exist. The public scheme answers "how do I reach this
 // deployment from outside", and the built-ins are not how.
 //
+// Address hosts are skipped for the same reason: no CA issues a certificate for
+// a bare IPv4 address in the story Bloud ships, so turning a LAN address into
+// an https origin is a promise the install cannot keep.
+//
 // Hosts that already carry an explicit base-URL override are also left alone:
 // that override is the more specific statement of intent, and letting a broad
 // scheme silently contradict a pinned URL is how a redirect ends up on a
@@ -272,7 +308,7 @@ func (h HostSet) WithPublicScheme(scheme Scheme) HostSet {
 	}
 	schemes := h.cloneSchemes()
 	for _, host := range h.hosts {
-		if h.IsBuiltin(host) {
+		if h.IsBuiltin(host) || IsAddress(host) {
 			continue
 		}
 		if _, pinned := h.urlOverrides[host]; pinned {
@@ -282,6 +318,20 @@ func (h HostSet) WithPublicScheme(scheme Scheme) HostSet {
 	}
 	return h.withSchemes(schemes)
 }
+
+// WithServedPort returns a copy carrying the port the public entrypoint
+// listens on. Address-hosted base URLs render on it, so every path that
+// rebuilds the set has to carry it: a set that loses the port renders an
+// adopted address on 80 again, which is the failure this exists to fix.
+func (h HostSet) WithServedPort(port int) HostSet {
+	next := h
+	next.servedPort = port
+	return next
+}
+
+// ServedPort returns the port the public entrypoint listens on (0 = not
+// stated, which renders as the http default).
+func (h HostSet) ServedPort() int { return h.servedPort }
 
 // WithSchemes returns a copy carrying a per-host scheme map, which is the
 // shape both the hosts store and the SetHosts intent produce. Keys and values
@@ -323,6 +373,7 @@ func (h HostSet) withSchemes(schemes map[string]Scheme) HostSet {
 		primary:      h.primary,
 		urlOverrides: h.urlOverrides,
 		schemes:      schemes,
+		servedPort:   h.servedPort,
 	}
 }
 
@@ -342,11 +393,18 @@ func (h HostSet) BaseURLs() []string {
 }
 
 // AllBaseURLs returns every base URL to register with the identity provider:
-// one per host (primary first) followed by the detected local-IP URLs, so
-// login also works when the server is reached by IP. Deduplicated.
+// one per host (primary first) followed by this machine's LAN IP URLs, so login
+// also works when the server is reached by address. Deduplicated.
+//
+// The LAN entries are plain http on the set's served port, for the reasons on
+// BaseURLFor: an address has no scheme-default port and no certificate, so the
+// socket is the only truth. They are listed separately from the host set because
+// the addresses are detected rather than configured, but an address that is in
+// the set derives to the same string either way, which is what the dedupe below
+// relies on.
 func (h HostSet) AllBaseURLs() []string {
 	urls := h.BaseURLs()
-	for _, u := range netutil.BuildBaseURLs(h.PrimaryBaseURL())[1:] {
+	for _, u := range netutil.LANBaseURLs(h.servedPort) {
 		if !containsStr(urls, u) {
 			urls = append(urls, u)
 		}
@@ -414,7 +472,7 @@ func (h HostSet) WithURLOverride(host, raw string) HostSet {
 		overrides[k] = v
 	}
 	overrides[host] = raw
-	return HostSet{hosts: h.hosts, primary: h.primary, urlOverrides: overrides, schemes: h.cloneSchemes()}
+	return HostSet{hosts: h.hosts, primary: h.primary, urlOverrides: overrides, schemes: h.cloneSchemes(), servedPort: h.servedPort}
 }
 
 // ProxyConsistency reports the ways the deployment's declared scheme and the
@@ -603,11 +661,13 @@ func Resolve(in Input) (HostSet, error) {
 	return hs.WithSchemes(storedSchemes), nil
 }
 
-// finalizeResolve applies the deployment-wide public scheme, if one was given.
-// It is the single place PublicScheme reaches the set, so the stored-hosts and
-// env paths cannot drift apart on it the way the legacy SSOBaseURL override
-// already has (that one is only reachable when there are no stored hosts).
+// finalizeResolve applies the two deployment-wide env settings: the public
+// scheme and the entrypoint port. It is the single place both reach the set,
+// so the stored-hosts and env paths cannot drift apart on them the way the
+// legacy SSOBaseURL override already has (that one is only reachable when
+// there are no stored hosts).
 func finalizeResolve(hs HostSet, in Input) (HostSet, error) {
+	hs = hs.WithServedPort(in.ServedPort)
 	if strings.TrimSpace(in.PublicScheme) == "" {
 		return hs, nil
 	}

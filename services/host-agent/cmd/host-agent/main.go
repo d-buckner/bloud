@@ -305,6 +305,7 @@ func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (
 		BaseDomain:   cfg.BaseDomain,
 		SSOBaseURL:   cfg.SSOBaseURL,
 		PublicScheme: cfg.PublicScheme,
+		ServedPort:   cfg.TraefikPort,
 	})
 	if err != nil {
 		logger.Warn("failed to resolve host set, using defaults", "error", err)

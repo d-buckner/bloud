@@ -24,10 +24,48 @@ type TraefikConfigurator struct {
 	trustedProxyNets []string
 }
 
+// defaultTrustedProxyNets is what Traefik trusts when the operator has not
+// named a terminator.
+//
+// A home server's TLS terminator is on the same network as the server, so the
+// private ranges are where a terminator actually lives. Without this, Traefik
+// trusts nobody and rewrites X-Forwarded-Proto to its own entrypoint scheme:
+// measured on a real proxied install, 55 of 55 requests from the terminator
+// arrived at Authentik as "scheme": "http", and the authentication flow would
+// not advance past the identification stage.
+//
+// 100.64.0.0/10 is the CGNAT block Tailscale assigns from, so a Tailscale
+// Serve terminator is covered by the same default.
+//
+// The trade is deliberate: on a flat LAN the client is also an internal
+// address, so a device on these ranges can assert X-Forwarded-Proto, Host, and
+// X-Forwarded-For for requests it sends itself. That is accepted for a home
+// deployment. It does mean an Authentik IP-based access policy is forgeable
+// from inside those ranges, so do not write one that matters.
+var defaultTrustedProxyNets = []string{
+	"127.0.0.0/8",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"100.64.0.0/10",
+}
+
+// effectiveTrustedProxyNets returns the operator's list when one was given, and
+// the private-range default otherwise. An explicit list replaces the default
+// rather than widening it, so naming one terminator trusts exactly that one.
+func (c *TraefikConfigurator) effectiveTrustedProxyNets() []string {
+	if len(c.trustedProxyNets) == 0 {
+		return defaultTrustedProxyNets
+	}
+	return c.trustedProxyNets
+}
+
 // NewTraefikConfigurator creates a new Traefik configurator. trustedProxyNets
 // is the set of addresses (IP or CIDR, as seen from Traefik) of the reverse
-// proxy directly in front of Bloud; see TraefikConfigurator.staticConfig for
-// what the list does and an empty list for the default behaviour.
+// proxy directly in front of Bloud. An empty list is not "trust nobody": it
+// selects the private-range default, because a home deployment's terminator is
+// on the LAN and naming it should not be a prerequisite for https to work.
+// See defaultTrustedProxyNets for what that default costs.
 func NewTraefikConfigurator(
 	runtime containerruntime.Runtime,
 	traefikPort int,
@@ -128,25 +166,27 @@ log:
 `
 }
 
-// entrypointYaml renders one entrypoint block. With no trusted proxy nets it is
-// just the address, which keeps the emitted config byte-identical to a build
-// without the setting. With them it adds forwardedHeaders.trustedIPs, so
-// Traefik accepts X-Forwarded-* from the proxy directly in front of it and
-// passes the original scheme on: without that, a TLS terminator leaves the
-// hop to Traefik in plain HTTP, Traefik rewrites X-Forwarded-Proto to "http",
-// and Authentik reads an HTTPS request as HTTP and generates http:// URLs the
-// browser then blocks as mixed content, stalling the login flow.
+// entrypointYaml renders one entrypoint block. It always carries
+// forwardedHeaders.trustedIPs: either the operator's list, or the private-range
+// default. The list makes Traefik accept X-Forwarded-* from the proxy directly
+// in front of it and pass the original scheme on; without that, a TLS
+// terminator leaves the hop to Traefik in plain HTTP, Traefik rewrites
+// X-Forwarded-Proto to "http", and Authentik reads an HTTPS request as HTTP
+// and generates http:// URLs the browser then blocks as mixed content, stalling
+// the login flow.
 //
 // Trust is scoped to the source address, not the header: a peer outside the
-// list keeps the secure default, and its X-Forwarded-* is overwritten. Each
-// entry is quoted so YAML reads it as a string whatever it contains.
+// list keeps the secure default, and its X-Forwarded-* is overwritten. `insecure:
+// true` is still never emitted. Each entry is quoted so YAML reads it as a string
+// whatever it contains.
 func (c *TraefikConfigurator) entrypointYaml(name string, port int) string {
 	block := "  " + name + ":\n    address: \":" + strconv.Itoa(port) + "\"\n"
-	if len(c.trustedProxyNets) == 0 {
+	nets := c.effectiveTrustedProxyNets()
+	if len(nets) == 0 {
 		return block
 	}
 	block += "    forwardedHeaders:\n      trustedIPs:\n"
-	for _, proxy := range c.trustedProxyNets {
+	for _, proxy := range nets {
 		block += "        - " + strconv.Quote(proxy) + "\n"
 	}
 	return block

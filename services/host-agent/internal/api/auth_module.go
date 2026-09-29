@@ -196,9 +196,10 @@ func isDirectAgentRequest(r *http.Request, selfPort int) bool {
 // oauthBaseURL returns the base URL used for OAuth redirects: the base URL the
 // browser used, but only when it is one of the URLs already registered with the
 // identity provider: hostset.AllBaseURLs, i.e. the configured hosts plus the
-// host's detected local IPs, which is exactly what initAuthHelper registers
-// (EnsureBloudOAuthApp). Anything else falls back to the primary host, so neither
-// the request nor a spoofed X-Forwarded-Host can introduce a redirect target.
+// host's detected local IPs on the entrypoint port, which is exactly what
+// initAuthHelper registers (EnsureBloudOAuthApp). Anything else falls back to
+// the primary host, so neither the request nor a spoofed X-Forwarded-Host can
+// introduce a redirect target.
 //
 // Matching the registered set rather than only the hostname list is what keeps
 // IP access working: the box's IPs are published as base URLs but are not
