@@ -1,2 +1,8 @@
+#!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
-npm run test:precommit
+#
+# Hygiene only, over the staged files: license header, gofmt, em dash, prose,
+# doc links. Target is ~1-2s and no test suite. The heavy tier (lint + tests)
+# is the pre-push hook; see scripts/checks.mjs for why the split is there.
+
+node scripts/checks.mjs commit

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/xmlutil"
@@ -34,6 +35,18 @@ func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
 
 func fakeJellyfinSecrets() configurator.AppSecretsProvider {
 	return &fakeSecrets{pw: fakeAdminPassword}
+}
+
+// newTestConfigurator builds a Configurator for tests with retry backoff
+// collapsed to zero (the seam appclient documents for exactly this). The retry
+// loops themselves still run -- these tests assert attempt counts and terminal
+// behavior, not the wall-clock cadence -- so the 503-tolerance regressions stay
+// covered without sleeping through the production policy in policies.go.
+func newTestConfigurator(t *testing.T, port int) *Configurator {
+	t.Helper()
+	c := NewConfigurator(port, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c.api.cl.WithSleeper(func(time.Duration) {})
+	return c
 }
 
 func TestNewConfigurator(t *testing.T) {
@@ -65,7 +78,7 @@ func TestNewConfigurator(t *testing.T) {
 }
 
 func TestConfigurator_Name(t *testing.T) {
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	if got := c.Name(); got != "apps-jellyfin" {
 		t.Errorf("Name() = %q, want %q", got, "apps-jellyfin")
 	}
@@ -75,7 +88,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	state := &configurator.AppState{
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
@@ -139,7 +152,7 @@ func TestConfigurator_PreStart(t *testing.T) {
 
 func TestConfigurator_PreStart_FirstRun(t *testing.T) {
 	tmpDir := t.TempDir()
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	state := &configurator.AppState{
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
@@ -170,7 +183,7 @@ func TestConfigurator_PreStart_FirstRun(t *testing.T) {
 
 func TestConfigurator_PreStart_SecondRunSucceeds(t *testing.T) {
 	tmpDir := t.TempDir()
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	state := &configurator.AppState{
 		DataPath:      filepath.Join(tmpDir, "jellyfin"),
 		BloudDataPath: filepath.Join(tmpDir, "bloud"),
@@ -221,7 +234,7 @@ func TestConfigurator_PreStartInstallsLDAPPlugin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.pluginURL = server.URL
 	// Pin the digest of the archive we just served so the checksummed download
 	// path is exercised (appasset requires a SHA256 for URL sources).
@@ -352,7 +365,7 @@ func TestConfigurator_GetSystemInfo(t *testing.T) {
 			}))
 			defer server.Close()
 
-			c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+			c := newTestConfigurator(t, 8096)
 			c.baseURL = server.URL
 
 			got, err := c.api.getSystemInfo(context.Background())
@@ -430,7 +443,7 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	err := c.completeStartupWizard(context.Background())
@@ -485,7 +498,7 @@ func TestConfigurator_Authenticate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	adminPassword, err := c.resolveAdminPassword()
@@ -528,7 +541,7 @@ func TestConfigurator_GetPluginConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	configBytes, err := c.api.getPluginConfiguration(context.Background(), "test-token", ldapPluginID)
@@ -559,7 +572,7 @@ func TestConfigurator_SetPluginConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	config := LDAPConfig{
@@ -595,7 +608,7 @@ func TestConfigurator_GetUsers(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	users, err := c.api.getUsers(context.Background(), "test-token")
@@ -628,7 +641,7 @@ func TestConfigurator_DeleteUser(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	err := c.api.deleteUser(context.Background(), "test-token", "user-123")
@@ -668,7 +681,7 @@ func TestConfigurator_DeleteBootstrapAdmin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	err := c.api.deleteBootstrapAdmin(context.Background(), "test-token")
@@ -692,7 +705,7 @@ func TestConfigurator_DeleteBootstrapAdmin_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	// Should not error even if bootstrap admin is not found
@@ -732,7 +745,7 @@ func TestConfigurator_PostStart_WizardAlreadyComplete(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -779,7 +792,7 @@ func TestConfigurator_PostStart_ToleratesTransient503(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
@@ -832,7 +845,7 @@ func TestConfigurator_PostStart_Tolerates503InWizardCheck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
@@ -904,7 +917,7 @@ func TestConfigurator_PostStart_WizardCheckNeverFailsPostStartOn503(t *testing.T
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	if err := c.PostStart(context.Background(), &configurator.AppState{SSOEnabled: false}); err != nil {
@@ -944,7 +957,7 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -975,7 +988,7 @@ func TestConfigurator_ConfigureLDAP_PluginNotInstalled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -1021,7 +1034,7 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{
@@ -1090,7 +1103,7 @@ func TestConfigurator_ConfigureLDAP_UpdatesRotatedPassword(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	err := c.configureLDAP(context.Background(), &configurator.AppState{
@@ -1136,7 +1149,7 @@ func TestConfigurator_PostStart_SkipsLDAPWhenNilDespiteSSOEnabled(t *testing.T) 
 	}))
 	defer server.Close()
 
-	c := NewConfigurator(8096, configurator.Deps{Secrets: fakeJellyfinSecrets()})
+	c := newTestConfigurator(t, 8096)
 	c.baseURL = server.URL
 
 	state := &configurator.AppState{

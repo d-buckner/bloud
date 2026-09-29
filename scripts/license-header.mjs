@@ -13,8 +13,8 @@
 // the runtime-managed Traefik routes file) and no-comment formats (JSON,
 // go.mod/go.sum) are excluded.
 
-import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { targetsFromArgs } from './checkTargets.mjs';
 
 const SPDX = 'SPDX-License-Identifier: AGPL-3.0-only';
 
@@ -116,8 +116,9 @@ function canonical(file, content) {
 
 function main() {
   const mode = process.argv[2] === 'fix' ? 'fix' : 'check';
-  const files = execFileSync('git', ['ls-files'], { encoding: 'utf8' })
-    .split('\n').filter(Boolean);
+  // argv[3:] is the explicit list the hook passes; empty means every tracked
+  // file, so `npm run license:check` still sweeps the tree.
+  const files = targetsFromArgs(process.argv.slice(3), []);
 
   let bad = 0;
   let fixed = 0;

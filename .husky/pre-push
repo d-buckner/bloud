@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The tier that used to be charged at every commit, now charged once per push:
+# hygiene over the whole pushed range, plus golangci-lint, the Go tests, eslint
+# and vitest for whatever the range touches.
+#
+# Not the gate. CI runs the full ./bloud validate --tier fast plus integration
+# and e2e, so skipping this loses you a few seconds of feedback, not
+# correctness: git push --no-verify
+
+node scripts/checks.mjs push
