@@ -18,11 +18,16 @@ import (
 )
 
 // treeScript spawns one grandchild that holds an exclusive flock for its whole
-// life, then records its pid. This is the shape that leaked: the dev loop's
+// life and records its pid. This is the shape that leaked: the dev loop's
 // children are wrappers (npm -> sh -> vite), and a signal sent only to the
 // wrapper leaves the grandchild holding the dev-server port.
-const treeScript = `flock -x %s -c 'sleep 300' &
-echo $! > %s
+//
+// The pid is written from inside the lock, and the holder then execs into
+// `sleep`, so the recorded pid is the lock holder and the pid file cannot
+// appear before the lock is held. A `flock ... & echo $!` pair has no such
+// guarantee: the parent records the pid while the child is still racing to
+// acquire, which is exactly how this test flaked in CI.
+const treeScript = `flock -x %s -c 'echo $$ > %s; exec sleep 300' &
 wait
 `
 
@@ -56,9 +61,9 @@ func startTree(t *testing.T, dir string) (*restartableCmd, int) {
 	if err != nil {
 		t.Fatalf("parse pid %q: %v", raw, err)
 	}
-	if !lockHeld(lockPath) {
-		t.Fatalf("expected the grandchild (pid %d) to hold %s", pid, lockPath)
-	}
+	waitUntil(t, 5*time.Second, fmt.Sprintf("the grandchild (pid %d) holds %s", pid, lockPath), func() bool {
+		return lockHeld(lockPath)
+	})
 	return c, pid
 }
 
