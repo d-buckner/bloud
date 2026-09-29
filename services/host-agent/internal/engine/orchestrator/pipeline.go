@@ -275,7 +275,7 @@ func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
 		return
 	}
 
-	hs := hostset.NewWithSchemes(hosts, primary, intent.Schemes)
+	hs := hostset.New(hosts, primary).WithSchemes(intent.Schemes)
 
 	// No-op guard: skip all side effects when nothing actually changed.
 	// Base URLs are compared, not just hostnames, or a scheme-only change
@@ -296,10 +296,14 @@ func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
 		}
 		stored := make([]store.Host, 0, len(hosts))
 		for _, h := range hosts {
+			// Persist the normalized value, so what the store holds and what
+			// the live set derives cannot diverge: an unusable scheme is
+			// dropped from both rather than stored as junk on one side.
+			scheme := hostset.NormalizeScheme(string(intent.Schemes[h]))
 			stored = append(stored, store.Host{
 				Hostname: h,
 				Primary:  h == storedPrimary,
-				Scheme:   hostset.NormalizeScheme(intent.Schemes[h]),
+				Scheme:   string(scheme),
 			})
 		}
 		if err := o.hostStore.Replace(stored, storedPrimary); err != nil {

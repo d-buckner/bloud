@@ -2,7 +2,11 @@
 
 package orchestrator
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
+)
 
 // Intent represents a mutation request to be processed by the orchestrator.
 // The interface is sealed via the unexported intentMarker() method.
@@ -149,13 +153,14 @@ type SetHostsIntent struct {
 	intentBase
 	Hosts   []string
 	Primary string
-	// Schemes pins the URL scheme per hostname ("https" for a host behind
-	// a TLS-terminating proxy). Absent or "" means the default mapping.
-	// It travels with the host list rather than being set separately because
-	// redirect URIs are registered per host: a host and its scheme have to
-	// land in the same transaction or the provider ends up with a redirect
-	// URI for a scheme nobody configured.
-	Schemes map[string]string
+	// Schemes pins the URL scheme per hostname (SchemeHTTPS for a host behind
+	// a TLS-terminating proxy). Absent means no stored statement, which is
+	// not the same as stating http: an absent host still inherits the
+	// deployment-wide scheme. It travels with the host list rather than being
+	// set separately because redirect URIs are registered per host: a host
+	// and its scheme have to land in the same transaction or the provider
+	// ends up with a redirect URI for a scheme nobody configured.
+	Schemes map[string]hostset.Scheme
 }
 
 func (SetHostsIntent) intentMarker() {}
@@ -167,7 +172,7 @@ func NewSetHostsIntent(hosts []string, primary string) SetHostsIntent {
 // WithSchemes returns the intent carrying per-host schemes. A value method
 // on purpose: the intent stays a value that is fully specified before it is
 // submitted, rather than something mutated after the queue has seen it.
-func (i SetHostsIntent) WithSchemes(schemes map[string]string) SetHostsIntent {
+func (i SetHostsIntent) WithSchemes(schemes map[string]hostset.Scheme) SetHostsIntent {
 	i.Schemes = schemes
 	return i
 }

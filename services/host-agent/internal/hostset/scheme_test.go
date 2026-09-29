@@ -9,22 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeScheme(t *testing.T) {
-	cases := map[string]string{
-		"https":  "https",
-		"HTTPS":  "https",
-		"  http": "http",
-		"http ":  "http",
-		"":       "",
-		"ftp":    "",
-		"htps":   "",
-		"ws":     "",
-	}
-	for in, want := range cases {
-		assert.Equal(t, want, NormalizeScheme(in), "NormalizeScheme(%q)", in)
-	}
-}
-
 // A stored https scheme is what makes a TLS-terminated host reachable: the
 // redirect URI and the issuer have to name https, and Bloud cannot learn that
 // from its own socket.
@@ -72,27 +56,53 @@ func TestResolveEnvPathStillWorks(t *testing.T) {
 	assert.Equal(t, "https://sso.example.com", hs.PrimaryBaseURL())
 }
 
-func TestNewWithSchemes(t *testing.T) {
-	hs := NewWithSchemes([]string{"localhost", "bloud.local", "a.example.com"}, "a.example.com", map[string]string{
-		"a.example.com": "https",
+// A stored per-host scheme is the more specific statement than the
+// deployment-wide BLOUD_PUBLIC_SCHEME, so it wins for that host. This is the
+// precedence the UI depends on: what Settings -> Hosts shows for a host is
+// what its redirect URI is registered as, and a deployment-wide default must
+// not silently overwrite a per-host choice.
+func TestStoredSchemeBeatsDeploymentWidePublicScheme(t *testing.T) {
+	hs, err := Resolve(Input{
+		Stored: []StoredHost{
+			{Hostname: "secure.example.com", Primary: true, Scheme: "https"},
+			{Hostname: "plain.example.com", Scheme: "http"},
+			{Hostname: "inherit.example.com"},
+		},
+		PublicScheme: "http",
 	})
-	assert.Equal(t, "https://a.example.com", hs.BaseURLFor("a.example.com"))
+	require.NoError(t, err)
+	assert.Equal(t, "https://secure.example.com", hs.BaseURLFor("secure.example.com"),
+		"the stored https must survive a deployment-wide http default")
+	assert.Equal(t, "http://plain.example.com", hs.BaseURLFor("plain.example.com"))
+	// No stored statement means the deployment-wide value applies.
+	assert.Equal(t, "http://inherit.example.com", hs.BaseURLFor("inherit.example.com"))
+}
 
-	// A scheme for a host that is not in the set is still applied by name,
-	// but must not add the host to the set.
-	hs2 := NewWithSchemes([]string{"localhost", "bloud.local"}, "localhost", map[string]string{
-		"ghost.example.com": "https",
+// The reverse direction: a deployment-wide https reaches a stored host that
+// never stated a scheme, so an operator behind a TLS terminator does not have
+// to set every host by hand.
+func TestPublicSchemeReachesStoredHostsWithoutAStoredScheme(t *testing.T) {
+	hs, err := Resolve(Input{
+		Stored: []StoredHost{
+			{Hostname: "a.example.com", Primary: true},
+			{Hostname: "b.example.com"},
+		},
+		PublicScheme: "https",
 	})
-	assert.Equal(t, []string{"localhost", "bloud.local"}, hs2.Hosts())
+	require.NoError(t, err)
+	assert.Equal(t, "https://a.example.com", hs.BaseURLFor("a.example.com"))
+	assert.Equal(t, "https://b.example.com", hs.BaseURLFor("b.example.com"))
+	assert.Equal(t, SchemeHTTPS, hs.PublicScheme())
 }
 
 // The issuer and the primary must agree, and both must be on the scheme the
 // operator's proxy actually serves. localhost stays in the redirect list on
 // its own origin: that entry is for local access, not for the public host.
 func TestHTTPSPrimaryKeepsIssuerAndPrimaryOnSameOrigin(t *testing.T) {
-	hs := NewWithSchemes([]string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com", map[string]string{
-		"bloud.example.com": "https",
+	hs, err := Resolve(Input{
+		Stored: []StoredHost{{Hostname: "bloud.example.com", Primary: true, Scheme: "https"}},
 	})
+	require.NoError(t, err)
 	assert.Equal(t, "https://bloud.example.com", hs.PrimaryBaseURL())
 	assert.Equal(t, hs.PrimaryBaseURL(), hs.IssuerBaseURL(),
 		"the issuer must be the primary's own base URL, not a differently-scheme'd one")
