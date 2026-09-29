@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strings"
 	"unicode/utf8"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
@@ -163,14 +165,29 @@ type hostResponse struct {
 	Hostname string `json:"hostname"`
 	Primary  bool   `json:"primary"`
 	Builtin  bool   `json:"builtin"`
+	// Scheme is the scheme this host is actually served under, read back from
+	// the live host set rather than echoed from the request.
+	Scheme string `json:"scheme,omitempty"`
+}
+
+// effectiveScheme returns the scheme the host set serves host under.
+func effectiveScheme(hs hostset.HostSet, host string) string {
+	u, err := url.Parse(hs.BaseURLFor(host))
+	if err != nil {
+		return ""
+	}
+	return u.Scheme
 }
 
 // currentHosts builds the effective host list (built-ins first, then stored
 // custom hosts) with the live primary host.
 func (m *settingsModule) currentHosts() []hostResponse {
 	var primary string
-	if m.hostState != nil {
-		primary = m.hostState.Get().Primary()
+	var hs hostset.HostSet
+	haveState := m.hostState != nil
+	if haveState {
+		hs = m.hostState.Get()
+		primary = hs.Primary()
 	} else {
 		primary = hostset.DefaultPrimary
 	}
@@ -179,7 +196,11 @@ func (m *settingsModule) currentHosts() []hostResponse {
 	seen := map[string]bool{}
 	var out []hostResponse
 	for _, h := range hostset.BuiltinHosts {
-		out = append(out, hostResponse{Hostname: h, Primary: h == primary, Builtin: true})
+		scheme := "http"
+		if haveState {
+			scheme = effectiveScheme(hs, h)
+		}
+		out = append(out, hostResponse{Hostname: h, Primary: h == primary, Builtin: true, Scheme: scheme})
 		seen[h] = true
 	}
 	if m.hostStore != nil {
@@ -188,7 +209,11 @@ func (m *settingsModule) currentHosts() []hostResponse {
 				if builtin[h.Hostname] || seen[h.Hostname] {
 					continue
 				}
-				out = append(out, hostResponse{Hostname: h.Hostname, Primary: h.Hostname == primary, Builtin: false})
+				scheme := h.Scheme
+				if haveState {
+					scheme = effectiveScheme(hs, h.Hostname)
+				}
+				out = append(out, hostResponse{Hostname: h.Hostname, Primary: h.Hostname == primary, Builtin: false, Scheme: scheme})
 				seen[h.Hostname] = true
 			}
 		}
@@ -207,8 +232,9 @@ func (m *settingsModule) GetHostsHandler() http.HandlerFunc {
 
 // setHostsRequest is the request body for PUT /api/settings/hosts.
 type setHostsRequest struct {
-	Hosts   []string `json:"hosts"`
-	Primary string   `json:"primary"`
+	Hosts   []string          `json:"hosts"`
+	Schemes map[string]string `json:"schemes,omitempty"`
+	Primary string            `json:"primary"`
 }
 
 // SetHostsHandler validates the host list and enqueues a SetHostsIntent. The
@@ -266,7 +292,19 @@ func (m *settingsModule) SetHostsHandler() http.HandlerFunc {
 			return
 		}
 
-		intent := orchestrator.NewSetHostsIntent(hosts, primary)
+		schemes, err := normalizeHostSchemes(req.Schemes)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		for h := range schemes {
+			if !seen[h] {
+				respondError(w, http.StatusBadRequest, fmt.Sprintf("scheme given for host %q which is not in the host list", h))
+				return
+			}
+		}
+
+		intent := orchestrator.NewSetHostsIntent(hosts, primary).WithSchemes(schemes)
 		m.orch.Submit(intent)
 
 		respondJSON(w, http.StatusAccepted, map[string]string{
@@ -316,6 +354,106 @@ func (m *settingsModule) authentikClientIsAvailable(ctx context.Context, client 
 		return ac.IsAvailable(ctx)
 	}
 	return false
+}
+
+// normalizeHostSchemes validates a hostname-to-scheme map, returning only
+// the entries that actually pin something. Anything other than http or https
+// is rejected rather than silently dropped: a typo in a scheme produces a
+// redirect URI that Authentik will refuse, and that is far harder to
+// diagnose than a 400 naming the bad value.
+func normalizeHostSchemes(in map[string]string) (map[string]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(in))
+	for rawHost, rawScheme := range in {
+		h := hostset.Normalize(rawHost)
+		if h == "" {
+			return nil, fmt.Errorf("invalid hostname in schemes: %q", rawHost)
+		}
+		s := hostset.NormalizeScheme(rawScheme)
+		if rawScheme != "" && s == "" {
+			return nil, fmt.Errorf("invalid scheme %q for host %q: only http and https are supported", rawScheme, h)
+		}
+		if s != "" {
+			out[h] = s
+		}
+	}
+	return out, nil
+}
+
+// requestScheme reports the scheme the client reached this request over.
+//
+// TLS on the socket is definitive. Behind a TLS-terminating proxy the socket
+// is plain http and X-Forwarded-Proto is the only signal that exists at
+// all, so it is read here. That is safe in this one place because the value
+// only ever lands on the host this same request is adopting, on a first-run
+// request made by whoever is creating the admin account; it is never read
+// from anonymous traffic, and the login path has no orchestrator to submit
+// the change with even if it tried.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
+		// The first entry is the client-facing scheme; later ones are hops
+		// appended downstream.
+		if s := hostset.NormalizeScheme(strings.Split(fwd, ",")[0]); s != "" {
+			return s
+		}
+	}
+	return "http"
+}
+
+// adoptFirstRunHost makes the origin the first-run admin is standing on the
+// primary host, so the login they are about to create round-trips on the
+// address they actually use instead of bouncing to a localhost the outside
+// world cannot reach.
+//
+// This is the only place a host becomes primary without an authenticated
+// admin call, and what makes it safe is when it runs: the caller has just
+// committed the admin credential on a box that had no users a moment
+// earlier. Anonymous traffic cannot reach it, and once any user exists the
+// handler 409s before this point is ever reached.
+//
+// It is deliberately not wired into /auth/login. An unauthenticated login
+// redirect must never widen the OAuth client's redirect-URI allowlist; that
+// is exactly the hole the earlier lazy AddRedirectURI opened and which was
+// removed for it.
+//
+// Returns the host it adopted, or "" when there was nothing to adopt (already
+// primary, unusable Host header, or no orchestrator to route through).
+func (m *settingsModule) adoptFirstRunHost(r *http.Request) string {
+	if m.orch == nil || m.hostState == nil {
+		return ""
+	}
+	observed := hostset.Normalize(hostOnly(r.Host))
+	if observed == "" || !hostset.ValidHostname(observed) {
+		return ""
+	}
+
+	hs := m.hostState.Get()
+	if hs.Primary() == observed {
+		return ""
+	}
+
+	hosts := append([]string{}, hs.Hosts()...)
+	found := false
+	for _, h := range hosts {
+		if h == observed {
+			found = true
+			break
+		}
+	}
+	if !found {
+		hosts = append(hosts, observed)
+	}
+
+	scheme := requestScheme(r)
+	m.orch.Submit(orchestrator.NewSetHostsIntent(hosts, observed).WithSchemes(map[string]string{observed: scheme}))
+	m.logger.Info("adopted the origin this install was set up from as the primary host",
+		"host", observed, "scheme", scheme, "previousPrimary", hs.Primary())
+	return observed
 }
 
 // CreateFirstUserHandler creates the first admin user during initial setup.
@@ -417,8 +555,14 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 
 		m.logger.Info("first user created successfully", "username", req.Username)
 
+		// The account exists now, so setup is over and this is the last moment
+		// the acting party is provably the admin. Adopt the origin they used so
+		// the first login lands on it rather than on the default localhost.
+		adopted := m.adoptFirstRunHost(r)
+
 		respondJSON(w, http.StatusOK, CreateUserResponse{
-			Success: true,
+			Success:     true,
+			PrimaryHost: adopted,
 		})
 	}
 }
@@ -836,6 +980,11 @@ type CreateUserRequest struct {
 type CreateUserResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
+	// PrimaryHost is the host the install was adopted for when first-run setup
+	// changed it away from the default. Empty when nothing was adopted. The
+	// wizard uses its presence to know the SSO stack is about to be
+	// re-provisioned and that it must wait for that before reloading.
+	PrimaryHost string `json:"primaryHost,omitempty"`
 }
 
 // createUserRequest is the request body for POST /api/admin/users.

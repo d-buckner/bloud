@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS user_app_positions (
 CREATE TABLE IF NOT EXISTS hosts (
     hostname   TEXT PRIMARY KEY,
     is_primary INTEGER NOT NULL DEFAULT 0,
+    scheme     TEXT NOT NULL DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
 

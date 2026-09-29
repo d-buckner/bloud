@@ -40,6 +40,22 @@ func BuiltinSet() map[string]bool {
 	return m
 }
 
+// NormalizeScheme lowercases and trims a URL scheme, returning "" for the
+// default and rejecting anything other than http or https. Only those two
+// are accepted because the value lands in OAuth redirect URIs and the OIDC
+// issuer, where a bad scheme is a broken login that is hard to diagnose
+// rather than an obvious error.
+func NormalizeScheme(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "http":
+		return "http"
+	case "https":
+		return "https"
+	default:
+		return ""
+	}
+}
+
 // Normalize lowercases and trims a hostname, returning "" when invalid.
 func Normalize(h string) string {
 	h = strings.ToLower(strings.TrimSpace(h))
@@ -67,6 +83,10 @@ func ValidHostname(h string) bool {
 type StoredHost struct {
 	Hostname string
 	Primary  bool
+	// Scheme is "http", "https", or "" for the default mapping. See
+	// store.Host.Scheme: a TLS-terminating proxy makes the reachable scheme
+	// unknowable from Bloud's own socket, so it has to be recorded.
+	Scheme string
 }
 
 // Input is everything needed to resolve the effective host set at startup.
@@ -277,6 +297,7 @@ func Resolve(in Input) (HostSet, error) {
 
 	// Stored hosts: built-ins are always present; customs come from the DB.
 	hosts = append(hosts, BuiltinHosts...)
+	schemes := map[string]string{}
 	for _, s := range in.Stored {
 		h := Normalize(s.Hostname)
 		if h == "" {
@@ -288,8 +309,34 @@ func Resolve(in Input) (HostSet, error) {
 		if s.Primary {
 			primary = h
 		}
+		schemes[h] = s.Scheme
 	}
-	return New(hosts, primary), nil
+	return NewWithSchemes(hosts, primary, schemes), nil
+}
+
+// NewWithSchemes builds a host set and applies a per-host URL scheme. Only
+// https produces an override: http is what the default mapping already
+// yields, so storing it changes nothing.
+//
+// This is the single place a scheme becomes a base URL. Resolve uses it for
+// schemes loaded from the database and the SetHosts path uses it for schemes
+// captured at first-run adoption, so the two cannot drift into meaning
+// different things. Built-in hosts are skipped: localhost is
+// http://localhost:8080 by dev/e2e convention, and no public CA issues for
+// it or for bloud.local, so a scheme on either would be a promise the
+// install cannot keep.
+func NewWithSchemes(hosts []string, primary string, schemes map[string]string) HostSet {
+	hs := New(hosts, primary)
+	for host, raw := range schemes {
+		h := Normalize(host)
+		if h == "" || BuiltinSet()[h] {
+			continue
+		}
+		if NormalizeScheme(raw) == "https" {
+			hs = hs.WithURLOverride(h, "https://"+h)
+		}
+	}
+	return hs
 }
 
 func containsStr(list []string, s string) bool {

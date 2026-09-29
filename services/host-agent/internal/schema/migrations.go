@@ -52,6 +52,7 @@ var Migrations = []Migration{
 		)`)
 		return err
 	}},
+	{8, "hosts.scheme", ensureColumn("hosts", "scheme", "TEXT NOT NULL DEFAULT ''")},
 }
 
 // LatestVersion is the schema version that schema.sql represents:

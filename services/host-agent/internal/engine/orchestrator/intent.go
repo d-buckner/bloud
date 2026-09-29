@@ -149,12 +149,27 @@ type SetHostsIntent struct {
 	intentBase
 	Hosts   []string
 	Primary string
+	// Schemes pins the URL scheme per hostname ("https" for a host behind
+	// a TLS-terminating proxy). Absent or "" means the default mapping.
+	// It travels with the host list rather than being set separately because
+	// redirect URIs are registered per host: a host and its scheme have to
+	// land in the same transaction or the provider ends up with a redirect
+	// URI for a scheme nobody configured.
+	Schemes map[string]string
 }
 
 func (SetHostsIntent) intentMarker() {}
 
 func NewSetHostsIntent(hosts []string, primary string) SetHostsIntent {
 	return SetHostsIntent{intentBase: newIntentBase(), Hosts: hosts, Primary: primary}
+}
+
+// WithSchemes returns the intent carrying per-host schemes. A value method
+// on purpose: the intent stays a value that is fully specified before it is
+// submitted, rather than something mutated after the queue has seen it.
+func (i SetHostsIntent) WithSchemes(schemes map[string]string) SetHostsIntent {
+	i.Schemes = schemes
+	return i
 }
 
 // Compile-time assertions that all types implement Intent.

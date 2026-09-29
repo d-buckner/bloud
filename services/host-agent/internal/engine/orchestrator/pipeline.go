@@ -275,9 +275,12 @@ func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
 		return
 	}
 
-	hs := hostset.New(hosts, primary)
+	hs := hostset.NewWithSchemes(hosts, primary, intent.Schemes)
 
 	// No-op guard: skip all side effects when nothing actually changed.
+	// Base URLs are compared, not just hostnames, or a scheme-only change
+	// (http to https behind a new TLS proxy) would be dismissed as a no-op
+	// while every redirect URI in the provider stayed on the old scheme.
 	if o.hosts != nil && hostSetsEqual(o.hosts.Get(), hs) {
 		o.logger.Info("host set unchanged, skipping SetHosts side effects", "hosts", hs.Hosts())
 		return
@@ -291,7 +294,15 @@ func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
 		if !hostset.BuiltinSet()[hs.Primary()] {
 			storedPrimary = hs.Primary()
 		}
-		if err := o.hostStore.Replace(hosts, storedPrimary); err != nil {
+		stored := make([]store.Host, 0, len(hosts))
+		for _, h := range hosts {
+			stored = append(stored, store.Host{
+				Hostname: h,
+				Primary:  h == storedPrimary,
+				Scheme:   hostset.NormalizeScheme(intent.Schemes[h]),
+			})
+		}
+		if err := o.hostStore.Replace(stored, storedPrimary); err != nil {
 			o.logger.Error("failed to persist host set", "error", err)
 			return
 		}
@@ -313,7 +324,7 @@ func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
 }
 
 // hostSetsEqual reports whether two host sets contain the same hosts with the
-// same primary, ignoring order.
+// same primary and the same base URL for each of them, ignoring order.
 func hostSetsEqual(a, b hostset.HostSet) bool {
 	if a.Primary() != b.Primary() {
 		return false
@@ -327,6 +338,11 @@ func hostSetsEqual(a, b hostset.HostSet) bool {
 	}
 	for _, h := range b.Hosts() {
 		if !set[h] {
+			return false
+		}
+	}
+	for _, h := range a.Hosts() {
+		if a.BaseURLFor(h) != b.BaseURLFor(h) {
 			return false
 		}
 	}

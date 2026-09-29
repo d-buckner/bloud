@@ -297,7 +297,7 @@ func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (
 		logger.Warn("failed to load stored hosts, using defaults", "error", err)
 	} else {
 		for _, h := range stored {
-			storedHosts = append(storedHosts, hostset.StoredHost{Hostname: h.Hostname, Primary: h.Primary})
+			storedHosts = append(storedHosts, hostset.StoredHost{Hostname: h.Hostname, Primary: h.Primary, Scheme: h.Scheme})
 		}
 	}
 	hostSet, err := hostset.Resolve(hostset.Input{

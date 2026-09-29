@@ -187,3 +187,55 @@ func TestApplySetHostsIntentIgnoresNonRunningNodes(t *testing.T) {
 	assert.Equal(t, graph.StatusStarting, nodeStatus(t, g, "apps-immich-server"))
 	assert.True(t, changed)
 }
+
+// A host behind a TLS-terminating proxy has to come out https everywhere:
+// runtime state, issuer, and the persisted row.
+func TestApplySetHostsIntentWithHTTPS(t *testing.T) {
+	orch, state, hostStore, _ := setupSetHostsTest(t, nil)
+
+	orch.applySetHostsIntent(NewSetHostsIntent(
+		[]string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com",
+	).WithSchemes(map[string]string{"bloud.example.com": "https"}))
+
+	hs := state.Get()
+	assert.Equal(t, "bloud.example.com", hs.Primary())
+	assert.Equal(t, "https://bloud.example.com", hs.PrimaryBaseURL())
+	assert.Equal(t, "https://bloud.example.com", hs.IssuerBaseURL())
+	// Built-ins keep their own mapping.
+	assert.Equal(t, "http://localhost:8080", hs.BaseURLFor("localhost"))
+
+	stored, err := hostStore.List()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "bloud.example.com", stored[0].Hostname)
+	assert.Equal(t, "https", stored[0].Scheme)
+	assert.True(t, stored[0].Primary)
+}
+
+// The no-op guard compares base URLs, not just hostnames. A scheme-only
+// change (operator puts the existing domain behind a TLS proxy) is a real
+// change: every redirect URI in the provider has to move to https, so
+// skipping it would leave the install broken while reporting success.
+func TestApplySetHostsIntentSchemeOnlyChangeIsNotANoOp(t *testing.T) {
+	orch, state, _, g := setupSetHostsTest(t, nil)
+
+	// Establish the http form of the same host set.
+	orch.applySetHostsIntent(NewSetHostsIntent(
+		[]string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com"))
+	require.Equal(t, "http://bloud.example.com", state.Get().PrimaryBaseURL())
+	require.Equal(t, graph.StatusInitializing, nodeStatus(t, g, "apps-authentik-server"))
+
+	// Bring the node back up, then flip only the scheme.
+	require.NoError(t, g.SetActualStatus("apps-authentik-server", graph.StatusRunning, ""))
+	var changed bool
+	orch.onHostsChanged = func() { changed = true }
+
+	orch.applySetHostsIntent(NewSetHostsIntent(
+		[]string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com",
+	).WithSchemes(map[string]string{"bloud.example.com": "https"}))
+
+	assert.Equal(t, "https://bloud.example.com", state.Get().PrimaryBaseURL())
+	assert.True(t, changed, "a scheme-only change must fire OnHostsChanged")
+	assert.Equal(t, graph.StatusInitializing, nodeStatus(t, g, "apps-authentik-server"),
+		"a scheme-only change must reset SSO nodes so the redirect URIs are re-provisioned")
+}

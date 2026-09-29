@@ -10,6 +10,7 @@
 	interface CreateUserResponse {
 		success: boolean;
 		error?: string;
+		primaryHost?: string;
 	}
 
 	let username = $state('');
@@ -19,12 +20,29 @@
 	let submitting = $state(false);
 	let authentikReady = $state(false);
 	let checkingStatus = $state(true);
+	// Set once first-run setup has moved the primary host to the address this
+	// install was actually reached on. That move re-provisions the identity
+	// provider's redirect URIs, so the wizard waits for the provider to come
+	// back before handing off to a login that would otherwise not be
+	// registered yet.
+	let finishingSetup = $state(false);
+	let adoptedHost = $state('');
 
 	// Check if Authentik is ready on mount
 	$effect(() => {
 		checkAuthentikStatus();
 		const interval = setInterval(checkAuthentikStatus, 5000);
 		return () => clearInterval(interval);
+	});
+
+	// The handoff. Reloading is what takes the browser out of the wizard, and
+	// it is deliberately gated on authentikReady rather than done inline: the
+	// poller above is already reading the one signal that says the redirect
+	// URIs for the new host are live.
+	$effect(() => {
+		if (finishingSetup && authentikReady) {
+			window.location.reload();
+		}
 	});
 
 	async function checkAuthentikStatus() {
@@ -65,6 +83,14 @@
 			const data: CreateUserResponse = await res.json();
 
 			if (data.success) {
+				if (data.primaryHost) {
+					finishingSetup = true;
+					adoptedHost = data.primaryHost;
+					// Force the wait: the provider is about to be re-provisioned
+					// for the new host, and the last known state is stale.
+					authentikReady = false;
+					return;
+				}
 				// Reload the page to trigger normal app flow
 				window.location.reload();
 			} else {
@@ -85,7 +111,16 @@
 			<p>Create your admin account to get started.</p>
 		</div>
 
-		{#if checkingStatus}
+		{#if finishingSetup}
+			<div class="status-message">
+				<span class="spinner"></span>
+				<p>Account created. Pointing this install at <strong>{adoptedHost}</strong>.</p>
+				<p class="hint">
+					Re-provisioning sign-in for that address. This takes a minute or two;
+					you will be taken to your dashboard automatically.
+				</p>
+			</div>
+		{:else if checkingStatus}
 			<div class="status-message">
 				<span class="spinner"></span>
 				Checking system status...
