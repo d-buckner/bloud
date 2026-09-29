@@ -28,7 +28,7 @@ relationships working.
 | `dev/` | VM configs (`lima.yaml`, `qemu.yaml`). |
 | `validation.yaml` | Manifest for `./bloud validate`: tier commands + path→command inference + app registry. |
 | `docs/` | All documentation. Index and "read for..." table: [`docs/README.md`](docs/README.md). Contains `specs/` (release plan, reconciler spec, app spec, dated review), `architecture/`, `guides/`, `features/`, `operations/` (tech-debt ledger), `plans/`. |
-| root `package.json` | npm workspaces + turbo; husky pre-commit runs `npm run test:precommit`. |
+| root `package.json` | npm workspaces + turbo; husky `pre-commit` runs staged-file hygiene, `pre-push` runs lint + tests (see "Validation & testing"). |
 
 Go modules are linked by `replace` directives (host-agent ↔ apps). CI: GitHub Actions
 (`.github/`) and Forgejo (`.forgejo/`), Go 1.25 / Node 22.
@@ -217,11 +217,35 @@ npm run check --workspace=@bloud/host-agent-web   # svelte-check (typecheck)
 cd e2e && npx playwright test                     # browser e2e (see below)
 ```
 
-**Pre-commit hook (husky) runs `npm run test:precommit`** = license header check
-+ Go lint (`npm run lint:go`) + Go formatting (`npm run check:gofmt`) + prose lint
-(`npm run lint:prose`) + the em dash, docs-link, and image pin checks + host-agent
-+ apps Go tests + web TS tests. Don't commit without it passing;
-don't disable the hook.
+**Hooks (husky) split by event, not by importance.** A commit happens hundreds of
+times a week and a push once per branch of work, so the cheap tier is charged at
+the frequent event and the expensive tier at the rare one. Putting the test
+suites in `pre-commit` charged the expensive tier at the frequent one: fixing a
+markdown typo ran three golangci-lint passes, eslint and both test suites.
+
+| Hook | What it runs | Cost |
+|---|---|---|
+| `pre-commit` | license header, gofmt, em dash, prose, doc links, over the **staged files only** | ~1-2s |
+| `pre-push` | the same hygiene over the **pushed range**, plus Go lint, the host-agent + apps Go tests, eslint and vitest, each triggered only when its area is in the range | ~5-25s |
+
+Both tiers run their checks concurrently (`scripts/checks.mjs`), so the wall
+clock is the slowest check rather than the sum. Scope narrows only where the
+failure lives in the files you touched: `check:docs-links` and
+`check:image-pins` scan the whole tree on purpose, because a relative link is
+broken by the file you *deleted* and an image-pin exception table goes stale
+when an app is removed rather than edited. Both cost 0.2s.
+
+Neither hook is the gate. CI runs the full `./bloud validate --tier fast` plus
+integration and e2e on every push, so `git commit --no-verify` costs you a few
+seconds of feedback, not correctness. That is deliberate: a hook nobody can
+bypass is a hook people disable globally, and then the hygiene layer is gone for
+everyone.
+
+By hand: `npm run test:precommit` runs every check over the whole tree (the
+shape CI mirrors); `npm run checks:commit` and `npm run checks:push` run the two
+tiers against the staged files and the pushed range. `BLOUD_CHECK_JOBS=n` caps
+concurrency. The per-file checks also take a list directly:
+`npm run check:gofmt -- apps/jellyfin/configurator.go`.
 
 Image pins: every container image Bloud runs must name a specific version
 (`npm run check:image-pins`, `scripts/pinned-images.mjs`). A rolling tag is
@@ -295,6 +319,18 @@ Two things Vale cannot do, both covered by standalone checks:
   (`scripts/docs-links.mjs`) checks that every relative link and its `#anchor`
   points at something that exists. Plans move between `plans/` and
   `plans/archive/`, which is what breaks these.
+
+`npm run lint:prose` (`scripts/prose-lint.mjs`) takes an optional file list, so
+the hooks lint only what changed: `npm run lint:prose -- docs/plans/x.md`. With
+no arguments it checks every tracked prose file. The Vale style package is not
+committed, so the first run provisions it with `vale sync`.
+
+Gotestsum is a pinned `tool` dependency in `services/host-agent/go.mod` and
+`apps/go.mod`, not a `@latest` argument. `go run pkg@latest` resolves over the
+network on every invocation and fails outright with `GOPROXY=off`, and an
+upstream release makes the first commit after it pay a re-download and rebuild.
+The `tool` directive pins the version in `go.mod` and resolves from the module
+cache, so `go run gotest.tools/gotestsum` works offline.
 
 ### Playwright e2e (`e2e/`)
 

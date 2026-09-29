@@ -12,14 +12,14 @@
 // The `&mdash;` entity is not checked here (Vale's rule covers it in prose, and
 // the pattern would make this file fail its own check).
 
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { targetsFromArgs } from './checkTargets.mjs';
 
 const EM_DASH = /\u2014/;
 
-const files = execFileSync('git', ['ls-files'], { encoding: 'utf8' })
-  .split('\n')
-  .filter(Boolean);
+// No patterns: the em dash ban covers every tracked file, not a file-type set.
+// The hook passes staged files so a one-line doc edit checks one line.
+const files = targetsFromArgs(process.argv.slice(2), []);
 
 let hits = 0;
 for (const file of files) {
