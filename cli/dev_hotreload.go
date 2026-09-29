@@ -21,6 +21,16 @@ import (
 // told where to proxy before vite has told anyone anything.
 const devVitePort = 5173
 
+// devViteHost is the address the host-agent proxies the dashboard to. It is a
+// literal IPv4 loopback rather than `localhost` on purpose: `localhost` is
+// whatever the resolver says it is, and on a dual-stack machine that is
+// `::1` first. A vite bound to only one family then decides which server the
+// dashboard comes from, and if a stale one holds the other family the proxy
+// happily serves the dashboard from that instead. Pinning the family removes
+// the ambiguity, and it matches the `host: '0.0.0.0'` vite is configured
+// with, which answers on 127.0.0.1.
+const devViteHost = "127.0.0.1"
+
 // gracefulStopTimeout bounds how long a reload waits for the old host-agent to
 // shut down before killing it. It has to exceed host-agent's own shutdown
 // budget, or every reload becomes a forced kill that leaves the orchestrator
