@@ -12,6 +12,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Component overview + data flows | [architecture/overview.md](architecture/overview.md) |
 | The full app + container graph (generated from the catalog) | [architecture/dependency-graph.md](architecture/dependency-graph.md) |
 | How to add an app | [guides/contributing-apps.md](guides/contributing-apps.md) |
+| Run Bloud locally / hot-reload the control plane and dashboard | [../services/host-agent/README.md](../services/host-agent/README.md#development) |
 | Run Vaultwarden in dev (needs `BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP=1` over plain HTTP) | [../apps/vaultwarden/INTEGRATION.md](../apps/vaultwarden/INTEGRATION.md#plain-http) |
 | Multi-container app model | [specs/app-spec.md](specs/app-spec.md) |
 | Backend debt + repayment plan | [operations/tech-debt.md](operations/tech-debt.md) |

@@ -215,11 +215,13 @@ They need the same treatment host-set changes give SSO apps; until then they sta
 ### 5. Rollout on existing installs
 
 There is no desired-state invalidation today (§9 F2), so an already-RUNNING app does not re-run
-`PostStart` on its own. The existing, already-verified trigger is a full lifecycle pass:
-`./bloud dev` removes and recreates managed containers on start, which re-runs `PostStart` for
-every app (confirmed in the host-agent log: `lifecycle phase: PostStart` for all six apps).
-`uninstall` + `install` of an app does the same for that app; installing a *provider* later
-re-runs its consumers through the staleness path.
+`PostStart` on its own. The existing, already-verified trigger is a full lifecycle pass: the
+one-shot dev loop (`./bloud dev --no-watch`, and the Lima/QEMU dev loop) removes and recreates
+managed containers on start, which re-runs `PostStart` for every app (confirmed in the
+host-agent log: `lifecycle phase: PostStart` for all six apps). The native hot-reload loop is
+**not** such a trigger: it restarts only the host-agent process and leaves containers alone, so
+no `PreStart`/`PostStart` pass is forced by a reload. `uninstall` + `install` of an app does the
+same for that app; installing a *provider* later re-runs its consumers through the staleness path.
 
 ### 6. Phases
 
