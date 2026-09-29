@@ -98,6 +98,15 @@ never touched by a reload, so the next reconciliation simply runs against the
 new binary. The frontend hot-reloads through vite; the browser stays on the
 Traefik origin, which is what keeps the OIDC round trip real.
 
+Killing the dev loop takes the dev servers with it. Each child (vite and
+host-agent) starts in its own process group and the loop signals the group, not
+just the direct child: `npm run dev` runs a shell that runs vite, and npm
+exits on `SIGTERM` without forwarding it, so a signal sent only to the child
+leaked the `node` process holding 5173 and the next run could not bind it. A second
+`Ctrl-C` (or a second `SIGTERM`) forces both groups down with `SIGKILL`
+instead of waiting out the grace period. Containers are still left alone:
+stopping the dev loop never stops an app.
+
 Watched: `services/host-agent/**/*.go` (except `_test.go`) and
 `apps/**/{*.go,metadata.yaml}`. A failed build leaves the running host-agent
 alone, so a typo never takes the dashboard down.

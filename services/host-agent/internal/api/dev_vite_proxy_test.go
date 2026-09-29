@@ -74,7 +74,7 @@ func TestViteDevProxyRewritesHost(t *testing.T) {
 
 	wantHost, _, _ := strings.Cut(strings.TrimPrefix(upstream.URL, "http://"), "/")
 	for _, incoming := range []string{
-		"home.thebloud.org",
+		"bloud.example.com",
 		"10.0.0.210:8080",
 		"bloud.local",
 		"localhost:8080",

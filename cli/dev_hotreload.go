@@ -8,8 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
 )
 
@@ -64,7 +66,7 @@ func runHotReload(ctx context.Context, opts hotReloadOptions, out io.Writer) int
 	}
 
 	vite := newRestartableCmd("vite", func() (*exec.Cmd, error) {
-		return viteCommand(ctx, opts.root)
+		return viteCommand(opts.root)
 	})
 	viteDone, err := vite.Start()
 	if err != nil {
@@ -89,12 +91,17 @@ func runHotReload(ctx context.Context, opts hotReloadOptions, out io.Writer) int
 	changes := make(chan []string, 8)
 	go watchBackendSources(ctx, opts.root, changes)
 
+	signals := make(chan os.Signal, 4)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
 	loop := &reloadLoop{
 		out:     out,
 		opts:    opts,
 		child:   child,
 		vite:    vite,
 		changes: changes,
+		signals: signals,
 	}
 	return loop.run(ctx, childDone, viteDone)
 }
@@ -107,6 +114,7 @@ type reloadLoop struct {
 	child   *restartableCmd
 	vite    *restartableCmd
 	changes <-chan []string
+	signals <-chan os.Signal
 
 	crashes int
 }
@@ -115,6 +123,7 @@ type reloadLoop struct {
 // are passed by pointer because each handler replaces them with the next
 // child's channel.
 func (l *reloadLoop) run(ctx context.Context, childDone, viteDone <-chan struct{}) int {
+	l.escalateOnSecondSignal()
 	for {
 		select {
 		case <-ctx.Done():
@@ -144,6 +153,28 @@ func (l *reloadLoop) run(ctx context.Context, childDone, viteDone <-chan struct{
 			viteDone = next
 		}
 	}
+}
+
+// escalateOnSecondSignal makes a second Ctrl-C (or a second kill) cut the
+// graceful shutdown short. It runs as its own goroutine because what it has
+// to interrupt is a blocking wait on the grace timer: a handler inside the
+// select loop could not see the signal until that wait finished anyway. The
+// first signal only announces the stop; each later one SIGKILLs both process
+// groups, which closes the done channels the graceful path is blocked on.
+func (l *reloadLoop) escalateOnSecondSignal() {
+	go func() {
+		seen := 0
+		for sig := range l.signals {
+			seen++
+			if seen == 1 {
+				fprintLog(l.out, "Stopping the dev servers; press Ctrl-C again to force it down.")
+				continue
+			}
+			fprintLog(l.out, "Second "+sig.String()+": forcing vite and host-agent down.")
+			l.child.Force()
+			l.vite.Force()
+		}
+	}()
 }
 
 // onChange rebuilds and restarts on a change batch. A build failure is
@@ -238,8 +269,14 @@ func buildHostAgentTo(root, outPath string) error {
 // viteCommand builds the dashboard dev server command. It runs on the
 // developer's machine, not in the runtime, because that is where the source
 // and the node toolchain live.
-func viteCommand(ctx context.Context, root string) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, "npm", "run", "dev", "--workspace=@bloud/host-agent-web")
+//
+// It is deliberately not an exec.CommandContext. The default context cancel is
+// a bare Process.Kill of the direct child, which fires the moment the loop's
+// context is cancelled and races the ordered SIGTERM in restartableCmd.Stop:
+// every Ctrl-C would become a forced kill that skips the group. restartableCmd
+// owns this process's lifecycle, so the command carries no context of its own.
+func viteCommand(root string) (*exec.Cmd, error) {
+	cmd := exec.Command("npm", "run", "dev", "--workspace=@bloud/host-agent-web")
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

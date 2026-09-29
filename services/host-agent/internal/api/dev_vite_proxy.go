@@ -47,7 +47,7 @@ func viteDevProxy(rawURL string, logger *slog.Logger) (http.Handler, error) {
 	// Present the dev server with its own host. `NewSingleHostReverseProxy`
 	// rewrites the URL but forwards the incoming Host header verbatim, and
 	// vite answers that header with its `allowedHosts` guard: a request for
-	// `home.thebloud.org` or a LAN address gets a 403 "Blocked request"
+	// an operator's own domain or a LAN address gets a 403 "Blocked request"
 	// while `localhost` works, which reads as a routing failure rather than
 	// a host check. Rewriting to the target host keeps vite out of the
 	// picture entirely; the browser still never leaves the origin it was

@@ -230,9 +230,9 @@ func newRestartableCmd(name string, launch func() (*exec.Cmd, error)) *restartab
 	return &restartableCmd{name: name, launch: launch}
 }
 
-// Start launches the child and reaps it in the background. When the child exits
-// the returned channel is closed, so the caller can tell a restart it asked
-// for from a crash it did not.
+// Start launches the child in its own process group and reaps it in the
+// background. When the child exits the returned channel is closed, so the
+// caller can tell a restart it asked for from a crash it did not.
 func (c *restartableCmd) Start() (<-chan struct{}, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -243,6 +243,7 @@ func (c *restartableCmd) Start() (<-chan struct{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	runInNewProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -263,9 +264,10 @@ func (c *restartableCmd) Running() bool {
 	return c.cmd != nil
 }
 
-// Stop sends SIGTERM and waits up to grace for a clean exit, then SIGKILL.
-// Grace matters: host-agent's shutdown path stops its orchestrator loop, and
-// killing it earlier would turn every reload into a forced kill.
+// Stop sends SIGTERM to the child's whole process group and waits up to grace
+// for a clean exit, then SIGKILLs the group. Grace matters: host-agent's
+// shutdown path stops its orchestrator loop, and killing it earlier would turn
+// every reload into a forced kill.
 func (c *restartableCmd) Stop(grace time.Duration) error {
 	c.mu.Lock()
 	cmd := c.cmd
@@ -276,13 +278,13 @@ func (c *restartableCmd) Stop(grace time.Duration) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
+	signalTree(cmd, syscall.SIGTERM)
 
 	if done != nil {
 		select {
 		case <-done:
 		case <-time.After(grace):
-			_ = cmd.Process.Kill()
+			signalTree(cmd, syscall.SIGKILL)
 			<-done
 		}
 	}
@@ -293,6 +295,46 @@ func (c *restartableCmd) Stop(grace time.Duration) error {
 	c.stopping = false
 	c.mu.Unlock()
 	return nil
+}
+
+// Force SIGKILLs the child's whole process group without waiting for anything.
+// It exists for the second Ctrl-C: the graceful stop is already running and
+// the developer wants out now. Safe to call concurrently with Stop, which is
+// typically blocked on done; the kill closes that channel out from under it.
+func (c *restartableCmd) Force() {
+	c.mu.Lock()
+	cmd := c.cmd
+	c.mu.Unlock()
+	signalTree(cmd, syscall.SIGKILL)
+}
+
+// runInNewProcessGroup puts the child in its own process group so every
+// generation it spawns can be reached by one signal.
+//
+// The dev loop's children are wrappers, not leaves: `npm run dev` runs a
+// shell that runs vite, and npm exits on SIGTERM without forwarding it to the
+// script it launched. A signal sent only to the direct child therefore leaks
+// the node process that holds the dev-server port: a killed `./bloud dev`
+// left vite behind, and the next run could not bind 5173. A process group
+// reaches the whole tree.
+func runInNewProcessGroup(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+}
+
+// signalTree sends sig to the child's process group, falling back to the
+// child alone when the group cannot be addressed. A child that was started
+// without its own group would otherwise take the CLI's whole group down with
+// it, so the fallback is the safe direction to fail.
+func signalTree(cmd *exec.Cmd, sig syscall.Signal) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil {
+		_ = cmd.Process.Signal(sig)
+	}
 }
 
 // describeChangeBatch names what changed, compactly. A raw list of absolute
