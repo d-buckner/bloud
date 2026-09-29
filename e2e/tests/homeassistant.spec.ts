@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appUrlPattern } from '../lib/origin';
 import { LoginPage } from '../lib/loginPage';
 
 // One test case per observable behavior; serial mode (from describeApp)
@@ -56,7 +57,13 @@ describeApp('homeassistant', (app) => {
       await expect(authScreen).toBeVisible({ timeout: 60_000 });
       // The gate held: no Lovelace view is rendered behind the auth screen.
       await expect(ha.locator('hui-view')).toHaveCount(0);
-      expect(ha.url()).toMatch(/homeassistant\.localhost:8080|sso\.localhost/);
+      expect(ha.url()).toMatch(
+        // Either the app's own origin or the shared issuer: both are the gate
+        // holding. Built from the origin (protocol included) rather than the bare
+        // host, since a URL starts with the scheme and an anchor on the hostname
+        // alone would never match.
+        new RegExp(`${appUrlPattern('homeassistant').source}|sso\\.localhost`),
+      );
     } finally {
       await ha.close();
     }
@@ -112,7 +119,7 @@ describeApp('homeassistant', (app) => {
     // marker: it survives Home Assistant renaming the panel element around it.
     await expect(view).toBeVisible({ timeout: 60_000 });
     expect(ha.url()).not.toMatch(/onboarding/);
-    await expect(ha).toHaveURL(/^http:\/\/homeassistant\.localhost:8080\/(?!auth\/)/, {
+    await expect(ha).toHaveURL(appUrlPattern('homeassistant', '/(?!auth/)'), {
       timeout: 30_000,
     });
 

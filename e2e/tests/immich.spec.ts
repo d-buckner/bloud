@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appUrlPattern } from '../lib/origin';
 import { LoginPage } from '../lib/loginPage';
 
 // One test case per observable behavior; serial mode (from describeApp)
@@ -86,7 +87,7 @@ describeApp('immich', (app) => {
 
     // The OIDC callback lands back on Immich, which exchanges the code
     // and redirects authenticated users to the photos page.
-    await expect(immich).toHaveURL(/immich\.localhost:8080\/photos/, {
+    await expect(immich).toHaveURL(appUrlPattern('immich', '/photos'), {
       timeout: 60_000,
     });
     // The app shell must render for the signed-in user: the top navbar

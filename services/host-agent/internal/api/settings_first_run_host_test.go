@@ -244,7 +244,7 @@ func TestCreateFirstUser_AdoptsHTTPSSchemeFromForwardedProto(t *testing.T) {
 	intent, ok := setHostsIntent(t, mod)
 	require.True(t, ok)
 	assert.Equal(t, "bloud.example.com", intent.Primary)
-	assert.Equal(t, "https", intent.Schemes["bloud.example.com"])
+	assert.Equal(t, hostset.SchemeHTTPS, intent.Schemes["bloud.example.com"])
 }
 
 // Multiple proxy hops: the first entry is the client-facing scheme.
@@ -263,7 +263,7 @@ func TestCreateFirstUser_AdoptsSchemeFromFirstForwardedHop(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	intent, ok := setHostsIntent(t, mod)
 	require.True(t, ok)
-	assert.Equal(t, "https", intent.Schemes["bloud.example.com"])
+	assert.Equal(t, hostset.SchemeHTTPS, intent.Schemes["bloud.example.com"])
 }
 
 // TLS on the socket is definitive and outranks any header.
@@ -282,7 +282,7 @@ func TestCreateFirstUser_AdoptsHTTPSSchemeFromTLS(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	intent, ok := setHostsIntent(t, mod)
 	require.True(t, ok)
-	assert.Equal(t, "https", intent.Schemes["bloud.example.com"])
+	assert.Equal(t, hostset.SchemeHTTPS, intent.Schemes["bloud.example.com"])
 }
 
 // No TLS and no forwarded header: plain http, which is the default mapping
@@ -294,7 +294,7 @@ func TestCreateFirstUser_DefaultsToHTTPScheme(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	intent, ok := setHostsIntent(t, mod)
 	require.True(t, ok)
-	assert.Equal(t, "http", intent.Schemes["bloud.example.com"])
+	assert.Equal(t, hostset.SchemeHTTP, intent.Schemes["bloud.example.com"])
 }
 
 // A garbage forwarded scheme must not become https by accident; it falls
@@ -314,5 +314,5 @@ func TestCreateFirstUser_GarbageForwardedSchemeFallsBackToHTTP(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	intent, ok := setHostsIntent(t, mod)
 	require.True(t, ok)
-	assert.Equal(t, "http", intent.Schemes["bloud.example.com"])
+	assert.Equal(t, hostset.SchemeHTTP, intent.Schemes["bloud.example.com"])
 }

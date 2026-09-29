@@ -361,11 +361,11 @@ func (m *settingsModule) authentikClientIsAvailable(ctx context.Context, client 
 // is rejected rather than silently dropped: a typo in a scheme produces a
 // redirect URI that Authentik will refuse, and that is far harder to
 // diagnose than a 400 naming the bad value.
-func normalizeHostSchemes(in map[string]string) (map[string]string, error) {
+func normalizeHostSchemes(in map[string]string) (map[string]hostset.Scheme, error) {
 	if len(in) == 0 {
 		return nil, nil
 	}
-	out := make(map[string]string, len(in))
+	out := make(map[string]hostset.Scheme, len(in))
 	for rawHost, rawScheme := range in {
 		h := hostset.Normalize(rawHost)
 		if h == "" {
@@ -391,9 +391,9 @@ func normalizeHostSchemes(in map[string]string) (map[string]string, error) {
 // request made by whoever is creating the admin account; it is never read
 // from anonymous traffic, and the login path has no orchestrator to submit
 // the change with even if it tried.
-func requestScheme(r *http.Request) string {
+func requestScheme(r *http.Request) hostset.Scheme {
 	if r.TLS != nil {
-		return "https"
+		return hostset.SchemeHTTPS
 	}
 	if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
 		// The first entry is the client-facing scheme; later ones are hops
@@ -402,7 +402,7 @@ func requestScheme(r *http.Request) string {
 			return s
 		}
 	}
-	return "http"
+	return hostset.SchemeHTTP
 }
 
 // adoptFirstRunHost makes the origin the first-run admin is standing on the
@@ -450,7 +450,8 @@ func (m *settingsModule) adoptFirstRunHost(r *http.Request) string {
 	}
 
 	scheme := requestScheme(r)
-	m.orch.Submit(orchestrator.NewSetHostsIntent(hosts, observed).WithSchemes(map[string]string{observed: scheme}))
+	m.orch.Submit(orchestrator.NewSetHostsIntent(hosts, observed).
+		WithSchemes(map[string]hostset.Scheme{observed: scheme}))
 	m.logger.Info("adopted the origin this install was set up from as the primary host",
 		"host", observed, "scheme", scheme, "previousPrimary", hs.Primary())
 	return observed

@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appHost } from '../lib/origin';
 import {
   expectForwardAuthPrompt,
   signInThroughForwardAuth,
@@ -67,7 +68,7 @@ describeApp('radarr', (app) => {
     // `#root` at all), and no visible password field exists, proving
     // Radarr did not demand its own credentials.
     await signInThroughForwardAuth(radarr, {
-      origin: 'radarr.localhost:8080',
+      origin: appHost('radarr'),
       title: /Radarr/i,
       appShell: '#root:not(:empty)',
     });

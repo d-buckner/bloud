@@ -468,8 +468,10 @@ combined with instance/SSH-target env vars). Instance overrides:
    `BLOUD_TRAEFIK_PORT` (80; the dev VMs expose it on the host as 8080, and
    `native` sets 8080),
    `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`,
-   `BLOUD_TRUSTED_LOCAL_NETS` (host-agent admin position), and
-   `BLOUD_TRUSTED_PROXY_NETS` (Traefik forwarded headers, see invariant 10).
+   `BLOUD_TRUSTED_LOCAL_NETS` (host-agent admin position),
+   `BLOUD_TRUSTED_PROXY_NETS` (Traefik forwarded headers, see invariant 10), and
+   `BLOUD_PUBLIC_SCHEME` (deployment-wide `http`|`https` for derived URLs; the
+   per-host scheme saved in Settings wins over it).
 9. **Hosts are a first-class setting.** The instance is reachable under a set
    of hostnames: built-ins `localhost` + `bloud.local`, plus admin-added
    custom domains (Settings → Hosts, `GET/PUT /api/settings/hosts`). One host
@@ -480,7 +482,18 @@ combined with instance/SSH-target env vars). Instance overrides:
    `http://sso.localhost:8080` for a localhost primary
    (containers resolve `sso.localhost` via `extraHosts`), `http://<primary>`
    otherwise (the orchestrator injects `<primary>:host-gateway` into
-   native-oidc containers so the issuer resolves inside them). An app with
+   native-oidc containers so the issuer resolves inside them). **Each host also
+   carries a scheme** (`http`|`https`), stored per host and editable in Settings
+   → Hosts. Precedence for a derived URL's scheme: per-host base-URL override
+   (`BLOUD_SSO_BASE_URL` legacy path) > stored per-host scheme >
+   `BLOUD_PUBLIC_SCHEME` > `http`. Built-ins keep their fixed mapping and ignore
+   stored/public schemes. Under a **https** issuer the orchestrator emits **no**
+   `extraHosts` pin: the container resolves the issuer by real DNS and reaches
+   the TLS terminator that serves it, because Bloud serves no certificate at the
+   gateway and a pinned TLS dial lands on a port nothing answers. The pin stays
+   for plain-http issuers. `HostSet.ProxyConsistency` / `Deployability` report
+   the layers that disagree at startup; see
+   [`docs/plans/proxied-scheme-urls.md`](docs/plans/proxied-scheme-urls.md). An app with
    `sso.loopbackIssuer` instead takes `http://localhost:<Traefik port>` and gets
    no `extraHosts` entry: it shares the host network namespace, where localhost
    is already the host. Host changes

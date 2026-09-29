@@ -3,6 +3,7 @@ import { test, expect } from '../lib/fixtures';
 import { describeApp } from '../lib/app-suite';
 import { expectInstalledInCatalog, expectRunningTile, openAppFromHome } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appUrlPattern } from '../lib/origin';
 import { TEST_CREDS } from './constants';
 
 // One test case per observable behavior; serial mode (from describeApp)
@@ -35,7 +36,7 @@ describeApp('jellyfin', (app) => {
       // The popup is really Jellyfin (not an error page or a stuck proxy),
       // and the app is up and answering: LDAP users authenticate against
       // Bloud's directory, so Jellyfin serves its login page directly.
-      await expect(jellyfin).toHaveURL(/jellyfin\.localhost:8080/, {
+      await expect(jellyfin).toHaveURL(appUrlPattern('jellyfin'), {
         timeout: 30_000,
       });
       await expect(jellyfin.locator('#loginPage')).toBeVisible({

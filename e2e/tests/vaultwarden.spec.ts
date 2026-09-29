@@ -9,9 +9,10 @@ import {
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
+import { appOrigin } from '../lib/origin';
 import { TEST_CREDS } from './constants';
 
-const VAULTWARDEN_URL = 'http://vaultwarden.localhost:8080';
+const VAULTWARDEN_URL = appOrigin('vaultwarden');
 
 // The Bitwarden web client refuses to talk to any server whose URL is not
 // https:// (its isDev() build flag is off), and Bloud serves apps over plain

@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appHost } from '../lib/origin';
 import {
   expectForwardAuthPrompt,
   signInThroughForwardAuth,
@@ -67,7 +68,7 @@ describeApp('sonarr', (app) => {
     // `#root` at all), and no visible password field exists, proving
     // Sonarr did not demand its own credentials.
     await signInThroughForwardAuth(sonarr, {
-      origin: 'sonarr.localhost:8080',
+      origin: appHost('sonarr'),
       title: /Sonarr/i,
       appShell: '#root:not(:empty)',
     });

@@ -8,8 +8,9 @@ import {
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
+import { appOrigin, appUrlPattern } from '../lib/origin';
 
-const HERMES_ORIGIN = 'http://hermes.localhost:8080';
+const HERMES_ORIGIN = appOrigin('hermes');
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it.
@@ -97,7 +98,7 @@ describeApp('hermes', (app) => {
       }
 
       // Back on the app origin, off the sign-in route.
-      await expect(hermes).toHaveURL(/hermes\.localhost:8080/, {
+      await expect(hermes).toHaveURL(appUrlPattern('hermes'), {
         timeout: 120_000,
       });
       await expect(hermes).not.toHaveURL(/\/login/, { timeout: 120_000 });
