@@ -55,7 +55,7 @@ func TestSetHostsHandler_AcceptsHTTPS(t *testing.T) {
 	intent, ok := mod.orch.(*FakeOrchestrator).LastIntent().(orchestrator.SetHostsIntent)
 	require.True(t, ok)
 	assert.Equal(t, "bloud.example.com", intent.Primary)
-	assert.Equal(t, "https", intent.Schemes["bloud.example.com"])
+	assert.Equal(t, hostset.SchemeHTTPS, intent.Schemes["bloud.example.com"])
 }
 
 // A scheme that is not http or https is a 400 naming the value, not a
@@ -97,10 +97,9 @@ func TestSetHostsHandler_SchemesOptional(t *testing.T) {
 // stored state, so what the UI shows is what the OAuth client was given.
 func TestGetHostsHandler_ReportsEffectiveScheme(t *testing.T) {
 	mod := newFirstRunModule(t, []string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com")
-	mod.hostState = hostset.NewState(hostset.NewWithSchemes(
+	mod.hostState = hostset.NewState(hostset.New(
 		[]string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com",
-		map[string]string{"bloud.example.com": "https"},
-	))
+	).WithSchemes(map[string]hostset.Scheme{"bloud.example.com": hostset.SchemeHTTPS}))
 	mod.hostStore = &fakeHostStore{hosts: []store.Host{{Hostname: "bloud.example.com", Primary: true, Scheme: "https"}}}
 
 	r := chi.NewRouter()
