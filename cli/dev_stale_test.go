@@ -275,8 +275,28 @@ func TestTakeoverPreviousDevLoopGarbagePid(t *testing.T) {
 func TestIsBloudDevProcess(t *testing.T) {
 	loop := writeFakeDevLoop(t, "sleep 300 & wait")
 	defer loop.Process.Kill() //nolint:errcheck
-	if !isBloudDevProcess(loop.Process.Pid) {
-		t.Fatal("a `bloud dev` process was not recognised")
+
+	// Poll rather than assert once. exec.Cmd.Start returns when the child has
+	// forked and reported its setup error, which is before execve has necessarily
+	// finished, so /proc/<pid>/cmdline can still read empty or pre-exec for a
+	// few milliseconds. A single read there is a race with the kernel, not with
+	// the code under test: it failed roughly one run in three.
+	//
+	// Only the positive case needs this. The negative assertions below hold while
+	// the cmdline is unsettled too, so waiting on them would hide nothing.
+	recognised := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if isBloudDevProcess(loop.Process.Pid) {
+			recognised = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !recognised {
+		raw, readErr := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", loop.Process.Pid))
+		t.Fatalf("a `bloud dev` process was not recognised: pid=%d cmdline=%q readErr=%v alive=%v",
+			loop.Process.Pid, string(raw), readErr, alive(loop.Process.Pid))
 	}
 
 	foreign := exec.Command("sleep", "300")
