@@ -156,7 +156,8 @@ Backends: Lima on macOS (automatic), QEMU on Linux (default), native on Linux CI
 (`BLOUD_BACKEND=native`). On the native backend `./bloud dev` hot-reloads: save a
 Go file and the host-agent rebuilds and restarts in about 3s with the app containers
 left running, and the dashboard hot-reloads through vite. Use `--no-watch` for the
-one-shot build-deploy-run. Apps land at
+one-shot build-deploy-run. Add `--reset` to wipe the runtime first (the same wipe as
+`./bloud reset -y`, no prompt) and come up from empty data. Apps land at
 `http://<app>.localhost:8080`.
 
 The integration tier runs the real graph path rather than a shortcut: host-agent deployed as a

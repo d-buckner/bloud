@@ -368,12 +368,14 @@ cache, so `go run gotest.tools/gotestsum` works offline.
 
 ```
 Setup:       setup                Select runtime backend, check prerequisites, build CLI
-Dev (VM):    dev                  Build + deploy + run host-agent (Ctrl-C to stop)
+Dev (VM):    dev [--reset]       Build + deploy + run host-agent (Ctrl-C to stop)
+                                 --reset wipes the runtime first (same as reset -y, no prompt)
             start                Show quick-start instructions
             stop | status | services | logs
             attach | shell [cmd] Shell / run command on the VM
             install <app> | uninstall <app>    via host-agent API (:3000)
-            reset | destroy      Wipe VM data (keep VM) / delete VM
+            reset [-y]           Wipe VM data (keep VM); -y skips the prompt
+            destroy              Delete the VM (prompts)
 Validation:  validate [flags]     Tiered validation (default --tier changed)
             e2e                  Playwright against the running runtime
             e2e lifecycle        Self-contained install→restart→uninstall lifecycle
