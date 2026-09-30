@@ -5,8 +5,9 @@ import { describeApp } from '../lib/app-suite';
 import { expectInstalledInCatalog, expectRunningTile } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
+import { appOrigin } from '../lib/origin';
 
-const AFFINE_URL = 'http://affine.localhost:8080';
+const AFFINE_URL = appOrigin('affine');
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. AFFiNE uses

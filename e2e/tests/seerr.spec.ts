@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appUrlPattern } from '../lib/origin';
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it.
@@ -56,7 +57,7 @@ describeApp('seerr', (app) => {
       // Seerr's login page; with `initialized: false` every path is
       // redirected to /setup instead. Landing on /login is therefore the
       // observable evidence that Bloud's onboarding ran to completion.
-      await expect(seerr).toHaveURL(/seerr\.localhost:8080\/login/, {
+      await expect(seerr).toHaveURL(appUrlPattern('seerr', '/login'), {
         timeout: 60_000,
       });
 

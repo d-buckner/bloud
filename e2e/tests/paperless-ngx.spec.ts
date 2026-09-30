@@ -9,8 +9,9 @@ import {
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
+import { appOrigin, appUrlPattern } from '../lib/origin';
 
-const PAPERLESS_NGX_URL = 'http://paperless-ngx.localhost:8080';
+const PAPERLESS_NGX_URL = appOrigin('paperless-ngx');
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. Paperless-ngx uses
@@ -100,7 +101,7 @@ describeApp('paperless-ngx', (app) => {
       // app redirects to its dashboard. That URL is the session check: the
       // dashboard is only served to an authenticated session, and the
       // sign-in page is where an unauthenticated one lands.
-      await expect(paperless).toHaveURL(/paperless-ngx\.localhost:8080\/dashboard/, {
+      await expect(paperless).toHaveURL(appUrlPattern('paperless-ngx', '/dashboard'), {
         timeout: 120_000,
       });
       await expect(paperless.locator('input#inputUsername')).toHaveCount(0);

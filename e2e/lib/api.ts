@@ -78,6 +78,24 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/** One host as the settings API reports it. */
+export interface HostEntry {
+  hostname: string;
+  primary: boolean;
+  builtin: boolean;
+  scheme: string;
+}
+
+/**
+ * The effective host set, read straight from the API. Specs use this instead of
+ * the settings widget so an assertion checks what is stored rather than what the
+ * UI is echoing back.
+ */
+export async function getHosts(): Promise<HostEntry[]> {
+  const body = await fetchJSON<{ hosts: HostEntry[] }>('/api/settings/hosts');
+  return body.hosts;
+}
+
 export async function getAppStatus(name: string): Promise<string | null> {
   const app = await getApp(name);
   return app?.status ?? null;

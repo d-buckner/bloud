@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appHost } from '../lib/origin';
 import {
   expectForwardAuthPrompt,
   signInThroughForwardAuth,
@@ -67,7 +68,7 @@ describeApp('prowlarr', (app) => {
     // login page with no `#root` at all), and no visible password field
     // exists, proving Prowlarr did not demand its own credentials.
     await signInThroughForwardAuth(prowlarr, {
-      origin: 'prowlarr.localhost:8080',
+      origin: appHost('prowlarr'),
       title: /Prowlarr/i,
       appShell: '#root:not(:empty)',
     });

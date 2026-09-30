@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appHost } from '../lib/origin';
 import {
   expectForwardAuthPrompt,
   signInThroughForwardAuth,
@@ -68,7 +69,7 @@ describeApp('qbittorrent', (app) => {
     // visible password field exists, proving the whitelisted request was
     // never sent to qBittorrent's own login page (`#loginform`).
     await signInThroughForwardAuth(qbittorrent, {
-      origin: 'qbittorrent.localhost:8080',
+      origin: appHost('qbittorrent'),
       title: /qBittorrent/i,
       appShell: '#desktop',
     });

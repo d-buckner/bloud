@@ -7,6 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
+import { appOrigin, appUrlPattern } from '../lib/origin';
 import { LoginPage } from '../lib/loginPage';
 
 // One test case per observable behavior; serial mode (from describeApp)
@@ -65,7 +66,7 @@ describeApp('navidrome', (app) => {
     const deadline = Date.now() + 180_000;
     for (;;) {
       const url = navidrome.url();
-      if (url.includes('navidrome.localhost:8080') && !url.includes('/if/flow'))
+      if (url.startsWith(appOrigin('navidrome')) && !url.includes('/if/flow'))
         break;
       if (Date.now() > deadline) break;
 
@@ -78,7 +79,7 @@ describeApp('navidrome', (app) => {
     }
 
     // Forward-auth issued the session and Navidrome served the app.
-    await expect(navidrome).toHaveURL(/navidrome\.localhost:8080/, {
+    await expect(navidrome).toHaveURL(appUrlPattern('navidrome'), {
       timeout: 30_000,
     });
     await expect(
