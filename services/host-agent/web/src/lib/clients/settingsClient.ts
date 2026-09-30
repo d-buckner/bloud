@@ -2,14 +2,29 @@
 import { get, post, del, put } from './httpClient';
 import type { IntentResponse } from '$lib/types';
 
+export type HostScheme = 'http' | 'https';
+
 export interface Host {
 	hostname: string;
 	primary: boolean;
 	builtin: boolean;
+	/**
+	 * The scheme this host is served under. Built-in hosts report their fixed
+	 * mapping; an admin-added host carries the scheme stored for it, which is
+	 * what makes a TLS-terminating proxy in front of Bloud expressible.
+	 */
+	scheme: HostScheme;
 }
 
 export interface SetHostsRequest {
 	hosts: string[];
+	/**
+	 * Per-host scheme. Omitting a host here leaves whatever is already stored for
+	 * it, so a save that never sends the field silently drops an existing https
+	 * back to http. The settings UI sends the scheme for every non-builtin host
+	 * it is showing.
+	 */
+	schemes?: Record<string, HostScheme>;
 	primary: string;
 }
 

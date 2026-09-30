@@ -10,7 +10,8 @@
 		fetchHosts,
 		setHosts,
 		type TailnetConnection,
-		type Host
+		type Host,
+		type HostScheme
 	} from '$lib/clients/settingsClient';
 	import {
 		fetchUsers,
@@ -45,11 +46,18 @@
 	// Hosts state
 	let loadedHosts = $state<Host[]>([]);
 	let hostList = $state<string[]>([]);
+	/**
+	 * Draft scheme per host, keyed by hostname. Only non-builtin hosts are
+	 * editable: the built-ins keep their fixed mapping and the backend ignores a
+	 * scheme for them, so sending one would be a lie the UI can't honour.
+	 */
+	let hostSchemes = $state<Record<string, HostScheme>>({});
 	let draftPrimary = $state('');
 	let hostsLoading = $state(true);
 	let hostsError = $state('');
 	let savingHosts = $state(false);
 	let newHost = $state('');
+	let newHostScheme = $state<HostScheme>('http');
 
 	const BUILTIN_HOSTS = ['localhost', 'bloud.local'];
 
@@ -61,6 +69,16 @@
 		return BUILTIN_HOSTS.includes(hostname);
 	}
 
+	/** The schemes the draft holds for hosts the backend will actually honour. */
+	function draftSchemes(): Record<string, HostScheme> {
+		const out: Record<string, HostScheme> = {};
+		for (const hostname of hostList) {
+			if (isBuiltin(hostname)) continue;
+			out[hostname] = hostSchemes[hostname] ?? 'http';
+		}
+		return out;
+	}
+
 	function hostsDirty() {
 		const loaded = loadedHosts.map((h) => h.hostname).sort();
 		const draft = [...hostList].sort();
@@ -68,7 +86,15 @@
 		for (let i = 0; i < loaded.length; i++) {
 			if (loaded[i] !== draft[i]) return true;
 		}
-		return hostPrimary !== draftPrimary;
+		if (hostPrimary !== draftPrimary) return true;
+		// A scheme-only change is a real change: it moves every redirect URI in
+		// the provider, so it has to reach the Save button.
+		const saved = draftSchemes();
+		for (const [host, scheme] of Object.entries(saved)) {
+			const current = loadedHosts.find((h) => h.hostname === host);
+			if (current && current.scheme !== scheme) return true;
+		}
+		return false;
 	}
 
 	const POLL_INTERVAL = 500;
@@ -114,6 +140,9 @@
 			loadedHosts = res.hosts;
 			hostList = res.hosts.map((h) => h.hostname);
 			draftPrimary = res.hosts.find((h) => h.primary)?.hostname ?? 'localhost';
+			hostSchemes = Object.fromEntries(
+				res.hosts.map((h) => [h.hostname, h.scheme ?? 'http']),
+			);
 		} catch (err) {
 			hostsError = err instanceof Error ? err.message : 'Failed to load hosts';
 		} finally {
@@ -125,35 +154,83 @@
 		const hostname = newHost.trim().toLowerCase();
 		if (!hostname || hostList.includes(hostname)) return;
 		hostList = [...hostList, hostname];
+		hostSchemes = { ...hostSchemes, [hostname]: newHostScheme };
 		newHost = '';
 	}
 
 	function handleRemoveHost(hostname: string) {
 		hostList = hostList.filter((h) => h !== hostname);
+		const rest = { ...hostSchemes };
+		delete rest[hostname];
+		hostSchemes = rest;
 		if (draftPrimary === hostname) {
 			draftPrimary = hostPrimary;
 		}
 	}
 
+	/**
+	 * Whether the orchestrator has finished applying a host set: same hosts, the
+	 * chosen primary, and every requested scheme actually stored. The scheme
+	 * clause is the point: a save that dropped it used to report success while
+	 * quietly putting every derived URL back on http.
+	 */
+	function hostsApplied(
+		hosts: Host[],
+		wantedHosts: string[],
+		wantedPrimary: string,
+		wantedSchemes: Record<string, HostScheme>,
+	): boolean {
+		if (hosts.length !== wantedHosts.length) return false;
+		if (!hosts.every((h) => wantedHosts.includes(h.hostname))) return false;
+		if (!hosts.some((h) => h.hostname === wantedPrimary && h.primary)) return false;
+		return Object.entries(wantedSchemes).every(([host, scheme]) => {
+			const row = hosts.find((h) => h.hostname === host);
+			return !row || row.scheme === scheme;
+		});
+	}
+
+	/** Name the hosts whose scheme came back different from what was saved. */
+	function schemeRevertNote(
+		hosts: Host[],
+		wanted: Record<string, HostScheme>,
+	): string {
+		const reverted = Object.entries(wanted)
+			.map(([host, scheme]) => ({ host, want: scheme, got: hosts.find((h) => h.hostname === host)?.scheme }))
+			.filter((r) => r.got !== undefined && r.got !== r.want)
+			.map((r) => `${r.host} (wanted ${r.want}, still ${r.got})`);
+		return reverted.length
+			? `Hosts saved but the scheme did not apply: ${reverted.join('; ')}`
+			: 'Hosts did not finish applying';
+	}
+
+	function applyFetchedHosts(hosts: Host[]) {
+		loadedHosts = hosts;
+		hostSchemes = Object.fromEntries(
+			hosts.map((h) => [h.hostname, h.scheme ?? 'http']),
+		);
+	}
+
 	async function handleSaveHosts() {
 		hostsError = '';
 		savingHosts = true;
+		const wanted = draftSchemes();
 		try {
-			await setHosts({ hosts: hostList, primary: draftPrimary });
+			await setHosts({ hosts: hostList, schemes: wanted, primary: draftPrimary });
 			// Poll until the orchestrator applies the change (store update is
 			// fast; SSO re-provisioning runs afterwards in the background).
 			const deadline = Date.now() + HOSTS_APPLY_TIMEOUT;
+			let last: Host[] = loadedHosts;
 			for (;;) {
 				const res = await fetchHosts();
-				const applied =
-					res.hosts.length === hostList.length &&
-					res.hosts.every((h) => hostList.includes(h.hostname)) &&
-					res.hosts.some((h) => h.hostname === draftPrimary && h.primary);
-				if (applied) {
-					loadedHosts = res.hosts;
+				last = res.hosts;
+				if (hostsApplied(last, hostList, draftPrimary, wanted)) {
+					applyFetchedHosts(last);
 					break;
 				}
-				if (Date.now() >= deadline) break;
+				if (Date.now() >= deadline) {
+					hostsError = schemeRevertNote(last, wanted);
+					break;
+				}
 				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
 			}
 		} catch (err) {
@@ -306,6 +383,16 @@
 							<span class="host-name mono">{hostname}</span>
 							{#if isBuiltin(hostname)}
 								<span class="role-badge">built-in</span>
+							{:else}
+								<select
+									class="host-scheme"
+									aria-label={`Scheme for ${hostname}`}
+									disabled={savingHosts}
+									bind:value={hostSchemes[hostname]}
+								>
+									<option value="http">http</option>
+									<option value="https">https</option>
+								</select>
 							{/if}
 							{#if hostPrimary === hostname}
 								<span class="role-badge admin">primary</span>
@@ -327,6 +414,10 @@
 					bind:value={newHost}
 					spellcheck="false"
 				/>
+				<select class="host-scheme" aria-label="Scheme for the new host" bind:value={newHostScheme}>
+					<option value="http">http</option>
+					<option value="https">https</option>
+				</select>
 				<button class="btn" type="submit" disabled={savingHosts || !newHost.trim() || hostList.includes(newHost.trim().toLowerCase())}>
 					Add Host
 				</button>
@@ -751,6 +842,29 @@
 
 	.add-host-form input::placeholder {
 		color: var(--color-text-muted);
+	}
+
+	/* Scheme selector: sits beside the hostname for hosts the operator owns.
+	   Narrow and mono so it reads as part of the URL, not as a separate control. */
+	.host-scheme {
+		padding: 2px var(--space-sm);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-elevated);
+		color: var(--color-text);
+		cursor: pointer;
+	}
+
+	.host-scheme:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+
+	.host-scheme:focus {
+		outline: none;
+		border-color: var(--color-accent);
 	}
 
 	.tailnet-section,
