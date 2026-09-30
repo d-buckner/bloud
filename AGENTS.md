@@ -425,7 +425,12 @@ combined with instance/SSH-target env vars). Instance overrides:
    stores directly or advance app status.
 2. **Configurators are idempotent.** `PreStart`/`PostStart` run on *every*
    reconciliation cycle (install, crash recovery, reboot). A configurator that
-   can't run twice is a bug.
+   can't run twice is a bug. This is also what makes the periodic self-healing
+   pass safe: it re-runs the same cycle on a timer (~60s, see invariant 8), so
+   a pass that finds nothing to change must change nothing. `PreStart` reports
+   `RestartNeeded` rather than restarting on its own, and `managedfile.Write`
+   reports `changed=false` when the bytes already match, for exactly this
+   reason.
 3. **Apps own their infrastructure.** Apps that need databases declare their own
    postgres/redis containers in `containers:` (e.g. Immich: pgvector postgres +
    redis + server + ML). There is no shared per-app database in the product path.
@@ -473,9 +478,14 @@ combined with instance/SSH-target env vars). Instance overrides:
    `native` sets 8080),
    `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`,
    `BLOUD_TRUSTED_LOCAL_NETS` (host-agent admin position),
-   `BLOUD_TRUSTED_PROXY_NETS` (Traefik forwarded headers, see invariant 10), and
+   `BLOUD_TRUSTED_PROXY_NETS` (Traefik forwarded headers, see invariant 10),
    `BLOUD_PUBLIC_SCHEME` (deployment-wide `http`|`https` for derived URLs; it
-   only fills a scheme the address itself did not state).
+   only fills a scheme the address itself did not state), and
+   `BLOUD_RECONCILE_INTERVAL` (how long the instance may go without a
+   convergence pass before the self-healing timer submits one; Go duration
+   syntax, default 60s, `off` disables. The timer is idle-based: any pass
+   resets it, so the value is a floor on the gap between passes rather than a
+   cadence. See `services/host-agent/internal/engine/orchestrator/selfheal.go`).
 9. **The address is a first-class setting, and it is one URL.** The instance
    has exactly one configured address, the **public URL**, typed as a bare
    origin in Settings → Address (`GET/PUT /api/settings/public-url`):
@@ -750,14 +760,18 @@ mirror. Full backend-debt ledger with the repayment plan:
 items: the **auth bypass is remotely forgeable**, not just a local-process
 concern (`middleware.RealIP` + Traefik `forwardedHeaders.insecure: true` +
 loopback=admin), so a single `True-Client-IP: 127.0.0.1` header grants admin.
-That is the shipping blocker; the engine's silent-failure paths (catalog
-nil-deref, lock-free `MemoryCache`, an intent queue that can exit permanently);
-`appclient.Call.Timeout` being a no-op; container
-drift never repaired while the process is alive; duplicated orchestrator wiring
-(CLI vs router). Recently paid: durable lifecycle operation state
+That is the shipping blocker. Everything else this paragraph used to list is
+closed in the ledger: the engine's silent-failure paths (catalog nil-deref,
+lock-free `MemoryCache`, an intent queue that could exit permanently),
+`appclient.Call.Timeout`, container drift never being repaired while the
+process is alive, and duplicated orchestrator wiring (CLI vs router).
+Recently paid: durable lifecycle operation state
 (`store/operations.go` + orchestrator recorder, plan archived), versioned schema
-migrations, route-generation purity (PR #88), and per-connection SQLite pragmas
-moved into the DSN (PR 7). Two earlier claims are
+migrations, route-generation purity (PR #88), per-connection SQLite pragmas
+moved into the DSN (PR 7), and the periodic self-healing pass
+(`orchestrator/selfheal.go`, 2026-09-30: a `ReconcileIntent` on an idle
+~60s timer, which is also what gives `retryable` on the operation row a
+driver). Two earlier claims are
 corrected in the ledger: the `user_app_positions` fork fix is a no-op (the grid
 shape already existed), and the derived OAuth client secret *is* currently
 persisted. Review findings:

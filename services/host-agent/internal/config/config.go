@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -40,6 +41,13 @@ type Config struct {
 	// It is the coarse knob: the per-host scheme saved in Settings wins over it,
 	// and the legacy BLOUD_SSO_BASE_URL wins over both. Empty means http.
 	PublicScheme string
+	// ReconcileInterval is how often the orchestrator runs a self-healing
+	// convergence pass with no intent behind it (BLOUD_RECONCILE_INTERVAL,
+	// Go duration syntax: "60s", "5m"). Zero means "not configured": the
+	// framework default (orchestrator.DefaultSelfHealInterval) applies.
+	// A negative value disables the periodic pass; the literal "off" is the
+	// spelling for it, so nobody has to type "-1s" to mean "never".
+	ReconcileInterval time.Duration
 	// SSO configuration
 	SSOHostSecret string // Master secret for deriving client secrets
 	// APIToken is the bearer credential for the admin API surface from a trusted
@@ -148,6 +156,7 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		TrustedLocalNets:       splitNets(getEnv("BLOUD_TRUSTED_LOCAL_NETS", "")),
 		TrustedProxyNets:       splitNets(getEnv("BLOUD_TRUSTED_PROXY_NETS", "")),
 		PublicScheme:           getEnv("BLOUD_PUBLIC_SCHEME", ""),
+		ReconcileInterval:      getEnvDuration("BLOUD_RECONCILE_INTERVAL", 0),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
@@ -205,6 +214,27 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getEnvDuration reads an environment variable as a Go duration. An unset or
+// unparseable value yields defaultValue. The literals "off", "none", and
+// "disabled" yield a negative duration, which is how a deployment says "no
+// timer at all": zero already means "not configured" everywhere else in this
+// config, so it cannot also mean "off".
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultValue
+	}
+	switch strings.ToLower(raw) {
+	case "off", "none", "disabled":
+		return -1
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return defaultValue
+	}
+	return value
 }
 
 // getSecret resolves a required secret from the environment or the generated

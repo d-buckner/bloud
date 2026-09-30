@@ -41,6 +41,17 @@ func (g *Generator) Generate(apps []*catalog.App) error {
 func (g *Generator) GenerateAll(apps []*catalog.App, remoteApps []RemoteAppRoute, tailnetDomain string) error {
 	config := g.generateConfig(apps, remoteApps, tailnetDomain)
 
+	// Skip the write when the file already holds exactly these bytes.
+	// Convergence now runs on a timer, and an unconditional atomic write
+	// replaces a file Traefik watches on every pass: identical content, new
+	// mtime, so the whole dynamic config reloads once a minute forever. A
+	// pass with nothing to change has to be silent, not merely correct.
+	// Any read failure falls through to the write, so a missing or
+	// unreadable file is still (re)created.
+	if existing, err := os.ReadFile(g.configPath); err == nil && string(existing) == config {
+		return nil
+	}
+
 	// Ensure parent directory exists
 	dir := filepath.Dir(g.configPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
