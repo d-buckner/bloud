@@ -64,10 +64,10 @@ type ServerConfig struct {
 	AuthentikPort     int
 	TSAuthKey         string
 	HostLabel         string
-	// Hosts is the live host-set state (multi-host SSO); nil disables the
-	// host endpoints and multi-host URL resolution.
-	Hosts     *hostset.State
-	HostStore store.HostStoreInterface
+	// Hosts is the live address state (the public URL behind which SSO URLs are
+	// derived); nil disables the address endpoints and URL resolution.
+	Hosts    *hostset.State
+	Settings store.SettingsStoreInterface
 	// TrustedLocalNets lists CIDRs/IPs treated as local (loopback-equivalent)
 	// for host-agent API requests (e.g. QEMU slirp NAT gateway).
 	TrustedLocalNets []string

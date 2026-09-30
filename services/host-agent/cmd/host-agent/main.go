@@ -100,8 +100,8 @@ func runServer() {
 	// hosts from the database, with legacy env fallbacks). Shared between the
 	// configurators, the orchestrator, and the API so UI host changes apply
 	// without a restart.
-	hostSet, hostStore := resolveHostSet(database, cfg, logger)
-	hosts := hostset.NewState(hostSet)
+	address, settingsStore := resolveAddress(database, cfg, logger)
+	hosts := hostset.NewState(address)
 
 	// One store, handed to both the orchestrator and the authentik
 	// configurator, so the LDAP token PostStart records is visible to the
@@ -161,7 +161,7 @@ func runServer() {
 		APIToken:              cfg.APIToken,
 		Hosts:                 hosts,
 		EventsBus:             eventsBus,
-		HostStore:             hostStore,
+		Settings:              settingsStore,
 		LDAPOutput:            cfg.LDAPOutput(),
 		Registry:              registry,
 		TemplateVars:          templateVars,
@@ -192,7 +192,7 @@ func runServer() {
 		EventsBus:         eventsBus,
 		Authentik:         authClient,
 		TailnetStore:      tailnetStore,
-		HostStore:         hostStore,
+		Settings:          settingsStore,
 		Hosts:             hosts,
 		AppsDir:           cfg.AppsDir,
 		DataDir:           cfg.DataDir,
@@ -286,32 +286,36 @@ func runServer() {
 	logger.Info("server stopped gracefully")
 }
 
-// resolveHostSet computes the effective host set from stored admin hosts and the
-// legacy env fallbacks, and returns it with the host store the caller wires into
-// the API. Resolution failures degrade to the built-in set rather than aborting
-// boot; the instance must still come up reachable on localhost.
-func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (hostset.HostSet, *store.HostStore) {
-	hostStore := store.NewHostStore(database)
-	var storedHosts []hostset.StoredHost
-	if stored, err := hostStore.List(); err != nil {
-		logger.Warn("failed to load stored hosts, using defaults", "error", err)
-	} else {
-		for _, h := range stored {
-			storedHosts = append(storedHosts, hostset.StoredHost{Hostname: h.Hostname, Primary: h.Primary, Scheme: h.Scheme})
-		}
+// resolveAddress computes the effective address from the stored public URL and
+// the legacy env fallbacks, and returns it with the settings store the caller
+// wires into the API. Resolution failures degrade to the built-in default
+// rather than aborting boot; the instance must still come up reachable on
+// localhost.
+func resolveAddress(database *sql.DB, cfg *config.Config, logger *slog.Logger) (hostset.HostSet, *store.SettingsStore) {
+	settingsStore := store.NewSettingsStore(database)
+	storedURL, err := settingsStore.Get(store.SettingPublicURL)
+	if err != nil {
+		logger.Warn("failed to load the stored public url, using defaults", "error", err)
+		storedURL = ""
 	}
 	hostSet, err := hostset.Resolve(hostset.Input{
-		Stored:       storedHosts,
+		StoredURL:    storedURL,
 		BaseDomain:   cfg.BaseDomain,
 		SSOBaseURL:   cfg.SSOBaseURL,
 		PublicScheme: cfg.PublicScheme,
 		ServedPort:   cfg.TraefikPort,
 	})
 	if err != nil {
-		logger.Warn("failed to resolve host set, using defaults", "error", err)
-		hostSet = hostset.New(hostset.BuiltinHosts, hostset.DefaultPrimary)
+		logger.Warn("failed to resolve the public address, using defaults", "error", err)
+		def, derr := hostset.ParsePublicURL(hostset.DefaultPublicURL)
+		if derr != nil {
+			def = hostset.PublicURL{Scheme: hostset.SchemeHTTP, Host: "localhost", Port: 8080}
+		}
+		hostSet = hostset.New(def)
 	}
-	logger.Info("host set resolved", "hosts", hostSet.Hosts(), "primary", hostSet.Primary(), "scheme", hostSet.PublicScheme())
+	logger.Info("address resolved",
+		"url", hostSet.PrimaryBaseURL(),
+		"issuer", hostSet.IssuerBaseURL())
 
 	// Report the proxy layers that disagree before any user hits a stalled
 	// login. Each issue names one setting, so "SSO does not work behind my
@@ -319,12 +323,12 @@ func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (
 	// false because Bloud ships no certificate resolver at Traefik; when a
 	// deployment does terminate there, this is the call site that changes.
 	for _, issue := range hostSet.ProxyConsistency(cfg.TrustedProxyNets, false) {
-		logger.Warn("host scheme configuration issue",
+		logger.Warn("address configuration issue",
 			"code", issue.Code,
 			"issuer", hostSet.IssuerBaseURL(),
 			"detail", issue.Message)
 	}
-	return hostSet, hostStore
+	return hostSet, settingsStore
 }
 
 // buildTemplateVars builds the template-variable store shared by the

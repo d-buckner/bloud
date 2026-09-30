@@ -133,12 +133,13 @@ type OrchestratorConfig struct {
 	// bindings still carry the provider's identity and address.
 	Secrets configurator.AppSecretsProvider
 
-	// Hosts is the live host-set state (multi-host SSO). When non-nil it
-	// supersedes the SSOBaseURL/SSOAuthentikURL/SSOIssuerURL strings above.
+	// Hosts is the live address state. When non-nil it supersedes the
+	// SSOBaseURL/SSOAuthentikURL/SSOIssuerURL strings above.
 	Hosts *hostset.State
-	// HostStore persists admin-configured custom hosts (nil = not supported).
-	HostStore store.HostStoreInterface
-	// OnHostsChanged fires after a SetHosts intent is applied (e.g. to
+	// Settings persists the instance-level settings, including the public
+	// address (nil = not supported).
+	Settings store.SettingsStoreInterface
+	// OnHostsChanged fires after a SetPublicURL intent is applied (e.g. to
 	// re-ensure the dashboard OAuth app with the new redirect URIs).
 	OnHostsChanged func()
 
@@ -200,9 +201,9 @@ type Orchestrator struct {
 	traefikGen       traefikgen.GeneratorInterface
 	activeTailnetID  func() string
 
-	// Multi-host SSO state (nil = legacy single-URL mode from config).
+	// Live address state (nil = legacy single-URL mode from config).
 	hosts          *hostset.State
-	hostStore      store.HostStoreInterface
+	settings       store.SettingsStoreInterface
 	onHostsChanged func()
 
 	// Start/Stop lifecycle
@@ -266,7 +267,7 @@ func NewOrchestrator(
 		traefikGen:       config.TraefikGen,
 		activeTailnetID:  config.ActiveTailnetID,
 		hosts:            config.Hosts,
-		hostStore:        config.HostStore,
+		settings:         config.Settings,
 		onHostsChanged:   config.OnHostsChanged,
 		queue:            NewIntentQueue(DefaultDebounce),
 		events:           config.Events,
@@ -1549,20 +1550,23 @@ func (o *Orchestrator) resolveSSOURLs() ssoURLs {
 			issuerURL:    hs.IssuerBaseURL(),
 		}
 	}
+	// Legacy path: no live address state, so build the set from the SSO base
+	// URL string. An unparseable value falls back to the default address rather
+	// than a half-built set, because every URL derived from this point is a
+	// redirect URI that has to be well-formed.
+	legacy, err := hostset.ParsePublicURL(o.ssoBaseURL)
+	if err != nil {
+		o.logger.Warn("unparseable sso base url, using the default address",
+			"ssoBaseURL", o.ssoBaseURL, "error", err)
+		legacy, _ = hostset.ParsePublicURL(hostset.DefaultPublicURL)
+	}
 	return ssoURLs{
-		hostSet:      hostset.New([]string{hostFromURL(o.ssoBaseURL)}, hostFromURL(o.ssoBaseURL)),
+		hostSet:      hostset.New(legacy).WithServedPort(o.config.TraefikPort),
 		baseURLs:     append([]string{o.ssoBaseURL}, netutil.LANBaseURLs(o.config.TraefikPort)...),
 		hostSecret:   o.ssoHostSecret,
 		authentikURL: o.ssoAuthentikURL,
 		issuerURL:    o.ssoIssuerURL,
 	}
-}
-
-func hostFromURL(raw string) string {
-	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
-		return u.Hostname()
-	}
-	return "localhost"
 }
 
 // ensureSSO provisions the per-app SSO provider in the identity provider for

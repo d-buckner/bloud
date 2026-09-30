@@ -41,7 +41,10 @@ func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
 		authentikClient: authClient,
 		orch:            orch,
 		authConfig:      newAuthRef(authConfig),
-		logger:          logger,
+		// The real default agent port, so first-run adoption tests exercise the
+		// "never adopt the agent's own port" guard the way production does.
+		selfPort: 3000,
+		logger:   logger,
 	}
 }
 
@@ -681,7 +684,7 @@ func TestSetupRouter_IsSeparateFromAdminRouter(t *testing.T) {
 	}
 
 	t.Run("admin routes are absent from the public router", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/settings/hosts", nil)
+		req := httptest.NewRequest("GET", "/settings/public-url", nil)
 		w := httptest.NewRecorder()
 		public.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code, "the public bootstrap router must expose only the setup pair")

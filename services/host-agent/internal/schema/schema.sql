@@ -88,13 +88,13 @@ CREATE TABLE IF NOT EXISTS user_app_positions (
     PRIMARY KEY (username, element_id)
 );
 
--- Admin-configured custom hosts. Built-in hosts (localhost, bloud.local)
--- are implicit and never stored here.
-CREATE TABLE IF NOT EXISTS hosts (
-    hostname   TEXT PRIMARY KEY,
-    is_primary INTEGER NOT NULL DEFAULT 0,
-    scheme     TEXT NOT NULL DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now'))
+-- Instance-level scalar settings, one row per key. This is where a single
+-- admin-editable value goes instead of each one getting its own table; the
+-- public address is the first entry. See store/settings.go.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

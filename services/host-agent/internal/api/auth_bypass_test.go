@@ -120,7 +120,7 @@ func TestRouter_UnauthenticatedRouteClassification(t *testing.T) {
 		{http.MethodPost, "/api/apps/test-app/install", http.StatusUnauthorized, "mutations are authenticated"},
 		{http.MethodPost, "/api/apps/test-app/uninstall", http.StatusUnauthorized, "mutations are authenticated"},
 		{http.MethodPost, "/api/apps/refresh-catalog", http.StatusUnauthorized, "admin surface"},
-		{http.MethodGet, "/api/settings/hosts", http.StatusUnauthorized, "admin surface"},
+		{http.MethodGet, "/api/settings/public-url", http.StatusUnauthorized, "admin surface"},
 		{http.MethodGet, "/api/admin/users", http.StatusUnauthorized, "admin surface"},
 		{http.MethodGet, "/api/sharing/shares", http.StatusUnauthorized, "admin surface"},
 		{http.MethodGet, "/api/user/home", http.StatusUnauthorized, "authenticated"},
@@ -142,7 +142,7 @@ func TestRouter_SpoofedForwardingHeadersGrantNoAccess(t *testing.T) {
 
 	for _, h := range []string{"True-Client-IP", "X-Real-IP", "X-Forwarded-For", "X-Forwarded-Host"} {
 		t.Run(h, func(t *testing.T) {
-			for _, path := range []string{"/api/apps/installed", "/api/settings/hosts"} {
+			for _, path := range []string{"/api/apps/installed", "/api/settings/public-url"} {
 				w := do(t, server, http.MethodGet, path, public, map[string]string{
 					h:                   "127.0.0.1",
 					"Authorization":     "Bearer s3cret-token",
@@ -185,14 +185,14 @@ func TestRouter_SessionSurvivesLoopbackPosition(t *testing.T) {
 
 		// Admin surface must be forbidden for a member, proving the session's
 		// role was used rather than the loopback admin shortcut.
-		w = do(t, server, http.MethodGet, "/api/settings/hosts", "127.0.0.1:44444", nil, cookie)
+		w = do(t, server, http.MethodGet, "/api/settings/public-url", "127.0.0.1:44444", nil, cookie)
 		require.Equal(t, http.StatusForbidden, w.Code,
 			"loopback must not upgrade a member session to admin")
 	})
 
 	t.Run("admin session keeps admin", func(t *testing.T) {
 		cookie := newSession(t, server, "root", store.RoleAdmin)
-		w := do(t, server, http.MethodGet, "/api/settings/hosts", "127.0.0.1:44444", nil, cookie)
+		w := do(t, server, http.MethodGet, "/api/settings/public-url", "127.0.0.1:44444", nil, cookie)
 		require.Equal(t, http.StatusOK, w.Code)
 	})
 }
@@ -224,8 +224,7 @@ func loginRedirectURI(t *testing.T, w *httptest.ResponseRecorder, resp *http.Res
 }
 
 func TestAuthModule_LoginNeverRegistersRequestSuppliedHost(t *testing.T) {
-	hs := hostset.New([]string{"localhost", "bloud.local"}, "bloud.local")
-	mod, client := newHostAwareAuthModule(t, hostset.NewState(hs))
+	mod, client := newHostAwareAuthModule(t, addrState(t, "http://bloud.local", 8080))
 
 	req := httptest.NewRequest(http.MethodGet, "http://evil.example/auth/login", nil)
 	req.Host = "evil.example"
@@ -241,8 +240,7 @@ func TestAuthModule_LoginNeverRegistersRequestSuppliedHost(t *testing.T) {
 }
 
 func TestAuthModule_LoginUsesConfiguredHost(t *testing.T) {
-	hs := hostset.New([]string{"localhost", "bloud.local"}, "bloud.local")
-	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hs))
+	mod, _ := newHostAwareAuthModule(t, addrState(t, "http://bloud.local", 8080))
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/auth/login", nil)
 	req.Host = "localhost:8080"
@@ -254,8 +252,7 @@ func TestAuthModule_LoginUsesConfiguredHost(t *testing.T) {
 }
 
 func TestAuthModule_LogoutDoesNotRedirectToRequestSuppliedHost(t *testing.T) {
-	hs := hostset.New([]string{"localhost", "bloud.local"}, "bloud.local")
-	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hs))
+	mod, _ := newHostAwareAuthModule(t, addrState(t, "http://bloud.local", 8080))
 
 	req := httptest.NewRequest(http.MethodPost, "http://evil.example/auth/logout", nil)
 	req.Host = "evil.example"
@@ -278,7 +275,7 @@ func TestAuthModule_IPAccessKeepsTheRequestedBaseURL(t *testing.T) {
 	if len(ips) == 0 {
 		t.Skip("no non-loopback IPv4 on this host")
 	}
-	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hostset.New([]string{"localhost"}, "localhost").WithServedPort(8080)))
+	mod, _ := newHostAwareAuthModule(t, addrState(t, "http://localhost:8080", 8080))
 
 	ip := ips[0]
 	req := httptest.NewRequest(http.MethodGet, "http://"+ip+":8080/auth/login", nil)
@@ -307,9 +304,7 @@ func TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme(t *testing.
 		t.Skip("no non-loopback IPv4 on this host")
 	}
 
-	hs := hostset.New([]string{"home.thebloud.org", "localhost"}, "home.thebloud.org").
-		WithScheme("home.thebloud.org", hostset.SchemeHTTPS).
-		WithServedPort(8080)
+	hs := hostset.New(addr(t, "https://home.thebloud.org")).WithServedPort(8080)
 	require.Equal(t, hostset.SchemeHTTPS, hs.PublicScheme())
 
 	ip := ips[0]
@@ -342,9 +337,9 @@ func TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort(t *testing.T) {
 	}
 	ip := ips[0]
 
-	hs := hostset.New([]string{ip, "localhost"}, ip).
-		WithScheme(ip, hostset.SchemeHTTP).
-		WithServedPort(8080)
+	// The address adopted from the browser keeps the port it was reached on,
+	// which is what first-run adoption now stores.
+	hs := hostset.New(addr(t, "http://"+ip+":8080")).WithServedPort(8080)
 	mod, _ := newHostAwareAuthModule(t, hostset.NewState(hs))
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+ip+":8080/auth/login", nil)

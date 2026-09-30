@@ -166,7 +166,7 @@ services/host-agent/
 │   │   ├── graph/             # Dependency graph repository
 │   │   └── orchestrator/      # Intent queue, reconciliation, install/uninstall
 │   ├── eventbus/              # In-process event bus behind the SSE streams
-│   ├── hostset/               # Live host-set state for multi-host SSO
+│   ├── hostset/               # Live address state: the one public URL SSO URLs derive from
 │   ├── netutil/               # Network utilities
 │   ├── podman/                # Podman API client
 │   ├── schema/                # Embedded schema.sql + versioned migration ledger
@@ -239,7 +239,7 @@ result arrives on the event stream or by polling.
 
 - `POST /api/apps/refresh-catalog`: Reload the catalog from disk
 - `GET /api/system/rebuild/stream`: Server-sent frontend rebuild stream
-- `GET /api/settings/hosts`, `PUT /api/settings/hosts`: Host settings (the host set is a first-class setting; see AGENTS.md invariant 9)
+- `GET /api/settings/public-url`, `PUT /api/settings/public-url`: The address setting (one URL: scheme, host, and the public proxy port; see AGENTS.md invariant 9)
 - `GET /api/settings/tailnet`, `POST /api/settings/tailnet`, `DELETE /api/settings/tailnet`: Tailnet connection for sharing
 - `GET /api/admin/users`, `POST /api/admin/users`, `DELETE /api/admin/users/:username`, `PUT /api/admin/users/:username/role`: User management
 

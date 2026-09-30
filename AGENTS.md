@@ -470,57 +470,90 @@ combined with instance/SSH-target env vars). Instance overrides:
    `BLOUD_SSO_BASE_URL` / `BLOUD_SSO_AUTHENTIK_URL` / `BLOUD_SSO_ISSUER_URL`,
    `BLOUD_TRUSTED_LOCAL_NETS` (host-agent admin position),
    `BLOUD_TRUSTED_PROXY_NETS` (Traefik forwarded headers, see invariant 10), and
-   `BLOUD_PUBLIC_SCHEME` (deployment-wide `http`|`https` for derived URLs; the
-   per-host scheme saved in Settings wins over it).
-9. **Hosts are a first-class setting.** The instance is reachable under a set
-   of hostnames: built-ins `localhost` + `bloud.local`, plus admin-added
-   custom domains (Settings → Hosts, `GET/PUT /api/settings/hosts`). One host
-   is **primary** (drives the OIDC issuer + launch URLs). Admin-saved hosts
-   win over `BLOUD_BASE_DOMAIN`/`BLOUD_SSO_BASE_URL`, which only seed the
-   initial state. URL rules: `localhost` → `http://localhost:8080` (dev/e2e
-   parity), any other host → `http://<host>` (port 80). Issuer:
-   `http://sso.localhost:8080` for a localhost primary
-   (containers resolve `sso.localhost` via `extraHosts`), `http://<primary>`
-   otherwise (the orchestrator injects `<primary>:host-gateway` into
-   native-oidc containers so the issuer resolves inside them). **Each host also
-   carries a scheme** (`http`|`https`), stored per host and editable in Settings
-   → Hosts. Precedence for a derived URL's scheme: per-host base-URL override
-   (`BLOUD_SSO_BASE_URL` legacy path) > stored per-host scheme >
-   `BLOUD_PUBLIC_SCHEME` > `http`. Built-ins keep their fixed mapping and ignore
-   stored/public schemes. **An address is not a name.** `ValidHostname` accepts a
-   dotted quad (it is a run of valid RFC 1123 labels), so an IP literal can enter
-   the set through first-run adoption or Settings, and `HostSet.IsAddress` is what
-   tells the two families apart. A **name** derives its port from its scheme,
-   because DNS is what makes the origin: `https://<host>` means 443 and something
-   answers there. An **address** has no such contract: it means whatever port the
-   socket was opened on, and it has no certificate story at all. So
-   `BaseURLFor` renders an address host on the set's **served port**
-   (`BLOUD_TRAEFIK_PORT`, carried as `Input.ServedPort`; `0`/`80` render as the
-   http default) and never https, and the detected LAN entries in
-   `AllBaseURLs()` follow the same rule. Two regressions this closes: an `https`
-   primary made every LAN IP URL an unreachable `https://<ip>`, and adopting the
-   address an install was created from as primary rendered it as `http://<ip>` on
-   port 80 while Traefik served 8080, so the login redirect was refused. Pinned
-   by `internal/hostset/lan_base_urls_test.go`,
+   `BLOUD_PUBLIC_SCHEME` (deployment-wide `http`|`https` for derived URLs; it
+   only fills a scheme the address itself did not state).
+9. **The address is a first-class setting, and it is one URL.** The instance
+   has exactly one configured address, the **public URL**, typed as a bare
+   origin in Settings → Address (`GET/PUT /api/settings/public-url`):
+   `https://bloud.example.com:8443`. The scheme, the host, and the port all
+   live in that string, and the port belongs to the proxy: it is the port the
+   public entrypoint is dialed on from outside, not anything Bloud binds
+   internally. There is no host list, no primary selection, and no per-host
+   scheme; `MaxHosts`, `SetHostsIntent`, and the `hosts` table are gone
+   (schema migration 9 collapses the old primary row into
+   `settings['public_url']`).
+
+   The built-ins `localhost` and `bloud.local` are **not** configurable and
+   are not a second knob. They stay reachable because Traefik routes are
+   domain-agnostic (`HostRegexp`), they render on a fixed plain-http mapping
+   (`http://localhost:8080` by the dev/e2e convention, `http://bloud.local`
+   on 80), and they appear in the derived redirect-URI list so local access
+   survives a public domain. The UI shows them read-only under "Also
+   reachable"; nothing there is editable.
+
+   Resolution precedence (`hostset.Resolve`), most specific first: the stored
+   public URL > `BLOUD_SSO_BASE_URL` > `BLOUD_BASE_DOMAIN` >
+   `DefaultPublicURL` (`http://localhost:8080`). `BLOUD_PUBLIC_SCHEME` fills
+   in a scheme **only** when the winning source did not state one, so it
+   applies to a bare `BLOUD_BASE_DOMAIN` and never rewrites a stored origin
+   or a full `BLOUD_SSO_BASE_URL`. It is rejected outright for an IP literal:
+   no CA issues a certificate for a bare address, so `https://<ip>` is an
+   origin nothing can complete a handshake against. `ParsePublicURL` is the
+   single gate on what may become the address: it rejects a path, a query, a
+   fragment, credentials, an unknown scheme, and an out-of-range port, because
+   a URL that is only partly understood registers a redirect URI that never matches what
+   the browser sends.
+
+   **An address is not a name.** `ValidHostname` accepts a dotted quad (a run
+   of valid RFC 1123 labels), so an IP literal can enter through first-run
+   adoption or Settings, and `hostset.IsAddress` is what tells the two
+   families apart. A **name** gets its port from its scheme, because DNS is
+   what makes the origin: `https://<host>` means 443 and something answers
+   there. An **address** has no such contract and no certificate story, so the
+   detected LAN entries in `AllBaseURLs()` are always plain http on the
+   **served port** (`BLOUD_TRAEFIK_PORT`, carried as `Input.ServedPort`;
+   `0`/`80` render as the http default). The public URL itself is different
+   again: it carries the operator's own port verbatim, which is why adopting
+   the origin an install was created from keeps `:8443` instead of collapsing
+   to 80. The served port must survive every rebuild of the set
+   (`WithServedPort`, `applySetPublicURLIntent`), or a change drops it and the
+   LAN URLs are back on port 80. Pinned by `internal/hostset/resolve_test.go`,
    `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme`, and
-   `TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort`. The served port must
-   survive every copy of the set (`WithSchemes`, `WithPublicScheme`,
-   `WithURLOverride`, and `applySetHostsIntent`), or a host change drops it and
-   the address is back on port 80. Under a **https** issuer the orchestrator emits **no**
+   `TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort`.
+
+   **The agent's own port is never a public address.** First-run adoption
+   reads the request's `Host` so a browser on `:8443` gets a redirect URI for
+   `:8443`, but a first admin created through the loopback API arrives as
+   `Host: localhost:3000`, which says nothing about public reachability.
+   Adopting it stores an origin that every later OAuth redirect is refused on,
+   because login on the agent bind port is exactly what
+   `isDirectAgentRequest` rejects, so the install cannot log itself in. The
+   adoption guard compares the observed port to the agent's own and keeps the
+   existing address when they match. Pinned by
+   `TestCreateFirstUser_NeverAdoptsTheAgentPort`.
+
+   Issuer: `http://sso.localhost:8080` for a localhost public URL
+   (containers resolve `sso.localhost` via `extraHosts`), otherwise the
+   public URL itself. Under a **https** issuer the orchestrator emits **no**
    `extraHosts` pin: the container resolves the issuer by real DNS and reaches
-   the TLS terminator that serves it, because Bloud serves no certificate at the
-   gateway and a pinned TLS dial lands on a port nothing answers. The pin stays
-   for plain-http issuers. `HostSet.ProxyConsistency` / `Deployability` report
-   the layers that disagree at startup; see
+   the TLS terminator that serves it, because Bloud serves no certificate at
+   the gateway and a pinned TLS dial lands on a port nothing answers. The pin
+   stays for plain-http issuers. `HostSet.ProxyConsistency` /
+   `Deployability` report the layers that disagree at startup; see
    [`docs/plans/proxied-scheme-urls.md`](docs/plans/proxied-scheme-urls.md). An app with
    `sso.loopbackIssuer` instead takes `http://localhost:<Traefik port>` and gets
    no `extraHosts` entry: it shares the host network namespace, where localhost
-   is already the host. Host changes
-   flow through the orchestrator (`SetHostsIntent`): persist, update the live
-   `hostset.State`, reset SSO apps + `apps-authentik-server` so the lifecycle
-   re-provisions Authentik (redirect URIs, outpost browser URL) and rewrites
-   app configs, then re-ensure the dashboard OAuth app. Traefik routes stay
-   domain-agnostic (`HostRegexp`), so they match every host without changes.
+   is already the host. Address changes
+   flow through the orchestrator (`SetPublicURLIntent`): persist to
+   `settings['public_url']`, update the live `hostset.State`, reset SSO apps +
+   `apps-authentik-server` so the lifecycle re-provisions Authentik (redirect
+   URIs, outpost browser URL) and rewrites app configs, then re-ensure the
+   dashboard OAuth app. The intent carries the canonical origin, re-rendered
+   from the parsed value at the API boundary, so a save that only changed
+   capitalization, a trailing slash, or an explicit default port is caught by
+   the no-op guard instead of restarting every SSO app. The PUT response
+   returns that canonical `url` so the UI can poll for convergence without
+   duplicating the parser.
 10. **Traefik owns port 80; reach-by-name services stay deferred.** Traefik's
     canonical entrypoint is `:80` (a real deployment serves it directly), so
     custom domains with real DNS reach the instance at `http://<host>`. The dev
@@ -626,7 +659,7 @@ combined with instance/SSH-target env vars). Instance overrides:
   `POST /api/apps/{name}/uninstall`, `PATCH /api/apps/{name}/rename`,
   home + logs routers.
 - Admin: `POST /api/apps/refresh-catalog`, `GET /api/system/rebuild/stream`,
-  settings (incl. `GET/PUT /api/settings/hosts`: the multi-host setting),
+  settings (incl. `GET/PUT /api/settings/public-url`: the address setting),
   sharing, remote-apps routers.
 
 ## Adding an app

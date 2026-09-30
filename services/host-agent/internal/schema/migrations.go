@@ -5,6 +5,7 @@ package schema
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -52,7 +53,75 @@ var Migrations = []Migration{
 		)`)
 		return err
 	}},
-	{8, "hosts.scheme", ensureColumn("hosts", "scheme", "TEXT NOT NULL DEFAULT ''")},
+	{8, "hosts.scheme", ensureColumnIfTable("hosts", "scheme", "TEXT NOT NULL DEFAULT ''")},
+	{9, "collapse hosts table into settings.public_url", collapseHostsToPublicURL},
+}
+
+// collapseHostsToPublicURL replaces the multi-row hosts table with a single
+// settings entry (the "public_url" key; see store.SettingPublicURL).
+//
+// The old shape stored a hostname, a primary flag, and a scheme per host so an
+// operator could serve several domains from one instance. The setting
+// collapsed to one address, so the value that survives is the one that was
+// primary. A deployment that had configured extra domains loses those
+// aliases: they were reachable only because Traefik routes are
+// domain-agnostic, and the new model has no way to express a second one.
+//
+// The old table is dropped rather than left behind unused, so nothing can read
+// a shape the code no longer writes. The migration is still idempotent: on a
+// database where schema.sql already created the final shape and hosts is gone,
+// it is a no-op after the create.
+func collapseHostsToPublicURL(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT DEFAULT (datetime('now'))
+	)`); err != nil {
+		return fmt.Errorf("create settings: %w", err)
+	}
+
+	ok, err := tableExists(tx, "hosts")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+
+	// Only carry the old primary forward when nothing has been migrated yet, so
+	// a re-run cannot overwrite a value the operator set after the first pass.
+	var existing int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM settings WHERE key = 'public_url'`,
+	).Scan(&existing); err != nil {
+		return fmt.Errorf("count public_url setting: %w", err)
+	}
+	if existing == 0 {
+		var hostname, scheme string
+		err := tx.QueryRow(
+			`SELECT hostname, scheme FROM hosts ORDER BY is_primary DESC, hostname LIMIT 1`,
+		).Scan(&hostname, &scheme)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// No custom host was ever configured; resolution falls back to the
+			// env knobs or the built-in default.
+		case err != nil:
+			return fmt.Errorf("read primary host: %w", err)
+		default:
+			if scheme == "" {
+				scheme = "http"
+			}
+			if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES ('public_url', ?)`,
+				scheme+"://"+hostname); err != nil {
+				return fmt.Errorf("insert public_url setting: %w", err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`DROP TABLE hosts`); err != nil {
+		return fmt.Errorf("drop hosts: %w", err)
+	}
+	return nil
 }
 
 // LatestVersion is the schema version that schema.sql represents:
@@ -140,6 +209,26 @@ func ensureColumn(table, column, definition string) func(*sql.Tx) error {
 		}
 		if has {
 			return nil
+		}
+		_, err = tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+		return err
+	}
+}
+
+// ensureColumnIfTable is ensureColumn for a table that a later migration
+// retires. On a database where the table is already gone the change is not
+// missing, it is obsolete, so this is a no-op rather than a failure. Without
+// this, a fresh install (whose baseline schema.sql no longer creates the table)
+// dies in the ledger on a migration that has nothing left to do.
+func ensureColumnIfTable(table, column, definition string) func(*sql.Tx) error {
+	return func(tx *sql.Tx) error {
+		ok, err := tableExists(tx, table)
+		if err != nil || !ok {
+			return err
+		}
+		has, err := columnExists(tx, table, column)
+		if err != nil || has {
+			return err
 		}
 		_, err = tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
 		return err
