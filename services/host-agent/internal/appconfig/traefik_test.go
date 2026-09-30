@@ -6,6 +6,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -81,19 +82,21 @@ func staticConfigOf(t *testing.T, nets []string) string {
 	return NewTraefikConfigurator(nil, 80, 3000, 9001, t.TempDir(), nets).staticConfig()
 }
 
-// With nothing configured, no forwardedHeaders key is emitted at all, so the
-// generated file stays byte-identical to a build without the setting and every
-// existing deployment keeps Traefik's secure default.
-func TestTraefikStaticConfig_NoForwardedHeadersWithoutTrustedProxies(t *testing.T) {
+// An empty trusted-proxy list is not "trust nobody": it selects the
+// private-range default. This replaces the earlier contract, which emitted no
+// forwardedHeaders block at all and left every LAN-terminated https deployment
+// rewriting X-Forwarded-Proto to http.
+//
+// What still holds from the old contract: a nil list and an empty list render
+// byte-identically, so there is no third state.
+func TestTraefikStaticConfig_EmptyListSelectsTheDefault(t *testing.T) {
 	for _, nets := range [][]string{nil, {}} {
 		cfg := parseStaticConfig(t, NewTraefikConfigurator(nil, 80, 3000, 9001, t.TempDir(), nets))
 		require.Len(t, cfg.EntryPoints, 2)
 		for name, ep := range cfg.EntryPoints {
-			require.Nil(t, ep.ForwardedHeaders,
-				"an empty trusted-proxy list must emit no forwardedHeaders block (entrypoint %s)", name)
+			require.Equal(t, defaultTrustedProxyNets, ep.forwardedTrustedIPs(t),
+				"an empty trusted-proxy list must select the private-range default (entrypoint %s)", name)
 		}
-		require.NotContains(t, staticConfigOf(t, nets), "forwardedHeaders",
-			"the key itself must be absent when nothing is trusted")
 	}
 
 	// A nil list and an empty list render the same bytes.
@@ -158,4 +161,45 @@ func TestTraefikStaticConfig_Entrypoints(t *testing.T) {
 		require.NotContains(t, cfg.EntryPoints, "web-local",
 			"a backend that cannot bind :80 (native, CI) must not emit a duplicate entrypoint")
 	})
+}
+
+// RED: a home-server deployment behind a TLS terminator on the LAN must work
+// without the operator naming the terminator.
+//
+// Today, with no BLOUD_TRUSTED_PROXY_NETS, Traefik trusts nobody and rewrites
+// X-Forwarded-Proto to its own entrypoint scheme. Measured on a real proxied
+// install: 55 of 55 requests from the terminator arrived at Authentik as
+// "scheme": "http", and the authentication flow would not advance past the
+// identification stage.
+//
+// The default therefore has to be that private/internal ranges are trusted as
+// potential terminators. An explicit BLOUD_TRUSTED_PROXY_NETS still overrides
+// the default entirely, so an operator can narrow it.
+func TestTraefikStaticConfig_DefaultTrustsPrivateRanges(t *testing.T) {
+	for _, port := range []int{80, 8080} {
+		cfg := parseStaticConfig(t, NewTraefikConfigurator(nil, port, 3000, 9001, t.TempDir(), nil))
+		require.NotEmpty(t, cfg.EntryPoints)
+
+		for name, ep := range cfg.EntryPoints {
+			trusted := ep.forwardedTrustedIPs(t)
+			require.NotEmpty(t, trusted,
+				"entrypoint %s must trust private ranges by default, or a LAN TLS terminator "+
+					"rewrites X-Forwarded-Proto to http and Authentik reads https requests as http", name)
+
+			for _, want := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"} {
+				assert.Contains(t, trusted, want, "entrypoint %s (port %d) must trust %s", name, port, want)
+			}
+		}
+	}
+}
+
+// An explicit setting replaces the default rather than adding to it, so an
+// operator who names one terminator trusts exactly that one.
+func TestTraefikStaticConfig_ExplicitOverridesDefault(t *testing.T) {
+	nets := []string{"10.0.0.20/32"}
+	cfg := parseStaticConfig(t, NewTraefikConfigurator(nil, 8080, 3000, 9001, t.TempDir(), nets))
+
+	trusted := cfg.EntryPoints["web"].forwardedTrustedIPs(t)
+	require.Equal(t, []string{"10.0.0.20/32"}, trusted,
+		"an explicit trusted-proxy list must be the whole list, not a widening of the default")
 }

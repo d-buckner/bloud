@@ -538,10 +538,22 @@ combined with instance/SSH-target env vars). Instance overrides:
     that proxy's address (IP or CIDR, as Traefik sees it) so Traefik accepts
     its `X-Forwarded-*` and the original scheme reaches Authentik; without it
     Traefik rewrites `X-Forwarded-Proto` to `http` and the Authentik login flow
-    stalls on mixed content. Trust is scoped to the source address only: the
-    generated config never emits `forwardedHeaders.insecure: true`, and an
-    empty list leaves the static config byte-identical to a build without the
-    setting. See [`docs/plans/upstream-proxy-headers.md`](docs/plans/upstream-proxy-headers.md).
+    stalls on mixed content. **An empty list is not "trust nobody": it selects
+    the private-range default** (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
+    `192.168.0.0/16`, `100.64.0.0/10`), because a home server's terminator is
+    on the LAN and naming it must not be a prerequisite for https. An explicit
+    list replaces the default rather than widening it, so naming one terminator
+    trusts exactly that one. The cost of the default: on a flat LAN the client is
+    also an internal address, so a device in those ranges can assert
+    `X-Forwarded-Proto`, `Host`, and `X-Forwarded-For` for requests it sends
+    itself. Accepted for a home deployment, but it means an Authentik IP-based
+    access policy is forgeable from inside those ranges, so do not write one that
+    matters. Trust is still scoped to the source address: the generated config
+    never emits `forwardedHeaders.insecure: true`. See
+    [`docs/plans/upstream-proxy-headers.md`](docs/plans/upstream-proxy-headers.md).
+    Measured on the real proxied install: before the default, 55 of 55 requests
+    from the terminator arrived at Authentik as `scheme: "http"`; after, the
+    same request arrives as `scheme: "https"`.
 11. **Frontend is a static build** served by host-agent from
     `<host-agent-dir>/web/build` (embedded `dev_dashboard.html` is only the
     missing-build fallback). Rebuild the frontend before deploying.
