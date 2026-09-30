@@ -461,11 +461,19 @@ discover_models, extra_body, extra_headers, capabilities, ssl_ca_cert, ssl_verif
 Unknown keys are warned about and ignored rather than fatal, which makes this a
 forgiving merge target. Two fields matter to this plan:
 
-- **`key_env`** lets Bloud name an environment variable instead of writing the
-  credential into `config.yaml` in plaintext. The key then lives only in the
-  container environment, sourced from the secrets manager, and the config file
-  that the user can read and edit carries a variable name. That is strictly better
-  than `api_key` for a file Bloud writes into a mounted volume.
+- **`api_key`** is what the implementation writes. The alternative, `key_env`,
+  names a container environment variable instead of putting the credential in
+  `config.yaml`, and it is the better shape in principle. It is not what shipped,
+  because the container spec is rendered from `metadata.yaml` with a fixed set of
+  template variables (`{{dataDir}}`, `{{appDataDir}}`, `{{postgresPassword}}`,
+  the LDAP outpost token) and there is no per-consumer resolved-integration
+  variable in that set. Plumbing one means teaching spec building to run
+  integration resolution, which it currently does not do. The exposure difference
+  is also smaller than it looks: `key_env` moves the secret into
+  `podman inspect` output, which is readable by anyone with the socket, while the
+  config file sits in the app's own data directory, readable by anyone with that
+  path. Both are host-level reads. Repaying this is a tracked follow-up, not a
+  correctness problem.
 - **`discover_models`** is Hermes doing live `/models` discovery itself. Given the
   decision that the model list is live rather than operator-typed, Bloud sets this
   to true and does not have to mirror a model list into Hermes at all. Bloud's own
@@ -478,17 +486,20 @@ The registration Bloud writes, per wired install:
 # config.yaml, Bloud-managed keys only. Everything else belongs to the user.
 providers:
   bloud:
+    name: Bloud
+    api: openai-completions
     base_url: http://apps-litellm:4000/v1   # or the external origin, unwired
-    key_env: BOLOUD_INFERENCE_API_KEY
+    api_key: <resolved from the secrets manager>   # omitted when the binding has none
     default_model: <settings ai_default_model>
     discover_models: true
 model:
-  provider: custom:bloud   # set only when the user has not chosen one; see below
+  provider: custom                # set only when the user has not chosen one
+  model: bloud/<ai_default_model>
 ```
 
-with `BOLOUD_INFERENCE_API_KEY` supplied through the container environment from
-the resolved binding. `bloud` is a reserved provider key: the configurator owns
-that map entry and strips it when the setting goes away.
+`bloud` is a reserved provider key: the configurator owns that map entry and
+strips it when the setting goes away. A binding with no credential writes no
+`api_key` at all, so a keyless endpoint never sends a blank bearer token.
 
 **The default-model policy is the intrusive part.** Setting `model.provider` makes
 Bloud's endpoint the model every Hermes session uses, which overrides a choice the
@@ -496,20 +507,19 @@ operator may have made in Hermes' own UI. The policy this plan adopts:
 
 | `model.provider` state | Bloud action |
 |---|---|
-| unset | Set it to `custom:bloud`. A fresh install gets inference working immediately. |
-| already `custom:bloud` | Leave it. No churn. |
+| unset | Set it to `custom` + `bloud/<default>`. A fresh install gets inference working immediately. |
+| already pointing at `bloud/…` | Leave it. No churn. |
 | something the user chose | Register the provider, do **not** override. The user selects it in Hermes. |
 
 That is a one-line rule with a real consequence: Bloud configures a new install
 completely and never fights a configured one. It also means the configurator reads
 before it writes, which the existing Hermes SSO merge already does.
 
-**Why this is a config merge and not env-only.** The `providers:` map, the
-`key_env` indirection, and the read-before-write default policy all require
-merging `config.yaml`. That is the same machinery the SSO integration already
-uses, including the semantic comparison that reports `changed=false` when the
-managed keys already match on disk, so wiring inference in adds no restart churn
-beyond what SSO established.
+**Why this is a config merge and not env-only.** The `providers:` map and the
+read-before-write default policy both require merging `config.yaml`. That is the
+same machinery the SSO integration already uses, including the semantic
+comparison that reports `changed=false` when the managed keys already match on
+disk, so wiring inference in adds no restart churn beyond what SSO established.
 
 ## Why this keeps the doors open
 
@@ -594,7 +604,7 @@ field. `CompatibleApp.Source`, `ProviderRef.Kind`, the `computeAppDeps` filter,
 the promotion in `buildIntegrations`. `ParseInferenceBaseURL`. Settings API and
 UI section, including the live `GET <base>/models` read that backs the model
 display and the `ai_default_model` picker. Hermes consumer:
-the `providers.bloud` merge with `key_env` and `discover_models`, and the
+the `providers.bloud` merge with `discover_models`, and the
 read-before-write default policy. Result: Settings to a working Hermes with no
 gateway app installed, wired to the model chosen in Settings.
 
@@ -674,11 +684,13 @@ because `ViaGateway` already distinguishes the two cases in the binding.
   key never appears in a `GET` response; omitted versus empty means keep versus
   clear.
 - **Hermes configurator:** binding present writes the `providers.bloud` entry
-  with `key_env` (never a plaintext `api_key`) and `discover_models: true`;
+  with `discover_models: true`; the credential is written as `api_key` for v1
+  (see the `key_env` note above for why the env indirection is deferred),
   binding absent strips the managed entry; a second pass over unchanged state
-  reports `changed=false`. The default policy is asserted three ways: unset
-  `model.provider` becomes `custom:bloud`, an existing `custom:bloud` is left
-  byte-identical, and a provider the user chose survives every pass untouched.
+  reports `changed=false`. The default policy is asserted three ways: an unset
+  `model.provider` becomes `custom` with `model: bloud/<default>`, an existing
+  Bloud selection is left byte-identical, and a provider the user chose survives
+  every pass untouched.
 - **Live:** a stub OpenAI-compatible container (a few lines of Python serving
   `/v1/models` and `/v1/chat/completions`) as the instance upstream, so the
   whole path is testable without a real API key or network egress.
@@ -707,7 +719,8 @@ because `ViaGateway` already distinguishes the two cases in the binding.
 
 - **Bloud sets Hermes' default model only when nothing is chosen.** The policy
   table above is the decision, not a proposal: register `providers.bloud` on
-  every wired install, set `model.provider: custom:bloud` only when the operator
+  every wired install, set `model.provider: custom` with
+  `model: bloud/<default>` only when the operator
   has not selected a provider, and never override a choice a human made. A fresh
   install works out of the box; a configured one is left alone. The cost is that
   the configurator must read before it writes, which the existing Hermes SSO merge
