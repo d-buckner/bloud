@@ -259,6 +259,7 @@ func Build(in Input) (*Output, error) {
 		SSOHostSecret:    in.SSOHostSecret,
 		SSOAuthentikURL:  in.SSOAuthentikURL,
 		SSOIssuerURL:     in.SSOIssuerURL,
+		TraefikPort:      in.TraefikPort,
 		TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
 		ActiveTailnetID: func() string {
 			conn, err := in.TailnetStore.GetActive()

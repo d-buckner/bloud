@@ -487,7 +487,17 @@ combined with instance/SSH-target env vars). Instance overrides:
    → Hosts. Precedence for a derived URL's scheme: per-host base-URL override
    (`BLOUD_SSO_BASE_URL` legacy path) > stored per-host scheme >
    `BLOUD_PUBLIC_SCHEME` > `http`. Built-ins keep their fixed mapping and ignore
-   stored/public schemes. Under a **https** issuer the orchestrator emits **no**
+   stored/public schemes. The **LAN IP base URLs** (`HostSet.AllBaseURLs(servedPort)`,
+   the detected non-loopback addresses registered so login works by IP) are the
+   one derived family that ignores the primary host entirely: they are always
+   plain `http` on the entrypoint port (`BLOUD_TRAEFIK_PORT`), never on the
+   primary's scheme or port. A bare address has no TLS terminator in front of it
+   and no certificate, and the primary's port describes the public origin (443
+   behind a terminator), not the socket a LAN client reaches. Taking both from
+   the primary made `http://10.0.0.210:8080` redirect its login to
+   `https://10.0.0.210`, which is unreachable. Pinned by
+   `internal/hostset/lan_base_urls_test.go` and
+   `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme`. Under a **https** issuer the orchestrator emits **no**
    `extraHosts` pin: the container resolves the issuer by real DNS and reaches
    the TLS terminator that serves it, because Bloud serves no certificate at the
    gateway and a pinned TLS dial lands on a port nothing answers. The pin stays

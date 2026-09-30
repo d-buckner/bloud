@@ -4,7 +4,7 @@ package netutil
 
 import (
 	"net"
-	"net/url"
+	"strconv"
 )
 
 // DetectLocalIPs returns all non-loopback IPv4 addresses on the host.
@@ -43,36 +43,31 @@ func GetPrimaryIP() string {
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
-// BuildBaseURLs returns a list of base URLs: the configured base URL first,
-// then an http://<ip>[:port] URL for each detected local IP.
+// LANBaseURLs returns one plain-http base URL per detected non-loopback IPv4
+// address, on the port the public entrypoint actually serves.
 //
-// The port is extracted from configuredBaseURL using net/url.Parse. If the
-// configured URL has an explicit port (e.g. "http://bloud.local:8080"),
-// the same port is used for IP-based URLs. If there's no explicit port
-// (e.g. "http://bloud.local"), IP-based URLs omit the port too.
-func BuildBaseURLs(configuredBaseURL string) []string {
-	urls := []string{configuredBaseURL}
-
-	parsed, err := url.Parse(configuredBaseURL)
-	if err != nil {
-		return urls
-	}
-
-	// Extract explicit port from the configured URL.
-	// url.Port() returns "" when no port is specified (e.g. "http://bloud.local").
-	port := parsed.Port()
-
-	ips := DetectLocalIPs()
-	for _, ip := range ips {
-		u := &url.URL{
-			Scheme: parsed.Scheme,
-			Host:   ip,
+// The scheme is always http. A client using one of these URLs is on the same
+// network reaching this machine's own address directly: there is no TLS
+// terminator in that path, Bloud ships no certificate at the gateway, and no
+// CA issues a certificate for a bare address. Deriving these from the primary
+// host's URL instead was the bug: with a https primary, http://10.0.0.210:8080
+// redirected its OAuth login to https://10.0.0.210, a scheme and port nothing
+// answers on, and LAN access became unreachable for anyone not using the domain.
+//
+// port is the port the public entrypoint listens on (config.TraefikPort), not
+// the port carried by the primary host's URL. Those are different numbers in
+// every deployment that does not serve 80: the primary's port describes the
+// public origin, which behind a TLS terminator is 443, while a LAN client
+// reaches the socket Bloud actually opened. 0 and 80 both mean the http
+// default and are left off the URL.
+func LANBaseURLs(port int) []string {
+	var urls []string
+	for _, ip := range DetectLocalIPs() {
+		host := ip
+		if port != 0 && port != 80 {
+			host = net.JoinHostPort(ip, strconv.Itoa(port))
 		}
-		if port != "" {
-			u.Host = net.JoinHostPort(ip, port)
-		}
-		urls = append(urls, u.String())
+		urls = append(urls, "http://"+host)
 	}
-
 	return urls
 }

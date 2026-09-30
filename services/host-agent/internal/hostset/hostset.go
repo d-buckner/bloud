@@ -342,11 +342,21 @@ func (h HostSet) BaseURLs() []string {
 }
 
 // AllBaseURLs returns every base URL to register with the identity provider:
-// one per host (primary first) followed by the detected local-IP URLs, so
-// login also works when the server is reached by IP. Deduplicated.
-func (h HostSet) AllBaseURLs() []string {
+// one per host (primary first) followed by this machine's LAN IP URLs, so login
+// also works when the server is reached by address. Deduplicated.
+//
+// servedPort is the port the public entrypoint (Traefik) listens on. It is a
+// parameter rather than a field of the set because the LAN URLs are the only
+// derived values that depend on the socket rather than on a name. They are
+// plain http on that port: the primary host's URL port describes the public
+// origin, which behind a TLS terminator is 443, while a client on the LAN
+// reaching the box by address hits whatever port the entrypoint opened. Taking
+// either the scheme or the port from the primary is wrong there, and both were
+// taken from it before: an https primary made every LAN IP URL an unreachable
+// https origin.
+func (h HostSet) AllBaseURLs(servedPort int) []string {
 	urls := h.BaseURLs()
-	for _, u := range netutil.BuildBaseURLs(h.PrimaryBaseURL())[1:] {
+	for _, u := range netutil.LANBaseURLs(servedPort) {
 		if !containsStr(urls, u) {
 			urls = append(urls, u)
 		}

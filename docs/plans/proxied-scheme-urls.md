@@ -228,6 +228,56 @@ not yet wired into `config` or startup. A reachable knob without TLS at Traefik
 produces a broken deployment, and TLS at Traefik is a non-goal below. The model
 and its tests are the floor the real fix lands on.
 
+> **Corrected after landing.** `BLOUD_PUBLIC_SCHEME` is wired through `config`
+> and startup now, and the per-host scheme is persisted and editable in Settings
+> to Hosts, both of which this section listed as follow-ups. Landing it is what
+> surfaced the LAN IP bug below: once https was actually expressible for a
+> stored host, the IP entries inherited it.
+
+## Follow-up: the LAN IP entries inherited the public scheme (landed)
+
+Making https real for a stored host broke plain LAN access, which is the path
+most installs use before they have a domain.
+
+`HostSet.AllBaseURLs()` built the detected local-IP entries from
+`PrimaryBaseURL()`, so they took **both** the primary's scheme and the primary's
+port. With `home.thebloud.org` stored as an https primary and Traefik listening
+on 8080, the IP entry became `https://10.0.0.210`:
+
+```
+browser   -> http://10.0.0.210:8080/auth/login
+host-agent -> 302 https://10.0.0.210/application/o/authorize/?redirect_uri=https://10.0.0.210/auth/callback
+            ^ scheme nothing serves on an address, port nothing listens on
+```
+
+Two independent mistakes in one derivation:
+
+| Wrong | Why the primary is the wrong source |
+|---|---|
+| scheme | A LAN client reaching the box by address goes straight to the socket. There is no TLS terminator in that path, Bloud ships no certificate at the gateway, and no CA issues one for a bare IPv4 address. |
+| port | The primary's port describes the **public origin**, which behind a terminator is 443. The client used the entrypoint port, and the primary carried no explicit port at all, so it was dropped. |
+
+The fix separates the two roles the way this plan separates the browser and the
+container. `netutil.LANBaseURLs(port)` returns plain-http entries on the port
+the entrypoint actually serves (`config.TraefikPort`, 0/80 omitted), and
+`AllBaseURLs(servedPort)` takes that port as a parameter rather than reading it
+off the set, so a caller cannot accidentally derive a LAN URL from a name again.
+The named hosts are untouched: a host's own scheme still drives its own base URL.
+
+| Piece | Where |
+|---|---|
+| `LANBaseURLs(port)` replaces `BuildBaseURLs(configuredURL)` | `services/host-agent/internal/netutil/ip.go` |
+| `AllBaseURLs(servedPort)` | `services/host-agent/internal/hostset/hostset.go` |
+| Served port into the orchestrator | `OrchestratorConfig.TraefikPort`, wired in `internal/wire/wire.go` |
+| Login/callback match on the entrypoint port | `authModule.servedPort`, `oauthBaseURL` |
+| LAN entries are http on the served port, never https | `services/host-agent/internal/hostset/lan_base_urls_test.go` |
+| LAN login stays http under an https public scheme | `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme` |
+
+Both vantage points were verified against the live install that reported it: the
+LAN address redirects to `http://10.0.0.210:8080/...` and completes the
+Authentik flow, while the domain still redirects to `https://home.thebloud.org/...`
+unaffected.
+
 ## Non-goals
 
 - **TLS at Traefik.** No certificate resolver and no ACME story in this plan. It

@@ -203,7 +203,7 @@ func NewRouter(
 		})
 	}
 
-	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port, cfg.Hosts)
+	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port, cfg.Hosts, cfg.TraefikPort)
 
 	homeMod := NewHomeModule(positionStore, appStore, launchPathsFn, logger)
 	eventsMod := NewEventsModule(eventsBus, homeMod.GetLayout, logger)
@@ -387,9 +387,9 @@ func initAuthHelper(
 	// single SSO base URL env value.
 	var baseURLs []string
 	if cfg.Hosts != nil {
-		baseURLs = cfg.Hosts.Get().AllBaseURLs()
+		baseURLs = cfg.Hosts.Get().AllBaseURLs(cfg.TraefikPort)
 	} else if cfg.SSOBaseURL != "" {
-		baseURLs = netutil.BuildBaseURLs(cfg.SSOBaseURL)
+		baseURLs = append([]string{cfg.SSOBaseURL}, netutil.LANBaseURLs(cfg.TraefikPort)...)
 	}
 	if len(baseURLs) == 0 {
 		logger.Info("authentication disabled (no SSO base URLs configured)")

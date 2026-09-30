@@ -195,10 +195,11 @@ func isDirectAgentRequest(r *http.Request, selfPort int) bool {
 
 // oauthBaseURL returns the base URL used for OAuth redirects: the base URL the
 // browser used, but only when it is one of the URLs already registered with the
-// identity provider: hostset.AllBaseURLs, i.e. the configured hosts plus the
-// host's detected local IPs, which is exactly what initAuthHelper registers
-// (EnsureBloudOAuthApp). Anything else falls back to the primary host, so neither
-// the request nor a spoofed X-Forwarded-Host can introduce a redirect target.
+// identity provider: hostset.AllBaseURLs(m.servedPort), i.e. the configured
+// hosts plus the host's detected local IPs on the entrypoint port, which is
+// exactly what initAuthHelper registers (EnsureBloudOAuthApp). Anything else
+// falls back to the primary host, so neither the request nor a spoofed
+// X-Forwarded-Host can introduce a redirect target.
 //
 // Matching the registered set rather than only the hostname list is what keeps
 // IP access working: the box's IPs are published as base URLs but are not
@@ -218,7 +219,7 @@ func (m *authModule) oauthBaseURL(r *http.Request) string {
 	}
 
 	if host := hostOnly(r.Host); host != "" {
-		for _, base := range hs.AllBaseURLs() {
+		for _, base := range hs.AllBaseURLs(m.servedPort) {
 			u, err := url.Parse(base)
 			if err != nil {
 				continue
@@ -370,13 +371,20 @@ type authModule struct {
 	// hostset.Resolve already seeds that env var into the set as a per-host URL
 	// override, and duplicating it would give one URL two owners.
 	hosts *hostset.State
+	// servedPort is the port the public entrypoint listens on. It is what the
+	// LAN IP base URLs are matched on, and it has to be the entrypoint's port
+	// rather than the primary host's URL port: a client reaching this box by
+	// address uses the socket that was opened, which is not 443 just because
+	// the primary host is served over TLS behind a terminator.
+	servedPort int
 }
 
 // NewAuthModule creates a new AuthModule. selfPort is host-agent's own bind
 // port (0 disables the direct-access check, e.g. in tests). hosts supplies the
 // OAuth base URL; nil (or an empty host set) means auth is unconfigured, and the
 // login/callback handlers refuse to build a URL rather than falling back to the
-// request's Host header.
+// request's Host header. servedPort is the public entrypoint port used for the
+// LAN IP base URLs.
 func NewAuthModule(
 	client AuthentikClientInterface,
 	cfg *AuthRef,
@@ -385,6 +393,7 @@ func NewAuthModule(
 	logger *slog.Logger,
 	selfPort int,
 	hosts *hostset.State,
+	servedPort int,
 ) *authModule {
 	return &authModule{
 		authentikClient: client,
@@ -394,6 +403,7 @@ func NewAuthModule(
 		logger:          logger,
 		selfPort:        selfPort,
 		hosts:           hosts,
+		servedPort:      servedPort,
 	}
 }
 
