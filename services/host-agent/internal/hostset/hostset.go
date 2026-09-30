@@ -386,11 +386,27 @@ func (h HostSet) IssuerBaseURL() string {
 }
 
 // LoopbackIssuerBaseURL returns the OIDC issuer base URL reached through the
-// host's own loopback. Apps whose OIDC client accepts http only on a literal
-// loopback hostname (catalog sso.loopbackIssuer) use it: they run with the
-// host network namespace, so localhost:<port> inside the container is
-// Traefik.
+// host's own loopback for an app whose OIDC client accepts a plain-http
+// issuer only on a literal loopback hostname (catalog sso.loopbackIssuer), or
+// "" when that issuer must not be used.
+//
+// The loopback URL is a statement about the server's own network namespace:
+// the app container shares it, so localhost:<compat port> inside the
+// container is Traefik. But the issuer string is not only dialed by that
+// container, it is also where the browser is redirected, and there localhost
+// is the visitor's machine. The override is therefore only sound while the
+// deployment is plain http, where no accepted-and-reachable alternative
+// exists and the app at least signs in from a browser on this box.
+//
+// Under a https public URL the override is a bug rather than a shortcut: the
+// provider accepts the public issuer (its rule is https anywhere, http only
+// on loopback), and the shared issuer is reachable by browser and container
+// alike. Handing out the loopback issuer then redirects every remote browser
+// off the instance, to a port on the visitor's own machine.
 func (h HostSet) LoopbackIssuerBaseURL() string {
+	if h.public.Scheme == SchemeHTTPS {
+		return ""
+	}
 	return h.BaseURLFor("localhost")
 }
 

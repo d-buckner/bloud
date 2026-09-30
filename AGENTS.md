@@ -452,10 +452,14 @@ combined with instance/SSH-target env vars). Instance overrides:
    public` app is registered as a public PKCE client with no `client_secret`
    (the Hermes dashboard rejects a confidential client). A `sso.loopbackIssuer:
    true` app is served its issuer from the host loopback
-   (`http://localhost:8080`) instead of `sso.localhost`, and runs with the host
-   network namespace: its OIDC client accepts a plain http issuer only on a
-   literal loopback hostname (the Hermes dashboard), so the container needs
-   `localhost` to be Traefik. See
+   (`http://localhost:8080`) instead of `sso.localhost` **only while the
+   deployment is plain http**, and runs with the host network namespace: its
+   OIDC client accepts a plain http issuer only on a literal loopback
+   hostname (the Hermes dashboard), so the container needs `localhost` to be
+   Traefik. Under a **https** public URL it gets the public issuer like every
+   other native-oidc app: the provider accepts https anywhere, and the issuer
+   string is where the browser is redirected, so `localhost` there would be
+   the visitor's own machine. See
    `apps/hermes/INTEGRATION.md` and `apps/affine/INTEGRATION.md`.
 7. **Routing is regenerated after convergence.** The orchestrator rewrites the
    Traefik dynamic config (`BLOUD_TRAEFIK_DYNAMIC_DIR/apps-routes.yml`) before
@@ -541,9 +545,12 @@ combined with instance/SSH-target env vars). Instance overrides:
    stays for plain-http issuers. `HostSet.ProxyConsistency` /
    `Deployability` report the layers that disagree at startup; see
    [`docs/plans/proxied-scheme-urls.md`](docs/plans/proxied-scheme-urls.md). An app with
-   `sso.loopbackIssuer` instead takes `http://localhost:<Traefik port>` and gets
+   `sso.loopbackIssuer` instead takes `http://localhost:<compat port>` and gets
    no `extraHosts` entry: it shares the host network namespace, where localhost
-   is already the host. Address changes
+   is already the host. That substitution is gated on the deployment being plain
+   http (`HostSet.LoopbackIssuerBaseURL` returns "" under a https public URL),
+   because the issuer is also the browser's redirect target and a loopback
+   issuer would strand every visitor who is not on the Bloud machine. Address changes
    flow through the orchestrator (`SetPublicURLIntent`): persist to
    `settings['public_url']`, update the live `hostset.State`, reset SSO apps +
    `apps-authentik-server` so the lifecycle re-provisions Authentik (redirect
