@@ -7,11 +7,9 @@
 		fetchTailnet,
 		setTailnet,
 		deleteTailnet,
-		fetchHosts,
-		setHosts,
-		type TailnetConnection,
-		type Host,
-		type HostScheme
+		fetchPublicURL,
+		setPublicURL,
+		type TailnetConnection
 	} from '$lib/clients/settingsClient';
 	import {
 		fetchUsers,
@@ -43,63 +41,20 @@
 	let formAuthKey = $state('');
 	let formControlUrl = $state('');
 
-	// Hosts state
-	let loadedHosts = $state<Host[]>([]);
-	let hostList = $state<string[]>([]);
-	/**
-	 * Draft scheme per host, keyed by hostname. Only non-builtin hosts are
-	 * editable: the built-ins keep their fixed mapping and the backend ignores a
-	 * scheme for them, so sending one would be a lie the UI can't honour.
-	 */
-	let hostSchemes = $state<Record<string, HostScheme>>({});
-	let draftPrimary = $state('');
-	let hostsLoading = $state(true);
-	let hostsError = $state('');
-	let savingHosts = $state(false);
-	let newHost = $state('');
-	let newHostScheme = $state<HostScheme>('http');
+	// Address state. One URL in, one URL out: the scheme, the host, and the
+	// port the proxy is dialed on all live in the string the operator types,
+	// so there is nothing else to hold.
+	let savedUrl = $state('');
+	let draftUrl = $state('');
+	let addressLoading = $state(true);
+	let addressError = $state('');
+	let savingAddress = $state(false);
 
-	const BUILTIN_HOSTS = ['localhost', 'bloud.local'];
-
-	const hostPrimary = $derived(
-		loadedHosts.find((h) => h.primary)?.hostname ?? 'localhost'
-	);
-
-	function isBuiltin(hostname: string) {
-		return BUILTIN_HOSTS.includes(hostname);
-	}
-
-	/** The schemes the draft holds for hosts the backend will actually honour. */
-	function draftSchemes(): Record<string, HostScheme> {
-		const out: Record<string, HostScheme> = {};
-		for (const hostname of hostList) {
-			if (isBuiltin(hostname)) continue;
-			out[hostname] = hostSchemes[hostname] ?? 'http';
-		}
-		return out;
-	}
-
-	function hostsDirty() {
-		const loaded = loadedHosts.map((h) => h.hostname).sort();
-		const draft = [...hostList].sort();
-		if (loaded.length !== draft.length) return true;
-		for (let i = 0; i < loaded.length; i++) {
-			if (loaded[i] !== draft[i]) return true;
-		}
-		if (hostPrimary !== draftPrimary) return true;
-		// A scheme-only change is a real change: it moves every redirect URI in
-		// the provider, so it has to reach the Save button.
-		const saved = draftSchemes();
-		for (const [host, scheme] of Object.entries(saved)) {
-			const current = loadedHosts.find((h) => h.hostname === host);
-			if (current && current.scheme !== scheme) return true;
-		}
-		return false;
-	}
+	const addressDirty = $derived(draftUrl.trim() !== savedUrl);
 
 	const POLL_INTERVAL = 500;
 	const POLL_TIMEOUT = 10_000;
-	const HOSTS_APPLY_TIMEOUT = 20_000;
+	const APPLY_TIMEOUT = 20_000;
 
 	async function pollTailnet(
 		predicate: (conn: TailnetConnection | null) => boolean
@@ -128,119 +83,66 @@
 			loading = false;
 		}
 
-		loadHosts();
+		loadAddress();
 		loadUsers();
 	});
 
-	async function loadHosts() {
-		hostsLoading = true;
-		hostsError = '';
+	async function loadAddress() {
+		addressLoading = true;
+		addressError = '';
 		try {
-			const res = await fetchHosts();
-			loadedHosts = res.hosts;
-			hostList = res.hosts.map((h) => h.hostname);
-			draftPrimary = res.hosts.find((h) => h.primary)?.hostname ?? 'localhost';
-			hostSchemes = Object.fromEntries(
-				res.hosts.map((h) => [h.hostname, h.scheme ?? 'http']),
-			);
-		} catch (err) {
-			hostsError = err instanceof Error ? err.message : 'Failed to load hosts';
+			const res = await fetchPublicURL();
+			savedUrl = res.url;
+			draftUrl = res.url;
+		} catch (err: unknown) {
+			addressError = errMessage(err, 'Failed to load the address');
 		} finally {
-			hostsLoading = false;
-		}
-	}
-
-	function handleAddHost() {
-		const hostname = newHost.trim().toLowerCase();
-		if (!hostname || hostList.includes(hostname)) return;
-		hostList = [...hostList, hostname];
-		hostSchemes = { ...hostSchemes, [hostname]: newHostScheme };
-		newHost = '';
-	}
-
-	function handleRemoveHost(hostname: string) {
-		hostList = hostList.filter((h) => h !== hostname);
-		const rest = { ...hostSchemes };
-		delete rest[hostname];
-		hostSchemes = rest;
-		if (draftPrimary === hostname) {
-			draftPrimary = hostPrimary;
+			addressLoading = false;
 		}
 	}
 
 	/**
-	 * Whether the orchestrator has finished applying a host set: same hosts, the
-	 * chosen primary, and every requested scheme actually stored. The scheme
-	 * clause is the point: a save that dropped it used to report success while
-	 * quietly putting every derived URL back on http.
+	 * The save is an intent: the API answers 202 and the orchestrator applies
+	 * it, re-provisioning SSO behind the scenes. Poll until the live address is
+	 * the canonical one the save reported, so a change that was dropped or never
+	 * landed gets reported instead of looking like it worked.
+	 *
+	 * The comparison is against the canonical origin the PUT returned rather
+	 * than the raw typed string, because "bloud.example.com" is stored as
+	 * "http://bloud.example.com" and the parser is not duplicated here.
 	 */
-	function hostsApplied(
-		hosts: Host[],
-		wantedHosts: string[],
-		wantedPrimary: string,
-		wantedSchemes: Record<string, HostScheme>,
-	): boolean {
-		if (hosts.length !== wantedHosts.length) return false;
-		if (!hosts.every((h) => wantedHosts.includes(h.hostname))) return false;
-		if (!hosts.some((h) => h.hostname === wantedPrimary && h.primary)) return false;
-		return Object.entries(wantedSchemes).every(([host, scheme]) => {
-			const row = hosts.find((h) => h.hostname === host);
-			return !row || row.scheme === scheme;
-		});
-	}
-
-	/** Name the hosts whose scheme came back different from what was saved. */
-	function schemeRevertNote(
-		hosts: Host[],
-		wanted: Record<string, HostScheme>,
-	): string {
-		const reverted = Object.entries(wanted)
-			.map(([host, scheme]) => ({ host, want: scheme, got: hosts.find((h) => h.hostname === host)?.scheme }))
-			.filter((r) => r.got !== undefined && r.got !== r.want)
-			.map((r) => `${r.host} (wanted ${r.want}, still ${r.got})`);
-		return reverted.length
-			? `Hosts saved but the scheme did not apply: ${reverted.join('; ')}`
-			: 'Hosts did not finish applying';
-	}
-
-	function applyFetchedHosts(hosts: Host[]) {
-		loadedHosts = hosts;
-		hostSchemes = Object.fromEntries(
-			hosts.map((h) => [h.hostname, h.scheme ?? 'http']),
-		);
-	}
-
-	async function handleSaveHosts() {
-		hostsError = '';
-		savingHosts = true;
-		const wanted = draftSchemes();
+	async function handleSaveAddress() {
+		addressError = '';
+		savingAddress = true;
 		try {
-			await setHosts({ hosts: hostList, schemes: wanted, primary: draftPrimary });
-			// Poll until the orchestrator applies the change (store update is
-			// fast; SSO re-provisioning runs afterwards in the background).
-			const deadline = Date.now() + HOSTS_APPLY_TIMEOUT;
-			let last: Host[] = loadedHosts;
+			const res = await setPublicURL(draftUrl.trim());
+			const wanted = res.url;
+			const deadline = Date.now() + APPLY_TIMEOUT;
 			for (;;) {
-				const res = await fetchHosts();
-				last = res.hosts;
-				if (hostsApplied(last, hostList, draftPrimary, wanted)) {
-					applyFetchedHosts(last);
+				const live = await fetchPublicURL();
+				if (live.url === wanted) {
+					savedUrl = live.url;
+					draftUrl = live.url;
 					break;
 				}
 				if (Date.now() >= deadline) {
-					hostsError = schemeRevertNote(last, wanted);
+					addressError = `Saved, but the address is still ${live.url}. Check the host-agent logs.`;
 					break;
 				}
 				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
 			}
-		} catch (err) {
-			const msg = err && typeof err === 'object' && 'message' in err
-				? (err as { message: string }).message
-				: 'Failed to save hosts';
-			hostsError = msg;
+		} catch (err: unknown) {
+			addressError = errMessage(err, 'Failed to save the address');
 		} finally {
-			savingHosts = false;
+			savingAddress = false;
 		}
+	}
+
+	function errMessage(err: unknown, fallback: string): string {
+		if (err && typeof err === 'object' && 'message' in err) {
+			return String((err as { message: unknown }).message);
+		}
+		return fallback;
 	}
 
 	async function loadUsers() {
@@ -362,76 +264,42 @@
 		</div>
 	</header>
 
-	<section class="section hosts-section">
-		<h2>Hosts</h2>
+	<section class="section address-section">
+		<h2>Address</h2>
 		<p class="section-description">
-			Domains this Bloud is reachable under. Login works from every host; the
-			primary host determines the SSO URLs baked into your apps. Saving a new
-			host set briefly restarts SSO apps so they pick up the new domain.
+			Where you reach this Bloud from outside. The scheme and the port belong
+			to the proxy: set them to whatever answers there, not to what Bloud
+			listens on internally. Saving re-provisions the SSO URLs baked into
+			your apps, which briefly restarts them.
 		</p>
 
-		{#if hostsLoading}
-			<div class="loading-state"><p>Loading hosts...</p></div>
+		{#if addressLoading}
+			<div class="loading-state"><p>Loading address...</p></div>
 		{:else}
-			<div class="hosts-list">
-				{#each hostList as hostname (hostname)}
-					<div class="host-row">
-						<label class="host-radio" title="Make primary host">
-							<input type="radio" name="host-primary" bind:group={draftPrimary} value={hostname} />
-						</label>
-						<div class="host-info">
-							<span class="host-name mono">{hostname}</span>
-							{#if isBuiltin(hostname)}
-								<span class="role-badge">built-in</span>
-							{:else}
-								<select
-									class="host-scheme"
-									aria-label={`Scheme for ${hostname}`}
-									disabled={savingHosts}
-									bind:value={hostSchemes[hostname]}
-								>
-									<option value="http">http</option>
-									<option value="https">https</option>
-								</select>
-							{/if}
-							{#if hostPrimary === hostname}
-								<span class="role-badge admin">primary</span>
-							{/if}
-						</div>
-						{#if !isBuiltin(hostname)}
-							<button class="btn-sm btn-sm-danger" onclick={() => handleRemoveHost(hostname)} disabled={savingHosts}>
-								Remove
-							</button>
-						{/if}
-					</div>
-				{/each}
-			</div>
-
-			<form class="add-host-form" onsubmit={(e) => { e.preventDefault(); handleAddHost(); }}>
+			<form class="address-form" onsubmit={(e) => { e.preventDefault(); handleSaveAddress(); }}>
 				<input
 					type="text"
-					placeholder="e.g. bloud.example.com"
-					bind:value={newHost}
+					class="address-input"
+					placeholder="https://bloud.example.com"
+					aria-label="Public address"
+					autocomplete="off"
+					autocapitalize="none"
 					spellcheck="false"
+					disabled={savingAddress}
+					bind:value={draftUrl}
 				/>
-				<select class="host-scheme" aria-label="Scheme for the new host" bind:value={newHostScheme}>
-					<option value="http">http</option>
-					<option value="https">https</option>
-				</select>
-				<button class="btn" type="submit" disabled={savingHosts || !newHost.trim() || hostList.includes(newHost.trim().toLowerCase())}>
-					Add Host
+				<button
+					class="btn btn-primary"
+					type="submit"
+					disabled={!addressDirty || savingAddress || !draftUrl.trim()}
+				>
+					{savingAddress ? 'Applying…' : 'Save'}
 				</button>
 			</form>
-
-			{#if hostsDirty()}
-				<button class="btn btn-primary" onclick={handleSaveHosts} disabled={savingHosts}>
-					{savingHosts ? 'Applying…' : 'Save Hosts'}
-				</button>
-			{/if}
 		{/if}
 
-		{#if hostsError}
-			<div class="error-message">{hostsError}</div>
+		{#if addressError}
+			<div class="error-message">{addressError}</div>
 		{/if}
 	</section>
 
@@ -784,47 +652,14 @@
 		border-radius: var(--radius-md);
 	}
 
-	/* Hosts section */
-	.hosts-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-lg);
-	}
-
-	.host-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
-		background: var(--color-bg-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-	}
-
-	.host-radio input {
-		cursor: pointer;
-	}
-
-	.host-info {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		flex: 1;
-	}
-
-	.host-name {
-		font-family: var(--font-mono);
-		font-size: 0.875rem;
-	}
-
-	.add-host-form {
+	/* Address section */
+	.address-form {
 		display: flex;
 		gap: var(--space-sm);
-		margin-bottom: var(--space-lg);
+		max-width: 32rem;
 	}
 
-	.add-host-form input {
+	.address-input {
 		flex: 1;
 		padding: var(--space-sm) var(--space-md);
 		font-family: var(--font-mono);
@@ -835,36 +670,18 @@
 		color: var(--color-text);
 	}
 
-	.add-host-form input:focus {
+	.address-input:focus {
 		outline: none;
 		border-color: var(--color-accent);
 	}
 
-	.add-host-form input::placeholder {
+	.address-input::placeholder {
 		color: var(--color-text-muted);
 	}
 
-	/* Scheme selector: sits beside the hostname for hosts the operator owns.
-	   Narrow and mono so it reads as part of the URL, not as a separate control. */
-	.host-scheme {
-		padding: 2px var(--space-sm);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-elevated);
-		color: var(--color-text);
-		cursor: pointer;
-	}
-
-	.host-scheme:disabled {
-		cursor: not-allowed;
+	.address-input:disabled {
 		opacity: 0.6;
-	}
-
-	.host-scheme:focus {
-		outline: none;
-		border-color: var(--color-accent);
+		cursor: not-allowed;
 	}
 
 	.tailnet-section,

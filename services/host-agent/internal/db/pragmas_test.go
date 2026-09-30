@@ -137,6 +137,12 @@ func TestInitDB_ForeignKeyCascadeWorksOnEveryConnection(t *testing.T) {
 // succeed once the lock releases. On the pre-fix pool (busy_timeout=0
 // on every connection but one) the second write returns SQLITE_BUSY
 // within milliseconds.
+//
+// The fixture is the settings table: a plain table with no foreign keys and
+// no triggers, so the only thing the two writers contend for is the write
+// lock. It replaced the retired hosts table, where a dropped-table error made
+// the holder's INSERT fail and left the transaction open, hanging the test
+// on connection close instead of proving anything about busy handling.
 func TestInitDB_ContendedWriteWaitsInsteadOfFailingBusy(t *testing.T) {
 	database, err := InitDB(t.TempDir())
 	require.NoError(t, err)
@@ -151,13 +157,14 @@ func TestInitDB_ContendedWriteWaitsInsteadOfFailingBusy(t *testing.T) {
 	defer func() { _ = holder.Close() }()
 	tx, err := holder.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	_, err = tx.ExecContext(ctx, `INSERT INTO hosts (hostname) VALUES ('holder.bloud.local')`)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES ('holder', 'x')`)
 	require.NoError(t, err)
 
 	written := make(chan error, 1)
 	go func() {
 		_, err := database.ExecContext(ctx,
-			`INSERT INTO hosts (hostname) VALUES ('waiter.bloud.local')`)
+			`INSERT INTO settings (key, value) VALUES ('waiter', 'y')`)
 		written <- err
 	}()
 
@@ -181,6 +188,6 @@ func TestInitDB_ContendedWriteWaitsInsteadOfFailingBusy(t *testing.T) {
 
 	var count int
 	require.NoError(t, database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM hosts`).Scan(&count))
+		`SELECT COUNT(*) FROM settings`).Scan(&count))
 	require.Equal(t, 2, count)
 }

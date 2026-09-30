@@ -4,8 +4,6 @@ package orchestrator
 
 import (
 	"github.com/google/uuid"
-
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 )
 
 // Intent represents a mutation request to be processed by the orchestrator.
@@ -144,37 +142,24 @@ func NewClearAppDataIntent(appName string) ClearAppDataIntent {
 	return ClearAppDataIntent{intentBase: newIntentBase(), AppName: appName}
 }
 
-// SetHostsIntent requests changing the host set: the full effective list of
-// hostnames (built-ins included, already validated) plus the primary host.
-// The orchestrator persists the custom hosts, updates the runtime URL state,
-// and resets SSO-dependent nodes so the convergence pass re-provisions SSO
-// and rewrites app configs with the new URLs.
-type SetHostsIntent struct {
+// SetPublicURLIntent requests changing the address this Bloud is reachable
+// at, given as one origin: https://bloud.example.com:8443. The orchestrator
+// validates it, persists it, updates the runtime URL state, and resets
+// SSO-dependent nodes so the convergence pass re-provisions SSO and
+// rewrites app configs with the new URLs.
+//
+// The URL travels as a string rather than a parsed value so the intent stays
+// a plain serializable record of what was asked; parsing happens once, in the
+// orchestrator, which is the only place that decides what is valid.
+type SetPublicURLIntent struct {
 	intentBase
-	Hosts   []string
-	Primary string
-	// Schemes pins the URL scheme per hostname (SchemeHTTPS for a host behind
-	// a TLS-terminating proxy). Absent means no stored statement, which is
-	// not the same as stating http: an absent host still inherits the
-	// deployment-wide scheme. It travels with the host list rather than being
-	// set separately because redirect URIs are registered per host: a host
-	// and its scheme have to land in the same transaction or the provider
-	// ends up with a redirect URI for a scheme nobody configured.
-	Schemes map[string]hostset.Scheme
+	URL string
 }
 
-func (SetHostsIntent) intentMarker() {}
+func (SetPublicURLIntent) intentMarker() {}
 
-func NewSetHostsIntent(hosts []string, primary string) SetHostsIntent {
-	return SetHostsIntent{intentBase: newIntentBase(), Hosts: hosts, Primary: primary}
-}
-
-// WithSchemes returns the intent carrying per-host schemes. A value method
-// on purpose: the intent stays a value that is fully specified before it is
-// submitted, rather than something mutated after the queue has seen it.
-func (i SetHostsIntent) WithSchemes(schemes map[string]hostset.Scheme) SetHostsIntent {
-	i.Schemes = schemes
-	return i
+func NewSetPublicURLIntent(rawURL string) SetPublicURLIntent {
+	return SetPublicURLIntent{intentBase: newIntentBase(), URL: rawURL}
 }
 
 // Compile-time assertions that all types implement Intent.
@@ -187,5 +172,5 @@ var (
 	_ Intent = AddRemoteAppIntent{}
 	_ Intent = DeleteRemoteAppIntent{}
 	_ Intent = ClearAppDataIntent{}
-	_ Intent = SetHostsIntent{}
+	_ Intent = SetPublicURLIntent{}
 )

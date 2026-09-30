@@ -78,22 +78,39 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-/** One host as the settings API reports it. */
-export interface HostEntry {
-  hostname: string;
-  primary: boolean;
-  builtin: boolean;
-  scheme: string;
+/** The address setting as the API reports it. */
+export interface PublicURLSettings {
+  url: string;
 }
 
 /**
- * The effective host set, read straight from the API. Specs use this instead of
+ * The configured address, read straight from the API. Specs use this instead of
  * the settings widget so an assertion checks what is stored rather than what the
  * UI is echoing back.
  */
-export async function getHosts(): Promise<HostEntry[]> {
-  const body = await fetchJSON<{ hosts: HostEntry[] }>('/api/settings/hosts');
-  return body.hosts;
+export async function getPublicURL(): Promise<PublicURLSettings> {
+  return fetchJSON<PublicURLSettings>('/api/settings/public-url');
+}
+
+/**
+ * Save the address through the UI and return the value the API reports after the
+ * orchestrator has applied it. The save is an intent, so this waits for the
+ * live value to reach the canonical one the PUT returned.
+ */
+export async function savePublicURLAndWait(url: string): Promise<PublicURLSettings> {
+  const res = await fetchJSON<{ intentId: string; url: string }>(
+    '/api/settings/public-url',
+    { method: 'PUT', body: JSON.stringify({ url }) },
+  );
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const live = await getPublicURL();
+    if (live.url === res.url) return live;
+    if (Date.now() >= deadline) {
+      throw new Error(`address never converged: wanted ${res.url}, still ${live.url}`);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
 }
 
 export async function getAppStatus(name: string): Promise<string | null> {

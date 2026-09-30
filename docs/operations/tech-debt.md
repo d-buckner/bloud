@@ -83,7 +83,7 @@ curl -H 'True-Client-IP: 127.0.0.1' http://<box>:8080/api/apps/installed
 ```
 
 That request is admin. So is `POST /api/apps/immich/uninstall` with
-`clearData`, `PUT /api/settings/hosts`, `POST /api/admin/users` (persist as a
+`clearData`, `PUT /api/settings/public-url`, `POST /api/admin/users` (persist as a
 real Authentik admin), tailnet keys, shares, remote apps. `:3000` binds every
 interface (`internal/api/server.go:108`), so the direct path works too, and any
 app container can reach the host gateway.
@@ -248,7 +248,7 @@ below (C1-C14) rather than ranked here.
 | 10 | The health surface is still blind to the runtime: a dead loop is now visible (`Stopped()`/`LastConverged()`, PR 6), but an unavailable Podman socket has no degraded signal, the startup gate is SQLite-only, and a failed system-app convergence still `os.Exit(1)`s the control plane | P1 | `internal/api/server.go` `checkSystemHealth`; `cmd/host-agent/main.go` `waitForSystemConvergence` |
 | 11 | ~~Two orchestrator wirings: the CLI `reconcile` path builds a different graph shape (per-`CatalogID`) and configures no store/runtime/catalog-graph, so it reports success while doing nothing~~ **FIXED 2026-09-25**: the CLI path was deleted for having no caller at all, and `internal/wire` is now the only place a `NewOrchestrator` call happens. Guarded by a config-completeness test. | P1→closed | `cli/distro.go` era `cmd/host-agent/configure.go` (deleted); `internal/wire/wire.go`; `internal/wire/completeness_test.go` |
 | 12 | ~~Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts~~ **FIXED 2026-09-25**: the second builder went with the CLI path. `orchestrator.buildAppState` is the only one, and it resolves SSO through the live host set. | P2→closed | `orchestrator.go` `buildAppState` / `resolveSSOURLs` |
-| 13 | An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer | P2 | `pipeline.go:~292-300`; `hostset.go:239-283` |
+| 13 | ~~An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer~~ **CLOSED 2026-09-26 by the model change**: there is no primary selection any more. The address is one URL stored at `settings['public_url']`, and whatever the operator typed is what gets persisted and read back, so there is no built-in-versus-stored case left to get wrong. | P2→closed | `store/settings.go`; `orchestrator/pipeline.go` `applySetPublicURLIntent` |
 | 14 | System-app hiding keys off `category == "infrastructure"`, which no `metadata.yaml` sets (traefik is `network`, authentik is `security`) → both appear as installable user apps, contradicting invariant 5 | P2 | `catalog/cache.go:70-103`; `api/apps_module.go:101` |
 | 15 | Sharing module and system module are wired with `nil` (tailnet node, graph, orchestrator) → `POST /api/sharing/invites` always 503 | P2 | `router.go:224-229`; `sharing_module.go:227-229` |
 | 16 | `ClearAppDataIntent` is dropped by the drain switch (logged "unhandled"), and `appsModule.ClearData` is unreachable **and** targets `<appsDir>/<name>` (the catalog dir) instead of the data dir: a latent destroyer of `apps/<name>/` | P2 | `intent.go:132-142`; `pipeline.go:31-49`; `apps_module.go:209-245` |
@@ -782,7 +782,7 @@ issued it: remote proxy port assignments, the tailnet domain, gateway state.
 
 ### 8. Honest surfaces and dead code (items 13-16, 18-23)
 
-Filter system apps by `IsSystem`; persist the primary host; delete
+Filter system apps by `IsSystem`; delete
 `ClearAppDataIntent`, `appsModule.ClearData` and its vacuous 404 test, and
 `NewAuthRouter`; stop trusting `category` as a system marker.
 

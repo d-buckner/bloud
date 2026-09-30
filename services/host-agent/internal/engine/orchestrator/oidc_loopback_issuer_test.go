@@ -30,7 +30,7 @@ func newIssuerTestOrchestrator(t *testing.T) *Orchestrator {
 		SSO:       catalog.SSO{Strategy: "native-oidc"},
 	})
 
-	state := hostset.NewState(hostset.New(hostset.BuiltinHosts, hostset.DefaultPrimary))
+	state := hostset.NewState(hostset.Default())
 	return NewOrchestrator(
 		graph.New(graph.NewMapRepository()),
 		new(MockConfiguratorRegistry),

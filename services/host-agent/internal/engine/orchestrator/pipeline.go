@@ -33,8 +33,8 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applyDeleteRemoteAppIntent(i)
 		case RenameAppIntent:
 			o.applyRenameAppIntent(i)
-		case SetHostsIntent:
-			o.applySetHostsIntent(i)
+		case SetPublicURLIntent:
+			o.applySetPublicURLIntent(i)
 		default:
 			o.logger.Warn("unhandled intent type in drain phase", "type", intentTypeName(intent))
 		}
@@ -247,73 +247,42 @@ func (o *Orchestrator) applyRenameAppIntent(intent RenameAppIntent) {
 	}
 }
 
-// applySetHostsIntent persists the new host set, swaps the runtime URL state,
-// and resets SSO-dependent nodes so the convergence pass that follows this
-// drain re-runs their full lifecycle: PreStart rewrites app configs with the
-// new URLs (recreating changed containers), ensureSSO re-provisions the
-// Authentik providers with the new redirect URIs, and PostStart re-applies
-// outpost/launch configuration.
-func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
-	hosts := make([]string, 0, len(intent.Hosts))
-	seen := map[string]bool{}
-	for _, h := range intent.Hosts {
-		h = hostset.Normalize(h)
-		if h == "" || seen[h] {
-			continue
-		}
-		seen[h] = true
-		hosts = append(hosts, h)
-	}
-	primary := hostset.Normalize(intent.Primary)
-	if primary == "" || !seen[primary] {
-		primary = hostset.DefaultPrimary
-		if !seen[primary] {
-			hosts = append(hosts, primary)
-		}
-	}
-	if len(hosts) == 0 {
+// applySetPublicURLIntent persists the new public address, swaps the runtime
+// URL state, and resets SSO-dependent nodes so the convergence pass that
+// follows this drain re-runs their full lifecycle: PreStart rewrites app
+// configs with the new URLs (recreating changed containers), ensureSSO
+// re-provisions the Authentik providers with the new redirect URIs, and
+// PostStart re-applies outpost/launch configuration.
+func (o *Orchestrator) applySetPublicURLIntent(intent SetPublicURLIntent) {
+	public, err := hostset.ParsePublicURL(intent.URL)
+	if err != nil {
+		o.logger.Error("rejected public url", "url", intent.URL, "error", err)
 		return
 	}
 
-	// The served port is re-applied here rather than inherited, because New()
-	// builds the set from scratch. A set that lost it would render an
-	// address-hosted entry on port 80 while the entrypoint serves something
-	// else, and the redirect URIs would be re-registered against a port
-	// nothing answers on.
-	hs := hostset.New(hosts, primary).WithSchemes(intent.Schemes).
-		WithServedPort(o.config.TraefikPort)
+	// The served port is re-applied here rather than inherited, because the
+	// set is built from scratch. A set that lost it would render the detected
+	// LAN URLs on port 80 while the entrypoint serves something else, and the
+	// redirect URIs would be re-registered against a port nothing answers on.
+	hs := hostset.New(public).WithServedPort(o.config.TraefikPort)
 
-	// No-op guard: skip all side effects when nothing actually changed.
-	// Base URLs are compared, not just hostnames, or a scheme-only change
-	// (http to https behind a new TLS proxy) would be dismissed as a no-op
-	// while every redirect URI in the provider stayed on the old scheme.
-	if o.hosts != nil && hostSetsEqual(o.hosts.Get(), hs) {
-		o.logger.Info("host set unchanged, skipping SetHosts side effects", "hosts", hs.Hosts())
+	// No-op guard: skip the side effects when the derived address did not
+	// change. The base URL is compared rather than the raw string, so a save
+	// that only reformatted the same origin (trailing slash, an explicit
+	// default port, mixed case) does not restart every SSO app for nothing.
+	// The old guard compared whole host lists, which the model no longer has.
+	if o.hosts != nil && o.hosts.Get().PrimaryBaseURL() == hs.PrimaryBaseURL() {
+		o.logger.Info("public url unchanged, skipping side effects", "url", hs.PrimaryBaseURL())
 		return
 	}
 
-	o.logger.Info("applying host set", "hosts", hs.Hosts(), "primary", hs.Primary())
+	o.logger.Info("applying public url", "url", hs.PrimaryBaseURL())
 
-	// 1. Persist custom hosts (built-ins are implicit, never stored).
-	if o.hostStore != nil {
-		storedPrimary := ""
-		if !hostset.BuiltinSet()[hs.Primary()] {
-			storedPrimary = hs.Primary()
-		}
-		stored := make([]store.Host, 0, len(hosts))
-		for _, h := range hosts {
-			// Persist the normalized value, so what the store holds and what
-			// the live set derives cannot diverge: an unusable scheme is
-			// dropped from both rather than stored as junk on one side.
-			scheme := hostset.NormalizeScheme(string(intent.Schemes[h]))
-			stored = append(stored, store.Host{
-				Hostname: h,
-				Primary:  h == storedPrimary,
-				Scheme:   string(scheme),
-			})
-		}
-		if err := o.hostStore.Replace(stored, storedPrimary); err != nil {
-			o.logger.Error("failed to persist host set", "error", err)
+	// 1. Persist the normalized origin, so what the store holds and what the
+	//    live set derives cannot diverge.
+	if o.settings != nil {
+		if err := o.settings.Set(store.SettingPublicURL, hs.PrimaryBaseURL()); err != nil {
+			o.logger.Error("failed to persist public url", "error", err)
 			return
 		}
 	}
@@ -331,32 +300,6 @@ func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
 	if o.onHostsChanged != nil {
 		o.onHostsChanged()
 	}
-}
-
-// hostSetsEqual reports whether two host sets contain the same hosts with the
-// same primary and the same base URL for each of them, ignoring order.
-func hostSetsEqual(a, b hostset.HostSet) bool {
-	if a.Primary() != b.Primary() {
-		return false
-	}
-	if len(a.Hosts()) != len(b.Hosts()) {
-		return false
-	}
-	set := map[string]bool{}
-	for _, h := range a.Hosts() {
-		set[h] = true
-	}
-	for _, h := range b.Hosts() {
-		if !set[h] {
-			return false
-		}
-	}
-	for _, h := range a.Hosts() {
-		if a.BaseURLFor(h) != b.BaseURLFor(h) {
-			return false
-		}
-	}
-	return true
 }
 
 // resetSSONodes resets every RUNNING node that depends on the host set back to
@@ -811,8 +754,8 @@ func intentTypeName(intent Intent) string {
 		return "DeleteRemoteApp"
 	case ClearAppDataIntent:
 		return "ClearAppData"
-	case SetHostsIntent:
-		return "SetHosts"
+	case SetPublicURLIntent:
+		return "SetPublicURL"
 	default:
 		return "Unknown"
 	}

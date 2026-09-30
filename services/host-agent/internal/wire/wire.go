@@ -84,9 +84,9 @@ type Input struct {
 	// connection drives the auth-key and tailnet-ID callbacks.
 	TailnetStore *store.TailnetStore
 
-	// HostStore persists admin-configured custom hosts. Nil disables the
-	// host endpoints.
-	HostStore store.HostStoreInterface
+	// Settings persists the instance settings, including the public address.
+	// Nil disables the address endpoints.
+	Settings store.SettingsStoreInterface
 
 	// Hosts is the live host-set state. When non-nil it supersedes the
 	// SSOBaseURL/SSOAuthentikURL/SSOIssuerURL strings, so admin host
@@ -269,7 +269,7 @@ func Build(in Input) (*Output, error) {
 			return conn.ID
 		},
 		Hosts:          in.Hosts,
-		HostStore:      in.HostStore,
+		Settings:       in.Settings,
 		OnHostsChanged: in.OnHostsChanged,
 	}
 

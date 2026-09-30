@@ -10,7 +10,7 @@
 	interface CreateUserResponse {
 		success: boolean;
 		error?: string;
-		primaryHost?: string;
+		adoptedUrl?: string;
 	}
 
 	let username = $state('');
@@ -26,7 +26,7 @@
 	// back before handing off to a login that would otherwise not be
 	// registered yet.
 	let finishingSetup = $state(false);
-	let adoptedHost = $state('');
+	let adoptedUrl = $state('');
 
 	// Check if Authentik is ready on mount
 	$effect(() => {
@@ -83,9 +83,9 @@
 			const data: CreateUserResponse = await res.json();
 
 			if (data.success) {
-				if (data.primaryHost) {
+				if (data.adoptedUrl) {
 					finishingSetup = true;
-					adoptedHost = data.primaryHost;
+					adoptedUrl = data.adoptedUrl;
 					// Force the wait: the provider is about to be re-provisioned
 					// for the new host, and the last known state is stale.
 					authentikReady = false;
@@ -114,7 +114,7 @@
 		{#if finishingSetup}
 			<div class="status-message">
 				<span class="spinner"></span>
-				<p>Account created. Pointing this install at <strong>{adoptedHost}</strong>.</p>
+				<p>Account created. Pointing this install at <strong>{adoptedUrl}</strong>.</p>
 				<p class="hint">
 					Re-provisioning sign-in for that address. This takes a minute or two;
 					you will be taken to your dashboard automatically.

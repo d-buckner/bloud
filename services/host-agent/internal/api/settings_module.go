@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -44,7 +43,7 @@ type settingsModule struct {
 	orch            orchestratorCaller
 	authConfig      *AuthRef
 	hostState       *hostset.State
-	hostStore       store.HostStoreInterface
+	settingsStore   store.SettingsStoreInterface
 	logger          *slog.Logger
 }
 
@@ -57,7 +56,7 @@ func NewSettingsModule(
 	orch orchestratorCaller,
 	authConfig *AuthRef,
 	hostState *hostset.State,
-	hostStore store.HostStoreInterface,
+	settingsStore store.SettingsStoreInterface,
 	logger *slog.Logger,
 ) *settingsModule {
 	return &settingsModule{
@@ -68,7 +67,7 @@ func NewSettingsModule(
 		orch:            orch,
 		authConfig:      authConfig,
 		hostState:       hostState,
-		hostStore:       hostStore,
+		settingsStore:   settingsStore,
 		logger:          logger,
 	}
 }
@@ -158,157 +157,83 @@ func (m *settingsModule) DeleteTailnetHandler() http.HandlerFunc {
 	}
 }
 
-// ---- Hosts ----
+// ---- Address ----
 
-// hostResponse is the API representation of one host.
-type hostResponse struct {
-	Hostname string `json:"hostname"`
-	Primary  bool   `json:"primary"`
-	Builtin  bool   `json:"builtin"`
-	// Scheme is the scheme this host is actually served under, read back from
-	// the live host set rather than echoed from the request.
-	Scheme string `json:"scheme,omitempty"`
+// publicURLResponse is the API representation of the address setting.
+//
+// URL is the configured origin: scheme, host, and the port the proxy is
+// dialed on, all in one string.
+type publicURLResponse struct {
+	URL string `json:"url"`
 }
 
-// effectiveScheme returns the scheme the host set serves host under.
-func effectiveScheme(hs hostset.HostSet, host string) string {
-	u, err := url.Parse(hs.BaseURLFor(host))
+// currentPublicURL returns the live address.
+func (m *settingsModule) currentPublicURL() publicURLResponse {
+	return publicURLResponse{URL: m.liveHostSet().PrimaryBaseURL()}
+}
+
+// liveHostSet returns the live address state, or the default address when the
+// orchestrator never installed one.
+func (m *settingsModule) liveHostSet() hostset.HostSet {
+	if m.hostState != nil {
+		return m.hostState.Get()
+	}
+	hs, err := hostset.ParsePublicURL(hostset.DefaultPublicURL)
 	if err != nil {
-		return ""
+		return hostset.HostSet{}
 	}
-	return u.Scheme
+	return hostset.New(hs)
 }
 
-// currentHosts builds the effective host list (built-ins first, then stored
-// custom hosts) with the live primary host.
-func (m *settingsModule) currentHosts() []hostResponse {
-	var primary string
-	var hs hostset.HostSet
-	haveState := m.hostState != nil
-	if haveState {
-		hs = m.hostState.Get()
-		primary = hs.Primary()
-	} else {
-		primary = hostset.DefaultPrimary
-	}
-
-	builtin := hostset.BuiltinSet()
-	seen := map[string]bool{}
-	var out []hostResponse
-	for _, h := range hostset.BuiltinHosts {
-		scheme := "http"
-		if haveState {
-			scheme = effectiveScheme(hs, h)
-		}
-		out = append(out, hostResponse{Hostname: h, Primary: h == primary, Builtin: true, Scheme: scheme})
-		seen[h] = true
-	}
-	if m.hostStore != nil {
-		if stored, err := m.hostStore.List(); err == nil {
-			for _, h := range stored {
-				if builtin[h.Hostname] || seen[h.Hostname] {
-					continue
-				}
-				scheme := h.Scheme
-				if haveState {
-					scheme = effectiveScheme(hs, h.Hostname)
-				}
-				out = append(out, hostResponse{Hostname: h.Hostname, Primary: h.Hostname == primary, Builtin: false, Scheme: scheme})
-				seen[h.Hostname] = true
-			}
-		}
-	}
-	return out
-}
-
-// GetHostsHandler returns the effective host list with the primary host.
-func (m *settingsModule) GetHostsHandler() http.HandlerFunc {
+// GetPublicURLHandler returns the address this Bloud is reachable at.
+func (m *settingsModule) GetPublicURLHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		respondJSON(w, http.StatusOK, map[string]interface{}{
-			"hosts": m.currentHosts(),
-		})
+		respondJSON(w, http.StatusOK, m.currentPublicURL())
 	}
 }
 
-// setHostsRequest is the request body for PUT /api/settings/hosts.
-type setHostsRequest struct {
-	Hosts   []string          `json:"hosts"`
-	Schemes map[string]string `json:"schemes,omitempty"`
-	Primary string            `json:"primary"`
+// setPublicURLRequest is the request body for PUT /api/settings/public-url.
+type setPublicURLRequest struct {
+	URL string `json:"url"`
 }
 
-// SetHostsHandler validates the host list and enqueues a SetHostsIntent. The
-// orchestrator persists the change, re-provisions SSO, and restarts SSO apps
-// so they pick up the new URLs.
-func (m *settingsModule) SetHostsHandler() http.HandlerFunc {
+// SetPublicURLHandler validates the address and enqueues a SetPublicURLIntent.
+// The orchestrator persists the change, re-provisions SSO, and restarts SSO
+// apps so they pick up the new URLs.
+//
+// The value is parsed here as well as in the orchestrator because the API owes
+// the operator a 400 naming what is wrong with the string they just typed,
+// rather than a 202 that quietly does nothing. The origin is re-rendered from
+// the parsed value before it is submitted, so the store receives the
+// canonical form and a save that only changed capitalization or a trailing
+// slash is not mistaken for a move.
+func (m *settingsModule) SetPublicURLHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req setHostsRequest
+		var req setPublicURLRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			respondError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-
-		// Normalize and dedupe.
-		hosts := make([]string, 0, len(req.Hosts))
-		seen := map[string]bool{}
-		for _, raw := range req.Hosts {
-			h := hostset.Normalize(raw)
-			if h == "" {
-				respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid hostname: %q", raw))
-				return
-			}
-			if seen[h] {
-				continue
-			}
-			seen[h] = true
-			hosts = append(hosts, h)
-		}
-		if len(hosts) == 0 {
-			respondError(w, http.StatusBadRequest, "hosts is required")
-			return
-		}
-		if len(hosts) > hostset.MaxHosts {
-			respondError(w, http.StatusBadRequest, fmt.Sprintf("at most %d hosts are supported", hostset.MaxHosts))
-			return
-		}
-		// Built-in hosts are always present.
-		for _, b := range hostset.BuiltinHosts {
-			if !seen[b] {
-				respondError(w, http.StatusBadRequest, fmt.Sprintf("built-in host %q cannot be removed", b))
-				return
-			}
-		}
-		primary := hostset.Normalize(req.Primary)
-		if primary == "" {
-			primary = hostset.DefaultPrimary
-		}
-		if !seen[primary] {
-			respondError(w, http.StatusBadRequest, fmt.Sprintf("primary host %q is not in the host list", primary))
-			return
-		}
-
 		if m.orch == nil {
 			respondError(w, http.StatusServiceUnavailable, "orchestrator not available")
 			return
 		}
-
-		schemes, err := normalizeHostSchemes(req.Schemes)
+		public, err := hostset.ParsePublicURL(req.URL)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		for h := range schemes {
-			if !seen[h] {
-				respondError(w, http.StatusBadRequest, fmt.Sprintf("scheme given for host %q which is not in the host list", h))
-				return
-			}
-		}
-
-		intent := orchestrator.NewSetHostsIntent(hosts, primary).WithSchemes(schemes)
+		intent := orchestrator.NewSetPublicURLIntent(public.Origin())
 		m.orch.Submit(intent)
 
+		// The canonical origin comes back on the response so the caller can
+		// tell "applied" from "submitted" without re-implementing the parser:
+		// a save of "bloud.example.com" is stored as
+		// "http://bloud.example.com", and the UI's poll has to compare
+		// against the stored form or a successful save looks like a failure.
 		respondJSON(w, http.StatusAccepted, map[string]string{
 			"intentId": intent.IntentID(),
+			"url":      public.Origin(),
 		})
 	}
 }
@@ -356,32 +281,6 @@ func (m *settingsModule) authentikClientIsAvailable(ctx context.Context, client 
 	return false
 }
 
-// normalizeHostSchemes validates a hostname-to-scheme map, returning only
-// the entries that actually pin something. Anything other than http or https
-// is rejected rather than silently dropped: a typo in a scheme produces a
-// redirect URI that Authentik will refuse, and that is far harder to
-// diagnose than a 400 naming the bad value.
-func normalizeHostSchemes(in map[string]string) (map[string]hostset.Scheme, error) {
-	if len(in) == 0 {
-		return nil, nil
-	}
-	out := make(map[string]hostset.Scheme, len(in))
-	for rawHost, rawScheme := range in {
-		h := hostset.Normalize(rawHost)
-		if h == "" {
-			return nil, fmt.Errorf("invalid hostname in schemes: %q", rawHost)
-		}
-		s := hostset.NormalizeScheme(rawScheme)
-		if rawScheme != "" && s == "" {
-			return nil, fmt.Errorf("invalid scheme %q for host %q: only http and https are supported", rawScheme, h)
-		}
-		if s != "" {
-			out[h] = s
-		}
-	}
-	return out, nil
-}
-
 // requestScheme reports the scheme the client reached this request over.
 //
 // TLS on the socket is definitive. Behind a TLS-terminating proxy the socket
@@ -421,40 +320,32 @@ func requestScheme(r *http.Request) hostset.Scheme {
 // is exactly the hole the earlier lazy AddRedirectURI opened and which was
 // removed for it.
 //
-// Returns the host it adopted, or "" when there was nothing to adopt (already
-// primary, unusable Host header, or no orchestrator to route through).
+// Returns the origin it adopted, or "" when there was nothing to adopt
+// (already the public address, an unusable Host header, or no orchestrator to
+// route through).
 func (m *settingsModule) adoptFirstRunHost(r *http.Request) string {
 	if m.orch == nil || m.hostState == nil {
 		return ""
 	}
-	observed := hostset.Normalize(hostOnly(r.Host))
-	if observed == "" || !hostset.ValidHostname(observed) {
+	// The Host header keeps the port the browser used, and that port is part of
+	// the origin the redirect URI has to match. hostOnly() strips it, which is
+	// right for matching a hostname and wrong here: adopting
+	// http://bloud.example.com when the operator is on :8443 registers a
+	// redirect URI for a port nothing serves.
+	observed, err := hostset.ParsePublicURL(string(requestScheme(r)) + "://" + r.Host)
+	if err != nil {
 		return ""
 	}
 
 	hs := m.hostState.Get()
-	if hs.Primary() == observed {
+	if hs.PrimaryBaseURL() == observed.Origin() {
 		return ""
 	}
 
-	hosts := append([]string{}, hs.Hosts()...)
-	found := false
-	for _, h := range hosts {
-		if h == observed {
-			found = true
-			break
-		}
-	}
-	if !found {
-		hosts = append(hosts, observed)
-	}
-
-	scheme := requestScheme(r)
-	m.orch.Submit(orchestrator.NewSetHostsIntent(hosts, observed).
-		WithSchemes(map[string]hostset.Scheme{observed: scheme}))
-	m.logger.Info("adopted the origin this install was set up from as the primary host",
-		"host", observed, "scheme", scheme, "previousPrimary", hs.Primary())
-	return observed
+	m.orch.Submit(orchestrator.NewSetPublicURLIntent(observed.Origin()))
+	m.logger.Info("adopted the origin this install was set up from as the public address",
+		"url", observed.Origin(), "previous", hs.PrimaryBaseURL())
+	return observed.Origin()
 }
 
 // CreateFirstUserHandler creates the first admin user during initial setup.
@@ -562,8 +453,8 @@ func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 		adopted := m.adoptFirstRunHost(r)
 
 		respondJSON(w, http.StatusOK, CreateUserResponse{
-			Success:     true,
-			PrimaryHost: adopted,
+			Success:    true,
+			AdoptedURL: adopted,
 		})
 	}
 }
@@ -802,8 +693,8 @@ func NewSetupRouter(mod *settingsModule, r chi.Router) {
 // same pattern on two routers leaves the effective middleware up to chi's
 // last-registration-wins order.
 func NewSettingsRouter(mod *settingsModule, r chi.Router) {
-	r.Get("/settings/hosts", mod.GetHostsHandler())
-	r.Put("/settings/hosts", mod.SetHostsHandler())
+	r.Get("/settings/public-url", mod.GetPublicURLHandler())
+	r.Put("/settings/public-url", mod.SetPublicURLHandler())
 
 	r.Get("/settings/tailnet", mod.GetTailnetHandler())
 	r.Post("/settings/tailnet", mod.SetTailnetHandler())
@@ -981,11 +872,11 @@ type CreateUserRequest struct {
 type CreateUserResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
-	// PrimaryHost is the host the install was adopted for when first-run setup
-	// changed it away from the default. Empty when nothing was adopted. The
-	// wizard uses its presence to know the SSO stack is about to be
-	// re-provisioned and that it must wait for that before reloading.
-	PrimaryHost string `json:"primaryHost,omitempty"`
+	// AdoptedURL is the origin first-run setup adopted for the install, when
+	// it differed from the default. Empty when nothing was adopted. The wizard
+	// uses its presence to know the SSO stack is about to be re-provisioned
+	// and that it must wait for that before reloading.
+	AdoptedURL string `json:"adoptedUrl,omitempty"`
 }
 
 // createUserRequest is the request body for POST /api/admin/users.
