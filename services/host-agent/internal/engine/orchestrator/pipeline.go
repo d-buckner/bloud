@@ -35,6 +35,8 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applyRenameAppIntent(i)
 		case SetPublicURLIntent:
 			o.applySetPublicURLIntent(i)
+		case SetInferenceIntent:
+			o.applySetInferenceIntent(i)
 		default:
 			o.logger.Warn("unhandled intent type in drain phase", "type", intentTypeName(intent))
 		}
@@ -763,6 +765,8 @@ func intentTypeName(intent Intent) string {
 		return "ClearAppData"
 	case SetPublicURLIntent:
 		return "SetPublicURL"
+	case SetInferenceIntent:
+		return "SetInference"
 	default:
 		return "Unknown"
 	}

@@ -4,6 +4,7 @@ package orchestrator
 
 import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -115,6 +116,115 @@ func secretAllowed(requires []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// applySetInferenceIntent persists the AI settings and resets every installed
+// inference consumer so its PreStart re-runs against the new value.
+//
+// The no-op guard compares the canonical rendering, not the raw request, so a
+// save that only reformatted the same configuration does not restart every
+// wired app. The credential is excluded from the comparison: writing the same
+// key again is not a reason to churn the stack, and not writing one is not a
+// reason to skip storing it.
+func (o *Orchestrator) applySetInferenceIntent(intent SetInferenceIntent) {
+	if o.settings == nil {
+		o.logger.Error("cannot apply inference settings: no settings store")
+		return
+	}
+
+	// Validate before persisting: a stored value that does not parse would be
+	// diagnosed at every convergence pass instead of at the save that caused it.
+	settings, err := inference.DecodeSettings(intent.UpstreamsJSON, intent.DefaultModel)
+	if err != nil {
+		o.logger.Error("rejected inference settings", "error", err)
+		return
+	}
+	if _, _, err := settings.Endpoint(); err != nil {
+		o.logger.Error("rejected inference settings", "error", err)
+		return
+	}
+
+	current := o.inferenceSettings()
+	if canonicalUpstreams(current.Upstreams) == canonicalUpstreams(settings.Upstreams) &&
+		current.DefaultModel == settings.DefaultModel {
+		o.logger.Info("inference settings unchanged, skipping side effects")
+		// The credential can still need storing or clearing even when nothing
+		// else moved, so it is written before the guard returns.
+		o.storeInferenceAPIKey(intent.APIKey)
+		return
+	}
+
+	if err := o.settings.Set(inference.SettingUpstreams, canonicalUpstreams(settings.Upstreams)); err != nil {
+		o.logger.Error("failed to persist inference upstreams", "error", err)
+		return
+	}
+	if err := o.settings.Set(inference.SettingDefaultModel, settings.DefaultModel); err != nil {
+		o.logger.Error("failed to persist inference default model", "error", err)
+		return
+	}
+	o.storeInferenceAPIKey(intent.APIKey)
+
+	o.logger.Info("applied inference settings",
+		"upstreams", len(settings.Upstreams),
+		"defaultModel", settings.DefaultModel)
+
+	o.resetInferenceConsumers()
+}
+
+// storeInferenceAPIKey writes or clears the instance-scoped upstream credential.
+// A nil pointer means the caller did not touch the field, so nothing is written.
+func (o *Orchestrator) storeInferenceAPIKey(apiKey *string) {
+	if apiKey == nil || o.secrets == nil {
+		return
+	}
+	if err := o.secrets.SetAppSecret(inference.SecretScope, inference.SecretAPIKey, *apiKey); err != nil {
+		o.logger.Error("failed to store the inference API key", "error", err)
+	}
+}
+
+// resetInferenceConsumers drops every installed inference consumer out of
+// RUNNING so its PreStart re-runs and rewrites whatever it manages from the new
+// binding. This is the propagation mechanism: a settings change reaches an app
+// by re-running that app's own configurator, never by pushing into it.
+func (o *Orchestrator) resetInferenceConsumers() {
+	if o.graph == nil || o.appStore == nil || o.catalog == nil {
+		return
+	}
+	apps, err := o.appStore.GetAll()
+	if err != nil {
+		return
+	}
+	for _, app := range apps {
+		if app.IsSystem {
+			continue
+		}
+		catalogApp, err := o.catalog.Get(app.CatalogID)
+		if err != nil || catalogApp == nil {
+			continue
+		}
+		if _, declares := catalogApp.Integrations["inference"]; !declares {
+			continue
+		}
+		for _, container := range catalogApp.Containers {
+			node, err := o.graph.GetNode(container.Name)
+			if err != nil || node == nil || node.ActualStatus != graph.StatusRunning {
+				continue
+			}
+			o.logger.Info("resetting inference consumer for settings change", "node", container.Name)
+			_ = o.graph.SetActualStatus(container.Name, graph.StatusInitializing, "")
+		}
+	}
+}
+
+// canonicalUpstreams renders the list in a stable form so the no-op guard
+// compares meaning rather than formatting. Disabled entries keep their order and
+// fields; only whitespace differences collapse.
+func canonicalUpstreams(upstreams []inference.Upstream) string {
+	encoded, err := inference.EncodeUpstreams(upstreams)
+	if err != nil {
+		return ""
+	}
+	return encoded
 }
 
 // providersOfContract returns every catalog app that declares `provides:` for the

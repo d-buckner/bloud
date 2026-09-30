@@ -24,6 +24,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -62,6 +63,8 @@ type routerDeps struct {
 	authRef        *AuthRef
 	orchCaller     orchestratorCaller
 	realOrch       *orchestrator.Orchestrator
+	secrets        configurator.AppSecretsProvider
+	settingsStore  store.SettingsStoreInterface
 }
 
 func buildRouterDeps(
@@ -110,6 +113,12 @@ func buildRouterDeps(
 	if d.tailnetStore == nil {
 		d.tailnetStore = store.NewTailnetStore(db)
 	}
+
+	// The instance-scoped credential store and the settings KV both come from
+	// config rather than being constructed here, so the API reads exactly the
+	// stores the orchestrator writes.
+	d.secrets = cfg.Secrets
+	d.settingsStore = cfg.Settings
 
 	d.catalogCache = options.catalog
 	if d.catalogCache == nil {
@@ -215,6 +224,15 @@ func NewRouter(
 
 	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, cfg.Hosts, cfg.Settings, cfg.Port, logger)
 
+	aiMod := &aiSettingsModule{
+		settingsStore: cfg.Settings,
+		secrets:       deps.secrets,
+		appStore:      appStore,
+		catalog:       catalogCache,
+		orch:          orchCaller,
+		logger:        logger,
+	}
+
 	gateway := sharing.NewGatewayManager(nil, nil, func() string { return "" }, sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
 	sharingMod := NewSharingModule(
 		store.NewShareStore(db), store.NewGuestStore(db),
@@ -298,6 +316,7 @@ func NewRouter(
 		admin.Post("/apps/refresh-catalog", appsMod.RefreshCatalogHandler())
 		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
 		NewSettingsRouter(settingsMod, admin)
+		RegisterAIRoutes(aiMod, admin)
 		NewSharingRouter(sharingMod, admin)
 		NewRemoteAppsRouter(remoteAppsMod, admin)
 	})
