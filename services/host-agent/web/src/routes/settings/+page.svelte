@@ -19,6 +19,7 @@
 		type ManagedUser
 	} from '$lib/clients/userClient';
 	import { isAdmin, type Role } from '$lib/stores/user';
+	import AISettingsSection from '$lib/components/AISettingsSection.svelte';
 
 	let connection = $state<TailnetConnection | null>(null);
 	let loading = $state(true);
@@ -302,6 +303,8 @@
 			<div class="error-message">{addressError}</div>
 		{/if}
 	</section>
+
+	<AISettingsSection />
 
 	<section class="section tailnet-section">
 		<h2>Tailnet Connection</h2>
