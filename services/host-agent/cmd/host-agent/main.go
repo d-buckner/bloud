@@ -301,15 +301,28 @@ func resolveHostSet(database *sql.DB, cfg *config.Config, logger *slog.Logger) (
 		}
 	}
 	hostSet, err := hostset.Resolve(hostset.Input{
-		Stored:     storedHosts,
-		BaseDomain: cfg.BaseDomain,
-		SSOBaseURL: cfg.SSOBaseURL,
+		Stored:       storedHosts,
+		BaseDomain:   cfg.BaseDomain,
+		SSOBaseURL:   cfg.SSOBaseURL,
+		PublicScheme: cfg.PublicScheme,
 	})
 	if err != nil {
 		logger.Warn("failed to resolve host set, using defaults", "error", err)
 		hostSet = hostset.New(hostset.BuiltinHosts, hostset.DefaultPrimary)
 	}
-	logger.Info("host set resolved", "hosts", hostSet.Hosts(), "primary", hostSet.Primary())
+	logger.Info("host set resolved", "hosts", hostSet.Hosts(), "primary", hostSet.Primary(), "scheme", hostSet.PublicScheme())
+
+	// Report the proxy layers that disagree before any user hits a stalled
+	// login. Each issue names one setting, so "SSO does not work behind my
+	// proxy" is a one-line answer instead of three candidates. tlsAtTraefik is
+	// false because Bloud ships no certificate resolver at Traefik; when a
+	// deployment does terminate there, this is the call site that changes.
+	for _, issue := range hostSet.ProxyConsistency(cfg.TrustedProxyNets, false) {
+		logger.Warn("host scheme configuration issue",
+			"code", issue.Code,
+			"issuer", hostSet.IssuerBaseURL(),
+			"detail", issue.Message)
+	}
 	return hostSet, hostStore
 }
 

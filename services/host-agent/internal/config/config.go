@@ -34,6 +34,12 @@ type Config struct {
 	// outside the list. Distinct from TrustedLocalNets, which is a host-agent
 	// admin-position scope and grants nothing to Traefik.
 	TrustedProxyNets []string
+	// PublicScheme is the deployment-wide scheme applied to derived URLs for
+	// hosts that carry no stored scheme of their own. Set it when a TLS
+	// terminator sits in front of Bloud and the instance is reached over https.
+	// It is the coarse knob: the per-host scheme saved in Settings wins over it,
+	// and the legacy BLOUD_SSO_BASE_URL wins over both. Empty means http.
+	PublicScheme string
 	// SSO configuration
 	SSOHostSecret string // Master secret for deriving client secrets
 	// APIToken is the bearer credential for the admin API surface from a trusted
@@ -141,6 +147,7 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
 		TrustedLocalNets:       splitNets(getEnv("BLOUD_TRUSTED_LOCAL_NETS", "")),
 		TrustedProxyNets:       splitNets(getEnv("BLOUD_TRUSTED_PROXY_NETS", "")),
+		PublicScheme:           getEnv("BLOUD_PUBLIC_SCHEME", ""),
 		SSOHostSecret:          ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
