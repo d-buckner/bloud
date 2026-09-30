@@ -1,5 +1,8 @@
-> Status: accepted. Parts A, B, and E are implemented. The TLS-at-Traefik work
-> that this plan pins down is still open and is a non-goal here.
+> Status: accepted and implemented. Parts A, B, and E landed, plus the UI wiring and
+> the startup diagnostic. The dial-plan question this plan left open is resolved:
+> a proxied https issuer is deployable without TLS at Traefik, because the
+> container resolves the issuer the same way the browser does. TLS at Traefik
+> remains a separate non-goal, tracked in [tls.md](tls.md).
 
 # Plan: Make derived URLs survive a TLS-terminating proxy
 
@@ -71,14 +74,33 @@ browser  -> https://mydomain.com  -> upstream proxy -> Traefik :80   (TLS ends a
 container -> https://mydomain.com -> host-gateway :443               (nothing listening)
 ```
 
-So a https issuer is **not deployable today**, and no amount of scheme plumbing
-changes that. Either TLS terminates at Traefik too, or the container must reach the
-issuer through the same upstream proxy, which reintroduces the hairpin and DNS
-problems the `host-gateway` pin exists to avoid.
+So a https issuer is **not deployable with that pin**, and no amount of scheme
+plumbing changes that. Either TLS terminates at Traefik too, or the container must
+reach the issuer through the same upstream proxy, which was assumed to reintroduce
+the hairpin and DNS problems the `host-gateway` pin exists to avoid.
 
-The useful conclusion: the model must represent these as two roles, and Bloud must
-say out loud when the pair is undeployable, rather than emit a URL that stalls a
-login at runtime.
+> **Corrected during implementation.** That assumption about the second option was
+> wrong, and the assumption decided the wrong way. Measured against a real proxied
+> deployment: a container with `--add-host <issuerHost>:host-gateway` resolves to
+> `169.254.1.2` and the TLS connection is refused, while the same container with
+> **no** pin resolves the public name to the terminator and completes discovery
+> over a valid certificate. The hairpin is just a LAN hop and the DNS already
+> exists, because it is the same name the browser resolves. The pin was the whole
+> problem.
+>
+> So `IssuerExtraHost()` returns `""` under a https scheme and the container
+> reaches the issuer the way every other client does. A proxied https issuer is
+> deployable without TLS at Traefik. The pin stays for plain-http issuers, where
+> it does its original job.
+
+What is still genuinely undeployable is a https issuer on a hostname no container
+can resolve to a TLS endpoint. `.local` is mDNS and the localhost family names the
+container's own loopback, so neither reaches a remote terminator. `Deployability()`
+reports that as `https_issuer_host_not_resolvable`.
+
+The useful conclusion stands: the model must represent these as two roles, and
+Bloud must say out loud when the pair is undeployable, rather than emit a URL that
+stalls a login at runtime.
 
 ## Decision
 
