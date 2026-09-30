@@ -275,7 +275,13 @@ func (o *Orchestrator) applySetHostsIntent(intent SetHostsIntent) {
 		return
 	}
 
-	hs := hostset.New(hosts, primary).WithSchemes(intent.Schemes)
+	// The served port is re-applied here rather than inherited, because New()
+	// builds the set from scratch. A set that lost it would render an
+	// address-hosted entry on port 80 while the entrypoint serves something
+	// else, and the redirect URIs would be re-registered against a port
+	// nothing answers on.
+	hs := hostset.New(hosts, primary).WithSchemes(intent.Schemes).
+		WithServedPort(o.config.TraefikPort)
 
 	// No-op guard: skip all side effects when nothing actually changed.
 	// Base URLs are compared, not just hostnames, or a scheme-only change

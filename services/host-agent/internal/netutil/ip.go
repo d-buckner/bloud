@@ -43,6 +43,17 @@ func GetPrimaryIP() string {
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
+// PortSuffix renders an entrypoint port for a URL, or "" when the port is the
+// http default. 0 means "no statement about the port" and also renders as "",
+// so a caller that does not know the port still produces a valid URL rather
+// than a bare ":".
+func PortSuffix(port int) string {
+	if port == 0 || port == 80 {
+		return ""
+	}
+	return ":" + strconv.Itoa(port)
+}
+
 // LANBaseURLs returns one plain-http base URL per detected non-loopback IPv4
 // address, on the port the public entrypoint actually serves.
 //
@@ -63,11 +74,7 @@ func GetPrimaryIP() string {
 func LANBaseURLs(port int) []string {
 	var urls []string
 	for _, ip := range DetectLocalIPs() {
-		host := ip
-		if port != 0 && port != 80 {
-			host = net.JoinHostPort(ip, strconv.Itoa(port))
-		}
-		urls = append(urls, "http://"+host)
+		urls = append(urls, "http://"+ip+PortSuffix(port))
 	}
 	return urls
 }

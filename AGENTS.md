@@ -487,17 +487,26 @@ combined with instance/SSH-target env vars). Instance overrides:
    → Hosts. Precedence for a derived URL's scheme: per-host base-URL override
    (`BLOUD_SSO_BASE_URL` legacy path) > stored per-host scheme >
    `BLOUD_PUBLIC_SCHEME` > `http`. Built-ins keep their fixed mapping and ignore
-   stored/public schemes. The **LAN IP base URLs** (`HostSet.AllBaseURLs(servedPort)`,
-   the detected non-loopback addresses registered so login works by IP) are the
-   one derived family that ignores the primary host entirely: they are always
-   plain `http` on the entrypoint port (`BLOUD_TRAEFIK_PORT`), never on the
-   primary's scheme or port. A bare address has no TLS terminator in front of it
-   and no certificate, and the primary's port describes the public origin (443
-   behind a terminator), not the socket a LAN client reaches. Taking both from
-   the primary made `http://10.0.0.210:8080` redirect its login to
-   `https://10.0.0.210`, which is unreachable. Pinned by
-   `internal/hostset/lan_base_urls_test.go` and
-   `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme`. Under a **https** issuer the orchestrator emits **no**
+   stored/public schemes. **An address is not a name.** `ValidHostname` accepts a
+   dotted quad (it is a run of valid RFC 1123 labels), so an IP literal can enter
+   the set through first-run adoption or Settings, and `HostSet.IsAddress` is what
+   tells the two families apart. A **name** derives its port from its scheme,
+   because DNS is what makes the origin: `https://<host>` means 443 and something
+   answers there. An **address** has no such contract: it means whatever port the
+   socket was opened on, and it has no certificate story at all. So
+   `BaseURLFor` renders an address host on the set's **served port**
+   (`BLOUD_TRAEFIK_PORT`, carried as `Input.ServedPort`; `0`/`80` render as the
+   http default) and never https, and the detected LAN entries in
+   `AllBaseURLs()` follow the same rule. Two regressions this closes: an `https`
+   primary made every LAN IP URL an unreachable `https://<ip>`, and adopting the
+   address an install was created from as primary rendered it as `http://<ip>` on
+   port 80 while Traefik served 8080, so the login redirect was refused. Pinned
+   by `internal/hostset/lan_base_urls_test.go`,
+   `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme`, and
+   `TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort`. The served port must
+   survive every copy of the set (`WithSchemes`, `WithPublicScheme`,
+   `WithURLOverride`, and `applySetHostsIntent`), or a host change drops it and
+   the address is back on port 80. Under a **https** issuer the orchestrator emits **no**
    `extraHosts` pin: the container resolves the issuer by real DNS and reaches
    the TLS terminator that serves it, because Bloud serves no certificate at the
    gateway and a pinned TLS dial lands on a port nothing answers. The pin stays

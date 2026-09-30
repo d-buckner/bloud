@@ -1543,7 +1543,7 @@ func (o *Orchestrator) resolveSSOURLs() ssoURLs {
 		hs := o.hosts.Get()
 		return ssoURLs{
 			hostSet:      hs,
-			baseURLs:     hs.AllBaseURLs(o.config.TraefikPort),
+			baseURLs:     hs.AllBaseURLs(),
 			hostSecret:   o.ssoHostSecret,
 			authentikURL: hs.PrimaryBaseURL(),
 			issuerURL:    hs.IssuerBaseURL(),

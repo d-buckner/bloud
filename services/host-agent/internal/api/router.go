@@ -203,7 +203,7 @@ func NewRouter(
 		})
 	}
 
-	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port, cfg.Hosts, cfg.TraefikPort)
+	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port, cfg.Hosts)
 
 	homeMod := NewHomeModule(positionStore, appStore, launchPathsFn, logger)
 	eventsMod := NewEventsModule(eventsBus, homeMod.GetLayout, logger)
@@ -387,7 +387,7 @@ func initAuthHelper(
 	// single SSO base URL env value.
 	var baseURLs []string
 	if cfg.Hosts != nil {
-		baseURLs = cfg.Hosts.Get().AllBaseURLs(cfg.TraefikPort)
+		baseURLs = cfg.Hosts.Get().AllBaseURLs()
 	} else if cfg.SSOBaseURL != "" {
 		baseURLs = append([]string{cfg.SSOBaseURL}, netutil.LANBaseURLs(cfg.TraefikPort)...)
 	}
