@@ -19,6 +19,19 @@ integrations:
     compatible:
       - app: authentik
         default: true
+  # Hermes is an inference consumer. The instance setting is the source by
+  # default; a litellm install takes over when it appears. `source: instance` is
+  # not an app: the resolver reads Bloud's own AI settings, and the graph never
+  # gains a node for it, so there is nothing to install or uninstall.
+  inference:
+    required: false
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - app: litellm
+        default: true
+      - source: instance
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider
