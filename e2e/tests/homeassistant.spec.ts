@@ -7,7 +7,7 @@ import {
   openAppFromHome,
 } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
-import { appHost, appUrlPattern, escapeRegExp } from '../lib/origin';
+import { appUrlPattern } from '../lib/origin';
 import { LoginPage } from '../lib/loginPage';
 
 // One test case per observable behavior; serial mode (from describeApp)
@@ -58,7 +58,11 @@ describeApp('homeassistant', (app) => {
       // The gate held: no Lovelace view is rendered behind the auth screen.
       await expect(ha.locator('hui-view')).toHaveCount(0);
       expect(ha.url()).toMatch(
-        new RegExp(`^${escapeRegExp(appHost('homeassistant'))}|sso\\.localhost`),
+        // Either the app's own origin or the shared issuer: both are the gate
+        // holding. Built from the origin (protocol included) rather than the bare
+        // host, since a URL starts with the scheme and an anchor on the hostname
+        // alone would never match.
+        new RegExp(`${appUrlPattern('homeassistant').source}|sso\\.localhost`),
       );
     } finally {
       await ha.close();
