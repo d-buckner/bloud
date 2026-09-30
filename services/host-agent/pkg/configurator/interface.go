@@ -144,12 +144,33 @@ type OIDCOutput struct {
 	RedirectURI  string // Primary redirect URI registered with the provider
 }
 
+// ProviderKind distinguishes what a ProviderRef points at. It is a wire type: a
+// plain string so a consumer can compare it without importing anything, and the
+// values mirror the catalog's `compatible:` discriminator (`app:` versus
+// `source: instance`).
+type ProviderKind string
+
+const (
+	// ProviderKindApp is an installed catalog app with containers and a node.
+	ProviderKindApp ProviderKind = "app"
+	// ProviderKindInstance is the instance's own configuration: no node, no
+	// port, no container. Node, Port, BaseURL and LocalURL are empty; the
+	// contract's own endpoint field carries the value.
+	ProviderKindInstance ProviderKind = "instance"
+)
+
 // ProviderRef is the part of an integration binding that is the same for every
 // contract: which app the provider is, whether it is installed, and where it is.
 // The contract payloads below embed it, so a consumer reads the address and its
 // role-specific fields from one value.
 type ProviderRef struct {
-	// App is the provider's catalog ID, e.g. "sonarr".
+	// Kind distinguishes an installed catalog app from the instance's own
+	// configuration. It is the discriminator behind `compatible: [{app: ...}]`
+	// versus `compatible: [{source: instance}]`.
+	Kind ProviderKind
+	// App is the provider's catalog ID, e.g. "sonarr". For an instance
+	// provider it is catalog.InstanceProviderSource ("instance"), which is a
+	// reserved value and never a real catalog ID.
 	App string
 	// Installed reports whether the provider is installed. It mirrors the
 	// dependency edge the same provider gets in the graph, so it is true exactly
@@ -174,6 +195,53 @@ type ProviderRef struct {
 	// container, so they need this vantage point, while what the app stores
 	// needs BaseURL. Empty when the provider publishes no port.
 	LocalURL string
+}
+
+// ModelSourceBinding is an OpenAI-compatible upstream that a gateway can route
+// to. It is the provider side of the routing chain: the instance's external
+// server, or a local runtime such as Ollama. Applications do not consume this
+// contract directly; they consume InferenceBinding.
+type ModelSourceBinding struct {
+	ProviderRef
+	// Endpoint is the OpenAI-compatible base URL as a client should pass it to
+	// an SDK, path included: http://apps-ollama:11434/v1, or the operator's
+	// external origin. Unlike ProviderRef.BaseURL it is not derived from a
+	// container address, because the upstream may not be on any Bloud network.
+	Endpoint string
+	// APIKey is the credential to send upstream. Empty when the source needs
+	// none (a local runtime on a trusted network).
+	APIKey string
+	// Models is the discovered model list, empty when discovery has not run or
+	// the upstream does not offer /models.
+	Models []string
+}
+
+// InferenceBinding is the OpenAI-compatible endpoint an application dials.
+//
+// The consumer declares `inference` and never learns what is behind it. That is
+// the property the contract exists to hold: whether the endpoint is the operator's
+// raw server or a LiteLLM gateway in front of several upstreams, the consumer's
+// metadata, its config, and the operator's Settings entry stay unchanged.
+type InferenceBinding struct {
+	ProviderRef
+	// Endpoint is the OpenAI-compatible base URL exactly as a client should
+	// pass it to an SDK, path included: http://apps-litellm:4000/v1. This is
+	// the field that always carries a usable value: ProviderRef.BaseURL is a
+	// container-network fact (http://<Node>:<Port>) and is empty for an
+	// instance provider, which has no container at all.
+	Endpoint string
+	// APIKey is the credential to send. Empty when the provider needs none.
+	APIKey string
+	// DefaultModel is the model to use where the app has picked none. It is a
+	// concrete model id, never a tier or alias, because it has to resolve on a
+	// server that has no Bloud-side name translation in front of it.
+	DefaultModel string
+	// Models is the model list on offer, for a consumer that renders a picker.
+	Models []string
+	// ViaGateway reports whether Endpoint is a Bloud-side gateway rather than
+	// the raw upstream. A configurator uses it to tell a gateway credential
+	// from the operator's real one.
+	ViaGateway bool
 }
 
 // PVRBinding is an app that holds recordings or a library and accepts requests
@@ -242,6 +310,8 @@ type Integrations struct {
 	DownloadClients []DownloadClientBinding
 	MCPServers      []MCPBinding
 	SSO             []SSOBinding
+	ModelSources    []ModelSourceBinding
+	Inference       []InferenceBinding
 }
 
 // AppState contains the inputs currently consumed by app configurators.

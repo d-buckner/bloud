@@ -53,12 +53,24 @@ type ContractProvides struct {
 	Values map[string]string `yaml:"values,omitempty" json:"values,omitempty"`
 }
 
-// CompatibleApp defines a specific app that can fulfill an integration
+// CompatibleApp defines a specific provider that can fulfill an integration.
+//
+// Exactly one of App and Source names the provider. App is the normal case: an
+// installed catalog app. Source: "instance" means the provider is the instance
+// itself, a value the operator configured in Settings rather than a thing Bloud
+// runs. An instance provider creates no graph node and has no container, which is
+// why it is a source and not a catalog entry.
 type CompatibleApp struct {
-	App      string `yaml:"app" json:"app"`
+	App      string `yaml:"app,omitempty" json:"app,omitempty"`
+	Source   string `yaml:"source,omitempty" json:"source,omitempty"`
 	Default  bool   `yaml:"default,omitempty" json:"default,omitempty"`
 	Category string `yaml:"category,omitempty" json:"category,omitempty"`
 }
+
+// InstanceProviderSource is the CompatibleApp.Source value naming the instance
+// settings as a contract provider, and the ProviderRef.App value it carries.
+// It is reserved: no catalog app may be named "instance".
+const InstanceProviderSource = "instance"
 
 // IntegrationRef is a back-pointer: which app needs this app, for what integration
 type IntegrationRef struct {

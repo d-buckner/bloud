@@ -1396,20 +1396,109 @@ func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) co
 	}
 
 	for contract, integration := range catalogApp.Integrations {
-		for _, providerID := range resolveProviders(integration, choices[contract]) {
+		if contract == "inference" {
+			// Inference has its own resolution because it is the one contract
+			// that can be served by a provider the consumer never named: a
+			// gateway app, the instance setting, or promotion from an
+			// installed modelSource.
+			if binding, ok := o.resolveInference(integration, choices[contract], installed, app); ok {
+				out.Inference = append(out.Inference, binding)
+			}
+			continue
+		}
+		for _, src := range resolveProviders(integration, choices[contract]) {
 			// An app cannot be its own provider: a self-edge would also make
 			// the graph order the node after itself.
-			if providerID == app {
+			if src.kind == configurator.ProviderKindApp && src.id == app {
 				continue
 			}
-			provider, err := o.catalog.Get(providerID)
+			if src.isInstance() {
+				continue
+			}
+			provider, err := o.catalog.Get(src.id)
 			if err != nil || provider == nil {
 				continue
 			}
-			o.bindContract(&out, contract, o.providerRef(providerID, provider, installed[providerID]), provider.Provides[contract], providerID, integration.Requires)
+			o.bindContract(&out, contract, o.providerRef(src.id, provider, installed[src.id]), provider.Provides[contract], src.id, integration.Requires)
 		}
 	}
 	return out
+}
+
+// resolveInference picks the single inference endpoint a consumer gets, by
+// precedence:
+//
+//  1. an installed gateway app the consumer named (ViaGateway true): the real
+//     provider always wins, so adding a gateway retires the fallback rather than
+//     competing with it;
+//  2. the instance's configured upstream (ViaGateway false), which is the
+//     operator's raw server and carries their credential;
+//  3. promotion from an installed modelSource provider, per the registry's
+//     SatisfiedBy list, so a bare Ollama serves a consumer that never named it.
+//
+// One binding, not several: a consumer dialing two inference endpoints has no
+// defined meaning, so the multi case is resolved here rather than pushed onto
+// every configurator.
+func (o *Orchestrator) resolveInference(integration catalog.Integration, choice string, installed map[string]bool, consumer string) (configurator.InferenceBinding, bool) {
+	for _, src := range resolveProviders(integration, choice) {
+		if src.isInstance() || src.id == consumer || !installed[src.id] {
+			continue
+		}
+		provider, err := o.catalog.Get(src.id)
+		if err != nil || provider == nil {
+			continue
+		}
+		offer, ok := provider.Provides["inference"]
+		if !ok {
+			continue
+		}
+		ref := o.providerRef(src.id, provider, true)
+		if ref.BaseURL == "" {
+			continue
+		}
+		return configurator.InferenceBinding{
+			ProviderRef:  ref,
+			Endpoint:     ref.BaseURL + offer.Values["path"],
+			APIKey:       o.publishedSecret(src.id, "inference", offer, integration.Requires),
+			DefaultModel: o.inferenceSettings().DefaultModel,
+			ViaGateway:   true,
+		}, true
+	}
+
+	if binding, ok := o.instanceInferenceSource(integration.Requires); ok {
+		return binding, true
+	}
+
+	if from, sources := o.promotedSources("inference", installed); from != "" {
+		for _, src := range sources {
+			if src.id == consumer {
+				continue
+			}
+			provider, err := o.catalog.Get(src.id)
+			if err != nil || provider == nil {
+				continue
+			}
+			offer, ok := provider.Provides[from]
+			if !ok {
+				continue
+			}
+			ref := o.providerRef(src.id, provider, true)
+			if ref.BaseURL == "" {
+				continue
+			}
+			settings := o.inferenceSettings()
+			return configurator.InferenceBinding{
+				ProviderRef:  ref,
+				Endpoint:     ref.BaseURL + offer.Values["path"],
+				DefaultModel: settings.DefaultModel,
+				// Promoted from a keyless source: the consumer is talking to
+				// the raw upstream, not a gateway, and holds no gateway key.
+				ViaGateway: false,
+			}, true
+		}
+	}
+
+	return configurator.InferenceBinding{}, false
 }
 
 // bindContract appends one provider's binding for one contract. The payload it
@@ -1446,6 +1535,14 @@ func (o *Orchestrator) bindContract(
 			ServerName:  offer.Values["serverName"],
 			URL:         ref.BaseURL + offer.Values["path"],
 			Token:       o.publishedSecret(providerID, contract, offer, requires),
+		})
+	case "modelSource":
+		// An app provider of modelSource (Ollama) is keyless by contract: the
+		// credential a gateway needs for the operator's external server comes
+		// from the instance scope, not from this provider.
+		out.ModelSources = append(out.ModelSources, configurator.ModelSourceBinding{
+			ProviderRef: ref,
+			Endpoint:    ref.BaseURL + offer.Values["path"],
 		})
 	default:
 		// Contracts with no payload (proxy, database) need no consumer input
@@ -1485,6 +1582,7 @@ func (o *Orchestrator) publishedSecret(providerID, contract string, offer catalo
 func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installed bool) configurator.ProviderRef {
 	node := o.primaryContainerNode(appID)
 	ref := configurator.ProviderRef{
+		Kind:      configurator.ProviderKindApp,
 		App:       appID,
 		Installed: installed,
 		Node:      node,
@@ -1497,30 +1595,38 @@ func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installe
 	return ref
 }
 
-// resolveProviders returns the provider catalog IDs an integration binds, in
-// declaration order, whichever of them are installed.
+// resolveProviders returns the providers an integration binds, in declaration
+// order, whichever of them are available.
 //
 // The set mirrors the dependency edges computeAppDeps builds for the same
 // contract: the recorded choice, plus, for an *optional* contract, every
-// compatible app the metadata declares. A required contract binds only what was
-// chosen, so a binding can never describe a provider the graph does not order.
-func resolveProviders(integration catalog.Integration, choice string) []string {
-	var out []string
-	add := func(appID string) {
+// compatible provider the metadata declares. A required contract binds only what
+// was chosen, so a binding can never describe a provider the graph does not
+// order.
+//
+// A `source: instance` entry becomes an instance providerSource. It carries no
+// node and produces no graph edge, which is why computeAppDeps filters on kind.
+func resolveProviders(integration catalog.Integration, choice string) []providerSource {
+	var out []providerSource
+	add := func(src providerSource) {
 		for _, existing := range out {
-			if existing == appID {
+			if existing == src {
 				return
 			}
 		}
-		out = append(out, appID)
+		out = append(out, src)
 	}
 
 	if choice != "" {
-		add(choice)
+		add(appSource(choice))
 	}
 	if !integration.Required {
 		for _, compatible := range integration.Compatible {
-			add(compatible.App)
+			if compatible.Source == catalog.InstanceProviderSource {
+				add(instanceSource())
+				continue
+			}
+			add(appSource(compatible.App))
 		}
 	}
 	return out

@@ -34,8 +34,16 @@ type IntegrationChoice struct {
 // ChoiceOption is a single option in an integration choice
 type ChoiceOption struct {
 	App      string `json:"app"`
+	Source   string `json:"source,omitempty"`
 	Default  bool   `json:"default"`
 	Category string `json:"category,omitempty"`
+}
+
+// choiceOption projects a compatible-provider declaration into the UI-facing
+// choice shape. Explicit rather than a struct conversion, so adding a field to
+// CompatibleApp is a deliberate decision here instead of a compile break.
+func choiceOption(c CompatibleApp) ChoiceOption {
+	return ChoiceOption{App: c.App, Source: c.Source, Default: c.Default, Category: c.Category}
 }
 
 // RemovePlan describes what will happen when removing an app
@@ -166,14 +174,14 @@ func makeChoice(intName string, integration Integration, installed, available []
 	}
 
 	for _, c := range installed {
-		choice.Installed = append(choice.Installed, ChoiceOption(c))
+		choice.Installed = append(choice.Installed, choiceOption(c))
 		if c.Default {
 			choice.Recommended = c.App
 		}
 	}
 
 	for _, c := range available {
-		choice.Available = append(choice.Available, ChoiceOption(c))
+		choice.Available = append(choice.Available, choiceOption(c))
 		if c.Default && choice.Recommended == "" {
 			choice.Recommended = c.App
 		}
