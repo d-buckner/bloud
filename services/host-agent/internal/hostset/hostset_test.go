@@ -148,9 +148,23 @@ func TestLocalhostIssuerUsesSSOAlias(t *testing.T) {
 
 // Loopback-issuer apps run in the host network namespace, so for them
 // localhost really is Traefik and the plain loopback URL is the right issuer.
+// Only a plain-http deployment gets it: the issuer string is where the browser
+// is redirected too, and there localhost is the visitor's own machine.
 func TestLoopbackIssuerBaseURL(t *testing.T) {
-	hs := New(mustParse(t, "https://bloud.example.com"))
-	assert.Equal(t, "http://localhost:8080", hs.LoopbackIssuerBaseURL())
+	plain := New(mustParse(t, "http://bloud.lan"))
+	assert.Equal(t, "http://localhost:8080", plain.LoopbackIssuerBaseURL())
+}
+
+// Under a https public URL the loopback issuer must not be handed out. The
+// provider accepts the public issuer, so overriding it only breaks every
+// browser that is not on the Bloud machine.
+func TestLoopbackIssuerBaseURLUnusedUnderHTTPS(t *testing.T) {
+	for _, raw := range []string{"https://home.thebloud.org", "https://bloud.example.com:8443"} {
+		hs := New(mustParse(t, raw))
+		assert.Equal(t, "", hs.LoopbackIssuerBaseURL(),
+			"a https deployment must use the public issuer, not the server's loopback")
+		assert.Equal(t, hs.PrimaryBaseURL(), hs.IssuerBaseURL())
+	}
 }
 
 // BaseURLs lists the public origin first so the OAuth client registers it

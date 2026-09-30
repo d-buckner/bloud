@@ -48,7 +48,7 @@ to a confidential client for every app; the `clientType: public` field makes the
 blueprint generator register a public, secret-less Authentik provider for this
 app only.
 
-### Why the issuer is the host loopback (`sso.loopbackIssuer`)
+### Why the issuer is the host loopback (`sso.loopbackIssuer`), and only on plain http
 
 The self-hosted provider accepts an `https` issuer anywhere, but a plain `http`
 issuer **only on a literal loopback hostname** (`localhost`, `127.0.0.1`,
@@ -59,8 +59,9 @@ startup with `Refusing to bind dashboard to 0.0.0.0 ... but no auth providers
 are registered`. That is exactly the failure the first CI run of this app's e2e
 leg hit.
 
-Bloud therefore hands Hermes the **loopback issuer**, set by the app's
-`sso.loopbackIssuer: true` (see `internal/hostset.LoopbackIssuerBaseURL` and
+On a plain-http deployment Bloud therefore hands Hermes the **loopback issuer**,
+set by the app's `sso.loopbackIssuer: true` (see
+`internal/hostset.LoopbackIssuerBaseURL` and
 `internal/engine/orchestrator.oidcInputsForApp`):
 
 | Hermes `config.yaml` key | Value |
@@ -82,7 +83,25 @@ namespace is `localhost` the machine running Traefik. In exchange:
   app port), which that loopback bind satisfies.
 - The browser is sent to the issuer on `http://localhost:8080`. That is the same
   reach the `*.localhost` issuer host has: both resolve to the local machine, so
-  Hermes SSO works from a browser on the Bloud machine.
+  Hermes SSO works from a browser on the Bloud machine, and from nowhere else.
+  That is the price of the loopback issuer, and it is only payable while the
+  deployment itself is plain http, where no accepted issuer a remote browser
+  could reach exists.
+
+**Under a https public URL the override is skipped** and Hermes gets the shared
+issuer, which is the public origin: `https://<public host>/application/o/hermes/`.
+Two things make that the right answer there. The provider accepts an https issuer
+anywhere, so nothing in its validation forces the loopback. And the issuer string
+is not only dialed by the container: it is also where an unauthenticated browser
+is redirected, and for a remote visitor `localhost` is the visitor's own machine.
+Handing out the loopback issuer on a proxied deployment produced exactly that
+failure: `https://hermes.<host>/` bounced to
+`http://localhost:8080/application/o/authorize?...`, a port on the visitor's
+laptop, and the sign-in could never complete. `HostSet.LoopbackIssuerBaseURL`
+returns `""` for a https public scheme, and `oidcInputsForApp` then leaves the
+shared issuer in place. The switch is self-healing: the next reconciliation pass
+sees a different issuer in the managed keys, rewrites `config.yaml`, and
+recreates the container.
 
 `public_url` does double duty. It makes the OIDC callback deterministic
 (`<public_url>/auth/callback`, matching the `callbackPath: /auth/callback` the
@@ -140,9 +159,10 @@ the `self-hosted` provider, fails when the provider is absent (e.g. only
 
 The issuer choice itself is covered in the orchestrator:
 `oidc_loopback_issuer_test.go` asserts a `sso.loopbackIssuer` app is handed
-`http://localhost:8080/application/o/<app>/` while a normal native-oidc app
-keeps `sso.localhost`, and that the loopback-issuer app gets no
-`sso.localhost:host-gateway` extra host.
+`http://localhost:8080/application/o/<app>/` on a plain-http deployment while a
+normal native-oidc app keeps `sso.localhost`, that the loopback-issuer app gets
+no `sso.localhost:host-gateway` extra host, and that under a https public URL
+both apps get the public origin as their issuer and neither gets an extra host.
 
 `e2e/tests/hermes.spec.ts` runs the user-visible contract against a real
 install: the gate is on (an unauthenticated visitor is handed to a sign-in

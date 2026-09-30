@@ -19,18 +19,28 @@ import (
 // shared issuer host.
 func newIssuerTestOrchestrator(t *testing.T) *Orchestrator {
 	t.Helper()
+	return newIssuerTestOrchestratorWith(t, hostset.Default())
+}
+
+func newIssuerTestOrchestratorWith(t *testing.T, hs hostset.HostSet) *Orchestrator {
+	t.Helper()
 
 	catCache := NewFakeCatalogCache()
 	catCache.AddApp(&catalog.App{
 		CatalogID: "hermes",
-		SSO:       catalog.SSO{Strategy: "native-oidc", ClientType: "public", LoopbackIssuer: true},
+		SSO: catalog.SSO{
+			Strategy:       "native-oidc",
+			ClientType:     "public",
+			LoopbackIssuer: true,
+			CallbackPath:   "/auth/callback",
+		},
 	})
 	catCache.AddApp(&catalog.App{
 		CatalogID: "immich",
-		SSO:       catalog.SSO{Strategy: "native-oidc"},
+		SSO:       catalog.SSO{Strategy: "native-oidc", CallbackPath: "/api/auth/openid/callback"},
 	})
 
-	state := hostset.NewState(hostset.Default())
+	state := hostset.NewState(hs)
 	return NewOrchestrator(
 		graph.New(graph.NewMapRepository()),
 		new(MockConfiguratorRegistry),
@@ -59,7 +69,7 @@ func TestOIDCInputsForApp_LoopbackIssuer(t *testing.T) {
 	// The client is still registered as a public PKCE client (no secret), and
 	// its redirect URIs stay on the app's public origins, not the issuer.
 	assert.Empty(t, inputs.ClientSecret)
-	assert.Contains(t, inputs.RedirectURIs, "http://hermes.localhost:8080")
+	assert.Contains(t, inputs.RedirectURIs, "http://hermes.localhost:8080/auth/callback")
 
 	sharedApp, err := orch.catalog.Get("immich")
 	require.NoError(t, err)
@@ -67,6 +77,38 @@ func TestOIDCInputsForApp_LoopbackIssuer(t *testing.T) {
 	shared := orch.oidcInputsForApp(sharedApp, urls)
 	require.NotNil(t, shared)
 	assert.Equal(t, "http://sso.localhost:8080/application/o/immich/", shared.IssuerURL)
+}
+
+// TestOIDCInputsForApp_LoopbackIssuerUnderHTTPS pins the proxied-deployment
+// case: under a https public URL a sso.loopbackIssuer app gets the public
+// issuer, not the server's loopback. The provider accepts an https issuer
+// anywhere, and the loopback string is where the browser is redirected, so
+// handing it out sends every remote visitor to a port on their own machine
+// instead of this instance.
+func TestOIDCInputsForApp_LoopbackIssuerUnderHTTPS(t *testing.T) {
+	hosts, err := hostset.ParsePublicURL("https://home.thebloud.org")
+	require.NoError(t, err)
+	orch := newIssuerTestOrchestratorWith(t, hostset.New(hosts))
+	urls := orch.resolveSSOURLs()
+
+	loopbackApp, err := orch.catalog.Get("hermes")
+	require.NoError(t, err)
+	require.NotNil(t, loopbackApp)
+	inputs := orch.oidcInputsForApp(loopbackApp, urls)
+	require.NotNil(t, inputs)
+	assert.Equal(t, "https://home.thebloud.org/application/o/hermes/", inputs.IssuerURL)
+	assert.NotContains(t, inputs.IssuerURL, "localhost",
+		"a loopback issuer under a https public URL is unreachable for every remote browser")
+	assert.Contains(t, inputs.RedirectURIs, "https://hermes.home.thebloud.org/auth/callback")
+	assert.Empty(t, inputs.ClientSecret)
+
+	// The shared-issuer app is unaffected by the loopback-issuer guard.
+	sharedApp, err := orch.catalog.Get("immich")
+	require.NoError(t, err)
+	require.NotNil(t, sharedApp)
+	shared := orch.oidcInputsForApp(sharedApp, urls)
+	require.NotNil(t, shared)
+	assert.Equal(t, "https://home.thebloud.org/application/o/immich/", shared.IssuerURL)
 }
 
 // TestApplyIssuerExtraHost_LoopbackIssuer confirms the shared issuer hostname
@@ -82,4 +124,20 @@ func TestApplyIssuerExtraHost_LoopbackIssuer(t *testing.T) {
 	var sharedSpec containerruntime.Spec
 	orch.applyIssuerExtraHost(&sharedSpec, "immich")
 	assert.Contains(t, sharedSpec.ExtraHosts, "sso.localhost:host-gateway")
+}
+
+// TestApplyIssuerExtraHost_HTTPSIssuerPinsNothing confirms that under a https
+// public URL no app gets the gateway pin. The terminator is not this box, and
+// Bloud serves no certificate at the gateway, so a pinned TLS dial lands on a
+// port nothing answers.
+func TestApplyIssuerExtraHost_HTTPSIssuerPinsNothing(t *testing.T) {
+	hosts, err := hostset.ParsePublicURL("https://home.thebloud.org")
+	require.NoError(t, err)
+	orch := newIssuerTestOrchestratorWith(t, hostset.New(hosts))
+
+	var loopbackSpec, sharedSpec containerruntime.Spec
+	orch.applyIssuerExtraHost(&loopbackSpec, "hermes")
+	orch.applyIssuerExtraHost(&sharedSpec, "immich")
+	assert.Empty(t, loopbackSpec.ExtraHosts)
+	assert.Empty(t, sharedSpec.ExtraHosts)
 }

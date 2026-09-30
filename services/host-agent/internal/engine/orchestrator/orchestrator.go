@@ -1631,11 +1631,17 @@ func (o *Orchestrator) oidcInputsForApp(catalogApp *catalog.App, u ssoURLs) *sso
 	}
 	issuerURL := u.issuerURL
 	if catalogApp.SSO.LoopbackIssuer {
-		// The app's OIDC client refuses a non-loopback http issuer, so route
-		// its issuer through the host loopback rather than the shared issuer
-		// host. The app container shares the host network namespace, which
-		// makes localhost:<Traefik port> reach Traefik.
-		issuerURL = u.hostSet.LoopbackIssuerBaseURL()
+		// The app's OIDC client refuses a non-loopback http issuer, so on a
+		// plain-http deployment its issuer routes through the host loopback
+		// rather than the shared issuer host. The app container shares the host
+		// network namespace, which makes localhost:<compat port> reach Traefik.
+		//
+		// Under a https public URL the override is skipped (empty return): the
+		// client accepts the public issuer, and the loopback string would send
+		// the browser to the visitor's own machine instead of this instance.
+		if loopback := u.hostSet.LoopbackIssuerBaseURL(); loopback != "" {
+			issuerURL = loopback
+		}
 	}
 	gen := sso.NewBlueprintGenerator(
 		u.hostSecret,

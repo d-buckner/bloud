@@ -93,7 +93,10 @@ sso:
   # scopes: [offline_access]        # native-oidc: scopes beyond openid/profile/email
   # accessTokenMinutes: 60          # native-oidc: access token lifetime (default 5)
   # loopbackIssuer: true   # only for OIDC clients that reject a non-loopback
-  #                        # http issuer (see apps/hermes)
+  #                        # http issuer (see apps/hermes). Applies to plain-http
+  #                        # deployments only: under a https public URL the app
+  #                        # gets the public issuer, since the browser has to be
+  #                        # able to reach it too.
 
 containers:
   - name: apps-your-app
