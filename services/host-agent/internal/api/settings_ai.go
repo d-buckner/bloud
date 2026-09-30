@@ -277,7 +277,7 @@ func fetchModels(ep inference.Endpoint, apiKey string) ([]string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("could not reach %s: %w", ep.ModelsURL(), err)
+		return nil, fmt.Errorf("could not reach %s: %w%s", ep.ModelsURL(), err, ep.MissingAPIPrefixHint())
 	}
 	defer resp.Body.Close() //nolint:errcheck // read-only response body; nothing to act on
 
@@ -286,7 +286,7 @@ func fetchModels(ep inference.Endpoint, apiKey string) ([]string, error) {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s returned %s", ep.ModelsURL(), resp.Status)
+		return nil, fmt.Errorf("%s returned %s%s", ep.ModelsURL(), resp.Status, ep.MissingAPIPrefixHint())
 	}
 
 	var parsed struct {

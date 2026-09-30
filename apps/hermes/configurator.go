@@ -5,7 +5,10 @@ package hermes
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
@@ -27,6 +30,10 @@ const (
 	// $HERMES_HOME is /opt/data, mounted from {{appDataDir}}/data, so on the
 	// host this is <DataPath>/data/config.yaml.
 	configFileName = "config.yaml"
+	// containerHome is $HERMES_HOME inside the image, the mount point of the
+	// host directory above. Reads that go through the container address the
+	// file by its in-container path, not the host path.
+	containerHome = "/opt/data"
 	// managedScopes is the OIDC scope set written into the self-hosted
 	// provider block (matches the Hermes default; stated explicitly so the
 	// managed block is unambiguous).
@@ -50,6 +57,12 @@ type Configurator struct {
 	logger     *slog.Logger
 	api        *hermesAPI
 
+	// exec runs a command inside the running Hermes container. It is the
+	// fallback reader for config.yaml, which the host agent cannot read once
+	// the container owns it (see readConfig). Nil in CLI/test contexts, where
+	// a denied host read has no remedy.
+	exec configurator.ExecFunc
+
 	// baseURL is a test seam: when set, the API client resolves to it
 	// instead of localhost:port.
 	baseURL string
@@ -72,6 +85,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		port:       port,
 		ssoBaseURL: deps.PrimaryBaseURL,
 		logger:     logger.With("app", "hermes"),
+		exec:       deps.Exec,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -117,6 +131,56 @@ func (c *Configurator) appExternalURL() string {
 	return strings.TrimSuffix(parsed.String(), "/")
 }
 
+// readConfig reads Hermes' config file, falling back to the container when
+// the host-side read is refused.
+//
+// Hermes' own container init (/opt/hermes/docker/stage2-hook.sh) chowns
+// config.yaml to the runtime user and chmods it 0640 on every start, so that
+// a file edited on the host stays readable by Hermes. Under rootless podman
+// that runtime user is a host uid inside the subuid range (109999 for a
+// uid-1000 agent) and the group is the matching subgid, so the mode leaves the
+// host agent, which wrote the file, unable to read it back. The directory
+// stays shared via HERMES_HOME_MODE, so the write path is fine; only the read
+// needs the container, which reads its own file without complaint.
+//
+// The bytes come back base64-encoded on purpose. Deps.Exec is a combined
+// stdout+stderr channel, so a podman warning would otherwise land inside the
+// YAML. Encoded, contamination fails the decode instead of silently writing a
+// corrupted config back over the real one.
+func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, error) {
+	raw, err := os.ReadFile(cfgPath)
+	if err == nil {
+		return raw, nil
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		return nil, err
+	}
+	if c.exec == nil {
+		return nil, fmt.Errorf("%w%s", err, containerReadUnavailable)
+	}
+
+	out, execErr := c.exec(ctx, nodeName, nil, []string{"base64", containerHome + "/" + configFileName})
+	if execErr != nil {
+		return nil, fmt.Errorf("%w%s (reading it inside %s failed too: %v)",
+			err, containerReadUnavailable, nodeName, execErr)
+	}
+	decoded, decErr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	if decErr != nil {
+		return nil, fmt.Errorf("decoding %s read from %s: %w", configFileName, nodeName, decErr)
+	}
+	c.logger.Info("read Hermes config through the container: the host agent cannot read a file the container owns",
+		"path", cfgPath)
+	return decoded, nil
+}
+
+// containerReadUnavailable is appended when a host read is refused and there
+// is no container to read through. It names the mechanism, because "permission
+// denied" on a file the agent itself wrote reads like a Bloud bug rather than
+// the consequence of the app reclaiming its config file at boot.
+const containerReadUnavailable = " (Hermes' container init chowns config.yaml to its own runtime user at 0640 on " +
+	"every start, which under rootless podman is a host uid in the subuid range the agent is not; the file can only " +
+	"be read through the running container - see apps/hermes/INTEGRATION.md)"
+
 // PreStart merges Bloud's SSO keys into Hermes' config.yaml so the
 // dashboard boots with the self-hosted OIDC provider configured. Returns
 // changed=true only when the managed keys differ from what is on disk, which
@@ -127,10 +191,10 @@ func (c *Configurator) appExternalURL() string {
 // values produces no write (no churn across reconciliation cycles). When
 // SSO is disabled the managed keys are stripped instead, so a leftover
 // provider never points at a dead issuer.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	cfgPath := filepath.Join(state.DataPath, "data", configFileName)
 
-	existing, err := os.ReadFile(cfgPath)
+	existing, err := c.readConfig(ctx, cfgPath)
 	if err != nil && !os.IsNotExist(err) {
 		return configurator.NoRestart(), fmt.Errorf("reading %s: %w", cfgPath, err)
 	}
@@ -171,7 +235,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 
 	changed, err := managedfile.Write(cfgPath, want, managedfile.ModeSharedConfig)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing %s: %w", cfgPath, err)
+		return configurator.NoRestart(), fmt.Errorf("writing %s: %w%s", cfgPath, err, permissionHint(err))
 	}
 	if changed {
 		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference)
@@ -196,6 +260,24 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	}
 	c.logger.Info("Hermes dashboard serving under Bloud SSO", "issuer", state.OIDC.IssuerURL)
 	return nil
+}
+
+// permissionHint names the failure this app is prone to. A bare "permission
+// denied" on a bind-mounted data directory says nothing about who owns it or
+// which side has to change: the directory belongs to the container's uid
+// mapped into the rootless podman subuid range, so neither the read nor the
+// temp-file write in that directory can succeed once Hermes secures it. The
+// fix is the app's own mode contract (HERMES_CONTAINER / HERMES_HOME_MODE in
+// metadata.yaml), not a host-side chmod, which is EPERM against a
+// subordinate uid. Kept a hard error on purpose: a degraded "running with
+// last-known config" would hide an SSO integration that is not being
+// updated, which is worse than a node that says it failed.
+func permissionHint(err error) string {
+	if !errors.Is(err, fs.ErrPermission) {
+		return ""
+	}
+	return " (the Hermes data directory is not writable by the host agent; " +
+		"set HERMES_CONTAINER=1 and HERMES_HOME_MODE=0777 in metadata.yaml - see apps/hermes/INTEGRATION.md)"
 }
 
 // parseConfig decodes a Hermes config.yaml into a generic map. A missing or
@@ -250,10 +332,28 @@ func stripOIDC(doc map[string]any) {
 }
 
 // inferenceProviderKey is the named provider entry Bloud registers in Hermes'
-// config.yaml. Hermes selects a named provider as custom:<key>, so the operator
-// can see and switch away from it in the dashboard rather than inheriting an
-// invisible default.
+// config.yaml, under the v12 `providers:` map.
 const inferenceProviderKey = "bloud"
+
+// inferenceProviderSlug is the identity Hermes uses to *select* that entry.
+// A named custom provider is addressed as `custom:<config key>`, never as bare
+// `custom`: bare `custom` reads OPENAI_BASE_URL/OPENAI_API_KEY from the
+// environment and never looks at `providers:` at all, so a Bloud endpoint
+// selected that way resolves to Hermes' OpenRouter default with no key and the
+// agent dies at init with "No LLM provider configured". Hermes derives the
+// slug from the config key rather than the display name, so it survives a
+// rename of the display name (custom_provider_slug in hermes_cli/providers.py).
+const inferenceProviderSlug = "custom:" + inferenceProviderKey
+
+// inferenceAPIMode names the wire protocol explicitly. Without it Hermes
+// infers the transport from the endpoint hostname, which works today but is a
+// default Bloud should not be relying on for an endpoint it chose itself.
+const inferenceAPIMode = "chat_completions"
+
+// inferenceProvidersKey is the v12 config section holding named provider
+// entries. Hermes also accepts a `custom_providers:` list alongside it and
+// merges the two views at runtime; Bloud writes only the map.
+const inferenceProvidersKey = "providers"
 
 // inferenceBinding pulls the resolved inference binding out of the app state.
 // A consumer with no binding has nothing to point at, which is different from a
@@ -280,10 +380,10 @@ func inferenceBinding(state *configurator.AppState) (configurator.InferenceBindi
 // silently replacing a model an operator picked is the failure mode that makes
 // a managed default unwelcome.
 func applyInference(doc map[string]any, b configurator.InferenceBinding) {
-	providers := mapAt(doc, "providers")
+	providers := mapAt(doc, inferenceProvidersKey)
 	p := mapAt(providers, inferenceProviderKey)
 	p["name"] = "Bloud"
-	p["api"] = "openai-completions"
+	p["api_mode"] = inferenceAPIMode
 	p["base_url"] = b.Endpoint
 	if b.APIKey != "" {
 		p["api_key"] = b.APIKey
@@ -309,11 +409,11 @@ func adoptDefaultModel(doc map[string]any, defaultModel string) {
 		return
 	}
 	model := mapAt(doc, "model")
-	if existing, ok := model["provider"]; ok && existing != nil && existing != "" {
+	if existing, ok := model["provider"].(string); ok && existing != "" {
 		return
 	}
-	model["provider"] = "custom"
-	model["model"] = inferenceProviderKey + "/" + defaultModel
+	model["provider"] = inferenceProviderSlug
+	model["model"] = defaultModel
 }
 
 // stripInference removes the Bloud-managed provider block, and the model
@@ -321,11 +421,11 @@ func adoptDefaultModel(doc map[string]any, defaultModel string) {
 // model pointing somewhere else is left alone, so removing Bloud's inference
 // cannot break a configuration the operator built by hand.
 func stripInference(doc map[string]any) {
-	providers, ok := doc["providers"].(map[string]any)
+	providers, ok := doc[inferenceProvidersKey].(map[string]any)
 	if ok {
 		delete(providers, inferenceProviderKey)
 		if len(providers) == 0 {
-			delete(doc, "providers")
+			delete(doc, inferenceProvidersKey)
 		}
 	}
 
@@ -335,7 +435,7 @@ func stripInference(doc map[string]any) {
 	}
 	active, _ := model["model"].(string)
 	provider, _ := model["provider"].(string)
-	if provider != "custom" || !strings.HasPrefix(active, inferenceProviderKey+"/") {
+	if provider != inferenceProviderSlug || active == "" {
 		return
 	}
 	delete(model, "model")

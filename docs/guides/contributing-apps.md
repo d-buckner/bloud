@@ -377,6 +377,60 @@ Both provider outputs are guaranteed complete when non-nil: if `SSOEnabled`
 is true and your strategy is `ldap`, `state.LDAP` has everything you need;
 same for `state.OIDC` with `native-oidc`.
 
+### Writing a managed file into a directory the app owns
+
+A configurator that writes a config file into the app's own data directory has
+to survive the uid mapping. Under rootless podman the container's uid is a
+subordinate host uid: a file the container created is owned by `100000+uid` on
+the host, and a directory the container has chowned is not yours to `chmod`
+(`EPERM`). `managedfile.Write` creates its temp file *inside* the target
+directory, so the **directory** has to be writable by the host agent, not just
+the file.
+
+Three ways catalog apps handle it, in order of preference:
+
+1. **Ask the app to set the mode itself.** If the image has a container or
+   umask knob, declare it in `metadata.yaml` and let the container apply it on
+   every boot. `apps/hermes` does this with `HERMES_CONTAINER=1` plus
+   `HERMES_HOME_MODE=0777`, because Hermes tightens `$HERMES_HOME` to `0700`
+   and its container probe does not recognize podman. This is the only variant
+   that survives an app which re-tightens on every start.
+2. **Open the directory from the host** with
+   `managedfile.EnsureWritable(dir, 0o777)`, which leaves a directory the
+   container already took over alone instead of failing on `EPERM`. That is
+   what the LSIO apps do (`apps/radarr`, `apps/sonarr`, `apps/qbittorrent`),
+   and it works as long as the app does not narrow the mode afterwards.
+3. **Pick a file mode the app's uid can read.** `managedfile.ModeSharedConfig`
+   (0644) rather than `ModeHostOnly` (0600) whenever the container reads the
+   file as a different uid; see the mode doc in `pkg/managedfile`.
+
+Do not reach for `--userns=keep-id` to make the uids agree. The specific form
+that would help (`keep-id:uid=N`) is not expressible through the libpod create
+API, and where plain `keep-id` collides with an app that remaps its own user it
+breaks that app's boot outright. The measurements are in
+[`apps/hermes/INTEGRATION.md`](../../apps/hermes/INTEGRATION.md).
+
+**Writing is only half of it.** The three patterns above make the directory
+accept a new file. They say nothing about reading the file back, and an app
+that chowns a config file to itself at `0640` on every boot leaves the host
+agent unable to read the file it wrote: the owner is a subordinate uid and
+the group is the matching subgid, so neither the owner bit nor the group bit
+helps. `apps/hermes` covers that with a read fallback through the container
+(`Deps.Exec`, running `base64` on the in-container path) while the write
+stays on the shared `managedfile` path. Two rules make that safe:
+
+- Encode the payload (`base64`) rather than catting it. `Deps.Exec` is a
+  combined stdout+stderr channel, so a runtime warning would otherwise land
+  inside the file's bytes. Encoded, contamination fails the decode instead of
+  being merged and written back over the real config.
+- Address the file by its **in-container** path, not the host path. The host
+  path does not exist inside the container, so a drift there silently reads
+  nothing. Keep the two paths as named constants and assert the argv.
+
+This needs the container to be running, so it only works for an app with a
+restart policy that brings it up ahead of the first reconciliation pass.
+Where there is nothing to read through, fail the pass and name the cause.
+
 ### Integrating with another app
 
 An app that wires itself to a *catalog* provider (anything you declare under

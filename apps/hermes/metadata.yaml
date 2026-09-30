@@ -78,6 +78,23 @@ containers:
       # dashboard.public_url, and the self-hosted OIDC provider it writes into
       # config.yaml satisfies it.
       HERMES_DASHBOARD_HOST: "127.0.0.1"
+      # The data-directory permission contract. Hermes secures $HERMES_HOME to
+      # 0700 for a bare-metal install, and the host agent cannot undo that from
+      # outside: the directory belongs to the container's uid mapped into the
+      # rootless podman subuid range, so chmod against it is EPERM. Both vars
+      # are upstream's own opt-outs; see INTEGRATION.md.
+      #
+      # Hermes' container probe reads /.dockerenv and the cgroup markers
+      # "docker", "lxc", "kubepods". Podman matches none of them, so under
+      # podman Hermes treats the install as bare-metal. This says otherwise.
+      HERMES_CONTAINER: "1"
+      # The mode Hermes re-applies to $HERMES_HOME on every start. 0777
+      # because the host agent is neither owner nor group member of the
+      # container's mapped subuid, so only the world-write bit lets it create
+      # the temp file that managedfile.Write renames into place. Applied on
+      # every boot, which is what makes it hold: a one-shot chmod from the
+      # host is re-tightened by the next container start.
+      HERMES_HOME_MODE: "0777"
     volumes:
       - source: "{{appDataDir}}/data"
         destination: /opt/data
