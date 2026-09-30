@@ -185,7 +185,7 @@
 				{#if models.length > 0}
 					<select id="ai-model" bind:value={defaultModel} disabled={saving}>
 						<option value="">(none)</option>
-						{#each models as model}
+						{#each models as model (model)}
 							<option value={model}>{model}</option>
 						{/each}
 					</select>
@@ -221,7 +221,7 @@
 		<div class="served-to">
 			<h3>Served to</h3>
 			<ul>
-				{#each servedTo as consumer}
+				{#each servedTo as consumer (consumer.app)}
 					<li>
 						<span class="consumer-name">{consumer.app}</span>
 						<span class="via via-{consumer.via}">{consumer.via}</span>

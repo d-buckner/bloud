@@ -40,10 +40,12 @@ type ChoiceOption struct {
 }
 
 // choiceOption projects a compatible-provider declaration into the UI-facing
-// choice shape. Explicit rather than a struct conversion, so adding a field to
-// CompatibleApp is a deliberate decision here instead of a compile break.
+// choice shape. The conversion is deliberate rather than a field-by-field
+// literal: Go ignores struct tags when converting, so the differing yaml tags
+// on CompatibleApp do not block it, and adding a field to either struct breaks
+// this line instead of silently going un-carried.
 func choiceOption(c CompatibleApp) ChoiceOption {
-	return ChoiceOption{App: c.App, Source: c.Source, Default: c.Default, Category: c.Category}
+	return ChoiceOption(c)
 }
 
 // RemovePlan describes what will happen when removing an app

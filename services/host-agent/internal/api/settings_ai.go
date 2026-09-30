@@ -279,7 +279,7 @@ func fetchModels(ep inference.Endpoint, apiKey string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not reach %s: %w", ep.ModelsURL(), err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read-only response body; nothing to act on
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
