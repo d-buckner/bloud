@@ -195,7 +195,7 @@ func TestApplySetHostsIntentWithHTTPS(t *testing.T) {
 
 	orch.applySetHostsIntent(NewSetHostsIntent(
 		[]string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com",
-	).WithSchemes(map[string]string{"bloud.example.com": "https"}))
+	).WithSchemes(map[string]hostset.Scheme{"bloud.example.com": hostset.SchemeHTTPS}))
 
 	hs := state.Get()
 	assert.Equal(t, "bloud.example.com", hs.Primary())
@@ -232,7 +232,7 @@ func TestApplySetHostsIntentSchemeOnlyChangeIsNotANoOp(t *testing.T) {
 
 	orch.applySetHostsIntent(NewSetHostsIntent(
 		[]string{"localhost", "bloud.local", "bloud.example.com"}, "bloud.example.com",
-	).WithSchemes(map[string]string{"bloud.example.com": "https"}))
+	).WithSchemes(map[string]hostset.Scheme{"bloud.example.com": hostset.SchemeHTTPS}))
 
 	assert.Equal(t, "https://bloud.example.com", state.Get().PrimaryBaseURL())
 	assert.True(t, changed, "a scheme-only change must fire OnHostsChanged")

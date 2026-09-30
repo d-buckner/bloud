@@ -1039,6 +1039,11 @@ func (o *Orchestrator) applyIssuerExtraHost(spec *containerruntime.Spec, appCata
 		return
 	}
 	ehost := o.hosts.Get().IssuerExtraHost()
+	if ehost == "" {
+		// A https issuer gets no pin: the container resolves the real public
+		// name and reaches the TLS terminator that serves it.
+		return
+	}
 	if !hasExtraHost(spec.ExtraHosts, ehost) {
 		spec.ExtraHosts = append(spec.ExtraHosts, ehost)
 	}

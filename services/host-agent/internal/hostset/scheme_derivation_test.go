@@ -67,11 +67,12 @@ func derivationCases() []derivationCase {
 			wantPublicScheme:   SchemeHTTPS,
 			wantPrimaryBaseURL: "https://bloud.example.com",
 			wantIssuerBaseURL:  "https://bloud.example.com",
-			wantIssuerExtra:    "bloud.example.com:host-gateway",
+			wantIssuerExtra:    "",
 			wantBaseURLs:       []string{"https://bloud.example.com", "http://localhost:8080", "http://bloud.local"},
-			// Correct derivation, still not deployable: the container hop is
-			// plain HTTP, so the https issuer cannot match on both hops.
-			wantIssueCodes: []string{"https_issuer_no_tls_at_gateway"},
+			// Correct derivation, and deployable: with no gateway pin the
+			// container resolves the public name and reaches the terminator,
+			// so the https issuer matches on both hops.
+			wantIssueCodes: nil,
 		},
 		{
 			// The Layer 2 gap. This is the path a real operator takes: they add
@@ -86,9 +87,9 @@ func derivationCases() []derivationCase {
 			wantPublicScheme:   SchemeHTTPS,
 			wantPrimaryBaseURL: "https://bloud.example.com",
 			wantIssuerBaseURL:  "https://bloud.example.com",
-			wantIssuerExtra:    "bloud.example.com:host-gateway",
+			wantIssuerExtra:    "",
 			wantBaseURLs:       []string{"https://bloud.example.com", "http://localhost:8080", "http://bloud.local"},
-			wantIssueCodes:     []string{"https_issuer_no_tls_at_gateway"},
+			wantIssueCodes:     nil,
 		},
 		{
 			// Same as above but with TLS where the container lands: the pair is
@@ -102,7 +103,7 @@ func derivationCases() []derivationCase {
 			wantPublicScheme:   SchemeHTTPS,
 			wantPrimaryBaseURL: "https://bloud.example.com",
 			wantIssuerBaseURL:  "https://bloud.example.com",
-			wantIssuerExtra:    "bloud.example.com:host-gateway",
+			wantIssuerExtra:    "",
 			wantBaseURLs:       []string{"https://bloud.example.com", "http://localhost:8080", "http://bloud.local"},
 		},
 		{
@@ -116,9 +117,9 @@ func derivationCases() []derivationCase {
 			wantPublicScheme:   SchemeHTTPS,
 			wantPrimaryBaseURL: "https://bloud.example.com:8443",
 			wantIssuerBaseURL:  "https://bloud.example.com:8443",
-			wantIssuerExtra:    "bloud.example.com:host-gateway",
+			wantIssuerExtra:    "",
 			wantBaseURLs:       []string{"https://bloud.example.com:8443", "http://localhost:8080", "http://bloud.local"},
-			wantIssueCodes:     []string{"https_issuer_no_tls_at_gateway"},
+			wantIssueCodes:     nil,
 		},
 	}
 }
@@ -289,7 +290,7 @@ func TestWithSchemeIgnoresUnrecognizedValue(t *testing.T) {
 // into an afternoon of guessing.
 func TestDeployabilityMessageNamesTheConcreteCause(t *testing.T) {
 	hs, err := Resolve(Input{
-		Stored:       []StoredHost{{Hostname: "bloud.example.com", Primary: true}},
+		Stored:       []StoredHost{{Hostname: "nas.local", Primary: true}},
 		PublicScheme: "https",
 	})
 	if err != nil {
@@ -301,9 +302,9 @@ func TestDeployabilityMessageNamesTheConcreteCause(t *testing.T) {
 	}
 	msg := issues[0].Message
 	for _, must := range []string{
-		"https://bloud.example.com", // the issuer that cannot be matched
-		"host-gateway",              // the pin the container actually dials
-		"plain HTTP",                // what is served there
+		"https://nas.local", // the issuer that cannot be reached
+		"nas.local",         // the hostname the container must resolve
+		"TLS terminator",    // what it has to reach
 	} {
 		if !strings.Contains(msg, must) {
 			t.Errorf("message %q must name %q so the cause is identifiable", msg, must)

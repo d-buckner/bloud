@@ -27,6 +27,15 @@ func mustResolve(t *testing.T, in Input) HostSet {
 	return hs
 }
 
+// orDefault returns v, or fallback when v is empty. Used by the signature
+// table so a row only names a host when it differs from the ordinary case.
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
+}
+
 func schemeOf(t *testing.T, raw string) string {
 	t.Helper()
 	u, err := url.Parse(raw)
@@ -70,13 +79,24 @@ func TestCanary_SchemeActuallyChangesDerivedURLs(t *testing.T) {
 // A Deployability that always returns nil is worse than no diagnostic at all,
 // because it reads as "checked and fine". A Deployability that always fires is
 // equally useless and gets ignored. Both directions are pinned.
+//
+// The undeployable case is a https issuer on a name no container can resolve to
+// a TLS endpoint (.local is mDNS). A https issuer on an ordinary public name is
+// deployable: the container resolves it and reaches the terminator, which is
+// what IssuerExtraHost changed to make true.
 func TestCanary_DeployabilityFiresOnlyWhenUndeployable(t *testing.T) {
-	tlsNoGateway := New([]string{"a.test"}, "a.test").WithScheme("a.test", SchemeHTTPS)
-	if len(tlsNoGateway.Deployability(false)) == 0 {
-		t.Fatal("a https issuer with no TLS at the host gateway must be reported")
+	tlsResolvable := New([]string{"a.test"}, "a.test").WithScheme("a.test", SchemeHTTPS)
+	if len(tlsResolvable.Deployability(false)) != 0 {
+		t.Fatalf("a https issuer on a resolvable public name is deployable, got %v",
+			tlsResolvable.Deployability(false))
 	}
-	if len(tlsNoGateway.Deployability(true)) != 0 {
+	if len(tlsResolvable.Deployability(true)) != 0 {
 		t.Fatal("a https issuer with TLS at the host gateway is deployable and must not be reported")
+	}
+
+	tlsUnresolvable := New([]string{"bloud.local"}, "bloud.local").WithScheme("bloud.local", SchemeHTTPS)
+	if len(tlsUnresolvable.Deployability(false)) == 0 {
+		t.Fatal("a https issuer on a name containers cannot resolve to a TLS endpoint must be reported")
 	}
 
 	plain := New([]string{"a.test"}, "a.test")
@@ -130,10 +150,12 @@ func TestCanary_HTTPSSchemeNeverSilentlyDowngradesTheIssuer(t *testing.T) {
 // This is the thing that turns "SSO does not work behind my proxy" into a
 // one-line answer.
 func TestCanary_ConsistencyNamesTheRightLayer(t *testing.T) {
+
 	nets := []string{"192.168.1.7"}
 
 	cases := []struct {
 		name         string
+		host         string
 		scheme       string
 		proxyNets    []string
 		tlsAtTraefik bool
@@ -167,22 +189,36 @@ func TestCanary_ConsistencyNamesTheRightLayer(t *testing.T) {
 		},
 		{
 			// Layer 3. Trust scope and derivation are both right; the
-			// container hop cannot match the issuer string.
-			name:         "https and trusted proxy, but no TLS at the gateway (layer 3)",
+			// container hop cannot reach the issuer. A resolvable public
+			// name is fine (the container resolves the terminator), so the
+			// broken case is a special-use name no container can resolve.
+			name:         "https and trusted proxy, but the issuer host is not resolvable (layer 3)",
+			host:         "nas.local",
 			scheme:       "https",
 			proxyNets:    nets,
 			tlsAtTraefik: false,
-			wantCodes:    []string{"https_issuer_no_tls_at_gateway"},
+			wantCodes:    []string{"https_issuer_host_not_resolvable"},
+		},
+		{
+			// A https issuer on a real public name, with the proxy trusted,
+			// is the working topology: nothing to report.
+			name:         "https, trusted proxy, resolvable issuer: nothing to report",
+			host:         "bloud.example.com",
+			scheme:       "https",
+			proxyNets:    nets,
+			tlsAtTraefik: false,
+			wantCodes:    nil,
 		},
 		{
 			// Layers 1 and 3 wrong together, and both must be reported. A
 			// diagnostic that stops at the first issue sends the operator to
 			// fix one thing and come back for the other.
 			name:         "layers 1 and 3 wrong at once",
+			host:         "nas.local",
 			scheme:       "https",
 			proxyNets:    nil,
 			tlsAtTraefik: false,
-			wantCodes:    []string{"https_without_trusted_proxy_nets", "https_issuer_no_tls_at_gateway"},
+			wantCodes:    []string{"https_without_trusted_proxy_nets", "https_issuer_host_not_resolvable"},
 		},
 		{
 			// The plain-http no-proxy deployment is a valid configuration,
@@ -199,7 +235,7 @@ func TestCanary_ConsistencyNamesTheRightLayer(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			hs := mustResolve(t, Input{
-				Stored:       []StoredHost{{Hostname: "bloud.example.com", Primary: true}},
+				Stored:       []StoredHost{{Hostname: orDefault(tc.host, "bloud.example.com"), Primary: true}},
 				PublicScheme: tc.scheme,
 			})
 			got := issueCodes(hs.ProxyConsistency(tc.proxyNets, tc.tlsAtTraefik))
@@ -224,7 +260,7 @@ func TestCanary_ConsistencyNamesTheRightLayer(t *testing.T) {
 // diagnostic that says "inconsistent" without a setting name is a second bug.
 func TestCanary_EveryIssueNamesAnActionableSetting(t *testing.T) {
 	hs := mustResolve(t, Input{
-		Stored:       []StoredHost{{Hostname: "bloud.example.com", Primary: true}},
+		Stored:       []StoredHost{{Hostname: "nas.local", Primary: true}},
 		PublicScheme: "https",
 	})
 	issues := hs.ProxyConsistency(nil, false)
@@ -237,7 +273,7 @@ func TestCanary_EveryIssueNamesAnActionableSetting(t *testing.T) {
 		}
 		namesSetting := strings.Contains(is.Message, "BLOUD_TRUSTED_PROXY_NETS") ||
 			strings.Contains(is.Message, "Traefik") ||
-			strings.Contains(is.Message, "host-gateway")
+			strings.Contains(is.Message, "primary host")
 		if !namesSetting {
 			t.Errorf("issue %s (%q) must name the setting or component to change", is.Code, is.Message)
 		}

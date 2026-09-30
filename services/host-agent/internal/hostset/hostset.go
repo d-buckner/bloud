@@ -383,9 +383,26 @@ func (h HostSet) IssuerHost() string {
 	return h.primary
 }
 
-// IssuerExtraHost is the host:target pair for app container extraHosts so
-// the issuer hostname resolves to the machine running Traefik.
+// IssuerExtraHost is the host:target pair for app container extraHosts, or
+// "" when the container must resolve the issuer itself.
+//
+// The pin exists for a plain-HTTP issuer: it points the issuer hostname at
+// the host gateway so the container reaches Traefik directly without
+// hairpinning through a router. Under a https issuer that pin is wrong. The
+// TLS terminator is not this box - it is whatever public host the name
+// resolves to - and Bloud serves no certificate at the gateway, so pinning
+// sends the container to a port nothing answers on TLS. Verified against a
+// real proxied deployment: with the pin the container dials the gateway and
+// the connection is refused; without it the name resolves to the
+// terminator and discovery succeeds.
+//
+// So an https issuer gets no pin, and the container reaches it over real
+// DNS. That makes a proxied https issuer deployable without TLS at Traefik,
+// which is the gap Deployability used to report as uncloseable.
 func (h HostSet) IssuerExtraHost() string {
+	if h.PublicScheme() == SchemeHTTPS {
+		return ""
+	}
 	return h.IssuerHost() + ":host-gateway"
 }
 
@@ -463,30 +480,58 @@ type Issue struct {
 // are handed to, if that is true. Empty means every derived URL is reachable.
 //
 // The case this exists for is a https issuer behind a TLS-terminating proxy.
-// OIDC requires the issuer string to be byte-identical on every hop, so the
-// browser and the app container must both be able to reach the same URL. The
-// container reaches the issuer hostname through the IssuerExtraHost pin, which
-// lands on the host gateway so it never has to hairpin through a router or rely
-// on split-horizon DNS. Bloud serves plain HTTP there, on the Traefik port and
-// the compat port, and ships no certificate resolver. A https issuer therefore
-// asks the container to dial TLS at an address where Bloud serves none, and
-// discovery fails with nothing in the login flow that names the cause.
+// Deployability reports why the derived URLs cannot be reached by the party they
+// are handed to, if that is true. Empty means every derived URL is reachable.
 //
-// tlsAtTraefik records whether the deployment terminates TLS where the
-// container actually lands. It is false for every topology Bloud ships today,
-// which is the honest answer: a https public scheme is not deployable until TLS
-// at Traefik lands. Reporting that at startup beats a stalled login later.
+// The case this was written for was a https issuer whose container hop could not
+// match the issuer string. That gap is closed by the dial plan: under https the
+// container gets no host-gateway pin (see IssuerExtraHost) and reaches the
+// issuer by resolving the real public name, which lands on the TLS terminator
+// that actually serves it. A proxied https deployment is therefore deployable
+// without TLS at Traefik.
+//
+// What is still genuinely undeployable is a https issuer whose hostname no
+// container can resolve to a TLS endpoint. A special-use name - .local, or a
+// loopback-derived name - resolves inside a container to mDNS or to nothing, so
+// the terminator is unreachable no matter what the scheme says. That is a
+// misconfiguration worth naming rather than a stalled login later.
+//
+// tlsAtTraefik records whether the deployment terminates TLS at Traefik. When
+// it does, the gateway hop is valid too, so nothing is reported.
 func (h HostSet) Deployability(tlsAtTraefik bool) []Issue {
 	if h.PublicScheme() != SchemeHTTPS || tlsAtTraefik {
 		return nil
 	}
-	return []Issue{{
-		Code: "https_issuer_no_tls_at_gateway",
-		Message: fmt.Sprintf(
-			"issuer %s is https, but app containers reach %s through %s, where Bloud serves plain HTTP. "+
-				"OIDC requires the issuer to match on both hops, so container discovery will fail until TLS terminates at Traefik.",
-			h.IssuerBaseURL(), h.IssuerHost(), h.IssuerExtraHost()),
-	}}
+	issuer := h.IssuerHost()
+	if !resolvableFromContainer(issuer) {
+		return []Issue{{
+			Code: "https_issuer_host_not_resolvable",
+			Message: fmt.Sprintf(
+				"issuer %s is https, but app containers must reach it by resolving %s, a special-use name that "+
+					"does not point at a TLS endpoint from inside a container. Point the primary host at a name that "+
+					"resolves to the TLS terminator.",
+				h.IssuerBaseURL(), issuer),
+		}}
+	}
+	return nil
+}
+
+// resolvableFromContainer reports whether a container can resolve host to a
+// real network endpoint. .local is mDNS (not reachable from a container's
+// resolver) and the localhost family names the container's own loopback, so
+// neither reaches a remote TLS terminator.
+func resolvableFromContainer(host string) bool {
+	host = Normalize(host)
+	if host == "" {
+		return false
+	}
+	if strings.HasSuffix(host, ".local") {
+		return false
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	return true
 }
 
 // Resolve computes the effective host set at startup from stored (admin)
