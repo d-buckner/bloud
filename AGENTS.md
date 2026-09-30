@@ -521,6 +521,17 @@ combined with instance/SSH-target env vars). Instance overrides:
    `TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme`, and
    `TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort`.
 
+   **The agent's own port is never a public address.** First-run adoption
+   reads the request's `Host` so a browser on `:8443` gets a redirect URI for
+   `:8443`, but a first admin created through the loopback API arrives as
+   `Host: localhost:3000`, which says nothing about public reachability.
+   Adopting it stores an origin that every later OAuth redirect is refused on,
+   because login on the agent bind port is exactly what
+   `isDirectAgentRequest` rejects, so the install cannot log itself in. The
+   adoption guard compares the observed port to the agent's own and keeps the
+   existing address when they match. Pinned by
+   `TestCreateFirstUser_NeverAdoptsTheAgentPort`.
+
    Issuer: `http://sso.localhost:8080` for a localhost public URL
    (containers resolve `sso.localhost` via `extraHosts`), otherwise the
    public URL itself. Under a **https** issuer the orchestrator emits **no**

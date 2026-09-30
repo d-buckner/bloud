@@ -44,7 +44,11 @@ type settingsModule struct {
 	authConfig      *AuthRef
 	hostState       *hostset.State
 	settingsStore   store.SettingsStoreInterface
-	logger          *slog.Logger
+	// selfPort is host-agent's own bind port. First-run adoption needs it to
+	// tell a browser origin apart from an automation origin; see
+	// adoptFirstRunHost.
+	selfPort int
+	logger   *slog.Logger
 }
 
 // NewSettingsModule creates a new SettingsModule.
@@ -57,6 +61,7 @@ func NewSettingsModule(
 	authConfig *AuthRef,
 	hostState *hostset.State,
 	settingsStore store.SettingsStoreInterface,
+	selfPort int,
 	logger *slog.Logger,
 ) *settingsModule {
 	return &settingsModule{
@@ -68,6 +73,7 @@ func NewSettingsModule(
 		authConfig:      authConfig,
 		hostState:       hostState,
 		settingsStore:   settingsStore,
+		selfPort:        selfPort,
 		logger:          logger,
 	}
 }
@@ -327,12 +333,30 @@ func (m *settingsModule) adoptFirstRunHost(r *http.Request) string {
 	if m.orch == nil || m.hostState == nil {
 		return ""
 	}
-	// The Host header keeps the port the browser used, and that port is part of
+	// The Host header keeps the port the client used, and that port is part of
 	// the origin the redirect URI has to match. hostOnly() strips it, which is
 	// right for matching a hostname and wrong here: adopting
 	// http://bloud.example.com when the operator is on :8443 registers a
 	// redirect URI for a port nothing serves.
+	//
+	// The exception is this process's own port, and it is the important one.
+	// A first admin created through the loopback API (the CLI, the e2e
+	// harness, any automation) arrives with Host: localhost:3000, which says
+	// nothing about where the instance is publicly reachable: :3000 is the
+	// internal ops bind, never a public entrypoint. Adopting it stores an
+	// address that every later OAuth redirect is refused on, because login on
+	// the agent port is exactly what isDirectAgentRequest rejects, so the
+	// install ends up unable to log itself in. The browser-origin rule stops
+	// here and the existing address is kept.
 	observed, err := hostset.ParsePublicURL(string(requestScheme(r)) + "://" + r.Host)
+	if err != nil {
+		return ""
+	}
+	if m.selfPort > 0 && observed.Port == m.selfPort {
+		m.logger.Info("not adopting the agent's own port as the public address",
+			"observed", observed.Origin(), "agentPort", m.selfPort)
+		return ""
+	}
 	if err != nil {
 		return ""
 	}

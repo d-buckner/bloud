@@ -213,7 +213,7 @@ func NewRouter(
 	remoteAppStore := deps.remoteAppStore
 	remoteAppsMod := NewRemoteAppsModule(remoteAppStore, catalogCache, orchCaller, logger)
 
-	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, cfg.Hosts, cfg.Settings, logger)
+	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, cfg.Hosts, cfg.Settings, cfg.Port, logger)
 
 	gateway := sharing.NewGatewayManager(nil, nil, func() string { return "" }, sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
 	sharingMod := NewSharingModule(

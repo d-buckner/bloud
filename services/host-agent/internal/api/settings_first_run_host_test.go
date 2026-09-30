@@ -116,6 +116,38 @@ func TestCreateFirstUser_NoAdoptionWhenAlreadySet(t *testing.T) {
 	assert.Equal(t, 0, mod.orch.(*FakeOrchestrator).IntentCount())
 }
 
+// The regression this pins: a first admin created through the loopback API
+// arrives with Host: localhost:3000, which is host-agent's own bind port and
+// not a public entrypoint. Adopting it stored http://localhost:3000 as the
+// public address, so every later OAuth redirect pointed at the agent port,
+// where login is refused outright by isDirectAgentRequest. The install could
+// no longer log itself in, and the browser showed nothing but the
+// "Login isn't available on this port" error where the catalog should be.
+//
+// The rule is that the agent's own port is never a public address, so the
+// existing address is kept and no intent is submitted.
+func TestCreateFirstUser_NeverAdoptsTheAgentPort(t *testing.T) {
+	mod := newFirstRunModule(t, "http://localhost:8080")
+
+	w := postCreateFirstUser(t, mod, "localhost:3000")
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeCreateUser(t, w).AdoptedURL,
+		"the agent's own port must never be adopted as the public address")
+	assert.Equal(t, 0, mod.orch.(*FakeOrchestrator).IntentCount(),
+		"adopting the agent port would re-provision SSO onto an unusable origin")
+	assert.Equal(t, "http://localhost:8080", mod.hostState.Get().PrimaryBaseURL())
+}
+
+// The guard keys on the port, not on the hostname: a request on some other
+// port still adopts, even on localhost. Only the agent's own port is excluded.
+func TestCreateFirstUser_AdoptsOtherPortsOnLocalhost(t *testing.T) {
+	mod := newFirstRunModule(t, "http://localhost:8080")
+
+	w := postCreateFirstUser(t, mod, "localhost:8443")
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "http://localhost:8443", decodeCreateUser(t, w).AdoptedURL)
+}
+
 // localhost is the default address, so a local first run adopts nothing.
 func TestCreateFirstUser_NoAdoptionForLocalhostOrigin(t *testing.T) {
 	mod := newFirstRunModule(t, "http://localhost:8080")
