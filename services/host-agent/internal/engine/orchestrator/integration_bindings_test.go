@@ -95,6 +95,9 @@ func bindingsOrchestrator(t *testing.T, appStore *FakeAppStore, apps ...*catalog
 		newTestLogger(),
 		OrchestratorConfig{AppStore: appStore, Secrets: secrets},
 	)
+	// Every binding test gets a settings store so the instance can act as a
+	// contract provider; an empty map reads as "nothing configured".
+	orch.settings = newFakeSettings()
 	return orch, secrets
 }
 

@@ -162,6 +162,36 @@ func NewSetPublicURLIntent(rawURL string) SetPublicURLIntent {
 	return SetPublicURLIntent{intentBase: newIntentBase(), URL: rawURL}
 }
 
+// SetInferenceIntent requests changing the instance's AI configuration: the
+// upstream list, the default model every consumer adopts unless it has chosen
+// its own, and optionally the upstream credential.
+//
+// The credential is a *string because the API distinguishes "leave what is
+// stored alone" (nil) from "clear it" (pointer to an empty string), and a plain
+// string cannot carry that difference. It travels here rather than being written
+// by the handler so the secrets manager is only ever touched by the
+// orchestrator, which is the single writer.
+type SetInferenceIntent struct {
+	intentBase
+	// UpstreamsJSON is the encoded inference.Upstream list.
+	UpstreamsJSON string
+	// DefaultModel is the instance default model id.
+	DefaultModel string
+	// APIKey is the upstream credential. nil keeps the stored value.
+	APIKey *string
+}
+
+func (SetInferenceIntent) intentMarker() {}
+
+func NewSetInferenceIntent(upstreamsJSON, defaultModel string, apiKey *string) SetInferenceIntent {
+	return SetInferenceIntent{
+		intentBase:    newIntentBase(),
+		UpstreamsJSON: upstreamsJSON,
+		DefaultModel:  defaultModel,
+		APIKey:        apiKey,
+	}
+}
+
 // Compile-time assertions that all types implement Intent.
 var (
 	_ Intent = InstallAppIntent{}

@@ -35,6 +35,8 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applyRenameAppIntent(i)
 		case SetPublicURLIntent:
 			o.applySetPublicURLIntent(i)
+		case SetInferenceIntent:
+			o.applySetInferenceIntent(i)
 		default:
 			o.logger.Warn("unhandled intent type in drain phase", "type", intentTypeName(intent))
 		}
@@ -726,6 +728,13 @@ func computeAppDeps(apps map[string]*store.InstalledApp, catalogCache catalog.Ca
 				continue
 			}
 			for _, compatible := range integration.Compatible {
+				// An instance provider has no container and therefore no
+				// node to order. Filtering on the source rather than relying
+				// on `apps[""]` missing keeps the invariant explicit: the
+				// graph never gains a phantom node for a setting.
+				if compatible.Source == catalog.InstanceProviderSource {
+					continue
+				}
 				if _, installed := apps[compatible.App]; installed {
 					deps[name] = append(deps[name], compatible.App)
 				}
@@ -756,6 +765,8 @@ func intentTypeName(intent Intent) string {
 		return "ClearAppData"
 	case SetPublicURLIntent:
 		return "SetPublicURL"
+	case SetInferenceIntent:
+		return "SetInference"
 	default:
 		return "Unknown"
 	}

@@ -154,6 +154,13 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		stripOIDC(doc)
 	}
 
+	binding, hasInference := inferenceBinding(state)
+	if hasInference {
+		applyInference(doc, binding)
+	} else {
+		stripInference(doc)
+	}
+
 	want, err := yaml.Marshal(doc)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("serializing %s: %w", cfgPath, err)
@@ -167,7 +174,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return configurator.NoRestart(), fmt.Errorf("writing %s: %w", cfgPath, err)
 	}
 	if changed {
-		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive)
+		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference)
 	}
 	return configurator.RestartIf(changed, "Hermes config rewritten"), nil
 }
@@ -239,6 +246,102 @@ func stripOIDC(doc map[string]any) {
 	}
 	if len(dash) == 0 {
 		delete(doc, "dashboard")
+	}
+}
+
+// inferenceProviderKey is the named provider entry Bloud registers in Hermes'
+// config.yaml. Hermes selects a named provider as custom:<key>, so the operator
+// can see and switch away from it in the dashboard rather than inheriting an
+// invisible default.
+const inferenceProviderKey = "bloud"
+
+// inferenceBinding pulls the resolved inference binding out of the app state.
+// A consumer with no binding has nothing to point at, which is different from a
+// binding with an empty endpoint: the latter is a misconfiguration the resolver
+// would not have produced.
+func inferenceBinding(state *configurator.AppState) (configurator.InferenceBinding, bool) {
+	if state == nil || len(state.Integrations.Inference) == 0 {
+		return configurator.InferenceBinding{}, false
+	}
+	b := state.Integrations.Inference[0]
+	if b.Endpoint == "" {
+		return configurator.InferenceBinding{}, false
+	}
+	return b, true
+}
+
+// applyInference registers the Bloud provider block and adopts the instance
+// default model only where Hermes has not chosen one.
+//
+// The provider block is always written when a binding exists, even if the
+// operator has pointed Hermes somewhere else: keeping it registered means the
+// operator can switch back in the dashboard without re-entering an endpoint.
+// The model selection is the part that respects an existing choice, because
+// silently replacing a model an operator picked is the failure mode that makes
+// a managed default unwelcome.
+func applyInference(doc map[string]any, b configurator.InferenceBinding) {
+	providers := mapAt(doc, "providers")
+	p := mapAt(providers, inferenceProviderKey)
+	p["name"] = "Bloud"
+	p["api"] = "openai-completions"
+	p["base_url"] = b.Endpoint
+	if b.APIKey != "" {
+		p["api_key"] = b.APIKey
+	} else {
+		delete(p, "api_key")
+	}
+	if b.DefaultModel != "" {
+		p["default_model"] = b.DefaultModel
+	}
+	// Ask Hermes to keep the model list current from the endpoint rather than
+	// trusting a snapshot, so a model added upstream is reachable without a
+	// Bloud change.
+	p["discover_models"] = true
+
+	adoptDefaultModel(doc, b.DefaultModel)
+}
+
+// adoptDefaultModel sets Hermes' active model to the Bloud default only when
+// Hermes has no model selection of its own. An existing model.provider is left
+// exactly as the operator set it.
+func adoptDefaultModel(doc map[string]any, defaultModel string) {
+	if defaultModel == "" {
+		return
+	}
+	model := mapAt(doc, "model")
+	if existing, ok := model["provider"]; ok && existing != nil && existing != "" {
+		return
+	}
+	model["provider"] = "custom"
+	model["model"] = inferenceProviderKey + "/" + defaultModel
+}
+
+// stripInference removes the Bloud-managed provider block, and the model
+// selection only when that selection is the one Bloud wrote. An operator-chosen
+// model pointing somewhere else is left alone, so removing Bloud's inference
+// cannot break a configuration the operator built by hand.
+func stripInference(doc map[string]any) {
+	providers, ok := doc["providers"].(map[string]any)
+	if ok {
+		delete(providers, inferenceProviderKey)
+		if len(providers) == 0 {
+			delete(doc, "providers")
+		}
+	}
+
+	model, ok := doc["model"].(map[string]any)
+	if !ok {
+		return
+	}
+	active, _ := model["model"].(string)
+	provider, _ := model["provider"].(string)
+	if provider != "custom" || !strings.HasPrefix(active, inferenceProviderKey+"/") {
+		return
+	}
+	delete(model, "model")
+	delete(model, "provider")
+	if len(model) == 0 {
+		delete(doc, "model")
 	}
 }
 

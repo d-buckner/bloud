@@ -337,4 +337,208 @@ func nested(t *testing.T, doc map[string]any, keys ...string) map[string]any {
 	return cur
 }
 
+// inferenceState builds an AppState carrying one resolved inference binding,
+// with SSO off so the tests read only the inference effect.
+func inferenceState(dir string, b configurator.InferenceBinding) *configurator.AppState {
+	st := &configurator.AppState{DataPath: dir}
+	if b.Endpoint != "" {
+		st.Integrations.Inference = []configurator.InferenceBinding{b}
+	}
+	return st
+}
+
+func TestPreStartWritesInferenceProvider(t *testing.T) {
+	dir := t.TempDir()
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+	})
+	state := inferenceState(dir, configurator.InferenceBinding{
+		Endpoint:     "https://api.example.com/v1",
+		APIKey:       "sk-test",
+		DefaultModel: "gpt-4o-mini",
+	})
+
+	changed, err := c.PreStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if !changed.RestartNeeded {
+		t.Fatal("expected changed=true when writing the inference provider")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "data", "config.yaml"))
+	if err != nil {
+		t.Fatalf("reading written config: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("written config is not valid yaml: %v", err)
+	}
+
+	p := nested(t, doc, "providers", inferenceProviderKey)
+	if p["base_url"] != "https://api.example.com/v1" {
+		t.Errorf("base_url = %v, want https://api.example.com/v1", p["base_url"])
+	}
+	if p["api_key"] != "sk-test" {
+		t.Errorf("api_key = %v, want sk-test", p["api_key"])
+	}
+	if p["default_model"] != "gpt-4o-mini" {
+		t.Errorf("default_model = %v, want gpt-4o-mini", p["default_model"])
+	}
+	if p["discover_models"] != true {
+		t.Errorf("discover_models = %v, want true", p["discover_models"])
+	}
+	model := nested(t, doc, "model")
+	if model["provider"] != "custom" || model["model"] != "bloud/gpt-4o-mini" {
+		t.Errorf("model selection = %v/%v, want custom/bloud/gpt-4o-mini", model["provider"], model["model"])
+	}
+}
+
+// TestPreStartAdoptUnlessOverridden: an operator who has already chosen a
+// model keeps it. Bloud registers the provider so it is switchable, but does
+// not replace the selection.
+func TestPreStartAdoptUnlessOverridden(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	operatorConfig := "model:\n  provider: openrouter\n  model: anthropic/claude-sonnet-4\n"
+	if err := os.WriteFile(filepath.Join(dir, "data", "config.yaml"), []byte(operatorConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+	})
+	state := inferenceState(dir, configurator.InferenceBinding{
+		Endpoint:     "https://api.example.com/v1",
+		DefaultModel: "gpt-4o-mini",
+	})
+
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+
+	raw, _ := os.ReadFile(filepath.Join(dir, "data", "config.yaml"))
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	model := nested(t, doc, "model")
+	if model["provider"] != "openrouter" || model["model"] != "anthropic/claude-sonnet-4" {
+		t.Errorf("operator model was overwritten: %v/%v", model["provider"], model["model"])
+	}
+	// The provider is still registered, so the operator can switch to it.
+	if _, ok := nested(t, doc, "providers")[inferenceProviderKey]; !ok {
+		t.Error("expected the bloud provider to stay registered")
+	}
+}
+
+func TestPreStartInferenceIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+	})
+	state := inferenceState(dir, configurator.InferenceBinding{
+		Endpoint:     "https://api.example.com/v1",
+		APIKey:       "sk-test",
+		DefaultModel: "gpt-4o-mini",
+	})
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("first PreStart: %v", err)
+	}
+	changed, err := c.PreStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("second PreStart: %v", err)
+	}
+	if changed.RestartNeeded {
+		t.Fatal("expected changed=false when the inference config already matches")
+	}
+}
+
+func TestPreStartStripsInferenceWhenNoBinding(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := "providers:\n  bloud:\n    base_url: https://old.example.com/v1\nmodel:\n  provider: custom\n  model: bloud/old-model\n"
+	if err := os.WriteFile(filepath.Join(dir, "data", "config.yaml"), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+	})
+
+	changed, err := c.PreStart(context.Background(), inferenceState(dir, configurator.InferenceBinding{}))
+	if err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if !changed.RestartNeeded {
+		t.Fatal("expected changed=true when stripping a stale provider")
+	}
+
+	raw, _ := os.ReadFile(filepath.Join(dir, "data", "config.yaml"))
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	if _, ok := doc["providers"]; ok {
+		t.Errorf("expected providers removed, got %v", doc["providers"])
+	}
+	if _, ok := doc["model"]; ok {
+		t.Errorf("expected the bloud model selection removed, got %v", doc["model"])
+	}
+}
+
+// TestStripInferenceKeepsOperatorModel: stripping Bloud's provider must not
+// touch a model selection that points somewhere else.
+func TestStripInferenceKeepsOperatorModel(t *testing.T) {
+	doc := map[string]any{
+		"providers": map[string]any{inferenceProviderKey: map[string]any{"base_url": "https://x/v1"}},
+		"model":     map[string]any{"provider": "openrouter", "model": "anthropic/claude-sonnet-4"},
+	}
+	stripInference(doc)
+
+	if _, ok := doc["providers"]; ok {
+		t.Error("expected the bloud provider removed")
+	}
+	model := doc["model"].(map[string]any)
+	if model["provider"] != "openrouter" || model["model"] != "anthropic/claude-sonnet-4" {
+		t.Errorf("operator model was disturbed: %v", model)
+	}
+}
+
+// TestPreStartNoAPIKeyWritesNoCredential: a keyless endpoint (Ollama behind a
+// gateway, say) must not leave an empty api_key that Hermes would send as a
+// blank bearer token.
+func TestPreStartNoAPIKeyWritesNoCredential(t *testing.T) {
+	dir := t.TempDir()
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+	})
+	state := inferenceState(dir, configurator.InferenceBinding{
+		Endpoint:     "http://127.0.0.1:8899/v1",
+		DefaultModel: "some-local-model",
+	})
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+
+	raw, _ := os.ReadFile(filepath.Join(dir, "data", "config.yaml"))
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	p := nested(t, doc, "providers", inferenceProviderKey)
+	if _, ok := p["api_key"]; ok {
+		t.Errorf("expected no api_key for a keyless binding, got %v", p["api_key"])
+	}
+}
+
 var _ configurator.NodeLifecycle = (*Configurator)(nil)

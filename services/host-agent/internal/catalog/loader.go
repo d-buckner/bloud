@@ -133,6 +133,11 @@ func (l *Loader) validateApp(app *App) error {
 // diagnosis for a typo in its own metadata.
 func validateIntegrations(app *App) error {
 	for name, integration := range app.Integrations {
+		for _, compatible := range integration.Compatible {
+			if err := validateCompatibleProvider(name, compatible); err != nil {
+				return err
+			}
+		}
 		if len(integration.Requires) == 0 {
 			continue
 		}
@@ -154,6 +159,27 @@ func validateIntegrations(app *App) error {
 					name, want, contract.Secrets)
 			}
 		}
+	}
+	return nil
+}
+
+// validateCompatibleProvider checks the provider discriminator on one
+// `compatible:` entry. Exactly one of `app` and `source` must name the provider:
+// both is ambiguous about which one wins, and neither resolves to nothing at all,
+// which the consumer would read as "no provider available" rather than as a
+// metadata typo.
+func validateCompatibleProvider(contract string, compatible CompatibleApp) error {
+	hasApp := strings.TrimSpace(compatible.App) != ""
+	hasSource := strings.TrimSpace(compatible.Source) != ""
+	switch {
+	case hasApp && hasSource:
+		return fmt.Errorf("integrations.%s compatible entry names both app %q and source %q; exactly one must be set",
+			contract, compatible.App, compatible.Source)
+	case !hasApp && !hasSource:
+		return fmt.Errorf("integrations.%s compatible entry names neither app nor source", contract)
+	case hasSource && compatible.Source != InstanceProviderSource:
+		return fmt.Errorf("integrations.%s compatible entry has source %q; the only source is %q (use app: to name a catalog app)",
+			contract, compatible.Source, InstanceProviderSource)
 	}
 	return nil
 }

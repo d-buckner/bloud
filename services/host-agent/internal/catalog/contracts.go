@@ -27,6 +27,16 @@ type Contract struct {
 	Secrets []string
 	// Values lists the non-secret values a provider must declare.
 	Values []ValueSpec
+	// SatisfiedBy names other contracts that can stand in for this one when no
+	// provider of it is installed. The resolver falls back to these, in order,
+	// and only when the contract itself has no installed provider: a real
+	// provider always wins, so installing a gateway retires the fallback rather
+	// than competing with it.
+	//
+	// The rule lives in the registry rather than in the resolver so the person
+	// reading a consumer's metadata can see why an unmet contract still
+	// resolves, instead of finding the exception buried in Go.
+	SatisfiedBy []string
 }
 
 // ValueSpec is one non-secret value a contract requires of a provider.
@@ -68,6 +78,39 @@ var contracts = []Contract{
 			{Key: "path", AbsolutePath: true},
 			{Key: "serverName"},
 		},
+	},
+
+	// An OpenAI-compatible upstream that something else can route to: the
+	// operator's own server (provided by the instance, through Settings) or a
+	// local model runtime (provided by an app such as Ollama). A gateway
+	// consumes this; an application does not.
+	//
+	// The contract carries no secret. A local runtime on a trusted network has
+	// no credential to publish, and making the secret mandatory would force
+	// Ollama to invent one. The instance's credential is resolved by the
+	// resolver from the secrets manager under the instance scope, not through
+	// this contract, so the binding's APIKey is empty for a keyless provider
+	// and populated for the operator's external server.
+	{
+		Name:   "modelSource",
+		Values: []ValueSpec{{Key: "path", AbsolutePath: true}},
+	},
+
+	// The endpoint an application dials: base URL, a key, a default model.
+	// Provided by a gateway app such as LiteLLM, and by promotion from any
+	// modelSource when no gateway is installed. That promotion is what lets a
+	// consumer's metadata stay identical whether it reaches a raw upstream or a
+	// gateway: adding the gateway later changes nothing on the consumer side.
+	//
+	// Only a gateway provides this contract, and a gateway always has a
+	// credential, so the secret is mandatory here even though its modelSource
+	// fallback is keyless. A promoted binding from a keyless provider simply
+	// carries an empty APIKey, which is the correct answer for Ollama.
+	{
+		Name:        "inference",
+		Secrets:     []string{"apiKey"},
+		Values:      []ValueSpec{{Key: "path", AbsolutePath: true}},
+		SatisfiedBy: []string{"modelSource"},
 	},
 }
 

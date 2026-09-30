@@ -52,3 +52,57 @@ export function setTailnet(data: SetTailnetRequest): Promise<IntentResponse> {
 export function deleteTailnet(): Promise<IntentResponse> {
 	return del<IntentResponse>('/api/settings/tailnet');
 }
+
+export interface AIUpstream {
+	id: string;
+	name: string;
+	baseUrl: string;
+	models?: string[];
+	enabled: boolean;
+}
+
+export interface AIServedTo {
+	app: string;
+	via: 'gateway' | 'direct' | 'none';
+	model?: string;
+}
+
+export interface AISettings {
+	upstreams: AIUpstream[];
+	defaultModel: string;
+	hasApiKey: boolean;
+	servedTo: AIServedTo[];
+}
+
+export interface SetAIRequest {
+	upstreams: AIUpstream[];
+	defaultModel: string;
+	/**
+	 * Omit to keep the stored credential. Send an empty string to clear it.
+	 * The API never returns the key, only `hasApiKey`.
+	 */
+	apiKey?: string;
+}
+
+export interface TestAIResponse {
+	ok: boolean;
+	models?: string[];
+	error?: string;
+}
+
+export function fetchAISettings(): Promise<AISettings> {
+	return get<AISettings>('/api/settings/ai');
+}
+
+export function setAISettings(data: SetAIRequest): Promise<IntentResponse> {
+	return put<IntentResponse>('/api/settings/ai', data);
+}
+
+/**
+ * Probe a candidate endpoint's /models. This is an operator-initiated check
+ * from the settings form, not a reconciler probe: nothing is pruned from its
+ * result, and convergence never consults it.
+ */
+export function testAIEndpoint(baseUrl: string, apiKey?: string): Promise<TestAIResponse> {
+	return post<TestAIResponse>('/api/settings/ai/test', { baseUrl, apiKey });
+}
