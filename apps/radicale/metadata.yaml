@@ -33,6 +33,16 @@ integrations:
 sso:
   strategy: ldap
 
+# What this server offers to the apps that integrate with it as a calendar
+# server. No secrets: Radicale authenticates the person with the password
+# their client sends, verified against the identity provider over LDAP, so
+# there is no machine credential here to hand out and no reason there should
+# be. The DAV root is the one fact a consumer cannot guess, so it is declared.
+provides:
+  caldav:
+    values:
+      path: /
+
 containers:
   - name: apps-radicale
     # The upstream image is built with the bcrypt, argon2, and ldap extras

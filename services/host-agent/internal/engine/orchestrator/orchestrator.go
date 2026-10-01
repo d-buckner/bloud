@@ -1549,6 +1549,16 @@ func (o *Orchestrator) bindContract(
 			Path:        o.contractValue(providerID, contract, offer, "path"),
 			Token:       o.publishedSecret(providerID, contract, offer, requires),
 		})
+	case "caldav":
+		// No secret arm: the `caldav` contract publishes none, because the
+		// credential is the person's own password and it never crosses an app
+		// boundary. The address is the whole payload, and the browser-facing
+		// half of it is the part a consumer cannot derive for itself.
+		out.CalDAVServers = append(out.CalDAVServers, configurator.CalDAVBinding{
+			ProviderRef: ref,
+			PublicURL:   o.appPublicURL(providerID),
+			Path:        offer.Values["path"],
+		})
 	default:
 		// Contracts with no payload (proxy, database) need no consumer input
 		// beyond the address, which the graph edge already encodes. A contract
@@ -1784,6 +1794,16 @@ func (o *Orchestrator) oidcInputsForApp(catalogApp *catalog.App, u ssoURLs) *sso
 
 // buildAppSubdomainURL constructs the app's subdomain URL from a base URL.
 // e.g., "http://localhost:8080" + "navidrome" → "http://navidrome.localhost:8080"
+// appPublicURL is the origin a browser dials for an installed app: the
+// instance's public address with the app's own subdomain prepended, which is
+// what Traefik's `HostRegexp(^<app>\.)` route serves. An integration binding
+// hands this to a consumer that reaches its provider through the browser rather
+// than through the container network, so the consumer never has to guess what
+// address the operator's users actually type.
+func (o *Orchestrator) appPublicURL(appID string) string {
+	return buildAppSubdomainURL(o.resolveSSOURLs().hostSet.PrimaryBaseURL(), appID)
+}
+
 func buildAppSubdomainURL(baseURL, appName string) string {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {

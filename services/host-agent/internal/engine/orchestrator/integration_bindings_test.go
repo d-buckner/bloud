@@ -10,6 +10,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 )
 
 // fakeSecrets is an in-memory AppSecretsProvider: the published bag the
@@ -402,4 +403,83 @@ func TestBuildIntegrations_MCPTokenOnlyForDeclaredRequires(t *testing.T) {
 	require.Len(t, out.MCPServers, 1)
 	assert.Empty(t, out.MCPServers[0].Token, "declaring the contract does not by itself hand over the bearer")
 	assert.Equal(t, "/mcp", out.MCPServers[0].Path, "the non-secret values are still available")
+}
+
+// A CalDAV provider hands its consumer the address and the DAV root, and no
+// credential of any kind. The contract carries no secret because the credential
+// is the person's own password, which their client sends to the provider
+// directly; nothing in Bloud's secret store is read on this path.
+func TestBuildIntegrations_CalDAVAddressOnlyNoCredential(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "calino", nil)
+	install(t, store, "radicale", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("calino", "caldav", catalog.Integration{}, "radicale"),
+		providerApp("radicale", 5232, "caldav", catalog.ContractProvides{
+			Values: map[string]string{"path": "/"},
+		}),
+	)
+	// A credential stored under the provider is still not handed over: the
+	// contract names none, so there is no field for it to arrive in.
+	secrets.publish("radicale", "apiKey", "must-not-travel")
+
+	out := orch.buildIntegrations("calino", consumerApp("calino", "caldav", catalog.Integration{}, "radicale"))
+	require.Len(t, out.CalDAVServers, 1)
+	binding := out.CalDAVServers[0]
+	assert.Equal(t, "radicale", binding.App)
+	assert.Equal(t, "apps-radicale", binding.Node)
+	assert.Equal(t, "http://apps-radicale:5232", binding.BaseURL)
+	assert.Equal(t, "/", binding.Path)
+	assert.True(t, binding.Installed)
+}
+
+// The public half of the address is the part a browser-based consumer cannot
+// derive for itself, and the container address is useless to it, so the binding
+// carries the app subdomain of the instance's live public URL.
+func TestBuildIntegrations_CalDAVPublicURLFollowsTheLiveHostSet(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "calino", nil)
+	install(t, store, "radicale", nil)
+
+	public, err := hostset.ParsePublicURL("https://home.example.com")
+	require.NoError(t, err)
+
+	cache := NewFakeCatalogCache()
+	cache.AddApp(consumerApp("calino", "caldav", catalog.Integration{}, "radicale"))
+	cache.AddApp(providerApp("radicale", 5232, "caldav", catalog.ContractProvides{
+		Values: map[string]string{"path": "/"},
+	}))
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()),
+		new(MockConfiguratorRegistry),
+		cache,
+		t.TempDir(),
+		newTestLogger(),
+		OrchestratorConfig{AppStore: store, Hosts: hostset.NewState(hostset.New(public))},
+	)
+
+	out := orch.buildIntegrations("calino", consumerApp("calino", "caldav", catalog.Integration{}, "radicale"))
+	require.Len(t, out.CalDAVServers, 1)
+	assert.Equal(t, "https://radicale.home.example.com", out.CalDAVServers[0].PublicURL)
+}
+
+// A provider that is not installed is still bound, with Installed false, so a
+// consumer that wrote an entry for it can recognize and prune that entry. The
+// address still resolves from catalog metadata, which is what a prune needs.
+func TestBuildIntegrations_CalDAVProviderNotInstalled(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "calino", nil)
+
+	orch, _ := bindingsOrchestrator(t, store,
+		consumerApp("calino", "caldav", catalog.Integration{}, "radicale"),
+		providerApp("radicale", 5232, "caldav", catalog.ContractProvides{
+			Values: map[string]string{"path": "/"},
+		}),
+	)
+
+	out := orch.buildIntegrations("calino", consumerApp("calino", "caldav", catalog.Integration{}, "radicale"))
+	require.Len(t, out.CalDAVServers, 1)
+	assert.False(t, out.CalDAVServers[0].Installed)
+	assert.Equal(t, "/", out.CalDAVServers[0].Path)
 }
