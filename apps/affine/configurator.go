@@ -33,6 +33,21 @@ const (
 // and mounted into the server container at /root/.affine/config/config.json.
 const configFileName = "config.json"
 
+// csrfCookieName is the cookie AFFiNE pairs with the session and requires
+// echoed back in the `x-csrf-token` header on every GraphQL write.
+const csrfCookieName = "affine_csrf_token"
+
+// mcpCredentialName is the label the minted credential carries in the AFFiNE
+// UI, so an operator can see which credential Bloud holds and revoke it.
+const mcpCredentialName = "bloud"
+
+// mcpCredentialExpiryDays bounds the credential's life. It is long because a
+// re-mint needs the owner's password and a live session, and short enough that
+// a forgotten install does not keep a valid tool credential forever. The
+// configurator re-mints on its own when the credential stops validating, so
+// expiry is not an outage.
+const mcpCredentialExpiryDays = 365
+
 // Configurator handles AFFiNE configuration: it writes the application
 // config (public URL + OIDC provider) before the server starts (PreStart),
 // bootstraps the first-run owner account, and verifies the OIDC login
@@ -134,6 +149,8 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return fmt.Errorf("bootstrapping owner account: %w", err)
 	}
 
+	c.ensureMCPCredential(ctx)
+
 	if state.OIDC == nil {
 		return nil
 	}
@@ -167,6 +184,119 @@ func (c *Configurator) ensureBootstrapAdmin(ctx context.Context) error {
 	return nil
 }
 
+// --- MCP provider ---
+
+// ensureMCPCredential makes Bloud the holder of a working, scoped MCP
+// credential for one AFFiNE workspace, and publishes what a consumer needs:
+// the bearer under `mcp.httpToken` and the workspace-scoped endpoint as the
+// runtime-published `path`.
+//
+// It is a no-op once the published credential validates, so a steady-state
+// pass costs one tools/list round trip.
+//
+// Failures are logged and swallowed rather than returned. That is a deliberate
+// difference from the "empty means not ready, fail the pass" rule a wrapper
+// follows. AFFiNE is not a wrapper: the node is the knowledge base itself, and
+// a node that serves its users fine should not land in ERROR because its MCP
+// credential could not be minted. The consumer is protected regardless: a
+// harness skips a binding with an empty token, so a broken credential registers
+// no tool namespace rather than one that 401s forever. What is given up is the
+// reconciler's own failure signal, which is what the warning carries.
+func (c *Configurator) ensureMCPCredential(ctx context.Context) {
+	if c.secrets == nil {
+		c.logger.Warn("cannot publish the affine MCP credential: no secrets provider")
+		return
+	}
+	password, err := c.secrets.GenerateAppAdminPassword(appName)
+	if err != nil {
+		c.logger.Warn("cannot publish the affine MCP credential: no owner password", "err", err)
+		return
+	}
+	if err := c.api.signIn(ctx, bootstrapAdminEmail, password); err != nil {
+		c.logger.Warn("affine MCP: owner sign-in failed, publishing nothing", "err", err)
+		return
+	}
+
+	workspaceID, err := c.ensureMCPWorkspace(ctx)
+	if err != nil {
+		c.logger.Warn("affine MCP: could not settle a workspace", "err", err)
+		return
+	}
+	path := mcpPath(workspaceID)
+	if err := c.secrets.SetAppContractValue(appName, "mcp", "path", path); err != nil {
+		c.logger.Warn("affine MCP: could not publish the endpoint path", "err", err)
+		return
+	}
+
+	if c.mcpCredentialStillGood(ctx, path) {
+		return
+	}
+	token, err := c.api.createMcpCredential(ctx, workspaceID, mcpCredentialName, mcpCredentialExpiryDays)
+	if err != nil {
+		c.logger.Warn("affine MCP: could not mint a credential", "err", err)
+		return
+	}
+	if err := c.secrets.SetAppSecret(appName, "httpToken", token); err != nil {
+		c.logger.Warn("affine MCP: could not publish the credential", "err", err)
+		return
+	}
+	c.logger.Info("published affine MCP credential", "workspace", workspaceID, "path", path)
+}
+
+// ensureMCPWorkspace settles which workspace the MCP credential is scoped to.
+//
+// The workspace Bloud already published wins as long as it still exists, so a
+// workspace the operator creates later cannot silently move the credential out
+// from under a running harness. Failing that, the first existing workspace is
+// adopted rather than a second copy being created, and only an instance with no
+// workspaces at all gets one made for it.
+func (c *Configurator) ensureMCPWorkspace(ctx context.Context) (string, error) {
+	ids, err := c.api.listWorkspaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	published := c.secrets.GetAppContractValue(appName, "mcp", "path")
+	for _, id := range ids {
+		if mcpPath(id) == published {
+			return id, nil
+		}
+	}
+	if len(ids) > 0 {
+		c.logger.Info("adopting an existing affine workspace for MCP", "workspace", ids[0])
+		return ids[0], nil
+	}
+	id, err := c.api.createWorkspace(ctx)
+	if err != nil {
+		return "", err
+	}
+	c.logger.Info("created the bloud affine workspace", "workspace", id)
+	return id, nil
+}
+
+// mcpCredentialStillGood probes the published bearer against the endpoint it
+// is meant to work on.
+//
+// A transport fault reads as "still good": the alternative is minting a spare
+// credential for every network blip, which is the pile-up a long-lived
+// install cannot clean up. Only a definitive rejection, a credential revoked
+// or expired in the AFFiNE UI, asks for a replacement.
+func (c *Configurator) mcpCredentialStillGood(ctx context.Context, path string) bool {
+	token := c.secrets.GetAppSecret(appName, "httpToken")
+	if token == "" {
+		return false
+	}
+	works, rejected, err := c.api.probeMCP(ctx, path, token)
+	if err != nil {
+		c.logger.Warn("affine MCP: could not probe the endpoint, keeping the published credential", "err", err)
+		return true
+	}
+	if rejected {
+		c.logger.Info("affine MCP: published credential was rejected, minting a replacement")
+		return false
+	}
+	return works
+}
+
 // --- Config file ---
 
 // renderConfigFile renders the AFFiNE config.json. Only keys that override
@@ -175,6 +305,14 @@ func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) (string
 	cfg := map[string]any{
 		"server": map[string]any{
 			"externalUrl": externalURL,
+		},
+		// The MCP server lives under AFFiNE's copilot module and the flag
+		// defaults off, so without this every credential mint and every MCP
+		// request answers "Copilot is disabled." Enabling it also opens the
+		// BYOK AI surface, which stays inert until the operator supplies a
+		// provider key in AFFiNE's own settings; it grants Bloud nothing.
+		"copilot": map[string]any{
+			"enabled": true,
 		},
 	}
 	if oidc != nil {

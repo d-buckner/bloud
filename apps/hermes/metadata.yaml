@@ -32,6 +32,23 @@ integrations:
       - app: litellm
         default: true
       - source: instance
+  # MCP servers Bloud wires into the agent. `multi: true` because the whole
+  # point is that a harness takes as many tool namespaces as the instance
+  # provides, and which ones exist changes as apps are installed. Optional
+  # because Hermes is a working agent with no MCP servers at all.
+  #
+  # `requires: [httpToken]` is the whole consumer surface: the provider's
+  # scoped bearer and nothing else. Each entry lands in Hermes' own
+  # `mcp_servers` map under the provider's serverName, so installing an
+  # MCP-capable app gives the agent a new namespace without any Hermes change.
+  mcp:
+    required: false
+    multi: true
+    requires:
+      - httpToken
+    compatible:
+      - app: affine
+        default: true
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider

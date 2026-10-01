@@ -105,6 +105,34 @@ containers:
 			provides: "  modelSource:\n    values: {path: /v1}",
 			wantErr:  "provides.modelSource declares values that are resolved against the app's address",
 		},
+		{
+			name:     "mcp with both values declared",
+			port:     "3011",
+			provides: "  mcp:\n    secrets: [httpToken]\n    values: {path: /mcp, serverName: simple}",
+		},
+		{
+			name:     "mcp with the path supplied at runtime",
+			port:     "3010",
+			provides: "  mcp:\n    secrets: [httpToken]\n    values: {serverName: affine}\n    runtimeValues: [path]",
+		},
+		{
+			name:     "a required value neither declared nor marked runtime",
+			port:     "3010",
+			provides: "  mcp:\n    secrets: [httpToken]\n    values: {serverName: affine}",
+			wantErr:  `provides.mcp.values must declare "path"`,
+		},
+		{
+			name:     "a runtime value the contract does not carry",
+			port:     "3010",
+			provides: "  mcp:\n    secrets: [httpToken]\n    values: {path: /mcp, serverName: affine}\n    runtimeValues: [bogus]",
+			wantErr:  `provides.mcp.runtimeValues names "bogus", which this contract does not carry`,
+		},
+		{
+			name:     "a value declared both statically and at runtime",
+			port:     "3010",
+			provides: "  mcp:\n    secrets: [httpToken]\n    values: {path: /mcp, serverName: affine}\n    runtimeValues: [path]",
+			wantErr:  `provides.mcp declares "path" both in values and in runtimeValues`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -195,4 +223,99 @@ containers:
 			assert.Contains(t, apps, "sso-app")
 		})
 	}
+}
+
+// TestValidateApp_RequiredIntegrationNeedsDefault pins the one place the graph's
+// ordering guarantee used to rest on a convention nothing enforced.
+//
+// A required integration's provider is recorded from the `default: true`
+// compatible entry, and for a required integration that recorded choice is the
+// only source of the dependency edge: computeAppDeps skips the compatible scan
+// entirely. So a required integration with no default records nothing, produces
+// no edge, and the app installs with no dependency at all. It then resolves an
+// empty credential on every pass and fails forever with no plan-time error
+// anywhere near the cause. Two defaults are rejected for the same reason in the
+// other direction: which one wins would depend on list iteration order.
+func TestValidateApp_RequiredIntegrationNeedsDefault(t *testing.T) {
+	const tmpl = `name: wrapper-app
+displayName: Wrapper App
+description: An app
+category: productivity
+port: 3011
+integrations:
+  mcp:
+    required: true
+    requires: [httpToken]
+%s
+containers:
+  - name: apps-wrapper-app
+    image: example/wrapper:1.0
+`
+
+	cases := []struct {
+		name       string
+		compatible string
+		wantErr    string
+	}{
+		{
+			name:       "exactly one default",
+			compatible: "    compatible: [{app: target, default: true}]",
+		},
+		{
+			name:       "one default among several compatible entries",
+			compatible: "    compatible: [{app: other}, {app: target, default: true}]",
+		},
+		{
+			name:       "no default at all",
+			compatible: "    compatible: [{app: target}]",
+			wantErr:    "integrations.mcp is required but declares no `default: true` compatible entry",
+		},
+		{
+			name:       "no compatible entries at all",
+			compatible: "    compatible: []",
+			wantErr:    "integrations.mcp is required but declares no `default: true` compatible entry",
+		},
+		{
+			name:       "two defaults",
+			compatible: "    compatible: [{app: target, default: true}, {app: other, default: true}]",
+			wantErr:    "integrations.mcp is required but declares 2 `default: true` entries",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewLoader(writeMetadataApp(t, fmt.Sprintf(tmpl, tc.compatible))).LoadAll()
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestValidateApp_OptionalIntegrationNeedsNoDefault keeps the rule scoped: an
+// optional contract binds every compatible provider that turns out to be
+// installed, so it has no recorded choice to be missing.
+func TestValidateApp_OptionalIntegrationNeedsNoDefault(t *testing.T) {
+	const metadata = `name: harness-app
+displayName: Harness App
+description: An app
+category: productivity
+integrations:
+  mcp:
+    required: false
+    multi: true
+    requires: [httpToken]
+    compatible:
+      - app: affine
+      - app: sonarr
+containers:
+  - name: apps-harness-app
+    image: example/harness:1.0
+`
+	apps, err := NewLoader(writeMetadataApp(t, metadata)).LoadAll()
+	require.NoError(t, err)
+	assert.Len(t, apps["harness-app"].Integrations["mcp"].Compatible, 2)
 }

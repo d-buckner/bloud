@@ -1567,6 +1567,16 @@ func (o *Orchestrator) bindContract(
 			ProviderRef: ref,
 			Endpoint:    ref.BaseURL + offer.Values["path"],
 		})
+	case "mcp":
+		// The path may be one the provider minted at runtime (an endpoint under
+		// an id the app generated on first boot), so it resolves through the
+		// published-value channel with the static metadata as the fallback.
+		out.MCPServers = append(out.MCPServers, configurator.MCPBinding{
+			ProviderRef: ref,
+			ServerName:  o.contractValue(providerID, contract, offer, "serverName"),
+			Path:        o.contractValue(providerID, contract, offer, "path"),
+			Token:       o.publishedSecret(providerID, contract, offer, requires),
+		})
 	default:
 		// Contracts with no payload (proxy, database) need no consumer input
 		// beyond the address, which the graph edge already encodes. A contract
@@ -1597,6 +1607,22 @@ func (o *Orchestrator) publishedSecret(providerID, contract string, offer catalo
 		return ""
 	}
 	return o.secrets.GetAppSecret(providerID, spec.Secrets[0])
+}
+
+// contractValue resolves one non-secret contract value: the runtime-published one
+// if the provider declared the key under `runtimeValues` and has published it,
+// otherwise the static value from the offer.
+//
+// The runtime value wins over the static one rather than merging into it because
+// the loader forbids a key being declared both ways, so there is never a
+// disagreement to arbitrate: a key is either metadata-owned or runtime-owned.
+func (o *Orchestrator) contractValue(providerID, contract string, offer catalog.ContractProvides, key string) string {
+	if slices.Contains(offer.RuntimeValues, key) && o.secrets != nil {
+		if v := o.secrets.GetAppContractValue(providerID, contract, key); v != "" {
+			return v
+		}
+	}
+	return offer.Values[key]
 }
 
 // providerRef resolves where a provider is reachable: its node on the app

@@ -138,6 +138,9 @@ func validateIntegrations(app *App) error {
 				return err
 			}
 		}
+		if err := validateRequiredDefault(name, integration); err != nil {
+			return err
+		}
 		if len(integration.Requires) == 0 {
 			continue
 		}
@@ -161,6 +164,52 @@ func validateIntegrations(app *App) error {
 		}
 	}
 	return nil
+}
+
+// validateRequiredDefault enforces that a required integration names exactly
+// one default provider.
+//
+// The default is what the orchestrator records as the provider of a required
+// contract (buildIntegrationConfig reads choice.Recommended), and for a required
+// integration the recorded choice is the *only* source of the graph edge:
+// computeAppDeps skips the compatible scan entirely in that case. So an
+// integration marked required but carrying no default records nothing, produces
+// no edge, and the app installs with no dependency at all. It then resolves an
+// empty credential on every pass and fails forever without ever producing a
+// plan-time error, which is the worst shape a metadata mistake can have: the
+// symptom is nowhere near the cause.
+//
+// Exactly one, not "at least one": two defaults make the recorded choice
+// ambiguous, and which one wins would depend on iteration order over the
+// compatible list.
+func validateRequiredDefault(name string, integration Integration) error {
+	if !integration.Required {
+		return nil
+	}
+	defaults := make([]string, 0, 1)
+	for _, compatible := range integration.Compatible {
+		if compatible.Default {
+			defaults = append(defaults, providerLabel(compatible))
+		}
+	}
+	switch len(defaults) {
+	case 1:
+		return nil
+	case 0:
+		return fmt.Errorf("integrations.%s is required but declares no `default: true` compatible entry; it would install with no dependency and resolve an empty credential forever", name)
+	default:
+		return fmt.Errorf("integrations.%s is required but declares %d `default: true` entries (%s); exactly one is allowed",
+			name, len(defaults), strings.Join(defaults, ", "))
+	}
+}
+
+// providerLabel renders a compatible entry for an error message, covering both
+// the catalog-app and instance-source forms.
+func providerLabel(compatible CompatibleApp) string {
+	if compatible.Source != "" {
+		return "source:" + compatible.Source
+	}
+	return compatible.App
 }
 
 // validateCompatibleProvider checks the provider discriminator on one
@@ -241,14 +290,36 @@ func validateContractSecrets(name string, contract Contract, offer ContractProvi
 }
 
 // validateContractValues checks the non-secret values an offer declares: the
-// ones its contract requires, and that a value meant to be concatenated onto an
-// address is an absolute path on an app that publishes a port (otherwise the
-// consumer would be handed an address it cannot use).
+// ones its contract requires, that a value meant to be concatenated onto an
+// address is an absolute path on an app that publishes a port, and that the
+// static and runtime halves of the offer do not both claim the same key.
+//
+// A required value may arrive either way, but it must have exactly one declared
+// source. Accepting a silently missing value would let a provider hand every
+// consumer an empty path that reads as "the contract had none" rather than as a
+// provider that never published; accepting a key declared both ways would leave
+// it ambiguous which one a later edit is supposed to change.
 func validateContractValues(name string, contract Contract, offer ContractProvides, port int) error {
+	for _, runtimeKey := range offer.RuntimeValues {
+		if runtimeKey == "" || strings.ContainsAny(runtimeKey, " \t\n") {
+			return fmt.Errorf("provides.%s.runtimeValues entries must be single non-empty names (got %q)", name, runtimeKey)
+		}
+		if !declaresValue(contract, runtimeKey) {
+			return fmt.Errorf("provides.%s.runtimeValues names %q, which this contract does not carry (it carries %s)",
+				name, runtimeKey, valueKeys(contract))
+		}
+		if _, static := offer.Values[runtimeKey]; static {
+			return fmt.Errorf("provides.%s declares %q both in values and in runtimeValues; a value needs exactly one source",
+				name, runtimeKey)
+		}
+	}
 	for _, want := range contract.Values {
+		if slices.Contains(offer.RuntimeValues, want.Key) {
+			continue // supplied at runtime, so metadata cannot be the authority on it
+		}
 		value, ok := offer.Values[want.Key]
 		if !ok || value == "" {
-			return fmt.Errorf("provides.%s.values must declare %q, which this contract carries", name, want.Key)
+			return fmt.Errorf("provides.%s.values must declare %q, which this contract carries (or list it under runtimeValues if the app mints it at runtime)", name, want.Key)
 		}
 		if want.AbsolutePath && !strings.HasPrefix(value, "/") {
 			return fmt.Errorf("provides.%s.values.%s must be an absolute path (got %q)", name, want.Key, value)
@@ -258,6 +329,25 @@ func validateContractValues(name string, contract Contract, offer ContractProvid
 		return fmt.Errorf("provides.%s declares values that are resolved against the app's address, so the app needs a port", name)
 	}
 	return nil
+}
+
+// declaresValue reports whether the contract carries the named value.
+func declaresValue(contract Contract, key string) bool {
+	for _, spec := range contract.Values {
+		if spec.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// valueKeys lists a contract's value names for an error message.
+func valueKeys(contract Contract) string {
+	names := make([]string, 0, len(contract.Values))
+	for _, spec := range contract.Values {
+		names = append(names, spec.Key)
+	}
+	return strings.Join(names, ", ")
 }
 
 // LoadGraph loads app definitions and builds an AppGraph

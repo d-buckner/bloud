@@ -81,6 +81,10 @@ func (f *fakeSecrets) SetAppSecret(app, key, value string) error {
 	return nil
 }
 
+// Contract values are not used by this app; these satisfy the interface.
+func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
+func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
+
 // appState returns the state a reconciliation passes for one install:
 // <tmp>/appdata is the app's own data dir, <tmp>/data the shared Bloud one.
 func appState(t *testing.T) *configurator.AppState {

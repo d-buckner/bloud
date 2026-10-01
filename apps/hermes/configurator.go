@@ -225,6 +225,8 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		stripInference(doc)
 	}
 
+	applyMCPServers(doc, state)
+
 	want, err := yaml.Marshal(doc)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("serializing %s: %w", cfgPath, err)
@@ -238,9 +240,121 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return configurator.NoRestart(), fmt.Errorf("writing %s: %w%s", cfgPath, err, permissionHint(err))
 	}
 	if changed {
-		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference)
+		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference,
+			"mcpServers", mcpServerNames(state))
 	}
 	return configurator.RestartIf(changed, "Hermes config rewritten"), nil
+}
+
+// --- MCP servers ---
+
+// mcpServersKey is the Hermes config section holding the agent's MCP servers.
+// Hermes reads it at startup and again on a `reload-mcp` chore, so a rewrite
+// takes effect on the next container start.
+const mcpServersKey = "mcp_servers"
+
+// applyMCPServers renders the Bloud-provided MCP servers into Hermes'
+// `mcp_servers` map, one entry per provider under that provider's serverName.
+//
+// Entries the operator added by hand under a different name are left exactly as
+// they are, the same way applyInference leaves a hand-chosen model alone. What
+// Bloud claims is the namespace: the key a provider's `serverName` names is
+// Bloud's to write and to remove, because that is the app the integration
+// contract points at.
+//
+// The removal case matters as much as the add. Bindings arrive for every
+// compatible provider an optional contract declares, installed or not, so an
+// uninstalled provider still shows up here with Installed false. Deleting its
+// entry on that signal is what stops a removed app from lingering as a tool
+// namespace the agent keeps trying to call.
+func applyMCPServers(doc map[string]any, state *configurator.AppState) {
+	for _, b := range mcpBindings(state) {
+		name := mcpServerKey(b)
+		if name == "" {
+			continue
+		}
+		entry, ok := mcpServerEntry(b)
+		if !ok {
+			removeMCPServer(doc, name)
+			continue
+		}
+		mapAt(doc, mcpServersKey)[name] = entry
+	}
+}
+
+// removeMCPServer drops one Bloud-claimed entry and tidies the section away
+// when nothing is left in it, so a config with no MCP servers has no empty
+// `mcp_servers:` key rather than a key Hermes reads as a malformed entry.
+func removeMCPServer(doc map[string]any, name string) {
+	servers, ok := doc[mcpServersKey].(map[string]any)
+	if !ok {
+		return
+	}
+	delete(servers, name)
+	if len(servers) == 0 {
+		delete(doc, mcpServersKey)
+	}
+}
+
+// mcpServerNames lists the namespaces that will be live after this pass, for
+// the config-change log line. A provider that is present but not usable is
+// absent from the list, which is the thing an operator needs to see.
+func mcpServerNames(state *configurator.AppState) []string {
+	names := []string{}
+	for _, b := range mcpBindings(state) {
+		if _, ok := mcpServerEntry(b); !ok {
+			continue
+		}
+		if name := mcpServerKey(b); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// mcpBindings returns the resolved MCP bindings from the app state.
+func mcpBindings(state *configurator.AppState) []configurator.MCPBinding {
+	if state == nil {
+		return nil
+	}
+	return state.Integrations.MCPServers
+}
+
+// mcpServerKey names the Hermes entry for one binding. serverName is the
+// contract's own namespace label; the provider app name is the fallback so a
+// provider that omitted it still lands somewhere identifiable.
+func mcpServerKey(b configurator.MCPBinding) string {
+	if b.ServerName != "" {
+		return b.ServerName
+	}
+	return b.App
+}
+
+// mcpServerEntry builds the Hermes entry for one usable binding, or ok false
+// when the binding cannot be dialed.
+//
+// LocalURL is the address, not BaseURL. BaseURL is `http://<container>:<port>`,
+// which podman's network-scoped DNS serves only to containers on that network,
+// and Hermes runs in the host network namespace for its own OIDC reasons. The
+// host loopback is the address both sides agree on, and it is the same one
+// Traefik uses to reach every app.
+func mcpServerEntry(b configurator.MCPBinding) (map[string]any, bool) {
+	if !b.Installed || b.Token == "" || b.Path == "" {
+		return nil, false
+	}
+	base := b.LocalURL
+	if base == "" {
+		base = b.BaseURL
+	}
+	if base == "" {
+		return nil, false
+	}
+	return map[string]any{
+		"url": strings.TrimSuffix(base, "/") + b.Path,
+		"headers": map[string]any{
+			"Authorization": "Bearer " + b.Token,
+		},
+	}, true
 }
 
 // PostStart waits for the dashboard to serve and then, when SSO is

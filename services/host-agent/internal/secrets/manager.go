@@ -63,10 +63,27 @@ type AppSecrets struct {
 	// through SetAppSecret: the names it declares under a contract's `secrets`
 	// in its catalog metadata, handed to that contract's consumers as the
 	// payload field they read (the Servarr ApiKey, Authentik's API token).
-	// They are deliberately not part of the env files written below: a
-	// published credential reaches a consumer through a binding, never
+	// A published credential reaches a consumer through a binding, never
 	// through a container's environment.
 	Published map[string]string `json:"published,omitempty"`
+
+	// PublishedValues holds the non-secret facts a provider mints at runtime
+	// for a contract it provides, keyed by contract name and then by value
+	// key. It exists because a contract's `values:` in metadata is static and
+	// some providers cannot know the value until their own app is up: AFFiNE's
+	// MCP endpoint is /api/workspaces/<id>/mcp, and the workspace id is
+	// minted by AFFiNE on first boot, not by Bloud's metadata.
+	//
+	// It is scoped by contract rather than flat because two contracts can name
+	// the same value key (`path` is in both `mcp` and `modelSource`) while an
+	// app provides both. A provider may only fill a key its offer declares
+	// under `runtimeValues`; the catalog loader enforces that, so this bag
+	// cannot become a place to smuggle undeclared facts to a consumer.
+	//
+	// Stored here rather than in a separate store because the durability and
+	// lifecycle are identical to a published secret: it is written once by a
+	// configurator, survives restart, and is deleted with the app.
+	PublishedValues map[string]map[string]string `json:"publishedValues,omitempty"`
 }
 
 // APITokenFileName is the standalone file (owner-only, next to secrets.json)
@@ -173,7 +190,7 @@ func (m *Manager) generateAndSave() error {
 	return m.saveLocked()
 }
 
-// saveLocked saves secrets to file and generates environment files. Caller must hold the lock.
+// saveLocked persists secrets to file. Caller must hold the lock.
 func (m *Manager) saveLocked() error {
 	// Ensure directory exists
 	dir := filepath.Dir(m.path)
@@ -198,117 +215,7 @@ func (m *Manager) saveLocked() error {
 		return fmt.Errorf("writing api token file: %w", err)
 	}
 
-	// Write environment files consumed by app containers
-	if err := m.writeEnvFiles(dir); err != nil {
-		return fmt.Errorf("writing env files: %w", err)
-	}
-
 	return nil
-}
-
-// writeEnvFiles writes .env files that are mounted into app containers.
-func (m *Manager) writeEnvFiles(dir string) error {
-	// PostgreSQL environment
-	postgresEnv := fmt.Sprintf("POSTGRES_PASSWORD=%s\n", m.secrets.PostgresPassword)
-	if err := os.WriteFile(filepath.Join(dir, "postgres.env"), []byte(postgresEnv), 0600); err != nil {
-		return fmt.Errorf("writing postgres.env: %w", err)
-	}
-
-	// Authentik environment
-	authentikEnv := fmt.Sprintf(`AUTHENTIK_SECRET_KEY=%s
-AUTHENTIK_BOOTSTRAP_PASSWORD=%s
-AUTHENTIK_BOOTSTRAP_TOKEN=%s
-AUTHENTIK_POSTGRESQL__PASSWORD=%s
-AUTHENTIK_REDIS__PASSWORD=
-`, m.secrets.AuthentikSecretKey, m.secrets.AuthentikBootstrapPassword,
-		m.secrets.AuthentikBootstrapToken, m.secrets.PostgresPassword)
-	if err := os.WriteFile(filepath.Join(dir, "authentik.env"), []byte(authentikEnv), 0600); err != nil {
-		return fmt.Errorf("writing authentik.env: %w", err)
-	}
-
-	// Shared database credentials for apps that need postgres access
-	dbEnv := fmt.Sprintf("DATABASE_PASSWORD=%s\nPGPASSWORD=%s\n",
-		m.secrets.PostgresPassword, m.secrets.PostgresPassword)
-	if err := os.WriteFile(filepath.Join(dir, "database.env"), []byte(dbEnv), 0600); err != nil {
-		return fmt.Errorf("writing database.env: %w", err)
-	}
-
-	// Write per-app environment files
-	// Always generate env files for known apps (they need DATABASE_URL etc.)
-	knownApps := []string{"miniflux"}
-	for _, appName := range knownApps {
-		appSecrets := m.secrets.AppSecrets[appName] // May be empty struct
-		if err := m.writeAppEnvFile(dir, appName, appSecrets); err != nil {
-			return fmt.Errorf("writing %s.env: %w", appName, err)
-		}
-	}
-
-	// Also write env files for any other apps with stored secrets
-	for appName, appSecrets := range m.secrets.AppSecrets {
-		// Skip if already written above
-		isKnown := false
-		for _, known := range knownApps {
-			if appName == known {
-				isKnown = true
-				break
-			}
-		}
-		if isKnown {
-			continue
-		}
-		if err := m.writeAppEnvFile(dir, appName, appSecrets); err != nil {
-			return fmt.Errorf("writing %s.env: %w", appName, err)
-		}
-	}
-
-	return nil
-}
-
-// writeAppEnvFile writes an environment file for a specific app
-func (m *Manager) writeAppEnvFile(dir, appName string, appSecrets AppSecrets) error {
-	var env string
-
-	if appSecrets.AdminPassword != "" {
-		env += fmt.Sprintf("ADMIN_PASSWORD=%s\n", appSecrets.AdminPassword)
-	}
-	if appSecrets.OAuthClientSecret != "" {
-		// Use app-specific env var names for OAuth secrets
-		oauthEnvName := getOAuthEnvVarName(appName)
-		env += fmt.Sprintf("%s=%s\n", oauthEnvName, appSecrets.OAuthClientSecret)
-	}
-	if appSecrets.DatabasePassword != "" {
-		env += fmt.Sprintf("DATABASE_PASSWORD=%s\n", appSecrets.DatabasePassword)
-	}
-
-	// Add postgres password for apps that need database connection strings
-	env += fmt.Sprintf("PGPASSWORD=%s\n", m.secrets.PostgresPassword)
-
-	// Generate DATABASE_URL with the correct hostname for this app's network mode
-	dbURL := getDatabaseURL(appName, m.secrets.PostgresPassword)
-	env += fmt.Sprintf("DATABASE_URL=%s\n", dbURL)
-
-	return os.WriteFile(filepath.Join(dir, appName+".env"), []byte(env), 0600)
-}
-
-// getDatabaseURL returns the DATABASE_URL for an app based on its network mode
-func getDatabaseURL(appName, password string) string {
-	// Apps using bridge networking connect to apps-postgres
-	// Apps using host networking connect to localhost
-	// Default: host networking
-	return fmt.Sprintf("postgres://apps:%s@localhost:5432/%s?sslmode=disable", password, appName)
-}
-
-// getOAuthEnvVarName returns the app-specific environment variable name for OAuth client secret
-func getOAuthEnvVarName(appName string) string {
-	// Map app names to their expected OAuth env var names
-	appOAuthEnvVars := map[string]string{
-		"miniflux": "OAUTH2_CLIENT_SECRET",
-	}
-	if envName, ok := appOAuthEnvVars[appName]; ok {
-		return envName
-	}
-	// Default to generic name
-	return "OAUTH_CLIENT_SECRET"
 }
 
 // Get returns a top-level secret by name.
@@ -412,9 +319,10 @@ func (m *Manager) GetAppSecret(appName, key string) string {
 //
 // A key outside the known set above is stored in the app's published bag; the
 // app is expected to have declared it under a contract's `secrets` in its
-// catalog metadata, which is what puts it in that contract's binding payload. Writing a value that is already stored is a no-op: configurators
-// publish on every reconciliation, and rewriting secrets.json (and every
-// generated env file with it) on each pass would be pure churn.
+// catalog metadata, which is what puts it in that contract's binding payload.
+// Writing a value that is already stored is a no-op: configurators publish on
+// every reconciliation, and rewriting secrets.json on each pass would be pure
+// churn.
 func (m *Manager) SetAppSecret(appName, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -430,8 +338,8 @@ func (m *Manager) SetAppSecret(appName, key, value string) error {
 	appSecrets := m.secrets.AppSecrets[appName]
 
 	// A value that is already stored is a no-op: configurators publish on
-	// every reconciliation, and rewriting secrets.json (and every generated
-	// env file with it) on each pass would be pure churn.
+	// every reconciliation, and rewriting secrets.json on each pass would be
+	// pure churn.
 	switch key {
 	case "adminPassword":
 		if appSecrets.AdminPassword == value {
@@ -461,6 +369,63 @@ func (m *Manager) SetAppSecret(appName, key, value string) error {
 	m.secrets.AppSecrets[appName] = appSecrets
 
 	return m.saveLocked()
+}
+
+// SetAppContractValue records a non-secret value a provider minted at runtime
+// for one contract it provides, so a consumer of that contract can read it. The
+// counterpart of SetAppSecret for the `values` half of a contract: the provider's
+// metadata declares the key, the provider's configurator supplies the value once
+// its own app has produced it.
+//
+// The catalog loader is what bounds this: a provider may only fill a key its offer
+// lists under `runtimeValues`, so a configurator cannot publish an undeclared
+// fact into a consumer's binding. Writing the value that is already stored is a
+// no-op, for the same reason SetAppSecret is one: configurators publish on every
+// reconciliation pass.
+func (m *Manager) SetAppContractValue(appName, contract, key, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.secrets == nil {
+		return fmt.Errorf("secrets not loaded")
+	}
+	if m.secrets.AppSecrets == nil {
+		m.secrets.AppSecrets = make(map[string]AppSecrets)
+	}
+
+	appSecrets := m.secrets.AppSecrets[appName]
+	if appSecrets.PublishedValues != nil && appSecrets.PublishedValues[contract] != nil &&
+		appSecrets.PublishedValues[contract][key] == value {
+		return nil
+	}
+	if appSecrets.PublishedValues == nil {
+		appSecrets.PublishedValues = make(map[string]map[string]string, 1)
+	}
+	if appSecrets.PublishedValues[contract] == nil {
+		appSecrets.PublishedValues[contract] = make(map[string]string, 1)
+	}
+	appSecrets.PublishedValues[contract][key] = value
+
+	m.secrets.AppSecrets[appName] = appSecrets
+
+	return m.saveLocked()
+}
+
+// GetAppContractValue returns a runtime-published value for one contract, or ""
+// when the provider has not published it yet. The empty string means "not ready",
+// the same reading as a published secret that has not landed.
+func (m *Manager) GetAppContractValue(appName, contract, key string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.secrets == nil || m.secrets.AppSecrets == nil {
+		return ""
+	}
+	appSecrets, ok := m.secrets.AppSecrets[appName]
+	if !ok || appSecrets.PublishedValues == nil {
+		return ""
+	}
+	return appSecrets.PublishedValues[contract][key]
 }
 
 // DeleteAppSecrets removes all secrets for an app and saves to file.
@@ -497,6 +462,17 @@ func (m *Manager) GetAllSecrets() *Secrets {
 					published[name] = value
 				}
 				v.Published = published
+			}
+			if v.PublishedValues != nil {
+				publishedValues := make(map[string]map[string]string, len(v.PublishedValues))
+				for contract, values := range v.PublishedValues {
+					cp := make(map[string]string, len(values))
+					for name, value := range values {
+						cp[name] = value
+					}
+					publishedValues[contract] = cp
+				}
+				v.PublishedValues = publishedValues
 			}
 			copy.AppSecrets[k] = v
 		}

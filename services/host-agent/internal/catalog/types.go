@@ -51,6 +51,17 @@ type ContractProvides struct {
 	// path. They travel in the provider's metadata, so they need no publication
 	// step.
 	Values map[string]string `yaml:"values,omitempty" json:"values,omitempty"`
+	// RuntimeValues names the value keys this provider fills at runtime instead
+	// of declaring in Values, because the value does not exist until the app is
+	// up. AFFiNE's MCP endpoint is `/api/workspaces/<id>/mcp` and the id is
+	// minted by AFFiNE on first boot, so no metadata file could state it.
+	//
+	// Declaring it here rather than leaving the loader to accept a missing value
+	// is what keeps the channel honest: the loader rejects a key that is neither
+	// declared statically nor listed as runtime-supplied, and rejects one listed
+	// both ways, so a value always has exactly one authoritative source. A
+	// configurator fills it with SetAppContractValue.
+	RuntimeValues []string `yaml:"runtimeValues,omitempty" json:"runtimeValues,omitempty"`
 }
 
 // CompatibleApp defines a specific provider that can fulfill an integration.

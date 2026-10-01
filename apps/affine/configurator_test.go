@@ -41,7 +41,9 @@ func (f *fakeSecrets) GenerateAppAdminPassword(_ string) (string, error) {
 
 func (f *fakeSecrets) GetAppSecret(_, _ string) string { return "" }
 
-func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+func (f *fakeSecrets) SetAppSecret(string, string, string) error                { return nil }
+func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
+func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
 
 // configuratorForServer points a configurator at an httptest server so the
 // PostStart admin-bootstrap flow can be exercised without a real server.
@@ -108,6 +110,12 @@ func TestRenderConfigFile_WithOIDC(t *testing.T) {
 	// The issuer resolves to a private address inside the VM; without this
 	// flag AFFiNE's SSRF guard rejects the discovery request.
 	assert.True(t, cfg.OAuth.Providers.OIDC.AllowPrivateNet)
+
+	var whole map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &whole))
+	copilot, ok := whole["copilot"].(map[string]any)
+	require.True(t, ok, "copilot section must be present: MCP depends on it")
+	assert.Equal(t, true, copilot["enabled"])
 }
 
 func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
@@ -119,6 +127,12 @@ func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
 	server, ok := cfg["server"].(map[string]any)
 	require.True(t, ok, "server section must be present")
 	assert.Equal(t, "http://affine.localhost:8080", server["externalUrl"])
+	// The MCP server lives under the copilot module and the flag defaults off,
+	// so a config without it answers every MCP call "Copilot is disabled."
+	copilot, ok := cfg["copilot"].(map[string]any)
+	require.True(t, ok, "copilot section must be present: MCP depends on it")
+	assert.Equal(t, true, copilot["enabled"])
+
 	_, hasOAuth := cfg["oauth"]
 	assert.False(t, hasOAuth, "oauth section must be absent without SSO")
 }

@@ -25,6 +25,18 @@ type AppSecretsProvider interface {
 	// its `provides.secrets` catalog metadata, which is what makes the value
 	// visible to consumers; anything else stays private to this app.
 	SetAppSecret(appName, key, value string) error
+	// SetAppContractValue persists a non-secret value a provider mints at
+	// runtime for one contract it provides, the counterpart of SetAppSecret for
+	// the `values` half of a contract. The key must be one the provider's offer
+	// lists under `runtimeValues`, which the catalog loader enforces; that is
+	// what stops a configurator publishing an undeclared fact into someone
+	// else's binding. Used where the value cannot exist in metadata because the
+	// app has to produce it first (an endpoint path containing an id the app
+	// minted on first boot).
+	SetAppContractValue(appName, contract, key, value string) error
+	// GetAppContractValue reads back a value published through
+	// SetAppContractValue. Empty means the provider has not published it yet.
+	GetAppContractValue(appName, contract, key string) string
 }
 
 // PreStartResult is what a configurator reports when its PreStart pass ends.
@@ -283,6 +295,30 @@ type SSOBinding struct {
 	APIToken string
 }
 
+// MCPBinding is a streamable-HTTP MCP server a harness registers as a tool
+// namespace.
+//
+// It carries the address and the path separately, and no composed URL. That is
+// deliberate: ProviderRef.BaseURL is a container-network name that only resolves
+// for a consumer sharing the provider's network namespace, so a URL composed on
+// the provider's side would be right for some consumers and silently wrong for
+// others. The consumer picks the address its own topology can dial and appends
+// Path.
+type MCPBinding struct {
+	ProviderRef
+	// ServerName is the tool namespace the harness registers this server under.
+	ServerName string
+	// Token is the bearer the provider's MCP listener expects, published under
+	// the provider's `mcp` contract. It is scoped to MCP: revoking it revokes
+	// tool access and nothing else. Empty while the provider has not published it
+	// yet, which a harness must treat as "not ready" and write no entry, never
+	// as an empty bearer.
+	Token string
+	// Path is the endpoint path to append to whichever address the consumer
+	// chose. Absolute, so composition is plain concatenation.
+	Path string
+}
+
 // Integrations holds the resolved providers for every contract the app declares
 // in its catalog metadata, one typed slice per contract.
 //
@@ -298,6 +334,7 @@ type Integrations struct {
 	SSO             []SSOBinding
 	ModelSources    []ModelSourceBinding
 	Inference       []InferenceBinding
+	MCPServers      []MCPBinding
 }
 
 // AppState contains the inputs currently consumed by app configurators.

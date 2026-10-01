@@ -18,8 +18,10 @@ type fakeSecrets struct {
 	calls    int
 }
 
-func (f *fakeSecrets) GetAppSecret(string, string) string        { return "" }
-func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+func (f *fakeSecrets) GetAppSecret(string, string) string                       { return "" }
+func (f *fakeSecrets) SetAppSecret(string, string, string) error                { return nil }
+func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
+func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
 func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) {
 	f.calls++
 	return f.password, f.err

@@ -849,6 +849,7 @@ to the right doc. When a doc moves, update it in both places.
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
 |Sharing/federation (in progress)|[features/sharing.md](docs/features/sharing.md)|
+|MCP servers as catalog apps (design; not built)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Dated review findings|[specs/review.md](docs/specs/review.md)|
 | Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|

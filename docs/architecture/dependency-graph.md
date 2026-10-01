@@ -42,9 +42,11 @@ flowchart TD
     subgraph app_affine["AFFiNE"]
         c_affine_postgres["postgres"]
         c_affine_redis["redis"]
+        c_affine_search["search"]
         c_affine["affine"]
         c_affine --> c_affine_postgres
         c_affine --> c_affine_redis
+        c_affine --> c_affine_search
     end
 
     subgraph app_hermes["Hermes"]
@@ -108,6 +110,7 @@ flowchart TD
 
     %% Cross-app integration edges
     app_affine -->|native-oidc| app_authentik
+    app_hermes -->|mcp| app_affine
     app_hermes -->|native-oidc| app_authentik
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
@@ -142,6 +145,8 @@ flowchart TD
 
 _Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._
 <!-- END GENERATED DEPENDENCY GRAPH -->
+
+
 
 
 

@@ -101,6 +101,34 @@ var contracts = []Contract{
 		Values:      []ValueSpec{{Key: "path", AbsolutePath: true}},
 		SatisfiedBy: []string{"modelSource"},
 	},
+
+	// A streamable-HTTP MCP server an agent harness can register as a tool
+	// namespace. The consumer is the harness (Hermes and friends); the provider
+	// is any app that serves MCP.
+	//
+	// There is no `SatisfiedBy`. A harness has no meaningful fallback: standing
+	// in some other contract for a tool server would hand it credentials for an
+	// endpoint that speaks a different protocol, and it could not tell.
+	//
+	// `httpToken` is the bearer the provider's own MCP listener expects. It is
+	// not the provider's admin credential and never the credential of an app
+	// behind it: the provider mints a scoped one through its own mechanism, so
+	// revoking it revokes MCP access and nothing else.
+	//
+	// `path` is the endpoint path and `serverName` the tool namespace. Note the
+	// binding deliberately does not carry a composed URL. The provider may be
+	// reachable from the consumer's network position by one address and not
+	// another (a host-networked harness cannot resolve a container name), so
+	// the binding hands over BaseURL, LocalURL and the path, and the consumer
+	// composes the one its own topology can dial.
+	{
+		Name:    "mcp",
+		Secrets: []string{"httpToken"},
+		Values: []ValueSpec{
+			{Key: "path", AbsolutePath: true},
+			{Key: "serverName"},
+		},
+	},
 }
 
 // ContractFor returns the contract with the given name.
