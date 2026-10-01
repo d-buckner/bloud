@@ -36,7 +36,7 @@ app-side, following the precedents already in the tree:
 |---|---|---|
 | "Is my provider installed?" | the resolved `integrations:` binding (`binding.Installed`) | see the landed follow-up below: the port probes this plan was written with were replaced in the same release |
 | Provider base URL to *store* in config | the same binding's `BaseURL` (`http://<node>:<port>`); container names are `apps-<name>` (invariant 12) | `apps/seerr` stores `apps-jellyfin`; Immich/AFFiNE use container DNS in env |
-| Provider credentials | the contract payload's credential field, from the provider's `provides.<contract>.secrets` declaration plus `AppSecretsProvider.SetAppSecret` | `apps/hermes` reads affine-mcp's generated token from the host store |
+| Provider credentials | the contract payload's credential field, from the provider's `provides.<contract>.secrets` declaration plus `AppSecretsProvider.SetAppSecret` | `apps/authentik` publishes its API token to the host store for consumers that declare `requires: [apiToken]` |
 | Ordering + retries after a provider appears | declarative `integrations:` metadata → `computeAppDeps` builds the edge for an **optional** integration once the provider is installed; the existing staleness re-run re-runs the consumer's `PostStart` when its provider transitions | `pipeline.go:699-756`, `orchestrator.go:803-835` |
 
 The "one cost of staying app-side" this plan originally accepted (each consumer holding its
@@ -356,11 +356,12 @@ each one: the label a consumer declares, the secret names a provider must publis
 values it must declare. A provider offers a contract in its metadata
 (`provides: {pvr: {secrets: [apiKey]}}`) and the catalog loader rejects a declaration that does not
 match; the orchestrator resolves each declared contract into a *typed slice* in
-`configurator.AppState.Integrations` (`PVRs`, `MediaServers`, `DownloadClients`, `MCPServers`,
-`SSO`), each binding embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`, `BaseURL` as
-`http://apps-<id>:<port>` for what the app stores, and `LocalURL` as `http://localhost:<port>` for
+`configurator.AppState.Integrations` (`PVRs`, `MediaServers`, `DownloadClients`, `SSO`,
+`ModelSources`, `Inference`), each binding embedding `ProviderRef` (`App`, `Installed`, `Node`,
+`Port`, `BaseURL` as `http://apps-<id>:<port>` for what the app stores, and `LocalURL` as
+`http://localhost:<port>` for
 the configurator's own calls) plus that contract's payload (`PVRBinding.APIKey`,
-`MediaServerBinding.AdminPassword`, `MCPBinding.URL`, ...). Credentials travel through the host
+`MediaServerBinding.AdminPassword`, `InferenceBinding.Endpoint`, ...). Credentials travel through the host
 secret store (`AppSecretsProvider.SetAppSecret`); endpoint facts travel in the metadata. A
 consumer declares what it reads (`integrations.<contract>.requires`), and only that is resolved: a
 contract's credentials are not handed to every app that integrates with it, so declaring `sso` no
@@ -391,13 +392,15 @@ Seerr then converge on their next pass, as they do for any other drift.
 `internal/catalog/contracts.go`, with the label a consumer declares, the secret names a provider
 must publish for it and the values it must declare, all validated at catalog load. Providers offer
 contracts in their metadata; the orchestrator resolves each into a *typed* slice in
-`AppState.Integrations` (`PVRs`, `MediaServers`, `DownloadClients`, `MCPServers`, `SSO`), so a
+`AppState.Integrations` (`PVRs`, `MediaServers`, `DownloadClients`, `SSO`, `ModelSources`,
+`Inference`), so a
 provider of an existing contract is metadata only, a consumer reads its own payload fields with no
 nil checks, and no binding struct grows a field for every capability (the frozen, already-merged
-revision had `Secrets map[string]string` plus `MCP *MCPEndpoint` on one struct, which is the shape
-this replaced). Adding a contract is a registry entry, a payload type and one resolver arm; the
-MCP edge (an MCP server an agent app registers, handed over as `MCPServers[i].URL` with the token
-the same provider publishes) is the first contract that carries a non-credential value.
+revision had `Secrets map[string]string` plus one shared endpoint pointer on one struct, which is
+the shape this replaced). Adding a contract is a registry entry, a payload type and one resolver
+arm; the `modelSource` and `inference` contracts (an endpoint an app dials, handed over as
+`Endpoint` alongside the credential the same provider publishes) are the contracts that carry a
+non-credential value.
 
 **Consequences for the docs above.** Where §2 says "provider discovery: probe ...", §7 risk 2 or
 the post-review notes reference per-consumer constants, or a consumer is said to read a sibling's

@@ -40,7 +40,9 @@ func (f *fakeSecrets) GenerateAppAdminPassword(string) (string, error) { return 
 
 func (f *fakeSecrets) GetAppSecret(string, string) string { return "" }
 
-func (f *fakeSecrets) SetAppSecret(string, string, string) error { return nil }
+func (f *fakeSecrets) SetAppSecret(string, string, string) error                { return nil }
+func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
+func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
 
 // recordedRequest is one request the fake Seerr received.
 type recordedRequest struct {

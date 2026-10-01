@@ -67,11 +67,6 @@ Verified against the tree and the pinned image at the time of writing.
   profile is available later and never needs to be built. But `config.yaml` outranks
   the environment for provider selection, which is what
   [How Hermes must be registered](#how-hermes-must-be-registered) works through.
-- **The `mcp` contract already exists and nothing uses it.**
-  `internal/catalog/contracts.go` declares it (`httpToken`, `path`,
-  `serverName`). No app provides or consumes it. It is vocabulary ahead of code,
-  and it is the *tools* contract, not the model contract. See
-  [MCP stays separate](#mcp-stays-separate).
 - **A containerless app parses today and then does nothing.** `Containers` is
   `yaml:"containers,omitempty"` (`internal/catalog/models.go`), so the loader
   accepts an app with no containers. The planner builds one graph node per
@@ -559,22 +554,6 @@ The underlying category error: the operator's external server is not a thing you
 install. It is a thing you configure. Putting it in the catalog makes the catalog
 lie about what it contains.
 
-## MCP stays separate
-
-Inference is the model. MCP is the tools. An agent app consumes both, and they
-are different contracts:
-
-| | Contract | Provider |
-|---|---|---|
-| The model | `inference` | LiteLLM, or the instance by promotion |
-| A tool server | `mcp` | an app that exposes an MCP listener |
-
-Do not merge them into one "AI" contract. A consumer that needs a model must not
-be handed tool credentials, and vice versa, which is the whole point of the
-`requires` list in invariant 15. A Bloud-side MCP aggregator that registers
-catalog apps' MCP endpoints behind one listener is a real idea and its own plan;
-nothing here blocks it.
-
 ## Invariant impacts
 
 | Invariant | Impact |
@@ -657,7 +636,6 @@ because `ViaGateway` already distinguishes the two cases in the binding.
 - **TLS for the upstream.** Bloud sends whatever the operator configured. A
   plaintext `http://` upstream with a real API key is the operator's choice and
   should be visually flagged in the UI, not refused.
-- **MCP aggregation.** Its own plan.
 - **Multiple named AI "profiles" per app.** One upstream list, one served
   endpoint. Per-app routing beyond the default is LiteLLM's job.
 

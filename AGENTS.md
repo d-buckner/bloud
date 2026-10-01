@@ -665,10 +665,11 @@ combined with instance/SSH-target env vars). Instance overrides:
     resolved**: declaring a contract gets an app the provider's address, never a
     credential by default. The orchestrator resolves each declared contract into
     `AppState.Integrations`, **one typed slice per contract** (`PVRs`,
-    `MediaServers`, `DownloadClients`, `MCPServers`, `SSO`), each binding
-    embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`, `BaseURL`,
-    `LocalURL` where `BaseURL` is what the app stores and `LocalURL` what the
-    configurator calls) plus that contract's payload. Credentials come from the
+    `MediaServers`, `DownloadClients`, `SSO`, `ModelSources`, `Inference`),
+    each binding embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`,
+    `BaseURL`, `LocalURL` where `BaseURL` is what the app stores and
+    `LocalURL` what the configurator calls) plus that contract's payload.
+    Credentials come from the
     host store (`AppSecretsProvider.SetAppSecret`); values are static metadata.
     Never add a field to a shared binding struct: a new capability is a contract
     entry, a payload type in `pkg/configurator`, and one arm in
@@ -848,6 +849,7 @@ to the right doc. When a doc moves, update it in both places.
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
 |Sharing/federation (in progress)|[features/sharing.md](docs/features/sharing.md)|
+|MCP servers as catalog apps (design; not built)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Dated review findings|[specs/review.md](docs/specs/review.md)|
 | Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|

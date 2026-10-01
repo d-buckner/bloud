@@ -16,10 +16,11 @@ import (
 // orchestrator resolves a contract's credentials from.
 type fakeSecrets struct {
 	published map[string]map[string]string
+	values    map[string]string
 }
 
 func newFakeSecrets() *fakeSecrets {
-	return &fakeSecrets{published: make(map[string]map[string]string)}
+	return &fakeSecrets{published: make(map[string]map[string]string), values: make(map[string]string)}
 }
 
 func (f *fakeSecrets) publish(app, key, value string) {
@@ -40,6 +41,18 @@ func (f *fakeSecrets) GetAppSecret(appName, key string) string {
 func (f *fakeSecrets) SetAppSecret(appName, key, value string) error {
 	f.publish(appName, key, value)
 	return nil
+}
+
+func (f *fakeSecrets) SetAppContractValue(appName, contract, key, value string) error {
+	if f.values == nil {
+		f.values = make(map[string]string)
+	}
+	f.values[appName+"/"+contract+"/"+key] = value
+	return nil
+}
+
+func (f *fakeSecrets) GetAppContractValue(appName, contract, key string) string {
+	return f.values[appName+"/"+contract+"/"+key]
 }
 
 // providerApp is catalog metadata for a single-container provider that offers
@@ -113,26 +126,16 @@ func install(t *testing.T, store *FakeAppStore, id string, integrationConfig map
 // that is not installed is still described, so its entry can be pruned.
 func TestBuildIntegrations_ResolvesContractPayloads(t *testing.T) {
 	consumer := consumerApp("prowlarr", "pvr", catalog.Integration{Requires: requires("apiKey")}, "sonarr", "radarr")
-	consumer.Integrations["mcp"] = catalog.Integration{
-		Requires:   requires("httpToken"),
-		Compatible: []catalog.CompatibleApp{{App: "affine-mcp"}},
-	}
 	store := NewFakeAppStore()
 	install(t, store, "prowlarr", nil)
 	install(t, store, "sonarr", nil)
-	install(t, store, "affine-mcp", nil)
 
 	orch, secrets := bindingsOrchestrator(t, store,
 		consumer,
 		providerApp("sonarr", 8989, "pvr", catalog.ContractProvides{Secrets: []string{"apiKey"}}),
 		providerApp("radarr", 7878, "pvr", catalog.ContractProvides{Secrets: []string{"apiKey"}}),
-		providerApp("affine-mcp", 3011, "mcp", catalog.ContractProvides{
-			Secrets: []string{"httpToken"},
-			Values:  map[string]string{"path": "/mcp", "serverName": "affine"},
-		}),
 	)
 	secrets.publish("sonarr", "apiKey", "sonarr-key")
-	secrets.publish("affine-mcp", "httpToken", "bearer-token")
 
 	out := orch.buildIntegrations("prowlarr", consumer)
 
@@ -151,12 +154,6 @@ func TestBuildIntegrations_ResolvesContractPayloads(t *testing.T) {
 	assert.False(t, radarr.Installed)
 	assert.Equal(t, "http://apps-radarr:7878", radarr.BaseURL, "an uninstalled provider still has the address Bloud wrote")
 	assert.Empty(t, radarr.APIKey, "an unpublished credential is empty, not a stale value")
-
-	require.Len(t, out.MCPServers, 1)
-	mcp := out.MCPServers[0]
-	assert.Equal(t, "affine", mcp.ServerName)
-	assert.Equal(t, "http://apps-affine-mcp:3011/mcp", mcp.URL, "the endpoint is the resolved address plus the provider's path")
-	assert.Equal(t, "bearer-token", mcp.Token)
 
 	assert.Empty(t, out.MediaServers, "a contract the consumer does not declare yields nothing")
 	assert.Empty(t, out.DownloadClients)
@@ -235,7 +232,6 @@ func TestBuildIntegrations_NoPayloadContractAndSelfProvider(t *testing.T) {
 	require.Len(t, out.PVRs, 1)
 	assert.Equal(t, "prowlarr", out.PVRs[0].App, "an app is not its own provider")
 	assert.Empty(t, out.MediaServers)
-	assert.Empty(t, out.MCPServers)
 }
 
 // Without a store there is nothing to resolve.
@@ -251,7 +247,6 @@ func TestBuildIntegrations_WithoutStore(t *testing.T) {
 	out := orch.buildIntegrations("seerr", consumerApp("seerr", "mediaServer", catalog.Integration{}, "jellyfin"))
 	assert.Empty(t, out.PVRs)
 	assert.Empty(t, out.MediaServers)
-	assert.Empty(t, out.MCPServers)
 }
 
 // A configurator's state carries the typed integrations, so the resolution runs
@@ -301,4 +296,110 @@ func TestBuildIntegrations_ResolvesOnlyRequiredSecrets(t *testing.T) {
 	require.Len(t, affine.SSO, 1)
 	assert.True(t, affine.SSO[0].Installed, "the binding is still resolved: the address is what a non-reader needs")
 	assert.Empty(t, affine.SSO[0].APIToken, "and an app that did not declare the requirement is not handed the credential")
+}
+
+// An MCP provider whose endpoint shape is known up front declares both values in
+// metadata. The binding carries the path and the namespace separately and never a
+// composed URL, because the consumer picks which address its own network position
+// can dial.
+func TestBuildIntegrations_MCPStaticValues(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "hermes", nil)
+	install(t, store, "simple-mcp", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("hermes", "mcp", catalog.Integration{Requires: requires("httpToken")}, "simple-mcp"),
+		providerApp("simple-mcp", 3011, "mcp", catalog.ContractProvides{
+			Secrets: []string{"httpToken"},
+			Values:  map[string]string{"path": "/mcp", "serverName": "simple"},
+		}),
+	)
+	secrets.publish("simple-mcp", "httpToken", "bearer-1")
+
+	out := orch.buildIntegrations("hermes", consumerApp("hermes", "mcp", catalog.Integration{Requires: requires("httpToken")}, "simple-mcp"))
+	require.Len(t, out.MCPServers, 1)
+	binding := out.MCPServers[0]
+	assert.Equal(t, "simple", binding.ServerName)
+	assert.Equal(t, "/mcp", binding.Path)
+	assert.Equal(t, "bearer-1", binding.Token)
+	assert.Equal(t, "http://apps-simple-mcp:3011", binding.BaseURL)
+	assert.Equal(t, "http://localhost:3011", binding.LocalURL)
+}
+
+// A provider whose endpoint path its own app mints declares the key under
+// `runtimeValues`, and the published value wins over anything in metadata. This
+// is the AFFiNE shape: /api/workspaces/<id>/mcp, where the id is created by
+// AFFiNE on first boot.
+func TestBuildIntegrations_MCPRuntimePublishedValue(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "hermes", nil)
+	install(t, store, "affine", nil)
+
+	offer := catalog.ContractProvides{
+		Secrets:       []string{"httpToken"},
+		Values:        map[string]string{"serverName": "affine"},
+		RuntimeValues: []string{"path"},
+	}
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("hermes", "mcp", catalog.Integration{Requires: requires("httpToken")}, "affine"),
+		providerApp("affine", 3010, "mcp", offer),
+	)
+	require.NoError(t, secrets.SetAppContractValue("affine", "mcp", "path", "/api/workspaces/ws-42/mcp"))
+	secrets.publish("affine", "httpToken", "aff_mcp_v1.cred.secret")
+
+	out := orch.buildIntegrations("hermes", consumerApp("hermes", "mcp", catalog.Integration{Requires: requires("httpToken")}, "affine"))
+	require.Len(t, out.MCPServers, 1)
+	binding := out.MCPServers[0]
+	assert.Equal(t, "/api/workspaces/ws-42/mcp", binding.Path, "the runtime-published path is what the consumer gets")
+	assert.Equal(t, "affine", binding.ServerName, "a value the provider did declare statically still resolves")
+	assert.Equal(t, "aff_mcp_v1.cred.secret", binding.Token)
+}
+
+// A runtime value the provider has not published yet reads as empty, which the
+// consumer must treat as "not ready" rather than as a path to write down. The
+// harness filter (skip anything with an empty token) is what keeps this from
+// registering a broken tool namespace; the empty path is the same signal one
+// level earlier.
+func TestBuildIntegrations_MCPNotPublishedYet(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "hermes", nil)
+	install(t, store, "affine", nil)
+
+	orch, _ := bindingsOrchestrator(t, store,
+		consumerApp("hermes", "mcp", catalog.Integration{Requires: requires("httpToken")}, "affine"),
+		providerApp("affine", 3010, "mcp", catalog.ContractProvides{
+			Secrets:       []string{"httpToken"},
+			Values:        map[string]string{"serverName": "affine"},
+			RuntimeValues: []string{"path"},
+		}),
+	)
+
+	out := orch.buildIntegrations("hermes", consumerApp("hermes", "mcp", catalog.Integration{Requires: requires("httpToken")}, "affine"))
+	require.Len(t, out.MCPServers, 1, "an unready provider is still bound, so the harness can prune an entry Bloud wrote for it")
+	assert.Empty(t, out.MCPServers[0].Path, "the runtime value is empty until the provider publishes it")
+	assert.Empty(t, out.MCPServers[0].Token, "and so is the token")
+	assert.True(t, out.MCPServers[0].Installed)
+}
+
+// A harness that declares `mcp` without requiring the token gets the address and
+// the namespace but no credential, the same least-privilege rule every other
+// contract enforces.
+func TestBuildIntegrations_MCPTokenOnlyForDeclaredRequires(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "reader", nil)
+	install(t, store, "simple-mcp", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("reader", "mcp", catalog.Integration{}, "simple-mcp"),
+		providerApp("simple-mcp", 3011, "mcp", catalog.ContractProvides{
+			Secrets: []string{"httpToken"},
+			Values:  map[string]string{"path": "/mcp", "serverName": "simple"},
+		}),
+	)
+	secrets.publish("simple-mcp", "httpToken", "bearer-1")
+
+	out := orch.buildIntegrations("reader", consumerApp("reader", "mcp", catalog.Integration{}, "simple-mcp"))
+	require.Len(t, out.MCPServers, 1)
+	assert.Empty(t, out.MCPServers[0].Token, "declaring the contract does not by itself hand over the bearer")
+	assert.Equal(t, "/mcp", out.MCPServers[0].Path, "the non-secret values are still available")
 }

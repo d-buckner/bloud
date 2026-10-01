@@ -85,6 +85,10 @@ func (f *fakeSecrets) SetAppSecret(app, key, value string) error {
 	return nil
 }
 
+// Contract values are not used by this app; these satisfy the interface.
+func (f *fakeSecrets) SetAppContractValue(string, string, string, string) error { return nil }
+func (f *fakeSecrets) GetAppContractValue(string, string, string) string        { return "" }
+
 // published returns the credentials written so far, oldest first.
 func (f *fakeSecrets) published() []secretWrite {
 	f.mu.Lock()

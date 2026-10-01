@@ -729,11 +729,6 @@ func (o *Orchestrator) removeApp(ctx context.Context, appName string, clearData 
 // running per-node configurator Remove() and container runtime Remove() for each.
 func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName string, defs []catalog.ContainerDef, clearData bool) error {
 	for _, def := range defs {
-		// Release container-owned data while the container is still alive
-		// (see releaseContainerOwnedData).
-		if clearData {
-			o.releaseContainerOwnedData(ctx, appName, def)
-		}
 		if r, ok := o.registry.Get(def.Name).(configurator.Remover); ok {
 			state, err := o.buildAppState(def.Name)
 			if err != nil {
@@ -754,50 +749,32 @@ func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName stri
 	}
 	if clearData {
 		dataDir := filepath.Join(o.dataDir, appName)
-		if err := os.RemoveAll(dataDir); err != nil {
+		if err := o.removeAppData(ctx, dataDir); err != nil {
 			o.logger.Warn("failed to remove data directory", "app", appName, "path", dataDir, "error", err)
 		}
 	}
 	return nil
 }
 
-// releaseContainerOwnedData empties a container's app-data volumes while the
-// container is still running, so the host-side os.RemoveAll afterwards can
-// delete the whole app data directory. Containers keep their data as their
-// (possibly non-root) container user, which leaves mode-0700 directories on
-// the host that the host-agent user cannot enter or delete (e.g. the
-// pgvector image's postgres user). The container's own filesystem view can
-// still reach them, so the cleanup runs inside the container. Volumes whose
-// host source is outside the app data directory (e.g. shared media) are left
-// untouched. Failures are logged, not fatal: the host-side RemoveAll is
-// still attempted.
-func (o *Orchestrator) releaseContainerOwnedData(ctx context.Context, appName string, def catalog.ContainerDef) {
-	if o.config.Containers == nil {
-		return
-	}
-	appDataDir := filepath.Join(o.dataDir, appName)
-	var targets []string
-	for _, v := range def.Volumes {
-		src := strings.ReplaceAll(v.Source, "{{appDataDir}}", appDataDir)
-		src = strings.ReplaceAll(src, "{{dataDir}}", o.dataDir)
-		if src == appDataDir || !strings.HasPrefix(src, appDataDir+string(os.PathSeparator)) {
-			continue
-		}
-		targets = append(targets, v.Destination)
-	}
-	if len(targets) == 0 {
-		return
-	}
-	state, err := o.config.Containers.Inspect(ctx, def.Name)
-	if err != nil || !state.Running {
-		return // container absent or already stopped: host-side removal is best-effort
-	}
-	for _, dest := range targets {
-		cmd := []string{"sh", "-c", fmt.Sprintf("find %s -mindepth 1 -delete 2>/dev/null || true", dest)}
-		if err := o.config.Containers.Exec(ctx, def.Name, cmd); err != nil {
-			o.logger.Warn("failed to release container-owned data", "container", def.Name, "volume", dest, "error", err)
+// removeAppData deletes an app's data directory now that its containers are
+// gone. Containers that write as a non-root user leave files owned, on the
+// host, by a mapped uid the host-agent user cannot delete, so os.RemoveAll
+// alone fails on them (e.g. the pgvector postgres user). The runtime can
+// remove the path as the root of its user namespace; when it can, that is the
+// only removal attempted, because it also covers every host-owned file. A
+// runtime without the capability falls back to the host-side removal.
+//
+// This runs after the containers are removed on purpose. Emptying the volumes
+// from inside a live container leaves the door open for the app to write again
+// while it shuts down (Manticore rewrites manticore.json on SIGTERM), and
+// those bytes are then unreachable to the host user.
+func (o *Orchestrator) removeAppData(ctx context.Context, path string) error {
+	if o.config.Containers != nil {
+		if remover, ok := o.config.Containers.(containerruntime.PathRemover); ok {
+			return remover.RemoveHostPath(ctx, path)
 		}
 	}
+	return os.RemoveAll(path)
 }
 
 // Reconcile runs one full reconciliation pass over all graph nodes.
@@ -1559,13 +1536,6 @@ func (o *Orchestrator) bindContract(
 		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(providerID, contract, offer, requires)})
 	case "downloadClient":
 		out.DownloadClients = append(out.DownloadClients, configurator.DownloadClientBinding{ProviderRef: ref})
-	case "mcp":
-		out.MCPServers = append(out.MCPServers, configurator.MCPBinding{
-			ProviderRef: ref,
-			ServerName:  offer.Values["serverName"],
-			URL:         ref.BaseURL + offer.Values["path"],
-			Token:       o.publishedSecret(providerID, contract, offer, requires),
-		})
 	case "modelSource":
 		// An app provider of modelSource (Ollama) is keyless by contract: the
 		// credential a gateway needs for the operator's external server comes
@@ -1573,6 +1543,16 @@ func (o *Orchestrator) bindContract(
 		out.ModelSources = append(out.ModelSources, configurator.ModelSourceBinding{
 			ProviderRef: ref,
 			Endpoint:    ref.BaseURL + offer.Values["path"],
+		})
+	case "mcp":
+		// The path may be one the provider minted at runtime (an endpoint under
+		// an id the app generated on first boot), so it resolves through the
+		// published-value channel with the static metadata as the fallback.
+		out.MCPServers = append(out.MCPServers, configurator.MCPBinding{
+			ProviderRef: ref,
+			ServerName:  o.contractValue(providerID, contract, offer, "serverName"),
+			Path:        o.contractValue(providerID, contract, offer, "path"),
+			Token:       o.publishedSecret(providerID, contract, offer, requires),
 		})
 	default:
 		// Contracts with no payload (proxy, database) need no consumer input
@@ -1604,6 +1584,22 @@ func (o *Orchestrator) publishedSecret(providerID, contract string, offer catalo
 		return ""
 	}
 	return o.secrets.GetAppSecret(providerID, spec.Secrets[0])
+}
+
+// contractValue resolves one non-secret contract value: the runtime-published one
+// if the provider declared the key under `runtimeValues` and has published it,
+// otherwise the static value from the offer.
+//
+// The runtime value wins over the static one rather than merging into it because
+// the loader forbids a key being declared both ways, so there is never a
+// disagreement to arbitrate: a key is either metadata-owned or runtime-owned.
+func (o *Orchestrator) contractValue(providerID, contract string, offer catalog.ContractProvides, key string) string {
+	if slices.Contains(offer.RuntimeValues, key) && o.secrets != nil {
+		if v := o.secrets.GetAppContractValue(providerID, contract, key); v != "" {
+			return v
+		}
+	}
+	return offer.Values[key]
 }
 
 // providerRef resolves where a provider is reachable: its node on the app

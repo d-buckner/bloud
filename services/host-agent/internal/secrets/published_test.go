@@ -10,10 +10,9 @@ import (
 )
 
 // TestManager_PublishedAppSecrets pins the store half of integration bindings:
-// a credential an app generates for itself is kept under a name it chooses,
-// survives a reload, and is not written into the app's env file (a published
-// credential reaches a consumer through a binding, never through a container's
-// environment).
+// a credential an app generates for itself is kept under a name it chooses and
+// survives a reload. A published credential reaches a consumer through a
+// binding, never through a container's environment.
 func TestManager_PublishedAppSecrets(t *testing.T) {
 	tmpDir := t.TempDir()
 	secretsPath := filepath.Join(tmpDir, "secrets.json")
@@ -44,16 +43,16 @@ func TestManager_PublishedAppSecrets(t *testing.T) {
 		t.Errorf("the published bag lost its value when a typed slot was written: %q", got)
 	}
 
-	envFile := filepath.Join(tmpDir, "sonarr.env")
-	env, err := os.ReadFile(envFile)
-	if err != nil {
-		t.Fatalf("reading %s: %v", envFile, err)
-	}
-	if !strings.Contains(string(env), "ADMIN_PASSWORD=typed\n") {
-		t.Errorf("%s does not carry the typed admin password: %q", envFile, env)
-	}
-	if got := string(env); strings.Contains(got, "0123456789abcdef0123456789abcdef") {
-		t.Errorf("%s leaked a published credential into the container environment: %q", envFile, got)
+	// No per-app env file is written at all. The store used to generate one per
+	// app on every save; nothing mounts it, and a published credential reaches a
+	// consumer through a binding, never through a container's environment. Pin
+	// the absence so the writer cannot come back looking load-bearing.
+	if entries, err := os.ReadDir(tmpDir); err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".env") {
+				t.Errorf("unexpected generated env file %q: published credentials travel through bindings, not container environments", e.Name())
+			}
+		}
 	}
 
 	m2 := NewManager(secretsPath)
@@ -65,9 +64,77 @@ func TestManager_PublishedAppSecrets(t *testing.T) {
 	}
 }
 
+// TestManager_AppContractValues pins the runtime-published value channel: a
+// provider stores a non-secret fact its own app minted, scoped by contract so two
+// contracts sharing a value key cannot collide, and reads it back across a
+// reload. Re-publishing the same value is a no-op, because a configurator
+// publishes on every reconciliation pass.
+func TestManager_AppContractValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretsPath := filepath.Join(tmpDir, "secrets.json")
+
+	m := NewManager(secretsPath)
+	if err := m.Load(); err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+
+	if err := m.SetAppContractValue("affine", "mcp", "path", "/api/workspaces/ws-1/mcp"); err != nil {
+		t.Fatalf("failed to publish contract value: %v", err)
+	}
+	if got := m.GetAppContractValue("affine", "mcp", "path"); got != "/api/workspaces/ws-1/mcp" {
+		t.Errorf("GetAppContractValue(mcp/path) = %q, want the published path", got)
+	}
+	// Scoped by contract: the same key under another contract is a different value.
+	if got := m.GetAppContractValue("affine", "modelSource", "path"); got != "" {
+		t.Errorf("contract values leaked across the contract scope: modelSource/path = %q", got)
+	}
+	// An unpublished provider/key reads as empty, the same "not ready" signal a
+	// published secret gives.
+	if got := m.GetAppContractValue("litellm", "mcp", "path"); got != "" {
+		t.Errorf("GetAppContractValue for an unknown provider = %q, want empty", got)
+	}
+
+	// A second write of the same value must not rewrite the file.
+	before, err := os.Stat(secretsPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if err := m.SetAppContractValue("affine", "mcp", "path", "/api/workspaces/ws-1/mcp"); err != nil {
+		t.Fatalf("re-publishing the same value failed: %v", err)
+	}
+	after, err := os.Stat(secretsPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Error("re-publishing an unchanged contract value rewrote secrets.json")
+	}
+	// A changed value does land.
+	if err := m.SetAppContractValue("affine", "mcp", "path", "/api/workspaces/ws-2/mcp"); err != nil {
+		t.Fatalf("failed to update contract value: %v", err)
+	}
+	if got := m.GetAppContractValue("affine", "mcp", "path"); got != "/api/workspaces/ws-2/mcp" {
+		t.Errorf("after update: GetAppContractValue = %q, want the new path", got)
+	}
+
+	m2 := NewManager(secretsPath)
+	if err := m2.Load(); err != nil {
+		t.Fatalf("failed to reload: %v", err)
+	}
+	if got := m2.GetAppContractValue("affine", "mcp", "path"); got != "/api/workspaces/ws-2/mcp" {
+		t.Errorf("after reload: GetAppContractValue = %q, want the persisted path", got)
+	}
+	// GetAllSecrets hands out a copy, not the live nested maps.
+	all := m2.GetAllSecrets()
+	all.AppSecrets["affine"].PublishedValues["mcp"]["path"] = "mutated"
+	if got := m2.GetAppContractValue("affine", "mcp", "path"); got != "/api/workspaces/ws-2/mcp" {
+		t.Errorf("GetAllSecrets aliased the published-value map: mutating the copy changed the store to %q", got)
+	}
+}
+
 // TestManager_SetAppSecretIsIdempotent pins the no-op: configurators publish on
 // every reconciliation, so re-writing a value it already holds must not touch
-// the file (which would rewrite every generated env file with it).
+// the file.
 func TestManager_SetAppSecretIsIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	secretsPath := filepath.Join(tmpDir, "secrets.json")

@@ -31,8 +31,8 @@ type Integration struct {
 // Keying by contract is what keeps the offer honest: a PVR's API key is offered
 // to whoever integrates with it *as a PVR*, not to every consumer that happens
 // to have a binding, and a consumer declaring one contract can never read
-// another contract's payload. An app that offers several (an MCP server that is
-// also a media server) declares one entry per contract.
+// another contract's payload. An app that offers several contracts declares one
+// entry per contract.
 //
 // The names and the required values are defined in contracts.go: a declaration
 // that does not match its contract fails the catalog load rather than reaching a
@@ -51,6 +51,17 @@ type ContractProvides struct {
 	// path. They travel in the provider's metadata, so they need no publication
 	// step.
 	Values map[string]string `yaml:"values,omitempty" json:"values,omitempty"`
+	// RuntimeValues names the value keys this provider fills at runtime instead
+	// of declaring in Values, because the value does not exist until the app is
+	// up. AFFiNE's MCP endpoint is `/api/workspaces/<id>/mcp` and the id is
+	// minted by AFFiNE on first boot, so no metadata file could state it.
+	//
+	// Declaring it here rather than leaving the loader to accept a missing value
+	// is what keeps the channel honest: the loader rejects a key that is neither
+	// declared statically nor listed as runtime-supplied, and rejects one listed
+	// both ways, so a value always has exactly one authoritative source. A
+	// configurator fills it with SetAppContractValue.
+	RuntimeValues []string `yaml:"runtimeValues,omitempty" json:"runtimeValues,omitempty"`
 }
 
 // CompatibleApp defines a specific provider that can fulfill an integration.

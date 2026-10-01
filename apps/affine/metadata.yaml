@@ -20,6 +20,22 @@ integrations:
       - app: authentik
         default: true
 
+# AFFiNE ships its own MCP server: a stateless streamable-HTTP endpoint per
+# workspace, authenticated by a scoped `aff_mcp_v1.*` bearer the app mints
+# through its own API. Bloud does not wrap it in another container. It mints
+# one credential as the owner it bootstraps and publishes it, so a harness that
+# declares the `mcp` contract gets a real AFFiNE credential it can revoke in
+# the AFFiNE UI, and the endpoint path travels as a runtime value because the
+# workspace id is created by AFFiNE, not knowable in this file.
+#
+# Requires copilot.enabled, which the configurator writes into config.json.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: affine
+    runtimeValues: [path]
+
 # SSO via the host-agent's per-app Authentik OIDC provider. AFFiNE's generic
 # OIDC provider (oauth.providers.oidc) performs discovery against the issuer
 # and uses PKCE + client secret; the browser callback lands on
@@ -59,6 +75,31 @@ containers:
       timeout: 5
       retries: 5
 
+  # AFFiNE's document search has two channels, and `doc_search` reports
+  # SEARCH_UNAVAILABLE when both are down. The lexical channel needs an
+  # external indexer service (provider enum is exactly manticoresearch or
+  # elasticsearch); the vector channel needs an embedding model, which on
+  # self-hosted means an operator-supplied AI provider key. Bundling Manticore
+  # lights the lexical channel with no AI key, which is what makes the MCP
+  # `doc_search` tool answer at all. Invariant 3: the app owns its own search
+  # infrastructure, the same way it owns its own postgres and redis.
+  - name: apps-affine-search
+    image: docker.io/manticoresearch/manticore:29.9.0
+    network: affine-internal
+    restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/search"
+        destination: /var/lib/manticore
+    healthCheck:
+      # The image ships wget but no curl; 9308 is the HTTP interface AFFiNE
+      # dials. The root path answers with an Elasticsearch-compatibility banner
+      # (Manticore fakes an ES 7.4.1 hello), so a 200 here means Manticore,
+      # not Elasticsearch.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9308/ || exit 1"]
+      interval: 5
+      timeout: 5
+      retries: 20
+
   # The official self-host deployment runs a one-shot migration job
   # (prisma migrate deploy + data migrations + private.key generation) before
   # the server starts. Bloud's orchestrator manages long-lived containers, so
@@ -81,9 +122,12 @@ containers:
     environment:
       DATABASE_URL: "postgresql://affine:{{postgresPassword}}@apps-affine-postgres:5432/affine"
       REDIS_SERVER_HOST: apps-affine-redis
-      # The AI indexer needs an external search provider; keep it off by
-      # default (matches the official self-host compose).
-      AFFINE_INDEXER_ENABLED: "false"
+      # Keyword search backend. Without this the MCP `doc_search` tool answers
+      # SEARCH_UNAVAILABLE because the lexical channel is null and the vector
+      # channel needs an embedding model Bloud does not supply.
+      AFFINE_INDEXER_ENABLED: "true"
+      AFFINE_INDEXER_SEARCH_PROVIDER: manticoresearch
+      AFFINE_INDEXER_SEARCH_ENDPOINT: "http://apps-affine-search:9308"
     # sso.localhost resolves to the host gateway inside the VM, letting the
     # server reach the OIDC provider (traefik) by the same name browsers use.
     extraHosts:
@@ -104,3 +148,4 @@ containers:
     dependsOn:
       - apps-affine-postgres
       - apps-affine-redis
+      - apps-affine-search

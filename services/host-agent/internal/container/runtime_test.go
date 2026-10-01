@@ -91,6 +91,21 @@ func (f *fakePodmanClient) Exec(_ context.Context, _ string, _ []string) ([]byte
 	return nil, nil
 }
 
+func (f *fakePodmanClient) RemoveHostPath(_ context.Context, path string) error {
+	f.record("remove-host-path")
+	f.removed = append(f.removed, path)
+	return nil
+}
+
+func TestPodmanRuntimeRemoveHostPathDelegates(t *testing.T) {
+	client := &fakePodmanClient{}
+	runtime := newPodmanRuntime(client)
+
+	require.NoError(t, runtime.RemoveHostPath(context.Background(), "/var/tmp/bloud/data/affine"))
+	assert.Equal(t, []string{"remove-host-path"}, client.events)
+	assert.Equal(t, []string{"/var/tmp/bloud/data/affine"}, client.removed)
+}
+
 func TestPodmanRuntimeEnsureIsIdempotentAndRecreatesChangedSpec(t *testing.T) {
 	client := &fakePodmanClient{}
 	runtime := newPodmanRuntime(client)

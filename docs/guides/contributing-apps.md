@@ -469,7 +469,8 @@ for _, pvr := range state.Integrations.PVRs {
 | `MediaServers` (`mediaServer`) | `AdminPassword`, the provider's bootstrap admin password |
 | `DownloadClients` (`downloadClient`) | nothing: the consumer stores the address |
 | `SSO` (`sso`) | `APIToken`, to read the provider's users |
-| `MCPServers` (`mcp`) | `ServerName`, `URL`, `Token` |
+| `ModelSources` (`modelSource`) | `Endpoint`, `APIKey`, `Models` |
+| `Inference` (`inference`) | `Endpoint`, `APIKey`, `DefaultModel`, `Models`, `ViaGateway` |
 
 Every binding embeds `ProviderRef`, the part that is the same for all of them:
 
@@ -547,20 +548,18 @@ enough, because the host is the one that stored it (jellyfin declares
 `adminPassword`, the password `GenerateAppAdminPassword` handed it).
 
 **Endpoint facts.** Static values travel in the metadata, so nothing has to be
-published at runtime. An MCP server declares where it serves and what it calls
-itself:
+published at runtime. A model upstream declares the path its API lives under:
 
 ```yaml
-port: 3011
+port: 11434
 provides:
-  mcp:
-    secrets: [httpToken]
-    values: {path: /mcp, serverName: affine}
+  modelSource:
+    values: {path: /v1}
 ```
 
-An agent app declaring the `mcp` contract receives `ServerName` and a ready
-`URL` (`http://apps-affine-mcp:3011/mcp`, the same resolved address as
-`BaseURL`) plus the token, and registers it through its own API.
+A gateway declaring the `modelSource` contract receives a ready `Endpoint`
+(`http://apps-ollama:11434/v1`, the resolved address plus the provider's
+path) and routes to it through its own configuration.
 
 **What a contract requires is defined once**, in
 `internal/catalog/contracts.go`: its name, the secret names a provider must
