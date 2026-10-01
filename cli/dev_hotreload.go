@@ -53,6 +53,7 @@ type hotReloadOptions struct {
 	binaryPath string
 	runDir     string
 	env        map[string]string
+	console    *devConsole
 }
 
 // runHotReload keeps a freshly built host-agent running on top of a stack that
@@ -63,40 +64,50 @@ type hotReloadOptions struct {
 // reconciliation pass simply runs against the new binary. App containers keep
 // running through every reload, so a reload costs seconds instead of a cold
 // install, and nothing about a code edit can disturb a running app.
-func runHotReload(ctx context.Context, opts hotReloadOptions, out io.Writer) int {
+func runHotReload(ctx context.Context, opts hotReloadOptions) int {
+	c := opts.console
 	if err := os.MkdirAll(opts.runDir, 0o755); err != nil {
-		errorf("could not create the runtime dir: %v", err)
+		c.StepFailed("prepare the runtime dir", opts.runDir, 0, err)
 		return 1
 	}
 
-	fprintLog(out, "Building host-agent for linux/"+runtime.GOARCH)
-	if err := buildHostAgentTo(opts.root, opts.binaryPath); err != nil {
-		errorf("Build failed: %v", err)
+	buildStart := time.Now()
+	buildTee := c.QuietStream()
+	if err := buildHostAgentTo(opts.root, opts.binaryPath, buildTee, buildTee); err != nil {
+		c.StepFailed("build host-agent", "linux/"+runtime.GOARCH, time.Since(buildStart), err)
+		c.PrintTail(buildTee.Tail(devTailLines))
 		return 1
 	}
+	c.Step("build host-agent", "linux/"+runtime.GOARCH, time.Since(buildStart))
 
+	// The dashboard's dev server owns its own stream filter: its banner and
+	// HMR chatter are noise, a Svelte compile error is not.
+	dashTee := c.DashboardStream()
 	vite := newRestartableCmd("vite", func() (*exec.Cmd, error) {
-		return viteCommand(opts.root)
+		return viteCommand(opts.root, dashTee, dashTee)
 	})
 	viteDone, err := vite.Start()
 	if err != nil {
-		errorf("Could not start the vite dev server: %v", err)
+		c.StepFailed("dashboard dev server", "", 0, err)
 		return 1
 	}
-	fprintLog(out, fmt.Sprintf(
-		"vite dev server up: the dashboard hot-reloads from it, proxied through the host-agent so the origin and the OIDC round trip stay real (dev server: http://localhost:%d).",
-		devVitePort))
+	c.Step("dashboard dev server", fmt.Sprintf("http://localhost:%d", devVitePort), 0)
 
+	agentTee := c.HostAgentStream()
 	child := newRestartableCmd("host-agent", func() (*exec.Cmd, error) {
-		return hostAgentCommand(opts)
+		return hostAgentCommand(opts, agentTee, agentTee)
 	})
 	childDone, err := child.Start()
 	if err != nil {
-		errorf("Could not start host-agent: %v", err)
+		c.StepFailed("host-agent", "", 0, err)
 		_ = vite.Stop(gracefulStopTimeout)
 		return 1
 	}
-	fprintLog(out, "host-agent up. Watching services/host-agent and apps; Ctrl-C to stop.")
+	c.Step("host-agent", "API http://localhost:3000", 0)
+
+	c.Blank()
+	c.Note("watching services/host-agent + apps · Ctrl-C to stop")
+	c.HintLogPath()
 
 	changes := make(chan []string, 8)
 	go watchBackendSources(ctx, opts.root, changes)
@@ -106,7 +117,7 @@ func runHotReload(ctx context.Context, opts hotReloadOptions, out io.Writer) int
 	defer signal.Stop(signals)
 
 	loop := &reloadLoop{
-		out:     out,
+		console: c,
 		opts:    opts,
 		child:   child,
 		vite:    vite,
@@ -119,7 +130,7 @@ func runHotReload(ctx context.Context, opts hotReloadOptions, out io.Writer) int
 // reloadLoop is the watch loop's event handling, split out from bring-up so
 // each handler stays small enough to read on its own.
 type reloadLoop struct {
-	out     io.Writer
+	console *devConsole
 	opts    hotReloadOptions
 	child   *restartableCmd
 	vite    *restartableCmd
@@ -137,7 +148,8 @@ func (l *reloadLoop) run(ctx context.Context, childDone, viteDone <-chan struct{
 	for {
 		select {
 		case <-ctx.Done():
-			fprintLog(l.out, "Stopping the dev loop")
+			l.console.Note("stopping the dev loop")
+			l.console.SuppressAgentLog(true)
 			_ = l.child.Stop(gracefulStopTimeout)
 			_ = l.vite.Stop(gracefulStopTimeout)
 			return 0
@@ -177,10 +189,10 @@ func (l *reloadLoop) escalateOnSecondSignal() {
 		for sig := range l.signals {
 			seen++
 			if seen == 1 {
-				fprintLog(l.out, "Stopping the dev servers; press Ctrl-C again to force it down.")
+				l.console.Note("stopping the dev servers; press Ctrl-C again to force it down")
 				continue
 			}
-			fprintLog(l.out, "Second "+sig.String()+": forcing vite and host-agent down.")
+			l.console.Emit("WARN", "second "+sig.String()+": forcing the dev servers down")
 			l.child.Force()
 			l.vite.Force()
 		}
@@ -194,21 +206,30 @@ func (l *reloadLoop) onChange(batch []string) (<-chan struct{}, bool) {
 	if len(batch) == 0 {
 		return nil, false
 	}
-	fprintLog(l.out, describeChangeBatch(batch))
+	trigger := changeTrigger(batch)
 	started := time.Now()
-	if err := buildHostAgentTo(l.opts.root, l.opts.binaryPath); err != nil {
-		errorf("build failed, keeping the running host-agent: %v", err)
+
+	// The build's own output is only interesting when it fails, so it goes to
+	// the log and a tail buffer rather than the console: a successful reload
+	// is one line, not forty.
+	buildTee := l.console.QuietStream()
+	if err := buildHostAgentTo(l.opts.root, l.opts.binaryPath, buildTee, buildTee); err != nil {
+		l.console.ReloadFailed(trigger, joinTail(buildTee.Tail(devTailLines)))
 		return nil, false
 	}
-	fprintLog(l.out, "built in "+time.Since(started).Round(time.Millisecond).String())
+	buildDur := time.Since(started)
 
+	// The old process is torn down on purpose here, so its shutdown warnings
+	// go to the log rather than the console: see SuppressAgentLog.
+	l.console.SuppressAgentLog(true)
 	next, err := restartChild(l.child)
+	l.console.SuppressAgentLog(false)
 	if err != nil {
-		errorf("restart failed: %v", err)
+		l.console.ReloadFailed(trigger, "restart failed: "+err.Error())
 		return nil, false
 	}
 	l.crashes = 0
-	fprintLog(l.out, "host-agent reloaded. Containers were left alone: the next reconciliation runs against the new code.")
+	l.console.ReloadOK(trigger, buildDur)
 	return next, true
 }
 
@@ -219,14 +240,15 @@ func (l *reloadLoop) onChange(batch []string) (<-chan struct{}, bool) {
 func (l *reloadLoop) onChildDeath() <-chan struct{} {
 	l.crashes++
 	if l.crashes > maxCrashes {
-		errorf("host-agent has crashed on startup %d times in a row; auto-restart is off. Fix the error above and save any watched file to try again.", l.crashes)
+		l.console.Emit("ERROR", fmt.Sprintf(
+			"host-agent has crashed on startup %d times in a row: auto-restart is off. Fix the error and save any watched file to try again.", l.crashes))
 		return nil
 	}
-	fprintLog(l.out, "host-agent exited on its own; restarting in "+crashBackoff.String())
+	l.console.Emit("WARN", "host-agent exited on its own; restarting in "+crashBackoff.String())
 	time.Sleep(crashBackoff)
 	next, err := l.child.Start()
 	if err != nil {
-		errorf("restart failed: %v", err)
+		l.console.Emit("ERROR", "restart failed: "+err.Error())
 		return nil
 	}
 	return next
@@ -236,7 +258,7 @@ func (l *reloadLoop) onChildDeath() <-chan struct{} {
 // itself. The API and every app container are unaffected when vite dies, so
 // this is reported separately rather than as a dev-loop failure.
 func (l *reloadLoop) onViteDeath(ctx context.Context) (<-chan struct{}, bool) {
-	fprintLog(l.out, "vite dev server exited; restarting in "+crashBackoff.String())
+	l.console.Emit("WARN", "dashboard dev server exited; restarting in "+crashBackoff.String())
 	select {
 	case <-ctx.Done():
 		return nil, false
@@ -244,7 +266,7 @@ func (l *reloadLoop) onViteDeath(ctx context.Context) (<-chan struct{}, bool) {
 	}
 	next, err := l.vite.Start()
 	if err != nil {
-		errorf("could not restart vite: %v", err)
+		l.console.Emit("ERROR", "could not restart the dashboard dev server: "+err.Error())
 		return nil, true
 	}
 	return next, true
@@ -262,13 +284,13 @@ func restartChild(c *restartableCmd) (<-chan struct{}, error) {
 // buildHostAgentTo compiles the host-agent into outPath. The build lands in a
 // sibling temp file and is renamed into place, so a reader never sees a half
 // written binary and a failed build cannot clobber the good one.
-func buildHostAgentTo(root, outPath string) error {
+func buildHostAgentTo(root, outPath string, stdout, stderr io.Writer) error {
 	tmp := outPath + ".building"
 	cmd := exec.Command("go", "build", "-o", tmp, "./cmd/host-agent")
 	cmd.Dir = filepath.Join(root, "services", "host-agent")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(tmp)
 		return err
@@ -285,11 +307,11 @@ func buildHostAgentTo(root, outPath string) error {
 // context is cancelled and races the ordered SIGTERM in restartableCmd.Stop:
 // every Ctrl-C would become a forced kill that skips the group. restartableCmd
 // owns this process's lifecycle, so the command carries no context of its own.
-func viteCommand(root string) (*exec.Cmd, error) {
+func viteCommand(root string, stdout, stderr io.Writer) (*exec.Cmd, error) {
 	cmd := exec.Command("npm", "run", "dev", "--workspace=@bloud/host-agent-web")
 	cmd.Dir = root
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	return cmd, nil
 }
 
@@ -297,15 +319,15 @@ func viteCommand(root string) (*exec.Cmd, error) {
 // are the point of the loop: the vite proxy for the dashboard, and the fast
 // gate so the API comes back in seconds instead of after a full convergence
 // pass.
-func hostAgentCommand(opts hotReloadOptions) (*exec.Cmd, error) {
+func hostAgentCommand(opts hotReloadOptions, stdout, stderr io.Writer) (*exec.Cmd, error) {
 	if _, err := os.Stat(opts.binaryPath); err != nil {
 		return nil, fmt.Errorf("host-agent binary is missing (%s): %w", opts.binaryPath, err)
 	}
 	cmd := exec.Command(opts.binaryPath)
 	cmd.Dir = opts.runDir
 	cmd.Env = append(os.Environ(), envPairs(opts.env)...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	return cmd, nil
 }
 

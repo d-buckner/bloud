@@ -16,6 +16,7 @@ const (
 	colorGreen  = "\033[0;32m"
 	colorYellow = "\033[1;33m"
 	colorCyan   = "\033[0;36m"
+	colorDim    = "\033[2m"
 	colorReset  = "\033[0m"
 )
 
@@ -122,6 +123,8 @@ func printUsage() {
 	fmt.Println("  dev             Build + deploy + run host-agent on the VM (Ctrl-C to stop)")
 	fmt.Println("    --reset        Wipe the runtime first (same as reset -y, no prompt)")
 	fmt.Println("    --no-watch     Run the one-shot build/deploy loop instead of hot reload")
+	fmt.Println("    -v | --verbose  Stream raw subprocess output, not just warnings")
+	fmt.Println("                    (all of it is mirrored to .bloud/logs/dev.log either way)")
 	fmt.Println("  start           Show dev environment quick-start instructions")
 	fmt.Println("  stop            Stop host-agent running on the VM")
 	fmt.Println("  status          Show VM and host-agent status")

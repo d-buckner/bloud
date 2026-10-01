@@ -669,6 +669,10 @@ type devFlags struct {
 	// reset wipes the runtime (the same wipe as `./bloud reset -y`) before
 	// the dev loop starts, so the stack comes up from empty data.
 	reset bool
+	// verbose streams the raw subprocess output to the console instead of
+	// quieting it to the dev log. It is the escape hatch for "the summary is
+	// not enough", and it changes nothing about what gets logged.
+	verbose bool
 }
 
 // parseDevFlags parses the dev command's flags. Unknown flags are an error:
@@ -684,9 +688,14 @@ func parseDevFlags(args []string) (devFlags, error) {
 			flags.watch = false
 		case "--reset":
 			flags.reset = true
+		case "-v", "--verbose":
+			flags.verbose = true
 		default:
-			return flags, fmt.Errorf("unknown dev flag %q (expected --watch, --no-watch, or --reset)", arg)
+			return flags, fmt.Errorf("unknown dev flag %q (expected --watch, --no-watch, --reset, or --verbose)", arg)
 		}
+	}
+	if v := os.Getenv("BLOUD_DEV_VERBOSE"); v == "1" || strings.EqualFold(v, "true") {
+		flags.verbose = true
 	}
 	return flags, nil
 }
@@ -716,6 +725,16 @@ func cmdDev(args []string) int {
 		return 1
 	}
 
+	// The console is built here rather than inside each loop so both paths
+	// share one log file, one header, and one close.
+	c, err := newDevConsole(os.Stdout, devLogPath(root), flags.verbose)
+	if err != nil {
+		errorf("could not open the dev log: %v", err)
+		return 1
+	}
+	defer func() { _ = c.Close() }()
+	c.Header(vmLabel(name), fmt.Sprintf("http://localhost:%s", portOr(bk.Host().Ports(), "traefik", defaultTraefikPort)))
+
 	if flags.watch {
 		// Hot reload needs the CLI to own the host-agent as a child process it
 		// can stop and start. That is only true on the native backend, where
@@ -724,12 +743,12 @@ func cmdDev(args []string) int {
 		// not what was wired. Say so and fall through rather than silently
 		// running something different from what was asked for.
 		if name == "native" {
-			return runDevWatch(root, bk, flags)
+			return runDevWatch(root, bk, flags, c)
 		}
-		log("Hot reload is wired for the native backend only; running the one-shot dev loop on " + vmLabel(name) + ".")
+		c.Note("hot reload is wired for the native backend only; running the one-shot loop")
 	}
 
-	return runDevOnce(root, bk, name, flags)
+	return runDevOnce(root, bk, name, flags, c)
 }
 
 // resetIfRequested runs the full runtime wipe when --reset was passed. The
@@ -749,32 +768,43 @@ func resetIfRequested(flags devFlags, bk backend.Backend, name string) error {
 }
 
 // runDevWatch brings up the hot-reload loop on a native runtime.
-func runDevWatch(root string, bk backend.Backend, flags devFlags) int {
+func runDevWatch(root string, bk backend.Backend, flags devFlags, c *devConsole) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log("Provisioning " + vmLabel("native"))
+	host := bk.Host()
+	ex := host.Executor()
+	// Create is a no-op when the runtime is already up, so the step is quick
+	// on every launch after the first.
+	provStart := time.Now()
 	if err := bk.Create(ctx); err != nil {
-		errorf("Failed to provision the runtime: %v", err)
+		c.StepFailed("provision runtime", "", time.Since(provStart), err)
 		return 1
 	}
+	c.Step("provision runtime", "", time.Since(provStart))
 
-	if err := resetIfRequested(flags, bk, "native"); err != nil {
-		errorf("%v", err)
-		return 1
+	if flags.reset {
+		resetStart := time.Now()
+		if err := resetRuntime(bk, "native"); err != nil {
+			c.StepFailed("wipe runtime", "--reset", time.Since(resetStart), err)
+			return 1
+		}
+		c.Step("wipe runtime", "--reset", time.Since(resetStart))
 	}
 
-	dirs := bk.Host().DataDirs()
+	dirs := host.DataDirs()
 
 	// A reload must never wipe the stack it is reloading, so the managed-
 	// container sweep the one-shot loop runs is deliberately absent here.
 	// Only the pre-catalog legacy names are cleared: nothing reconciles those,
 	// so a leftover from an old compose stack would squat on a port forever.
-	log("Clearing pre-catalog legacy containers")
-	if err := bk.Host().Executor().RunStream(ctx, executor.RunSpec{
+	// Housekeeping like this runs on every launch and is invisible unless it
+	// fails, so it writes to the log rather than the console.
+	quiet := c.QuietStream()
+	if err := ex.RunStream(ctx, executor.RunSpec{
 		Command: `podman rm -f bloud-dev-postgres bloud-dev-redis dev_authentik-worker_1 dev_authentik-proxy_1 2>/dev/null; true`,
-	}, os.Stdout, os.Stderr); err != nil && ctx.Err() == nil {
-		errorf("Failed to clear legacy containers: %v", err)
+	}, quiet, quiet); err != nil && ctx.Err() == nil {
+		c.StepFailed("clear pre-catalog legacy containers", "", 0, err)
 		return 1
 	}
 
@@ -785,20 +815,19 @@ func runDevWatch(root string, bk backend.Backend, flags devFlags) int {
 	pidPath := devLoopPIDPath(dirs.HostAgentDir)
 	tookOver, err := takeoverPreviousDevLoop(pidPath)
 	if err != nil {
-		errorf("Could not take over the previous dev loop: %v", err)
+		c.StepFailed("take over the previous dev loop", "", 0, err)
 		return 1
 	}
 	if tookOver {
-		log("Replacing the dev loop already running (pid file: " + pidPath + ")")
+		c.Note("replacing the dev loop already running (pid file: " + pidPath + ")")
 	}
 
 	// Stop a host-agent left behind by an earlier run, or the new one cannot
 	// bind its port and the two fight over the same runtime dir.
-	log("Stopping any previous host-agent")
-	if err := bk.Host().Executor().RunStream(ctx, executor.RunSpec{
+	if err := ex.RunStream(ctx, executor.RunSpec{
 		Command: stopPreviousHostAgentCommand("3000", dirs.HostAgentDir+"/host-agent"),
-	}, os.Stdout, os.Stderr); err != nil && ctx.Err() == nil {
-		errorf("Failed to stop the previous host-agent: %v", err)
+	}, quiet, quiet); err != nil && ctx.Err() == nil {
+		c.StepFailed("stop the previous host-agent", "", 0, err)
 		return 1
 	}
 
@@ -807,9 +836,8 @@ func runDevWatch(root string, bk backend.Backend, flags devFlags) int {
 	// Clear the port before starting ours: the host-agent is told to proxy the
 	// dashboard at a fixed port, and a stale server sitting on it serves the
 	// dashboard from a checkout that may no longer exist.
-	log("Freeing the dashboard dev-server port " + strconv.Itoa(devVitePort))
 	if err := runLocalCommand(ctx, stopPreviousViteCommand(devVitePort)); err != nil && ctx.Err() == nil {
-		errorf("Failed to free the vite port: %v", err)
+		c.StepFailed("free the dashboard dev-server port", strconv.Itoa(devVitePort), 0, err)
 		return 1
 	}
 
@@ -818,17 +846,23 @@ func runDevWatch(root string, bk backend.Backend, flags devFlags) int {
 	env["BLOUD_DEV_FAST_GATE"] = "1"
 
 	if err := writeDevLoopPID(pidPath); err != nil {
-		errorf("Could not record the dev loop pid: %v", err)
+		c.StepFailed("record the dev loop pid", "", 0, err)
 		return 1
 	}
 	defer func() { _ = os.Remove(pidPath) }()
+
+	// The API opens only once the host-agent is listening, which is the one
+	// bring-up fact the steps above cannot report. Watching for it from the
+	// side is what turns "host-agent started" into "open your browser".
+	go announceHostAgentReady(ctx, ex, c, host.Ports(), readyPollInterval, devQuietProgressFirst)
 
 	return runHotReload(ctx, hotReloadOptions{
 		root:       root,
 		binaryPath: dirs.HostAgentDir + "/host-agent",
 		runDir:     dirs.HostAgentDir,
 		env:        env,
-	}, os.Stdout)
+		console:    c,
+	})
 }
 
 // devRunEnv is the host-agent's dev environment. The same map feeds the
@@ -850,25 +884,34 @@ func devRunEnv(dirs executor.DataDirs, name string) map[string]string {
 }
 
 // runDevOnce is the one-shot loop: build, deploy, run in the foreground.
-func runDevOnce(root string, bk backend.Backend, name string, flags devFlags) int {
-	// Provision the VM if it is not already running. This is a no-op when the
-	// guest is already up (Lima: already created+started; QEMU: image+seed
-	// present and guest reachable), so it is safe for both backends.
-	log("Provisioning " + vmLabel(name))
-	if err := bk.Create(context.Background()); err != nil {
-		errorf("Failed to provision VM: %v", err)
-		return 1
-	}
-
-	if err := resetIfRequested(flags, bk, name); err != nil {
-		errorf("%v", err)
-		return 1
-	}
-
+func runDevOnce(root string, bk backend.Backend, name string, flags devFlags, c *devConsole) int {
 	host := bk.Host()
 	ex := host.Executor()
 	dirs := host.DataDirs()
 	goarch := runtime.GOARCH
+	// Most of this loop is routine work whose output only matters when it
+	// fails, so it is mirrored to the dev log rather than the console.
+	quiet := c.QuietStream()
+	ctx := context.Background()
+
+	// Provision the VM if it is not already running. This is a no-op when the
+	// guest is already up (Lima: already created+started; QEMU: image+seed
+	// present and guest reachable), so it is safe for both backends.
+	provStart := time.Now()
+	if err := bk.Create(ctx); err != nil {
+		c.StepFailed("provision runtime", "", time.Since(provStart), err)
+		return 1
+	}
+	c.Step("provision runtime", "", time.Since(provStart))
+
+	if flags.reset {
+		resetStart := time.Now()
+		if err := resetIfRequested(flags, bk, name); err != nil {
+			c.StepFailed("wipe runtime", "--reset", time.Since(resetStart), err)
+			return 1
+		}
+		c.Step("wipe runtime", "--reset", time.Since(resetStart))
+	}
 
 	// Clean slate: remove managed containers before the host-agent takes over.
 	// Also remove any stale legacy dev containers (bloud-dev-postgres,
@@ -877,115 +920,122 @@ func runDevOnce(root string, bk backend.Backend, name string, flags devFlags) in
 	// apps own their infra containers (e.g. apps-authentik-postgres) via
 	// metadata.yaml containers blocks, so the host-agent is the single manager.
 	// apps-traefik is included because it uses host network and holds port 80.
-	log("Stopping managed app containers")
-	if err := ex.RunStream(context.Background(), executor.RunSpec{
+	if err := ex.RunStream(ctx, executor.RunSpec{
 		Command: `podman rm -f bloud-dev-postgres bloud-dev-redis apps-traefik dev_authentik-worker_1 dev_authentik-proxy_1 apps-authentik-ldap apps-authentik-server 2>/dev/null; podman ps -a --filter label=io.bloud.managed=true -q | xargs -r podman rm -f -t 2 2>/dev/null; true`,
-	}, os.Stdout, os.Stderr); err != nil {
-		errorf("Failed to stop managed app containers: %v", err)
+	}, quiet, quiet); err != nil {
+		c.StepFailed("stop managed app containers", "", 0, err)
 		return 1
 	}
 
-	// Build
-	log("Building host-agent for linux/" + goarch)
 	tmpDir, err := os.MkdirTemp("", "bloud-dev-build-*")
 	if err != nil {
-		errorf("Failed to create temp dir: %v", err)
+		c.StepFailed("create the build dir", "", 0, err)
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	hostAgentDir := filepath.Join(root, "services", "host-agent")
 	binaryPath := filepath.Join(tmpDir, "host-agent")
+	buildTee := c.QuietStream()
+	buildStart := time.Now()
 	buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/host-agent")
 	buildCmd.Dir = hostAgentDir
 	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+goarch)
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Stderr = os.Stderr
+	buildCmd.Stdout = buildTee
+	buildCmd.Stderr = buildTee
 	if err := buildCmd.Run(); err != nil {
-		errorf("Build failed: %v", err)
+		c.StepFailed("build host-agent", "linux/"+goarch, time.Since(buildStart), err)
+		c.PrintTail(buildTee.Tail(devTailLines))
 		return 1
 	}
+	c.Step("build host-agent", "linux/"+goarch, time.Since(buildStart))
 
-	// Build frontend
-	log("Building frontend")
 	webDir := filepath.Join(hostAgentDir, "web")
+	frontendTee := c.QuietStream()
+	frontendStart := time.Now()
 	frontendBuild := exec.Command("npm", "run", "build", "--workspace=@bloud/host-agent-web")
 	frontendBuild.Dir = root
-	frontendBuild.Stdout = os.Stdout
-	frontendBuild.Stderr = os.Stderr
+	frontendBuild.Stdout = frontendTee
+	frontendBuild.Stderr = frontendTee
 	if err := frontendBuild.Run(); err != nil {
-		errorf("Frontend build failed: %v", err)
+		c.StepFailed("build dashboard", "", time.Since(frontendStart), err)
+		c.PrintTail(frontendTee.Tail(devTailLines))
 		return 1
 	}
+	c.Step("build dashboard", "", time.Since(frontendStart))
 
 	// Stop any previous host-agent before deploying: copying over a running
 	// binary fails with "text file busy" (and by now its containers are gone).
-	if err := ex.RunStream(context.Background(), executor.RunSpec{
+	if err := ex.RunStream(ctx, executor.RunSpec{
 		Command: stopPreviousHostAgentCommand("3000", dirs.HostAgentDir+"/host-agent"),
-	}, os.Stdout, os.Stderr); err != nil {
-		errorf("Failed to stop previous host-agent: %v", err)
+	}, quiet, quiet); err != nil {
+		c.StepFailed("stop the previous host-agent", "", 0, err)
 		return 1
 	}
 
-	// Deploy
-	log("Deploying to " + dirs.HostAgentDir)
-	if err := ex.RunStream(context.Background(), executor.RunSpec{
+	deployStart := time.Now()
+	if err := ex.RunStream(ctx, executor.RunSpec{
 		Command: "mkdir -p " + dirs.HostAgentDir,
-	}, os.Stdout, os.Stderr); err != nil {
-		errorf("Failed to create remote dir: %v", err)
+	}, quiet, quiet); err != nil {
+		c.StepFailed("deploy host-agent", dirs.HostAgentDir, time.Since(deployStart), err)
 		return 1
 	}
-	if err := ex.CopyTo(context.Background(), binaryPath, dirs.HostAgentDir+"/host-agent"); err != nil {
-		errorf("Failed to copy binary: %v", err)
+	if err := ex.CopyTo(ctx, binaryPath, dirs.HostAgentDir+"/host-agent"); err != nil {
+		c.StepFailed("deploy host-agent", dirs.HostAgentDir, time.Since(deployStart), err)
 		return 1
 	}
-
-	if err := ex.RunStream(context.Background(), executor.RunSpec{
+	if err := ex.RunStream(ctx, executor.RunSpec{
 		Command: "chmod 755 " + dirs.HostAgentDir + "/host-agent",
-	}, os.Stdout, os.Stderr); err != nil {
-		errorf("Failed to chmod binary: %v", err)
+	}, quiet, quiet); err != nil {
+		c.StepFailed("deploy host-agent", dirs.HostAgentDir, time.Since(deployStart), err)
 		return 1
 	}
+	c.Step("deploy host-agent", dirs.HostAgentDir, time.Since(deployStart))
 
 	// Deploy frontend build to VM
 	webBuildDir := filepath.Join(webDir, "build")
-	if _, err := os.Stat(webBuildDir); err == nil {
-		if err := ex.RunStream(context.Background(), executor.RunSpec{
+	if _, statErr := os.Stat(webBuildDir); statErr == nil {
+		webStart := time.Now()
+		if err := ex.RunStream(ctx, executor.RunSpec{
 			Command: "rm -rf " + dirs.HostAgentDir + "/web/build",
-		}, os.Stdout, os.Stderr); err != nil {
-			errorf("Failed to clean remote web dir: %v", err)
+		}, quiet, quiet); err != nil {
+			c.StepFailed("deploy dashboard", "", time.Since(webStart), err)
 			return 1
 		}
-		if err := ex.RunStream(context.Background(), executor.RunSpec{
+		if err := ex.RunStream(ctx, executor.RunSpec{
 			Command: "mkdir -p " + dirs.HostAgentDir + "/web",
-		}, os.Stdout, os.Stderr); err != nil {
-			errorf("Failed to create remote web dir: %v", err)
+		}, quiet, quiet); err != nil {
+			c.StepFailed("deploy dashboard", "", time.Since(webStart), err)
 			return 1
 		}
-		if err := ex.CopyTo(context.Background(), webBuildDir, dirs.HostAgentDir+"/web/build"); err != nil {
-			errorf("Failed to copy frontend build: %v", err)
+		if err := ex.CopyTo(ctx, webBuildDir, dirs.HostAgentDir+"/web/build"); err != nil {
+			c.StepFailed("deploy dashboard", "", time.Since(webStart), err)
 			return 1
 		}
-		log("Frontend deployed")
+		c.Step("deploy dashboard", "", time.Since(webStart))
 	}
+
+	c.Blank()
+	c.Note("running in the foreground · Ctrl-C to stop")
+	c.HintLogPath()
+	c.Blank()
 
 	// Run foreground. The SSO issuer URL is derived (see ssoIssuerURL); all
 	// other configuration resolves through env vars, secrets.json, and the
 	// host-agent's dev fallbacks.
-	log("Starting host-agent (Ctrl-C to stop)")
-	runEnv := devRunEnv(dirs, name)
+	agentTee := c.HostAgentStream()
 	// The host-agent opens its API only after every installed app is up, so
 	// watch for that and say so instead of leaving the terminal silent.
 	readyCtx, stopReadyWatch := context.WithCancel(context.Background())
-	go announceHostAgentReady(readyCtx, ex, os.Stdout, host.Ports(), readyPollInterval, readyProgressInterval)
+	go announceHostAgentReady(readyCtx, ex, c, host.Ports(), readyPollInterval, devQuietProgressFirst)
 	runErr := ex.RunStream(context.Background(), executor.RunSpec{
 		Command: "unset DATABASE_URL; exec ./host-agent",
 		Dir:     dirs.HostAgentDir,
-		Env:     runEnv,
-	}, os.Stdout, os.Stderr)
+		Env:     devRunEnv(dirs, name),
+	}, agentTee, agentTee)
 	stopReadyWatch()
 	if runErr != nil && !isSignalExit(runErr) {
-		errorf("host-agent exited: %v", runErr)
+		c.StepFailed("host-agent", "", 0, runErr)
 		return 1
 	}
 	return 0

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -335,6 +336,20 @@ func signalTree(cmd *exec.Cmd, sig syscall.Signal) {
 	if err := syscall.Kill(-cmd.Process.Pid, sig); err != nil {
 		_ = cmd.Process.Signal(sig)
 	}
+}
+
+// changeTrigger is the compact "what caused this reload" label: one path for
+// a single file, and the first path plus a count for a batch. It is the
+// trigger half of the reload line, so it stays short enough to read inline.
+func changeTrigger(batch []string) string {
+	if len(batch) == 0 {
+		return "change"
+	}
+	first := shortSourcePath(batch[0])
+	if len(batch) == 1 {
+		return first
+	}
+	return fmt.Sprintf("%s +%d more", first, len(batch)-1)
 }
 
 // describeChangeBatch names what changed, compactly. A raw list of absolute

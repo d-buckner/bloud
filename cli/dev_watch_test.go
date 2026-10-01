@@ -175,6 +175,53 @@ func TestDescribeChangeBatch(t *testing.T) {
 	}
 }
 
+func TestParseDevFlagsVerbose(t *testing.T) {
+	t.Setenv("BLOUD_DEV_VERBOSE", "")
+	for _, arg := range []string{"-v", "--verbose"} {
+		got, err := parseDevFlags([]string{arg})
+		if err != nil {
+			t.Fatalf("parseDevFlags(%v): %v", arg, err)
+		}
+		if !got.verbose {
+			t.Errorf("parseDevFlags(%v).verbose = false, want true", arg)
+		}
+	}
+	if got, _ := parseDevFlags(nil); got.verbose {
+		t.Error("verbose must be off by default: the quiet console is the default experience")
+	}
+
+	t.Setenv("BLOUD_DEV_VERBOSE", "1")
+	if got, err := parseDevFlags(nil); err != nil || !got.verbose {
+		t.Errorf("BLOUD_DEV_VERBOSE=1 should enable verbose, got %+v err %v", got, err)
+	}
+
+	t.Setenv("BLOUD_DEV_VERBOSE", "0")
+	if got, err := parseDevFlags(nil); err != nil || got.verbose {
+		t.Errorf("BLOUD_DEV_VERBOSE=0 should leave verbose off, got %+v err %v", got, err)
+	}
+}
+
+func TestChangeTrigger(t *testing.T) {
+	if got := changeTrigger(nil); got == "" {
+		t.Error("an empty batch still needs a non-empty trigger")
+	}
+	single := changeTrigger([]string{"/x/services/host-agent/internal/api/server.go"})
+	if single != "services/host-agent/internal/api/server.go" {
+		t.Errorf("single-file trigger = %q", single)
+	}
+	multi := changeTrigger([]string{
+		"/x/apps/jellyfin/configurator.go",
+		"/x/apps/jellyfin/metadata.yaml",
+		"/x/apps/jellyfin/other.go",
+	})
+	if !strings.Contains(multi, "+2 more") {
+		t.Errorf("multi-file trigger = %q, want it to count the rest", multi)
+	}
+	if strings.Contains(multi, "/x/") {
+		t.Errorf("trigger should not carry the absolute prefix: %q", multi)
+	}
+}
+
 func keysOf(m sourceSnapshot) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
