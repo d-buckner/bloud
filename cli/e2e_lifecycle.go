@@ -70,9 +70,6 @@ func runLifecycle(root string, args []string) error {
 
 // wantsHelp reports whether args ask for usage text; checked before backend
 // resolution so '--help' never triggers the backend prompt.
-
-// wantsHelp reports whether args ask for usage text; checked before backend
-// resolution so '--help' never triggers the backend prompt.
 func wantsHelp(args []string) bool {
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -81,10 +78,6 @@ func wantsHelp(args []string) bool {
 	}
 	return false
 }
-
-// parseLifecycleConfig builds the lifecycle config from args and the
-// environment. backendName is the resolved runtime backend (see
-// backendName); explicit BLOUD_E2E_* instance variables still override it.
 
 // parseLifecycleConfig builds the lifecycle config from args and the
 // environment. backendName is the resolved runtime backend (see
@@ -128,9 +121,6 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 
 // applyLifecycleDefaults fills unset config fields with backend-aware
 // defaults (instance names, URLs, credentials, derived paths).
-
-// applyLifecycleDefaults fills unset config fields with backend-aware
-// defaults (instance names, URLs, credentials, derived paths).
 func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
 	if cfg.remoteDir == "" {
 		cfg.remoteDir = "/var/tmp/bloud-e2e-runtime"
@@ -168,9 +158,6 @@ func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
 
 // validateLifecycleConfig rejects combinations of instance/SSH/runtime
 // settings that cannot describe one coherent deployment target.
-
-// validateLifecycleConfig rejects combinations of instance/SSH/runtime
-// settings that cannot describe one coherent deployment target.
 func validateLifecycleConfig(cfg *lifecycleConfig) error {
 	if err := validateInstanceSelection(cfg); err != nil {
 		return err
@@ -197,9 +184,6 @@ func validateLifecycleConfig(cfg *lifecycleConfig) error {
 
 // validateInstanceSelection enforces that at most one VM/SSH target is
 // configured and that it is compatible with the chosen backend.
-
-// validateInstanceSelection enforces that at most one VM/SSH target is
-// configured and that it is compatible with the chosen backend.
 func validateInstanceSelection(cfg *lifecycleConfig) error {
 	if cfg.native && (cfg.lima != "" || cfg.qemu != "" || cfg.sshTarget != "") {
 		return fmt.Errorf("native backend cannot be combined with BLOUD_E2E_LIMA_INSTANCE, BLOUD_E2E_QEMU_INSTANCE, or BLOUD_E2E_SSH_TARGET")
@@ -213,9 +197,6 @@ func validateInstanceSelection(cfg *lifecycleConfig) error {
 	}
 	return nil
 }
-
-// lifecycleReservedDir reports whether a runtime dir is (or is inside) a
-// system directory that a dedicated validation runtime must never occupy.
 
 // lifecycleReservedDir reports whether a runtime dir is (or is inside) a
 // system directory that a dedicated validation runtime must never occupy.
@@ -301,7 +282,3 @@ func (r *lifecycle) run() (runErr error) {
 	r.step("Jellyfin lifecycle passed")
 	return nil
 }
-
-// checkPrerequisites verifies the remote host (HOME, preflight script),
-// prepares a QEMU target if one is configured, and provisions the native
-// runtime when running without a VM.

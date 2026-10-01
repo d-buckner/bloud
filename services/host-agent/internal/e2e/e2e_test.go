@@ -444,9 +444,3 @@ func postJSON(t *testing.T, url string, body string, wantStatus int) {
 		t.Fatalf("POST %s: status %d (want %d): %s", url, resp.StatusCode, wantStatus, data)
 	}
 }
-
-// --- System apps (auto-installed and converged on boot) ---
-
-// TestSystemAppsConverged verifies the bootstrap contract: system apps are
-// auto-installed by the orchestrator and their containers are up, running,
-// and carry the managed labels (architecture invariant 12).

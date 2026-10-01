@@ -139,10 +139,3 @@ func TestInstallLiveStateStream(t *testing.T) {
 	}
 	t.Logf("live-state stream: snapshot=%v node=%v pull=%v (pull absent if the image was already local)", sawSnapshot, sawNode, sawPull)
 }
-
-// --- Jellyfin through the real install path ---
-
-// TestJellyfinInstallViaAPI installs Jellyfin through the host-agent API and
-// waits for the orchestrator to converge it to running: intent queue,
-// dependency graph, container creation, PreStart (LDAP plugin), PostStart
-// (wizard, libraries, LDAP config), route generation.

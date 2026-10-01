@@ -124,11 +124,11 @@ rationale is dead: the net is forgeable, so it is not a factor at all.
    user (not as `_cli` admin).
 2. **Delete `middleware.RealIP`.** Nothing else in host-agent consumes client IP
    (verified: `r.RemoteAddr` has two readers, both inside `isLocalRequest`), so
-   this is a deletion with no behavioural regression beyond the bypass. It also
+   this is a deletion with no behavioral regression beyond the bypass. It also
    removes the `X-Forwarded-Host` / `X-Forwarded-Proto` spoof (PR 4 item 5).
    Keep the position check as a *coarse* scoping factor only.
 3. **Position becomes non-authoritative.** `isLocalRequest` stops granting
-   anything on its own; it gates whether the token is honoured at all (defence in
+   anything on its own; it gates whether the token is honored at all (defense in
    depth, not the credential). Keep `BLOUD_TRUSTED_LOCAL_NETS` for the QEMU slirp
    case, but document it as a scoping hint, not a security boundary.
 4. **Token generation and distribution**, as originally planned and still
@@ -294,13 +294,13 @@ that silently run on `DefaultRetry` (5 attempts, 30 s) and land the node in
 terminal ERROR on a cold boot whose first migration is slow. Jellyfin escapes
 only because `policies.go` sets explicit `RetryPolicy` overrides.
 
-- Fix: honour `timeoutOverride` in `effectivePolicy`/the attempt loop, and make
+- Fix: honor `timeoutOverride` in `effectivePolicy`/the attempt loop, and make
   `Wait()` use `WaitPolicy` as its default when no override is set. If either is
   genuinely not wanted, **delete the accessor** so an unsupported option fails
   loudly instead of degrading: silently weakening a declared timeout is the
   defect, not the missing feature.
 - Test: a call declaring `Timeout(2s)` against a handler that responds at 500 ms
-  and 4 s proves the override is honoured; a `Ready()` wait with no override uses
+  and 4 s proves the override is honored; a `Ready()` wait with no override uses
   the wait policy, not the retry policy.
 
 ### 8b. Home Assistant's asset `SkipIf` never matches

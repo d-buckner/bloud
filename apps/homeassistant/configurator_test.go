@@ -90,9 +90,9 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 	return c
 }
 
-// testCtx bounds a PostStart wait the way the orchestrator now does: a deadline
-// on the pass context. Configurators no longer carry their own post-start timeout;
-// the framework's PostStartBudget is the ceiling and tests reproduce it here.
+// testCtx bounds a PostStart wait the way the orchestrator does: a deadline on the
+// pass context. The framework's PostStartBudget is the ceiling, and tests
+// reproduce it here.
 func testCtx(t *testing.T, d time.Duration) (context.Context, context.CancelFunc) {
 	t.Helper()
 	return context.WithTimeout(context.Background(), d)
@@ -379,7 +379,7 @@ func (s *apiServer) setTrustLive(v bool) {
 // restartContainer returns the host-runtime callback to inject into the
 // configurator's restartContainerFn (normally from Deps.RestartContainer). It models a real container stop+start:
 // the re-exec'd process re-reads the patched .storage/http, so it flips
-// trustLive (after trustFlipDelay, modelling restart latency) when
+// trustLive (after trustFlipDelay, modeling restart latency) when
 // restartAppliesTrust. restartAppliesTrust=false models a restart that never
 // reloads, so the forwarded-400 persists. Records each container name it is
 // asked to restart.
@@ -655,12 +655,9 @@ func TestEnsureOnboardedExchangesAuthCodeForToken(t *testing.T) {
 	assert.Contains(t, srv.tokenReqs[0], "client_id="+url.QueryEscape(onboardingClientID))
 }
 
-// Regression for the reported failure, now fixed: on a RETRY (owner already
-// created), HA never re-issues an auth code, so there is no admin token; the
-// old API-restart path died there and had to surface a self-healing ERROR. A
-// container restart needs no token, so PostStart now succeeds on the retry: it
-// patches the on-disk trust and restarts the container, which re-execs HA to
-// load it. This is the case that used to strand the app in ERROR.
+// On a RETRY (owner already created) HA never re-issues an auth code, so there is
+// no admin token. A container restart needs no token: PostStart patches the
+// on-disk trust and restarts the container, which re-execs HA to load it.
 func TestPostStartAlreadyOnboardedAppliesTrustViaContainerRestart(t *testing.T) {
 	srv := newAPIServer(t, true)
 	srv.mu.Lock()

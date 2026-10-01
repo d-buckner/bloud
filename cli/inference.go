@@ -96,9 +96,6 @@ func inferTriggers(changedFiles []string, manifest *validationManifest) (map[str
 
 // detectAffectedApps returns the sorted names of catalog apps whose file
 // globs match any changed file.
-
-// detectAffectedApps returns the sorted names of catalog apps whose file
-// globs match any changed file.
 func detectAffectedApps(changedFiles []string, manifest *validationManifest) []string {
 	appSet := map[string]bool{}
 	for appName, appDef := range manifest.Apps {
@@ -121,15 +118,6 @@ func detectAffectedApps(changedFiles []string, manifest *validationManifest) []s
 	sort.Strings(apps)
 	return apps
 }
-
-// --- Integration tier ---
-
-// integrationRuntimeDir is the guest-side home of the validation runtime: a
-// self-contained host-agent deployment (binary, web build, app catalog,
-// data) separate from the dev runtime. The tier deploys the current code
-// here through the real product path (host-agent + orchestrator + catalog)
-// and runs the tier's commands against it, so integration validation
-// exercises the same install/reconcile flow as production.
 
 func getChangedFiles(root string, since string) ([]string, error) {
 	// Get both staged and unstaged changes
@@ -213,9 +201,6 @@ func splitLines(s string) []string {
 	}
 	return lines
 }
-
-// pathMatches checks if a file path matches a glob-like pattern.
-// Supports ** for recursive directory matching and * for single segment.
 
 // pathMatches checks if a file path matches a glob-like pattern.
 // Supports ** for recursive directory matching and * for single segment.

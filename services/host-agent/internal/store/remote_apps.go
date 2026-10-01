@@ -33,7 +33,6 @@ func NewRemoteAppStore(db *sql.DB) *RemoteAppStore {
 	return &RemoteAppStore{db: db}
 }
 
-// Create inserts a new remote app
 func (s *RemoteAppStore) Create(app RemoteApp) error {
 	bypassJSON, err := json.Marshal(app.BypassPaths)
 	if err != nil {
@@ -68,7 +67,6 @@ func (s *RemoteAppStore) GetByID(id string) (*RemoteApp, error) {
 	return app, nil
 }
 
-// List returns all remote apps
 func (s *RemoteAppStore) List() ([]*RemoteApp, error) {
 	rows, err := s.db.Query(`
 		SELECT id, host_label, app_id, app_name, sso_strategy, bypass_paths, tailnet_addr, encrypted_cred, status, created_at

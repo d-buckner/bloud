@@ -38,7 +38,6 @@ type Source struct {
 	Local string
 }
 
-// URL builds a remote-fetch source.
 func URL(u string) Source { return Source{URL: u} }
 
 // Embedded builds a source from a go:embed filesystem and a name within it.

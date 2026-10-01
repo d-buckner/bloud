@@ -146,7 +146,7 @@ const debounceWindow = 300 * time.Millisecond
 const pollInterval = 500 * time.Millisecond
 
 // watchBackendSources walks the backend source trees and sends debounced change
-// batches to out. It returns when ctx is cancelled.
+// batches to out. It returns when ctx is canceled.
 //
 // The batch is delivered once the trees have been quiet for debounceWindow, so
 // a multi-file save is one rebuild.
@@ -374,7 +374,7 @@ func describeChangeBatch(batch []string) string {
 }
 
 // shortSourcePath trims a long absolute path down to the part a developer
-// recognises, preferring the segment after services/ or the app name.
+// recognizes, preferring the segment after services/ or the app name.
 func shortSourcePath(path string) string {
 	parts := strings.Split(filepath.ToSlash(path), "/")
 	for i, part := range parts {

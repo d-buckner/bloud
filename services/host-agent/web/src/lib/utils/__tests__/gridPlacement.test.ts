@@ -30,7 +30,7 @@ describe('firstFreeSlot', () => {
 		expect(firstFreeSlot([at('a', 0, 0, 4, 1)], 4, 2, 0, 6)).toEqual({ x: 0, y: 1 });
 	});
 
-	it('honours the height of items it is placing beside', () => {
+	it('honors the height of items it is placing beside', () => {
 		expect(firstFreeSlot([at('a', 0, 0, 1, 2)], 1, 2, 0, 6)).toEqual({ x: 1, y: 0 });
 	});
 

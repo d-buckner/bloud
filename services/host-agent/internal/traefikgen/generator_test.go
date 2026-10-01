@@ -169,7 +169,7 @@ func TestGenerator_Generate_MultipleApps_Sorted(t *testing.T) {
 
 	contentStr := string(content)
 
-	// Apps should be sorted alphabetically (router names no longer have -backend suffix)
+	// Apps should be sorted alphabetically.
 	actualBudgetIdx := strings.Index(contentStr, "    actual-budget:")
 	adguardHomeIdx := strings.Index(contentStr, "    adguard-home:")
 	minifluxIdx := strings.Index(contentStr, "    miniflux:")

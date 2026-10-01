@@ -26,7 +26,6 @@ type AppMetadata struct {
 	Containers   []ContainerMetadata    `yaml:"containers"`
 }
 
-// SSOConfig represents SSO configuration
 type SSOConfig struct {
 	Strategy string `yaml:"strategy"`
 }
@@ -165,7 +164,6 @@ func printDepGraphUsage() {
 	fmt.Println("  --target     File to write or check (default: " + graphDefaultFile + ")")
 }
 
-// graphTargetPath resolves --target against the repo root.
 func graphTargetPath(root, target string) string {
 	if filepath.IsAbs(target) {
 		return target
@@ -481,7 +479,7 @@ func appDisplayName(app *AppMetadata) string {
 }
 
 // appBoxTitle is the mermaid box title: the display name, with system apps
-// labelled so the infrastructure the rest depends on reads as infrastructure.
+// labeled so the infrastructure the rest depends on reads as infrastructure.
 func appBoxTitle(app *AppMetadata) string {
 	title := appDisplayName(app)
 	if app.IsSystem {

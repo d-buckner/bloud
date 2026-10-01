@@ -14,10 +14,10 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 )
 
-// Contract: the intent loop stops only when its context is cancelled. A
-// stale signal token (the coalescing timer winning the select while a
-// token was still buffered) used to surface as a nil batch that Start read
-// as shutdown: one unlucky interleaving ended reconciliation forever
+// Contract: the intent loop stops only when its context is canceled. A stale
+// signal token (the coalescing timer winning the select while a token was still
+// buffered) must surface as an empty batch, never as shutdown: if a nil batch
+// read as stopped, one unlucky interleaving would end reconciliation forever
 // while every later Submit kept answering 202.
 
 func TestStart_LoopSurvivesStaleSignalTokens(t *testing.T) {

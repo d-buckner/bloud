@@ -260,7 +260,7 @@ change to the automations above. What a bundle needs (separate design):
   type;
 - install-intent expansion into N member installs (a `required`-style "install these" list, which
   is the same path `PlanInstall`'s `Choices` already models);
-- user integration choices being honoured (`review.md §H3`), which is what a bundle would use to
+- user integration choices being honored (`review.md §H3`), which is what a bundle would use to
   pick providers.
 
 ## 9. Framework candidates (NOT in this plan: need an explicit decision)
@@ -291,7 +291,7 @@ integration-tier test `services/host-agent/internal/e2e/media_stack_test.go`, an
 | Seerr → Radarr/Sonarr | `settings/radarr|sonarr` each hold one entry (HD-1080p, `/movies` · `/shows`, `syncEnabled`) |
 | Seerr → Jellyfin | unchanged from the earlier verification |
 
-Two behaviours were only discoverable against the real apps and are now encoded:
+Two behaviors were only discoverable against the real apps and are now encoded:
 
 1. **qBittorrent does not create categories on demand** (`TorrentImpl::setCategory` refuses an
    unknown category), so the PVR creates its own category before adding the client

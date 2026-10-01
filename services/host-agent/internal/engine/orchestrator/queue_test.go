@@ -109,10 +109,10 @@ func TestWaitAndDrain_ResetsOnNewArrival(t *testing.T) {
 	}
 }
 
-// TestWaitAndDrain_CtxCancelledOnEmptyQueue reports live=false when
-// cancelled before any intent arrives. Cancellation is the only shutdown
+// TestWaitAndDrain_CtxCanceledOnEmptyQueue reports live=false when
+// canceled before any intent arrives. Cancellation is the only shutdown
 // signal WaitAndDrain gives.
-func TestWaitAndDrain_CtxCancelledOnEmptyQueue(t *testing.T) {
+func TestWaitAndDrain_CtxCanceledOnEmptyQueue(t *testing.T) {
 	q := NewIntentQueue(time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -122,9 +122,9 @@ func TestWaitAndDrain_CtxCancelledOnEmptyQueue(t *testing.T) {
 	assert.False(t, live, "cancellation must be reported as shutdown")
 }
 
-// TestWaitAndDrain_CtxCancelledDuringCoalesce returns the accumulated intents
+// TestWaitAndDrain_CtxCanceledDuringCoalesce returns the accumulated intents
 // instead of dropping them, and reports shutdown.
-func TestWaitAndDrain_CtxCancelledDuringCoalesce(t *testing.T) {
+func TestWaitAndDrain_CtxCanceledDuringCoalesce(t *testing.T) {
 	q := NewIntentQueue(5 * time.Second)
 	q.Enqueue(NewInstallAppIntent("jellyfin"))
 
@@ -139,13 +139,12 @@ func TestWaitAndDrain_CtxCancelledDuringCoalesce(t *testing.T) {
 	assert.False(t, live, "cancellation must be reported as shutdown")
 }
 
-// TestWaitAndDrain_StaleTokenIsLiveEmptyBatch reproduces the exact state
-// that used to end reconciliation forever: a coalescing timer that won the
-// select while a signal token was still buffered (emulated here by draining
-// the items away under the race-free conditions the interleaving produces).
-// Waking on a token with nothing queued must be an empty LIVE batch, never
-// a shutdown report: under the old nil-means-stopped contract, one such
-// wake stopped the orchestrator forever while Submits kept answering 202.
+// TestWaitAndDrain_StaleTokenIsLiveEmptyBatch covers a coalescing timer that wins
+// the select while a signal token is still buffered (emulated here by draining
+// the items away under the race-free conditions that interleaving produces).
+// Waking on a token with nothing queued must be an empty LIVE batch, never a
+// shutdown report: if nil read as stopped, one such wake would stop the
+// orchestrator forever while Submits kept answering 202.
 func TestWaitAndDrain_StaleTokenIsLiveEmptyBatch(t *testing.T) {
 	q := NewIntentQueue(50 * time.Millisecond)
 	q.Enqueue(NewInstallAppIntent("jellyfin"))

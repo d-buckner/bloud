@@ -58,7 +58,6 @@ func (b *LimaBackend) Create(ctx context.Context) error {
 	return nil
 }
 
-// Destroy deletes the Lima VM.
 func (b *LimaBackend) Destroy(ctx context.Context) error {
 	if _, err := b.run(ctx, "limactl", "delete", "--force", b.instance); err != nil {
 		return fmt.Errorf("failed to delete Lima VM: %w", err)

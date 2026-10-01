@@ -16,11 +16,6 @@ func shellQuote(value string) string {
 // quotes, double quotes, and backslash escapes. It is a minimal shell-like
 // tokenizer used to turn manifest command strings into exec.Command args so
 // that quoted arguments containing spaces survive intact.
-
-// splitShellWords splits a command string into arguments, respecting single
-// quotes, double quotes, and backslash escapes. It is a minimal shell-like
-// tokenizer used to turn manifest command strings into exec.Command args so
-// that quoted arguments containing spaces survive intact.
 func splitShellWords(s string) []string {
 	var words []string
 	for i := 0; i < len(s); {
@@ -41,8 +36,6 @@ func splitShellWords(s string) []string {
 }
 
 // isShellSpace reports whether b is a word-separating whitespace byte.
-
-// isShellSpace reports whether b is a word-separating whitespace byte.
 func isShellSpace(b byte) bool {
 	switch b {
 	case ' ', '\t', '\n', '\r':
@@ -50,9 +43,6 @@ func isShellSpace(b byte) bool {
 	}
 	return false
 }
-
-// readShellWord reads one shell word starting at i (a non-space byte), writing
-// its unquoted contents into word. It returns the index just past the word.
 
 // readShellWord reads one shell word starting at i (a non-space byte), writing
 // its unquoted contents into word. It returns the index just past the word.
@@ -83,10 +73,6 @@ func readShellWord(s string, i int, word *strings.Builder) int {
 // readSingleQuoted copies the literal contents of a single-quoted section
 // starting at the opening quote at i, and returns the index just past it. An
 // unterminated quote consumes the rest of the string.
-
-// readSingleQuoted copies the literal contents of a single-quoted section
-// starting at the opening quote at i, and returns the index just past it. An
-// unterminated quote consumes the rest of the string.
 func readSingleQuoted(s string, i int, word *strings.Builder) int {
 	close := strings.IndexByte(s[i+1:], '\'')
 	if close < 0 {
@@ -96,10 +82,6 @@ func readSingleQuoted(s string, i int, word *strings.Builder) int {
 	word.WriteString(s[i+1 : i+1+close])
 	return i + close + 2
 }
-
-// readDoubleQuoted copies the contents of a double-quoted section starting at
-// the opening quote at i, honoring backslash escapes, and returns the index
-// just past it. An unterminated quote consumes the rest of the string.
 
 // readDoubleQuoted copies the contents of a double-quoted section starting at
 // the opening quote at i, honoring backslash escapes, and returns the index

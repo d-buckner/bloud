@@ -36,7 +36,6 @@ type ProxyOutpostManager struct {
 	logger     *slog.Logger
 }
 
-// NewProxyOutpostManager creates a ProxyOutpostManager.
 func NewProxyOutpostManager(containers container.Runtime, logger *slog.Logger) *ProxyOutpostManager {
 	return &ProxyOutpostManager{
 		containers: containers,

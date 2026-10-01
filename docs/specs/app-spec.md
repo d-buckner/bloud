@@ -826,7 +826,7 @@ health check and no configurator, the node succeeds after EnsureContainer.
       single-container nodes (backward compat)
 - [x] Unit test: health check passes on the third attempt → success
 - [x] Unit test: health check exceeds retries → error
-- [x] Unit test: context cancelled mid-poll → returns context error
+- [x] Unit test: context canceled mid-poll → returns context error
 
 **Depends on:** Task 2.1 (needs `ContainerSpecFromDef` for container
 ensure), Task 2.3 (needs multi-node creation to exist)

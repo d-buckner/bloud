@@ -532,9 +532,8 @@ func TestAppsHTTP_Icon_Missing(t *testing.T) {
 }
 
 // TestAppsHTTP_RefreshCatalogIsNotOnTheMemberRouter pins that refresh-catalog is
-// admin-only. It used to be registered on the member router and then
-// re-registered on the admin router, leaving the effective middleware to depend
-// on chi's last-registration-wins order.
+// admin-only: registering it on the member router as well would leave the
+// effective middleware depending on chi's last-registration-wins order.
 func TestAppsHTTP_RefreshCatalogIsNotOnTheMemberRouter(t *testing.T) {
 	cache := NewFakeCatalogCache()
 	appStore := NewFakeAppStore()

@@ -33,7 +33,7 @@ import (
 const DefaultSelfHealInterval = 60 * time.Second
 
 // startSelfHealing submits one ReconcileIntent per idle interval until ctx
-// is cancelled. It is armed by Start after the first convergence pass and
+// is canceled. It is armed by Start after the first convergence pass and
 // must run in its own goroutine.
 //
 // The timer is idle-based rather than a plain ticker on purpose. A ticker

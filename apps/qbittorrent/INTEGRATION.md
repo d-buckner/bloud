@@ -115,14 +115,14 @@ outbound-only torrenting works without it but is far slower.
 | Phase | Action |
 |-------|--------|
 | `PreStart` | Creates `<appDataDir>/config/qBittorrent`, `<dataDir>/downloads` and `<dataDir>/downloads/incomplete`, makes each of them (and the conf file, when it exists) writable by the daemon's user *and* by the host agent, then merges the managed keys above. Returns `changed=true` only when the conf content changed. |
-| `PostStart` | `GET /api/v2/app/version` (anonymous) must answer **200**. It answers 403 while the requesting address is not whitelisted, so this is the behavioural proof that the running process loaded the bypass, not just that the file on disk says so. Retried on a constant cadence (~30 attempts at 2 s, inside the orchestrator's 150 s PostStart budget). |
+| `PostStart` | `GET /api/v2/app/version` (anonymous) must answer **200**. It answers 403 while the requesting address is not whitelisted, so this is the behavioral proof that the running process loaded the bypass, not just that the file on disk says so. Retried on a constant cadence (~30 attempts at 2 s, inside the orchestrator's 150 s PostStart budget). |
 | `Remove` | No-op; container and data removal are the orchestrator's job. |
 
 `PreStart` runs on the host and writes as the host-agent's own user; the daemon
 runs as LSIO's `abc` (`PUID=1000`, a host subuid under rootless podman). The
 image's init chowns `/config` **recursively** but `/downloads` only at its mount
 root, non-recursively and only when it is a mount point, so neither the conf
-file nor the subdirectories Bloud pre-creates are normalised to the daemon's
+file nor the subdirectories Bloud pre-creates are normalized to the daemon's
 user, and both identities have to be able to write them. `PreStart` therefore
 asks for the conf file `0666` and the directories `0777` (see the row above),
 which is what keeps the merge working after the first boot: `INIFile.Save`

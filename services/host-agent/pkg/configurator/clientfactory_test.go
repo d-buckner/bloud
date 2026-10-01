@@ -38,7 +38,6 @@ func TestClientFactory_SpecOverridesTransport(t *testing.T) {
 	assert.Same(t, own, transportOf(t, c), "an explicit Spec transport wins over the factory's")
 }
 
-// transportOf returns the client's transport.
 func transportOf(t *testing.T, c *appclient.Client) *http.Transport {
 	t.Helper()
 	return c.Transport()

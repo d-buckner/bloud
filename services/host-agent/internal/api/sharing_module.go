@@ -28,7 +28,6 @@ type sharingModule struct {
 	logger        *slog.Logger
 }
 
-// NewSharingModule creates a new SharingModule.
 func NewSharingModule(
 	shareStore store.ShareStoreInterface,
 	guestStore store.GuestStoreInterface,
@@ -268,7 +267,6 @@ func (m *sharingModule) CreateInviteHandler() http.HandlerFunc {
 
 // ---- Shares ----
 
-// ListSharesHandler returns all shares.
 func (m *sharingModule) ListSharesHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		shares, err := m.shareStore.List()
@@ -307,7 +305,6 @@ func (m *sharingModule) RevokeShareHandler() http.HandlerFunc {
 
 // ---- Guests ----
 
-// ListGuestsHandler returns all guests.
 func (m *sharingModule) ListGuestsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		guests, err := m.guestStore.List()
@@ -327,7 +324,6 @@ func (m *sharingModule) ListGuestsHandler() http.HandlerFunc {
 	}
 }
 
-// CreateGuestHandler creates a new guest.
 func (m *sharingModule) CreateGuestHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createGuestRequest

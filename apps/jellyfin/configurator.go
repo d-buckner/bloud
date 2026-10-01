@@ -73,10 +73,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
-// Name returns the node name this configurator manages.
-// nodeName is the graph node and container name the host-agent reconciles
-// this configurator under. Registration and Name() both read it, so the two
-// cannot drift apart.
+// nodeName is this app's graph node and container name; see NodeLifecycle.Name.
 const nodeName = "apps-jellyfin"
 
 // defaultPort is the app's own web port, the value the constructor uses
@@ -142,7 +139,6 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	return c.postStart(ctx, state)
 }
 
-// postStart contains the PostStart body.
 func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {
 	c.logger.Info("PostStart: checking setup wizard status")
 

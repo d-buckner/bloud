@@ -135,7 +135,7 @@ func sortedEntrypointNames(cfg staticConfigShape) []string {
 	return names
 }
 
-// The canonical entrypoint honours Config.TraefikPort; the compat entrypoint
+// The canonical entrypoint honors Config.TraefikPort; the compat entrypoint
 // stays on 8080 so app containers keep reaching Traefik for OIDC discovery
 // (`sso.localhost:8080`) even when the canonical port is 80.
 func TestTraefikStaticConfig_Entrypoints(t *testing.T) {
@@ -148,10 +148,10 @@ func TestTraefikStaticConfig_Entrypoints(t *testing.T) {
 			"base.yml owns /ping so it answers on every entrypoint")
 	})
 
-	t.Run("non-default canonical port is honoured", func(t *testing.T) {
+	t.Run("non-default canonical port is honored", func(t *testing.T) {
 		cfg := parseStaticConfig(t, NewTraefikConfigurator(nil, 9090, 3000, 9001, t.TempDir(), nil))
 		require.Equal(t, ":9090", cfg.EntryPoints["web"].Address,
-			"the configured Traefik port must be honoured")
+			"the configured Traefik port must be honored")
 		require.Equal(t, ":8080", cfg.EntryPoints["web-local"].Address)
 	})
 

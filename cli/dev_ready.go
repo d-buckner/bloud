@@ -28,7 +28,7 @@ const (
 // devQuietProgressRest after that. The first wait is the one that surprises
 // people; a note repeated on a fixed short cadence after that is the noise
 // this console exists to remove, and a long wait stays visibly alive either
-// way. It returns when ready or when ctx is cancelled.
+// way. It returns when ready or when ctx is canceled.
 func announceHostAgentReady(ctx context.Context, ex executor.Executor, c *devConsole, ports map[string]string, poll, progressEvery time.Duration) {
 	apiPort := portOr(ports, "host-agent", defaultHostAgentPort)
 	uiPort := portOr(ports, "traefik", defaultTraefikPort)

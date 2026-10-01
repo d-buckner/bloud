@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// RemoteAppsModule encapsulates remote app management.
 type remoteAppsModule struct {
 	remoteAppStore store.RemoteAppStoreInterface
 	catalog        catalog.CacheInterface
@@ -23,7 +22,6 @@ type remoteAppsModule struct {
 	logger         *slog.Logger
 }
 
-// NewRemoteAppsModule creates a new RemoteAppsModule.
 func NewRemoteAppsModule(
 	remoteAppStore store.RemoteAppStoreInterface,
 	catalog catalog.CacheInterface,
@@ -38,7 +36,6 @@ func NewRemoteAppsModule(
 	}
 }
 
-// List returns all remote apps.
 func (m *remoteAppsModule) List() ([]*store.RemoteApp, error) {
 	apps, err := m.remoteAppStore.List()
 	if err != nil {
@@ -95,7 +92,6 @@ func NewRemoteAppsRouter(mod *remoteAppsModule, r chi.Router) {
 	r.Delete("/sharing/remote-apps/{id}", mod.DeleteHandler())
 }
 
-// ListHandler returns all remote apps.
 func (m *remoteAppsModule) ListHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apps, err := m.List()
@@ -108,7 +104,6 @@ func (m *remoteAppsModule) ListHandler() http.HandlerFunc {
 	}
 }
 
-// AddHandler creates a remote app.
 func (m *remoteAppsModule) AddHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -129,7 +124,6 @@ func (m *remoteAppsModule) AddHandler() http.HandlerFunc {
 	}
 }
 
-// DeleteHandler removes a remote app.
 func (m *remoteAppsModule) DeleteHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")

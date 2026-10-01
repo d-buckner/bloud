@@ -134,7 +134,7 @@ type recordedRequest struct {
 
 // fakeProwlarr stands in for a running Prowlarr instance: its
 // /api/v1/config/host auth resource, and its /api/v1/applications resource
-// with the /test endpoint. It mirrors the upstream behaviour the configurator
+// with the /test endpoint. It mirrors the upstream behavior the configurator
 // depends on: 201 on create, 200 with an empty body on delete, and a masked
 // apiKey on every read.
 type fakeProwlarr struct {

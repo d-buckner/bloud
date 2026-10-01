@@ -172,9 +172,9 @@ func getUserFromContext(ctx context.Context) *store.User {
 
 // requestHost returns the request's Host header.
 //
-// Deliberately not X-Forwarded-Host: that header is client-controlled
-// (Traefik forwards it verbatim with forwardedHeaders.insecure), and the value
-// used to become an OAuth redirect URI registered in the identity provider.
+// Deliberately not X-Forwarded-Host: that header is client-controlled (Traefik
+// forwards it verbatim with forwardedHeaders.insecure), and this value becomes an
+// OAuth redirect URI registered in the identity provider.
 func requestHost(r *http.Request) string {
 	return r.Host
 }
@@ -364,7 +364,7 @@ type authModule struct {
 	selfPort        int
 	// hosts is the live host set (built-ins + admin custom hosts). OAuth
 	// redirect and logout URLs are derived from it, never from the request:
-	// LoginHandler registers those URLs in the identity provider, so honouring
+	// LoginHandler registers those URLs in the identity provider, so honoring
 	// a request header let any caller add redirect URIs to the OAuth client.
 	//
 	// There is deliberately no second URL source here (e.g. BLOUD_SSO_BASE_URL):
@@ -473,7 +473,6 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 
 // ---- Callback ----
 
-// CallbackHandler handles the OAuth2 callback.
 func (m *authModule) CallbackHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := m.getAuthConfig()

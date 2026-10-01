@@ -161,7 +161,7 @@ func TestDescribeChangeBatch(t *testing.T) {
 	if multi == "" {
 		t.Fatal("describeChangeBatch returned an empty string for a multi-file batch")
 	}
-	// A long batch is summarised rather than dumped in full.
+	// A long batch is summariized rather than dumped in full.
 	long := describeChangeBatch([]string{
 		"/a/services/host-agent/one.go",
 		"/a/services/host-agent/two.go",
@@ -171,7 +171,7 @@ func TestDescribeChangeBatch(t *testing.T) {
 		"/a/apps/radarr/six.go",
 	})
 	if len(long) > 200 {
-		t.Errorf("a long batch should be summarised, got %d chars: %q", len(long), long)
+		t.Errorf("a long batch should be summariized, got %d chars: %q", len(long), long)
 	}
 }
 

@@ -55,7 +55,6 @@ type appsModule struct {
 	imageSizeResolver func(ctx context.Context, image string) (int64, bool)
 }
 
-// NewAppsModule creates a new AppsModule.
 func NewAppsModule(
 	catalog catalog.CacheInterface,
 	appStore store.AppStoreInterface,
@@ -177,7 +176,6 @@ func (m *appsModule) Install(name string) (*IntentRef, *installedAppResponse, er
 	return &IntentRef{ID: intent.IntentID()}, app, nil
 }
 
-// Uninstall enqueues an uninstall intent.
 func (m *appsModule) Uninstall(name string, clearData bool) (*IntentRef, error) {
 	if m.orch == nil {
 		return nil, fmt.Errorf("orchestrator not available")
@@ -188,7 +186,6 @@ func (m *appsModule) Uninstall(name string, clearData bool) (*IntentRef, error) 
 	return &IntentRef{ID: intent.IntentID()}, nil
 }
 
-// Rename enqueues a rename intent.
 func (m *appsModule) Rename(name, displayName string) (*IntentRef, error) {
 	if displayName == "" {
 		return nil, fmt.Errorf("displayName is required")
@@ -301,7 +298,6 @@ func (m *appsModule) GetCatalogHandler() http.HandlerFunc {
 	}
 }
 
-// GetInstalledHandler returns installed user apps.
 func (m *appsModule) GetInstalledHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		installed, err := m.GetInstalled()
@@ -351,7 +347,6 @@ func (m *appsModule) InstallHandler() http.HandlerFunc {
 	}
 }
 
-// UninstallHandler enqueues an uninstall intent.
 func (m *appsModule) UninstallHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")
@@ -373,7 +368,6 @@ func (m *appsModule) UninstallHandler() http.HandlerFunc {
 	}
 }
 
-// RenameHandler enqueues a rename intent.
 func (m *appsModule) RenameHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")

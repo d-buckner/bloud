@@ -26,9 +26,6 @@ func (r *lifecycle) runInstallFlow() error {
 	return runPlaywright(r.cfg.root, r.cfg.username, r.cfg.password, r.apiTokenBestEffort())
 }
 
-// verifyAfterRestart restarts Jellyfin and the host-agent and re-runs the
-// browser flow (unless --host-only) to prove the lifecycle survives restarts.
-
 var remoteResetJellyfinScript = `tok="$(cat ${1}/data/host-agent-api-token)"
 installed="$(curl -sS -H "Authorization: Bearer $tok" http://localhost:3000/api/apps/installed || printf '[]')"
 if printf '%s' "$installed" | grep -q '"name":"jellyfin"'; then

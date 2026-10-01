@@ -43,7 +43,6 @@ const devSwitchEnv = "BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP"
 // agree (a test pins them together).
 const devSwitchKey = "BLOUD_DEV_ALLOW_HTTP"
 
-// Configurator handles Vaultwarden configuration.
 type Configurator struct {
 	port       int
 	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)
@@ -86,9 +85,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	return c
 }
 
-// nodeName is the graph node and container name the host-agent reconciles
-// this configurator under. Registration and Name() both read it, so the two
-// cannot drift apart.
+// nodeName is this app's graph node and container name; see NodeLifecycle.Name.
 const nodeName = "apps-vaultwarden"
 
 // defaultPort is the app's own web port, the value the constructor uses

@@ -21,7 +21,7 @@ own.
 | Port | host `8989` → container `8989` (`port: 8989` in `metadata.yaml`) |
 | Volumes | `{{appDataDir}}/config` → `/config`, `{{dataDir}}/media/shows` → `/shows`, `{{dataDir}}/downloads` → `/downloads` |
 | Healthcheck | `curl -sf http://localhost:8989/ping` (5 s interval, 10 s timeout, 24 retries) |
-| PreStart dirs | `<appDataDir>/config`, `<dataDir>/media/shows`, `<dataDir>/downloads`: the config dir, the media library and the shared downloads dir are chmodded `0777`, because the container writes them as LSIO's `abc` (uid 1000 → a host subuid under rootless podman, which the host agent is neither owner nor group member of). Without the media chmod, `/shows` is rejected as a root folder ("not writable by user 'abc'"); without the config chmod, Bloud's own later write of `config.xml` (which goes through a temp file *in that directory*) fails with EACCES and takes the node to ERROR; without the downloads chmod, an import that has to delete its source fails. The container's own init chowns only `/config` and `/run/sonarr-temp`, so nothing else normalises them |
+| PreStart dirs | `<appDataDir>/config`, `<dataDir>/media/shows`, `<dataDir>/downloads`: the config dir, the media library and the shared downloads dir are chmodded `0777`, because the container writes them as LSIO's `abc` (uid 1000 → a host subuid under rootless podman, which the host agent is neither owner nor group member of). Without the media chmod, `/shows` is rejected as a root folder ("not writable by user 'abc'"); without the config chmod, Bloud's own later write of `config.xml` (which goes through a temp file *in that directory*) fails with EACCES and takes the node to ERROR; without the downloads chmod, an import that has to delete its source fails. The container's own init chowns only `/config` and `/run/sonarr-temp`, so nothing else normalizes them |
 | PreStart file | `<appDataDir>/config/config.xml` (mounted at `/config/config.xml`) |
 
 `/ping` is the only route the app leaves anonymous: it answers `200
@@ -46,7 +46,7 @@ test compares **values, not bytes**: Sonarr re-serialises `config.xml` with its
 own serializer whenever settings are saved, and byte-comparing would report a
 change on every reconciliation and restart the container in a loop.
 
-Two upstream behaviours drive that rule:
+Two upstream behaviors drive that rule:
 
 - A key that appears **twice** is treated as absent by the app, which then
   appends its own default, so Bloud only ever writes single, well-formed keys
@@ -216,7 +216,7 @@ Bloud's own address (`GET /api/v3/downloadclient`, then `DELETE
 provider that was uninstalled must not leave a stored hostname behind that no
 longer resolves; every grab would fail against a dead target. The binding still
 carries the provider's node and port from its catalog metadata, which is how the
-prune recognises the entry Bloud wrote. Clients the operator added point
+prune recognizes the entry Bloud wrote. Clients the operator added point
 somewhere else and are left alone: the provider being gone says nothing about
 them.
 
@@ -292,7 +292,7 @@ regardless of the port.
 | `services/host-agent/pkg/servarr/config.go` | Shared `config.xml` reader/writer |
 | `services/host-agent/pkg/servarr/client.go` | Shared `X-Api-Key` client and auth verification |
 | `services/host-agent/pkg/servarr/downloadclient.go` | Shared download-client surface (`GET`/`POST`/`DELETE` `/downloadclient`, the qBittorrent payload, `.../test`) |
-| `services/host-agent/pkg/servarr/config_test.go`, `client_test.go`, `downloadclient_test.go` | The shared behaviour's test matrix (create/idempotence/preserve/repair/add/prune) |
+| `services/host-agent/pkg/servarr/config_test.go`, `client_test.go`, `downloadclient_test.go` | The shared behavior's test matrix (create/idempotence/preserve/repair/add/prune) |
 
 ## Verification
 

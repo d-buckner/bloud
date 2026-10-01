@@ -60,9 +60,9 @@ Measured per-function before/after cost of the abstraction (real pairs from this
    `context.WithBackground`-equivalent (`configurator.go:291`, `context.Background()`), HA
    with `context.WithoutCancel` (`configurator.go:200`). Both **silently defeat shutdown**:
    `orchestrator.Stop()` cannot cancel an in-flight `PostStart`. Meanwhile the stated reason
-   for the detach, "the pass context is cancelled when the pass completes", is **not true
+   for the detach, "the pass context is canceled when the pass completes", is **not true
    in the current code**: the pass context comes from `Start()`'s context
-   (`orchestrator.go:471-489`) and is only cancelled by `Stop()`.
+   (`orchestrator.go:471-489`) and is only canceled by `Stop()`.
 4. **Idempotency is a string match.** `strings.Contains(strings.ToLower(b), "already has an
    admin")` (immich:261), `strings.Contains(string(b), "First user already created")`
    (affine:198), `resp.StatusCode == http.StatusUnauthorized` meaning "wizard already
@@ -276,7 +276,7 @@ Transient classification (retried under any policy unless `NoRetry()`):
 | `408 Request Timeout`, `425`, `429 Too Many Requests` | yes (honors `Retry-After`) |
 | `500`, `502`, `503`, `504` | yes |
 | any other status | no: fail fast with `HTTPError` |
-| `ctx` cancelled/deadline | no: return immediately, wrapped |
+| `ctx` canceled/deadline | no: return immediately, wrapped |
 
 `Retry-After` on 429/503 overrides the computed backoff (delta-seconds and HTTP-date both
 parsed; clamped to `MaxInterval × 3`).
@@ -681,7 +681,7 @@ with a comment. Immich's 400-string case gets the same treatment.
 ### 8.4 Trust probe with a hybrid stop condition (`homeassistant/configurator.go:772-795`)
 
 ```go
-// Anything except a forward-middleware 400 means the running process now honours
+// Anything except a forward-middleware 400 means the running process now honors
 // X-Forwarded-*; a refused connection mid-restart is retried, not fatal.
 func (c *haAPI) waitForProxyTrust(ctx context.Context) error {
 	return c.cl.GET("/api/").
@@ -734,7 +734,7 @@ Home Assistant's variant adds a version-aware skip and a manifest-domain check:
 | D4 | `Client` is a concrete struct; no per-app interface | The repo's `interfaces.go` mock pattern (configurator, authentik) exists to break cycles, not for polymorphism. Apps test against `httptest` over a real socket, strictly more real than a mock. |
 | D5 | Outcome contract is a **status set + predicate**, string matching only via declared `AlreadyDoneFunc` | Fixes the class of bug (silent wording drift) while remaining honest about upstream APIs that lack distinct codes. |
 | D6 | Per-request timeout default 15s; waits carry an explicit `Timeout` | Kills the `http.DefaultClient`-with-no-timeout failure mode (§1.2) without per-app knobs. |
-| D7 | **Delete the per-app detach dance.** Framework guarantees (verified: `orchestrator.go:471-489`) the pass context is *not* cancelled at pass end and *is* cancelled at `Stop()`; apps just use `ctx` | `context.Background()`/`WithoutCancel` in `PostStart` make shutdown uncancellable. Their stated premise is false in current code. Jellyfin's claim that `WithoutCancel` "did not prevent cancellation on Go 1.25" is recorded as an open question (§13 Q1); with the pass ctx being process-scoped, apps don't need either. |
+| D7 | **Delete the per-app detach dance.** Framework guarantees (verified: `orchestrator.go:471-489`) the pass context is *not* canceled at pass end and *is* canceled at `Stop()`; apps just use `ctx` | `context.Background()`/`WithoutCancel` in `PostStart` make shutdown uncancellable. Their stated premise is false in current code. Jellyfin's claim that `WithoutCancel` "did not prevent cancellation on Go 1.25" is recorded as an open question (§13 Q1); with the pass ctx being process-scoped, apps don't need either. |
 | D8 | `Ensure[T]` generic helper, not an app-by-app interface | Same 5-line shape ~25×; one implementation, one log line, one test. |
 | D9 | Vendor quirks stay in `apps/<name>/api.go`; the framework never learns app semantics | Prevents the client becoming a per-app switchboard. `pkg/authentik` stays the only host-owned service client (Bloud owns that integration), but it gets **rebuilt on** `appclient` rather than hand-rolling 60 requests (§12 R4). |
 | D10 | Content-addressed asset cache under `BLOUD_DATA_DIR` | Repeat installs/reinstalls skip re-download; a broken cache entry is self-deleting (digest mismatch). Enables the air-gapped bundle path later without changing the API. |

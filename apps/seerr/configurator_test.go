@@ -512,7 +512,7 @@ func sonarrBinding(localURL, apiKey string) configurator.PVRBinding {
 // notInstalledPVR is the binding of a PVR the stack does not include. Only the
 // edge changes: the address survives, because it comes from the provider's
 // catalog metadata, which outlives its installation, and that is what lets a
-// consumer recognise - and here, prune - the entry it wrote for it.
+// consumer recognize - and here, prune - the entry it wrote for it.
 func notInstalledPVR(binding configurator.PVRBinding) configurator.PVRBinding {
 	binding.Installed = false
 	return binding

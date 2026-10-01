@@ -584,7 +584,7 @@ func (c *Configurator) pvrQualityProfile(ctx context.Context, pvr pvrTarget, api
 
 // readAPIKey reads the API key Seerr generated for itself into settings.json
 // (server/lib/settings/index.ts: a missing key is minted during load and the
-// file is saved before the HTTP listener opens). Seerr honours a non-empty
+// file is saved before the HTTP listener opens). Seerr honors a non-empty
 // main.apiKey verbatim, so an empty or unreadable file means the admin-only
 // onboarding calls cannot be authenticated: an error naming the file rather
 // than a silent unauthenticated attempt.

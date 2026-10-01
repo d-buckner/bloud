@@ -360,10 +360,9 @@ func TestSelfHeal_TimerRepairsDriftWithoutAnIntent(t *testing.T) {
 
 // ── error recovery ────────────────────────────────────────────────────
 
-// `retryable: true` on an operation row used to be a promise nothing kept.
-// The self-heal pass is the consumer: an app that failed, whose cause has
-// been cleared, comes back on the next tick without a human submitting an
-// install.
+// The self-heal pass is the consumer of `retryable: true` on an operation row: an
+// app that failed, whose cause has been cleared, comes back on the next tick
+// without a human submitting an install.
 func TestSelfHeal_RetriesARetryableFailure(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	ops := store.NewOperationStore(db)

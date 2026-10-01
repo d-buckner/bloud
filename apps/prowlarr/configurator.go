@@ -68,7 +68,6 @@ const (
 	fieldAPIKey      = "apiKey"
 )
 
-// Configurator handles Prowlarr configuration.
 type Configurator struct {
 	port   int
 	logger *slog.Logger

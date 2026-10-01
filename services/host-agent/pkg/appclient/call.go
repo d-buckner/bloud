@@ -28,7 +28,7 @@ type Call struct {
 	headers     map[string]string
 
 	timeoutOverride time.Duration
-	// budgetErr records a declared wait budget the framework cannot honour.
+	// budgetErr records a declared wait budget the framework cannot honor.
 	// Wait surfaces it instead of letting the wait be truncated in silence.
 	budgetErr    error
 	anonymous    bool
@@ -55,19 +55,14 @@ type Call struct {
 	retryOverride *RetryPolicy
 }
 
-// GET starts a GET call against path.
 func (c *Client) GET(path string) *Call { return &Call{c: c, method: http.MethodGet, path: path} }
 
-// POST starts a POST call against path.
 func (c *Client) POST(path string) *Call { return &Call{c: c, method: http.MethodPost, path: path} }
 
-// PUT starts a PUT call against path.
 func (c *Client) PUT(path string) *Call { return &Call{c: c, method: http.MethodPut, path: path} }
 
-// PATCH starts a PATCH call against path.
 func (c *Client) PATCH(path string) *Call { return &Call{c: c, method: http.MethodPatch, path: path} }
 
-// DELETE starts a DELETE call against path.
 func (c *Client) DELETE(path string) *Call { return &Call{c: c, method: http.MethodDelete, path: path} }
 
 // --- request body / modifiers ---
@@ -98,7 +93,6 @@ func (x *Call) Body(raw []byte, contentType string) *Call {
 	return x
 }
 
-// Query adds a query parameter.
 func (x *Call) Query(k, v string) *Call {
 	if x.query == nil {
 		x.query = url.Values{}
@@ -107,7 +101,6 @@ func (x *Call) Query(k, v string) *Call {
 	return x
 }
 
-// Header adds a request header.
 func (x *Call) Header(k, v string) *Call {
 	if x.headers == nil {
 		x.headers = map[string]string{}
@@ -186,7 +179,6 @@ func (x *Call) RetryStatus(status ...int) *Call {
 	return x
 }
 
-// NoRetry disables retry for this call.
 func (x *Call) NoRetry() *Call {
 	x.noRetry = true
 	return x

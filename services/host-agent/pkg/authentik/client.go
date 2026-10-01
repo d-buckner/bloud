@@ -855,7 +855,6 @@ func (c *Client) getAdminGroupMembers(ctx context.Context) (map[int]bool, error)
 	return members, nil
 }
 
-// DeleteUser deletes a user by username
 func (c *Client) DeleteUser(ctx context.Context, username string) error {
 	// Find the user ID first
 	userID, err := c.findUserID(ctx, username)
@@ -1123,7 +1122,6 @@ type TokenResponse struct {
 	IDToken      string `json:"id_token,omitempty"`
 }
 
-// UserInfo represents the OIDC userinfo response
 type UserInfo struct {
 	Sub               string   `json:"sub"`
 	PreferredUsername string   `json:"preferred_username"`

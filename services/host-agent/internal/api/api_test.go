@@ -946,9 +946,6 @@ func TestAPI_ClearData_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// Note: clear-data endpoint no longer has an HTTP route in the deep modules refactor.
-// The AppsModule.ClearData() method still exists for programmatic use.
-
 // ── Utility function tests ─────────────────────────────────────────────
 
 func TestRespondJSON(t *testing.T) {

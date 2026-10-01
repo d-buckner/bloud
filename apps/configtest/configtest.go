@@ -9,7 +9,7 @@
 // and a change that breaks one of the rules fails a test instead of quietly
 // becoming the new precedent.
 //
-// The harness asserts externally observable behaviour only. It calls the
+// The harness asserts externally observable behavior only. It calls the
 // public contract and checks what a caller would notice: whether a recreate
 // was requested, whether a network call happened, whether a second pass
 // changed anything, whether the app's own metadata agrees with its code. It

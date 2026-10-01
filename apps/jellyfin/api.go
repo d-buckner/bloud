@@ -41,13 +41,11 @@ type SystemInfo struct {
 	ID                     string `json:"Id"`
 }
 
-// User represents a Jellyfin user.
 type User struct {
 	ID   string `json:"Id"`
 	Name string `json:"Name"`
 }
 
-// VirtualFolder represents a Jellyfin library.
 type VirtualFolder struct {
 	Name           string   `json:"Name"`
 	Locations      []string `json:"Locations"`
@@ -193,7 +191,6 @@ func (a *jellyfinAPI) setStartupUser(ctx context.Context, username, password str
 		Exec(ctx)
 }
 
-// setRemoteAccess configures remote access settings.
 func (a *jellyfinAPI) setRemoteAccess(ctx context.Context) error {
 	return a.cl.POST("/Startup/RemoteAccess").
 		JSON(map[string]bool{"EnableRemoteAccess": true, "EnableAutomaticPortMapping": false}).
@@ -218,7 +215,6 @@ func (a *jellyfinAPI) getPluginConfiguration(ctx context.Context, token, pluginI
 		Do(ctx)
 }
 
-// setPluginConfiguration updates a plugin's configuration.
 func (a *jellyfinAPI) setPluginConfiguration(ctx context.Context, token, pluginID string, config []byte) error {
 	return a.cl.POST(fmt.Sprintf("/Plugins/%s/Configuration", pluginID)).
 		Header("Authorization", mediaBrowserAuth(token)).
@@ -229,7 +225,6 @@ func (a *jellyfinAPI) setPluginConfiguration(ctx context.Context, token, pluginI
 
 // --- users ---
 
-// getUsers lists all users.
 func (a *jellyfinAPI) getUsers(ctx context.Context, token string) ([]User, error) {
 	var users []User
 	if err := a.cl.GET("/Users").
@@ -241,7 +236,6 @@ func (a *jellyfinAPI) getUsers(ctx context.Context, token string) ([]User, error
 	return users, nil
 }
 
-// deleteUser deletes a user by ID.
 func (a *jellyfinAPI) deleteUser(ctx context.Context, token, userID string) error {
 	return a.cl.DELETE("/Users/"+userID).
 		Header("Authorization", mediaBrowserAuth(token)).
@@ -268,7 +262,6 @@ func (a *jellyfinAPI) deleteBootstrapAdmin(ctx context.Context, token string) er
 
 // --- libraries ---
 
-// getVirtualFolders returns all configured libraries.
 func (a *jellyfinAPI) getVirtualFolders(ctx context.Context, token string) ([]VirtualFolder, error) {
 	var folders []VirtualFolder
 	if err := a.cl.GET("/Library/VirtualFolders").

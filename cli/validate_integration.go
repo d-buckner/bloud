@@ -24,13 +24,7 @@ import (
 const integrationRuntimeDir = "/var/tmp/bloud-validate-runtime"
 
 // integrationHostAgentUnit supervises the validation runtime's host-agent.
-
-// integrationHostAgentUnit supervises the validation runtime's host-agent.
 const integrationHostAgentUnit = "bloud-validate-host-agent.service"
-
-// integrationPreflightScript verifies the guest has everything the
-// validation runtime needs. Go is not required in the guest: artifacts are
-// built locally and copied in.
 
 // integrationPreflightScript verifies the guest has everything the
 // validation runtime needs. Go is not required in the guest: artifacts are
@@ -50,22 +44,11 @@ podman info >/dev/null`
 // older CLI versions) and any prior lifecycle or validation unit. The
 // units are disabled so a Restart=on-failure cannot resurrect an agent
 // that races the validation unit for the port after the fuser kill.
-
-// integrationStopAgentScript stops whatever holds port 3000 so the
-// validation unit can bind: the dev host-agent (foreground under ./bloud
-// dev, or the legacy bloud-host-agent.service unit on VMs provisioned by
-// older CLI versions) and any prior lifecycle or validation unit. The
-// units are disabled so a Restart=on-failure cannot resurrect an agent
-// that races the validation unit for the port after the fuser kill.
 var integrationStopAgentScript = `for unit in bloud-host-agent.service bloud-e2e-host-agent.service bloud-validate-host-agent.service; do
   systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
 done
 fuser -k 3000/tcp 2>/dev/null || true
 sleep 1`
-
-// integrationWaitAgentScript waits for the validation host-agent API. First
-// boot pulls images and converges the system apps before the listener opens,
-// so this doubles as the bootstrap convergence gate.
 
 // integrationWaitAgentScript waits for the validation host-agent API. First
 // boot pulls images and converges the system apps before the listener opens,
@@ -176,10 +159,6 @@ func integrationBuildArtifacts(root, hostAgentSrc, tmpDir string, step func(stri
 // integrationDeploy copies the built artifacts into the guest validation
 // runtime dir and initializes runtime secrets (idempotent product command;
 // the tests read the real values from secrets.json).
-
-// integrationDeploy copies the built artifacts into the guest validation
-// runtime dir and initializes runtime secrets (idempotent product command;
-// the tests read the real values from secrets.json).
 func integrationDeploy(ctx context.Context, ex executor.Executor, root, hostAgentSrc, rt, binaryPath, testBinary string) error {
 	if _, err := ex.Run(ctx, executor.RunSpec{
 		Command: fmt.Sprintf("rm -rf %s/host-agent %s/apps && mkdir -p %s/host-agent/web/build %s/apps %s/data %s/bin", rt, rt, rt, rt, rt, rt),
@@ -219,9 +198,6 @@ func integrationDeploy(ctx context.Context, ex executor.Executor, root, hostAgen
 
 // integrationInstallService installs the validation host-agent systemd user
 // unit in the guest and starts it.
-
-// integrationInstallService installs the validation host-agent systemd user
-// unit in the guest and starts it.
 func integrationInstallService(ctx context.Context, ex executor.Executor, rt, backend, tmpDir string) error {
 	unit := renderIntegrationHostAgentUnit(rt, backend)
 	unitPath := filepath.Join(tmpDir, integrationHostAgentUnit)
@@ -245,10 +221,6 @@ systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
 	}
 	return nil
 }
-
-// integrationRunTests runs the tier's commands against the deployed
-// runtime and records each result. Returns 0 when every command passed,
-// 1 on the first failure (remaining commands are skipped).
 
 // integrationRunTests runs the tier's commands against the deployed
 // runtime and records each result. Returns 0 when every command passed,

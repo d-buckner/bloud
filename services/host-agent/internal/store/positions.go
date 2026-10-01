@@ -22,7 +22,6 @@ type PositionStore struct {
 	db *sql.DB
 }
 
-// NewPositionStore creates a new PositionStore.
 func NewPositionStore(db *sql.DB) *PositionStore {
 	return &PositionStore{db: db}
 }

@@ -307,7 +307,7 @@ For development, the supported way to run Bloud is the development VM, driven by
 - Check that `$BLOUD_DATA_DIR` exists and is writable. `bloud.db` is created on first run, and a corrupt `secrets.json` makes startup fail rather than regenerating it
 
 **Admin API calls return 401 or 403?**
-- Send the token from `$BLOUD_DATA_DIR/host-agent-api-token` as a bearer credential from loopback or a `BLOUD_TRUSTED_LOCAL_NETS` address; the token is only honoured from a trusted position
+- Send the token from `$BLOUD_DATA_DIR/host-agent-api-token` as a bearer credential from loopback or a `BLOUD_TRUSTED_LOCAL_NETS` address; the token is only honored from a trusted position
 
 **Port already in use?**
 - Change the port: `export BLOUD_PORT=3001`

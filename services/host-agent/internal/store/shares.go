@@ -30,7 +30,6 @@ func NewShareStore(db *sql.DB) *ShareStore {
 	return &ShareStore{db: db}
 }
 
-// Create inserts a new share
 func (s *ShareStore) Create(share Share) error {
 	_, err := s.db.Exec(`
 		INSERT INTO shares (id, app_id, sso_strategy, guest_id, node_share_link, status)
@@ -60,7 +59,6 @@ func (s *ShareStore) GetByID(id string) (*Share, error) {
 	return share, nil
 }
 
-// List returns all shares
 func (s *ShareStore) List() ([]*Share, error) {
 	rows, err := s.db.Query(`
 		SELECT id, app_id, sso_strategy, guest_id, node_share_link, status, created_at, revoked_at

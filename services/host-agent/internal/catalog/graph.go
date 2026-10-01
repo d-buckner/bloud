@@ -41,7 +41,6 @@ func (g *AppGraph) buildDependents(app *AppDefinition) {
 	}
 }
 
-// SetInstalled updates which apps are installed
 func (g *AppGraph) SetInstalled(installed []string) {
 	g.Installed = installed
 	g.installedSet = make(map[string]bool)
@@ -97,7 +96,6 @@ func (g *AppGraph) GetCompatibleApps(appName string, integrationName string) (in
 	return installed, available
 }
 
-// GetApps returns all app definitions
 func (g *AppGraph) GetApps() map[string]*AppDefinition {
 	return g.Apps
 }

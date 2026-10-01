@@ -58,7 +58,7 @@ func plannedNode(catalogID string, app *catalog.App) string {
 // System apps are excluded. Authentik's last container is
 // apps-authentik-ldap while its registered configurator node is
 // apps-authentik-server, and that mismatch is a separate open item, not
-// something this test should pass judgement on.
+// something this test should pass judgment on.
 func TestEveryPlannedNodeHasAConfigurator(t *testing.T) {
 	apps.RegisterAll()
 	registry := configurator.NewRegistry(slog.New(slog.DiscardHandler), configurator.Deps{})

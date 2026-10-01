@@ -481,7 +481,7 @@ func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) 
 //
 // installed=false is how the orchestrator reports an uninstalled provider: it
 // is the signal to prune. The provider's address stays in the binding either
-// way, which is exactly what a prune needs to recognise the stale entry.
+// way, which is exactly what a prune needs to recognize the stale entry.
 func withDownloadClient(state *configurator.AppState, qb *fakeQBittorrent, installed bool) {
 	state.Integrations.DownloadClients = []configurator.DownloadClientBinding{{
 		ProviderRef: configurator.ProviderRef{

@@ -156,9 +156,9 @@ func TestPullImageWithProgressFallsBackToExecOnInfraFailure(t *testing.T) {
 	assert.Equal(t, "done", last.Phase)
 }
 
-func TestPullImageWithProgressCancelledSkipsFallback(t *testing.T) {
+func TestPullImageWithProgressCanceledSkipsFallback(t *testing.T) {
 	// Point the client at a socket that does not exist so the pull request
-	// fails; a cancelled context must surface without the CLI fallback.
+	// fails; a canceled context must surface without the CLI fallback.
 	runner := &fakeCommandRunner{}
 	client := &Client{socketPath: "/nonexistent/bloud-test.sock", runner: runner}
 

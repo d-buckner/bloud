@@ -249,7 +249,6 @@ func (m *Manager) Get(name string) string {
 	}
 }
 
-// GetPostgresPassword returns the PostgreSQL password.
 func (m *Manager) GetPostgresPassword() string {
 	return m.Get("postgresPassword")
 }

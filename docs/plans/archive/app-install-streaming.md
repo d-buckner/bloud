@@ -489,7 +489,7 @@ Delivered as planned, with these implementation details/deviations:
   happens only for *infrastructure* failures (socket dial error, non-200 HTTP).
   A `error` event inside the stream (bad reference, registry error) is
   definitive and returned as-is: retrying would hit the same error; a
-  cancelled context surfaces without retry. Without a registered reporter,
+  canceled context surfaces without retry. Without a registered reporter,
   `Ensure` keeps the original plain exec pull path (zero behavior change).
 - **"Already exists"** (status-only stream, no blob sizes) emits exactly one
   `done` event with the status as detail: no fake progress (per plan §4).
@@ -498,7 +498,7 @@ Delivered as planned, with these implementation details/deviations:
   1.0 GiB)"`, falling back to the raw status line when no sizes are known.
 - **Tests added:** podman stream parsing (percent + monotonicity + done),
   already-exists, definitive stream error (no CLI retry), 500 → exec fallback
-  (final `done`), cancelled ctx (no fallback), unsafe reference rejection,
+  (final `done`), canceled ctx (no fallback), unsafe reference rejection,
   blob aggregation unit test, throttler coalescing; container Ensure →
   reporter (with/without); orchestrator pull → bus with owning-app
   attribution (multi-container + unknown-container fallback), `pullDetail`,

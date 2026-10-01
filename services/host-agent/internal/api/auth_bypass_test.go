@@ -178,7 +178,7 @@ func TestRouter_LoopbackPositionIsNotEnough(t *testing.T) {
 func TestRouter_SessionSurvivesLoopbackPosition(t *testing.T) {
 	server := newAuthTestServer(t, func(c *ServerConfig) { c.APIToken = "s3cret-token" })
 
-	t.Run("member session is honoured, not promoted", func(t *testing.T) {
+	t.Run("member session is honored, not promoted", func(t *testing.T) {
 		cookie := newSession(t, server, "alice", store.RoleMember)
 		w := do(t, server, http.MethodGet, "/api/apps/installed", "127.0.0.1:44444", nil, cookie)
 		require.Equal(t, http.StatusOK, w.Code, "a member session from loopback still authenticates")
@@ -197,13 +197,12 @@ func TestRouter_SessionSurvivesLoopbackPosition(t *testing.T) {
 	})
 }
 
-// ── OAuth redirect URIs (PR 4) ───────────────────────────────────────────────
+// ── OAuth redirect URIs ──────────────────────────────────────────────────────
 //
-// The login handler used to build the redirect URI from the request's Host /
-// X-Forwarded-Host and *register it in Authentik* when unknown. An
-// unauthenticated caller could therefore add arbitrary redirect URIs to the
-// OAuth client that backs every SSO'd app. Redirect URIs must come from the
-// admin-controlled host set.
+// Redirect URIs must come from the admin-controlled host set. Building one from
+// the request's Host / X-Forwarded-Host and registering it when unknown would
+// let an unauthenticated caller add arbitrary redirect URIs to the OAuth client
+// that backs every SSO'd app.
 
 func newHostAwareAuthModule(t *testing.T, hosts *hostset.State) (*authModule, *FakeAuthentikClient) {
 	t.Helper()
@@ -322,14 +321,11 @@ func TestAuthModule_LANIPLoginStaysPlainHTTPUnderAnHTTPSPublicScheme(t *testing.
 		"the LAN IP redirect URI must name the entrypoint port, not the primary host's 443")
 }
 
-// The second reported case: the first admin was created from the LAN address,
-// so the address itself became the primary host. The redirect has to keep the
-// port the browser used.
-//
-// BaseURLFor used to render any non-localhost host as the bare host on the
-// scheme's default port, so the adopted address came out as http://10.0.0.210
-// on port 80 while Traefik served 8080, and the browser got a connection
-// refused on the way to the authorize endpoint.
+// The first admin created from the LAN address makes that address the primary host,
+// so the redirect has to keep the port the browser used. Rendering a
+// non-localhost host as the bare host on the scheme's default port would give
+// http://10.0.0.210 on port 80 while Traefik serves 8080, and the browser would
+// get a connection refused on the way to the authorize endpoint.
 func TestAuthModule_AddressPrimaryHostKeepsTheEntrypointPort(t *testing.T) {
 	ips := netutil.DetectLocalIPs()
 	if len(ips) == 0 {

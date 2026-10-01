@@ -16,7 +16,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
 
-// Config holds the application configuration
 type Config struct {
 	Port              int
 	DataDir           string

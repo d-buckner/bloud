@@ -65,7 +65,6 @@ type fakeSecrets struct {
 	published []publishedSecret
 }
 
-// publishedSecret is one SetAppSecret call.
 type publishedSecret struct {
 	app   string
 	key   string
@@ -466,7 +465,7 @@ func configuratorFor(t *testing.T, instance *fakeInstance, qb *fakeQBittorrent) 
 // configurator reaches the provider on from the host.
 //
 // installed=false is the provider-gone case. The binding still carries the
-// provider's address, which is what lets the prune recognise the entry Bloud
+// provider's address, which is what lets the prune recognize the entry Bloud
 // wrote, and it is the only thing that means "not installed": a provider that is
 // installed but not answering keeps its binding and is retried.
 func withDownloadClient(state *configurator.AppState, qb *fakeQBittorrent, installed bool) {
@@ -814,7 +813,7 @@ func TestPostStart_WiresCategoryAndDownloadClient(t *testing.T) {
 // The binding's Installed flag is what says the provider is gone: uninstalling
 // qBittorrent leaves the client Bloud wrote pointing at a container that no
 // longer exists, so the entry is pruned. The binding still carries the
-// provider's coordinates, which is how the prune recognises it.
+// provider's coordinates, which is how the prune recognizes it.
 func TestPostStart_PrunesStaleDownloadClientWhenProviderIsGone(t *testing.T) {
 	instance := newFakeInstance("external")
 	instance.clients = []fakeClient{bloudClient(3)}

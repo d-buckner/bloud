@@ -52,7 +52,6 @@ func (s *AppStore) notify() {
 	}
 }
 
-// GetAll returns all installed apps
 func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	rows, err := s.db.Query(`
 		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.tailnet_id, a.integration_config, a.installed_at, a.updated_at,

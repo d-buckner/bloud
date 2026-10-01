@@ -60,7 +60,6 @@ func collectStatsLoop(ctx context.Context) {
 	}
 }
 
-// collectStats updates the cached stats
 func collectStats() {
 	stats := &Stats{}
 
@@ -104,7 +103,6 @@ func GetStats() (*Stats, error) {
 	}, nil
 }
 
-// StorageStats represents detailed storage information
 type StorageStats struct {
 	Used       uint64 `json:"used"`
 	Total      uint64 `json:"total"`

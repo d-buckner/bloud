@@ -139,7 +139,7 @@ func TestEscalateOnSecondSignalForcesBothDevServers(t *testing.T) {
 	loop.escalateOnSecondSignal()
 
 	// The first signal only announces: the graceful stop is the caller's job
-	// (the context it cancelled), so nothing gets killed here.
+	// (the context it canceled), so nothing gets killed here.
 	signals <- syscall.SIGTERM
 	time.Sleep(300 * time.Millisecond)
 	if !processAlive(childGrand) || !processAlive(viteGrand) {

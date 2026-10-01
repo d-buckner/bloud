@@ -347,7 +347,7 @@ func buildTemplateVars(cfg *config.Config) *configurator.TemplateVars {
 }
 
 // waitForSystemConvergence blocks until the orchestrator reports ready and the
-// system apps pass their health check, then initialises auth. It aborts the
+// system apps pass their health check, then initializes auth. It aborts the
 // process on a failed health check or a systemConvergenceTimeout. The
 // listener is already open here, but bootstrapGate keeps the API unavailable
 // until this returns: the API must not serve before the system apps it depends

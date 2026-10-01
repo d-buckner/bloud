@@ -287,7 +287,6 @@ func (c *Client) PullImage(ctx context.Context, image string) error {
 	return nil
 }
 
-// CreateContainer creates a new container
 func (c *Client) CreateContainer(ctx context.Context, config ContainerConfig) (string, error) {
 	// Build the Podman API spec
 	spec := buildContainerSpec(config)
@@ -318,7 +317,6 @@ func (c *Client) CreateContainer(ctx context.Context, config ContainerConfig) (s
 	return result.ID, nil
 }
 
-// StartContainer starts a stopped container
 func (c *Client) StartContainer(ctx context.Context, nameOrID string) error {
 	resp, err := c.post(ctx, fmt.Sprintf("/libpod/containers/%s/start", url.PathEscape(nameOrID)), nil)
 	if err != nil {
@@ -334,7 +332,6 @@ func (c *Client) StartContainer(ctx context.Context, nameOrID string) error {
 	return nil
 }
 
-// StopContainer stops a running container
 func (c *Client) StopContainer(ctx context.Context, nameOrID string, timeout int) error {
 	params := url.Values{}
 	if timeout > 0 {
@@ -360,7 +357,6 @@ func (c *Client) StopContainer(ctx context.Context, nameOrID string, timeout int
 	return nil
 }
 
-// RemoveContainer removes a container
 func (c *Client) RemoveContainer(ctx context.Context, nameOrID string, force bool) error {
 	params := url.Values{}
 	if force {

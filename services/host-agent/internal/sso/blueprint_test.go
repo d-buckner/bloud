@@ -11,7 +11,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 )
 
-// testBlueprintGenerator creates a BlueprintGenerator for testing
 func testBlueprintGenerator(t *testing.T, dir string) *BlueprintGenerator {
 	return NewBlueprintGenerator(
 		"test-secret",

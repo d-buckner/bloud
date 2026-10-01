@@ -32,7 +32,7 @@
 		return () => clearInterval(interval);
 	});
 
-	/** Capacity is usually fine; only high usage is worth colour. */
+	/** Capacity is usually fine; only high usage is worth color. */
 	function tone(value: number): string {
 		return value >= 90 ? 'var(--color-error)' : 'var(--color-accent)';
 	}

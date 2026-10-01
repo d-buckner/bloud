@@ -252,8 +252,8 @@ A `forbidigo` rule in `.golangci.yml` (run by `npm run lint:go`, so it gates the
 `fast` tier and CI) keeps `apps/**/*.go` free of raw `net/http`
 (`http.NewRequest`, `http.DefaultClient`, `http.Client`/`http.Client.Do`): the
 sanctioned terminal is appclient's `.Do(ctx)`. The same rule forbids direct file
-writes (`os.WriteFile` and friends, in favour of `pkg/managedfile.Write`) and
-`os/exec` (in favour of `Deps.Exec`/`Deps.RestartContainer`) in app
+writes (`os.WriteFile` and friends, in favor of `pkg/managedfile.Write`) and
+`os/exec` (in favor of `Deps.Exec`/`Deps.RestartContainer`) in app
 configurators.
 
 ### Authentik Client (`pkg/authentik/`)

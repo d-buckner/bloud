@@ -116,7 +116,6 @@ func (c *Client) WithSleeper(fn func(time.Duration)) *Client {
 	return c
 }
 
-// WithLogger overrides the logger after construction.
 func (c *Client) WithLogger(l *slog.Logger) *Client {
 	if l != nil {
 		c.logger = l

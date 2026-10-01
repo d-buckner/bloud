@@ -422,7 +422,6 @@ func paperlessNgxGet(t *testing.T, path, token string) string {
 
 var csrfTokenRe = regexp.MustCompile(`name="csrfmiddlewaretoken"\s+value="([^"]+)"`)
 
-// truncateBody keeps failure output readable.
 func truncateBody(body []byte) string {
 	const limit = 200
 	if len(body) > limit {

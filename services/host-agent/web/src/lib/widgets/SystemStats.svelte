@@ -37,7 +37,7 @@
 		return () => clearInterval(interval);
 	});
 
-	/** Load colour: green until it matters, amber then red near saturation. */
+	/** Load color: green until it matters, amber then red near saturation. */
 	function tone(value: number): string {
 		if (value >= 90) return 'var(--color-error)';
 		if (value >= 75) return 'var(--color-warning)';

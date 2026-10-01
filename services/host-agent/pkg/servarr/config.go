@@ -10,7 +10,7 @@
 // their default port, so both are parameters here and everything else lives
 // in this package.
 //
-// Two upstream behaviours shape the code:
+// Two upstream behaviors shape the code:
 //
 //   - config.xml keys are read with exactly-one-occurrence semantics: a key
 //     that appears twice is treated as absent, the app then appends its own
@@ -49,7 +49,7 @@ const (
 	SecretAPIKey = "apiKey"
 
 	// apiKeyElement holds the instance API key. Servarr generates 32
-	// lowercase hex characters and honours whatever is present exactly once
+	// lowercase hex characters and honors whatever is present exactly once
 	// verbatim, so Bloud generates the same shape.
 	apiKeyElement = "ApiKey"
 
