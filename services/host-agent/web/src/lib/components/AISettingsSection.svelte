@@ -8,6 +8,8 @@
 		type AISettings,
 		type AIUpstream
 	} from '$lib/clients/settingsClient';
+	import Button from '$lib/components/Button.svelte';
+	import ErrorState from '$lib/components/ErrorState.svelte';
 
 	let settings = $state<AISettings | null>(null);
 	let loading = $state(true);
@@ -113,7 +115,7 @@
 	}
 </script>
 
-<section class="section ai-section">
+<section class="section">
 	<h2>AI</h2>
 	<p class="section-description">
 		Point Bloud at an OpenAI-compatible server and every app that uses models
@@ -124,16 +126,16 @@
 	</p>
 
 	{#if loading}
-		<div class="loading-state"><p>Loading AI settings...</p></div>
+		<div class="loading-state">Loading AI settings…</div>
 	{:else}
 		<form class="ai-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
 			<div class="field-row">
-				<label class="field" for="ai-name">
-					<span class="field-title">Name</span>
+				<div class="field">
+					<label for="ai-name">Name</label>
 					<input id="ai-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
-				</label>
-				<label class="field" for="ai-base-url">
-					<span class="field-title">Base URL</span>
+				</div>
+				<div class="field">
+					<label for="ai-base-url">Base URL</label>
 					<input
 						id="ai-base-url"
 						type="text"
@@ -143,15 +145,15 @@
 						autocomplete="off"
 						spellcheck="false"
 					/>
-				</label>
+				</div>
 			</div>
 
 			<div class="field-row">
-				<label class="field" for="ai-key">
-					<span class="field-title">
+				<div class="field">
+					<label for="ai-key">
 						API key
-						{#if hasApiKey}<span class="badge">stored</span>{/if}
-					</span>
+						{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
+					</label>
 					<input
 						id="ai-key"
 						type="password"
@@ -160,28 +162,28 @@
 						disabled={saving}
 						autocomplete="off"
 					/>
-				</label>
-				<div class="field test-field">
-					<span class="field-title">&nbsp;</span>
-					<button
-						class="btn btn-secondary"
+				</div>
+				<div class="field field-action">
+					<span class="label-spacer" aria-hidden="true"></span>
+					<Button
+						variant="secondary"
 						type="button"
 						onclick={handleTest}
 						disabled={!baseUrl.trim() || testing}
 					>
 						{testing ? 'Testing…' : 'Test connection'}
-					</button>
+					</Button>
 				</div>
 			</div>
 
 			{#if testResult}
-				<p class="test-result" class:test-ok={testOk === true} class:test-fail={testOk === false}>
+				<p class="test-result" class:ok={testOk === true} class:fail={testOk === false}>
 					{testResult}
 				</p>
 			{/if}
 
-			<label class="field" for="ai-model">
-				<span class="field-title">Default model</span>
+			<div class="field">
+				<label for="ai-model">Default model</label>
 				{#if models.length > 0}
 					<select id="ai-model" bind:value={defaultModel} disabled={saving}>
 						<option value="">(none)</option>
@@ -193,28 +195,28 @@
 					<input
 						id="ai-model"
 						type="text"
-						placeholder="test connection to pick from the live list"
+						placeholder="test the connection to pick from the live list"
 						bind:value={defaultModel}
 						disabled={saving}
 						autocomplete="off"
 						spellcheck="false"
 					/>
 				{/if}
-			</label>
+			</div>
 
 			<div class="actions">
-				<button class="btn btn-primary" type="submit" disabled={!dirty || saving}>
+				<Button variant="primary" type="submit" disabled={!dirty || saving}>
 					{saving ? 'Applying…' : 'Save'}
-				</button>
+				</Button>
 				{#if saved}
-					<span class="saved-note">Saved. Apps will pick this up on their next pass.</span>
+					<span class="saved-note">Saved. Apps pick this up on their next pass.</span>
 				{/if}
 			</div>
 		</form>
 	{/if}
 
 	{#if error}
-		<div class="error-message">{error}</div>
+		<div class="error-box"><ErrorState message={error} /></div>
 	{/if}
 
 	{#if servedTo.length > 0}
@@ -224,7 +226,9 @@
 				{#each servedTo as consumer (consumer.app)}
 					<li>
 						<span class="consumer-name">{consumer.app}</span>
-						<span class="via via-{consumer.via}">{consumer.via}</span>
+						<span class="pill" class:pill-info={consumer.via === 'gateway'} class:pill-error={consumer.via === 'none'}>
+							{consumer.via}
+						</span>
 						{#if consumer.model}<span class="consumer-model">{consumer.model}</span>{/if}
 					</li>
 				{/each}
@@ -266,9 +270,11 @@
 	.field-row {
 		display: flex;
 		gap: var(--space-md);
-		align-items: flex-end;
+		align-items: flex-start;
 	}
 
+	/* Field styling follows the house form pattern (ShareModal): serif inputs on
+	   the base background, muted label, accent border on focus. */
 	.field {
 		display: flex;
 		flex-direction: column;
@@ -277,46 +283,63 @@
 		min-width: 0;
 	}
 
-	.field-title {
-		font-size: 0.8125rem;
+	.field label {
+		font-size: 0.875rem;
 		color: var(--color-text-muted);
 	}
 
 	.field input,
 	.field select {
+		width: 100%;
 		padding: var(--space-sm) var(--space-md);
-		background: var(--color-bg-elevated);
+		font-size: 1rem;
+		font-family: var(--font-serif);
+		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		color: var(--color-text);
-		font-family: var(--font-mono);
-		font-size: 0.875rem;
 	}
 
-	.test-field {
+	.field input:focus,
+	.field select:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+
+	.field input:disabled,
+	.field select:disabled {
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+	}
+
+	.field input::placeholder,
+	.field select::placeholder {
+		color: var(--color-text-muted);
+	}
+
+	.field-action {
 		flex: 0 0 auto;
 	}
 
-	.badge {
-		margin-left: var(--space-xs);
-		padding: 1px 6px;
-		background: var(--color-success-subtle, rgba(34, 197, 94, 0.15));
-		color: var(--color-success, #22c55e);
-		border-radius: 999px;
-		font-size: 0.6875rem;
+	/* Keeps the button baseline aligned with the input in the row beside it,
+	   since this field has no visible label of its own. */
+	.label-spacer {
+		display: block;
+		height: calc(0.875rem + var(--space-xs));
 	}
 
 	.test-result {
 		margin: 0;
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
+		color: var(--color-text-secondary);
 	}
 
-	.test-ok {
-		color: var(--color-success, #22c55e);
+	.test-result.ok {
+		color: var(--color-success);
 	}
 
-	.test-fail {
-		color: var(--color-danger, #ef4444);
+	.test-result.fail {
+		color: var(--color-error);
 	}
 
 	.actions {
@@ -327,17 +350,43 @@
 	}
 
 	.saved-note {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		color: var(--color-text-muted);
 	}
 
-	.error-message {
+	.error-box {
 		margin-top: var(--space-md);
 		padding: var(--space-md);
-		background: var(--color-danger-subtle, rgba(239, 68, 68, 0.1));
-		color: var(--color-danger, #ef4444);
+		background: var(--color-error-bg);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		font-size: 0.875rem;
+	}
+
+	.pill {
+		display: inline-block;
+		margin-left: var(--space-xs);
+		padding: 1px var(--space-sm);
+		border-radius: 999px;
+		font-size: 0.6875rem;
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		border: 1px solid var(--color-border);
+		vertical-align: middle;
+	}
+
+	.pill-success {
+		background: var(--color-success-bg);
+		color: var(--color-success);
+	}
+
+	.pill-info {
+		background: var(--color-info-bg);
+		color: var(--color-info);
+	}
+
+	.pill-error {
+		background: var(--color-error-bg);
+		color: var(--color-error);
 	}
 
 	.served-to {
@@ -364,32 +413,15 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
-		font-size: 0.875rem;
+		font-size: 0.9375rem;
 	}
 
 	.consumer-name {
 		color: var(--color-text);
 	}
 
-	.via {
-		padding: 1px 6px;
-		border-radius: 999px;
-		font-size: 0.6875rem;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-		background: var(--color-bg-elevated);
-		border: 1px solid var(--color-border);
-		color: var(--color-text-muted);
-	}
-
-	.via-gateway {
-		color: var(--color-info, #3b82f6);
-	}
-
-	.via-none {
-		color: var(--color-danger, #ef4444);
-	}
-
+	/* The model id is an identifier the operator may need to copy verbatim, so
+	   it stays monospaced the way the settings page renders other machine values. */
 	.consumer-model {
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
