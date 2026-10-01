@@ -127,7 +127,8 @@ Kubernetes controllers. It lives in two packages: `orchestrator/` (the typed int
 and the loop that drains it) and `graph/` (the lifecycle DAG whose `targetStatus` vs
 `actualStatus` the loop converges). You declare the desired state; the engine observes the
 actual state and runs the actions needed to close the gap, then keeps running them, so a
-crash or reboot simply triggers another convergence pass.
+crash or reboot simply triggers another convergence pass. Nothing waits on a human:
+the same pass also runs on a timer, so an instance left alone still converges.
 
 All mutations flow through a typed intent queue with debounce. The orchestrator is the
 single writer to all stores and the single executor of all side effects. It is also the
@@ -141,6 +142,22 @@ Intent types (`intent.go`):
 - **SetTailnetIntent / DeleteTailnetIntent**: tailnet configuration changes
 - **AddRemoteAppIntent / DeleteRemoteAppIntent**: remote app management
 - **ClearAppDataIntent**: wipe app data
+- **ReconcileIntent**: the periodic self-heal trigger. It carries no
+  request; the value is the convergence pass that follows. Routing the
+  timer through the queue rather than calling the loop directly is what
+  keeps the orchestrator the single writer.
+- *(Share/guest records are not intents by design: pure store writes with no
+  lifecycle side effects, and invite creation returns its token synchronously.
+  The sharing API writes them directly; see docs/specs/review.md §C3)*
+
+The loop is not purely reactive. An idle timer submits a `ReconcileIntent`
+when nothing else has converged recently (`BLOUD_RECONCILE_INTERVAL`,
+default 60s), so an app that died or landed in `error` recovers without
+somebody noticing. The timer is idle-based: every completed pass resets it,
+so the interval is a floor on the gap between passes rather than a
+schedule that can stack one behind a user-triggered pass. The pass itself
+must be free when reality already matches intent, and that is asserted, not
+assumed (`orchestrator/selfheal_test.go`).
 - *(Share/guest records are not intents by design: pure store writes with no
   lifecycle side effects, and invite creation returns its token synchronously.
   The sharing API writes them directly; see docs/specs/review.md §C3)*

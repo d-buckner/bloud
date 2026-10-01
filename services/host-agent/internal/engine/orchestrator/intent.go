@@ -192,6 +192,25 @@ func NewSetInferenceIntent(upstreamsJSON, defaultModel string, apiKey *string) S
 	}
 }
 
+// ReconcileIntent requests a self-healing convergence pass. It carries no
+// request of its own: the value is the pass that runs after the drain, not
+// anything this intent mutates. It exists so the periodic pass enters the
+// engine through the same single-writer queue as every user action
+// (invariant 1) instead of a second goroutine calling converge directly.
+//
+// Submitting one is also how a retryable failure gets retried: the drain arm
+// resets ERROR nodes whose operation row says a retry may help, which is the
+// driver behind that flag. See Orchestrator.retryErroredNodes.
+type ReconcileIntent struct {
+	intentBase
+}
+
+func (ReconcileIntent) intentMarker() {}
+
+func NewReconcileIntent() ReconcileIntent {
+	return ReconcileIntent{intentBase: newIntentBase()}
+}
+
 // Compile-time assertions that all types implement Intent.
 var (
 	_ Intent = InstallAppIntent{}
@@ -203,4 +222,6 @@ var (
 	_ Intent = DeleteRemoteAppIntent{}
 	_ Intent = ClearAppDataIntent{}
 	_ Intent = SetPublicURLIntent{}
+	_ Intent = SetInferenceIntent{}
+	_ Intent = ReconcileIntent{}
 )

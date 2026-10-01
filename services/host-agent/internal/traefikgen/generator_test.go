@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 )
@@ -685,5 +686,72 @@ func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
 	// Should NOT have middlewares section when no app needs one
 	if strings.Contains(contentStr, "middlewares:") {
 		t.Error("Should NOT have middlewares section when no app needs middleware")
+	}
+}
+
+// Convergence now runs on a timer. An unconditional atomic write replaces a
+// file Traefik watches on every pass: identical bytes, new mtime, so the
+// whole dynamic config reloads once a minute forever. A pass with nothing to
+// change has to leave the file alone.
+func TestGenerator_GenerateAll_SkipsWriteWhenUnchanged(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "apps-routes.yml")
+	apps := []*catalog.App{{CatalogID: "jellyfin", Port: 8096}}
+
+	g := NewGenerator(configPath)
+	if err := g.GenerateAll(apps, nil, ""); err != nil {
+		t.Fatalf("first GenerateAll: %v", err)
+	}
+	first, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	// Enough of a gap that a rewrite would move the mtime on any filesystem
+	// this test runs on.
+	time.Sleep(30 * time.Millisecond)
+
+	if err := g.GenerateAll(apps, nil, ""); err != nil {
+		t.Fatalf("second GenerateAll: %v", err)
+	}
+	second, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	if !first.ModTime().Equal(second.ModTime()) {
+		t.Errorf("unchanged config rewrote the file: mtime %v -> %v", first.ModTime(), second.ModTime())
+	}
+}
+
+// The skip must be a content comparison, not a "the file exists" one: a
+// different app set has to land on disk.
+func TestGenerator_GenerateAll_RewritesWhenContentDiffers(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "apps-routes.yml")
+
+	g := NewGenerator(configPath)
+	if err := g.GenerateAll([]*catalog.App{{CatalogID: "jellyfin", Port: 8096}}, nil, ""); err != nil {
+		t.Fatalf("first GenerateAll: %v", err)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	if err := g.GenerateAll([]*catalog.App{
+		{CatalogID: "jellyfin", Port: 8096},
+		{CatalogID: "navidrome", Port: 4533},
+	}, nil, ""); err != nil {
+		t.Fatalf("second GenerateAll: %v", err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	if string(after) == string(before) {
+		t.Fatal("changed config must be written")
+	}
+	if !strings.Contains(string(after), "navidrome") {
+		t.Errorf("the new app is missing from the rewritten config:\n%s", after)
 	}
 }

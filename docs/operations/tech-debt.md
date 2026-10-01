@@ -7,7 +7,11 @@
 > verified live against a deployed host-agent.
 
 **Status:** Active debt inventory  
-**Last updated:** 2026-09-27 (items 8 and 9 closed: drift is now written
+**Last updated:** 2026-09-30 (item 25 closed: the reconciler now runs on a
+self-healing timer, so convergence no longer depends on somebody submitting
+an intent, and `retryable` on the operation row finally has a driver. See
+"The instance converges on its own" below.)  
+Prior update 2026-09-27 (items 8 and 9 closed: drift is now written
 into the graph node instead of only into the store, so the reconciler acts
 on it, and `Ensure` pulls before it destroys. See "Already Paid" below and
 [`specs/REFACTOR_LATEST.md`](../../specs/REFACTOR_LATEST.md).)
@@ -260,6 +264,7 @@ below (C1-C14) rather than ranked here.
 | 22 | App networks and orphaned containers are never removed or swept; `ListContainers` is test-only | P2 | no `RemoveNetwork` in tree |
 | 23 | Health checks never reach Podman; the emulated loop reads `retries` as total attempts | P2 | `internal/container/runtime.go`; orchestrator health path |
 | 24 | `appsModule.GetCatalog` mutates cached catalog entries: it writes `app.EstimatedSizeMB` on the `*catalog.App` structs `GetUserApps` returns, which are the same pointers the cache map holds. PR 6's RWMutex guards the map, not the pointed-to structs, so concurrent `GET /api/apps` requests race on that field (and the catalog is no longer purely disk-driven) | P2 | `catalog/cache.go` `GetAll`; `api/apps_module.go` `GetCatalog` |
+| 25 | ~~Nothing re-runs convergence unless an intent is submitted, so an app that lands in `error` stays there indefinitely and the item 8 repair only fires when some other trigger happens to run a pass. `retryable: true` on the operation row was descriptive metadata with no driver: the row promised a retry was expected to help and no retry ever came~~ **CLOSED 2026-09-30**: a `ReconcileIntent` on an idle-based timer (~60s, `BLOUD_RECONCILE_INTERVAL`) submits through the same single-writer queue, and the pass it runs resets `ERROR` nodes whose operation row is retryable. The pass is proven free over a healthy stack: zero container creates, zero config writes, zero node transitions, and no Traefik file rewrite | P1→closed | `orchestrator/selfheal.go`; `orchestrator/selfheal_test.go`; `traefikgen/generator.go` `GenerateAll` |
 
 **Documented exception (not debt).** Share/guest/preference handlers write their
 stores directly, bypassing the intent queue. Verified non-racing: the
@@ -465,6 +470,50 @@ Two claims in the history below do not hold up against the code:
   not evidence of one.
 
 ## Already Paid
+
+### The instance converges on its own (2026-09-30, item 25)
+
+The invariant this closes: **reality is made to match intent without a
+human in the loop.** Item 8 put the repair machinery in place, but it sat
+behind a trigger that only user actions pulled. A container that died
+overnight stayed dead, and an app that landed in `error` stayed there with
+`retryable: true` on its operation row, which was a promise nothing kept.
+
+- **The trigger is an intent, not a second driver** (`selfheal.go`).
+  `startSelfHealing` submits a `ReconcileIntent` into the same queue every
+  other trigger uses. A second goroutine calling `converge` directly would
+  have been a second writer into the engine, which is the one thing
+  invariant 1 forbids.
+- **The timer is idle-based, not a ticker.** Every completed pass pings the
+  loop and pushes the next one out a full interval, so the interval is a
+  floor on the gap between passes. A ticker would have stacked a pass
+  100ms behind a user install that happened to land at t+59.9s, and a
+  pass that outlives the interval would have turned the loop into a tight
+  submit cycle.
+- **`retryable` gets its driver.** `retryErroredNodes` resets an `ERROR`
+  node whose owning app's operation row is failed-and-retryable, which is
+  the case with no other answer: the settings-change path deliberately
+  does not force a failing app, so without this the change would never
+  reach it. `ERROR` stays terminal for every other trigger, and a failure
+  marked non-retryable is left alone, so the pass cannot hammer a cause no
+  retry can fix.
+- **A no-op pass is proven free, not assumed free.** The issue called this
+  the deliverable rather than an afterthought, and it is the reason the
+  feature is safe at all: a once-a-minute pass that restarted something
+  would replace a rare bug with a 60-second reboot cycle.
+  `TestSelfHeal_IdlePassChangesNothing` converges a healthy stack twice and
+  asserts zero container creates, zero removals, zero node status writes,
+  and zero configurator `PreStart`/`PostStart` calls.
+- **The route file was the one thing that was not idempotent.**
+  `GenerateAll` wrote atomically on every pass regardless of content, so
+  Traefik reloaded the whole dynamic config once a minute forever. It now
+  compares the rendered bytes to what is on disk and skips the write when
+  they match.
+
+Tunable with `BLOUD_RECONCILE_INTERVAL` (Go duration syntax; `off`
+disables). The default is `DefaultSelfHealInterval`, 60s, applied by
+`wire.Build` so a hand-built orchestrator in a unit test stays quiet unless
+it asks for a timer.
 
 ### Reality matches intent for container drift and image pulls (2026-09-27, items 8-9)
 

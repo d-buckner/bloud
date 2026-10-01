@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
@@ -20,6 +21,8 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 )
 
 // recordingRuntime is a container runtime that records every call. Build must
@@ -194,4 +197,26 @@ func TestBuildRejectsMissingRequiredFields(t *testing.T) {
 				"the error should name the package that rejected it")
 		})
 	}
+}
+
+func TestResolveSelfHealInterval(t *testing.T) {
+	// Unset means the framework default, never "off": a deployment that
+	// forgot the environment variable must still self-heal.
+	assert.Equal(t, orchestrator.DefaultSelfHealInterval, resolveSelfHealInterval(0))
+
+	// An explicit interval is honored verbatim.
+	assert.Equal(t, 15*time.Second, resolveSelfHealInterval(15*time.Second))
+
+	// A negative value is the deliberate disable and must not be replaced
+	// by the default on the way through.
+	assert.Negative(t, resolveSelfHealInterval(-1))
+}
+
+func TestBuildSetsSelfHealInterval(t *testing.T) {
+	in := baseInput(t)
+	in.ReconcileInterval = 7 * time.Second
+
+	out, err := Build(in)
+	require.NoError(t, err)
+	assert.Equal(t, 7*time.Second, out.Config.SelfHealInterval)
 }

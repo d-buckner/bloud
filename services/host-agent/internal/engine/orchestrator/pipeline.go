@@ -37,6 +37,13 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applySetPublicURLIntent(i)
 		case SetInferenceIntent:
 			o.applySetInferenceIntent(i)
+		case ReconcileIntent:
+			// The timer pass asks for no change of its own, so there is no
+			// user request to record. The one thing it does drive is the
+			// retry of nodes whose failure was marked retryable: without a
+			// consumer, that flag is decoration and an app that failed once
+			// stays down until a human submits an install.
+			o.retryErroredNodes()
 		default:
 			o.logger.Warn("unhandled intent type in drain phase", "type", intentTypeName(intent))
 		}
@@ -767,6 +774,8 @@ func intentTypeName(intent Intent) string {
 		return "SetPublicURL"
 	case SetInferenceIntent:
 		return "SetInference"
+	case ReconcileIntent:
+		return "Reconcile"
 	default:
 		return "Unknown"
 	}

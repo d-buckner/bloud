@@ -198,6 +198,7 @@ func runServer() {
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
 		TraefikPort:       cfg.TraefikPort,
+		ReconcileInterval: cfg.ReconcileInterval,
 		TSAuthKey:         cfg.TSAuthKey,
 		LDAPOutput:        cfg.LDAPOutput(),
 		TemplateVars:      templateVars,

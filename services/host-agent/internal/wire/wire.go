@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
@@ -134,6 +135,12 @@ type Input struct {
 	// new redirect URIs. It crosses this boundary as a plain func so wire
 	// never imports the API package.
 	OnHostsChanged func()
+
+	// ReconcileInterval is how often the self-healing convergence pass
+	// runs (BLOUD_RECONCILE_INTERVAL). Zero means "not configured": Build
+	// substitutes orchestrator.DefaultSelfHealInterval. A negative value
+	// disables the periodic pass entirely.
+	ReconcileInterval time.Duration
 }
 
 // Output is what Build hands back.
@@ -239,6 +246,7 @@ func Build(in Input) (*Output, error) {
 	}
 
 	config := orchestrator.OrchestratorConfig{
+		SelfHealInterval: resolveSelfHealInterval(in.ReconcileInterval),
 		LDAPOutput:       in.LDAPOutput,
 		Containers:       runtime,
 		TemplateVars:     in.TemplateVars,
@@ -289,6 +297,19 @@ func Build(in Input) (*Output, error) {
 		TailnetNode:  tailnetNode,
 		Config:       config,
 	}, nil
+}
+
+// resolveSelfHealInterval turns the configured reconcile interval into the
+// value the orchestrator runs with. Zero means the caller had no opinion, so
+// the framework default applies. A negative value is a deliberate "no
+// periodic pass" and passes straight through: the zero value cannot carry
+// both meanings, and silently disabling the feature because nobody set an
+// environment variable is the worse failure by a wide margin.
+func resolveSelfHealInterval(in time.Duration) time.Duration {
+	if in == 0 {
+		return orchestrator.DefaultSelfHealInterval
+	}
+	return in
 }
 
 // migrateLegacyAuthKey moves a BLOUD_TS_AUTHKEY environment value into the

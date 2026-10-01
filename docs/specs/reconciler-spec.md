@@ -105,9 +105,22 @@ provides the transactional guarantees we need.
 
 ### 5. Reconciler Trigger
 
-Event-driven with debounce. The reconciler sleeps until an intent is enqueued, waits a
-short debounce window (~200ms) for more intents to accumulate, then drains the queue and
-runs the convergence loop.
+Event-driven with debounce, plus a periodic self-heal. The reconciler sleeps
+until an intent is enqueued, waits a short debounce window for more intents
+to accumulate, then drains the queue and runs the convergence loop.
+
+On top of that, an idle timer submits a `ReconcileIntent` when nothing else
+has converged recently (default 60s, `BLOUD_RECONCILE_INTERVAL`). Without it
+the loop wakes only on submitted intents, so an app that lands in `error`
+stays there until a human retries it and container drift is repaired only
+when something else happens to trigger a pass.
+
+The timer is idle-based rather than fixed-cadence: every completed pass
+resets it, so the interval is a floor on the gap between passes rather than
+a schedule that can stack a pass directly behind a user-triggered one. The
+timer submits through the queue rather than calling the convergence loop
+itself, because a second entry point into the engine would break the
+single-writer rule.
 
 ### 6. Dependency Resolution
 
@@ -120,6 +133,14 @@ integrations. The `PlanInstall`/`PlanRemove` read-only API endpoints are removed
 No rollback. If an app fails (health check timeout, container won't start), it goes to
 `error` status. Successfully installed dependencies stay installed. The user can retry or
 uninstall.
+
+`error` is terminal for ordinary convergence: a pass never retries a failed
+node on its own. Two things reset it. An install intent is the user's
+explicit retry. The periodic self-heal pass retries a node whose operation
+row is failed-and-`retryable`, which is what makes that flag mean something
+instead of being descriptive metadata no code reads. A failure marked
+non-retryable stays put, and a node belonging to an app that is uninstalling
+is never re-driven.
 
 ### 8. Intent Tracking
 
@@ -241,7 +262,18 @@ type ClearAppDataIntent struct {
     ID      string
     AppName string
 }
+
+// The periodic self-heal trigger. It carries no request: the value is the
+// convergence pass that follows the drain. Routing it through the queue is
+// what keeps the orchestrator the single writer.
+type ReconcileIntent struct {
+    ID string
+}
 ```
+
+The Go types in `internal/engine/orchestrator/intent.go` are the source of
+truth for this catalog; the list above omits the settings intents
+(`SetPublicURLIntent`, `SetInferenceIntent`).
 
 ## What Changes
 

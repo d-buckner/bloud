@@ -88,6 +88,14 @@ type OrchestratorConfig struct {
 	// LDAP SSO strategy. Nil when no LDAP provider is configured.
 	LDAPOutput *configurator.LDAPOutput
 
+	// SelfHealInterval is how long the instance may sit without a
+	// convergence pass before the self-healing timer submits one. Zero
+	// means no periodic pass: the value has to be asked for, so a
+	// hand-built orchestrator (every unit test) stays quiet, while
+	// wire.Build always supplies DefaultSelfHealInterval unless the
+	// deployment set BLOUD_RECONCILE_INTERVAL. See startSelfHealing.
+	SelfHealInterval time.Duration
+
 	// ── Container runtime ────────────────────────────────────────────────
 
 	// Containers is the container runtime used to create app containers from
@@ -163,7 +171,9 @@ type OrchestratorConfig struct {
 // Error handling:
 //   - Individual app errors set the node to ERROR and are not propagated.
 //   - ERROR is terminal: a node in ERROR is skipped on all subsequent passes
-//     until its status is explicitly reset.
+//     until its status is explicitly reset. Two things reset it: an install
+//     intent (the user's retry) and the periodic self-healing pass, when the
+//     recorded failure is marked retryable. See retryErroredNodes.
 //   - A node whose dependency is in ERROR is also skipped (blocked).
 //
 // Staleness: if a node is already RUNNING and one of its dependencies
@@ -212,6 +222,11 @@ type Orchestrator struct {
 	ready   chan struct{}
 	done    chan struct{}
 	once    sync.Once
+
+	// healWake is the one-slot mailbox the self-healing timer waits on:
+	// every completed convergence pass pings it, which is how the timer
+	// stays idle-based instead of running on a fixed schedule.
+	healWake chan struct{}
 
 	// containerOwner maps container node names to their owning app catalog ID.
 	// Used for multi-container apps where node names differ from app catalog IDs.
@@ -274,6 +289,7 @@ func NewOrchestrator(
 		started:          make(chan struct{}),
 		ready:            make(chan struct{}),
 		done:             make(chan struct{}),
+		healWake:         make(chan struct{}, 1),
 		containerOwner:   make(map[string]string),
 	}
 	o.setupStatusSync()
@@ -571,6 +587,13 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	o.converge(ctx, nil)
 	close(o.ready)
 
+	// Arm the periodic pass after the boot pass, not before: the boot pass
+	// is the activity the idle timer measures from, and arming it earlier
+	// would let a tick land in the middle of bootstrap. It runs in its own
+	// goroutine but submits into this same queue, so the single-writer rule
+	// holds: there is still exactly one caller of converge.
+	go o.startSelfHealing(ctx)
+
 	for {
 		intents, live := o.queue.WaitAndDrain(ctx)
 		if !live {
@@ -627,6 +650,13 @@ func (o *Orchestrator) Stop() {
 // converge processes a batch of intents: applies them to stores, then
 // converges the system state from the stores.
 func (o *Orchestrator) converge(ctx context.Context, intents []Intent) {
+	// Every exit from a pass counts as activity for the self-healing
+	// timer, including the stub exit below: the pass either did the work or
+	// had nothing to do, and either way the next one is due a full interval
+	// later. Deferred first so it runs last, after the converging flag has
+	// cleared.
+	defer o.signalConverged()
+
 	if o.appStore == nil {
 		o.logger.Info("convergence pass complete (stub)", "intentCount", len(intents))
 		return
