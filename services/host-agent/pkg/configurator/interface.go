@@ -283,19 +283,6 @@ type SSOBinding struct {
 	APIToken string
 }
 
-// MCPBinding is a Model Context Protocol server an agent app registers.
-type MCPBinding struct {
-	ProviderRef
-	// ServerName is the provider's own name for the server, e.g. "affine".
-	ServerName string
-	// URL is the endpoint as the consuming app's containers reach it:
-	// http://<Node>:<Port><path>.
-	URL string
-	// Token is the bearer token the provider's listener expects, published under
-	// its `mcp` contract. Empty while it has not been published yet.
-	Token string
-}
-
 // Integrations holds the resolved providers for every contract the app declares
 // in its catalog metadata, one typed slice per contract.
 //
@@ -308,7 +295,6 @@ type Integrations struct {
 	PVRs            []PVRBinding
 	MediaServers    []MediaServerBinding
 	DownloadClients []DownloadClientBinding
-	MCPServers      []MCPBinding
 	SSO             []SSOBinding
 	ModelSources    []ModelSourceBinding
 	Inference       []InferenceBinding

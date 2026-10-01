@@ -113,26 +113,16 @@ func install(t *testing.T, store *FakeAppStore, id string, integrationConfig map
 // that is not installed is still described, so its entry can be pruned.
 func TestBuildIntegrations_ResolvesContractPayloads(t *testing.T) {
 	consumer := consumerApp("prowlarr", "pvr", catalog.Integration{Requires: requires("apiKey")}, "sonarr", "radarr")
-	consumer.Integrations["mcp"] = catalog.Integration{
-		Requires:   requires("httpToken"),
-		Compatible: []catalog.CompatibleApp{{App: "affine-mcp"}},
-	}
 	store := NewFakeAppStore()
 	install(t, store, "prowlarr", nil)
 	install(t, store, "sonarr", nil)
-	install(t, store, "affine-mcp", nil)
 
 	orch, secrets := bindingsOrchestrator(t, store,
 		consumer,
 		providerApp("sonarr", 8989, "pvr", catalog.ContractProvides{Secrets: []string{"apiKey"}}),
 		providerApp("radarr", 7878, "pvr", catalog.ContractProvides{Secrets: []string{"apiKey"}}),
-		providerApp("affine-mcp", 3011, "mcp", catalog.ContractProvides{
-			Secrets: []string{"httpToken"},
-			Values:  map[string]string{"path": "/mcp", "serverName": "affine"},
-		}),
 	)
 	secrets.publish("sonarr", "apiKey", "sonarr-key")
-	secrets.publish("affine-mcp", "httpToken", "bearer-token")
 
 	out := orch.buildIntegrations("prowlarr", consumer)
 
@@ -151,12 +141,6 @@ func TestBuildIntegrations_ResolvesContractPayloads(t *testing.T) {
 	assert.False(t, radarr.Installed)
 	assert.Equal(t, "http://apps-radarr:7878", radarr.BaseURL, "an uninstalled provider still has the address Bloud wrote")
 	assert.Empty(t, radarr.APIKey, "an unpublished credential is empty, not a stale value")
-
-	require.Len(t, out.MCPServers, 1)
-	mcp := out.MCPServers[0]
-	assert.Equal(t, "affine", mcp.ServerName)
-	assert.Equal(t, "http://apps-affine-mcp:3011/mcp", mcp.URL, "the endpoint is the resolved address plus the provider's path")
-	assert.Equal(t, "bearer-token", mcp.Token)
 
 	assert.Empty(t, out.MediaServers, "a contract the consumer does not declare yields nothing")
 	assert.Empty(t, out.DownloadClients)
@@ -235,7 +219,6 @@ func TestBuildIntegrations_NoPayloadContractAndSelfProvider(t *testing.T) {
 	require.Len(t, out.PVRs, 1)
 	assert.Equal(t, "prowlarr", out.PVRs[0].App, "an app is not its own provider")
 	assert.Empty(t, out.MediaServers)
-	assert.Empty(t, out.MCPServers)
 }
 
 // Without a store there is nothing to resolve.
@@ -251,7 +234,6 @@ func TestBuildIntegrations_WithoutStore(t *testing.T) {
 	out := orch.buildIntegrations("seerr", consumerApp("seerr", "mediaServer", catalog.Integration{}, "jellyfin"))
 	assert.Empty(t, out.PVRs)
 	assert.Empty(t, out.MediaServers)
-	assert.Empty(t, out.MCPServers)
 }
 
 // A configurator's state carries the typed integrations, so the resolution runs

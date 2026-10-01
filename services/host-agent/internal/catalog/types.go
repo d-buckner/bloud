@@ -31,8 +31,8 @@ type Integration struct {
 // Keying by contract is what keeps the offer honest: a PVR's API key is offered
 // to whoever integrates with it *as a PVR*, not to every consumer that happens
 // to have a binding, and a consumer declaring one contract can never read
-// another contract's payload. An app that offers several (an MCP server that is
-// also a media server) declares one entry per contract.
+// another contract's payload. An app that offers several contracts declares one
+// entry per contract.
 //
 // The names and the required values are defined in contracts.go: a declaration
 // that does not match its contract fails the catalog load rather than reaching a

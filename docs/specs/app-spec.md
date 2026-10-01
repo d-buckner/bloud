@@ -301,12 +301,13 @@ The orchestrator already processes nodes in topological order. The only changes:
 
    The same declaration also resolves into the consumer's configurator input:
    each contract becomes a typed slice of bindings in `AppState.Integrations`
-   (`PVRs`, `MediaServers`, `DownloadClients`, `MCPServers`, `SSO`), each
+   (`PVRs`, `MediaServers`, `DownloadClients`, `SSO`, `ModelSources`,
+   `Inference`), each
    provider contributing its catalog id, container name, port, a `BaseURL` (what
    the app stores) and a `LocalURL` (how the configurator reaches it from the
    host), plus that contract's payload from the provider's `provides` metadata
-   (credentials from the host store, values such as an MCP path from the
-   metadata). A consumer also declares which of the contract's secrets it reads
+   (credentials from the host store, values such as an inference endpoint path
+   from the metadata). A consumer also declares which of the contract's secrets it reads
    (`integrations.<contract>.requires`), and only those are resolved, so
    integrating with a provider never hands an app a credential it did not ask
    for. The bindings mirror the edges `computeAppDeps` builds, so they never

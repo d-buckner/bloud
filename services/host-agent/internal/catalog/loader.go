@@ -187,9 +187,9 @@ func validateCompatibleProvider(contract string, compatible CompatibleApp) error
 // validateProvides checks the provider-side declarations against the contract
 // registry. Everything here is a cross-file agreement that no compiler sees: a
 // provider's `provides.pvr.secrets` has to carry the key the PVR contract names,
-// an MCP endpoint's path is concatenated onto an address, and a contract name
-// that no consumer can use is a typo. Each of those fails the load instead of
-// reaching a consumer as a binding that is silently half-empty.
+// an inference endpoint's path is concatenated onto an address, and a contract
+// name that no consumer can use is a typo. Each of those fails the load instead
+// of reaching a consumer as a binding that is silently half-empty.
 func validateProvides(app *App) error {
 	seen := make(map[string]bool, len(app.Provides))
 	for name, offer := range app.Provides {

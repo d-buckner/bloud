@@ -1559,13 +1559,6 @@ func (o *Orchestrator) bindContract(
 		out.SSO = append(out.SSO, configurator.SSOBinding{ProviderRef: ref, APIToken: o.publishedSecret(providerID, contract, offer, requires)})
 	case "downloadClient":
 		out.DownloadClients = append(out.DownloadClients, configurator.DownloadClientBinding{ProviderRef: ref})
-	case "mcp":
-		out.MCPServers = append(out.MCPServers, configurator.MCPBinding{
-			ProviderRef: ref,
-			ServerName:  offer.Values["serverName"],
-			URL:         ref.BaseURL + offer.Values["path"],
-			Token:       o.publishedSecret(providerID, contract, offer, requires),
-		})
 	case "modelSource":
 		// An app provider of modelSource (Ollama) is keyless by contract: the
 		// credential a gateway needs for the operator's external server comes

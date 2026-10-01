@@ -13,8 +13,9 @@ import (
 // TestValidateApp_Provides pins the provider-side declaration against the
 // contract registry. Everything checked here is a cross-file agreement no
 // compiler sees: a provider's `provides.pvr.secrets` must carry the key the PVR
-// contract names, an MCP endpoint's path is concatenated onto an address, and a
-// contract name no consumer can use is a typo. Each has to fail the load rather
+// contract names, an inference endpoint's path is concatenated onto an
+// address, and a contract name no consumer can use is a typo. Each has to fail
+// the load rather
 // than reach a consumer as a binding that is silently half-empty.
 func TestValidateApp_Provides(t *testing.T) {
 	const tmpl = `name: sso-app
@@ -76,22 +77,21 @@ containers:
 			wantErr:  "provides.pvr.secrets lists a name twice",
 		},
 		{
-			name: "mcp with the endpoint and token this contract carries",
-			port: "3011",
-			provides: "  mcp:\n    secrets: [httpToken]\n" +
-				"    values: {path: /mcp, serverName: affine}",
+			name:     "modelSource with the endpoint path this contract carries",
+			port:     "11434",
+			provides: "  modelSource:\n    values: {path: /v1}",
 		},
 		{
-			name:     "mcp without a server name",
-			port:     "3011",
-			provides: "  mcp:\n    secrets: [httpToken]\n    values: {path: /mcp}",
-			wantErr:  `provides.mcp.values must declare "serverName"`,
+			name:     "modelSource with no path at all",
+			port:     "11434",
+			provides: "  modelSource: {}",
+			wantErr:  `provides.modelSource.values must declare "path"`,
 		},
 		{
-			name:     "mcp with a relative path",
-			port:     "3011",
-			provides: "  mcp:\n    secrets: [httpToken]\n    values: {path: mcp, serverName: affine}",
-			wantErr:  "provides.mcp.values.path must be an absolute path",
+			name:     "modelSource with a relative path",
+			port:     "11434",
+			provides: "  modelSource:\n    values: {path: v1}",
+			wantErr:  "provides.modelSource.values.path must be an absolute path",
 		},
 		{
 			name:     "a secret the contract does not carry",
@@ -100,10 +100,10 @@ containers:
 			wantErr:  `provides.pvr publishes "somethingElse", which this contract does not carry`,
 		},
 		{
-			name:     "mcp on an app with no port to build the address from",
+			name:     "modelSource on an app with no port to build the address from",
 			port:     "0",
-			provides: "  mcp:\n    secrets: [httpToken]\n    values: {path: /mcp, serverName: affine}",
-			wantErr:  "provides.mcp declares values that are resolved against the app's address",
+			provides: "  modelSource:\n    values: {path: /v1}",
+			wantErr:  "provides.modelSource declares values that are resolved against the app's address",
 		},
 	}
 

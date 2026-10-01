@@ -69,17 +69,6 @@ var contracts = []Contract{
 	// the host, so an app can mirror its users.
 	{Name: "sso", Secrets: []string{"apiToken"}},
 
-	// A Model Context Protocol server hands the consumer the endpoint to
-	// register, plus the bearer token its listener expects.
-	{
-		Name:    "mcp",
-		Secrets: []string{"httpToken"},
-		Values: []ValueSpec{
-			{Key: "path", AbsolutePath: true},
-			{Key: "serverName"},
-		},
-	},
-
 	// An OpenAI-compatible upstream that something else can route to: the
 	// operator's own server (provided by the instance, through Settings) or a
 	// local model runtime (provided by an app such as Ollama). A gateway
