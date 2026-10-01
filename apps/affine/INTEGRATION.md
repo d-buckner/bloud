@@ -163,12 +163,12 @@ warning, never a crash.
 
 ### OIDC login flow
 
-1. User opens `http://affine.localhost:8080/`; AFFiNE renders the workspace
-   read-only with a **Sign in and enable** button (local accounts are not
-   part of the Bloud story).
-2. Clicking it opens the sign-in modal; **Continue with OIDC** starts the
-   authorization-code + PKCE flow at the issuer
-   (`http://sso.localhost:8080/application/o/affine/`).
+1. User opens `http://affine.localhost:8080/`; self-hosted AFFiNE (the
+   server container sets `DEPLOYMENT_TYPE=selfhosted`) redirects the
+   unauthenticated browser to its `/sign-in` page, which offers
+   **Continue with OIDC** (local accounts are not part of the Bloud story).
+2. Clicking **Continue with OIDC** starts the authorization-code + PKCE flow
+   at the issuer (`http://sso.localhost:8080/application/o/affine/`).
 3. The browser authenticates at Authentik (the Bloud identity).
 4. AFFiNE's `/oauth/callback` exchanges the code, then **creates the app
    account on first login** (matched by the `email` claim). No per-user
