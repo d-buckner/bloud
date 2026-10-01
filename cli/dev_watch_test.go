@@ -100,34 +100,47 @@ func TestDiffSnapshots(t *testing.T) {
 	})
 }
 
-func TestDevWatchRequested(t *testing.T) {
+func TestParseDevFlags(t *testing.T) {
 	cases := []struct {
-		args    []string
-		want    bool
-		wantErr bool
+		args      []string
+		wantWatch bool
+		wantReset bool
+		wantErr   bool
 	}{
 		// Hot reload is the default: the one-shot loop is the slow,
 		// destructive one, so it should never be what you get by accident.
-		{nil, true, false},
-		{[]string{}, true, false},
-		{[]string{"--watch"}, true, false},
-		{[]string{"--no-watch"}, false, false},
-		{[]string{"--bogus"}, false, true},
+		{nil, true, false, false},
+		{[]string{}, true, false, false},
+		{[]string{"--watch"}, true, false, false},
+		{[]string{"--no-watch"}, false, false, false},
+		// --reset is orthogonal to the loop shape: it wipes first, then
+		// runs whichever loop the other flags selected.
+		{[]string{"--reset"}, true, true, false},
+		{[]string{"--reset", "--no-watch"}, false, true, false},
+		{[]string{"--no-watch", "--reset"}, false, true, false},
+		// An unknown flag is an error, not a silently ignored option: a typo
+		// in a flag that wipes data must not pass unnoticed.
+		{[]string{"--bogus"}, false, false, true},
+		{[]string{"--reseet"}, false, false, true},
+		{[]string{"-y"}, false, false, true},
 	}
 	for _, tc := range cases {
-		got, err := devWatchRequested(tc.args)
+		got, err := parseDevFlags(tc.args)
 		if tc.wantErr {
 			if err == nil {
-				t.Errorf("devWatchRequested(%v) = %v, want an error", tc.args, got)
+				t.Errorf("parseDevFlags(%v) = %+v, want an error", tc.args, got)
 			}
 			continue
 		}
 		if err != nil {
-			t.Errorf("devWatchRequested(%v) returned unexpected error: %v", tc.args, err)
+			t.Errorf("parseDevFlags(%v) returned unexpected error: %v", tc.args, err)
 			continue
 		}
-		if got != tc.want {
-			t.Errorf("devWatchRequested(%v) = %v, want %v", tc.args, got, tc.want)
+		if got.watch != tc.wantWatch {
+			t.Errorf("parseDevFlags(%v).watch = %v, want %v", tc.args, got.watch, tc.wantWatch)
+		}
+		if got.reset != tc.wantReset {
+			t.Errorf("parseDevFlags(%v).reset = %v, want %v", tc.args, got.reset, tc.wantReset)
 		}
 	}
 }

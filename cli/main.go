@@ -84,7 +84,7 @@ func dispatch(cmd string, args []string) int {
 		"shell":     cmdShell,
 		"install":   cmdInstall,
 		"uninstall": cmdUninstall,
-		"reset":     func([]string) int { return cmdReset() },
+		"reset":     cmdReset,
 		"destroy":   func([]string) int { return cmdDestroy() },
 		"services":  func([]string) int { return cmdServices() },
 		"attach":    func([]string) int { return cmdAttach() },
@@ -120,6 +120,8 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Dev (VM):")
 	fmt.Println("  dev             Build + deploy + run host-agent on the VM (Ctrl-C to stop)")
+	fmt.Println("    --reset        Wipe the runtime first (same as reset -y, no prompt)")
+	fmt.Println("    --no-watch     Run the one-shot build/deploy loop instead of hot reload")
 	fmt.Println("  start           Show dev environment quick-start instructions")
 	fmt.Println("  stop            Stop host-agent running on the VM")
 	fmt.Println("  status          Show VM and host-agent status")
@@ -130,6 +132,7 @@ func printUsage() {
 	fmt.Println("  install <app>   Install an app via API (requires running host-agent)")
 	fmt.Println("  uninstall <app> Uninstall an app via API")
 	fmt.Println("  reset           Wipe all data in the VM and re-run setup (keeps VM)")
+	fmt.Println("    -y | --yes     Skip the confirmation prompt")
 	fmt.Println("  destroy         Delete the VM")
 	fmt.Println()
 	fmt.Println("Validation:")
