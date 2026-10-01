@@ -288,6 +288,23 @@ func TestClient_PullImageRejectsUnsafeImageReference(t *testing.T) {
 	require.ErrorContains(t, client.PullImage(context.Background(), "image\n--flag"), "invalid image reference")
 }
 
+func TestClient_RemoveHostPathUsesUnshare(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	client := &Client{runner: runner}
+
+	require.NoError(t, client.RemoveHostPath(context.Background(), "/var/tmp/bloud/data/affine"))
+	assert.Equal(t, [][]string{
+		{"podman", "unshare", "rm", "-rf", "--", "/var/tmp/bloud/data/affine"},
+	}, runner.commands)
+}
+
+func TestClient_RemoveHostPathRejectsUnsafePath(t *testing.T) {
+	client := &Client{runner: &fakeCommandRunner{}}
+
+	require.ErrorContains(t, client.RemoveHostPath(context.Background(), "/"), "refusing to remove unsafe path")
+	require.ErrorContains(t, client.RemoveHostPath(context.Background(), ""), "refusing to remove unsafe path")
+}
+
 func TestClient_ImageSize(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// r.URL.Path is percent-decoded by net/http.

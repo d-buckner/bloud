@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,9 +17,8 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 )
 
-// newRemoveTestOrchestrator builds an orchestrator with a mock runtime
-// rooted at a temp data dir.
-func newRemoveTestOrchestrator(t *testing.T, mockRuntime *MockContainerRuntime) (*Orchestrator, *MockConfiguratorRegistry, string) {
+// newRemoveTestOrchestrator builds an orchestrator rooted at a temp data dir.
+func newRemoveTestOrchestrator(t *testing.T, runtime containerruntime.Runtime) (*Orchestrator, *MockConfiguratorRegistry, string) {
 	t.Helper()
 	dataDir := t.TempDir()
 	g := graph.New(graph.NewMapRepository())
@@ -32,24 +30,40 @@ func newRemoveTestOrchestrator(t *testing.T, mockRuntime *MockContainerRuntime) 
 		catalogCache,
 		dataDir,
 		newTestLogger(),
-		OrchestratorConfig{Containers: mockRuntime},
+		OrchestratorConfig{Containers: runtime},
 	)
 	return orch, registry, dataDir
 }
 
-// TestRemoveMultiContainerApp_ClearData_ExecutesInContainerCleanup covers
-// the postgres-ownership case: the postgres image keeps its data as a
-// non-root container user, leaving a mode-0700 volume directory on the
-// host that the host-agent user cannot delete. The orchestrator must
-// therefore empty the volume from inside the container (Exec) before the
-// container is removed, so the host-side RemoveAll can finish the job.
-func TestRemoveMultiContainerApp_ClearData_ExecutesInContainerCleanup(t *testing.T) {
+// pathRemovalSpy wraps MockContainerRuntime with the runtime's optional
+// PathRemover capability, recording the order in which the container removal
+// and the data-directory removal happen.
+type pathRemovalSpy struct {
+	*MockContainerRuntime
+	events []string
+}
+
+func (s *pathRemovalSpy) RemoveHostPath(_ context.Context, path string) error {
+	s.events = append(s.events, "remove-host-path:"+path)
+	return os.RemoveAll(path)
+}
+
+// TestRemoveMultiContainerApp_ClearData_RemovesDataAfterContainers covers the
+// postgres-ownership case: the postgres image keeps its data as a non-root
+// container user, leaving a mode-0700 volume directory on the host that the
+// host-agent user cannot delete. The runtime removes the app data directory as
+// the root of its user namespace, and it must do so only after the containers
+// are gone: emptying the volumes while a container is still alive leaves the
+// app free to write again as it shuts down (a live Manticore rewrites
+// manticore.json on SIGTERM), and those bytes are then unreachable to the
+// host user.
+func TestRemoveMultiContainerApp_ClearData_RemovesDataAfterContainers(t *testing.T) {
 	mockRuntime := new(MockContainerRuntime)
-	orch, registry, dataDir := newRemoveTestOrchestrator(t, mockRuntime)
+	spy := &pathRemovalSpy{MockContainerRuntime: mockRuntime}
+	orch, registry, dataDir := newRemoveTestOrchestrator(t, spy)
 
 	pgName := "apps-affine-postgres"
 	require.NoError(t, orch.graph.AddNode(pgName))
-	orch.registerContainerOwner(pgName, "affine")
 	registry.On("Get", pgName).Return(nil)
 
 	// The app data volume, with content.
@@ -57,21 +71,8 @@ func TestRemoveMultiContainerApp_ClearData_ExecutesInContainerCleanup(t *testing
 	require.NoError(t, os.MkdirAll(pgData, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(pgData, "PG_VERSION"), []byte("16"), 0o600))
 
-	var callOrder []string
-	mockRuntime.On("Inspect", mock.Anything, pgName).
-		Return(containerruntime.State{Exists: true, Running: true}, nil)
-	mockRuntime.On("Exec", mock.Anything, pgName, mock.Anything).
-		Run(func(args mock.Arguments) {
-			callOrder = append(callOrder, "exec")
-			// Emulate the in-container `find -delete`: empty the volume.
-			entries, _ := os.ReadDir(pgData)
-			for _, e := range entries {
-				require.NoError(t, os.Remove(filepath.Join(pgData, e.Name())))
-			}
-		}).
-		Return(nil)
 	mockRuntime.On("Remove", mock.Anything, pgName).
-		Run(func(_ mock.Arguments) { callOrder = append(callOrder, "remove") }).
+		Run(func(mock.Arguments) { spy.events = append(spy.events, "remove-container") }).
 		Return(nil)
 
 	defs := []catalog.ContainerDef{{
@@ -85,53 +86,19 @@ func TestRemoveMultiContainerApp_ClearData_ExecutesInContainerCleanup(t *testing
 
 	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "affine", defs, true))
 
-	require.Equal(t, []string{"exec", "remove"}, callOrder,
-		"in-container cleanup must happen before container removal")
-	// With the volume emptied, the host-side RemoveAll deletes everything.
+	require.Equal(t, []string{
+		"remove-container",
+		"remove-host-path:" + filepath.Join(dataDir, "affine"),
+	}, spy.events, "the data directory is removed only after its containers are gone")
 	_, err := os.Stat(filepath.Join(dataDir, "affine"))
 	assert.True(t, os.IsNotExist(err), "app data directory should be fully removed")
 	mockRuntime.AssertExpectations(t)
 }
 
-// TestRemoveMultiContainerApp_ClearData_ExecUsesVolumeDestination verifies
-// the cleanup command targets the container-side mount point.
-func TestRemoveMultiContainerApp_ClearData_ExecUsesVolumeDestination(t *testing.T) {
-	mockRuntime := new(MockContainerRuntime)
-	orch, registry, _ := newRemoveTestOrchestrator(t, mockRuntime)
-
-	pgName := "apps-affine-postgres"
-	require.NoError(t, orch.graph.AddNode(pgName))
-	registry.On("Get", pgName).Return(nil)
-
-	var execCmd []string
-	mockRuntime.On("Inspect", mock.Anything, pgName).
-		Return(containerruntime.State{Exists: true, Running: true}, nil)
-	mockRuntime.On("Exec", mock.Anything, pgName, mock.Anything).
-		Run(func(args mock.Arguments) { execCmd = args.Get(2).([]string) }).
-		Return(nil)
-	mockRuntime.On("Remove", mock.Anything, pgName).Return(nil)
-
-	defs := []catalog.ContainerDef{{
-		Name:  pgName,
-		Image: "docker.io/pgvector/pgvector:pg16",
-		Volumes: []catalog.ContainerVolume{{
-			Source:      "{{appDataDir}}/postgres",
-			Destination: "/var/lib/postgresql/data",
-		}},
-	}}
-
-	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "affine", defs, true))
-
-	require.NotEmpty(t, execCmd)
-	joined := strings.Join(execCmd, " ")
-	assert.Contains(t, joined, "/var/lib/postgresql/data")
-	assert.Contains(t, joined, "-mindepth 1 -delete")
-}
-
-// TestRemoveMultiContainerApp_ClearData_SkipsExecWhenContainerNotRunning
-// verifies the cleanup is best-effort: a stopped container is simply left
-// for the host-side RemoveAll (no exec into a dead container).
-func TestRemoveMultiContainerApp_ClearData_SkipsExecWhenContainerNotRunning(t *testing.T) {
+// TestRemoveMultiContainerApp_ClearData_FallsBackToHostRemoval verifies a
+// runtime without the PathRemover capability still gets the host-side
+// removal, which is enough for every host-owned directory.
+func TestRemoveMultiContainerApp_ClearData_FallsBackToHostRemoval(t *testing.T) {
 	mockRuntime := new(MockContainerRuntime)
 	orch, registry, dataDir := newRemoveTestOrchestrator(t, mockRuntime)
 
@@ -139,36 +106,52 @@ func TestRemoveMultiContainerApp_ClearData_SkipsExecWhenContainerNotRunning(t *t
 	require.NoError(t, orch.graph.AddNode(pgName))
 	registry.On("Get", pgName).Return(nil)
 
-	// Host-owned volume: deletable without in-container help.
-	pgData := filepath.Join(dataDir, "affine", "postgres")
-	require.NoError(t, os.MkdirAll(pgData, 0o755))
+	appData := filepath.Join(dataDir, "affine")
+	require.NoError(t, os.MkdirAll(appData, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(appData, "config.json"), []byte("{}"), 0o600))
 
-	mockRuntime.On("Inspect", mock.Anything, pgName).
-		Return(containerruntime.State{Exists: true, Running: false}, nil)
 	mockRuntime.On("Remove", mock.Anything, pgName).Return(nil)
 
-	defs := []catalog.ContainerDef{{
-		Name:  pgName,
-		Image: "docker.io/pgvector/pgvector:pg16",
-		Volumes: []catalog.ContainerVolume{{
-			Source:      "{{appDataDir}}/postgres",
-			Destination: "/var/lib/postgresql/data",
-		}},
-	}}
+	defs := []catalog.ContainerDef{{Name: pgName, Image: "docker.io/pgvector/pgvector:pg16"}}
 
 	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "affine", defs, true))
 
-	mockRuntime.AssertNotCalled(t, "Exec", mock.Anything, mock.Anything, mock.Anything)
-	_, err := os.Stat(filepath.Join(dataDir, "affine"))
+	_, err := os.Stat(appData)
 	assert.True(t, os.IsNotExist(err), "host-owned data should still be removed")
+	mockRuntime.AssertExpectations(t)
+}
+
+// TestRemoveMultiContainerApp_KeepData_HoldsDirectory verifies clearData=false
+// leaves the data directory alone.
+func TestRemoveMultiContainerApp_KeepData_HoldsDirectory(t *testing.T) {
+	mockRuntime := new(MockContainerRuntime)
+	orch, registry, dataDir := newRemoveTestOrchestrator(t, mockRuntime)
+
+	pgName := "apps-affine-postgres"
+	require.NoError(t, orch.graph.AddNode(pgName))
+	registry.On("Get", pgName).Return(nil)
+
+	appData := filepath.Join(dataDir, "affine")
+	require.NoError(t, os.MkdirAll(appData, 0o755))
+
+	mockRuntime.On("Remove", mock.Anything, pgName).Return(nil)
+
+	defs := []catalog.ContainerDef{{Name: pgName, Image: "docker.io/pgvector/pgvector:pg16"}}
+
+	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "affine", defs, false))
+
+	_, err := os.Stat(appData)
+	assert.NoError(t, err, "clearData=false must keep the data directory")
+	mockRuntime.AssertExpectations(t)
 }
 
 // TestRemoveMultiContainerApp_ClearData_IgnoresForeignVolumes verifies
 // volumes whose host source is outside the app data directory (e.g. shared
-// media) are never touched by the in-container cleanup.
+// media) are never touched: only the app data directory is removed.
 func TestRemoveMultiContainerApp_ClearData_IgnoresForeignVolumes(t *testing.T) {
 	mockRuntime := new(MockContainerRuntime)
-	orch, registry, dataDir := newRemoveTestOrchestrator(t, mockRuntime)
+	spy := &pathRemovalSpy{MockContainerRuntime: mockRuntime}
+	orch, registry, dataDir := newRemoveTestOrchestrator(t, spy)
 
 	mediaName := "apps-myapp"
 	require.NoError(t, orch.graph.AddNode(mediaName))
@@ -177,13 +160,11 @@ func TestRemoveMultiContainerApp_ClearData_IgnoresForeignVolumes(t *testing.T) {
 	mediaDir := filepath.Join(dataDir, "media", "movies")
 	require.NoError(t, os.MkdirAll(mediaDir, 0o755))
 
-	mockRuntime.On("Inspect", mock.Anything, mediaName).
-		Return(containerruntime.State{Exists: true, Running: true}, nil)
 	mockRuntime.On("Remove", mock.Anything, mediaName).Return(nil)
 
 	defs := []catalog.ContainerDef{{
 		Name:  mediaName,
-		Image: "myapp:latest",
+		Image: "myapp:1.0",
 		Volumes: []catalog.ContainerVolume{{
 			Source:      "{{dataDir}}/media/movies",
 			Destination: "/movies",
@@ -192,7 +173,9 @@ func TestRemoveMultiContainerApp_ClearData_IgnoresForeignVolumes(t *testing.T) {
 
 	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "myapp", defs, true))
 
-	mockRuntime.AssertNotCalled(t, "Exec", mock.Anything, mock.Anything, mock.Anything)
 	_, err := os.Stat(mediaDir)
 	assert.NoError(t, err, "foreign volume must not be deleted")
+	assert.Equal(t, []string{"remove-host-path:" + filepath.Join(dataDir, "myapp")}, spy.events,
+		"only the app data directory is handed to the runtime")
+	mockRuntime.AssertExpectations(t)
 }

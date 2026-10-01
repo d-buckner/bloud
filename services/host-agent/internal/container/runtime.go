@@ -67,6 +67,17 @@ type Runtime interface {
 	Exec(ctx context.Context, name string, cmd []string) error
 }
 
+// PathRemover is implemented by runtimes that can delete a host path whose
+// contents a container wrote as a mapped non-root user. A rootless runtime
+// maps those container IDs into its user namespace, so the host-agent user
+// cannot delete them with os.RemoveAll even though the directory sits in the
+// agent's own data tree; the runtime deletes the path as the namespace root.
+// It is an optional capability, type-asserted by callers that need it, so
+// plain Runtime implementations and test fakes need no changes.
+type PathRemover interface {
+	RemoveHostPath(ctx context.Context, path string) error
+}
+
 // PullProgress reports one image pull update while a container's image is
 // being downloaded (see podman.PullProgress for the field semantics).
 type PullProgress = podman.PullProgress
@@ -92,6 +103,7 @@ type podmanClient interface {
 	InspectContainer(ctx context.Context, nameOrID string) (*podman.ContainerDetails, error)
 	EnsureNetwork(ctx context.Context, name string) error
 	Exec(ctx context.Context, containerName string, cmd []string) ([]byte, error)
+	RemoveHostPath(ctx context.Context, path string) error
 }
 
 // PodmanRuntime implements Runtime using the Podman API.
@@ -242,6 +254,13 @@ func validContainerName(name string) bool {
 func (r *PodmanRuntime) Exec(ctx context.Context, name string, cmd []string) error {
 	_, err := r.client.Exec(ctx, name, cmd)
 	return err
+}
+
+// RemoveHostPath deletes a host path through the runtime's user namespace,
+// which is the only vantage point that can remove files a container wrote as a
+// non-root user.
+func (r *PodmanRuntime) RemoveHostPath(ctx context.Context, path string) error {
+	return r.client.RemoveHostPath(ctx, path)
 }
 
 func (r *PodmanRuntime) Inspect(ctx context.Context, name string) (State, error) {

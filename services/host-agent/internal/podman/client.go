@@ -158,6 +158,25 @@ func (c *Client) ExecWithEnv(ctx context.Context, containerName string, env map[
 	return out, nil
 }
 
+// RemoveHostPath deletes a host path from inside the user namespace with
+// `podman unshare rm -rf`. A container that runs as a non-root user writes its
+// files as a mapped uid the host-agent user cannot delete (a "permission
+// denied" from os.RemoveAll), while the namespace root can. Used to release an
+// app's data directory after its containers are gone.
+func (c *Client) RemoveHostPath(ctx context.Context, path string) error {
+	if path == "" || path == "/" {
+		return fmt.Errorf("refusing to remove unsafe path %q", path)
+	}
+	if c.runner == nil {
+		c.runner = execRunner{}
+	}
+	out, err := c.runner.Run(ctx, "podman", "unshare", "rm", "-rf", "--", path)
+	if err != nil {
+		return fmt.Errorf("podman unshare rm -rf %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // sortedKeys returns a map's keys in sorted order, so command arguments built
 // from a map are deterministic.
 func sortedKeys(m map[string]string) []string {
