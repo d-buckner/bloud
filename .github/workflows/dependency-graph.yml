@@ -114,5 +114,5 @@ jobs:
           git config user.name "graph visualization bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/architecture/dependency-graph.md docs/assets/dependency-graph.png
-          git commit -m --no-verify "docs(graph): refresh the catalog graph [skip ci]"
+          git commit --no-verify -m "docs(graph): refresh the catalog graph [skip ci]"
           git push origin HEAD:main
