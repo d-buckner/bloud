@@ -190,7 +190,6 @@ func (s *Server) Start() error {
 	return server.ListenAndServe()
 }
 
-// Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(_ context.Context) error {
 	s.logger.Info("shutting down HTTP server")
 	return nil

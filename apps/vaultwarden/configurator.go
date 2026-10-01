@@ -43,7 +43,6 @@ const devSwitchEnv = "BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP"
 // agree (a test pins them together).
 const devSwitchKey = "BLOUD_DEV_ALLOW_HTTP"
 
-// Configurator handles Vaultwarden configuration.
 type Configurator struct {
 	port       int
 	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)

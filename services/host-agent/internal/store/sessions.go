@@ -27,7 +27,6 @@ func formatSessionTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// Session represents an authenticated user session.
 type Session struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
@@ -37,7 +36,6 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// SessionStore manages sessions in SQLite.
 type SessionStore struct {
 	db  *sql.DB
 	ttl time.Duration
@@ -80,7 +78,6 @@ func (s *SessionStore) Create(userID, username string, role Role) (*Session, err
 	return session, nil
 }
 
-// Get retrieves a session by ID.
 func (s *SessionStore) Get(sessionID string) (*Session, error) {
 	var createdAt, expiresAt string
 	var userID, username, role string
@@ -115,7 +112,6 @@ func (s *SessionStore) Get(sessionID string) (*Session, error) {
 	}, nil
 }
 
-// Delete removes a session.
 func (s *SessionStore) Delete(sessionID string) error {
 	_, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
 	if err != nil {
@@ -142,7 +138,6 @@ func (s *SessionStore) DeleteByUsername(username string) error {
 	return nil
 }
 
-// Refresh extends a session's TTL.
 func (s *SessionStore) Refresh(sessionID string) error {
 	// Get current session
 	session, err := s.Get(sessionID)

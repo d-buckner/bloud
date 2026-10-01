@@ -25,7 +25,6 @@ func NewGuestStore(db *sql.DB) *GuestStore {
 	return &GuestStore{db: db}
 }
 
-// Create inserts a new guest
 func (s *GuestStore) Create(guest Guest) error {
 	_, err := s.db.Exec(`
 		INSERT INTO guests (id, name) VALUES (?, ?)
@@ -78,7 +77,6 @@ func (s *GuestStore) List() ([]*Guest, error) {
 	return guests, nil
 }
 
-// Delete removes a guest by ID
 func (s *GuestStore) Delete(id string) error {
 	result, err := s.db.Exec(`DELETE FROM guests WHERE id = ?`, id)
 	if err != nil {

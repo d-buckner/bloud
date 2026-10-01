@@ -36,7 +36,6 @@ var app = servarr.PVRApp{
 // configurator's own Name() cannot drift apart.
 var nodeName = app.NodeName()
 
-// Configurator handles Radarr configuration.
 type Configurator = servarr.PVRConfigurator
 
 // NewConfigurator creates a new Radarr configurator from the host Deps.

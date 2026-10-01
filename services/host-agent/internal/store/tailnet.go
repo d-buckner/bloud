@@ -78,7 +78,6 @@ func (s *TailnetStore) GetActive() (*TailnetConnection, error) {
 	return conn, nil
 }
 
-// List returns all tailnet connections.
 func (s *TailnetStore) List() ([]*TailnetConnection, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, type, auth_key, control_url, status, created_at

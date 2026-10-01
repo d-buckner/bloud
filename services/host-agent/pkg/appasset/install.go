@@ -64,7 +64,6 @@ func (in Installer) Install(ctx context.Context, a Asset) (bool, error) {
 	return in.commitFile(a, payload.tempPath)
 }
 
-// alreadyInstalled reports the skip condition.
 func (in Installer) alreadyInstalled(a Asset) bool {
 	if a.SkipIf != nil {
 		return a.SkipIf(a.Dest)

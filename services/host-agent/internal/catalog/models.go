@@ -100,7 +100,6 @@ type Resources struct {
 	GPU     bool `yaml:"gpu" json:"gpu"`
 }
 
-// SSO defines SSO integration configuration
 type SSO struct {
 	Strategy     string   `yaml:"strategy" json:"strategy"`                           // native-oidc, forward-auth, none
 	BypassPaths  []string `yaml:"bypassPaths,omitempty" json:"bypassPaths,omitempty"` // Paths exempt from forward-auth (forward-auth only)
@@ -139,7 +138,6 @@ func (s SSO) PublicClient() bool {
 	return strings.EqualFold(strings.TrimSpace(s.ClientType), "public")
 }
 
-// Docs contains documentation links
 type Docs struct {
 	Homepage string `yaml:"homepage" json:"homepage"`
 	Source   string `yaml:"source" json:"source"`

@@ -51,7 +51,6 @@ type settingsModule struct {
 	logger   *slog.Logger
 }
 
-// NewSettingsModule creates a new SettingsModule.
 func NewSettingsModule(
 	tailnetStore store.TailnetStoreInterface,
 	prefsStore store.PreferencesStoreInterface,
@@ -173,7 +172,6 @@ type publicURLResponse struct {
 	URL string `json:"url"`
 }
 
-// currentPublicURL returns the live address.
 func (m *settingsModule) currentPublicURL() publicURLResponse {
 	return publicURLResponse{URL: m.liveHostSet().PrimaryBaseURL()}
 }
@@ -859,7 +857,6 @@ type tailnetResponse struct {
 	Status     string `json:"status"`
 }
 
-// toTailnetResponse converts a store.TailnetConnection to tailnetResponse.
 func toTailnetResponse(conn *store.TailnetConnection) tailnetResponse {
 	return tailnetResponse{
 		ID:         conn.ID,

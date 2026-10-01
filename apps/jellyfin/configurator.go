@@ -142,7 +142,6 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	return c.postStart(ctx, state)
 }
 
-// postStart contains the PostStart body.
 func (c *Configurator) postStart(ctx context.Context, state *configurator.AppState) error {
 	c.logger.Info("PostStart: checking setup wizard status")
 

@@ -23,7 +23,6 @@ const authentikAppName = "authentik"
 // It never appears in Authentik and is not meant for end users.
 const bootstrapAdminUsername = "bloud-admin"
 
-// Configurator handles Navidrome configuration.
 type Configurator struct {
 	port         int
 	authentikURL string

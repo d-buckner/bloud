@@ -17,13 +17,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// LogsModule encapsulates log streaming operations.
 type logsModule struct {
 	appStore store.AppStoreInterface
 	logger   *slog.Logger
 }
 
-// NewLogsModule creates a new LogsModule.
 func NewLogsModule(appStore store.AppStoreInterface, logger *slog.Logger) *logsModule {
 	return &logsModule{appStore: appStore, logger: logger}
 }

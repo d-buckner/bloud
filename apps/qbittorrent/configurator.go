@@ -83,7 +83,6 @@ var managedPreferences = map[string]string{
 	"WebUI\\LocalHostAuth": "false",
 }
 
-// Configurator handles qBittorrent configuration.
 type Configurator struct {
 	port int
 	api  *appclient.Client

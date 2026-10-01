@@ -42,7 +42,6 @@ type systemModule struct {
 	logger      *slog.Logger
 }
 
-// NewSystemModule creates a new SystemModule.
 func NewSystemModule(
 	appStore store.AppStoreInterface,
 	catalog catalog.CacheInterface,
@@ -111,7 +110,6 @@ func (m *systemModule) SystemStatusHandler() http.HandlerFunc {
 
 // ---- Storage ----
 
-// StorageHandler returns storage statistics.
 func (m *systemModule) StorageHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		storage, err := system.GetStorageStats()

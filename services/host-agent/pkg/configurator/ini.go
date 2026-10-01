@@ -83,7 +83,6 @@ func LoadINI(path string) (*INIFile, error) {
 	return ini, scanner.Err()
 }
 
-// Section returns or creates a section
 func (ini *INIFile) Section(name string) *INISection {
 	if s, ok := ini.sections[name]; ok {
 		return s

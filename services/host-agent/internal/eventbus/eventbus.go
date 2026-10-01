@@ -82,7 +82,6 @@ type Bus struct {
 	next int
 }
 
-// New creates an empty Bus.
 func New() *Bus {
 	return &Bus{subs: make(map[int]*subscriber)}
 }

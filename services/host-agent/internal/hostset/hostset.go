@@ -251,7 +251,6 @@ func Default() HostSet {
 	return New(hs)
 }
 
-// Public returns the configured public URL.
 func (h HostSet) Public() PublicURL { return h.public }
 
 // Hosts returns every hostname this instance answers: the public host first,

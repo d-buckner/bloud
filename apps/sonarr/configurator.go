@@ -36,7 +36,6 @@ var app = servarr.PVRApp{
 // configurator's own Name() cannot drift apart.
 var nodeName = app.NodeName()
 
-// Configurator handles Sonarr configuration.
 type Configurator = servarr.PVRConfigurator
 
 // NewConfigurator creates a new Sonarr configurator from the host Deps.

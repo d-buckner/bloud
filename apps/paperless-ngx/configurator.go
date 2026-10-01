@@ -93,7 +93,6 @@ const confFileName = "paperless.conf"
 // provider to exist at all (PAPERLESS_APPS is appended to the built-in list).
 const oidcApps = "allauth.socialaccount.providers.openid_connect"
 
-// Configurator handles Paperless-ngx configuration.
 type Configurator struct {
 	port       int
 	ssoBaseURL func() string // current Bloud base URL (host-set aware; read on every PreStart)

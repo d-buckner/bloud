@@ -65,7 +65,6 @@ type fakeSecrets struct {
 	published []publishedSecret
 }
 
-// publishedSecret is one SetAppSecret call.
 type publishedSecret struct {
 	app   string
 	key   string

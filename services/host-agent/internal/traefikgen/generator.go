@@ -18,7 +18,6 @@ type Generator struct {
 	authentikEnabled bool   // Whether Authentik is installed (for SSO middlewares)
 }
 
-// NewGenerator creates a Traefik config generator
 func NewGenerator(configPath string) *Generator {
 	return &Generator{
 		configPath: configPath,

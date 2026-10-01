@@ -473,7 +473,6 @@ func (m *authModule) LoginHandler() http.HandlerFunc {
 
 // ---- Callback ----
 
-// CallbackHandler handles the OAuth2 callback.
 func (m *authModule) CallbackHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg := m.getAuthConfig()

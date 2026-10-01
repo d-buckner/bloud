@@ -15,7 +15,6 @@ const (
 	RoleMember Role = "member"
 )
 
-// User represents a Bloud user
 type User struct {
 	Username string `json:"username"`
 	Role     Role   `json:"role"`
