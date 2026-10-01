@@ -31,6 +31,183 @@ own `config.yaml`, memory, skills, and SQLite session store there on first boot.
 Bloud writes **only** the SSO keys into that `config.yaml` (see below); every
 other key belongs to the user and is preserved untouched.
 
+## The data-directory ownership contract (issue #136)
+
+The host agent reads and rewrites `config.yaml` on **every** reconciliation
+pass, and it shares that file with an app that reclaims it on every boot.
+There are two separate ownership problems here, and the first one hides the
+second: fixing the directory is necessary and not sufficient.
+
+### Layer 1: the directory (`HERMES_CONTAINER`, `HERMES_HOME_MODE`)
+
+`managedfile.Write` creates its temp file *inside* the target directory, so
+it needs write access to `/opt/data`. The host agent does not have that by
+default: the directory ends up owned by the container's uid mapped into the
+rootless podman subuid range, and `chmod` against a subordinate uid is
+`EPERM`, so nothing on the host side can repair it.
+
+Hermes secures `$HERMES_HOME` itself, and its container probe misses podman:
+
+```python
+# hermes_cli/config.py
+
+
+def _is_container():
+    if os.environ.get("HERMES_CONTAINER") or os.environ.get("HERMES_SKIP_CHMOD") or os.path.exists("/.dockerenv"):
+        return True
+    # ... else: the cgroup markers "docker", "lxc", "kubepods"
+```
+
+Podman appears in none of those, so under podman Hermes treats the install as
+a bare-metal one and applies the 0700 hardening to a bind mount whose host
+owner is not the container's uid. The first write ever succeeds because Bloud
+creates `config.yaml` before the container starts; every pass after that fails
+with `permission denied` and the node parks in `error`.
+
+The fix is the app's own opt-outs, both declared in `metadata.yaml`:
+
+| Var | What it does |
+|---|---|
+| `HERMES_CONTAINER=1` | States what the probe cannot detect: podman is not in its marker list. Without it Hermes hardens `$HERMES_HOME` as if it were a bare-metal install. |
+| `HERMES_HOME_MODE=0777` | The mode Hermes re-applies to `$HERMES_HOME` on **every** start. 0777 because the host agent is neither owner nor group member of the container's mapped subuid, so only the world-write bit lets the temp-file-plus-rename land. |
+
+Measured on the real image under rootless podman with host uid 1000:
+
+| Env | `$HERMES_HOME` after boot | after `podman restart` | host agent |
+|---|---|---|---|
+| neither | `0700`, owner `109999` | `0700` | read and write both `EACCES` |
+| `HERMES_CONTAINER=1` | `0755` | `0755` | reads, cannot write |
+| `HERMES_HOME_MODE=0777` | `0777` | `0777` | reads and writes |
+
+The mode has to come from *inside* the container. A one-shot `chmod 0777` from
+the host unblocks the next pass and Hermes re-tightens the directory on the
+following container start, which is what makes a host-side repair a non-fix.
+
+This is the class the LSIO apps in this catalog were solved with
+(`apps/radarr`, `apps/sonarr`, `apps/qbittorrent`: config, media and
+download dirs opened to `0777` because the container writes them as a host
+subuid). The difference is that those apps never tighten the directory, so
+`managedfile.EnsureWritable` from the host suffices. Hermes tightens it, so
+the mode has to be declared to the app.
+
+### Layer 2: the file (`stage2-hook.sh` chmods it to 0640)
+
+With the directory shared the write path works and the read still does not.
+The image's own init, `/opt/hermes/docker/stage2-hook.sh`, runs on every
+container start:
+
+```sh
+# --- config.yaml permissions ---
+# Ensure config.yaml is readable by the hermes runtime user even if it
+# was edited on the host after initial ownership setup.
+if [ -f "$HERMES_HOME/config.yaml" ]; then
+    chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
+    chmod 640 "$HERMES_HOME/config.yaml" 2>/dev/null || true
+fi
+```
+
+The stated intent is exactly Bloud's situation: the file was edited on the
+host. The mode chosen to serve that intent is the problem. Under rootless
+podman `hermes:hermes` is host `109999:109999`, and `0640` grants nothing
+to a host agent at uid/gid 1000. The file Bloud wrote becomes unreadable by
+the thing that wrote it.
+
+Measured with the real install ordering (host uid 1000, directory already
+`0777`):
+
+| step | result |
+|---|---|
+| Bloud pre-writes `config.yaml` `0644` owner `daniel` | ok |
+| container boots | `0640`, owner `109999:109999` |
+| host agent reads it | `EACCES` |
+| host agent writes it (temp + rename in the `0777` dir) | ok |
+
+So the agent can always write and can never read: the reverse of layer 1,
+landing on the same terminal error.
+
+It is the shell hook that sets the mode, not Hermes' Python. `save_config` →
+`atomic_yaml_write` → `_mode_for_write` *preserves* the existing mode, so a
+Python save could not turn a `0644` file into `0640`. Confirmed with a
+`sitecustomize.py` audit hook wrapping `os.chmod` and `os.fchmod`: at the
+first Python process of the boot the file is already `0640 uid=10000`,
+before any `save_config` runs.
+
+### The fix: write through `managedfile`, read through the container
+
+The directory contract makes the write path work. The read goes through the
+container, which reads its own file without complaint:
+
+```go
+raw, err := os.ReadFile(cfgPath)                       // the normal path
+if errors.Is(err, fs.ErrPermission) && c.exec != nil { // the fallback
+    out, err := c.exec(ctx, nodeName, nil,
+        []string{"base64", containerHome + "/" + configFileName})
+    // base64-decode `out` and merge over it
+}
+```
+
+`Deps.Exec` is already in the configurator contract (`pkg/configurator`),
+wired to `podman.Client.ExecWithEnv`, so this adds no new host capability.
+The bytes come back base64-encoded on purpose: `Exec` is a combined
+stdout+stderr channel, so a podman warning would otherwise land inside the
+YAML. Encoded, contamination fails the decode instead of being merged and
+written back over the operator's real config.
+
+The container is reachable because the app runs with `restartPolicy: always`,
+so podman brings it up at boot ahead of the host agent's first pass. Where
+there is nothing to read through (no runtime wired, or the container is down)
+the pass fails and says so.
+
+Verified against a live install: `config.yaml` sits at `0640 109999:109999`,
+the host read returns `EACCES`, and the node reconciles to `running` with the
+SSO and inference blocks merged and the operator's own keys intact.
+
+### Directions that do not work
+
+**The uid mapping.** `--userns=keep-id` is the obvious candidate, and
+it was measured rather than assumed:
+
+| userns mode | container uid | host uid |
+|---|---|---|
+| default | 0 | 1000 (the host agent) |
+| default | 10000 (hermes) | 109999 |
+| `keep-id` | 1000 | 1000 |
+| `keep-id:uid=10000` | 10000 | 1000 |
+
+`keep-id:uid=10000` would work from the CLI and is not expressible through
+the libpod HTTP create API the host agent uses: `userns.nsmode` accepts
+`keep-id` but rejects the `:uid=` suffix, and `idmappings` is accepted and
+then ignored. The `idmappings` result was re-checked with both field spellings
+(`host_id`/`container_id` and `hostID`/`containerID`) and with `nsmode:
+keep-id` alongside it: the create call returns an id, and a file chowned to
+container uid 10000 still lands on host `109999`, with `UsernsMode` empty.
+Plain `keep-id` plus `HERMES_UID=1000` is worse than the status quo: keep-id
+injects the host user into the container's `/etc/passwd` at uid 1000, so
+Hermes' own remap fails with `usermod: UID '1000' already exists`, hermes
+stays at 10000, and the boot cannot even create `$HERMES_HOME/logs`.
+
+**A shared group.** The file's group is the container's mapped subgid.
+Making the host agent a member of it needs root, plus a group number derived
+from the subgid range start, which differs per install. `HERMES_GID` cannot
+reach it either: the mapping that would put the file's group at host gid 1000
+only exists under `keep-id`, where the injected `daniel` group collides with
+Hermes' `groupmod`.
+
+**A symlink.** `refuse_symlinked_path` does make the hook skip the chown and
+the chmod, but Hermes' `atomic_replace` is symlink-*preserving*, so the next
+save replaces the symlink with a real `0640` file.
+
+**Re-chmod from the host.** `EPERM`: you cannot chmod a file you do not own.
+Replacing it works, and the next container start tightens it again.
+
+**A read that cannot fall back stays a hard error.** When the host read is
+refused and there is no container to read through, the pass fails rather than
+carrying on with the last-known config: a Hermes running on a stale SSO block
+looks healthy while the integration silently stops being updated. Both
+failure messages name the mechanism and this file, because a bare
+`permission denied` on a file the agent itself wrote reads like a Bloud bug
+rather than the consequence of the app reclaiming its config at boot.
+
 ## The SSO contract (`sso: strategy: native-oidc`, `clientType: public`)
 
 Hermes enforces its **own** auth gate on any non-loopback bind, and the gate
@@ -122,6 +299,61 @@ issuer.
 > upstream in a June 2026 hardening pass: unauthenticated public dashboards were
 > an attack vector). It is accepted and ignored. Bloud never sets it; the gate
 > stays on and is satisfied by the self-hosted OIDC provider.
+
+## The inference provider contract (`providers.bloud` + `model.provider: custom:bloud`)
+
+Bloud registers its inference endpoint as a named entry in Hermes' v12
+`providers:` map and then has to *select* it. The selection is the part that
+is easy to get wrong, and getting it wrong fails at agent init, not at config
+write time, so nothing looks broken until a chat is opened:
+
+> `agent init failed: No LLM provider configured. Run `hermes model` to select
+> a provider, or run `hermes setup` for first-time configuration.`
+
+**A named provider is addressed as `custom:<config key>`.** Bare `custom` is
+not "whatever named provider is configured": it reads `OPENAI_BASE_URL` and
+`OPENAI_API_KEY` from the environment and never consults `providers:` at all.
+Measured against the live config with `resolve_runtime_provider`:
+
+| `model.provider` | `model.model` | resolved `base_url` | key | `source` |
+|---|---|---|---|---|
+| `custom` | `bloud/qwen3.8-flash-next` | `https://openrouter.ai/api/v1` | empty | `env/config` |
+| `custom:bloud` | `qwen3.8-flash-next` | `https://inference.thebloud.org` | set | `pool:custom:bloud` |
+
+The first row is the bug: the request would have gone to OpenRouter with no
+credential, and because nothing resolved, `agent_init` fell through to the
+"No LLM provider configured" raise. The slug is derived from the **config
+key**, not the display name (`custom_provider_slug` in
+`hermes_cli/providers.py`), so renaming the display name does not break the
+selection. The model slug carries no provider prefix.
+
+**Never write `api:` into a `providers.<name>` entry.** It is a known key, but
+the named-custom runtime resolver reads it as the endpoint URL. With
+`api: openai-completions` present alongside a correct `base_url`, the
+resolver returns `base_url = "openai-completions"`, the literal transport
+string. The wire protocol belongs in `api_mode`, which is what Bloud writes
+(`chat_completions`).
+
+The entry Bloud writes, verified end to end by feeding the generated file
+back through `resolve_runtime_provider`:
+
+```yaml
+providers:
+  bloud:
+    name: Bloud
+    api_mode: chat_completions
+    base_url: https://inference.thebloud.org
+    api_key: <from the resolved inference binding>
+    default_model: <binding default>
+    discover_models: true
+model:
+  provider: custom:bloud
+  model: <binding default>
+```
+
+`adoptDefaultModel` only writes the selection when Hermes has none of its
+own, so an operator who picked a different provider keeps it. `discover_models`
+keeps the model list live from the endpoint rather than a snapshot.
 
 ## Health check
 

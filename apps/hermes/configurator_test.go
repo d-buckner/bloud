@@ -4,12 +4,16 @@ package hermes
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -380,6 +384,12 @@ func TestPreStartWritesInferenceProvider(t *testing.T) {
 	if p["base_url"] != "https://api.example.com/v1" {
 		t.Errorf("base_url = %v, want https://api.example.com/v1", p["base_url"])
 	}
+	if p["api_mode"] != inferenceAPIMode {
+		t.Errorf("api_mode = %v, want %q", p["api_mode"], inferenceAPIMode)
+	}
+	if _, ok := p["api"]; ok {
+		t.Error(`"api" must not be written: the named-custom resolver reads it as the endpoint URL, so "api: openai-completions" makes base_url come back as that literal string`)
+	}
 	if p["api_key"] != "sk-test" {
 		t.Errorf("api_key = %v, want sk-test", p["api_key"])
 	}
@@ -390,8 +400,23 @@ func TestPreStartWritesInferenceProvider(t *testing.T) {
 		t.Errorf("discover_models = %v, want true", p["discover_models"])
 	}
 	model := nested(t, doc, "model")
-	if model["provider"] != "custom" || model["model"] != "bloud/gpt-4o-mini" {
-		t.Errorf("model selection = %v/%v, want custom/bloud/gpt-4o-mini", model["provider"], model["model"])
+	if model["provider"] != inferenceProviderSlug || model["model"] != "gpt-4o-mini" {
+		t.Errorf("model selection = %v/%v, want %v/gpt-4o-mini", model["provider"], model["model"], inferenceProviderSlug)
+	}
+}
+
+// TestInferenceProviderSlugIsHowHermesSelectsANamedEntry pins the two facts the
+// resolver was measured on: a named entry is addressed as custom:<key>, and the
+// model slug carries no provider prefix. Bare `custom` reads OPENAI_BASE_URL /
+// OPENAI_API_KEY from the environment and never consults `providers:`, so the
+// wrong form resolves to Hermes' OpenRouter default with no key and the agent
+// fails init with "No LLM provider configured".
+func TestInferenceProviderSlugIsHowHermesSelectsANamedEntry(t *testing.T) {
+	if inferenceProviderSlug != "custom:bloud" {
+		t.Errorf("inferenceProviderSlug = %q, want custom:bloud", inferenceProviderSlug)
+	}
+	if inferenceProviderSlug == "custom" {
+		t.Error("bare custom never resolves a named provider")
 	}
 }
 
@@ -464,7 +489,7 @@ func TestPreStartStripsInferenceWhenNoBinding(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	seed := "providers:\n  bloud:\n    base_url: https://old.example.com/v1\nmodel:\n  provider: custom\n  model: bloud/old-model\n"
+	seed := "providers:\n  bloud:\n    base_url: https://old.example.com/v1\nmodel:\n  provider: custom:bloud\n  model: old-model\n"
 	if err := os.WriteFile(filepath.Join(dir, "data", "config.yaml"), []byte(seed), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -538,6 +563,356 @@ func TestPreStartNoAPIKeyWritesNoCredential(t *testing.T) {
 	p := nested(t, doc, "providers", inferenceProviderKey)
 	if _, ok := p["api_key"]; ok {
 		t.Errorf("expected no api_key for a keyless binding, got %v", p["api_key"])
+	}
+}
+
+// ---- the data-directory permission contract (issue #136) ----
+
+// TestMetadata_DeclaresTheDataDirPermissionContract: Hermes secures
+// $HERMES_HOME to 0700 for a bare-metal install, and the host agent cannot
+// undo that from outside, because the directory belongs to the container's uid
+// mapped into the rootless podman subuid range (chmod is EPERM). These two
+// env vars are the only thing between a second reconciliation pass and a node
+// parked in error forever, so they are asserted here rather than trusted to a
+// comment beside them.
+func TestMetadata_DeclaresTheDataDirPermissionContract(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		Containers []struct {
+			Name        string            `yaml:"name"`
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"containers"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+	if len(m.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(m.Containers))
+	}
+	env := m.Containers[0].Environment
+	if got := env["HERMES_CONTAINER"]; got != "1" {
+		t.Errorf("HERMES_CONTAINER = %q, want \"1\": Hermes' container probe matches docker/lxc/kubepods but not podman, so without it Hermes hardens $HERMES_HOME as if it were bare metal", got)
+	}
+	if got := env["HERMES_HOME_MODE"]; got != "0777" {
+		t.Errorf("HERMES_HOME_MODE = %q, want \"0777\": the host agent is neither owner nor group member of the container's mapped subuid, so only the world-write bit lets managedfile.Write create the temp file it renames into place", got)
+	}
+}
+
+func TestPermissionHint_NamesTheContractOnEPERM(t *testing.T) {
+	perm := &fs.PathError{Op: "open", Path: "/opt/data/config.yaml", Err: fs.ErrPermission}
+	hint := permissionHint(fmt.Errorf("writing %s: %w", "/opt/data/config.yaml", perm))
+	if !strings.Contains(hint, "HERMES_HOME_MODE") || !strings.Contains(hint, "HERMES_CONTAINER") {
+		t.Errorf("hint = %q, want it to name the env contract where the fix lives", hint)
+	}
+	if got := permissionHint(errors.New("boom")); got != "" {
+		t.Errorf("a non-permission error must carry no hint, got %q", got)
+	}
+}
+
+// TestPreStart_UnwritableDataDirReportsTheContract reproduces the failure in
+// the issue: the config file itself is still readable, but the directory no
+// longer accepts a new file, so the temp file managedfile.Write renames in
+// cannot be created. The error has to say what to change, not just "permission
+// denied". Skipped as root, where a directory mode denies nothing.
+func TestPreStart_UnwritableDataDirReportsTheContract(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory modes do not deny the write")
+	}
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte("model:\n  provider: other\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Readable and traversable, but no new file can be created: the shape a
+	// container-owned directory leaves the host agent in.
+	if err := os.Chmod(dataDir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) })
+
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+	})
+	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
+		ClientID:  "hermes-client",
+		IssuerURL: "http://sso.localhost:8080/application/o/hermes/",
+	}}
+
+	if _, err := c.PreStart(context.Background(), state); err == nil {
+		t.Fatal("expected the write to fail against a non-writable data directory")
+	} else if !strings.Contains(err.Error(), "HERMES_HOME_MODE") {
+		t.Errorf("error = %v, want it to name the fix", err)
+	}
+}
+
+// ---- reading a config file the container took ownership of (issue #136) ----
+
+// recordingExec is the Deps.Exec test double: it records the container and
+// argv it was asked to run and replays a canned result.
+type recordingExec struct {
+	calls []string
+	out   string
+	err   error
+}
+
+func (r *recordingExec) fn(_ context.Context, container string, _ map[string]string, cmd []string) ([]byte, error) {
+	r.calls = append(r.calls, container+" \x00 "+strings.Join(cmd, " "))
+	if r.err != nil {
+		return nil, r.err
+	}
+	return []byte(r.out), nil
+}
+
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+// unreadableByHost makes cfgPath unreadable by the running test user. The real
+// install reaches the same fs.ErrPermission from the other direction: the file
+// is 0640 owned by the container's mapped subuid, so the agent is neither
+// owner nor group member. A non-root test cannot chown to a foreign uid, so
+// the mode is tightened all the way instead. What the code under test sees is
+// identical: a host read that returns EACCES.
+func unreadableByHost(t *testing.T, cfgPath string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: no file mode denies the read")
+	}
+	if err := os.Chmod(cfgPath, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cfgPath, 0o644) })
+	if _, err := os.ReadFile(cfgPath); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("setup: expected the host read to be refused, got %v", err)
+	}
+}
+
+// TestReadConfig_FallsBackToTheContainerWhenTheHostCannotRead is the core of
+// the issue: Hermes' stage2-hook chowns config.yaml to its runtime user at
+// 0640 on every boot, so the agent cannot read the file it wrote. The read
+// has to come back through the container, addressed by the in-container path.
+func TestReadConfig_FallsBackToTheContainerWhenTheHostCannotRead(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dataDir, configFileName)
+	if err := os.WriteFile(cfgPath, []byte("operator: kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	fx := &recordingExec{out: b64("operator: kept\nmodel:\n  default: from-container\n") + "\n"}
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+
+	raw, err := c.readConfig(context.Background(), cfgPath)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if string(raw) != "operator: kept\nmodel:\n  default: from-container\n" {
+		t.Errorf("read %q, want the decoded container bytes", raw)
+	}
+	// The argv must name the in-container path, not the host path: the host
+	// path does not exist inside the container, so a drift here reads nothing.
+	want := nodeName + " \x00 base64 " + containerHome + "/" + configFileName
+	if len(fx.calls) != 1 || fx.calls[0] != want {
+		t.Errorf("exec calls = %q, want exactly [%q]", fx.calls, want)
+	}
+}
+
+// TestReadConfig_UsesTheHostReadWhenItIsPermitted: the fallback is a fallback,
+// not the default. A readable file must not shell into the container, or every
+// steady-state reconciliation cycle would pay an exec.
+func TestReadConfig_UsesTheHostReadWhenItIsPermitted(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, configFileName)
+	if err := os.WriteFile(cfgPath, []byte("host: readable\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fx := &recordingExec{out: b64("from-container: wrong\n")}
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+
+	raw, err := c.readConfig(context.Background(), cfgPath)
+	if err != nil {
+		t.Fatalf("readConfig: %v", err)
+	}
+	if string(raw) != "host: readable\n" {
+		t.Errorf("read %q, want the host bytes", raw)
+	}
+	if len(fx.calls) != 0 {
+		t.Errorf("expected no exec for a readable file, got %q", fx.calls)
+	}
+}
+
+// TestReadConfig_MissingFileIsNotAFallback: ENOENT is a first-run state, not a
+// permission problem. Falling back here would turn "no config yet" into a
+// container exec, and a container that seeds its own file would then be
+// overwritten by whatever the exec returned.
+func TestReadConfig_MissingFileIsNotAFallback(t *testing.T) {
+	fx := &recordingExec{out: b64("should: not\n")}
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+
+	_, err := c.readConfig(context.Background(), filepath.Join(t.TempDir(), "absent.yaml"))
+	if !os.IsNotExist(err) {
+		t.Errorf("err = %v, want the not-exist error preserved", err)
+	}
+	if len(fx.calls) != 0 {
+		t.Errorf("expected no exec for a missing file, got %q", fx.calls)
+	}
+}
+
+// TestReadConfig_ContaminatedStreamIsAnError: Deps.Exec merges stderr into the
+// output, so a podman warning can arrive glued to the payload. Base64 makes
+// that loud. Silently accepting it would parse as garbage and get written back
+// over the operator's real config.
+func TestReadConfig_ContaminatedStreamIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, configFileName)
+	if err := os.WriteFile(cfgPath, []byte("real: content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	fx := &recordingExec{out: "time=... level=warning msg=podman complained\n" + b64("real: content\n")}
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger(), Exec: fx.fn})
+
+	if _, err := c.readConfig(context.Background(), cfgPath); err == nil {
+		t.Fatal("expected a decode error for a stream with non-base64 noise in it")
+	}
+}
+
+// TestReadConfig_NoRuntimeNamesTheCause: with no Exec wired (CLI, tests) a
+// denied host read has no remedy, and the message has to say why rather than
+// leaving "permission denied" to be read as a Bloud misconfiguration.
+func TestReadConfig_NoRuntimeNamesTheCause(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, configFileName)
+	if err := os.WriteFile(cfgPath, []byte("x: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	c := NewConfigurator(0, configurator.Deps{Logger: quietLogger()})
+	_, err := c.readConfig(context.Background(), cfgPath)
+	if err == nil {
+		t.Fatal("expected an error with no Exec available")
+	}
+	if !strings.Contains(err.Error(), "INTEGRATION.md") || !strings.Contains(err.Error(), "0640") {
+		t.Errorf("err = %v, want it to name the ownership mechanism and where it is documented", err)
+	}
+}
+
+// TestPreStart_MergesOverAConfigOnlyTheContainerCanRead is the issue scenario
+// end to end: the container owns config.yaml at a mode the host cannot read,
+// the operator's own keys live in it, and Bloud still has to merge its SSO
+// keys without losing them. Before the fallback this failed the pass and parked
+// the node in error permanently.
+func TestPreStart_MergesOverAConfigOnlyTheContainerCanRead(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dataDir, configFileName)
+	operatorCfg := "model:\n  provider: openrouter\n  model: anthropic/claude-sonnet-4\nagent:\n  max_iterations: 42\n"
+	if err := os.WriteFile(cfgPath, []byte(operatorCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	fx := &recordingExec{out: b64(operatorCfg) + "\n"}
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Exec:           fx.fn,
+	})
+	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
+		ClientID:  "hermes-client",
+		IssuerURL: "http://sso.localhost:8080/application/o/hermes/",
+	}}
+
+	changed, err := c.PreStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if !changed.RestartNeeded {
+		t.Fatal("expected changed=true: the SSO block was missing from the operator's config")
+	}
+
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("reading the rewritten config: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("rewritten config is not valid yaml: %v", err)
+	}
+	if nested(t, doc, "dashboard", "oauth", "self_hosted")["client_id"] != "hermes-client" {
+		t.Error("SSO keys were not merged")
+	}
+	if fmt.Sprint(nested(t, doc, "model")["provider"]) != "openrouter" {
+		t.Errorf("operator model lost: %v", doc["model"])
+	}
+	if fmt.Sprint(nested(t, doc, "agent")["max_iterations"]) != "42" {
+		t.Errorf("operator agent setting lost: %v", doc["agent"])
+	}
+	// The write landed at the shared-config mode, so the container can read it
+	// back on its next boot (its own hook re-tightens it to 0640 then, which
+	// is what the fallback exists for).
+	if info, err := os.Stat(cfgPath); err != nil || info.Mode().Perm() != 0o644 {
+		t.Errorf("config mode = %v (err %v), want 0644", info.Mode().Perm(), err)
+	}
+}
+
+// TestPreStart_NoChurnWhenTheContainerCopyAlreadyMatches: the merge is
+// computed against the bytes read through the container, so a steady state
+// must still report changed=false. If the fallback content were ignored this
+// would rewrite the file every cycle and restart the app forever.
+func TestPreStart_NoChurnWhenTheContainerCopyAlreadyMatches(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dataDir, configFileName)
+	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
+		ClientID:  "hermes-client",
+		IssuerURL: "http://sso.localhost:8080/application/o/hermes/",
+	}}
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+	})
+	if _, err := c.PreStart(context.Background(), state); err != nil {
+		t.Fatalf("seed PreStart: %v", err)
+	}
+	current, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	fx := &recordingExec{out: b64(string(current)) + "\n"}
+	c2 := NewConfigurator(0, configurator.Deps{
+		Logger:         quietLogger(),
+		PrimaryBaseURL: func() string { return "http://localhost:8080" },
+		Exec:           fx.fn,
+	})
+	changed, err := c2.PreStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if changed.RestartNeeded {
+		t.Fatal("expected changed=false when the container's copy already carries the SSO block")
+	}
+	if len(fx.calls) != 1 {
+		t.Errorf("expected exactly one container read, got %d", len(fx.calls))
 	}
 }
 

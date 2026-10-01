@@ -133,13 +133,31 @@ func (e Endpoint) Origin() string {
 	return out
 }
 
-// ModelsURL is where the live model catalog lives for this endpoint: the
-// OpenAI-compatible GET /models, resolved against the endpoint rather than
-// guessed at its origin, because a gateway may serve /models under its own path.
+// ModelsURL is where the live model catalog lives for this endpoint: GET
+// /models resolved against the endpoint exactly as the operator entered it.
+//
+// It deliberately does not invent an API prefix. The OpenAI-compatible clients
+// downstream append /chat/completions to this same base, so a reachability
+// check has to test the URL they will actually dial. Falling back to
+// Origin()+"/v1/models" made a path-less endpoint pass the settings check
+// while every real call from the app 404'd: the check reported on a URL
+// nothing would ever use, which is worse than no check at all because it
+// reads as a green light.
 func (e Endpoint) ModelsURL() string {
-	base := e.String()
-	if strings.HasSuffix(base, "/v1") {
-		return base + "/models"
+	return e.String() + "/models"
+}
+
+// MissingAPIPrefixHint names the most common reason a probe fails against an
+// endpoint entered without a path: the OpenAI wire is not served at the origin
+// root, it is served under a prefix (almost always /v1), and the client
+// appends /chat/completions to whatever base it was given. Empty when the
+// endpoint already carries a path, so a caller never appends advice that does
+// not apply to the input.
+func (e Endpoint) MissingAPIPrefixHint() string {
+	if e.Path != "" {
+		return ""
 	}
-	return e.Origin() + "/v1/models"
+	return " (this endpoint has no API base path; OpenAI-compatible clients append " +
+		"/chat/completions to the URL as entered, so it needs the prefix the API " +
+		"is served under, usually " + e.Origin() + "/v1)"
 }
