@@ -745,3 +745,28 @@ because `ViaGateway` already distinguishes the two cases in the binding.
 1. Ollama model pulls: Bloud-driven from the dashboard, or left to the user
    inside the app? Multi-gigabyte downloads make this a real UX decision, and it
    does not change the contract shape.
+2. **Adopt-unless-overridden cannot tell "the operator chose this" from "Bloud
+   chose this earlier."** The policy is implemented as written above: if
+   `model.provider` is already set, the active model is left alone. But a fresh
+   install has Bloud set it, so a later change to the instance default updates
+   `providers.bloud.default_model` while `model.model` keeps the value Bloud
+   wrote on day one. Changing the default therefore does not move a Hermes that
+   Bloud itself configured, which is probably not what an operator expects.
+   Fixing it means recording which fields Bloud wrote (a marker in the managed
+   block, or a separate "bloud_adopted" key) so a later pass can tell its own
+   earlier choice from a human's. That is a real design decision, not a bug to
+   paper over.
+
+## Tracked follow-ups
+
+Found verifying this feature end to end against a live install:
+
+- [#136](https://github.com/d-buckner/bloud/issues/136): Hermes takes ownership
+  of `/opt/data` and locks host-agent out of the config file it manages, on the
+  native backend. Blocks the Hermes consumer entirely there. Pre-existing: the
+  failing read is the shared SSO merge path, unchanged from `main`.
+- [#137](https://github.com/d-buckner/bloud/issues/137): no periodic
+  self-healing reconcile pass. `resetInferenceConsumers` only resets nodes in
+  `RUNNING`, so a consumer stuck in `error` never picks up a settings change.
+  The proposed `ReconcileIntent` on a timer is what makes that case self-correct
+  once the underlying cause is cleared.

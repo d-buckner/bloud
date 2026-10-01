@@ -207,7 +207,18 @@ func (o *Orchestrator) resetInferenceConsumers() {
 		}
 		for _, container := range catalogApp.Containers {
 			node, err := o.graph.GetNode(container.Name)
-			if err != nil || node == nil || node.ActualStatus != graph.StatusRunning {
+			if err != nil || node == nil {
+				continue
+			}
+			if node.ActualStatus != graph.StatusRunning {
+				// The API has already answered 202 accepted by the time this
+				// runs, so a skipped consumer has to be visible somewhere or
+				// the response reads as a promise nothing keeps. The pass that
+				// owns this case is the periodic self-heal pass, not the save.
+				o.logger.Info("inference consumer not reset, not running",
+					"node", container.Name,
+					"status", node.ActualStatus,
+					"note", "picked up by the next self-healing pass once it is healthy")
 				continue
 			}
 			o.logger.Info("resetting inference consumer for settings change", "node", container.Name)
