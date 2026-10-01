@@ -26,7 +26,7 @@ func propagationHarness(t *testing.T) (*Orchestrator, *fakeSettings) {
 	appStore := NewFakeAppStore()
 	install(t, appStore, "hermes", nil)
 
-	consumer := inferenceConsumer("hermes", litellmSource, instanceSrc)
+	consumer := inferenceConsumer("hermes", instanceSrc)
 	consumer.Containers = []catalog.ContainerDef{{Name: "apps-hermes", Image: "example/hermes"}}
 
 	orch, _ := bindingsOrchestrator(t, appStore, consumer)

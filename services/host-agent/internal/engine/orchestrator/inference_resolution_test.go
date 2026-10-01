@@ -30,6 +30,8 @@ func (f *fakeSettings) Set(key, value string) error {
 
 var _ store.SettingsStoreInterface = (*fakeSettings)(nil)
 
+// inferenceConsumer builds an app that declares the inference contract the way
+// Hermes does, including the least-privilege `requires` gate.
 func inferenceConsumer(id string, compatible ...catalog.CompatibleApp) *catalog.App {
 	return &catalog.App{
 		CatalogID: id,
@@ -43,23 +45,7 @@ func inferenceConsumer(id string, compatible ...catalog.CompatibleApp) *catalog.
 	}
 }
 
-func gatewayApp() *catalog.App {
-	return providerApp("litellm", 4000, "inference", catalog.ContractProvides{
-		Secrets: []string{"apiKey"},
-		Values:  map[string]string{"path": "/v1"},
-	})
-}
-
-func ollamaApp() *catalog.App {
-	return providerApp("ollama", 11434, "modelSource", catalog.ContractProvides{
-		Values: map[string]string{"path": "/v1"},
-	})
-}
-
-var (
-	litellmSource = catalog.CompatibleApp{App: "litellm", Default: true}
-	instanceSrc   = catalog.CompatibleApp{Source: catalog.InstanceProviderSource}
-)
+var instanceSrc = catalog.CompatibleApp{Source: catalog.InstanceProviderSource}
 
 // configureInstance sets the instance's upstream and default model.
 func configureInstance(t *testing.T, s *fakeSettings, baseURL, defaultModel string) {
@@ -72,40 +58,19 @@ func configureInstance(t *testing.T, s *fakeSettings, baseURL, defaultModel stri
 	s.values[inference.SettingDefaultModel] = defaultModel
 }
 
-// A gateway app that is installed serves inference, and the binding says so:
-// ViaGateway distinguishes a gateway credential from the operator's own.
-func TestResolveInference_GatewayWins(t *testing.T) {
-	store := NewFakeAppStore()
-	install(t, store, "hermes", nil)
-	install(t, store, "litellm", nil)
-
-	orch, secrets := bindingsOrchestrator(t, store, inferenceConsumer("hermes", litellmSource, instanceSrc), gatewayApp(), ollamaApp())
-	secrets.publish("litellm", "apiKey", "gateway-key")
-	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "gpt-4o")
-
-	out := orch.buildIntegrations("hermes", inferenceConsumer("hermes", litellmSource, instanceSrc))
-
-	require.Len(t, out.Inference, 1, "a consumer dials exactly one inference endpoint")
-	b := out.Inference[0]
-	assert.Equal(t, "litellm", b.App)
-	assert.Equal(t, configurator.ProviderKindApp, b.Kind)
-	assert.Equal(t, "http://apps-litellm:4000/v1", b.Endpoint)
-	assert.Equal(t, "gateway-key", b.APIKey)
-	assert.Equal(t, "gpt-4o", b.DefaultModel, "the instance default propagates through the gateway")
-	assert.True(t, b.ViaGateway)
-}
-
-// With no gateway installed the instance's own upstream serves inference, and
-// the credential carried is the operator's, not a gateway-issued one.
-func TestResolveInference_InstanceServesWhenNoGateway(t *testing.T) {
+// The instance-as-provider path, which is the only inference source that exists
+// today: the setting is populated, the consumer resolves it, and the binding
+// carries the operator's own credential rather than a gateway-issued one.
+func TestResolveInference_InstanceServesAsProvider(t *testing.T) {
 	store := NewFakeAppStore()
 	install(t, store, "hermes", nil)
 
-	orch, secrets := bindingsOrchestrator(t, store, inferenceConsumer("hermes", litellmSource, instanceSrc), gatewayApp(), ollamaApp())
+	consumer := inferenceConsumer("hermes", instanceSrc)
+	orch, secrets := bindingsOrchestrator(t, store, consumer)
 	secrets.publish("ai", "apiKey", "operator-key")
 	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "gpt-4o-mini")
 
-	out := orch.buildIntegrations("hermes", inferenceConsumer("hermes", litellmSource, instanceSrc))
+	out := orch.buildIntegrations("hermes", consumer)
 
 	require.Len(t, out.Inference, 1)
 	b := out.Inference[0]
@@ -120,52 +85,16 @@ func TestResolveInference_InstanceServesWhenNoGateway(t *testing.T) {
 	assert.Zero(t, b.Port)
 }
 
-// A bare Ollama serves a consumer that never named it, because the inference
-// contract declares modelSource as its fallback.
-func TestResolveInference_PromotesModelSource(t *testing.T) {
-	store := NewFakeAppStore()
-	install(t, store, "hermes", nil)
-	install(t, store, "ollama", nil)
-
-	orch, _ := bindingsOrchestrator(t, store, inferenceConsumer("hermes", litellmSource, instanceSrc), gatewayApp(), ollamaApp())
-
-	out := orch.buildIntegrations("hermes", inferenceConsumer("hermes", litellmSource, instanceSrc))
-
-	require.Len(t, out.Inference, 1)
-	b := out.Inference[0]
-	assert.Equal(t, "ollama", b.App, "promoted from the modelSource contract the consumer never named")
-	assert.Equal(t, "http://apps-ollama:11434/v1", b.Endpoint)
-	assert.False(t, b.ViaGateway, "a promoted source is the raw upstream")
-	assert.Empty(t, b.APIKey, "a keyless local runtime stays keyless through promotion")
-}
-
-// Promotion must not outrank the instance setting: precedence is gateway, then
-// instance, then promoted sources.
-func TestResolveInference_PromotionIsLastResort(t *testing.T) {
-	store := NewFakeAppStore()
-	install(t, store, "hermes", nil)
-	install(t, store, "ollama", nil)
-
-	orch, secrets := bindingsOrchestrator(t, store, inferenceConsumer("hermes", litellmSource, instanceSrc), gatewayApp(), ollamaApp())
-	secrets.publish("ai", "apiKey", "operator-key")
-	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "gpt-4o")
-
-	out := orch.buildIntegrations("hermes", inferenceConsumer("hermes", litellmSource, instanceSrc))
-
-	require.Len(t, out.Inference, 1)
-	assert.Equal(t, catalog.InstanceProviderSource, out.Inference[0].App,
-		"the configured instance upstream wins over a promoted Ollama")
-}
-
 // Nothing configured and nothing installed resolves to no binding, which a
 // consumer treats the way it treats an uninstalled provider.
 func TestResolveInference_NothingConfigured(t *testing.T) {
 	store := NewFakeAppStore()
 	install(t, store, "hermes", nil)
 
-	orch, _ := bindingsOrchestrator(t, store, inferenceConsumer("hermes", litellmSource, instanceSrc), gatewayApp(), ollamaApp())
+	consumer := inferenceConsumer("hermes", instanceSrc)
+	orch, _ := bindingsOrchestrator(t, store, consumer)
 
-	out := orch.buildIntegrations("hermes", inferenceConsumer("hermes", litellmSource, instanceSrc))
+	out := orch.buildIntegrations("hermes", consumer)
 	assert.Empty(t, out.Inference)
 }
 
@@ -176,14 +105,40 @@ func TestResolveInference_DefaultModelIsNeverValidated(t *testing.T) {
 	store := NewFakeAppStore()
 	install(t, store, "hermes", nil)
 
-	orch, _ := bindingsOrchestrator(t, store, inferenceConsumer("hermes", litellmSource, instanceSrc), gatewayApp(), ollamaApp())
+	consumer := inferenceConsumer("hermes", instanceSrc)
+	orch, _ := bindingsOrchestrator(t, store, consumer)
 	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "a-model-that-no-longer-exists")
 
-	out := orch.buildIntegrations("hermes", inferenceConsumer("hermes", litellmSource, instanceSrc))
+	out := orch.buildIntegrations("hermes", consumer)
 
 	require.Len(t, out.Inference, 1)
 	assert.Equal(t, "a-model-that-no-longer-exists", out.Inference[0].DefaultModel,
 		"Bloud does not second-guess the stored default")
+}
+
+// The credential gate is real: a consumer that never declared `requires: apiKey`
+// is not handed the operator's credential by accident.
+func TestResolveInference_RequiresGatesTheCredential(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "hermes", nil)
+
+	consumer := &catalog.App{
+		CatalogID: "hermes",
+		Integrations: map[string]catalog.Integration{
+			"inference": {
+				Compatible: []catalog.CompatibleApp{instanceSrc},
+			},
+		},
+	}
+	orch, secrets := bindingsOrchestrator(t, store, consumer)
+	secrets.publish("ai", "apiKey", "operator-key")
+	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "gpt-4o")
+
+	out := orch.buildIntegrations("hermes", consumer)
+
+	require.Len(t, out.Inference, 1)
+	assert.Empty(t, out.Inference[0].APIKey,
+		"a consumer that did not ask for the credential does not get it")
 }
 
 // The load-bearing graph property: an instance provider never produces a node or
@@ -193,7 +148,7 @@ func TestComputeAppDeps_InstanceProviderCreatesNoEdge(t *testing.T) {
 		"hermes": {CatalogID: "hermes"},
 	}
 	cache := NewFakeCatalogCache()
-	cache.AddApp(inferenceConsumer("hermes", litellmSource, instanceSrc))
+	cache.AddApp(inferenceConsumer("hermes", instanceSrc))
 
 	deps := computeAppDeps(apps, cache)
 
@@ -202,33 +157,6 @@ func TestComputeAppDeps_InstanceProviderCreatesNoEdge(t *testing.T) {
 			"the instance is never a graph dependency")
 		assert.NotEmpty(t, dep, "an empty provider id must never become an edge")
 	}
-}
-
-// A modelSource consumer (the gateway itself) gets its upstreams bound, so
-// LiteLLM can merge the instance's server and a local Ollama into one config.
-func TestBuildIntegrations_ModelSourceConsumer(t *testing.T) {
-	consumer := &catalog.App{
-		CatalogID: "litellm",
-		Integrations: map[string]catalog.Integration{
-			"modelSource": {Required: false, Multi: true, Compatible: []catalog.CompatibleApp{
-				{App: "ollama"},
-				{Source: catalog.InstanceProviderSource},
-			}},
-		},
-	}
-	store := NewFakeAppStore()
-	install(t, store, "litellm", nil)
-	install(t, store, "ollama", nil)
-
-	orch, secrets := bindingsOrchestrator(t, store, consumer, ollamaApp())
-	secrets.publish("ai", "apiKey", "operator-key")
-	configureInstance(t, orch.settings.(*fakeSettings), "https://api.example.com/v1", "gpt-4o")
-
-	out := orch.buildIntegrations("litellm", consumer)
-
-	require.Len(t, out.ModelSources, 1, "the app provider binds; the instance is resolved by the gateway path")
-	assert.Equal(t, "ollama", out.ModelSources[0].App)
-	assert.Equal(t, "http://apps-ollama:11434/v1", out.ModelSources[0].Endpoint)
 }
 
 // The instance provider must not leak into non-inference contracts: a consumer

@@ -523,8 +523,8 @@ func TestPreStartNoAPIKeyWritesNoCredential(t *testing.T) {
 		PrimaryBaseURL: func() string { return "http://localhost:8080" },
 	})
 	state := inferenceState(dir, configurator.InferenceBinding{
-		Endpoint:     "http://ollama.localhost:8080/v1",
-		DefaultModel: "llama3.1",
+		Endpoint:     "http://127.0.0.1:8899/v1",
+		DefaultModel: "some-local-model",
 	})
 	if _, err := c.PreStart(context.Background(), state); err != nil {
 		t.Fatalf("PreStart: %v", err)
