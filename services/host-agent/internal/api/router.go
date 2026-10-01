@@ -253,6 +253,10 @@ func NewRouter(
 	systemMod.SetHealthCheck(func() error {
 		return checkSystemHealth(orchAsReconcilingLoop(realOrch), db)
 	})
+	// The developer graph shows the AI Model node only while Settings -> AI
+	// has an enabled upstream, so it reads the same store the settings module
+	// writes.
+	systemMod.SetAISettings(cfg.Settings)
 
 	// ---- Wire middleware and routes ----
 

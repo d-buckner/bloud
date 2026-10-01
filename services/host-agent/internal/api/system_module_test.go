@@ -17,8 +17,10 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,6 +91,7 @@ func newSystemModule(t *testing.T, opts systemModuleOpts) *systemModule {
 		tailnetStore: tailnetStore,
 		orch:         orch,
 		healthCheck:  opts.healthCheck,
+		aiSettings:   opts.aiSettings,
 		logger:       logger,
 	}
 }
@@ -98,6 +101,71 @@ type systemModuleOpts struct {
 	// healthCheck wires the system health check the health endpoint answers
 	// from. Left nil, the endpoint stays a liveness echo.
 	healthCheck func() error
+	// aiSettings is the store behind Settings -> AI, which decides whether
+	// the developer graph shows the AI Model node.
+	aiSettings store.SettingsStoreInterface
+}
+
+// fakeAISettings answers Get from a fixed map, so a test can state exactly
+// what Settings -> AI holds.
+type fakeAISettings struct {
+	values map[string]string
+	err    error
+}
+
+func (f *fakeAISettings) Get(key string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.values[key], nil
+}
+
+func (f *fakeAISettings) Set(key, value string) error {
+	if f.values == nil {
+		f.values = make(map[string]string)
+	}
+	f.values[key] = value
+	return nil
+}
+
+var _ store.SettingsStoreInterface = (*fakeAISettings)(nil)
+
+// aiSettingsWith renders an upstream list for the settings store.
+func aiSettingsWith(upstreamsJSON string) *fakeAISettings {
+	return &fakeAISettings{values: map[string]string{inference.SettingUpstreams: upstreamsJSON}}
+}
+
+// inferenceConsumerDef is the catalog entry of an app that declares the
+// inference contract against the instance, the shape hermes/metadata.yaml
+// carries.
+func inferenceConsumerDef() *catalog.AppDefinition {
+	return &catalog.AppDefinition{
+		Integrations: map[string]catalog.Integration{
+			"inference": {
+				Compatible: []catalog.CompatibleApp{{Source: catalog.InstanceProviderSource, Default: true}},
+			},
+		},
+	}
+}
+
+// graphNodeByID finds one node in a decoded developer graph.
+func graphNodeByID(nodes []graphNode, id string) (graphNode, bool) {
+	for _, n := range nodes {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return graphNode{}, false
+}
+
+// graphEdgePresent reports whether one edge is in the decoded graph.
+func graphEdgePresent(edges []graphEdge, source, target string) bool {
+	for _, e := range edges {
+		if e.Source == source && e.Target == target {
+			return true
+		}
+	}
+	return false
 }
 
 // FakeAppGraph is a fake catalog.AppGraphInterface for testing.
@@ -255,6 +323,164 @@ func TestSystemHTTP_DeveloperGraph_WithApps(t *testing.T) {
 	require.NoError(t, err)
 	// Should have traefik, jellyfin, and other graph nodes
 	assert.Greater(t, len(resp.Nodes), 2)
+}
+
+// fetchDeveloperGraph runs the developer graph endpoint and decodes it.
+func fetchDeveloperGraph(t *testing.T, mod *systemModule) developerGraph {
+	t.Helper()
+	r := chi.NewRouter()
+	NewSystemRouter(mod, r)
+
+	req := httptest.NewRequest("GET", "/system/developer", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp developerGraph
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	return resp
+}
+
+// installInferenceConsumer puts a hermes-shaped inference consumer into the
+// store and its catalog definition into the graph.
+func installInferenceConsumer(mod *systemModule) {
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID: "hermes", DisplayName: "Hermes", IsSystem: false, Status: "running",
+	})
+	appGraph := mod.graph.(*FakeAppGraph)
+	appGraph.apps = map[string]*catalog.AppDefinition{"hermes": inferenceConsumerDef()}
+}
+
+// The AI Model node is the instance's own provider, so it shows exactly when
+// Settings -> AI has something to serve: an enabled upstream.
+func TestSystemHTTP_DeveloperGraph_AINodeShownWhenConfigured(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		aiSettings: aiSettingsWith(
+			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+	})
+	installInferenceConsumer(mod)
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	node, ok := graphNodeByID(resp.Nodes, AINodeID)
+	require.True(t, ok, "an enabled upstream should put the AI Model node in the graph")
+	assert.Equal(t, "AI Model", node.DisplayName)
+	assert.Equal(t, "service", node.NodeType)
+	assert.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+}
+
+// With nothing configured the node is absent, and so is the edge that was
+// headed for it: an edge naming a node that is not in the payload reaches the
+// browser anyway and draws an arrow into empty space.
+func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUnconfigured(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{aiSettings: aiSettingsWith("")})
+	installInferenceConsumer(mod)
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	assert.False(t, ok)
+	assert.False(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+}
+
+// A disabled upstream is not configured. The entry is kept so the toggle is
+// reversible, but nothing is served.
+func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUpstreamDisabled(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		aiSettings: aiSettingsWith(
+			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":false}]`),
+	})
+	installInferenceConsumer(mod)
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	assert.False(t, ok)
+	assert.False(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+}
+
+// A settings store that cannot answer reads as unconfigured. The graph is a
+// display, and a read error is not a reason to invent a provider.
+func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenStoreFails(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		aiSettings: &fakeAISettings{err: errors.New("database is closed")},
+	})
+	installInferenceConsumer(mod)
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	assert.False(t, ok)
+}
+
+// Unwired is the same as unconfigured, so a module built without the
+// settings store never shows the node instead of panicking on a nil read.
+func TestSystemHTTP_DeveloperGraph_AINodeHiddenWhenUnwired(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	installInferenceConsumer(mod)
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	_, ok := graphNodeByID(resp.Nodes, AINodeID)
+	assert.False(t, ok)
+}
+
+// An app that does not declare the contract gets no edge, configured or not:
+// the graph renders what the catalog declares, never what a provider could
+// theoretically serve.
+// The graph reads the same settings key the Settings -> AI API writes, so
+// wire the real SQLite store rather than a fake and drive both sides of it.
+// A key-name drift between the two would otherwise read as "never configured"
+// and the node would silently never appear.
+func TestSystemHTTP_DeveloperGraph_AINodeRoundTripsThroughRealStore(t *testing.T) {
+	db := testdb.SetupTestDB(t)
+	settings := store.NewSettingsStore(db)
+
+	mod := newSystemModule(t, systemModuleOpts{})
+	mod.aiSettings = settings
+	installInferenceConsumer(mod)
+
+	_, ok := graphNodeByID(fetchDeveloperGraph(t, mod).Nodes, AINodeID)
+	require.False(t, ok, "a fresh instance has no AI configured")
+
+	encoded, err := inference.EncodeUpstreams([]inference.Upstream{
+		{ID: "u1", Name: "Main", BaseURL: "https://api.example.com/v1", Enabled: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, settings.Set(inference.SettingUpstreams, encoded))
+
+	resp := fetchDeveloperGraph(t, mod)
+	aiNode, ok := graphNodeByID(resp.Nodes, AINodeID)
+	require.True(t, ok, "the settings the API writes must be the settings the graph reads")
+	assert.Equal(t, "service", aiNode.NodeType)
+	require.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+
+	// Turning the upstream off takes the node and its edge back out, so the
+	// graph tracks the setting rather than remembering that it was once on.
+	require.NoError(t, settings.Set(inference.SettingUpstreams,
+		`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":false}]`))
+
+	resp = fetchDeveloperGraph(t, mod)
+	assert.False(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+	_, ok = graphNodeByID(resp.Nodes, AINodeID)
+	assert.False(t, ok)
+}
+
+func TestSystemHTTP_DeveloperGraph_NonConsumerGetsNoAIEdge(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		aiSettings: aiSettingsWith(
+			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+	})
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID: "jellyfin", DisplayName: "Jellyfin", IsSystem: false, Status: "running",
+	})
+	mod.graph.(*FakeAppGraph).apps = map[string]*catalog.AppDefinition{
+		"jellyfin": {Integrations: map[string]catalog.Integration{}},
+	}
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	assert.False(t, graphEdgePresent(resp.Edges, "jellyfin", AINodeID))
 }
 
 func TestSystemHTTP_DeveloperGraph_WithTailnetNodes(t *testing.T) {

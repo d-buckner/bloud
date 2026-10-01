@@ -36,9 +36,12 @@ type Integration struct {
 	Compatible []CompatibleApp `yaml:"compatible"`
 }
 
-// CompatibleApp defines a specific app that can fulfill an integration
+// CompatibleApp defines a specific provider that can fulfill an integration.
+// Exactly one of App and Source names it: App is a catalog app, Source is the
+// instance's own settings (`instance`), which is not an app at all.
 type CompatibleApp struct {
 	App     string `yaml:"app"`
+	Source  string `yaml:"source"`
 	Default bool   `yaml:"default"`
 }
 
@@ -86,6 +89,29 @@ const (
 // snapshot is running, so the dashboard's status color falls back to the
 // neutral gray rather than implying a live state.
 const catalogNodeStatus = "catalog"
+
+// The instance's own AI settings get a graph node. Nothing in apps/
+// metadata.yaml declares it: there is no install, no container, and no
+// lifecycle for the orchestrator to order. It is the one node the instance
+// itself provides, and an inference consumer's edge has to point somewhere.
+//
+// The catalog snapshot always carries it. The generated picture is the full
+// view of everything Bloud can wire, configured or not, so the node is part
+// of the topology a reader learns rather than something that appears only
+// after someone fills in a form. The live dashboard graph applies its own
+// rule and shows the node only once Settings -> AI has an upstream.
+const (
+	instanceProviderNodeID   = "ai:instance"
+	instanceProviderLabel    = "AI Model"
+	instanceProviderMermaid  = "ai_model"
+	instanceProviderCategory = "ai"
+	// instanceProviderStatus is what the node reads as: "external", not the
+	// snapshot-wide "catalog". It names what the node is rather than that it
+	// happens to be part of a catalog dump, and it is deliberately absent
+	// from the dashboard's status color table so the dot stays the same
+	// neutral gray as every other unprobed status.
+	instanceProviderStatus = "external"
+)
 
 func cmdDepGraph(args []string) int {
 	root, err := getProjectRoot()
@@ -352,9 +378,13 @@ func renderDependencyGraph(apps map[string]*AppMetadata) string {
 		sb.WriteString(renderAppBox(apps[appName], ids))
 	}
 
+	// Drawn outside every box: the instance provides it, not an app.
+	fmt.Fprintf(&sb, "\n    %s[\"%s\"]\n", instanceProviderMermaid, instanceProviderLabel)
+
 	sb.WriteString("\n    %% Cross-app integration edges\n")
 	for _, edge := range integrationEdges(apps) {
-		fmt.Fprintf(&sb, "    %s -->|%s| %s\n", appBoxID(edge.from), edge.label, appBoxID(edge.to))
+		fmt.Fprintf(&sb, "    %s -->|%s| %s\n",
+			edgeEnd(edge.from), edge.label, edgeEnd(edge.to))
 	}
 
 	sb.WriteString("```\n")
@@ -415,6 +445,17 @@ func buildCatalogGraph(apps map[string]*AppMetadata) catalogGraph {
 		edges = append(edges, appContainerNodes(app, &nodes)...)
 	}
 
+	// Always present, whatever the catalog declares: see the note on
+	// instanceProviderNodeID.
+	nodes = append(nodes, catalogGraphNode{
+		ID:          instanceProviderNodeID,
+		DisplayName: instanceProviderLabel,
+		Status:      instanceProviderStatus,
+		IsSystem:    false,
+		NodeType:    "service",
+		Category:    instanceProviderCategory,
+	})
+
 	for _, edge := range integrationEdges(apps) {
 		edges = append(edges, catalogGraphEdge{Source: edge.from, Target: edge.to, Label: edge.label})
 	}
@@ -468,7 +509,8 @@ func renderCatalogGraphJSON(apps map[string]*AppMetadata) (string, error) {
 // graphLegend explains the notation, because the diagram is generated and no
 // prose around it is written by whoever changed the metadata.
 const graphLegend = "_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. " +
-	"Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._"
+	"Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`). " +
+	"The AI Model node is outside every box because no app provides it: it is the instance's own Settings -> AI endpoint, and any app that declares the `inference` contract is wired to it._"
 
 // appDisplayName is the app's display name, falling back to its catalog id.
 func appDisplayName(app *AppMetadata) string {
@@ -588,7 +630,7 @@ func integrationEdges(apps map[string]*AppMetadata) []graphEdge {
 		for _, integrationName := range sortedKeys(app.Integrations) {
 			integration := app.Integrations[integrationName]
 			provider := defaultProvider(integration)
-			if provider == "" || provider == appName || apps[provider] == nil {
+			if provider == "" || provider == appName || !providerIsDrawn(apps, provider) {
 				continue
 			}
 
@@ -623,18 +665,48 @@ func integrationEdges(apps map[string]*AppMetadata) []graphEdge {
 	return edges
 }
 
-// defaultProvider returns the app an integration resolves to by default:
-// the entry flagged default, or the first compatible app when none is.
+// defaultProvider returns the provider an integration resolves to by
+// default: the entry flagged default, or the first compatible entry when
+// none is. The value is a graph node id, so an instance-source entry comes
+// back as the AI Model node rather than as an empty app name.
 func defaultProvider(integration Integration) string {
 	for _, compat := range integration.Compatible {
 		if compat.Default {
-			return compat.App
+			return providerNodeID(compat)
 		}
 	}
 	if len(integration.Compatible) > 0 {
-		return integration.Compatible[0].App
+		return providerNodeID(integration.Compatible[0])
 	}
 	return ""
+}
+
+// providerNodeID maps one compatible entry to the graph node that stands for
+// it. `source: instance` is not a catalog app, so it maps to the node the
+// instance provides instead of to a name nothing can look up.
+func providerNodeID(compat CompatibleApp) string {
+	if compat.Source != "" {
+		return instanceProviderNodeID
+	}
+	return compat.App
+}
+
+// providerIsDrawn reports whether a resolved provider is something the graph
+// can draw an edge to. The instance provider always is; a catalog app only
+// when the catalog actually has it, so an integration naming an app that is
+// not shipped drops its edge instead of inventing a node.
+func providerIsDrawn(apps map[string]*AppMetadata, provider string) bool {
+	return provider == instanceProviderNodeID || apps[provider] != nil
+}
+
+// edgeEnd resolves one end of a cross-app edge to its mermaid id. An app is
+// its box; the instance provider is a standalone node, because there is no
+// app box to put it in.
+func edgeEnd(endpoint string) string {
+	if endpoint == instanceProviderNodeID {
+		return instanceProviderMermaid
+	}
+	return appBoxID(endpoint)
 }
 
 // ssoEdgeLabel is the strategy name for an sso edge, falling back to "sso"

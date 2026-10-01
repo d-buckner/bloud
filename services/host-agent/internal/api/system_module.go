@@ -11,6 +11,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
@@ -39,7 +40,13 @@ type systemModule struct {
 	// reachable, orchestrator intent loop alive). Wired by the router; nil
 	// leaves the endpoint as a liveness echo.
 	healthCheck func() error
-	logger      *slog.Logger
+	// aiSettings is the store behind Settings -> AI. The developer graph
+	// reads it to decide whether the instance provides an AI model at all:
+	// with no enabled upstream there is nothing to wire, so the AI Model node
+	// stays out of the picture instead of showing a provider that answers
+	// nothing. Wired by the router; nil means never shown.
+	aiSettings store.SettingsStoreInterface
+	logger     *slog.Logger
 }
 
 func NewSystemModule(
@@ -68,6 +75,13 @@ func NewSystemModule(
 // the HTTP answer and Server.CheckSystemHealth come from one implementation.
 func (m *systemModule) SetHealthCheck(check func() error) {
 	m.healthCheck = check
+}
+
+// SetAISettings wires the settings store behind Settings -> AI, which is what
+// the developer graph reads to decide whether the instance provides an AI
+// model. Unwired, the graph never shows the AI Model node.
+func (m *systemModule) SetAISettings(settingsStore store.SettingsStoreInterface) {
+	m.aiSettings = settingsStore
 }
 
 // HealthHandler answers the health probe. 200 means the instance is up and
@@ -124,12 +138,34 @@ func (m *systemModule) StorageHandler() http.HandlerFunc {
 
 // ---- Types ----
 
+// The AI Model node: the instance's own Settings -> AI endpoint, drawn as a
+// provider so an inference consumer's edge has somewhere to land. It is not
+// an app. Nothing installs it, no container backs it, and the orchestrator
+// never gains a lifecycle node for it; this is a display of a wiring that is
+// real but has no installed shape.
+//
+// The live graph shows it only while an upstream is enabled. The catalog
+// snapshot the README image renders from always shows it, because that
+// picture is the full view of what Bloud can wire rather than of what this
+// instance happens to have configured.
+const (
+	AINodeID    = "ai:instance"
+	AINodeLabel = "AI Model"
+	// AINodeStatus is what the node reads as. "external" rather than a
+	// lifecycle word: the instance never health-checks someone else's server,
+	// so "running" would claim a liveness nobody verified, and it is not a
+	// Bloud-run workload either. It is deliberately absent from the status
+	// color table so the dot falls back to the same neutral gray every other
+	// unprobed status gets.
+	AINodeStatus = "external"
+)
+
 type graphNode struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	Status      string `json:"status"`
 	IsSystem    bool   `json:"isSystem"`
-	NodeType    string `json:"nodeType"` // "app", "container", or "connection"
+	NodeType    string `json:"nodeType"` // "app", "container", "connection", or "service"
 	// ParentID is the owning app's node ID for container nodes; the dashboard
 	// draws those inside the app's box.
 	ParentID string `json:"parentId,omitempty"`
@@ -175,7 +211,7 @@ func (m *systemModule) buildGraphEdges(app *store.InstalledApp, def *catalog.App
 			}
 			for _, compat := range integration.Compatible {
 				if compat.Default {
-					targets[label] = compat.App
+					targets[label] = providerNodeID(compat)
 					break
 				}
 			}
@@ -205,6 +241,16 @@ func (m *systemModule) buildGraphEdges(app *store.InstalledApp, def *catalog.App
 		edges = append(edges, edge)
 	}
 	return edges
+}
+
+// providerNodeID maps one compatible entry to the graph node that stands for
+// it. A catalog app is its own node; `source: instance` is not an app, so it
+// maps to the AI Model node the instance provides.
+func providerNodeID(compat catalog.CompatibleApp) string {
+	if compat.Source != "" {
+		return AINodeID
+	}
+	return compat.App
 }
 
 // DeveloperGraphHandler returns the lifecycle graph for the developer dashboard.
@@ -252,6 +298,8 @@ func (m *systemModule) buildDeveloperGraph(
 	nodes = append(nodes, gwNodes...)
 	edges = append(edges, gwEdges...)
 
+	nodes, edges = m.applyAINode(nodes, edges)
+
 	var orchStatus *orchestrator.OrchestratorStatus
 	if m.orch != nil {
 		status := m.orch.Status()
@@ -264,6 +312,62 @@ func (m *systemModule) buildDeveloperGraph(
 		TailnetDomain: domain,
 		Orchestrator:  orchStatus,
 	}
+}
+
+// applyAINode reconciles the AI Model node with the edges that point at it.
+//
+// The node exists only while the instance has an enabled AI upstream. An edge
+// to a node that is not in the payload still reaches the browser, which draws
+// an arrow into empty space, so when the node is not shown the edges that were
+// headed for it are dropped with it. That is the whole rule: no upstream,
+// nothing to point at.
+func (m *systemModule) applyAINode(nodes []graphNode, edges []graphEdge) ([]graphNode, []graphEdge) {
+	if !m.aiConfigured() {
+		return nodes, dropEdgesTo(edges, AINodeID)
+	}
+	nodes = append(nodes, graphNode{
+		ID:          AINodeID,
+		DisplayName: AINodeLabel,
+		Status:      AINodeStatus,
+		// Not flagged system: that would add a "system" chip on top of
+		// "external" and a dashed border, and the point of this node is that
+		// it reads as one plain thing the instance points at.
+		IsSystem: false,
+		NodeType: "service",
+	})
+	return nodes, edges
+}
+
+// aiConfigured reports whether Settings -> AI has an enabled upstream. A
+// store that fails to answer reads as unconfigured: the graph is a display,
+// and a settings read error is not a reason to invent a provider.
+func (m *systemModule) aiConfigured() bool {
+	if m.aiSettings == nil {
+		return false
+	}
+	upstreamsJSON, err := m.aiSettings.Get(inference.SettingUpstreams)
+	if err != nil {
+		return false
+	}
+	settings, err := inference.DecodeSettings(upstreamsJSON, "")
+	if err != nil {
+		return false
+	}
+	_, ok := settings.ActiveUpstream()
+	return ok
+}
+
+// dropEdgesTo removes the edges pointing at one node id, leaving every other
+// edge in order.
+func dropEdgesTo(edges []graphEdge, nodeID string) []graphEdge {
+	kept := make([]graphEdge, 0, len(edges))
+	for _, edge := range edges {
+		if edge.Target == nodeID {
+			continue
+		}
+		kept = append(kept, edge)
+	}
+	return kept
 }
 
 // appNodes builds one node per installed app, plus one child node per

@@ -230,12 +230,13 @@ type ModelSourceBinding struct {
 //
 // The consumer declares `inference` and never learns what is behind it. That is
 // the property the contract exists to hold: whether the endpoint is the operator's
-// raw server or a LiteLLM gateway in front of several upstreams, the consumer's
-// metadata, its config, and the operator's Settings entry stay unchanged.
+// raw server or a gateway app sitting in front of several upstreams, the
+// consumer's metadata, its config, and the operator's Settings entry stay
+// unchanged.
 type InferenceBinding struct {
 	ProviderRef
 	// Endpoint is the OpenAI-compatible base URL exactly as a client should
-	// pass it to an SDK, path included: http://apps-litellm:4000/v1. This is
+	// pass it to an SDK, path included: http://apps-gateway:4000/v1. This is
 	// the field that always carries a usable value: ProviderRef.BaseURL is a
 	// container-network fact (http://<Node>:<Port>) and is empty for an
 	// instance provider, which has no container at all.

@@ -19,19 +19,19 @@ integrations:
     compatible:
       - app: authentik
         default: true
-  # Hermes is an inference consumer. The instance setting is the source by
-  # default; a litellm install takes over when it appears. `source: instance` is
-  # not an app: the resolver reads Bloud's own AI settings, and the graph never
-  # gains a node for it, so there is nothing to install or uninstall.
+  # Hermes is an inference consumer, and the provider is the instance itself.
+  # `source: instance` is not an app: the resolver reads Bloud's own AI
+  # settings (Settings -> AI), so there is nothing to install or uninstall and
+  # no container to order on the graph. The graph still shows the wiring, as an
+  # edge to the AI Model node.
   inference:
     required: false
     multi: false
     requires:
       - apiKey
     compatible:
-      - app: litellm
-        default: true
       - source: instance
+        default: true
   # MCP servers Bloud wires into the agent. `multi: true` because the whole
   # point is that a harness takes as many tool namespaces as the instance
   # provides, and which ones exist changes as apps are installed. Optional

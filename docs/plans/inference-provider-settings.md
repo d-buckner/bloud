@@ -42,17 +42,17 @@ Settings -> AI  (external OpenAI-compatible: base URL, key, models,
         |        default model)
         |        provider source: instance,  contract: modelSource
         |
-        +--> modelSource --> litellm (app) --inference--> hermes, ...
+        +--> modelSource --> gateway (app) --inference--> hermes, ...
         |                        ^                          |
         |                        |                    adopts the default
         |                        |                    unless it already
-   ollama (app) --modelSource ---+                    picked its own
+ local runtime (app) --modelSource-+                    picked its own
 ```
 
 The load-bearing property is the last hop. A consumer declares `inference` and
-never learns what is behind it. Adding LiteLLM to a running install that already
-had Hermes pointed at a raw endpoint changes nothing in Hermes' metadata, its
-config, or the operator's Settings entry. The gateway appears between them and
+never learns what is behind it. Adding a gateway app to a running install that
+already had Hermes pointed at a raw endpoint changes nothing in Hermes' metadata,
+its config, or the operator's Settings entry. The gateway appears between them and
 neither end moves.
 
 ## Facts this design rests on
@@ -100,8 +100,8 @@ Registry entries in `internal/catalog/contracts.go`:
 },
 
 // The endpoint an application dials. Base URL, a key, a default model.
-// Provided by a gateway app (LiteLLM) and, by promotion, by any modelSource
-// when no gateway is installed.
+// The endpoint an application dials. Provided by a gateway app and, by
+// promotion, by any modelSource when no gateway is installed.
 {
     Name:         "inference",
     Secrets:      []string{"apiKey"},
@@ -123,7 +123,7 @@ The consumer binding:
 type InferenceBinding struct {
     ProviderRef
     // Endpoint is the OpenAI-compatible base URL exactly as a client should
-    // pass it to an SDK, path included: http://apps-litellm:4000/v1.
+    // pass it to an SDK, path included: http://apps-gateway:4000/v1.
     Endpoint string
     // APIKey is the credential to send. Empty when the provider needs none
     // (a local Ollama on a trusted network).
@@ -167,9 +167,8 @@ integrations:
     required: false
     multi: false
     compatible:
-      - app: litellm
-        default: true
       - source: instance
+        default: true
 ```
 
 `ProviderRef` gains `Kind` (`"app"` | `"instance"`). For an instance provider:
@@ -194,11 +193,18 @@ condition as the graph edge":
 2. `Node` and `Port` are empty. Any consumer code that assumes them is
    consumer-side bug; `Endpoint` is the field that always carries a usable value.
 
-**The discipline that keeps the graph clean:** `computeAppDeps` and every graph
-edge builder must filter to `Kind == app`. An instance provider never produces a
-node, never enters a convergence level, and never appears in the dashboard graph.
-That filter is the single thing standing between this design and a graph full of
-phantom nodes.
+**The discipline that keeps the lifecycle clean:** `computeAppDeps` and every
+lifecycle edge builder must filter to `Kind == app`. An instance provider never
+produces a lifecycle node, never enters a convergence level, and never gets a
+container the orchestrator has to start. That filter is the single thing standing
+between this design and an orchestrator trying to reconcile a setting as if it
+were a workload.
+
+The **display** graphs are a separate matter, and they do show it. A consumer's
+`inference` edge has to point at something, so the catalog snapshot and the
+developer dashboard both render the instance's endpoint as a standalone "AI
+Model" node outside every app box. That is presentation of a real wiring, not a
+node the reconciler orders.
 
 ## Settings: the interface
 
@@ -264,7 +270,7 @@ consumer get.
 
 **It is a concrete model id, not a tier or an alias.** It has to resolve in
 every topology this plan supports, and the promotion path is the strict test.
-Pointed directly at the external server, through a LiteLLM gateway, or promoted
+Pointed directly at the external server, through a gateway app, or promoted
 from a bare Ollama, a real model id is recognized by all three. A logical alias
 like `bloud-default` 400s the moment it reaches a server that has never heard of
 it, and every no-gateway path is exactly such a server. Tiers are a real idea,
@@ -338,56 +344,6 @@ multi-gigabyte, user-initiated download. Whether Bloud drives it from the
 dashboard or leaves it inside the app is a product decision, and it does not
 change the contract shape.
 
-## App sketch: LiteLLM
-
-The gateway. Also a real app.
-
-```yaml
-name: litellm
-category: infrastructure
-port: 4000
-integrations:
-  modelSource:
-    required: false
-    multi: true
-    compatible:
-      - app: ollama
-      - source: instance
-provides:
-  inference:
-    secrets:
-      - apiKey
-    values:
-      models: ""
-      defaultModel: ""
-containers:
-  - name: apps-litellm
-    image: docker.io/bitnami/litellm:<pinned>
-    dependsOn: [apps-litellm-db]
-  - name: apps-litellm-db
-    image: docker.io/library/postgres:<pinned>
-```
-
-Postgres is its own container per invariant 3: LiteLLM needs durable storage for
-virtual keys and usage, and it owns that infrastructure rather than sharing one.
-
-The configurator is where the chain closes. `PreStart` renders
-`litellm_config.yaml` from the resolved `modelSource` bindings: one LiteLLM
-model group per upstream, model aliases merged, the instance upstream's key read
-from the secrets manager. `PostStart` mints the gateway key through LiteLLM's
-admin API and publishes it with `SetAppSecret("litellm", "apiKey")`, which is
-what every `inference` consumer then receives.
-
-**The per-consumer key wrinkle.** `publishedSecret` resolves a contract secret
-from the *provider's* scope, so one LiteLLM key is shared by every consumer.
-That is fine for v1 and it is a real weakening: no per-app rate limit, no
-per-app usage attribution, and revoking access for one app means rotating the key
-for all of them. Per-consumer virtual keys are a contract change, not a config
-change: a `perConsumer` marker on the secret spec, resolved from the consumer's
-own app-secret scope, minted by the provider during `PostStart` for each
-declared consumer. Deferred, but the binding already carries `ViaGateway`, so the
-information a later fix needs is present.
-
 ## Consumer wiring: Hermes
 
 ```yaml
@@ -396,9 +352,8 @@ integrations:
     required: false
     multi: false
     compatible:
-      - app: litellm
-        default: true
       - source: instance
+        default: true
 ```
 
 `PreStart` registers the binding in Hermes' `config.yaml` and, when no binding
@@ -483,7 +438,7 @@ providers:
   bloud:
     name: Bloud
     api: openai-completions
-    base_url: http://apps-litellm:4000/v1   # or the external origin, unwired
+    base_url: http://apps-gateway:4000/v1   # or the external origin, unwired
     api_key: <resolved from the secrets manager>   # omitted when the binding has none
     default_model: <settings ai_default_model>
     discover_models: true
@@ -522,8 +477,8 @@ disk, so wiring inference in adds no restart churn beyond what SSO established.
 |---|---|
 | Settings only | the external server, directly, `ViaGateway: false` |
 | Ollama only | Ollama, promoted from `modelSource`, `ViaGateway: false` |
-| Settings + LiteLLM | the LiteLLM endpoint and gateway key, `ViaGateway: true` |
-| Settings + Ollama + LiteLLM | one LiteLLM endpoint; LiteLLM routes per model alias |
+| Settings + a gateway app | the gateway endpoint and gateway key, `ViaGateway: true` |
+| Settings + a local runtime + a gateway | one gateway endpoint; the gateway routes per model alias |
 | N external upstreams | N `modelSource` entries; still zero logical apps |
 | Nothing configured | empty binding; the app runs unconfigured, as today |
 
@@ -590,7 +545,7 @@ gateway app installed, wired to the model chosen in Settings.
 **Phase 2.** Ollama as an app. Proves `modelSource` works with an app provider
 and exercises promotion from an app rather than from Settings.
 
-**Phase 3.** LiteLLM as an app. Proves the gateway chain and the promotion
+**Phase 3.** A gateway app. Proves the gateway chain and the promotion
 suppression: a real `inference` provider wins over the `SatisfiedBy` fallback,
 so installing the gateway moves every consumer onto it without the consumer
 changing anything. The per-consumer key question is already decided (shared key
@@ -604,8 +559,8 @@ because `ViaGateway` already distinguishes the two cases in the binding.
 | Setting unset | Empty binding. Apps run unconfigured, exactly as today. |
 | Base URL is not OpenAI-compatible | The `POST .../test` route reports it before save. At runtime the consumer gets a 404 or a 401 from its own client; Bloud does not second-guess the upstream. |
 | Upstream key wrong | Same as above: surfaced by the test route, and by the consumer's own auth failure. |
-| Both LiteLLM and the instance setting present | LiteLLM wins for `inference` (a real provider beats the promotion fallback). The instance is still consumed by LiteLLM as a `modelSource`. |
-| LiteLLM uninstalled while Hermes is installed | Promotion re-runs on the next convergence and Hermes falls back to the raw upstream. No manual repair. |
+| A gateway app and the instance setting both present | The gateway wins for `inference` (a real provider beats the promotion fallback). The instance is still consumed by the gateway as a `modelSource`. |
+| Gateway uninstalled while Hermes is installed | Promotion re-runs on the next convergence and Hermes falls back to the raw upstream. No manual repair. |
 | Upstream disappears mid-run | Bloud does not detect it. There is no health model for an external endpoint, and pretending otherwise would be the probe invariant 15 forbids. |
 | Stored default model retired upstream | Bloud does not know and does not guess. The consumer's next request fails against the upstream and the operator sees it in the app, which is where they were trying to do something. |
 | `/models` unreachable when Settings opens | Model list empty, picker degrades to free text, the stored default renders as its own entry. Nothing is cleared and nothing is blocked. |
@@ -621,23 +576,23 @@ because `ViaGateway` already distinguishes the two cases in the binding.
 - **Logical model tiers.** `fast` / `smart` / `default` mapped to real models is
   a good idea with a hard constraint: it only resolves through a gateway. A tier
   name sent to a server that has never heard of it is a 400, so tiers cannot be
-  the contract's default shape. They are a natural LiteLLM model-group feature
+  the contract's default shape. They are a natural gateway model-group feature
   and belong to a later design, where `InferenceBinding.DefaultModel` carrying an
   alias instead of an id is a value change rather than a contract change.
 - **Per-app model override in Bloud.** The adopt-unless-overridden rule already
   leaves a consumer's own choice alone; adding a Bloud-side per-app override on
   top would mean Bloud overriding the app's own picker, which is the exact
   behavior this design rejects.
-- **Quotas, cost caps, rate limits.** Gateway features. They belong to LiteLLM's
-  own UI once it exists as an app, not to Bloud's settings.
+- **Quotas, cost caps, rate limits.** Gateway features. They belong to the
+  gateway's own UI once one exists as an app, not to Bloud's settings.
 - **Embeddings, vision, audio, rerank.** All reachable through the same
-  LiteLLM endpoint today. If they ever need distinct contracts, `SatisfiedBy`
-  generalizes; do not pre-build for it.
+  OpenAI-compatible endpoint today. If they ever need distinct contracts,
+  `SatisfiedBy` generalizes; do not pre-build for it.
 - **TLS for the upstream.** Bloud sends whatever the operator configured. A
   plaintext `http://` upstream with a real API key is the operator's choice and
   should be visually flagged in the UI, not refused.
 - **Multiple named AI "profiles" per app.** One upstream list, one served
-  endpoint. Per-app routing beyond the default is LiteLLM's job.
+  endpoint. Per-app routing beyond the default is the gateway's job.
 
 ## Verification
 
@@ -653,9 +608,11 @@ because `ViaGateway` already distinguishes the two cases in the binding.
 - **Resolver:** promotion fires only when no `inference` provider is installed;
   a real provider suppresses the fallback; the promoted binding carries
   `ViaGateway: false`; uninstalling the gateway re-promotes on the next pass.
-- **Graph:** an `inference` binding whose provider is `source: instance`
-  produces no graph node and no edge. Assert this directly; it is the property
-  the design depends on most.
+- **Graph:** the *lifecycle* graph gains no node for an `inference` binding whose
+  provider is `source: instance`. Assert this directly; it is the property the
+  design depends on most. The *display* graphs (the catalog snapshot and the
+  developer dashboard) do render that provider, as the AI Model node, and drop
+  the edge again when nothing is configured.
 - **Parser:** `ParseInferenceBaseURL` accepts a path, rejects a query,
   fragment, credentials, unknown scheme, out-of-range port.
 - **Settings API:** the no-op guard catches a canonical-identical save; the API

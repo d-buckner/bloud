@@ -108,9 +108,12 @@ flowchart TD
         c_vaultwarden["vaultwarden"]
     end
 
+    ai_model["AI Model"]
+
     %% Cross-app integration edges
     app_affine -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_affine
+    app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
@@ -143,8 +146,10 @@ flowchart TD
     app_vaultwarden -->|native-oidc| app_authentik
 ```
 
-_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`)._
+_Each box is one app; the nodes inside it are that app's containers, with an arrow from a container to every container it depends on. Arrows between boxes are integrations: a `proxy` arrow is drawn from the proxy to the apps it routes, and an SSO arrow is labeled with the app's strategy (`ldap`, `forward-auth`, `native-oidc`). The AI Model node is outside every box because no app provides it: it is the instance's own Settings -> AI endpoint, and any app that declares the `inference` contract is wired to it._
 <!-- END GENERATED DEPENDENCY GRAPH -->
+
+
 
 
 
