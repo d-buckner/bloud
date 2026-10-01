@@ -40,11 +40,11 @@ func seedRunningNode(t *testing.T, g *graph.Graph, id string, status graph.NodeS
 	require.NoError(t, g.SetActualStatus(id, status, ""))
 }
 
-// An installed row whose catalog entry is gone (the app directory was
-// removed or renamed, so the loader never produced a metadata.yaml for it)
-// must not dereference the nil catalog result. There is no recover()
-// anywhere in host-agent, so the old code killed the daemon on the next
-// convergence pass; SyncContainerState runs on every pass.
+// An installed row whose catalog entry is gone (the app directory was removed or
+// renamed, so the loader never produced a metadata.yaml for it) must not
+// dereference the nil catalog result. There is no recover() anywhere in
+// host-agent, so a nil deref here kills the daemon on the next convergence pass;
+// SyncContainerState runs on every pass.
 func TestSyncContainerState_CatalogMissDoesNotPanic(t *testing.T) {
 	apps := NewFakeAppStore()
 	apps.AddApp(&store.InstalledApp{CatalogID: "ghost", DisplayName: "Ghost", Status: "running"})

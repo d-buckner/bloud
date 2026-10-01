@@ -172,9 +172,9 @@ func getUserFromContext(ctx context.Context) *store.User {
 
 // requestHost returns the request's Host header.
 //
-// Deliberately not X-Forwarded-Host: that header is client-controlled
-// (Traefik forwards it verbatim with forwardedHeaders.insecure), and the value
-// used to become an OAuth redirect URI registered in the identity provider.
+// Deliberately not X-Forwarded-Host: that header is client-controlled (Traefik
+// forwards it verbatim with forwardedHeaders.insecure), and this value becomes an
+// OAuth redirect URI registered in the identity provider.
 func requestHost(r *http.Request) string {
 	return r.Host
 }

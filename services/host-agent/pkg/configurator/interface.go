@@ -29,17 +29,12 @@ type AppSecretsProvider interface {
 
 // PreStartResult is what a configurator reports when its PreStart pass ends.
 //
-// It replaces the bare boolean this contract used to return. That boolean was
-// documented as "mounted file contents were modified" and consumed as "delete
-// and re-create the container", which are not the same claim: a configurator
-// can need a recreate without writing anything (a running instance that never
-// picked up an earlier write), and a file write does not always mean the
-// container has to be replaced. One field carrying both meanings made every app
-// pick its own reading, and nothing could tell a self-heal signal from a config
-// diff.
-//
-// The field is therefore named for the side effect the orchestrator performs on
-// it, not for what the configurator did to the filesystem.
+// The field is named for the side effect the orchestrator performs on it, not for
+// what the configurator did to the filesystem. The two are different claims: a
+// configurator can need a recreate without writing anything (a running instance
+// that never picked up an earlier write), and a file write does not always mean
+// the container has to be replaced. Keeping the recreate decision explicit is
+// what stops each app reading the signal its own way.
 type PreStartResult struct {
 	// RestartNeeded is true when the container must be removed and created
 	// again for reality to match intent. Report it when the running container
@@ -87,7 +82,10 @@ func (r PreStartResult) Or(other PreStartResult) PreStartResult {
 // NodeLifecycle handles the lifecycle of a single app node.
 // All methods must be idempotent - safe to call repeatedly.
 type NodeLifecycle interface {
-	// Name returns the app name this configurator handles.
+	// Name returns the graph node this configurator manages. That node name is also
+	// the container name the host-agent reconciles it under (apps-<app>), so an
+	// app keeps it in one constant and reads it from both its registration key
+	// and this method: the two cannot drift apart.
 	Name() string
 
 	// PreStart runs before the container starts.

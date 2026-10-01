@@ -127,9 +127,9 @@ func TestPodmanRuntimeRemoveRefusesUnmanagedContainer(t *testing.T) {
 	assert.Empty(t, client.removed)
 }
 
-// The recreate path must honour the same ownership guard Remove does. It
-// used to call the raw client directly, so a container that merely shared
-// a name with a Bloud spec was destroyed without any check.
+// The recreate path must honour the same ownership guard Remove does: calling the
+// raw client directly would destroy any container that merely shares a name with
+// a Bloud spec, unchecked.
 func TestPodmanRuntimeEnsureRefusesUnmanagedContainer(t *testing.T) {
 	client := &fakePodmanClient{
 		current: &podman.ContainerDetails{Name: "apps-jellyfin", State: "running"},

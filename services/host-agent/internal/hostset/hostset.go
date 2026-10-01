@@ -47,10 +47,10 @@ const DefaultPublicURL = "http://localhost:8080"
 // the plain http default.
 var builtinPorts = map[string]int{"localhost": 8080}
 
-// Scheme is the protocol an address is served under. It lives in the model
-// because a hard-coded "http" used to propagate from here into the OIDC
-// issuer, every OAuth redirect URI, every launch URL, and the outpost's
-// browser URL the moment a TLS terminator sat in front of Bloud.
+// Scheme is the protocol an address is served under. It lives in the model because
+// a hard-coded "http" here would propagate into the OIDC issuer, every OAuth
+// redirect URI, every launch URL, and the outpost's browser URL the moment a TLS
+// terminator sits in front of Bloud.
 type Scheme string
 
 const (

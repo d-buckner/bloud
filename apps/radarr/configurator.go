@@ -31,9 +31,8 @@ var app = servarr.PVRApp{
 	DownloadCategory:      "movie-radarr",
 }
 
-// nodeName is the graph node / container name the host-agent reconciles. It is
-// derived rather than written out so the registration key and the
-// configurator's own Name() cannot drift apart.
+// nodeName is this app's graph node and container name; see NodeLifecycle.Name.
+// Derived rather than written out, so the registration key and Name() match.
 var nodeName = app.NodeName()
 
 type Configurator = servarr.PVRConfigurator

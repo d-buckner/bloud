@@ -22,11 +22,10 @@ func TestCrashRecoveryViaReconcile(t *testing.T) {
 		t.Skip("BLOUD_E2E_HOST_AGENT_UNIT not set; skipping crash recovery test")
 	}
 
-	// Install the app this test crashes, rather than waiting for another test
-	// to install it: Go runs tests in file order, and
-	// crash_recovery_test.go sorts before jellyfin_test.go, so the wait used
-	// to run against an app that was not installed yet and time out with an
-	// empty status.
+	// Install the app this test crashes rather than waiting for another test to install
+	// it: Go runs tests in file order, and crash_recovery_test.go sorts before
+	// jellyfin_test.go, so waiting would run against an app that is not installed yet
+	// and time out with an empty status.
 	postJSON(t, hostAgentURL+"/api/apps/jellyfin/install", `{}`, http.StatusAccepted)
 	waitAppRunning(t, "jellyfin", 5*time.Minute)
 	waitHTTPOrFatal(t, 60*time.Second, jellyfinURL+"/health")

@@ -7,12 +7,11 @@ import (
 	"testing"
 )
 
-// TestModelsURLNeverInventsAPrefix is the regression that matters. The probe
-// used to fall back to origin+"/v1/models" whenever the entered path was not
-// already /v1, so an endpoint typed without its API base path passed the
-// settings check while every real call the app made 404'd: the check was
-// reporting on a URL nothing would ever dial. The probe has to test the base
-// the client appends /chat/completions to, which is the endpoint as entered.
+// TestModelsURLNeverInventsAPrefix: the probe has to test the base the client
+// appends /chat/completions to, which is the endpoint as entered. Falling back to
+// origin+"/v1/models" when the entered path is not already /v1 would let an
+// endpoint typed without its API base path pass the settings check while every
+// real call the app makes 404s, reporting on a URL nothing would ever dial.
 func TestModelsURLNeverInventsAPrefix(t *testing.T) {
 	cases := []struct {
 		in   string

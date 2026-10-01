@@ -34,16 +34,13 @@ import (
 const maxOrchestratorEvents = 20
 
 // DefaultPostStartBudget bounds a node's PostStart finalization when the
-// configured OrchestratorConfig.PostStartBudget is zero. It replaces the
-// per-app detach-and-timeout the apps used to implement themselves.
+// configured OrchestratorConfig.PostStartBudget is zero.
 //
 // It is appclient.MaxWaitBudget rather than a smaller number of its own
-// choosing: an app's declared readiness wait (appclient.Within) has to fit
-// under this ceiling or the framework cancels it before its own deadline can
-// fire, which is the same silent-truncation failure the wait budget used to
-// have. The two constants are deliberately the same value, pinned by the
-// apps/configtest harness rule that checks every declared wait against
-// MaxWaitBudget.
+// choosing: an app's declared readiness wait (appclient.Within) has to fit under
+// this ceiling or the framework cancels it before its own deadline can fire. The
+// two constants are deliberately the same value, pinned by the apps/configtest
+// harness rule that checks every declared wait against MaxWaitBudget.
 const DefaultPostStartBudget = appclient.MaxWaitBudget
 
 // OrchestratorStatus is a snapshot of the orchestrator's current state for
@@ -77,11 +74,9 @@ type OrchestratorConfig struct {
 	// HealthCheckTimeout limits how long each app's HealthCheck can run.
 	// Zero means no timeout (the caller's context deadline applies).
 	HealthCheckTimeout time.Duration
-	// PostStartBudget bounds how long a node's PostStart finalization wait may
-	// run before the framework cancels it. It is the ceiling the apps used to
-	// set themselves (jellyfin's 90s / homeassistant's per-app timeout) lifted
-	// into the framework so the budget is uniform and Stop() can still interrupt
-	// the call. Zero means use DefaultPostStartBudget.
+	// PostStartBudget bounds how long a node's PostStart finalization wait may run
+	// before the framework cancels it, so the budget is uniform across apps and
+	// Stop() can still interrupt the call. Zero means use DefaultPostStartBudget.
 	PostStartBudget time.Duration
 
 	// LDAPOutput is the LDAP provider endpoint injected into apps with

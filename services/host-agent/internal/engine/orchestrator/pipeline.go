@@ -279,7 +279,6 @@ func (o *Orchestrator) applySetPublicURLIntent(intent SetPublicURLIntent) {
 	// change. The base URL is compared rather than the raw string, so a save
 	// that only reformatted the same origin (trailing slash, an explicit
 	// default port, mixed case) does not restart every SSO app for nothing.
-	// The old guard compared whole host lists, which the model no longer has.
 	if o.hosts != nil && o.hosts.Get().PrimaryBaseURL() == hs.PrimaryBaseURL() {
 		o.logger.Info("public url unchanged, skipping side effects", "url", hs.PrimaryBaseURL())
 		return

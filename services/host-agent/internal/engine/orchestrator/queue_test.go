@@ -139,13 +139,12 @@ func TestWaitAndDrain_CtxCancelledDuringCoalesce(t *testing.T) {
 	assert.False(t, live, "cancellation must be reported as shutdown")
 }
 
-// TestWaitAndDrain_StaleTokenIsLiveEmptyBatch reproduces the exact state
-// that used to end reconciliation forever: a coalescing timer that won the
-// select while a signal token was still buffered (emulated here by draining
-// the items away under the race-free conditions the interleaving produces).
-// Waking on a token with nothing queued must be an empty LIVE batch, never
-// a shutdown report: under the old nil-means-stopped contract, one such
-// wake stopped the orchestrator forever while Submits kept answering 202.
+// TestWaitAndDrain_StaleTokenIsLiveEmptyBatch covers a coalescing timer that wins
+// the select while a signal token is still buffered (emulated here by draining
+// the items away under the race-free conditions that interleaving produces).
+// Waking on a token with nothing queued must be an empty LIVE batch, never a
+// shutdown report: if nil read as stopped, one such wake would stop the
+// orchestrator forever while Submits kept answering 202.
 func TestWaitAndDrain_StaleTokenIsLiveEmptyBatch(t *testing.T) {
 	q := NewIntentQueue(50 * time.Millisecond)
 	q.Enqueue(NewInstallAppIntent("jellyfin"))

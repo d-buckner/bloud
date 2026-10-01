@@ -14,11 +14,11 @@ type ReadyFunc func(status int, body []byte) bool
 
 // Ready switches the call into wait mode with the given readiness predicate.
 //
-// A wait defaults to WaitPolicy, not to the client's DefaultRetry: waiting out
-// an app's first-boot migrations is a different job from riding out a network
-// blip, and the short default attempt budget is what used to land a slow-booting
-// app in a terminal ERROR that the orchestrator never retries. An explicit
-// WithRetry, set before or after this call, still wins.
+// A wait defaults to WaitPolicy, not to the client's DefaultRetry: waiting out an
+// app's first-boot migrations is a different job from riding out a network blip,
+// and the short default attempt budget would land a slow-booting app in a
+// terminal ERROR that the orchestrator never retries. An explicit WithRetry, set
+// before or after this call, still wins.
 func (x *Call) Ready(p ReadyFunc) *Call {
 	x.ready = p
 	if x.stable <= 0 {
