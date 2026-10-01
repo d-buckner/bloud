@@ -9,7 +9,6 @@
 		type AIUpstream
 	} from '$lib/clients/settingsClient';
 	import Button from '$lib/components/Button.svelte';
-	import ErrorState from '$lib/components/ErrorState.svelte';
 
 	let settings = $state<AISettings | null>(null);
 	let loading = $state(true);
@@ -115,7 +114,7 @@
 	}
 </script>
 
-<section class="section">
+<section class="section ai-section">
 	<h2>AI</h2>
 	<p class="section-description">
 		Point Bloud at an OpenAI-compatible server and every app that uses models
@@ -126,54 +125,85 @@
 	</p>
 
 	{#if loading}
-		<div class="loading-state">Loading AI settings…</div>
+		<div class="loading-state"><p>Loading AI settings...</p></div>
 	{:else}
 		<form class="ai-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
-			<div class="field-row">
-				<div class="field">
+			<div class="form-field">
+				<label for="ai-base-url">Base URL</label>
+				<input
+					id="ai-base-url"
+					type="text"
+					placeholder="https://api.example.com/v1"
+					bind:value={baseUrl}
+					disabled={saving}
+					autocomplete="off"
+					spellcheck="false"
+				/>
+			</div>
+
+			<div class="form-field">
+				<label for="ai-key">
+					API key
+					{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
+				</label>
+				<input
+					id="ai-key"
+					type="password"
+					placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
+					bind:value={apiKey}
+					disabled={saving}
+					autocomplete="off"
+				/>
+				<span class="hint">
+					{hasApiKey
+						? 'Leave blank to keep the stored key.'
+						: 'Stored in the secrets manager, never read back by the browser.'}
+				</span>
+			</div>
+
+			<div class="form-row">
+				<div class="form-field">
 					<label for="ai-name">Name</label>
 					<input id="ai-name" type="text" bind:value={name} disabled={saving} autocomplete="off" />
 				</div>
-				<div class="field">
-					<label for="ai-base-url">Base URL</label>
-					<input
-						id="ai-base-url"
-						type="text"
-						placeholder="https://api.example.com/v1"
-						bind:value={baseUrl}
-						disabled={saving}
-						autocomplete="off"
-						spellcheck="false"
-					/>
+				<div class="form-field">
+					<label for="ai-model">Default model</label>
+					{#if models.length > 0}
+						<select id="ai-model" bind:value={defaultModel} disabled={saving}>
+							<option value="">(none)</option>
+							{#each models as model (model)}
+								<option value={model}>{model}</option>
+							{/each}
+						</select>
+					{:else}
+						<input
+							id="ai-model"
+							type="text"
+							placeholder="test the connection to list models"
+							bind:value={defaultModel}
+							disabled={saving}
+							autocomplete="off"
+							spellcheck="false"
+						/>
+					{/if}
 				</div>
 			</div>
 
-			<div class="field-row">
-				<div class="field">
-					<label for="ai-key">
-						API key
-						{#if hasApiKey}<span class="pill pill-success">stored</span>{/if}
-					</label>
-					<input
-						id="ai-key"
-						type="password"
-						placeholder={hasApiKey ? 'unchanged' : 'sk-...'}
-						bind:value={apiKey}
-						disabled={saving}
-						autocomplete="off"
-					/>
-				</div>
-				<div class="field field-action">
-					<span class="label-spacer" aria-hidden="true"></span>
-					<Button
-						variant="secondary"
-						type="button"
-						onclick={handleTest}
-						disabled={!baseUrl.trim() || testing}
-					>
-						{testing ? 'Testing…' : 'Test connection'}
-					</Button>
-				</div>
+			<div class="actions">
+				<Button variant="primary" type="submit" disabled={!dirty || saving}>
+					{saving ? 'Applying…' : 'Save'}
+				</Button>
+				<Button
+					variant="secondary"
+					type="button"
+					onclick={handleTest}
+					disabled={!baseUrl.trim() || testing}
+				>
+					{testing ? 'Testing…' : 'Test connection'}
+				</Button>
+				{#if saved}
+					<span class="saved-note">Saved. Apps pick this up on their next pass.</span>
+				{/if}
 			</div>
 
 			{#if testResult}
@@ -181,65 +211,42 @@
 					{testResult}
 				</p>
 			{/if}
-
-			<div class="field">
-				<label for="ai-model">Default model</label>
-				{#if models.length > 0}
-					<select id="ai-model" bind:value={defaultModel} disabled={saving}>
-						<option value="">(none)</option>
-						{#each models as model (model)}
-							<option value={model}>{model}</option>
-						{/each}
-					</select>
-				{:else}
-					<input
-						id="ai-model"
-						type="text"
-						placeholder="test the connection to pick from the live list"
-						bind:value={defaultModel}
-						disabled={saving}
-						autocomplete="off"
-						spellcheck="false"
-					/>
-				{/if}
-			</div>
-
-			<div class="actions">
-				<Button variant="primary" type="submit" disabled={!dirty || saving}>
-					{saving ? 'Applying…' : 'Save'}
-				</Button>
-				{#if saved}
-					<span class="saved-note">Saved. Apps pick this up on their next pass.</span>
-				{/if}
-			</div>
 		</form>
 	{/if}
 
 	{#if error}
-		<div class="error-box"><ErrorState message={error} /></div>
+		<div class="error-message">{error}</div>
 	{/if}
 
 	{#if servedTo.length > 0}
 		<div class="served-to">
 			<h3>Served to</h3>
-			<ul>
+			<div class="served-list">
 				{#each servedTo as consumer (consumer.app)}
-					<li>
+					<div class="served-row">
 						<span class="consumer-name">{consumer.app}</span>
 						<span class="pill" class:pill-info={consumer.via === 'gateway'} class:pill-error={consumer.via === 'none'}>
 							{consumer.via}
 						</span>
 						{#if consumer.model}<span class="consumer-model">{consumer.model}</span>{/if}
-					</li>
+					</div>
 				{/each}
-			</ul>
+			</div>
 		</div>
 	{/if}
 </section>
 
 <style>
+	/* The section shell matches the other settings sections (Address, Tailnet,
+	   Users) exactly: same measure, same separator, same heading and
+	   description type. This component renders between Address and Tailnet, so
+	   it has to carry its own rule -- the page's separator selector does not
+	   reach into a child component's scoped styles. */
 	.section {
 		max-width: 560px;
+		margin-top: var(--space-2xl);
+		padding-top: var(--space-2xl);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.section h2 {
@@ -264,89 +271,77 @@
 	.ai-form {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: var(--space-lg);
 	}
 
-	.field-row {
-		display: flex;
-		gap: var(--space-md);
-		align-items: flex-start;
-	}
-
-	/* Field styling follows the house form pattern (ShareModal): serif inputs on
-	   the base background, muted label, accent border on focus. */
-	.field {
+	/* Field styling follows the settings page form pattern: serif inputs on the
+	   elevated background, small semibold secondary label, accent border plus
+	   soft ring on focus. */
+	.form-field {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-xs);
-		flex: 1;
 		min-width: 0;
 	}
 
-	.field label {
-		font-size: 0.875rem;
-		color: var(--color-text-muted);
-	}
-
-	.field input,
-	.field select {
-		width: 100%;
-		padding: var(--space-sm) var(--space-md);
-		font-size: 1rem;
-		font-family: var(--font-serif);
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		color: var(--color-text);
-	}
-
-	.field input:focus,
-	.field select:focus {
-		outline: none;
-		border-color: var(--color-accent);
-	}
-
-	.field input:disabled,
-	.field select:disabled {
-		background: var(--color-bg-subtle);
-		color: var(--color-text-muted);
-	}
-
-	.field input::placeholder,
-	.field select::placeholder {
-		color: var(--color-text-muted);
-	}
-
-	.field-action {
-		flex: 0 0 auto;
-	}
-
-	/* Keeps the button baseline aligned with the input in the row beside it,
-	   since this field has no visible label of its own. */
-	.label-spacer {
-		display: block;
-		height: calc(0.875rem + var(--space-xs));
-	}
-
-	.test-result {
-		margin: 0;
-		font-size: 0.875rem;
+	.form-field label {
+		font-size: 0.8125rem;
+		font-weight: 500;
 		color: var(--color-text-secondary);
 	}
 
-	.test-result.ok {
-		color: var(--color-success);
+	.form-field input,
+	.form-field select {
+		padding: var(--space-sm) var(--space-md);
+		font-family: var(--font-serif);
+		font-size: 0.9375rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-elevated);
+		color: var(--color-text);
+		transition: border-color 0.15s ease;
 	}
 
-	.test-result.fail {
-		color: var(--color-error);
+	.form-field input:focus,
+	.form-field select:focus {
+		outline: none;
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px rgba(28, 25, 23, 0.08);
+	}
+
+	.form-field input::placeholder,
+	.form-field select::placeholder {
+		color: var(--color-text-muted);
+	}
+
+	.form-field input:disabled,
+	.form-field select:disabled {
+		background: var(--color-bg-subtle);
+		color: var(--color-text-muted);
+		cursor: not-allowed;
+	}
+
+	.form-row {
+		display: flex;
+		gap: var(--space-md);
+		flex-wrap: wrap;
+	}
+
+	.form-row .form-field {
+		flex: 1;
+		min-width: 140px;
+	}
+
+	.hint {
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--color-text-muted);
 	}
 
 	.actions {
 		display: flex;
 		align-items: center;
-		gap: var(--space-md);
-		margin-top: var(--space-sm);
+		gap: var(--space-sm);
 	}
 
 	.saved-note {
@@ -354,20 +349,47 @@
 		color: var(--color-text-muted);
 	}
 
-	.error-box {
-		margin-top: var(--space-md);
-		padding: var(--space-md);
-		background: var(--color-error-bg);
+	/* Test feedback uses the same tinted-panel shape as the page's error
+	   message, so a result reads as a status rather than as stray text. */
+	.test-result {
+		margin: 0;
+		padding: var(--space-sm) var(--space-md);
+		font-size: 0.875rem;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
+		background: var(--color-bg-subtle);
+		color: var(--color-text-secondary);
+	}
+
+	.test-result.ok {
+		color: var(--color-success);
+		background: var(--color-success-bg);
+		border-color: rgba(22, 101, 52, 0.15);
+	}
+
+	.test-result.fail {
+		color: var(--color-error);
+		background: var(--color-error-bg);
+		border-color: rgba(153, 27, 27, 0.15);
+	}
+
+	.error-message {
+		margin-top: var(--space-md);
+		padding: var(--space-sm) var(--space-md);
+		font-size: 0.875rem;
+		color: var(--color-error);
+		background: var(--color-error-bg);
+		border: 1px solid rgba(153, 27, 27, 0.15);
 		border-radius: var(--radius-md);
 	}
 
 	.pill {
 		display: inline-block;
 		margin-left: var(--space-xs);
-		padding: 1px var(--space-sm);
-		border-radius: 999px;
+		padding: 2px 8px;
+		border-radius: 9999px;
 		font-size: 0.6875rem;
+		font-weight: 500;
 		background: var(--color-bg-subtle);
 		color: var(--color-text-muted);
 		border: 1px solid var(--color-border);
@@ -377,52 +399,59 @@
 	.pill-success {
 		background: var(--color-success-bg);
 		color: var(--color-success);
+		border-color: rgba(22, 101, 52, 0.15);
 	}
 
 	.pill-info {
 		background: var(--color-info-bg);
 		color: var(--color-info);
+		border-color: rgba(12, 74, 110, 0.15);
 	}
 
 	.pill-error {
 		background: var(--color-error-bg);
 		color: var(--color-error);
+		border-color: rgba(153, 27, 27, 0.15);
 	}
 
 	.served-to {
-		margin-top: var(--space-xl);
+		margin-top: var(--space-2xl);
 	}
 
 	.served-to h3 {
-		margin: 0 0 var(--space-sm) 0;
-		font-size: 0.875rem;
+		margin: 0 0 var(--space-md) 0;
+		font-size: 0.9375rem;
 		font-weight: 500;
-		color: var(--color-text-secondary);
 	}
 
-	.served-to ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
+	/* Consumers render as rows in an elevated card, the way the Users list and
+	   the tailnet connection card do, rather than as a bare list. */
+	.served-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--space-sm);
 	}
 
-	.served-to li {
+	.served-row {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--color-bg-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
 		font-size: 0.9375rem;
 	}
 
 	.consumer-name {
 		color: var(--color-text);
+		font-weight: 500;
 	}
 
 	/* The model id is an identifier the operator may need to copy verbatim, so
 	   it stays monospaced the way the settings page renders other machine values. */
 	.consumer-model {
+		margin-left: auto;
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 		color: var(--color-text-muted);
