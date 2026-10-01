@@ -319,10 +319,8 @@ func requestScheme(r *http.Request) hostset.Scheme {
 // earlier. Anonymous traffic cannot reach it, and once any user exists the
 // handler 409s before this point is ever reached.
 //
-// It is deliberately not wired into /auth/login. An unauthenticated login
-// redirect must never widen the OAuth client's redirect-URI allowlist; that
-// is exactly the hole the earlier lazy AddRedirectURI opened and which was
-// removed for it.
+// It is deliberately not wired into /auth/login: an unauthenticated login
+// redirect must never widen the OAuth client's redirect-URI allowlist.
 //
 // Returns the origin it adopted, or "" when there was nothing to adopt
 // (already the public address, an unusable Host header, or no orchestrator to
