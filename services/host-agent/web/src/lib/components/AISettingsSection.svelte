@@ -120,8 +120,7 @@
 		Point Bloud at an OpenAI-compatible server and every app that uses models
 		follows. The key is stored in the secrets manager and is never read back
 		by the browser. Apps adopt the default model only where they have not
-		picked one themselves; installing a gateway app like LiteLLM takes over
-		from the instance setting automatically.
+		picked one themselves.
 	</p>
 
 	{#if loading}
