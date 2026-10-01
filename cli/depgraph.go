@@ -276,6 +276,15 @@ func extractGraphBlock(content string) (string, bool) {
 
 // spliceGraphBlock swaps the target's generated block for a new one and
 // leaves the rest of the document byte-for-byte alone.
+//
+// The replacement is the block with its trailing newline dropped. The
+// renderer ends the block with a newline, but the newline that terminates
+// the end-marker line belongs to the document, not to the block, and it
+// sits outside the replaced span. Splicing the rendered bytes verbatim
+// therefore left both behind: every --write grew the file by one blank
+// line, which made the merge-to-main refresh diff on every run and commit
+// whitespace-only commits forever. Trimming the generated tail makes the
+// write a fixed point: writing the same block twice changes nothing.
 func spliceGraphBlock(content, generated string) (string, bool) {
 	begin := strings.Index(content, graphBeginMarker)
 	if begin < 0 {
@@ -286,7 +295,7 @@ func spliceGraphBlock(content, generated string) (string, bool) {
 		return content, false
 	}
 	absEnd := begin + relEnd + len(graphEndMarker)
-	return content[:begin] + generated + content[absEnd:], true
+	return content[:begin] + strings.TrimRight(generated, "\n") + content[absEnd:], true
 }
 
 // normalizeGraph trims the trailing newline and surrounding blank lines so a

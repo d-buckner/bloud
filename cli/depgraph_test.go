@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -600,14 +601,87 @@ func TestSpliceGraphBlockKeepsTheRestOfTheDocument(t *testing.T) {
 		t.Fatal("splice reported no block, but the markers are present")
 	}
 	// Everything outside the markers is preserved byte for byte, including
-	// the blank lines the document already had after the end marker.
-	want := "# Doc\n\nIntro text.\n\n" + generated + "\n\nOutro.\n"
+	// the blank lines the document already had after the end marker. The
+	// block itself contributes no newline of its own at the seam: the one
+	// that terminated the end-marker line is the document's, so the blank
+	// line after the marker is still exactly one blank line.
+	want := "# Doc\n\nIntro text.\n\n" + strings.TrimRight(generated, "\n") + "\n\nOutro.\n"
 	if updated != want {
 		t.Errorf("splice changed more than the block:\ngot:\n%s\nwant:\n%s", updated, want)
 	}
 
 	if _, ok := spliceGraphBlock("# nothing here\n", generated); ok {
 		t.Error("splice succeeded on a document with no markers")
+	}
+}
+
+// TestSpliceGraphBlockIsIdempotent pins the property the merge-to-main
+// refresh depends on. That job runs --write on every merge and commits
+// only when the file changed, so a writer that adds a blank line on each
+// pass makes the guard always fire: it shipped whitespace-only commits and
+// a tail of blank lines that grew with every catalog change.
+func TestSpliceGraphBlockIsIdempotent(t *testing.T) {
+	generated := graphBeginMarker + "\nfresh content\n" + graphEndMarker + "\n"
+
+	cases := map[string]string{
+		"block ends the file with blank lines": "# Doc\n\n" + graphBeginMarker + "\nold\n" + graphEndMarker + "\n\n\n",
+		"block ends the file cleanly":          "# Doc\n\n" + graphBeginMarker + "\nold\n" + graphEndMarker + "\n",
+		"block is followed by more prose":      "# Doc\n\n" + graphBeginMarker + "\nold\n" + graphEndMarker + "\n\nOutro.\n",
+	}
+
+	for name, original := range cases {
+		current := original
+		var first string
+		for pass := 1; pass <= 3; pass++ {
+			var ok bool
+			current, ok = spliceGraphBlock(current, generated)
+			if !ok {
+				t.Fatalf("%s: splice pass %d reported no block", name, pass)
+			}
+			if pass == 1 {
+				first = current
+				// The document's own ending is the ending: the block
+				// does not bring a second newline to the party.
+				if strings.Count(current, "\n") != strings.Count(original, "\n") {
+					t.Errorf("%s: first write changed the line count %d -> %d:\n%q",
+						name, strings.Count(original, "\n"), strings.Count(current, "\n"), current)
+				}
+				continue
+			}
+			if current != first {
+				t.Errorf("%s: pass %d changed the file again:\nfirst:\n%q\nafter:\n%q", name, pass, first, current)
+			}
+		}
+	}
+}
+
+// TestWriteGraphBlockIsIdempotentOnDisk covers the same property through
+// the mode CI actually runs: a second --write over a file that is already
+// current must report current, not rewrite a longer file.
+func TestWriteGraphBlockIsIdempotentOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	original := "# Doc\n\nIntro.\n\n" + graphBeginMarker + "\nstale\n" + graphEndMarker + "\n\nOutro.\n"
+	generated := graphBeginMarker + "\nfresh\n" + graphEndMarker + "\n"
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if code := writeGraphBlock(dir, "README.md", generated); code != 0 {
+		t.Fatalf("first writeGraphBlock = %d, want 0", code)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := writeGraphBlock(dir, "README.md", generated); code != 0 {
+		t.Fatalf("second writeGraphBlock = %d, want 0", code)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Errorf("second write changed the file (%d -> %d bytes):\n%s", len(first), len(second), second)
 	}
 }
 
