@@ -16,7 +16,7 @@ into the graph node instead of only into the store, so the reconciler acts
 on it, and `Ensure` pulls before it destroys. See "Already Paid" below and
 [`specs/REFACTOR_LATEST.md`](../../specs/REFACTOR_LATEST.md).)
 Prior update 2026-09-25 (item 6 closed: the readiness/wait contract is
-now honoured, and the wait budget is single-sourced and harness-enforced).
+now honored, and the wait budget is single-sourced and harness-enforced).
 Prior update 2026-09-26 (reconciliation audit against the working tree).
 The ranked inventory is whole again: items 5-10 are restored (the table
 previously jumped from 4 to 11, hiding the still-open P1 items 6, 8, 9 and
@@ -97,7 +97,7 @@ host-agent, both inside `isLocalRequest` (`auth_module.go:100,102`); the
 forwarded-header surface is three reads total, all in the same file
 (`:135` `X-Forwarded-Host`, `:161` `X-Forwarded-Proto`). Nothing else uses
 client IP: no rate limiting, no source-keyed audit log. The bypass can
-therefore be removed with no behavioural regression beyond the bypass itself.
+therefore be removed with no behavioral regression beyond the bypass itself.
 
 **This was a shipping blocker**, and the cheapest high-impact change in the
 repo. **What closed it (2026-09-19):**
@@ -737,7 +737,7 @@ the CLI's curl runs host-side while the token file lives in the guest, so
 
 Nil-guarded the catalog lookup; `MemoryCache` is lock-protected with an
 off-lock build + swap-on-refresh; `WaitAndDrain` distinguishes "empty"
-from "cancelled" and `Start` exits only on cancellation. The health
+from "canceled" and `Start` exits only on cancellation. The health
 surface can now see a dead orchestrator (`Stopped()` + `LastConverged()`
 feed `CheckSystemHealth`); the rest of PR 11's degraded-payload /
 startup-gate scope is still open.
@@ -750,11 +750,11 @@ so `SkipIf` matches and the per-pass re-download plus destructive container
 recreate are gone (the conformance harness caught the mismatch against the
 real manifest).
 
-The appclient half closed the same day. `Call.Timeout` is honoured as a
+The appclient half closed the same day. `Call.Timeout` is honored as a
 per-request deadline, `Ready()` defaults to `WaitPolicy` as its own doc
 always claimed, and the total wait budget is a distinct `Within(d)`. The
-choice between "honour it" and "delete it and fail loudly" turned out not to
-be binary: honouring `Timeout` needed a second method anyway, because
+choice between "honor it" and "delete it and fail loudly" turned out not to
+be binary: honoring `Timeout` needed a second method anyway, because
 "how long one probe may take" and "how long the whole wait may take" are
 different numbers and the old single method was being used to mean the
 second one.

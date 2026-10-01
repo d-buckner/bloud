@@ -109,10 +109,10 @@ func TestWaitAndDrain_ResetsOnNewArrival(t *testing.T) {
 	}
 }
 
-// TestWaitAndDrain_CtxCancelledOnEmptyQueue reports live=false when
-// cancelled before any intent arrives. Cancellation is the only shutdown
+// TestWaitAndDrain_CtxCanceledOnEmptyQueue reports live=false when
+// canceled before any intent arrives. Cancellation is the only shutdown
 // signal WaitAndDrain gives.
-func TestWaitAndDrain_CtxCancelledOnEmptyQueue(t *testing.T) {
+func TestWaitAndDrain_CtxCanceledOnEmptyQueue(t *testing.T) {
 	q := NewIntentQueue(time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -122,9 +122,9 @@ func TestWaitAndDrain_CtxCancelledOnEmptyQueue(t *testing.T) {
 	assert.False(t, live, "cancellation must be reported as shutdown")
 }
 
-// TestWaitAndDrain_CtxCancelledDuringCoalesce returns the accumulated intents
+// TestWaitAndDrain_CtxCanceledDuringCoalesce returns the accumulated intents
 // instead of dropping them, and reports shutdown.
-func TestWaitAndDrain_CtxCancelledDuringCoalesce(t *testing.T) {
+func TestWaitAndDrain_CtxCanceledDuringCoalesce(t *testing.T) {
 	q := NewIntentQueue(5 * time.Second)
 	q.Enqueue(NewInstallAppIntent("jellyfin"))
 

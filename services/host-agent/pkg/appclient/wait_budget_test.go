@@ -22,16 +22,16 @@ import (
 // never retries.
 
 // blockingHandler sleeps up to sleepFor, but reports immediately if the
-// request's own context is cancelled first, so a test can tell "the server
+// request's own context is canceled first, so a test can tell "the server
 // was slow" apart from "the client's per-request deadline fired".
 //
-// `cancelled` is a channel rather than a flag because the handler runs on its
+// `canceled` is a channel rather than a flag because the handler runs on its
 // own goroutine: the client is finished the instant its deadline fires, and
 // the scheduler owes the handler nothing, so a caller that reads a bool right
 // after Do() returns is racing a goroutine. A buffered channel lets the test
 // wait for the observation instead of guessing at its timing. Send is
 // non-blocking so a handler invoked more than once cannot wedge the test.
-func blockingHandler(sleepFor time.Duration, cancelled chan<- struct{}, calls *atomic.Int32) http.Handler {
+func blockingHandler(sleepFor time.Duration, canceled chan<- struct{}, calls *atomic.Int32) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls != nil {
 			calls.Add(1)
@@ -41,9 +41,9 @@ func blockingHandler(sleepFor time.Duration, cancelled chan<- struct{}, calls *a
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ready"))
 		case <-r.Context().Done():
-			if cancelled != nil {
+			if canceled != nil {
 				select {
-				case cancelled <- struct{}{}:
+				case canceled <- struct{}{}:
 				default:
 				}
 			}
@@ -54,8 +54,8 @@ func blockingHandler(sleepFor time.Duration, cancelled chan<- struct{}, calls *a
 }
 
 func TestTimeout_AppliesARealPerRequestDeadline(t *testing.T) {
-	cancelled := make(chan struct{}, 1)
-	srv := httptest.NewServer(blockingHandler(2*time.Second, cancelled, nil))
+	canceled := make(chan struct{}, 1)
+	srv := httptest.NewServer(blockingHandler(2*time.Second, canceled, nil))
 	t.Cleanup(srv.Close)
 
 	c := New(Spec{Name: "test", BaseURL: srv.URL})
@@ -73,7 +73,7 @@ func TestTimeout_AppliesARealPerRequestDeadline(t *testing.T) {
 	// is ever hit, the deadline genuinely did not cancel the request, which is
 	// the failure this test exists to catch.
 	select {
-	case <-cancelled:
+	case <-canceled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the per-request deadline must actually cancel the request (server never saw a client hang up)")
 	}
@@ -137,7 +137,7 @@ func TestWithin_AboveMaxWaitBudgetFailsAtWait(t *testing.T) {
 		Ready(StatusIs(http.StatusOK)).
 		Wait(context.Background())
 
-	require.Error(t, err, "a wait budget the framework cannot honour must fail loudly, not truncate")
+	require.Error(t, err, "a wait budget the framework cannot honor must fail loudly, not truncate")
 	assert.Contains(t, err.Error(), "MaxWaitBudget")
 }
 
@@ -220,6 +220,6 @@ func TestWait_CallerContextStillTerminal(t *testing.T) {
 		Within(10 * time.Second).
 		Ready(StatusIs(http.StatusOK)).
 		Wait(ctx)
-	require.Error(t, err, "a cancelled caller context must end the wait immediately")
+	require.Error(t, err, "a canceled caller context must end the wait immediately")
 	assert.LessOrEqual(t, calls.Load(), int32(1), "must not keep polling after cancellation")
 }

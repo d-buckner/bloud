@@ -72,7 +72,7 @@ func (q *IntentQueue) PendingCount() int {
 //     processing a previous batch) it waits out the debounce window, resetting
 //     on each new arrival, so a burst of intents coalesces into one batch.
 //
-// live is false only when ctx is cancelled; cancellation is the only shutdown
+// live is false only when ctx is canceled; cancellation is the only shutdown
 // condition. On cancellation any intents already queued are returned, not
 // dropped. An empty batch with live=true is possible: the coalescing timer can
 // win the select while a signal token is still buffered, leaving that token to
@@ -92,7 +92,7 @@ func (q *IntentQueue) WaitAndDrain(ctx context.Context) ([]Intent, bool) {
 			// an empty batch here is not shutdown.
 			return q.Drain(), true
 		case <-ctx.Done():
-			// Cancelled: hand back anything queued, and the only shutdown
+			// Canceled: hand back anything queued, and the only shutdown
 			// signal there is.
 			return q.Drain(), false
 		}
@@ -117,7 +117,7 @@ func (q *IntentQueue) WaitAndDrain(ctx context.Context) ([]Intent, bool) {
 			return q.Drain(), true
 
 		case <-ctx.Done():
-			// Context cancelled: return whatever we have.
+			// Context canceled: return whatever we have.
 			return q.Drain(), false
 		}
 	}

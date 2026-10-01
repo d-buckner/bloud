@@ -64,7 +64,7 @@ The configurator's **PreStart** (runs before every container start):
 
 Traefik runs on the **host network** and reaches HA over the published loopback
 port (`http://localhost:8123`), adding `X-Forwarded-*` headers on every request.
-Home Assistant refuses to honour `X-Forwarded-*` unless it is explicitly told it
+Home Assistant refuses to honor `X-Forwarded-*` unless it is explicitly told it
 sits behind a reverse proxy, and its forwarded middleware then rejects the
 proxied request (`homeassistant.components.http.forwarded` raises
 `HTTPBadRequest`). The symptom is a **`400: Bad Request` page after the Authentik

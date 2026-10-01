@@ -175,7 +175,7 @@ type ProviderRef struct {
 	// when the provider is wired to run before this app. A consumer that has an
 	// entry to prune uses it to tell "wire to this provider" from "the provider
 	// is gone"; the binding still carries the provider's address, from its
-	// catalog metadata, which is what a prune needs to recognise the entry Bloud
+	// catalog metadata, which is what a prune needs to recognize the entry Bloud
 	// wrote.
 	Installed bool
 	// Node is the provider's primary graph node, which is also its container

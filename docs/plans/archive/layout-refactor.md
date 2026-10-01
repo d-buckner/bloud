@@ -19,7 +19,7 @@ what is ultimately a polling problem: "what apps are installed and where are the
 
 ## Direction
 
-**Server owns positions. GridStack is the single source of truth for layout behaviour.**
+**Server owns positions. GridStack is the single source of truth for layout behavior.**
 
 - Positions flow server → GridStack on load/poll
 - GridStack settles items (auto-compaction, auto-position for new items)

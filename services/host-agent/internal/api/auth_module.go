@@ -364,7 +364,7 @@ type authModule struct {
 	selfPort        int
 	// hosts is the live host set (built-ins + admin custom hosts). OAuth
 	// redirect and logout URLs are derived from it, never from the request:
-	// LoginHandler registers those URLs in the identity provider, so honouring
+	// LoginHandler registers those URLs in the identity provider, so honoring
 	// a request header let any caller add redirect URIs to the OAuth client.
 	//
 	// There is deliberately no second URL source here (e.g. BLOUD_SSO_BASE_URL):

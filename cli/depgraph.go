@@ -479,7 +479,7 @@ func appDisplayName(app *AppMetadata) string {
 }
 
 // appBoxTitle is the mermaid box title: the display name, with system apps
-// labelled so the infrastructure the rest depends on reads as infrastructure.
+// labeled so the infrastructure the rest depends on reads as infrastructure.
 func appBoxTitle(app *AppMetadata) string {
 	title := appDisplayName(app)
 	if app.IsSystem {

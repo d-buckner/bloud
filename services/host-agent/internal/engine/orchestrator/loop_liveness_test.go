@@ -14,7 +14,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 )
 
-// Contract: the intent loop stops only when its context is cancelled. A stale
+// Contract: the intent loop stops only when its context is canceled. A stale
 // signal token (the coalescing timer winning the select while a token was still
 // buffered) must surface as an empty batch, never as shutdown: if a nil batch
 // read as stopped, one unlucky interleaving would end reconciliation forever

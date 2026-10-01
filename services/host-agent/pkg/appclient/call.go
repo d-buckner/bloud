@@ -28,7 +28,7 @@ type Call struct {
 	headers     map[string]string
 
 	timeoutOverride time.Duration
-	// budgetErr records a declared wait budget the framework cannot honour.
+	// budgetErr records a declared wait budget the framework cannot honor.
 	// Wait surfaces it instead of letting the wait be truncated in silence.
 	budgetErr    error
 	anonymous    bool

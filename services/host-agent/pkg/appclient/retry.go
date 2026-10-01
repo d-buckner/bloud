@@ -41,7 +41,7 @@ var DefaultRetry = RetryPolicy{
 
 // MaxWaitBudget is the longest total readiness wait an app may declare with
 // Within. The orchestrator's default PostStart budget is this same value, so
-// a wait declared longer than it would be cancelled by the framework before
+// a wait declared longer than it would be canceled by the framework before
 // its own deadline could ever be reached: the declared budget would be a lie
 // again, which is the exact failure this package had before.
 //

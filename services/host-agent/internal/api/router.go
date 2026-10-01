@@ -459,7 +459,7 @@ func rebuildStreamHandler() http.HandlerFunc {
 
 // authMiddlewareFn authenticates a request by one of two credentials:
 //
-//  1. The API token, honoured only from a trusted position (loopback or
+//  1. The API token, honored only from a trusted position (loopback or
 //     TrustedLocalNets). This is the CLI/automation credential and yields
 //     RoleAdmin.
 //  2. A session cookie, which carries its own role.

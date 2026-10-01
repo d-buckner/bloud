@@ -178,7 +178,7 @@ func TestRouter_LoopbackPositionIsNotEnough(t *testing.T) {
 func TestRouter_SessionSurvivesLoopbackPosition(t *testing.T) {
 	server := newAuthTestServer(t, func(c *ServerConfig) { c.APIToken = "s3cret-token" })
 
-	t.Run("member session is honoured, not promoted", func(t *testing.T) {
+	t.Run("member session is honored, not promoted", func(t *testing.T) {
 		cookie := newSession(t, server, "alice", store.RoleMember)
 		w := do(t, server, http.MethodGet, "/api/apps/installed", "127.0.0.1:44444", nil, cookie)
 		require.Equal(t, http.StatusOK, w.Code, "a member session from loopback still authenticates")

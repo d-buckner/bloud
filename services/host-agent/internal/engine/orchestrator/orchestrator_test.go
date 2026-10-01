@@ -925,7 +925,7 @@ func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing
 	node, err := to.g.GetNode("app")
 	require.NoError(t, err)
 	assert.NotEqual(t, graph.StatusError, node.ActualStatus,
-		"a shutdown-cancelled PostStart must not park the node in terminal ERROR")
+		"a shutdown-canceled PostStart must not park the node in terminal ERROR")
 	assert.Equal(t, graph.StatusPostStartConfig, node.ActualStatus,
 		"the node is left where the finalization was interrupted, to re-converge on next start")
 }

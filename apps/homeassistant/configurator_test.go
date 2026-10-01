@@ -377,7 +377,7 @@ func (s *apiServer) setTrustLive(v bool) {
 // restartContainer returns the host-runtime callback to inject into the
 // configurator's restartContainerFn (normally from Deps.RestartContainer). It models a real container stop+start:
 // the re-exec'd process re-reads the patched .storage/http, so it flips
-// trustLive (after trustFlipDelay, modelling restart latency) when
+// trustLive (after trustFlipDelay, modeling restart latency) when
 // restartAppliesTrust. restartAppliesTrust=false models a restart that never
 // reloads, so the forwarded-400 persists. Records each container name it is
 // asked to restart.

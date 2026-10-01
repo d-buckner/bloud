@@ -63,7 +63,7 @@ type Runtime interface {
 	Inspect(ctx context.Context, name string) (State, error)
 	// Exec runs a command inside a running container. Returns an error if the
 	// command exits with a non-zero status, the container is not running, or
-	// the context is cancelled.
+	// the context is canceled.
 	Exec(ctx context.Context, name string, cmd []string) error
 }
 

@@ -485,7 +485,7 @@ type SidecarManager struct {
 }
 
 // EnsureRunning starts the sidecar for appName if not already running.
-// Blocks until the tailnet address is available or ctx is cancelled.
+// Blocks until the tailnet address is available or ctx is canceled.
 func (m *SidecarManager) EnsureRunning(ctx context.Context, appName string, appPort int) error
 
 // GetAddr returns the current tailnet address of the sidecar, or error if not running.

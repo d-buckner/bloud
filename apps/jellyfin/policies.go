@@ -8,7 +8,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 )
 
-// Jellyfin's first-run behaviour needs specific poll shapes; each is declared
+// Jellyfin's first-run behavior needs specific poll shapes; each is declared
 // once here rather than hand-rolled per loop. Jitter is off so the cadence
 // matches the previous fixed sleeps (keeps cold-start timing predictable).
 const (

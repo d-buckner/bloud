@@ -62,7 +62,7 @@ func (x *Call) Wait(ctx context.Context) error {
 	if x.ready == nil {
 		return fmt.Errorf("%s: Wait called without a Ready predicate", x.c.name)
 	}
-	// A declared budget the framework cannot honour is a caller bug, not a
+	// A declared budget the framework cannot honor is a caller bug, not a
 	// runtime condition to discover by truncation. Fail loudly here.
 	if x.budgetErr != nil {
 		return x.budgetErr

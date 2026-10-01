@@ -290,7 +290,7 @@ func (c *Configurator) postStart(ctx context.Context, state *configurator.AppSta
 			return fmt.Errorf("reverse-proxy trust written but the container could not be restarted (%v); the next recreate applies it", err)
 		}
 	}
-	// Verify the RUNNING process actually honours forwarded headers before the
+	// Verify the RUNNING process actually honors forwarded headers before the
 	// node can be marked RUNNING, but only when there is trust on disk to
 	// verify (just-patched or already-trusted). When HA has not written its
 	// http entry yet (early onboarding) there is nothing to check and the wait
@@ -366,7 +366,7 @@ func managedBlock(oidc *configurator.OIDCOutput) string {
 // warning about it that is expected and accepted here.
 var trustedProxies = []string{"10.0.0.0/8"}
 
-// ensureReverseProxy makes an existing Home Assistant http config entry honour
+// ensureReverseProxy makes an existing Home Assistant http config entry honor
 // the X-Forwarded-* headers that Traefik adds in front of it. HA 2026.x
 // moved the http integration to a stored config entry (config/.storage/http)
 // and ignores the `http:` block in configuration.yaml entirely (it files a

@@ -557,7 +557,7 @@ func (o *Orchestrator) recordInstallNow(appName string) {
 }
 
 // Start runs an initial convergence pass and then processes intents as they
-// arrive. It blocks until the context is cancelled or Stop is called. Must be
+// arrive. It blocks until the context is canceled or Stop is called. Must be
 // called exactly once (typically via goroutine).
 func (o *Orchestrator) Start(ctx context.Context) {
 	ctx, o.cancel = context.WithCancel(ctx)
@@ -598,7 +598,7 @@ func (o *Orchestrator) Start(ctx context.Context) {
 		if len(intents) == 0 {
 			// A stale signal token can wake the wait with an empty queue
 			// (see IntentQueue.WaitAndDrain). The loop survives; only a
-			// cancelled context stops it.
+			// canceled context stops it.
 			continue
 		}
 		o.converge(ctx, intents)
@@ -1214,7 +1214,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 
 	// Phase 4: PostStart runs under the framework's PostStartBudget so the
 	// finalization wait is bounded and Stop() can interrupt it (apps no longer
-	// detach their own contexts). A failure whose cause is the cancelled pass
+	// detach their own contexts). A failure whose cause is the canceled pass
 	// context is an interruption, not a fault: leave the node where it is so the
 	// next start re-converges, rather than parking a shutdown in ERROR (R3).
 	if cfg != nil {

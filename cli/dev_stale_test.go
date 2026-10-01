@@ -225,7 +225,7 @@ func TestTakeoverPreviousDevLoopEscalatesToKill(t *testing.T) {
 
 // The pid came from a file written by a run that could have died at any
 // point, so the number may now belong to something unrelated. Only a real
-// `bloud dev` process may be signalled.
+// `bloud dev` process may be signaled.
 func TestTakeoverPreviousDevLoopSparesForeignProcess(t *testing.T) {
 	foreign := exec.Command("sleep", "300")
 	if err := foreign.Start(); err != nil {
@@ -284,18 +284,18 @@ func TestIsBloudDevProcess(t *testing.T) {
 	//
 	// Only the positive case needs this. The negative assertions below hold while
 	// the cmdline is unsettled too, so waiting on them would hide nothing.
-	recognised := false
+	recognized := false
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if isBloudDevProcess(loop.Process.Pid) {
-			recognised = true
+			recognized = true
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !recognised {
+	if !recognized {
 		raw, readErr := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", loop.Process.Pid))
-		t.Fatalf("a `bloud dev` process was not recognised: pid=%d cmdline=%q readErr=%v alive=%v",
+		t.Fatalf("a `bloud dev` process was not recognized: pid=%d cmdline=%q readErr=%v alive=%v",
 			loop.Process.Pid, string(raw), readErr, alive(loop.Process.Pid))
 	}
 

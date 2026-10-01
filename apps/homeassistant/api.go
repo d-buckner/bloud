@@ -97,7 +97,7 @@ func (a *haAPI) waitOIDCReady(ctx context.Context, iv time.Duration) error {
 //	                              middleware passed the forwarded request.
 //	trusted=false, reachable=true→ 400 (stale, forward-rejecting) or 5xx
 //	                              (still booting): the process answered but
-//	                              does not yet honour forwarded headers.
+//	                              does not yet honor forwarded headers.
 //	reachable=false              → never connected (down / mid-restart).
 func (a *haAPI) probeProxyTrust(ctx context.Context) (trusted, reachable bool, status int, perr error) {
 	_, err := a.cl.GET("/api/").

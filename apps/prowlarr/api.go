@@ -15,7 +15,7 @@ import (
 
 // Everything Prowlarr-specific about Bloud's conversation with the instance's
 // application-sync resource lives in this file: paths, payload shape, field
-// names. The behaviour below was verified against a running instance of the
+// names. The behavior below was verified against a running instance of the
 // pinned image (lscr.io/linuxserver/prowlarr:2.6.5.5623-ls161) and read back
 // from Prowlarr v2.6.5.5623 so a future tag bump can re-check each claim:
 //

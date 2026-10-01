@@ -481,7 +481,7 @@ func TestConverge_ProvisionTailnetSSO_SkipsWhenGatewayNotReady(t *testing.T) {
 	assert.Empty(t, fd.CalledDomain(), "EnsureForwardDomainAuth should not be called when gateway is not ready")
 }
 
-// ── Stub behaviour when appStore is nil ───────────────────────────────────
+// ── Stub behavior when appStore is nil ───────────────────────────────────
 
 func TestConverge_NilAppStore_StubBehavior(t *testing.T) {
 	// Orchestrator with no converge config: converge should be a no-op.

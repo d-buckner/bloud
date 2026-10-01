@@ -44,7 +44,7 @@ type fakeHostConfig struct {
 	getStatus int
 	getBody   string
 	putStatus int
-	// ignorePuts accepts a PUT with 200 but keeps the old mode, modelling an
+	// ignorePuts accepts a PUT with 200 but keeps the old mode, modeling an
 	// instance that silently refuses the change.
 	ignorePuts bool
 }
@@ -296,10 +296,10 @@ func TestClientEnsureExternalAuth_NullDocumentSurfacesError(t *testing.T) {
 	}
 }
 
-// TestNewClient_NormalisesAPIPath pins the parameter contract: callers pass
+// TestNewClient_NormalizesAPIPath pins the parameter contract: callers pass
 // the versioned root with or without slashes, and the request path is always
 // /<root>/config/host (Prowlarr's root is api/v1).
-func TestNewClient_NormalisesAPIPath(t *testing.T) {
+func TestNewClient_NormalizesAPIPath(t *testing.T) {
 	for _, apiPath := range []string{"api/v1", "/api/v1/", "api/v1/"} {
 		fake := &fakeHostConfig{mode: "external"}
 		server := httptest.NewServer(fake.handler())

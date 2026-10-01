@@ -48,7 +48,7 @@ test compares **values, not bytes**: Prowlarr re-serialises `config.xml` with
 its own serializer whenever settings are saved, and byte-comparing would
 report a change on every reconciliation and restart the container in a loop.
 
-Two upstream behaviours drive that rule:
+Two upstream behaviors drive that rule:
 
 - A key that appears **twice** is treated as absent by the app, which then
   appends its own default, so Bloud only ever writes single, well-formed keys
@@ -275,7 +275,7 @@ regardless of the port.
 | `apps/prowlarr/configurator_test.go` | Wiring for this app against an `httptest` fake Prowlarr, with the PVRs supplied as `pvr` bindings |
 | `services/host-agent/pkg/servarr/config.go` | Shared `config.xml` reader/writer and `SecretAPIKey` (the name a PVR publishes its own key under) |
 | `services/host-agent/pkg/servarr/client.go` | Shared `X-Api-Key` client and auth verification |
-| `services/host-agent/pkg/servarr/config_test.go`, `client_test.go` | The shared behaviour's test matrix (create/idempotence/preserve/repair) |
+| `services/host-agent/pkg/servarr/config_test.go`, `client_test.go` | The shared behavior's test matrix (create/idempotence/preserve/repair) |
 
 ## Verification
 

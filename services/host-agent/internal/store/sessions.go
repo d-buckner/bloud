@@ -178,7 +178,7 @@ func (s *SessionStore) PurgeExpired() (int64, error) {
 }
 
 // StartSessionPurger removes expired sessions immediately and then
-// periodically until ctx is cancelled. Intended to be called once at
+// periodically until ctx is canceled. Intended to be called once at
 // startup; the goroutine exits when the context is done.
 func StartSessionPurger(ctx context.Context, s *SessionStore, logger *slog.Logger) {
 	go func() {

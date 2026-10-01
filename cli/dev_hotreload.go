@@ -140,7 +140,7 @@ type reloadLoop struct {
 	crashes int
 }
 
-// run consumes events until the context is cancelled. The two done channels
+// run consumes events until the context is canceled. The two done channels
 // are passed by pointer because each handler replaces them with the next
 // child's channel.
 func (l *reloadLoop) run(ctx context.Context, childDone, viteDone <-chan struct{}) int {
@@ -304,7 +304,7 @@ func buildHostAgentTo(root, outPath string, stdout, stderr io.Writer) error {
 //
 // It is deliberately not an exec.CommandContext. The default context cancel is
 // a bare Process.Kill of the direct child, which fires the moment the loop's
-// context is cancelled and races the ordered SIGTERM in restartableCmd.Stop:
+// context is canceled and races the ordered SIGTERM in restartableCmd.Stop:
 // every Ctrl-C would become a forced kill that skips the group. restartableCmd
 // owns this process's lifecycle, so the command carries no context of its own.
 func viteCommand(root string, stdout, stderr io.Writer) (*exec.Cmd, error) {

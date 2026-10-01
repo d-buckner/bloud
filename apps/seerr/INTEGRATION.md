@@ -273,7 +273,7 @@ Details that matter:
   false is gone, and the entry whose `hostname` is `binding.Node` is deleted, so
   requests do not keep pointing at a hostname that no longer resolves. That
   address outlives the uninstall because it comes from the provider's catalog
-  metadata, so the prune always recognises what Bloud wrote, whether or not the
+  metadata, so the prune always recognizes what Bloud wrote, whether or not the
   provider's data was purged along with it. Pruning still asks Seerr for its PVR
   list (one read per declared PVR), so a stack with no PVR installed makes no
   write unless it finds a stale entry to delete.
