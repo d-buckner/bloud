@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,7 +135,7 @@ func TestEscalateOnSecondSignalForcesBothDevServers(t *testing.T) {
 	signals := make(chan os.Signal, 4)
 	child, childGrand := startTree(t, t.TempDir())
 	vite, viteGrand := startTree(t, t.TempDir())
-	loop := &reloadLoop{out: io.Discard, child: child, vite: vite, signals: signals}
+	loop := &reloadLoop{console: discardConsole(), child: child, vite: vite, signals: signals}
 	loop.escalateOnSecondSignal()
 
 	// The first signal only announces: the graceful stop is the caller's job

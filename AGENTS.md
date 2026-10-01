@@ -134,9 +134,37 @@ A cold start still takes a minute or more: the host-agent brings every installed
 app up (first convergence pass) before it reports ready. Port 3000 is open from
 the start but serves a loading page (and `503 {"error":"starting"}` for `/api`,
 also through Traefik on :8080) until that pass ends (invariant 5). `./bloud dev`
-prints a progress line every ~15s and finally
-`==> Bloud is ready: http://localhost:8080 ...`; the terminal then stays in the
-foreground by design.
+shows a quiet console (see "Dev console output") and the terminal then stays in
+the foreground by design.
+
+### Dev console output
+
+`./bloud dev` streams four producers into one terminal: the CLI's own
+orchestration, the Go build, the dashboard's vite dev server, and the
+host-agent's structured log (300+ call sites, one JSON object per line).
+Piping all of it through unreadable is the whole problem, so the console
+carries decisions and the log file carries evidence (`cli/dev_output.go`):
+
+- Bring-up is one aligned line per step with its duration, then the ready
+  line with the UI URL.
+- A reload is **one line**: trigger, build time, and the fact that no
+  container was disturbed. A failed build prints its compiler output as an
+  indented tail and leaves the running host-agent up.
+- Every raw byte from every subprocess is mirrored to
+  `.bloud/logs/dev.log` (rotated to a single `.1` past 5 MB), whose path is
+  printed once at bring-up.
+- The quiet console still surfaces the host-agent's `WARN`/`ERROR` records
+  and vite's error lines, reformatted as `HH:MM:SS  LEVEL  msg  k=v`.
+- `--verbose` / `-v` / `BLOUD_DEV_VERBOSE=1` streams the raw output too.
+- Colors are off when stdout is not a TTY (`NO_COLOR` and `TERM=dumb`
+  respected), so a redirected console stays plain text.
+
+While the CLI is *deliberately* stopping the host-agent, its stream is muted
+on the console (`devConsole.SuppressAgentLog`). Tearing the process down out
+from under its own orchestrator produces a burst of "database is closed"
+warnings on every reload; they stay in the log. Warnings from a host-agent
+that is actually running, including one that fails to come back up, still
+show.
 
 VM data lives in `/var/tmp/bloud-dev-runtime` (Lima), `/var/tmp/bloud-qemu-runtime`
 (QEMU), or `/var/tmp/bloud-native-runtime` (native): `<dir>/host-agent` (binary + `web/build`), `<dir>/data` (BLOUD_DATA_DIR,
@@ -370,6 +398,8 @@ cache, so `go run gotest.tools/gotestsum` works offline.
 Setup:       setup                Select runtime backend, check prerequisites, build CLI
 Dev (VM):    dev [--reset]       Build + deploy + run host-agent (Ctrl-C to stop)
                                  --reset wipes the runtime first (same as reset -y, no prompt)
+                                 --verbose / -v streams raw subprocess output
+                                 (all of it is mirrored to .bloud/logs/dev.log)
             start                Show quick-start instructions
             stop | status | services | logs
             attach | shell [cmd] Shell / run command on the VM
