@@ -152,9 +152,3 @@ func TestAuthentikAdminLogin(t *testing.T) {
 	}
 	t.Logf("Authentik login as admin successful (redirect to %s)", flowResp.To)
 }
-
-// TestLDAPAuth_ServiceAccountCanBind is the key behavioral test for the LDAP
-// token flow: the outpost accepts connections and the service account binds.
-// In the product path the outpost container gets its real token via the
-// shared template-var map during graph reconciliation; no container restart
-// or env rewriting.

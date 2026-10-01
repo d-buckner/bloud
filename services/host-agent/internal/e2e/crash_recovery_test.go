@@ -63,8 +63,3 @@ func TestCrashRecoveryViaReconcile(t *testing.T) {
 	jellyfinLDAPLoginAs(t, "admin", readSecrets(t).AuthentikBootstrapPassword)
 	t.Log("crash recovery complete: host-agent reconciled the container back")
 }
-
-// --- Uninstall through the real path ---
-
-// TestJellyfinUninstallCleanup uninstalls Jellyfin through the API and asserts
-// the full cleanup: store entry, container, data directory, and routes.

@@ -144,13 +144,6 @@ func jellyfinLDAPLoginAs(t *testing.T, username, password string) {
 	t.Logf("Jellyfin LDAP login as %s successful", username)
 }
 
-// --- Crash recovery through startup convergence ---
-
-// TestCrashRecoveryViaReconcile simulates a container crash, then restarts
-// only the host-agent process. Recovery must come from the host-agent's
-// startup convergence (graph reconciliation + idempotent PreStart/PostStart),
-// not from the supervisor or any direct container manipulation.
-
 type jellyfinPublicInfo struct {
 	StartupWizardCompleted bool   `json:"StartupWizardCompleted"`
 	ServerName             string `json:"ServerName"`

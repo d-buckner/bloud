@@ -31,8 +31,6 @@ type ValidateResult struct {
 }
 
 // CommandResult records the outcome of a single validation command.
-
-// CommandResult records the outcome of a single validation command.
 type CommandResult struct {
 	ID         string `json:"id"`
 	Cwd        string `json:"cwd"`
@@ -41,8 +39,6 @@ type CommandResult struct {
 	DurationMs int64  `json:"durationMs"`
 	ExitCode   int    `json:"exitCode"`
 }
-
-// SkippedCommand records a command that was not run and why.
 
 // SkippedCommand records a command that was not run and why.
 type SkippedCommand struct {

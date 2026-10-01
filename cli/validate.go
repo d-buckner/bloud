@@ -197,10 +197,6 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	return exitCode
 }
 
-// inferTriggers maps changed files through the manifest's inference globs:
-// which validation command IDs are triggered, which risk areas are hit,
-// and which files matched no pattern at all.
-
 func runIntegrationTier(root string, manifest *validationManifest, flags validateFlags) int {
 	tier, ok := manifest.Tiers["integration"]
 	if !ok {
@@ -327,10 +323,6 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	writeLedger(root, result, flags)
 	return 0
 }
-
-// integrationPrepareGuest verifies the guest has everything the tier needs
-// and stops any host-agent holding port 3000. Returns a ledger fail reason,
-// or "" when the guest is ready.
 
 func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
 	exitCode := 0

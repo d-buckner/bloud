@@ -41,10 +41,6 @@ func (r *lifecycle) checkPrerequisites() error {
 	return nil
 }
 
-// runInstallFlow installs Jellyfin through the host-local API in --host-only
-// mode, or through the browser (ensure user + Playwright install/login flow)
-// otherwise.
-
 func renderLifecycleHostAgentUnit(cfg lifecycleConfig) string {
 	var extraEnv strings.Builder
 	if cfg.qemu != "" {
@@ -85,10 +81,6 @@ WantedBy=default.target
 func (r *lifecycle) step(message string) {
 	fmt.Printf("\n%s==>%s %s\n", colorGreen, colorReset, message)
 }
-
-// buildAndDeploy builds the host-agent binary and frontend, deploys them to
-// the runtime, installs the systemd service, and waits for the API to come
-// up. Shared by the lifecycle and app E2E runners.
 
 func (r *lifecycle) localRun(dir string, env []string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
