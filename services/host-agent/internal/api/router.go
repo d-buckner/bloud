@@ -74,7 +74,18 @@ func buildRouterDeps(
 	options *routerOptions,
 ) *routerDeps {
 	d := &routerDeps{}
+	buildStoreDeps(d, db, cfg, options, logger)
+	buildAuthDeps(d, cfg, logger, options)
+	return d
+}
 
+// buildStoreDeps resolves the read-side stores the API handlers use. Each one
+// comes from the router options when the caller supplied it, and from the
+// database otherwise, so a test can hand over a fake and production needs
+// none. The instance-scoped credential store and the settings KV come from
+// config rather than being constructed here, so the API reads exactly the
+// stores the orchestrator writes.
+func buildStoreDeps(d *routerDeps, db *sql.DB, cfg ServerConfig, options *routerOptions, logger *slog.Logger) {
 	d.appStore = options.appStore
 	if d.appStore == nil {
 		d.appStore = store.NewAppStore(db)
@@ -90,6 +101,7 @@ func buildRouterDeps(
 	d.appStore.SetOnChange(func() {
 		d.eventsBus.Publish(eventbus.Event{Type: eventbus.TypeAppsChanged})
 	})
+
 	d.positionStore = options.positionStore
 	if d.positionStore == nil {
 		d.positionStore = store.NewPositionStore(db)
@@ -98,25 +110,14 @@ func buildRouterDeps(
 	if d.prefsStore == nil {
 		d.prefsStore = store.NewPreferencesStore(db)
 	}
-
-	d.authentik = cfg.Authentik
-	if d.authentik == nil {
-		d.authentik = NewAuthentikClient(cfg.AuthentikPort, cfg.AuthentikToken, cfg.BaseDomain)
-	}
-
 	d.sessionStore = options.sessionStore
 	if d.sessionStore == nil {
 		d.sessionStore = store.NewSessionStore(db)
 	}
-
 	d.tailnetStore = options.tailnetStore
 	if d.tailnetStore == nil {
 		d.tailnetStore = store.NewTailnetStore(db)
 	}
-
-	// The instance-scoped credential store and the settings KV both come from
-	// config rather than being constructed here, so the API reads exactly the
-	// stores the orchestrator writes.
 	d.secrets = cfg.Secrets
 	d.settingsStore = cfg.Settings
 
@@ -130,19 +131,25 @@ func buildRouterDeps(
 	if d.remoteAppStore == nil {
 		d.remoteAppStore = store.NewRemoteAppStore(db)
 	}
+}
 
-	// Auth ref: supplied by the caller in production, built here for tests
-	// that do not supply one. It exists before the orchestrator because the
-	// orchestrator's OnHostsChanged hook re-ensures it after a host change.
+// buildAuthDeps resolves the identity and orchestrator references. The auth
+// ref exists before the orchestrator because the orchestrator's OnHostsChanged
+// hook re-ensures it after a host change. The orchestrator itself is supplied
+// by the caller (main.go builds it in internal/wire) or by a test through the
+// router options; the API cannot construct one. If nobody hands it over there
+// is none, visibly, rather than a half-wired one conjured here.
+func buildAuthDeps(d *routerDeps, cfg ServerConfig, logger *slog.Logger, options *routerOptions) {
+	d.authentik = cfg.Authentik
+	if d.authentik == nil {
+		d.authentik = NewAuthentikClient(cfg.AuthentikPort, cfg.AuthentikToken, cfg.BaseDomain)
+	}
+
 	d.authRef = options.authConfig
 	if d.authRef == nil {
 		d.authRef = NewAuthRef(d.authentik, d.sessionStore, cfg, logger)
 	}
 
-	// Orchestrator: supplied by the caller (main.go builds it in
-	// internal/wire) or by a test through the router options. The API cannot
-	// construct one. If nobody hands it over there is none, visibly, rather
-	// than a half-wired one conjured here.
 	if o, ok := options.orch.(orchestratorCaller); ok && o != nil {
 		d.orchCaller = o
 		if ro, isReal := o.(*orchestrator.Orchestrator); isReal {
@@ -152,8 +159,6 @@ func buildRouterDeps(
 		d.realOrch = cfg.Orchestrator
 		d.orchCaller = d.realOrch
 	}
-
-	return d
 }
 
 // NewRouter builds a fully wired *chi.Mux with all domain modules and
@@ -173,33 +178,53 @@ func NewRouter(
 
 	// ---- Dependencies ----
 	deps := buildRouterDeps(db, cfg, logger, options)
-	appStore := deps.appStore
-	eventsBus := deps.eventsBus
-	positionStore := deps.positionStore
-	prefsStore := deps.prefsStore
-	sessionStore := deps.sessionStore
-	tailnetStore := deps.tailnetStore
-	catalogCache := deps.catalogCache
-	authentikClient := deps.authentik
-	authRef := deps.authRef
-	orchCaller := deps.orchCaller
-	realOrch := deps.realOrch
+	mods := buildRouterModules(db, cfg, logger, deps)
 
-	launchPathsFn := func() map[string]string {
-		paths := make(map[string]string)
-		if catalogApps, err := catalogCache.GetAll(); err == nil {
-			for _, ca := range catalogApps {
-				if ca.SSO.LaunchPath != "" {
-					paths[ca.CatalogID] = ca.SSO.LaunchPath
-				}
-			}
-		}
-		return paths
-	}
+	// ---- Wire middleware and routes ----
 
-	// ---- Create domain modules ----
+	r := chi.NewRouter()
+	applyRouterMiddleware(r, deps.sessionStore, logger, cfg)
 
-	appsMod := NewAppsModule(catalogCache, appStore, orchCaller, logger)
+	// Public routes
+	pub := r.With(mods.requestTimeout)
+	pub.Get("/health", mods.system.HealthHandler())
+	pub.Get("/auth/login", mods.auth.LoginHandler())
+	pub.Get("/auth/callback", mods.auth.CallbackHandler())
+	pub.Post("/auth/logout", mods.auth.LogoutHandler())
+
+	mods.registerRoutes(r)
+
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		respondError(w, http.StatusNotFound, "not found")
+	})
+
+	setupFrontendHelper(r.With(mods.requestTimeout), logger)
+	return r, mods.realOrch
+}
+
+// routerModules is the set of domain modules the router registers, plus the
+// two middleware chains they share.
+type routerModules struct {
+	apps       *appsModule
+	auth       *authModule
+	home       *homeModuleSimple
+	events     *eventsModule
+	logs       *logsModule
+	remoteApps *remoteAppsModule
+	settings   *settingsModule
+	ai         *aiSettingsModule
+	sharing    *sharingModule
+	system     *systemModule
+
+	requestTimeout func(http.Handler) http.Handler
+	authMiddleware func(http.Handler) http.Handler
+	realOrch       *orchestrator.Orchestrator
+}
+
+// buildRouterModules constructs every domain module from the resolved
+// dependencies.
+func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps *routerDeps) *routerModules {
+	appsMod := NewAppsModule(deps.catalogCache, deps.appStore, deps.orchCaller, logger)
 	appsMod.SetAppsDir(cfg.AppsDir)
 	// Catalog size fallback: resolve undeclared estimates from local images.
 	if sizeClient, err := podman.NewClient(); err == nil {
@@ -212,33 +237,7 @@ func NewRouter(
 		})
 	}
 
-	authMod := NewAuthModule(authentikClient, authRef, prefsStore, sessionStore, logger, cfg.Port, cfg.Hosts)
-
-	homeMod := NewHomeModule(positionStore, appStore, launchPathsFn, logger)
-	eventsMod := NewEventsModule(eventsBus, homeMod.GetLayout, logger)
-
-	logsMod := NewLogsModule(appStore, logger)
-
-	remoteAppStore := deps.remoteAppStore
-	remoteAppsMod := NewRemoteAppsModule(remoteAppStore, catalogCache, orchCaller, logger)
-
-	settingsMod := NewSettingsModule(tailnetStore, prefsStore, sessionStore, authentikClient, orchCaller, authRef, cfg.Hosts, cfg.Settings, cfg.Port, logger)
-
-	aiMod := &aiSettingsModule{
-		settingsStore: cfg.Settings,
-		secrets:       deps.secrets,
-		appStore:      appStore,
-		catalog:       catalogCache,
-		orch:          orchCaller,
-		logger:        logger,
-	}
-
-	gateway := sharing.NewGatewayManager(nil, nil, func() string { return "" }, sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
-	sharingMod := NewSharingModule(
-		store.NewShareStore(db), store.NewGuestStore(db),
-		appStore, catalogCache, nil,
-		cfg.HostLabel, cfg.SSOHostSecret, logger,
-	)
+	homeMod := NewHomeModule(deps.positionStore, deps.appStore, catalogLaunchPaths(deps.catalogCache), logger)
 
 	// The developer graph renders each app's containers with their live
 	// lifecycle phase, so the system module needs the real orchestrator.
@@ -247,26 +246,74 @@ func NewRouter(
 	if deps.realOrch != nil {
 		systemOrch = deps.realOrch
 	}
-	systemMod := NewSystemModule(appStore, catalogCache, gateway, tailnetStore, systemOrch, logger)
+	gateway := sharing.NewGatewayManager(nil, nil, func() string { return "" },
+		sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
+	systemMod := NewSystemModule(deps.appStore, deps.catalogCache, gateway, deps.tailnetStore, systemOrch, logger)
 	// The health endpoint answers from the same check main.go runs, so a dead
 	// intent loop cannot read healthy over HTTP.
 	systemMod.SetHealthCheck(func() error {
-		return checkSystemHealth(orchAsReconcilingLoop(realOrch), db)
+		return checkSystemHealth(orchAsReconcilingLoop(deps.realOrch), db)
 	})
 	// The developer graph shows the AI Model node only while Settings -> AI
 	// has an enabled upstream, so it reads the same store the settings module
 	// writes.
 	systemMod.SetAISettings(cfg.Settings)
 
-	// ---- Wire middleware and routes ----
+	return &routerModules{
+		apps: appsMod,
+		auth: NewAuthModule(deps.authentik, deps.authRef, deps.prefsStore, deps.sessionStore,
+			logger, cfg.Port, cfg.Hosts),
+		home: homeMod,
+		// The SSE snapshot is the same payload the home route serves, so the
+		// events module reads the home module rather than a second builder.
+		events:     NewEventsModule(deps.eventsBus, homeMod.GetLayout, logger),
+		logs:       NewLogsModule(deps.appStore, logger),
+		remoteApps: NewRemoteAppsModule(deps.remoteAppStore, deps.catalogCache, deps.orchCaller, logger),
+		settings: NewSettingsModule(deps.tailnetStore, deps.prefsStore, deps.sessionStore, deps.authentik,
+			deps.orchCaller, deps.authRef, cfg.Hosts, cfg.Settings, cfg.Port, logger),
+		ai: &aiSettingsModule{
+			settingsStore: cfg.Settings,
+			secrets:       deps.secrets,
+			appStore:      deps.appStore,
+			catalog:       deps.catalogCache,
+			orch:          deps.orchCaller,
+			logger:        logger,
+		},
+		sharing: NewSharingModule(store.NewShareStore(db), store.NewGuestStore(db),
+			deps.appStore, deps.catalogCache, nil, cfg.HostLabel, cfg.SSOHostSecret, logger),
+		system:         systemMod,
+		realOrch:       deps.realOrch,
+		authMiddleware: authMiddlewareFn(deps.sessionStore, logger, cfg.TrustedLocalNets, cfg.APIToken),
+		// No global request timeout on the router: SSE streams must outlive a
+		// single request. Non-streaming routes opt in explicitly via With().
+		requestTimeout: middleware.Timeout(60 * time.Second),
+	}
+}
 
-	r := chi.NewRouter()
+// catalogLaunchPaths indexes each app's SSO launch path by catalog id, so the
+// home payload can hand the dashboard the right entry URL per app.
+func catalogLaunchPaths(cache catalog.CacheInterface) func() map[string]string {
+	return func() map[string]string {
+		paths := make(map[string]string)
+		if catalogApps, err := cache.GetAll(); err == nil {
+			for _, ca := range catalogApps {
+				if ca.SSO.LaunchPath != "" {
+					paths[ca.CatalogID] = ca.SSO.LaunchPath
+				}
+			}
+		}
+		return paths
+	}
+}
+
+// applyRouterMiddleware installs the shared middleware stack.
+func applyRouterMiddleware(r *chi.Mux, sessionStore store.SessionStoreInterface, logger *slog.Logger, cfg ServerConfig) {
 	r.Use(middleware.RequestID)
 	// NOTE: no middleware.RealIP. It rewrites r.RemoteAddr from client-supplied
 	// True-Client-IP / X-Real-IP / X-Forwarded-For, and RemoteAddr is the input
-	// to the trusted-position check below: trusting it made admin reachable by
-	// anyone who could set a header (see authMiddlewareFn). The client address
-	// is not used for anything else in host-agent.
+	// to the trusted-position check in authMiddlewareFn: trusting it made admin
+	// reachable by anyone who could set a header. The client address is not used
+	// for anything else in host-agent.
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
@@ -277,60 +324,46 @@ func NewRouter(
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	// NOTE: no global request timeout here: SSE streams (below) must
-	// outlive a single request. Non-streaming routes opt into the timeout
-	// explicitly via With(requestTimeout).
-	requestTimeout := middleware.Timeout(60 * time.Second)
-	authMiddleware := authMiddlewareFn(sessionStore, logger, cfg.TrustedLocalNets, cfg.APIToken)
+}
 
-	// Public routes
-	pub := r.With(requestTimeout)
-	pub.Get("/health", systemMod.HealthHandler())
-	pub.Get("/auth/login", authMod.LoginHandler())
-	pub.Get("/auth/callback", authMod.CallbackHandler())
-	pub.Post("/auth/logout", authMod.LogoutHandler())
-
+// registerRoutes mounts the /api subtree: the long-lived streams, the
+// non-streaming public routes that first-run needs before any credential
+// exists, and the authenticated and admin tiers above them.
+func (m *routerModules) registerRoutes(r chi.Router) {
 	r.Route("/api", func(api chi.Router) {
 		// SSE streaming routes: authenticated, but exempt from the request
 		// timeout: these are long-lived streams, not single requests.
-		stream := api.With(authMiddleware)
-		NewEventsRouter(eventsMod, stream)
-		stream.Get("/apps/{name}/logs", logsMod.StreamLogsHandler())
-		stream.Get("/system/status/stream", logsMod.SystemStatusStreamHandler())
+		stream := api.With(m.authMiddleware)
+		NewEventsRouter(m.events, stream)
+		stream.Get("/apps/{name}/logs", m.logs.StreamLogsHandler())
+		stream.Get("/system/status/stream", m.logs.SystemStatusStreamHandler())
 
 		// Non-streaming public routes. The setup pair must be reachable before
 		// any credential exists: first-run has no user to authenticate as.
-		npub := api.With(requestTimeout)
-		npub.Get("/health", systemMod.HealthHandler())
-		NewSetupRouter(settingsMod, npub)
-		npub.Get("/auth/me", authMod.GetCurrentUserHandler())
+		npub := api.With(m.requestTimeout)
+		npub.Get("/health", m.system.HealthHandler())
+		NewSetupRouter(m.settings, npub)
+		npub.Get("/auth/me", m.auth.GetCurrentUserHandler())
 
 		// System info (public, no auth required)
-		NewSystemRouter(systemMod, npub)
+		NewSystemRouter(m.system, npub)
 
 		// Authenticated non-streaming routes
-		auth := api.With(requestTimeout, authMiddleware)
+		auth := api.With(m.requestTimeout, m.authMiddleware)
 
 		// User-accessible routes (registered directly)
-		NewAppsRouter(appsMod, auth)
-		NewHomeRouter(homeMod, auth)
+		NewAppsRouter(m.apps, auth)
+		NewHomeRouter(m.home, auth)
 
 		// Admin-only routes
 		admin := auth.With(adminMiddlewareFn)
-		admin.Post("/apps/refresh-catalog", appsMod.RefreshCatalogHandler())
+		admin.Post("/apps/refresh-catalog", m.apps.RefreshCatalogHandler())
 		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
-		NewSettingsRouter(settingsMod, admin)
-		RegisterAIRoutes(aiMod, admin)
-		NewSharingRouter(sharingMod, admin)
-		NewRemoteAppsRouter(remoteAppsMod, admin)
+		NewSettingsRouter(m.settings, admin)
+		RegisterAIRoutes(m.ai, admin)
+		NewSharingRouter(m.sharing, admin)
+		NewRemoteAppsRouter(m.remoteApps, admin)
 	})
-
-	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		respondError(w, http.StatusNotFound, "not found")
-	})
-
-	setupFrontendHelper(r.With(requestTimeout), logger)
-	return r, realOrch
 }
 
 // ---- Frontend ----
