@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -77,7 +78,6 @@ func newSystemModule(t *testing.T, opts systemModuleOpts) *systemModule {
 	t.Helper()
 	appStore := NewFakeAppStore()
 	catalogCache := NewFakeCatalogCache()
-	appGraph := &FakeAppGraph{}
 	gateway := &FakeGateway{running: true, domain: "bloud.ts.net"}
 	tailnetStore := &FakeTailnetStore{}
 	orch := newFakeSystemOrchestrator()
@@ -86,7 +86,6 @@ func newSystemModule(t *testing.T, opts systemModuleOpts) *systemModule {
 	return &systemModule{
 		appStore:     appStore,
 		catalog:      catalogCache,
-		graph:        appGraph,
 		gateway:      gateway,
 		tailnetStore: tailnetStore,
 		orch:         orch,
@@ -138,8 +137,9 @@ func aiSettingsWith(upstreamsJSON string) *fakeAISettings {
 // inferenceConsumerDef is the catalog entry of an app that declares the
 // inference contract against the instance, the shape hermes/metadata.yaml
 // carries.
-func inferenceConsumerDef() *catalog.AppDefinition {
-	return &catalog.AppDefinition{
+func inferenceConsumerDef(catalogID string) *catalog.App {
+	return &catalog.App{
+		CatalogID: catalogID,
 		Integrations: map[string]catalog.Integration{
 			"inference": {
 				Compatible: []catalog.CompatibleApp{{Source: catalog.InstanceProviderSource, Default: true}},
@@ -166,27 +166,6 @@ func graphEdgePresent(edges []graphEdge, source, target string) bool {
 		}
 	}
 	return false
-}
-
-// FakeAppGraph is a fake catalog.AppGraphInterface for testing.
-type FakeAppGraph struct {
-	apps      map[string]*catalog.AppDefinition
-	installed []string
-}
-
-func (f *FakeAppGraph) PlanInstall(appName string) (*catalog.InstallPlan, error) { return nil, nil }
-func (f *FakeAppGraph) PlanRemove(appName string) (*catalog.RemovePlan, error)   { return nil, nil }
-func (f *FakeAppGraph) SetInstalled(installed []string)                          { f.installed = installed }
-func (f *FakeAppGraph) IsInstalled(appName string) bool                          { return true }
-func (f *FakeAppGraph) FindDependents(appName string) []catalog.ConfigTask       { return nil }
-func (f *FakeAppGraph) GetCompatibleApps(appName string, integrationName string) (installed []catalog.CompatibleApp, available []catalog.CompatibleApp) {
-	return nil, nil
-}
-func (f *FakeAppGraph) GetApps() map[string]*catalog.AppDefinition {
-	if f.apps != nil {
-		return f.apps
-	}
-	return make(map[string]*catalog.AppDefinition)
 }
 
 // ---- Health tests ----
@@ -342,13 +321,13 @@ func fetchDeveloperGraph(t *testing.T, mod *systemModule) developerGraph {
 }
 
 // installInferenceConsumer puts a hermes-shaped inference consumer into the
-// store and its catalog definition into the graph.
+// store and its catalog entry into the cache the graph reads its integration
+// declarations from.
 func installInferenceConsumer(mod *systemModule) {
 	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
 		CatalogID: "hermes", DisplayName: "Hermes", IsSystem: false, Status: "running",
 	})
-	appGraph := mod.graph.(*FakeAppGraph)
-	appGraph.apps = map[string]*catalog.AppDefinition{"hermes": inferenceConsumerDef()}
+	mod.catalog.(*FakeCatalogCache).AddApp(inferenceConsumerDef("hermes"))
 }
 
 // The AI Model node is the instance's own provider, so it shows exactly when
@@ -474,13 +453,145 @@ func TestSystemHTTP_DeveloperGraph_NonConsumerGetsNoAIEdge(t *testing.T) {
 	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
 		CatalogID: "jellyfin", DisplayName: "Jellyfin", IsSystem: false, Status: "running",
 	})
-	mod.graph.(*FakeAppGraph).apps = map[string]*catalog.AppDefinition{
-		"jellyfin": {Integrations: map[string]catalog.Integration{}},
-	}
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:    "jellyfin",
+		DisplayName:  "Jellyfin",
+		Integrations: map[string]catalog.Integration{},
+	})
 
 	resp := fetchDeveloperGraph(t, mod)
 
 	assert.False(t, graphEdgePresent(resp.Edges, "jellyfin", AINodeID))
+}
+
+// An optional contract that declares no `default: true` still draws its edge.
+// The orchestrator binds every compatible provider of an optional contract, so
+// a display that required the flag would hide wiring that exists. This is the
+// shape apps/affine/metadata.yaml carries for inference.
+func TestSystemHTTP_DeveloperGraph_InferenceEdgeWithoutDefault(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{
+		aiSettings: aiSettingsWith(
+			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+	})
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID: "affine", DisplayName: "AFFiNE", Status: "running",
+	})
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:   "affine",
+		DisplayName: "AFFiNE",
+		Integrations: map[string]catalog.Integration{
+			"inference": {Compatible: []catalog.CompatibleApp{{Source: catalog.InstanceProviderSource}}},
+		},
+	})
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	assert.True(t, graphEdgePresent(resp.Edges, "affine", AINodeID),
+		"a source:instance consumer with no declared default still wires the instance")
+}
+
+// A compatible provider that is not installed is a possibility the metadata
+// allows, not a wiring that exists, so it gets no edge. Without that filter the
+// browser receives an edge naming a node it was never given and draws an arrow
+// into empty space.
+func TestSystemHTTP_DeveloperGraph_NoEdgeToUninstalledProvider(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID: "seerr", DisplayName: "Seerr", Status: "running",
+	})
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:   "seerr",
+		DisplayName: "Seerr",
+		Integrations: map[string]catalog.Integration{
+			"mediaServer": {Compatible: []catalog.CompatibleApp{{App: "jellyfin", Default: true}}},
+		},
+	})
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	assert.False(t, graphEdgePresent(resp.Edges, "seerr", "jellyfin"),
+		"jellyfin is not installed, so nothing may point at a node absent from the payload")
+}
+
+// An optional multi-provider contract draws one edge per installed provider:
+// the consumer wires all of them, so the graph shows all of them rather than
+// the one a single-value recorded choice could name.
+func TestSystemHTTP_DeveloperGraph_MultiProviderContractDrawsEveryInstalledProvider(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	for _, id := range []string{"prowlarr", "sonarr", "radarr"} {
+		mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+			CatalogID: id, DisplayName: id, Status: "running",
+		})
+	}
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:   "prowlarr",
+		DisplayName: "Prowlarr",
+		Integrations: map[string]catalog.Integration{
+			"pvr": {Multi: true, Compatible: []catalog.CompatibleApp{{App: "sonarr"}, {App: "radarr"}}},
+		},
+	})
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "sonarr"))
+	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "radarr"))
+}
+
+// A choice the install recorded is authoritative: the graph shows the provider
+// that was picked, not every compatible entry the catalog allows.
+func TestSystemHTTP_DeveloperGraph_RecordedChoiceWinsOverCompatibleList(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	for _, id := range []string{"sonarr", "radarr"} {
+		mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+			CatalogID: id, DisplayName: id, Status: "running",
+		})
+	}
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID:         "prowlarr",
+		DisplayName:       "Prowlarr",
+		Status:            "running",
+		IntegrationConfig: map[string]string{"pvr": "radarr"},
+	})
+	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
+		CatalogID:   "prowlarr",
+		DisplayName: "Prowlarr",
+		Integrations: map[string]catalog.Integration{
+			"pvr": {Multi: true, Compatible: []catalog.CompatibleApp{{App: "sonarr"}, {App: "radarr"}}},
+		},
+	})
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "radarr"))
+	assert.False(t, graphEdgePresent(resp.Edges, "prowlarr", "sonarr"),
+		"the recorded choice is the wiring; the compatible list is only the fallback")
+}
+
+// The real catalog through the real cache. Production reads its integration
+// declarations from the catalog cache, so a test that injects a hand-built
+// definition proves nothing about whether the shipped metadata produces the
+// edge. This loads apps/ and pins both sides: hermes declares its instance
+// provider with `default: true`, affine without it, and both must wire.
+func TestSystemHTTP_DeveloperGraph_RealCatalogWiresInferenceConsumers(t *testing.T) {
+	cache := catalog.NewMemoryCache()
+	require.NoError(t, cache.Refresh(catalog.NewLoader(filepath.Join("..", "..", "..", "..", "apps"))))
+
+	mod := newSystemModule(t, systemModuleOpts{
+		aiSettings: aiSettingsWith(
+			`[{"id":"u1","name":"Main","baseUrl":"https://api.example.com/v1","enabled":true}]`),
+	})
+	mod.catalog = cache
+	for _, id := range []string{"hermes", "affine", "traefik", "authentik"} {
+		mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+			CatalogID: id, DisplayName: id, Status: "running",
+		})
+	}
+
+	resp := fetchDeveloperGraph(t, mod)
+
+	assert.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
+	assert.True(t, graphEdgePresent(resp.Edges, "affine", AINodeID),
+		"affine declares source: instance with no `default: true`; the edge must not depend on the flag")
 }
 
 func TestSystemHTTP_DeveloperGraph_WithTailnetNodes(t *testing.T) {

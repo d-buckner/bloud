@@ -26,6 +26,12 @@ const edge = (source: string, target: string): GraphEdge => ({ source, target, l
 
 const byId = <T extends { id: string }>(nodes: T[], id: string) => nodes.find((n) => n.id === id);
 
+/** Read `width: Npx; height: Npx` off a node's inline style. */
+const boxSize = (style: unknown): { width: number; height: number } => {
+	const m = /width: (\d+(?:\.\d+)?)px; height: (\d+(?:\.\d+)?)px/.exec(String(style ?? ''));
+	return m ? { width: Number(m[1]), height: Number(m[2]) } : { width: 0, height: 0 };
+};
+
 describe('detectUserConnection', () => {
 	const tailnet = conn('conn:tailnet:abc');
 	const local = conn('conn:local');
@@ -106,6 +112,34 @@ describe('layoutGraph: apps present', () => {
 	it('adds an animated You→connection edge by the connection status', () => {
 		const youEdge = edges.find((e) => e.id === 'e-you');
 		expect(youEdge).toMatchObject({ source: '__you__', target: 'conn:tailnet:z', animated: true });
+	});
+});
+
+describe('layoutGraph: service node edges', () => {
+	// The AI Model node is the instance's own provider: never probed, so it
+	// carries `external` rather than a lifecycle status, and the backend drops
+	// it the moment Settings -> AI has no enabled upstream. Its presence in the
+	// payload is the liveness claim, so an edge into it animates.
+	const graph: DeveloperGraph = {
+		nodes: [
+			node('hermes'),
+			node('affine', { status: 'stopped' }),
+			node('ai:instance', { status: 'external', nodeType: 'service' }),
+			conn('conn:local')
+		],
+		edges: [edge('hermes', 'ai:instance'), edge('affine', 'ai:instance')],
+		tailnetDomain: 'ts1.ts.net'
+	};
+	const { edges } = layoutGraph(graph, 'bloud.local');
+
+	it('animates a running consumer\'s edge into the service node', () => {
+		const e = edges.find((x) => x.source === 'hermes' && x.target === 'ai:instance');
+		expect(e?.animated).toBe(true);
+	});
+
+	it('still requires the consumer side to be live', () => {
+		const e = edges.find((x) => x.source === 'affine' && x.target === 'ai:instance');
+		expect(e?.animated).toBe(false);
 	});
 });
 
@@ -199,7 +233,8 @@ describe('layoutGraph: container whose app is missing', () => {
 describe('layoutGraph: service nodes', () => {
 	// A service is a provider the instance supplies itself rather than an app
 	// it installs: no box, no containers, consumers point at it with an
-	// integration edge.
+	// integration edge. It sits outside the apps group, in a row below it, the
+	// mirror of the connection row above.
 	const graph: DeveloperGraph = {
 		nodes: [
 			node('traefik'),
@@ -215,8 +250,16 @@ describe('layoutGraph: service nodes', () => {
 	};
 	const { nodes, edges } = layoutGraph(graph, 'bloud.local');
 
-	it('lays the service under the apps group as a flat node, not a box', () => {
-		expect(byId(nodes, 'ai:instance')).toMatchObject({ type: 'app', parentId: '__apps_group' });
+	it('lays the service outside the apps group, below it, as a flat node', () => {
+		const service = byId(nodes, 'ai:instance')!;
+		expect(service.type).toBe('app');
+		expect(service.parentId).toBeUndefined();
+
+		const group = byId(nodes, '__apps_group')!;
+		const { width, height } = boxSize(group.style);
+		expect(service.position.y).toBeGreaterThan(group.position.y + height);
+		// centered over the group, the way the connection row is over it from above
+		expect(service.position.x + NODE_WIDTH / 2).toBeCloseTo(group.position.x + width / 2, 5);
 	});
 
 	it('keeps the service node type on the data so layout can place it', () => {
@@ -236,7 +279,19 @@ describe('layoutGraph: service nodes', () => {
 			{ nodes: [node('a'), node('ai:instance', { nodeType: 'service' })], edges: [] },
 			'bloud.local'
 		);
-		expect(byId(lonely.nodes, 'ai:instance')).toMatchObject({ parentId: '__apps_group' });
+		expect(byId(lonely.nodes, 'ai:instance')).toMatchObject({ type: 'app' });
+		expect(byId(lonely.nodes, 'ai:instance')!.parentId).toBeUndefined();
+	});
+
+	it('still lays the service out when there are no apps at all', () => {
+		const noApps = layoutGraph(
+			{ nodes: [conn('conn:local'), node('ai:instance', { nodeType: 'service' })], edges: [] },
+			'bloud.local'
+		);
+		expect(byId(noApps.nodes, 'ai:instance')).toBeDefined();
+		expect(byId(noApps.nodes, 'ai:instance')!.position.y).toBeGreaterThan(
+			byId(noApps.nodes, 'conn:local')!.position.y
+		);
 	});
 });
 

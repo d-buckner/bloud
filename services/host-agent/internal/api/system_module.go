@@ -30,9 +30,13 @@ type orchestratorStatusCaller interface {
 // SystemModule encapsulates system-level operations: health check, system
 // status, storage stats, and the developer lifecycle graph.
 type systemModule struct {
-	appStore     store.AppStoreInterface
+	appStore store.AppStoreInterface
+	// catalog is the disk-driven catalog cache, and the source the developer
+	// graph draws its integration edges from: it is the live view of
+	// apps/*/metadata.yaml, refreshed by POST /api/apps/refresh-catalog, so a
+	// display never needs a second copy of the declarations kept in sync by
+	// hand. It is also what ssoEdgeLabel reads.
 	catalog      catalog.CacheInterface
-	graph        catalog.AppGraphInterface
 	gateway      sharing.GatewayManagerInterface
 	tailnetStore store.TailnetStoreInterface
 	orch         orchestratorStatusCaller
@@ -52,7 +56,6 @@ type systemModule struct {
 func NewSystemModule(
 	appStore store.AppStoreInterface,
 	catalog catalog.CacheInterface,
-	graph catalog.AppGraphInterface,
 	gateway sharing.GatewayManagerInterface,
 	tailnetStore store.TailnetStoreInterface,
 	orch orchestratorStatusCaller,
@@ -61,7 +64,6 @@ func NewSystemModule(
 	return &systemModule{
 		appStore:     appStore,
 		catalog:      catalog,
-		graph:        graph,
 		gateway:      gateway,
 		tailnetStore: tailnetStore,
 		orch:         orch,
@@ -197,50 +199,123 @@ func (m *systemModule) ssoEdgeLabel(appName string) string {
 	return app.SSO.Strategy
 }
 
-// buildGraphEdges derives the integration edges for a single app. It prefers
-// the runtime integration config for each catalog-defined integration, falling
-// back to the integration's default compatible app. When no catalog definition
-// is available, it emits edges directly from the runtime integration config.
-func (m *systemModule) buildGraphEdges(app *store.InstalledApp, def *catalog.AppDefinition) []graphEdge {
-	targets := make(map[string]string)
-	if def != nil {
-		for label, integration := range def.Integrations {
-			if target, chosen := app.IntegrationConfig[label]; chosen {
-				targets[label] = target
-				continue
-			}
-			for _, compat := range integration.Compatible {
-				if compat.Default {
-					targets[label] = providerNodeID(compat)
-					break
-				}
-			}
-		}
-	} else {
-		for label, target := range app.IntegrationConfig {
-			targets[label] = target
-		}
-	}
+// integrationTarget is one (contract, provider node) pair an app is wired to.
+type integrationTarget struct {
+	label string
+	node  string
+}
 
-	labels := make([]string, 0, len(targets))
-	for label := range targets {
-		labels = append(labels, label)
-	}
-	sort.Strings(labels)
+// buildGraphEdges derives the integration edges for a single app, keeping only
+// those whose provider is actually a node in the payload.
+//
+// The catalog declaration drives it. The choice recorded in IntegrationConfig
+// is authoritative when present, because that is the provider the orchestrator
+// actually wired. With no recorded choice the rule mirrors the orchestrator's
+// resolveProviders, which binds every compatible provider of an optional
+// contract rather than only its declared default. That is why the instance's
+// own AI provider reaches the graph without a `default: true` anywhere: an app
+// that declares `source: instance` declares a wiring that exists the moment
+// the setting is populated, and a display keyed on the default flag would hide
+// it.
+//
+// Every candidate then passes through `present`, so an edge only ever names a
+// node the browser was also given.
+func (m *systemModule) buildGraphEdges(app *store.InstalledApp, present map[string]bool) []graphEdge {
+	targets := m.integrationTargets(app)
 
-	edges := make([]graphEdge, 0, len(labels))
-	for _, label := range labels {
-		edgeLabel := label
-		if label == "sso" {
+	edges := make([]graphEdge, 0, len(targets))
+	for _, target := range targets {
+		if !present[target.node] {
+			continue
+		}
+		edgeLabel := target.label
+		if target.label == "sso" {
 			edgeLabel = m.ssoEdgeLabel(app.CatalogID)
 		}
-		edge := graphEdge{Source: app.CatalogID, Target: targets[label], Label: edgeLabel}
-		if label == "proxy" {
+		edge := graphEdge{Source: app.CatalogID, Target: target.node, Label: edgeLabel}
+		if target.label == "proxy" {
 			edge.Source, edge.Target = edge.Target, edge.Source
 		}
 		edges = append(edges, edge)
 	}
 	return edges
+}
+
+// integrationTargets lists the provider nodes each of the app's declared
+// integrations resolves to, deduplicated, in a deterministic order.
+//
+// An app the catalog does not describe falls back to what its install recorded,
+// which is all the display has for it.
+func (m *systemModule) integrationTargets(app *store.InstalledApp) []integrationTarget {
+	var targets []integrationTarget
+	seen := make(map[string]bool)
+	add := func(label, node string) {
+		key := label + "\x00" + node
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		targets = append(targets, integrationTarget{label: label, node: node})
+	}
+
+	def := m.catalogDefinition(app.CatalogID)
+	if def == nil {
+		for label, node := range app.IntegrationConfig {
+			add(label, node)
+		}
+		return targets
+	}
+
+	labels := make([]string, 0, len(def.Integrations))
+	for label := range def.Integrations {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+
+	for _, label := range labels {
+		if chosen, recorded := app.IntegrationConfig[label]; recorded {
+			add(label, chosen)
+			continue
+		}
+		for _, compat := range def.Integrations[label].Compatible {
+			add(label, providerNodeID(compat))
+		}
+	}
+	return targets
+}
+
+// catalogDefinition returns the catalog entry for an installed app, or nil when
+// no cache is wired or the catalog does not list it. A missing entry is not an
+// error here: the display falls back to the recorded config rather than
+// inventing declarations for an app the catalog does not know.
+func (m *systemModule) catalogDefinition(catalogID string) *catalog.App {
+	if m.catalog == nil {
+		return nil
+	}
+	def, err := m.catalog.Get(catalogID)
+	if err != nil {
+		return nil
+	}
+	return def
+}
+
+// providerNodes is the set of node IDs an integration edge may point at:
+// every installed app, plus the AI Model node while the instance provides one.
+//
+// The display filters on this rather than trusting the catalog's compatible
+// list outright because an edge naming a node that is not in the payload still
+// reaches the browser, which draws an arrow into empty space. A compatible
+// entry whose provider is not installed is a possibility the metadata allows,
+// not a wiring that exists.
+func providerNodes(apps []*store.InstalledApp, aiShown bool) map[string]bool {
+	present := make(map[string]bool, len(apps)+1)
+	for _, app := range apps {
+		present[app.CatalogID] = true
+	}
+	if aiShown {
+		present[AINodeID] = true
+	}
+	return present
 }
 
 // providerNodeID maps one compatible entry to the graph node that stands for
@@ -263,12 +338,7 @@ func (m *systemModule) DeveloperGraphHandler() http.HandlerFunc {
 			return
 		}
 
-		var graphDefs map[string]*catalog.AppDefinition
-		if m.graph != nil {
-			graphDefs = m.graph.GetApps()
-		}
-
-		respondJSON(w, http.StatusOK, m.buildDeveloperGraph(r.Context(), apps, graphDefs))
+		respondJSON(w, http.StatusOK, m.buildDeveloperGraph(r.Context(), apps))
 	}
 }
 
@@ -285,9 +355,12 @@ type tailnetNodeInfo struct {
 func (m *systemModule) buildDeveloperGraph(
 	ctx context.Context,
 	apps []*store.InstalledApp,
-	graphDefs map[string]*catalog.AppDefinition,
 ) developerGraph {
-	nodes, edges, tailnetApps, tailnetIDs, hasTraefik := m.appNodes(apps, graphDefs)
+	// Whether the instance provides an AI model is resolved before the edges,
+	// not after: it decides whether an inference edge has anywhere to point.
+	aiShown := m.aiConfigured()
+
+	nodes, edges, tailnetApps, tailnetIDs, hasTraefik := m.appNodes(apps, providerNodes(apps, aiShown))
 	domain := m.resolveTailnetDomain(ctx, tailnetIDs)
 
 	tunnelNodes, tunnelEdges := m.tunnelNodes(tailnetApps, tailnetIDs, domain, hasTraefik)
@@ -298,7 +371,7 @@ func (m *systemModule) buildDeveloperGraph(
 	nodes = append(nodes, gwNodes...)
 	edges = append(edges, gwEdges...)
 
-	nodes, edges = m.applyAINode(nodes, edges)
+	nodes = append(nodes, aiNode(aiShown)...)
 
 	var orchStatus *orchestrator.OrchestratorStatus
 	if m.orch != nil {
@@ -314,18 +387,19 @@ func (m *systemModule) buildDeveloperGraph(
 	}
 }
 
-// applyAINode reconciles the AI Model node with the edges that point at it.
+// aiNode returns the AI Model node when the instance provides one, and nothing
+// otherwise.
 //
-// The node exists only while the instance has an enabled AI upstream. An edge
-// to a node that is not in the payload still reaches the browser, which draws
-// an arrow into empty space, so when the node is not shown the edges that were
-// headed for it are dropped with it. That is the whole rule: no upstream,
-// nothing to point at.
-func (m *systemModule) applyAINode(nodes []graphNode, edges []graphEdge) ([]graphNode, []graphEdge) {
-	if !m.aiConfigured() {
-		return nodes, dropEdgesTo(edges, AINodeID)
+// The node is the display's stand-in for a provider with no installed shape:
+// nothing installs it, no container backs it, and the orchestrator never gains
+// a lifecycle node for it. Whether it is in the payload is also what gates the
+// edges that point at it (see providerNodes), so no edge can ever name a node
+// the browser was not given.
+func aiNode(shown bool) []graphNode {
+	if !shown {
+		return nil
 	}
-	nodes = append(nodes, graphNode{
+	return []graphNode{{
 		ID:          AINodeID,
 		DisplayName: AINodeLabel,
 		Status:      AINodeStatus,
@@ -334,8 +408,7 @@ func (m *systemModule) applyAINode(nodes []graphNode, edges []graphEdge) ([]grap
 		// it reads as one plain thing the instance points at.
 		IsSystem: false,
 		NodeType: "service",
-	})
-	return nodes, edges
+	}}
 }
 
 // aiConfigured reports whether Settings -> AI has an enabled upstream. A
@@ -357,26 +430,13 @@ func (m *systemModule) aiConfigured() bool {
 	return ok
 }
 
-// dropEdgesTo removes the edges pointing at one node id, leaving every other
-// edge in order.
-func dropEdgesTo(edges []graphEdge, nodeID string) []graphEdge {
-	kept := make([]graphEdge, 0, len(edges))
-	for _, edge := range edges {
-		if edge.Target == nodeID {
-			continue
-		}
-		kept = append(kept, edge)
-	}
-	return kept
-}
-
 // appNodes builds one node per installed app, plus one child node per
 // container that app declares, and collects the tailnet/apps bookkeeping
 // (unique tailnet IDs, the tunnel-node list, traefik presence) plus each
 // app's integration edges.
 func (m *systemModule) appNodes(
 	apps []*store.InstalledApp,
-	graphDefs map[string]*catalog.AppDefinition,
+	present map[string]bool,
 ) ([]graphNode, []graphEdge, []tailnetNodeInfo, map[string]bool, bool) {
 	nodes := make([]graphNode, 0, len(apps))
 	edges := make([]graphEdge, 0)
@@ -412,11 +472,7 @@ func (m *systemModule) appNodes(
 			})
 		}
 
-		var def *catalog.AppDefinition
-		if graphDefs != nil {
-			def = graphDefs[app.CatalogID]
-		}
-		edges = append(edges, m.buildGraphEdges(app, def)...)
+		edges = append(edges, m.buildGraphEdges(app, present)...)
 	}
 
 	return nodes, edges, tailnetApps, tailnetIDs, hasTraefik
