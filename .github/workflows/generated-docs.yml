@@ -1,27 +1,31 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Keeps the README's graph picture current. On every merge to main it derives
-# the catalog graph from the app metadata, renders it in a headless browser,
-# and commits the result.
+# Keeps every generated doc current. On every merge to main it rewrites the
+# README's catalog list and one-login table, rewrites the text form of the
+# dependency graph, renders the graph picture in a headless browser, and
+# commits the results.
 #
-# The picture is the dashboard's own developer graph: the same Svelte
-# components and the same dagre layout, fed a snapshot of the whole catalog
-# (`bloud depgraph --json`, which emits the shape /api/system/developer
-# returns) instead of one instance's installed apps. Rendering it in a real
-# browser is what makes the README image and the dashboard the same drawing
-# rather than two descriptions of it.
+# Three artifacts, one source: apps/*/metadata.yaml. `bloud catalogdoc
+# --write` rewrites the two README blocks between their markers; `bloud
+# depgraph --write` rewrites the graph in
+# docs/architecture/dependency-graph.md; and the picture is the dashboard's
+# own developer graph: the same Svelte components and the same dagre layout,
+# fed a snapshot of the whole catalog (`bloud depgraph --json`, which emits
+# the shape /api/system/developer returns) instead of one instance's
+# installed apps. Rendering it in a real browser is what makes the README
+# image and the dashboard the same drawing rather than two descriptions of it.
 #
-# The PR-time gate is `./bloud depgraph --check` on the text form of the
-# graph (docs/architecture/dependency-graph.md), a command in the fast
-# validation tier; this job is the safety net that leaves main correct even
-# when a PR forgot to regenerate. The commit is marked [skip ci] so the
-# generated commit does not kick off another full validation pass.
+# The PR-time gate is `./bloud depgraph --check` and `./bloud catalogdoc
+# --check` in the fast validation tier; this job is the safety net that
+# leaves main correct even when a PR forgot to regenerate. The commit is
+# marked [skip ci] so the generated commit does not kick off another full
+# validation pass.
 #
-# The trigger is scoped to the inputs of the picture: the catalog it depicts,
-# and the code that draws it. A push to main that touches neither leaves the
-# committed image alone, which is the point of rendering it once instead of
-# redrawing a text diagram on every merge.
-name: Dependency graph
+# The trigger is scoped to the inputs of the artifacts: the catalog they
+# depict, and the code that draws them. A push to main that touches neither
+# leaves the committed artifacts alone, which is the point of generating them
+# once instead of redrawing on every merge.
+name: Generated docs
 
 on:
   workflow_dispatch:
@@ -29,23 +33,26 @@ on:
     branches:
       - main
     paths:
-      # What the picture depicts: the catalog topology.
+      # What the artifacts depict: the catalog topology and per-app metadata.
       - 'apps/**/metadata.yaml'
+      # The generators that write the README blocks and the text graph.
+      - 'cli/depgraph.go'
+      - 'cli/catalogdoc.go'
+      - 'cli/genblock.go'
       # What draws the picture. A change here can change the pixels without
       # changing the catalog, so the committed image has to follow it too.
-      - 'cli/depgraph.go'
       - 'services/host-agent/web/src/routes/graph/**'
       - 'services/host-agent/web/src/lib/graph/**'
       - 'services/host-agent/web/src/lib/timeline/graphLayout.ts'
       - 'services/host-agent/web/src/lib/utils/statusColor.ts'
       - 'scripts/render-graph.mjs'
-      - '.github/workflows/dependency-graph.yml'
+      - '.github/workflows/generated-docs.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: dependency-graph-main
+  group: generated-docs-main
   cancel-in-progress: false
 
 jobs:
@@ -80,6 +87,9 @@ jobs:
       - name: Refresh the text graph
         run: ./bloud depgraph --write
 
+      - name: Refresh the README blocks
+        run: ./bloud catalogdoc --write
+
       - name: Derive the catalog snapshot
         run: |
           set -euo pipefail
@@ -108,11 +118,11 @@ jobs:
         run: |
           set -euo pipefail
           if git diff --quiet -- README.md docs/architecture/dependency-graph.md docs/assets/dependency-graph.png; then
-            echo "graph already current; nothing to commit"
+            echo "generated docs already current; nothing to commit"
             exit 0
           fi
-          git config user.name "graph visualization bot"
+          git config user.name "generated docs bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/architecture/dependency-graph.md docs/assets/dependency-graph.png
-          git commit --no-verify -m "docs(graph): refresh the catalog graph [skip ci]"
+          git add README.md docs/architecture/dependency-graph.md docs/assets/dependency-graph.png
+          git commit --no-verify -m "docs: refresh generated docs [skip ci]"
           git push origin HEAD:main
