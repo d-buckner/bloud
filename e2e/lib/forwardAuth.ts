@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { expect, type Page } from '@playwright/test';
+import { expect, type Browser, type Page } from '@playwright/test';
 import { LoginPage } from './loginPage';
+import { appOrigin } from './origin';
 
 /**
  * Shared journey for apps that are gated by Authentik's forward-auth
@@ -10,17 +11,20 @@ import { LoginPage } from './loginPage';
  * popup is redirected to the Authentik prompt and only receives the app
  * document once the flow completes.
  *
- * The two halves of that arrangement are separate observable behaviors,
- * so they are separate helpers and the specs keep one test case each:
+ * The two halves of that arrangement are separate observable behaviors, so
+ * they are separate helpers. Both are registered as test cases by
+ * `describeApp` (`./app-suite.ts`) when the spec passes its
+ * `forwardAuth` values, so a forward-auth spec never repeats the rungs:
  *
- *  - `expectForwardAuthPrompt` asserts the ingress gate: the popup never
- *    reached the app, it is sitting on the Authentik login form.
+ *  - `expectForwardAuthGate` asserts the ingress gate from a context with
+ *    no IdP session: the popup never reached the app, it is sitting on the
+ *    Authentik login form.
  *  - `signInThroughForwardAuth`: completing that prompt serves the app
  *    itself, and the app does not ask for its own credentials.
  *
- * App-specific assertions stay in the specs (each passes the origin,
- * title pattern and app-shell selector it owns), so a red run names the
- * rung and the app that broke rather than a generic failure.
+ * App-specific values stay in the spec (`label`, `title`, `appShell`), so
+ * a red run names the rung and the app that broke rather than a generic
+ * failure.
  */
 
 /** The app-specific inputs a spec supplies for its own sign-in rung. */
@@ -81,6 +85,35 @@ export async function expectForwardAuthPrompt(popup: Page): Promise<void> {
       );
     }
     await popup.waitForTimeout(500);
+  }
+}
+
+/**
+ * Assert the ingress gate from a context that has never signed into the
+ * identity provider.
+ *
+ * The gating rung needs its own context. The suite's shared context completes
+ * an Authentik login in `beforeAll`, and against a valid session the outpost
+ * can authorize the request and serve the app without showing a prompt, which
+ * is correct behavior but fails an assertion that always expects one. A fresh
+ * context has no session, so the outpost must redirect it and the prompt is
+ * deterministic.
+ *
+ * Navigating straight to the app origin is enough: the tile journey is rung
+ * three's contract, and going through the dashboard would sign this context
+ * in and reintroduce the race.
+ */
+export async function expectForwardAuthGate(
+  browser: Browser,
+  app: string,
+): Promise<void> {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.goto(appOrigin(app));
+    await expectForwardAuthPrompt(page);
+  } finally {
+    await context.close();
   }
 }
 
