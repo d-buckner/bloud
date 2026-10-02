@@ -185,7 +185,11 @@
 				<h2 class="section-title">Shared apps</h2>
 				<div class="remote-apps-grid">
 					{#each remoteApps as app (app.id)}
-						<RemoteAppCard {app} onclick={() => handleRemoteAppClick(app)} onremove={handleRemoveRemoteApp} />
+						<RemoteAppCard
+							{app}
+							onclick={() => handleRemoteAppClick(app)}
+							onremove={handleRemoveRemoteApp}
+						/>
 					{/each}
 				</div>
 			</section>

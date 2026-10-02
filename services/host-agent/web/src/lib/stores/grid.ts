@@ -9,12 +9,56 @@
 
 import { writable, derived } from 'svelte/store';
 import { getWidgetById } from '$lib/widgets/registry';
-import type { GridElement, HomeData } from '$lib/types';
+import type { GridElement, HomeApp, HomeData, HomeWidget } from '$lib/types';
 
 export type { GridElement };
 
 /** App tiles are uniform: one grid cell, not resizable. */
 const APP_SIZE = 1;
+
+/** Turn the snapshot's app list into grid tiles, skipping system apps. */
+function appElements(apps: HomeApp[]): GridElement[] {
+	const elements: GridElement[] = [];
+	for (const app of apps) {
+		if (app.is_system) continue;
+		elements.push({
+			type: 'app',
+			id: app.catalog_id,
+			x: app.x,
+			y: app.y,
+			w: app.w || APP_SIZE,
+			h: app.h || APP_SIZE,
+		});
+	}
+	return elements;
+}
+
+/**
+ * Turn the snapshot's widget list into grid tiles. The registry size is the
+ * default; the stored size is the user's own resize and must win, or the next
+ * snapshot would undo it.
+ */
+function widgetElements(widgets: HomeWidget[]): GridElement[] {
+	const elements: GridElement[] = [];
+	for (const widget of widgets) {
+		const def = getWidgetById(widget.id);
+		if (!def) continue;
+		elements.push({
+			type: 'widget',
+			id: widget.id,
+			x: widget.x,
+			y: widget.y,
+			w: Math.max(widget.w || 0, def.size.cols),
+			h: Math.max(widget.h || 0, def.size.rows),
+		});
+	}
+	return elements;
+}
+
+/** Rebuild the whole element list from a home endpoint response. */
+function elementsFromHome(data: HomeData): GridElement[] {
+	return [...appElements(data.apps), ...widgetElements(data.widgets)];
+}
 
 function createGridStore() {
 	const { subscribe, set, update } = writable<GridElement[]>([]);
@@ -24,34 +68,7 @@ function createGridStore() {
 
 		/** Replace all elements from a home endpoint response. */
 		setFromHome(data: HomeData): void {
-			const elements: GridElement[] = [];
-			for (const app of data.apps) {
-				if (app.is_system) continue;
-				elements.push({
-					type: 'app',
-					id: app.catalog_id,
-					x: app.x,
-					y: app.y,
-					w: app.w || APP_SIZE,
-					h: app.h || APP_SIZE,
-				});
-			}
-			for (const widget of data.widgets) {
-				const def = getWidgetById(widget.id);
-				if (!def) continue;
-				// The registry size is the default; the stored size is the
-				// user's own resize and must win, or the next snapshot would
-				// undo it.
-				elements.push({
-					type: 'widget',
-					id: widget.id,
-					x: widget.x,
-					y: widget.y,
-					w: Math.max(widget.w || 0, def.size.cols),
-					h: Math.max(widget.h || 0, def.size.rows),
-				});
-			}
-			set(elements);
+			set(elementsFromHome(data));
 		},
 
 		removeWidget(widgetId: string): void {
