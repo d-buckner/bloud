@@ -5,7 +5,7 @@ import { describeApp } from '../lib/app-suite';
 import { expectInstalledInCatalog, expectRunningTile } from '../lib/apps';
 import { ensureInstalled } from '../lib/api';
 import { LoginPage } from '../lib/loginPage';
-import { appOrigin } from '../lib/origin';
+import { appOrigin, escapeRegExp } from '../lib/origin';
 
 const AFFINE_URL = appOrigin('affine');
 
@@ -67,7 +67,7 @@ describeApp('affine', (app) => {
     }
   });
 
-  test('signs in through OIDC and reaches the workspace', async ({
+  test('signs in through OIDC and reaches the signed-in app', async ({
     browser,
   }) => {
     test.setTimeout(360_000);
@@ -84,9 +84,10 @@ describeApp('affine', (app) => {
       // load, so poll for the form within a deadline instead of checking
       // once.
       const loginPage = new LoginPage(affine);
+      const signedInRoot = new RegExp('^' + escapeRegExp(AFFINE_URL) + '/?$');
       const deadline = Date.now() + 240_000;
       for (;;) {
-        if (affine.url().includes('/workspace/')) break;
+        if (signedInRoot.test(affine.url())) break;
         if (Date.now() > deadline) break;
 
         if (await loginPage.isVisible()) {
@@ -98,9 +99,11 @@ describeApp('affine', (app) => {
       }
 
       // AFFiNE exchanges the code at /oauth/callback, creates the app
-      // account on first login (matched by email), and redirects into
-      // the user's workspace.
-      await expect(affine).toHaveURL(/\/workspace\//, { timeout: 120_000 });
+      // account on first login (matched by email), and redirects back to
+      // the app. Self-hosted AFFiNE serves the signed-in shell from the
+      // app root (no /workspace/<id> path), so the root URL is the
+      // "past the sign-in gate" signal.
+      await expect(affine).toHaveURL(signedInRoot, { timeout: 120_000 });
 
       // The signed-in shell no longer offers the sign-in page's OIDC
       // button.
