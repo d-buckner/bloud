@@ -31,7 +31,7 @@ installed="$(curl -sS -H "Authorization: Bearer $tok" http://localhost:3000/api/
 if printf '%s' "$installed" | grep -q '"name":"jellyfin"'; then
   curl -sS -X POST -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' -d '{"clearData":true}' http://localhost:3000/api/apps/jellyfin/uninstall >/dev/null || true
   deadline=$((SECONDS + 120))
-  until ! curl -sS -H "Authorization: Bearer $tok" http://localhost:3000/api/apps/installed | grep -q '"name":"jellyfin"'; do
+  until ! curl -s -H "Authorization: Bearer $tok" http://localhost:3000/api/apps/installed 2>/dev/null | grep -q '"name":"jellyfin"'; do
     if ((SECONDS >= deadline)); then exit 1; fi
     sleep 2
   done
@@ -45,7 +45,7 @@ http_code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST -H "Authorization:
 printf 'install response: %%s\n' "$http_code"
 test "$http_code" -ge 200 && test "$http_code" -lt 300
 deadline=$((SECONDS + 300))
-until curl -sS -H "Authorization: Bearer $tok" http://localhost:3000/api/apps/installed | grep -q '"status":"running".*"name":"jellyfin"\|"name":"jellyfin".*"status":"running"'; do
+until curl -s -H "Authorization: Bearer $tok" http://localhost:3000/api/apps/installed 2>/dev/null | grep -q '"status":"running".*"name":"jellyfin"\|"name":"jellyfin".*"status":"running"'; do
   if ((SECONDS >= deadline)); then echo "timed out waiting for jellyfin to reach running"; exit 1; fi
   sleep 3
 done
@@ -63,7 +63,7 @@ test "$running" = true || { echo "FAIL: container running=$running" >&2; exit 1;
 # Retry the Jellyfin health check: the API oscillates between 200 and 503
 # "Server is loading" during first-run init, even after PostStart completes.
 deadline=$((SECONDS + 60))
-until curl -fsS http://localhost:8096/health >/dev/null; do
+until curl -fs http://localhost:8096/health >/dev/null 2>&1; do
   if ((SECONDS >= deadline)); then
     echo "FAIL: Jellyfin health check timed out after 60s" >&2
     curl -sS http://localhost:8096/health >&2 || true

@@ -3,9 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"codeberg.org/d-buckner/bloud/cli/executor"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,7 @@ type validateFlags struct {
 	explain bool
 	dryRun  bool
 	since   string
+	verbose bool
 }
 
 func cmdValidate(args []string) int {
@@ -75,7 +78,12 @@ func parseValidateFlags(args []string) validateFlags {
 				i++
 				f.since = args[i]
 			}
+		case "--verbose", "-v":
+			f.verbose = true
 		}
+	}
+	if os.Getenv("BLOUD_VALIDATE_VERBOSE") == "1" {
+		f.verbose = true
 	}
 	return f
 }
@@ -324,8 +332,29 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	return 0
 }
 
+// ranCommand is one executed fast-tier command and everything the console
+// needs to report it: the captured output, how long it took, and whether it
+// failed. The output is captured rather than streamed because both `go test`
+// and the generators write freely to stdout, including deliberate error-path
+// text from tests that pass. Streaming it buries the verdict; the captured log
+// keeps the evidence, and only a failing command's output reaches the console.
+type ranCommand struct {
+	cmd      manifestCommand
+	output   string
+	duration time.Duration
+	exitCode int
+	failed   bool
+}
+
 func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
 	exitCode := 0
+	verbose := flags.verbose && !flags.json
+	var ran []ranCommand
+
+	if !flags.json {
+		fmt.Printf("  %s\n", strings.Repeat("-", 60))
+	}
+
 	for _, cmd := range commands {
 		if flags.explain && !flags.json {
 			fmt.Printf("    %s→%s %s: %s\n", colorCyan, colorReset, cmd.ID, cmd.Run)
@@ -338,25 +367,39 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 
 		parts := splitShellWords(cmd.Run)
 		if len(parts) == 0 {
-			result.Commands = append(result.Commands, CommandResult{
-				ID:         cmd.ID,
-				Cwd:        cmd.Cwd,
-				Command:    cmd.Run,
-				Status:     "fail",
-				DurationMs: 0,
-				ExitCode:   1,
+			ran = append(ran, ranCommand{
+				cmd:      cmd,
+				output:   "empty command\n",
+				exitCode: 1,
+				failed:   true,
 			})
-			if !flags.json {
-				fmt.Printf("%s✗%s %s (empty command)\n", colorRed, colorReset, cmd.ID)
-			}
 			exitCode = 1
+			if !flags.json {
+				fmt.Printf("  %s✗%s %-24s (empty command)\n", colorRed, colorReset, cmd.ID)
+			}
 			continue
 		}
+
+		var buf bytes.Buffer
 		c := exec.Command(parts[0], parts[1:]...)
 		c.Dir = cwd
-		if !flags.json {
-			c.Stdout = os.Stdout
-			c.Stderr = os.Stderr
+		c.Stdin = os.Stdin
+		switch {
+		case flags.json:
+			// JSON mode owns stdout: the command's output is not part of the
+			// payload, so send it to /dev/null rather than the console.
+			c.Stdout = nil
+			c.Stderr = nil
+		case verbose:
+			// Stream it live and keep a copy for the log.
+			w := io.MultiWriter(os.Stdout, &buf)
+			c.Stdout = w
+			c.Stderr = w
+		default:
+			// Quiet by default: capture, and surface it only if the command
+			// fails (or in the log file).
+			c.Stdout = &buf
+			c.Stderr = &buf
 		}
 
 		start := time.Now()
@@ -364,17 +407,23 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 		dur := time.Since(start)
 
 		cmdExit := 0
-		status := "pass"
-		if err != nil {
+		failed := err != nil
+		if failed {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				cmdExit = exitErr.ExitCode()
 			} else {
 				cmdExit = 1
 			}
-			status = "fail"
 			exitCode = 1
 		}
 
+		out := buf.String()
+		ran = append(ran, ranCommand{cmd: cmd, output: out, duration: dur, exitCode: cmdExit, failed: failed})
+
+		status := "pass"
+		if failed {
+			status = "fail"
+		}
 		result.Commands = append(result.Commands, CommandResult{
 			ID:         cmd.ID,
 			Cwd:        cmd.Cwd,
@@ -386,13 +435,97 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 
 		if !flags.json {
 			icon := colorGreen + "✓" + colorReset
-			if status == "fail" {
+			if failed {
 				icon = colorRed + "✗" + colorReset
 			}
-			fmt.Printf("%s %s (%dms)\n", icon, cmd.ID, dur.Milliseconds())
+			fmt.Printf("  %s %-24s %6.1fs\n", icon, cmd.ID, dur.Seconds())
 		}
 	}
+
+	logPath := writeValidateLog(root, result.Tier, ran)
+
+	if !flags.json {
+		printValidateSummary(result.Tier, ran, logPath)
+	}
 	return exitCode
+}
+
+// printValidateSummary is the signal the tier owes the reader: did it pass or
+// fail, how long it took, and, when it failed, the output of only the failing
+// commands. The per-command verdicts were already printed as they ran.
+func printValidateSummary(tier string, ran []ranCommand, logPath string) {
+	var failed []ranCommand
+	var total time.Duration
+	for _, r := range ran {
+		total += r.duration
+		if r.failed {
+			failed = append(failed, r)
+		}
+	}
+
+	for _, r := range failed {
+		fmt.Printf("\n%s=== %s failed (exit %d, %s) ===%s\n%s\n",
+			colorRed, r.cmd.ID, r.exitCode, r.duration.Round(time.Millisecond), colorReset,
+			indentOutput(r.output))
+	}
+
+	fmt.Printf("  %s\n", strings.Repeat("-", 60))
+	if len(failed) == 0 {
+		fmt.Printf("validate: %s tier passed, %d/%d checks in %s\n",
+			tier, len(ran), len(ran), total.Round(time.Millisecond))
+	} else {
+		names := make([]string, 0, len(failed))
+		for _, r := range failed {
+			names = append(names, r.cmd.ID)
+		}
+		fmt.Printf("validate: %s tier failed, %d/%d checks in %s; failed: %s\n",
+			tier, len(ran)-len(failed), len(ran), total.Round(time.Millisecond), strings.Join(names, ", "))
+	}
+	if logPath != "" {
+		fmt.Printf("full output: %s\n", logPath)
+	}
+}
+
+// indentOutput prefixes every line so the dumped failure output is visually
+// scoped to the check that produced it.
+func indentOutput(out string) string {
+	out = strings.TrimRight(out, "\n")
+	if out == "" {
+		return "    (no output)"
+	}
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		lines[i] = "    " + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// writeValidateLog mirrors every command's full output to .bloud/logs so the
+// console can stay quiet without losing evidence. Best effort: a read-only
+// checkout must not fail the tier.
+func writeValidateLog(root, tier string, ran []ranCommand) string {
+	dir := filepath.Join(root, ".bloud", "logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	path := filepath.Join(dir, "validate-"+tier+".log")
+	var b strings.Builder
+	fmt.Fprintf(&b, "validate %s tier, %s\n", tier, time.Now().UTC().Format(time.RFC3339))
+	for _, r := range ran {
+		status := "PASS"
+		if r.failed {
+			status = "FAIL"
+		}
+		fmt.Fprintf(&b, "\n===== [%s] %s (cd %s && %s) %s =====\n%s\n",
+			status, r.cmd.ID, r.cmd.Cwd, r.cmd.Run, r.duration.Round(time.Millisecond), r.output)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return ""
+	}
+	if rel, err := filepath.Rel(root, path); err == nil {
+		return rel
+	}
+	return path
 }
 
 func printDryRun(tier string, commands []manifestCommand, riskAreas []string, changedFiles []string, flags validateFlags) {

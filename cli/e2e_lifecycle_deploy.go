@@ -22,12 +22,12 @@ func (r *lifecycle) buildAndDeploy() error {
 	r.buildDir = buildDir
 	defer func() { _ = os.RemoveAll(buildDir) }()
 
-	if err := r.localRun(r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
+	if err := r.localRunQuiet("frontend build", r.cfg.root, nil, "npm", "run", "build", "--workspace=@bloud/host-agent-web"); err != nil {
 		return err
 	}
 	hostAgentDir := filepath.Join(r.cfg.root, "services", "host-agent")
 	buildEnv := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+r.cfg.goarch)
-	if err := r.localRun(hostAgentDir, buildEnv, "go", "build", "-o", filepath.Join(buildDir, "host-agent"), "./cmd/host-agent"); err != nil {
+	if err := r.localRunQuiet("host-agent build", hostAgentDir, buildEnv, "go", "build", "-o", filepath.Join(buildDir, "host-agent"), "./cmd/host-agent"); err != nil {
 		return err
 	}
 
@@ -122,7 +122,7 @@ systemctl --user enable "$unit"
 systemctl --user restart "$unit"`
 
 var remoteWaitForHostAgentScript = `deadline=$((SECONDS + 300))
-until curl -fsS http://localhost:3000/api/health >/dev/null; do
+until curl -fs http://localhost:3000/api/health >/dev/null 2>&1; do
   if ((SECONDS >= deadline)); then exit 1; fi
   sleep 2
 done`
@@ -131,7 +131,7 @@ var remoteEnsureUserScript = `payload="$1"
 status="$(curl -fsS http://localhost:3000/api/setup/status)"
 if printf '%s' "$status" | grep -q '"setupRequired":true'; then
   deadline=$((SECONDS + 180))
-  until curl -fsS http://localhost:3000/api/setup/status | grep -q '"authentikReady":true'; do
+  until curl -fs http://localhost:3000/api/setup/status 2>/dev/null | grep -q '"authentikReady":true'; do
     if ((SECONDS >= deadline)); then exit 1; fi
     sleep 3
   done
