@@ -40,6 +40,10 @@ describeApp('radicale', (app) => {
 
   test('appears on the home screen as a converged tile', async () => {
     test.setTimeout(60_000);
+    // Navigate explicitly: the catalog test above leaves the shared page on
+    // /catalog, and `.app-slot` is a home-screen element that does not exist
+    // there.
+    await app.page.goto('/');
     await expectRunningTile(app.page, 'Radicale');
   });
 
