@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: calino
+displayName: Calino
+description: Browser calendar for the CalDAV calendars Bloud already serves
+category: productivity
+port: 8180
+estimatedSizeMB: 50
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+  # Calino is a client and nothing else: with no CalDAV server it is an empty
+  # window. The server is the whole reason to install it, so the contract is
+  # required rather than opportunistic, and installing Calino brings Radicale
+  # with it.
+  #
+  # Nothing is read out of the binding at runtime, because Calino takes no
+  # configuration from a server: the user types the DAV address into the app
+  # and the app authenticates them against the provider with their own Bloud
+  # password. The requirement is what makes the graph say so, so the pairing is
+  # installed, ordered, and reported instead of being something the operator
+  # has to know.
+  caldav:
+    required: true
+    multi: false
+    compatible:
+      - app: radicale
+        default: true
+
+# The app is a static bundle with no login of its own, so the gate is the
+# proxy's: forward-auth in front of the whole origin. That is the right shape
+# here for a reason beyond convenience: Calino holds the user's CalDAV password
+# in browser storage, so leaving the page loadable by anyone on the LAN would
+# put a credential store behind no door at all.
+#
+# The DAV traffic itself does not traverse this gate. The browser talks to
+# radicale.<host> directly, under its own Basic credential, and Radicale
+# verifies it against the identity provider over LDAP (see apps/radicale).
+sso:
+  strategy: forward-auth
+
+containers:
+  - name: apps-calino
+    image: ghcr.io/ivan-malinovski/calino:0.36.0
+    network: apps-net
+    restartPolicy: always
+    ports:
+      # The image serves from Caddy on 8080 with the Caddyfile baked in, and
+      # 8080 is Traefik's own entrypoint on this host. The host side carries
+      # the Bloud port; the container keeps the one its image was built with.
+      - host: 8180
+        container: 8080
+    healthCheck:
+      # The image's own healthcheck shape: a GET on the root that must return
+      # content. Caddy answers 200 with the SPA shell once it is serving, and
+      # wget -q fails on any 4xx/5xx, so this goes green on a serving process.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ | grep -q root"]
+      interval: 5
+      timeout: 10
+      retries: 12

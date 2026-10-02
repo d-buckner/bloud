@@ -134,6 +134,18 @@ apps:
       - apps/radicale/**
     e2e-project: radicale
 
+  # Calino is the client half of the same story: a browser CalDAV app that
+  # declares `caldav` as a required integration, so installing it brings
+  # Radicale along. It has no login of its own, so the gate is forward-auth on
+  # the whole origin; the browser talks to the DAV server under the user's own
+  # credential, which is Radicale's `ldap` strategy, not this app's.
+  calino:
+    auth: forward-auth
+    validation-level: full
+    files:
+      - apps/calino/**
+    e2e-project: calino
+
   navidrome:
     auth: forward-auth
     validation-level: full

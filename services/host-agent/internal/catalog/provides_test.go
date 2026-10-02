@@ -133,6 +133,26 @@ containers:
 			provides: "  mcp:\n    secrets: [httpToken]\n    values: {path: /mcp, serverName: affine}\n    runtimeValues: [path]",
 			wantErr:  `provides.mcp declares "path" both in values and in runtimeValues`,
 		},
+		{
+			// The caldav contract carries no secret on purpose: the credential is
+			// the person's own password, so a provider publishing one is offering
+			// something the contract refuses to transport.
+			name:     "caldav with the DAV root this contract carries",
+			port:     "5232",
+			provides: "  caldav:\n    values: {path: /}",
+		},
+		{
+			name:     "caldav with no DAV root declared",
+			port:     "5232",
+			provides: "  caldav: {}",
+			wantErr:  `provides.caldav.values must declare "path"`,
+		},
+		{
+			name:     "caldav with a credential it must not publish",
+			port:     "5232",
+			provides: "  caldav:\n    secrets: [password]\n    values: {path: /}",
+			wantErr:  `provides.caldav publishes "password", which this contract does not carry`,
+		},
 	}
 
 	for _, tc := range cases {

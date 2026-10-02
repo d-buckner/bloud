@@ -102,6 +102,29 @@ var contracts = []Contract{
 		SatisfiedBy: []string{"modelSource"},
 	},
 
+	// A CalDAV/CardDAV server: the endpoint a calendar or contacts client
+	// speaks DAV to. Provided by the DAV server itself (Radicale), consumed
+	// by anything that wants to show the user the calendars Bloud already
+	// serves instead of making them type a server address from memory.
+	//
+	// The contract carries no credential, and that is the design rather than
+	// an omission. A DAV server authenticates the *person*: the password they
+	// typed into Thunderbird or DAVx⁵, which the server verifies against the
+	// identity provider itself. There is no machine credential for Bloud to
+	// hand over, and a contract that could carry one would be a contract for
+	// reading a user's password and handing it to a second app. A consumer
+	// gets the address and nothing else, which is also exactly what it needs:
+	// the client authenticates the user directly, end to end.
+	//
+	// `path` is the DAV root on the provider's address. It is a value rather
+	// than a hardcoded `/` so a provider mounted under a prefix (Nextcloud's
+	// `/remote.php/dav`) declares its own truth instead of every consumer
+	// assuming the shape of the one server in this catalog.
+	{
+		Name:   "caldav",
+		Values: []ValueSpec{{Key: "path", AbsolutePath: true}},
+	},
+
 	// A streamable-HTTP MCP server an agent harness can register as a tool
 	// namespace. The consumer is the harness (Hermes and friends); the provider
 	// is any app that serves MCP.

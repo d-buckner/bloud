@@ -40,6 +40,7 @@ type appSpec struct {
 // so coverage cannot silently shrink.
 var conformanceTable = []appSpec{
 	{Dir: "affine", Node: "apps-affine", DefaultPort: 3010, WithSSO: true},
+	{Dir: "calino", Node: "apps-calino", DefaultPort: 8180},
 	{Dir: "hermes", Node: "apps-hermes", DefaultPort: 9119, WithSSO: true},
 	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, Preseed: preseedHAComponent},
 	{Dir: "immich", Node: "apps-immich-server", DefaultPort: 2283, WithSSO: true},

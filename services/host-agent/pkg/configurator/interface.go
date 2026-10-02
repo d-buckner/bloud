@@ -318,6 +318,33 @@ type MCPBinding struct {
 	Path string
 }
 
+// CalDAVBinding is the DAV server a calendar or contacts client talks to.
+//
+// There is no credential field, and that is the contract, not a gap: a DAV
+// server authenticates the person with the password they give the client, and
+// the provider verifies it against the identity provider itself. Bloud does
+// not route user passwords between apps, so a consumer of this contract gets
+// the address and nothing else.
+//
+// It carries two addresses and no composed URL, for the same reason MCPBinding
+// does. ProviderRef.BaseURL is the container-network address, which is the
+// right one for a client running beside the provider on apps-net. PublicURL is
+// the address a browser dials, and it is the only one that works for a
+// browser-based client: the container name does not resolve there, and the
+// browser will not send the user's credentials to an origin it did not get
+// the page from. The consumer picks the one its own vantage point can use and
+// appends Path.
+type CalDAVBinding struct {
+	ProviderRef
+	// PublicURL is the origin the provider is reachable at from a browser:
+	// the instance's public address with the provider's app subdomain on it.
+	// Empty when the instance has no resolvable public address.
+	PublicURL string
+	// Path is the DAV root on whichever address the consumer chose. Absolute,
+	// so composition is plain concatenation.
+	Path string
+}
+
 // Integrations holds the resolved providers for every contract the app declares
 // in its catalog metadata, one typed slice per contract.
 //
@@ -334,6 +361,7 @@ type Integrations struct {
 	ModelSources    []ModelSourceBinding
 	Inference       []InferenceBinding
 	MCPServers      []MCPBinding
+	CalDAVServers   []CalDAVBinding
 }
 
 // AppState contains the inputs currently consumed by app configurators.

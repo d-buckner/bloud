@@ -49,6 +49,10 @@ flowchart TD
         c_affine --> c_affine_search
     end
 
+    subgraph app_calino["Calino"]
+        c_calino["calino"]
+    end
+
     subgraph app_hermes["Hermes"]
         c_hermes["hermes"]
     end
@@ -117,6 +121,8 @@ flowchart TD
     %% Cross-app integration edges
     app_affine -->|inference| ai_model
     app_affine -->|native-oidc| app_authentik
+    app_calino -->|forward-auth| app_authentik
+    app_calino -->|caldav| app_radicale
     app_hermes -->|mcp| app_affine
     app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
@@ -137,6 +143,7 @@ flowchart TD
     app_sonarr -->|downloadClient| app_qbittorrent
     app_traefik -->|proxy| app_affine
     app_traefik -->|proxy| app_authentik
+    app_traefik -->|proxy| app_calino
     app_traefik -->|proxy| app_hermes
     app_traefik -->|proxy| app_homeassistant
     app_traefik -->|proxy| app_immich
