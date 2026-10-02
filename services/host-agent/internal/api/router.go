@@ -247,7 +247,7 @@ func NewRouter(
 	if deps.realOrch != nil {
 		systemOrch = deps.realOrch
 	}
-	systemMod := NewSystemModule(appStore, catalogCache, nil, gateway, tailnetStore, systemOrch, logger)
+	systemMod := NewSystemModule(appStore, catalogCache, gateway, tailnetStore, systemOrch, logger)
 	// The health endpoint answers from the same check main.go runs, so a dead
 	// intent loop cannot read healthy over HTTP.
 	systemMod.SetHealthCheck(func() error {
