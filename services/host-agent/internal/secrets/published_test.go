@@ -90,7 +90,7 @@ func TestManager_AppContractValues(t *testing.T) {
 	}
 	// An unpublished provider/key reads as empty, the same "not ready" signal a
 	// published secret gives.
-	if got := m.GetAppContractValue("litellm", "mcp", "path"); got != "" {
+	if got := m.GetAppContractValue("no-such-app", "mcp", "path"); got != "" {
 		t.Errorf("GetAppContractValue for an unknown provider = %q, want empty", got)
 	}
 

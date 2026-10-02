@@ -15,6 +15,7 @@
 	let { data }: { data: NodeData } = $props();
 
 	const isConnection = $derived(data.nodeType === 'connection');
+	const isService = $derived(data.nodeType === 'service');
 	const label = $derived(data.displayName || window.location.hostname);
 </script>
 
@@ -22,14 +23,16 @@
 	<Handle type="target" position={Position.Top} />
 {/if}
 
-<div class="app-node" class:system={data.isSystem} class:connection={isConnection}>
+<div class="app-node" class:system={data.isSystem} class:connection={isConnection} class:service={isService}>
 	<div class="node-header">
 		<span class="node-name">{label}</span>
 	</div>
 	<div class="node-footer">
 		<span class="status-dot" style="background: {statusColor(data.status)}"></span>
 		<span class="status-text">{data.status}</span>
-		{#if data.isSystem}
+		{#if isService}
+			<span class="system-tag">service</span>
+		{:else if data.isSystem}
 			<span class="system-tag">system</span>
 		{/if}
 		{#if isConnection}
@@ -60,6 +63,14 @@
 		border-color: #6366f1;
 		border-width: 2px;
 		background: #eef2ff;
+	}
+
+	/* A service the instance provides rather than an app it runs: nothing was
+	   installed, so it reads as plumbing, not as a box with a lifecycle. */
+	.app-node.service {
+		border-color: #0d9488;
+		border-style: dashed;
+		background: #f0fdfa;
 	}
 
 	.node-header {

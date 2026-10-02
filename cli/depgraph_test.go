@@ -376,9 +376,139 @@ func TestBuildCatalogGraphContainerlessApp(t *testing.T) {
 	graph := buildCatalogGraph(map[string]*AppMetadata{
 		"flat": {Name: "flat", DisplayName: "Flat"},
 	})
-	if len(graph.Nodes) != 1 || graph.Nodes[0].NodeType != "app" {
+	if len(graph.Nodes) != 2 || graph.Nodes[0].NodeType != "app" || graph.Nodes[0].ID != "flat" {
 		t.Errorf("containerless app rendered as %+v", graph.Nodes)
 	}
+	// The AI Model node rides along with every snapshot; see the note on
+	// instanceProviderNodeID.
+	if graph.Nodes[1].ID != instanceProviderNodeID || graph.Nodes[1].NodeType != "service" {
+		t.Errorf("expected the AI provider node second, got %+v", graph.Nodes[1])
+	}
+}
+
+// The instance's AI provider is in every snapshot, whatever the catalog
+// declares. The generated picture is the full view of what Bloud can wire,
+// not of what happens to have a consumer this week.
+func TestBuildCatalogGraphAlwaysCarriesAIProvider(t *testing.T) {
+	graph := buildCatalogGraph(map[string]*AppMetadata{
+		"lonely": {Name: "lonely", DisplayName: "Lonely"},
+	})
+	found := false
+	for _, node := range graph.Nodes {
+		if node.ID == instanceProviderNodeID {
+			found = true
+			if node.DisplayName != instanceProviderLabel || node.NodeType != "service" {
+				t.Errorf("AI provider node rendered as %+v", node)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("snapshot has no AI provider node: %+v", graph.Nodes)
+	}
+}
+
+// An app whose only inference provider is `source: instance` gets an edge to
+// the AI Model node. Before the instance source mapped to a node this edge
+// resolved to an empty app name and vanished, so the wiring the app declares
+// was invisible.
+func TestBuildCatalogGraphInferenceEdgeToAIProvider(t *testing.T) {
+	graph := buildCatalogGraph(map[string]*AppMetadata{
+		"agent": {
+			Name:        "agent",
+			DisplayName: "Agent",
+			Integrations: map[string]Integration{
+				"inference": {Compatible: []CompatibleApp{{Source: "instance", Default: true}}},
+			},
+		},
+	})
+	want := catalogGraphEdge{Source: "agent", Target: instanceProviderNodeID, Label: "inference"}
+	if !containsEdge(graph.Edges, want) {
+		t.Errorf("no inference edge to the AI provider; edges: %+v", graph.Edges)
+	}
+}
+
+func containsEdge(edges []catalogGraphEdge, want catalogGraphEdge) bool {
+	for _, edge := range edges {
+		if edge == want {
+			return true
+		}
+	}
+	return false
+}
+
+// A compatible entry naming an app that is not in the catalog still draws
+// nothing: the AI node is the instance's, not a catch-all for a dangling
+// provider reference.
+func TestBuildCatalogGraphUnknownProviderStillDropped(t *testing.T) {
+	graph := buildCatalogGraph(map[string]*AppMetadata{
+		"consumer": {
+			Name:        "consumer",
+			DisplayName: "Consumer",
+			Integrations: map[string]Integration{
+				"pvr": {Compatible: []CompatibleApp{{App: "not-shipped", Default: true}}},
+			},
+		},
+	})
+	for _, edge := range graph.Edges {
+		if edge.Target == "not-shipped" || edge.Source == "not-shipped" {
+			t.Errorf("edge to an app the catalog does not have: %+v", edge)
+		}
+	}
+}
+
+func TestDefaultProviderMapsInstanceSourceToAINode(t *testing.T) {
+	integration := Integration{Compatible: []CompatibleApp{{Source: "instance", Default: true}}}
+	if got := defaultProvider(integration); got != instanceProviderNodeID {
+		t.Errorf("defaultProvider = %q, want %q", got, instanceProviderNodeID)
+	}
+}
+
+func TestRenderGraphAIProviderOutsideEveryBox(t *testing.T) {
+	apps := testCatalog()
+	apps["agent"] = &AppMetadata{
+		Name:        "agent",
+		DisplayName: "Agent",
+		Integrations: map[string]Integration{
+			"inference": {Compatible: []CompatibleApp{{Source: "instance", Default: true}}},
+		},
+	}
+	rendered := renderDependencyGraph(apps)
+
+	if !strings.Contains(rendered, `ai_model["AI Model"]`) {
+		t.Errorf("no AI Model node in:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "app_agent -->|inference| ai_model") {
+		t.Errorf("no inference edge to the AI Model node in:\n%s", rendered)
+	}
+	// The node is drawn, never boxed: it is not an app, so it must not open
+	// or sit inside a subgraph.
+	if strings.Contains(rendered, "subgraph ai_model") {
+		t.Errorf("the AI provider must not be a subgraph:\n%s", rendered)
+	}
+	if lines := strings.Split(rendered, "\n"); countSubgraphDepthAtAI(lines) != 0 {
+		t.Errorf("AI Model node is nested inside a subgraph")
+	}
+}
+
+// countSubgraphDepthAtAI reports how many open subgraphs surround the line
+// that declares the AI Model node.
+func countSubgraphDepthAtAI(lines []string) int {
+	depth := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "subgraph ") {
+			depth++
+			continue
+		}
+		if trimmed == "end" {
+			depth--
+			continue
+		}
+		if strings.HasPrefix(trimmed, instanceProviderMermaid+"[") {
+			return depth
+		}
+	}
+	return -1
 }
 
 func TestRenderCatalogGraphJSON(t *testing.T) {
@@ -391,8 +521,8 @@ func TestRenderCatalogGraphJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(encoded), &round); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, encoded)
 	}
-	// testCatalog: 3 app nodes + 5 container nodes.
-	if len(round.Nodes) != 8 || len(round.Edges) == 0 {
+	// testCatalog: 3 app nodes + 5 container nodes + the AI provider node.
+	if len(round.Nodes) != 9 || len(round.Edges) == 0 {
 		t.Errorf("unexpected round-trip size: %d nodes, %d edges\n%s", len(round.Nodes), len(round.Edges), encoded)
 	}
 

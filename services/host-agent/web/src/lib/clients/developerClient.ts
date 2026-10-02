@@ -6,7 +6,7 @@ export interface GraphNode {
 	displayName: string;
 	status: string;
 	isSystem: boolean;
-	nodeType: string; // "app" | "container" | "connection"
+	nodeType: string; // "app" | "container" | "connection" | "service"
 	/** Owning app's node ID; set on container nodes, which render inside the app's box. */
 	parentId?: string;
 }

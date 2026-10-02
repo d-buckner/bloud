@@ -86,15 +86,15 @@ var contracts = []Contract{
 	},
 
 	// The endpoint an application dials: base URL, a key, a default model.
-	// Provided by a gateway app such as LiteLLM, and by promotion from any
-	// modelSource when no gateway is installed. That promotion is what lets a
-	// consumer's metadata stay identical whether it reaches a raw upstream or a
-	// gateway: adding the gateway later changes nothing on the consumer side.
+	// Provided by a gateway app, and by promotion from any modelSource when no
+	// gateway is installed. That promotion is what lets a consumer's metadata
+	// stay identical whether it reaches a raw upstream or a gateway: adding the
+	// gateway later changes nothing on the consumer side.
 	//
 	// Only a gateway provides this contract, and a gateway always has a
 	// credential, so the secret is mandatory here even though its modelSource
 	// fallback is keyless. A promoted binding from a keyless provider simply
-	// carries an empty APIKey, which is the correct answer for Ollama.
+	// carries an empty APIKey, which is the correct answer for a local runtime.
 	{
 		Name:        "inference",
 		Secrets:     []string{"apiKey"},

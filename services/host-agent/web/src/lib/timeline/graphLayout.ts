@@ -299,10 +299,14 @@ function looseContainerPositions(
 /** Lay the whole developer graph out to xyflow nodes + edges. */
 export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: Node[]; edges: Edge[] } {
 	const appNodes = graph.nodes.filter((n) => n.nodeType === 'app');
+	// A service is a provider the instance supplies itself rather than an app
+	// that gets installed: no box, no containers, drawn flat among the apps.
+	const serviceNodes = graph.nodes.filter((n) => n.nodeType === 'service');
+	const groupNodes = [...appNodes, ...serviceNodes];
 	const connectionNodes = graph.nodes.filter((n) => n.nodeType === 'connection');
-	const appNodeIds = new Set(appNodes.map((n) => n.id));
-	const { byApp, loose } = groupContainers(graph.nodes, appNodeIds);
-	const { boxes, sizes } = measureTopLevel(appNodes, byApp, loose, graph.edges);
+	const groupNodeIds = new Set(groupNodes.map((n) => n.id));
+	const { byApp, loose } = groupContainers(graph.nodes, groupNodeIds);
+	const { boxes, sizes } = measureTopLevel(groupNodes, byApp, loose, graph.edges);
 	const userConnectionId = detectUserConnection(graph, hostname);
 
 	const sources = new Set(graph.edges.map((e) => e.source));
@@ -320,7 +324,7 @@ export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: N
 		hasIncoming: targets.has(n.id)
 	});
 
-	const topLevelIds = [...appNodeIds, ...loose.map((n) => n.id)];
+	const topLevelIds = [...groupNodeIds, ...loose.map((n) => n.id)];
 	if (topLevelIds.length === 0) {
 		const nodes = connectionRow(connectionNodes, 0, 0, dataFor);
 		const you = buildYouNode(connectionNodes, userConnectionId, 0, 0);
@@ -342,7 +346,7 @@ export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: N
 		}
 	];
 	// Parents before children: app nodes first, then the containers they hold.
-	for (const n of appNodes) {
+	for (const n of groupNodes) {
 		const size = sizes.get(n.id)!;
 		const pos = g.node(n.id);
 		const position = { x: pos.x - size.width / 2 - group.x, y: pos.y - size.height / 2 - group.y };

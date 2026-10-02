@@ -196,6 +196,49 @@ describe('layoutGraph: container whose app is missing', () => {
 	});
 });
 
+describe('layoutGraph: service nodes', () => {
+	// A service is a provider the instance supplies itself rather than an app
+	// it installs: no box, no containers, consumers point at it with an
+	// integration edge.
+	const graph: DeveloperGraph = {
+		nodes: [
+			node('traefik'),
+			node('hermes'),
+			node('ai:instance', {
+				displayName: 'AI Model',
+				nodeType: 'service',
+				status: 'configured',
+				isSystem: true
+			})
+		],
+		edges: [edge('hermes', 'ai:instance')]
+	};
+	const { nodes, edges } = layoutGraph(graph, 'bloud.local');
+
+	it('lays the service under the apps group as a flat node, not a box', () => {
+		expect(byId(nodes, 'ai:instance')).toMatchObject({ type: 'app', parentId: '__apps_group' });
+	});
+
+	it('keeps the service node type on the data so the node can tag it', () => {
+		expect(byId(nodes, 'ai:instance')!.data).toMatchObject({
+			nodeType: 'service',
+			displayName: 'AI Model'
+		});
+	});
+
+	it('draws the consumer edge into the service', () => {
+		expect(edges.some((e) => e.source === 'hermes' && e.target === 'ai:instance')).toBe(true);
+	});
+
+	it('lays a service out even when nothing points at it', () => {
+		const lonely = layoutGraph(
+			{ nodes: [node('a'), node('ai:instance', { nodeType: 'service' })], edges: [] },
+			'bloud.local'
+		);
+		expect(byId(lonely.nodes, 'ai:instance')).toMatchObject({ parentId: '__apps_group' });
+	});
+});
+
 describe('layoutGraph: connections only (no apps)', () => {
 	const graph: DeveloperGraph = {
 		nodes: [conn('conn:local'), conn('conn:tailnet:z')],
