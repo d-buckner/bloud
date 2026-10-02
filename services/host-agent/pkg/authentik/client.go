@@ -1830,91 +1830,13 @@ func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, cli
 		return fmt.Errorf("checking OAuth2 provider: %w", err)
 	}
 
-	var providerID int
-	if existingID != 0 {
-		providerID = existingID
-		// Refresh redirect URIs so newly detected hosts/IPs work
-		if err := c.updateBloudOAuth2ProviderRedirectURIs(ctx, providerID, redirectURIs); err != nil {
-			return fmt.Errorf("updating redirect URIs: %w", err)
-		}
-		// Swap in the verified-email scope mapping (Authentik's managed one
-		// reports email_verified: False, which apps like AFFiNE reject).
-		if err := c.ensureProviderEmailScopeMapping(ctx, providerID); err != nil {
-			return fmt.Errorf("updating email scope mapping: %w", err)
-		}
-		if !tuning.isZero() {
-			if err := c.ensureProviderTuning(ctx, providerID, tuning); err != nil {
-				return fmt.Errorf("applying provider tuning: %w", err)
-			}
-		}
-	} else {
-		// Find required flows
-		authFlowID, err := c.findFlowID(ctx, "default-provider-authorization-implicit-consent")
-		if err != nil {
-			authFlowID, err = c.findFlowID(ctx, "default-provider-authorization-explicit-consent")
-			if err != nil {
-				return fmt.Errorf("finding authorization flow: %w", err)
-			}
-		}
-		invalidationFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
-		if err != nil {
-			return fmt.Errorf("finding invalidation flow: %w", err)
-		}
-
-		certUUID, err := c.getFirstCertificateUUID(ctx)
-		if err != nil {
-			return fmt.Errorf("getting signing certificate: %w", err)
-		}
-		// Use Bloud's verified-email scope mapping for the "email" scope:
-		// Authentik's managed mapping hardcodes email_verified: False, which
-		// breaks apps whose OIDC provider rejects unverified emails (AFFiNE).
-		scopeMappings, err := c.getScopePropertyMappings(ctx, []string{"openid", "profile"})
-		if err != nil {
-			return fmt.Errorf("getting scope mappings: %w", err)
-		}
-		bloudEmail, err := c.ensureBloudEmailScopeMapping(ctx)
-		if err != nil {
-			return fmt.Errorf("ensuring email scope mapping: %w", err)
-		}
-		scopeMappings = append(scopeMappings, bloudEmail)
-		extraMappings, err := c.extraScopeMappings(ctx, tuning.ExtraScopes)
-		if err != nil {
+	providerID := existingID
+	if providerID == 0 {
+		if providerID, err = c.createNativeProvider(ctx, providerName, clientID, clientSecret, redirectURIs, tuning); err != nil {
 			return err
 		}
-		scopeMappings = append(scopeMappings, extraMappings...)
-
-		var uriEntries []map[string]string
-		for _, uri := range redirectURIs {
-			uriEntries = append(uriEntries, map[string]string{
-				"matching_mode": "strict",
-				"url":           uri,
-			})
-		}
-
-		payload := map[string]interface{}{
-			"name":                       providerName,
-			"authorization_flow":         authFlowID,
-			"invalidation_flow":          invalidationFlowID,
-			"client_type":                "confidential",
-			"client_id":                  clientID,
-			"client_secret":              clientSecret,
-			"redirect_uris":              uriEntries,
-			"signing_key":                certUUID,
-			"property_mappings":          scopeMappings,
-			"sub_mode":                   "hashed_user_id",
-			"include_claims_in_id_token": true,
-			"access_code_validity":       "minutes=1",
-			"access_token_validity":      tuning.accessTokenValidity(),
-			"refresh_token_validity":     "days=30",
-		}
-
-		var result struct {
-			PK int `json:"pk"`
-		}
-		if err := c.cl.POST("/api/v3/providers/oauth2/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
-			return fmt.Errorf("creating OAuth2 provider: %w", err)
-		}
-		providerID = result.PK
+	} else if err := c.reconcileNativeProvider(ctx, providerID, redirectURIs, tuning); err != nil {
+		return err
 	}
 
 	// Ensure the application exists (and points at this provider)
@@ -1923,6 +1845,115 @@ func (c *Client) EnsureNativeOIDC(ctx context.Context, appName, displayName, cli
 	}
 
 	return nil
+}
+
+// reconcileNativeProvider brings an existing provider up to date: the redirect
+// URI list is refreshed so newly detected hosts and addresses work, the
+// verified-email scope mapping is swapped in (Authentik's managed one reports
+// email_verified: False, which apps like AFFiNE reject), and the app's declared
+// tuning is applied.
+func (c *Client) reconcileNativeProvider(ctx context.Context, providerID int, redirectURIs []string, tuning OIDCTuning) error {
+	if err := c.updateBloudOAuth2ProviderRedirectURIs(ctx, providerID, redirectURIs); err != nil {
+		return fmt.Errorf("updating redirect URIs: %w", err)
+	}
+	if err := c.ensureProviderEmailScopeMapping(ctx, providerID); err != nil {
+		return fmt.Errorf("updating email scope mapping: %w", err)
+	}
+	if !tuning.isZero() {
+		if err := c.ensureProviderTuning(ctx, providerID, tuning); err != nil {
+			return fmt.Errorf("applying provider tuning: %w", err)
+		}
+	}
+	return nil
+}
+
+// findAuthorizationFlow picks the provider's authorization flow, preferring the
+// implicit-consent flow and falling back to explicit consent when the instance
+// only ships one.
+func (c *Client) findAuthorizationFlow(ctx context.Context) (string, error) {
+	if id, err := c.findFlowID(ctx, "default-provider-authorization-implicit-consent"); err == nil {
+		return id, nil
+	}
+	id, err := c.findFlowID(ctx, "default-provider-authorization-explicit-consent")
+	if err != nil {
+		return "", fmt.Errorf("finding authorization flow: %w", err)
+	}
+	return id, nil
+}
+
+// redirectURIEntries renders the redirect URIs as Authentik's strict-match
+// rows: a URI that is not on the list is refused rather than prefix-matched.
+func redirectURIEntries(redirectURIs []string) []map[string]string {
+	var uriEntries []map[string]string
+	for _, uri := range redirectURIs {
+		uriEntries = append(uriEntries, map[string]string{
+			"matching_mode": "strict",
+			"url":           uri,
+		})
+	}
+	return uriEntries
+}
+
+// createNativeProvider builds the OAuth2 provider from scratch: the flows it
+// runs, the signing key it signs with, and the scope mapping set that carries
+// Bloud's verified-email mapping plus whatever extra scopes the app declared.
+func (c *Client) createNativeProvider(ctx context.Context, providerName, clientID, clientSecret string, redirectURIs []string, tuning OIDCTuning) (int, error) {
+	// Find required flows
+	authFlowID, err := c.findAuthorizationFlow(ctx)
+	if err != nil {
+		return 0, err
+	}
+	invalidationFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
+	if err != nil {
+		return 0, fmt.Errorf("finding invalidation flow: %w", err)
+	}
+
+	certUUID, err := c.getFirstCertificateUUID(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("getting signing certificate: %w", err)
+	}
+	// Use Bloud's verified-email scope mapping for the "email" scope:
+	// Authentik's managed mapping hardcodes email_verified: False, which
+	// breaks apps whose OIDC provider rejects unverified emails (AFFiNE).
+	scopeMappings, err := c.getScopePropertyMappings(ctx, []string{"openid", "profile"})
+	if err != nil {
+		return 0, fmt.Errorf("getting scope mappings: %w", err)
+	}
+	bloudEmail, err := c.ensureBloudEmailScopeMapping(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("ensuring email scope mapping: %w", err)
+	}
+	scopeMappings = append(scopeMappings, bloudEmail)
+	extraMappings, err := c.extraScopeMappings(ctx, tuning.ExtraScopes)
+	if err != nil {
+		return 0, err
+	}
+	scopeMappings = append(scopeMappings, extraMappings...)
+
+	payload := map[string]interface{}{
+		"name":                       providerName,
+		"authorization_flow":         authFlowID,
+		"invalidation_flow":          invalidationFlowID,
+		"client_type":                "confidential",
+		"client_id":                  clientID,
+		"client_secret":              clientSecret,
+		"redirect_uris":              redirectURIEntries(redirectURIs),
+		"signing_key":                certUUID,
+		"property_mappings":          scopeMappings,
+		"sub_mode":                   "hashed_user_id",
+		"include_claims_in_id_token": true,
+		"access_code_validity":       "minutes=1",
+		"access_token_validity":      tuning.accessTokenValidity(),
+		"refresh_token_validity":     "days=30",
+	}
+
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := c.cl.POST("/api/v3/providers/oauth2/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
+		return 0, fmt.Errorf("creating OAuth2 provider: %w", err)
+	}
+	return result.PK, nil
 }
 
 // ensureProviderTuning brings an existing OAuth2 provider in line with the

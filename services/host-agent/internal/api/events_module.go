@@ -96,27 +96,30 @@ func (m *eventsModule) StreamHandler() http.HandlerFunc {
 				if !ok {
 					return
 				}
-				switch evt.Type {
-				case eventbus.TypeAppsChanged:
-					if err := m.writeSnapshot(w, flusher, username); err != nil {
-						return
-					}
-				case eventbus.TypeNode:
-					if err := writeSSE(w, flusher, "node", evt.Node); err != nil {
-						return
-					}
-				case eventbus.TypeActivity:
-					if err := writeSSE(w, flusher, "activity", evt.Activity); err != nil {
-						return
-					}
-				case eventbus.TypePull:
-					if err := writeSSE(w, flusher, "pull", evt.Pull); err != nil {
-						return
-					}
+				if !m.deliverEvent(w, flusher, username, evt) {
+					return
 				}
 			}
 		}
 	}
+}
+
+// deliverEvent forwards one bus event onto the SSE stream. It reports false
+// when the write failed, which means the client is gone and the stream should
+// end rather than spin on a dead connection. A type with no mapping is not an
+// error: it is simply not forwarded.
+func (m *eventsModule) deliverEvent(w http.ResponseWriter, flusher http.Flusher, username string, evt eventbus.Event) bool {
+	switch evt.Type {
+	case eventbus.TypeAppsChanged:
+		return m.writeSnapshot(w, flusher, username) == nil
+	case eventbus.TypeNode:
+		return writeSSE(w, flusher, "node", evt.Node) == nil
+	case eventbus.TypeActivity:
+		return writeSSE(w, flusher, "activity", evt.Activity) == nil
+	case eventbus.TypePull:
+		return writeSSE(w, flusher, "pull", evt.Pull) == nil
+	}
+	return true
 }
 
 // writeSnapshot sends the full home payload as a snapshot event. The client

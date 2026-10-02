@@ -53,9 +53,19 @@ type fakeDownloadClients struct {
 }
 
 func (f *fakeDownloadClients) handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+	mux := http.NewServeMux()
+	mux.HandleFunc(downloadClientTestPath, f.recordRequest(f.handleTest))
+	mux.HandleFunc(downloadClientPath, f.recordRequest(f.handleCollection))
+	mux.HandleFunc(downloadClientPath+"/", f.recordRequest(f.handleDelete))
+	return mux
+}
 
+// recordRequest logs one call into the fake's transcript before handing it on,
+// so assertions read what the client actually sent rather than the fake's
+// internals.
+func (f *fakeDownloadClients) recordRequest(next func(http.ResponseWriter, *http.Request, []byte)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.requests = append(f.requests, recordedRequest{
 			method: r.Method,
@@ -63,62 +73,92 @@ func (f *fakeDownloadClients) handler() http.Handler {
 			apiKey: r.Header.Get(APIKeyHeader),
 			body:   body,
 		})
-		listStatus, testStatus := f.listStatus, f.testStatus
 		f.mu.Unlock()
+		next(w, r, body)
+	}
+}
 
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == downloadClientTestPath:
-			if testStatus != 0 {
-				w.WriteHeader(testStatus)
-				_, _ = io.WriteString(w, `{"isValid":false}`)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"isValid":true}`)
-		case r.Method == http.MethodGet && r.URL.Path == downloadClientPath:
-			if listStatus != 0 {
-				w.WriteHeader(listStatus)
-				_, _ = io.WriteString(w, "denied")
-				return
-			}
-			f.mu.Lock()
-			raw := append([]byte(nil), f.listBody...)
-			f.mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			if raw != nil {
-				_, _ = w.Write(raw)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(f.clientsNow())
-		case r.Method == http.MethodPost && r.URL.Path == downloadClientPath:
-			var dc downloadClientResource
-			_ = json.Unmarshal(body, &dc)
-			f.mu.Lock()
-			f.nextID++
-			dc.ID = f.nextID
-			f.clients = append(f.clients, dc)
-			f.mu.Unlock()
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, downloadClientPath+"/"):
-			id, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, downloadClientPath+"/"))
-			if err != nil {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			kept := []downloadClientResource{}
-			f.mu.Lock()
-			for _, dc := range f.clients {
-				if dc.ID != id {
-					kept = append(kept, dc)
-				}
-			}
-			f.clients = kept
-			f.mu.Unlock()
-			w.WriteHeader(http.StatusOK)
-		default:
-			w.WriteHeader(http.StatusNotFound)
+// handleTest answers the connection test. testStatus, when set, is the verdict
+// a test call gets back.
+func (f *fakeDownloadClients) handleTest(w http.ResponseWriter, r *http.Request, _ []byte) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	f.mu.Lock()
+	testStatus := f.testStatus
+	f.mu.Unlock()
+	if testStatus != 0 {
+		w.WriteHeader(testStatus)
+		_, _ = io.WriteString(w, `{"isValid":false}`)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, `{"isValid":true}`)
+}
+
+// handleCollection serves the list read and the create. listBody overrides the
+// list verbatim; listStatus overrides its outcome.
+func (f *fakeDownloadClients) handleCollection(w http.ResponseWriter, r *http.Request, body []byte) {
+	switch r.Method {
+	case http.MethodGet:
+		f.handleList(w)
+	case http.MethodPost:
+		f.handleCreate(w, body)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func (f *fakeDownloadClients) handleList(w http.ResponseWriter) {
+	f.mu.Lock()
+	listStatus, raw := f.listStatus, append([]byte(nil), f.listBody...)
+	f.mu.Unlock()
+	if listStatus != 0 {
+		w.WriteHeader(listStatus)
+		_, _ = io.WriteString(w, "denied")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if raw != nil {
+		_, _ = w.Write(raw)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(f.clientsNow())
+}
+
+func (f *fakeDownloadClients) handleCreate(w http.ResponseWriter, body []byte) {
+	var dc downloadClientResource
+	_ = json.Unmarshal(body, &dc)
+	f.mu.Lock()
+	f.nextID++
+	dc.ID = f.nextID
+	f.clients = append(f.clients, dc)
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusCreated)
+}
+
+// handleDelete removes one client by the id in its URL.
+func (f *fakeDownloadClients) handleDelete(w http.ResponseWriter, r *http.Request, _ []byte) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	id, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, downloadClientPath+"/"))
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	kept := []downloadClientResource{}
+	f.mu.Lock()
+	for _, dc := range f.clients {
+		if dc.ID != id {
+			kept = append(kept, dc)
 		}
-	})
+	}
+	f.clients = kept
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
 }
 
 // requestsTo returns the recorded requests for one method and path.

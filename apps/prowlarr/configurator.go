@@ -292,20 +292,7 @@ func (c *Configurator) reconcilePvrApplication(
 	// binding still names the address Bloud wrote, which is what identifies
 	// the entry: the provider's catalog metadata outlives its installation.
 	if !target.binding.Installed {
-		if !found {
-			return nil
-		}
-		if _, err := apps.deleteApplication(ctx, current.ID); err != nil {
-			if err := c.transientOrError(err, target,
-				"Prowlarr did not answer while pruning the application for an uninstalled PVR"); err == nil {
-				return nil
-			}
-			return fmt.Errorf("pruning the %s application (id %d) after %s disappeared: %w",
-				target.implementation, current.ID, target.binding.App, err)
-		}
-		c.logger.Info("pruned the Prowlarr application for an uninstalled PVR",
-			"pvr", target.binding.App, "application", current.Name, "id", current.ID)
-		return nil
+		return c.pruneUninstalledPvr(ctx, apps, current, found, target)
 	}
 
 	siblingKey := target.binding.APIKey
@@ -327,12 +314,11 @@ func (c *Configurator) reconcilePvrApplication(
 		// entry exists. The instance's own test of the entries it holds is the
 		// only readable verdict, so a match counts as converged only when
 		// Prowlarr either confirms it or cannot be asked at all.
-		verdicts, err := testStored()
+		converged, err := c.storedEntryConverged(current, testStored, target)
 		if err != nil {
-			return c.transientOrError(err, target,
-				"Prowlarr did not answer its own application test; accepting the stored entry for this pass")
+			return err
 		}
-		if valid, known := verdicts[current.ID]; !known || valid {
+		if converged {
 			return nil
 		}
 		c.logger.Info("Prowlarr reports its stored application as unreachable; re-pushing it",
@@ -340,27 +326,90 @@ func (c *Configurator) reconcilePvrApplication(
 	}
 
 	if found {
-		// Repair in place. The document is PUT to the entry the instance holds
-		// (RestPutById), which runs the same validator and connection test as a
-		// create: nothing the operator owns on it is lost the way a
-		// delete-then-create would lose it, and re-testing the document under
-		// its own name is not rejected as a duplicate.
-		document := mergeApplication(current, desired)
-		if err := apps.updateApplication(ctx, document); err != nil {
-			return c.transientOrError(err, target,
-				"Prowlarr or the PVR did not answer while updating the application")
-		}
-		c.logger.Info("updated the Prowlarr application",
-			"pvr", target.binding.App, "application", document.Name, "id", document.ID)
+		return c.updatePvrApplication(ctx, apps, current, desired, target)
+	}
+	return c.createPvrApplication(ctx, apps, desired, target)
+}
+
+// pruneUninstalledPvr removes the entry Bloud wired for a PVR that is gone.
+// An entry that was never there is not a thing to prune.
+func (c *Configurator) pruneUninstalledPvr(
+	ctx context.Context,
+	apps *applicationsAPI,
+	current application,
+	found bool,
+	target pvrTarget,
+) error {
+	if !found {
 		return nil
 	}
+	if _, err := apps.deleteApplication(ctx, current.ID); err != nil {
+		if err := c.transientOrError(err, target,
+			"Prowlarr did not answer while pruning the application for an uninstalled PVR"); err == nil {
+			return nil
+		}
+		return fmt.Errorf("pruning the %s application (id %d) after %s disappeared: %w",
+			target.implementation, current.ID, target.binding.App, err)
+	}
+	c.logger.Info("pruned the Prowlarr application for an uninstalled PVR",
+		"pvr", target.binding.App, "application", current.Name, "id", current.ID)
+	return nil
+}
 
-	// Test before creating: /applications/test is the endpoint that validates
-	// the document against the PVR and its own schema without saving anything,
-	// so a PVR that rejects the key or is unreachable leaves no half-written
-	// entry behind, and the failure names the sibling and the status. Prowlarr
-	// runs the same test again inside the create, which is why a rejection can
-	// surface there too.
+// storedEntryConverged asks Prowlarr to test the entry it already holds and
+// reports whether that entry can be left alone. A transient failure of the test
+// is not evidence against the entry, so it is accepted for this pass rather
+// than re-pushed on a guess; a real fault comes back as an error, and the
+// caller's err check runs before it looks at the bool.
+func (c *Configurator) storedEntryConverged(
+	current application,
+	testStored func() (map[int]bool, error),
+	target pvrTarget,
+) (bool, error) {
+	verdicts, err := testStored()
+	if err != nil {
+		return true, c.transientOrError(err, target,
+			"Prowlarr did not answer its own application test; accepting the stored entry for this pass")
+	}
+	if valid, known := verdicts[current.ID]; !known || valid {
+		return true, nil
+	}
+	return false, nil
+}
+
+// updatePvrApplication repairs the entry in place. The document is PUT to the
+// entry the instance holds (RestPutById), which runs the same validator and
+// connection test as a create: nothing the operator owns on it is lost the way
+// a delete-then-create would lose it, and re-testing the document under its own
+// name is not rejected as a duplicate.
+func (c *Configurator) updatePvrApplication(
+	ctx context.Context,
+	apps *applicationsAPI,
+	current, desired application,
+	target pvrTarget,
+) error {
+	document := mergeApplication(current, desired)
+	if err := apps.updateApplication(ctx, document); err != nil {
+		return c.transientOrError(err, target,
+			"Prowlarr or the PVR did not answer while updating the application")
+	}
+	c.logger.Info("updated the Prowlarr application",
+		"pvr", target.binding.App, "application", document.Name, "id", document.ID)
+	return nil
+}
+
+// createPvrApplication adds the entry. Test before creating: /applications/test
+// is the endpoint that validates the document against the PVR and its own
+// schema without saving anything, so a PVR that rejects the key or is
+// unreachable leaves no half-written entry behind, and the failure names the
+// sibling and the status. Prowlarr runs the same test again inside the create,
+// which is why a rejection can surface there too.
+func (c *Configurator) createPvrApplication(
+	ctx context.Context,
+	apps *applicationsAPI,
+	desired application,
+	target pvrTarget,
+) error {
 	if err := apps.testApplication(ctx, desired); err != nil {
 		if duplicateName(err) {
 			// Another entry already holds the name Bloud wants. With the

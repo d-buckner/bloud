@@ -104,31 +104,10 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 	}
 	logger.Info("loaded secrets", "path", secretsPath)
 
-	// Required secrets: env var > generated secret. An empty resolution is a
-	// configuration fault with no safe fallback. The secrets manager generates
-	// every secret when its file is missing and migrates missing fields on load,
-	// so a successful Load guarantees non-empty; the guard also catches an env var
-	// explicitly set to empty and any future secret not covered by migration.
-	postgresPassword, err := getSecret("BLOUD_POSTGRES_PASSWORD", secretsMgr.GetPostgresPassword())
-	if err != nil {
-		return nil, err
-	}
-	ssoHostSecret, err := getSecret("BLOUD_SSO_HOST_SECRET", secretsMgr.GetSSOHostSecret())
-	if err != nil {
-		return nil, err
-	}
-	authentikAdminPassword, err := getSecret("BLOUD_AUTHENTIK_ADMIN_PASSWORD", secretsMgr.GetAuthentikBootstrapPassword())
-	if err != nil {
-		return nil, err
-	}
-	ldapBindPassword, err := getSecret("BLOUD_LDAP_BIND_PASSWORD", secretsMgr.GetLDAPBindPassword())
-	if err != nil {
-		return nil, err
-	}
-	// The admin API credential for trusted-position callers (CLI, e2e). An empty
-	// value disables the position-based admin path entirely (see
-	// api.authMiddlewareFn), so a resolution failure fails closed.
-	apiToken, err := getSecret("BLOUD_API_TOKEN", secretsMgr.GetAPIToken())
+	// Required secrets: env var > generated secret, with no static fallback.
+	// A fault here is fatal rather than a silent downgrade to known
+	// credentials.
+	sec, err := loadRequiredSecrets(secretsMgr)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +135,7 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		TrustedProxyNets:       splitNets(getEnv("BLOUD_TRUSTED_PROXY_NETS", "")),
 		PublicScheme:           getEnv("BLOUD_PUBLIC_SCHEME", ""),
 		ReconcileInterval:      getEnvDuration("BLOUD_RECONCILE_INTERVAL", 0),
-		SSOHostSecret:          ssoHostSecret,
+		SSOHostSecret:          sec.ssoHostSecret,
 		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
 		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
 		SSOIssuerURL:           getEnv("BLOUD_SSO_ISSUER_URL", ""),
@@ -164,14 +143,14 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		BaseDomain:             baseDomain,
 		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 80),
 		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
-		AuthentikAdminPassword: authentikAdminPassword,
+		AuthentikAdminPassword: sec.authentikAdmin,
 		AuthentikAdminEmail:    adminEmail,
 		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
-		LDAPBindPassword:       ldapBindPassword,
+		LDAPBindPassword:       sec.ldapBindPassword,
 		TSAuthKey:              getEnv("BLOUD_TS_AUTHKEY", ""),
 		HostLabel:              getEnv("BLOUD_HOST_LABEL", hostname()),
-		PostgresPassword:       postgresPassword,
-		APIToken:               apiToken,
+		PostgresPassword:       sec.postgresPassword,
+		APIToken:               sec.apiToken,
 		Secrets:                secretsMgr,
 	}
 
@@ -249,6 +228,46 @@ func getSecret(envKey, secretValue string) (string, error) {
 	return "", fmt.Errorf(
 		"required secret %s unresolved: set %s or initialize secrets.json (host-agent init-secrets)",
 		envKey, envKey)
+}
+
+// resolvedSecrets is the set of secrets config requires from the secrets
+// manager before it can build a Config.
+type resolvedSecrets struct {
+	postgresPassword string
+	ssoHostSecret    string
+	authentikAdmin   string
+	ldapBindPassword string
+	apiToken         string
+}
+
+// loadRequiredSecrets resolves every secret config refuses to start without.
+// The secrets manager generates each one when its file is missing and migrates
+// missing fields on load, so a successful Load guarantees non-empty; the guard
+// in getSecret also catches an env var explicitly set to empty and any future
+// secret not covered by migration.
+//
+// The API token is the admin credential for trusted-position callers (CLI,
+// e2e). An empty value disables the position-based admin path entirely (see
+// api.authMiddlewareFn), so a resolution failure fails closed.
+func loadRequiredSecrets(mgr *secrets.Manager) (resolvedSecrets, error) {
+	var out resolvedSecrets
+	var err error
+	if out.postgresPassword, err = getSecret("BLOUD_POSTGRES_PASSWORD", mgr.GetPostgresPassword()); err != nil {
+		return out, err
+	}
+	if out.ssoHostSecret, err = getSecret("BLOUD_SSO_HOST_SECRET", mgr.GetSSOHostSecret()); err != nil {
+		return out, err
+	}
+	if out.authentikAdmin, err = getSecret("BLOUD_AUTHENTIK_ADMIN_PASSWORD", mgr.GetAuthentikBootstrapPassword()); err != nil {
+		return out, err
+	}
+	if out.ldapBindPassword, err = getSecret("BLOUD_LDAP_BIND_PASSWORD", mgr.GetLDAPBindPassword()); err != nil {
+		return out, err
+	}
+	if out.apiToken, err = getSecret("BLOUD_API_TOKEN", mgr.GetAPIToken()); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 // hostname returns the OS hostname or "bloud" as fallback.

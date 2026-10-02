@@ -77,14 +77,14 @@ func (r *lifecycle) copyDirectory(source, destination string) error {
 		return r.remoteRun(`rm -rf "$2"
 mkdir -p "$2"
 cp -a "$1/." "$2/"`, source, destination)
-	} else if r.cfg.qemu != "" {
+	}
+	if r.cfg.qemu != "" {
 		sshCmd := fmt.Sprintf("ssh -i %s -p 2222 -o StrictHostKeyChecking=accept-new", shellQuote(r.cfg.sshKeyFile))
 		args := []string{"-a", "--delete", "-e", sshCmd, source + string(os.PathSeparator), r.cfg.sshTarget + ":" + destination + "/"}
 		return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
-	} else {
-		args := []string{"-a", "--delete", source + string(os.PathSeparator), r.cfg.sshTarget + ":" + shellQuote(destination) + "/"}
-		return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
 	}
+	args := []string{"-a", "--delete", source + string(os.PathSeparator), r.cfg.sshTarget + ":" + shellQuote(destination) + "/"}
+	return r.localRun(r.cfg.root, os.Environ(), "rsync", args...)
 }
 
 func (r *lifecycle) copyFile(source, destination string) error {
@@ -93,12 +93,12 @@ func (r *lifecycle) copyFile(source, destination string) error {
 	}
 	if r.cfg.lima != "" {
 		return r.localRun(r.cfg.root, os.Environ(), "limactl", "copy", source, r.cfg.lima+":"+destination)
-	} else if r.cfg.qemu != "" {
+	}
+	if r.cfg.qemu != "" {
 		sshCmd := fmt.Sprintf("ssh -i %s -p 2222 -o StrictHostKeyChecking=accept-new", shellQuote(r.cfg.sshKeyFile))
 		return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", "-e", sshCmd, source, r.cfg.sshTarget+":"+destination)
-	} else {
-		return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", source, r.cfg.sshTarget+":"+shellQuote(destination))
 	}
+	return r.localRun(r.cfg.root, os.Environ(), "rsync", "-a", source, r.cfg.sshTarget+":"+shellQuote(destination))
 }
 
 func (r *lifecycle) prepareQEMUTarget() error {

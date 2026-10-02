@@ -147,13 +147,8 @@ func cmdDepGraph(args []string) int {
 		}
 	}
 
-	apps, err := loadAppMetadata(filepath.Join(root, "apps"))
-	if err != nil {
-		errorf("Failed to load app metadata: %v", err)
-		return 1
-	}
-	if len(apps) == 0 {
-		errorf("No apps with a metadata.yaml found under %s", filepath.Join(root, "apps"))
+	apps, ok := loadCatalog(root)
+	if !ok {
 		return 1
 	}
 
@@ -165,17 +160,23 @@ func cmdDepGraph(args []string) int {
 	case graphModeCheck:
 		return checkGraphBlock(root, target, generated)
 	case graphModeJSON:
-		encoded, err := renderCatalogGraphJSON(apps)
-		if err != nil {
-			errorf("Failed to encode the catalog graph: %v", err)
-			return 1
-		}
-		fmt.Print(encoded)
-		return 0
+		return printCatalogGraphJSON(apps)
 	default:
 		fmt.Print(generated)
 		return 0
 	}
+}
+
+// printCatalogGraphJSON emits the catalog in the shape the browser renderer
+// consumes: nodes and edges, not a Mermaid string.
+func printCatalogGraphJSON(apps map[string]*AppMetadata) int {
+	encoded, err := renderCatalogGraphJSON(apps)
+	if err != nil {
+		errorf("Failed to encode the catalog graph: %v", err)
+		return 1
+	}
+	fmt.Print(encoded)
+	return 0
 }
 
 // printDepGraphUsage documents the graph command's modes.

@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -115,13 +114,8 @@ func cmdCatalogDoc(args []string) int {
 		}
 	}
 
-	apps, err := loadAppMetadata(filepath.Join(root, "apps"))
-	if err != nil {
-		errorf("Failed to load app metadata: %v", err)
-		return 1
-	}
-	if len(apps) == 0 {
-		errorf("No apps with a metadata.yaml found under %s", filepath.Join(root, "apps"))
+	apps, ok := loadCatalog(root)
+	if !ok {
 		return 1
 	}
 

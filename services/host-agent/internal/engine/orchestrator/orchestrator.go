@@ -872,54 +872,75 @@ func (o *Orchestrator) collectWorkForLevel(nodeIDs []string, changedIDs map[stri
 			continue
 		}
 
-		if node.TargetStatus != node.ActualStatus {
-			// Node needs to progress. Only proceed if all deps are ready:
-			// either RUNNING from a prior pass, or having completed their
-			// lifecycle phases this pass (present in changedIDs). A dep in
-			// ERROR blocks this node regardless.
-			deps, err := o.graph.GetDependencies(id)
-			if err != nil {
-				return nil, fmt.Errorf("get dependencies for %q: %w", id, err)
-			}
-			blocked := false
-			var blockingDep string
-			for _, dep := range deps {
-				depNode, err := o.graph.GetNode(dep)
-				if err != nil || depNode == nil {
-					continue
-				}
-				if depNode.ActualStatus != graph.StatusRunning && !changedIDs[dep] {
-					blocked = true
-					blockingDep = dep
-					break
-				}
-			}
-			if !blocked {
-				o.logger.Info("queuing node for lifecycle", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus)
-				work = append(work, id)
-				continue
-			}
-			o.logger.Info("skipping blocked node", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus, "blocking_dep", blockingDep)
-			continue
+		queued, err := o.collectNodeWork(id, node, changedIDs)
+		if err != nil {
+			return nil, err
 		}
-
-		// Node is already at its target. Check staleness: re-run PostStart if a
-		// direct dependency successfully completed this pass.
-		if node.ActualStatus == graph.StatusRunning {
-			deps, err := o.graph.GetDependencies(id)
-			if err != nil {
-				return nil, fmt.Errorf("get dependencies for %q: %w", id, err)
-			}
-			for _, dep := range deps {
-				if changedIDs[dep] {
-					o.logger.Info("queuing stale node for PostStart re-run", "app", id, "changed_dep", dep)
-					work = append(work, id)
-					break
-				}
-			}
+		if queued {
+			work = append(work, id)
 		}
 	}
 	return work, nil
+}
+
+// collectNodeWork decides whether one node has work this pass. A node below its
+// target is queued unless a dependency is neither RUNNING nor freshly
+// converged; a node already at its target is queued only when a dependency
+// just changed, which is the staleness re-run of PostStart.
+func (o *Orchestrator) collectNodeWork(id string, node *graph.Node, changedIDs map[string]bool) (bool, error) {
+	if node.TargetStatus == node.ActualStatus {
+		if node.ActualStatus != graph.StatusRunning {
+			return false, nil
+		}
+		return o.isStaleAtTarget(id, changedIDs)
+	}
+	blocker, err := o.blockingDependency(id, changedIDs)
+	if err != nil {
+		return false, err
+	}
+	if blocker != "" {
+		o.logger.Info("skipping blocked node", "app", id, "actual", node.ActualStatus,
+			"target", node.TargetStatus, "blocking_dep", blocker)
+		return false, nil
+	}
+	o.logger.Info("queuing node for lifecycle", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus)
+	return true, nil
+}
+
+// blockingDependency returns the first dependency that is neither RUNNING from
+// a prior pass nor converged earlier in this pass, or "" when every dependency
+// is ready. A dependency in ERROR comes back the same way: it blocks regardless.
+func (o *Orchestrator) blockingDependency(id string, changedIDs map[string]bool) (string, error) {
+	deps, err := o.graph.GetDependencies(id)
+	if err != nil {
+		return "", fmt.Errorf("get dependencies for %q: %w", id, err)
+	}
+	for _, dep := range deps {
+		depNode, err := o.graph.GetNode(dep)
+		if err != nil || depNode == nil {
+			continue
+		}
+		if depNode.ActualStatus != graph.StatusRunning && !changedIDs[dep] {
+			return dep, nil
+		}
+	}
+	return "", nil
+}
+
+// isStaleAtTarget reports whether a node already at its target needs its
+// PostStart re-run because a direct dependency completed this pass.
+func (o *Orchestrator) isStaleAtTarget(id string, changedIDs map[string]bool) (bool, error) {
+	deps, err := o.graph.GetDependencies(id)
+	if err != nil {
+		return false, fmt.Errorf("get dependencies for %q: %w", id, err)
+	}
+	for _, dep := range deps {
+		if changedIDs[dep] {
+			o.logger.Info("queuing stale node for PostStart re-run", "app", id, "changed_dep", dep)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // runConfigurator drives a single node through its lifecycle, or re-runs
@@ -1120,99 +1141,121 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 		return false
 	}
 
-	// Phase 1: PreStart
-	var prestart configurator.PreStartResult
-	if cfg != nil {
-		o.logger.Info("lifecycle phase: PreStart", "app", id)
-		o.recordOpPhase(owner, store.OpPhasePrestart)
-		_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
-		var err error
-		prestart, err = cfg.PreStart(ctx, state)
-		if err != nil {
-			o.logger.Warn("PreStart failed", "app", id, "error", err)
-			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-			o.recordOpFail(owner, store.OpPhasePrestart, opCause(id, owner, err), true)
-			return false
-		}
-		o.logger.Info("lifecycle phase: PreStart complete",
-			"app", id,
-			"restart_needed", prestart.RestartNeeded,
-			"restart_reason", prestart.Reason)
+	prestart, ok := o.runPreStartPhase(ctx, id, owner, cfg, state)
+	if !ok {
+		return false
 	}
 
 	// SSO provisioning: ensure the forward-auth provider exists in Authentik before the
 	// container starts, so requests can be authenticated immediately on first boot.
 	if err := o.ensureSSO(ctx, id); err != nil {
-		o.logger.Warn("SSO provisioning failed", "app", id, "error", err)
-		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-		o.recordOpFail(owner, store.OpPhasePrestart, opCause(id, owner, err), true)
+		o.failNode(id, owner, store.OpPhasePrestart, err, "SSO provisioning failed")
 		return false
 	}
 
-	// Phase 2: EnsureContainer
-	// If PreStart asked for a recreate, remove the existing container first so
-	// Ensure() creates a fresh one that picks up the change.
-	if def != nil {
-		if prestart.RestartNeeded {
-			o.logger.Info("PreStart requires recreate, removing container",
-				"app", id, "reason", prestart.Reason)
-			_ = o.config.Containers.Remove(ctx, def.Name)
-		}
-		o.logger.Info("lifecycle phase: EnsureContainer", "app", id)
-		o.recordOpPhase(owner, store.OpPhaseTopology)
-		_ = o.graph.SetActualStatus(id, graph.StatusStarting, "")
-		if err := o.ensureContainerFromDef(ctx, def, appCatalogID); err != nil {
-			o.logger.Warn("EnsureContainer failed", "app", id, "error", err)
-			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-			o.recordOpFail(owner, store.OpPhaseTopology, opCause(id, owner, err), true)
-			return false
-		}
-		o.logger.Info("lifecycle phase: EnsureContainer complete", "app", id)
-
-		// Phase 3: HealthCheck
-		o.logger.Info("lifecycle phase: HealthCheck", "app", id)
-		o.recordOpPhase(owner, store.OpPhaseHealth)
-		healthCtx := ctx
-		if o.config.HealthCheckTimeout > 0 {
-			var cancel context.CancelFunc
-			healthCtx, cancel = context.WithTimeout(ctx, o.config.HealthCheckTimeout)
-			defer cancel()
-		}
-		if def.HealthCheck != nil {
-			if err := o.runContainerHealthCheck(healthCtx, def.Name, def.HealthCheck); err != nil {
-				o.logger.Warn("HealthCheck failed", "app", id, "error", err)
-				_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-				o.recordOpFail(owner, store.OpPhaseHealth, opCause(id, owner, err), true)
-				return false
-			}
-		}
-		o.logger.Info("lifecycle phase: HealthCheck complete", "app", id)
+	if def != nil && !o.runContainerPhases(ctx, id, owner, def, appCatalogID, prestart) {
+		return false
 	}
 
-	// Phase 4: PostStart runs under the framework's PostStartBudget so the
-	// finalization wait is bounded and Stop() can interrupt it (apps no longer
-	// detach their own contexts). A failure whose cause is the canceled pass
-	// context is an interruption, not a fault: leave the node where it is so the
-	// next start re-converges, rather than parking a shutdown in ERROR (R3).
-	if cfg != nil {
-		o.logger.Info("lifecycle phase: PostStart", "app", id)
-		o.recordOpPhase(owner, store.OpPhasePoststart)
-		_ = o.graph.SetActualStatus(id, graph.StatusPostStartConfig, "")
-		if err := o.runPostStart(ctx, cfg, state); err != nil {
-			if ctx.Err() != nil {
-				o.logger.Info("PostStart interrupted by shutdown; leaving status for re-converge", "app", id, "error", err)
-				o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, fmt.Errorf("interrupted by shutdown: %w", err)), true)
-				return false
-			}
-			o.logger.Warn("PostStart failed", "app", id, "error", err)
-			_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-			o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, err), true)
-			return false
-		}
-		o.logger.Info("lifecycle phase: PostStart complete", "app", id)
+	if cfg != nil && !o.runPostStartPhase(ctx, id, owner, cfg, state) {
+		return false
 	}
 
 	o.logger.Info("lifecycle phases complete, will mark RUNNING after route generation", "app", id)
+	return true
+}
+
+// failNode parks a node in ERROR and records the failure on its operation row.
+// Every phase failure goes through here so the log line, the status write, and
+// the ledger entry cannot drift apart.
+func (o *Orchestrator) failNode(id, owner, phase string, err error, msg string) {
+	o.logger.Warn(msg, "app", id, "error", err)
+	_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
+	o.recordOpFail(owner, phase, opCause(id, owner, err), true)
+}
+
+// runPreStartPhase runs the configurator's PreStart and reports whether the
+// lifecycle may continue. The result is empty when there is no configurator.
+func (o *Orchestrator) runPreStartPhase(ctx context.Context, id, owner string, cfg configurator.NodeLifecycle, state *configurator.AppState) (configurator.PreStartResult, bool) {
+	if cfg == nil {
+		return configurator.PreStartResult{}, true
+	}
+	o.logger.Info("lifecycle phase: PreStart", "app", id)
+	o.recordOpPhase(owner, store.OpPhasePrestart)
+	_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
+	prestart, err := cfg.PreStart(ctx, state)
+	if err != nil {
+		o.failNode(id, owner, store.OpPhasePrestart, err, "PreStart failed")
+		return configurator.PreStartResult{}, false
+	}
+	o.logger.Info("lifecycle phase: PreStart complete",
+		"app", id,
+		"restart_needed", prestart.RestartNeeded,
+		"restart_reason", prestart.Reason)
+	return prestart, true
+}
+
+// runContainerPhases recreates the container when PreStart asked for it, then
+// brings it up and waits for its health check.
+func (o *Orchestrator) runContainerPhases(ctx context.Context, id, owner string, def *catalog.ContainerDef, appCatalogID string, prestart configurator.PreStartResult) bool {
+	// If PreStart asked for a recreate, remove the existing container first so
+	// Ensure() creates a fresh one that picks up the change.
+	if prestart.RestartNeeded {
+		o.logger.Info("PreStart requires recreate, removing container",
+			"app", id, "reason", prestart.Reason)
+		_ = o.config.Containers.Remove(ctx, def.Name)
+	}
+	o.logger.Info("lifecycle phase: EnsureContainer", "app", id)
+	o.recordOpPhase(owner, store.OpPhaseTopology)
+	_ = o.graph.SetActualStatus(id, graph.StatusStarting, "")
+	if err := o.ensureContainerFromDef(ctx, def, appCatalogID); err != nil {
+		o.failNode(id, owner, store.OpPhaseTopology, err, "EnsureContainer failed")
+		return false
+	}
+	o.logger.Info("lifecycle phase: EnsureContainer complete", "app", id)
+	return o.runHealthPhase(ctx, id, owner, def)
+}
+
+// runHealthPhase waits for the container's own health check under a bounded
+// context, so a container that never becomes healthy cannot pin the pass.
+func (o *Orchestrator) runHealthPhase(ctx context.Context, id, owner string, def *catalog.ContainerDef) bool {
+	o.logger.Info("lifecycle phase: HealthCheck", "app", id)
+	o.recordOpPhase(owner, store.OpPhaseHealth)
+	healthCtx := ctx
+	if o.config.HealthCheckTimeout > 0 {
+		var cancel context.CancelFunc
+		healthCtx, cancel = context.WithTimeout(ctx, o.config.HealthCheckTimeout)
+		defer cancel()
+	}
+	if def.HealthCheck != nil {
+		if err := o.runContainerHealthCheck(healthCtx, def.Name, def.HealthCheck); err != nil {
+			o.failNode(id, owner, store.OpPhaseHealth, err, "HealthCheck failed")
+			return false
+		}
+	}
+	o.logger.Info("lifecycle phase: HealthCheck complete", "app", id)
+	return true
+}
+
+// runPostStartPhase runs finalization under the framework's PostStartBudget so
+// the wait is bounded and Stop() can interrupt it (apps no longer detach their
+// own contexts). A failure whose cause is the canceled pass context is an
+// interruption, not a fault: leave the node where it is so the next start
+// re-converges, rather than parking a shutdown in ERROR (R3).
+func (o *Orchestrator) runPostStartPhase(ctx context.Context, id, owner string, cfg configurator.NodeLifecycle, state *configurator.AppState) bool {
+	o.logger.Info("lifecycle phase: PostStart", "app", id)
+	o.recordOpPhase(owner, store.OpPhasePoststart)
+	_ = o.graph.SetActualStatus(id, graph.StatusPostStartConfig, "")
+	if err := o.runPostStart(ctx, cfg, state); err != nil {
+		if ctx.Err() != nil {
+			o.logger.Info("PostStart interrupted by shutdown; leaving status for re-converge", "app", id, "error", err)
+			o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, fmt.Errorf("interrupted by shutdown: %w", err)), true)
+			return false
+		}
+		o.failNode(id, owner, store.OpPhasePoststart, err, "PostStart failed")
+		return false
+	}
+	o.logger.Info("lifecycle phase: PostStart complete", "app", id)
 	return true
 }
 
@@ -1384,18 +1427,8 @@ func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) co
 		o.logger.Warn("cannot resolve integration bindings; configurators run without them", "app", app, "error", err)
 		return out
 	}
-	installed := make(map[string]bool, len(installedApps))
-	for _, a := range installedApps {
-		installed[a.CatalogID] = true
-	}
-
-	choices := map[string]string{}
-	for _, a := range installedApps {
-		if a.CatalogID == app {
-			choices = a.IntegrationConfig
-			break
-		}
-	}
+	installed := installedSet(installedApps)
+	choices := integrationChoices(installedApps, app)
 
 	for contract, integration := range catalogApp.Integrations {
 		if contract == "inference" {
@@ -1408,23 +1441,49 @@ func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) co
 			}
 			continue
 		}
-		for _, src := range resolveProviders(integration, choices[contract]) {
-			// An app cannot be its own provider: a self-edge would also make
-			// the graph order the node after itself.
-			if src.kind == configurator.ProviderKindApp && src.id == app {
-				continue
-			}
-			if src.isInstance() {
-				continue
-			}
-			provider, err := o.catalog.Get(src.id)
-			if err != nil || provider == nil {
-				continue
-			}
-			o.bindContract(&out, contract, o.providerRef(src.id, provider, installed[src.id]), provider.Provides[contract], src.id, integration.Requires)
-		}
+		o.bindAppProviders(&out, contract, integration, choices[contract], installed, app)
 	}
 	return out
+}
+
+// installedSet is the set of catalog IDs that have an installed app row.
+func installedSet(apps []*store.InstalledApp) map[string]bool {
+	out := make(map[string]bool, len(apps))
+	for _, a := range apps {
+		out[a.CatalogID] = true
+	}
+	return out
+}
+
+// integrationChoices returns the provider choices one app recorded, keyed by
+// contract name. An app that is not installed has recorded none.
+func integrationChoices(apps []*store.InstalledApp, app string) map[string]string {
+	for _, a := range apps {
+		if a.CatalogID == app {
+			return a.IntegrationConfig
+		}
+	}
+	return map[string]string{}
+}
+
+// bindAppProviders binds every declared provider of one contract that is a
+// real, installed, non-self app.
+func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract string, integration catalog.Integration, choice string, installed map[string]bool, app string) {
+	for _, src := range resolveProviders(integration, choice) {
+		// An app cannot be its own provider: a self-edge would also make
+		// the graph order the node after itself.
+		if src.kind == configurator.ProviderKindApp && src.id == app {
+			continue
+		}
+		if src.isInstance() {
+			continue
+		}
+		provider, err := o.catalog.Get(src.id)
+		if err != nil || provider == nil {
+			continue
+		}
+		o.bindContract(out, contract, o.providerRef(src.id, provider, installed[src.id]), provider.Provides[contract], src.id, integration.Requires)
+	}
 }
 
 // resolveInference picks the single inference endpoint a consumer gets, by
@@ -1446,16 +1505,8 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, choice 
 		if src.isInstance() || src.id == consumer || !installed[src.id] {
 			continue
 		}
-		provider, err := o.catalog.Get(src.id)
-		if err != nil || provider == nil {
-			continue
-		}
-		offer, ok := provider.Provides["inference"]
+		ref, offer, ok := o.usableInferenceProvider("inference", src.id)
 		if !ok {
-			continue
-		}
-		ref := o.providerRef(src.id, provider, true)
-		if ref.BaseURL == "" {
 			continue
 		}
 		return configurator.InferenceBinding{
@@ -1471,36 +1522,49 @@ func (o *Orchestrator) resolveInference(integration catalog.Integration, choice 
 		return binding, true
 	}
 
-	if from, sources := o.promotedSources("inference", installed); from != "" {
-		for _, src := range sources {
-			if src.id == consumer {
-				continue
-			}
-			provider, err := o.catalog.Get(src.id)
-			if err != nil || provider == nil {
-				continue
-			}
-			offer, ok := provider.Provides[from]
-			if !ok {
-				continue
-			}
-			ref := o.providerRef(src.id, provider, true)
-			if ref.BaseURL == "" {
-				continue
-			}
-			settings := o.inferenceSettings()
-			return configurator.InferenceBinding{
-				ProviderRef:  ref,
-				Endpoint:     ref.BaseURL + offer.Values["path"],
-				DefaultModel: settings.DefaultModel,
-				// Promoted from a keyless source: the consumer is talking to
-				// the raw upstream, not a gateway, and holds no gateway key.
-				ViaGateway: false,
-			}, true
+	from, sources := o.promotedSources("inference", installed)
+	if from == "" {
+		return configurator.InferenceBinding{}, false
+	}
+	for _, src := range sources {
+		if src.id == consumer {
+			continue
 		}
+		ref, offer, ok := o.usableInferenceProvider(from, src.id)
+		if !ok {
+			continue
+		}
+		return configurator.InferenceBinding{
+			ProviderRef:  ref,
+			Endpoint:     ref.BaseURL + offer.Values["path"],
+			DefaultModel: o.inferenceSettings().DefaultModel,
+			// Promoted from a keyless source: the consumer is talking to
+			// the raw upstream, not a gateway, and holds no gateway key.
+			ViaGateway: false,
+		}, true
 	}
 
 	return configurator.InferenceBinding{}, false
+}
+
+// usableInferenceProvider resolves one source to an inference provider that
+// actually has an address to hand out. Anything else reports false so the
+// caller falls through to the next candidate rather than binding a provider
+// nothing can dial.
+func (o *Orchestrator) usableInferenceProvider(contract, sourceID string) (configurator.ProviderRef, catalog.ContractProvides, bool) {
+	provider, err := o.catalog.Get(sourceID)
+	if err != nil || provider == nil {
+		return configurator.ProviderRef{}, catalog.ContractProvides{}, false
+	}
+	offer, ok := provider.Provides[contract]
+	if !ok {
+		return configurator.ProviderRef{}, catalog.ContractProvides{}, false
+	}
+	ref := o.providerRef(sourceID, provider, true)
+	if ref.BaseURL == "" {
+		return configurator.ProviderRef{}, catalog.ContractProvides{}, false
+	}
+	return ref, offer, true
 }
 
 // bindContract appends one provider's binding for one contract. The payload it

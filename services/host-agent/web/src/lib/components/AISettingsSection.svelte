@@ -224,7 +224,11 @@
 				{#each servedTo as consumer (consumer.app)}
 					<div class="served-row">
 						<span class="consumer-name">{consumer.app}</span>
-						<span class="pill" class:pill-info={consumer.via === 'gateway'} class:pill-error={consumer.via === 'none'}>
+						<span
+							class="pill"
+							class:pill-info={consumer.via === 'gateway'}
+							class:pill-error={consumer.via === 'none'}
+						>
 							{consumer.via}
 						</span>
 						{#if consumer.model}<span class="consumer-model">{consumer.model}</span>{/if}

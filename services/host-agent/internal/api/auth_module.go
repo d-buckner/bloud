@@ -482,70 +482,16 @@ func (m *authModule) CallbackHandler() http.HandlerFunc {
 			return
 		}
 
-		// Verify state parameter
-		stateCookie, err := r.Cookie(stateCookieName)
-		if err != nil {
-			m.logger.Warn("missing state cookie")
-			http.Error(w, "Invalid request", http.StatusBadRequest)
+		if !m.verifyCallbackState(w, r) {
 			return
 		}
 
-		state := r.URL.Query().Get("state")
-		if state == "" || state != stateCookie.Value {
-			m.logger.Warn("state mismatch", "expected", stateCookie.Value, "got", state)
-			http.Error(w, "Invalid state", http.StatusBadRequest)
+		if m.reportProviderError(w, r) {
 			return
 		}
 
-		// Clear state cookie
-		http.SetCookie(w, &http.Cookie{
-			Name:     stateCookieName,
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1,
-			HttpOnly: true,
-		})
-
-		// Check for error response
-		if errParam := r.URL.Query().Get("error"); errParam != "" {
-			errDesc := r.URL.Query().Get("error_description")
-			m.logger.Warn("OAuth error", "error", errParam, "description", errDesc)
-			http.Error(w, "Authentication failed: "+errDesc, http.StatusUnauthorized)
-			return
-		}
-
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			m.logger.Warn("missing authorization code")
-			http.Error(w, "Missing authorization code", http.StatusBadRequest)
-			return
-		}
-
-		baseURL := m.oauthBaseURL(r)
-		if baseURL == "" {
-			m.logger.Error("cannot build OAuth redirect URI: no host set or SSO base URL configured")
-			http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
-			return
-		}
-		redirectURI := baseURL + "/auth/callback"
-
-		tokenResp, err := m.authentikClient.ExchangeCode(
-			r.Context(),
-			code,
-			redirectURI,
-			cfg.OIDCConfig.ClientID,
-			cfg.OIDCConfig.ClientSecret,
-		)
-		if err != nil {
-			m.logger.Error("failed to exchange code", "error", err)
-			http.Error(w, "Failed to authenticate", http.StatusInternalServerError)
-			return
-		}
-
-		userInfo, err := m.authentikClient.GetUserInfo(r.Context(), tokenResp.AccessToken)
-		if err != nil {
-			m.logger.Error("failed to get user info", "error", err)
-			http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+		userInfo, ok := m.exchangeCallbackCode(w, r, cfg)
+		if !ok {
 			return
 		}
 
@@ -556,36 +502,131 @@ func (m *authModule) CallbackHandler() http.HandlerFunc {
 			return
 		}
 
-		// Determine role from Authentik groups
-		role := store.RoleMember
-		for _, group := range userInfo.Groups {
-			if group == "authentik Admins" {
-				role = store.RoleAdmin
-				break
-			}
-		}
-
-		session, err := m.sessionStore.Create(username, username, role)
-		if err != nil {
-			m.logger.Error("failed to create session", "error", err)
-			http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		session, ok := m.createCallbackSession(w, username, userInfo.Groups)
+		if !ok {
 			return
 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:     sessionCookieName,
-			Value:    session.ID,
-			Path:     "/",
-			Expires:  session.ExpiresAt,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
-
+		m.issueSessionCookie(w, session)
 		m.logger.Info("user logged in", "username", username)
 
 		// Redirect to home
 		http.Redirect(w, r, "/", http.StatusFound)
 	}
+}
+
+// verifyCallbackState checks the state query param against the state cookie and
+// clears the cookie either way. The state is the CSRF guard: it must have come
+// from the login this browser started, so a callback minted elsewhere fails here.
+func (m *authModule) verifyCallbackState(w http.ResponseWriter, r *http.Request) bool {
+	stateCookie, err := r.Cookie(stateCookieName)
+	if err != nil {
+		m.logger.Warn("missing state cookie")
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return false
+	}
+
+	state := r.URL.Query().Get("state")
+	if state == "" || state != stateCookie.Value {
+		m.logger.Warn("state mismatch", "expected", stateCookie.Value, "got", state)
+		http.Error(w, "Invalid state", http.StatusBadRequest)
+		return false
+	}
+
+	// Clear state cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     stateCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
+	return true
+}
+
+// reportProviderError answers the callback with the provider's own error, if it
+// sent one, and reports whether it did.
+func (m *authModule) reportProviderError(w http.ResponseWriter, r *http.Request) bool {
+	errParam := r.URL.Query().Get("error")
+	if errParam == "" {
+		return false
+	}
+	errDesc := r.URL.Query().Get("error_description")
+	m.logger.Warn("OAuth error", "error", errParam, "description", errDesc)
+	http.Error(w, "Authentication failed: "+errDesc, http.StatusUnauthorized)
+	return true
+}
+
+// exchangeCallbackCode trades the authorization code for the identity behind
+// it. The redirect URI must be byte-identical to the one the authorization
+// request carried, so it is rebuilt from the same oauthBaseURL the login used.
+func (m *authModule) exchangeCallbackCode(w http.ResponseWriter, r *http.Request, cfg *AuthConfig) (*authentik.UserInfo, bool) {
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		m.logger.Warn("missing authorization code")
+		http.Error(w, "Missing authorization code", http.StatusBadRequest)
+		return nil, false
+	}
+
+	baseURL := m.oauthBaseURL(r)
+	if baseURL == "" {
+		m.logger.Error("cannot build OAuth redirect URI: no host set or SSO base URL configured")
+		http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
+		return nil, false
+	}
+
+	tokenResp, err := m.authentikClient.ExchangeCode(
+		r.Context(),
+		code,
+		baseURL+"/auth/callback",
+		cfg.OIDCConfig.ClientID,
+		cfg.OIDCConfig.ClientSecret,
+	)
+	if err != nil {
+		m.logger.Error("failed to exchange code", "error", err)
+		http.Error(w, "Failed to authenticate", http.StatusInternalServerError)
+		return nil, false
+	}
+
+	userInfo, err := m.authentikClient.GetUserInfo(r.Context(), tokenResp.AccessToken)
+	if err != nil {
+		m.logger.Error("failed to get user info", "error", err)
+		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+		return nil, false
+	}
+	return userInfo, true
+}
+
+// createCallbackSession opens a session for the signed-in identity, with the
+// admin role if Authentik says they are in the admins group.
+func (m *authModule) createCallbackSession(w http.ResponseWriter, username string, groups []string) (*store.Session, bool) {
+	role := store.RoleMember
+	for _, group := range groups {
+		if group == "authentik Admins" {
+			role = store.RoleAdmin
+			break
+		}
+	}
+
+	session, err := m.sessionStore.Create(username, username, role)
+	if err != nil {
+		m.logger.Error("failed to create session", "error", err)
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return nil, false
+	}
+	return session, true
+}
+
+// issueSessionCookie sets the session cookie the rest of the API reads.
+func (m *authModule) issueSessionCookie(w http.ResponseWriter, session *store.Session) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    session.ID,
+		Path:     "/",
+		Expires:  session.ExpiresAt,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // ---- Logout ----

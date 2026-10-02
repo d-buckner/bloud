@@ -4,8 +4,10 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os/exec"
@@ -47,84 +49,114 @@ func (m *logsModule) StreamLogsHandler() http.HandlerFunc {
 			return
 		}
 
-		ctx := r.Context()
-
-		// Resolve the primary container for the app. The host-agent owns
-		// containers directly (no systemd units), so we look them up by the
-		// io.bloud.app label rather than a fixed name.
-		lookup := exec.CommandContext(ctx, "podman", "ps", "-a",
-			"--filter", "label=io.bloud.app="+name,
-			"--format", "{{.Names}}")
-		lookupOut, err := lookup.Output()
-		if err != nil {
-			m.logger.Error("failed to resolve app container", "app", name, "error", err)
-			respondError(w, http.StatusInternalServerError, "Failed to resolve app container")
-			return
-		}
-		containerName := strings.TrimSpace(string(lookupOut))
-		if containerName == "" {
-			respondError(w, http.StatusNotFound, "App has no managed containers")
-			return
-		}
-
-		// Set headers for SSE
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		flusher, ok := w.(http.Flusher)
+		containerName, ok := m.resolveAppContainer(w, r.Context(), name)
 		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		flusher, ok := beginLogSSE(w)
+		if !ok {
 			return
 		}
 
 		m.logger.Info("SSE client connected for app logs", "app", name)
 
-		cmd := exec.CommandContext(ctx, "podman", "logs",
-			"-f",
-			"-n", "100",
-			"--timestamps",
-			containerName,
-		)
-
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			m.logger.Error("failed to create stdout pipe", "error", err)
-			respondError(w, http.StatusInternalServerError, "Failed to start log stream")
+		cmd, stdout, ok := m.startLogStream(w, r.Context(), containerName)
+		if !ok {
 			return
 		}
-
-		if err := cmd.Start(); err != nil {
-			m.logger.Error("failed to start podman logs", "error", err)
-			respondError(w, http.StatusInternalServerError, "Failed to start log stream")
-			return
-		}
-
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", line); err != nil {
-				// Client disconnected mid-stream.
-				return
-			}
-			flusher.Flush()
-
-			select {
-			case <-ctx.Done():
-				m.logger.Info("SSE client disconnected from app logs", "app", name)
-				return
-			default:
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			m.logger.Error("scanner error reading logs", "error", err)
-		}
-
-		_ = cmd.Wait()
-		m.logger.Info("log stream ended", "app", name)
+		m.pumpLogStream(w, flusher, r.Context(), name, stdout, cmd)
 	}
+}
+
+// resolveAppContainer finds the app's primary container. The host-agent owns
+// containers directly (no systemd units), so they are looked up by the
+// io.bloud.app label rather than a fixed name.
+func (m *logsModule) resolveAppContainer(w http.ResponseWriter, ctx context.Context, name string) (string, bool) {
+	lookup := exec.CommandContext(ctx, "podman", "ps", "-a",
+		"--filter", "label=io.bloud.app="+name,
+		"--format", "{{.Names}}")
+	lookupOut, err := lookup.Output()
+	if err != nil {
+		m.logger.Error("failed to resolve app container", "app", name, "error", err)
+		respondError(w, http.StatusInternalServerError, "Failed to resolve app container")
+		return "", false
+	}
+	containerName := strings.TrimSpace(string(lookupOut))
+	if containerName == "" {
+		respondError(w, http.StatusNotFound, "App has no managed containers")
+		return "", false
+	}
+	return containerName, true
+}
+
+// beginLogSSE writes the SSE headers and returns the flusher the stream needs
+// to get each line out without waiting for a buffer to fill.
+func beginLogSSE(w http.ResponseWriter) (http.Flusher, bool) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return nil, false
+	}
+	return flusher, true
+}
+
+// startLogStream launches `podman logs -f` and hands back its stdout pipe.
+func (m *logsModule) startLogStream(w http.ResponseWriter, ctx context.Context, containerName string) (*exec.Cmd, io.ReadCloser, bool) {
+	cmd := exec.CommandContext(ctx, "podman", "logs",
+		"-f",
+		"-n", "100",
+		"--timestamps",
+		containerName,
+	)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		m.logger.Error("failed to create stdout pipe", "error", err)
+		respondError(w, http.StatusInternalServerError, "Failed to start log stream")
+		return nil, nil, false
+	}
+
+	if err := cmd.Start(); err != nil {
+		m.logger.Error("failed to start podman logs", "error", err)
+		respondError(w, http.StatusInternalServerError, "Failed to start log stream")
+		return nil, nil, false
+	}
+	return cmd, stdout, true
+}
+
+// pumpLogStream forwards lines until the client goes away or the pipe ends. A
+// write error means the client disconnected, which is normal rather than a
+// fault, so it ends the stream quietly.
+func (m *logsModule) pumpLogStream(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, name string, stdout io.Reader, cmd *exec.Cmd) {
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", line); err != nil {
+			// Client disconnected mid-stream.
+			return
+		}
+		flusher.Flush()
+
+		select {
+		case <-ctx.Done():
+			m.logger.Info("SSE client disconnected from app logs", "app", name)
+			return
+		default:
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		m.logger.Error("scanner error reading logs", "error", err)
+	}
+
+	_ = cmd.Wait()
+	m.logger.Info("log stream ended", "app", name)
 }
 
 // SystemStatusStreamHandler streams system stats via SSE.

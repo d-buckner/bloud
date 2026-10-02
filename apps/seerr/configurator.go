@@ -281,13 +281,19 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		}
 		return c.reconcilePVRsWithStoredKey(ctx, state)
 	}
+	return c.onboardSeerr(ctx, state, settingsPath)
+}
 
-	// Seerr's only non-interactive onboarding path starts with a Jellyfin
-	// administrator login, so without Jellyfin there is nothing to do. A
-	// missing provider is never an error: a later reconciliation re-runs
-	// PostStart once Jellyfin is installed. (PVR wiring is deferred with it:
-	// it needs the admin user the login below creates.)
-	//
+// onboardSeerr drives the first-run setup of an instance that has not been
+// initialized yet, from the Jellyfin admin login through the PVR wiring that
+// only makes sense after it.
+//
+// Seerr's only non-interactive onboarding path starts with a Jellyfin
+// administrator login, so without Jellyfin there is nothing to do. A
+// missing provider is never an error: a later reconciliation re-runs
+// PostStart once Jellyfin is installed. (PVR wiring is deferred with it:
+// it needs the admin user the login below creates.)
+func (c *Configurator) onboardSeerr(ctx context.Context, state *configurator.AppState, settingsPath string) error {
 	// It is not silent, though: an instance that has never completed onboarding
 	// serves its first-run wizard to anyone who can reach it, and whoever
 	// completes it (pointing Seerr at a Jellyfin they control) becomes its

@@ -61,14 +61,7 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
 			return result{}, ctxErr
 		}
 		x.logAttempt("", 0, attempt, "transport-error")
-		return result{}, &HTTPError{
-			Name:    x.c.name,
-			Method:  x.method,
-			URL:     req.URL.String(),
-			Status:  0,
-			Body:    []byte(err.Error()),
-			Attempt: attempt,
-		}
+		return result{}, x.httpError(req, 0, []byte(err.Error()), attempt)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -77,14 +70,7 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return result{}, ctxErr
 		}
-		return result{}, &HTTPError{
-			Name:    x.c.name,
-			Method:  x.method,
-			URL:     req.URL.String(),
-			Status:  resp.StatusCode,
-			Body:    capBody([]byte("read body: " + readErr.Error())),
-			Attempt: attempt,
-		}
+		return result{}, x.httpError(req, resp.StatusCode, capBody([]byte("read body: "+readErr.Error())), attempt)
 	}
 
 	// 401 with a managed token: invalidate, refetch once, retry once.
@@ -103,15 +89,23 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
 	case outcomeAlreadyDone:
 		return result{status: resp.StatusCode, body: body, alreadyDone: true}, nil
 	default:
-		return result{}, &HTTPError{
-			Name:       x.c.name,
-			Method:     x.method,
-			URL:        req.URL.String(),
-			Status:     resp.StatusCode,
-			Body:       capBody(body),
-			Attempt:    attempt,
-			retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), nowFunc()),
-		}
+		he := x.httpError(req, resp.StatusCode, capBody(body), attempt)
+		he.retryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), nowFunc())
+		return result{}, he
+	}
+}
+
+// httpError builds the error for one failed attempt against req. The body is
+// stored as given: the transport path passes a raw message, the response path
+// passes an already-capped one.
+func (x *Call) httpError(req *http.Request, status int, body []byte, attempt int) *HTTPError {
+	return &HTTPError{
+		Name:    x.c.name,
+		Method:  x.method,
+		URL:     req.URL.String(),
+		Status:  status,
+		Body:    body,
+		Attempt: attempt,
 	}
 }
 

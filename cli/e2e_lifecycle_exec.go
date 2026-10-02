@@ -154,7 +154,8 @@ func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 		commandArgs = append(commandArgs, "shell", "--start", r.cfg.lima, "bash", "-se", "--")
 		commandArgs = append(commandArgs, args...)
 		return exec.Command(name, commandArgs...)
-	} else if r.cfg.qemu != "" {
+	}
+	if r.cfg.qemu != "" {
 		name := "ssh"
 		commandArgs = append(commandArgs,
 			"-i", r.cfg.sshKeyFile,
@@ -166,14 +167,13 @@ func (r *lifecycle) remoteCommand(_ string, args ...string) *exec.Cmd {
 			commandArgs = append(commandArgs, shellQuote(arg))
 		}
 		return exec.Command(name, commandArgs...)
-	} else {
-		name := "ssh"
-		commandArgs = append(commandArgs, r.cfg.sshTarget, "bash", "-se", "--")
-		for _, arg := range args {
-			commandArgs = append(commandArgs, shellQuote(arg))
-		}
-		return exec.Command(name, commandArgs...)
 	}
+	name := "ssh"
+	commandArgs = append(commandArgs, r.cfg.sshTarget, "bash", "-se", "--")
+	for _, arg := range args {
+		commandArgs = append(commandArgs, shellQuote(arg))
+	}
+	return exec.Command(name, commandArgs...)
 }
 
 func (r *lifecycle) remotePath(relative string) string {

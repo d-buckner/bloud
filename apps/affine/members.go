@@ -83,58 +83,16 @@ func (c *Configurator) ensureSharedMembers(ctx context.Context, state *configura
 		c.logger.Info("affine shared workspace: no identity provider token, inviting nobody")
 		return
 	}
-	if c.secrets == nil {
-		c.logger.Warn("cannot invite into the affine shared workspace: no secrets provider")
+	workspaceID, ok := c.ownerSessionForInvites(ctx)
+	if !ok {
 		return
 	}
-	password, err := c.secrets.GenerateAppAdminPassword(appName)
-	if err != nil {
-		c.logger.Warn("affine shared workspace: no owner password", "err", err)
+	wanted, ok := c.wantedMemberEmails(ctx, idp)
+	if !ok {
 		return
 	}
-	if err := c.api.signIn(ctx, c.adminEmail, password); err != nil {
-		c.logger.Warn("affine shared workspace: owner sign-in failed, inviting nobody", "err", err)
-		return
-	}
-	workspaceID, err := c.ensureWorkspace(ctx)
-	if err != nil {
-		c.logger.Warn("affine shared workspace: could not settle a workspace", "err", err)
-		return
-	}
-
-	// LocalURL, not BaseURL: this call is made by the host-agent process, which
-	// is not on the app's container network, while the identity provider's
-	// port is published to the host.
-	ak := authentik.NewClient(idp.LocalURL, idp.APIToken)
-	managed, err := ak.ListUsers(ctx)
-	if err != nil {
-		c.logger.Warn("affine shared workspace: could not read the identity provider's users",
-			"provider", idp.App, "url", idp.LocalURL, "err", err)
-		return
-	}
-	wanted := bloudUserEmails(managed)
-	if len(wanted) == 0 {
-		c.logger.Info("affine shared workspace: no Bloud users to invite", "provider", idp.App)
-		return
-	}
-
-	members, err := c.api.workspaceMembers(ctx, workspaceID, memberPageLimit)
-	if err != nil {
-		c.logger.Warn("affine shared workspace: could not read the member list", "err", err)
-		return
-	}
-	present := make(map[string]bool, len(members))
-	for _, m := range members {
-		present[strings.ToLower(strings.TrimSpace(m.Email))] = true
-	}
-
-	var missing []string
-	for _, email := range wanted {
-		if !present[email] {
-			missing = append(missing, email)
-		}
-	}
-	if len(missing) == 0 {
+	missing, total, err := c.missingMembers(ctx, workspaceID, wanted)
+	if err != nil || len(missing) == 0 {
 		return
 	}
 
@@ -144,6 +102,85 @@ func (c *Configurator) ensureSharedMembers(ctx context.Context, state *configura
 			"workspace", workspaceID, "attempted", len(missing), "err", err)
 		return
 	}
+	if invited := c.collectInvites(results); len(invited) > 0 {
+		c.logger.Info("invited the Bloud users into the shared workspace",
+			"workspace", workspaceID, "invited", len(invited), "members", total)
+	}
+}
+
+// ownerSessionForInvites signs in as the Bloud-owned AFFiNE account and
+// settles on the shared workspace, which is what the invite calls are made
+// against. Each step is a hard prerequisite for the next, so the whole prologue
+// is one yes/no.
+func (c *Configurator) ownerSessionForInvites(ctx context.Context) (string, bool) {
+	if c.secrets == nil {
+		c.logger.Warn("cannot invite into the affine shared workspace: no secrets provider")
+		return "", false
+	}
+	password, err := c.secrets.GenerateAppAdminPassword(appName)
+	if err != nil {
+		c.logger.Warn("affine shared workspace: no owner password", "err", err)
+		return "", false
+	}
+	if err := c.api.signIn(ctx, c.adminEmail, password); err != nil {
+		c.logger.Warn("affine shared workspace: owner sign-in failed, inviting nobody", "err", err)
+		return "", false
+	}
+	workspaceID, err := c.ensureWorkspace(ctx)
+	if err != nil {
+		c.logger.Warn("affine shared workspace: could not settle a workspace", "err", err)
+		return "", false
+	}
+	return workspaceID, true
+}
+
+// wantedMemberEmails reads the accounts the identity provider holds and keeps
+// the ones that belong to Bloud.
+func (c *Configurator) wantedMemberEmails(ctx context.Context, idp configurator.SSOBinding) ([]string, bool) {
+	// LocalURL, not BaseURL: this call is made by the host-agent process, which
+	// is not on the app's container network, while the identity provider's
+	// port is published to the host.
+	ak := authentik.NewClient(idp.LocalURL, idp.APIToken)
+	managed, err := ak.ListUsers(ctx)
+	if err != nil {
+		c.logger.Warn("affine shared workspace: could not read the identity provider's users",
+			"provider", idp.App, "url", idp.LocalURL, "err", err)
+		return nil, false
+	}
+	wanted := bloudUserEmails(managed)
+	if len(wanted) == 0 {
+		c.logger.Info("affine shared workspace: no Bloud users to invite", "provider", idp.App)
+		return nil, false
+	}
+	return wanted, true
+}
+
+// missingMembers diffs the wanted addresses against the workspace's member
+// list, and reports how many members the workspace holds so the summary line
+// can say what the invites were added to.
+func (c *Configurator) missingMembers(ctx context.Context, workspaceID string, wanted []string) ([]string, int, error) {
+	members, err := c.api.workspaceMembers(ctx, workspaceID, memberPageLimit)
+	if err != nil {
+		c.logger.Warn("affine shared workspace: could not read the member list", "err", err)
+		return nil, 0, err
+	}
+	present := make(map[string]bool, len(members))
+	for _, m := range members {
+		present[strings.ToLower(strings.TrimSpace(m.Email))] = true
+	}
+	var missing []string
+	for _, email := range wanted {
+		if !present[email] {
+			missing = append(missing, email)
+		}
+	}
+	return missing, len(members), nil
+}
+
+// collectInvites keeps the addresses the instance actually accepted, and logs
+// the ones it refused. A partial invite is not a failure: the refused addresses
+// are retried on the next pass.
+func (c *Configurator) collectInvites(results []inviteResult) []string {
 	invited := make([]string, 0, len(results))
 	for _, r := range results {
 		if r.InviteID == "" || r.Error != nil {
@@ -153,8 +190,5 @@ func (c *Configurator) ensureSharedMembers(ctx context.Context, state *configura
 		}
 		invited = append(invited, r.Email)
 	}
-	if len(invited) > 0 {
-		c.logger.Info("invited the Bloud users into the shared workspace",
-			"workspace", workspaceID, "invited", len(invited), "members", len(members))
-	}
+	return invited
 }

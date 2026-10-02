@@ -151,36 +151,54 @@ func (f *fakeAffine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (f *fakeAffine) graphql(w http.ResponseWriter, r *http.Request) {
+// graphqlRequest is one GraphQL call as it arrives on the wire. The fake
+// decodes both the plain JSON body and the multipart `operations` field into
+// the same shape.
+type graphqlRequest struct {
+	Query     string         `json:"query"`
+	Variables map[string]any `json:"variables"`
+}
+
+// decodeGraphQLRequest reads a GraphQL call from either a JSON body or a
+// multipart upload. It writes the error response itself and reports false
+// when the request never became a query, so the handler's own switch stays
+// about queries rather than about transport.
+func (f *fakeAffine) decodeGraphQLRequest(w http.ResponseWriter, r *http.Request) (graphqlRequest, bool) {
 	if f.requireCSRF && r.Header.Get("x-csrf-token") == "" {
 		writeGraphQLErr(w, "missing csrf token")
-		return
-	}
-	var req struct {
-		Query     string         `json:"query"`
-		Variables map[string]any `json:"variables"`
+		return graphqlRequest{}, false
 	}
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		// graphql-multipart-request-spec: the query lives in the `operations`
-		// form field, the file is part "0".
-		if err := r.ParseMultipartForm(10 << 20); err != nil {
-			writeGraphQLErr(w, "bad multipart request")
-			return
-		}
-		var op struct {
-			Query string `json:"query"`
-		}
-		if err := json.Unmarshal([]byte(r.FormValue("operations")), &op); err != nil {
-			writeGraphQLErr(w, "bad operations field")
-			return
-		}
-		req.Query = op.Query
-	} else {
-		body := newDecoder(r)
-		if err := body.Decode(&req); err != nil {
-			writeGraphQLErr(w, "bad request")
-			return
-		}
+		return f.decodeMultipartGraphQL(w, r)
+	}
+	var req graphqlRequest
+	if err := newDecoder(r).Decode(&req); err != nil {
+		writeGraphQLErr(w, "bad request")
+		return graphqlRequest{}, false
+	}
+	return req, true
+}
+
+// decodeMultipartGraphQL reads the query out of the `operations` form field
+// of a graphql-multipart-request-spec upload; the file itself stays in the
+// parts for whichever case consumes it.
+func (f *fakeAffine) decodeMultipartGraphQL(w http.ResponseWriter, r *http.Request) (graphqlRequest, bool) {
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeGraphQLErr(w, "bad multipart request")
+		return graphqlRequest{}, false
+	}
+	var req graphqlRequest
+	if err := json.Unmarshal([]byte(r.FormValue("operations")), &req); err != nil {
+		writeGraphQLErr(w, "bad operations field")
+		return graphqlRequest{}, false
+	}
+	return req, true
+}
+
+func (f *fakeAffine) graphql(w http.ResponseWriter, r *http.Request) {
+	req, ok := f.decodeGraphQLRequest(w, r)
+	if !ok {
+		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

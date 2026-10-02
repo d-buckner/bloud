@@ -18,6 +18,10 @@
 		e.stopPropagation();
 		onremove?.(app);
 	}
+
+	function handleRemoveKey(e: KeyboardEvent) {
+		if (e.key === 'Enter') handleRemove(e);
+	}
 </script>
 
 <button class="remote-app-card" {onclick}>
@@ -29,7 +33,14 @@
 		<span class="card-badge">shared</span>
 	</div>
 	{#if onremove}
-		<div class="remove-btn" role="button" tabindex="0" onclick={handleRemove} onkeydown={(e) => e.key === 'Enter' && handleRemove(e)} title="Remove shared app">
+		<div
+			class="remove-btn"
+			role="button"
+			tabindex="0"
+			onclick={handleRemove}
+			onkeydown={handleRemoveKey}
+			title="Remove shared app"
+		>
 			<Icon name="trash" size={14} />
 		</div>
 	{/if}

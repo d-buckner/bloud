@@ -318,46 +318,59 @@ func (o *Orchestrator) resetSSONodes() {
 	if o.graph == nil || o.appStore == nil {
 		return
 	}
-
-	reset := func(nodeID string) {
+	for _, nodeID := range o.ssoDependentNodes() {
 		node, err := o.graph.GetNode(nodeID)
 		if err != nil || node == nil || node.ActualStatus != graph.StatusRunning {
-			return
+			continue
 		}
 		o.logger.Info("resetting SSO-dependent node for host change", "node", nodeID)
 		_ = o.graph.SetActualStatus(nodeID, graph.StatusInitializing, "")
 	}
+}
 
+// ssoDependentNodes lists the nodes whose config or provider bakes in the host
+// set: the Authentik server container, plus every container of each installed
+// app that joined the identity provider.
+func (o *Orchestrator) ssoDependentNodes() []string {
+	var nodes []string
 	// Authentik server: PostStart re-applies the embedded outpost host URL.
 	if _, err := o.appStore.GetByCatalogID("authentik"); err == nil {
-		reset("apps-authentik-server")
+		nodes = append(nodes, "apps-authentik-server")
 	}
-
 	apps, err := o.appStore.GetAll()
 	if err != nil {
-		return
+		return nodes
 	}
 	for _, app := range apps {
-		if app.IsSystem || o.catalog == nil {
-			continue
-		}
-		catalogApp, err := o.catalog.Get(app.CatalogID)
-		if err != nil || catalogApp == nil {
-			continue
-		}
-		switch catalogApp.SSO.Strategy {
-		case "native-oidc", "forward-auth":
-		default:
-			continue
-		}
-		if len(catalogApp.Containers) > 0 {
-			for _, def := range catalogApp.Containers {
-				reset(def.Name)
-			}
-			continue
-		}
-		reset(app.CatalogID)
+		nodes = append(nodes, o.ssoAppNodes(app)...)
 	}
+	return nodes
+}
+
+// ssoAppNodes returns the container nodes of one installed app when its SSO
+// strategy makes it host-dependent, or the app's own node when it declares no
+// containers of its own.
+func (o *Orchestrator) ssoAppNodes(app *store.InstalledApp) []string {
+	if app.IsSystem || o.catalog == nil {
+		return nil
+	}
+	catalogApp, err := o.catalog.Get(app.CatalogID)
+	if err != nil || catalogApp == nil {
+		return nil
+	}
+	switch catalogApp.SSO.Strategy {
+	case "native-oidc", "forward-auth":
+	default:
+		return nil
+	}
+	if len(catalogApp.Containers) == 0 {
+		return []string{app.CatalogID}
+	}
+	nodes := make([]string, 0, len(catalogApp.Containers))
+	for _, def := range catalogApp.Containers {
+		nodes = append(nodes, def.Name)
+	}
+	return nodes
 }
 
 // recordIntent writes an app to the store if it's not already running.
@@ -446,20 +459,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	// Step 2: Handle uninstalls (apps with status "uninstalling").
 	o.logger.Info("convergence step", "step", "handle-uninstalls")
 	o.recordActivity("converge_step", "handle-uninstalls")
-	for _, app := range apps {
-		if app.Status != "uninstalling" {
-			continue
-		}
-		clearData := pendingClearData[app.CatalogID]
-		if err := o.RemoveApp(ctx, app.CatalogID, clearData); err != nil {
-			o.logger.Error("failed to remove app", "app", app.CatalogID, "error", err)
-		}
-		// Uninstall from store (RemoveApp handles container + graph; store is separate).
-		if err := o.appStore.Uninstall(app.CatalogID); err != nil {
-			o.logger.Error("failed to uninstall app from store", "app", app.CatalogID, "error", err)
-		}
-		delete(appMap, app.CatalogID)
-	}
+	o.convergeUninstalls(ctx, apps, appMap, pendingClearData)
 
 	// Step 3: Set graph targets to RUNNING so the Orchestrator drives app lifecycle.
 	// Nodes and edges are populated here so the Orchestrator enforces dependency ordering.
@@ -499,7 +499,32 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	o.logger.Info("convergence pass complete", "apps", len(apps), "duration", duration.String())
 }
 
-// convergeTailnet ensures tailnet nodes/gateway/proxies match the tailnet store state.
+// convergeUninstalls tears down every app the store marks "uninstalling":
+// containers and graph nodes first, then the store row, then the entry in the
+// map the rest of the pass reads, so a removed app is never re-added as a
+// target. Each step logs and continues: a half-removed app is repaired on the
+// next pass rather than abandoning the rest of the list.
+func (o *Orchestrator) convergeUninstalls(ctx context.Context, apps []*store.InstalledApp, appMap map[string]*store.InstalledApp, pendingClearData map[string]bool) {
+	for _, app := range apps {
+		if app.Status != "uninstalling" {
+			continue
+		}
+		clearData := pendingClearData[app.CatalogID]
+		if err := o.RemoveApp(ctx, app.CatalogID, clearData); err != nil {
+			o.logger.Error("failed to remove app", "app", app.CatalogID, "error", err)
+		}
+		// Uninstall from store (RemoveApp handles container + graph; store is separate).
+		if err := o.appStore.Uninstall(app.CatalogID); err != nil {
+			o.logger.Error("failed to uninstall app from store", "app", app.CatalogID, "error", err)
+		}
+		delete(appMap, app.CatalogID)
+	}
+}
+
+// convergeTailnet ensures tailnet nodes, gateway, proxies, and the proxy
+// outpost match the tailnet store state: an active connection brings a node up
+// for every running app, and no connection takes the whole tailnet surface
+// down.
 func (o *Orchestrator) convergeTailnet(ctx context.Context) {
 	if o.tailnetStore == nil {
 		return
@@ -518,26 +543,36 @@ func (o *Orchestrator) convergeTailnet(ctx context.Context) {
 	}
 
 	if conn != nil {
-		// Active tailnet: ensure tailnet nodes for running non-system apps.
-		o.logger.Info("tailnet active, ensuring nodes for running apps", "conn_id", conn.ID, "app_count", len(apps))
-		if o.tailnetNode == nil {
-			return
-		}
-		for _, app := range apps {
-			if app.IsSystem || app.Status != "running" {
-				continue
-			}
-			o.logger.Info("ensuring tailnet node", "app", app.CatalogID)
-			if err := o.tailnetNode.EnsureRunning(ctx, app.CatalogID); err != nil {
-				o.logger.Warn("failed to ensure tailnet node", "app", app.CatalogID, "error", err)
-				continue
-			}
-			_ = o.appStore.SetTailnetID(app.CatalogID, conn.ID)
-		}
+		o.ensureTailnetNodes(ctx, conn, apps)
 		return
 	}
+	o.purgeTailnet(ctx, apps)
+}
 
-	// No tailnet: purge tailnet nodes, gateway, proxy outpost, and proxies.
+// ensureTailnetNodes brings a tailnet node up for each running non-system app
+// and records which connection it now rides.
+func (o *Orchestrator) ensureTailnetNodes(ctx context.Context, conn *store.TailnetConnection, apps []*store.InstalledApp) {
+	o.logger.Info("tailnet active, ensuring nodes for running apps", "conn_id", conn.ID, "app_count", len(apps))
+	if o.tailnetNode == nil {
+		return
+	}
+	for _, app := range apps {
+		if app.IsSystem || app.Status != "running" {
+			continue
+		}
+		o.logger.Info("ensuring tailnet node", "app", app.CatalogID)
+		if err := o.tailnetNode.EnsureRunning(ctx, app.CatalogID); err != nil {
+			o.logger.Warn("failed to ensure tailnet node", "app", app.CatalogID, "error", err)
+			continue
+		}
+		_ = o.appStore.SetTailnetID(app.CatalogID, conn.ID)
+	}
+}
+
+// purgeTailnet takes the whole tailnet surface down: the per-app nodes, the
+// SOCKS gateway, the proxy outpost, and the remote-proxy pool. Each piece logs
+// and carries on, so one stuck container does not leave the others up.
+func (o *Orchestrator) purgeTailnet(ctx context.Context, apps []*store.InstalledApp) {
 	o.logger.Info("no active tailnet, purging nodes and gateway", "app_count", len(apps))
 	if o.tailnetNode != nil {
 		for _, app := range apps {
