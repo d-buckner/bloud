@@ -260,3 +260,54 @@ func TestIsAvailable_NilClientIsUnavailable(t *testing.T) {
 		t.Fatal("a nil client must report unavailable")
 	}
 }
+
+func TestWaitForwardAuthProviderReady(t *testing.T) {
+	// The outpost answers its own "Not Found" page (404) until it has reloaded
+	// a freshly-added provider, then answers the same probe with a redirect to
+	// the flow (302). The wait must ride out the 404 and present the host and
+	// scheme Traefik's forwardAuth middleware would forward.
+	t.Run("recognized immediately", func(t *testing.T) {
+		var gotHost, gotScheme string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/outpost.goauthentik.io/auth/traefik" {
+				t.Errorf("unexpected probe path %q", r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "" {
+				t.Error("probe must be anonymous: got an Authorization header")
+			}
+			gotHost = r.Header.Get("X-Forwarded-Host")
+			gotScheme = r.Header.Get("X-Forwarded-Proto")
+			http.Redirect(w, r, "http://calino.localhost:8080/outpost.goauthentik.io/start", http.StatusFound)
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, "test-token")
+		if err := client.waitForwardAuthProviderReady(context.Background(), "calino.localhost:8080", "http"); err != nil {
+			t.Fatalf("wait returned error: %v", err)
+		}
+		if gotHost != "calino.localhost:8080" || gotScheme != "http" {
+			t.Errorf("probe headers = host %q scheme %q; want calino.localhost:8080 / http", gotHost, gotScheme)
+		}
+	})
+
+	t.Run("retries a not-yet-loaded provider", func(t *testing.T) {
+		var calls int
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if calls == 1 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			http.Redirect(w, r, "http://calino.localhost:8080/outpost.goauthentik.io/start", http.StatusFound)
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, "test-token")
+		if err := client.waitForwardAuthProviderReady(context.Background(), "calino.localhost:8080", "http"); err != nil {
+			t.Fatalf("wait returned error: %v", err)
+		}
+		if calls != 2 {
+			t.Errorf("probe calls = %d; want 2 (404 then 302)", calls)
+		}
+	})
+}

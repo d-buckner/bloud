@@ -16,6 +16,12 @@
 # place the no-VM trade-off is acceptable (AGENTS.md). It deploys host-agent
 # and the catalog as a systemd user service in /var/tmp/bloud-validate-runtime
 # and installs Jellyfin through POST /api/apps/jellyfin/install.
+#
+# No Node.js here on purpose. The tier builds two Go binaries and copies them
+# in; it ships no dashboard, so it needs no frontend toolchain. The
+# production bundle is built and gated by the fast tier in ci.yml, and the
+# validation runtime serves host-agent's missing-build fallback page
+# instead (invariant 11).
 name: Integration
 
 on:
@@ -35,9 +41,10 @@ jobs:
     # October 2026.
     runs-on: ubuntu-24.04
     # Worst case is the sum of the pieces, not the test timeout alone:
-    # local builds (~5m) + deploy (~1m) + first-boot convergence, which the
-    # tier allows 20m for, + the 30m test timeout in validation.yaml.
-    timeout-minutes: 75
+    # local Go builds (~4m on a cold cache) + deploy (~1m) + first-boot
+    # convergence, which the tier allows 20m for, + the 30m test timeout in
+    # validation.yaml.
+    timeout-minutes: 70
 
     steps:
       - name: Checkout
@@ -51,15 +58,6 @@ jobs:
             services/host-agent/go.sum
             apps/go.sum
             cli/go.sum
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
 
       - name: Install ldap-utils and psmisc
         run: |

@@ -76,12 +76,13 @@ type fakeApp struct {
 	groupTokens []string
 
 	// Knobs for the failure cases.
-	signupClosed     bool
-	signupRejected   bool
-	providerHidden   bool
-	providerError    bool
-	signupPageStatus int
-	groupWriteStatus int
+	signupClosed            bool
+	signupRejected          bool
+	providerHidden          bool
+	providerError           bool
+	providerTransientErrors int
+	signupPageStatus        int
+	groupWriteStatus        int
 }
 
 // fakeAPIToken is the token the fake issues and demands, so a call that
@@ -178,7 +179,7 @@ func (f *fakeApp) serveProviderLogin(w http.ResponseWriter, r *http.Request) {
 	for _, c := range r.Cookies() {
 		f.providerCookies = append(f.providerCookies, c.Name)
 	}
-	if f.providerError {
+	if f.providerError || f.providerPosts <= f.providerTransientErrors {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -619,9 +620,29 @@ func TestPostStart_FailsWhenProviderProbeErrors(t *testing.T) {
 	app.providerError = true
 	c, dataPath := testConfigurator(t, app)
 
-	err := c.PostStart(context.Background(), appState(dataPath, testOIDC()))
+	// The probe retries a transient 500 (allauth's issuer-discovery fetch
+	// racing Authentik warm-up), so a persistent 500 is bounded by the context
+	// rather than by a single attempt.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := c.PostStart(ctx, appState(dataPath, testOIDC()))
 	require.Error(t, err, "a provider that cannot start the flow must surface as an error")
 	assert.Contains(t, err.Error(), "authorization redirect")
+}
+
+func TestPostStart_ProbeRetriesTransientProviderError(t *testing.T) {
+	app := newFakeApp()
+	app.providerTransientErrors = 1
+	c, dataPath := testConfigurator(t, app)
+
+	require.NoError(t, c.PostStart(context.Background(), appState(dataPath, testOIDC())))
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	// The first POST answered 500 (allauth's issuer-discovery fetch racing
+	// Authentik warm-up); the probe retried and the second POST succeeded.
+	assert.Equal(t, 2, app.providerPosts)
 }
 
 func TestPostStart_DeclaresBaselineGroupOnFreshInstall(t *testing.T) {

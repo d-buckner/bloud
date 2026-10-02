@@ -225,13 +225,24 @@ pruned to the newest 20).
 |---|---|---|
 | `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate + nolintlint, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, file length ratchet, prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check`) |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
-| `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
+| `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent and the integration test binary locally (no frontend build, see below); deploys them plus the app catalog to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) with `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
 Flags: `--tier fast|changed|integration`, `--app <name>`, `--dry-run`, `--explain`,
 `--json`, `--since <ref>`, `--verbose` / `-v` (stream each command's raw output;
 `BLOUD_VALIDATE_VERBOSE=1` does the same). The console is quiet by default: one
 line per command plus a pass/fail summary, with the full per-command output
 dumped only for failures and mirrored to `.bloud/logs/validate-<tier>.log`.
+The integration tier uses the same split for its bring-up phases (provision,
+preflight, build, deploy, start, wait-for-convergence) as for the test command
+itself, so a 10-minute run that goes well is ten lines.
+
+The integration tier builds no frontend. The fast tier's `web-build` command
+already gates the production bundle on every push, and no integration test
+reads the dashboard, so rebuilding the same artifact here would prove the same
+thing twice and add a minute of vite chunk listing to the log. The validation
+runtime is deployed without `web/build`, so host-agent serves its documented
+missing-build fallback page (invariant 11), and the CI job that runs the tier
+installs no Node.js at all.
 
 Run individual suites directly (from the repo root unless noted):
 
@@ -477,6 +488,20 @@ same `apps/*/metadata.yaml`, by `catalogdoc`. Each block sits between HTML comme
 and everything outside them is hand-written prose, so the voice of the section is not
 generated and the entries are. Neither block carries a count of how many apps there are: a
 count is one more thing to keep in sync, and the list underneath it answers the question.
+
+The login table has one override, the `loginQuirks` table in `cli/catalogdoc.go`, for the
+case where the strategy an app declares at the ingress is not the login a reader would
+perform. Seerr declares `none` because it cannot delegate authentication, but its users sign
+in with their Jellyfin account, which is LDAP-backed through Authentik, so it renders under
+**LDAP** rather than under "App-local accounts". It is an override in the generator rather
+than a new value in the strategy enum because invariant 6 is a runtime contract and Seerr's
+`none` is correct for it; only the README's grouping was wrong. It is data, the same shape
+as the `EXCEPTIONS` table in `scripts/pinned-images.mjs`: every entry carries its reason,
+and `checkLoginQuirks` fails an entry that names an app that is gone, targets a system app,
+duplicates another entry, points at a strategy with no README label, or agrees with what the
+app already declares and so does nothing. An override that guards nothing is itself a
+failure, so the table cannot quietly keep asserting something the catalog stopped being true
+of. The overrides are also printed on every `--write` / `--check` run.
 
 The `generated-docs` workflow regenerates all of it on merge to `main`, scoped by path to
 what the artifacts depend on: `apps/**/metadata.yaml`, the generators (`cli/depgraph.go`,

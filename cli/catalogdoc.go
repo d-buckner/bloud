@@ -58,6 +58,125 @@ var loginStrategyLabels = map[string]string{
 
 var loginStrategyOrder = []string{"ldap", "forward-auth", "native-oidc", "none"}
 
+// loginQuirk overrides the strategy row an app is drawn under. It exists
+// because `sso.strategy` describes how Bloud authenticates the app at the
+// ingress, which is not always the answer the login table is being asked
+// for: "what do I type into this app?"
+//
+// It is an override, deliberately kept here rather than in the app's
+// metadata. The strategy enum is a runtime contract (invariant 6) and
+// Seerr's value is correct for it: Seerr genuinely cannot delegate
+// authentication. Only the README's grouping is wrong, so only the README
+// generator carries the correction.
+//
+// The table is data, the same shape as the EXCEPTIONS table in
+// scripts/pinned-images.mjs and the BASELINE block in
+// scripts/file-length.mjs: every entry states the reason it exists, and
+// checkLoginQuirks fails an entry that no longer changes anything, so the
+// list cannot rot into a confident lie about a catalog that moved on.
+type loginQuirk struct {
+	app      string // catalog name of the app being overridden
+	strategy string // strategy row to draw it under instead
+	reason   string // why the declared strategy misdescribes the login
+}
+
+var loginQuirks = []loginQuirk{
+	{
+		app:      "seerr",
+		strategy: "ldap",
+		reason: "Seerr declares `none` because it cannot delegate authentication at the " +
+			"ingress, but its users sign in with their Jellyfin account, and Jellyfin's " +
+			"credential is LDAP-backed through Authentik. " +
+			"\"App-local accounts\" tells a reader who already has a Bloud account that " +
+			"they need something else. They do not.",
+	},
+}
+
+// loginTableRowStrategy is the strategy row an app is drawn under: its own
+// declared strategy, unless a quirk says that value misdescribes the login
+// a reader would actually perform.
+func loginTableRowStrategy(app *AppMetadata) string {
+	if quirk, ok := findLoginQuirk(app.Name); ok {
+		return quirk.strategy
+	}
+	return normalizeStrategy(app.SSO.Strategy)
+}
+
+// findLoginQuirk returns the override declared for an app, if any.
+func findLoginQuirk(appName string) (loginQuirk, bool) {
+	for _, quirk := range loginQuirks {
+		if quirk.app == appName {
+			return quirk, true
+		}
+	}
+	return loginQuirk{}, false
+}
+
+// checkLoginQuirks returns every quirk that no longer describes the
+// catalog. A quirk for an app that is gone, one that agrees with what the
+// app already declares, and a second quirk for the same app are the same
+// problem: the override is load-bearing for nothing, and a stale override
+// is how a generated table starts lying without anyone editing it. An
+// override that points at a strategy with no README label is caught here
+// too, because a typo in this table renders a row no reader can map to a
+// real mechanism.
+func checkLoginQuirks(apps map[string]*AppMetadata) []string {
+	var problems []string
+	seen := make(map[string]bool, len(loginQuirks))
+
+	for _, quirk := range loginQuirks {
+		if seen[quirk.app] {
+			problems = append(problems, fmt.Sprintf("duplicate quirk for %q", quirk.app))
+		}
+		seen[quirk.app] = true
+
+		if strings.TrimSpace(quirk.reason) == "" {
+			problems = append(problems, fmt.Sprintf("quirk for %q carries no reason", quirk.app))
+		}
+		if _, ok := loginStrategyLabels[quirk.strategy]; !ok {
+			problems = append(problems, fmt.Sprintf("quirk for %q points at strategy %q, which has no README label",
+				quirk.app, quirk.strategy))
+		}
+
+		app, ok := apps[quirk.app]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("quirk names %q, which is not in the catalog", quirk.app))
+			continue
+		}
+		if app.IsSystem {
+			problems = append(problems, fmt.Sprintf("quirk for %q targets a system app, which the login table does not list", quirk.app))
+			continue
+		}
+		if normalizeStrategy(app.SSO.Strategy) == quirk.strategy {
+			problems = append(problems, fmt.Sprintf("quirk for %q sets strategy %q, which is what the app already declares: the override does nothing",
+				quirk.app, quirk.strategy))
+		}
+	}
+	return problems
+}
+
+// loginQuirkSummary names the overridden apps, so an override that changes
+// what a reader sees is visible in the run that applied it rather than only
+// in the diff that introduced it.
+func loginQuirkSummary(apps map[string]*AppMetadata) string {
+	if len(loginQuirks) == 0 {
+		return ""
+	}
+	notes := make([]string, 0, len(loginQuirks))
+	for _, quirk := range loginQuirks {
+		app, ok := apps[quirk.app]
+		if !ok {
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("%s renders under %s: %s",
+			appDisplayName(app), loginStrategyLabel(quirk.strategy), quirk.reason))
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	return strings.Join(notes, " ")
+}
+
 // catalogDocMode is what a `bloud catalogdoc` run does with the rendered
 // blocks.
 type catalogDocMode int
@@ -66,6 +185,7 @@ const (
 	catalogDocPrint catalogDocMode = iota
 	catalogDocWrite
 	catalogDocCheck
+	catalogDocHelp
 )
 
 // catalogDocSection pairs a block in the target document with the bytes the
@@ -84,38 +204,28 @@ func catalogDocSections(apps map[string]*AppMetadata) []catalogDocSection {
 }
 
 func cmdCatalogDoc(args []string) int {
+	mode, target := parseCatalogDocArgs(args)
+	if mode == catalogDocHelp {
+		printCatalogDocUsage()
+		return 0
+	}
+	if mode == catalogDocPrint && target == "" {
+		// A bad flag was already reported; print is the zero value, so the
+		// empty target is the "do not run" signal.
+		return 1
+	}
+
 	root, err := getProjectRoot()
 	if err != nil {
 		errorf("Could not find project root: %v", err)
 		return 1
 	}
 
-	mode := catalogDocPrint
-	target := catalogDocDefaultFile
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--write":
-			mode = catalogDocWrite
-		case "--check":
-			mode = catalogDocCheck
-		case "--target":
-			if i+1 >= len(args) {
-				errorf("--target needs a path (usage: bloud catalogdoc [--write | --check] [--target FILE])")
-				return 1
-			}
-			i++
-			target = args[i]
-		case "--help", "-h":
-			printCatalogDocUsage()
-			return 0
-		default:
-			errorf("Unknown flag %q (usage: bloud catalogdoc [--write | --check] [--target FILE])", args[i])
-			return 1
-		}
-	}
-
 	apps, ok := loadCatalog(root)
 	if !ok {
+		return 1
+	}
+	if !reportLoginQuirks(apps, mode) {
 		return 1
 	}
 
@@ -135,6 +245,56 @@ func cmdCatalogDoc(args []string) int {
 		}
 		return 0
 	}
+}
+
+// parseCatalogDocArgs reads the flag list. An unrecognised or malformed flag
+// comes back as print with an empty target, which cmdCatalogDoc reads as
+// "already reported, do not run": the error text belongs next to the flag
+// that caused it, not at each return.
+func parseCatalogDocArgs(args []string) (catalogDocMode, string) {
+	mode := catalogDocPrint
+	target := catalogDocDefaultFile
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--write":
+			mode = catalogDocWrite
+		case "--check":
+			mode = catalogDocCheck
+		case "--target":
+			if i+1 >= len(args) {
+				errorf("--target needs a path (usage: bloud catalogdoc [--write | --check] [--target FILE])")
+				return catalogDocPrint, ""
+			}
+			i++
+			target = args[i]
+		case "--help", "-h":
+			return catalogDocHelp, ""
+		default:
+			errorf("Unknown flag %q (usage: bloud catalogdoc [--write | --check] [--target FILE])", args[i])
+			return catalogDocPrint, ""
+		}
+	}
+	return mode, target
+}
+
+// reportLoginQuirks validates the QUIRKS override against the catalog and,
+// in the modes that produce a document rather than the raw blocks, prints
+// what the override is doing. Returns false when the override is out of
+// step, which stops both --write and --check rather than letting either one
+// ship a table built from a stale assertion.
+func reportLoginQuirks(apps map[string]*AppMetadata, mode catalogDocMode) bool {
+	if problems := checkLoginQuirks(apps); len(problems) > 0 {
+		errorf("the login table QUIRKS override is out of step with the catalog:\n  - %s",
+			strings.Join(problems, "\n  - "))
+		return false
+	}
+	if mode == catalogDocPrint {
+		return true
+	}
+	if summary := loginQuirkSummary(apps); summary != "" {
+		log("Login table overrides: " + summary)
+	}
+	return true
 }
 
 // printCatalogDocUsage documents the catalogdoc command's modes.
@@ -276,15 +436,15 @@ func systemAppsLine(systemApps []*AppMetadata) string {
 }
 
 // renderLoginTable renders the `## one login` table: every user app under
-// the login strategy it declares. Apps with no declared strategy land in the
-// `none` row, which is what the catalog means by it: the app keeps its own
-// credential end to end.
+// the login strategy it declares, with the QUIRKS overrides applied. Apps
+// with no declared strategy land in the `none` row, which is what the
+// catalog means by it: the app keeps its own credential end to end.
 func renderLoginTable(apps map[string]*AppMetadata) string {
 	userApps, _ := splitCatalog(apps)
 
 	byStrategy := make(map[string][]string)
 	for _, app := range userApps {
-		strategy := normalizeStrategy(app.SSO.Strategy)
+		strategy := loginTableRowStrategy(app)
 		byStrategy[strategy] = append(byStrategy[strategy], appDisplayName(app))
 	}
 
