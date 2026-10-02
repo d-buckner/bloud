@@ -55,21 +55,21 @@ function originPattern(origin: string): RegExp {
 }
 
 /**
- * Assert the app is gated: the popup never received the app document, it
- * is sitting in Authentik's flow on the app's behalf.
+ * True once the current navigation has landed the popup on the IdP's flow with
+ * the identification/password form visible. False while the flow is still
+ * rendering, or while the outpost serves its own "Not Found" page for a host
+ * whose provider it has not loaded yet (the caller then re-navigates).
  *
- * Which stage that flow shows depends on the session the browser
- * already carries. A visitor without one gets the identification form;
- * a browser that signed into Authentik earlier (the suite's `beforeAll`
- * does, since Bloud's own login goes through the IdP) gets the password
- * re-prompt with identification skipped, and a run that waited for the
- * username field sat there for its whole timeout. Both stages are the
- * IdP asking, and the app's own login form is never served from these
- * paths, so the assertion is scoped by the flow's URL rather than by
- * one field's name.
+ * Which stage the flow shows depends on the session the browser already
+ * carries. A visitor without one gets the identification form; a browser that
+ * signed into Authentik earlier (the suite's `beforeAll` does, since Bloud's
+ * own login goes through the IdP) gets the password re-prompt with
+ * identification skipped. Both stages are the IdP asking, and the app's own
+ * login form is never served from these paths, so the check is scoped by the
+ * flow's URL plus a visible prompt field rather than by one field's name.
  */
-export async function expectForwardAuthPrompt(popup: Page): Promise<void> {
-  const deadline = Date.now() + 60_000;
+async function sawForwardAuthPrompt(popup: Page): Promise<boolean> {
+  const deadline = Date.now() + 15_000;
   for (;;) {
     const url = popup.url();
     const inIdPFlow =
@@ -77,13 +77,24 @@ export async function expectForwardAuthPrompt(popup: Page): Promise<void> {
     const prompt = popup
       .locator('input[name="uidField"], input[name="password"]')
       .first();
-    if (inIdPFlow && (await prompt.isVisible().catch(() => false))) return;
-
-    if (Date.now() > deadline) {
-      throw new Error(
-        `forward-auth did not prompt: the popup is at ${url}, not on the IdP's flow`,
-      );
+    if (inIdPFlow && (await prompt.isVisible().catch(() => false))) {
+      return true;
     }
+
+    // Authentik serves this page for a host whose provider the embedded
+    // outpost has not loaded yet. It is static (it never auto-redirects), so
+    // bail out and let the caller re-navigate instead of polling a page that
+    // cannot move.
+    if (
+      await popup
+        .locator('h1', { hasText: 'Not Found' })
+        .isVisible()
+        .catch(() => false)
+    ) {
+      return false;
+    }
+
+    if (Date.now() > deadline) return false;
     await popup.waitForTimeout(500);
   }
 }
@@ -102,6 +113,11 @@ export async function expectForwardAuthPrompt(popup: Page): Promise<void> {
  * Navigating straight to the app origin is enough: the tile journey is rung
  * three's contract, and going through the dashboard would sign this context
  * in and reintroduce the race.
+ *
+ * The navigation is retried within one budget because the embedded outpost
+ * loads a newly-added forward-auth provider asynchronously. Until it does, a
+ * request to the app origin is served Authentik's own "Not Found" page rather
+ * than the flow, so a single navigation would fail a working gate.
  */
 export async function expectForwardAuthGate(
   browser: Browser,
@@ -110,8 +126,18 @@ export async function expectForwardAuthGate(
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
-    await page.goto(appOrigin(app));
-    await expectForwardAuthPrompt(page);
+    const deadline = Date.now() + 100_000;
+    for (;;) {
+      await page.goto(appOrigin(app), { waitUntil: 'domcontentloaded' });
+      if (await sawForwardAuthPrompt(page)) return;
+
+      if (Date.now() > deadline) {
+        throw new Error(
+          `forward-auth did not prompt: the popup is at ${page.url()}, not on the IdP's flow`,
+        );
+      }
+      await page.waitForTimeout(1000);
+    }
   } finally {
     await context.close();
   }

@@ -54,7 +54,7 @@ const SELF = fileURLToPath(import.meta.url);
 // number and never adds a file. An entry for a file that is compliant or
 // gone is a failure, so this list cannot keep a claim that stopped being true.
 const BASELINE = {
-  'services/host-agent/pkg/authentik/client.go': 1521,
+  'services/host-agent/pkg/authentik/client.go': 1454,
   'services/host-agent/internal/engine/orchestrator/orchestrator.go': 1291,
   'cli/dev.go': 828,
   'services/host-agent/internal/api/settings_module.go': 751,
