@@ -90,7 +90,7 @@ func TestVaultwardenConfiguredByConfigurator(t *testing.T) {
 	// The file carries the OIDC client secret: it must not be readable by
 	// other users. (Only checkable when the test shares the data dir.)
 	if os.Getenv("BLOUD_DATA_DIR") != "" {
-		path := filepath.Join(dataDir(), "vaultwarden", "config", "vaultwarden.env")
+		path := filepath.Join(appDataDir("vaultwarden"), "config", "vaultwarden.env")
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatalf("stat %s: %v", path, err)
@@ -222,7 +222,7 @@ func TestVaultwardenUninstallCleanup(t *testing.T) {
 		t.Error("apps-vaultwarden container still exists after uninstall")
 	}
 	if os.Getenv("BLOUD_DATA_DIR") != "" {
-		dataPath := filepath.Join(dataDir(), "vaultwarden")
+		dataPath := appDataDir("vaultwarden")
 		if _, err := os.Stat(dataPath); err == nil {
 			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
 		}

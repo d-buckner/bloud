@@ -97,7 +97,7 @@ func TestAffineUninstallCleanup(t *testing.T) {
 	}
 
 	if os.Getenv("BLOUD_DATA_DIR") != "" {
-		dataPath := filepath.Join(dataDir(), "affine")
+		dataPath := appDataDir("affine")
 		if _, err := os.Stat(dataPath); err == nil {
 			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
 		}

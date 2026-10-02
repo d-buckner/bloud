@@ -308,7 +308,7 @@ func checkProwlarrApplications(baseURL, apiKey string) error {
 // one the consumers are handed.
 func apiKey(t *testing.T, appID string) string {
 	t.Helper()
-	path := filepath.Join(dataDir(), appID, "config", "config.xml")
+	path := filepath.Join(appDataDir(appID), "config", "config.xml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
