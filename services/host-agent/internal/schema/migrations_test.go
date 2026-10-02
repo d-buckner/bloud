@@ -162,7 +162,21 @@ func TestMigrate_LegacyColumnsAdded(t *testing.T) {
 
 func TestMigrate_FixesUserAppPositionsShapeFork(t *testing.T) {
 	db := openRawDB(t)
+	seedDeadShapeFork(t, db)
 
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	assertGridColumns(t, db)
+	assertRebuiltPosition(t, db)
+}
+
+// seedDeadShapeFork lays down the dead early-v6 positions table plus one row
+// that must not survive, and a recoverable legacy col/row layout JSON in
+// user_preferences for the repair to read.
+func seedDeadShapeFork(t *testing.T, db *sql.DB) {
+	t.Helper()
 	if _, err := db.Exec(`CREATE TABLE user_preferences (
 		username TEXT PRIMARY KEY,
 		layout TEXT DEFAULT '[]',
@@ -187,11 +201,12 @@ func TestMigrate_FixesUserAppPositionsShapeFork(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO user_preferences (username, layout) VALUES ('alice', ?)`, layout); err != nil {
 		t.Fatalf("seed layout: %v", err)
 	}
+}
 
-	if err := Migrate(db); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-
+// assertGridColumns checks the dead-shape column is gone and every column the
+// final grid shape declares is present.
+func assertGridColumns(t *testing.T, db *sql.DB) {
+	t.Helper()
 	if has, _ := columnExists(db, "user_app_positions", "user_id"); has {
 		t.Fatal("dead-shape column user_id survived the fork repair")
 	}
@@ -204,7 +219,13 @@ func TestMigrate_FixesUserAppPositionsShapeFork(t *testing.T) {
 			t.Errorf("grid column %s missing after fork repair", want)
 		}
 	}
+}
 
+// assertRebuiltPosition reads the single row the repair should have produced
+// from the legacy layout and checks both its identity and its geometry: the
+// legacy col/row pair is 1-based, the grid is 0-based.
+func assertRebuiltPosition(t *testing.T, db *sql.DB) {
+	t.Helper()
 	var (
 		username, elementID, elementType string
 		x, y, w, h                       int

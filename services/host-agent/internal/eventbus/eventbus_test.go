@@ -51,6 +51,20 @@ func TestOverflowDropsEventAndForcesResync(t *testing.T) {
 	b.Publish(Event{Type: TypeNode, Node: &NodeInfo{App: "overflow"}})
 
 	// The buffer holds exactly the 64 fill events; none lost, none extra.
+	assertDrainedFillEvents(t, ch)
+	assertEmpty(t, ch)
+
+	// The next publish must deliver the forced resync before the event.
+	b.Publish(Event{Type: TypeNode, Node: &NodeInfo{App: "after"}})
+	assertNextEvent(t, ch, func(evt Event) bool { return evt.Type == TypeAppsChanged }, "forced apps-changed resync")
+	assertNextEvent(t, ch, func(evt Event) bool { return evt.Type == TypeNode && evt.Node.App == "after" }, "post-overflow event")
+}
+
+// assertDrainedFillEvents drains exactly subscriberBuffer events and requires
+// each to be one of the fill events, so a drop in the middle fails the test
+// rather than surfacing as a shorter drain.
+func assertDrainedFillEvents(t *testing.T, ch <-chan Event) {
+	t.Helper()
 	for i := 0; i < subscriberBuffer; i++ {
 		select {
 		case evt := <-ch:
@@ -61,29 +75,29 @@ func TestOverflowDropsEventAndForcesResync(t *testing.T) {
 			t.Fatalf("drain stopped early at %d", i)
 		}
 	}
+}
+
+// assertEmpty requires the channel to hold nothing at this instant.
+func assertEmpty(t *testing.T, ch <-chan Event) {
+	t.Helper()
 	select {
 	case evt := <-ch:
 		t.Fatalf("expected empty channel, got %+v", evt)
 	default:
 	}
+}
 
-	// The next publish must deliver the forced resync before the event.
-	b.Publish(Event{Type: TypeNode, Node: &NodeInfo{App: "after"}})
+// assertNextEvent requires one event matching want, and names it in the
+// failure so a wrong delivery says which expectation broke.
+func assertNextEvent(t *testing.T, ch <-chan Event, want func(Event) bool, name string) {
+	t.Helper()
 	select {
 	case evt := <-ch:
-		if evt.Type != TypeAppsChanged {
-			t.Fatalf("expected forced apps-changed resync, got %+v", evt)
+		if !want(evt) {
+			t.Fatalf("expected %s, got %+v", name, evt)
 		}
 	default:
-		t.Fatal("resync not delivered after consumer drained")
-	}
-	select {
-	case evt := <-ch:
-		if evt.Type != TypeNode || evt.Node.App != "after" {
-			t.Fatalf("expected the post-overflow event, got %+v", evt)
-		}
-	default:
-		t.Fatal("event after resync not delivered")
+		t.Fatalf("%s not delivered", name)
 	}
 }
 
