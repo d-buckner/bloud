@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -371,112 +372,150 @@ func (m *settingsModule) adoptFirstRunHost(r *http.Request) string {
 // CreateFirstUserHandler creates the first admin user during initial setup.
 func (m *settingsModule) CreateFirstUserHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		hasUsers, err := m.prefsStore.HasUsers()
+		req, ok := m.decodeFirstUser(w, r)
+		if !ok {
+			return
+		}
+		authentikUserID, err := m.provisionFirstAdmin(r.Context(), req)
 		if err != nil {
-			m.logger.Error("failed to check existing users", "error", err)
-			respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
-				Success: false,
-				Error:   "Failed to check existing users",
-			})
+			respondSetupFailure(w, err)
 			return
 		}
-		if hasUsers {
-			respondJSON(w, http.StatusConflict, CreateUserResponse{
-				Success: false,
-				Error:   "Setup already completed",
-			})
-			return
-		}
-
-		if m.authentikClient == nil || !m.authentikClientIsAvailable(r.Context(), m.authentikClient) {
-			respondJSON(w, http.StatusServiceUnavailable, CreateUserResponse{
-				Success: false,
-				Error:   "Authentik is not available. Please wait for it to start.",
-			})
-			return
-		}
-
-		var req CreateUserRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondJSON(w, http.StatusBadRequest, CreateUserResponse{
-				Success: false,
-				Error:   "Invalid request body",
-			})
-			return
-		}
-
-		if err := validateCreateUserRequest(req); err != nil {
-			respondJSON(w, http.StatusBadRequest, CreateUserResponse{
-				Success: false,
-				Error:   err.Error(),
-			})
-			return
-		}
-
-		authentikUserID, err := m.authentikClient.CreateUser(r.Context(), req.Username, req.Password)
-		if err != nil {
-			// A fresh install already has an "admin" user in Authentik: the
-			// bootstrap script creates it before Bloud's setup completes. Adopt
-			// it (reset its password) so the first-user flow works out of the
-			// box instead of failing on the duplicate username.
-			existingID, findErr := m.authentikClient.FindUserID(r.Context(), req.Username)
-			if findErr != nil || existingID == 0 {
-				m.logger.Error("failed to create user in Authentik", "error", err)
-				respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
-					Success: false,
-					Error:   "Failed to create user in Authentik",
-				})
-				return
-			}
-			if setErr := m.authentikClient.SetUserPassword(r.Context(), existingID, req.Password); setErr != nil {
-				m.logger.Error("failed to set password for existing Authentik user", "error", setErr)
-				respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
-					Success: false,
-					Error:   "Failed to update the user in Authentik",
-				})
-				return
-			}
-			// Adopted users (e.g. the bootstrap admin) may predate managed-user
-			// emails or carry an unusable one (no TLD); give the user a valid
-			// identity email so SSO apps can create accounts for them.
-			if setErr := m.authentikClient.SetUserEmail(r.Context(), existingID, m.authentikClient.ManagedUserEmail(req.Username)); setErr != nil {
-				m.logger.Warn("failed to set email for adopted Authentik user", "error", setErr)
-			}
-			m.logger.Info("adopted existing Authentik user for initial setup", "username", req.Username)
-			authentikUserID = existingID
-		}
-
-		if err := m.authentikClient.AddUserToGroup(r.Context(), authentikUserID, "authentik Admins"); err != nil {
-			m.logger.Warn("failed to add user to admins group", "error", err)
-		}
-
-		if err := m.prefsStore.EnsureUser(req.Username); err != nil {
-			m.logger.Error("failed to create local user", "error", err)
-			respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
-				Success: false,
-				Error:   "Failed to create local user record",
-			})
-			return
-		}
-
-		if err := m.authentikClient.DeleteUser(r.Context(), "akadmin"); err != nil {
-			m.logger.Warn("failed to delete akadmin user", "error", err)
-		} else {
-			m.logger.Info("deleted default akadmin user")
-		}
-
-		m.logger.Info("first user created successfully", "username", req.Username)
-
-		// The account exists now, so setup is over and this is the last moment
-		// the acting party is provably the admin. Adopt the origin they used so
-		// the first login lands on it rather than on the default localhost.
-		adopted := m.adoptFirstRunHost(r)
-
-		respondJSON(w, http.StatusOK, CreateUserResponse{
-			Success:    true,
-			AdoptedURL: adopted,
-		})
+		m.finishFirstUser(w, r, req, authentikUserID)
 	}
+}
+
+// firstUserError is a setup step that failed with a client-visible status and
+// reason, so the wizard can show what went wrong without the handler threading
+// a status code through every branch.
+type firstUserError struct {
+	status int
+	msg    string
+}
+
+func (e *firstUserError) Error() string { return e.msg }
+
+// respondSetupFailure writes a setup failure. A firstUserError carries its own
+// status and message; anything else is a plain 500.
+func respondSetupFailure(w http.ResponseWriter, err error) {
+	var fail *firstUserError
+	if errors.As(err, &fail) {
+		respondJSON(w, fail.status, CreateUserResponse{Success: false, Error: fail.msg})
+		return
+	}
+	respondJSON(w, http.StatusInternalServerError, CreateUserResponse{Success: false, Error: err.Error()})
+}
+
+// decodeFirstUser reads and validates the setup request, refusing it when setup
+// has already completed, the identity provider is unreachable, or the payload
+// is unusable.
+func (m *settingsModule) decodeFirstUser(w http.ResponseWriter, r *http.Request) (CreateUserRequest, bool) {
+	hasUsers, err := m.prefsStore.HasUsers()
+	if err != nil {
+		m.logger.Error("failed to check existing users", "error", err)
+		respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
+			Success: false,
+			Error:   "Failed to check existing users",
+		})
+		return CreateUserRequest{}, false
+	}
+	if hasUsers {
+		respondJSON(w, http.StatusConflict, CreateUserResponse{
+			Success: false,
+			Error:   "Setup already completed",
+		})
+		return CreateUserRequest{}, false
+	}
+
+	if m.authentikClient == nil || !m.authentikClientIsAvailable(r.Context(), m.authentikClient) {
+		respondJSON(w, http.StatusServiceUnavailable, CreateUserResponse{
+			Success: false,
+			Error:   "Authentik is not available. Please wait for it to start.",
+		})
+		return CreateUserRequest{}, false
+	}
+
+	var req CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, CreateUserResponse{
+			Success: false,
+			Error:   "Invalid request body",
+		})
+		return CreateUserRequest{}, false
+	}
+
+	if err := validateCreateUserRequest(req); err != nil {
+		respondJSON(w, http.StatusBadRequest, CreateUserResponse{
+			Success: false,
+			Error:   err.Error(),
+		})
+		return CreateUserRequest{}, false
+	}
+	return req, true
+}
+
+// provisionFirstAdmin creates the admin in Authentik and returns its id. A
+// fresh install already has an "admin" user, because the bootstrap script
+// creates it before Bloud's setup completes, so a duplicate username is
+// expected rather than fatal: adopt that account by resetting its password.
+// Adopted accounts may predate managed-user emails or carry an unusable one
+// (no TLD), so the identity email is rewritten to a valid one for the SSO
+// apps to build accounts from.
+func (m *settingsModule) provisionFirstAdmin(ctx context.Context, req CreateUserRequest) (int, error) {
+	authentikUserID, err := m.authentikClient.CreateUser(ctx, req.Username, req.Password)
+	if err == nil {
+		return authentikUserID, nil
+	}
+	existingID, findErr := m.authentikClient.FindUserID(ctx, req.Username)
+	if findErr != nil || existingID == 0 {
+		m.logger.Error("failed to create user in Authentik", "error", err)
+		return 0, &firstUserError{status: http.StatusInternalServerError, msg: "Failed to create user in Authentik"}
+	}
+	if setErr := m.authentikClient.SetUserPassword(ctx, existingID, req.Password); setErr != nil {
+		m.logger.Error("failed to set password for existing Authentik user", "error", setErr)
+		return 0, &firstUserError{status: http.StatusInternalServerError, msg: "Failed to update the user in Authentik"}
+	}
+	if setErr := m.authentikClient.SetUserEmail(ctx, existingID, m.authentikClient.ManagedUserEmail(req.Username)); setErr != nil {
+		m.logger.Warn("failed to set email for adopted Authentik user", "error", setErr)
+	}
+	m.logger.Info("adopted existing Authentik user for initial setup", "username", req.Username)
+	return existingID, nil
+}
+
+// finishFirstUser completes the local side of setup: the admins group, the
+// local user record, the removal of the install-time akadmin account, and the
+// adoption of the origin the operator used.
+func (m *settingsModule) finishFirstUser(w http.ResponseWriter, r *http.Request, req CreateUserRequest, authentikUserID int) {
+	if err := m.authentikClient.AddUserToGroup(r.Context(), authentikUserID, "authentik Admins"); err != nil {
+		m.logger.Warn("failed to add user to admins group", "error", err)
+	}
+
+	if err := m.prefsStore.EnsureUser(req.Username); err != nil {
+		m.logger.Error("failed to create local user", "error", err)
+		respondJSON(w, http.StatusInternalServerError, CreateUserResponse{
+			Success: false,
+			Error:   "Failed to create local user record",
+		})
+		return
+	}
+
+	if err := m.authentikClient.DeleteUser(r.Context(), "akadmin"); err != nil {
+		m.logger.Warn("failed to delete akadmin user", "error", err)
+	} else {
+		m.logger.Info("deleted default akadmin user")
+	}
+
+	m.logger.Info("first user created successfully", "username", req.Username)
+
+	// The account exists now, so setup is over and this is the last moment
+	// the acting party is provably the admin. Adopt the origin they used so
+	// the first login lands on it rather than on the default localhost.
+	adopted := m.adoptFirstRunHost(r)
+
+	respondJSON(w, http.StatusOK, CreateUserResponse{
+		Success:    true,
+		AdoptedURL: adopted,
+	})
 }
 
 // ---- User Management ----
@@ -629,59 +668,28 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 			return
 		}
 
-		var req setUserRoleRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, http.StatusBadRequest, "invalid request body")
+		req, ok := decodeUserRoleRequest(w, r)
+		if !ok {
 			return
 		}
 
-		if req.Role != store.RoleAdmin && req.Role != store.RoleMember {
-			respondError(w, http.StatusBadRequest, "role must be 'admin' or 'member'")
-			return
-		}
-
-		currentUser := getUserFromContext(r.Context())
-		if currentUser != nil && currentUser.Username == username && req.Role == store.RoleMember {
+		if m.isSelfDemotion(r, username, req.Role) {
 			respondError(w, http.StatusBadRequest, "cannot demote your own account")
 			return
 		}
 
-		userID, err := m.authentikClient.FindUserID(r.Context(), username)
-		if err != nil {
-			m.logger.Error("failed to find user", "error", err)
-			respondError(w, http.StatusInternalServerError, "failed to find user")
-			return
-		}
-		if userID == 0 {
-			respondError(w, http.StatusNotFound, "user not found")
+		userID, ok := m.lookupRoleUser(w, r.Context(), username)
+		if !ok {
 			return
 		}
 
-		if req.Role == store.RoleMember {
-			lastAdmin, err := m.wouldOrphanAdmin(r.Context())
-			if err != nil {
-				m.logger.Error("failed to list users for last-admin check", "error", err)
-				respondError(w, http.StatusInternalServerError, "failed to verify admin count")
-				return
-			}
-			if lastAdmin {
-				respondError(w, http.StatusBadRequest, "cannot demote the last admin")
-				return
-			}
+		if m.isLastAdminDemotion(w, r.Context(), req.Role) {
+			return
 		}
 
-		if req.Role == store.RoleAdmin {
-			if err := m.authentikClient.AddUserToGroup(r.Context(), userID, "authentik Admins"); err != nil {
-				m.logger.Error("failed to add user to admin group", "error", err)
-				respondError(w, http.StatusInternalServerError, "failed to update role")
-				return
-			}
-		} else {
-			if err := m.authentikClient.RemoveUserFromGroup(r.Context(), userID, "authentik Admins"); err != nil {
-				m.logger.Error("failed to remove user from admin group", "error", err)
-				respondError(w, http.StatusInternalServerError, "failed to update role")
-				return
-			}
+		if err := m.applyRole(r.Context(), userID, req.Role); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to update role")
+			return
 		}
 
 		if m.sessionStore != nil {
@@ -695,6 +703,84 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 			"role":     req.Role,
 		})
 	}
+}
+
+// decodeUserRoleRequest reads and validates the role payload: only the two
+// roles the product has are accepted.
+func decodeUserRoleRequest(w http.ResponseWriter, r *http.Request) (setUserRoleRequest, bool) {
+	var req setUserRoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return setUserRoleRequest{}, false
+	}
+	if req.Role != store.RoleAdmin && req.Role != store.RoleMember {
+		respondError(w, http.StatusBadRequest, "role must be 'admin' or 'member'")
+		return setUserRoleRequest{}, false
+	}
+	return req, true
+}
+
+// isSelfDemotion reports whether the caller is demoting the account they are
+// logged in as, which is how an admin removes their own way back in.
+func (m *settingsModule) isSelfDemotion(r *http.Request, username string, role store.Role) bool {
+	if role != store.RoleMember {
+		return false
+	}
+	currentUser := getUserFromContext(r.Context())
+	return currentUser != nil && currentUser.Username == username
+}
+
+// isLastAdminDemotion reports, and answers, a demotion that would leave the
+// instance with no admin at all. The count check runs after the user lookup so
+// a request naming nobody still gets 404 rather than a confusing
+// last-admin message.
+func (m *settingsModule) isLastAdminDemotion(w http.ResponseWriter, ctx context.Context, role store.Role) bool {
+	if role != store.RoleMember {
+		return false
+	}
+	lastAdmin, err := m.wouldOrphanAdmin(ctx)
+	if err != nil {
+		m.logger.Error("failed to list users for last-admin check", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to verify admin count")
+		return true
+	}
+	if lastAdmin {
+		respondError(w, http.StatusBadRequest, "cannot demote the last admin")
+		return true
+	}
+	return false
+}
+
+// lookupRoleUser resolves a username to its Authentik id, answering 404 when no
+// such user exists.
+func (m *settingsModule) lookupRoleUser(w http.ResponseWriter, ctx context.Context, username string) (int, bool) {
+	userID, err := m.authentikClient.FindUserID(ctx, username)
+	if err != nil {
+		m.logger.Error("failed to find user", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to find user")
+		return 0, false
+	}
+	if userID == 0 {
+		respondError(w, http.StatusNotFound, "user not found")
+		return 0, false
+	}
+	return userID, true
+}
+
+// applyRole moves the user into, or out of, the Authentik admins group.
+func (m *settingsModule) applyRole(ctx context.Context, userID int, role store.Role) error {
+	if role == store.RoleAdmin {
+		if err := m.authentikClient.AddUserToGroup(ctx, userID, "authentik Admins"); err != nil {
+			m.logger.Error("failed to add user to admin group", "error", err)
+			return err
+		}
+		return nil
+	}
+	if err := m.authentikClient.RemoveUserFromGroup(ctx, userID, "authentik Admins"); err != nil {
+		m.logger.Error("failed to remove user from admin group", "error", err)
+		return err
+	}
+	return nil
 }
 
 // ---- Router ----
