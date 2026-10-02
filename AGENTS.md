@@ -392,8 +392,11 @@ cache, so `go run gotest.tools/gotestsum` works offline.
 - CI sizes the e2e runs to the change. The reusable
   `.github/workflows/e2e-affected.yml` runs `./bloud e2e affected`, whose logic
   reuses the `apps:` file globs and `e2e-project` in `validation.yaml`: an
-  `apps/<name>/`-only push runs just that app's spec, a markdown-only push runs
-  none, and any other change runs every app (and the Jellyfin lifecycle run).
+  `apps/<name>/`-only change runs just that app's spec, a markdown-only change
+  runs none, and any other change runs every app (and the Jellyfin lifecycle
+  run). On a pull request the change set is the whole PR (`--base origin/main`,
+  diffed from the merge base), not just the latest push; on `main` it is the
+  pushed range (`--since`).
 
 ## `./bloud` CLI reference
 

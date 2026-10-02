@@ -17,6 +17,7 @@ import (
 // nothing.
 func runE2EAffected(root string, args []string) error {
 	since := ""
+	base := ""
 	asJSON := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -25,11 +26,19 @@ func runE2EAffected(root string, args []string) error {
 				i++
 				since = args[i]
 			}
+		case "--base":
+			if i+1 < len(args) {
+				i++
+				base = args[i]
+			}
 		case "--json":
 			asJSON = true
 		default:
-			return fmt.Errorf("unknown flag %q (usage: bloud e2e affected [--since <ref>] [--json])", args[i])
+			return fmt.Errorf("unknown flag %q (usage: bloud e2e affected [--since <ref> | --base <ref>] [--json])", args[i])
 		}
+	}
+	if since != "" && base != "" {
+		return fmt.Errorf("--since and --base are mutually exclusive")
 	}
 
 	manifest, err := loadManifest(root)
@@ -38,15 +47,32 @@ func runE2EAffected(root string, args []string) error {
 	}
 
 	var changed []string
-	if since != "" {
-		// CI passes the push's base commit. A missing base (force-push, shallow
-		// clone) must not fail the run: an empty set widens to every app.
+	switch {
+	case base != "":
+		// A pull request: the change set is every commit since the branch
+		// diverged from base, not just the latest push. Diffing from the
+		// previous branch tip (the old behavior) narrowed the matrix to what
+		// the last push touched, so an app changed earlier in the PR was
+		// skipped. A missing base must not fail the run: an empty set widens to
+		// every app.
+		mergeBase, err := mergeBaseWith(root, base)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: git merge-base %s HEAD failed (%v); running every app\n", base, err)
+		} else if files, err := changedFilesSince(root, mergeBase); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: git diff %s HEAD failed (%v); running every app\n", mergeBase, err)
+		} else {
+			changed = files
+		}
+	case since != "":
+		// An explicit base, used for a push to the default branch. A missing
+		// base (force-push, shallow clone) must not fail the run: an empty set
+		// widens to every app.
 		if files, err := changedFilesSince(root, since); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: git diff %s HEAD failed (%v); running every app\n", since, err)
 		} else {
 			changed = files
 		}
-	} else {
+	default:
 		if changed, err = getChangedFiles(root, ""); err != nil {
 			return err
 		}
@@ -78,6 +104,18 @@ func changedFilesSince(root, ref string) ([]string, error) {
 		return nil, err
 	}
 	return splitLines(string(out)), nil
+}
+
+// mergeBaseWith is the commit where HEAD diverged from ref: the change set a
+// pull request introduces, however many pushes it took. A commit range query
+// from the previous push tip instead sees only the latest push.
+func mergeBaseWith(root, ref string) (string, error) {
+	cmd := exec.Command("git", "-C", root, "merge-base", ref, "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // affectedE2EProjects narrows the e2e projects to run for a change set.
