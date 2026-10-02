@@ -251,111 +251,148 @@ type apiServer struct {
 
 func newAPIServer(t *testing.T, oidcLive bool) *apiServer {
 	s := &apiServer{t: t, oidcLive: oidcLive, stepsCompleted: map[string]bool{}, restartAppliesTrust: true}
-	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/":
-			// Model HA 2026.9's forwarded middleware: a request carrying
-			// X-Forwarded-For is rejected 400 until the running process has
-			// the trust loaded. Once trust is live the forward check passes and
-			// the (unauthenticated) request falls through to the auth layer,
-			// which answers 401 Bearer: the live-trust signal is "not 400".
-			// An unforwarded (no-XFF) request always answers 200 here, so the
-			// plain wait still sees the listener up.
-			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				s.mu.Lock()
-				live := s.trustLive
-				if !live {
-					s.xffRejected = append(s.xffRejected, xff)
-				}
-				s.mu.Unlock()
-				if !live {
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = io.WriteString(w, "400: Bad Request")
-					return
-				}
-				w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="http://localhost:8123/.well-known/oauth-protected-resource"`)
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = io.WriteString(w, "401: Unauthorized")
-				return
-			}
-			w.WriteHeader(200)
-			_, _ = io.WriteString(w, `{"message":"API running."}`)
-		case "/api/onboarding":
-			s.mu.Lock()
-			onboarded := s.onboarded
-			dereg := s.deregistered
-			s.mu.Unlock()
-			if dereg {
-				// Real HA deregisters this endpoint once every step is closed.
-				w.WriteHeader(http.StatusNotFound)
-				_, _ = io.WriteString(w, `404: Not Found`)
-				return
-			}
-			w.WriteHeader(200)
-			if onboarded {
-				// Realistic post-owner flow: remaining interactive steps
-				// are still pending; onboarding must NOT be re-run.
-				_, _ = io.WriteString(w, `[{"step":"user","done":true},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
-			} else {
-				_, _ = io.WriteString(w, `[{"step":"user","done":false},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
-			}
-		case "/api/onboarding/core_config", "/api/onboarding/analytics", "/api/onboarding/integration":
-			s.mu.Lock()
-			if s.stepsCompleted[r.URL.Path] {
-				// Real HA: already-closed steps answer 403 (replay).
-				s.mu.Unlock()
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = io.WriteString(w, `{"message":"step already done"}`)
-				return
-			}
-			s.stepsCompleted[r.URL.Path] = true
-			s.mu.Unlock()
-			w.WriteHeader(200)
-			_, _ = io.WriteString(w, `{}`)
-		case "/api/onboarding/users":
-			body, _ := io.ReadAll(r.Body)
-			s.mu.Lock()
-			if s.onboarded {
-				// Real HA: the user step is already done → 403, no code re-issued.
-				s.mu.Unlock()
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = io.WriteString(w, `{"message":"User step already done"}`)
-				return
-			}
-			s.postBodies = append(s.postBodies, string(body))
-			s.onboarded = true
-			s.authCodeIssued = true
-			s.mu.Unlock()
-			w.WriteHeader(201)
-			_, _ = io.WriteString(w, `{"auth_code":"code123"}`)
-		case "/auth/token":
-			form, _ := io.ReadAll(r.Body)
-			s.mu.Lock()
-			s.tokenReqs = append(s.tokenReqs, string(form))
-			ok := s.authCodeIssued && strings.Contains(string(form), "grant_type=authorization_code") && strings.Contains(string(form), "code=code123")
-			if ok {
-				s.authCodeIssued = false // one-shot code, like real HA
-			}
-			s.mu.Unlock()
-			if !ok {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, `{"error":"invalid_request"}`)
-				return
-			}
-			w.WriteHeader(200)
-			_, _ = io.WriteString(w, `{"access_token":"tok","token_type":"Bearer","refresh_token":"rtok","expires_in":1800}`)
-		case "/auth/oidc/welcome":
-			if s.isOIDCLive() {
-				_, _ = io.WriteString(w, `<!doctype html><title>Sign in with Bloud</title>`)
-				return
-			}
-			http.NotFound(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	s.srv = httptest.NewServer(s.mux())
 	t.Cleanup(s.srv.Close)
 	return s
+}
+
+// mux routes the fake one handler per endpoint, the way Home Assistant
+// separates the API root from the onboarding steps and the token endpoint.
+// `{$}` keeps "/api/" an exact match rather than a subtree, so an unknown
+// path under it still 404s as the hand-written switch did.
+func (s *apiServer) mux() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/{$}", s.handleRoot)
+	mux.HandleFunc("/api/onboarding", s.handleOnboardingStatus)
+	for _, step := range []string{"core_config", "analytics", "integration"} {
+		mux.HandleFunc("/api/onboarding/"+step, s.handleOnboardingStep)
+	}
+	mux.HandleFunc("/api/onboarding/users", s.handleOnboardingUsers)
+	mux.HandleFunc("/auth/token", s.handleToken)
+	mux.HandleFunc("/auth/oidc/welcome", s.handleOIDCWelcome)
+	mux.HandleFunc("/", http.NotFound)
+	return mux
+}
+
+// handleRoot models HA 2026.9's forwarded middleware: a request carrying
+// X-Forwarded-For is rejected 400 until the running process has the trust
+// loaded. Once trust is live the forward check passes and the (unauthenticated)
+// request falls through to the auth layer, which answers 401 Bearer: the
+// live-trust signal is "not 400". An unforwarded (no-XFF) request always
+// answers 200 here, so the plain wait still sees the listener up.
+func (s *apiServer) handleRoot(w http.ResponseWriter, r *http.Request) {
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"message":"API running."}`)
+		return
+	}
+	s.mu.Lock()
+	live := s.trustLive
+	if !live {
+		s.xffRejected = append(s.xffRejected, xff)
+	}
+	s.mu.Unlock()
+	if !live {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, "400: Bad Request")
+		return
+	}
+	w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="http://localhost:8123/.well-known/oauth-protected-resource"`)
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = io.WriteString(w, "401: Unauthorized")
+}
+
+// handleOnboardingStatus reports the onboarding checklist. Real HA
+// deregisters this endpoint once every step is closed.
+func (s *apiServer) handleOnboardingStatus(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	onboarded := s.onboarded
+	dereg := s.deregistered
+	s.mu.Unlock()
+	if dereg {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `404: Not Found`)
+		return
+	}
+	userDone := "false"
+	if onboarded {
+		// Realistic post-owner flow: remaining interactive steps are still
+		// pending; onboarding must NOT be re-run.
+		userDone = "true"
+	}
+	w.WriteHeader(200)
+	_, _ = io.WriteString(w, `[{"step":"user","done":`+userDone+`},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
+}
+
+// handleOnboardingStep closes one interactive step; an already-closed step
+// answers 403 on replay, like real HA.
+func (s *apiServer) handleOnboardingStep(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	done := s.stepsCompleted[r.URL.Path]
+	if !done {
+		s.stepsCompleted[r.URL.Path] = true
+	}
+	s.mu.Unlock()
+	if done {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"step already done"}`)
+		return
+	}
+	w.WriteHeader(200)
+	_, _ = io.WriteString(w, `{}`)
+}
+
+// handleOnboardingUsers runs the user step; once the owner exists the step is
+// closed and no code is re-issued.
+func (s *apiServer) handleOnboardingUsers(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	s.mu.Lock()
+	alreadyDone := s.onboarded
+	if !alreadyDone {
+		s.postBodies = append(s.postBodies, string(body))
+		s.onboarded = true
+		s.authCodeIssued = true
+	}
+	s.mu.Unlock()
+	if alreadyDone {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"User step already done"}`)
+		return
+	}
+	w.WriteHeader(201)
+	_, _ = io.WriteString(w, `{"auth_code":"code123"}`)
+}
+
+// handleToken redeems the one-shot authorization code issued by the user step.
+func (s *apiServer) handleToken(w http.ResponseWriter, r *http.Request) {
+	form, _ := io.ReadAll(r.Body)
+	s.mu.Lock()
+	s.tokenReqs = append(s.tokenReqs, string(form))
+	ok := s.authCodeIssued &&
+		strings.Contains(string(form), "grant_type=authorization_code") &&
+		strings.Contains(string(form), "code=code123")
+	if ok {
+		s.authCodeIssued = false // one-shot code, like real HA
+	}
+	s.mu.Unlock()
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_request"}`)
+		return
+	}
+	w.WriteHeader(200)
+	_, _ = io.WriteString(w, `{"access_token":"tok","token_type":"Bearer","refresh_token":"rtok","expires_in":1800}`)
+}
+
+// handleOIDCWelcome serves the provider's sign-in page only while the fake
+// models the provider as reachable.
+func (s *apiServer) handleOIDCWelcome(w http.ResponseWriter, r *http.Request) {
+	if !s.isOIDCLive() {
+		http.NotFound(w, r)
+		return
+	}
+	_, _ = io.WriteString(w, `<!doctype html><title>Sign in with Bloud</title>`)
 }
 
 func (s *apiServer) isOIDCLive() bool {

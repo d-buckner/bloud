@@ -112,23 +112,44 @@ func desiredLDAPConfig(ldap *configurator.LDAPOutput) LDAPConfig {
 	}
 }
 
+// The LDAP plugin config is compared in three groups rather than as one chain
+// of eighteen `&&`, which no one can audit at a glance. Each group is the
+// fields Bloud owns in that area; the fields left out of all three are ones
+// Jellyfin fills in itself, so comparing the whole struct would report a
+// difference that can never converge.
+
+// sameConnection compares the transport half of the LDAP config.
+func (c LDAPConfig) sameConnection(o LDAPConfig) bool {
+	return c.LdapServer == o.LdapServer &&
+		c.LdapPort == o.LdapPort &&
+		c.UseSsl == o.UseSsl &&
+		c.UseStartTls == o.UseStartTls &&
+		c.SkipSslVerify == o.SkipSslVerify
+}
+
+// sameDirectory compares the bind and search half.
+func (c LDAPConfig) sameDirectory(o LDAPConfig) bool {
+	return c.LdapBindUser == o.LdapBindUser &&
+		c.LdapBindPassword == o.LdapBindPassword &&
+		c.LdapBaseDn == o.LdapBaseDn &&
+		c.LdapSearchFilter == o.LdapSearchFilter &&
+		c.LdapAdminBaseDn == o.LdapAdminBaseDn &&
+		c.LdapAdminFilter == o.LdapAdminFilter &&
+		c.LdapSearchAttributes == o.LdapSearchAttributes
+}
+
+// sameAccountPolicy compares the user- and folder-mapping half.
+func (c LDAPConfig) sameAccountPolicy(o LDAPConfig) bool {
+	return c.LdapUidAttribute == o.LdapUidAttribute &&
+		c.LdapUsernameAttribute == o.LdapUsernameAttribute &&
+		c.LdapPasswordAttribute == o.LdapPasswordAttribute &&
+		c.CreateUsersFromLdap == o.CreateUsersFromLdap &&
+		c.AllowPassChange == o.AllowPassChange &&
+		c.EnableAllFolders == o.EnableAllFolders
+}
+
 func ldapConfigMatchesDesired(current, desired LDAPConfig) bool {
-	return current.LdapServer == desired.LdapServer &&
-		current.LdapPort == desired.LdapPort &&
-		current.UseSsl == desired.UseSsl &&
-		current.UseStartTls == desired.UseStartTls &&
-		current.SkipSslVerify == desired.SkipSslVerify &&
-		current.LdapBindUser == desired.LdapBindUser &&
-		current.LdapBindPassword == desired.LdapBindPassword &&
-		current.LdapBaseDn == desired.LdapBaseDn &&
-		current.LdapSearchFilter == desired.LdapSearchFilter &&
-		current.LdapAdminBaseDn == desired.LdapAdminBaseDn &&
-		current.LdapAdminFilter == desired.LdapAdminFilter &&
-		current.LdapSearchAttributes == desired.LdapSearchAttributes &&
-		current.LdapUidAttribute == desired.LdapUidAttribute &&
-		current.LdapUsernameAttribute == desired.LdapUsernameAttribute &&
-		current.LdapPasswordAttribute == desired.LdapPasswordAttribute &&
-		current.CreateUsersFromLdap == desired.CreateUsersFromLdap &&
-		current.AllowPassChange == desired.AllowPassChange &&
-		current.EnableAllFolders == desired.EnableAllFolders
+	return current.sameConnection(desired) &&
+		current.sameDirectory(desired) &&
+		current.sameAccountPolicy(desired)
 }

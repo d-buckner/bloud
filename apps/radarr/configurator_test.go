@@ -760,62 +760,8 @@ func TestPostStart_WiresCategoryAndDownloadClient(t *testing.T) {
 	}
 
 	// The category has to exist before the client that stores it.
-	creates := qb.requestsTo(http.MethodPost, qbittorrentCategoryResource)
-	if len(creates) != 1 {
-		t.Fatalf("POST %s count = %d, want 1", qbittorrentCategoryResource, len(creates))
-	}
-	if got, want := string(creates[0].body), "category="+downloadCategory; got != want {
-		t.Errorf("createCategory body = %q, want %q (qBittorrent's API is form-encoded)", got, want)
-	}
-	if got := qb.categoriesNow(); !reflect.DeepEqual(got, []string{downloadCategory}) {
-		t.Errorf("qBittorrent categories = %v, want [%s]", got, downloadCategory)
-	}
-
-	posts := instance.requestsTo(http.MethodPost, downloadClientEndpoint)
-	if len(posts) != 1 {
-		t.Fatalf("POST %s count = %d, want 1", downloadClientEndpoint, len(posts))
-	}
-	var payload struct {
-		Implementation string `json:"implementation"`
-		Priority       int    `json:"priority"`
-		Enable         bool   `json:"enable"`
-		Fields         []struct {
-			Name  string `json:"name"`
-			Value any    `json:"value"`
-		} `json:"fields"`
-	}
-	if err := json.Unmarshal(posts[0].body, &payload); err != nil {
-		t.Fatalf("download client payload is not JSON: %v (%s)", err, posts[0].body)
-	}
-	if payload.Implementation != "QBittorrent" {
-		t.Errorf("payload implementation = %q, want %q", payload.Implementation, "QBittorrent")
-	}
-	if payload.Priority != 1 {
-		t.Errorf("payload priority = %d, want 1", payload.Priority)
-	}
-	if !payload.Enable {
-		t.Error("payload enable = false, want true")
-	}
-	fields := map[string]any{}
-	for _, f := range payload.Fields {
-		fields[f.Name] = f.Value
-	}
-	want := map[string]any{
-		"host":                "apps-qbittorrent",
-		"port":                float64(8081),
-		"useSsl":              false,
-		"urlBase":             "",
-		"username":            "",
-		"password":            "",
-		downloadCategoryField: downloadCategory,
-	}
-	if !reflect.DeepEqual(fields, want) {
-		t.Errorf("payload fields = %v, want %v", fields, want)
-	}
-	if tests := instance.requestsTo(http.MethodPost, downloadClientTestEndpoint); len(tests) != 1 {
-		t.Errorf("POST %s count = %d, want 1: the create must be proven against the provider",
-			downloadClientTestEndpoint, len(tests))
-	}
+	assertCategoryCreated(t, qb)
+	assertDownloadClientPayload(t, instance)
 
 	// A second run re-sends the category, which qBittorrent answers with 409:
 	// that is the normal outcome and must not fail the node. The client itself
@@ -831,6 +777,81 @@ func TestPostStart_WiresCategoryAndDownloadClient(t *testing.T) {
 	}
 	if posts := instance.requestsTo(http.MethodPost, downloadClientEndpoint); len(posts) != 1 {
 		t.Errorf("POST %s count = %d after a second run, want 1", downloadClientEndpoint, len(posts))
+	}
+}
+
+// assertCategoryCreated checks the category is created before the client that
+// stores it, and that qBittorrent really holds it afterwards.
+func assertCategoryCreated(t *testing.T, qb *fakeQBittorrent) {
+	t.Helper()
+	creates := qb.requestsTo(http.MethodPost, qbittorrentCategoryResource)
+	if len(creates) != 1 {
+		t.Fatalf("POST %s count = %d, want 1", qbittorrentCategoryResource, len(creates))
+	}
+	if got, want := string(creates[0].body), "category="+downloadCategory; got != want {
+		t.Errorf("createCategory body = %q, want %q (qBittorrent's API is form-encoded)", got, want)
+	}
+	if got := qb.categoriesNow(); !reflect.DeepEqual(got, []string{downloadCategory}) {
+		t.Errorf("qBittorrent categories = %v, want [%s]", got, downloadCategory)
+	}
+}
+
+// downloadClientPayload is the document the app stores for one download client.
+type downloadClientPayload struct {
+	Implementation string `json:"implementation"`
+	Priority       int    `json:"priority"`
+	Enable         bool   `json:"enable"`
+	Fields         []struct {
+		Name  string `json:"name"`
+		Value any    `json:"value"`
+	} `json:"fields"`
+}
+
+// fields indexes the payload's name/value pairs for comparison.
+func (p downloadClientPayload) fields() map[string]any {
+	out := map[string]any{}
+	for _, f := range p.Fields {
+		out[f.Name] = f.Value
+	}
+	return out
+}
+
+// assertDownloadClientPayload checks the client document the app stored, and
+// that the create was proven against the provider before it landed.
+func assertDownloadClientPayload(t *testing.T, instance *fakeInstance) {
+	t.Helper()
+	posts := instance.requestsTo(http.MethodPost, downloadClientEndpoint)
+	if len(posts) != 1 {
+		t.Fatalf("POST %s count = %d, want 1", downloadClientEndpoint, len(posts))
+	}
+	var payload downloadClientPayload
+	if err := json.Unmarshal(posts[0].body, &payload); err != nil {
+		t.Fatalf("download client payload is not JSON: %v (%s)", err, posts[0].body)
+	}
+	if payload.Implementation != "QBittorrent" {
+		t.Errorf("payload implementation = %q, want %q", payload.Implementation, "QBittorrent")
+	}
+	if payload.Priority != 1 {
+		t.Errorf("payload priority = %d, want 1", payload.Priority)
+	}
+	if !payload.Enable {
+		t.Error("payload enable = false, want true")
+	}
+	want := map[string]any{
+		"host":                "apps-qbittorrent",
+		"port":                float64(8081),
+		"useSsl":              false,
+		"urlBase":             "",
+		"username":            "",
+		"password":            "",
+		downloadCategoryField: downloadCategory,
+	}
+	if got := payload.fields(); !reflect.DeepEqual(got, want) {
+		t.Errorf("payload fields = %v, want %v", got, want)
+	}
+	if tests := instance.requestsTo(http.MethodPost, downloadClientTestEndpoint); len(tests) != 1 {
+		t.Errorf("POST %s count = %d, want 1: the create must be proven against the provider",
+			downloadClientTestEndpoint, len(tests))
 	}
 }
 

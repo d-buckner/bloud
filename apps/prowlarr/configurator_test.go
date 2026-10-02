@@ -806,6 +806,26 @@ func TestPostStart_WiresInstalledPvrs(t *testing.T) {
 		t.Fatalf("read instance key: %v", err)
 	}
 
+	assertPvrCreates(t, fake, want, instanceKey)
+	assertPvrTests(t, fake, want)
+	assertStoredPvrs(t, fake)
+}
+
+// decodeApplication fails the test rather than carrying on with a body that
+// cannot be read.
+func decodeApplication(t *testing.T, body []byte) application {
+	t.Helper()
+	var app application
+	if err := json.Unmarshal(body, &app); err != nil {
+		t.Fatalf("decode application %s: %v", body, err)
+	}
+	return app
+}
+
+// assertPvrCreates checks one create per installed PVR, each carrying the
+// Prowlarr instance key and the document Bloud intends to store.
+func assertPvrCreates(t *testing.T, fake *fakeProwlarr, want map[string]string, instanceKey string) {
+	t.Helper()
 	creates := fake.requestsFor(http.MethodPost, applicationsPath)
 	if len(creates) != 2 {
 		t.Fatalf("create count = %d, want 2 (one per installed PVR)", len(creates))
@@ -814,22 +834,24 @@ func TestPostStart_WiresInstalledPvrs(t *testing.T) {
 		if req.apiKey != instanceKey {
 			t.Errorf("create X-Api-Key = %q, want the instance key %q", req.apiKey, instanceKey)
 		}
-		var app application
-		if err := json.Unmarshal(req.body, &app); err != nil {
-			t.Fatalf("decode created application %s: %v", req.body, err)
-		}
+		app := decodeApplication(t, req.body)
 		expected, ok := want[app.Implementation]
 		if !ok {
 			t.Fatalf("created an unexpected application: %s", req.body)
 		}
 		assertSameJSON(t, "create body for "+app.Implementation, req.body, expected)
 	}
+}
 
-	// Every created application is tested with the same document first, and
-	// only then stored: Prowlarr's /test endpoint rejects a name an existing
-	// entry already holds, so a create that came first would make its own test
-	// fail with "Should be unique".
-	if ti, ci := fake.indexOf(http.MethodPost, applicationTestPath), fake.indexOf(http.MethodPost, applicationsPath); ti < 0 || ci < 0 || ti > ci {
+// assertPvrTests checks that every created application is tested with the same
+// document first, and only then stored: Prowlarr's /test endpoint rejects a
+// name an existing entry already holds, so a create that came first would make
+// its own test fail with "Should be unique".
+func assertPvrTests(t *testing.T, fake *fakeProwlarr, want map[string]string) {
+	t.Helper()
+	ti := fake.indexOf(http.MethodPost, applicationTestPath)
+	ci := fake.indexOf(http.MethodPost, applicationsPath)
+	if ti < 0 || ci < 0 || ti > ci {
 		t.Errorf("first test request at %d, first create at %d: the test must come first", ti, ci)
 	}
 	tests := fake.requestsFor(http.MethodPost, applicationTestPath)
@@ -837,14 +859,15 @@ func TestPostStart_WiresInstalledPvrs(t *testing.T) {
 		t.Fatalf("test count = %d, want 2", len(tests))
 	}
 	for _, req := range tests {
-		var app application
-		if err := json.Unmarshal(req.body, &app); err != nil {
-			t.Fatalf("decode tested application %s: %v", req.body, err)
-		}
+		app := decodeApplication(t, req.body)
 		assertSameJSON(t, "test body for "+app.Implementation, req.body, want[app.Implementation])
 	}
+}
 
-	// The instance holds exactly the two documents Bloud sent.
+// assertStoredPvrs checks the instance holds exactly the two documents Bloud
+// sent, each with the sibling's own key and Bloud's Prowlarr address.
+func assertStoredPvrs(t *testing.T, fake *fakeProwlarr) {
+	t.Helper()
 	stored := fake.applications()
 	if len(stored) != 2 {
 		t.Fatalf("stored applications = %d, want 2", len(stored))
