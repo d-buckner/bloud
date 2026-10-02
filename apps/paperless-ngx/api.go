@@ -100,11 +100,18 @@ func (a *paperlessNgxAPI) probeProviderLogin(ctx context.Context) error {
 	if match == nil {
 		return fmt.Errorf("no CSRF token in the sign-in form")
 	}
+	// allauth builds the redirect by fetching the issuer's discovery document,
+	// which races with Authentik still warming up on a fresh install: the fetch
+	// times out and the view answers 500. That is a readiness gap, not a
+	// misconfiguration, so the POST rides out transient 500s under the wait
+	// budget. The CSRF token stays valid across attempts (Django does not
+	// rotate it on a 500, and the form client's cookie jar holds the session),
+	// so the same form is re-sent on each retry.
 	return a.forms.POST(providerLoginPath).
 		Anonymous().
 		Form(url.Values{"csrfmiddlewaretoken": {string(match[1])}}).
 		OK(http.StatusFound, http.StatusSeeOther).
-		NoRetry().
+		WithRetry(appclient.WaitPolicy).
 		Exec(ctx)
 }
 
