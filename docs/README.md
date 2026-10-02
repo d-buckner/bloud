@@ -22,6 +22,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Dashboard layout + widgets | [features/dashboard.md](features/dashboard.md) |
 | Dated review findings | [specs/review.md](specs/review.md) |
 | Latest architecture/code review (2026-09-19) | [specs/review-2026-09-19.md](specs/review-2026-09-19.md) |
+| CI flakiness: measured root causes and the fix order | [plans/ci-flakiness-reduction.md](plans/ci-flakiness-reduction.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections
