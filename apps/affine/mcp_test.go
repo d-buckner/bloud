@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,6 +86,30 @@ type fakeAffine struct {
 	mintErr string
 	// requireCSRF mirrors AFFiNE refusing a GraphQL write with no token.
 	requireCSRF bool
+	// createInit records the Yjs root document Bloud uploaded with the
+	// createWorkspace mutation, so a test can assert the workspace is seeded.
+	createInit []byte
+
+	// --- BYOK (inference) state ---
+
+	// byokProfiles is the stored profile list, in the shape the settings query
+	// returns it.
+	byokProfiles []map[string]any
+	// byokPolicyMode is the customEndpointMode the settings query reports.
+	// Empty means "enabled"; set it to "disabled" to model a server whose
+	// config.json did not take effect.
+	byokPolicyMode string
+	// byokCreates/byokReplaces/byokRotates/byokDeletes count the mutations so a
+	// test can prove a steady-state pass touches nothing.
+	byokCreates  int
+	byokReplaces int
+	byokRotates  int
+	byokDeletes  int
+	// byokLast* record the values of the most recent write, so a test can
+	// assert what Bloud actually sent rather than only what it stored.
+	byokLastEndpoint   string
+	byokLastModel      string
+	byokLastCredential string
 }
 
 func newFakeAffine(workspaces ...string) *fakeAffine {
@@ -119,13 +144,36 @@ func (f *fakeAffine) graphql(w http.ResponseWriter, r *http.Request) {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
 	}
-	body := newDecoder(r)
-	if err := body.Decode(&req); err != nil {
-		writeGraphQLErr(w, "bad request")
-		return
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		// graphql-multipart-request-spec: the query lives in the `operations`
+		// form field, the file is part "0".
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			writeGraphQLErr(w, "bad multipart request")
+			return
+		}
+		var op struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal([]byte(r.FormValue("operations")), &op); err != nil {
+			writeGraphQLErr(w, "bad operations field")
+			return
+		}
+		req.Query = op.Query
+	} else {
+		body := newDecoder(r)
+		if err := body.Decode(&req); err != nil {
+			writeGraphQLErr(w, "bad request")
+			return
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	// The BYOK surface is handled separately so this switch stays under the
+	// cyclop gate as the fake grows with the app's API.
+	if f.graphqlByok(w, req.Query, req.Variables) {
+		return
+	}
 
 	switch {
 	case strings.Contains(req.Query, "workspaces { id }"):
@@ -135,9 +183,15 @@ func (f *fakeAffine) graphql(w http.ResponseWriter, r *http.Request) {
 		}
 		writeGraphQLData(w, map[string]any{"workspaces": ids})
 
-	case strings.Contains(req.Query, "createWorkspace"):
+	case strings.Contains(req.Query, "createWorkspace("):
 		id := fmt.Sprintf("ws-%d", len(f.workspaces)+1)
 		f.workspaces = append(f.workspaces, id)
+		if file, _, err := r.FormFile("0"); err == nil {
+			if data, err := io.ReadAll(file); err == nil {
+				f.createInit = data
+			}
+			_ = file.Close()
+		}
 		writeGraphQLData(w, map[string]any{"createWorkspace": map[string]string{"id": id}})
 
 	case strings.Contains(req.Query, "createMcpCredential"):
@@ -162,6 +216,94 @@ func (f *fakeAffine) graphql(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// graphqlByok handles the copilot-BYOK queries and mutations. It returns true
+// when it wrote a response, leaving the caller's switch to the MCP surface.
+// Called with f.mu held.
+func (f *fakeAffine) graphqlByok(w http.ResponseWriter, query string, variables map[string]any) bool {
+	switch {
+	case strings.Contains(query, "byokSettings"):
+		mode := f.byokPolicyMode
+		if mode == "" {
+			mode = "enabled"
+		}
+		workspaceID, _ := variables["id"].(string)
+		var profiles []map[string]any
+		for _, p := range f.byokProfiles {
+			if p["workspaceId"] == workspaceID {
+				profiles = append(profiles, p)
+			}
+		}
+		if profiles == nil {
+			profiles = []map[string]any{}
+		}
+		writeGraphQLData(w, map[string]any{"workspace": map[string]any{
+			"byokSettings": map[string]any{
+				"policy": map[string]any{
+					"enabled":                  true,
+					"customEndpointMode":       mode,
+					"privateEndpointSupported": true,
+				},
+				"profiles": profiles,
+			},
+		}})
+
+	case strings.Contains(query, "createWorkspaceByokProfile"):
+		input, _ := variables["input"].(map[string]any)
+		f.byokCreates++
+		f.byokLastEndpoint = endpointURL(input)
+		f.byokLastModel = firstModelID(input)
+		f.byokLastCredential, _ = input["credential"].(string)
+		id := fmt.Sprintf("byok-%d", f.byokCreates)
+		f.byokProfiles = append(f.byokProfiles, profileFromInput(id, input))
+		writeGraphQLData(w, map[string]any{
+			"createWorkspaceByokProfile": map[string]string{"profileId": id},
+		})
+
+	case strings.Contains(query, "replaceWorkspaceByokProfile"):
+		input, _ := variables["input"].(map[string]any)
+		f.byokReplaces++
+		f.byokLastEndpoint = endpointURL(input)
+		f.byokLastModel = firstModelID(input)
+		// The replace input is nullable-credential: absent means "keep the
+		// stored one", which the fake models by leaving it blank.
+		f.byokLastCredential, _ = input["credential"].(string)
+		pid, _ := input["profileId"].(string)
+		for i := range f.byokProfiles {
+			if f.byokProfiles[i]["profileId"] == pid {
+				f.byokProfiles[i] = profileFromInput(pid, input)
+			}
+		}
+		writeGraphQLData(w, map[string]any{
+			"replaceWorkspaceByokProfile": map[string]string{"profileId": pid},
+		})
+
+	case strings.Contains(query, "rotateWorkspaceByokCredential"):
+		input, _ := variables["input"].(map[string]any)
+		f.byokRotates++
+		f.byokLastCredential, _ = input["credential"].(string)
+		pid, _ := input["profileId"].(string)
+		writeGraphQLData(w, map[string]any{
+			"rotateWorkspaceByokCredential": map[string]string{"profileId": pid},
+		})
+
+	case strings.Contains(query, "deleteWorkspaceByokProfile"):
+		f.byokDeletes++
+		pid, _ := variables["profileId"].(string)
+		kept := make([]map[string]any, 0, len(f.byokProfiles))
+		for _, p := range f.byokProfiles {
+			if p["profileId"] != pid {
+				kept = append(kept, p)
+			}
+		}
+		f.byokProfiles = kept
+		writeGraphQLData(w, map[string]any{"deleteWorkspaceByokProfile": true})
+
+	default:
+		return false
+	}
+	return true
+}
+
 func (f *fakeAffine) mcp(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
 	token := strings.TrimPrefix(auth, "Bearer ")
@@ -181,6 +323,92 @@ func (f *fakeAffine) mintCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.minted
+}
+
+func (f *fakeAffine) createInitBytes() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.createInit
+}
+
+// --- BYOK accessors (locked: the httptest server runs handlers on its own
+// goroutines, so a test must not read the fields directly) ---
+
+func (f *fakeAffine) byokStats() (creates, replaces, rotates, deletes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.byokCreates, f.byokReplaces, f.byokRotates, f.byokDeletes
+}
+
+func (f *fakeAffine) byokLastWrite() (endpoint, model, credential string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.byokLastEndpoint, f.byokLastModel, f.byokLastCredential
+}
+
+func (f *fakeAffine) byokProfileCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.byokProfiles)
+}
+
+func (f *fakeAffine) byokProfileID() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.byokProfiles) == 0 {
+		return ""
+	}
+	id, _ := f.byokProfiles[0]["profileId"].(string)
+	return id
+}
+
+// byokDeleteExternally models an operator removing the profile in the AFFiNE
+// UI: the next pass must notice the absence and recreate it.
+func (f *fakeAffine) byokDeleteExternally() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.byokProfiles = nil
+}
+
+func (f *fakeAffine) setByokPolicyMode(mode string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.byokPolicyMode = mode
+}
+
+// endpointURL and firstModelID read the endpoint and first model out of a BYOK
+// mutation input, following the nested definition the GraphQL input carries.
+func endpointURL(input map[string]any) string {
+	def, _ := input["definition"].(map[string]any)
+	ep, _ := def["endpoint"].(map[string]any)
+	u, _ := ep["url"].(string)
+	return u
+}
+
+func firstModelID(input map[string]any) string {
+	def, _ := input["definition"].(map[string]any)
+	models, _ := def["models"].([]any)
+	if len(models) == 0 {
+		return ""
+	}
+	m, _ := models[0].(map[string]any)
+	id, _ := m["modelId"].(string)
+	return id
+}
+
+func profileFromInput(id string, input map[string]any) map[string]any {
+	name, _ := input["name"].(string)
+	provider, _ := input["provider"].(string)
+	enabled, _ := input["enabled"].(bool)
+	return map[string]any{
+		"profileId":   id,
+		"workspaceId": input["workspaceId"],
+		"provider":    provider,
+		"name":        name,
+		"enabled":     enabled,
+		"revision":    1,
+		"definition":  input["definition"],
+	}
 }
 
 func newDecoder(r *http.Request) *json.Decoder { return json.NewDecoder(r.Body) }
@@ -217,6 +445,7 @@ func TestEnsureMCPCredential_FirstPassCreatesAndPublishes(t *testing.T) {
 
 	require.Len(t, fake.workspaces, 1, "an instance with no workspaces gets one created")
 	assert.Equal(t, 1, fake.mintCount())
+	assert.Equal(t, workspaceInitDoc, fake.createInitBytes(), "the workspace is seeded with a root document so the editor initializes")
 
 	workspaceID := fake.workspaces[0]
 	assert.Equal(t, mcpPath(workspaceID), secrets.GetAppContractValue("affine", "mcp", "path"))
@@ -229,7 +458,7 @@ func TestEnsureMCPCredential_FirstPassCreatesAndPublishes(t *testing.T) {
 // and keeps every credential it has ever issued, so a configurator that minted
 // per reconciliation would leave an unbounded pile of live credentials behind.
 func TestEnsureMCPCredential_SteadyStateMintsNothing(t *testing.T) {
-	fake := newFakeAffine()
+	fake := newFakeAffine("ws-1")
 	secrets := newStoreSecrets("owner-pass")
 	c := mcpConfigurator(t, fake, secrets)
 
@@ -250,7 +479,7 @@ func TestEnsureMCPCredential_SteadyStateMintsNothing(t *testing.T) {
 // the stored bearer stops validating, so the next pass replaces it rather than
 // publishing a dead token forever.
 func TestEnsureMCPCredential_ReplacedAfterRevocation(t *testing.T) {
-	fake := newFakeAffine()
+	fake := newFakeAffine("ws-1")
 	secrets := newStoreSecrets("owner-pass")
 	c := mcpConfigurator(t, fake, secrets)
 
@@ -286,7 +515,7 @@ func TestEnsureMCPCredential_AdoptsExistingWorkspace(t *testing.T) {
 // the credential: the harness is wired to the published path, and silently
 // repointing it would change which library an agent reads.
 func TestEnsureMCPCredential_PublishedWorkspaceIsSticky(t *testing.T) {
-	fake := newFakeAffine()
+	fake := newFakeAffine("ws-1")
 	secrets := newStoreSecrets("owner-pass")
 	c := mcpConfigurator(t, fake, secrets)
 
@@ -306,7 +535,7 @@ func TestEnsureMCPCredential_PublishedWorkspaceIsSticky(t *testing.T) {
 // A mint that AFFiNE refuses is logged and leaves nothing published, rather
 // than half-writing a path with no credential behind it.
 func TestEnsureMCPCredential_MintFailurePublishesNoToken(t *testing.T) {
-	fake := newFakeAffine()
+	fake := newFakeAffine("ws-1")
 	fake.mintErr = "MCP write tools are not available"
 	secrets := newStoreSecrets("owner-pass")
 	c := mcpConfigurator(t, fake, secrets)
@@ -321,7 +550,7 @@ func TestEnsureMCPCredential_MintFailurePublishesNoToken(t *testing.T) {
 // rejects one that does not, so a configurator that skipped it would never
 // mint anything.
 func TestEnsureMCPCredential_SendsCSRFToken(t *testing.T) {
-	fake := newFakeAffine()
+	fake := newFakeAffine("ws-1")
 	fake.requireCSRF = true
 	secrets := newStoreSecrets("owner-pass")
 	c := mcpConfigurator(t, fake, secrets)

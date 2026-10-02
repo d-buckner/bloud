@@ -228,9 +228,36 @@ func TestEnsureBootstrapAdmin_CreatesOwnerOnFirstRun(t *testing.T) {
 
 	require.NoError(t, c.ensureBootstrapAdmin(context.Background()))
 	assert.Equal(t, "/api/setup/create-admin-user", gotPath)
-	assert.Equal(t, bootstrapAdminEmail, got["email"])
+	assert.Equal(t, fallbackAdminEmail, got["email"], "no operator email supplied, so the local fallback is used")
 	assert.Equal(t, bootstrapAdminName, got["name"])
 	assert.Equal(t, "test-password-123", got["password"])
+}
+
+// The first user is created with the operator's SSO identity email, not a
+// synthetic address, so AFFiNE links the operator's OIDC login to this account
+// (AFFiNE links by email) and the operator owns the wired workspace.
+func TestEnsureBootstrapAdmin_UsesOperatorEmail(t *testing.T) {
+	var got map[string]string
+	var gotPath string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"u1"}`))
+	})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	c := NewConfigurator(0, configurator.Deps{
+		Secrets:       &fakeSecrets{password: "test-password-123"},
+		OperatorEmail: "admin@localhost.local",
+		Logger:        quietLogger(),
+	})
+	c.baseURL = server.URL
+
+	require.NoError(t, c.ensureBootstrapAdmin(context.Background()))
+	assert.Equal(t, "/api/setup/create-admin-user", gotPath)
+	assert.Equal(t, "admin@localhost.local", got["email"], "the operator's identity, not a synthetic address")
 }
 
 func TestEnsureBootstrapAdmin_IdempotentWhenOwnerExists(t *testing.T) {

@@ -22,6 +22,14 @@ type Deps struct {
 	// degraded/CLI contexts; factories must tolerate nil).
 	Secrets AppSecretsProvider
 
+	// OperatorEmail is the operator's SSO identity email (the Authentik admin
+	// email). Apps that bootstrap a first-run admin account use it, not a
+	// synthetic address, so the operator's OIDC login links to that account
+	// (AFFiNE links by email) and the operator owns the workspace the app
+	// provisions. Empty in CLI/tests; factories should fall back to a local
+	// default only there.
+	OperatorEmail string
+
 	// PrimaryBaseURL resolves the current primary host's public base URL.
 	// It is a function so live host-set changes take effect without
 	// re-registering configurators.

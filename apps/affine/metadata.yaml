@@ -19,6 +19,21 @@ integrations:
     compatible:
       - app: authentik
         default: true
+  # AFFiNE's built-in AI (copilot) reaches an OpenAI-compatible endpoint
+  # through a per-workspace BYOK profile. Bloud is the endpoint, not the
+  # operator's real provider key: the configurator writes the custom-endpoint
+  # policy into config.json and registers the resolved binding as a workspace
+  # profile through AFFiNE's own API, so "bring your own endpoint" needs no
+  # manual workspace setting. `requires: [apiKey]` because the gateway
+  # authenticates with it; declaring the contract gets the address, the
+  # explicit requirement gets the credential (invariant 15).
+  inference:
+    required: false
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - source: instance
 
 # AFFiNE ships its own MCP server: a stateless streamable-HTTP endpoint per
 # workspace, authenticated by a scoped `aff_mcp_v1.*` bearer the app mints
@@ -128,6 +143,22 @@ containers:
       AFFINE_INDEXER_ENABLED: "true"
       AFFINE_INDEXER_SEARCH_PROVIDER: manticoresearch
       AFFINE_INDEXER_SEARCH_ENDPOINT: "http://apps-affine-search:9308"
+      # The copilot/BYOK policy is enforced by AFFiNE's native (Rust) runtime,
+      # and that runtime does NOT read ~/.affine/config/config.json on its own:
+      # its default config paths are the node executable's directory and the
+      # CWD, neither of which holds our file. Without this pointer the runtime
+      # sees copilot disabled, every AI request answers `copilot_disabled`, and
+      # the BYOK GraphQL query is refused, so Bloud cannot register the
+      # inference endpoint at all. Upstream fixed this after 0.27.4 (config.json
+      # gains `deployment.type` and the image runs an upgrade-config step); the
+      # env var is the workaround on the pinned image. See affine/AFFiNE#15506.
+      AFFINE_BACKEND_RUNTIME_CONFIG_PATH: /root/.affine/config/config.json
+      # `deployment_from_env()` in the native runtime accepts only this value;
+      # anything else (including unset) is Deployment::Cloud, which reports
+      # `customEndpointMode: unavailable` and refuses every OpenAI-compatible
+      # endpoint in the BYOK dialog. The JS side reads the same variable and
+      # treats `selfhosted` as the self-hosted default it already assumes.
+      DEPLOYMENT_TYPE: selfhosted
     # sso.localhost resolves to the host gateway inside the VM, letting the
     # server reach the OIDC provider (traefik) by the same name browsers use.
     extraHosts:

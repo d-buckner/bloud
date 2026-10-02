@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -198,24 +199,100 @@ func (a *affineAPI) listWorkspaces(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// createWorkspace creates a workspace owned by the bootstrap account. The
-// `init` upload the mutation also accepts is the local-first document a browser
-// seeds a new workspace with; it is optional, and omitting it is what makes a
-// server-side create possible: the workspace is created empty and the owner
-// fills it in.
-func (a *affineAPI) createWorkspace(ctx context.Context) (string, error) {
+// createWorkspace creates a server workspace owned by the first-user account,
+// seeded with a minimal root document so it is "initialized". A workspace
+// created without a root doc (the mutation is empty without `init`) spins the
+// editor on "Syncing..." and never renders its sidebar, so the AI chat entry
+// never appears. A purely client-side workspace (AFFiNE's onboarding) is
+// invisible to this GraphQL API, so Bloud creates the workspace itself: that
+// is what lets the BYOK profile and MCP credential be registered against it.
+func (a *affineAPI) createWorkspace(ctx context.Context, init []byte) (string, error) {
 	var out struct {
 		CreateWorkspace struct {
 			ID string `json:"id"`
 		} `json:"createWorkspace"`
 	}
-	if err := a.graphql(ctx, `mutation { createWorkspace { id } }`, nil, &out); err != nil {
-		return "", fmt.Errorf("creating the bloud workspace: %w", err)
+	query := `mutation createWorkspace($init: Upload) { createWorkspace(init: $init) { id } }`
+	if err := a.graphqlUpload(ctx, query, map[string]any{"init": nil}, "variables.init", "init.bin", init, &out); err != nil {
+		return "", fmt.Errorf("creating the affine workspace: %w", err)
 	}
 	if out.CreateWorkspace.ID == "" {
-		return "", fmt.Errorf("creating the bloud workspace: no id in the response")
+		return "", fmt.Errorf("creating the affine workspace: no id in the response")
 	}
 	return out.CreateWorkspace.ID, nil
+}
+
+// graphqlUpload runs a GraphQL mutation that carries one `Upload` variable,
+// using the graphql-multipart-request-spec: the operations/map fields plus the
+// file part. It reuses the same envelope handling as graphql, so a refused
+// mutation surfaces its GraphQL error rather than a bare transport status.
+func (a *affineAPI) graphqlUpload(ctx context.Context, query string, variables map[string]any, varPath, filename string, file []byte, out any) error {
+	csrf, err := a.csrfToken()
+	if err != nil {
+		return err
+	}
+	body, contentType, err := multipartGraphQL(query, variables, varPath, filename, file)
+	if err != nil {
+		return err
+	}
+	resp, err := a.session.POST("/graphql").
+		Anonymous().
+		Header("x-csrf-token", csrf).
+		Body(body, contentType).
+		OK(http.StatusOK).
+		NoRetry().
+		Do(ctx)
+	if err != nil {
+		return err
+	}
+	var env graphqlEnvelope
+	if err := json.Unmarshal(resp, &env); err != nil {
+		return fmt.Errorf("parsing graphql response: %w", err)
+	}
+	if len(env.Errors) > 0 {
+		return fmt.Errorf("graphql: %s", env.Errors[0].Message)
+	}
+	if out == nil || len(env.Data) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(env.Data, out); err != nil {
+		return fmt.Errorf("parsing graphql data: %w", err)
+	}
+	return nil
+}
+
+// multipartGraphQL builds a multipart/form-data body per the
+// graphql-multipart-request-spec: `operations` (query + variables, with the
+// upload variable nulled), `map` (which part fills which variable path), and
+// the file part.
+func multipartGraphQL(query string, variables map[string]any, varPath, filename string, file []byte) ([]byte, string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	ops, err := json.Marshal(map[string]any{"query": query, "variables": variables})
+	if err != nil {
+		return nil, "", err
+	}
+	m, err := json.Marshal(map[string]any{"0": []string{varPath}})
+	if err != nil {
+		return nil, "", err
+	}
+	if err := w.WriteField("operations", string(ops)); err != nil {
+		return nil, "", err
+	}
+	if err := w.WriteField("map", string(m)); err != nil {
+		return nil, "", err
+	}
+	part, err := w.CreateFormFile("0", filename)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(file); err != nil {
+		return nil, "", err
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", err
+	}
+	return buf.Bytes(), w.FormDataContentType(), nil
 }
 
 // createMcpCredential mints a workspace-scoped MCP credential and returns the
@@ -278,4 +355,216 @@ func (a *affineAPI) probeMCP(ctx context.Context, path, token string) (works boo
 	default:
 		return false, true, nil
 	}
+}
+
+// --- BYOK inference provider ---
+//
+// AFFiNE's built-in AI (copilot) reaches an OpenAI-compatible endpoint through a
+// per-workspace BYOK profile: an endpoint URL, a dialect, a credential, and the
+// model declarations the endpoint serves. Bloud registers its resolved
+// `inference` binding as one such profile, so "bring your own endpoint" is a
+// reconciliation instead of a manual workspace setting. The profile lives in
+// AFFiNE's database (config.json only opens the policy; see renderConfigFile),
+// which is why it is written through AFFiNE's own API and not into a file.
+//
+// The wire shape is pinned to AFFiNE 0.27.4 (the image in metadata.yaml): the
+// copilot-BYOK GraphQL surface is young and not part of a public contract, so a
+// future image may rename a field. Callers treat any GraphQL error as "this
+// pass did not wire AI," never as a node failure (see ensureInferenceProvider).
+const (
+	byokProviderOpenAI           = "openai"
+	byokEndpointOpenAICompatible = "openai_compatible"
+	byokDialectChatCompletions   = "chat_completions"
+)
+
+// byokProfile is the slice of a workspace BYOK profile the configurator reads
+// back for reconciliation. AFFiNE never returns the stored credential, so the
+// only way to detect credential drift is the caller's own fingerprint of what
+// it last wrote (see the state file in configurator.go).
+type byokProfile struct {
+	ProfileID  string `json:"profileId"`
+	Provider   string `json:"provider"`
+	Name       string `json:"name"`
+	Enabled    bool   `json:"enabled"`
+	Revision   int    `json:"revision"`
+	Definition struct {
+		Endpoint struct {
+			Kind    string  `json:"kind"`
+			URL     *string `json:"url"`
+			Dialect *string `json:"dialect"`
+		} `json:"endpoint"`
+		Models []struct {
+			ModelID string `json:"modelId"`
+			Enabled bool   `json:"enabled"`
+		} `json:"models"`
+	} `json:"definition"`
+}
+
+// byokSettings is the workspace's BYOK state: the server policy that gates a
+// custom endpoint, and the profiles already registered. The policy is what
+// tells the configurator whether config.json has taken effect yet.
+type byokSettings struct {
+	Policy struct {
+		Enabled                  bool   `json:"enabled"`
+		CustomEndpointMode       string `json:"customEndpointMode"`
+		PrivateEndpointSupported bool   `json:"privateEndpointSupported"`
+	} `json:"policy"`
+	Profiles []byokProfile `json:"profiles"`
+}
+
+// byokSettingsQuery reads the policy and the existing profiles. byokSettings
+// takes no range arguments (unlike byokUsage, which is not requested here).
+const byokSettingsQuery = `query($id: String!) {
+  workspace(id: $id) {
+    byokSettings {
+      policy { enabled customEndpointMode privateEndpointSupported }
+      profiles {
+        profileId
+        provider
+        name
+        enabled
+        revision
+        definition {
+          endpoint { kind url dialect }
+          models { modelId enabled }
+        }
+      }
+    }
+  }
+}`
+
+func (a *affineAPI) byokSettings(ctx context.Context, workspaceID string) (*byokSettings, error) {
+	var out struct {
+		Workspace struct {
+			ByokSettings byokSettings `json:"byokSettings"`
+		} `json:"workspace"`
+	}
+	if err := a.graphql(ctx, byokSettingsQuery, map[string]any{"id": workspaceID}, &out); err != nil {
+		return nil, err
+	}
+	return &out.Workspace.ByokSettings, nil
+}
+
+// byokDefinition is the endpoint + model declaration AFFiNE requires. A model
+// needs at least one capability or the mutation is rejected. AFFiNE's chat
+// sends a toolsConfig (workspace search + doc reading), which makes the route
+// slot require the `tool_calling` feature; without it the route reports
+// `no_compatible_target`. Bloud's gateway is an OpenAI-compatible server, so a
+// tool-calling request is forwarded as-is.
+func byokDefinition(b configurator.InferenceBinding) map[string]any {
+	return map[string]any{
+		"endpoint": map[string]any{
+			"kind":    byokEndpointOpenAICompatible,
+			"url":     b.Endpoint,
+			"dialect": byokDialectChatCompletions,
+		},
+		"models": []any{
+			map[string]any{
+				"modelId": b.DefaultModel,
+				"enabled": true,
+				"capabilities": []any{
+					map[string]any{
+						"input":             []string{"text"},
+						"output":            []string{"text"},
+						"features":          []string{"tool_calling"},
+						"attachmentKinds":   []string{},
+						"attachmentSources": []string{},
+					},
+				},
+			},
+		},
+	}
+}
+
+// createByokProfile registers the Bloud endpoint as a new workspace BYOK
+// profile and returns its id. `description` must be present explicitly (AFFiNE
+// rejects the input otherwise), and the credential is required here.
+func (a *affineAPI) createByokProfile(ctx context.Context, workspaceID, credential, name, description string, b configurator.InferenceBinding) (string, error) {
+	var out struct {
+		CreateWorkspaceByokProfile struct {
+			ProfileID string `json:"profileId"`
+		} `json:"createWorkspaceByokProfile"`
+	}
+	err := a.graphql(ctx,
+		`mutation($input: CreateWorkspaceByokProfileInput!) { createWorkspaceByokProfile(input: $input) { profileId } }`,
+		map[string]any{"input": map[string]any{
+			"workspaceId": workspaceID,
+			"provider":    byokProviderOpenAI,
+			"name":        name,
+			"description": description,
+			"credential":  credential,
+			"definition":  byokDefinition(b),
+			"enabled":     true,
+		}},
+		&out)
+	if err != nil {
+		return "", fmt.Errorf("creating the affine BYOK profile: %w", err)
+	}
+	if out.CreateWorkspaceByokProfile.ProfileID == "" {
+		return "", fmt.Errorf("creating the affine BYOK profile: no profile id")
+	}
+	return out.CreateWorkspaceByokProfile.ProfileID, nil
+}
+
+// replaceByokProfile updates an existing profile under optimistic concurrency
+// (expectedRevision). A credential is only sent when non-empty: AFFiNE treats a
+// null credential as "keep the stored one," which is what an endpoint-only
+// change wants. The empty-string case cannot happen because AFFiNE rejects an
+// empty credential on create, so a profile always has one.
+func (a *affineAPI) replaceByokProfile(ctx context.Context, workspaceID, profileID, credential, name, description string, revision int, b configurator.InferenceBinding) error {
+	var credentialArg any
+	if credential != "" {
+		credentialArg = credential
+	}
+	var out struct {
+		ReplaceWorkspaceByokProfile struct {
+			ProfileID string `json:"profileId"`
+		} `json:"replaceWorkspaceByokProfile"`
+	}
+	return a.graphql(ctx,
+		`mutation($input: ReplaceWorkspaceByokProfileInput!) { replaceWorkspaceByokProfile(input: $input) { profileId } }`,
+		map[string]any{"input": map[string]any{
+			"workspaceId":      workspaceID,
+			"profileId":        profileID,
+			"expectedRevision": revision,
+			"name":             name,
+			"description":      description,
+			"credential":       credentialArg,
+			"definition":       byokDefinition(b),
+			"enabled":          true,
+		}},
+		&out)
+}
+
+// rotateByokCredential changes only the stored credential, keeping the
+// definition untouched. Used when the endpoint and models are unchanged but the
+// gateway key is not, so the profile's revision does not churn.
+func (a *affineAPI) rotateByokCredential(ctx context.Context, workspaceID, profileID, credential string, revision int) error {
+	var out struct {
+		RotateWorkspaceByokCredential struct {
+			ProfileID string `json:"profileId"`
+		} `json:"rotateWorkspaceByokCredential"`
+	}
+	return a.graphql(ctx,
+		`mutation($input: RotateWorkspaceByokCredentialInput!) { rotateWorkspaceByokCredential(input: $input) { profileId } }`,
+		map[string]any{"input": map[string]any{
+			"workspaceId":      workspaceID,
+			"profileId":        profileID,
+			"expectedRevision": revision,
+			"credential":       credential,
+		}},
+		&out)
+}
+
+// deleteByokProfile removes a profile Bloud registered. AFFiNE answers with a
+// bool that is false when the profile was already gone, which is a successful
+// teardown from the caller's point of view.
+func (a *affineAPI) deleteByokProfile(ctx context.Context, workspaceID, profileID string) error {
+	var out struct {
+		DeleteWorkspaceByokProfile bool `json:"deleteWorkspaceByokProfile"`
+	}
+	return a.graphql(ctx,
+		`mutation($workspaceId: String!, $profileId: ID!) { deleteWorkspaceByokProfile(workspaceId: $workspaceId, profileId: $profileId) }`,
+		map[string]any{"workspaceId": workspaceID, "profileId": profileID},
+		&out)
 }

@@ -98,6 +98,7 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, rest
 	return configurator.Deps{
 		Logger:           logger,
 		Secrets:          cfg.Secrets,
+		OperatorEmail:    cfg.AuthentikAdminEmail,
 		PrimaryBaseURL:   primaryBaseURL,
 		TraefikPort:      cfg.TraefikPort,
 		RestartContainer: restartContainer,
