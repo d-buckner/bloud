@@ -56,6 +56,8 @@ unchanged config never churns the file across reconciliation cycles.
 ```json
 {
   "server": { "externalUrl": "http://affine.localhost:8080" },
+  "flags": { "allowGuestDemoWorkspace": false },
+  "auth": { "inviteQuotaShadowMode": true },
   "copilot": {
     "enabled": true,
     "byok": {
@@ -84,8 +86,105 @@ unchanged config never churns the file across reconciliation cycles.
   `extraHosts`): the same name browsers use, so no second URL is needed.
 - Client ID/secret are derived deterministically by the host-agent (the app
   and the IdP agree without a shared store).
+- `allowGuestDemoWorkspace: false` stops AFFiNE handing a first-time user a
+  local demo workspace instead of the server workspace Bloud created and wired.
+- `auth.inviteQuotaShadowMode: true` is what makes the
+  [shared workspace](#the-shared-workspace) membership pass possible. See that
+  section for why the guard reads zero on self-host and why shadowing it is the
+  supported way around that.
 - The `copilot.byok` block is the server policy for the built-in AI; see
   [Built-in AI](#built-in-ai-bring-your-own-endpoint).
+
+## The shared workspace
+
+Bloud's model for AFFiNE is **one workspace the whole instance shares**, not one
+per account. It is named `shared`, and every Bloud user is a member of it.
+
+### The name
+
+The name is fixed at creation, by the Yjs bytes in `workspaceInitDoc`. It is
+not a field the API can set afterwards:
+
+- `WorkspaceType` has no `name` field at all. The name the client displays is
+  read from the workspace's own `meta` document.
+- `adminUpdateWorkspace(input: {id, name})` exists, but the whole admin
+  resolver starts with `assertCloudOnly()`, which throws `NotFoundException`
+  when the server is self-hosted. Verified on `0.27.4`: `adminWorkspace` and
+  `adminWorkspaces` both 404 against a self-host instance.
+
+So a workspace Bloud creates is named `shared`, and a workspace created before
+this change keeps the name it was seeded with. Renaming the latter is a
+client-side operation the owner does in the AFFiNE UI; there is nothing Bloud
+can do about it, and pretending otherwise would mean writing into the sync
+protocol.
+
+### Membership
+
+`ensureSharedMembers` runs every reconciliation pass. It reads the Bloud user
+directory from the identity provider and invites whoever the workspace does not
+already have:
+
+```
+Authentik (sso contract, apiToken)
+  -> ListUsers: internal accounts, service accounts dropped
+  -> keep active accounts that have an email
+AFFiNE workspace.members(take: 500)
+  -> active members AND outstanding invitations, in one list
+  -> diff by email
+  -> inviteMembers(the missing addresses)
+```
+
+Two properties make this safe to run forever:
+
+- **It is a diff, not a broadcast.** AFFiNE's `members` query unions active
+  members with outstanding invitations, so a user who was invited and has not
+  accepted yet is already *present*. A steady-state pass issues two reads and no
+  writes.
+- **The address is the only shared key.** Bloud knows Authentik accounts, AFFiNE
+  knows its own; the email is the one thing they agree on, and it is also what
+  later links a user's OIDC sign-in to the account they were invited as. An
+  account with no email is skipped rather than invited, because an empty address
+  would be a hole rather than a user.
+
+### Why the user still has to click accept
+
+Bloud can create the invitation but cannot accept it for someone else, and that
+is the honest limit of the self-host API rather than a gap in this integration:
+
+| Attempted | Result on `0.27.4` self-host |
+|---|---|
+| `grantMember(Collaborator, userId, ws)` | `ActionForbiddenOnNonTeamWorkspace`. A team workspace needs `plan` in `team`/`selfhost_team`, which is a paid entitlement |
+| `inviteMembers` with the default config | `429 TooManyRequest`: the invite quota answers `limit: 0, reason: 'quota_subject'` |
+| OIDC sign-in auto-accepting a pending invite | Does not exist. The OAuth plugin has no invitation handling |
+| `acceptInviteById` with no session | Works, because the endpoint is `@Public()` and its guard (`if (user && user.id !== role.userId)`) passes when `user` is nil. **Not used.** It is an authorization gap, not an integration point, and building on it means the integration breaks the day upstream closes it |
+
+`auth.inviteQuotaShadowMode: true` is the supported knob: the quota still
+records its accounting and emits its would-block log, and the request proceeds.
+The guard exists to stop anonymous signups spamming invitations to strangers on
+AFFiNE's hosted infrastructure. None of that applies here: the inviter is
+Bloud's own bootstrap admin, the invitees are the accounts the operator made
+in Bloud's identity provider, and the server is a home box.
+
+### No mail transport
+
+This works with no SMTP configured, and that is a property of the flow rather
+than a workaround. `inviteMembers` writes the invitation row; the mail is a
+queued job hanging off it, and `NotificationService.createInvitation` persists
+the in-app `Invitation` notification **before** it attempts delivery. So the
+user finds the invitation in AFFiNE's own notification center when they first
+sign in through Bloud's SSO, and accepting it there makes them an active
+member. A server with no mailer loses the email and keeps everything the user
+needs.
+
+### Reading the identity provider
+
+The user list comes from the `sso` contract, declared with
+`requires: [apiToken]` in `metadata.yaml`. Declaring the contract alone gets
+the provider's address; the explicit requirement is what gets the credential
+(invariant 15). The call is made against `ProviderRef.LocalURL`
+(`http://localhost:9001`), not `BaseURL` (`http://apps-authentik-server:9001`):
+this call is made by the host-agent process, which is not on the app's container
+network, while the provider's port is published to the host.
 
 ### Built-in AI: bring your own endpoint
 
@@ -229,12 +328,14 @@ idempotency signal for later reconciliation passes.
 
 | File | Purpose |
 |------|---------|
-| `apps/affine/metadata.yaml` | Containers (postgres/redis/server), native-oidc SSO, port 3010, `inference` consumer |
-| `apps/affine/configurator.go` | config.json writer, owner bootstrap, OIDC preflight verification, AI endpoint registration |
+| `apps/affine/metadata.yaml` | Containers (postgres/redis/server), native-oidc SSO, port 3010, `inference` and `sso` (`apiToken`) consumers |
+| `apps/affine/configurator.go` | config.json writer, owner bootstrap, OIDC preflight verification, AI endpoint registration, the `shared` workspace seed |
+| `apps/affine/members.go` | Shared-workspace membership: read the Bloud directory, diff it against the workspace, invite the missing addresses |
 | `apps/affine/configurator_test.go` | Unit tests for config rendering + bootstrap idempotency |
 | `apps/affine/inference_test.go` | Unit tests for BYOK registration, rotation, teardown, and idempotency |
+| `apps/affine/members_test.go` | Unit tests for the membership diff, pending-invite handling, and the failure paths |
 | `services/host-agent/internal/appconfig/register.go` | Configurator registration |
-| `services/host-agent/pkg/authentik/client.go` | Verified-email scope mapping + provider reconciliation |
+| `services/host-agent/pkg/authentik/client.go` | Verified-email scope mapping, provider reconciliation, `ListUsers` (the directory the shared workspace reads) |
 | `services/host-agent/internal/e2e/e2e_test.go` | Go integration tests (install/configure/uninstall) |
 | `e2e/tests/affine.spec.ts` | Playwright user journey (home tile → OIDC login → workspace) |
 
@@ -246,7 +347,15 @@ idempotency signal for later reconciliation passes.
 | `/api/setup/create-admin-user` | POST | First-run owner bootstrap (403 once a user exists) |
 | `/api/oauth/preflight` | POST | Returns the authorization URL; SSO wiring check |
 | `/oauth/callback` | GET | OIDC redirect target (PKCE code exchange) |
-| `/graphql` | POST | Owner-session GraphQL: `byokSettings` read, BYOK profile mutations (see [Built-in AI](#built-in-ai-bring-your-own-endpoint)) |
+| `/graphql` | POST | Owner-session GraphQL: `byokSettings` read, BYOK profile mutations (see [Built-in AI](#built-in-ai-bring-your-own-endpoint)), `workspace.members` read, `inviteMembers` (see [The shared workspace](#the-shared-workspace)) |
+
+Identity provider side (Authentik, `:9001`, reached from the host at
+`ProviderRef.LocalURL`):
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v3/core/users/?type=internal` | GET | The Bloud user directory the shared-workspace diff reads |
+| `/api/v3/core/groups/?search=authentik Admins` | GET | Admin-group cross-reference for `ListUsers` roles |
 
 ## Verification
 
@@ -277,3 +386,7 @@ dir, routes).
 | AI fails with `no_compatible_target` | Copilot is enabled but no provider is registered in *this workspace*. BYOK is per-workspace and Bloud can only wire the workspace it owns, so a workspace you created needs the endpoint added once by hand (see [Built-in AI](#built-in-ai-bring-your-own-endpoint)). Check host-agent logs for `affine AI:`. |
 | AFFiNE AI works, then stops after a gateway key change | The stored credential went stale (AFFiNE never returns it). Reconcile rotates it on the next pass; check for `rotated the affine AI credential`. |
 | Slow first boot | Expected: image pull + prisma migrations run before the listener opens. The healthcheck window covers ~7.5 minutes. |
+| A Bloud user is not in the shared workspace | Check the host-agent log for `affine shared workspace:`. "no identity provider token" means the `sso` contract is unbound or Authentik has not published its `apiToken` yet; "could not read the identity provider's users" means the directory call failed. Both are retried next pass. |
+| Invited but still not a member | Expected until they accept. The invitation is in their AFFiNE notification center after their first Bloud SSO sign-in; accepting it is what moves them from `Pending` to `Accepted`. Bloud cannot accept on their behalf (see [Why the user still has to click accept](#why-the-user-still-has-to-click-accept)). |
+| `429 TooManyRequest` from `inviteMembers` | `auth.inviteQuotaShadowMode` did not take effect. It is read from config.json at startup, so a config change must force a container recreate (PreStart reports `RestartNeeded` for exactly this). |
+| Workspace is named "Bloud", not "shared" | It was created before the rename. The name lives in the workspace's Yjs `meta` doc and the only server-side mutation for it is cloud-gated, so Bloud cannot rename it. The owner renames it in the AFFiNE UI. |

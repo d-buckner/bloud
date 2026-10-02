@@ -44,16 +44,27 @@ const (
 // and mounted into the server container at /root/.affine/config/config.json.
 const configFileName = "config.json"
 
+// sharedWorkspaceName is the name the one workspace Bloud creates carries.
+// Bloud's model for AFFiNE is a single workspace the whole instance shares,
+// not one per account, so the name says what it is rather than who made it.
+const sharedWorkspaceName = "shared"
+
 // workspaceInitDoc is the minimal Yjs root document AFFiNE expects for a
 // workspace: a `meta` map with a name and an empty `pages` array. Without it,
 // a server-created workspace is "uninitialized" and the editor spins on
 // "Syncing..." without ever rendering its sidebar, so the AI chat entry never
 // appears. The bytes were generated once with a fixed Yjs client id and
-// round-tripped through yjs (they decode to {"name":"Bloud","pages":[]}).
+// round-tripped through yjs (they decode to {"name":"shared","pages":[]}).
+//
+// The name lives in this document and nowhere else the API can reach. AFFiNE's
+// `WorkspaceType` has no `name` field, and the mutation that would set one,
+// `adminUpdateWorkspace`, is behind an `assertCloudOnly()` guard that 404s on
+// self-host. So the name is fixed at creation, by these bytes, and an existing
+// workspace cannot be renamed by Bloud: it renames its own doc in the client.
 var workspaceInitDoc = []byte{
 	0x01, 0x02, 0x01, 0x00, 0x28, 0x01, 0x04, 0x6d, 0x65, 0x74, 0x61, 0x04, 0x6e, 0x61, 0x6d, 0x65,
-	0x01, 0x77, 0x05, 0x42, 0x6c, 0x6f, 0x75, 0x64, 0x27, 0x01, 0x04, 0x6d, 0x65, 0x74, 0x61, 0x05,
-	0x70, 0x61, 0x67, 0x65, 0x73, 0x00, 0x00,
+	0x01, 0x77, 0x06, 0x73, 0x68, 0x61, 0x72, 0x65, 0x64, 0x27, 0x01, 0x04, 0x6d, 0x65, 0x74, 0x61,
+	0x05, 0x70, 0x61, 0x67, 0x65, 0x73, 0x00, 0x00,
 }
 
 // csrfCookieName is the cookie AFFiNE pairs with the session and requires
@@ -178,6 +189,8 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	c.ensureMCPCredential(ctx)
 
 	c.ensureInferenceProvider(ctx, state)
+
+	c.ensureSharedMembers(ctx, state)
 
 	if state.OIDC == nil {
 		return nil
@@ -672,6 +685,19 @@ func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) (string
 		// makes the operator's first workspace the server one Bloud owns.
 		"flags": map[string]any{
 			"allowGuestDemoWorkspace": false,
+		},
+		// The invite quota is the one thing standing between Bloud and adding its
+		// own users to its own workspace, and on self-host it is set to zero: the
+		// admission check answers `limit: 0, reason: 'quota_subject'` and every
+		// `inviteMembers` call is a 429. The guard exists to stop anonymous
+		// signups spamming invites to strangers on AFFiNE's hosted infrastructure.
+		// Neither applies here: the inviter is Bloud's own bootstrap admin, the
+		// invitees are the accounts the operator created in Bloud's identity
+		// provider, and the server is a home box with no mail transport. Shadow
+		// mode keeps the accounting and drops the rejection, which is the whole
+		// point of the flag rather than a bypass of it.
+		"auth": map[string]any{
+			"inviteQuotaShadowMode": true,
 		},
 		// The MCP server lives under AFFiNE's copilot module and the flag
 		// defaults off, so without this every credential mint and every MCP

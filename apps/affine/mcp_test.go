@@ -110,6 +110,22 @@ type fakeAffine struct {
 	byokLastEndpoint   string
 	byokLastModel      string
 	byokLastCredential string
+
+	// --- Shared workspace membership state ---
+
+	// members is the workspace's member list in the shape the members query
+	// returns it. It holds active members and outstanding invitations together,
+	// which is how AFFiNE actually answers, so a diff test models the real thing
+	// rather than two separate lists.
+	members []map[string]string
+	// inviteCreates counts inviteMembers calls that succeeded.
+	inviteCreates int
+	// invitedEmails accumulates every address the fake was asked to invite, so a
+	// test can assert the same address was not invited twice across passes.
+	invitedEmails []string
+	// inviteErr, when set, makes every inviteMembers call fail with a GraphQL
+	// error envelope.
+	inviteErr string
 }
 
 func newFakeAffine(workspaces ...string) *fakeAffine {
@@ -172,6 +188,10 @@ func (f *fakeAffine) graphql(w http.ResponseWriter, r *http.Request) {
 	// The BYOK surface is handled separately so this switch stays under the
 	// cyclop gate as the fake grows with the app's API.
 	if f.graphqlByok(w, req.Query, req.Variables) {
+		return
+	}
+	// Same for the shared-workspace membership surface.
+	if f.graphqlMembers(w, req.Query, req.Variables) {
 		return
 	}
 

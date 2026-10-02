@@ -199,6 +199,75 @@ func (a *affineAPI) listWorkspaces(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// --- Shared workspace membership ---
+
+// workspaceMemberRow is one row of the workspace member list.
+//
+// AFFiNE answers `workspace.members` with active members and outstanding
+// invitations in a single list, told apart by `status`. That is exactly the
+// shape a diff needs: an address present under any status is an address that
+// needs no new invitation, so a steady-state pass invites nothing.
+type workspaceMemberRow struct {
+	Email  string `json:"email"`
+	Status string `json:"status"`
+}
+
+// workspaceMembers reads the member list. `take` is explicit because the
+// resolver defaults to 8 rows, and a page that small would hide the users past
+// it and re-invite them on every pass.
+func (a *affineAPI) workspaceMembers(ctx context.Context, workspaceID string, take int) ([]workspaceMemberRow, error) {
+	var out struct {
+		Workspace struct {
+			Members []workspaceMemberRow `json:"members"`
+		} `json:"workspace"`
+	}
+	err := a.graphql(ctx,
+		`query($id: String!, $take: Int) { workspace(id: $id) { members(take: $take) { email status } } }`,
+		map[string]any{"id": workspaceID, "take": take},
+		&out)
+	if err != nil {
+		return nil, fmt.Errorf("reading the affine workspace members: %w", err)
+	}
+	return out.Workspace.Members, nil
+}
+
+// inviteResult is one address's outcome from inviteMembers. A refusal is a
+// per-row error rather than a failed call, so one bad address in a list of many
+// does not lose the invitations that did land.
+type inviteResult struct {
+	Email    string         `json:"email"`
+	InviteID string         `json:"inviteId"`
+	Error    map[string]any `json:"error"`
+}
+
+// inviteMembers creates a pending membership for each address.
+//
+// No mail transport is involved. The invitation is a row; the mail is a queued
+// job hanging off it, and a server with no SMTP fails the delivery and keeps
+// the row. The user finds the invitation in AFFiNE's own notification center,
+// whose record is written before the mail is attempted, so the accept action is
+// available in-app with no mailer configured.
+//
+// The InviteID is the invitation row's own id and this response is the only
+// place it can be read: `workspace.members` reports the invitee's *user* id in
+// that field, not the invitation's.
+func (a *affineAPI) inviteMembers(ctx context.Context, workspaceID string, emails []string) ([]inviteResult, error) {
+	if len(emails) == 0 {
+		return nil, nil
+	}
+	var out struct {
+		InviteMembers []inviteResult `json:"inviteMembers"`
+	}
+	err := a.graphql(ctx,
+		`mutation($id: String!, $emails: [String!]!) { inviteMembers(workspaceId: $id, emails: $emails) { email inviteId error } }`,
+		map[string]any{"id": workspaceID, "emails": emails},
+		&out)
+	if err != nil {
+		return nil, fmt.Errorf("inviting members into the affine workspace: %w", err)
+	}
+	return out.InviteMembers, nil
+}
+
 // createWorkspace creates a server workspace owned by the first-user account,
 // seeded with a minimal root document so it is "initialized". A workspace
 // created without a root doc (the mutation is empty without `init`) spins the

@@ -3,6 +3,7 @@
 package affine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -287,4 +288,15 @@ func TestEnsureBootstrapAdmin_SurfacesOtherRejections(t *testing.T) {
 func TestEnsureBootstrapAdmin_RequiresSecretsProvider(t *testing.T) {
 	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:1"), Logger: quietLogger()})
 	require.Error(t, c.ensureBootstrapAdmin(context.Background()))
+}
+
+// TestWorkspaceInitDocCarriesTheSharedName guards the hand-written Yjs bytes
+// against drifting from the name Bloud says it creates. No API call sets the
+// workspace name on self-host, so these bytes are the only place the name is
+// decided and this is the only check that they still agree with the constant.
+func TestWorkspaceInitDocCarriesTheSharedName(t *testing.T) {
+	assert.True(t, bytes.Contains(workspaceInitDoc, []byte(sharedWorkspaceName)),
+		"the seeded workspace document must carry the name Bloud advertises")
+	assert.False(t, bytes.Contains(workspaceInitDoc, []byte("Bloud")),
+		"the workspace is named for what it is, not for who made it")
 }
