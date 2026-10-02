@@ -8,11 +8,12 @@
  *
  * The layout is: connections in a row above the app group; a "You" node above
  * the specific connection the operator is using; app boxes inside a bounding
- * group, positioned by dagre. Every container an app declares is laid out
- * inside its app's box (its own dagre pass, so within-app `dependsOn` edges
- * read top-down); apps without containers stay flat leaf nodes. When there are
- * no apps the connection row sits at the origin. Node/edge animation reflects
- * whether endpoints are 'running'/'active'.
+ * group, positioned by dagre; instance-provided services in a row below the
+ * group. Every container an app declares is laid out inside its app's box (its
+ * own dagre pass, so within-app `dependsOn` edges read top-down); apps without
+ * containers stay flat leaf nodes. When there are no apps the connection row
+ * sits at the origin. Node/edge animation reflects whether endpoints are
+ * 'running'/'active'.
  */
 
 import dagre from '@dagrejs/dagre';
@@ -31,7 +32,7 @@ export const BOX_HEADER = 26;
 const GROUP_PADDING = 40;
 const CONNECTION_GAP = 100;
 const USER_GAP = 60;
-/** Horizontal gap between connection nodes in the row. */
+/** Horizontal gap between nodes within a row (connections, services). */
 const CONN_HGAP = 60;
 /** Gaps between the container nodes of one box (dagre nodesep / ranksep). */
 const CONTAINER_NODESEP = 24;
@@ -50,6 +51,20 @@ interface BoxLayout {
 /** A status that counts as "live" for edge animation. */
 function isActiveStatus(status: string): boolean {
 	return status === 'running' || status === 'active';
+}
+
+/**
+ * Whether one node counts as live for edge animation.
+ *
+ * An app or container is live when it is running. A `service` node is live
+ * because the backend put it in the payload at all: the AI Model node carries
+ * `external` rather than a lifecycle status precisely because nothing probes
+ * it, and it disappears the moment Settings -> AI has no enabled upstream.
+ * Its presence is the liveness claim. Reading that node as inert would draw the
+ * one edge that is definitely wired as a dead line.
+ */
+function isLiveNode(n: GraphNode): boolean {
+	return isActiveStatus(n.status) || n.nodeType === 'service';
 }
 
 /**
@@ -106,20 +121,20 @@ function layoutBox(containers: GraphNode[], edges: GraphEdge[]): BoxLayout {
 	};
 }
 
-/** The connection row's left x, centered over the app group. */
-function connectionStartX(groupX: number, groupWidth: number, count: number): number {
+/** The left x of a row of `count` nodes, centered over the app group. */
+function rowStartX(groupX: number, groupWidth: number, count: number): number {
 	const totalWidth = count * NODE_WIDTH + (count - 1) * CONN_HGAP;
 	return groupX + groupWidth / 2 - totalWidth / 2;
 }
 
-/** Map connection nodes to a horizontal row starting at `baseX`, all at `y`. */
-function connectionRow(
-	connectionNodes: GraphNode[],
+/** Map `rowNodes` to a horizontal row starting at `baseX`, all at `y`. */
+function nodeRow(
+	rowNodes: GraphNode[],
 	baseX: number,
 	y: number,
 	dataFor: (n: GraphNode) => Record<string, unknown>
 ): Node[] {
-	return connectionNodes.map((cn, i) => ({
+	return rowNodes.map((cn, i) => ({
 		id: cn.id,
 		type: 'app',
 		position: { x: baseX + i * (NODE_WIDTH + CONN_HGAP), y },
@@ -153,17 +168,18 @@ function buildYouNode(
 	};
 }
 
-/** Build edges, animating those whose endpoints are both active. */
+/** Build edges, animating those whose endpoints are both live. */
 function buildEdges(graph: DeveloperGraph, userConnectionId: string | null): Edge[] {
-	const statusById = new Map(graph.nodes.map((n) => [n.id, n.status]));
-	statusById.set(YOU_ID, 'active'); // "You" is always live for animation
+	const live = new Map(graph.nodes.map((n) => [n.id, isLiveNode(n)]));
+	live.set(YOU_ID, true); // "You" is always live for animation
+	const isLive = (id: string) => live.get(id) === true;
 
 	const edges: Edge[] = graph.edges.map((e, i) => ({
 		id: `e-${i}`,
 		source: e.source,
 		target: e.target,
 		label: e.label,
-		animated: isActiveStatus(statusById.get(e.source) ?? '') && isActiveStatus(statusById.get(e.target) ?? '')
+		animated: isLive(e.source) && isLive(e.target)
 	}));
 
 	if (userConnectionId) {
@@ -171,7 +187,7 @@ function buildEdges(graph: DeveloperGraph, userConnectionId: string | null): Edg
 			id: 'e-you',
 			source: YOU_ID,
 			target: userConnectionId,
-			animated: isActiveStatus(statusById.get(userConnectionId) ?? '')
+			animated: isLive(userConnectionId)
 		});
 	}
 	return edges;
@@ -299,14 +315,16 @@ function looseContainerPositions(
 /** Lay the whole developer graph out to xyflow nodes + edges. */
 export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: Node[]; edges: Edge[] } {
 	const appNodes = graph.nodes.filter((n) => n.nodeType === 'app');
-	// A service is a provider the instance supplies itself rather than an app
-	// that gets installed: no box, no containers, drawn flat among the apps.
-	const serviceNodes = graph.nodes.filter((n) => n.nodeType === 'service');
-	const groupNodes = [...appNodes, ...serviceNodes];
 	const connectionNodes = graph.nodes.filter((n) => n.nodeType === 'connection');
-	const groupNodeIds = new Set(groupNodes.map((n) => n.id));
+	// A service is a provider the instance supplies itself rather than an app it
+	// installs: no box, no containers, and no place among the things it runs. It
+	// gets its own row below the group, mirroring the connection row above it.
+	// The box is what the instance runs; the row above is what it is reached
+	// through; the row below is what it hands out.
+	const serviceNodes = graph.nodes.filter((n) => n.nodeType === 'service');
+	const groupNodeIds = new Set(appNodes.map((n) => n.id));
 	const { byApp, loose } = groupContainers(graph.nodes, groupNodeIds);
-	const { boxes, sizes } = measureTopLevel(groupNodes, byApp, loose, graph.edges);
+	const { boxes, sizes } = measureTopLevel(appNodes, byApp, loose, graph.edges);
 	const userConnectionId = detectUserConnection(graph, hostname);
 
 	const sources = new Set(graph.edges.map((e) => e.source));
@@ -326,9 +344,11 @@ export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: N
 
 	const topLevelIds = [...groupNodeIds, ...loose.map((n) => n.id)];
 	if (topLevelIds.length === 0) {
-		const nodes = connectionRow(connectionNodes, 0, 0, dataFor);
+		const nodes = nodeRow(connectionNodes, 0, 0, dataFor);
 		const you = buildYouNode(connectionNodes, userConnectionId, 0, 0);
 		if (you) nodes.push(you);
+		const serviceY = connectionNodes.length > 0 ? NODE_HEIGHT + CONNECTION_GAP : 0;
+		nodes.push(...nodeRow(serviceNodes, 0, serviceY, dataFor));
 		return { nodes, edges: buildEdges(graph, userConnectionId) };
 	}
 	const { g, bounds } = layoutTopLevel(topLevelIds, sizes, graph.edges);
@@ -346,7 +366,7 @@ export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: N
 		}
 	];
 	// Parents before children: app nodes first, then the containers they hold.
-	for (const n of groupNodes) {
+	for (const n of appNodes) {
 		const size = sizes.get(n.id)!;
 		const pos = g.node(n.id);
 		const position = { x: pos.x - size.width / 2 - group.x, y: pos.y - size.height / 2 - group.y };
@@ -373,11 +393,14 @@ export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: N
 	);
 
 	const connY = group.y - NODE_HEIGHT - CONNECTION_GAP;
-	const connBaseX = connectionStartX(group.x, groupWidth, connectionNodes.length);
-	nodes.push(...connectionRow(connectionNodes, connBaseX, connY, dataFor));
+	const connBaseX = rowStartX(group.x, groupWidth, connectionNodes.length);
+	nodes.push(...nodeRow(connectionNodes, connBaseX, connY, dataFor));
 
 	const you = buildYouNode(connectionNodes, userConnectionId, connBaseX, connY);
 	if (you) nodes.push(you);
+
+	const serviceY = group.y + groupHeight + CONNECTION_GAP;
+	nodes.push(...nodeRow(serviceNodes, rowStartX(group.x, groupWidth, serviceNodes.length), serviceY, dataFor));
 
 	return { nodes, edges: buildEdges(graph, userConnectionId) };
 }
