@@ -1867,17 +1867,41 @@ func (c *Client) reconcileNativeProvider(ctx context.Context, providerID int, re
 	return nil
 }
 
+// findAuthorizationFlow picks the provider's authorization flow, preferring the
+// implicit-consent flow and falling back to explicit consent when the instance
+// only ships one.
+func (c *Client) findAuthorizationFlow(ctx context.Context) (string, error) {
+	if id, err := c.findFlowID(ctx, "default-provider-authorization-implicit-consent"); err == nil {
+		return id, nil
+	}
+	id, err := c.findFlowID(ctx, "default-provider-authorization-explicit-consent")
+	if err != nil {
+		return "", fmt.Errorf("finding authorization flow: %w", err)
+	}
+	return id, nil
+}
+
+// redirectURIEntries renders the redirect URIs as Authentik's strict-match
+// rows: a URI that is not on the list is refused rather than prefix-matched.
+func redirectURIEntries(redirectURIs []string) []map[string]string {
+	var uriEntries []map[string]string
+	for _, uri := range redirectURIs {
+		uriEntries = append(uriEntries, map[string]string{
+			"matching_mode": "strict",
+			"url":           uri,
+		})
+	}
+	return uriEntries
+}
+
 // createNativeProvider builds the OAuth2 provider from scratch: the flows it
 // runs, the signing key it signs with, and the scope mapping set that carries
 // Bloud's verified-email mapping plus whatever extra scopes the app declared.
 func (c *Client) createNativeProvider(ctx context.Context, providerName, clientID, clientSecret string, redirectURIs []string, tuning OIDCTuning) (int, error) {
 	// Find required flows
-	authFlowID, err := c.findFlowID(ctx, "default-provider-authorization-implicit-consent")
+	authFlowID, err := c.findAuthorizationFlow(ctx)
 	if err != nil {
-		authFlowID, err = c.findFlowID(ctx, "default-provider-authorization-explicit-consent")
-		if err != nil {
-			return 0, fmt.Errorf("finding authorization flow: %w", err)
-		}
+		return 0, err
 	}
 	invalidationFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
 	if err != nil {
@@ -1906,14 +1930,6 @@ func (c *Client) createNativeProvider(ctx context.Context, providerName, clientI
 	}
 	scopeMappings = append(scopeMappings, extraMappings...)
 
-	var uriEntries []map[string]string
-	for _, uri := range redirectURIs {
-		uriEntries = append(uriEntries, map[string]string{
-			"matching_mode": "strict",
-			"url":           uri,
-		})
-	}
-
 	payload := map[string]interface{}{
 		"name":                       providerName,
 		"authorization_flow":         authFlowID,
@@ -1921,7 +1937,7 @@ func (c *Client) createNativeProvider(ctx context.Context, providerName, clientI
 		"client_type":                "confidential",
 		"client_id":                  clientID,
 		"client_secret":              clientSecret,
-		"redirect_uris":              uriEntries,
+		"redirect_uris":              redirectURIEntries(redirectURIs),
 		"signing_key":                certUUID,
 		"property_mappings":          scopeMappings,
 		"sub_mode":                   "hashed_user_id",

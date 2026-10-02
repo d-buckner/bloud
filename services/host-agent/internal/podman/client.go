@@ -517,46 +517,70 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 		spec["hostadd"] = config.ExtraHosts
 	}
 
-	// Port mappings
-	if len(config.Ports) > 0 {
-		var portMappings []map[string]interface{}
-		for _, p := range config.Ports {
-			pm := map[string]interface{}{
-				"container_port": p.ContainerPort,
-			}
-			if p.HostPort > 0 {
-				pm["host_port"] = p.HostPort
-			}
-			if p.Protocol != "" {
-				pm["protocol"] = p.Protocol
-			}
-			portMappings = append(portMappings, pm)
-		}
-		spec["portmappings"] = portMappings
-	}
-
-	// Volume mounts
-	if len(config.Volumes) > 0 {
-		var mounts []map[string]interface{}
-		for _, v := range config.Volumes {
-			mount := map[string]interface{}{
-				"source":      v.Source,
-				"destination": v.Destination,
-				"type":        v.Type,
-			}
-			if len(v.Options) > 0 {
-				mount["options"] = v.Options
-			}
-			mounts = append(mounts, mount)
-		}
-		spec["mounts"] = mounts
-	}
+	addPortMappings(spec, config)
+	addVolumeMounts(spec, config)
 
 	// Labels
 	if len(config.Labels) > 0 {
 		spec["labels"] = config.Labels
 	}
-	// Networks
+	addNetworkNamespace(spec, config)
+	if len(config.Command) > 0 {
+		spec["command"] = config.Command
+	}
+	if config.RestartPolicy != "" {
+		spec["restart_policy"] = config.RestartPolicy
+	}
+
+	return spec
+}
+
+// addPortMappings writes the port map, leaving the host port and protocol off
+// when the caller left them unset so Podman chooses them.
+func addPortMappings(spec map[string]interface{}, config ContainerConfig) {
+	if len(config.Ports) == 0 {
+		return
+	}
+	var portMappings []map[string]interface{}
+	for _, p := range config.Ports {
+		pm := map[string]interface{}{
+			"container_port": p.ContainerPort,
+		}
+		if p.HostPort > 0 {
+			pm["host_port"] = p.HostPort
+		}
+		if p.Protocol != "" {
+			pm["protocol"] = p.Protocol
+		}
+		portMappings = append(portMappings, pm)
+	}
+	spec["portmappings"] = portMappings
+}
+
+// addVolumeMounts writes the bind and volume mounts.
+func addVolumeMounts(spec map[string]interface{}, config ContainerConfig) {
+	if len(config.Volumes) == 0 {
+		return
+	}
+	var mounts []map[string]interface{}
+	for _, v := range config.Volumes {
+		mount := map[string]interface{}{
+			"source":      v.Source,
+			"destination": v.Destination,
+			"type":        v.Type,
+		}
+		if len(v.Options) > 0 {
+			mount["options"] = v.Options
+		}
+		mounts = append(mounts, mount)
+	}
+	spec["mounts"] = mounts
+}
+
+// addNetworkNamespace resolves the network namespace mode: host for a lone
+// "host" network, an explicit bridge plus the named networks otherwise, and
+// nothing at all for an empty list, which leaves Podman's own default.
+func addNetworkNamespace(spec map[string]interface{}, config ContainerConfig) {
 	switch {
 	case len(config.Networks) == 0:
 		// default networking
@@ -570,12 +594,4 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 		}
 		spec["networks"] = networks
 	}
-	if len(config.Command) > 0 {
-		spec["command"] = config.Command
-	}
-	if config.RestartPolicy != "" {
-		spec["restart_policy"] = config.RestartPolicy
-	}
-
-	return spec
 }
