@@ -287,7 +287,7 @@ func TestTakeoverPreviousDevLoopGarbagePid(t *testing.T) {
 
 func TestIsBloudDevProcess(t *testing.T) {
 	loop := writeFakeDevLoop(t, "sleep 300 & wait")
-	defer loop.Process.Kill() //nolint:errcheck
+	defer loop.Process.Kill() //nolint:errcheck // best-effort cleanup; a failed Kill is not what this test asserts
 
 	// Poll rather than assert once. exec.Cmd.Start returns when the child has
 	// forked and reported its setup error, which is before execve has necessarily
@@ -316,7 +316,7 @@ func TestIsBloudDevProcess(t *testing.T) {
 	if err := foreign.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	defer foreign.Process.Kill() //nolint:errcheck
+	defer foreign.Process.Kill() //nolint:errcheck // best-effort cleanup; a failed Kill is not what this test asserts
 	if isBloudDevProcess(foreign.Process.Pid) {
 		t.Fatal("a bare sleep was mistaken for a dev loop")
 	}

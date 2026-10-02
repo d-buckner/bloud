@@ -48,6 +48,15 @@ tiers:
       - id: image-pins
         cwd: .
         run: npm run check:image-pins
+      # File length is a ratchet, not a cap. The files already over 500 code
+      # lines are recorded with their current size as a ceiling they may not
+      # exceed, so the check is green today and tightens on its own every time
+      # someone splits a file. Comments and blank lines do not count, so a
+      # documented file is not penalised for its docs. Go tests are exempt, for
+      # the reason already recorded in .golangci.yml for funlen.
+      - id: file-length
+        cwd: .
+        run: npm run check:file-length
       # Prose lint: Markdown docs plus the comments in source files (Vale; rules
       # and vocabulary in .vale.ini + .vale/styles).
       - id: prose-lint

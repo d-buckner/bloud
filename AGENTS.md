@@ -220,7 +220,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check`) |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate + nolintlint, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, file length ratchet, prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check`) |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
@@ -243,6 +243,8 @@ npm run lint:prose                              # Vale: tracked *.md, *.go, *.ts
 npm run check:no-emdash                         # em dashes anywhere in tracked files (covers what Vale cannot read)
 npm run check:docs-links                        # relative links and their #anchors
 npm run check:image-pins                        # every container image names a specific version (see "Image pins" below)
+npm run check:file-length                       # no source file grows past its recorded ceiling (see "File length" below)
+npm run check:file-length:update                # lower the ratchet baseline after a split (it cannot raise one)
 npm run test --workspace=@bloud/host-agent-web    # vitest
 npm run check --workspace=@bloud/host-agent-web   # svelte-check (typecheck)
 cd e2e && npx playwright test                     # browser e2e (see below)
@@ -256,15 +258,17 @@ markdown typo ran three golangci-lint passes, eslint and both test suites.
 
 | Hook | What it runs | Cost |
 |---|---|---|
-| `pre-commit` | license header, gofmt, em dash, prose, doc links, over the **staged files only** | ~1-2s |
+| `pre-commit` | license header, gofmt, em dash, prose, doc links, file length, over the **staged files only** | ~1-2s |
 | `pre-push` | the same hygiene over the **pushed range**, plus Go lint, the host-agent + apps Go tests, eslint and vitest, each triggered only when its area is in the range | ~5-25s |
 
 Both tiers run their checks concurrently (`scripts/checks.mjs`), so the wall
 clock is the slowest check rather than the sum. Scope narrows only where the
-failure lives in the files you touched: `check:docs-links` and
-`check:image-pins` scan the whole tree on purpose, because a relative link is
-broken by the file you *deleted* and an image-pin exception table goes stale
-when an app is removed rather than edited. Both cost 0.2s.
+failure lives in the files you touched: `check:docs-links`, `check:image-pins`
+and `check:file-length` scan the whole tree on purpose, because a relative link
+is broken by the file you *deleted*, an image-pin exception table goes stale
+when an app is removed rather than edited, and the file-length baseline has to
+be reconciled against every governed file or a deleted exempt file leaves a
+stale ceiling behind. All three cost well under a second.
 
 Neither hook is the gate. CI runs the full `./bloud validate --tier fast` plus
 integration and e2e on every push, so `git commit --no-verify` costs you a few
@@ -295,6 +299,26 @@ invisible, and it fails an exception that matches nothing, so the list cannot ro
 The one live exception is the Tailscale sidecar: a pinned Tailscale client drifts
 from its coordination server and its peers, and that failure shows up as broken
 transport rather than as a version mismatch, so it tracks `:stable` on purpose.
+
+File length: no source file may grow past 500 code lines, where a code line is a
+non-blank line that is not entirely a comment (`npm run check:file-length`,
+`scripts/file-length.mjs`). It governs Go, TypeScript, and Svelte; Go tests are
+exempt for the reason already recorded in `.golangci.yml` for `funlen`, and
+Markdown is out because a long spec is not the same problem as a long module.
+
+It is a ratchet, not a cap. The nine files already over 500 are recorded in the
+`BASELINE` block with their current size as a ceiling they may not exceed, so the
+check is green now and gets stricter on its own every time someone splits a file.
+A plain cap would have been red for reasons nobody introduced, which makes it safe
+to ignore. Four things fail: a new file over 500 with no exemption; an exempt file
+grown past its recorded ceiling; a baseline entry for a file that no longer
+exists; and a baseline entry looser than the file it guards, because that leaves
+headroom for the file to grow back. `npm run check:file-length:update` fixes the
+last two and can only ever lower a number or drop an entry. It cannot add one, so
+a new exemption has to be typed into the block by hand and shows up in the diff.
+This is the same shape as the `EXCEPTIONS` table above and the `internal/wire`
+completeness test: the exemption is data, it is reviewed, and an exemption that
+guards nothing is itself a failure.
 
 License headers: every source file starts with a single
 `SPDX-License-Identifier: AGPL-3.0-only` comment line (syntax per language;
