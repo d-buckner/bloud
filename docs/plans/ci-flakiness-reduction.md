@@ -420,6 +420,12 @@ range is the right unit. `TestMergeBaseWithCoversEveryCommitInThePR` pins it.
    from real failures without hiding assertion bugs, at the cost of some wall
    time. The Playwright config currently sets `retries: 0` on purpose; if a
    retry is added, report it, so it cannot quietly become the norm.
+   **Implemented:** the e2e workflows set `BLOUD_E2E_RETRIES=1` and run
+   `e2e/report-retries.mjs` afterwards, which names every spec that only
+   passed on the retry as a warning annotation on the PR. The retry is
+   CI-only: local runs still default to 0 so a flake surfaces while someone
+   is watching. It reports and never fails the build, since a retried pass is
+   the outcome the retry exists to produce.
 3. **A readiness helper per external dependency.** LDAP, the IdP, and each
    app's own health endpoint should each have one wait that every test calls.
    Readiness belongs in one place, not re-derived per test with a different
