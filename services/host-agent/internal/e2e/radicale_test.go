@@ -57,6 +57,23 @@ func davRequest(t *testing.T, method, path, user, pass string) (*http.Response, 
 	return res, string(body)
 }
 
+// TestRadicaleInstallViaAPI is the rung every other test in this file stands
+// on: it puts Radicale through the real install path (intent queue, container
+// creation, PreStart writing the INI and the ldap-secret, PostStart, route
+// generation) and waits for the orchestrator to converge it.
+//
+// It has to be the first test here. TestMain wipes user apps before the suite
+// runs and nothing else in the package installs Radicale, so without this the
+// rest of the file waits on an app that was never installed and each one times
+// out with `last status ""`.
+func TestRadicaleInstallViaAPI(t *testing.T) {
+	postJSON(t, hostAgentURL+"/api/apps/radicale/install", `{}`, http.StatusAccepted)
+	// Radicale is one container with no bundled database, so this is a single
+	// image pull. The budget matches the install rung of the other single-
+	// container apps, which is sized for a cold VM rather than for the app.
+	waitAppRunning(t, "radicale", 10*time.Minute)
+}
+
 // TestRadicaleConfigScopesTheLDAPSearch pins the two settings that decide
 // whether anyone can sign in at all.
 //
