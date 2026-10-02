@@ -20,18 +20,20 @@ curl -fsSL https://raw.githubusercontent.com/d-buckner/bloud/main/install.sh | s
 
 Open the dashboard. Set your host under Settings, then Hosts. Install Jellyfin.
 
-That is the whole setup. The installer fetches the published `.deb` and hands it to `apt`,
-which pulls the real dependency set: Podman 5, `uidmap`, `dbus-user-session`, and the rest.
-The `.deb` does the rest of the provisioning itself: a dedicated unprivileged `bloud` user,
-its subuid ranges, linger, the sysctl that lets a rootless container bind port 80, and the
-user-level host-agent service.
+That's the whole setup. What it does underneath: the installer fetches the published `.deb`
+and hands it to `apt`, which pulls the real dependency set (Podman 5, `uidmap`,
+`dbus-user-session`, and the rest). The `.deb` then provisions the machine itself: a dedicated
+unprivileged `bloud` user with its own subuid ranges, linger enabled, the sysctl that lets a
+rootless container bind port 80, and the user-level host-agent service.
 
 The script is short, and you should read it before piping it to a shell:
 [install.sh](install.sh). To do it by hand instead, grab the `.deb` from
 [the releases page](https://github.com/d-buckner/bloud/releases) and run
 `sudo apt install ./bloud_*.deb`.
 
-**Please don't expose bloud to the public internet**. It's currently in alpha and uses plain HTTP at the moment. There is also no robust security update mechaism for apps or the system itself at this moment.
+**Please don't expose bloud to the public internet yet.** It's alpha, it serves plain HTTP,
+and there is no mechanism yet for getting security updates to apps or to Bloud itself. Keep it
+on your LAN for now.
 
 ## what just happened
 
@@ -47,38 +49,48 @@ When you clicked install:
 6. The loop started again. It runs forever, every few seconds, and does nothing when nothing has
    changed.
 
-Step 6 is the point. The same loop that installed your apps is the loop that brings them back
-after a power cut. There is no recovery code, because a reboot is just a disturbance the loop
-reads and responds to like any other.
+Step 6 is why the design looks the way it does. Installing an app once is a script. Bringing it
+back after a power cut, with nobody watching, is the part that needs an engine. The loop that
+installed Jellyfin is the loop that has to recover Jellyfin, so there is no separate recovery
+path to write; a reboot is just another disturbance it reads and responds to.
 
-## what makes this thing unlike the others?
+## why an engine
 
-Anyone can run `podman run` and get great self-hosted apps up and running. The differentiator is not container installation. It is the **engine**: a reconciliation control loop, built the way Kubernetes controllers are, that reads what each app declares, works out the wiring, and keeps those relationships correct forever.
+Getting a container running isn't the hard part, `podman run` will do that. The hard part is
+everything the container needs from the rest of the system: a route in Traefik, an OIDC client
+or an LDAP binding in Authentik, a database with a password nobody has to copy by hand, and all
+of it still correct a year later.
 
-Two rules make it work:
+Bloud handles that with a **reconciliation loop**, the same shape as a Kubernetes controller.
+Each app declares what it provides and what it consumes, the engine resolves those declarations
+into a graph, works out the wiring, and then keeps checking its work.
 
-- **Single writer.** Only the orchestrator authors lifecycle state or performs side effects.
-  HTTP handlers submit intents and never mutate anything.
-- **Idempotent configurators.** `PreStart` and `PostStart` run on every cycle. PreStart configurator runs before boot and ensures the config files are up-to-date and is a no-op when that's already the case.
+Two rules hold that together:
 
-Generating a config file once is easy. Generating a whole homelab's worth of config files and maintaining them indefinitely is not.
+- **Single writer.** Only the orchestrator writes lifecycle state or performs side effects. HTTP
+  handlers submit intents and never mutate anything themselves.
+- **Idempotent configurators.** `PreStart` and `PostStart` run on every cycle, not just on
+  install. `PreStart` brings the config on disk in line with what the app should have, and does
+  nothing when it already matches.
+
+A template can write one config file once. Nothing but a loop keeps every config file in
+someone's homelab correct through upgrades, crashes, and reboots.
 
 ## the full graph
 
 Every app, the containers each one declares, and the edges that connect them.
 
-The picture is not drawn by a diagramming tool. CI renders it in a headless browser with the
-same components that draw the developer graph inside a running Bloud, fed a snapshot of the
-whole catalog that `./bloud depgraph --json` derives from every app's `metadata.yaml`. Nothing
-in it is installed and nothing is running.
+CI draws this rather than anyone updating it by hand. A headless browser renders it with the
+same components that draw the developer graph inside a running Bloud, fed the catalog snapshot
+that `./bloud depgraph --json` builds from every app's `metadata.yaml`. The catalog is the only
+input, so the picture can be drawn on a machine with nothing installed.
 
 ![The Bloud catalog: every app, the containers it declares, and the integrations between them](docs/assets/dependency-graph.png)
 
 The text form of the same graph is in
 [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md), and that is
-what `--write` refreshes and `--check` gates. The README's prose does not move with the
-catalog: adding an app regenerates the picture, and a merge that touches neither the catalog
-nor the renderer leaves it alone.
+what `--write` refreshes and `--check` gates. Add an app and both of them regenerate; a merge
+that touches neither the catalog nor the renderer leaves both alone.
 
 ```bash
 npm run graph:image   # rebuild the picture locally
@@ -89,12 +101,14 @@ npm run graph:image   # rebuild the picture locally
 
 ## catalog
 
-Small on purpose: a half-supported app is worse than no app in my opinion. Each app
-carries a verified support contract: install, shared login, persistence, reboot, removal.
+The catalog is small on purpose. A half-supported app is worse than no app at all, because it
+looks like an answer right up until the first time you depend on it. Every entry here carries
+the same contract and we verify each one of them: install, shared login, persistence, reboot,
+removal.
 
-The list is generated, not typed: `./bloud catalogdoc --write` derives it from every app's
-`metadata.yaml`, the same source the graph is drawn from, so a new app lands here whether
-anyone remembers to mention it or not.
+`./bloud catalogdoc --write` generates the list below from every app's `metadata.yaml`, the
+same file the graph is drawn from, so a new app shows up here whether or not anyone remembers
+to mention it.
 
 <!-- BEGIN GENERATED CATALOG LIST -->
 <!-- Generated by `./bloud catalogdoc --write` from `apps/*/metadata.yaml`. Do not edit by hand. -->
@@ -117,14 +131,15 @@ anyone remembers to mention it or not.
 Plus the system apps: **Authentik** (security) and **Traefik** (network).
 <!-- END GENERATED CATALOG LIST -->
 
-The media stack is the clearest illustration of what the engine buys you. Sonarr, Radarr,
-Prowlarr, qBittorrent, and Seerr are five separate projects that become useful only once they
-talk to each other. Bloud wires them: each PVR gets qBittorrent as a download client with its
-own category and folder, Prowlarr syncs indexers into both, Seerr becomes the request front end
-and onboards itself to Jellyfin. Without the wiring you have five web UIs and no pipeline.
+The media stack is where this shows up most. Sonarr, Radarr, Prowlarr, qBittorrent, and Seerr
+are five separate projects that only become a pipeline once they're wired to each other, and
+that wiring is the tedious part by hand: add qBittorrent as a download client in each PVR with
+its own category and folder, get the indexers from Prowlarr into both, then connect Seerr to
+Jellyfin and to the PVRs so a request actually lands somewhere. Bloud does all of it from the
+declarations, so five apps is five clicks rather than an afternoon of copy-paste.
 
-Bloud ships no media, no indexers, no trackers, and takes no position on what you point it at.
-It is built for things you have the right to use.
+We ship no media, no indexers, and no trackers, and Bloud has no view on what you point it at.
+It's built for things you have the right to use.
 
 ## one login
 
@@ -138,15 +153,17 @@ It is built for things you have the right to use.
 | **App-local accounts** | Seerr |
 <!-- END GENERATED LOGIN TABLE -->
 
-Native-protocol clients, a Subsonic player or a TV app talking to Jellyfin, keep their own
-documented login path. Bloud does not break the client you already like.
+Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep
+the login path their protocol defines. Bloud fronts the web UIs and stays out of the way of
+those.
 
 ## what is not done yet
 
-Alpha, and specific.
+Alpha in specific ways, so you know which gaps you're signing up for.
 
-- **No TLS.** Plain HTTP only. Let's Encrypt on Traefik, or Tailscale Serve, is the planned
-  follow-up. Fine on your LAN if you accept it; not acceptable off-LAN. Biggest gap.
+- **No TLS.** Plain HTTP only, and this is the biggest gap. Let's Encrypt on Traefik, or
+  Tailscale Serve, is the planned follow-up. Fine on your LAN if you accept it; not acceptable
+  off-LAN.
 - **Sharing in progress.** Core sharing works. Tailnet outpost auth is still in development.
 - **No `bloud init`.** First-run host config happens in the dashboard.
 - **Debian 13 only.** A support contract has to be true somewhere before it spreads.
@@ -185,8 +202,8 @@ reports, not what our config values happen to be.
 
 While the high level technical design and architecture are done by me personally, much of the
 low level implementation is done by LLM. For me, this is done with local models hosted on my
-own hardware (qwen3.8-flash-next at the time of writing). If this does not align with the values you want your software to have, I
-understand and this project may not be for you.
+own hardware (qwen3.8-flash-next at the time of writing). If this does not align with the values
+you want your software to have, I understand and this project may not be for you.
 
 ## further reading
 
