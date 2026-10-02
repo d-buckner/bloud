@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: radicale
+displayName: Radicale
+description: CalDAV and CardDAV server for calendars, contacts, and to-do lists
+category: productivity
+port: 5232
+estimatedSizeMB: 150
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# Radicale speaks CalDAV and CardDAV to desktop, mobile, and terminal clients
+# that authenticate with a username and password on every request. None of them
+# can follow a browser redirect to a login page, so the SSO strategy is `ldap`:
+# the app verifies the Bloud password against the Authentik LDAP outpost, the
+# same way Jellyfin does. `forward-auth` would put a 302 in front of every
+# calendar sync and break it.
+#
+# Radicale reads no environment variables for its settings, so everything below
+# lives in the INI file the configurator writes into <appDataDir>/config and the
+# container is pointed at with `--config`.
+sso:
+  strategy: ldap
+
+containers:
+  - name: apps-radicale
+    # The upstream image is built with the bcrypt, argon2, and ldap extras
+    # (see .github/workflows/docker-publish.yml in Kozea/Radicale), which is
+    # what puts ldap3 in the venv this app's auth backend imports.
+    image: ghcr.io/kozea/radicale:3.8.1
+    network: apps-net
+    restartPolicy: always
+    # Replaces the image's default `--hosts 0.0.0.0:5232,...`, so the bind
+    # address now comes from [server] hosts in the generated config.
+    command:
+      - --config
+      - /config/config
+    ports:
+      - host: 5232
+        container: 5232
+    volumes:
+      # The storage tree. The image runs as its own `radicale` uid, so this is
+      # the one mount the container writes as a non-host user; the configurator
+      # widens it and owns the layout.
+      - source: "{{appDataDir}}/collections"
+        destination: /var/lib/radicale/collections
+      # Generated config + LDAP reader secret, read-only: the app never writes
+      # back into its own configuration.
+      - source: "{{appDataDir}}/config"
+        destination: /config
+        options: [ro]
+    healthCheck:
+      # GET / answers 302 to the built-in web UI once the server is listening.
+      # `-f` treats 3xx as success, so this goes green on a serving process and
+      # not on anything about authentication.
+      test: ["CMD-SHELL", "curl -sf -o /dev/null http://localhost:5232/ || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 12

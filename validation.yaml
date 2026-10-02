@@ -123,6 +123,17 @@ apps:
       - apps/jellyfin/**
     e2e-project: jellyfin
 
+  # Radicale authenticates over LDAP for the same reason jellyfin does: CalDAV
+  # and CardDAV clients cannot follow a browser SSO redirect, so the app has
+  # to verify the password the client sends. The regression gate is the DAV
+  # round trip itself, not a page.
+  radicale:
+    auth: ldap
+    validation-level: full
+    files:
+      - apps/radicale/**
+    e2e-project: radicale
+
   navidrome:
     auth: forward-auth
     validation-level: full

@@ -96,6 +96,10 @@ flowchart TD
         c_radarr["radarr"]
     end
 
+    subgraph app_radicale["Radicale"]
+        c_radicale["radicale"]
+    end
+
     subgraph app_seerr["Seerr"]
         c_seerr["seerr"]
     end
@@ -126,6 +130,7 @@ flowchart TD
     app_qbittorrent -->|forward-auth| app_authentik
     app_radarr -->|forward-auth| app_authentik
     app_radarr -->|downloadClient| app_qbittorrent
+    app_radicale -->|ldap| app_authentik
     app_seerr -->|mediaServer| app_jellyfin
     app_seerr -->|pvr| app_sonarr
     app_sonarr -->|forward-auth| app_authentik
@@ -141,6 +146,7 @@ flowchart TD
     app_traefik -->|proxy| app_prowlarr
     app_traefik -->|proxy| app_qbittorrent
     app_traefik -->|proxy| app_radarr
+    app_traefik -->|proxy| app_radicale
     app_traefik -->|proxy| app_seerr
     app_traefik -->|proxy| app_sonarr
     app_traefik -->|proxy| app_vaultwarden

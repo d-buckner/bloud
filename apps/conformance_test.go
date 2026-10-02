@@ -26,6 +26,11 @@ type appSpec struct {
 	// output. Apps whose PreStart requires OIDC need this to reach the code
 	// path that writes their config.
 	WithSSO bool
+	// WithLDAP says to hand the configurator a populated LDAP provider output.
+	// Apps whose config is LDAP-backed (Radicale) need it to reach the path
+	// that renders their real config rather than the locked-down no-provider
+	// fallback the same code produces.
+	WithLDAP bool
 	// Preseed runs against a fresh data dir before each pass.
 	Preseed func(dataDir string) error
 }
@@ -44,6 +49,7 @@ var conformanceTable = []appSpec{
 	{Dir: "prowlarr", Node: "apps-prowlarr", DefaultPort: 9696},
 	{Dir: "qbittorrent", Node: "apps-qbittorrent", DefaultPort: 8081},
 	{Dir: "radarr", Node: "apps-radarr", DefaultPort: 7878},
+	{Dir: "radicale", Node: "apps-radicale", DefaultPort: 5232, WithSSO: true, WithLDAP: true},
 	{Dir: "seerr", Node: "apps-seerr", DefaultPort: 5055},
 	{Dir: "sonarr", Node: "apps-sonarr", DefaultPort: 8989},
 	{Dir: "vaultwarden", Node: "apps-vaultwarden", DefaultPort: 8222, WithSSO: true},
@@ -89,7 +95,7 @@ func TestConformance(t *testing.T) {
 				Node:        spec.Node,
 				Metadata:    md,
 				DefaultPort: spec.DefaultPort,
-				State:       stateFor(spec.WithSSO),
+				State:       stateFor(spec.WithSSO, spec.WithLDAP),
 				Preseed:     spec.Preseed,
 			}
 			configtest.Run(t, tc)
@@ -100,7 +106,7 @@ func TestConformance(t *testing.T) {
 // stateFor builds the AppState the harness passes to PreStart. With SSO off
 // the configurator sees no provider, which is the shape it handles when
 // Authentik is not installed.
-func stateFor(withSSO bool) func(dataDir, bloudDataDir string) *configurator.AppState {
+func stateFor(withSSO, withLDAP bool) func(dataDir, bloudDataDir string) *configurator.AppState {
 	return func(dataDir, bloudDataDir string) *configurator.AppState {
 		st := &configurator.AppState{
 			DataPath:      dataDir,
@@ -113,6 +119,16 @@ func stateFor(withSSO bool) func(dataDir, bloudDataDir string) *configurator.App
 				ClientSecret: "conformance-secret",
 				IssuerURL:    "http://sso.localhost:8080/application/o/app/",
 				RedirectURI:  "http://app.localhost:8080/mCallback",
+			}
+		}
+		if withLDAP {
+			st.SSOEnabled = true
+			st.LDAP = &configurator.LDAPOutput{
+				Host:         "apps-authentik-ldap",
+				Port:         3389,
+				BaseDN:       "dc=ldap,dc=goauthentik,dc=io",
+				BindUser:     "cn=ldap-service,ou=users,dc=ldap,dc=goauthentik,dc=io",
+				BindPassword: "conformance-ldap-reader-secret",
 			}
 		}
 		return st

@@ -31,6 +31,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/prowlarr"
 	_ "codeberg.org/d-buckner/bloud/apps/qbittorrent"
 	_ "codeberg.org/d-buckner/bloud/apps/radarr"
+	_ "codeberg.org/d-buckner/bloud/apps/radicale"
 	_ "codeberg.org/d-buckner/bloud/apps/seerr"
 	_ "codeberg.org/d-buckner/bloud/apps/sonarr"
 	_ "codeberg.org/d-buckner/bloud/apps/vaultwarden"
@@ -58,6 +59,7 @@ func NodeNames() []string {
 		"apps-prowlarr",
 		"apps-qbittorrent",
 		"apps-radarr",
+		"apps-radicale",
 		"apps-seerr",
 		"apps-sonarr",
 		"apps-vaultwarden",
