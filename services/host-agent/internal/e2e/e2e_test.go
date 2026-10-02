@@ -289,12 +289,42 @@ func appStatus(t *testing.T, catalogID string) string {
 	return ""
 }
 
-// waitAppRunning polls until the app reaches "running" status.
+// appUsesLDAP reports whether the catalog app authenticates over LDAP. The
+// metadata is the single source of truth, so the readiness barrier below
+// follows the app's declared strategy rather than a hardcoded list of app
+// names.
+func appUsesLDAP(t *testing.T, catalogID string) bool {
+	t.Helper()
+	resp := agentGet(t, fmt.Sprintf("%s/api/apps/%s/metadata", hostAgentURL, catalogID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var app struct {
+		SSO struct {
+			Strategy string `json:"strategy"`
+		} `json:"sso"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&app); err != nil {
+		return false
+	}
+	return app.SSO.Strategy == "ldap"
+}
+
+// waitAppRunning polls until the app reaches "running" status. For an app that
+// authenticates over LDAP it then waits for the outpost to accept a bind:
+// every app install re-provisions Authentik and can restart the outpost, and
+// the app's own containers can be up while the directory is still coming back.
+// That window is a readiness gap, not an app failure, so the framework absorbs
+// it here rather than turning it into a 401 or 500 in whichever test runs next.
 func waitAppRunning(t *testing.T, catalogID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if appStatus(t, catalogID) == "running" {
+			if appUsesLDAP(t, catalogID) {
+				waitLDAPReady(t, 3*time.Minute)
+			}
 			return
 		}
 		time.Sleep(3 * time.Second)

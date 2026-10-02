@@ -3,8 +3,10 @@
 # Reusable: resolves the Playwright projects a push actually needs. A markdown
 # change runs nothing; a change confined to apps/<name>/ runs only that app's
 # project; anything else (the framework, shared system apps) runs every
-# project. The selection logic lives in validation.yaml + cli/e2e_affected.go
-# and is exposed as `./bloud e2e affected`; this workflow is a thin wrapper.
+# project. On a pull request the change set is the whole PR (every commit since
+# the branch diverged), not just the latest push. The selection logic lives in
+# validation.yaml + cli/e2e_affected.go and is exposed as
+# `./bloud e2e affected`; this workflow is a thin wrapper.
 name: E2E affected
 
 on:
@@ -23,7 +25,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # The diff base (the previous branch tip) must be present.
+          # Full history so `git merge-base origin/main HEAD` can resolve the
+          # PR's diff base.
           fetch-depth: 0
 
       - name: Set up Go
@@ -39,10 +42,16 @@ jobs:
         id: detect
         env:
           BEFORE: ${{ github.event.before }}
+          REF: ${{ github.ref }}
         run: |
-          # `before` is empty on workflow_dispatch and all-zero on a first
-          # push of a branch; with no diff base, run every app.
-          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+          # On a pull request branch the change set is the whole PR, so diff
+          # from the merge base with the default branch. The old `--since
+          # $BEFORE` saw only the latest push, so an app changed earlier in the
+          # PR was skipped. On the default branch, diff from the previous tip.
+          # With no base at all (workflow_dispatch on main), run every app.
+          if [ "$REF" != "refs/heads/main" ]; then
+            apps=$(./bloud e2e affected --base origin/main --json)
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
             apps=$(./bloud e2e affected --since "$BEFORE" --json)
           else
             apps=$(./bloud e2e affected --json)

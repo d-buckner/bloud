@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"codeberg.org/d-buckner/bloud/cli/backend"
 	"codeberg.org/d-buckner/bloud/cli/executor"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +23,7 @@ type validateFlags struct {
 	explain bool
 	dryRun  bool
 	since   string
+	verbose bool
 }
 
 func cmdValidate(args []string) int {
@@ -76,7 +79,12 @@ func parseValidateFlags(args []string) validateFlags {
 				i++
 				f.since = args[i]
 			}
+		case "--verbose", "-v":
+			f.verbose = true
 		}
+	}
+	if os.Getenv("BLOUD_VALIDATE_VERBOSE") == "1" {
+		f.verbose = true
 	}
 	return f
 }
@@ -353,25 +361,136 @@ func integrationWaitForAgent(ctx context.Context, ex executor.Executor) error {
 	return fmt.Errorf("validation host-agent did not become healthy")
 }
 
+// ranCommand is one executed fast-tier command and everything the console
+// needs to report it: the captured output, how long it took, and whether it
+// failed. The output is captured rather than streamed because both `go test`
+// and the generators write freely to stdout, including deliberate error-path
+// text from tests that pass. Streaming it buries the verdict; the captured log
+// keeps the evidence, and only a failing command's output reaches the console.
+type ranCommand struct {
+	cmd      manifestCommand
+	output   string
+	duration time.Duration
+	exitCode int
+	failed   bool
+}
+
 func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
 	exitCode := 0
+	var ran []ranCommand
+
+	if !flags.json {
+		fmt.Printf("  %s\n", strings.Repeat("-", 60))
+	}
+
 	for _, cmd := range commands {
 		if flags.explain && !flags.json {
 			fmt.Printf("    %s→%s %s: %s\n", colorCyan, colorReset, cmd.ID, cmd.Run)
 		}
-		cr := runManifestCommand(root, cmd, flags)
-		result.Commands = append(result.Commands, cr)
-		if cr.Status == "fail" {
+		r := runManifestCommand(root, cmd, flags)
+		ran = append(ran, r)
+		result.Commands = append(result.Commands, r.result())
+		if r.failed {
 			exitCode = 1
 		}
+	}
+
+	logPath := writeValidateLog(root, result.Tier, ran)
+
+	if !flags.json {
+		printValidateSummary(result.Tier, ran, logPath)
 	}
 	return exitCode
 }
 
+// printValidateSummary is the signal the tier owes the reader: did it pass or
+// fail, how long it took, and, when it failed, the output of only the failing
+// commands. The per-command verdicts were already printed as they ran.
+func printValidateSummary(tier string, ran []ranCommand, logPath string) {
+	var failed []ranCommand
+	var total time.Duration
+	for _, r := range ran {
+		total += r.duration
+		if r.failed {
+			failed = append(failed, r)
+		}
+	}
+
+	for _, r := range failed {
+		fmt.Printf("\n%s=== %s failed (exit %d, %s) ===%s\n%s\n",
+			colorRed, r.cmd.ID, r.exitCode, r.duration.Round(time.Millisecond), colorReset,
+			indentOutput(r.output))
+	}
+
+	fmt.Printf("  %s\n", strings.Repeat("-", 60))
+	if len(failed) == 0 {
+		fmt.Printf("validate: %s tier passed, %d/%d checks in %s\n",
+			tier, len(ran), len(ran), total.Round(time.Millisecond))
+	} else {
+		names := make([]string, 0, len(failed))
+		for _, r := range failed {
+			names = append(names, r.cmd.ID)
+		}
+		fmt.Printf("validate: %s tier failed, %d/%d checks in %s; failed: %s\n",
+			tier, len(ran)-len(failed), len(ran), total.Round(time.Millisecond), strings.Join(names, ", "))
+	}
+	if logPath != "" {
+		fmt.Printf("full output: %s\n", logPath)
+	}
+}
+
+// indentOutput prefixes every line so the dumped failure output is visually
+// scoped to the check that produced it.
+func indentOutput(out string) string {
+	out = strings.TrimRight(out, "\n")
+	if out == "" {
+		return "    (no output)"
+	}
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		lines[i] = "    " + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// writeValidateLog mirrors every command's full output to .bloud/logs so the
+// console can stay quiet without losing evidence. Best effort: a read-only
+// checkout must not fail the tier.
+func writeValidateLog(root, tier string, ran []ranCommand) string {
+	dir := filepath.Join(root, ".bloud", "logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	path := filepath.Join(dir, "validate-"+tier+".log")
+	var b strings.Builder
+	fmt.Fprintf(&b, "validate %s tier, %s\n", tier, time.Now().UTC().Format(time.RFC3339))
+	for _, r := range ran {
+		status := "PASS"
+		if r.failed {
+			status = "FAIL"
+		}
+		fmt.Fprintf(&b, "\n===== [%s] %s (cd %s && %s) %s =====\n%s\n",
+			status, r.cmd.ID, r.cmd.Cwd, r.cmd.Run, r.duration.Round(time.Millisecond), r.output)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return ""
+	}
+	if rel, err := filepath.Rel(root, path); err == nil {
+		return rel
+	}
+	return path
+}
+
 // runManifestCommand runs one validation command, prints its result line, and
-// returns the ledger row. An empty command string is a manifest error rather
-// than a spawn failure, so it is recorded without starting a process.
-func runManifestCommand(root string, cmd manifestCommand, flags validateFlags) CommandResult {
+// returns everything the log and the summary need. The output is captured
+// rather than streamed: `go test` and the generators write freely to stdout,
+// including deliberate error-path text from tests that pass, and streaming it
+// buries the verdict. --verbose streams it live and still logs it; a failing
+// command's output is dumped by printValidateSummary.
+//
+// An empty command string is a manifest error rather than a spawn failure, so
+// it is recorded without starting a process.
+func runManifestCommand(root string, cmd manifestCommand, flags validateFlags) ranCommand {
 	cwd := root
 	if cmd.Cwd != "." {
 		cwd = filepath.Join(root, cmd.Cwd)
@@ -380,38 +499,50 @@ func runManifestCommand(root string, cmd manifestCommand, flags validateFlags) C
 	parts := splitShellWords(cmd.Run)
 	if len(parts) == 0 {
 		reportCommand(flags, cmd.ID, "fail", 0, "(empty command)")
-		return CommandResult{ID: cmd.ID, Cwd: cmd.Cwd, Command: cmd.Run, Status: "fail", ExitCode: 1}
+		return ranCommand{cmd: cmd, output: "empty command\n", exitCode: 1, failed: true}
 	}
 
+	var buf bytes.Buffer
 	c := exec.Command(parts[0], parts[1:]...)
 	c.Dir = cwd
-	if !flags.json {
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	switch {
+	case flags.json:
+		// JSON mode owns stdout: the command's output is not part of the
+		// payload, so send it to /dev/null rather than the console.
+		c.Stdout = nil
+		c.Stderr = nil
+	case flags.verbose:
+		// Stream it live and keep a copy for the log.
+		w := io.MultiWriter(os.Stdout, &buf)
+		c.Stdout = w
+		c.Stderr = w
+	default:
+		// Quiet by default: capture, and surface it only if the command
+		// fails (or in the log file).
+		c.Stdout = &buf
+		c.Stderr = &buf
 	}
 
 	start := time.Now()
 	err := c.Run()
 	dur := time.Since(start)
 
-	status, code := "pass", 0
-	if err != nil {
-		status = "fail"
-		code = 1
+	exitCode := 0
+	failed := err != nil
+	if failed {
+		exitCode = 1
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
+			exitCode = exitErr.ExitCode()
 		}
 	}
 
-	reportCommand(flags, cmd.ID, status, dur.Milliseconds(), "")
-	return CommandResult{
-		ID:         cmd.ID,
-		Cwd:        cmd.Cwd,
-		Command:    cmd.Run,
-		Status:     status,
-		DurationMs: dur.Milliseconds(),
-		ExitCode:   code,
+	status := "pass"
+	if failed {
+		status = "fail"
 	}
+	reportCommand(flags, cmd.ID, status, dur.Milliseconds(), "")
+	return ranCommand{cmd: cmd, output: buf.String(), duration: dur, exitCode: exitCode, failed: failed}
 }
 
 // reportCommand prints the one-line console result for a validation command.
@@ -426,10 +557,26 @@ func reportCommand(flags validateFlags, id, status string, ms int64, note string
 		icon = colorRed + "✗" + colorReset
 	}
 	if note != "" {
-		fmt.Printf("%s %s %s\n", icon, id, note)
+		fmt.Printf("  %s %s %s\n", icon, id, note)
 		return
 	}
-	fmt.Printf("%s %s (%dms)\n", icon, id, ms)
+	fmt.Printf("  %s %-24s %6.1fs\n", icon, id, float64(ms)/1000)
+}
+
+// result is the ledger row for a finished command.
+func (r ranCommand) result() CommandResult {
+	status := "pass"
+	if r.failed {
+		status = "fail"
+	}
+	return CommandResult{
+		ID:         r.cmd.ID,
+		Cwd:        r.cmd.Cwd,
+		Command:    r.cmd.Run,
+		Status:     status,
+		DurationMs: r.duration.Milliseconds(),
+		ExitCode:   r.exitCode,
+	}
 }
 
 func printDryRun(tier string, commands []manifestCommand, riskAreas []string, changedFiles []string, flags validateFlags) {

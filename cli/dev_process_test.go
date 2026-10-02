@@ -49,7 +49,7 @@ func startTree(t *testing.T, dir string) (*restartableCmd, int) {
 	if _, err := c.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if err := waitForFile(pidPath, 5*time.Second); err != nil {
+	if err := waitForFile(pidPath, 30*time.Second); err != nil {
 		t.Fatalf("grandchild never reported its pid: %v", err)
 	}
 	raw, err := os.ReadFile(pidPath)
@@ -60,7 +60,7 @@ func startTree(t *testing.T, dir string) (*restartableCmd, int) {
 	if err != nil {
 		t.Fatalf("parse pid %q: %v", raw, err)
 	}
-	waitUntil(t, 5*time.Second, fmt.Sprintf("the grandchild (pid %d) holds %s", pid, lockPath), func() bool {
+	waitUntil(t, 30*time.Second, fmt.Sprintf("the grandchild (pid %d) holds %s", pid, lockPath), func() bool {
 		return lockHeld(lockPath)
 	})
 	return c, pid
@@ -189,7 +189,10 @@ func processAlive(pid int) bool {
 
 func waitProcessGone(t *testing.T, pid int) {
 	t.Helper()
-	waitUntil(t, 5*time.Second, fmt.Sprintf("pid %d is gone", pid), func() bool {
+	// A generous budget on purpose: this is a poll, so a genuinely leaked
+	// process still fails the test, and only the report is slower. A tight
+	// budget turned a loaded CI runner into a flake.
+	waitUntil(t, 30*time.Second, fmt.Sprintf("pid %d is gone", pid), func() bool {
 		return !processAlive(pid)
 	})
 }

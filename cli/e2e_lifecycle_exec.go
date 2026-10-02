@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"codeberg.org/d-buckner/bloud/cli/backend"
 	"context"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // checkPrerequisites verifies the remote host (HOME, preflight script),
@@ -92,6 +94,29 @@ func (r *lifecycle) localRun(dir string, env []string, name string, args ...stri
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s failed: %w", name, err)
 	}
+	return nil
+}
+
+// localRunQuiet runs a local command with its output captured. On success it
+// prints one result line; on failure it returns the captured output so the
+// caller reports it once. A build tool is loud by design (the frontend build
+// lists every emitted chunk, about 120 lines) and an app matrix runs it once
+// per leg, so streaming it buries the test result that the job exists to
+// produce. The quiet console keeps the verdict; --verbose is not needed here
+// because a failure always carries its own output.
+func (r *lifecycle) localRunQuiet(label, dir string, env []string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	start := time.Now()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s failed: %w\n%s", label, err, strings.TrimSpace(out.String()))
+	}
+	fmt.Printf("  %s✓%s %s (%.1fs)\n", colorGreen, colorReset, label, time.Since(start).Seconds())
 	return nil
 }
 

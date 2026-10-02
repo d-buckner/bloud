@@ -225,7 +225,10 @@ pruned to the newest 20).
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
 Flags: `--tier fast|changed|integration`, `--app <name>`, `--dry-run`, `--explain`,
-`--json`, `--since <ref>`.
+`--json`, `--since <ref>`, `--verbose` / `-v` (stream each command's raw output;
+`BLOUD_VALIDATE_VERBOSE=1` does the same). The console is quiet by default: one
+line per command plus a pass/fail summary, with the full per-command output
+dumped only for failures and mirrored to `.bloud/logs/validate-<tier>.log`.
 
 Run individual suites directly (from the repo root unless noted):
 
@@ -389,8 +392,11 @@ cache, so `go run gotest.tools/gotestsum` works offline.
 - CI sizes the e2e runs to the change. The reusable
   `.github/workflows/e2e-affected.yml` runs `./bloud e2e affected`, whose logic
   reuses the `apps:` file globs and `e2e-project` in `validation.yaml`: an
-  `apps/<name>/`-only push runs just that app's spec, a markdown-only push runs
-  none, and any other change runs every app (and the Jellyfin lifecycle run).
+  `apps/<name>/`-only change runs just that app's spec, a markdown-only change
+  runs none, and any other change runs every app (and the Jellyfin lifecycle
+  run). On a pull request the change set is the whole PR (`--base origin/main`,
+  diffed from the merge base), not just the latest push; on `main` it is the
+  pushed range (`--since`).
 
 ## `./bloud` CLI reference
 
