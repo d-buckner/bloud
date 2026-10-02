@@ -130,7 +130,11 @@ If your app has no integrations: `integrations: {}`.
 Template variables available in `containers[].environment` and
 `containers[].volumes`:
 
-- `{{appDataDir}}`: your app's own data directory, kept private to it
+- `{{appDataDir}}`: your app's own data directory, kept private to it.
+  Resolves to `$BLOUD_DATA_DIR/apps/<app>`, so everything your app writes
+  lands under one path an operator can back up without dragging the shared
+  media trees along. Subdirectories under it (`config`, `data`, `postgres`,
+  ...) are yours to name; nothing enforces them.
 - `{{dataDir}}`: the shared Bloud data directory (for things like media libraries)
 - `{{postgresPassword}}`: a per-app PostgreSQL password, generated and
   stored by the host for apps that bundle their own postgres container

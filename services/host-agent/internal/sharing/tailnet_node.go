@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	container "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 )
 
 // TailscaleImage is the pinned Tailscale container image used for tailnet nodes
@@ -95,8 +96,9 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 // proxies to Traefik, and the state directory that lets the node keep its own
 // identity across restarts.
 func (m *TailnetNodeManager) writeNodeFiles(appName string) (configDir, stateDir string, err error) {
-	configDir = filepath.Join(m.dataDir, appName, "ts-serve")
-	stateDir = filepath.Join(m.dataDir, appName, "ts-state")
+	appDir := dirs.AppDataDir(m.dataDir, appName)
+	configDir = filepath.Join(appDir, "ts-serve")
+	stateDir = filepath.Join(appDir, "ts-state")
 
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return "", "", fmt.Errorf("create serve config dir: %w", err)
@@ -184,7 +186,7 @@ func (m *TailnetNodeManager) Stop(ctx context.Context, appName string) error {
 // Call this when the tailnet connection is deleted so a future connection starts fresh.
 func (m *TailnetNodeManager) StopAndPurge(ctx context.Context, appName string) error {
 	_ = m.Stop(ctx, appName)
-	stateDir := filepath.Join(m.dataDir, appName, "ts-state")
+	stateDir := filepath.Join(dirs.AppDataDir(m.dataDir, appName), "ts-state")
 	if err := os.RemoveAll(stateDir); err != nil {
 		return fmt.Errorf("purge tailnet node state for %s: %w", appName, err)
 	}

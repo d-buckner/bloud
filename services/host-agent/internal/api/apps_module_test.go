@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -572,7 +573,7 @@ func TestAppsModule_ClearData_OrphanUsesDataDirNotCatalog(t *testing.T) {
 	dataDir := t.TempDir()
 	catalogDir := t.TempDir()
 
-	orphan := filepath.Join(dataDir, "jellyfin")
+	orphan := dirs.AppDataDir(dataDir, "jellyfin")
 	require.NoError(t, os.MkdirAll(orphan, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(orphan, "leftover.db"), []byte("x"), 0o600))
 

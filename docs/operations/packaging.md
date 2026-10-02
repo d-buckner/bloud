@@ -150,7 +150,7 @@ Two layers, one for the rendered control file and one for the real archive:
 | `/usr/share/bloud/apps` | app catalog (`metadata.yaml` plus icons) |
 | `/usr/lib/systemd/user/bloud-host-agent.service` | user service unit |
 | `/etc/sysctl.d/99-bloud-unprivileged-ports.conf` | lets the rootless Traefik container bind port 80 |
-| `/var/lib/bloud` | runtime data: SQLite database, `secrets.json`, Traefik dynamic config |
+| `/var/lib/bloud` | runtime data: SQLite database, `secrets.json`, Traefik dynamic config, and `apps/` (every app's private tree) |
 
 ## Service model
 

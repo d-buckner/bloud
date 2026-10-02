@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -235,7 +236,7 @@ func (m *appsModule) ClearData(name string) (*IntentRef, error) {
 	// Orphaned data: remove the app's private data directory directly. This
 	// is the writable tree under BLOUD_DATA_DIR, never the catalog.
 	if m.dataDir != "" {
-		appDataDir := filepath.Join(m.dataDir, name)
+		appDataDir := dirs.AppDataDir(m.dataDir, name)
 		if _, err := os.Stat(appDataDir); err == nil {
 			if err := os.RemoveAll(appDataDir); err != nil {
 				m.logger.Error("failed to remove orphaned data dir", "app", name, "error", err)

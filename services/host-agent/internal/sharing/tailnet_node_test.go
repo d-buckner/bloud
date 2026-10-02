@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	container "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,7 +108,7 @@ func TestEnsureRunning_WritesServeConfigJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read and verify the serve config file
-	configPath := filepath.Join(dataDir, "jellyfin", "ts-serve", "serve.json")
+	configPath := filepath.Join(dirs.AppDataDir(dataDir, "jellyfin"), "ts-serve", "serve.json")
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 

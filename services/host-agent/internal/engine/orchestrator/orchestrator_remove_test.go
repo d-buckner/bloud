@@ -14,6 +14,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 )
 
@@ -67,7 +68,7 @@ func TestRemoveMultiContainerApp_ClearData_RemovesDataAfterContainers(t *testing
 	registry.On("Get", pgName).Return(nil)
 
 	// The app data volume, with content.
-	pgData := filepath.Join(dataDir, "affine", "postgres")
+	pgData := filepath.Join(dirs.AppDataDir(dataDir, "affine"), "postgres")
 	require.NoError(t, os.MkdirAll(pgData, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(pgData, "PG_VERSION"), []byte("16"), 0o600))
 
@@ -88,9 +89,9 @@ func TestRemoveMultiContainerApp_ClearData_RemovesDataAfterContainers(t *testing
 
 	require.Equal(t, []string{
 		"remove-container",
-		"remove-host-path:" + filepath.Join(dataDir, "affine"),
+		"remove-host-path:" + dirs.AppDataDir(dataDir, "affine"),
 	}, spy.events, "the data directory is removed only after its containers are gone")
-	_, err := os.Stat(filepath.Join(dataDir, "affine"))
+	_, err := os.Stat(dirs.AppDataDir(dataDir, "affine"))
 	assert.True(t, os.IsNotExist(err), "app data directory should be fully removed")
 	mockRuntime.AssertExpectations(t)
 }
@@ -106,7 +107,7 @@ func TestRemoveMultiContainerApp_ClearData_FallsBackToHostRemoval(t *testing.T) 
 	require.NoError(t, orch.graph.AddNode(pgName))
 	registry.On("Get", pgName).Return(nil)
 
-	appData := filepath.Join(dataDir, "affine")
+	appData := dirs.AppDataDir(dataDir, "affine")
 	require.NoError(t, os.MkdirAll(appData, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(appData, "config.json"), []byte("{}"), 0o600))
 
@@ -131,7 +132,7 @@ func TestRemoveMultiContainerApp_KeepData_HoldsDirectory(t *testing.T) {
 	require.NoError(t, orch.graph.AddNode(pgName))
 	registry.On("Get", pgName).Return(nil)
 
-	appData := filepath.Join(dataDir, "affine")
+	appData := dirs.AppDataDir(dataDir, "affine")
 	require.NoError(t, os.MkdirAll(appData, 0o755))
 
 	mockRuntime.On("Remove", mock.Anything, pgName).Return(nil)
@@ -175,7 +176,7 @@ func TestRemoveMultiContainerApp_ClearData_IgnoresForeignVolumes(t *testing.T) {
 
 	_, err := os.Stat(mediaDir)
 	assert.NoError(t, err, "foreign volume must not be deleted")
-	assert.Equal(t, []string{"remove-host-path:" + filepath.Join(dataDir, "myapp")}, spy.events,
+	assert.Equal(t, []string{"remove-host-path:" + dirs.AppDataDir(dataDir, "myapp")}, spy.events,
 		"only the app data directory is handed to the runtime")
 	mockRuntime.AssertExpectations(t)
 }
