@@ -17,6 +17,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/config"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/db"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
@@ -24,6 +25,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/wire"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
@@ -53,15 +55,141 @@ func main() {
 }
 
 func runServer() {
-	// Setup structured logging
+	logger := setupLogging()
+	logger.Info("starting Bloud host agent")
+
+	stack := buildAgentStack(logger)
+	defer func() { _ = stack.database.Close() }()
+
+	fastGated := stack.applyDevFastGate()
+
+	// The intent loop runs under its own cancellable context so the shutdown
+	// path stops it deliberately instead of letting it outlive the process.
+	orchCtx, stopOrchestrator := context.WithCancel(context.Background())
+	defer stopOrchestrator()
+	go stack.orch.Start(orchCtx)
+
+	server := api.NewServer(stack.database, stack.serverCfg, logger)
+	startAgentListener(server, logger)
+
+	// The listener is open and the intent loop is running; now wait for the
+	// first convergence pass to say the system is usable.
+	if fastGated {
+		watchConvergenceBehindFastGate(server, logger)
+	} else {
+		waitForSystemConvergence(server, logger)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	startBackgroundCollectors(ctx, stack.database, logger)
+
+	<-ctx.Done()
+	logger.Info("shutdown signal received")
+	shutdownAgentServer(server, logger)
+}
+
+// agentStack is everything startup builds once. The same store pointers go to
+// both the orchestrator and the API: the catalog refresh endpoint has to
+// refresh the cache the orchestrator reads, and app-status writes have to fire
+// the change hook the SSE stream listens to.
+type agentStack struct {
+	cfg        *config.Config
+	database   *sql.DB
+	client     *podman.Client
+	runtime    containerruntime.Runtime
+	hosts      *hostset.State
+	settings   *store.SettingsStore
+	vars       *configurator.TemplateVars
+	registry   *configurator.Registry
+	eventsBus  *eventbus.Bus
+	app        *store.AppStore
+	catalog    *catalog.MemoryCache
+	tailnet    *store.TailnetStore
+	remoteApp  *store.RemoteAppStore
+	authClient *authentik.Client
+	authRef    *api.AuthRef
+	orch       *orchestrator.Orchestrator
+	serverCfg  api.ServerConfig
+}
+
+// buildAgentStack brings up every long-lived piece of the agent: config,
+// database, container runtime, host state, configurator registry, stores, the
+// auth handle, and the orchestrator.
+func buildAgentStack(logger *slog.Logger) *agentStack {
+	st := &agentStack{
+		cfg:       loadAgentConfig(logger),
+		eventsBus: eventbus.New(),
+	}
+	st.database = openAgentDatabase(st.cfg, logger)
+
+	// Podman client and runtime: the client is shared by the runtime, the
+	// configurator deps, and the warm-stack check the dev fast gate runs.
+	st.client = newAgentPodmanClient(logger)
+	st.runtime = containerruntime.NewPodmanRuntime(st.client)
+
+	// Host state: the effective set of hostnames (built-ins + admin custom
+	// hosts from the database, with legacy env fallbacks). Shared between the
+	// configurators, the orchestrator, and the API so UI host changes apply
+	// without a restart.
+	address, settingsStore := resolveAddress(st.database, st.cfg, logger)
+	st.settings = settingsStore
+	st.hosts = hostset.NewState(address)
+
+	// One template-var store, handed to both the orchestrator and the authentik
+	// configurator, so the LDAP token PostStart records is visible to the
+	// orchestrator without either of them holding a mutable map.
+	st.vars = buildTemplateVars(st.cfg)
+	st.registry = buildConfiguratorRegistry(st.cfg, logger, st.hosts, st.client, st.vars)
+
+	openAgentStoresInto(st, logger)
+
+	// The auth ref exists before the orchestrator because the orchestrator's
+	// host-change hook re-ensures the dashboard OAuth app. The hook crosses
+	// into the builder as a plain func(), so wire never imports the API
+	// package.
+	st.authClient = api.NewAuthentikClient(st.cfg.AuthentikPort, st.cfg.AuthentikToken, st.cfg.BaseDomain)
+	st.serverCfg = agentServerConfig(st)
+	st.authRef = api.NewAuthRef(st.authClient, store.NewSessionStore(st.database), st.serverCfg, logger)
+	st.serverCfg.Authentik = st.authClient
+	st.serverCfg.AuthRef = st.authRef
+
+	// One builder owns the orchestrator wiring. Nothing else constructs one.
+	out, err := wire.Build(st.wireInput())
+	if err != nil {
+		logger.Error("failed to build the orchestrator", "error", err)
+		os.Exit(1)
+	}
+	st.orch = out.Orchestrator
+	st.serverCfg.Orchestrator = out.Orchestrator
+	return st
+}
+
+// openAgentStoresInto builds the four shared stores and loads the catalog.
+func openAgentStoresInto(st *agentStack, logger *slog.Logger) {
+	st.app = store.NewAppStore(st.database)
+	st.catalog = catalog.NewMemoryCache()
+	if err := st.catalog.Refresh(catalog.NewLoader(st.cfg.AppsDir)); err != nil {
+		logger.Error("failed to load the app catalog", "apps_dir", st.cfg.AppsDir, "error", err)
+		os.Exit(1)
+	}
+	st.tailnet = store.NewTailnetStore(st.database)
+	st.remoteApp = store.NewRemoteAppStore(st.database)
+}
+
+// setupLogging installs the JSON logger the whole process writes through.
+func setupLogging() *slog.Logger {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
+	return logger
+}
 
-	logger.Info("starting Bloud host agent")
-
-	// Load configuration
+// loadAgentConfig loads configuration, or ends the process. There is no
+// fallback configuration: a missing required value is a startup failure, not a
+// silently defaulted one.
+func loadAgentConfig(logger *slog.Logger) *config.Config {
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("failed to load configuration", "error", err)
@@ -72,77 +200,71 @@ func runServer() {
 		"data_dir", cfg.DataDir,
 		"apps_dir", cfg.AppsDir,
 	)
+	return cfg
+}
 
-	// Ensure data directory exists for SQLite
+// openAgentDatabase creates the data directory and opens SQLite. The database
+// is instant to bring up: there is no postgres dependency at this layer.
+func openAgentDatabase(cfg *config.Config, logger *slog.Logger) *sql.DB {
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		logger.Error("failed to create data directory", "error", err)
 		os.Exit(1)
 	}
-
-	// Initialize SQLite database (instant: no postgres dependency)
 	database, err := db.InitDB(cfg.DataDir)
 	if err != nil {
 		logger.Error("failed to initialize database", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = database.Close() }()
 	logger.Info("database initialized successfully")
+	return database
+}
 
-	// Create PodmanRuntime for system app configurators
+// newAgentPodmanClient opens the podman connection the runtime, the
+// configurator deps, and the warm-stack check all share.
+func newAgentPodmanClient(logger *slog.Logger) *podman.Client {
 	client, err := podman.NewClient()
 	if err != nil {
 		logger.Error("failed to create podman client", "error", err)
 		os.Exit(1)
 	}
-	runtime := containerruntime.NewPodmanRuntime(client)
+	return client
+}
 
-	// Host state: the effective set of hostnames (built-ins + admin custom
-	// hosts from the database, with legacy env fallbacks). Shared between the
-	// configurators, the orchestrator, and the API so UI host changes apply
-	// without a restart.
-	address, settingsStore := resolveAddress(database, cfg, logger)
-	hosts := hostset.NewState(address)
-
-	// One store, handed to both the orchestrator and the authentik
-	// configurator, so the LDAP token PostStart records is visible to the
-	// orchestrator without either of them holding a mutable map.
-	templateVars := buildTemplateVars(cfg)
-
-	// Configurator registry: system configurators are registered eagerly;
-	// app configurators self-register factories (apps/<name>/registration.go)
-	// and are instantiated lazily on first lookup.
-	//
-	// restartContainer forces a running container to stop and start again, so
-	// its process re-execs and re-reads on-disk config. Configurators use this
-	// where the app's own in-app restart is unreliable under a container init
-	// (Home Assistant). Stop grace lets the app shut down cleanly before SIGKILL.
+// buildConfiguratorRegistry wires the app configurator dependencies. System
+// configurators are registered eagerly; app configurators self-register
+// factories (apps/<name>/registration.go) and are instantiated lazily on
+// first lookup.
+//
+// vars is the same store the orchestrator renders container specs from, not a
+// fresh one. The authentik configurator writes the LDAP outpost token into it
+// during PostStart and the orchestrator reads {{authentikLdapToken}} when it
+// builds the outpost's container spec two seconds later; a second store would
+// take the write and the read to different objects, leave the placeholder
+// unresolved, and the outpost would come up permanently unable to fetch its
+// configuration. See the note on configurator.TemplateVars.
+//
+// restartContainer forces a running container to stop and start again, so its
+// process re-execs and re-reads on-disk config. Configurators use this where
+// the app's own in-app restart is unreliable under a container init (Home
+// Assistant). Stop grace lets the app shut down cleanly before SIGKILL.
+func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, client *podman.Client, vars *configurator.TemplateVars) *configurator.Registry {
 	restartContainer := func(ctx context.Context, name string) error {
 		if err := client.StopContainer(ctx, name, 30); err != nil {
 			return err
 		}
 		return client.StartContainer(ctx, name)
 	}
-	registry := configurator.NewRegistry(logger, appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv))
-	appconfig.RegisterSystem(cfg, runtime, templateVars)
+	registry := configurator.NewRegistry(logger,
+		appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv))
+	appconfig.RegisterSystem(cfg, containerruntime.NewPodmanRuntime(client), vars)
+	return registry
+}
 
-	// Event bus: shared between the API (SSE streams) and background consumers.
-	eventsBus := eventbus.New()
-
-	// The stores the orchestrator and the API share. They are built once, here,
-	// and the same pointers go to both: the catalog refresh endpoint has to
-	// refresh the cache the orchestrator reads, and app-status writes have to
-	// fire the change hook the SSE stream listens to.
-	appStore := store.NewAppStore(database)
-	catalogCache := catalog.NewMemoryCache()
-	if err := catalogCache.Refresh(catalog.NewLoader(cfg.AppsDir)); err != nil {
-		logger.Error("failed to load the app catalog", "apps_dir", cfg.AppsDir, "error", err)
-		os.Exit(1)
-	}
-	tailnetStore := store.NewTailnetStore(database)
-	remoteAppStore := store.NewRemoteAppStore(database)
-
-	serverCfg := api.ServerConfig{
-		RefreshAuthentikToken: func() string { return cfg.ReadAuthentikToken(logger) },
+// agentServerConfig assembles the API server config from the stack.
+func agentServerConfig(st *agentStack) api.ServerConfig {
+	cfg := st.cfg
+	return api.ServerConfig{
+		RefreshAuthentikToken: func() string { return cfg.ReadAuthentikToken(slog.Default()) },
 		AppsDir:               cfg.AppsDir,
 		DataDir:               cfg.DataDir,
 		TraefikDynamicDir:     cfg.TraefikDynamicDir,
@@ -159,41 +281,35 @@ func runServer() {
 		HostLabel:             cfg.HostLabel,
 		TrustedLocalNets:      cfg.TrustedLocalNets,
 		APIToken:              cfg.APIToken,
-		Hosts:                 hosts,
-		EventsBus:             eventsBus,
-		Settings:              settingsStore,
+		Hosts:                 st.hosts,
+		EventsBus:             st.eventsBus,
+		Settings:              st.settings,
 		LDAPOutput:            cfg.LDAPOutput(),
-		Registry:              registry,
-		TemplateVars:          templateVars,
+		Registry:              st.registry,
+		TemplateVars:          st.vars,
 		Secrets:               cfg.Secrets,
-		AppStore:              appStore,
-		CatalogCache:          catalogCache,
-		TailnetStore:          tailnetStore,
-		RemoteAppStore:        remoteAppStore,
+		AppStore:              st.app,
+		CatalogCache:          st.catalog,
+		TailnetStore:          st.tailnet,
+		RemoteAppStore:        st.remoteApp,
 	}
+}
 
-	// The auth ref exists before the orchestrator because the orchestrator's
-	// host-change hook re-ensures the dashboard OAuth app. The hook crosses
-	// into the builder as a plain func(), so wire never imports the API
-	// package.
-	authClient := api.NewAuthentikClient(cfg.AuthentikPort, cfg.AuthentikToken, cfg.BaseDomain)
-	authRef := api.NewAuthRef(authClient, store.NewSessionStore(database), serverCfg, logger)
-	serverCfg.Authentik = authClient
-	serverCfg.AuthRef = authRef
-
-	// One builder owns the orchestrator wiring. Nothing else constructs one.
-	out, err := wire.Build(wire.Input{
-		Logger:            logger,
-		DB:                database,
-		AppStore:          appStore,
-		CatalogCache:      catalogCache,
-		Registry:          registry,
-		ContainerRuntime:  runtime,
-		EventsBus:         eventsBus,
-		Authentik:         authClient,
-		TailnetStore:      tailnetStore,
-		Settings:          settingsStore,
-		Hosts:             hosts,
+// wireInput maps the stack onto the orchestrator builder's input.
+func (st *agentStack) wireInput() wire.Input {
+	cfg := st.cfg
+	return wire.Input{
+		Logger:            slog.Default(),
+		DB:                st.database,
+		AppStore:          st.app,
+		CatalogCache:      st.catalog,
+		Registry:          st.registry,
+		ContainerRuntime:  st.runtime,
+		EventsBus:         st.eventsBus,
+		Authentik:         st.authClient,
+		TailnetStore:      st.tailnet,
+		Settings:          st.settings,
+		Hosts:             st.hosts,
 		AppsDir:           cfg.AppsDir,
 		DataDir:           cfg.DataDir,
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
@@ -201,81 +317,65 @@ func runServer() {
 		ReconcileInterval: cfg.ReconcileInterval,
 		TSAuthKey:         cfg.TSAuthKey,
 		LDAPOutput:        cfg.LDAPOutput(),
-		TemplateVars:      templateVars,
+		TemplateVars:      st.vars,
 		SSOBaseURL:        cfg.SSOBaseURL,
 		SSOHostSecret:     cfg.SSOHostSecret,
 		SSOAuthentikURL:   cfg.SSOAuthentikURL,
 		SSOIssuerURL:      cfg.SSOIssuerURL,
 		Secrets:           cfg.Secrets,
-		OnHostsChanged:    authRef.Ensure,
-	})
-	if err != nil {
-		logger.Error("failed to build the orchestrator", "error", err)
-		os.Exit(1)
+		OnHostsChanged:    st.authRef.Ensure,
 	}
-	serverCfg.Orchestrator = out.Orchestrator
+}
 
-	// Dev fast gate: on a stack that is already up, open the API now instead of
-	// behind a full convergence pass. Falls back to the ordinary wait whenever
-	// the conditions are not met, so a cold boot is unchanged. See DevFastGateEnv
-	// for what this trades away and why it is opt-in.
-	fastGated := false
-	if devFastGateEnabled(os.Getenv) {
-		apps, catalogErr := catalogCache.GetAll()
-		report, warmErr := checkWarmStack(context.Background(), client, systemContainerNames(apps))
-		if catalogErr != nil {
-			warmErr = catalogErr
-		}
-		decision := decideDevFastGate(report, warmErr, authReady(authRef))
-		if decision.Open {
-			fastGated = true
-			serverCfg.Gate = closedGate()
-			logger.Info("dev fast gate: opening the API now, first convergence pass runs in the background", "why", decision.Reason)
-		} else {
-			logger.Info("dev fast gate: not opening early, waiting for full convergence", "why", decision.Reason)
-		}
+// applyDevFastGate decides whether the API opens before the first convergence
+// pass. On a stack that is already up, it opens now instead of behind a full
+// convergence pass. It falls back to the ordinary wait whenever the conditions
+// are not met, so a cold boot is unchanged. See DevFastGateEnv for what this
+// trades away and why it is opt-in.
+func (st *agentStack) applyDevFastGate() bool {
+	logger := slog.Default()
+	if !devFastGateEnabled(os.Getenv) {
+		return false
 	}
+	apps, catalogErr := st.catalog.GetAll()
+	report, warmErr := checkWarmStack(context.Background(), st.client, systemContainerNames(apps))
+	if catalogErr != nil {
+		warmErr = catalogErr
+	}
+	decision := decideDevFastGate(report, warmErr, authReady(st.authRef))
+	if !decision.Open {
+		logger.Info("dev fast gate: not opening early, waiting for full convergence", "why", decision.Reason)
+		return false
+	}
+	st.serverCfg.Gate = closedGate()
+	logger.Info("dev fast gate: opening the API now, first convergence pass runs in the background", "why", decision.Reason)
+	return true
+}
 
-	// The intent loop runs under its own cancellable context so the shutdown
-	// path stops it deliberately instead of letting it outlive the process.
-	orchCtx, stopOrchestrator := context.WithCancel(context.Background())
-	defer stopOrchestrator()
-	go out.Orchestrator.Start(orchCtx)
-
-	server := api.NewServer(database, serverCfg, logger)
-
-	// Open the listener before convergence. Until the orchestrator reports
-	// ready the server answers with a static loading page (and 503 for /api),
-	// so a browser hitting Traefik during bootstrap sees the page instead of
-	// Traefik's 502. waitForSystemConvergence still gates the API surface.
+// startAgentListener opens the listener before convergence. Until the
+// orchestrator reports ready the server answers with a static loading page
+// (and 503 for /api), so a browser hitting Traefik during bootstrap sees the
+// page instead of Traefik's 502.
+func startAgentListener(server *api.Server, logger *slog.Logger) {
 	go func() {
 		if err := server.Start(); err != nil {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
 	}()
+}
 
-	if fastGated {
-		watchConvergenceBehindFastGate(server, logger)
-	} else {
-		waitForSystemConvergence(server, logger)
-	}
-
-	// Setup graceful shutdown
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// Start background system stats collector
+// startBackgroundCollectors runs the periodic housekeeping that has no owner
+// in the request path.
+func startBackgroundCollectors(ctx context.Context, database *sql.DB, logger *slog.Logger) {
+	// Background system stats collector.
 	system.StartStatsCollector(ctx)
-
-	// Start background purge of expired sessions (SQLite has no TTL)
+	// Background purge of expired sessions (SQLite has no TTL).
 	store.StartSessionPurger(ctx, store.NewSessionStore(database), logger)
+}
 
-	// Wait for shutdown signal
-	<-ctx.Done()
-	logger.Info("shutdown signal received")
-
-	// Graceful shutdown
+// shutdownAgentServer drains in-flight requests on the shutdown signal.
+func shutdownAgentServer(server *api.Server, logger *slog.Logger) {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
@@ -283,7 +383,6 @@ func runServer() {
 		logger.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
 	}
-
 	logger.Info("server stopped gracefully")
 }
 

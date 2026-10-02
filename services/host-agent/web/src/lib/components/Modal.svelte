@@ -42,7 +42,12 @@
 	onclick={handleClick}
 	oncancel={handleCancel}
 >
-	<div class="modal-content" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="presentation">
+	<div
+		class="modal-content"
+		onclick={(e) => e.stopPropagation()}
+		onkeydown={(e) => e.stopPropagation()}
+		role="presentation"
+	>
 		{#if open}
 			{@render children()}
 		{/if}

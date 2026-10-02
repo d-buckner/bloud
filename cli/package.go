@@ -80,34 +80,12 @@ func runPackage(cfg packageConfig) error {
 		return fmt.Errorf("create staging dir: %w", err)
 	}
 
-	log("Building host-agent for linux/" + cfg.arch)
-	hostAgentDir := filepath.Join(cfg.root, "services", "host-agent")
-	build := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w",
-		"-o", filepath.Join(stageDir, "host-agent"), "./cmd/host-agent")
-	build.Dir = hostAgentDir
-	build.Env = withEnv(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+cfg.arch)
-	build.Stdout = os.Stdout
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		return fmt.Errorf("build host-agent: %w", err)
+	if err := buildHostAgent(cfg, stageDir); err != nil {
+		return err
 	}
-
-	log("Building frontend")
-	web := exec.Command("npm", "run", "build", "--workspace=@bloud/host-agent-web")
-	web.Dir = cfg.root
-	web.Stdout = os.Stdout
-	web.Stderr = os.Stderr
-	if err := web.Run(); err != nil {
-		return fmt.Errorf("build frontend: %w", err)
+	if err := stageFrontend(cfg, stageDir); err != nil {
+		return err
 	}
-	webBuild := filepath.Join(hostAgentDir, "web", "build")
-	if _, err := os.Stat(webBuild); err != nil {
-		return fmt.Errorf("frontend build missing at %s: %w", webBuild, err)
-	}
-	if err := copyTree(webBuild, filepath.Join(stageDir, "web", "build")); err != nil {
-		return fmt.Errorf("stage frontend: %w", err)
-	}
-
 	log("Staging app catalog")
 	if err := stageCatalog(filepath.Join(cfg.root, "apps"), filepath.Join(stageDir, "apps")); err != nil {
 		return fmt.Errorf("stage catalog: %w", err)
@@ -117,7 +95,48 @@ func runPackage(cfg packageConfig) error {
 	if err != nil {
 		return fmt.Errorf("render package config: %w", err)
 	}
+	return buildDeb(cfg, configPath)
+}
 
+// buildHostAgent cross-compiles the host-agent binary into the staging dir.
+func buildHostAgent(cfg packageConfig, stageDir string) error {
+	log("Building host-agent for linux/" + cfg.arch)
+	build := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w",
+		"-o", filepath.Join(stageDir, "host-agent"), "./cmd/host-agent")
+	build.Dir = filepath.Join(cfg.root, "services", "host-agent")
+	build.Env = withEnv(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+cfg.arch)
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		return fmt.Errorf("build host-agent: %w", err)
+	}
+	return nil
+}
+
+// stageFrontend builds the dashboard and copies the static bundle in beside
+// the binary, where host-agent looks for it at <dir>/web/build.
+func stageFrontend(cfg packageConfig, stageDir string) error {
+	log("Building frontend")
+	web := exec.Command("npm", "run", "build", "--workspace=@bloud/host-agent-web")
+	web.Dir = cfg.root
+	web.Stdout = os.Stdout
+	web.Stderr = os.Stderr
+	if err := web.Run(); err != nil {
+		return fmt.Errorf("build frontend: %w", err)
+	}
+	webBuild := filepath.Join(cfg.root, "services", "host-agent", "web", "build")
+	if _, err := os.Stat(webBuild); err != nil {
+		return fmt.Errorf("frontend build missing at %s: %w", webBuild, err)
+	}
+	if err := copyTree(webBuild, filepath.Join(stageDir, "web", "build")); err != nil {
+		return fmt.Errorf("stage frontend: %w", err)
+	}
+	return nil
+}
+
+// buildDeb hands the staged payload to the pinned nfpm and reports the file it
+// wrote.
+func buildDeb(cfg packageConfig, configPath string) error {
 	log("Building .deb with nfpm " + nfpmVersion)
 	target := filepath.Join(cfg.outDir, fmt.Sprintf("bloud_%s_%s.deb", cfg.version, cfg.arch))
 	pack := exec.Command("go", "run", "github.com/goreleaser/nfpm/v2/cmd/nfpm@"+nfpmVersion,
@@ -132,7 +151,6 @@ func runPackage(cfg packageConfig) error {
 	if err := pack.Run(); err != nil {
 		return fmt.Errorf("nfpm: %w", err)
 	}
-
 	log("Wrote " + target)
 	return nil
 }

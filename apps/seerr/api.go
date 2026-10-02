@@ -116,24 +116,40 @@ type dvrSettings struct {
 // sameWiring reports whether other already holds the settings Bloud writes.
 // Only the fields Bloud owns are compared: Seerr fills in ids and tags itself,
 // and an admin may edit the rest in the UI without that being drift this
-// configurator should undo.
+// configurator should undo. The comparison is split in three so each group can
+// be read against the API doc; the ID and Tags fields are deliberately absent.
 func (s dvrSettings) sameWiring(other dvrSettings) bool {
-	return s.Name == other.Name &&
-		s.Hostname == other.Hostname &&
-		s.Port == other.Port &&
-		s.APIKey == other.APIKey &&
-		s.UseSSL == other.UseSSL &&
-		s.BaseURL == other.BaseURL &&
-		s.ActiveProfileID == other.ActiveProfileID &&
-		s.ActiveProfileName == other.ActiveProfileName &&
-		s.ActiveDirectory == other.ActiveDirectory &&
-		s.IsDefault == other.IsDefault &&
-		s.Is4k == other.Is4k &&
-		s.SyncEnabled == other.SyncEnabled &&
-		s.SeriesType == other.SeriesType &&
-		s.AnimeSeriesType == other.AnimeSeriesType &&
-		s.EnableSeasonFolders == other.EnableSeasonFolders &&
-		s.MinimumAvailability == other.MinimumAvailability
+	return s.sameAddress(other) && s.sameSyncPolicy(other) && s.samePerAppToggles(other)
+}
+
+// sameAddress compares how Seerr reaches the DVR.
+func (s dvrSettings) sameAddress(o dvrSettings) bool {
+	return s.Name == o.Name &&
+		s.Hostname == o.Hostname &&
+		s.Port == o.Port &&
+		s.APIKey == o.APIKey &&
+		s.UseSSL == o.UseSSL &&
+		s.BaseURL == o.BaseURL
+}
+
+// sameSyncPolicy compares the library and profile wiring.
+func (s dvrSettings) sameSyncPolicy(o dvrSettings) bool {
+	return s.ActiveProfileID == o.ActiveProfileID &&
+		s.ActiveProfileName == o.ActiveProfileName &&
+		s.ActiveDirectory == o.ActiveDirectory &&
+		s.IsDefault == o.IsDefault &&
+		s.Is4k == o.Is4k &&
+		s.SyncEnabled == o.SyncEnabled
+}
+
+// samePerAppToggles compares the fields that exist for one sibling and not the
+// other (Sonarr's series types, Radarr's minimum availability); the sibling
+// that omits one leaves it zero on both sides.
+func (s dvrSettings) samePerAppToggles(o dvrSettings) bool {
+	return s.SeriesType == o.SeriesType &&
+		s.AnimeSeriesType == o.AnimeSeriesType &&
+		s.EnableSeasonFolders == o.EnableSeasonFolders &&
+		s.MinimumAvailability == o.MinimumAvailability
 }
 
 // seerrAPI is the typed surface over Seerr's HTTP API for one instance.

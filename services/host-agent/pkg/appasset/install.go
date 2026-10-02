@@ -99,21 +99,8 @@ func (in Installer) stagePayload(ctx context.Context, a Asset) (*stagedPayload, 
 
 // stageURL fetches (or reuses the cache for) a remote asset.
 func (in Installer) stageURL(ctx context.Context, a Asset) (*stagedPayload, error) {
-	// Cache hit: verify the cached digest, then copy into a fresh temp.
-	if cached, ok := in.cachedPath(a.SHA256); ok {
-		d, err := hashFile(cached)
-		if err == nil && d == a.SHA256 {
-			f, ferr := os.Open(cached)
-			if ferr == nil {
-				tp, dh, cerr := copyToTemp(f, filepath.Dir(a.Dest), "."+a.Name+"-*", a.maxBytes())
-				_ = f.Close()
-				if cerr == nil {
-					return &stagedPayload{tempPath: tp, digest: dh}, nil
-				}
-			}
-		}
-		// Poisoned or unreadable cache entry: drop it and re-download.
-		in.deleteCache(a.SHA256)
+	if payload, ok := in.stageFromCache(a); ok {
+		return payload, nil
 	}
 
 	tp, dh, err := in.download(ctx, a)
@@ -122,6 +109,44 @@ func (in Installer) stageURL(ctx context.Context, a Asset) (*stagedPayload, erro
 	}
 	in.storeCache(a.SHA256, tp)
 	return &stagedPayload{tempPath: tp, digest: dh}, nil
+}
+
+// stageFromCache copies a cached asset into a fresh temp file and reports
+// whether it could. An entry that does not hash to the digest it is stored
+// under is poisoned or unreadable: it is dropped so the caller re-downloads
+// rather than install bytes nothing vouched for. A copy failure gets the same
+// treatment, because a cache entry that cannot be read back is not worth
+// trusting either.
+func (in Installer) stageFromCache(a Asset) (*stagedPayload, bool) {
+	cached, ok := in.cachedPath(a.SHA256)
+	if !ok {
+		return nil, false
+	}
+	if d, err := hashFile(cached); err != nil || d != a.SHA256 {
+		in.deleteCache(a.SHA256)
+		return nil, false
+	}
+	payload, ok := copyFileToTemp(cached, a)
+	if !ok {
+		in.deleteCache(a.SHA256)
+		return nil, false
+	}
+	return payload, true
+}
+
+// copyFileToTemp copies an existing file into a fresh temp in the destination's
+// directory, under the same size cap the download path enforces.
+func copyFileToTemp(cached string, a Asset) (*stagedPayload, bool) {
+	f, err := os.Open(cached)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	tp, dh, err := copyToTemp(f, filepath.Dir(a.Dest), "."+a.Name+"-*", a.maxBytes())
+	if err != nil {
+		return nil, false
+	}
+	return &stagedPayload{tempPath: tp, digest: dh}, true
 }
 
 // download streams the URL into a temp file in the destination fs, hashing

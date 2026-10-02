@@ -17,6 +17,23 @@ func docTargetPath(root, target string) string {
 	return filepath.Join(root, target)
 }
 
+// loadCatalog reads the app catalog every generated-doc command renders from.
+// An empty catalog is reported as an error rather than generating an empty
+// block, because an empty block would silently erase the list it replaced.
+func loadCatalog(root string) (map[string]*AppMetadata, bool) {
+	appsDir := filepath.Join(root, "apps")
+	apps, err := loadAppMetadata(appsDir)
+	if err != nil {
+		errorf("Failed to load app metadata: %v", err)
+		return nil, false
+	}
+	if len(apps) == 0 {
+		errorf("No apps with a metadata.yaml found under %s", appsDir)
+		return nil, false
+	}
+	return apps, true
+}
+
 // relOrAbs labels a path for output: relative to the repo root when it is
 // inside it, absolute otherwise.
 func relOrAbs(root, path string) string {

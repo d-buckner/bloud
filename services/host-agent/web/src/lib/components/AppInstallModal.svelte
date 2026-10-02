@@ -75,7 +75,12 @@
 			<h3 class="section-heading">Install progress</h3>
 			<ol class="timeline">
 				{#each steps as step (step.id)}
-					<li class="step" class:done={step.state === 'done'} class:current={step.state === 'current'} class:failed={step.state === 'failed'}>
+					<li
+						class="step"
+						class:done={step.state === 'done'}
+						class:current={step.state === 'current'}
+						class:failed={step.state === 'failed'}
+					>
 						<span class="step-marker">
 							{#if stepIcon(step.state)}
 								<Icon name={stepIcon(step.state)} size={16} />

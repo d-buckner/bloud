@@ -79,31 +79,48 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 		return fmt.Errorf("no tailnet connection configured")
 	}
 
-	name := TailnetNodeContainerName(appName)
-
-	// Write serve config file for Tailscale: proxy to Traefik.
-	configDir := filepath.Join(m.dataDir, appName, "ts-serve")
-	configFile := filepath.Join(configDir, "serve.json")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("create serve config dir: %w", err)
-	}
-	serveCfg := buildGatewayServeConfig(m.traefikPort)
-	data, err := json.MarshalIndent(serveCfg, "", "  ")
+	configDir, stateDir, err := m.writeNodeFiles(appName)
 	if err != nil {
-		return fmt.Errorf("marshal serve config: %w", err)
-	}
-	if err := os.WriteFile(configFile, data, 0644); err != nil {
-		return fmt.Errorf("write serve config: %w", err)
+		return err
 	}
 
-	// Persist Tailscale state so the tailnet node keeps its node identity across restarts.
-	stateDir := filepath.Join(m.dataDir, appName, "ts-state")
+	if _, err := m.containers.Ensure(ctx, tailnetNodeSpec(appName, authKey, configDir, stateDir)); err != nil {
+		return fmt.Errorf("ensure tailnet node container %s: %w", TailnetNodeContainerName(appName), err)
+	}
+
+	return nil
+}
+
+// writeNodeFiles lays down what the tailnet node mounts: the serve config that
+// proxies to Traefik, and the state directory that lets the node keep its own
+// identity across restarts.
+func (m *TailnetNodeManager) writeNodeFiles(appName string) (configDir, stateDir string, err error) {
+	configDir = filepath.Join(m.dataDir, appName, "ts-serve")
+	stateDir = filepath.Join(m.dataDir, appName, "ts-state")
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return "", "", fmt.Errorf("create serve config dir: %w", err)
+	}
+	data, err := json.MarshalIndent(buildGatewayServeConfig(m.traefikPort), "", "  ")
+	if err != nil {
+		return "", "", fmt.Errorf("marshal serve config: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "serve.json"), data, 0644); err != nil {
+		return "", "", fmt.Errorf("write serve config: %w", err)
+	}
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		return fmt.Errorf("create tailnet node state dir: %w", err)
+		return "", "", fmt.Errorf("create tailnet node state dir: %w", err)
 	}
+	return configDir, stateDir, nil
+}
 
-	spec := container.Spec{
-		Name:     name,
+// tailnetNodeSpec builds the node container: host network so it can carry the
+// tailnet, userspace so it needs no root, and the two directories above
+// mounted where Tailscale expects them. TS_AUTH_ONCE makes a restart reuse the
+// identity in the state dir rather than re-authenticating.
+func tailnetNodeSpec(appName, authKey, configDir, stateDir string) container.Spec {
+	return container.Spec{
+		Name:     TailnetNodeContainerName(appName),
 		Image:    TailscaleImage,
 		Networks: []string{"host"},
 		Environment: map[string]string{
@@ -132,12 +149,6 @@ func (m *TailnetNodeManager) EnsureRunning(ctx context.Context, appName string) 
 		},
 		RestartPolicy: "always",
 	}
-
-	if _, err := m.containers.Ensure(ctx, spec); err != nil {
-		return fmt.Errorf("ensure tailnet node container %s: %w", name, err)
-	}
-
-	return nil
 }
 
 // GetAddr returns the Tailscale IPv4 address of the tailnet node container.

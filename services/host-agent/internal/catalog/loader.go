@@ -77,6 +77,20 @@ func (l *Loader) loadAppFromFile(filePath string) (*App, error) {
 
 // validateApp validates that an app definition has all required fields
 func (l *Loader) validateApp(app *App) error {
+	if err := validateIdentity(app); err != nil {
+		return err
+	}
+	if err := validateSSO(app); err != nil {
+		return err
+	}
+	if err := validateProvides(app); err != nil {
+		return err
+	}
+	return validateIntegrations(app)
+}
+
+// validateIdentity checks the fields every catalog entry must carry to render.
+func validateIdentity(app *App) error {
 	if app.CatalogID == "" {
 		return fmt.Errorf("app name is required")
 	}
@@ -89,6 +103,14 @@ func (l *Loader) validateApp(app *App) error {
 	if app.Category == "" {
 		return fmt.Errorf("category is required")
 	}
+	return nil
+}
+
+// validateSSO checks the SSO declaration is internally consistent: each knob
+// belongs to a strategy that can actually honor it, so a mistake reads as a
+// validation error at load time rather than as an app that silently never
+// joins the provider.
+func validateSSO(app *App) error {
 	if len(app.SSO.BypassPaths) > 0 && app.SSO.Strategy != "forward-auth" {
 		return fmt.Errorf("sso.bypassPaths is only valid for strategy: forward-auth (got %q)", app.SSO.Strategy)
 	}
@@ -103,14 +125,8 @@ func (l *Loader) validateApp(app *App) error {
 	if app.SSO.AccessTokenMinutes < 0 {
 		return fmt.Errorf("sso.accessTokenMinutes must not be negative (got %d)", app.SSO.AccessTokenMinutes)
 	}
-	for _, scope := range app.SSO.Scopes {
-		if strings.TrimSpace(scope) == "" || strings.ContainsAny(scope, " \t") {
-			return fmt.Errorf("sso.scopes entries must be single non-empty scope names (got %q)", scope)
-		}
-		switch scope {
-		case "openid", "profile", "email":
-			return fmt.Errorf("sso.scopes must not list %q: every native-oidc provider already carries it", scope)
-		}
+	if err := validateSSOScopeNames(app); err != nil {
+		return err
 	}
 	// The loopback issuer is http://localhost:<Traefik port>, which reaches
 	// Traefik only from inside the host network namespace. Without it the
@@ -120,10 +136,22 @@ func (l *Loader) validateApp(app *App) error {
 		return fmt.Errorf("sso.loopbackIssuer requires a container with network: host " +
 			"(the issuer is http://localhost:<Traefik port>, which resolves to Traefik only in the host network namespace)")
 	}
-	if err := validateProvides(app); err != nil {
-		return err
+	return nil
+}
+
+// validateSSOScopeNames checks each declared extra scope is a single name the
+// provider will not already have sent.
+func validateSSOScopeNames(app *App) error {
+	for _, scope := range app.SSO.Scopes {
+		if strings.TrimSpace(scope) == "" || strings.ContainsAny(scope, " \t") {
+			return fmt.Errorf("sso.scopes entries must be single non-empty scope names (got %q)", scope)
+		}
+		switch scope {
+		case "openid", "profile", "email":
+			return fmt.Errorf("sso.scopes must not list %q: every native-oidc provider already carries it", scope)
+		}
 	}
-	return validateIntegrations(app)
+	return nil
 }
 
 // validateIntegrations checks the consumer-side declarations of a contract: what

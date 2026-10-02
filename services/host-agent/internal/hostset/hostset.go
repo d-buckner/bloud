@@ -154,14 +154,8 @@ func ParsePublicURL(raw string) (PublicURL, error) {
 	if scheme == "" {
 		return PublicURL{}, fmt.Errorf("scheme %q is not http or https", u.Scheme)
 	}
-	if u.User != nil {
-		return PublicURL{}, fmt.Errorf("a public URL cannot carry credentials")
-	}
-	if u.Path != "" && u.Path != "/" {
-		return PublicURL{}, fmt.Errorf("a public URL must be an origin without a path (got %q)", u.Path)
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return PublicURL{}, fmt.Errorf("a public URL must be an origin without a query or fragment")
+	if err := rejectNonOrigin(u); err != nil {
+		return PublicURL{}, err
 	}
 	host := Normalize(u.Hostname())
 	if host == "" {
@@ -170,15 +164,40 @@ func ParsePublicURL(raw string) (PublicURL, error) {
 	if scheme == SchemeHTTPS && IsAddress(host) {
 		return PublicURL{}, fmt.Errorf("https://%s is not usable: no CA issues a certificate for an IP address", host)
 	}
-	port := 0
-	if p := u.Port(); p != "" {
-		n, err := strconv.Atoi(p)
-		if err != nil || n < 1 || n > 65535 {
-			return PublicURL{}, fmt.Errorf("port %q is out of range", p)
-		}
-		port = n
+	port, err := parseExplicitPort(u.Port())
+	if err != nil {
+		return PublicURL{}, err
 	}
 	return PublicURL{Scheme: scheme, Host: host, Port: port}, nil
+}
+
+// rejectNonOrigin refuses the parts a bare origin must not carry: credentials, a
+// path, a query, or a fragment. Any of them would register a redirect URI that
+// never matches what the browser sends.
+func rejectNonOrigin(u *url.URL) error {
+	if u.User != nil {
+		return fmt.Errorf("a public URL cannot carry credentials")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("a public URL must be an origin without a path (got %q)", u.Path)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("a public URL must be an origin without a query or fragment")
+	}
+	return nil
+}
+
+// parseExplicitPort reads the port the operator typed. "" means they named no
+// port, which is recorded as 0: the scheme's own default.
+func parseExplicitPort(p string) (int, error) {
+	if p == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n < 1 || n > 65535 {
+		return 0, fmt.Errorf("port %q is out of range", p)
+	}
+	return n, nil
 }
 
 // Origin renders the URL as scheme://host[:port], leaving the port off when it

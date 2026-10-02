@@ -76,7 +76,21 @@
 		</div>
 	{:else}
 		<div class="graph-container">
-			<SvelteFlow {nodes} {edges} {nodeTypes} fitView colorMode="light" nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} panOnDrag={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}>
+			<SvelteFlow
+				{nodes}
+				{edges}
+				{nodeTypes}
+				fitView
+				colorMode="light"
+				nodesDraggable={false}
+				nodesConnectable={false}
+				elementsSelectable={false}
+				panOnDrag={false}
+				zoomOnScroll={false}
+				zoomOnPinch={false}
+				zoomOnDoubleClick={false}
+				preventScrolling={false}
+			>
 				<FitView key={graphKey} />
 			</SvelteFlow>
 		</div>

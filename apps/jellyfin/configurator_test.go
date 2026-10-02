@@ -383,6 +383,39 @@ func TestConfigurator_GetSystemInfo(t *testing.T) {
 	}
 }
 
+// startupStepHandler serves one of the wizard's GET-then-POST endpoints: the
+// GET answers `{}` so the configurator's readiness poll passes, the POST
+// asserts one field of the payload it received.
+func startupStepHandler(t *testing.T, field, want string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		var payload map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if payload[field] != want {
+			t.Errorf("expected %s=%s, got %s", field, want, payload[field])
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// startupPostHandler serves a wizard endpoint that only ever takes a POST.
+func startupPostHandler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 	var calls []string
 
@@ -391,53 +424,11 @@ func TestConfigurator_CompleteStartupWizard(t *testing.T) {
 
 		switch r.URL.Path {
 		case "/Startup/Configuration":
-			if r.Method == http.MethodGet {
-				// waitForStartupWizardReady checks this endpoint
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{}`))
-				return
-			}
-			if r.Method != http.MethodPost {
-				t.Errorf("expected POST, got %s", r.Method)
-			}
-			var payload map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&payload)
-			if payload["UICulture"] != "en-US" {
-				t.Errorf("expected UICulture=en-US, got %s", payload["UICulture"])
-			}
-			w.WriteHeader(http.StatusNoContent)
-
+			startupStepHandler(t, "UICulture", "en-US")(w, r)
 		case "/Startup/User":
-			if r.Method == http.MethodGet {
-				// setStartupUser waits for initial user to be available
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{}`))
-				return
-			}
-			if r.Method != http.MethodPost {
-				t.Errorf("expected POST, got %s", r.Method)
-			}
-			var payload map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&payload)
-			if payload["Name"] != bootstrapUsername {
-				t.Errorf("expected Name=%s, got %s", bootstrapUsername, payload["Name"])
-			}
-			w.WriteHeader(http.StatusNoContent)
-
-		case "/Startup/RemoteAccess":
-			if r.Method != http.MethodPost {
-				t.Errorf("expected POST, got %s", r.Method)
-			}
-			w.WriteHeader(http.StatusNoContent)
-
-		case "/Startup/Complete":
-			if r.Method != http.MethodPost {
-				t.Errorf("expected POST, got %s", r.Method)
-			}
-			w.WriteHeader(http.StatusNoContent)
-
+			startupStepHandler(t, "Name", bootstrapUsername)(w, r)
+		case "/Startup/RemoteAccess", "/Startup/Complete":
+			startupPostHandler(t)(w, r)
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

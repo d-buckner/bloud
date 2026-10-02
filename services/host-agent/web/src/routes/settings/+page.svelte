@@ -451,11 +451,11 @@
 					<div class="form-row">
 						<div class="form-field">
 							<label for="new-username">Username</label>
-							<input id="new-username" type="text" bind:value={newUsername} placeholder="username" required />
+							<input id="new-username" type="text" bind:value={newUsername} required />
 						</div>
 						<div class="form-field">
 							<label for="new-password">Password</label>
-							<input id="new-password" type="password" bind:value={newPassword} placeholder="password" required />
+							<input id="new-password" type="password" bind:value={newPassword} required />
 						</div>
 						<div class="form-field">
 							<label for="new-role">Role</label>

@@ -236,55 +236,48 @@ func integrationRunTests(ctx context.Context, ex executor.Executor, tier manifes
 		if flags.explain && !flags.json {
 			fmt.Printf("    %s->%s %s: %s (cwd %s)\n", colorCyan, colorReset, cmd.ID, cmd.Run, cmd.Cwd)
 		}
-		spec := executor.RunSpec{
-			Command: cmd.Run,
-			Dir:     cmd.Cwd,
-			Env:     testEnv,
-		}
-		start := time.Now()
-		var (
-			cmdExit int
-			runErr  error
-		)
-		if flags.json {
-			res, err := ex.Run(ctx, spec)
-			cmdExit = res.ExitCode
-			runErr = err
-		} else {
-			runErr = ex.RunStream(ctx, spec, os.Stdout, os.Stderr)
-			if exitErr, ok := runErr.(*exec.ExitError); ok {
-				cmdExit = exitErr.ExitCode()
-			} else if runErr != nil {
-				cmdExit = 1
-			}
-		}
-		dur := time.Since(start)
-
-		status := "pass"
-		if runErr != nil {
-			status = "fail"
-			exitCode = 1
-		}
-		result.Commands = append(result.Commands, CommandResult{
-			ID:         cmd.ID,
-			Cwd:        cmd.Cwd,
-			Command:    cmd.Run,
-			Status:     status,
-			DurationMs: dur.Milliseconds(),
-			ExitCode:   cmdExit,
-		})
-
-		if !flags.json {
-			icon := colorGreen + "✓" + colorReset
-			if status == "fail" {
-				icon = colorRed + "✗" + colorReset
-			}
-			fmt.Printf("%s %s (%dms)\n", icon, cmd.ID, dur.Milliseconds())
-		}
-
-		if runErr != nil {
-			break
+		cr := runIntegrationCommand(ctx, ex, cmd, testEnv, flags)
+		result.Commands = append(result.Commands, cr)
+		if cr.Status == "fail" {
+			return 1
 		}
 	}
 	return exitCode
+}
+
+// runIntegrationCommand runs one tier command in the guest and returns its
+// ledger row. In JSON mode the output is captured rather than streamed, so the
+// ledger stays the only thing on stdout.
+func runIntegrationCommand(ctx context.Context, ex executor.Executor, cmd manifestCommand, testEnv map[string]string, flags validateFlags) CommandResult {
+	spec := executor.RunSpec{Command: cmd.Run, Dir: cmd.Cwd, Env: testEnv}
+	start := time.Now()
+
+	var runErr error
+	code := 0
+	if flags.json {
+		res, err := ex.Run(ctx, spec)
+		code, runErr = res.ExitCode, err
+	} else {
+		runErr = ex.RunStream(ctx, spec, os.Stdout, os.Stderr)
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else if runErr != nil {
+			code = 1
+		}
+	}
+
+	status := "pass"
+	if runErr != nil {
+		status = "fail"
+	}
+	dur := time.Since(start).Milliseconds()
+	reportCommand(flags, cmd.ID, status, dur, "")
+	return CommandResult{
+		ID:         cmd.ID,
+		Cwd:        cmd.Cwd,
+		Command:    cmd.Run,
+		Status:     status,
+		DurationMs: dur,
+		ExitCode:   code,
+	}
 }

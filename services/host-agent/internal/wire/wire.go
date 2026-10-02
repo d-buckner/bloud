@@ -166,56 +166,96 @@ type Output struct {
 	Config orchestrator.OrchestratorConfig
 }
 
+// validateInput refuses a half-wired Build. Every field here is something the
+// orchestrator cannot recover from at runtime, so a missing one is a
+// programming error caught at startup rather than a nil deref mid-reconcile.
+func validateInput(in Input) error {
+	switch {
+	case in.Logger == nil:
+		return fmt.Errorf("wire: Logger is required")
+	case in.DB == nil:
+		return fmt.Errorf("wire: DB is required")
+	case in.Registry == nil:
+		return fmt.Errorf("wire: Registry is required")
+	case in.CatalogCache == nil:
+		return fmt.Errorf("wire: CatalogCache is required")
+	case in.TailnetStore == nil:
+		return fmt.Errorf("wire: TailnetStore is required")
+	}
+	return nil
+}
+
 // Build constructs the orchestrator and everything it owns.
 func Build(in Input) (*Output, error) {
-	if in.Logger == nil {
-		return nil, fmt.Errorf("wire: Logger is required")
-	}
-	if in.DB == nil {
-		return nil, fmt.Errorf("wire: DB is required")
-	}
-	if in.Registry == nil {
-		return nil, fmt.Errorf("wire: Registry is required")
-	}
-	if in.CatalogCache == nil {
-		return nil, fmt.Errorf("wire: CatalogCache is required")
-	}
-	if in.TailnetStore == nil {
-		return nil, fmt.Errorf("wire: TailnetStore is required")
+	if err := validateInput(in); err != nil {
+		return nil, err
 	}
 
 	logger := in.Logger
 	traefikConfigPath := filepath.Join(in.TraefikDynamicDir, "apps-routes.yml")
 	logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
 
-	lifecycleGraph := graph.New(graph.NewMapRepository())
-
-	// The podman client backs the exec callback and the runtime fallback, so
-	// it is built even when a runtime was supplied.
-	client, err := podman.NewClient()
+	runtime, client, err := resolveRuntime(in)
 	if err != nil {
-		logger.Warn("podman client unavailable", "error", err)
-	}
-
-	runtime := in.ContainerRuntime
-	if runtime == nil {
-		if client == nil {
-			return nil, fmt.Errorf("wire: container runtime unavailable (no podman client)")
-		}
-		runtime = containerruntime.NewPodmanRuntime(client)
-	}
-
-	var ssoProvisioner orchestrator.SSOProvisioner
-	var forwardDomainSSO orchestrator.ForwardDomainProvisioner
-	if in.Authentik != nil {
-		ssoProvisioner = in.Authentik
-		forwardDomainSSO = in.Authentik
+		return nil, err
 	}
 
 	if err := migrateLegacyAuthKey(in.TailnetStore, in.TSAuthKey, logger); err != nil {
 		return nil, err
 	}
 
+	managers := buildSharingManagers(in, runtime, client)
+	config := buildOrchestratorConfig(in, runtime, managers, loadCatalogGraph(in, logger), traefikConfigPath)
+
+	orch := orchestrator.NewOrchestrator(
+		graph.New(graph.NewMapRepository()),
+		in.Registry,
+		in.CatalogCache,
+		in.DataDir,
+		logger,
+		config,
+	)
+	logger.Info("lifecycle orchestrator initialized")
+
+	return &Output{
+		Orchestrator: orch,
+		Gateway:      managers.Gateway,
+		TailnetNode:  managers.Node,
+		Config:       config,
+	}, nil
+}
+
+// resolveRuntime picks the container runtime: the one supplied, or a Podman
+// runtime over a client built here. The client comes back either way because it
+// also backs the exec callback the sharing managers need, which the runtime
+// abstraction does not carry.
+func resolveRuntime(in Input) (containerruntime.Runtime, *podman.Client, error) {
+	client, err := podman.NewClient()
+	if err != nil {
+		in.Logger.Warn("podman client unavailable", "error", err)
+	}
+	if in.ContainerRuntime != nil {
+		return in.ContainerRuntime, client, nil
+	}
+	if client == nil {
+		return nil, nil, fmt.Errorf("wire: container runtime unavailable (no podman client)")
+	}
+	return containerruntime.NewPodmanRuntime(client), client, nil
+}
+
+// sharingManagers bundles the tailnet-facing managers the orchestrator drives
+// on behalf of an app.
+type sharingManagers struct {
+	Node        *sharing.TailnetNodeManager
+	Gateway     *sharing.GatewayManager
+	RemoteProxy *sharing.RemoteProxyManager
+}
+
+// buildSharingManagers wires the tailnet node, the SOCKS gateway, and the
+// remote-proxy pool. All three read the active connection through the store on
+// every call rather than capturing the key at build time, so a rotation takes
+// effect without a restart.
+func buildSharingManagers(in Input, runtime containerruntime.Runtime, client *podman.Client) sharingManagers {
 	authKeyFn := func() string {
 		conn, err := in.TailnetStore.GetActive()
 		if err != nil || conn == nil {
@@ -223,29 +263,51 @@ func Build(in Input) (*Output, error) {
 		}
 		return conn.AuthKey
 	}
-
 	var exec sharing.ContainerExec
 	if client != nil {
 		exec = client
 	}
-	tailnetNode := sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, in.TraefikPort, in.DataDir, logger)
-	gateway := sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, in.TraefikPort, in.DataDir, logger)
-
 	socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
-	remoteProxy := sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, logger)
+	return sharingManagers{
+		Node:        sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, in.TraefikPort, in.DataDir, in.Logger),
+		Gateway:     sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, in.TraefikPort, in.DataDir, in.Logger),
+		RemoteProxy: sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, in.Logger),
+	}
+}
 
-	// The catalog dependency graph is the planner install and uninstall
-	// intents use to resolve integrations and auto-install required
-	// providers. A load failure leaves it nil, which makes those intents
-	// unable to plan rather than planning against a stale graph.
-	catalogGraph, err := catalog.NewLoader(in.AppsDir).LoadGraph()
+// loadCatalogGraph builds the dependency graph the install and uninstall
+// planners use to resolve integrations and auto-install required providers. A
+// load failure leaves it nil, which makes those intents unable to plan rather
+// than plan against a stale graph.
+func loadCatalogGraph(in Input, logger *slog.Logger) *catalog.AppGraph {
+	g, err := catalog.NewLoader(in.AppsDir).LoadGraph()
 	if err != nil {
 		logger.Error("failed to build catalog graph", "error", err)
-	} else {
-		logger.Info("catalog dependency graph built", "apps", len(catalogGraph.GetApps()))
+		return nil
+	}
+	logger.Info("catalog dependency graph built", "apps", len(g.GetApps()))
+	return g
+}
+
+// buildOrchestratorConfig fills the orchestrator's config from the wire input.
+// The two SSO interfaces come from the same Authentik client when one was
+// supplied; both stay nil otherwise, which disables SSO provisioning while the
+// runtime still boots.
+func buildOrchestratorConfig(
+	in Input,
+	runtime containerruntime.Runtime,
+	managers sharingManagers,
+	catalogGraph *catalog.AppGraph,
+	traefikConfigPath string,
+) orchestrator.OrchestratorConfig {
+	var ssoProvisioner orchestrator.SSOProvisioner
+	var forwardDomainSSO orchestrator.ForwardDomainProvisioner
+	if in.Authentik != nil {
+		ssoProvisioner = in.Authentik
+		forwardDomainSSO = in.Authentik
 	}
 
-	config := orchestrator.OrchestratorConfig{
+	return orchestrator.OrchestratorConfig{
 		SelfHealInterval: resolveSelfHealInterval(in.ReconcileInterval),
 		LDAPOutput:       in.LDAPOutput,
 		Containers:       runtime,
@@ -257,10 +319,10 @@ func Build(in Input) (*Output, error) {
 		CatalogGraph:     catalogGraph,
 		TailnetStore:     in.TailnetStore,
 		RemoteAppStore:   store.NewRemoteAppStore(in.DB),
-		TailnetNode:      tailnetNode,
-		Gateway:          gateway,
-		RemoteProxy:      remoteProxy,
-		ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, logger),
+		TailnetNode:      managers.Node,
+		Gateway:          managers.Gateway,
+		RemoteProxy:      managers.RemoteProxy,
+		ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, in.Logger),
 		ForwardDomainSSO: forwardDomainSSO,
 		SSO:              ssoProvisioner,
 		SSOBaseURL:       in.SSOBaseURL,
@@ -280,23 +342,6 @@ func Build(in Input) (*Output, error) {
 		Settings:       in.Settings,
 		OnHostsChanged: in.OnHostsChanged,
 	}
-
-	orch := orchestrator.NewOrchestrator(
-		lifecycleGraph,
-		in.Registry,
-		in.CatalogCache,
-		in.DataDir,
-		logger,
-		config,
-	)
-	logger.Info("lifecycle orchestrator initialized")
-
-	return &Output{
-		Orchestrator: orch,
-		Gateway:      gateway,
-		TailnetNode:  tailnetNode,
-		Config:       config,
-	}, nil
 }
 
 // resolveSelfHealInterval turns the configured reconcile interval into the

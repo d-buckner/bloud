@@ -159,63 +159,95 @@ func (f *fakeSeerr) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/settings/public":
-		f.mu.Lock()
-		initialized := f.initialized
-		f.mu.Unlock()
-		writeJSON(w, map[string]any{"initialized": initialized})
+		writeJSON(w, map[string]any{"initialized": f.isInitialized()})
 
 	case isDVRPath(r.URL.Path):
 		f.serveDVR(w, r, recorded.Body)
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/jellyfin":
-		f.mu.Lock()
-		alreadyConfigured := f.jellyfinAlreadyConfigured
-		f.mu.Unlock()
-		if alreadyConfigured {
-			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, map[string]any{"error": alreadyConfiguredError})
-			return
-		}
-		writeJSON(w, map[string]any{"id": 1, "username": jellyfinAdminUsername})
+		f.serveJellyfinLogin(w)
 
+	case strings.HasPrefix(r.URL.Path, "/api/v1/settings/jellyfin"):
+		f.serveJellyfinRoutes(w, r, recorded.Body)
+
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/settings/initialize":
+		f.serveInitialize(w)
+
+	default:
+		w.WriteHeader(http.StatusNotFound)
+		writeJSON(w, map[string]any{"error": "not found"})
+	}
+}
+
+func (f *fakeSeerr) isInitialized() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.initialized
+}
+
+// serveJellyfinLogin answers the onboarding login that creates Seerr's admin
+// from the Jellyfin bootstrap admin. An instance that already has one answers
+// the way the real route does: a 500 whose body says so.
+func (f *fakeSeerr) serveJellyfinLogin(w http.ResponseWriter) {
+	f.mu.Lock()
+	alreadyConfigured := f.jellyfinAlreadyConfigured
+	f.mu.Unlock()
+	if alreadyConfigured {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, map[string]any{"error": alreadyConfiguredError})
+		return
+	}
+	writeJSON(w, map[string]any{"id": 1, "username": jellyfinAdminUsername})
+}
+
+// serveJellyfinRoutes handles the three Jellyfin settings routes. The POST is
+// merged into settings.jellyfin (server/routes/settings/index.ts) only after
+// Seerr has tested the resulting connection; the fake records the write, while
+// a real instance calls Jellyfin there and answers 400 for a key it rejects.
+func (f *fakeSeerr) serveJellyfinRoutes(w http.ResponseWriter, r *http.Request, body []byte) {
+	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/settings/jellyfin":
-		// server/routes/settings/index.ts: the body is merged into
-		// settings.jellyfin, but only after Seerr has tested the resulting
-		// connection. The fake records the write; a real instance calls
-		// Jellyfin here and answers 400 for a key it rejects.
 		var doc map[string]any
-		_ = json.Unmarshal(recorded.Body, &doc)
+		_ = json.Unmarshal(body, &doc)
 		f.mu.Lock()
 		f.jellyfinSettings = doc
 		f.mu.Unlock()
 		writeJSON(w, doc)
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/settings/jellyfin/library":
-		f.mu.Lock()
-		ids := append([]string(nil), f.libraryIDs...)
-		f.mu.Unlock()
-		libraries := make([]map[string]any, 0, len(ids))
-		for _, id := range ids {
-			libraries = append(libraries, map[string]any{"id": id, "name": id, "enabled": false})
-		}
-		writeJSON(w, libraries)
+		writeJSON(w, f.libraryList())
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/settings/jellyfin/sync":
 		writeJSON(w, map[string]any{"running": true})
-
-	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/settings/initialize":
-		f.mu.Lock()
-		if f.initializeFlips {
-			f.initialized = true
-		}
-		initialized := f.initialized
-		f.mu.Unlock()
-		writeJSON(w, map[string]any{"initialized": initialized})
 
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		writeJSON(w, map[string]any{"error": "not found"})
 	}
+}
+
+func (f *fakeSeerr) libraryList() []map[string]any {
+	f.mu.Lock()
+	ids := append([]string(nil), f.libraryIDs...)
+	f.mu.Unlock()
+	libraries := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		libraries = append(libraries, map[string]any{"id": id, "name": id, "enabled": false})
+	}
+	return libraries
+}
+
+// serveInitialize marks the instance initialized. initializeFlips=false models
+// a route that accepts the call without committing it, which is exactly what
+// the configurator's confirmation step is there to catch.
+func (f *fakeSeerr) serveInitialize(w http.ResponseWriter) {
+	f.mu.Lock()
+	if f.initializeFlips {
+		f.initialized = true
+	}
+	initialized := f.initialized
+	f.mu.Unlock()
+	writeJSON(w, map[string]any{"initialized": initialized})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -252,63 +284,91 @@ func (f *fakeSeerr) serveDVR(w http.ResponseWriter, r *http.Request, body []byte
 		writeJSON(w, f.dvrs[service])
 
 	case r.Method == http.MethodPost && idPart == "":
-		var entry map[string]any
-		if err := json.Unmarshal(body, &entry); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "invalid body"})
-			return
-		}
-		entry["id"] = f.nextDVRID
-		f.nextDVRID++
-		f.dvrs[service] = append(f.dvrs[service], entry)
-		w.WriteHeader(http.StatusCreated)
-		writeJSON(w, entry)
+		f.createDVR(w, service, body)
 
 	case r.Method == http.MethodPut:
-		id, err := strconv.Atoi(idPart)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			writeJSON(w, map[string]any{"error": "settings instance not found"})
-			return
-		}
-		var entry map[string]any
-		if err := json.Unmarshal(body, &entry); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "invalid body"})
-			return
-		}
-		entry["id"] = id
-		for i, stored := range f.dvrs[service] {
-			if current, ok := stored["id"].(int); ok && current == id {
-				f.dvrs[service][i] = entry
-				writeJSON(w, entry)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNotFound)
-		writeJSON(w, map[string]any{"error": "settings instance not found"})
+		f.putDVR(w, service, idPart, body)
 
 	case r.Method == http.MethodDelete:
-		id, err := strconv.Atoi(idPart)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			writeJSON(w, map[string]any{"error": "settings instance not found"})
-			return
-		}
-		for i, stored := range f.dvrs[service] {
-			if current, ok := stored["id"].(int); ok && current == id {
-				f.dvrs[service] = append(f.dvrs[service][:i], f.dvrs[service][i+1:]...)
-				writeJSON(w, stored)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNotFound)
-		writeJSON(w, map[string]any{"error": "settings instance not found"})
+		f.deleteDVR(w, service, idPart)
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		writeJSON(w, map[string]any{"error": "method not allowed"})
 	}
+}
+
+// createDVR appends the entry under the next id, as the POST route does.
+// Called with f.mu held.
+func (f *fakeSeerr) createDVR(w http.ResponseWriter, service string, body []byte) {
+	var entry map[string]any
+	if err := json.Unmarshal(body, &entry); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid body"})
+		return
+	}
+	entry["id"] = f.nextDVRID
+	f.nextDVRID++
+	f.dvrs[service] = append(f.dvrs[service], entry)
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, entry)
+}
+
+// putDVR replaces the entry holding the id, or 404s when none does. Called
+// with f.mu held.
+func (f *fakeSeerr) putDVR(w http.ResponseWriter, service, idPart string, body []byte) {
+	id, err := strconv.Atoi(idPart)
+	if err != nil {
+		f.dvrNotFound(w)
+		return
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(body, &entry); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid body"})
+		return
+	}
+	entry["id"] = id
+	i, ok := f.findDVR(service, id)
+	if !ok {
+		f.dvrNotFound(w)
+		return
+	}
+	f.dvrs[service][i] = entry
+	writeJSON(w, entry)
+}
+
+// deleteDVR removes the entry holding the id. Called with f.mu held.
+func (f *fakeSeerr) deleteDVR(w http.ResponseWriter, service, idPart string) {
+	id, err := strconv.Atoi(idPart)
+	if err != nil {
+		f.dvrNotFound(w)
+		return
+	}
+	i, ok := f.findDVR(service, id)
+	if !ok {
+		f.dvrNotFound(w)
+		return
+	}
+	stored := f.dvrs[service][i]
+	f.dvrs[service] = append(f.dvrs[service][:i], f.dvrs[service][i+1:]...)
+	writeJSON(w, stored)
+}
+
+// findDVR locates the entry that holds the id. Called with f.mu held.
+func (f *fakeSeerr) findDVR(service string, id int) (int, bool) {
+	for i, stored := range f.dvrs[service] {
+		if current, ok := stored["id"].(int); ok && current == id {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// dvrNotFound is the 404 the DVR routes answer for an id they do not hold.
+func (f *fakeSeerr) dvrNotFound(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
+	writeJSON(w, map[string]any{"error": "settings instance not found"})
 }
 
 // fakeJellyfin is a stand-in for the media server Seerr onboards against and

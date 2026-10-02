@@ -3,6 +3,7 @@
 package main
 
 import (
+	"codeberg.org/d-buckner/bloud/cli/backend"
 	"codeberg.org/d-buckner/bloud/cli/executor"
 	"context"
 	"fmt"
@@ -128,53 +129,25 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 		}
 		result.Confidence = "high"
 		result.ConfidenceReason = "no changes detected"
-		result.ExitCode = 0
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 0
+		return finishResult(root, result, flags, 0)
 	}
 
 	// Infer commands and risk areas from changed files
 	triggeredIDs, riskAreas, unmapped := inferTriggers(changedFiles, manifest)
-
 	result.UnmappedFiles = unmapped
 	result.RiskAreas = riskAreas
-
-	// Determine confidence
-	result.Confidence = "high"
-	result.ConfidenceReason = "all changed files mapped to validation commands"
-	if len(unmapped) > 0 {
-		result.Confidence = "medium"
-		result.ConfidenceReason = fmt.Sprintf("%d file(s) not mapped to any validation command", len(unmapped))
-	}
-
-	// Collect commands to run
-	fastTier := manifest.Tiers["fast"]
-	var commands []manifestCommand
-	for _, cmd := range fastTier.Commands {
-		if triggeredIDs[cmd.ID] {
-			commands = append(commands, cmd)
-		}
-	}
-
-	// Detect affected apps
+	result.Confidence, result.ConfidenceReason = changedConfidence(unmapped)
 	result.Apps = detectAffectedApps(changedFiles, manifest)
+
+	// Only the fast tier's commands are inferable from a path; the higher
+	// tiers are chosen, not derived.
+	commands := triggeredCommands(manifest.Tiers["fast"], triggeredIDs)
 
 	if flags.dryRun {
 		printDryRun("changed", commands, result.RiskAreas, changedFiles, flags)
 		return 0
 	}
-
-	if !flags.json && len(commands) > 0 {
-		fmt.Printf("%s==>%s Inferred %d command(s) from %d changed file(s)\n", colorGreen, colorReset, len(commands), len(changedFiles))
-		if len(result.RiskAreas) > 0 {
-			fmt.Printf("    Risk areas: %s\n", strings.Join(result.RiskAreas, ", "))
-		}
-		if len(result.Apps) > 0 {
-			fmt.Printf("    Affected apps: %s\n", strings.Join(result.Apps, ", "))
-		}
-		fmt.Println()
-	}
+	printChangedPlan(flags, result, commands, changedFiles)
 
 	if len(commands) == 0 {
 		if !flags.json {
@@ -183,18 +156,55 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 				fmt.Printf("Risk areas detected: %s. Consider running a higher tier.\n", strings.Join(result.RiskAreas, ", "))
 			}
 		}
-		result.ExitCode = 0
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 0
+		return finishResult(root, result, flags, 0)
 	}
 
-	exitCode := runCommands(root, commands, result, flags)
+	return finishResult(root, result, flags, runCommands(root, commands, result, flags))
+}
 
+// finishResult stamps the ledger with the end time and the exit code, then
+// returns that code, so every tier ends the run the same way.
+func finishResult(root string, result *ValidateResult, flags validateFlags, exitCode int) int {
 	result.ExitCode = exitCode
 	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	writeLedger(root, result, flags)
 	return exitCode
+}
+
+// changedConfidence is what the changed tier's coverage is worth: a file no
+// glob in validation.yaml claims is a file no command looked at.
+func changedConfidence(unmapped []string) (string, string) {
+	if len(unmapped) > 0 {
+		return "medium", fmt.Sprintf("%d file(s) not mapped to any validation command", len(unmapped))
+	}
+	return "high", "all changed files mapped to validation commands"
+}
+
+// triggeredCommands keeps the tier's commands the changed files selected.
+func triggeredCommands(tier manifestTier, triggeredIDs map[string]bool) []manifestCommand {
+	var commands []manifestCommand
+	for _, cmd := range tier.Commands {
+		if triggeredIDs[cmd.ID] {
+			commands = append(commands, cmd)
+		}
+	}
+	return commands
+}
+
+// printChangedPlan states what the inference picked, unless the caller asked
+// for the JSON ledger only.
+func printChangedPlan(flags validateFlags, result *ValidateResult, commands []manifestCommand, changedFiles []string) {
+	if flags.json || len(commands) == 0 {
+		return
+	}
+	fmt.Printf("%s==>%s Inferred %d command(s) from %d changed file(s)\n", colorGreen, colorReset, len(commands), len(changedFiles))
+	if len(result.RiskAreas) > 0 {
+		fmt.Printf("    Risk areas: %s\n", strings.Join(result.RiskAreas, ", "))
+	}
+	if len(result.Apps) > 0 {
+		fmt.Printf("    Affected apps: %s\n", strings.Join(result.Apps, ", "))
+	}
+	fmt.Println()
 }
 
 func runIntegrationTier(root string, manifest *validationManifest, flags validateFlags) int {
@@ -214,15 +224,24 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 		return 0
 	}
 
-	ctx := context.Background()
-	fail := func(reason string) int {
-		result.ExitCode = 1
+	exitCode, reason := runIntegrationRuntime(root, tier, result, flags)
+	if reason != "" {
 		result.Confidence = "low"
 		result.ConfidenceReason = reason
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 1
+		return finishResult(root, result, flags, 1)
 	}
+
+	result.Confidence = "high"
+	result.ConfidenceReason = "integration tests passed against the real dependency-graph path"
+	return finishResult(root, result, flags, exitCode)
+}
+
+// runIntegrationRuntime brings the validation runtime up, runs the tier's
+// commands against it, and takes the unit back down. It returns the exit code
+// with an empty reason, or 1 with the reason the run could not complete, so the
+// caller only has to stamp the ledger once.
+func runIntegrationRuntime(root string, tier manifestTier, result *ValidateResult, flags validateFlags) (int, string) {
+	ctx := context.Background()
 	step := func(msg string) {
 		if !flags.json {
 			fmt.Printf("%s==>%s %s\n", colorGreen, colorReset, msg)
@@ -230,22 +249,12 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	}
 
 	// Step 1: Provision the VM (no-op if it is already running).
-	bk, name, err := devBackend()
+	bk, name, err := integrationProvisionVM(ctx, step)
 	if err != nil {
-		errorf("could not set up backend: %v", err)
-		return fail("backend setup failed")
+		errorf("%v", err)
+		return 1, err.Error()
 	}
-	step("Provisioning " + vmLabel(name))
-	if err := bk.Create(ctx); err != nil {
-		errorf("failed to provision VM: %v", err)
-		return fail("VM provisioning failed")
-	}
-	host := bk.Host()
-	if !host.Ready() {
-		errorf("VM is not reachable after provisioning")
-		return fail("VM not reachable")
-	}
-	ex := host.Executor()
+	ex := bk.Host().Executor()
 	rt := integrationRuntimeDir
 
 	// Steps 2-3: guest preflight + take over port 3000. The validation
@@ -253,75 +262,95 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	// runtime state (data, containers) is untouched and ./bloud dev
 	// converges it back afterwards.
 	if reason := integrationPrepareGuest(ctx, ex, step); reason != "" {
-		return fail(reason)
+		return 1, reason
 	}
 
 	// Step 4: Build artifacts locally.
 	tmpDir, err := os.MkdirTemp("", "bloud-validate-build-*")
 	if err != nil {
 		errorf("failed to create build dir: %v", err)
-		return fail("could not create build dir")
+		return 1, "could not create build dir"
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 	hostAgentSrc := filepath.Join(root, "services", "host-agent")
 	binaryPath, testBinary, err := integrationBuildArtifacts(root, hostAgentSrc, tmpDir, step)
 	if err != nil {
-		return fail(err.Error())
+		return 1, err.Error()
 	}
 
 	// Step 5: Deploy to the validation runtime.
 	step("Deploying to " + rt)
 	if err := integrationDeploy(ctx, ex, root, hostAgentSrc, rt, binaryPath, testBinary); err != nil {
-		return fail(err.Error())
+		return 1, err.Error()
 	}
 
 	// Step 6: Install and start the host-agent systemd service.
 	step("Installing and starting " + integrationHostAgentUnit)
 	if err := integrationInstallService(ctx, ex, rt, name, tmpDir); err != nil {
-		return fail(err.Error())
+		return 1, err.Error()
 	}
 
 	// Step 7: Wait for the API (first boot converges the system apps).
 	step("Waiting for host-agent (first boot pulls images and converges system apps; may take a while)")
-	if res, err := ex.Run(ctx, executor.RunSpec{Command: integrationWaitAgentScript}); err != nil || res.ExitCode != 0 {
-		if detail := strings.TrimSpace(res.Stderr); detail != "" {
-			fmt.Fprintln(os.Stderr, detail)
-		}
-		errorf("validation host-agent did not become healthy")
-		return fail("host-agent did not become healthy")
+	if err := integrationWaitForAgent(ctx, ex); err != nil {
+		return 1, err.Error()
 	}
 
 	// Step 8: Run the tier's commands against the deployed runtime.
 	step("Running integration tests")
 	exitCode := integrationRunTests(ctx, ex, tier, rt, result, flags)
 
-	// Stop the validation unit. The runtime dir and containers are left in
-	// place for inspection; ./bloud dev re-converges the dev state.
+	integrationStopService(ctx, ex)
+
+	if exitCode != 0 {
+		return 1, "integration tests failed"
+	}
+	if !flags.json {
+		fmt.Printf("\n%s==>%s Validation runtime remains at %s (guest). Re-run %s%s%s to restore the dev runtime state.\n",
+			colorGreen, colorReset, rt, colorCyan, "./bloud dev", colorReset)
+	}
+	return 0, ""
+}
+
+// integrationStopService stops the validation unit. The runtime dir and its
+// containers are left in place for inspection; ./bloud dev re-converges the
+// dev state.
+func integrationStopService(ctx context.Context, ex executor.Executor) {
 	if _, err := ex.Run(ctx, executor.RunSpec{
 		Command: "systemctl --user disable --now " + integrationHostAgentUnit + " >/dev/null 2>&1 || true",
 	}); err != nil {
 		errorf("failed to stop validation host-agent: %v", err)
 	}
+}
 
-	if exitCode != 0 {
-		result.ExitCode = 1
-		result.Confidence = "low"
-		result.ConfidenceReason = "integration tests failed"
-		result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		writeLedger(root, result, flags)
-		return 1
+// integrationProvisionVM resolves the dev backend and brings the VM up, which
+// is a no-op when it is already running.
+func integrationProvisionVM(ctx context.Context, step func(string)) (backend.Backend, string, error) {
+	bk, name, err := devBackend()
+	if err != nil {
+		return nil, "", fmt.Errorf("could not set up backend: %w", err)
 	}
+	step("Provisioning " + vmLabel(name))
+	if err := bk.Create(ctx); err != nil {
+		return nil, name, fmt.Errorf("failed to provision VM: %w", err)
+	}
+	if !bk.Host().Ready() {
+		return nil, name, fmt.Errorf("VM is not reachable after provisioning")
+	}
+	return bk, name, nil
+}
 
-	result.ExitCode = 0
-	result.Confidence = "high"
-	result.ConfidenceReason = "integration tests passed against the real dependency-graph path"
-	result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-	if !flags.json {
-		fmt.Printf("\n%s==>%s Validation runtime remains at %s (guest). Re-run %s%s%s to restore the dev runtime state.\n",
-			colorGreen, colorReset, rt, colorCyan, "./bloud dev", colorReset)
+// integrationWaitForAgent blocks until the validation host-agent reports
+// healthy, echoing whatever it said on stderr when it did not.
+func integrationWaitForAgent(ctx context.Context, ex executor.Executor) error {
+	res, err := ex.Run(ctx, executor.RunSpec{Command: integrationWaitAgentScript})
+	if err == nil && res.ExitCode == 0 {
+		return nil
 	}
-	writeLedger(root, result, flags)
-	return 0
+	if detail := strings.TrimSpace(res.Stderr); detail != "" {
+		fmt.Fprintln(os.Stderr, detail)
+	}
+	return fmt.Errorf("validation host-agent did not become healthy")
 }
 
 func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
@@ -330,69 +359,77 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 		if flags.explain && !flags.json {
 			fmt.Printf("    %s→%s %s: %s\n", colorCyan, colorReset, cmd.ID, cmd.Run)
 		}
-
-		cwd := root
-		if cmd.Cwd != "." {
-			cwd = filepath.Join(root, cmd.Cwd)
-		}
-
-		parts := splitShellWords(cmd.Run)
-		if len(parts) == 0 {
-			result.Commands = append(result.Commands, CommandResult{
-				ID:         cmd.ID,
-				Cwd:        cmd.Cwd,
-				Command:    cmd.Run,
-				Status:     "fail",
-				DurationMs: 0,
-				ExitCode:   1,
-			})
-			if !flags.json {
-				fmt.Printf("%s✗%s %s (empty command)\n", colorRed, colorReset, cmd.ID)
-			}
+		cr := runManifestCommand(root, cmd, flags)
+		result.Commands = append(result.Commands, cr)
+		if cr.Status == "fail" {
 			exitCode = 1
-			continue
-		}
-		c := exec.Command(parts[0], parts[1:]...)
-		c.Dir = cwd
-		if !flags.json {
-			c.Stdout = os.Stdout
-			c.Stderr = os.Stderr
-		}
-
-		start := time.Now()
-		err := c.Run()
-		dur := time.Since(start)
-
-		cmdExit := 0
-		status := "pass"
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				cmdExit = exitErr.ExitCode()
-			} else {
-				cmdExit = 1
-			}
-			status = "fail"
-			exitCode = 1
-		}
-
-		result.Commands = append(result.Commands, CommandResult{
-			ID:         cmd.ID,
-			Cwd:        cmd.Cwd,
-			Command:    cmd.Run,
-			Status:     status,
-			DurationMs: dur.Milliseconds(),
-			ExitCode:   cmdExit,
-		})
-
-		if !flags.json {
-			icon := colorGreen + "✓" + colorReset
-			if status == "fail" {
-				icon = colorRed + "✗" + colorReset
-			}
-			fmt.Printf("%s %s (%dms)\n", icon, cmd.ID, dur.Milliseconds())
 		}
 	}
 	return exitCode
+}
+
+// runManifestCommand runs one validation command, prints its result line, and
+// returns the ledger row. An empty command string is a manifest error rather
+// than a spawn failure, so it is recorded without starting a process.
+func runManifestCommand(root string, cmd manifestCommand, flags validateFlags) CommandResult {
+	cwd := root
+	if cmd.Cwd != "." {
+		cwd = filepath.Join(root, cmd.Cwd)
+	}
+
+	parts := splitShellWords(cmd.Run)
+	if len(parts) == 0 {
+		reportCommand(flags, cmd.ID, "fail", 0, "(empty command)")
+		return CommandResult{ID: cmd.ID, Cwd: cmd.Cwd, Command: cmd.Run, Status: "fail", ExitCode: 1}
+	}
+
+	c := exec.Command(parts[0], parts[1:]...)
+	c.Dir = cwd
+	if !flags.json {
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+	}
+
+	start := time.Now()
+	err := c.Run()
+	dur := time.Since(start)
+
+	status, code := "pass", 0
+	if err != nil {
+		status = "fail"
+		code = 1
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		}
+	}
+
+	reportCommand(flags, cmd.ID, status, dur.Milliseconds(), "")
+	return CommandResult{
+		ID:         cmd.ID,
+		Cwd:        cmd.Cwd,
+		Command:    cmd.Run,
+		Status:     status,
+		DurationMs: dur.Milliseconds(),
+		ExitCode:   code,
+	}
+}
+
+// reportCommand prints the one-line console result for a validation command.
+// A command that never spawned has no duration worth reporting, so `note`
+// carries the reason instead.
+func reportCommand(flags validateFlags, id, status string, ms int64, note string) {
+	if flags.json {
+		return
+	}
+	icon := colorGreen + "✓" + colorReset
+	if status == "fail" {
+		icon = colorRed + "✗" + colorReset
+	}
+	if note != "" {
+		fmt.Printf("%s %s %s\n", icon, id, note)
+		return
+	}
+	fmt.Printf("%s %s (%dms)\n", icon, id, ms)
 }
 
 func printDryRun(tier string, commands []manifestCommand, riskAreas []string, changedFiles []string, flags validateFlags) {

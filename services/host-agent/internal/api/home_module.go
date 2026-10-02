@@ -53,56 +53,65 @@ func (m *homeModuleSimple) GetLayout(username string) (*homeResponse, error) {
 		posMap[p.ElementID] = p
 	}
 
-	launchPaths := m.getLaunchPaths()
+	return &homeResponse{
+		Apps:    m.homeAppItems(apps, posMap),
+		Widgets: homeWidgetItems(positions),
+	}, nil
+}
 
-	appItems := make([]appWithPosition, 0, len(apps))
+// homeAppItems pairs each non-system app with its saved grid position and the
+// SSO launch path the dashboard opens it on.
+func (m *homeModuleSimple) homeAppItems(apps []*store.InstalledApp, posMap map[string]store.Position) []appWithPosition {
+	launchPaths := m.getLaunchPaths()
+	items := make([]appWithPosition, 0, len(apps))
 	for _, app := range apps {
 		if app.IsSystem {
 			continue
 		}
 		pos := posMap[app.CatalogID]
-		pw, ph := pos.W, pos.H
-		if pw < 1 {
-			pw = 1
-		}
-		if ph < 1 {
-			ph = 1
-		}
-		appItems = append(appItems, appWithPosition{
+		w, h := atLeastOne(pos)
+		items = append(items, appWithPosition{
 			InstalledApp:  app,
 			SSOLaunchPath: launchPaths[app.CatalogID],
 			X:             pos.X,
 			Y:             pos.Y,
-			W:             pw,
-			H:             ph,
+			W:             w,
+			H:             h,
 		})
 	}
+	return items
+}
 
-	widgetItems := make([]widgetPosition, 0)
+// homeWidgetItems picks the widget-typed positions out of the user's full set.
+func homeWidgetItems(positions []store.Position) []widgetPosition {
+	items := make([]widgetPosition, 0)
 	for _, p := range positions {
 		if p.ElementType != "widget" {
 			continue
 		}
-		pw, ph := p.W, p.H
-		if pw < 1 {
-			pw = 1
-		}
-		if ph < 1 {
-			ph = 1
-		}
-		widgetItems = append(widgetItems, widgetPosition{
+		w, h := atLeastOne(p)
+		items = append(items, widgetPosition{
 			ID: p.ElementID,
 			X:  p.X,
 			Y:  p.Y,
-			W:  pw,
-			H:  ph,
+			W:  w,
+			H:  h,
 		})
 	}
+	return items
+}
 
-	return &homeResponse{
-		Apps:    appItems,
-		Widgets: widgetItems,
-	}, nil
+// atLeastOne clamps a stored size to one cell. A zero or negative w/h renders
+// an invisible tile the user can never drag back.
+func atLeastOne(p store.Position) (w, h int) {
+	w, h = p.W, p.H
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	return w, h
 }
 
 // SetLayout replaces the user's full grid layout.

@@ -55,100 +55,30 @@ func NewSharingModule(
 // CommunityGraphHandler returns a graph of host → apps → guests for active shares.
 func (m *sharingModule) CommunityGraphHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		shares, err := m.shareStore.List()
-		if err != nil {
-			m.logger.Error("failed to list shares", "error", err)
-			respondError(w, http.StatusInternalServerError, "failed to list shares")
+		src, ok := m.loadCommunitySources(w)
+		if !ok {
 			return
 		}
-
-		// Build app ID → catalog_id lookup from installed apps
-		allApps, err := m.appStore.GetAll()
-		if err != nil {
-			m.logger.Error("failed to list apps", "error", err)
-			respondError(w, http.StatusInternalServerError, "failed to list apps")
-			return
-		}
-		appByDBID := make(map[int]*store.InstalledApp, len(allApps))
-		for _, a := range allApps {
-			appByDBID[a.ID] = a
-		}
-
-		nodeMap := make(map[string]communityNode)
-		edgeSet := make(map[string]communityEdge)
 
 		// Add host node
-		hostLabel := m.hostLabel
-		if hostLabel == "" {
-			hostLabel = "My Server"
+		nodeMap := map[string]communityNode{
+			"__host__": {ID: "__host__", Label: m.hostDisplayLabel(), NodeType: "person"},
 		}
-		nodeMap["__host__"] = communityNode{
-			ID:       "__host__",
-			Label:    hostLabel,
-			NodeType: "person",
-		}
+		edgeSet := make(map[string]communityEdge)
 
-		guests, err := m.guestStore.List()
-		if err != nil {
-			m.logger.Error("failed to list guests", "error", err)
-			respondError(w, http.StatusInternalServerError, "failed to list guests")
-			return
-		}
-		guestByID := make(map[string]*store.Guest)
-		for _, g := range guests {
-			guestByID[g.ID] = g
-		}
-
-		for _, share := range shares {
+		for _, share := range src.shares {
 			if share.Status != "active" {
 				continue
 			}
 
-			installedApp, ok := appByDBID[share.AppID]
+			installedApp, ok := src.appByDBID[share.AppID]
 			if !ok {
 				continue
 			}
-			catalogID := installedApp.CatalogID
-
-			// App node
-			appNodeID := "app:" + catalogID
-			if _, exists := nodeMap[appNodeID]; !exists {
-				displayName := catalogID
-				if catalogApp, err := m.catalog.Get(catalogID); err == nil {
-					displayName = catalogApp.DisplayName
-				}
-				nodeMap[appNodeID] = communityNode{
-					ID:       appNodeID,
-					Label:    displayName,
-					NodeType: "app",
-					AppID:    catalogID,
-				}
-			}
-
-			// Guest node
-			guestNodeID := "guest:" + share.GuestID
-			if _, exists := nodeMap[guestNodeID]; !exists {
-				guestName := share.GuestID
-				if guest, ok := guestByID[share.GuestID]; ok {
-					guestName = guest.Name
-				}
-				nodeMap[guestNodeID] = communityNode{
-					ID:       guestNodeID,
-					Label:    guestName,
-					NodeType: "person",
-				}
-			}
-
-			// Edges (deduplicate via map key)
-			hostToApp := "__host__->" + appNodeID
-			if _, exists := edgeSet[hostToApp]; !exists {
-				edgeSet[hostToApp] = communityEdge{Source: "__host__", Target: appNodeID}
-			}
-
-			appToGuest := appNodeID + "->" + guestNodeID
-			if _, exists := edgeSet[appToGuest]; !exists {
-				edgeSet[appToGuest] = communityEdge{Source: appNodeID, Target: guestNodeID}
-			}
+			appNodeID := m.communityAppNode(nodeMap, installedApp.CatalogID)
+			guestNodeID := communityGuestNode(nodeMap, src.guestByID, share.GuestID)
+			addCommunityEdge(edgeSet, "__host__", appNodeID)
+			addCommunityEdge(edgeSet, appNodeID, guestNodeID)
 		}
 
 		nodes := make([]communityNode, 0, len(nodeMap))
@@ -167,72 +97,127 @@ func (m *sharingModule) CommunityGraphHandler() http.HandlerFunc {
 	}
 }
 
+// communitySources is the three store reads the community graph needs, with
+// the shares already indexed by the keys the loop resolves.
+type communitySources struct {
+	shares    []*store.Share
+	appByDBID map[int]*store.InstalledApp
+	guestByID map[string]*store.Guest
+}
+
+// loadCommunitySources reads shares, installed apps, and guests. Any read
+// failing ends the request: a graph built from a partial picture would render a
+// host that appears to share nothing, which is worse than an error.
+func (m *sharingModule) loadCommunitySources(w http.ResponseWriter) (communitySources, bool) {
+	shares, err := m.shareStore.List()
+	if err != nil {
+		m.logger.Error("failed to list shares", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to list shares")
+		return communitySources{}, false
+	}
+
+	// Build app ID → catalog_id lookup from installed apps
+	allApps, err := m.appStore.GetAll()
+	if err != nil {
+		m.logger.Error("failed to list apps", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to list apps")
+		return communitySources{}, false
+	}
+	appByDBID := make(map[int]*store.InstalledApp, len(allApps))
+	for _, a := range allApps {
+		appByDBID[a.ID] = a
+	}
+
+	guests, err := m.guestStore.List()
+	if err != nil {
+		m.logger.Error("failed to list guests", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to list guests")
+		return communitySources{}, false
+	}
+	guestByID := make(map[string]*store.Guest)
+	for _, g := range guests {
+		guestByID[g.ID] = g
+	}
+
+	return communitySources{shares: shares, appByDBID: appByDBID, guestByID: guestByID}, true
+}
+
+// hostDisplayLabel is the label for the local host node, with a fallback for an
+// instance that was never given a name.
+func (m *sharingModule) hostDisplayLabel() string {
+	if m.hostLabel == "" {
+		return "My Server"
+	}
+	return m.hostLabel
+}
+
+// communityAppNode returns the app's node id, adding the node on first use. The
+// map key is the dedupe, so N shares of one app render one app node.
+func (m *sharingModule) communityAppNode(nodeMap map[string]communityNode, catalogID string) string {
+	appNodeID := "app:" + catalogID
+	if _, exists := nodeMap[appNodeID]; exists {
+		return appNodeID
+	}
+	displayName := catalogID
+	if catalogApp, err := m.catalog.Get(catalogID); err == nil {
+		displayName = catalogApp.DisplayName
+	}
+	nodeMap[appNodeID] = communityNode{
+		ID:       appNodeID,
+		Label:    displayName,
+		NodeType: "app",
+		AppID:    catalogID,
+	}
+	return appNodeID
+}
+
+// communityGuestNode returns the guest's node id, adding the node on first use
+// and falling back to the raw id when the guest record is gone.
+func communityGuestNode(nodeMap map[string]communityNode, guestByID map[string]*store.Guest, guestID string) string {
+	guestNodeID := "guest:" + guestID
+	if _, exists := nodeMap[guestNodeID]; exists {
+		return guestNodeID
+	}
+	guestName := guestID
+	if guest, ok := guestByID[guestID]; ok {
+		guestName = guest.Name
+	}
+	nodeMap[guestNodeID] = communityNode{
+		ID:       guestNodeID,
+		Label:    guestName,
+		NodeType: "person",
+	}
+	return guestNodeID
+}
+
+// addCommunityEdge records one directed edge, keyed by its endpoints so a
+// repeated share of the same pair does not draw the line twice.
+func addCommunityEdge(edgeSet map[string]communityEdge, source, target string) {
+	key := source + "->" + target
+	if _, exists := edgeSet[key]; !exists {
+		edgeSet[key] = communityEdge{Source: source, Target: target}
+	}
+}
+
 // ---- Invites ----
 
 // CreateInviteHandler creates an invite token for sharing an app.
 func (m *sharingModule) CreateInviteHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req createInviteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, http.StatusBadRequest, "invalid request body")
+		req, ok := decodeCreateInviteRequest(w, r)
+		if !ok {
 			return
 		}
-
-		if req.AppID == "" {
-			respondError(w, http.StatusBadRequest, "appId is required")
-			return
-		}
-
-		if req.GuestID == "" {
-			respondError(w, http.StatusBadRequest, "guestId is required")
-			return
-		}
-
-		if req.NodeShareLink == "" {
-			respondError(w, http.StatusBadRequest, "nodeShareLink is required")
-			return
-		}
-
-		// Validate app is installed and get its integer ID
-		app, err := m.appStore.GetByCatalogID(req.AppID)
-		if err != nil || app == nil {
-			respondError(w, http.StatusNotFound, "app not installed")
-			return
-		}
-
-		// Get display name from catalog
-		catalogApp, err := m.catalog.Get(req.AppID)
-		if err != nil {
-			respondError(w, http.StatusNotFound, "app not found in catalog")
-			return
-		}
-
-		// Validate guest exists
-		guest, err := m.guestStore.GetByID(req.GuestID)
-		if err != nil || guest == nil {
-			respondError(w, http.StatusBadRequest, "guest not found")
-			return
-		}
-
-		// Get tailnet node address
-		if m.tailnetNode == nil {
-			respondError(w, http.StatusServiceUnavailable, "sharing not available: tailnet node manager not configured")
-			return
-		}
-
-		addr, err := m.tailnetNode.GetAddr(r.Context(), req.AppID)
-		if err != nil {
-			m.logger.Error("failed to get tailnet node address", "app", req.AppID, "error", err)
-			respondError(w, http.StatusServiceUnavailable, "tailnet node not ready")
+		resolved, ok := m.resolveInvite(w, r, req)
+		if !ok {
 			return
 		}
 
 		shareID := uuid.New().String()
-
 		share := store.Share{
 			ID:            shareID,
-			AppID:         app.ID,
-			SSOStrategy:   catalogApp.SSO.Strategy,
+			AppID:         resolved.app.ID,
+			SSOStrategy:   resolved.catalogApp.SSO.Strategy,
 			GuestID:       req.GuestID,
 			NodeShareLink: req.NodeShareLink,
 			Status:        "active",
@@ -243,15 +228,7 @@ func (m *sharingModule) CreateInviteHandler() http.HandlerFunc {
 			return
 		}
 
-		payload := sharing.InvitePayload{
-			AppID:         req.AppID,
-			AppName:       catalogApp.DisplayName,
-			HostLabel:     m.hostLabel,
-			TailnetAddr:   addr,
-			NodeShareLink: req.NodeShareLink,
-		}
-
-		token, err := sharing.GenerateToken(payload, m.ssoHostSecret)
+		token, err := sharing.GenerateToken(resolved.invitePayload(req), m.ssoHostSecret)
 		if err != nil {
 			m.logger.Error("failed to generate invite token", "error", err)
 			respondError(w, http.StatusInternalServerError, "failed to generate token")
@@ -263,6 +240,90 @@ func (m *sharingModule) CreateInviteHandler() http.HandlerFunc {
 			Token:   token,
 		})
 	}
+}
+
+// inviteResolution is what an invite needs before it can be written: the
+// installed app row, its catalog entry, and the tailnet address the guest will
+// dial.
+type inviteResolution struct {
+	app         *store.InstalledApp
+	catalogApp  *catalog.App
+	tailnetAddr string
+	hostLabel   string
+}
+
+// invitePayload builds the signed envelope the guest redeems on the far side.
+func (r inviteResolution) invitePayload(req createInviteRequest) sharing.InvitePayload {
+	return sharing.InvitePayload{
+		AppID:         req.AppID,
+		AppName:       r.catalogApp.DisplayName,
+		HostLabel:     r.hostLabel,
+		TailnetAddr:   r.tailnetAddr,
+		NodeShareLink: req.NodeShareLink,
+	}
+}
+
+// decodeCreateInviteRequest reads the invite request and refuses it when any of
+// the four things it must name is missing.
+func decodeCreateInviteRequest(w http.ResponseWriter, r *http.Request) (createInviteRequest, bool) {
+	var req createInviteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return createInviteRequest{}, false
+	}
+	for _, field := range []struct{ name, value string }{
+		{"appId", req.AppID},
+		{"guestId", req.GuestID},
+		{"nodeShareLink", req.NodeShareLink},
+	} {
+		if field.value == "" {
+			respondError(w, http.StatusBadRequest, field.name+" is required")
+			return createInviteRequest{}, false
+		}
+	}
+	return req, true
+}
+
+// resolveInvite checks the three things an invite depends on: the app is
+// installed and in the catalog, the guest exists, and the tailnet node has an
+// address to hand out.
+func (m *sharingModule) resolveInvite(w http.ResponseWriter, r *http.Request, req createInviteRequest) (inviteResolution, bool) {
+	app, err := m.appStore.GetByCatalogID(req.AppID)
+	if err != nil || app == nil {
+		respondError(w, http.StatusNotFound, "app not installed")
+		return inviteResolution{}, false
+	}
+
+	catalogApp, err := m.catalog.Get(req.AppID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "app not found in catalog")
+		return inviteResolution{}, false
+	}
+
+	guest, err := m.guestStore.GetByID(req.GuestID)
+	if err != nil || guest == nil {
+		respondError(w, http.StatusBadRequest, "guest not found")
+		return inviteResolution{}, false
+	}
+
+	if m.tailnetNode == nil {
+		respondError(w, http.StatusServiceUnavailable, "sharing not available: tailnet node manager not configured")
+		return inviteResolution{}, false
+	}
+
+	addr, err := m.tailnetNode.GetAddr(r.Context(), req.AppID)
+	if err != nil {
+		m.logger.Error("failed to get tailnet node address", "app", req.AppID, "error", err)
+		respondError(w, http.StatusServiceUnavailable, "tailnet node not ready")
+		return inviteResolution{}, false
+	}
+
+	return inviteResolution{
+		app:         app,
+		catalogApp:  catalogApp,
+		tailnetAddr: addr,
+		hostLabel:   m.hostLabel,
+	}, true
 }
 
 // ---- Shares ----

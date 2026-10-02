@@ -197,7 +197,8 @@
 	{:else}
 		<div class="modal-body">
 			<p class="description">
-				Copy this token and send it to <strong>{selectedGuestName}</strong>. They'll paste it into "Add Shared App" on their Bloud instance.
+				Copy this token and send it to <strong>{selectedGuestName}</strong>. They'll paste it into
+				"Add Shared App" on their Bloud instance.
 			</p>
 
 			<div class="field">

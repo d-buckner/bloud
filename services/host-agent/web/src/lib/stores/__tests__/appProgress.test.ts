@@ -88,7 +88,13 @@ describe('mergePullEvent', () => {
 		let m = mergeNodeEvent({}, node('jellyfin', 'apps-jellyfin', 'queued'), NOW);
 		m = mergePullEvent(
 			m,
-			{ app: 'jellyfin', image: 'jellyfin:10', phase: 'pulling', percent: 34, detail: '34% (340.0 MiB of 1.0 GiB)' },
+			{
+				app: 'jellyfin',
+				image: 'jellyfin:10',
+				phase: 'pulling',
+				percent: 34,
+				detail: '34% (340.0 MiB of 1.0 GiB)',
+			},
 			NOW + 100
 		);
 		expect(m.jellyfin.phase).toBe('pulling');
