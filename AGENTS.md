@@ -410,9 +410,14 @@ cache, so `go run gotest.tools/gotestsum` works offline.
   through django-allauth), `hermes.spec.ts` (native-oidc over the loopback
   issuer). Fixtures: `lib/fixtures.ts`
   (`authenticatedPage`, `api`); shared login: `lib/auth.ts`, `lib/loginPage.ts`.
-- Config: single worker, no retries, 10 min/test, trace/screenshot/video retained
-  on failure. `./bloud e2e` runs the suite against a runtime started by
-  `./bloud dev`.
+- Config: single worker, 15 min/test, trace/screenshot/video retained on
+  failure. Retries: 1 in CI, 0 locally, both overridable with
+  `BLOUD_E2E_RETRIES`. A spec that only passed on the retry is named by
+  `e2e/report-retries.mjs` as a PR warning annotation, so the retry is
+  reported rather than absorbed. That reporting is the condition guardrail 2
+  of `docs/plans/ci-flakiness-reduction.md` attached to adding a retry: a
+  retry nobody sees quietly becomes the norm. The local default stays 0 so a
+  flake surfaces while a human is watching it.
 - `./bloud e2e lifecycle [--host-only] [--keep]` is self-contained: deploys
   host-agent + catalog to the VM as systemd user service
   `bloud-e2e-host-agent.service` into `/var/tmp/bloud-e2e-runtime`, **installs
@@ -421,7 +426,8 @@ cache, so `go run gotest.tools/gotestsum` works offline.
   cleanup. Key env: `BLOUD_E2E_LIMA_INSTANCE` (default `bloud-dev`),
   `BLOUD_E2E_QEMU_INSTANCE`, `BLOUD_E2E_SSH_TARGET`, `BLOUD_E2E_RUNTIME_DIR`,
   `BLOUD_E2E_GOARCH` (amd64|arm64), `BLOUD_E2E_USERNAME`/`BLOUD_E2E_PASSWORD`
-  (defaults `e2etest`/`e2etest123`), `BLOUD_E2E_TRAEFIK_DYNAMIC_DIR`.
+  (defaults `e2etest`/`e2etest123`), `BLOUD_E2E_TRAEFIK_DYNAMIC_DIR`,
+  `BLOUD_E2E_RETRIES` (Playwright retries; CI sets 1, local default 0).
   `./bloud e2e app` (used by `.github/workflows/e2e-apps.yml` on the native
   backend) adds `BLOUD_E2E_APP` (required) and `BLOUD_E2E_PLAYWRIGHT_FILTER`.
 - CI sizes the e2e runs to the change. The reusable

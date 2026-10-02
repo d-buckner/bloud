@@ -106,9 +106,22 @@ jobs:
           # for that leg only) lets its browser rung run; see
           # apps/vaultwarden/INTEGRATION.md, "Plain HTTP".
           BLOUD_DEV_VAULTWARDEN_ALLOW_HTTP: ${{ matrix.app == 'vaultwarden' && '1' || '' }}
+          # One automatic re-run of a test that failed. The flakes in this
+          # suite are convergence timing, not assertions, so a real
+          # regression still fails on both attempts. Reported rather than
+          # absorbed: see the next step and guardrail 2 of
+          # docs/plans/ci-flakiness-reduction.md.
+          BLOUD_E2E_RETRIES: "1"
         run: |
           # Each matrix app maps 1:1 to <app>.spec.ts.
           BLOUD_E2E_PLAYWRIGHT_FILTER="${{ matrix.app }}" ./bloud e2e app
+
+      - name: Report retried tests
+        if: always()
+        # Names every spec that only passed on its second attempt, as a
+        # warning annotation on the PR. A retry that nobody sees becomes
+        # the norm, which is the failure mode the plan called out.
+        run: node e2e/report-retries.mjs e2e/test-results/e2e-report.json
 
       - name: Upload test results
         if: failure()
