@@ -119,6 +119,12 @@ func parseLifecycleConfig(root string, args []string, getenv func(string) string
 	return cfg, false, nil
 }
 
+// hasNoTarget reports whether the config names no VM instance and no SSH
+// target, which is when the backend's own default applies.
+func (cfg *lifecycleConfig) hasNoTarget() bool {
+	return cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == ""
+}
+
 // applyLifecycleDefaults fills unset config fields with backend-aware
 // defaults (instance names, URLs, credentials, derived paths).
 func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
@@ -129,19 +135,29 @@ func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
 	switch {
 	case cfg.native:
 		// Runs on the current machine; no VM instance.
-	case cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "" && backendName == "qemu":
+	case cfg.hasNoTarget() && backendName == "qemu":
 		cfg.qemu = "bloud-qemu"
-	case cfg.lima == "" && cfg.qemu == "" && cfg.sshTarget == "":
+	case cfg.hasNoTarget():
 		cfg.lima = "bloud-dev"
 	}
 	if cfg.qemu != "" && cfg.sshTarget == "" {
-		// Derive SSH target and key from QEMU instance
+		// Derive SSH target and key from the QEMU instance
 		cfg.sshTarget = "bloud@127.0.0.1"
 		cfg.sshKeyFile = filepath.Join(cfg.root, ".bloud", "qemu", cfg.qemu, "id_ed25519")
 	}
 	if cfg.baseURL == "" && (cfg.lima != "" || cfg.native) {
 		cfg.baseURL = "http://localhost:3000"
 	}
+	applyTestCredentials(cfg)
+	if cfg.traefikDir == "" {
+		cfg.traefikDir = filepath.Join(cfg.remoteDir, "data", "traefik", "dynamic")
+	}
+}
+
+// applyTestCredentials defaults the e2e account and the target architecture.
+// The credentials are throwaway: they only ever exist inside the disposable
+// runtime the suite builds for itself.
+func applyTestCredentials(cfg *lifecycleConfig) {
 	if cfg.goarch == "" {
 		cfg.goarch = runtime.GOARCH
 	}
@@ -150,9 +166,6 @@ func applyLifecycleDefaults(cfg *lifecycleConfig, backendName string) {
 	}
 	if cfg.password == "" {
 		cfg.password = "e2etest123"
-	}
-	if cfg.traefikDir == "" {
-		cfg.traefikDir = filepath.Join(cfg.remoteDir, "data", "traefik", "dynamic")
 	}
 }
 

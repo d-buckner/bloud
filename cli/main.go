@@ -112,61 +112,77 @@ func dispatch(cmd string, args []string) int {
 	}
 }
 
+// usageLines is the CLI help screen as data: one entry per printed line. The
+// text is the contract with whoever reads `./bloud` with no arguments, so it
+// lives in one block that can be read top to bottom.
+var usageLines = []string{
+	"Bloud CLI",
+	"",
+	"Usage: ./bloud <command> [args]",
+	"",
+	"Setup:",
+	"  setup           Select runtime backend, check prerequisites, build CLI",
+	"",
+	"Dev (VM):",
+	"  dev             Build + deploy + run host-agent on the VM (Ctrl-C to stop)",
+	"    --reset        Wipe the runtime first (same as reset -y, no prompt)",
+	"    --no-watch     Run the one-shot build/deploy loop instead of hot reload",
+	"    -v | --verbose  Stream raw subprocess output, not just warnings",
+	"                    (all of it is mirrored to .bloud/logs/dev.log either way)",
+	"  start           Show dev environment quick-start instructions",
+	"  stop            Stop host-agent running on the VM",
+	"  status          Show VM and host-agent status",
+	"  services        Show app container status on the VM",
+	"  logs            Stream host-agent logs from the VM",
+	"  attach          Open a shell on the VM",
+	"  shell [cmd]     Run a command on the VM (or open a shell)",
+	"  install <app>   Install an app via API (requires running host-agent)",
+	"  uninstall <app> Uninstall an app via API",
+	"  reset           Wipe all data in the VM and re-run setup (keeps VM)",
+	"    -y | --yes     Skip the confirmation prompt",
+	"  destroy         Delete the VM",
+	"",
+	"Validation:",
+	"  validate [flags]     Run tiered validation (default: --tier changed)",
+	"    --tier <t>         fast | changed | integration",
+	"    --app <name>       Scope to a specific app",
+	"    --dry-run          Show plan without executing",
+	"    --explain          Print why each command was selected",
+	"    --json             Output JSON ledger only",
+	"    --since <ref>      Git ref for diff base (default: HEAD)",
+	"  e2e lifecycle [flags] Run full lifecycle E2E",
+	"  e2e affected [--since <ref>] [--json]",
+	"                       Print the e2e projects a change set needs",
+	"",
+	"Release:",
+	"  package              Build the host-agent, frontend, and catalog into a .deb",
+	"    --arch <a>         Package architecture (default: host arch)",
+	"    --version <v>      Package version (default: git describe)",
+	"    --out <dir>        Output directory (default: dist)",
+	"",
+	"Other:",
+	"  depgraph        Generate the full Mermaid dependency graph from app metadata",
+	"    --write          Embed it in README.md (between the generated markers)",
+	"    --check          Exit 1 when README.md's graph is stale",
+	"  catalogdoc      Generate the README's catalog list and one-login table",
+	"    --write          Replace both generated blocks in README.md",
+	"    --check          Exit 1 when either block is stale",
+	"    --target FILE    File to write or check (default: README.md)",
+	"  token           Print the host-agent API token (for ad-hoc curl / e2e)",
+}
+
 func printUsage() {
-	fmt.Println("Bloud CLI")
+	for _, line := range usageLines {
+		fmt.Println(line)
+	}
 	fmt.Println()
-	fmt.Println("Usage: ./bloud <command> [args]")
-	fmt.Println()
-	fmt.Println("Setup:")
-	fmt.Println("  setup           Select runtime backend, check prerequisites, build CLI")
-	fmt.Println()
-	fmt.Println("Dev (VM):")
-	fmt.Println("  dev             Build + deploy + run host-agent on the VM (Ctrl-C to stop)")
-	fmt.Println("    --reset        Wipe the runtime first (same as reset -y, no prompt)")
-	fmt.Println("    --no-watch     Run the one-shot build/deploy loop instead of hot reload")
-	fmt.Println("    -v | --verbose  Stream raw subprocess output, not just warnings")
-	fmt.Println("                    (all of it is mirrored to .bloud/logs/dev.log either way)")
-	fmt.Println("  start           Show dev environment quick-start instructions")
-	fmt.Println("  stop            Stop host-agent running on the VM")
-	fmt.Println("  status          Show VM and host-agent status")
-	fmt.Println("  services        Show app container status on the VM")
-	fmt.Println("  logs            Stream host-agent logs from the VM")
-	fmt.Println("  attach          Open a shell on the VM")
-	fmt.Println("  shell [cmd]     Run a command on the VM (or open a shell)")
-	fmt.Println("  install <app>   Install an app via API (requires running host-agent)")
-	fmt.Println("  uninstall <app> Uninstall an app via API")
-	fmt.Println("  reset           Wipe all data in the VM and re-run setup (keeps VM)")
-	fmt.Println("    -y | --yes     Skip the confirmation prompt")
-	fmt.Println("  destroy         Delete the VM")
-	fmt.Println()
-	fmt.Println("Validation:")
-	fmt.Println("  validate [flags]     Run tiered validation (default: --tier changed)")
-	fmt.Println("    --tier <t>         fast | changed | integration")
-	fmt.Println("    --app <name>       Scope to a specific app")
-	fmt.Println("    --dry-run          Show plan without executing")
-	fmt.Println("    --explain          Print why each command was selected")
-	fmt.Println("    --json             Output JSON ledger only")
-	fmt.Println("    --since <ref>      Git ref for diff base (default: HEAD)")
-	fmt.Println("  e2e lifecycle [flags] Run full lifecycle E2E")
-	fmt.Println("  e2e affected [--since <ref>] [--json]")
-	fmt.Println("                       Print the e2e projects a change set needs")
-	fmt.Println()
-	fmt.Println("Release:")
-	fmt.Println("  package              Build the host-agent, frontend, and catalog into a .deb")
-	fmt.Println("    --arch <a>         Package architecture (default: host arch)")
-	fmt.Println("    --version <v>      Package version (default: git describe)")
-	fmt.Println("    --out <dir>        Output directory (default: dist)")
-	fmt.Println()
-	fmt.Println("Other:")
-	fmt.Println("  depgraph        Generate the full Mermaid dependency graph from app metadata")
-	fmt.Println("    --write          Embed it in README.md (between the generated markers)")
-	fmt.Println("    --check          Exit 1 when README.md's graph is stale")
-	fmt.Println("  catalogdoc      Generate the README's catalog list and one-login table")
-	fmt.Println("    --write          Replace both generated blocks in README.md")
-	fmt.Println("    --check          Exit 1 when either block is stale")
-	fmt.Println("    --target FILE    File to write or check (default: README.md)")
-	fmt.Println("  token           Print the host-agent API token (for ad-hoc curl / e2e)")
-	fmt.Println()
+	printBackendQuickStart()
+	fmt.Println("  ./bloud dev")
+}
+
+// printBackendQuickStart prints the first-run lines for whichever runtime
+// backend is selected, or the pointer at `setup` when there is none yet.
+func printBackendQuickStart() {
 	switch usageBackend() {
 	case "qemu":
 		fmt.Println("QEMU VM quick-start:")
@@ -182,7 +198,6 @@ func printUsage() {
 		fmt.Println("First time? Pick a runtime backend:")
 		fmt.Println("  ./bloud setup")
 	}
-	fmt.Println("  ./bloud dev")
 }
 
 func log(msg string) {

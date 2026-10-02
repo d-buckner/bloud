@@ -14,13 +14,7 @@ import (
 )
 
 func cmdSetup() int {
-	fmt.Println()
-	fmt.Printf("%s╭──────────────────────────────╮%s\n", colorCyan, colorReset)
-	fmt.Printf("%s│   Bloud Development Setup    │%s\n", colorCyan, colorReset)
-	fmt.Printf("%s╰──────────────────────────────╯%s\n", colorCyan, colorReset)
-	fmt.Println()
-
-	var allGood bool
+	printSetupBanner()
 
 	projectRoot, err := getProjectRoot()
 	if err != nil {
@@ -34,44 +28,18 @@ func cmdSetup() int {
 		return 1
 	}
 
-	prereqs := []prereq{
-		{"go", "Go"},
-		{"node", "Node.js"},
-		{"podman", "Podman"},
-	}
-	switch bkName {
-	case "qemu":
-		prereqs = append(prereqs, prereq{"qemu-system-x86_64", "QEMU"})
-	case "lima":
-		prereqs = append(prereqs, prereq{"limactl", "Lima"})
-	}
+	prereqs := backendPrereqs(bkName)
 	missing := checkPrereqs(prereqs)
-	allGood = len(missing) == 0
-
-	canAptInstall := bkName == "native" && runtime.GOOS == "linux" && checkCommand("apt-get")
-	if !allGood && canAptInstall {
-		pkgs := aptPackagesFor(missing)
-		if len(pkgs) > 0 {
-			fmt.Println()
-			fmt.Printf("  Installing missing packages via apt: %s\n", strings.Join(pkgs, " "))
-			installCmd := "sudo apt-get update -qq && sudo apt-get install -y -qq " + strings.Join(pkgs, " ")
-			cmd := localExec("bash", "-c", installCmd)
-			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				errorf("apt-get install failed: %v", err)
-				return 1
-			}
-			fmt.Println()
-			missing = checkPrereqs(prereqs)
-			allGood = len(missing) == 0
+	if len(missing) > 0 && canAptInstall(bkName) {
+		missing, err = aptInstallMissing(prereqs, missing)
+		if err != nil {
+			errorf("%v", err)
+			return 1
 		}
 	}
 
 	fmt.Println()
-
-	if !allGood {
+	if len(missing) > 0 {
 		fmt.Printf("%s✗ Some prerequisites are missing.%s\n", colorRed, colorReset)
 		fmt.Println()
 		fmt.Println("  Fix the issues above, then run './bloud setup' again.")
@@ -86,18 +54,9 @@ func cmdSetup() int {
 		}
 	}
 
-	// Build CLI binary
-
-	fmt.Print("  Building CLI binary...        ")
-	buildCmd := fmt.Sprintf("cd %s/cli && go build -o ../bloud .", projectRoot)
-	cmd := localExec("bash", "-c", buildCmd)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("%s✗ failed%s\n", colorRed, colorReset)
+	if err := buildCLIBinary(projectRoot); err != nil {
 		return 1
 	}
-	fmt.Printf("%s✓ built%s\n", colorGreen, colorReset)
 
 	fmt.Println()
 	fmt.Printf("%s✓ Setup complete!%s\n", colorGreen, colorReset)
@@ -106,6 +65,72 @@ func cmdSetup() int {
 	fmt.Println("    ./bloud dev")
 	fmt.Println()
 	return 0
+}
+
+func printSetupBanner() {
+	fmt.Println()
+	fmt.Printf("%s╭──────────────────────────────╮%s\n", colorCyan, colorReset)
+	fmt.Printf("%s│   Bloud Development Setup    │%s\n", colorCyan, colorReset)
+	fmt.Printf("%s╰──────────────────────────────╯%s\n", colorCyan, colorReset)
+	fmt.Println()
+}
+
+// backendPrereqs is the tool list a backend needs on top of the base set.
+func backendPrereqs(bkName string) []prereq {
+	prereqs := []prereq{
+		{"go", "Go"},
+		{"node", "Node.js"},
+		{"podman", "Podman"},
+	}
+	switch bkName {
+	case "qemu":
+		return append(prereqs, prereq{"qemu-system-x86_64", "QEMU"})
+	case "lima":
+		return append(prereqs, prereq{"limactl", "Lima"})
+	}
+	return prereqs
+}
+
+// canAptInstall reports whether setup can install what it found missing: only
+// the native backend, on a Linux host that has apt.
+func canAptInstall(bkName string) bool {
+	return bkName == "native" && runtime.GOOS == "linux" && checkCommand("apt-get")
+}
+
+// aptInstallMissing installs the missing prerequisites through apt and
+// re-checks the full list, so the caller sees what is still outstanding.
+func aptInstallMissing(prereqs, missing []prereq) ([]prereq, error) {
+	pkgs := aptPackagesFor(missing)
+	if len(pkgs) == 0 {
+		return missing, nil
+	}
+	fmt.Println()
+	fmt.Printf("  Installing missing packages via apt: %s\n", strings.Join(pkgs, " "))
+	installCmd := "sudo apt-get update -qq && sudo apt-get install -y -qq " + strings.Join(pkgs, " ")
+	cmd := localExec("bash", "-c", installCmd)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return missing, fmt.Errorf("apt-get install failed: %v", err)
+	}
+	fmt.Println()
+	return checkPrereqs(prereqs), nil
+}
+
+// buildCLIBinary compiles the ./bloud binary from the cli module.
+func buildCLIBinary(projectRoot string) error {
+	fmt.Print("  Building CLI binary...        ")
+	buildCmd := fmt.Sprintf("cd %s/cli && go build -o ../bloud .", projectRoot)
+	cmd := localExec("bash", "-c", buildCmd)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("%s✗ failed%s\n", colorRed, colorReset)
+		return err
+	}
+	fmt.Printf("%s✓ built%s\n", colorGreen, colorReset)
+	return nil
 }
 
 func checkCommand(name string) bool {

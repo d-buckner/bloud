@@ -200,29 +200,40 @@ func (b *QEMUBackend) ensureRunning(ctx context.Context) error {
 	if ready && alive && !b.launchArgsChanged() {
 		return nil
 	}
-	// If a tracked qemu process for this VM is already alive, do not spawn a
-	// duplicate (it would collide on the pidfile lock).
 	if alive {
-		if b.launchArgsChanged() {
-			fmt.Fprintf(os.Stderr, "QEMU launch args changed; restarting VM %q to apply them...\n", b.instance)
-			if err := b.stop(); err != nil {
-				return fmt.Errorf("stop QEMU VM for restart: %w", err)
-			}
-			if err := b.launch(ctx); err != nil {
-				return err
-			}
-			if err := b.waitReady(ctx); err != nil {
-				return fmt.Errorf("QEMU guest %q did not become ready after restart: %w", b.instance, err)
-			}
-			return nil
-		}
+		return b.relaunchIfChanged(ctx)
+	}
+	return b.launchAndAwait(ctx, ready)
+}
+
+// relaunchIfChanged handles a VM whose process is already alive, so nothing
+// duplicate is spawned on top of it (a second qemu would collide on the
+// pidfile lock). A change to the recorded launch args means the VM has to be
+// restarted to pick them up; otherwise the guest only has to be waited for.
+func (b *QEMUBackend) relaunchIfChanged(ctx context.Context) error {
+	if !b.launchArgsChanged() {
 		if err := b.waitReady(ctx); err != nil {
 			return fmt.Errorf("QEMU guest %q did not become ready: %w", b.instance, err)
 		}
 		return nil
 	}
-	// Not alive: (re)launch. A reachable guest without a launch record is
-	// externally managed (legacy/manual): do not spawn a duplicate.
+	fmt.Fprintf(os.Stderr, "QEMU launch args changed; restarting VM %q to apply them...\n", b.instance)
+	if err := b.stop(); err != nil {
+		return fmt.Errorf("stop QEMU VM for restart: %w", err)
+	}
+	if err := b.launch(ctx); err != nil {
+		return err
+	}
+	if err := b.waitReady(ctx); err != nil {
+		return fmt.Errorf("QEMU guest %q did not become ready after restart: %w", b.instance, err)
+	}
+	return nil
+}
+
+// launchAndAwait starts a VM that is not running. A reachable guest with no
+// launch record is externally managed (legacy or manual), so nothing is
+// spawned over it.
+func (b *QEMUBackend) launchAndAwait(ctx context.Context, ready bool) error {
 	if ready && !b.hasLaunchRecord() {
 		return nil
 	}

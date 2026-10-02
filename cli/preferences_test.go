@@ -76,67 +76,96 @@ func TestStoredBackendIgnoresStaleValue(t *testing.T) {
 	}
 }
 
-func TestResolveBackendPrecedence(t *testing.T) {
-	envSet := func(string) string { return "native" }
-	getenv := func(string) string { return "" }
-	ask := func(opts []string) (string, error) { return opts[0], nil }
-	// These cases exercise the resolution order, not the Fedora refusal, so
-	// pin a host where native is available. Without this the test would fail
-	// or pass by accident depending on the machine it runs on.
+// noEnv is a getenv that reports nothing set.
+func noEnv(string) string { return "" }
+
+// firstOption is a chooser that always picks the first offered backend.
+func firstOption(opts []string) (string, error) { return opts[0], nil }
+
+// askFor returns a chooser that asserts the offered option list and picks
+// `want`.
+func askFor(t *testing.T, available []string, want string) func([]string) (string, error) {
+	return func(opts []string) (string, error) {
+		if strings.Join(opts, ",") != strings.Join(available, ",") {
+			t.Fatalf("ask options = %v, want %v", opts, available)
+		}
+		return want, nil
+	}
+}
+
+// precedenceRelease pins a host where every backend is available, so these
+// cases exercise the resolution order rather than the Fedora refusal. Without
+// this the test would fail or pass by accident depending on the machine it
+// runs on.
+func precedenceRelease(t *testing.T) []string {
+	t.Helper()
 	useRelease(t, archOSRelease)
 	// The stored value has to be applicable to this host, or storedBackend
 	// discards it as stale (TestStoredBackendIgnoresStaleValue): "qemu" is
 	// stale on macOS and "lima" on Linux. Derive it from this host's
 	// available backends instead of hardcoding one.
-	available := availableBackends()
+	return availableBackends()
+}
 
-	// 1. BLOUD_BACKEND overrides the stored preference.
+func TestResolveBackendEnvOverrideBeatsStored(t *testing.T) {
+	available := precedenceRelease(t)
+	envSet := func(string) string { return "native" }
 	root := t.TempDir()
 	if err := savePreferences(root, Preferences{Backend: available[0]}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveBackend(root, envSet, false, ask); err != nil || got != "native" {
+	if got, err := resolveBackend(root, envSet, false, firstOption); err != nil || got != "native" {
 		t.Fatalf("env override = %q, %v; want native", got, err)
 	}
-	// 2. The stored preference wins when no env override is set.
-	if got, err := resolveBackend(root, getenv, false, ask); err != nil || got != available[0] {
+}
+
+func TestResolveBackendStoredPreferenceWins(t *testing.T) {
+	available := precedenceRelease(t)
+	root := t.TempDir()
+	if err := savePreferences(root, Preferences{Backend: available[0]}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveBackend(root, noEnv, false, firstOption); err != nil || got != available[0] {
 		t.Fatalf("stored preference = %q, %v; want %s", got, err, available[0])
 	}
-	// 3. No preference: single-option hosts auto-resolve, multi-option
-	// hosts error when not interactive.
-	empty := t.TempDir()
-	got, err := resolveBackend(empty, getenv, false, ask)
+}
+
+// TestResolveBackendNoPreferenceNonInteractive: a single-option host
+// auto-resolves; a multi-option host refuses until it is interactive.
+func TestResolveBackendNoPreferenceNonInteractive(t *testing.T) {
+	available := precedenceRelease(t)
+	got, err := resolveBackend(t.TempDir(), noEnv, false, firstOption)
 	if len(available) == 1 {
 		if err != nil || got != available[0] {
 			t.Fatalf("auto resolve = %q, %v; want %s", got, err, available[0])
 		}
-	} else {
-		if err == nil {
-			t.Fatalf("expected non-interactive error, got %q", got)
-		}
-		if !strings.Contains(err.Error(), "./bloud setup") {
-			t.Fatalf("error should point at ./bloud setup: %v", err)
-		}
+		return
 	}
-	// 4. Interactive answer is persisted.
-	if len(available) > 1 {
-		want := available[1]
-		got, err := resolveBackend(empty, getenv, true, func(opts []string) (string, error) {
-			if strings.Join(opts, ",") != strings.Join(available, ",") {
-				t.Fatalf("ask options = %v, want %v", opts, available)
-			}
-			return want, nil
-		})
-		if err != nil || got != want {
-			t.Fatalf("interactive = %q, %v; want %s", got, err, want)
-		}
-		p, err := loadPreferences(empty)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if p.Backend != want {
-			t.Fatalf("preference not persisted: %q", p.Backend)
-		}
+	if err == nil {
+		t.Fatalf("expected non-interactive error, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "./bloud setup") {
+		t.Fatalf("error should point at ./bloud setup: %v", err)
+	}
+}
+
+func TestResolveBackendInteractiveAnswerPersisted(t *testing.T) {
+	available := precedenceRelease(t)
+	if len(available) < 2 {
+		t.Skip("single-backend host has nothing to choose")
+	}
+	empty := t.TempDir()
+	want := available[1]
+	got, err := resolveBackend(empty, noEnv, true, askFor(t, available, want))
+	if err != nil || got != want {
+		t.Fatalf("interactive = %q, %v; want %s", got, err, want)
+	}
+	p, err := loadPreferences(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Backend != want {
+		t.Fatalf("preference not persisted: %q", p.Backend)
 	}
 }
 

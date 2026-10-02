@@ -57,6 +57,16 @@ func fakeSSHProbe(args []string, sshReadyResults []bool, call *int) *exec.Cmd {
 	return exec.Command("true")
 }
 
+// flagValue returns the value that follows `flag` in args.
+func flagValue(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
 // emulateToolFiles emulates the side effects (created files) of the
 // provisioning tools the backend shells out to, so later ReadFile/Stat
 // calls in the code under test succeed.
@@ -64,33 +74,24 @@ func emulateToolFiles(name string, args []string) {
 	switch name {
 	case "ssh-keygen":
 		// Emulate key generation: create <key> and <key>.pub so ReadFile succeeds.
-		for i, a := range args {
-			if a == "-f" && i+1 < len(args) {
-				_ = os.WriteFile(args[i+1], []byte("key"), 0600)
-				_ = os.WriteFile(args[i+1]+".pub", []byte("ssh-ed25519 AAAAC3Nza fake@host\n"), 0644)
-				break
-			}
+		if key, ok := flagValue(args, "-f"); ok {
+			_ = os.WriteFile(key, []byte("key"), 0600)
+			_ = os.WriteFile(key+".pub", []byte("ssh-ed25519 AAAAC3Nza fake@host\n"), 0644)
 		}
 	case "curl":
 		// -o <file>: write the downloaded base image
-		for i, a := range args {
-			if a == "-o" && i+1 < len(args) {
-				_ = os.WriteFile(args[i+1], []byte("base"), 0644)
-				break
-			}
+		if file, ok := flagValue(args, "-o"); ok {
+			_ = os.WriteFile(file, []byte("base"), 0644)
 		}
 	case "qemu-img":
+		// create overlay disk at the final positional arg
 		if len(args) > 0 && args[0] == "create" {
-			// create overlay disk at the final positional arg
 			_ = os.WriteFile(args[len(args)-1], []byte("disk"), 0644)
 		}
 	case "mkisofs":
 		// -output <file>: write the seed ISO
-		for i, a := range args {
-			if a == "-output" && i+1 < len(args) {
-				_ = os.WriteFile(args[i+1], []byte("seed"), 0644)
-				break
-			}
+		if file, ok := flagValue(args, "-output"); ok {
+			_ = os.WriteFile(file, []byte("seed"), 0644)
 		}
 	}
 }
@@ -125,19 +126,30 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
+	assertCommandSequence(t, recorded, []string{
+		"curl", "qemu-img", "qemu-img", "ssh-keygen", "mkisofs",
+		"ssh", "qemu-system-x86_64", "ssh", "ssh", "rsync",
+	})
+	assertProvisioningArtifacts(t, b)
+	assertCloudConfig(t, b)
+}
+
+// assertCommandSequence checks the tools the backend shelled out to, in order.
+func assertCommandSequence(t *testing.T, recorded [][]string, want []string) {
+	t.Helper()
 	names := make([]string, len(recorded))
 	for i, cmd := range recorded {
 		names[i] = cmd[0]
 	}
-	want := []string{
-		"curl", "qemu-img", "qemu-img", "ssh-keygen", "mkisofs",
-		"ssh", "qemu-system-x86_64", "ssh", "ssh", "rsync",
-	}
 	if !slicesEqual(names, want) {
 		t.Fatalf("command sequence = %v, want %v", names, want)
 	}
+}
 
-	// Verify the provisioning artifacts were written.
+// assertProvisioningArtifacts checks the files provisioning leaves behind in
+// the instance dir.
+func assertProvisioningArtifacts(t *testing.T, b *QEMUBackend) {
+	t.Helper()
 	if _, err := os.Stat(filepath.Join(b.dir, b.instance+".qcow2")); err != nil {
 		t.Errorf("disk not created: %v", err)
 	}
@@ -149,23 +161,23 @@ func TestQEMUBackendCreateProvisionsAndLaunches(t *testing.T) {
 			t.Errorf("%s not written: %v", f, err)
 		}
 	}
+}
+
+// assertCloudConfig checks the cloud-init document that seeds the guest: the
+// bloud user with its authorized key and project-dir ownership, and the
+// sysctl drop-in that lets the rootless Traefik container bind :80 in the
+// guest's host network namespace.
+func assertCloudConfig(t *testing.T, b *QEMUBackend) {
+	t.Helper()
 	userData, err := os.ReadFile(filepath.Join(b.dir, "user-data"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(userData), "name: bloud") {
-		t.Errorf("user-data missing bloud user")
+	for _, want := range []string{"name: bloud", "ssh_authorized_keys", "chown bloud:bloud"} {
+		if !strings.Contains(string(userData), want) {
+			t.Errorf("user-data missing %q", want)
+		}
 	}
-	if !strings.Contains(string(userData), "ssh_authorized_keys") {
-		t.Errorf("user-data missing ssh_authorized_keys")
-	}
-	if !strings.Contains(string(userData), "chown bloud:bloud") {
-		t.Errorf("user-data missing project dir ownership")
-	}
-
-	// The rootless Traefik container binds :80 in the guest's host network
-	// namespace, so cloud-init must permit unprivileged low ports (and the
-	// document must stay valid cloud-config YAML).
 	var doc struct {
 		WriteFiles []struct {
 			Path    string `yaml:"path"`
