@@ -19,6 +19,7 @@ import (
 type AppMetadata struct {
 	Name         string                 `yaml:"name"`
 	DisplayName  string                 `yaml:"displayName"`
+	Description  string                 `yaml:"description"`
 	Category     string                 `yaml:"category"`
 	IsSystem     bool                   `yaml:"isSystem"`
 	Integrations map[string]Integration `yaml:"integrations"`
@@ -190,18 +191,11 @@ func printDepGraphUsage() {
 	fmt.Println("  --target     File to write or check (default: " + graphDefaultFile + ")")
 }
 
-func graphTargetPath(root, target string) string {
-	if filepath.IsAbs(target) {
-		return target
-	}
-	return filepath.Join(root, target)
-}
-
 // writeGraphBlock replaces the generated block in the target file. It fails
 // rather than appending when the markers are missing, so a typo in the target
 // can never produce a second copy of the diagram.
 func writeGraphBlock(root, target, generated string) int {
-	path := graphTargetPath(root, target)
+	path := docTargetPath(root, target)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		errorf("Could not read %s: %v", path, err)
@@ -210,8 +204,7 @@ func writeGraphBlock(root, target, generated string) int {
 
 	updated, ok := spliceGraphBlock(string(content), generated)
 	if !ok {
-		errorf("%s has no generated dependency graph block. Add these two lines where the diagram belongs:\n  %s\n  %s",
-			path, graphBeginMarker, graphEndMarker)
+		errorf("%s", graphBlock.missingBlockMessage(path))
 		return 1
 	}
 	if updated == string(content) {
@@ -230,7 +223,7 @@ func writeGraphBlock(root, target, generated string) int {
 // produces now. A stale README describes a graph that no longer exists, so
 // this is the gate that keeps the two together.
 func checkGraphBlock(root, target, generated string) int {
-	path := graphTargetPath(root, target)
+	path := docTargetPath(root, target)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		errorf("Could not read %s: %v", path, err)
@@ -252,50 +245,26 @@ func checkGraphBlock(root, target, generated string) int {
 	return 1
 }
 
-// relOrAbs labels a path for output: relative to the repo root when it is
-// inside it, absolute otherwise.
-func relOrAbs(root, path string) string {
-	if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
-		return rel
-	}
-	return path
+// graphBlock is the generated span of the graph document. The marker pair,
+// the splice semantics, and the difference report all live in the shared
+// generatedBlock (genblock.go), which is what lets `bloud catalogdoc` own a
+// second generated block in the same file without copying the mechanism.
+var graphBlock = generatedBlock{
+	Begin: graphBeginMarker,
+	End:   graphEndMarker,
+	Label: "dependency graph",
 }
 
 // extractGraphBlock returns the generated block, markers included.
 func extractGraphBlock(content string) (string, bool) {
-	begin := strings.Index(content, graphBeginMarker)
-	if begin < 0 {
-		return "", false
-	}
-	relEnd := strings.Index(content[begin:], graphEndMarker)
-	if relEnd < 0 {
-		return "", false
-	}
-	return content[begin : begin+relEnd+len(graphEndMarker)], true
+	return graphBlock.Extract(content)
 }
 
 // spliceGraphBlock swaps the target's generated block for a new one and
-// leaves the rest of the document byte-for-byte alone.
-//
-// The replacement is the block with its trailing newline dropped. The
-// renderer ends the block with a newline, but the newline that terminates
-// the end-marker line belongs to the document, not to the block, and it
-// sits outside the replaced span. Splicing the rendered bytes verbatim
-// therefore left both behind: every --write grew the file by one blank
-// line, which made the merge-to-main refresh diff on every run and commit
-// whitespace-only commits forever. Trimming the generated tail makes the
-// write a fixed point: writing the same block twice changes nothing.
+// leaves the rest of the document byte-for-byte alone. The generated tail is
+// trimmed so the write is a fixed point; see generatedBlock.Splice.
 func spliceGraphBlock(content, generated string) (string, bool) {
-	begin := strings.Index(content, graphBeginMarker)
-	if begin < 0 {
-		return content, false
-	}
-	relEnd := strings.Index(content[begin:], graphEndMarker)
-	if relEnd < 0 {
-		return content, false
-	}
-	absEnd := begin + relEnd + len(graphEndMarker)
-	return content[:begin] + strings.TrimRight(generated, "\n") + content[absEnd:], true
+	return graphBlock.Splice(content, generated)
 }
 
 // normalizeGraph trims the trailing newline and surrounding blank lines so a
@@ -305,24 +274,9 @@ func normalizeGraph(s string) string {
 }
 
 // reportFirstGraphDifference prints the first line where the committed
-// diagram and the current one diverge, which is usually all it takes to see
-// what a metadata change did.
+// diagram and the current one diverge.
 func reportFirstGraphDifference(existing, generated string) {
-	existingLines := strings.Split(existing, "\n")
-	generatedLines := strings.Split(generated, "\n")
-	limit := len(existingLines)
-	if len(generatedLines) < limit {
-		limit = len(generatedLines)
-	}
-	for i := 0; i < limit; i++ {
-		if existingLines[i] != generatedLines[i] {
-			fmt.Fprintf(os.Stderr, "  first difference at block line %d:\n    committed: %s\n    expected:  %s\n",
-				i+1, strings.TrimSpace(existingLines[i]), strings.TrimSpace(generatedLines[i]))
-			return
-		}
-	}
-	fmt.Fprintf(os.Stderr, "  block length differs: committed %d lines, expected %d lines\n",
-		len(existingLines), len(generatedLines))
+	graphBlock.ReportDifference(existing, generated)
 }
 
 // loadAppMetadata reads every apps/<name>/metadata.yaml into a map keyed by

@@ -42,6 +42,13 @@ Readiness is declarative too: the `healthCheck:` block you write in
 `metadata.yaml` is what the orchestrator waits for between PreStart and
 PostStart, so your `PostStart` only ever runs against a live container.
 
+Your declaration is also what the docs are built from. The README's app list and
+one-login table, and the dependency graph picture, are generated from
+`apps/*/metadata.yaml`: `./bloud catalogdoc --write` and `./bloud depgraph --write`
+refresh them, and the `generated-docs` workflow does the same on every merge to
+`main`. Generated blocks sit between HTML comment markers and say so; you never
+hand-edit them, and you never add your app to a doc by hand either.
+
 ## App Structure
 
 Each app lives in `apps/<name>/`:

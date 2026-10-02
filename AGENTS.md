@@ -220,7 +220,7 @@ pruned to the newest 20).
 
 | Tier | Command | What happens |
 |---|---|---|
-| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, prose lint (Vale), em dash check, docs link check |
+| `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check`) |
 | `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
 | `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent, frontend, and the integration test binary locally; deploys them to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) plus `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
 
@@ -424,19 +424,33 @@ Other:       depgraph             Full dependency graph from app metadata
             depgraph --json      The whole catalog as the developer-graph JSON
                                  (nodes + edges) the browser renderer consumes
             depgraph --target F  File to write or check
+            catalogdoc           README's catalog list + one-login table,
+                                 generated from apps/*/metadata.yaml
+                                 (no flag: print both generated blocks)
+            catalogdoc --write   Replace both generated blocks in README.md
+            catalogdoc --check   Exit 1 when either block is not what the
+                                 catalog produces (the fast-tier gate)
+            catalogdoc --target F File to write or check
 ```
 
 The README's graph is an image, not a text diagram: `docs/assets/dependency-graph.png`,
 rendered in a headless browser from the `--json` snapshot by `scripts/render-graph.mjs`,
 using the dashboard's own graph components (`services/host-agent/web/src/routes/graph/`).
-`npm run graph:image` rebuilds it locally (it needs Playwright's Chromium). The README
-embeds that file and carries no generated block, so a catalog change moves the picture and
-not the README's prose; the text form of the graph is what `--write` / `--check` govern.
-The `dependency-graph` workflow regenerates both on merge to `main`, scoped by path to what
-the picture depends on: `apps/**/metadata.yaml`, `cli/depgraph.go`, the graph components
+`npm run graph:image` rebuilds it locally (it needs Playwright's Chromium). The text form of
+the graph is what `depgraph --write` / `--check` govern.
+
+The README's `## catalog` list and `## one login` table are generated the same way, from the
+same `apps/*/metadata.yaml`, by `catalogdoc`. Each block sits between HTML comment markers
+and everything outside them is hand-written prose, so the voice of the section is not
+generated and the entries are. Neither block carries a count of how many apps there are: a
+count is one more thing to keep in sync, and the list underneath it answers the question.
+
+The `generated-docs` workflow regenerates all of it on merge to `main`, scoped by path to
+what the artifacts depend on: `apps/**/metadata.yaml`, the generators (`cli/depgraph.go`,
+`cli/catalogdoc.go`, `cli/genblock.go`), the graph components
 (`web/src/routes/graph/`, `web/src/lib/graph/`, `graphLayout.ts`, `statusColor.ts`),
 `scripts/render-graph.mjs`, and the workflow itself. A merge that touches none of those
-leaves the committed image untouched.
+leaves the committed artifacts untouched.
 
 The CLI resolves the project root from cwd using the `rootMarkers` list in
 `cli/dev.go` (stable root-level files such as `validation.yaml` and
