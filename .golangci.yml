@@ -4,26 +4,71 @@
 # apps, cli). golangci-lint walks up from each module dir to find this,
 # so one file at the repo root governs every module.
 #
-# Cyclop baselines measured 2026-09-13 with golangci-lint v2.13.2
-# (cyclop reports only when complexity is STRICTLY above the threshold,
-# so the current worst values pass):
-#   worst function complexity: 42  (cli: runIntegrationTier, parseLifecycleConfig)
-#   worst package average:     7.0 (services/host-agent/internal/db)
-# The thresholds sit at the current ceiling: nothing fails today, but any
-# new code more complex than the worst function that exists right now errors.
-# Repayment plan: lower max-complexity over time (first target: 20).
+# Baselines re-measured 2026-10-01 over all three modules with
+# golangci-lint v2.13.2. Cyclop reports only when the value is STRICTLY
+# above the threshold, so a cap equal to the worst value still passes.
+#
+#   cyclop function complexity: worst non-test 19 (api.SetUserRoleHandler,
+#     orchestrator/pipeline.convergeTailnet), worst test 20; p95 13, p90 9.
+#     Cap is 15, which is 21 non-test and 15 test functions over: the
+#     repayment list, not a passing gate. The previous cap of 20 sat one
+#     step under the worst function in the tree, so it constrained nothing
+#     that the tree was not already doing, while p90 sat at 9.
+#
+#   cyclop package average: worst is 6.12 (internal/db/schema). The 7.0
+#     cap is unchanged and still passes with room.
+#
+#   funlen: worst non-test function is 107 lines / 68 statements
+#     (api/auth_module.go CallbackHandler); 7 non-test functions exceed
+#     60 lines. Tests are excluded (see exclusions): a table-driven test
+#     legitimately runs long, and the cap is about production code.
+#
+#   nestif: worst non-test nested-block complexity is 15
+#     (cli/backend/qemu.go, appclient/waits.go, orchestrator, appasset);
+#     5 non-test sites exceed min-complexity 5.
+#
+#   revive indent-error-flow (the Go counterpart of eslint no-else-return
+#   with allowElseIf: false): 6 sites, 3 of them non-test. Nearly free.
+#
+# Not enabled, and why: `lll` (line length) measures 212 non-test and 202
+# test lines over 120 columns, spread across 63 non-test files, which is a
+# mechanical wrap of a different scale than the rest of this list. Comment
+# lines are not the cause: zero non-test comment lines exceed 120 columns.
 version: "2"
 
 linters:
   enable:
     - cyclop
     - forbidigo
+    - funlen
+    - nestif
+    - revive
   settings:
     cyclop:
-      # Fail any function with cyclomatic complexity > 20.
-      max-complexity: 20
+      # Fail any function with cyclomatic complexity > 15.
+      max-complexity: 15
       # Fail any package whose average function complexity > 7.0.
       package-average: 7.0
+    funlen:
+      # Fail a function longer than 60 code lines or 40 statements.
+      # Comment lines do not count against the length: a documented
+      # function is not penalised for its docs.
+      lines: 60
+      statements: 40
+      ignore-comments: true
+    nestif:
+      # Fail an if-block whose nested complexity exceeds 5: the depth
+      # counterpart to cyclop, which counts branches but not nesting.
+      min-complexity: 5
+    revive:
+      # One rule, deliberately: indent-error-flow is the Go equivalent of
+      # eslint's no-else-return with allowElseIf disabled. An if block that
+      # ends in return/break/continue/panic needs no else; the else only
+      # pushes the live path one indent level deeper. Revive's other rules
+      # are not enabled here: the default set is a naming-and-doc style
+      # sweep, not a size gate, and it is not what this config is for.
+      rules:
+        - name: indent-error-flow
     forbidigo:
       # App configurators integrate with their app through sanctioned helpers:
       # pkg/managedfile for generated files, pkg/appclient for HTTP, and
@@ -62,7 +107,7 @@ linters:
       # modules legitimately write files and spawn processes. Paths are
       # module-relative (apps/, services/host-agent/, cli/).
       - path: '_test\.go$'
-        linters: [forbidigo]
+        linters: [forbidigo, funlen]
       - path: '^(services|cli)/'
         linters: [forbidigo]
 
