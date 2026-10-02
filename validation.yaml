@@ -71,6 +71,13 @@ tiers:
       - id: depgraph-check
         cwd: .
         run: ./bloud depgraph --check
+      # The README's catalog list and one-login table are generated the same
+      # way, from the same metadata. A new app that leaves them alone leaves the
+      # README listing apps that do not exist and hiding apps that do, so both
+      # blocks are compared against what the catalog produces right now.
+      - id: catalogdoc-check
+        cwd: .
+        run: ./bloud catalogdoc --check
 
   integration:
     # Commands run inside the guest against the validation runtime deployed
@@ -99,7 +106,7 @@ inference:
     - pattern: "**"
       # These ride the catch-all: any change can invalidate a doc, and the
       # matcher has no recursive `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, depgraph-check]
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, depgraph-check, catalogdoc-check]
 
 apps:
   affine:

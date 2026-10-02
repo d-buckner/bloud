@@ -78,24 +78,25 @@ func main() {
 // dispatch routes a CLI command to its handler; unknown commands print usage.
 func dispatch(cmd string, args []string) int {
 	handlers := map[string]func([]string) int{
-		"start":     func([]string) int { return cmdStart() },
-		"stop":      func([]string) int { return cmdStop() },
-		"status":    func([]string) int { return cmdStatus() },
-		"logs":      func([]string) int { return cmdLogs() },
-		"shell":     cmdShell,
-		"install":   cmdInstall,
-		"uninstall": cmdUninstall,
-		"reset":     cmdReset,
-		"destroy":   func([]string) int { return cmdDestroy() },
-		"services":  func([]string) int { return cmdServices() },
-		"attach":    func([]string) int { return cmdAttach() },
-		"rebuild":   func([]string) int { return cmdRebuild() },
-		"dev":       cmdDev,
-		"e2e":       cmdE2E,
-		"validate":  cmdValidate,
-		"package":   cmdPackage,
-		"depgraph":  cmdDepGraph,
-		"token":     func([]string) int { return cmdToken() },
+		"start":      func([]string) int { return cmdStart() },
+		"stop":       func([]string) int { return cmdStop() },
+		"status":     func([]string) int { return cmdStatus() },
+		"logs":       func([]string) int { return cmdLogs() },
+		"shell":      cmdShell,
+		"install":    cmdInstall,
+		"uninstall":  cmdUninstall,
+		"reset":      cmdReset,
+		"destroy":    func([]string) int { return cmdDestroy() },
+		"services":   func([]string) int { return cmdServices() },
+		"attach":     func([]string) int { return cmdAttach() },
+		"rebuild":    func([]string) int { return cmdRebuild() },
+		"dev":        cmdDev,
+		"e2e":        cmdE2E,
+		"validate":   cmdValidate,
+		"package":    cmdPackage,
+		"depgraph":   cmdDepGraph,
+		"catalogdoc": cmdCatalogDoc,
+		"token":      func([]string) int { return cmdToken() },
 	}
 	if h, ok := handlers[cmd]; ok {
 		return h(args)
@@ -160,6 +161,10 @@ func printUsage() {
 	fmt.Println("  depgraph        Generate the full Mermaid dependency graph from app metadata")
 	fmt.Println("    --write          Embed it in README.md (between the generated markers)")
 	fmt.Println("    --check          Exit 1 when README.md's graph is stale")
+	fmt.Println("  catalogdoc      Generate the README's catalog list and one-login table")
+	fmt.Println("    --write          Replace both generated blocks in README.md")
+	fmt.Println("    --check          Exit 1 when either block is stale")
+	fmt.Println("    --target FILE    File to write or check (default: README.md)")
 	fmt.Println("  token           Print the host-agent API token (for ad-hoc curl / e2e)")
 	fmt.Println()
 	switch usageBackend() {
