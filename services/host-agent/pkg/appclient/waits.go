@@ -73,50 +73,70 @@ func (x *Call) Wait(ctx context.Context) error {
 	}
 	start := time.Now()
 	attempt := 0
-	streak := 0
-	sawGood := false
-	var lastStatus int
-	var lastBody []byte
-	var lastErr error
+	var st waitState
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return x.conclude(sawGood, attempt, lastStatus, lastBody, lastErr, err)
+			return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, err)
 		}
 		attempt++
 		res, err := x.attemptOnce(ctx, attempt)
 		if err != nil {
 			if errorsIsContext(err) {
-				return x.conclude(sawGood, attempt, lastStatus, lastBody, lastErr, err)
+				return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, err)
 			}
-			lastErr = err
-			streak = 0
+			st.recordFailure(err)
 		} else {
-			lastStatus, lastBody = res.status, res.body
-			lastErr = nil
-			sawGood = true // a successful HTTP read (any status) counts as a good read
+			st.recordSuccess(res, x.ready(res.status, res.body))
 			if res.alreadyDone {
 				return nil
 			}
-			if x.ready(res.status, res.body) {
-				streak++
-				if streak >= x.stable {
-					x.c.logger.Debug("wait converged", "path", x.path, "attempts", attempt)
-					return nil
-				}
-			} else {
-				streak = 0
+			if st.streak >= x.stable {
+				x.c.logger.Debug("wait converged", "path", x.path, "attempts", attempt)
+				return nil
 			}
 		}
 
 		if policy.MaxAttempts > 0 && attempt >= policy.MaxAttempts {
-			return x.conclude(sawGood, attempt, lastStatus, lastBody, lastErr, fmt.Errorf("exhausted %d attempts", attempt))
+			return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, fmt.Errorf("exhausted %d attempts", attempt))
 		}
 		if policy.Deadline > 0 && time.Since(start) >= policy.Deadline {
-			return x.conclude(sawGood, attempt, lastStatus, lastBody, lastErr, fmt.Errorf("deadline exceeded"))
+			return x.conclude(st.sawGood, attempt, st.lastStatus, st.lastBody, st.lastErr, fmt.Errorf("deadline exceeded"))
 		}
-		x.c.sleeper(x.nextDelay(policy, attempt, lastErr))
+		x.c.sleeper(x.nextDelay(policy, attempt, st.lastErr))
 	}
+}
+
+// waitState is what a readiness wait remembers between probes: whether it ever
+// got a readable answer, how long the ready streak currently is, and the last
+// thing it saw. Holding that in one value is what keeps the loop body short
+// enough to read as a sequence of decisions.
+type waitState struct {
+	sawGood    bool
+	streak     int
+	lastStatus int
+	lastBody   []byte
+	lastErr    error
+}
+
+// recordFailure folds one failed attempt in: any error breaks the streak and is
+// kept as the last thing seen, so the terminal error can name it.
+func (s *waitState) recordFailure(err error) {
+	s.lastErr = err
+	s.streak = 0
+}
+
+// recordSuccess folds one readable HTTP answer in. Any status counts as a good
+// read; only a ready status extends the streak.
+func (s *waitState) recordSuccess(res result, ready bool) {
+	s.lastStatus, s.lastBody = res.status, res.body
+	s.lastErr = nil
+	s.sawGood = true
+	if ready {
+		s.streak++
+		return
+	}
+	s.streak = 0
 }
 
 // conclude decides a wait's terminal return: with TolerateFailures and a prior

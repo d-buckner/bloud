@@ -128,40 +128,9 @@ func (m *Manager) Load() error {
 		secrets.AppSecrets = make(map[string]AppSecrets)
 	}
 
-	// Migrate: fill in any missing secrets (in case new secrets were added)
-	updated := false
-	if secrets.PostgresPassword == "" {
-		secrets.PostgresPassword = generateSecret(32)
-		updated = true
-	}
-	if secrets.AuthentikSecretKey == "" {
-		secrets.AuthentikSecretKey = generateSecret(64)
-		updated = true
-	}
-	if secrets.AuthentikBootstrapPassword == "" {
-		secrets.AuthentikBootstrapPassword = generateSecret(32)
-		updated = true
-	}
-	if secrets.AuthentikBootstrapToken == "" {
-		secrets.AuthentikBootstrapToken = generateSecret(48)
-		updated = true
-	}
-	if secrets.LDAPOutpostToken == "" {
-		secrets.LDAPOutpostToken = generateSecret(48)
-		updated = true
-	}
-	if secrets.LDAPBindPassword == "" {
-		secrets.LDAPBindPassword = generateSecret(32)
-		updated = true
-	}
-	if secrets.SSOHostSecret == "" {
-		secrets.SSOHostSecret = generateSecret(64)
-		updated = true
-	}
-	if secrets.APIToken == "" {
-		secrets.APIToken = generateSecret(48)
-		updated = true
-	}
+	// Migrate: fill in any missing secrets, which is what happens when a new
+	// secret is added to the schema after a deployment already has a file.
+	updated := fillMissingSecrets(secretTable(&secrets))
 
 	m.secrets = &secrets
 
@@ -172,20 +141,50 @@ func (m *Manager) Load() error {
 	return nil
 }
 
+// secretField is one Secrets field paired with the length Bloud issues it at.
+type secretField struct {
+	field  *string
+	length int
+}
+
+// secretTable lists every secret Bloud issues and how long it is. The
+// fresh-deployment path and the migration path both read this table, so a new
+// secret is added in exactly one place and the two can never disagree about a
+// length.
+func secretTable(s *Secrets) []secretField {
+	return []secretField{
+		{&s.PostgresPassword, 32},
+		{&s.AuthentikSecretKey, 64},
+		{&s.AuthentikBootstrapPassword, 32},
+		{&s.AuthentikBootstrapToken, 48},
+		{&s.LDAPOutpostToken, 48},
+		{&s.LDAPBindPassword, 32},
+		{&s.SSOHostSecret, 64},
+		{&s.APIToken, 48},
+	}
+}
+
+// fillMissingSecrets generates the still-empty secrets in the table and
+// reports whether any were written.
+func fillMissingSecrets(fields []secretField) bool {
+	updated := false
+	for _, f := range fields {
+		if *f.field == "" {
+			*f.field = generateSecret(f.length)
+			updated = true
+		}
+	}
+	return updated
+}
+
 // generateAndSave generates all secrets and saves to file.
 // Secrets are cryptographically random and unique per deployment.
 func (m *Manager) generateAndSave() error {
-	m.secrets = &Secrets{
-		PostgresPassword:           generateSecret(32),
-		AuthentikSecretKey:         generateSecret(64),
-		AuthentikBootstrapPassword: generateSecret(32),
-		AuthentikBootstrapToken:    generateSecret(48),
-		LDAPOutpostToken:           generateSecret(48),
-		LDAPBindPassword:           generateSecret(32),
-		SSOHostSecret:              generateSecret(64),
-		APIToken:                   generateSecret(48),
-		AppSecrets:                 make(map[string]AppSecrets),
+	s := &Secrets{AppSecrets: make(map[string]AppSecrets)}
+	for _, f := range secretTable(s) {
+		*f.field = generateSecret(f.length)
 	}
+	m.secrets = s
 
 	return m.saveLocked()
 }
