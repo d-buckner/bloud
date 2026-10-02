@@ -343,9 +343,14 @@ func TestSelfHeal_TimerRepairsDriftWithoutAnIntent(t *testing.T) {
 	// Kill it the way an OOM or a `podman kill` would.
 	f.rt.kill(healContainer)
 
+	// Wait for the container to be back *and* for the graph to report RUNNING.
+	// isRunning only proves the runtime restarted the container; the node is
+	// promoted to RUNNING once POSTSTART has run, so sampling between the two
+	// is what made this test flake. Poll the state under test.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if f.rt.isRunning(healContainer) {
+		if f.rt.isRunning(healContainer) &&
+			healNode(t, f.g, healContainer).ActualStatus == graph.StatusRunning {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)

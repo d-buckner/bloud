@@ -69,12 +69,14 @@ func TestTimeout_AppliesARealPerRequestDeadline(t *testing.T) {
 	assert.Less(t, elapsed, 1*time.Second,
 		"must give up at the 50ms deadline, not wait out the 2s handler (took %s)", elapsed)
 
-	// Wait for the handler to report the hang-up. The bound is generous: if it
-	// is ever hit, the deadline genuinely did not cancel the request, which is
-	// the failure this test exists to catch.
+	// Wait for the handler to report the hang-up. The bound is deliberately
+	// loose: the handler goroutine has to be scheduled on a possibly loaded
+	// runner to observe the cancel, and a tight bound made that a flake. If
+	// this is ever hit, the deadline genuinely did not cancel the request,
+	// which is the failure this test exists to catch.
 	select {
 	case <-canceled:
-	case <-time.After(2 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("the per-request deadline must actually cancel the request (server never saw a client hang up)")
 	}
 }

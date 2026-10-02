@@ -146,6 +146,19 @@ func writeFakeDevLoop(t *testing.T, script string) *exec.Cmd {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start fake dev loop: %v", err)
 	}
+	// Wait until the process is recognizable before returning. cmd.Start can
+	// return while /proc/<pid>/cmdline is still unset, and a caller that reads
+	// the identity immediately (takeoverPreviousDevLoop) would see "not a
+	// bloud dev loop" for a live one and skip the kill. That is the same exec
+	// race TestIsBloudDevProcess documents; settling it here means every
+	// caller starts from a process the production check agrees is ours.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !isBloudDevProcess(cmd.Process.Pid) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !isBloudDevProcess(cmd.Process.Pid) {
+		t.Fatalf("fake dev loop pid %d never became recognizable", cmd.Process.Pid)
+	}
 	t.Cleanup(func() {
 		if cmd.Process != nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
