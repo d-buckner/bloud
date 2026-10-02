@@ -156,8 +156,9 @@ containers:
       # `deployment_from_env()` in the native runtime accepts only this value;
       # anything else (including unset) is Deployment::Cloud, which reports
       # `customEndpointMode: unavailable` and refuses every OpenAI-compatible
-      # endpoint in the BYOK dialog. The JS side reads the same variable and
-      # treats `selfhosted` as the self-hosted default it already assumes.
+      # endpoint in the BYOK dialog. The JS side reads the same variable:
+      # `selfhosted` is what makes the frontend serve the /sign-in page (with
+      # its Continue with OIDC button) instead of the cloud read-only editor.
       DEPLOYMENT_TYPE: selfhosted
     # sso.localhost resolves to the host gateway inside the VM, letting the
     # server reach the OIDC provider (traefik) by the same name browsers use.

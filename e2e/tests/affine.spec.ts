@@ -11,13 +11,13 @@ const AFFINE_URL = appOrigin('affine');
 
 // One test case per observable behavior; serial mode (from describeApp)
 // means the first failure skips the rungs behind it. AFFiNE uses
-// native-oidc with a user-initiated flow: unlike Immich (whose login
-// page auto-launches OIDC), unauthenticated AFFiNE renders its editor
-// with a "Sign in and enable" affordance: the observable gate is that
-// this sign-in path launches Bloud's OIDC provider on sso.localhost and
-// settles on the Authentik prompt. The auth rungs open their own fresh
-// browser contexts: AFFiNE's pre-sign-in workspace state lives in the
-// browser profile, so a shared context would make them order-dependent.
+// native-oidc with a user-initiated flow: self-hosted AFFiNE redirects
+// the unauthenticated browser to its /sign-in page, whose "Continue with
+// OIDC" button is the gate. Clicking it launches Bloud's OIDC provider on
+// sso.localhost and settles on the Authentik prompt. The auth rungs open
+// their own fresh browser contexts: AFFiNE's pre-sign-in workspace state
+// lives in the browser profile, so a shared context would make them
+// order-dependent.
 describeApp('affine', (app) => {
   test('converges to running', async () => {
     // Infrastructure rung: fresh-VM image pull (own postgres + redis +
@@ -39,7 +39,7 @@ describeApp('affine', (app) => {
     await expectRunningTile(app.page, 'AFFiNE');
   });
 
-  test('SSO gates the app: sign-in launches the OIDC flow to the prompt', async ({
+  test('SSO gates the app: the sign-in page launches the OIDC flow to the prompt', async ({
     browser,
   }) => {
     test.setTimeout(180_000);
@@ -102,9 +102,10 @@ describeApp('affine', (app) => {
       // the user's workspace.
       await expect(affine).toHaveURL(/\/workspace\//, { timeout: 120_000 });
 
-      // The signed-in shell no longer offers the sign-in affordance.
+      // The signed-in shell no longer offers the sign-in page's OIDC
+      // button.
       await expect(
-        affine.getByRole('button', { name: /sign in and enable/i }),
+        affine.getByRole('button', { name: /continue with oidc/i }),
       ).toBeHidden({ timeout: 30_000 });
     } finally {
       await context.close();
@@ -114,21 +115,15 @@ describeApp('affine', (app) => {
 
 /**
  * Drive AFFiNE's unauthenticated UI to the point where it redirects to
- * the OIDC provider: the local editor is read-only until sign-in and
- * shows a "Sign in and enable" button; clicking it opens the sign-in
- * modal, and "Continue with OIDC" starts the flow. The AFFiNE bundle is
- * large, so wait generously for the shell before clicking.
+ * the OIDC provider. Self-hosted AFFiNE redirects the browser from the
+ * app root to its /sign-in page, whose "Continue with OIDC" button starts
+ * the authorization-code + PKCE flow at the issuer. The AFFiNE bundle is
+ * large, so wait generously for the sign-in page before clicking.
  */
 async function launchOidcFlow(affine: Page): Promise<void> {
-  const signInButton = affine
-    .getByRole('button', { name: /sign in/i })
-    .first();
-  await signInButton.waitFor({ state: 'visible', timeout: 120_000 });
-  await signInButton.click();
-
   const oidcButton = affine.getByRole('button', {
     name: /continue with oidc/i,
   });
-  await oidcButton.waitFor({ state: 'visible', timeout: 30_000 });
+  await oidcButton.waitFor({ state: 'visible', timeout: 120_000 });
   await oidcButton.click();
 }
