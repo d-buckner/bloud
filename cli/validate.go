@@ -4,9 +4,6 @@ package main
 
 import (
 	"bytes"
-	"codeberg.org/d-buckner/bloud/cli/backend"
-	"codeberg.org/d-buckner/bloud/cli/executor"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -242,123 +239,6 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	result.Confidence = "high"
 	result.ConfidenceReason = "integration tests passed against the real dependency-graph path"
 	return finishResult(root, result, flags, exitCode)
-}
-
-// runIntegrationRuntime brings the validation runtime up, runs the tier's
-// commands against it, and takes the unit back down. It returns the exit code
-// with an empty reason, or 1 with the reason the run could not complete, so the
-// caller only has to stamp the ledger once.
-func runIntegrationRuntime(root string, tier manifestTier, result *ValidateResult, flags validateFlags) (int, string) {
-	ctx := context.Background()
-	step := func(msg string) {
-		if !flags.json {
-			fmt.Printf("%s==>%s %s\n", colorGreen, colorReset, msg)
-		}
-	}
-
-	// Step 1: Provision the VM (no-op if it is already running).
-	bk, name, err := integrationProvisionVM(ctx, step)
-	if err != nil {
-		errorf("%v", err)
-		return 1, err.Error()
-	}
-	ex := bk.Host().Executor()
-	rt := integrationRuntimeDir
-
-	// Steps 2-3: guest preflight + take over port 3000. The validation
-	// runtime takes the port over for the duration of the tier; the dev
-	// runtime state (data, containers) is untouched and ./bloud dev
-	// converges it back afterwards.
-	if reason := integrationPrepareGuest(ctx, ex, step); reason != "" {
-		return 1, reason
-	}
-
-	// Step 4: Build artifacts locally.
-	tmpDir, err := os.MkdirTemp("", "bloud-validate-build-*")
-	if err != nil {
-		errorf("failed to create build dir: %v", err)
-		return 1, "could not create build dir"
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-	hostAgentSrc := filepath.Join(root, "services", "host-agent")
-	binaryPath, testBinary, err := integrationBuildArtifacts(root, hostAgentSrc, tmpDir, step)
-	if err != nil {
-		return 1, err.Error()
-	}
-
-	// Step 5: Deploy to the validation runtime.
-	step("Deploying to " + rt)
-	if err := integrationDeploy(ctx, ex, root, hostAgentSrc, rt, binaryPath, testBinary); err != nil {
-		return 1, err.Error()
-	}
-
-	// Step 6: Install and start the host-agent systemd service.
-	step("Installing and starting " + integrationHostAgentUnit)
-	if err := integrationInstallService(ctx, ex, rt, name, tmpDir); err != nil {
-		return 1, err.Error()
-	}
-
-	// Step 7: Wait for the API (first boot converges the system apps).
-	step("Waiting for host-agent (first boot pulls images and converges system apps; may take a while)")
-	if err := integrationWaitForAgent(ctx, ex); err != nil {
-		return 1, err.Error()
-	}
-
-	// Step 8: Run the tier's commands against the deployed runtime.
-	step("Running integration tests")
-	exitCode := integrationRunTests(ctx, ex, tier, rt, result, flags)
-
-	integrationStopService(ctx, ex)
-
-	if exitCode != 0 {
-		return 1, "integration tests failed"
-	}
-	if !flags.json {
-		fmt.Printf("\n%s==>%s Validation runtime remains at %s (guest). Re-run %s%s%s to restore the dev runtime state.\n",
-			colorGreen, colorReset, rt, colorCyan, "./bloud dev", colorReset)
-	}
-	return 0, ""
-}
-
-// integrationStopService stops the validation unit. The runtime dir and its
-// containers are left in place for inspection; ./bloud dev re-converges the
-// dev state.
-func integrationStopService(ctx context.Context, ex executor.Executor) {
-	if _, err := ex.Run(ctx, executor.RunSpec{
-		Command: "systemctl --user disable --now " + integrationHostAgentUnit + " >/dev/null 2>&1 || true",
-	}); err != nil {
-		errorf("failed to stop validation host-agent: %v", err)
-	}
-}
-
-// integrationProvisionVM resolves the dev backend and brings the VM up, which
-// is a no-op when it is already running.
-func integrationProvisionVM(ctx context.Context, step func(string)) (backend.Backend, string, error) {
-	bk, name, err := devBackend()
-	if err != nil {
-		return nil, "", fmt.Errorf("could not set up backend: %w", err)
-	}
-	step("Provisioning " + vmLabel(name))
-	if err := bk.Create(ctx); err != nil {
-		return nil, name, fmt.Errorf("failed to provision VM: %w", err)
-	}
-	if !bk.Host().Ready() {
-		return nil, name, fmt.Errorf("VM is not reachable after provisioning")
-	}
-	return bk, name, nil
-}
-
-// integrationWaitForAgent blocks until the validation host-agent reports
-// healthy, echoing whatever it said on stderr when it did not.
-func integrationWaitForAgent(ctx context.Context, ex executor.Executor) error {
-	res, err := ex.Run(ctx, executor.RunSpec{Command: integrationWaitAgentScript})
-	if err == nil && res.ExitCode == 0 {
-		return nil
-	}
-	if detail := strings.TrimSpace(res.Stderr); detail != "" {
-		fmt.Fprintln(os.Stderr, detail)
-	}
-	return fmt.Errorf("validation host-agent did not become healthy")
 }
 
 // ranCommand is one executed fast-tier command and everything the console

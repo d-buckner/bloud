@@ -169,14 +169,135 @@ func TestRenderCatalogListCarriesNoCounts(t *testing.T) {
 func TestRenderLoginTableGroupsAppsByStrategy(t *testing.T) {
 	rendered := renderLoginTable(docCatalog())
 	want := []string{
-		"| **LDAP** | Jellyfin, Radicale |",
+		// Seerr is here rather than under "App-local accounts" because of the
+		// QUIRKS override; see TestLoginQuirkMovesSeerrIntoTheLDAPRow.
+		"| **LDAP** | Jellyfin, Radicale, Seerr |",
 		"| **Forward auth** | qBittorrent |",
 		"| **Native OIDC** | AFFiNE |",
-		"| **App-local accounts** | Mystery App, Seerr |",
+		"| **App-local accounts** | Mystery App |",
 	}
 	for _, row := range want {
 		if !strings.Contains(rendered, row) {
 			t.Errorf("row %q missing from:\n%s", row, rendered)
+		}
+	}
+}
+
+// TestLoginQuirkMovesSeerrIntoTheLDAPRow pins the one override the README
+// needs: Seerr declares `none` at the ingress but its users sign in with
+// their Jellyfin account, so drawing it under "App-local accounts" tells a
+// Bloud user they need a credential they do not have.
+func TestLoginQuirkMovesSeerrIntoTheLDAPRow(t *testing.T) {
+	quirk, ok := findLoginQuirk("seerr")
+	if !ok {
+		t.Fatal("no login quirk declared for seerr")
+	}
+	if quirk.strategy != "ldap" {
+		t.Errorf("seerr quirk strategy = %q, want ldap", quirk.strategy)
+	}
+	if strings.TrimSpace(quirk.reason) == "" {
+		t.Error("the seerr quirk must carry the reason it exists")
+	}
+
+	rendered := renderLoginTable(docCatalog())
+	if strings.Contains(rendered, "App-local accounts** | Mystery App, Seerr") {
+		t.Errorf("seerr should not share the app-local-accounts row:\n%s", rendered)
+	}
+}
+
+// TestLoginQuirkLeavesOtherAppsOnTheirDeclaredRow guards the override
+// against being read as a general reshuffle: only the named app moves.
+func TestLoginQuirkLeavesOtherAppsOnTheirDeclaredRow(t *testing.T) {
+	for _, app := range []string{"jellyfin", "radicale", "qbittorrent", "affine", "mystery"} {
+		if _, ok := findLoginQuirk(app); ok {
+			t.Errorf("unexpected quirk for %q", app)
+			continue
+		}
+		meta := docCatalog()[app]
+		if got := loginTableRowStrategy(meta); got != normalizeStrategy(meta.SSO.Strategy) {
+			t.Errorf("%s row strategy = %q, want its declared %q", app, got, normalizeStrategy(meta.SSO.Strategy))
+		}
+	}
+}
+
+func TestCheckLoginQuirksAcceptsTheRepoCatalog(t *testing.T) {
+	root, err := getProjectRoot()
+	if err != nil {
+		t.Fatalf("project root: %v", err)
+	}
+	apps, err := loadAppMetadata(filepath.Join(root, "apps"))
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	if problems := checkLoginQuirks(apps); len(problems) > 0 {
+		t.Errorf("the repo catalog should satisfy every quirk, got:\n  - %s", strings.Join(problems, "\n  - "))
+	}
+}
+
+// TestCheckLoginQuirksRejectsStaleOverrides is the ratchet half: an
+// override that guards nothing is itself a failure, so the table cannot
+// keep asserting something the catalog stopped being true of.
+func TestCheckLoginQuirksRejectsStaleOverrides(t *testing.T) {
+	original := loginQuirks
+	t.Cleanup(func() { loginQuirks = original })
+
+	apps := docCatalog()
+
+	cases := []struct {
+		name    string
+		quirks  []loginQuirk
+		wantSub string
+	}{
+		{
+			name:    "app no longer in the catalog",
+			quirks:  []loginQuirk{{app: "removed-app", strategy: "ldap", reason: "gone"}},
+			wantSub: "not in the catalog",
+		},
+		{
+			name:    "override agrees with the declared strategy",
+			quirks:  []loginQuirk{{app: "radicale", strategy: "ldap", reason: "already ldap"}},
+			wantSub: "does nothing",
+		},
+		{
+			name:    "target is a system app",
+			quirks:  []loginQuirk{{app: "authentik", strategy: "none", reason: "not listed"}},
+			wantSub: "system app",
+		},
+		{
+			name:    "strategy has no README label",
+			quirks:  []loginQuirk{{app: "seerr", strategy: "ldap-through-the-magic-sock", reason: "typo"}},
+			wantSub: "no README label",
+		},
+		{
+			name:    "reason is blank",
+			quirks:  []loginQuirk{{app: "seerr", strategy: "ldap", reason: "  "}},
+			wantSub: "no reason",
+		},
+		{
+			name: "two overrides for one app",
+			quirks: []loginQuirk{
+				{app: "seerr", strategy: "ldap", reason: "one"},
+				{app: "seerr", strategy: "none", reason: "two"},
+			},
+			wantSub: "duplicate quirk",
+		},
+	}
+
+	for _, tc := range cases {
+		loginQuirks = tc.quirks
+		problems := checkLoginQuirks(apps)
+		if len(problems) == 0 {
+			t.Errorf("%s: expected a problem, got none", tc.name)
+			continue
+		}
+		found := false
+		for _, p := range problems {
+			if strings.Contains(p, tc.wantSub) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: want a problem containing %q, got:\n  - %s", tc.name, tc.wantSub, strings.Join(problems, "\n  - "))
 		}
 	}
 }
@@ -446,7 +567,8 @@ func TestRepoCatalogListCoversEveryUserApp(t *testing.T) {
 }
 
 // TestRepoLoginTableCoversEveryUserApp asserts every user app appears in the
-// generated table exactly once, under the strategy its own metadata declares.
+// generated table exactly once, under the strategy its metadata declares as
+// adjusted by the QUIRKS override.
 func TestRepoLoginTableCoversEveryUserApp(t *testing.T) {
 	root, err := getProjectRoot()
 	if err != nil {
@@ -455,6 +577,9 @@ func TestRepoLoginTableCoversEveryUserApp(t *testing.T) {
 	apps, err := loadAppMetadata(filepath.Join(root, "apps"))
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
+	}
+	if problems := checkLoginQuirks(apps); len(problems) > 0 {
+		t.Fatalf("quirks out of step with the catalog:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 
 	rendered := renderLoginTable(apps)
@@ -465,7 +590,7 @@ func TestRepoLoginTableCoversEveryUserApp(t *testing.T) {
 		if strings.Count(rendered, name) != 1 {
 			t.Errorf("%s should appear exactly once in the login table:\n%s", name, rendered)
 		}
-		strategy := normalizeStrategy(app.SSO.Strategy)
+		strategy := loginTableRowStrategy(app)
 		label := loginStrategyLabel(strategy)
 		found := false
 		for _, line := range strings.Split(rendered, "\n") {
