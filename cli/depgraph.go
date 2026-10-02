@@ -105,6 +105,12 @@ const (
 	instanceProviderLabel    = "AI Model"
 	instanceProviderMermaid  = "ai_model"
 	instanceProviderCategory = "ai"
+	// instanceProviderStatus is what the node reads as: "external", not the
+	// snapshot-wide "catalog". It names what the node is rather than that it
+	// happens to be part of a catalog dump, and it is deliberately absent
+	// from the dashboard's status color table so the dot stays the same
+	// neutral gray as every other unprobed status.
+	instanceProviderStatus = "external"
 )
 
 func cmdDepGraph(args []string) int {
@@ -444,8 +450,8 @@ func buildCatalogGraph(apps map[string]*AppMetadata) catalogGraph {
 	nodes = append(nodes, catalogGraphNode{
 		ID:          instanceProviderNodeID,
 		DisplayName: instanceProviderLabel,
-		Status:      catalogNodeStatus,
-		IsSystem:    true,
+		Status:      instanceProviderStatus,
+		IsSystem:    false,
 		NodeType:    "service",
 		Category:    instanceProviderCategory,
 	})

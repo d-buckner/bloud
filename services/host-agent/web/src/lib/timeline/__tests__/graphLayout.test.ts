@@ -207,8 +207,8 @@ describe('layoutGraph: service nodes', () => {
 			node('ai:instance', {
 				displayName: 'AI Model',
 				nodeType: 'service',
-				status: 'configured',
-				isSystem: true
+				status: 'external',
+				isSystem: false
 			})
 		],
 		edges: [edge('hermes', 'ai:instance')]
@@ -219,10 +219,11 @@ describe('layoutGraph: service nodes', () => {
 		expect(byId(nodes, 'ai:instance')).toMatchObject({ type: 'app', parentId: '__apps_group' });
 	});
 
-	it('keeps the service node type on the data so the node can tag it', () => {
+	it('keeps the service node type on the data so layout can place it', () => {
 		expect(byId(nodes, 'ai:instance')!.data).toMatchObject({
 			nodeType: 'service',
-			displayName: 'AI Model'
+			displayName: 'AI Model',
+			status: 'external'
 		});
 	});
 

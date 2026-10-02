@@ -151,6 +151,13 @@ func (m *systemModule) StorageHandler() http.HandlerFunc {
 const (
 	AINodeID    = "ai:instance"
 	AINodeLabel = "AI Model"
+	// AINodeStatus is what the node reads as. "external" rather than a
+	// lifecycle word: the instance never health-checks someone else's server,
+	// so "running" would claim a liveness nobody verified, and it is not a
+	// Bloud-run workload either. It is deliberately absent from the status
+	// color table so the dot falls back to the same neutral gray every other
+	// unprobed status gets.
+	AINodeStatus = "external"
 )
 
 type graphNode struct {
@@ -321,11 +328,11 @@ func (m *systemModule) applyAINode(nodes []graphNode, edges []graphEdge) ([]grap
 	nodes = append(nodes, graphNode{
 		ID:          AINodeID,
 		DisplayName: AINodeLabel,
-		// "configured", not "running": the instance never health-checks
-		// someone else's server, and a green node would claim a liveness
-		// nobody verified.
-		Status:   "configured",
-		IsSystem: true,
+		Status:      AINodeStatus,
+		// Not flagged system: that would add a "system" chip on top of
+		// "external" and a dashed border, and the point of this node is that
+		// it reads as one plain thing the instance points at.
+		IsSystem: false,
 		NodeType: "service",
 	})
 	return nodes, edges
