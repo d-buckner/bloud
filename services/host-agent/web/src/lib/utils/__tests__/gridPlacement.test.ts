@@ -42,4 +42,22 @@ describe('firstFreeSlot', () => {
 		const occupied = [at('a', 0, 0, 2, 1), at('b', 4, 0, 2, 1)];
 		expect(firstFreeSlot(occupied, 2, 1, 0, 6)).toEqual({ x: 2, y: 0 });
 	});
+
+	it('falls to the row below the lowest item when every upper row is full', () => {
+		const full = [0, 1, 2, 3, 4, 5].map((x) => at(`a${x}`, x, 0, 1, 3));
+		expect(firstFreeSlot(full, 6, 3, 0, 6)).toEqual({ x: 0, y: 3 });
+	});
+
+	it('clamps an element wider than the grid instead of hanging', () => {
+		// The registry authors sizes at desktop width; a narrow viewport can be
+		// narrower than that. The old `for (;;)` never came back on this input.
+		expect(firstFreeSlot([at('a', 0, 0, 2, 1)], 7, 1, 0, 6)).toEqual({ x: 0, y: 1 });
+	});
+
+	it('throws rather than spinning on a grid with no columns', () => {
+		// The one case the row-below-the-lowest-item bound cannot cover.
+		expect(() => firstFreeSlot([], 2, 1, 0, 0)).toThrow(
+			'no 1-wide slot in a 0-column grid'
+		);
+	});
 });
