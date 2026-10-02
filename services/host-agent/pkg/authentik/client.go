@@ -803,6 +803,7 @@ func (c *Client) ListUsers(ctx context.Context) ([]ManagedUserInfo, error) {
 			PK       int    `json:"pk"`
 			Username string `json:"username"`
 			Name     string `json:"name"`
+			Email    string `json:"email"`
 			IsActive bool   `json:"is_active"`
 			Type     string `json:"type"`
 		}
@@ -824,6 +825,7 @@ func (c *Client) ListUsers(ctx context.Context) ([]ManagedUserInfo, error) {
 			ID:       user.PK,
 			Username: user.Username,
 			Name:     user.Name,
+			Email:    user.Email,
 			IsAdmin:  adminGroupMembers[user.PK],
 			IsActive: user.IsActive,
 		})

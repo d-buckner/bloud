@@ -16,6 +16,12 @@ integrations:
   sso:
     required: false
     multi: false
+    # The shared workspace has to know who the Bloud users are, and the identity
+    # provider is the only place that answer lives. Declaring the contract alone
+    # gets the provider's address; `apiToken` is what lets the configurator
+    # read its user list (invariant 15).
+    requires:
+      - apiToken
     compatible:
       - app: authentik
         default: true
