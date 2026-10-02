@@ -32,12 +32,26 @@ func radicaleConfigPath() string {
 // hide it.
 func davRequest(t *testing.T, method, path, user, pass string) (*http.Response, string) {
 	t.Helper()
+	return davRequestDepth(t, method, path, user, pass, "")
+}
+
+// davRequestDepth is davRequest with an explicit DAV Depth header. Radicale
+// reads a missing header as Depth 0 (radicale/app/propfind.py:
+// `environ.get("HTTP_DEPTH", "0")`), so it answers with the requested
+// collection alone and never with its children. A listing that has to show
+// what is inside a collection must ask for Depth 1: RFC 4918 lets a server
+// treat an absent header as infinity, and this one does not.
+func davRequestDepth(t *testing.T, method, path, user, pass, depth string) (*http.Response, string) {
+	t.Helper()
 	req, err := http.NewRequest(method, radicaleURL+path, nil)
 	if err != nil {
 		t.Fatalf("build %s %s: %v", method, path, err)
 	}
 	if user != "" {
 		req.SetBasicAuth(user, pass)
+	}
+	if depth != "" {
+		req.Header.Set("Depth", depth)
 	}
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -200,8 +214,9 @@ func TestRadicaleWritesACalendar(t *testing.T) {
 	}
 
 	// The collection must show up in the parent listing, which is what a
-	// calendar client does next.
-	res, listing := davRequest(t, "PROPFIND", "/admin/", "admin", password)
+	// calendar client does next. Depth 1 is what asks for the children: a
+	// header-less PROPFIND answers with /admin/ alone and never lists them.
+	res, listing := davRequestDepth(t, "PROPFIND", "/admin/", "admin", password, "1")
 	if res.StatusCode != http.StatusMultiStatus {
 		t.Fatalf("PROPFIND /admin/ after create = %d, want 207", res.StatusCode)
 	}
