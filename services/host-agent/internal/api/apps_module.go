@@ -50,6 +50,11 @@ type appsModule struct {
 	orch     orchestratorCaller
 	logger   *slog.Logger
 	appsDir  string
+	// dataDir is BLOUD_DATA_DIR, the writable root that holds each app's
+	// private tree under apps/. Distinct from appsDir, which is the read-only
+	// catalog. Orphaned-data cleanup must use this one: joining the catalog
+	// instead deletes the installed app's source directory.
+	dataDir string
 	// imageSizeResolver returns the on-disk size (bytes) of a locally
 	// present image. Nil disables the catalog size fallback.
 	imageSizeResolver func(ctx context.Context, image string) (int64, bool)
@@ -69,10 +74,17 @@ func NewAppsModule(
 	}
 }
 
-// SetAppsDir sets the apps directory (used for orphaned data cleanup and
-// serving app icons).
+// SetAppsDir sets the catalog directory (used for catalog reloads and for
+// serving app icons). This is the read-only install location, not where app
+// state lives; orphaned-data cleanup uses SetDataDir.
 func (m *appsModule) SetAppsDir(dir string) {
 	m.appsDir = dir
+}
+
+// SetDataDir sets BLOUD_DATA_DIR, the root that holds each app's private
+// tree under apps/.
+func (m *appsModule) SetDataDir(dir string) {
+	m.dataDir = dir
 }
 
 // SetImageSizeResolver wires the local-image size lookup used to fill in
@@ -220,9 +232,10 @@ func (m *appsModule) ClearData(name string) (*IntentRef, error) {
 		return &IntentRef{ID: intent.IntentID()}, nil
 	}
 
-	// Orphaned data: remove the data directory directly
-	if m.appsDir != "" {
-		appDataDir := filepath.Join(m.appsDir, name)
+	// Orphaned data: remove the app's private data directory directly. This
+	// is the writable tree under BLOUD_DATA_DIR, never the catalog.
+	if m.dataDir != "" {
+		appDataDir := filepath.Join(m.dataDir, name)
 		if _, err := os.Stat(appDataDir); err == nil {
 			if err := os.RemoveAll(appDataDir); err != nil {
 				m.logger.Error("failed to remove orphaned data dir", "app", name, "error", err)

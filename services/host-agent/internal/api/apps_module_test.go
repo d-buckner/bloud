@@ -554,3 +554,44 @@ func TestAppsHTTP_RefreshCatalogIsNotOnTheMemberRouter(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code,
 		"refresh-catalog must be registered on the admin router only")
 }
+
+// TestAppsModule_ClearData_OrphanUsesDataDirNotCatalog pins which directory
+// orphaned-data cleanup deletes. The catalog at BLOUD_APPS_DIR is also named
+// "apps" and holds the app's installed source; orphaned state lives at
+// $BLOUD_DATA_DIR/apps/<name>. Cleaning up the catalog instead would delete
+// the directory the catalog loader reads on every refresh, so the two must
+// never be interchangeable.
+func TestAppsModule_ClearData_OrphanUsesDataDirNotCatalog(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{CatalogID: "jellyfin", DisplayName: "Jellyfin"})
+	// Empty store: the app is not installed, so ClearData takes the orphan branch.
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	dataDir := t.TempDir()
+	catalogDir := t.TempDir()
+
+	orphan := filepath.Join(dataDir, "jellyfin")
+	require.NoError(t, os.MkdirAll(orphan, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(orphan, "leftover.db"), []byte("x"), 0o600))
+
+	catalogAppDir := filepath.Join(catalogDir, "jellyfin")
+	require.NoError(t, os.MkdirAll(catalogAppDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(catalogAppDir, "metadata.yaml"), []byte("name: jellyfin\n"), 0o644))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+	mod.SetAppsDir(catalogDir)
+	mod.SetDataDir(dataDir)
+
+	_, err := mod.ClearData("jellyfin")
+	require.NoError(t, err)
+
+	_, err = os.Stat(orphan)
+	assert.True(t, os.IsNotExist(err), "orphaned app data should be removed")
+
+	_, err = os.Stat(filepath.Join(catalogAppDir, "metadata.yaml"))
+	assert.NoError(t, err,
+		"data cleanup must never delete the catalog source directory")
+}
