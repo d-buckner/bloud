@@ -59,8 +59,7 @@ Two rules make it work:
 
 - **Single writer.** Only the orchestrator authors lifecycle state or performs side effects.
   HTTP handlers submit intents and never mutate anything.
-- **Idempotent configurators.** `PreStart` and `PostStart` run on every cycle. A configurator
-  that breaks when it runs twice is a bug, not a caveat.
+- **Idempotent configurators.** `PreStart` and `PostStart` run on every cycle. PreStart configurator runs before boot and ensures the config files are up-to-date and is a no-op when that's already the case.
 
 Generating a config file once is easy. Generating a whole homelab's worth of config files and maintaining them indefinitely is not.
 
