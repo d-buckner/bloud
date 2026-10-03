@@ -16,28 +16,31 @@ import (
 )
 
 // runConfigurator drives a single node through its lifecycle, or re-runs
-// PostStart only for nodes that are already RUNNING (staleness).
+// PostStart only for a node that is already RUNNING (the resync case).
 // Returns true only when the node successfully transitions to its target status
-// for the first time this pass (staleness re-runs return false).
+// for the first time this pass (a PostStart resync returns false).
 func (o *Orchestrator) runConfigurator(ctx context.Context, id string) bool {
 	node, err := o.graph.GetNode(id)
 	if err != nil || node == nil {
 		return false
 	}
 
-	// Staleness re-run: node is already at RUNNING, update PostStart config only.
+	// Already at target: re-run PostStart only, so the configurator gets its
+	// diff against the outside world without disturbing the container.
 	if node.ActualStatus == graph.StatusRunning && node.TargetStatus == graph.StatusRunning {
-		o.logger.Info("dispatching staleness re-run", "app", id)
+		o.logger.Info("dispatching PostStart resync", "app", id)
 		o.runPostStartOnly(ctx, id)
-		return false // staleness re-runs don't propagate changedIDs further
+		return false // resyncs don't propagate changedIDs further
 	}
 
 	o.logger.Info("dispatching full lifecycle", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus)
 	return o.runFullLifecycle(ctx, id, node)
 }
 
-// runPostStartOnly re-runs PostStart for an already-RUNNING node whose
-// dependency just became available. Used for staleness propagation.
+// runPostStartOnly re-runs PostStart for an already-RUNNING node: because a
+// direct dependency just became available, or because the periodic pass is
+// giving the configurator its diff against the outside world. The container is
+// left alone either way.
 func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 	cfg := o.registry.Get(id)
 	if cfg == nil {
@@ -46,18 +49,18 @@ func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 	appID := o.ownerApp(id)
 	state, err := o.buildAppState(id)
 	if err != nil {
-		o.logger.Warn("staleness re-run: failed to build state", "app", id, "error", err)
+		o.logger.Warn("PostStart resync: failed to build state", "app", id, "error", err)
 		return
 	}
-	o.logger.Info("staleness re-run: running PostStart", "app", id)
+	o.logger.Info("PostStart resync: running PostStart", "app", id)
 	if err := o.runPostStart(ctx, cfg, state); err != nil {
-		o.logger.Warn("staleness re-run: PostStart failed", "app", id, "error", err)
+		o.logger.Warn("PostStart resync: PostStart failed", "app", id, "error", err)
 		o.ensureOpDrive(appID)
 		o.recordOpFail(appID, store.OpPhasePoststart, opCause(id, appID, err), true)
 		return
 	}
 	o.healOp(appID)
-	o.logger.Info("staleness re-run: PostStart complete", "app", id)
+	o.logger.Info("PostStart resync: PostStart complete", "app", id)
 }
 
 // runPostStart invokes a configurator's PostStart bounded by the framework's

@@ -37,6 +37,11 @@ func (f *fakeAffine) graphqlMembers(w http.ResponseWriter, query string, variabl
 		for i, e := range emails {
 			email, _ := e.(string)
 			f.invitedEmails = append(f.invitedEmails, email)
+			// AFFiNE's member list unions active members with outstanding
+			// invitations, so a successful invite makes the address present
+			// right away. Modelling that here is what lets a test run a further
+			// pass and assert the same address was not invited twice.
+			f.members = append(f.members, map[string]string{"email": email, "status": "Pending"})
 			results = append(results, map[string]any{
 				"email":    email,
 				"inviteId": "perm-invite-" + string(rune('a'+i)),
@@ -246,6 +251,40 @@ func TestEnsureSharedMembers_InviteFailureIsSwallowed(t *testing.T) {
 	})
 	assert.Equal(t, 0, fake.inviteCreates)
 	assert.Empty(t, fake.invitedEmails)
+}
+
+// The reported bug: a user created in Settings after AFFiNE was installed must
+// reach the shared workspace without anyone restarting anything. The membership
+// pass is a diff against the directory, so a later pass that finds one more
+// account invites exactly that account, and the pass after that finds nothing.
+func TestEnsureSharedMembers_NewUserIsInvitedOnALaterPass(t *testing.T) {
+	idp := startFakeAuthentik(t, []map[string]any{
+		{"pk": 1, "username": "admin", "email": "admin@localhost.local", "is_active": true, "type": "internal"},
+	})
+	fake := newFakeAffine("ws-1")
+	fake.members = []map[string]string{{"email": "admin@localhost.local", "status": "Accepted"}}
+	c := inferenceConfigurator(t, fake, newStoreSecrets("owner-pass"))
+	st := membersState(t, idp.url())
+
+	c.ensureSharedMembers(context.Background(), st)
+	require.Empty(t, fake.invitedEmails, "the establishing pass finds everyone already in")
+
+	// The operator adds a user in Settings. Nothing restarts and no intent is
+	// raised: the next pass simply reads a directory with one more row in it.
+	idp.users = append(idp.users, map[string]any{
+		"pk": 2, "username": "alice", "email": "alice@localhost.local",
+		"is_active": true, "type": "internal",
+	})
+	c.ensureSharedMembers(context.Background(), st)
+
+	assert.Equal(t, []string{"alice@localhost.local"}, fake.invitedEmails,
+		"the user added after the install is invited by the next pass")
+
+	// And the invitation lands as a Pending row, so the pass after that is a
+	// no-op rather than a second invitation for the same person.
+	c.ensureSharedMembers(context.Background(), st)
+	assert.Equal(t, 1, fake.inviteCreates,
+		"the pending invitation is presence: nobody gets invited twice")
 }
 
 // The directory call must leave the host on the host-side address. BaseURL is a

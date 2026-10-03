@@ -120,9 +120,14 @@ protocol.
 
 ### Membership
 
-`ensureSharedMembers` runs every reconciliation pass. It reads the Bloud user
-directory from the identity provider and invites whoever the workspace does not
-already have:
+`ensureSharedMembers` runs on every `PostStart`, and `PostStart` runs on every
+reconciliation pass: a node already at `RUNNING` gets a PostStart resync
+(`orchestrator/levels.go:readyForPostStartResync`) instead of being treated as
+converged. That trigger is most of the feature. Without it the membership diff
+only ran on install, on host-agent restart, or when a direct dependency
+converged, so a user created in Settings after AFFiNE was installed never got an
+invitation. It reads the Bloud user directory from the identity provider and
+invites whoever the workspace does not already have:
 
 ```
 Authentik (sso contract, apiToken)

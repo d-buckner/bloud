@@ -537,10 +537,17 @@ combined with instance/SSH-target env vars). Instance overrides:
    submit intents (202 accepted) and return current state; they must not write
    stores directly or advance app status.
 2. **Configurators are idempotent.** `PreStart`/`PostStart` run on *every*
-   reconciliation cycle (install, crash recovery, reboot). A configurator that
-   can't run twice is a bug. This is also what makes the periodic self-healing
-   pass safe: it re-runs the same cycle on a timer (~60s, see invariant 8), so
-   a pass that finds nothing to change must change nothing. `PreStart` reports
+   reconciliation that touches the node (install, crash recovery, reboot), and
+   `PostStart` additionally runs on **every** pass for a node already at
+   `RUNNING`: the PostStart resync
+   (`orchestrator/levels.go:readyForPostStartResync`). A configurator that
+   can't run twice is a bug. The resync is what makes the periodic self-healing
+   pass (~60s, see invariant 8) a real diff against the outside world instead
+   of a no-op, because the outside world moves without raising an intent: a
+   user created in Settings after the install, a credential rotated by hand, a
+   provider's address changed. It re-runs `PostStart` only, never `PreStart`,
+   so `PreStart` stays the only phase that can restart a container, and it is
+   withheld when a direct dependency is in `ERROR`. `PreStart` reports
    `RestartNeeded` rather than restarting on its own, and `managedfile.Write`
    reports `changed=false` when the bytes already match, for exactly this
    reason.

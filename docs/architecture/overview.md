@@ -168,6 +168,16 @@ the graph, converge tailnet, run a topological reconcile pass (per-level concurr
 phases `INITIALIZING→PRESTART→STARTING→POSTSTART→RUNNING`), and finally regenerate
 Traefik routes before promoting nodes to RUNNING.
 
+A node already at `RUNNING` is not assumed converged. Every pass queues it for a
+**PostStart resync** (`orchestrator/levels.go:readyForPostStartResync`), because
+`RUNNING` records that the phases completed once, not that the app's config still
+matches the outside world. The outside world moves on its own schedule: a user
+added in Settings after the install, a credential rotated by hand, a provider's
+address changed. The resync re-runs `PostStart` only, so `PreStart` stays the
+only phase that can restart a container, and it is withheld when a direct
+dependency is sitting in `ERROR`. An idle pass therefore costs one idempotent
+diff per running app rather than nothing at all.
+
 ```go
 type Intent interface {
     intentMarker()  // sealed interface
