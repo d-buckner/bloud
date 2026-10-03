@@ -1,14 +1,9 @@
 # bloud
-
-An open-source home server. You add an app; the reverse proxy, the unified login, the database,
-and the wiring between apps happen automatically.
-
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
 
-Self-hosting is kind of unreasonably hard. Not the installing part. The part after: the proxy
-rules, the OAuth clients, the database credentials, the API keys you paste from one web UI into
-another. Bloud moves that job out of your head and into the software.
+An open-source home server inspired by kubernetes. Self-hosting is kind of unreasonably hard. Not the installing part. The part after.
+In bloud, you install an app and the reverse proxy, unified login, and all inter-app integrations happen for you.
 
 ## try it
 
