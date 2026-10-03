@@ -26,6 +26,17 @@ describeApp(
       await ensureInstalled('hermes-webui');
     });
 
+    test('brought Hermes in as the agent it fronts', async () => {
+      // The required `agentGateway` contract means installing the front end
+      // resolves Hermes as its provider and records it first, so a
+      // hermes-webui install is also what puts the agent on the instance.
+      // Asserted as an observable outcome rather than a metadata read,
+      // because the planner running is exactly the thing that could quietly
+      // stop happening.
+      test.setTimeout(15 * 60_000);
+      await expectInstalledInCatalog(app.page, 'Hermes');
+    });
+
     test('appears in the catalog as installed', async () => {
       test.setTimeout(60_000);
       await expectInstalledInCatalog(app.page, 'Hermes Web UI');
