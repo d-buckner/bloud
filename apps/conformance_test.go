@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"codeberg.org/d-buckner/bloud/apps/configtest"
-	hermeswebui "codeberg.org/d-buckner/bloud/apps/hermes-webui"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +42,6 @@ var conformanceTable = []appSpec{
 	{Dir: "affine", Node: "apps-affine", DefaultPort: 3010, WithSSO: true},
 	{Dir: "calino", Node: "apps-calino", DefaultPort: 8180},
 	{Dir: "hermes", Node: "apps-hermes", DefaultPort: 9119, WithSSO: true},
-	{Dir: "hermes-webui", Node: "apps-hermes-webui", DefaultPort: 8787, Preseed: preseedAgentSource},
 	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, Preseed: preseedHAComponent},
 	{Dir: "immich", Node: "apps-immich-server", DefaultPort: 2283, WithSSO: true},
 	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
@@ -160,14 +158,4 @@ func preseedHAComponent(dataDir string) error {
 	}
 	manifest := `{"domain": "auth_oidc", "name": "OpenID Connect/SSO Authentication", "version": "1.2.1"}`
 	return os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o644)
-}
-
-// preseedAgentSource marks the app's agent-source directory as already
-// holding the pinned Hermes agent tree, so PreStart's asset install takes
-// its skip path instead of downloading the archive. The marker is written
-// through the app's own exported seeder rather than a literal copy of the
-// marker string, so the fixture cannot quietly stop matching the pin it
-// stands for and turn the offline assertion into a network test.
-func preseedAgentSource(dataDir string) error {
-	return hermeswebui.SeedInstalledAgentSource(filepath.Join(dataDir, "agent-src"))
 }
