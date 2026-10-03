@@ -2,7 +2,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
 
-An open-source home server inspired by kubernetes. Self-hosting is kind of unreasonably hard. Not the installing part. The part after.
+An open-source home server inspired by kubernetes. Self-hosting is kind of unreasonably hard. Not the installing part, but everything after.
 
 In bloud, you install an app and the reverse proxy, unified login, and all inter-app integrations happen for you.
 
