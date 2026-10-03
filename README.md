@@ -14,22 +14,16 @@ another. Bloud moves that job out of your head and into the software.
 
 Debian 13, x86_64.
 
+The script is short, and you should read it before piping it to a shell:
+[install.sh](install.sh). To do it by hand instead, grab the `.deb` from
+[the releases page](https://github.com/d-buckner/bloud/releases) and run
+`sudo apt install ./bloud_*.deb`.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/d-buckner/bloud/main/install.sh | sudo sh
 ```
 
 Open the dashboard at http://localhost:8080. Set your host under Settings, then Hosts. Install Jellyfin.
-
-That's the whole setup. What it does underneath: the installer fetches the published `.deb`
-and hands it to `apt`, which pulls the real dependency set (Podman 5, `uidmap`,
-`dbus-user-session`, and the rest). The `.deb` then provisions the machine itself: a dedicated
-unprivileged `bloud` user with its own subuid ranges, linger enabled, the sysctl that lets a
-rootless container bind port 80, and the user-level host-agent service.
-
-The script is short, and you should read it before piping it to a shell:
-[install.sh](install.sh). To do it by hand instead, grab the `.deb` from
-[the releases page](https://github.com/d-buckner/bloud/releases) and run
-`sudo apt install ./bloud_*.deb`.
 
 **Please don't expose bloud to the public internet yet.** It's alpha, it serves plain HTTP,
 and there is no mechanism yet for getting security updates to apps or to Bloud itself. Keep it
