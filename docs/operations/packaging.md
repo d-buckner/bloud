@@ -66,6 +66,22 @@ token is a barrier to entry the install path should not have. Anonymous calls
 are capped at 60 per hour per IP, and one call per install sits well inside
 that.
 
+## Updating
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/d-buckner/bloud/main/update.sh | sudo sh
+```
+
+[`update.sh`](../../update.sh) is the same download-and-verify path as
+`install.sh`, with the one guard an update needs: it refuses to run unless
+bloud is already installed, reports the version it is moving from and to, and
+skips the `apt-get install` when the installed package is already the newest
+one. An upgrade runs the package's own maintainer scripts (the same `postinst`
+as a fresh install), which restart the host-agent service; app containers,
+data, and settings are left alone. The manual equivalent is downloading the
+newest `.deb` and running `sudo apt install ./bloud_*.deb`, the same as a
+fresh install.
+
 ## Integrity
 
 Each release carries a `SHA256SUMS` asset, and `install.sh` verifies the
