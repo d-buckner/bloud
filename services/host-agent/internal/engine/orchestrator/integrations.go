@@ -275,6 +275,16 @@ func (o *Orchestrator) bindContract(
 			PublicURL:   o.appPublicURL(providerID),
 			Path:        offer.Values["path"],
 		})
+	case "agentGateway":
+		// The agent's own control plane. The token is resolved only because
+		// the consumer asked for it: a front end that runs the agent
+		// in-process gets the address and no credential, which is exactly
+		// what it needs and no more.
+		out.AgentGateways = append(out.AgentGateways, configurator.AgentGatewayBinding{
+			ProviderRef: ref,
+			Path:        o.contractValue(providerID, contract, offer, "path"),
+			Token:       o.publishedSecret(providerID, contract, offer, requires),
+		})
 	default:
 		// Contracts with no payload (proxy, database) need no consumer input
 		// beyond the address, which the graph edge already encodes. A contract

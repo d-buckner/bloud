@@ -483,3 +483,79 @@ func TestBuildIntegrations_CalDAVProviderNotInstalled(t *testing.T) {
 	assert.False(t, out.CalDAVServers[0].Installed)
 	assert.Equal(t, "/", out.CalDAVServers[0].Path)
 }
+
+// The agent gateway hands a front end the address of the agent's own control
+// plane. The credential belongs to the agent, and a consumer that did not
+// name it under `requires` is not handed one: Hermes Web UI runs the agent
+// in-process today, so a bearer it would never present is a bearer it should
+// not hold.
+func TestBuildIntegrations_AgentGatewayWithoutRequiresGetsAddressOnly(t *testing.T) {
+	consumer := consumerApp("hermes-webui", "agentGateway", catalog.Integration{Required: true}, "hermes")
+	store := NewFakeAppStore()
+	install(t, store, "hermes-webui", map[string]string{"agentGateway": "hermes"})
+	install(t, store, "hermes", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumer,
+		providerApp("hermes", 9119, "agentGateway", catalog.ContractProvides{
+			Secrets: []string{"httpToken"},
+			Values:  map[string]string{"path": "/v1"},
+		}),
+	)
+	secrets.publish("hermes", "httpToken", "gateway-key")
+
+	out := orch.buildIntegrations("hermes-webui", consumer)
+	require.Len(t, out.AgentGateways, 1)
+	gw := out.AgentGateways[0]
+
+	assert.Equal(t, "hermes", gw.App)
+	assert.True(t, gw.Installed)
+	assert.Equal(t, "http://apps-hermes:9119", gw.BaseURL)
+	assert.Equal(t, "/v1", gw.Path, "the API root the provider declared, not one the consumer assumed")
+	assert.Empty(t, gw.Token, "a consumer that did not declare the secret is not handed one")
+}
+
+func TestBuildIntegrations_AgentGatewayResolvesThePublishedToken(t *testing.T) {
+	consumer := consumerApp("hermes-webui", "agentGateway",
+		catalog.Integration{Required: true, Requires: requires("httpToken")}, "hermes")
+	store := NewFakeAppStore()
+	install(t, store, "hermes-webui", map[string]string{"agentGateway": "hermes"})
+	install(t, store, "hermes", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumer,
+		providerApp("hermes", 9119, "agentGateway", catalog.ContractProvides{
+			Secrets: []string{"httpToken"},
+			Values:  map[string]string{"path": "/v1"},
+		}),
+	)
+	secrets.publish("hermes", "httpToken", "gateway-key")
+
+	out := orch.buildIntegrations("hermes-webui", consumer)
+	require.Len(t, out.AgentGateways, 1)
+	assert.Equal(t, "gateway-key", out.AgentGateways[0].Token)
+}
+
+// The provider mints its credential on a later pass than the install, so the
+// first passes see a binding with no token. That is "not ready", and it has
+// to read as empty rather than as a contract with no credential at all.
+func TestBuildIntegrations_AgentGatewayUnpublishedTokenIsEmpty(t *testing.T) {
+	consumer := consumerApp("hermes-webui", "agentGateway",
+		catalog.Integration{Required: true, Requires: requires("httpToken")}, "hermes")
+	store := NewFakeAppStore()
+	install(t, store, "hermes-webui", map[string]string{"agentGateway": "hermes"})
+	install(t, store, "hermes", nil)
+
+	orch, _ := bindingsOrchestrator(t, store,
+		consumer,
+		providerApp("hermes", 9119, "agentGateway", catalog.ContractProvides{
+			Secrets: []string{"httpToken"},
+			Values:  map[string]string{"path": "/v1"},
+		}),
+	)
+
+	out := orch.buildIntegrations("hermes-webui", consumer)
+	require.Len(t, out.AgentGateways, 1)
+	assert.Empty(t, out.AgentGateways[0].Token)
+	assert.Equal(t, "/v1", out.AgentGateways[0].Path, "the address half resolves whatever the credential's state is")
+}

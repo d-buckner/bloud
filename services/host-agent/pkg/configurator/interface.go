@@ -345,6 +345,31 @@ type CalDAVBinding struct {
 	Path string
 }
 
+// AgentGatewayBinding is the control-plane listener of a running agent that a
+// front end drives.
+//
+// The address and the path are kept separate and no URL is composed, for the
+// same reason MCPBinding does: ProviderRef.BaseURL is a container-network
+// address that only resolves for a consumer sharing the provider's network
+// namespace, so a URL composed on the provider's side would be right for some
+// consumers and silently wrong for others.
+//
+// The credential is the provider's, not the consumer's. The agent minted it,
+// gave it to its own listener, and published it here; a consumer that did not
+// name it under `integrations.<contract>.requires` gets the address alone.
+type AgentGatewayBinding struct {
+	ProviderRef
+	// Token is the bearer the provider's gateway listener authenticates
+	// with, published under its `agentGateway` contract. Empty while the
+	// provider has not published it, or when this consumer did not ask for
+	// it. A consumer must treat empty as "not ready" and write no credential
+	// at all, never as an empty bearer.
+	Token string
+	// Path is the API root on whichever address the consumer chose.
+	// Absolute, so composition is plain concatenation.
+	Path string
+}
+
 // Integrations holds the resolved providers for every contract the app declares
 // in its catalog metadata, one typed slice per contract.
 //
@@ -362,6 +387,7 @@ type Integrations struct {
 	Inference       []InferenceBinding
 	MCPServers      []MCPBinding
 	CalDAVServers   []CalDAVBinding
+	AgentGateways   []AgentGatewayBinding
 }
 
 // AppState contains the inputs currently consumed by app configurators.

@@ -33,6 +33,26 @@ integrations:
       - source: instance
         default: true
 
+  # The agent this UI is a front end for. Required: the image ships no agent
+  # of its own, so an install with nothing behind it is a chat window with
+  # nobody answering. The edge orders Hermes ahead of this container on the
+  # graph and makes the dependency visible instead of implied.
+  #
+  # It declares no `requires`, so it gets the gateway address and no
+  # credential. This build runs the agent in-process from the source tree
+  # Bloud installs (agent_source.go) rather than dialing the gateway, and a
+  # consumer that will not present a bearer should not be handed one. The
+  # whole metadata change that turns the gateway backend on later is one
+  # `requires: [httpToken]` line plus the app's own
+  # HERMES_WEBUI_CHAT_BACKEND / GATEWAY_BASE_URL env: the credential is
+  # already minted and published by Hermes, which owns it.
+  agentGateway:
+    required: true
+    multi: false
+    compatible:
+      - app: hermes
+        default: true
+
 # The app's own login is a single shared password, and its native OIDC client
 # will not talk to a home-LAN issuer at all: it requires https for every OIDC
 # endpoint and refuses to dial any address that resolves to a private,

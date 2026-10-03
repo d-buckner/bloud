@@ -34,6 +34,51 @@ read-only. The upstream init script stages the tree to `/tmp/hermes-agent-build`
 before installing, so a `:ro` mount is the supported shape, not a
 workaround; it warns when the mount is writable instead.
 
+## It requires Hermes (`integrations.agentGateway`)
+
+The image is a front end, so the app it fronts is a dependency, and the
+catalog says so with a required `agentGateway` integration whose default
+provider is `hermes`. That makes the relationship a graph edge rather than
+a paragraph of prose: Hermes converges ahead of this container, the
+dependency shows in `docs/architecture/dependency-graph.md`, and the
+install records the choice instead of leaving it implied.
+
+### Why it declares no `requires`
+
+A required contract hands over the provider's address. A credential comes
+only to a consumer that names it under `integrations.<contract>.requires`,
+and this app names nothing, so `AgentGatewayBinding.Token` is empty here.
+
+That is least privilege rather than an omission. This build runs the agent
+**in-process**, from the source tree `agent_source.go` installs, and never
+presents a bearer to anything. A consumer that will not use a credential
+should not hold one, and the loader would let it take one.
+
+### What turning the gateway backend on would take
+
+The app already supports it upstream. `api/gateway_chat.py` reads:
+
+| Variable | What it does |
+|---|---|
+| `HERMES_WEBUI_CHAT_BACKEND` | `gateway` routes browser chat turns over HTTP instead of in-process |
+| `HERMES_WEBUI_GATEWAY_BASE_URL` | the agent to dial |
+| `HERMES_WEBUI_GATEWAY_API_KEY` | the bearer, which must equal the agent's `API_SERVER_KEY` |
+
+and `api/agent_health.py` resolves a remote gateway from
+`GATEWAY_HEALTH_URL` / `HERMES_GATEWAY_HEALTH_URL` / `HERMES_API_URL`.
+
+The Bloud-side change is one metadata line (`requires: [httpToken]`), the
+three env entries rendered from the binding, and the container work to
+actually run Hermes' `api_server`. The credential itself needs nothing:
+Hermes mints it and publishes it today, which is the point of putting the
+contract in place before the consumer that will read it.
+
+Upstream's own `docs/architecture/agent-api-contract.md` is explicit that
+the source-tree share is still required and HTTP-only is the migration
+target, so `agent_source.go` is not retired by any of this. The two live
+together: the source tree for the in-process agent, the contract for the
+day the front end stops needing it.
+
 ## The agent source pin
 
 | | |
