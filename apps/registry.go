@@ -25,6 +25,7 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/affine-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/calino"
 	_ "codeberg.org/d-buckner/bloud/apps/hermes"
+	_ "codeberg.org/d-buckner/bloud/apps/hermes-webui"
 	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
 	_ "codeberg.org/d-buckner/bloud/apps/immich"
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
@@ -55,6 +56,7 @@ func NodeNames() []string {
 		"apps-affine-mcp",
 		"apps-calino",
 		"apps-hermes",
+		"apps-hermes-webui",
 		"apps-homeassistant",
 		"apps-immich-server",
 		"apps-jellyfin",
