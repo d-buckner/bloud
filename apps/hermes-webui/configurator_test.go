@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,6 +474,74 @@ func TestProviderIsBloud(t *testing.T) {
 }
 
 // ---- config document helpers ----
+
+// TestReadConfigTreatsAMissingFileAsAbsent is the CI regression. The host
+// cannot stat inside a directory it does not own, so a config that has not
+// been written yet arrives as EACCES rather than ENOENT. Falling back to
+// the container is the only way to tell "absent" from "unreadable", and
+// absent has to mean an empty document rather than a failed node.
+func TestReadConfigTreatsAMissingFileAsAbsent(t *testing.T) {
+	c := newTestConfigurator(t, nil)
+	c.exec = func(_ context.Context, _ string, _ map[string]string, _ []string) ([]byte, error) {
+		return nil, errors.New("podman exec apps-hermes-webui [...]: exit status 44")
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	// No execute bit, so traversal is refused and the read comes back EACCES
+	// rather than ENOENT. That is the shape the real directory has: owned by
+	// a uid the host agent is not. A test could not fake the ownership, so
+	// it fakes the permission that produces the same error.
+	require.NoError(t, os.Chmod(dir, 0o600))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	raw, err := c.readConfig(context.Background(), cfgPath)
+	require.NoError(t, err, "an absent config is not a failed read")
+	assert.Nil(t, raw)
+}
+
+func TestReadConfigStillReportsARealExecFailure(t *testing.T) {
+	c := newTestConfigurator(t, nil)
+	c.exec = func(_ context.Context, _ string, _ map[string]string, _ []string) ([]byte, error) {
+		return nil, errors.New("podman exec: container not running: exit status 1")
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.Chmod(dir, 0o600))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	_, err := c.readConfig(context.Background(), cfgPath)
+	require.Error(t, err, "only the dedicated absent code means absent")
+}
+
+// TestConvergeWritesAnAbsentConfigThroughTheContainer walks the whole path
+// the failed install took: the host cannot read the directory, the file is
+// not there, and the converged document has to land via exec.
+func TestConvergeWritesAnAbsentConfigThroughTheContainer(t *testing.T) {
+	var written string
+	c := newTestConfigurator(t, nil)
+	c.exec = func(_ context.Context, _ string, _ map[string]string, cmd []string) ([]byte, error) {
+		joined := strings.Join(cmd, " ")
+		if strings.Contains(joined, "base64 -d") {
+			written = decodeExecPayload(t, cmd[len(cmd)-1])
+			return nil, nil
+		}
+		// The read script's "no such file" answer.
+		return nil, errors.New("exit status 44")
+	}
+	// The host cannot write the directory either, so the write must go exec.
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.Chmod(dataDir, 0o600))
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) })
+
+	changed, err := c.convergeConfig(context.Background(), dir,
+		inferenceState(dir, "https://ai.example.test/v1", "sk-k", "m"), true)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Contains(t, written, "base_url: https://ai.example.test/v1",
+		"the converged document is what should reach the container")
+}
 
 func TestParseConfigTreatsEmptyAsEmptyDocument(t *testing.T) {
 	for _, raw := range []string{"", "   \n", "\n# only a comment\n"} {
