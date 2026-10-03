@@ -13,6 +13,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -30,169 +31,59 @@ const (
 	fixtureOAuth2ProviderName = "E2E Catalog Fixture OAuth2 Provider"
 )
 
-// Every fixture container bind-mounts the app's shared data tree. The mount is
-// part of the fixture rather than of one test because the orchestrator creates
-// apps/<app> only as a side effect of rendering a directory mount: a fixture
-// with no volumes has no data directory at all, and a "the data survived" check
-// against a directory that was never there cannot fail. It is on every container
-// because the variants are diffs of one another: a mount present in one and
-// absent in the next is a spec change, and the tests that assert only the
-// intended container was recreated would then fail on the mount.
-const fixtureV1 = `name: e2e-catalog-fixture
-displayName: E2E Catalog Fixture
-description: Integration fixture for catalog-update reconciliation
-category: media
-version: 1.0.0
-port: 9999
-sso:
-  strategy: none
-containers:
-  - name: apps-e2e-catalog-fixture-a
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-  - name: apps-e2e-catalog-fixture-b
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-  - name: apps-e2e-catalog-fixture-c
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-`
+// fixtureYAML renders one catalog entry for the fixture app. The five variants
+// are generated rather than pasted because they are one concept with one thing
+// changed each, and five hand-synced blobs make that change expensive enough to
+// get wrong.
+//
+// Every container gets the shared {{appDataDir}}/data mount, and that is the
+// reason to generate. The orchestrator creates apps/<app> only as a side
+// effect of rendering a directory mount, so a fixture with no volumes has no
+// data tree at all, and a "the data survived the prune" check against a tree
+// that was never there cannot fail. Mounting on every container, not just the
+// one a given test drops, is what keeps that check armed no matter which
+// container a later variant removes.
+//
+// The mount also has to be uniform across any pair of variants diffed against
+// each other. A mount present in fixtureV1 and absent in fixtureV2 is a spec
+// change, and the tests asserting that only the intended container was
+// recreated would then fail on the mount instead of on the thing under test.
+//
+// containers are container-name suffixes; "suffix@image" overrides the default
+// image for that container.
+func fixtureYAML(version, strategy string, containers ...string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "name: %s\ndisplayName: E2E Catalog Fixture\n", fixtureApp)
+	b.WriteString("description: Integration fixture for catalog-update reconciliation\n")
+	b.WriteString("category: media\n")
+	fmt.Fprintf(&b, "version: %s\nport: 9999\nsso:\n  strategy: %s\ncontainers:\n", version, strategy)
+	for _, c := range containers {
+		suffix, image := c, "docker.io/alpine:3.20"
+		if at := strings.Index(c, "@"); at >= 0 {
+			suffix, image = c[:at], c[at+1:]
+		}
+		fmt.Fprintf(&b, "  - name: apps-%s-%s\n", fixtureApp, suffix)
+		fmt.Fprintf(&b, "    image: %s\n", image)
+		b.WriteString("    command: [\"sleep\", \"infinity\"]\n")
+		b.WriteString("    network: apps-net\n")
+		b.WriteString("    restartPolicy: always\n")
+		b.WriteString("    volumes:\n")
+		b.WriteString("      - source: \"{{appDataDir}}/data\"\n")
+		b.WriteString("        destination: /data\n")
+	}
+	return b.String()
+}
 
-// fixtureV2 drops container c; a and b are otherwise byte-identical to v1, so
-// the only thing the reconciler sees is the removed node.
-const fixtureV2 = `name: e2e-catalog-fixture
-displayName: E2E Catalog Fixture
-description: Integration fixture for catalog-update reconciliation
-category: media
-version: 2.0.0
-port: 9999
-sso:
-  strategy: none
-containers:
-  - name: apps-e2e-catalog-fixture-a
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-  - name: apps-e2e-catalog-fixture-b
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-`
-
-// fixtureImageBump bumps container a's image only.
-const fixtureImageBump = `name: e2e-catalog-fixture
-displayName: E2E Catalog Fixture
-description: Integration fixture for catalog-update reconciliation
-category: media
-version: 2.0.0
-port: 9999
-sso:
-  strategy: none
-containers:
-  - name: apps-e2e-catalog-fixture-a
-    image: docker.io/alpine:3.21
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-  - name: apps-e2e-catalog-fixture-b
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-  - name: apps-e2e-catalog-fixture-c
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-`
-
-// fixtureForwardAuth is fixtureV1 under a forward-auth strategy.
-const fixtureForwardAuth = `name: e2e-catalog-fixture
-displayName: E2E Catalog Fixture
-description: Integration fixture for catalog-update reconciliation
-category: media
-version: 2.0.0
-port: 9999
-sso:
-  strategy: forward-auth
-containers:
-  - name: apps-e2e-catalog-fixture-a
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-  - name: apps-e2e-catalog-fixture-b
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-`
-
-// fixtureNativeOIDC is fixtureForwardAuth flipped to native-oidc.
-const fixtureNativeOIDC = `name: e2e-catalog-fixture
-displayName: E2E Catalog Fixture
-description: Integration fixture for catalog-update reconciliation
-category: media
-version: 2.0.0
-port: 9999
-sso:
-  strategy: native-oidc
-containers:
-  - name: apps-e2e-catalog-fixture-a
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-  - name: apps-e2e-catalog-fixture-b
-    image: docker.io/alpine:3.20
-    command: ["sleep", "infinity"]
-    network: apps-net
-    restartPolicy: always
-    volumes:
-      - source: "{{appDataDir}}/data"
-        destination: /data
-`
+// The variants. Each differs from fixtureV1 in exactly the one thing its name
+// claims, which is the property the generator makes structural: dropping
+// container c is one argument, not a blob edit that might also move a volume.
+var (
+	fixtureV1          = fixtureYAML("1.0.0", "none", "a", "b", "c")
+	fixtureV2          = fixtureYAML("2.0.0", "none", "a", "b")
+	fixtureImageBump   = fixtureYAML("2.0.0", "none", "a@docker.io/alpine:3.21", "b", "c")
+	fixtureForwardAuth = fixtureYAML("2.0.0", "forward-auth", "a", "b")
+	fixtureNativeOIDC  = fixtureYAML("2.0.0", "native-oidc", "a", "b")
+)
 
 func requireCatalogDir(t *testing.T) {
 	t.Helper()
