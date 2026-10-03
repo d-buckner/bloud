@@ -349,6 +349,51 @@ func waitAppRunning(t *testing.T, catalogID string, timeout time.Duration) {
 		timeout, catalogID, appStatus(t, catalogID))
 }
 
+// fallbackDashboardMarker is the title of the page host-agent serves for every
+// unmatched path when no frontend build sits next to it. The integration tier
+// deploys no frontend on purpose, so this page is exactly what a request finds
+// when the ingress has not been pointed at the app yet.
+const fallbackDashboardMarker = "Bloud Dev Dashboard"
+
+// waitRoutedApp polls a path on the app's routed (public) URL until the app
+// itself answers. It is the second half of the readiness barrier that
+// waitAppRunning starts, and it covers a gap the store cannot see.
+//
+// waitAppRunning proves the orchestrator marked the node RUNNING. It does not
+// prove the ingress serves the app: the orchestrator regenerates the Traefik
+// dynamic config immediately before that promotion, and Traefik applies the
+// new file a moment later. A request inside that window is routed by the
+// previous config and never reaches the app, while the store already reads
+// "running" and reports nothing missing.
+//
+// The probe tells the two apart by who answered, not by status: the fallback
+// page arrives with a 200, so a status check passes on the wrong responder.
+// A body that is not that page means the app answered.
+//
+// Tests that dial the container's own port do not need this. That is why an
+// install test can pass against :8222 while the next test's first call on the
+// routed URL lands on host-agent instead of the app.
+func waitRoutedApp(t *testing.T, probeURL string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	last := "no response"
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(probeURL)
+		if err != nil {
+			last = err.Error()
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			last = fmt.Sprintf("%d %s %.80s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+			if resp.StatusCode == http.StatusOK && !strings.Contains(string(body), fallbackDashboardMarker) {
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("timed out after %s: %s never served the app (last response: %s)", timeout, probeURL, last)
+}
+
 // resetUserApps uninstalls every installed user app through the API so the
 // suite always starts from a clean slate, regardless of prior state.
 func resetUserApps() error {
