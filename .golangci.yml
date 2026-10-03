@@ -4,31 +4,22 @@
 # apps, cli). golangci-lint walks up from each module dir to find this,
 # so one file at the repo root governs every module.
 #
-# Baselines re-measured 2026-10-01 over all three modules with
-# golangci-lint v2.13.2. Cyclop reports only when the value is STRICTLY
-# above the threshold, so a cap equal to the worst value still passes.
+# Baseline state, verified 2026-10-04: all three modules report 0 issues at
+# the caps below with golangci-lint v2.13.2.
 #
-#   cyclop function complexity: worst non-test 19 (api.SetUserRoleHandler,
-#     orchestrator/pipeline.convergeTailnet), worst test 20; p95 13, p90 9.
-#     Cap is 15, which is 21 non-test and 15 test functions over: the
-#     repayment list, not a passing gate. The previous cap of 20 sat one
-#     step under the worst function in the tree, so it constrained nothing
-#     that the tree was not already doing, while p90 sat at 9.
+# An earlier revision of this header carried a per-linter measurement
+# (cyclop "21 non-test functions over", funlen "worst 107 lines", nestif
+# "5 sites over"). None of it still describes the tree: CallbackHandler is
+# 41 lines, not 107, and nothing is over the cyclop cap. The debt got repaid
+# and the prose did not follow. That is the reason not to restate measured
+# numbers here. A number in a comment is a claim with no check behind it, so
+# it rots silently and then misleads the next reader about how much room the
+# tree has. The caps below are the rule; running the linter is the
+# measurement. Cyclop reports only when the value is STRICTLY above the
+# threshold, so a cap equal to the worst value still passes.
 #
-#   cyclop package average: worst is 6.12 (internal/db/schema). The 7.0
-#     cap is unchanged and still passes with room.
-#
-#   funlen: worst non-test function is 107 lines / 68 statements
-#     (api/auth_module.go CallbackHandler); 7 non-test functions exceed
-#     60 lines. Tests are excluded (see exclusions): a table-driven test
-#     legitimately runs long, and the cap is about production code.
-#
-#   nestif: worst non-test nested-block complexity is 15
-#     (cli/backend/qemu.go, appclient/waits.go, orchestrator, appasset);
-#     5 non-test sites exceed min-complexity 5.
-#
-#   revive indent-error-flow (the Go counterpart of eslint no-else-return
-#   with allowElseIf: false): 6 sites, 3 of them non-test. Nearly free.
+# Tests are excluded from funlen (see exclusions): a table-driven test
+# legitimately runs long, and the cap is about production code.
 #
 # Not enabled, and why: `lll` (line length) measures 212 non-test and 202
 # test lines over 120 columns, spread across 63 non-test files, which is a
@@ -42,6 +33,7 @@ linters:
     - forbidigo
     - funlen
     - nestif
+    - nolintlint
     - revive
   settings:
     cyclop:
@@ -60,6 +52,18 @@ linters:
       # Fail an if-block whose nested complexity exceeds 5: the depth
       # counterpart to cyclop, which counts branches but not nesting.
       min-complexity: 5
+    nolintlint:
+      # A suppression with no explanation is indistinguishable from one that
+      # papered over a bug at 6pm, and a suppression that suppresses nothing
+      # is dead code that outlives the reason it was written. Both fail here,
+      # for the same reason an exception in pinned-images.mjs that matches
+      # nothing fails: an exemption has to keep describing the code, or it is
+      # worse than no exemption at all. Without this linter the tree can drift
+      # from 5 explained directives to 30 unexplained ones and every other
+      # rule in this file quietly stops mattering.
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
     revive:
       # One rule, deliberately: indent-error-flow is the Go equivalent of
       # eslint's no-else-return with allowElseIf disabled. An if block that

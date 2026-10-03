@@ -13,7 +13,8 @@
 // tier at the frequent event: a markdown typo fix ran three golangci-lint
 // passes, eslint and both test suites, ~30s to change a sentence.
 //
-//   commit  license header, gofmt, em dash, prose, doc links   ~1-2s
+//   commit  license header, gofmt, em dash, prose, doc links,   ~1-2s
+//           file length ratchet
 //   push    the above over the range, plus lint + tests          ~5-25s
 //
 // Both tiers run their checks concurrently: they are independent, so the wall
@@ -26,9 +27,12 @@
 // hygiene layer is gone for everyone.
 //
 // Scope rule: a check narrows only when its failures live in the files you
-// touched. `check:docs-links` and `check:image-pins` scan the whole tree on
-// purpose -- a relative link is broken by the file you deleted, not the one
-// you staged -- and both cost 0.2s, so narrowing them buys nothing.
+// touched. `check:docs-links`, `check:image-pins`, and `check:file-length`
+// scan the whole tree on purpose: a relative link is broken by the file you
+// deleted, a pin exception goes stale when an app is removed rather than
+// edited, and the file-length baseline has to be reconciled against every
+// governed file or a deleted exempt file leaves a stale ceiling behind. All
+// three cost well under a second, so narrowing them buys nothing.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -180,6 +184,14 @@ const CHECKS = [
     id: 'check:image-pins',
     tiers: ['push'],
     run: () => ({ script: 'check:image-pins', args: [] }),
+  },
+  {
+    // Whole-tree on purpose: the ratchet baseline is reconciled against every
+    // governed file, so an exempt file that was deleted or shrank has to be
+    // noticed even though nobody staged it.
+    id: 'check:file-length',
+    tiers: ['commit', 'push'],
+    run: () => ({ script: 'check:file-length', args: [] }),
   },
   {
     id: 'lint:go:apps',
