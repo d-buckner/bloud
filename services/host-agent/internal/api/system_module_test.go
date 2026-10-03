@@ -19,8 +19,10 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -738,6 +740,43 @@ func TestSystemRouter_RegistersRoutes(t *testing.T) {
 				"route %s %s should not return 404", route.method, route.path)
 		})
 	}
+}
+
+// ---- Diagnostics ----
+
+// fakeDNSProber is a ContainerProber that is never consulted: the tests here
+// use a public URL the diagnostic skips, so they pin the handler wiring rather
+// than the check itself (covered in internal/system).
+type fakeDNSProber struct{}
+
+func (fakeDNSProber) ListContainers(context.Context) ([]podman.Container, error) { return nil, nil }
+
+func (fakeDNSProber) ExecWithEnv(context.Context, string, map[string]string, []string) ([]byte, error) {
+	return nil, errors.New("unused")
+}
+
+func TestSystemHTTP_Diagnostics(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+	mod.SetDNSDiagnostics(system.NewDNSDiagnostics(fakeDNSProber{}, func() string { return "http://localhost:8080" }))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/diagnostics", nil)
+	w := httptest.NewRecorder()
+	mod.DiagnosticsHandler()(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var got system.DNSDiagnostic
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.True(t, got.Skipped, "localhost public URL must be skipped")
+}
+
+func TestSystemHTTP_Diagnostics_Unwired(t *testing.T) {
+	mod := newSystemModule(t, systemModuleOpts{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/diagnostics", nil)
+	w := httptest.NewRecorder()
+	mod.DiagnosticsHandler()(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // ---- Interface contract ----

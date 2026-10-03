@@ -50,7 +50,10 @@ type systemModule struct {
 	// stays out of the picture instead of showing a provider that answers
 	// nothing. Wired by the router; nil means never shown.
 	aiSettings store.SettingsStoreInterface
-	logger     *slog.Logger
+	// dnsDiagnostics answers /system/diagnostics. Wired by the router; nil
+	// omits the endpoint.
+	dnsDiagnostics *system.DNSDiagnostics
+	logger         *slog.Logger
 }
 
 func NewSystemModule(
@@ -86,6 +89,12 @@ func (m *systemModule) SetAISettings(settingsStore store.SettingsStoreInterface)
 	m.aiSettings = settingsStore
 }
 
+// SetDNSDiagnostics wires the container DNS diagnostic behind
+// /system/diagnostics. Unwired, the endpoint answers 503.
+func (m *systemModule) SetDNSDiagnostics(d *system.DNSDiagnostics) {
+	m.dnsDiagnostics = d
+}
+
 // HealthHandler answers the health probe. 200 means the instance is up and
 // reconciling. 503 with status "unhealthy" means the process answers but
 // something it depends on is broken; the reason goes to the log, not the wire,
@@ -110,6 +119,19 @@ func (m *systemModule) HealthHandler() http.HandlerFunc {
 }
 
 // ---- System Status ----
+
+// DiagnosticsHandler answers the container DNS diagnostic: whether the
+// configured public host resolves inside a managed container the way it does
+// on the host.
+func (m *systemModule) DiagnosticsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if m.dnsDiagnostics == nil {
+			respondError(w, http.StatusServiceUnavailable, "diagnostics unavailable")
+			return
+		}
+		respondJSON(w, http.StatusOK, m.dnsDiagnostics.Check(r.Context()))
+	}
+}
 
 // SystemStatusHandler returns system stats (CPU, memory, disk).
 func (m *systemModule) SystemStatusHandler() http.HandlerFunc {
@@ -681,6 +703,9 @@ func (m *systemModule) gatewayAndLocalNodes(
 // ---- Router ----
 
 // NewSystemRouter registers all system-related routes on the given router.
+// /system/diagnostics is registered on the authenticated router, not here (see
+// registerRoutes): the other system routes are public info, but resolver
+// upstreams are operator-only.
 func NewSystemRouter(mod *systemModule, r chi.Router) {
 	r.Get("/health", mod.HealthHandler())
 	r.Get("/system/status", mod.SystemStatusHandler())
