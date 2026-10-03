@@ -355,6 +355,99 @@ model:
 own, so an operator who picked a different provider keeps it. `discover_models`
 keeps the model list live from the endpoint rather than a snapshot.
 
+## The gateway credential (`provides: agentGateway`)
+
+The Hermes gateway has a key-authed control-plane listener: `api_server`,
+which refuses to start with a key shorter than 16 characters. The webui
+front end and anything else that wants to drive the agent needs that key, so
+the question is who owns it.
+
+**Hermes does.** That is what `provides: agentGateway` says, and it is why
+the credential is minted here rather than somewhere downstream: a consumer
+should never reach into this app's dotfile to find a secret out, and this
+app should not have to trust a key somebody else chose for it.
+
+### Why Bloud mints it instead of reading it back
+
+The image mints its own key when nothing is there:
+
+```sh
+# /opt/hermes/docker/stage2-hook.sh
+elif ! grep -q '^API_SERVER_KEY=..*' "$HERMES_HOME/.env" 2>/dev/null; then
+    ...
+    printf 'API_SERVER_KEY=%s\n' "$_gen_key" >> "$HERMES_HOME/.env"
+```
+
+That key is unreachable from the host, and not in the way `config.yaml`
+is. The same hook tightens the file on every boot:
+
+> `.env holds API keys and secrets - restrict to owner-only access.`
+> Applied unconditionally (not only on first-seed) so a host-mounted `.env`
+> that was world-readable gets tightened
+
+`chown hermes:hermes` plus `chmod 600`, every start, whether or not
+anything changed. Under rootless podman that `hermes` is a host uid inside
+the subuid range and the host agent is not it, so the file is not merely
+unreadable, it is unwritable too. There is no `HERMES_HOME_MODE`-shaped
+override for this: that variable governs the credential-file *fixer*, and
+this is not the fixer, it is the hook.
+
+So the direction has to be the other way. Bloud mints the credential into
+its own secrets store (`SetAppSecret("hermes", "httpToken", ...)`), seeds
+it into `$HERMES_HOME/.env` as `API_SERVER_KEY`, and publishes the same
+value under the contract. The image's generation branch then never fires,
+because a non-empty key is already there, and the value the contract hands
+out is the value the listener authenticates with.
+
+### The seeding window
+
+`PreStart` on a fresh install is the last moment the host can write that
+file. From the second boot the hook has chowned it, so `seedGatewayCredential`
+checks the host read and treats `EACCES` as the normal steady state rather
+than a failure, and `convergeGatewayEnv` in `PostStart` re-asserts the key
+through the running container, which reads and writes its own file without
+complaint.
+
+The re-assertion is what makes the published value the *effective* one.
+Without it, delete `.env` after first boot and the image mints its own on
+the next start while the contract keeps handing out the old secret: a
+credential that quietly stops meaning anything. That is the failure this
+half exists to close.
+
+`PostStart` warns rather than fails on a bad convergence. The dashboard is
+what this node serves to a user and it is healthy by the time the write is
+attempted; parking a working install in a terminal `ERROR` because one
+write into the app's own dotfile did not land would trade a working thing
+for a louder one. The next pass retries.
+
+### The merge
+
+`.env` is Hermes' file and Bloud is a guest in it, so
+`mergeGatewayEnvKey` replaces the one line this app claims and preserves
+every other line verbatim and in place. Two details that are load-bearing:
+
+- **Duplicates collapse to one.** `python-dotenv` takes the last match, so
+  a file that grew a new `API_SERVER_KEY` on every pass would silently
+  change which credential is effective. The merge keeps exactly one.
+- **The merge is a fixed point.** Re-running it over its own output moves
+  no bytes, which is what lets a steady-state reconciliation pass write
+  nothing at all. Asserted per case in `gateway_test.go`.
+
+### What is not running
+
+Bloud does not start the gateway process. This container runs the dashboard
+only (`HERMES_DASHBOARD=1` with a parked main program), and the dashboard
+serves chat in-process rather than through `api_server`. The credential is
+provisioned ahead of the listener on purpose: the day the gateway comes up,
+it comes up with the instance's key rather than one the image invented
+behind a `0600` file, and the contract already names the value.
+
+`path: /v1` in the `provides:` entry is the OpenAI-compatible root
+`api_server` mirrors its surface under (`SHARED_LISTENER_MIRROR_PATHS` in
+`gateway/config.py`), not the `:9119` dashboard port this app's `port`
+names. It is declared rather than assumed so a consumer concatenates a
+truth this app stated instead of a shape it guessed.
+
 ## Health check
 
 `GET /api/health` on `:9119`, loopback. Upstream declares this path a **public

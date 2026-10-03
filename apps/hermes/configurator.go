@@ -57,6 +57,11 @@ type Configurator struct {
 	logger     *slog.Logger
 	api        *hermesAPI
 
+	// secrets mints and holds the gateway credential this app publishes
+	// under its `agentGateway` contract. Nil in CLI/test contexts, where
+	// there is no instance to own a credential.
+	secrets configurator.AppSecretsProvider
+
 	// exec runs a command inside the running Hermes container. It is the
 	// fallback reader for config.yaml, which the host agent cannot read once
 	// the container owns it (see readConfig). Nil in CLI/test contexts, where
@@ -86,6 +91,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		ssoBaseURL: deps.PrimaryBaseURL,
 		logger:     logger.With("app", "hermes"),
 		exec:       deps.Exec,
+		secrets:    deps.Secrets,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -178,44 +184,93 @@ const containerReadUnavailable = " (Hermes' container init chowns config.yaml to
 	"every start, which under rootless podman is a host uid in the subuid range the agent is not; the file can only " +
 	"be read through the running container - see apps/hermes/INTEGRATION.md)"
 
-// PreStart merges Bloud's SSO keys into Hermes' config.yaml so the
-// dashboard boots with the self-hosted OIDC provider configured. Returns
-// changed=true only when the managed keys differ from what is on disk, which
-// makes the orchestrator (re)create the container so Hermes re-reads it.
+// PreStart does the two things that have to be true before the container
+// comes up: Bloud's managed keys are merged into Hermes' config.yaml so the
+// dashboard boots with the self-hosted OIDC provider configured, and the
+// gateway credential this app owns is seeded into the file Hermes reads it
+// from. Either one moving asks the orchestrator to (re)create the container
+// so Hermes re-reads both.
+//
+// The two tracks are independent on purpose. The config half changes when
+// SSO, the model, or the MCP wiring changes; the credential half changes
+// once per install and then never again. A pass that found the config
+// already converged still has to run the seed, which is why the seed is not
+// behind that early return.
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
+	file, err := c.convergeConfigFile(ctx, state)
+	if err != nil {
+		return configurator.NoRestart(), err
+	}
+
+	// The gateway credential runs on its own track. It changes for a reason
+	// that has nothing to do with the SSO, inference, and MCP keys merged
+	// into config.yaml, and folding it behind a "config unchanged" early
+	// return would skip the seed on exactly the passes that needed it.
+	envChanged, err := c.seedGatewayCredential(state)
+	if err != nil {
+		return configurator.NoRestart(), err
+	}
+
+	switch {
+	case file.changed:
+		c.logger.Info("updated Hermes config", "path", file.path, "sso", file.ssoActive,
+			"inference", file.hasInference, "mcpServers", mcpServerNames(state))
+		return configurator.RestartIf(true, "Hermes config rewritten"), nil
+	case envChanged:
+		return configurator.RestartIf(true, "Hermes gateway credential seeded"), nil
+	default:
+		return configurator.NoRestart(), nil
+	}
+}
+
+// fileConvergence is what one pass over config.yaml produced: whether the
+// file actually moved, and which halves of the managed content are live, so
+// the log line can say what changed rather than that something did.
+type fileConvergence struct {
+	path         string
+	changed      bool
+	ssoActive    bool
+	hasInference bool
+}
+
+// convergeConfigFile merges Bloud's managed keys into Hermes' config.yaml
+// and reports whether the file moved.
 //
 // The merge is whole-file and semantically compared: Hermes' other settings
-// are preserved untouched, and a file that already carries the right SSO
-// values produces no write (no churn across reconciliation cycles). When
-// SSO is disabled the managed keys are stripped instead, so a leftover
-// provider never points at a dead issuer.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
+// are preserved untouched, and a file that already carries the right values
+// produces no write, so a steady-state reconciliation cycle changes nothing.
+// When SSO is disabled the managed keys are stripped rather than left, so a
+// leftover provider never points at a dead issuer.
+func (c *Configurator) convergeConfigFile(ctx context.Context, state *configurator.AppState) (fileConvergence, error) {
 	cfgPath := filepath.Join(state.DataPath, "data", configFileName)
+	out := fileConvergence{path: cfgPath}
 
 	existing, err := c.readConfig(ctx, cfgPath)
 	if err != nil && !os.IsNotExist(err) {
-		return configurator.NoRestart(), fmt.Errorf("reading %s: %w", cfgPath, err)
+		return out, fmt.Errorf("reading %s: %w", cfgPath, err)
 	}
 
 	// The managed edit is measured against the parsed document, not the raw
 	// bytes: a re-parse-and-re-marshal of an unchanged file yields the same
-	// document, so only a real SSO change reports changed=true.
+	// document, so only a real change reports changed=true.
 	doc, err := parseConfig(existing)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("parsing %s: %w", cfgPath, err)
+		return out, fmt.Errorf("parsing %s: %w", cfgPath, err)
 	}
 	base, err := yaml.Marshal(doc)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("serializing %s: %w", cfgPath, err)
+		return out, fmt.Errorf("serializing %s: %w", cfgPath, err)
 	}
 
-	ssoActive := state != nil && state.SSOEnabled && state.OIDC != nil
-	if ssoActive {
+	out.ssoActive = state != nil && state.SSOEnabled && state.OIDC != nil
+	if out.ssoActive {
 		applyOIDC(doc, state.OIDC, c.appExternalURL())
 	} else {
 		stripOIDC(doc)
 	}
 
 	binding, hasInference := inferenceBinding(state)
+	out.hasInference = hasInference
 	if hasInference {
 		applyInference(doc, binding)
 	} else {
@@ -226,21 +281,18 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 	want, err := yaml.Marshal(doc)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("serializing %s: %w", cfgPath, err)
+		return out, fmt.Errorf("serializing %s: %w", cfgPath, err)
 	}
 	if bytes.Equal(base, want) {
-		return configurator.NoRestart(), nil
+		return out, nil
 	}
 
 	changed, err := managedfile.Write(cfgPath, want, managedfile.ModeSharedConfig)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing %s: %w%s", cfgPath, err, permissionHint(err))
+		return out, fmt.Errorf("writing %s: %w%s", cfgPath, err, permissionHint(err))
 	}
-	if changed {
-		c.logger.Info("updated Hermes config", "path", cfgPath, "sso", ssoActive, "inference", hasInference,
-			"mcpServers", mcpServerNames(state))
-	}
-	return configurator.RestartIf(changed, "Hermes config rewritten"), nil
+	out.changed = changed
+	return out, nil
 }
 
 // --- MCP servers ---
@@ -363,6 +415,25 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 	if err := c.api.waitDashboard(ctx); err != nil {
 		return fmt.Errorf("waiting for hermes dashboard: %w", err)
 	}
+
+	// The gateway credential is re-asserted here rather than only in
+	// PreStart, because from the second boot on the host cannot write the
+	// file at all and only the running container can. It runs ahead of the
+	// SSO early-return below: the credential has nothing to do with SSO, and
+	// a Hermes with SSO disabled still owns a gateway.
+	//
+	// A failure is warned about rather than failed over. The dashboard is
+	// what this node serves to a user, and it is up and healthy by the time
+	// this runs; parking it in a terminal ERROR because one write into the
+	// app's own dotfile did not land would trade a working install for a
+	// louder one. The next pass retries, and the warning names what is at
+	// stake so the drift is visible rather than absorbed.
+	if err := c.convergeGatewayEnv(ctx); err != nil {
+		c.logger.Warn("could not re-assert the Hermes gateway credential; "+
+			"the value published under agentGateway may not be the one the gateway would use",
+			"path", gatewayEnvContainerPath, "error", err)
+	}
+
 	if state == nil || !state.SSOEnabled || state.OIDC == nil {
 		return nil
 	}

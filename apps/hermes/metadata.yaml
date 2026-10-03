@@ -54,6 +54,28 @@ integrations:
       # and multi, so neither app is required.
       - app: affine-mcp
 
+# What Hermes hands the front ends that drive it. The gateway is Hermes' own
+# process and Hermes' own secret: the image's stage2 hook will mint an
+# API_SERVER_KEY into $HERMES_HOME/.env if nothing is there, and a key that
+# lives only in a file Bloud cannot read back is a key Bloud cannot publish.
+# So the configurator mints one through the secrets store, writes it into
+# that .env before the container starts, and publishes it here as the same
+# credential under a name a consumer is allowed to ask for.
+#
+# `path` is the OpenAI-compatible root the gateway's api_server mirrors its
+# surface under (/v1), not the dashboard port this app's `port` names.
+#
+# Bloud does not start the gateway process today: this container runs the
+# dashboard only. The credential is provisioned so that the day the listener
+# comes up it authenticates with the key the instance holds, rather than with
+# one the image invented behind a 0640 file. See INTEGRATION.md.
+provides:
+  agentGateway:
+    secrets:
+      - httpToken
+    values:
+      path: /v1
+
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider
 # accepts an https issuer anywhere, but a plain http issuer only on a literal
