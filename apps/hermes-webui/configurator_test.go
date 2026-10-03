@@ -114,7 +114,8 @@ func TestPreStartRegistersTheBloudProvider(t *testing.T) {
 	model, ok := readConfigFile(t, dataDir)["model"].(map[string]any)
 	require.True(t, ok, "config has no model selection")
 	assert.Equal(t, inferenceProviderSlug, model["provider"])
-	assert.Equal(t, "model-a", model["model"])
+	assert.Equal(t, "model-a", model[modelDefaultKey],
+		"the selected model has to land on the key the agent actually reads")
 }
 
 func TestPreStartAdoptsNoModelTheInstanceDidNotSupply(t *testing.T) {
@@ -138,7 +139,7 @@ func TestPreStartLeavesAnOperatorChosenModelAlone(t *testing.T) {
 	cfgDir := filepath.Join(dataDir, "data")
 	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, configFileName),
-		[]byte("model:\n  provider: openrouter\n  model: human-picked-model\n"), 0o644))
+		[]byte("model:\n  provider: openrouter\n  default: human-picked-model\n"), 0o644))
 
 	c := newTestConfigurator(t, nil)
 	_, err := c.PreStart(context.Background(), inferenceState(dataDir, "https://ai.example.test/v1", "k", "model-a"))
@@ -147,7 +148,7 @@ func TestPreStartLeavesAnOperatorChosenModelAlone(t *testing.T) {
 	model := readConfigFile(t, dataDir)["model"].(map[string]any)
 	assert.Equal(t, "openrouter", model["provider"],
 		"a model chosen by the operator outranks the Bloud default")
-	assert.Equal(t, "human-picked-model", model["model"])
+	assert.Equal(t, "human-picked-model", model[modelDefaultKey])
 
 	assert.Contains(t, bloudProvider(t, readConfigFile(t, dataDir)), "base_url",
 		"the Bloud provider stays registered so switching back in the UI needs no re-typing")
@@ -162,7 +163,7 @@ func TestPreStartStripsOnlyWhatBloudWrote(t *testing.T) {
 		"providers:\n"+
 			"  bloud:\n    base_url: https://old.test/v1\n"+
 			"  other:\n    base_url: https://theirs.test/v1\n"+
-			"model:\n  provider: custom:bloud\n  model: old-model\n"), 0o644))
+			"model:\n  provider: custom:bloud\n  default: old-model\n"), 0o644))
 
 	c := newTestConfigurator(t, nil)
 	// No inference binding: the managed block and the selection Bloud made
@@ -186,7 +187,7 @@ func TestPreStartKeepsAnOperatorModelWhenInferenceGoesAway(t *testing.T) {
 	cfgDir := filepath.Join(dataDir, "data")
 	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, configFileName),
-		[]byte("model:\n  provider: openrouter\n  model: theirs\n"), 0o644))
+		[]byte("model:\n  provider: openrouter\n  default: theirs\n"), 0o644))
 
 	c := newTestConfigurator(t, nil)
 	_, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: dataDir})
@@ -494,7 +495,7 @@ func TestReadConfigTreatsAMissingFileAsAbsent(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o600))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	raw, err := c.readConfig(context.Background(), cfgPath)
+	raw, err := c.readConfig(context.Background(), cfgPath, true)
 	require.NoError(t, err, "an absent config is not a failed read")
 	assert.Nil(t, raw)
 }
@@ -509,8 +510,64 @@ func TestReadConfigStillReportsARealExecFailure(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o600))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	_, err := c.readConfig(context.Background(), cfgPath)
+	_, err := c.readConfig(context.Background(), cfgPath, true)
 	require.Error(t, err, "only the dedicated absent code means absent")
+	assert.NotErrorIs(t, err, errConfigUnknown,
+		"a container that answered wrongly is a real failure, not an unknown")
+}
+
+// TestReadConfigIsUnknownBeforeTheContainerExists is the reinstall case that
+// put the node in ERROR. The previous install left $HERMES_HOME owned by the
+// container's uid, so the next install's PreStart gets EACCES, and there is
+// no container to exec into yet. That is "unknown", not "empty" and not
+// "dead": the caller has to write nothing.
+func TestReadConfigIsUnknownBeforeTheContainerExists(t *testing.T) {
+	for name, exec := range map[string]configurator.ExecFunc{
+		"no exec at all": nil,
+		"no container": func(_ context.Context, _ string, _ map[string]string, _ []string) ([]byte, error) {
+			return nil, errors.New(`podman exec apps-hermes-webui [...]: exit status 125: ` +
+				`Error: no container with name or ID "apps-hermes-webui" found: no such container`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestConfigurator(t, nil)
+			c.exec = exec
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "config.yaml")
+			require.NoError(t, os.Chmod(dir, 0o600))
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+			_, err := c.readConfig(context.Background(), cfgPath, false)
+			require.ErrorIs(t, err, errConfigUnknown,
+				"pre-start cannot resolve a refused read, so it must report unknown")
+		})
+	}
+}
+
+// TestConvergeWritesNothingWhenTheConfigIsUnknown is the guard that keeps a
+// blind write from clobbering a config the host cannot see. The agent may
+// hold an operator's model choice in that file; converging from an empty
+// read would replace it, so the whole pass has to be a no-op.
+func TestConvergeWritesNothingWhenTheConfigIsUnknown(t *testing.T) {
+	var wrote bool
+	c := newTestConfigurator(t, nil)
+	c.exec = func(_ context.Context, _ string, _ map[string]string, cmd []string) ([]byte, error) {
+		if strings.Contains(strings.Join(cmd, " "), "base64 -d") {
+			wrote = true
+		}
+		return nil, errors.New(`exit status 125: no such container`)
+	}
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.Chmod(dataDir, 0o600))
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) })
+
+	changed, err := c.convergeConfig(context.Background(), dir,
+		inferenceState(dir, "https://ai.example.test/v1", "sk-k", "m"), false)
+	require.NoError(t, err, "an unknown config is not a failed pass")
+	assert.False(t, changed)
+	assert.False(t, wrote, "nothing may be written when the current content is unknown")
 }
 
 // TestConvergeWritesAnAbsentConfigThroughTheContainer walks the whole path

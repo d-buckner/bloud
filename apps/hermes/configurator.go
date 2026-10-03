@@ -532,6 +532,18 @@ const inferenceProviderSlug = "custom:" + inferenceProviderKey
 // default Bloud should not be relying on for an endpoint it chose itself.
 const inferenceAPIMode = "chat_completions"
 
+// modelDefaultKey is the key the agent reads its selected model from inside
+// the `model:` block. It is `default`, not `model`.
+//
+// The agent's own resolvers read `model_cfg.get("default") or
+// model_cfg.get("model")`, so `model` survives as a legacy alias on some
+// paths, but every writer in the agent and the webui writes `default`, and
+// readers that do not carry the alias (the webui's
+// `get_effective_default_model`) come up with no model at all and then dial
+// the provider with an empty one. Writing the key every reader agrees on is
+// the only shape that is right everywhere.
+const modelDefaultKey = "default"
+
 // inferenceProvidersKey is the v12 config section holding named provider
 // entries. Hermes also accepts a `custom_providers:` list alongside it and
 // merges the two views at runtime; Bloud writes only the map.
@@ -595,7 +607,7 @@ func adoptDefaultModel(doc map[string]any, defaultModel string) {
 		return
 	}
 	model["provider"] = inferenceProviderSlug
-	model["model"] = defaultModel
+	model[modelDefaultKey] = defaultModel
 }
 
 // stripInference removes the Bloud-managed provider block, and the model
@@ -615,12 +627,12 @@ func stripInference(doc map[string]any) {
 	if !ok {
 		return
 	}
-	active, _ := model["model"].(string)
+	active, _ := model[modelDefaultKey].(string)
 	provider, _ := model["provider"].(string)
 	if provider != inferenceProviderSlug || active == "" {
 		return
 	}
-	delete(model, "model")
+	delete(model, modelDefaultKey)
 	delete(model, "provider")
 	if len(model) == 0 {
 		delete(doc, "model")

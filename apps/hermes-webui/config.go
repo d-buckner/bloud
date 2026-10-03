@@ -44,6 +44,20 @@ const (
 	// inferenceAPIMode names the wire protocol so the agent does not have
 	// to guess it from the endpoint shape.
 	inferenceAPIMode = "chat_completions"
+
+	// modelDefaultKey is the key the agent reads its selected model from,
+	// inside the `model:` block. It is `default`, not `model`.
+	//
+	// This is the one key in this file that the app, not Bloud, owns the name
+	// of, and getting it wrong fails silently in exactly the way that is hardest
+	// to see: the config file is valid YAML, `api/profiles` reports the model
+	// because it reads the file back loosely, the provider resolves, the
+	// endpoint is dialed, and the provider answers
+	// `Invalid model name passed in model=` because the agent's own resolver
+	// never found a model to send. Verified against the image's own code:
+	// `api/config.py:get_effective_default_model` reads `model.default`, and
+	// the app's own settings write path writes `model_cfg["default"]`.
+	modelDefaultKey = "default"
 )
 
 // convergeConfig makes <dataDir>/data/config.yaml carry (or not carry) the
@@ -63,7 +77,24 @@ const (
 func (c *Configurator) convergeConfig(ctx context.Context, dataDir string, state *configurator.AppState, allowExec bool) (bool, error) {
 	cfgPath := filepath.Join(dataDir, "data", configFileName)
 
-	existing, err := c.readConfig(ctx, cfgPath)
+	existing, err := c.readConfig(ctx, cfgPath, allowExec)
+	if errors.Is(err, errConfigUnknown) {
+		// Convergence is a read-modify-write, and here there is nothing to
+		// modify: the current content is unknown and there is no running
+		// container to read it through. Writing on top of an empty read would
+		// replace a config the host cannot see with one derived from nothing,
+		// which silently drops whatever the agent or an operator put there.
+		// Skipping is the safe half of the convergence, not a punt: PostStart
+		// runs this same call with a live container to read through, and
+		// converges then. This is the reinstall-over-an-agent-owned-home case:
+		// the previous install left $HERMES_HOME owned by the container's uid,
+		// so the very first PreStart of the next install cannot read it, and
+		// there is no container yet to ask.
+		c.logger.Info("cannot read the agent config and no container is running to read it through; "+
+			"leaving it untouched until the app is up",
+			"path", cfgPath)
+		return false, nil
+	}
 	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("reading %s: %w", cfgPath, err)
 	}
@@ -186,7 +217,7 @@ const containerWriteUnavailable = " (the agent owns $HERMES_HOME once it has sta
 // stdout+stderr channel, so a runtime warning would otherwise land inside
 // the YAML. Encoded, contamination fails the decode instead of being merged
 // and written back over the real config.
-func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, error) {
+func (c *Configurator) readConfig(ctx context.Context, cfgPath string, allowExec bool) ([]byte, error) {
 	raw, err := os.ReadFile(cfgPath)
 	if err == nil {
 		return raw, nil
@@ -194,8 +225,12 @@ func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, 
 	if !errors.Is(err, fs.ErrPermission) {
 		return nil, err
 	}
-	if c.exec == nil {
-		return nil, fmt.Errorf("%w%s", err, containerReadUnavailable)
+	// Before the container has ever run there is nothing to exec into, so a
+	// refused host read cannot be resolved either way. Report it as unknown
+	// rather than as a failed read: the caller must not treat "could not see
+	// it" as "it is empty", and must not treat it as a dead node either.
+	if !allowExec || c.exec == nil {
+		return nil, fmt.Errorf("%w: %w", errConfigUnknown, err)
 	}
 
 	out, execErr := c.exec(ctx, nodeName, nil, []string{"sh", "-c", containerReadScript})
@@ -221,6 +256,14 @@ func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, 
 		"path", cfgPath)
 	return decoded, nil
 }
+
+// errConfigUnknown means the existing agent config could not be read and
+// there was no running container to read it through. It is distinct from
+// both "absent" (safe to write a fresh document) and "unreadable, and the
+// container said something wrong" (a real failure), because the correct
+// response is to write nothing and let a later pass with a live container
+// do the read-modify-write it needs a real baseline for.
+var errConfigUnknown = errors.New("agent config unreadable and no running container to read it through")
 
 // absentExitCode is the exit status containerReadScript uses to say "no such
 // file". A dedicated code rather than a message match because Deps.Exec
@@ -324,7 +367,7 @@ func adoptDefaultModel(doc map[string]any, defaultModel string) {
 		return
 	}
 	model["provider"] = inferenceProviderSlug
-	model["model"] = defaultModel
+	model[modelDefaultKey] = defaultModel
 }
 
 // stripInference removes the Bloud-managed provider block, and the model
@@ -343,12 +386,12 @@ func stripInference(doc map[string]any) {
 	if !ok {
 		return
 	}
-	active, _ := model["model"].(string)
+	active, _ := model[modelDefaultKey].(string)
 	provider, _ := model["provider"].(string)
 	if provider != inferenceProviderSlug || active == "" {
 		return
 	}
-	delete(model, "model")
+	delete(model, modelDefaultKey)
 	delete(model, "provider")
 	if len(model) == 0 {
 		delete(doc, "model")

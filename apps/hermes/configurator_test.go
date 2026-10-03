@@ -400,8 +400,8 @@ func TestPreStartWritesInferenceProvider(t *testing.T) {
 		t.Errorf("discover_models = %v, want true", p["discover_models"])
 	}
 	model := nested(t, doc, "model")
-	if model["provider"] != inferenceProviderSlug || model["model"] != "gpt-4o-mini" {
-		t.Errorf("model selection = %v/%v, want %v/gpt-4o-mini", model["provider"], model["model"], inferenceProviderSlug)
+	if model["provider"] != inferenceProviderSlug || model[modelDefaultKey] != "gpt-4o-mini" {
+		t.Errorf("model selection = %v/%v, want %v/gpt-4o-mini", model["provider"], model[modelDefaultKey], inferenceProviderSlug)
 	}
 }
 
@@ -428,7 +428,7 @@ func TestPreStartAdoptUnlessOverridden(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	operatorConfig := "model:\n  provider: openrouter\n  model: anthropic/claude-sonnet-4\n"
+	operatorConfig := "model:\n  provider: openrouter\n  default: anthropic/claude-sonnet-4\n"
 	if err := os.WriteFile(filepath.Join(dir, "data", "config.yaml"), []byte(operatorConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -452,8 +452,8 @@ func TestPreStartAdoptUnlessOverridden(t *testing.T) {
 		t.Fatalf("reparse: %v", err)
 	}
 	model := nested(t, doc, "model")
-	if model["provider"] != "openrouter" || model["model"] != "anthropic/claude-sonnet-4" {
-		t.Errorf("operator model was overwritten: %v/%v", model["provider"], model["model"])
+	if model["provider"] != "openrouter" || model[modelDefaultKey] != "anthropic/claude-sonnet-4" {
+		t.Errorf("operator model was overwritten: %v/%v", model["provider"], model[modelDefaultKey])
 	}
 	// The provider is still registered, so the operator can switch to it.
 	if _, ok := nested(t, doc, "providers")[inferenceProviderKey]; !ok {
@@ -489,7 +489,7 @@ func TestPreStartStripsInferenceWhenNoBinding(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	seed := "providers:\n  bloud:\n    base_url: https://old.example.com/v1\nmodel:\n  provider: custom:bloud\n  model: old-model\n"
+	seed := "providers:\n  bloud:\n    base_url: https://old.example.com/v1\nmodel:\n  provider: custom:bloud\n  default: old-model\n"
 	if err := os.WriteFile(filepath.Join(dir, "data", "config.yaml"), []byte(seed), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +525,7 @@ func TestPreStartStripsInferenceWhenNoBinding(t *testing.T) {
 func TestStripInferenceKeepsOperatorModel(t *testing.T) {
 	doc := map[string]any{
 		"providers": map[string]any{inferenceProviderKey: map[string]any{"base_url": "https://x/v1"}},
-		"model":     map[string]any{"provider": "openrouter", "model": "anthropic/claude-sonnet-4"},
+		"model":     map[string]any{"provider": "openrouter", modelDefaultKey: "anthropic/claude-sonnet-4"},
 	}
 	stripInference(doc)
 
@@ -533,7 +533,7 @@ func TestStripInferenceKeepsOperatorModel(t *testing.T) {
 		t.Error("expected the bloud provider removed")
 	}
 	model := doc["model"].(map[string]any)
-	if model["provider"] != "openrouter" || model["model"] != "anthropic/claude-sonnet-4" {
+	if model["provider"] != "openrouter" || model[modelDefaultKey] != "anthropic/claude-sonnet-4" {
 		t.Errorf("operator model was disturbed: %v", model)
 	}
 }
@@ -820,7 +820,7 @@ func TestPreStart_MergesOverAConfigOnlyTheContainerCanRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(dataDir, configFileName)
-	operatorCfg := "model:\n  provider: openrouter\n  model: anthropic/claude-sonnet-4\nagent:\n  max_iterations: 42\n"
+	operatorCfg := "model:\n  provider: openrouter\n  default: anthropic/claude-sonnet-4\nagent:\n  max_iterations: 42\n"
 	if err := os.WriteFile(cfgPath, []byte(operatorCfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
