@@ -290,6 +290,82 @@ $ curl -s http://127.0.0.1:8787/api/profiles | jq '.profiles[0]'
 `PreStart` asks for a restart only for the agent source (a new tree has to
 be installed at boot) and never for a config change.
 
+## The model key is `default`, not `model`
+
+The agent reads its selected model from `model.default` inside
+`config.yaml`. Writing `model.model` does not work, and it does not fail
+loudly either. This was the second of the two bugs that made the reverted
+install useless, and it is the nastier of the pair because everything
+upstream of the chat request looks healthy:
+
+- the YAML is valid and parses;
+- `/api/profiles` reports the model, because that endpoint reads the file
+  back loosely;
+- the provider resolves, the endpoint is dialed, and the auth is fine;
+- the provider answers `HTTP 400: Invalid model name passed in model=`.
+
+The app's own resolver is the authority here. `api/config.py`:
+
+```python
+model_cfg = active_cfg.get("model", {})
+if isinstance(model_cfg, str):
+    default_model = model_cfg.strip()
+elif isinstance(model_cfg, dict):
+    cfg_default = str(model_cfg.get("default") or "").strip()
+```
+
+and the app's own settings write path writes `model_cfg["default"]`. The
+agent tree is looser, `model_cfg.get("default") or model_cfg.get("model")`,
+so `model` survives there as a legacy alias, but the alias is not universal:
+the webui resolver does not carry it, so a session is created with
+`model: ""` and every turn dies on the empty model name.
+
+Write the key every reader agrees on. `modelDefaultKey` names it in both
+this package and `apps/hermes` so the two configurators that write this
+file format cannot drift apart again.
+
+## The venv's `.deps_installed` marker can poison an install
+
+The image's entrypoint, `/hermeswebui_init.bash`, guards its dependency
+install with a marker file:
+
+```bash
+if [ -f /app/venv/.deps_installed ]; then
+  echo "== Dependencies already installed - skipping (fast restart)"
+else
+  uv pip install -r requirements.txt
+  # ... then the agent's [all] extra, from the mounted source ...
+  touch /app/venv/.deps_installed
+fi
+```
+
+The marker is touched **whether or not the agent source was found**. So if
+the first boot happens while the agent source is invisible - which is exactly
+what the umask problem above produces - the entrypoint prints
+`WARNING: hermes-agent source not found`, touches the marker anyway, and
+the agent's dependencies are never installed. Every restart after that takes
+the fast path and never retries. The app then serves, answers `/health` with
+`ok`, reports the right provider on `/api/profiles`, and fails every chat
+with:
+
+```
+AIAgent not available -- check that hermes-agent is on sys.path
+python: /app/venv/bin/python
+```
+
+because `run_agent.py` needs `python-dotenv` and the venv has no agent
+dependencies at all. Measured on the poisoned container: 58 packages in the
+venv, no `dotenv`. After a clean install with the source readable: 271
+packages, `Installed 98 packages` for the agent's extra.
+
+The fix is upstream of the marker: keep the agent source visible at first
+boot, which is what `ensureReadableRoot` on every pass buys. There is no
+Bloud-side repair of an already-poisoned venv, because repairing it means
+deleting the marker and restarting the container from a phase that is not
+`PostStart`, and `PostStart` cannot ask for that restart. A poisoned venv
+lives in the container's own writable layer, so recreating the container
+(which an uninstall followed by an install does) clears it.
+
 ## Why the SSO strategy is forward-auth
 
 The app has a native OIDC client, and it cannot be used on a home LAN. Its
@@ -384,6 +460,41 @@ configurator and read back through the app's own endpoint. The host's
 inability to read the file it wrote is the permission contract above
 operating as designed.
 
+The bar that actually matters is a chat turn, not a config read. With the
+fixes in, a real round trip through the in-process agent and Bloud's
+inference endpoint:
+
+```
+$ curl -X POST http://localhost:8787/api/session/new -d '{}'
+  model = 'qwen3.8-flash-next'   provider = custom:bloud
+
+$ curl -X POST http://localhost:8787/api/chat/start \
+    -d '{"session_id":"<sid>","message":"Reply with exactly: PONG"}'
+  effective_model_provider = custom:bloud
+
+$ curl http://localhost:8787/api/session?session_id=<sid>
+  user      : Reply with exactly: PONG
+  assistant : PONG
+  tokens    : 12859 in / 21 out
+```
+
+The token counts are the part worth reading: they are the provider's, not
+the app's, so the turn really crossed the wire. Before the model-key fix the
+same call returned `Model not found: ... model=`.
+
+The forward-auth gate, exercised against the configured public host rather
+than the localhost built-in:
+
+```
+$ curl -i -H 'Host: hermes-webui.home.thebloud.org' http://127.0.0.1:8080/
+HTTP/1.1 302 Found
+Location: https://home.thebloud.org/application/o/authorize/?client_id=...&redirect_uri=https%3A%2F%2Fhermes-webui.home.thebloud.org%2Foutpost.goauthentik.io%2Fcallback...
+```
+
+The unauthenticated request is redirected to Authentik with the app's own
+proxy client and the original URL preserved in the outpost state, which is
+the gate doing its job rather than the app answering for itself.
+
 The ingress wiring, from the Traefik dynamic config the orchestrator
 generated:
 
@@ -410,4 +521,17 @@ hermes-webui-forwardauth:
 - **A model chosen inside the app outranks Bloud's default.** The
   configurator never overwrites a `model.provider` it did not write, and
   `PostStart` warns rather than fails when the active profile is not
-  Bloud's.
+  Bloud's. The cost of that guard is stickiness: because Bloud writes
+  `model.provider` itself on the first pass, a later change to the
+  instance default model does not reach an app that already has a
+  selection. Making Bloud's own selection updatable without clobbering an
+  operator's is an open question, not a bug to paper over.
+- **`*.localhost` does not serve a forward-auth app under a public URL.**
+  Traefik's routes are domain-agnostic, so the router matches, but the
+  Authentik proxy outpost resolves the application by the request's host
+  and has no binding for the built-in. The request comes back 404 from
+  authentik (`domain_url: hermes-webui.localhost`) rather than redirecting.
+  This is not specific to this app: it is every forward-auth app, and it is
+  why the gate above was exercised with the configured public host. The
+  e2e suite passes because it runs with the localhost origin as the
+  instance's public URL, where the two agree.
