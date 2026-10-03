@@ -12,6 +12,22 @@
 //   already returns early, including through else-if chains. This one is a
 //   guard, not a backlog.
 //
+//   no-constant-condition  error with checkLoops: 'all'. A constant `if` or
+//   ternary test is dead code, and a constant loop test is either that same
+//   mistake written twice or an unbounded loop. The rule's default exemption
+//   for `while (true)` is switched off: an unconditional loop is exactly what
+//   this gate is for.
+//
+//   no-restricted-syntax  one selector, `ForStatement[test=null]`, which is a
+//   `for` with an empty header: `for (;;)`, or `for (let y = 0; ; y++)`. The
+//   rule above cannot see it, because there is no test node to find a constant
+//   in, so the same ban needs its own selector.
+//
+//   Both added 2026-10-02, with the two migrations they required. The settings
+//   address poll loops on "not the wanted address yet, and inside the apply
+//   window"; firstFreeSlot scans to the row below the lowest placed item, which
+//   is free by construction, and throws on the one case that bound cannot cover.
+//
 //   complexity  <= 10  Unchanged. Worst is exactly 10 (clients/httpClient.ts,
 //   stores/appProgress.ts); p90 is 6. First ratchet target: 8 (5 over).
 //
@@ -58,6 +74,11 @@ const gates = ({ lines, fnLines = 50 }) => ({
     ignoreRegExpLiterals: true,
   }],
   'no-else-return': ['error', { allowElseIf: false }],
+  'no-constant-condition': ['error', { checkLoops: 'all' }],
+  'no-restricted-syntax': ['error', {
+    selector: 'ForStatement[test=null]',
+    message: 'A loop has to state what ends it. `for (;;)` has no test at all, and `while (true)` is caught by no-constant-condition.',
+  }],
 })
 
 export default tseslint.config(

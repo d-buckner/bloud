@@ -108,6 +108,11 @@
 	 * the canonical one the save reported, so a change that was dropped or never
 	 * landed gets reported instead of looking like it worked.
 	 *
+	 * The loop condition is the whole exit story: keep going while the address
+	 * still differs and the apply window is open. Both outcomes fall out of the
+	 * loop into the same if/else, so "it matched" and "it timed out" are read off
+	 * the final value rather than tracked through breaks.
+	 *
 	 * The comparison is against the canonical origin the PUT returned rather
 	 * than the raw typed string, because "bloud.example.com" is stored as
 	 * "http://bloud.example.com" and the parser is not duplicated here.
@@ -119,18 +124,16 @@
 			const res = await setPublicURL(draftUrl.trim());
 			const wanted = res.url;
 			const deadline = Date.now() + APPLY_TIMEOUT;
-			for (;;) {
-				const live = await fetchPublicURL();
-				if (live.url === wanted) {
-					savedUrl = live.url;
-					draftUrl = live.url;
-					break;
-				}
-				if (Date.now() >= deadline) {
-					addressError = `Saved, but the address is still ${live.url}. Check the host-agent logs.`;
-					break;
-				}
+			let live = await fetchPublicURL();
+			while (live.url !== wanted && Date.now() < deadline) {
 				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+				live = await fetchPublicURL();
+			}
+			if (live.url === wanted) {
+				savedUrl = live.url;
+				draftUrl = live.url;
+			} else {
+				addressError = `Saved, but the address is still ${live.url}. Check the host-agent logs.`;
 			}
 		} catch (err: unknown) {
 			addressError = errMessage(err, 'Failed to save the address');

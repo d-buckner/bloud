@@ -58,7 +58,7 @@ const BASELINE = {
   'services/host-agent/internal/engine/orchestrator/orchestrator.go': 1291,
   'cli/dev.go': 828,
   'services/host-agent/internal/api/settings_module.go': 751,
-  'services/host-agent/web/src/routes/settings/+page.svelte': 686,
+  'services/host-agent/web/src/routes/settings/+page.svelte': 684,
   'services/host-agent/internal/engine/orchestrator/pipeline.go': 624,
   'services/host-agent/internal/sso/blueprint.go': 561,
   'cli/depgraph.go': 520,
