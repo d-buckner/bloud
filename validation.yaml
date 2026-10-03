@@ -183,6 +183,18 @@ apps:
       - apps/hermes/**
     e2e-project: hermes
 
+  # Hermes Web UI is the browser front end for the same agent apps/hermes
+  # runs. Its own login is one shared password, and its native OIDC client
+  # refuses any issuer that resolves to a private or loopback address, so
+  # Bloud's forward-auth outpost is the door and the app validates like the
+  # other apps gated at the ingress.
+  hermes-webui:
+    auth: forward-auth
+    validation-level: full
+    files:
+      - apps/hermes-webui/**
+    e2e-project: hermes-webui
+
   paperless-ngx:
     auth: native-oidc
     validation-level: embed

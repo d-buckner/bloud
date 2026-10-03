@@ -86,6 +86,7 @@ to mention it.
 - **AFFiNE**: AI-native knowledge base that unifies docs, databases, and whiteboards
 - **Calino**: Browser calendar for the CalDAV calendars Bloud already serves
 - **Hermes**: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard
+- **Hermes Web UI**: Browser front end for the Hermes agent, with sessions, workspaces, and a Control Center
 - **Home Assistant**: Open-source home automation platform
 - **Immich**: Self-hosted photo and video management
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
@@ -119,7 +120,7 @@ It's built for things you have the right to use.
 | Strategy | Apps |
 |---|---|
 | **LDAP** | Jellyfin, Radicale, Seerr |
-| **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
+| **Forward auth** | Calino, Hermes Web UI, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
 <!-- END GENERATED LOGIN TABLE -->
 

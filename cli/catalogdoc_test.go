@@ -587,19 +587,70 @@ func TestRepoLoginTableCoversEveryUserApp(t *testing.T) {
 
 	for _, app := range userApps {
 		name := appDisplayName(app)
-		if strings.Count(rendered, name) != 1 {
+		if countLoginTableEntries(rendered, name) != 1 {
 			t.Errorf("%s should appear exactly once in the login table:\n%s", name, rendered)
 		}
 		strategy := loginTableRowStrategy(app)
 		label := loginStrategyLabel(strategy)
-		found := false
-		for _, line := range strings.Split(rendered, "\n") {
-			if strings.Contains(line, name) && strings.Contains(line, "**"+label+"**") {
-				found = true
-			}
-		}
-		if !found {
+		if !loginTableEntryUnderLabel(rendered, name, label) {
 			t.Errorf("%s is not under its declared strategy %q (%s):\n%s", name, strategy, label, rendered)
 		}
 	}
+}
+
+// loginTableEntries parses the app names out of one rendered login-table row.
+// The cells are comma-separated display names, so the entries are what a
+// reader sees as one app, not what a substring search would find.
+//
+// That distinction is load-bearing here: "Hermes Web UI" contains "Hermes",
+// so a raw strings.Count over the rendered table charges the shorter name
+// for the longer app's appearance and reports a duplicate that is not one.
+func loginTableEntries(row string) []string {
+	cells := strings.Split(row, "|")
+	if len(cells) < 3 {
+		return nil
+	}
+	cell := strings.TrimSpace(cells[2])
+	if cell == "" {
+		return nil
+	}
+	parts := strings.Split(cell, ",")
+	entries := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			entries = append(entries, trimmed)
+		}
+	}
+	return entries
+}
+
+// countLoginTableEntries counts rows whose cell contains `name` as a whole
+// entry, which is the count the test means: how many times this app is
+// listed, not how many times its name occurs as characters.
+func countLoginTableEntries(rendered, name string) int {
+	count := 0
+	for _, line := range strings.Split(rendered, "\n") {
+		for _, entry := range loginTableEntries(line) {
+			if entry == name {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// loginTableEntryUnderLabel reports whether `name` is listed in a row whose
+// strategy label is `label`.
+func loginTableEntryUnderLabel(rendered, name, label string) bool {
+	for _, line := range strings.Split(rendered, "\n") {
+		if !strings.Contains(line, "**"+label+"**") {
+			continue
+		}
+		for _, entry := range loginTableEntries(line) {
+			if entry == name {
+				return true
+			}
+		}
+	}
+	return false
 }
