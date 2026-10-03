@@ -6,12 +6,17 @@
 //   node scripts/file-length.mjs --update   # lower the baseline (never raises)
 //   node scripts/file-length.mjs --list     # also print every exempt file
 //
-// Why a ratchet and not a plain cap. A hard cap of 500 fails on 9 files today,
-// which makes the check red for reasons nobody introduced and therefore safe to
-// ignore. A ratchet is red only for the change you just made: the files that are
-// already too long are recorded with their current size, and the recorded number
-// is the ceiling that file may not exceed. The list can only shrink, so the check
-// is green now and gets stricter on its own every time someone splits a file.
+// Why a ratchet and not a plain cap. When the tree already contains files over
+// the limit, a hard cap is red for reasons nobody introduced, which makes it
+// safe to ignore. A ratchet is red only for the change you just made: a file
+// that is already too long is recorded with its current size, and that number is
+// the ceiling it may not exceed. The list can only shrink, so the check is green
+// on a clean tree and gets stricter on its own every time someone splits a file.
+//
+// The baseline is empty now: every governed file is at or under the limit, so
+// the plain cap applies everywhere and any new over-limit file is a violation
+// rather than an exemption. The mechanism stays because the tree can drift, and
+// because the empty block is itself the assertion worth keeping.
 //
 // This is the same shape as the exception table in `pinned-images.mjs` and the
 // completeness test in `internal/wire`: the exemption is data, it is reviewed in
@@ -49,21 +54,8 @@ const MARK_END = ['//', 'end', 'ratchet', 'baseline'].join(' ');
 const SELF = fileURLToPath(import.meta.url);
 
 // begin ratchet baseline
-// Each number is the ceiling for that file: it may not exceed it. Lower only.
-// Regenerate with `npm run check:file-length:update`, which never raises a
-// number and never adds a file. An entry for a file that is compliant or
-// gone is a failure, so this list cannot keep a claim that stopped being true.
-const BASELINE = {
-  'services/host-agent/pkg/authentik/client.go': 1454,
-  'services/host-agent/internal/engine/orchestrator/orchestrator.go': 1291,
-  'cli/dev.go': 828,
-  'services/host-agent/internal/api/settings_module.go': 751,
-  'services/host-agent/web/src/routes/settings/+page.svelte': 684,
-  'services/host-agent/internal/engine/orchestrator/pipeline.go': 624,
-  'services/host-agent/internal/sso/blueprint.go': 561,
-  'cli/depgraph.go': 520,
-  'services/host-agent/internal/api/auth_module.go': 507,
-};
+// Nothing is exempt: every governed file is at or under 500 code lines.
+const BASELINE = {};
 // end ratchet baseline
 
 // The files the cap governs. `html` adds `<!-- -->` to the comment syntax, which

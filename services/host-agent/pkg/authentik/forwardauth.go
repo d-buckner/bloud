@@ -150,3 +150,147 @@ func (c *Client) ensureProxyApplication(ctx context.Context, slug, displayName s
 	}
 	return nil
 }
+
+// EnsureForwardAuth implements orchestrator.SSOProvisioner.
+func (c *Client) EnsureForwardAuth(ctx context.Context, appName, displayName, externalURL string) error {
+	return c.EnsureForwardAuthApplication(ctx, appName, displayName, externalURL)
+}
+
+// EnsureForwardDomainAuth creates a forward_domain proxy provider, application, and
+// standalone proxy outpost for the tailnet MagicDNS domain. In forward_domain mode,
+// a single cookie on the domain (e.g. ".tail12756a.ts.net") authenticates all *.domain
+// subdomains. A standalone outpost is used (instead of the embedded outpost) so that
+// AUTHENTIK_HOST_BROWSER can point to the tailnet URL while the embedded outpost
+// continues using localhost for local access.
+// Returns the outpost API token needed to start the standalone outpost container.
+// cookieDomain is the MagicDNS suffix (e.g. "tail12756a.ts.net").
+func (c *Client) EnsureForwardDomainAuth(ctx context.Context, cookieDomain string) (string, error) {
+	const (
+		providerName = "Tailnet Forward Domain Provider"
+		appSlug      = "tailnet-domain"
+		appName      = "Tailnet Domain Auth"
+	)
+
+	externalHost := "https://bloud." + cookieDomain
+
+	// Check if provider already exists.
+	existingID, err := c.findProviderID(ctx, "proxy", providerName)
+	if err != nil {
+		return "", fmt.Errorf("checking proxy provider: %w", err)
+	}
+
+	var providerID int
+	if existingID != 0 {
+		providerID = existingID
+	} else {
+		authFlowID, err := c.findFlowID(ctx, "default-authentication-flow")
+		if err != nil {
+			return "", fmt.Errorf("finding auth flow: %w", err)
+		}
+		invalidationFlowID, err := c.findFlowID(ctx, "default-provider-invalidation-flow")
+		if err != nil {
+			return "", fmt.Errorf("finding invalidation flow: %w", err)
+		}
+
+		providerID, err = c.createForwardDomainProvider(ctx, providerName, externalHost, cookieDomain, authFlowID, invalidationFlowID)
+		if err != nil {
+			return "", fmt.Errorf("creating forward_domain provider: %w", err)
+		}
+	}
+
+	if err := c.ensureProxyApplication(ctx, appSlug, appName, providerID); err != nil {
+		return "", fmt.Errorf("ensuring proxy application: %w", err)
+	}
+
+	// Use a standalone proxy outpost (not the embedded outpost) so the browser-facing
+	// URL can be the tailnet domain while local auth stays on localhost.
+	if err := c.ensureProxyOutpost(ctx, providerID); err != nil {
+		return "", fmt.Errorf("ensuring proxy outpost: %w", err)
+	}
+
+	token, err := c.GetProxyOutpostToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("getting proxy outpost token: %w", err)
+	}
+
+	return token, nil
+}
+
+// ensureProxyOutpost creates the standalone proxy outpost if it doesn't exist.
+// This outpost runs as a separate container with AUTHENTIK_HOST_BROWSER set to the
+// tailnet URL, allowing remote users to authenticate via tailnet while the embedded
+// outpost continues serving local auth on localhost.
+func (c *Client) ensureProxyOutpost(ctx context.Context, providerID int) error {
+	outpost, err := c.findOutpostByName(ctx, proxyOutpostName)
+	if err != nil {
+		return err
+	}
+	if outpost != nil {
+		// Outpost exists: ensure the provider is attached.
+		for _, pid := range outpost.Providers {
+			if pid == providerID {
+				return nil
+			}
+		}
+		outpost.Providers = append(outpost.Providers, providerID)
+		return c.updateOutpostProviders(ctx, outpost.PK, outpost.Providers)
+	}
+
+	payload := map[string]interface{}{
+		"name":      proxyOutpostName,
+		"type":      "proxy",
+		"providers": []int{providerID},
+		"config": map[string]interface{}{
+			"authentik_host": c.baseURL,
+			"log_level":      "info",
+		},
+	}
+	if err := c.cl.POST("/api/v3/outposts/instances/").JSON(payload).OK(http.StatusCreated).Exec(ctx); err != nil {
+		return fmt.Errorf("creating proxy outpost: %w", err)
+	}
+
+	return nil
+}
+
+// GetProxyOutpostToken returns the auto-generated token for the standalone proxy outpost.
+// Authentik creates a token with identifier "ak-outpost-{uuid}-api" when an outpost is created.
+func (c *Client) GetProxyOutpostToken(ctx context.Context) (string, error) {
+	outpost, err := c.findOutpostByName(ctx, proxyOutpostName)
+	if err != nil {
+		return "", fmt.Errorf("finding outpost: %w", err)
+	}
+	if outpost == nil {
+		return "", fmt.Errorf("proxy outpost not found")
+	}
+
+	tokenIdentifier := fmt.Sprintf("ak-outpost-%s-api", outpost.PK)
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := c.cl.GET("/api/v3/core/tokens/"+url.PathEscape(tokenIdentifier)+"/view_key/").
+		OK(http.StatusOK).
+		DoInto(ctx, &result); err != nil {
+		return "", fmt.Errorf("getting token key: %w", err)
+	}
+	return result.Key, nil
+}
+
+// createForwardDomainProvider creates a proxy provider in forward_domain mode.
+func (c *Client) createForwardDomainProvider(ctx context.Context, name, externalHost, cookieDomain, authFlowID, invalidationFlowID string) (int, error) {
+	payload := map[string]interface{}{
+		"name":               name,
+		"authorization_flow": authFlowID,
+		"invalidation_flow":  invalidationFlowID,
+		"external_host":      externalHost,
+		"mode":               "forward_domain",
+		"cookie_domain":      cookieDomain,
+	}
+	var result struct {
+		PK int `json:"pk"`
+	}
+	if err := c.cl.POST("/api/v3/providers/proxy/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
+		return 0, err
+	}
+	return result.PK, nil
+}

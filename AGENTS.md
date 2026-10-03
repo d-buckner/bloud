@@ -320,16 +320,19 @@ non-blank line that is not entirely a comment (`npm run check:file-length`,
 exempt for the reason already recorded in `.golangci.yml` for `funlen`, and
 Markdown is out because a long spec is not the same problem as a long module.
 
-It is a ratchet, not a cap. The nine files already over 500 are recorded in the
-`BASELINE` block with their current size as a ceiling they may not exceed, so the
-check is green now and gets stricter on its own every time someone splits a file.
-A plain cap would have been red for reasons nobody introduced, which makes it safe
-to ignore. Four things fail: a new file over 500 with no exemption; an exempt file
-grown past its recorded ceiling; a baseline entry for a file that no longer
-exists; and a baseline entry looser than the file it guards, because that leaves
-headroom for the file to grow back. `npm run check:file-length:update` fixes the
-last two and can only ever lower a number or drop an entry. It cannot add one, so
-a new exemption has to be typed into the block by hand and shows up in the diff.
+It is a ratchet, not a cap. Any file that is already over 500 is recorded in the
+`BASELINE` block with its current size as a ceiling it may not exceed, so the
+check is green on a clean tree and gets stricter on its own every time someone
+splits a file. A plain cap over a tree that already contains long files is red
+for reasons nobody introduced, which makes it safe to ignore. The baseline is
+empty today: the nine files that needed the ratchet are split, so the plain cap
+applies everywhere and the block is the assertion that nothing is exempt. Four
+things fail: a new file over 500 with no exemption; an exempt file grown past its
+recorded ceiling; a baseline entry for a file that no longer exists; and a
+baseline entry looser than the file it guards, because that leaves headroom for
+the file to grow back. `npm run check:file-length:update` fixes the last two and
+can only ever lower a number or drop an entry. It cannot add one, so a new
+exemption has to be typed into the block by hand and shows up in the diff.
 This is the same shape as the `EXCEPTIONS` table above and the `internal/wire`
 completeness test: the exemption is data, it is reviewed, and an exemption that
 guards nothing is itself a failure.
