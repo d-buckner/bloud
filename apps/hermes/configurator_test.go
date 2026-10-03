@@ -916,4 +916,147 @@ func TestPreStart_NoChurnWhenTheContainerCopyAlreadyMatches(t *testing.T) {
 	}
 }
 
+// runningProbe is the Deps.ContainerRunning test double: a fixed answer for
+// the container readConfig asks about.
+type runningProbe struct{ running bool }
+
+func (p runningProbe) fn(_ context.Context, _ string) (bool, error) { return p.running, nil }
+
+// TestReadConfig_StoppedContainerIsSkippable pins issue #184: when the host
+// read is refused and the container that owns the file is stopped, the read
+// cannot be done this pass, but that is the cold-start state after a reboot
+// rather than a fault. The sentinel lets PreStart skip the merge instead of
+// parking the node in ERROR.
+func TestReadConfig_StoppedContainerIsSkippable(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dataDir, configFileName)
+	if err := os.WriteFile(cfgPath, []byte("operator: kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	fx := &recordingExec{err: errors.New("can only create exec sessions on running containers: container state improper")}
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:           quietLogger(),
+		Exec:             fx.fn,
+		ContainerRunning: runningProbe{running: false}.fn,
+	})
+
+	_, err := c.readConfig(context.Background(), cfgPath)
+	if !errors.Is(err, errContainerNotRunning) {
+		t.Fatalf("err = %v, want the skippable sentinel", err)
+	}
+}
+
+// TestReadConfig_RunningContainerExecFailureIsHard: the skip is only for a
+// stopped container. A running container whose read still fails is the fault
+// the original error described, and it must still fail the pass.
+func TestReadConfig_RunningContainerExecFailureIsHard(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dataDir, configFileName)
+	if err := os.WriteFile(cfgPath, []byte("operator: kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	fx := &recordingExec{err: errors.New("base64: not found")}
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:           quietLogger(),
+		Exec:             fx.fn,
+		ContainerRunning: runningProbe{running: true}.fn,
+	})
+
+	_, err := c.readConfig(context.Background(), cfgPath)
+	if err == nil {
+		t.Fatal("expected a hard error when the container is running")
+	}
+	if errors.Is(err, errContainerNotRunning) {
+		t.Fatalf("err = %v, must not be the skippable sentinel", err)
+	}
+}
+
+// TestPreStart_SkipsMergeWhenContainerStopped is the cold-start scenario end
+// to end: the file is left exactly as it is (no rewrite, no error), so Hermes
+// boots on the config it already had instead of the node going to ERROR.
+func TestPreStart_SkipsMergeWhenContainerStopped(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.MkdirAll(dataDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dataDir, configFileName)
+	operatorCfg := "model:\n  provider: openrouter\n"
+	if err := os.WriteFile(cfgPath, []byte(operatorCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadableByHost(t, cfgPath)
+
+	fx := &recordingExec{err: errors.New("can only create exec sessions on running containers: container state improper")}
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:           quietLogger(),
+		PrimaryBaseURL:   func() string { return "http://localhost:8080" },
+		Exec:             fx.fn,
+		ContainerRunning: runningProbe{running: false}.fn,
+	})
+	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
+		ClientID:  "hermes-client",
+		IssuerURL: "http://sso.localhost:8080/application/o/hermes/",
+	}}
+
+	res, err := c.PreStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if res.RestartNeeded {
+		t.Fatal("expected no restart: nothing was written")
+	}
+	if err := os.Chmod(cfgPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != operatorCfg {
+		t.Errorf("config = %q, want it left alone", raw)
+	}
+}
+
+// TestPreStart_WritesWhenTheConfigIsMissingEvenIfContainerStopped: a missing
+// file is the first-run state, not a permission problem, so the cold-start
+// skip must not apply. ENOENT never reaches the container probe.
+func TestPreStart_WritesWhenTheConfigIsMissingEvenIfContainerStopped(t *testing.T) {
+	dir := t.TempDir()
+	fx := &recordingExec{out: b64("should: not be read\n")}
+	c := NewConfigurator(0, configurator.Deps{
+		Logger:           quietLogger(),
+		PrimaryBaseURL:   func() string { return "http://localhost:8080" },
+		Exec:             fx.fn,
+		ContainerRunning: runningProbe{running: false}.fn,
+	})
+	state := &configurator.AppState{DataPath: dir, SSOEnabled: true, OIDC: &configurator.OIDCOutput{
+		ClientID:  "hermes-client",
+		IssuerURL: "http://sso.localhost:8080/application/o/hermes/",
+	}}
+
+	res, err := c.PreStart(context.Background(), state)
+	if err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if !res.RestartNeeded {
+		t.Fatal("expected the fresh SSO config to be written and the container recreated")
+	}
+	if len(fx.calls) != 0 {
+		t.Errorf("expected no container read for a missing file, got %q", fx.calls)
+	}
+}
+
 var _ configurator.NodeLifecycle = (*Configurator)(nil)
