@@ -35,25 +35,6 @@ The script is short, and you should read it before piping it to a shell:
 and there is no mechanism yet for getting security updates to apps or to Bloud itself. Keep it
 on your LAN for now.
 
-## what just happened
-
-When you clicked install:
-
-1. The API pushed an intent onto a typed queue. It did not install anything itself.
-2. The engine resolved the dependency graph. Jellyfin needs Authentik; Authentik needs
-   PostgreSQL and Redis; everything needs Traefik.
-3. Containers came up in topological order, in parallel within each level.
-4. Secrets were generated. An LDAP binding was created in Authentik. Routes were written to
-   Traefik.
-5. Jellyfin was verified through its own API, not through our own bookkeeping.
-6. The loop started again. It runs forever, every few seconds, and does nothing when nothing has
-   changed.
-
-Step 6 is why the design looks the way it does. Installing an app once is a script. Bringing it
-back after a power cut, with nobody watching, is the part that needs an engine. The loop that
-installed Jellyfin is the loop that has to recover Jellyfin, so there is no separate recovery
-path to write; a reboot is just another disturbance it reads and responds to.
-
 ## why an engine
 
 Getting a container running isn't the hard part, `podman run` will do that. The hard part is
