@@ -42,7 +42,13 @@ const (
 func TestVaultwardenInstallViaAPI(t *testing.T) {
 	postJSON(t, hostAgentURL+"/api/apps/vaultwarden/install", `{}`, http.StatusAccepted)
 	waitAppRunning(t, "vaultwarden", 10*time.Minute)
+	// Reachable directly, then reachable through the ingress. The second wait is
+	// not redundant with the first: the container answers on its own port the
+	// moment it boots, while the routed URL depends on Traefik having picked up
+	// the config regenerated just before the node was promoted. Without it the
+	// next test's first call can land on host-agent instead of the app.
 	waitHTTPOrFatal(t, 60*time.Second, vaultwardenURL+"/alive")
+	waitRoutedApp(t, vaultwardenPublicURL()+"/alive", 2*time.Minute)
 }
 
 // TestVaultwardenConfiguredByConfigurator verifies the configurator's outcomes
