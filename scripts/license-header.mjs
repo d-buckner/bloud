@@ -41,6 +41,17 @@ const EXCLUDE_EXTS = new Set([
 // emits them, so a header would drift (or have to be mirrored in goldens).
 const EXCLUDE_PATHS = new Set();
 
+// Vendored third-party source keeps its upstream license, so stamping Bloud's
+// SPDX header on it would misstate who licensed the file. Today that is the
+// MIT-licensed radicale-ics-sync plugin under apps/radicale/plugin/, whose
+// upstream LICENSE sits beside the package and whose local modifications are
+// recorded in that directory's PROVENANCE.md.
+const VENDORED_PREFIXES = ['apps/radicale/plugin/'];
+
+function isVendored(file) {
+  return VENDORED_PREFIXES.some((prefix) => file.startsWith(prefix));
+}
+
 function isGenerated(file) {
   return file.endsWith('.golden.yml') || file.includes('/testdata/');
 }
@@ -126,7 +137,7 @@ function main() {
     const base = f.split('/').pop();
     const ext = extOf(f);
     if (EXCLUDE_BASENAMES.has(base) || EXCLUDE_EXTS.has(ext) ||
-        EXCLUDE_PATHS.has(f) || isGenerated(f) || styleFor(f) === null) continue;
+        EXCLUDE_PATHS.has(f) || isVendored(f) || isGenerated(f) || styleFor(f) === null) continue;
 
     let content;
     try {

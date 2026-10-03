@@ -98,6 +98,9 @@ it, authentication fails on a directory that is otherwise correct.
 | `ldap_security` | `none` | No StartTLS on the internal hop |
 | `realm` | `Bloud` | Shows up in the client's password prompt |
 | `[storage] filesystem_folder` | `/var/lib/radicale/collections` | The one tree the container writes |
+| `[storage] type` | `radicale_ics_sync.storage` | The vendored plugin; see [Aggregated calendar feeds](#aggregated-calendar-feeds) |
+| `[storage] ics_config` | `/config/ics_sync.json` | The sync jobs `PreStart` writes |
+| `[storage] hash_db` | `/var/lib/radicale/collections/ics_sync_hashes.json` | Inside the persisted tree, so deletions survive a restart |
 | `[rights] type` | `owner_only` | See [Isolation model](#isolation-model) |
 | `[web] type` | `internal` | Radicale's built-in browser UI at `/.web/` |
 
@@ -111,6 +114,55 @@ calendar is not something to leave open for one reconciliation cycle.
 
 `PreStart` also deletes `ldap-secret` when the provider goes away, so a
 credential nothing reads does not stay on disk.
+
+## Aggregated calendar feeds
+
+Apps that publish an ICS feed (Radarr, Sonarr) declare it under the
+`icsFeed` contract, and Radicale subscribes to each one server-side. The user
+adds one CalDAV account and inherits a calendar per feed, without pasting a
+webcal URL into every device and without the feed's API key ever reaching a
+client.
+
+The fetching is done by a vendored storage plugin,
+[`radicale-ics-sync`](https://pypi.org/project/radicale-ics-sync/), which
+wraps Radicale's filesystem backend. It is vendored rather than built into a
+custom image so Bloud ships no image pipeline of its own: the source is
+embedded in the host-agent binary, written into `<appDataDir>/plugin` by
+`PreStart`, mounted read-only at `/plugins`, and made importable with
+`PYTHONPATH=/plugins`. See
+[`plugin/PROVENANCE.md`](plugin/PROVENANCE.md) for the pinned version and the
+two local changes.
+
+What `PreStart` writes:
+
+- `config/ics_sync.json`, one job per feed binding. The feed URL is the
+  provider's container address plus its declared path, with the API key as the
+  `?apikey=` query parameter the Servarr feed endpoint requires. A feed with no
+  published key yet is skipped rather than written with an empty one.
+- the plugin tree above.
+
+A change to either asks the orchestrator to recreate the container, because the
+plugin starts one polling thread per job when the storage backend is
+constructed. The writes are compared and idempotent, so a steady-state
+reconciliation changes nothing.
+
+### Who owns the synced calendars, and how they get created
+
+The collection path is `<operator>/<provider>`, under the account of the user
+who completed first-run setup (`PreferencesStore.FirstUser`). It has to be the
+operator's own tree: `owner_only` rights mean a collection anywhere else is
+invisible to the account they actually sign in with.
+
+Bloud cannot create that collection over the DAV API. After first-run the
+bootstrap `akadmin` account is deleted and Bloud never stores the operator's
+password, so there is no credential to `MKCALENDAR` with. The plugin runs
+inside the storage layer with write access, so the vendored copy creates the
+calendar itself on the first sync (see `plugin/PROVENANCE.md`). That is the
+one Bloud-side change to upstream; the alternative, a configurator that holds
+a user's password, is the thing the `caldav` contract exists to avoid.
+
+Synced calendars are read-only projections: an event removed upstream is
+removed here too. Events the user creates belong in their own calendar.
 
 ## Isolation model
 
@@ -160,6 +212,14 @@ using the deployment's own generated config:
 The same assertions are in `services/host-agent/internal/e2e/radicale_test.go`
 (integration tier) and `e2e/tests/radicale.spec.ts` (browser tier).
 
+`apps/radicale/configurator_test.go` covers the feed path: the storage section
+names the plugin, the sync jobs compose the feed URL with the escaped key, an
+incomplete binding writes no job, and the plugin tree plus `ics_sync.json` are
+written once and recreated (not rewritten) on a change.
+`services/host-agent/internal/engine/orchestrator/integration_bindings_test.go`
+asserts the `icsFeed` binding carries the address, path, display name, and the
+key only when the consumer required it.
+
 ## What is not wired
 
 - **Sharing.** `owner_only` has no sharing. Radicale supports a `from_file`
@@ -171,3 +231,7 @@ The same assertions are in `services/host-agent/internal/e2e/radicale_test.go`
 - **TLS.** Bloud serves plain HTTP today, so `ldap_security = none` on the
   internal hop matches. When Bloud serves HTTPS, the internal hop is still
   inside the container network, so this does not have to change with it.
+- **Reaching Radicale from a browser app cross-origin.** The synced calendars
+  are visible to any DAV client that can reach `radicale.<host>`; Calino's
+  browser-to-Radicale call is still missing CORS. See
+  [`apps/calino/INTEGRATION.md`](../calino/INTEGRATION.md#what-is-not-wired).

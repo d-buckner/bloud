@@ -61,6 +61,31 @@ var contracts = []Contract{
 	// pushes indexers into it, Seerr hands it requests).
 	{Name: "pvr", Secrets: []string{"apiKey"}},
 
+	// An ICS calendar feed a calendar server subscribes to on the user's
+	// behalf. The provider hands over the path to its feed and the key that
+	// authenticates it; the consumer (Radicale's ics-sync storage plugin)
+	// fetches the feed server-side and projects the events into one of its own
+	// collections, so the user adds one CalDAV account and inherits every feed
+	// the instance publishes.
+	//
+	// `apiKey` is the provider's own API key, the same credential its `pvr`
+	// offer publishes. The Servarr feed endpoint authenticates with
+	// `?apikey=`, which is the only form that works here: a calendar client,
+	// and the storage plugin that stands in for one, cannot set an X-Api-Key
+	// header.
+	//
+	// `displayName` is the name the consumer gives the collection it creates
+	// for the feed. It is a provider fact (Radarr's calendar is "Radarr
+	// Movies"), not something a consumer can derive from the app id.
+	{
+		Name:    "icsFeed",
+		Secrets: []string{"apiKey"},
+		Values: []ValueSpec{
+			{Key: "path", AbsolutePath: true},
+			{Key: "displayName"},
+		},
+	},
+
 	// A media server hands the consumer the bootstrap admin password it was
 	// given, so the consumer can log in and mint its own key.
 	{Name: "mediaServer", Secrets: []string{"adminPassword"}},

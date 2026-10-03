@@ -286,6 +286,17 @@ func (o *Orchestrator) bindContract(
 			PublicURL:   o.appPublicURL(providerID),
 			Path:        offer.Values["path"],
 		})
+	case "icsFeed":
+		// The consumer (Radicale's ics-sync storage) composes the feed URL from
+		// the provider's address, the declared path, and the key as a query
+		// parameter. The Servarr feed endpoint accepts no header auth, which is
+		// the whole reason the key travels in the URL.
+		out.ICSFeeds = append(out.ICSFeeds, configurator.ICSFeedBinding{
+			ProviderRef: ref,
+			APIKey:      o.publishedSecret(providerID, contract, offer, requires),
+			Path:        offer.Values["path"],
+			DisplayName: offer.Values["displayName"],
+		})
 	default:
 		// Contracts with no payload (proxy, database) need no consumer input
 		// beyond the address, which the graph edge already encodes. A contract

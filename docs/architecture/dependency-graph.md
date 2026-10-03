@@ -140,6 +140,7 @@ flowchart TD
     app_radarr -->|forward-auth| app_authentik
     app_radarr -->|downloadClient| app_qbittorrent
     app_radicale -->|ldap| app_authentik
+    app_radicale -->|icsFeed| app_radarr
     app_seerr -->|mediaServer| app_jellyfin
     app_seerr -->|pvr| app_sonarr
     app_sonarr -->|forward-auth| app_authentik

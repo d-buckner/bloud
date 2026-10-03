@@ -11,13 +11,18 @@ package radicale
 
 import (
 	"context"
+	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -52,12 +57,33 @@ const (
 	// containerStorageDir is the `[storage] filesystem_folder` inside the
 	// container. The host side is <appDataDir>/collections.
 	containerStorageDir = "/var/lib/radicale/collections"
+
+	// icsSyncFileName is the sync-job config the vendored plugin reads from the
+	// config dir. A change requires a Radicale restart: the plugin starts one
+	// polling thread per job when the storage backend is constructed.
+	icsSyncFileName = "ics_sync.json"
+
+	// pluginDirName is the host-side directory the embedded plugin tree is
+	// written into; metadata.yaml mounts it at /plugins and sets
+	// PYTHONPATH=/plugins so Radicale can import it by dotted module path.
+	pluginDirName = "plugin"
+
+	// icsSyncIntervalSeconds is how often the plugin refetches a feed. One
+	// hour is the plugin's own default and is plenty for release calendars.
+	icsSyncIntervalSeconds = 3600
 )
 
 type Configurator struct {
 	port   int
 	logger *slog.Logger
 	api    *radicaleAPI
+
+	// operatorUsername returns the login name of the user who completed
+	// first-run setup, which is the Radicale principal the synced calendar
+	// collections live under. It is a function so a user created after the
+	// agent started is seen on the next pass, not captured at construction.
+	// Empty before setup: there is no account to own a collection yet.
+	operatorUsername func() string
 
 	// baseURL is a test seam: when set, the client resolves to it instead of
 	// localhost:port. Never used to build request URLs by hand.
@@ -74,8 +100,9 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	c := &Configurator{
-		port:   port,
-		logger: logger.With("app", appName),
+		port:             port,
+		logger:           logger.With("app", appName),
+		operatorUsername: deps.OperatorUsername,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -129,13 +156,133 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", cfgPath, err)
 	}
-	if !cfgChanged && !secretChanged {
+
+	icsChanged, err := c.syncICSFeeds(filepath.Join(configDir, icsSyncFileName), state)
+	if err != nil {
+		return configurator.NoRestart(), fmt.Errorf("write %s: %w", icsSyncFileName, err)
+	}
+
+	pluginChanged, err := syncPlugin(state.DataPath)
+	if err != nil {
+		return configurator.NoRestart(), fmt.Errorf("write %s: %w", pluginDirName, err)
+	}
+
+	if !cfgChanged && !secretChanged && !icsChanged && !pluginChanged {
 		return configurator.NoRestart(), nil
 	}
 
 	c.logger.Info("wrote Radicale config", "path", cfgPath,
-		"auth", authType(state.LDAP), "secretChanged", secretChanged)
+		"auth", authType(state.LDAP), "secretChanged", secretChanged,
+		"feedsChanged", icsChanged, "pluginChanged", pluginChanged)
 	return configurator.MustRestart("Radicale config rewritten"), nil
+}
+
+// syncICSFeeds renders the feed sync jobs from the resolved bindings and the
+// operator's collection path. Returns true when the file changed.
+func (c *Configurator) syncICSFeeds(path string, state *configurator.AppState) (bool, error) {
+	owner := ""
+	if c.operatorUsername != nil {
+		owner = c.operatorUsername()
+	}
+	var feeds []configurator.ICSFeedBinding
+	if state != nil {
+		feeds = state.Integrations.ICSFeeds
+	}
+	return managedfile.Write(path, []byte(renderICSSync(owner, feeds)), managedfile.ModeSharedConfig)
+}
+
+// icsSyncJob is one entry of the plugin's ics_sync.json.
+type icsSyncJob struct {
+	Feed         string `json:"feed"`
+	Collection   string `json:"collection"`
+	SyncInterval int    `json:"sync_interval"`
+	DisplayName  string `json:"displayname,omitempty"`
+}
+
+// renderICSSync renders the sync jobs the vendored plugin reads. A feed is
+// skipped until it is fully bound (installed, addressed, with a published key);
+// a job with an empty key would make the plugin retry a 401 forever. With no
+// operator account yet there is no principal to own a collection, so the list
+// is empty and the next pass (after first-run) fills it in. The output is
+// sorted by collection so re-rendering the same bindings is byte-identical and
+// asks for no restart.
+func renderICSSync(owner string, feeds []configurator.ICSFeedBinding) string {
+	jobs := make([]icsSyncJob, 0, len(feeds))
+	if owner != "" {
+		for _, feed := range feeds {
+			if !feed.Installed || feed.APIKey == "" || feed.Path == "" || feed.BaseURL == "" {
+				continue
+			}
+			jobs = append(jobs, icsSyncJob{
+				Feed:         feedURL(feed),
+				Collection:   owner + "/" + feed.App,
+				SyncInterval: icsSyncIntervalSeconds,
+				DisplayName:  feed.DisplayName,
+			})
+		}
+	}
+	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Collection < jobs[j].Collection })
+	raw, err := json.MarshalIndent(jobs, "", "  ")
+	if err != nil {
+		// A slice of strings and an int cannot fail to marshal; keep a valid
+		// empty document rather than return an error nothing can act on.
+		return "[]\n"
+	}
+	return string(raw) + "\n"
+}
+
+// feedURL composes the URL the plugin dials: the provider's container address
+// plus the declared path, with the key as a query parameter. The Servarr feed
+// endpoint accepts no header auth, which is why the key travels in the URL.
+func feedURL(feed configurator.ICSFeedBinding) string {
+	u := strings.TrimSuffix(feed.BaseURL, "/") + feed.Path
+	sep := "?"
+	if strings.Contains(u, "?") {
+		sep = "&"
+	}
+	return u + sep + "apikey=" + url.QueryEscape(feed.APIKey)
+}
+
+// pluginFS is the vendored radicale-ics-sync tree, embedded so the bytes the
+// container loads are the bytes this binary shipped with. See
+// apps/radicale/plugin/PROVENANCE.md for the two local modifications.
+//
+//go:embed plugin
+var pluginFS embed.FS
+
+// syncPlugin writes the embedded plugin tree into <dataPath>/plugin. Radicale
+// imports it at process start, so a changed byte needs a recreate, which the
+// caller signals alongside the config write.
+func syncPlugin(dataPath string) (bool, error) {
+	destRoot := filepath.Join(dataPath, pluginDirName)
+	changed := false
+	err := fs.WalkDir(pluginFS, pluginDirName, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(pluginDirName, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destRoot, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		raw, err := pluginFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		wrote, err := managedfile.Write(target, raw, managedfile.ModeSharedConfig)
+		if err != nil {
+			return err
+		}
+		changed = changed || wrote
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
 }
 
 // PostStart checks the running server for the one property that matters: an
@@ -275,7 +422,13 @@ func renderConfig(port int, ldap *configurator.LDAPOutput) string {
 	}
 
 	b.WriteString("[storage]\n")
-	fmt.Fprintf(&b, "filesystem_folder = %s\n\n", containerStorageDir)
+	b.WriteString("# The vendored ics-sync storage plugin wraps Radicale's filesystem backend\n")
+	b.WriteString("# and projects external ICS feeds into collections under the operator's\n")
+	b.WriteString("# account. See apps/radicale/plugin/PROVENANCE.md.\n")
+	b.WriteString("type = radicale_ics_sync.storage\n")
+	fmt.Fprintf(&b, "filesystem_folder = %s\n", containerStorageDir)
+	fmt.Fprintf(&b, "ics_config = %s/%s\n", containerConfigDir, icsSyncFileName)
+	fmt.Fprintf(&b, "hash_db = %s/ics_sync_hashes.json\n\n", containerStorageDir)
 
 	b.WriteString("[rights]\n")
 	b.WriteString("type = owner_only\n\n")

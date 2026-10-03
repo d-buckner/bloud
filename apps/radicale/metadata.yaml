@@ -20,6 +20,25 @@ integrations:
       - app: authentik
         default: true
 
+  # Calendar feeds other apps publish. Radicale's ics-sync storage subscribes
+  # to each one server-side and projects the events into a collection under the
+  # operator's own account, so the user adds one CalDAV account and inherits
+  # every feed the instance has. `multi: true` because the point is to
+  # aggregate as many feeds as the catalog provides, and optional because
+  # Radicale serves the user's own calendars with no feeds at all.
+  #
+  # `requires: [apiKey]` is the whole consumer surface: the provider's feed
+  # endpoint authenticates with `?apikey=`, because neither the plugin nor a
+  # calendar client can set an X-Api-Key header.
+  icsFeed:
+    required: false
+    multi: true
+    requires:
+      - apiKey
+    compatible:
+      - app: radarr
+      - app: sonarr
+
 # Radicale speaks CalDAV and CardDAV to desktop, mobile, and terminal clients
 # that authenticate with a username and password on every request. None of them
 # can follow a browser redirect to a login page, so the SSO strategy is `ldap`:
@@ -56,6 +75,13 @@ containers:
     command:
       - --config
       - /config/config
+    # The vendored radicale-ics-sync storage plugin. Its source is embedded in
+    # the host-agent binary and written into <appDataDir>/plugin by PreStart, so
+    # the mount always carries the bytes that shipped with this agent. Radicale
+    # imports it by dotted module path; PYTHONPATH is what makes /plugins
+    # importable, since the image's venv path changes with its Python version.
+    environment:
+      PYTHONPATH: /plugins
     ports:
       - host: 5232
         container: 5232
@@ -69,6 +95,10 @@ containers:
       # back into its own configuration.
       - source: "{{appDataDir}}/config"
         destination: /config
+        options: [ro]
+      # The vendored ics-sync plugin, read-only. Written by PreStart.
+      - source: "{{appDataDir}}/plugin"
+        destination: /plugins
         options: [ro]
     healthCheck:
       # GET / answers 302 to the built-in web UI once the server is listening.

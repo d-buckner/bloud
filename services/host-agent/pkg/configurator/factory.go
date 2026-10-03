@@ -30,6 +30,14 @@ type Deps struct {
 	// default only there.
 	OperatorEmail string
 
+	// OperatorUsername returns the login name of the user who completed
+	// first-run setup. Apps that must create per-user state on that user's
+	// behalf (Radicale's synced calendar collections) use it as the principal,
+	// because there is no client credential to act as that user with. It is a
+	// function so a user created after the agent started is seen on the next
+	// pass, not captured at construction. Empty before first-run.
+	OperatorUsername func() string
+
 	// PrimaryBaseURL resolves the current primary host's public base URL.
 	// It is a function so live host-set changes take effect without
 	// re-registering configurators.

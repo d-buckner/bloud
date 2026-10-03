@@ -141,7 +141,21 @@ func buildAgentStack(logger *slog.Logger) *agentStack {
 	// configurator, so the LDAP token PostStart records is visible to the
 	// orchestrator without either of them holding a mutable map.
 	st.vars = buildTemplateVars(st.cfg)
-	st.registry = buildConfiguratorRegistry(st.cfg, logger, st.hosts, st.client, st.vars)
+	// The operator's login name is the principal for per-user state an app has
+	// to create on their behalf (Radicale's synced calendar collections). The
+	// first-run setup row is the operator: setup creates it before any other
+	// user can exist. Read fresh on each pass so a user created after startup
+	// is seen without a restart.
+	prefs := store.NewPreferencesStore(st.database)
+	operatorUsername := func() string {
+		username, err := prefs.FirstUser()
+		if err != nil {
+			logger.Warn("could not read the first-run user", "error", err)
+			return ""
+		}
+		return username
+	}
+	st.registry = buildConfiguratorRegistry(st.cfg, logger, st.hosts, st.client, st.vars, operatorUsername)
 
 	openAgentStoresInto(st, logger)
 
@@ -248,7 +262,7 @@ func newAgentPodmanClient(logger *slog.Logger) *podman.Client {
 // process re-execs and re-reads on-disk config. Configurators use this where
 // the app's own in-app restart is unreliable under a container init (Home
 // Assistant). Stop grace lets the app shut down cleanly before SIGKILL.
-func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, client *podman.Client, vars *configurator.TemplateVars) *configurator.Registry {
+func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, client *podman.Client, vars *configurator.TemplateVars, operatorUsername func() string) *configurator.Registry {
 	restartContainer := func(ctx context.Context, name string) error {
 		if err := client.StopContainer(ctx, name, 30); err != nil {
 			return err
@@ -266,7 +280,7 @@ func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *h
 		return details != nil && details.State == "running", nil
 	}
 	registry := configurator.NewRegistry(logger,
-		appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv, containerRunning))
+		appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv, containerRunning, operatorUsername))
 	appconfig.RegisterSystem(cfg, containerruntime.NewPodmanRuntime(client), vars)
 	return registry
 }
