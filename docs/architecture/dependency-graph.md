@@ -59,6 +59,10 @@ flowchart TD
         c_hermes["hermes"]
     end
 
+    subgraph app_hermes_webui["Hermes Web UI"]
+        c_hermes_webui["hermes-webui"]
+    end
+
     subgraph app_homeassistant["Home Assistant"]
         c_homeassistant["homeassistant"]
     end
@@ -129,6 +133,9 @@ flowchart TD
     app_hermes -->|mcp| app_affine_mcp
     app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
+    app_hermes_webui -->|inference| ai_model
+    app_hermes_webui -->|forward-auth| app_authentik
+    app_hermes_webui -->|agentGateway| app_hermes
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
     app_jellyfin -->|ldap| app_authentik
@@ -149,6 +156,7 @@ flowchart TD
     app_traefik -->|proxy| app_authentik
     app_traefik -->|proxy| app_calino
     app_traefik -->|proxy| app_hermes
+    app_traefik -->|proxy| app_hermes_webui
     app_traefik -->|proxy| app_homeassistant
     app_traefik -->|proxy| app_immich
     app_traefik -->|proxy| app_jellyfin

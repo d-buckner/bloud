@@ -36,6 +36,7 @@ func TestNodeNamesStable(t *testing.T) {
 		"apps-affine-mcp",
 		"apps-calino",
 		"apps-hermes",
+		"apps-hermes-webui",
 		"apps-homeassistant",
 		"apps-immich-server",
 		"apps-jellyfin",
