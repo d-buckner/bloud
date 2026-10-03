@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: affine-mcp
+displayName: AFFiNE MCP
+description: Full read-write MCP tool server for AFFiNE, for agents that author documents, databases, and canvases
+category: productivity
+port: 9222
+estimatedSizeMB: 150
+
+# A wrapper, not the app: it ships no AFFiNE of its own and exists only to put a
+# richer MCP tool surface in front of one. AFFiNE provides `mcp` directly (the
+# design's preferred shape), so this app is the documented fallback for a target
+# whose own server is weaker than the third-party one. Both providers coexist
+# under different namespaces; installing this one does not remove the built-in.
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # The wrapper is not a browser and cannot join the identity provider, so it
+  # needs AFFiNE's own account credential. `requires: [password]` is the whole
+  # dependency: the username arrives as a value without being asked for, and an
+  # empty password means "not ready", never an empty credential. The graph edge
+  # this required integration produces is what orders AFFiNE first, so the
+  # credential is published before this app's PreStart reads it.
+  appApi:
+    required: true
+    multi: false
+    requires:
+      - password
+    compatible:
+      - app: affine
+        default: true
+
+# The same `mcp` contract AFFiNE's built-in server provides, under a different
+# namespace so a harness can register both and choose per call. `path` is static
+# (`/mcp`) because the wrapper serves one endpoint for every workspace, unlike
+# AFFiNE's workspace-scoped path.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: affine-mcp
+      path: /mcp
+
+containers:
+  - name: apps-affine-mcp
+    image: ghcr.io/dawncr0w/affine-mcp-server:3.8.5
+    network: apps-net
+    restartPolicy: always
+    ports:
+      - host: 9222
+        container: 9222
+    environment:
+      # The image reads its saved config from $XDG_CONFIG_HOME/affine-mcp/config.
+      # That file carries the per-install half (the AFFiNE credential, which the
+      # configurator reads out of the appApi binding, and the MCP bearer, which
+      # Bloud generates). Everything below is static and lives in the environment.
+      XDG_CONFIG_HOME: /data/config
+      PORT: "9222"
+      AFFINE_MCP_HTTP_HOST: "0.0.0.0"
+      MCP_TRANSPORT: http
+      # Bloud reaches AFFiNE by container name over plain http inside the podman
+      # network. The server refuses a non-loopback plain-http destination without
+      # this opt-in; the traffic never leaves the app network.
+      AFFINE_ALLOW_INSECURE_HTTP: "true"
+      # All 106 tools. AFFiNE's built-in MCP server is READ_ONLY, so restricting
+      # this one to read_only would make it a duplicate; the wider surface is the
+      # whole reason to run the wrapper. An operator who wants less can set this
+      # to read_only, core, or authoring. The value is environment-only upstream,
+      # so it must live here rather than in the generated config file.
+      AFFINE_TOOL_PROFILE: full
+      # AFFiNE gates sign-in on the client version and answers 403
+      # UNSUPPORTED_CLIENT_VERSION when it trails. Keep both values at the AFFiNE
+      # image's version; bump them alongside apps/affine/metadata.yaml.
+      AFFINE_CLIENT_VERSION: "0.27.4"
+      AFFINE_WS_CLIENT_VERSION: "0.27.4"
+    volumes:
+      - source: "{{appDataDir}}/config"
+        destination: /data/config
+    healthCheck:
+      # /healthz is the image's own liveness path (unauthenticated). The deeper
+      # /readyz probe checks AFFiNE reachability and is the configurator's job in
+      # PostStart, where a failure can be reported without flapping the container.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9222/healthz || exit 1"]
+      interval: 5
+      timeout: 5
+      retries: 30

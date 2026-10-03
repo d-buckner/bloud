@@ -100,8 +100,8 @@ func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName stri
 //
 // This runs after the containers are removed on purpose. Emptying the volumes
 // from inside a live container leaves the door open for the app to write again
-// while it shuts down (Manticore rewrites manticore.json on SIGTERM), and
-// those bytes are then unreachable to the host user.
+// while it shuts down (many images rewrite state files on SIGTERM), and those
+// bytes are then unreachable to the host user.
 func (o *Orchestrator) removeAppData(ctx context.Context, path string) error {
 	if o.config.Containers != nil {
 		if remover, ok := o.config.Containers.(containerruntime.PathRemover); ok {

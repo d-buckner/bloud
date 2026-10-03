@@ -257,9 +257,9 @@ Reconciliation is idempotent: an unchanged profile sends nothing, a
 credential-only change rotates the credential, an endpoint or model change
 replaces the profile, a profile deleted in the AFFiNE UI is recreated, and
 unbinding the contract removes the profile Bloud owns (a hand-registered
-profile is never touched). Failures are logged and swallowed, like the MCP
-credential: a knowledge base that serves its users fine must not land in
-ERROR because AI wiring failed, and the next pass retries.
+profile is never touched). Failures are logged and swallowed, like the
+shared-workspace settlement: a knowledge base that serves its users fine must
+not land in ERROR because AI wiring failed, and the next pass retries.
 
 The GraphQL surface is pinned to AFFiNE `0.27.4` and is not a public contract:
 a future image may rename a field. A rename degrades to "AI not wired" plus a
@@ -324,8 +324,8 @@ exposed.
 This is deliberate, not an arbitrary choice: AFFiNE links an OIDC login to an
 existing account by email, so when the operator signs in through Bloud's SSO
 they land on this account. That makes the operator the AFFiNE server admin and
-the owner of the workspace the configurator wires (MCP + AI), with no manual
-workspace setup. The endpoint accepts the call only before any user exists and
+the owner of the workspace the configurator wires (the AI profile and the
+shared workspace), with no manual workspace setup. The endpoint accepts the call only before any user exists and
 answers `403 First user already created` otherwise: that response is the
 idempotency signal for later reconciliation passes.
 

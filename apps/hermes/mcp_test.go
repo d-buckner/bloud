@@ -62,7 +62,7 @@ func affineBinding() configurator.MCPBinding {
 			LocalURL:  "http://localhost:3010",
 		},
 		ServerName: "affine",
-		Token:      "aff_mcp_v1.cred-1.secret",
+		Token:      "bearer-1",
 		Path:       "/api/workspaces/ws-1/mcp",
 	}
 }
@@ -89,7 +89,7 @@ func TestPreStartWritesMCPServer(t *testing.T) {
 		t.Errorf("url = %v, want %s", srv["url"], want)
 	}
 	headers := nested(t, doc, mcpServersKey, "affine", "headers")
-	if headers["Authorization"] != "Bearer aff_mcp_v1.cred-1.secret" {
+	if headers["Authorization"] != "Bearer bearer-1" {
 		t.Errorf("Authorization = %v", headers["Authorization"])
 	}
 }
@@ -257,7 +257,7 @@ func TestPreStartPicksUpRotatedToken(t *testing.T) {
 	}
 
 	rotated := affineBinding()
-	rotated.Token = "aff_mcp_v1.cred-2.rotated"
+	rotated.Token = "bearer-2"
 	changed, err := c.PreStart(context.Background(), mcpState(dir, rotated))
 	if err != nil {
 		t.Fatalf("PreStart: %v", err)
@@ -267,7 +267,7 @@ func TestPreStartPicksUpRotatedToken(t *testing.T) {
 	}
 	doc := readConfigDoc(t, dir)
 	headers := nested(t, doc, mcpServersKey, "affine", "headers")
-	if headers["Authorization"] != "Bearer aff_mcp_v1.cred-2.rotated" {
+	if headers["Authorization"] != "Bearer bearer-2" {
 		t.Errorf("Authorization = %v, want the rotated bearer", headers["Authorization"])
 	}
 }

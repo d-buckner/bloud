@@ -585,21 +585,32 @@ func TestRepoLoginTableCoversEveryUserApp(t *testing.T) {
 	rendered := renderLoginTable(apps)
 	userApps, _ := splitCatalog(apps)
 
-	for _, app := range userApps {
-		name := appDisplayName(app)
-		if strings.Count(rendered, name) != 1 {
-			t.Errorf("%s should appear exactly once in the login table:\n%s", name, rendered)
+	// Count exact table entries rather than substrings: a display name can
+	// contain another ("AFFiNE" is a prefix of "AFFiNE MCP"), and a raw
+	// strings.Count would read that as a duplicate.
+	entries := map[string]int{}
+	for _, line := range strings.Split(rendered, "\n") {
+		if !strings.HasPrefix(line, "| **") {
+			continue
 		}
-		strategy := loginTableRowStrategy(app)
-		label := loginStrategyLabel(strategy)
-		found := false
-		for _, line := range strings.Split(rendered, "\n") {
-			if strings.Contains(line, name) && strings.Contains(line, "**"+label+"**") {
-				found = true
+		cells := strings.Split(line, "|")
+		if len(cells) < 4 {
+			continue
+		}
+		label := strings.TrimSpace(cells[1])
+		for _, entry := range strings.Split(cells[2], ",") {
+			if entry = strings.TrimSpace(entry); entry != "" {
+				entries[label+"\x00"+entry]++
 			}
 		}
-		if !found {
-			t.Errorf("%s is not under its declared strategy %q (%s):\n%s", name, strategy, label, rendered)
+	}
+
+	for _, app := range userApps {
+		name := appDisplayName(app)
+		strategy := loginTableRowStrategy(app)
+		label := "**" + loginStrategyLabel(strategy) + "**"
+		if got := entries[label+"\x00"+name]; got != 1 {
+			t.Errorf("%s should appear exactly once under %s in the login table, got %d:\n%s", name, label, got, rendered)
 		}
 	}
 }

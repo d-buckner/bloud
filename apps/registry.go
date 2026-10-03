@@ -22,6 +22,7 @@ import (
 	// registers those eagerly in appconfig.RegisterSystem, because they are
 	// runtime-dependent and always needed.
 	_ "codeberg.org/d-buckner/bloud/apps/affine"
+	_ "codeberg.org/d-buckner/bloud/apps/affine-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/calino"
 	_ "codeberg.org/d-buckner/bloud/apps/hermes"
 	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
@@ -51,6 +52,7 @@ import (
 func NodeNames() []string {
 	return []string{
 		"apps-affine",
+		"apps-affine-mcp",
 		"apps-calino",
 		"apps-hermes",
 		"apps-homeassistant",

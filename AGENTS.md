@@ -863,7 +863,10 @@ combined with instance/SSH-target env vars). Instance overrides:
    generated dotenv config file for django-allauth OIDC, internal admin
    bootstrap), `apps/vaultwarden` (single container, generated dotenv file for
    built-in OIDC with `sso.scopes`/`sso.accessTokenMinutes`, `SSO_ONLY`, an
-   opt-in plain-HTTP dev switch; see its `INTEGRATION.md`).
+   opt-in plain-HTTP dev switch; see its `INTEGRATION.md`), `apps/affine-mcp`
+   (the wrapper shape: consumes the `appApi` credential from AFFiNE, generates
+   and publishes its own MCP bearer, writes the image's saved config file; see
+   its `INTEGRATION.md`).
 
 ## Integration validation runs the real dependency-graph path
 
@@ -949,7 +952,7 @@ to the right doc. When a doc moves, update it in both places.
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
 |Sharing/federation (in progress)|[features/sharing.md](docs/features/sharing.md)|
-|MCP servers as catalog apps (design; not built)|[features/mcp.md](docs/features/mcp.md)|
+|MCP servers as catalog apps (shipped: `apps/affine-mcp` providers, Hermes consumes)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Dated review findings|[specs/review.md](docs/specs/review.md)|
 | Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|

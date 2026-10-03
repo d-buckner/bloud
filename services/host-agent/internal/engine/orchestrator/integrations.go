@@ -265,6 +265,17 @@ func (o *Orchestrator) bindContract(
 			Path:        o.contractValue(providerID, contract, offer, "path"),
 			Token:       o.publishedSecret(providerID, contract, offer, requires),
 		})
+	case "appApi":
+		// The username is a non-secret value the provider mints at runtime (the
+		// account it bootstrapped), so it resolves through the published-value
+		// channel; the password is the ordinary single-secret payload. A consumer
+		// that did not require the secret gets the username and an empty password.
+		out.AppAPIs = append(out.AppAPIs, configurator.AppAPIBinding{
+			ProviderRef: ref,
+			Username:    o.contractValue(providerID, contract, offer, "username"),
+			Password:    o.publishedSecret(providerID, contract, offer, requires),
+			WorkspaceID: o.contractValue(providerID, contract, offer, "workspaceId"),
+		})
 	case "caldav":
 		// No secret arm: the `caldav` contract publishes none, because the
 		// credential is the person's own password and it never crosses an app
