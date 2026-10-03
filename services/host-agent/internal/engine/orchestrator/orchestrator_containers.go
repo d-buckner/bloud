@@ -8,11 +8,11 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
@@ -304,7 +304,7 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 
 	render := func(value string) string {
 		value = strings.ReplaceAll(value, "{{dataDir}}", dataDir)
-		value = strings.ReplaceAll(value, "{{appDataDir}}", filepath.Join(dataDir, appCatalogID))
+		value = strings.ReplaceAll(value, "{{appDataDir}}", dirs.AppDataDir(dataDir, appCatalogID))
 		for k, v := range extraVars {
 			value = strings.ReplaceAll(value, "{{"+k+"}}", v)
 		}

@@ -226,6 +226,7 @@ type routerModules struct {
 func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps *routerDeps) *routerModules {
 	appsMod := NewAppsModule(deps.catalogCache, deps.appStore, deps.orchCaller, logger)
 	appsMod.SetAppsDir(cfg.AppsDir)
+	appsMod.SetDataDir(cfg.DataDir)
 	// Catalog size fallback: resolve undeclared estimates from local images.
 	if sizeClient, err := podman.NewClient(); err == nil {
 		appsMod.SetImageSizeResolver(func(ctx context.Context, image string) (int64, bool) {

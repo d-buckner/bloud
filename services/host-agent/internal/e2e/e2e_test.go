@@ -50,6 +50,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 )
 
 // Service endpoints: published by the catalog to localhost inside the VM.
@@ -96,15 +98,29 @@ type secretsFile struct {
 	} `json:"appSecrets"`
 }
 
-// dataDir returns the runtime data directory (secrets.json, api-token, app
-// data). The deployer sets BLOUD_DATA_DIR; the standard default is the
-// fallback for direct runs.
+// dataDir returns the runtime data root (secrets.json, bloud.db, the
+// generated proxy config). App state is not directly in here: it sits one
+// level down, so use appDataDir for that. The deployer sets BLOUD_DATA_DIR;
+// the standard default is the fallback for direct runs.
 func dataDir() string {
 	if d := os.Getenv("BLOUD_DATA_DIR"); d != "" {
 		return d
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "bloud")
+}
+
+// appDataDir returns one app's private tree in the runtime under test. It
+// resolves through the same dirs helper the orchestrator uses to render
+// {{appDataDir}} and to fill AppState.DataPath, so the harness cannot drift
+// from the on-disk layout.
+//
+// This matters more than a normal helper. Most of these paths feed an
+// os.Stat inside a "must be gone after uninstall" assertion: point it at a
+// directory that never existed and the assertion passes forever. Routing
+// through dirs is what keeps that check able to fail.
+func appDataDir(app string) string {
+	return dirs.AppDataDir(dataDir(), app)
 }
 
 func readSecrets(t *testing.T) secretsFile {
@@ -127,7 +143,7 @@ func readSecrets(t *testing.T) secretsFile {
 // one-shot bootstrap token from secrets.json (first boot only).
 func authentikToken(t *testing.T) string {
 	t.Helper()
-	if data, err := os.ReadFile(filepath.Join(dataDir(), "authentik", "api-token")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(appDataDir("authentik"), "api-token")); err == nil {
 		if token := strings.TrimSpace(string(data)); token != "" {
 			return token
 		}

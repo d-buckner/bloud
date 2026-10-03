@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
@@ -743,7 +743,7 @@ func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName stri
 		delete(o.containerOwner, def.Name)
 	}
 	if clearData {
-		dataDir := filepath.Join(o.dataDir, appName)
+		dataDir := dirs.AppDataDir(o.dataDir, appName)
 		if err := o.removeAppData(ctx, dataDir); err != nil {
 			o.logger.Warn("failed to remove data directory", "app", appName, "path", dataDir, "error", err)
 		}
@@ -1364,7 +1364,7 @@ func (o *Orchestrator) runContainerHealthCheck(ctx context.Context, containerNam
 // using catalog metadata when available.
 func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) {
 	state := &configurator.AppState{
-		DataPath:      filepath.Join(o.dataDir, o.ownerApp(id)),
+		DataPath:      dirs.AppDataDir(o.dataDir, o.ownerApp(id)),
 		BloudDataPath: o.dataDir,
 	}
 

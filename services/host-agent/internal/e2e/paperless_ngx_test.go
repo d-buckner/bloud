@@ -219,7 +219,7 @@ func TestPaperlessNgxUninstallCleanup(t *testing.T) {
 	}
 
 	if os.Getenv("BLOUD_DATA_DIR") != "" {
-		dataPath := filepath.Join(dataDir(), "paperless-ngx")
+		dataPath := appDataDir("paperless-ngx")
 		if _, err := os.Stat(dataPath); err == nil {
 			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
 		}

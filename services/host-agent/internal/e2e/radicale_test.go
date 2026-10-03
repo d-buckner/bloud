@@ -23,7 +23,7 @@ var radicaleURL = getEnvDefault("BLOUD_E2E_RADICALE_URL", "http://localhost:5232
 // radicaleConfigPath is the INI file the configurator writes and the container
 // is pointed at with --config.
 func radicaleConfigPath() string {
-	return filepath.Join(dataDir(), "radicale", "config", "config")
+	return filepath.Join(appDataDir("radicale"), "config", "config")
 }
 
 // davRequest issues a DAV method with Basic credentials. Redirects are refused

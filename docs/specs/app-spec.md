@@ -468,8 +468,8 @@ from config/secrets at startup:
 
 | Variable | Source |
 |----------|--------|
-| `{{appDataDir}}` | `~/bloud-data/{appName}` |
-| `{{dataDir}}` | `~/bloud-data` |
+| `{{appDataDir}}` | `$BLOUD_DATA_DIR/apps/{appName}` |
+| `{{dataDir}}` | `$BLOUD_DATA_DIR` |
 | `{{postgresPassword}}` | Generated per-app from secrets.json |
 | `{{authentikSecretKey}}` | Generated from secrets.json |
 | `{{authentikLdapToken}}` | Retrieved at runtime (PostStart writes it) |
@@ -534,23 +534,27 @@ like Authentik.
 ## Volume and Data Management
 
 ```
-~/bloud-data/
-  authentik/
-    postgres/         ← apps-authentik-postgres data
-    media/            ← apps-authentik-server media
-  jellyfin/
-    config/           ← apps-jellyfin config
-    media/            ← apps-jellyfin media
-  immich/
-    postgres/         ← apps-immich-postgres data
-    upload/           ← apps-immich-server uploads
-    model-cache/      ← apps-immich-ml cache
+$BLOUD_DATA_DIR/
+  apps/
+    authentik/
+      postgres/         ← apps-authentik-postgres data
+      media/            ← apps-authentik-server media
+    jellyfin/
+      config/           ← apps-jellyfin config
+      media/            ← apps-jellyfin media
+    immich/
+      postgres/         ← apps-immich-postgres data
+      upload/           ← apps-immich-server uploads
+      model-cache/      ← apps-immich-ml cache
 ```
 
-`{{appDataDir}}` resolves to `~/bloud-data/{appName}`. Volume sources are
-relative to that.
+`{{appDataDir}}` resolves to `$BLOUD_DATA_DIR/apps/{appName}`. Volume
+sources are relative to that. Every app's private state sits under `apps/`
+so one operator-level path covers all of it, and an app named `media` or
+`downloads` cannot collide with the shared trees one level above.
 
-Uninstall with `clearData: true` removes `~/bloud-data/{appName}/` entirely.
+Uninstall with `clearData: true` removes
+`$BLOUD_DATA_DIR/apps/{appName}/` entirely.
 Uninstall with `clearData: false` removes containers but preserves data.
 
 ## App Store Model

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/secrets"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 )
@@ -81,6 +82,11 @@ type Config struct {
 	// Secrets manager for accessing generated secrets
 	Secrets *secrets.Manager
 }
+
+// authentikApp is the catalog ID of the identity provider whose configurator
+// drops its API token in the app data directory. Named here because config
+// reads a file another component writes, so the two must agree on the path.
+const authentikApp = "authentik"
 
 // Load reads configuration from environment variables with sensible defaults.
 // It initializes the secrets manager (auto-generating secrets when its file is
@@ -315,8 +321,10 @@ func getAuthentikToken(dataDir string, secretsMgr *secrets.Manager, logger *slog
 	}
 
 	// Check api-token file created by Authentik configurator
-	// This token is created via Django shell and is always valid
-	tokenPath := filepath.Join(dataDir, "authentik", "api-token")
+	// This token is created via Django shell and is always valid. The writer is
+	// the Authentik configurator at AppState.DataPath/api-token, so this must
+	// resolve through the same app-directory helper rather than a literal path.
+	tokenPath := filepath.Join(dirs.AppDataDir(dataDir, authentikApp), "api-token")
 	if data, err := os.ReadFile(tokenPath); err == nil {
 		token := string(data)
 		if token != "" {

@@ -100,9 +100,31 @@ Configuration is env var first, then `secrets.json`, then an error: there is no 
 
 Everything host-agent persists lives under `$BLOUD_DATA_DIR`:
 
+```text
+$BLOUD_DATA_DIR/
+├── bloud.db                 Bloud's own state (SQLite)
+├── secrets.json
+├── host-agent-api-token
+├── traefik/                 generated proxy config
+├── apps/                    every app's private tree
+│   └── <app>/               config, data, postgres, ... per metadata.yaml
+├── media/                   shared: movies, shows, music
+└── downloads/               shared: the media stack's drop area
+```
+
 - `bloud.db`: the SQLite database, created on first run and opened in WAL mode with foreign keys on
 - `secrets.json`: generated secrets (Postgres password, SSO host secret, LDAP bind password, admin API token). It is created on first run and migrated on load; a corrupt file is a fatal error rather than a silent regeneration.
 - `host-agent-api-token`: the admin API token as a standalone file, written next to `secrets.json` so the CLI and tests never parse the secrets file
+- `apps/`: every app's private state, one directory per app, resolved by
+  `internal/dirs.AppDataDir`. This is the grouping that makes `apps/` a
+  single backup target: it holds all app state and none of the shared media
+  or download trees. Grouping also keeps an app named `media` or `downloads`
+  from resolving onto the shared tree of the same name.
+
+The layout is defined in one place, `internal/dirs`, rather than as scattered
+`filepath.Join` calls. The catalog is not in this tree: `metadata.yaml` and
+configurator source live at `BLOUD_APPS_DIR`, a read-only install location
+whose directory is also named `apps`. The two are never interchangeable.
 
 The schema comes from the embedded `internal/schema/schema.sql`, applied through the versioned
 migration ledger in `internal/schema/migrations.go` on every start. Both the production database and

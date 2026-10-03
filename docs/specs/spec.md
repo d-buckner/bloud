@@ -804,13 +804,22 @@ The first release ships as a versioned Debian package containing:
   config.yaml
 
 /var/lib/bloud/
-  state/
-  secrets/
+  bloud.db            state: SQLite (WAL)
+  secrets.json
+  host-agent-api-token
+  traefik/            generated proxy config
   apps/
-  shared/
-  generated/
-  host-backups/
+    <app>/            every app's private tree: config, data, postgres, ...
+  media/              shared: movies, shows, music
+  downloads/          shared: the media stack's drop area
 ```
+
+The layout is defined once, in `internal/dirs`. `apps/` is the grouping
+that lets an operator point one backup rule at all app state without the
+shared media trees, and it keeps an app named `media` or `downloads` from
+resolving onto the shared tree of that name. Backups of the live database
+are a separate concern: `bloud.db` is WAL and each app may bundle a live
+Postgres, so a file copy while the stack runs is not a consistent snapshot.
 
 ### Runtime Application
 

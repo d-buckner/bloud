@@ -39,7 +39,7 @@ func TestJellyfinUninstallCleanup(t *testing.T) {
 	// clearData must remove the app's data directory (asserted when the
 	// deployer provides the data directory location).
 	if os.Getenv("BLOUD_DATA_DIR") != "" {
-		dataPath := filepath.Join(dataDir(), "jellyfin")
+		dataPath := appDataDir("jellyfin")
 		if _, err := os.Stat(dataPath); err == nil {
 			t.Errorf("data directory %s still exists after clearData uninstall", dataPath)
 		}
