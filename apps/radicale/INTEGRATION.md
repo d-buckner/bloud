@@ -103,6 +103,7 @@ it, authentication fails on a directory that is otherwise correct.
 | `[storage] hash_db` | `/var/lib/radicale/collections/ics_sync_hashes.json` | Inside the persisted tree, so deletions survive a restart |
 | `[rights] type` | `owner_only` | See [Isolation model](#isolation-model) |
 | `[web] type` | `internal` | Radicale's built-in browser UI at `/.web/` |
+| `[headers] Access-Control-Allow-*` | CORS allow-list | Lets a browser SPA (Calino) call the DAV endpoint cross-origin; see [Browser clients](#browser-clients) |
 
 ### Locked until the provider arrives
 
@@ -174,6 +175,33 @@ share is a follow-up that needs a rights backend change, not a setting.
 This was verified against a live install: `ldap-service` requesting
 `/admin/` gets `403 Forbidden`, not `401`. The identity was fine; the rights
 model is what refused it.
+
+## Browser clients
+
+The built-in web UI at `/.web/` is same-origin, but a browser-based DAV client
+is not: Calino is served from `calino.<host>` and calls `radicale.<host>`,
+which the browser treats as cross-origin. Radicale sends no CORS headers by
+default, so the generated config adds a `[headers]` section with an allow-list.
+
+Two properties make that sufficient, and a wildcard origin safe:
+
+- Radicale applies `[headers]` to every response, including `OPTIONS`. The
+  browser's CORS preflight is an anonymous `OPTIONS` (it carries no
+  credentials), and Radicale runs `do_OPTIONS` for an unauthenticated request,
+  so the preflight returns `200` before the client has presented a password.
+- Real DAV calls authenticate with Basic credentials the client sets in the
+  `Authorization` header. There is no cookie or browser session to ride, so
+  `Access-Control-Allow-Origin: *` exposes nothing to a caller who does not
+  already hold the user's password, and Calino needs none of the third-party
+  CORS proxy upstream offers as an alternative.
+
+`Access-Control-Allow-Headers` covers what a CalDAV client sends
+(`authorization`, `depth`, `if-match`, `destination`, `overwrite`), and
+`Access-Control-Expose-Headers` covers what it reads back (`DAV`, `ETag`,
+`Sync-Token`, `WWW-Authenticate`). A stricter origin list is possible once the
+Bloud host set is passed to this configurator; the wildcard is the deliberate
+choice for now, because it matches the per-request Basic-auth model rather than
+a browser-session one.
 
 ## Storage and the rootless Podman uid
 

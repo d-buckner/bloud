@@ -115,6 +115,27 @@ against 8080, and the configurator probes the host side. The trade-off is
 that `port` is the published port rather than the container's own; nothing
 consumes Calino's container address, because Calino provides no contract.
 
+## Why the browser can reach Radicale
+
+Calino is a static SPA, so its DAV calls go from the `calino.<host>` origin to
+the `radicale.<host>` origin: a cross-origin request the browser only exposes
+to JavaScript when the response carries CORS headers. Radicale sends none by
+default, so the bundle loads, authenticates, and then shows an empty window.
+
+The Radicale configurator writes a `[headers]` section with the CORS
+allow-list (see [`apps/radicale/INTEGRATION.md`](../radicale/INTEGRATION.md#browser-clients)).
+Two properties make this the right place and a wildcard origin safe:
+
+- Radicale applies `[headers]` to every response, including the preflight: the
+  browser's preflight is an anonymous `OPTIONS`, and Radicale answers it
+  without auth, so the preflight succeeds before the client has presented a
+  password.
+- Every real DAV call authenticates with Basic credentials the client sets
+  explicitly in the `Authorization` header, not with a cookie or a
+  browser-issued session. A wildcard origin therefore exposes nothing to a
+  caller who does not already hold the user's password, and Calino needs no
+  third-party CORS proxy (which would see the traffic) to reach the server.
+
 ## What the user does
 
 Bloud cannot preconfigure the account for them. Calino bakes its
@@ -131,12 +152,6 @@ user; the app's own settings UI is the right place for this.
 
 ## What is not wired
 
-- **Cross-origin reach from the browser to Radicale.** Calino dials
-  `radicale.<host>` from `calino.<host>`, which is cross-origin, and
-  Radicale sends no CORS headers. The upstream answer is a CORS proxy
-  (`ghcr.io/ivan-malinovski/calino-proxy`) or headers added at the reverse
-  proxy; neither is wired here yet. The app installs, loads, and authenticates;
-  the DAV round trip from the browser is what a follow-up has to settle.
 - **Preconfigured accounts.** Build-time only upstream, so per-install by
   definition. See [What the user does](#what-the-user-does).
 - **Server-side state of any kind.** Nothing to back up, nothing to migrate,

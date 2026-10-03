@@ -331,6 +331,28 @@ func TestRenderConfigUsesTheICSSyncStorage(t *testing.T) {
 	}
 }
 
+// Calino is a browser SPA: its DAV calls to radicale.<host> are cross-origin,
+// so without CORS headers the browser refuses the response and no calendar
+// ever appears. Radicale's [headers] section is applied to every response,
+// including the anonymous OPTIONS preflight, which is what makes the direct
+// (proxy-free) connection work.
+func TestRenderConfigAllowsBrowserDAVOrigins(t *testing.T) {
+	got := renderConfig(5232, ldapOutput())
+
+	for _, want := range []string{
+		"Access-Control-Allow-Origin = *",
+		"Access-Control-Allow-Methods = GET, HEAD, OPTIONS, PROPFIND, PROPPATCH, REPORT, PUT, DELETE, MKCALENDAR, MKCOL, MOVE, COPY",
+	} {
+		assert.Contains(t, got, want)
+	}
+	// The headers a DAV REPORT/PROPFIND preflight asks for, plus the response
+	// headers a sync client reads back (ETag, Sync-Token, DAV).
+	assert.Contains(t, got, "authorization")
+	assert.Contains(t, got, "depth")
+	assert.Contains(t, got, "Sync-Token")
+	assert.Contains(t, got, "ETag")
+}
+
 func TestRenderICSSyncComposesTheFeedURL(t *testing.T) {
 	got := renderICSSync("alice", []configurator.ICSFeedBinding{feedBinding()})
 

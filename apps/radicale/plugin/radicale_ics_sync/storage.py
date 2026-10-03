@@ -139,10 +139,14 @@ class Storage(BaseStorage):
         self._delegate = MultiFileSystemStorage(configuration)
         self._sync_jobs: List[SyncJob] = []
         filesystem_folder = configuration.get("storage", "filesystem_folder")
-        self._hash_db_path = os.path.join(
-            os.path.dirname(os.path.normpath(filesystem_folder)),
-            "ics_sync_hashes.json",
-        )
+        configured_hash_db = self.configuration.get("storage", "hash_db")
+        if configured_hash_db:
+            self._hash_db_path = configured_hash_db
+        else:
+            self._hash_db_path = os.path.join(
+                os.path.dirname(os.path.normpath(filesystem_folder)),
+                "ics_sync_hashes.json",
+            )
         self._upstream_hashes: Dict[str, Dict[str, Dict[str, str]]] = _load_hashes(
             self._hash_db_path
         )
@@ -329,7 +333,10 @@ class Storage(BaseStorage):
             props["D:displayname"] = display_name
         logger.info("radicale-ics-sync: creating collection %r", collection_path)
         try:
-            self._delegate.create_collection(collection_path, props=props)
+            # create_collection takes the sanitized absolute path (leading
+            # slash, no trailing slash), not the "user/name" form the sync job
+            # carries.
+            self._delegate.create_collection(path, props=props)
         except Exception as e:
             logger.warning(
                 "radicale-ics-sync: failed to create collection %r: %s",
