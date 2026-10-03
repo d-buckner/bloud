@@ -192,7 +192,35 @@ config (any settings change does), the file is `0600` and the host cannot
 read it. `readConfig` falls back to `base64` inside the container, which
 reads its own file without complaint.
 
-The read comes back encoded on purpose too. `Deps.Exec` merges stdout and
+The fallback has to answer a second question too. A config that has not
+been written yet is **not visible as missing** from the host: the host
+cannot traverse into the directory at all, so `ENOENT` arrives as `EACCES`.
+An unconditional error on the container read therefore failed the node over
+a file that simply was not there yet, which is exactly how the first CI run
+of this app failed:
+
+```
+PostStart failed: reading .../data/config.yaml: permission denied
+  (reading it inside apps-hermes-webui failed too:
+   base64: /home/hermeswebui/.hermes/config.yaml: No such file or directory)
+```
+
+The container-side read is now a script that tests for the file and exits
+with a dedicated code (44) when it is absent, so "absent" is a distinct,
+deterministic answer rather than a string match against an error message
+that could change with locale. Absent means an empty document, which the
+merge then fills with the Bloud provider and writes back through the
+container.
+
+Verified against the live install after deleting the file out from under it:
+
+```
+the agent config does not exist yet; reading it through the container said so
+wrote the agent config through the running container
+the active agent profile is wired to Bloud's model  provider=custom:bloud
+```
+
+The bytes come back encoded on purpose too. `Deps.Exec` merges stdout and
 stderr, so a runtime warning printed during the read would otherwise land
 inside the YAML and get written back over the real config. Encoded,
 contamination fails the decode instead of being merged.

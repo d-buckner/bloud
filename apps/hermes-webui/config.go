@@ -177,13 +177,10 @@ const containerWriteUnavailable = " (the agent owns $HERMES_HOME once it has sta
 // readConfig reads the agent's config file, falling back to the container
 // when the host-side read is refused.
 //
-// Once the agent has rewritten its own config (the user changed a setting in
-// the UI), the file is owned by the container's uid, which under rootless
-// podman is a host uid in the subuid range and mode 0600. The host agent
-// wrote the file originally and can no longer read it. HERMES_HOME_MODE
-// makes the *directory* writable, which is the write path; this is the read
-// path, and it goes through the container, which reads its own file without
-// complaint.
+// Once the agent has run it owns $HERMES_HOME, and under rootless podman
+// that is a host uid the host agent is not. The host cannot read the file
+// it wrote, and cannot write it either; the container is the only process
+// with a right to either. This is the read path.
 //
 // The bytes come back base64-encoded on purpose. Deps.Exec is a combined
 // stdout+stderr channel, so a runtime warning would otherwise land inside
@@ -201,8 +198,18 @@ func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, 
 		return nil, fmt.Errorf("%w%s", err, containerReadUnavailable)
 	}
 
-	out, execErr := c.exec(ctx, nodeName, nil, []string{"base64", containerHome + "/" + configFileName})
+	out, execErr := c.exec(ctx, nodeName, nil, []string{"sh", "-c", containerReadScript})
 	if execErr != nil {
+		if isAbsentExit(execErr) {
+			// The file is simply not there yet. The host could not see that
+			// for itself: it cannot stat inside a directory it does not own,
+			// so a missing file arrives as EACCES rather than ENOENT, and an
+			// unconditional error here failed the node over a config that had
+			// not been written yet.
+			c.logger.Info("the agent config does not exist yet; reading it through the container said so",
+				"path", cfgPath)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("%w%s (reading it inside %s failed too: %v)",
 			err, containerReadUnavailable, nodeName, execErr)
 	}
@@ -213,6 +220,24 @@ func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, 
 	c.logger.Info("read the agent config through the container: the host agent cannot read a file the container owns",
 		"path", cfgPath)
 	return decoded, nil
+}
+
+// absentExitCode is the exit status containerReadScript uses to say "no such
+// file". A dedicated code rather than a message match because Deps.Exec
+// reports failure as a string, and "No such file or directory" is the kind
+// of text that changes with locale while an exit code does not.
+const absentExitCode = 44
+
+// containerReadScript is the container-side read. The test is what makes an
+// absent file distinguishable from a failed read.
+var containerReadScript = fmt.Sprintf(
+	"if [ -f %s ]; then base64 %s; else exit %d; fi",
+	containerConfigPath, containerConfigPath, absentExitCode)
+
+// isAbsentExit reports whether an exec error is the script's "no such file"
+// signal.
+func isAbsentExit(err error) bool {
+	return strings.Contains(err.Error(), fmt.Sprintf("exit status %d", absentExitCode))
 }
 
 // containerConfigPath is the agent config file as the container addresses it.
