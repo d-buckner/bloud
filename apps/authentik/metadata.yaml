@@ -128,5 +128,14 @@ containers:
       AUTHENTIK_HOST: "http://apps-authentik-server:9000"
       AUTHENTIK_INSECURE: "true"
       AUTHENTIK_TOKEN: "{{authentikLdapToken}}"
+    # The outpost container is up long before it serves. It must fetch its
+    # configuration from Authentik with the token above, and only then binds
+    # 3389; a wrong or not-yet-issued token leaves it retrying forever while the
+    # container stays Up. Readiness is the TCP socket, not the process.
+    healthCheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/3389'"]
+      interval: 5
+      timeout: 5
+      retries: 30
     dependsOn:
       - apps-authentik-server
