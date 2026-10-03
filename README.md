@@ -19,7 +19,7 @@ The script is short, and you should read it before piping it to a shell:
 curl -fsSL https://raw.githubusercontent.com/d-buckner/bloud/main/install.sh | sudo sh
 ```
 
-Open the dashboard at http://localhost:8080. Set your host under Settings, then Hosts. Install Jellyfin.
+Open the dashboard at http://localhost:8080. Set your host under Settings. Install Jellyfin.
 
 **Please don't expose bloud to the public internet yet.** It's alpha, it serves plain HTTP,
 and there is no mechanism yet for getting security updates to apps or to Bloud itself. Keep it
