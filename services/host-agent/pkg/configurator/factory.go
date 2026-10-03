@@ -58,6 +58,14 @@ type Deps struct {
 	// nil as "cannot apply now".
 	Exec ExecFunc
 
+	// ContainerRunning reports whether a named container currently exists and
+	// is running. It lets a configurator tell "the container is stopped, so a
+	// read that needs the container is not meaningful yet" from "the container
+	// is up and the read still failed", which is a real fault. Nil when no
+	// runtime is available (CLI/tests); callers that need the distinction must
+	// treat nil as "cannot tell" and keep their hard-error path.
+	ContainerRunning ContainerRunningFunc
+
 	// HTTP builds app HTTP clients for this process: shared transport,
 	// default retry policy, shared logger. The zero value is usable (lazy
 	// defaults), so a configurator can always call deps.HTTP.New(...).
@@ -84,6 +92,10 @@ type Factory func(deps Deps) (NodeLifecycle, error)
 // ExecFunc runs a command inside a named container and returns its combined
 // output. It is the shape of Deps.Exec (see there for the nil contract).
 type ExecFunc func(ctx context.Context, containerName string, env map[string]string, cmd []string) ([]byte, error)
+
+// ContainerRunningFunc reports whether a named container is currently running.
+// It is the shape of Deps.ContainerRunning (see there for the nil contract).
+type ContainerRunningFunc func(ctx context.Context, containerName string) (bool, error)
 
 var (
 	factoryMu     sync.RWMutex

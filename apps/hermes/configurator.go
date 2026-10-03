@@ -63,6 +63,12 @@ type Configurator struct {
 	// a denied host read has no remedy.
 	exec configurator.ExecFunc
 
+	// containerRunning reports whether the Hermes container is up. readConfig
+	// uses it to tell "stopped, so the read cannot be attempted" from "running
+	// and the read still failed", which is a real fault. Nil in CLI/test
+	// contexts; readConfig then keeps its hard-error path.
+	containerRunning configurator.ContainerRunningFunc
+
 	// baseURL is a test seam: when set, the API client resolves to it
 	// instead of localhost:port.
 	baseURL string
@@ -82,10 +88,11 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	c := &Configurator{
-		port:       port,
-		ssoBaseURL: deps.PrimaryBaseURL,
-		logger:     logger.With("app", "hermes"),
-		exec:       deps.Exec,
+		port:             port,
+		ssoBaseURL:       deps.PrimaryBaseURL,
+		logger:           logger.With("app", "hermes"),
+		exec:             deps.Exec,
+		containerRunning: deps.ContainerRunning,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -158,6 +165,13 @@ func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, 
 
 	out, execErr := c.exec(ctx, nodeName, nil, []string{"base64", containerHome + "/" + configFileName})
 	if execErr != nil {
+		// The container read is only possible while the container is running.
+		// A stopped container is the cold-start state after a reboot, not a
+		// permissions fault, so report it as a skippable condition: the file
+		// keeps the config it already had and PreStart does not fail the node.
+		if c.containerNotRunning(ctx) {
+			return nil, fmt.Errorf("%w: %s%s", errContainerNotRunning, configFileName, containerReadUnavailable)
+		}
 		return nil, fmt.Errorf("%w%s (reading it inside %s failed too: %v)",
 			err, containerReadUnavailable, nodeName, execErr)
 	}
@@ -168,6 +182,28 @@ func (c *Configurator) readConfig(ctx context.Context, cfgPath string) ([]byte, 
 	c.logger.Info("read Hermes config through the container: the host agent cannot read a file the container owns",
 		"path", cfgPath)
 	return decoded, nil
+}
+
+// errContainerNotRunning reports that config.yaml is readable only through the
+// container and the container is stopped, so the read cannot be completed this
+// pass. PreStart turns it into a skipped merge rather than a failure: the file
+// already carries the last merged config, and the next pass reads it through
+// the container once it is up (issue #184).
+var errContainerNotRunning = errors.New("config is readable only through a running container")
+
+// containerNotRunning reports whether the probe positively says the container
+// is stopped. A nil probe or a probe error means "cannot tell" (false), so the
+// caller keeps the hard error: an unverifiable state is not a reason to skip a
+// merge that may be needed.
+func (c *Configurator) containerNotRunning(ctx context.Context) bool {
+	if c.containerRunning == nil {
+		return false
+	}
+	running, err := c.containerRunning(ctx, nodeName)
+	if err != nil {
+		return false
+	}
+	return !running
 }
 
 // containerReadUnavailable is appended when a host read is refused and there
@@ -192,6 +228,17 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 	cfgPath := filepath.Join(state.DataPath, "data", configFileName)
 
 	existing, err := c.readConfig(ctx, cfgPath)
+	if errors.Is(err, errContainerNotRunning) {
+		// Cold start: the container owns config.yaml and is not up yet, so the
+		// merge cannot be measured against the current document. Leaving the
+		// file alone starts Hermes on its last merged config instead of
+		// parking the node in ERROR. If that config is stale, PostStart's
+		// provider check fails and the next pass re-runs PreStart with the
+		// container up, which is when the merge can complete.
+		c.logger.Warn("skipping Hermes config merge: the container is stopped and the host cannot read its config; "+
+			"keeping the config already on disk", "path", cfgPath)
+		return configurator.NoRestart(), nil
+	}
 	if err != nil && !os.IsNotExist(err) {
 		return configurator.NoRestart(), fmt.Errorf("reading %s: %w", cfgPath, err)
 	}

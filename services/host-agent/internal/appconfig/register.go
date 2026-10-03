@@ -84,7 +84,10 @@ func RegisterSystem(
 // exec (may be nil in CLI/tests) is the host-runtime callback configurators use
 // to run a command inside a container and read its output; it is plumbed
 // straight into Deps.Exec.
-func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, restartContainer func(ctx context.Context, name string) error, exec configurator.ExecFunc) configurator.Deps {
+// containerRunning (may be nil in CLI/tests) is the host-runtime callback
+// configurators use to tell a stopped container from a running one; it is
+// plumbed straight into Deps.ContainerRunning.
+func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, restartContainer func(ctx context.Context, name string) error, exec configurator.ExecFunc, containerRunning configurator.ContainerRunningFunc) configurator.Deps {
 	primaryBaseURL := func() string {
 		if hosts != nil {
 			return hosts.Get().PrimaryBaseURL()
@@ -103,6 +106,7 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, rest
 		TraefikPort:      cfg.TraefikPort,
 		RestartContainer: restartContainer,
 		Exec:             exec,
+		ContainerRunning: containerRunning,
 		HTTP: configurator.ClientFactory{
 			Transport: transport,
 			Retry:     appclient.DefaultRetry,

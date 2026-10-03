@@ -255,8 +255,18 @@ func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *h
 		}
 		return client.StartContainer(ctx, name)
 	}
+	// containerRunning lets a configurator tell a stopped container from a
+	// running one when a read depends on the container being up (Hermes' config
+	// that only the container can read). A missing container is not running.
+	containerRunning := func(ctx context.Context, name string) (bool, error) {
+		details, err := client.InspectContainer(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		return details != nil && details.State == "running", nil
+	}
 	registry := configurator.NewRegistry(logger,
-		appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv))
+		appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv, containerRunning))
 	appconfig.RegisterSystem(cfg, containerruntime.NewPodmanRuntime(client), vars)
 	return registry
 }
