@@ -87,18 +87,29 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 
 	o.ensureNetworksForContainer(ctx, def)
 
-	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.TemplateVars)
+	spec, err := o.computeContainerSpec(def, appCatalogID)
 	if err != nil {
-		return fmt.Errorf("build container spec: %w", err)
+		return err
 	}
-
-	o.applyIssuerExtraHost(&spec, appCatalogID)
 	o.ensureMountDirs(def.Name, spec)
 
 	if _, err := o.config.Containers.Ensure(ctx, spec); err != nil {
 		return fmt.Errorf("ensure container: %w", err)
 	}
 	return nil
+}
+
+// computeContainerSpec renders the spec the current catalog produces for one
+// container, including the issuer extra-host pin. It is pure: no networks or
+// mount directories are created, so callers can use it to diff a desired spec
+// against a running container without side effects.
+func (o *Orchestrator) computeContainerSpec(def *catalog.ContainerDef, appCatalogID string) (containerruntime.Spec, error) {
+	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.TemplateVars)
+	if err != nil {
+		return containerruntime.Spec{}, fmt.Errorf("build container spec: %w", err)
+	}
+	o.applyIssuerExtraHost(&spec, appCatalogID)
+	return spec, nil
 }
 
 // ensureNetworksForContainer creates every user-defined network the
@@ -227,6 +238,10 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 		o.failNode(id, owner, store.OpPhasePrestart, err, "SSO provisioning failed")
 		return false
 	}
+
+	// If the catalog changed this app's SSO strategy, deprovision the old one
+	// now that the new one is live, then record the new strategy.
+	o.reconcileSSOStrategy(ctx, id)
 
 	if def != nil && !o.runContainerPhases(ctx, id, owner, def, appCatalogID, prestart) {
 		return false

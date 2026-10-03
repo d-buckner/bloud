@@ -402,14 +402,16 @@ func (f *FakeCatalogCache) AddApp(app *catalog.App) {
 // ============================================================================
 
 type FakeAppStore struct {
-	mu       sync.RWMutex
-	apps     map[string]*store.InstalledApp
-	onChange func()
+	mu          sync.RWMutex
+	apps        map[string]*store.InstalledApp
+	ssoStrategy map[string]string
+	onChange    func()
 }
 
 func NewFakeAppStore() *FakeAppStore {
 	return &FakeAppStore{
-		apps: make(map[string]*store.InstalledApp),
+		apps:        make(map[string]*store.InstalledApp),
+		ssoStrategy: make(map[string]string),
 	}
 }
 
@@ -508,6 +510,19 @@ func (f *FakeAppStore) UpdateDisplayName(name, displayName string) error {
 		app.DisplayName = displayName
 		f.notify()
 	}
+	return nil
+}
+
+func (f *FakeAppStore) GetSSOStrategy(name string) (string, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.ssoStrategy[name], nil
+}
+
+func (f *FakeAppStore) SetSSOStrategy(name, strategy string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ssoStrategy[name] = strategy
 	return nil
 }
 

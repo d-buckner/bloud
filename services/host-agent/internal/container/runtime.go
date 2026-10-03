@@ -8,14 +8,23 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
 )
 
 const (
-	managedLabel  = "io.bloud.managed"
-	revisionLabel = "io.bloud.spec-revision"
+	// AppLabel names the owning catalog app on every managed container
+	// (invariant 12).
+	AppLabel = "io.bloud.app"
+	// ManagedLabel marks a container Bloud created and therefore may
+	// remove or recreate.
+	ManagedLabel = "io.bloud.managed"
+	// SpecRevisionLabel carries the revision of the spec a container was
+	// created from, so a caller can compare a desired spec against a
+	// running container without recreating it.
+	SpecRevisionLabel = "io.bloud.spec-revision"
 )
 
 // Spec is the runtime-neutral desired state for one container.
@@ -55,12 +64,23 @@ type EnsureResult struct {
 	Started   bool
 }
 
+// ContainerInfo is the runtime-neutral view of one container the orchestrator
+// needs to diff against the catalog: its name and its labels. The labels carry
+// the owner (AppLabel) and the spec revision (SpecRevisionLabel).
+type ContainerInfo struct {
+	Name   string
+	Labels map[string]string
+}
+
 // Runtime converges container desired state without exposing Podman-specific operations.
 type Runtime interface {
 	EnsureNetwork(ctx context.Context, name string) error
 	Ensure(ctx context.Context, spec Spec) (EnsureResult, error)
 	Remove(ctx context.Context, name string) error
 	Inspect(ctx context.Context, name string) (State, error)
+	// ListContainers returns every container with its name and labels, so
+	// the orchestrator can diff the running set against the catalog.
+	ListContainers(ctx context.Context) ([]ContainerInfo, error)
 	// Exec runs a command inside a running container. Returns an error if the
 	// command exits with a non-zero status, the container is not running, or
 	// the context is canceled.
@@ -101,6 +121,7 @@ type podmanClient interface {
 	StartContainer(ctx context.Context, nameOrID string) error
 	RemoveContainer(ctx context.Context, nameOrID string, force bool) error
 	InspectContainer(ctx context.Context, nameOrID string) (*podman.ContainerDetails, error)
+	ListContainers(ctx context.Context) ([]podman.Container, error)
 	EnsureNetwork(ctx context.Context, name string) error
 	Exec(ctx context.Context, containerName string, cmd []string) ([]byte, error)
 	RemoveHostPath(ctx context.Context, path string) error
@@ -160,7 +181,7 @@ func (r *PodmanRuntime) Ensure(ctx context.Context, spec Spec) (EnsureResult, er
 		return EnsureResult{}, err
 	}
 
-	if current != nil && current.Labels[revisionLabel] == revision {
+	if current != nil && current.Labels[SpecRevisionLabel] == revision {
 		if current.State == "running" {
 			return EnsureResult{}, nil
 		}
@@ -221,7 +242,7 @@ func (r *PodmanRuntime) Remove(ctx context.Context, name string) error {
 // ownership label. Every destructive path checks it, so a name collision
 // with a container Bloud did not create can never destroy it.
 func isManaged(details *podman.ContainerDetails) bool {
-	return details != nil && details.Labels[managedLabel] == "true"
+	return details != nil && details.Labels[ManagedLabel] == "true"
 }
 
 func validateSpec(spec Spec) error {
@@ -271,6 +292,32 @@ func (r *PodmanRuntime) Inspect(ctx context.Context, name string) (State, error)
 	return State{Exists: true, Running: current.State == "running"}, nil
 }
 
+// ListContainers returns every container with its name and labels, translating
+// podman's leading-slash names into the bare names the rest of the runtime
+// addresses (spec.Name is written without the slash).
+func (r *PodmanRuntime) ListContainers(ctx context.Context) ([]ContainerInfo, error) {
+	containers, err := r.client.ListContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		out = append(out, ContainerInfo{Name: name, Labels: c.Labels})
+	}
+	return out, nil
+}
+
+// Revision returns the deterministic revision stored as SpecRevisionLabel on a
+// container created from this spec. Callers compare it against a running
+// container's label to detect a change without recreating the container.
+func (s Spec) Revision() (string, error) {
+	return specRevision(s)
+}
+
 func specRevision(spec Spec) (string, error) {
 	data, err := json.Marshal(spec)
 	if err != nil {
@@ -285,8 +332,8 @@ func toPodmanConfig(spec Spec, revision string) podman.ContainerConfig {
 	for key, value := range spec.Labels {
 		labels[key] = value
 	}
-	labels[managedLabel] = "true"
-	labels[revisionLabel] = revision
+	labels[ManagedLabel] = "true"
+	labels[SpecRevisionLabel] = revision
 	config := podman.ContainerConfig{
 		Name:          spec.Name,
 		Image:         spec.Image,

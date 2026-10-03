@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS apps (
     port INTEGER,
     is_system INTEGER NOT NULL DEFAULT 0,
     tailnet_id TEXT DEFAULT '',
+    sso_strategy TEXT NOT NULL DEFAULT '',
     integration_config TEXT DEFAULT '{}',
     installed_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))

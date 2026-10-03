@@ -5,6 +5,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -246,6 +247,32 @@ func (s *AppStore) UpdateDisplayName(catalogID, displayName string) error {
 	}
 
 	s.notify()
+	return nil
+}
+
+// GetSSOStrategy returns the SSO strategy the app last converged to, or the
+// empty string when none has been recorded yet.
+func (s *AppStore) GetSSOStrategy(catalogID string) (string, error) {
+	var strategy string
+	err := s.db.QueryRow(`SELECT sso_strategy FROM apps WHERE catalog_id = ?`, catalogID).Scan(&strategy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get sso strategy: %w", err)
+	}
+	return strategy, nil
+}
+
+// SetSSOStrategy records the SSO strategy the app just converged to.
+func (s *AppStore) SetSSOStrategy(catalogID, strategy string) error {
+	_, err := s.db.Exec(`
+		UPDATE apps SET sso_strategy = ?, updated_at = datetime('now')
+		WHERE catalog_id = ?
+	`, strategy, catalogID)
+	if err != nil {
+		return fmt.Errorf("failed to set sso strategy: %w", err)
+	}
 	return nil
 }
 

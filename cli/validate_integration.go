@@ -358,6 +358,7 @@ systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
 func integrationRunTests(ctx context.Context, ex executor.Executor, tier manifestTier, rt string, result *ValidateResult, t *integrationTranscript) int {
 	testEnv := map[string]string{
 		"BLOUD_DATA_DIR":            rt + "/data",
+		"BLOUD_APPS_DIR":            rt + "/apps",
 		"BLOUD_TRAEFIK_DYNAMIC_DIR": rt + "/data/traefik/dynamic",
 		"BLOUD_E2E_HOST_AGENT_UNIT": integrationHostAgentUnit,
 	}

@@ -25,6 +25,8 @@ type fakePodmanClient struct {
 	// pullErr, when set, makes every pull fail. Used to prove a failed pull
 	// cannot cost the container that is already running.
 	pullErr error
+	// listed is the set of containers ListContainers returns.
+	listed []podman.Container
 	// events is the chronological log across all mutating calls, so a test
 	// can pin ordering and not just the final set of calls.
 	events []string
@@ -82,6 +84,10 @@ func (f *fakePodmanClient) InspectContainer(_ context.Context, _ string) (*podma
 	return f.current, nil
 }
 
+func (f *fakePodmanClient) ListContainers(_ context.Context) ([]podman.Container, error) {
+	return f.listed, nil
+}
+
 func (f *fakePodmanClient) EnsureNetwork(_ context.Context, name string) error {
 	f.networks = append(f.networks, name)
 	return nil
@@ -116,7 +122,7 @@ func TestPodmanRuntimeEnsureIsIdempotentAndRecreatesChangedSpec(t *testing.T) {
 	assert.True(t, first.Created)
 	assert.True(t, first.Started)
 	require.Len(t, client.created, 1)
-	assert.Equal(t, "true", client.created[0].Labels[managedLabel])
+	assert.Equal(t, "true", client.created[0].Labels[ManagedLabel])
 
 	second, err := runtime.Ensure(context.Background(), spec)
 	require.NoError(t, err)
@@ -166,7 +172,7 @@ func TestPodmanRuntimePullFailureLeavesExistingContainerUntouched(t *testing.T) 
 			ID:     "old",
 			Name:   "apps-jellyfin",
 			State:  "running",
-			Labels: map[string]string{managedLabel: "true"},
+			Labels: map[string]string{ManagedLabel: "true"},
 		},
 		pullErr: errors.New("registry unreachable"),
 	}
@@ -188,7 +194,7 @@ func TestPodmanRuntimeEnsurePullsBeforeRemoving(t *testing.T) {
 			ID:     "old",
 			Name:   "apps-jellyfin",
 			State:  "running",
-			Labels: map[string]string{managedLabel: "true"},
+			Labels: map[string]string{ManagedLabel: "true"},
 		},
 	}
 	runtime := newPodmanRuntime(client)

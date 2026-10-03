@@ -141,6 +141,9 @@ func (r *pullTestRuntime) Inspect(context.Context, string) (containerruntime.Sta
 	return containerruntime.State{}, nil
 }
 func (r *pullTestRuntime) Exec(context.Context, string, []string) error { return nil }
+func (r *pullTestRuntime) ListContainers(context.Context) ([]containerruntime.ContainerInfo, error) {
+	return nil, nil
+}
 
 func TestOrchestrator_PullProgressPublishedWithOwningApp(t *testing.T) {
 	g := graph.New(graph.NewMapRepository())

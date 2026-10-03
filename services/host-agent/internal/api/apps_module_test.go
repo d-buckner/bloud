@@ -285,6 +285,30 @@ func TestAppsModule_GetInstalled_ExcludesSystem(t *testing.T) {
 	}
 }
 
+func TestAppsModule_GetInstalled_CatalogMissing(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{CatalogID: "jellyfin", DisplayName: "Jellyfin"})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin", IsSystem: false})
+	appStore.AddApp(&store.InstalledApp{CatalogID: "ghost", DisplayName: "Ghost", IsSystem: false})
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+
+	installed, err := mod.GetInstalled()
+	require.NoError(t, err)
+	require.Len(t, installed, 2)
+	for _, app := range installed {
+		if app.CatalogID == "ghost" {
+			assert.True(t, app.CatalogMissing, "an installed app with no catalog entry must be flagged")
+		} else {
+			assert.False(t, app.CatalogMissing)
+		}
+	}
+}
+
 func TestAppsModule_GetInstalled_Empty(t *testing.T) {
 	cache := NewFakeCatalogCache()
 	appStore := NewFakeAppStore()
@@ -297,7 +321,6 @@ func TestAppsModule_GetInstalled_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, installed, 0)
 }
-
 func TestAppsModule_AppMetadata(t *testing.T) {
 	cache := NewFakeCatalogCache()
 	addAppToCache(cache, &catalog.App{CatalogID: "jellyfin", DisplayName: "Jellyfin", Description: "A media server"})

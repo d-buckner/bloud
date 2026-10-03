@@ -94,3 +94,12 @@ func (c *Client) DeleteAppSSO(ctx context.Context, appName, displayName, ssoStra
 
 	return nil
 }
+
+// Deprovision implements orchestrator.SSOProvisioner.Deprovision: it deletes
+// the application and provider an app's previous SSO strategy created. It is
+// idempotent by way of DeleteAppSSO, which treats an already-deleted provider
+// as success. Strategies with no per-app provider ("none", "ldap") delete
+// nothing beyond a possibly-absent application slug.
+func (c *Client) Deprovision(ctx context.Context, appName, displayName, ssoStrategy string) error {
+	return c.DeleteAppSSO(ctx, appName, displayName, ssoStrategy)
+}

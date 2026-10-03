@@ -150,6 +150,14 @@ func (f *FakeAppStore) UpdateDisplayName(name, displayName string) error {
 	return nil
 }
 
+func (f *FakeAppStore) GetSSOStrategy(catalogID string) (string, error) {
+	return "", nil
+}
+
+func (f *FakeAppStore) SetSSOStrategy(catalogID, strategy string) error {
+	return nil
+}
+
 func (f *FakeAppStore) Uninstall(name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
