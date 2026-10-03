@@ -79,6 +79,7 @@ func runServer() {
 	} else {
 		waitForSystemConvergence(server, logger)
 	}
+	logDNSDiagnostic(stack, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -282,6 +283,7 @@ func agentServerConfig(st *agentStack) api.ServerConfig {
 		TrustedLocalNets:      cfg.TrustedLocalNets,
 		APIToken:              cfg.APIToken,
 		Hosts:                 st.hosts,
+		DNSDiagnostics:        system.NewDNSDiagnostics(st.client, func() string { return st.hosts.Get().PrimaryBaseURL() }),
 		EventsBus:             st.eventsBus,
 		Settings:              st.settings,
 		LDAPOutput:            cfg.LDAPOutput(),
@@ -372,6 +374,27 @@ func startBackgroundCollectors(ctx context.Context, database *sql.DB, logger *sl
 	system.StartStatsCollector(ctx)
 	// Background purge of expired sessions (SQLite has no TTL).
 	store.StartSessionPurger(ctx, store.NewSessionStore(database), logger)
+}
+
+// logDNSDiagnostic runs the container DNS check once at startup. A podman
+// sandbox that captured stale resolver upstreams at boot is otherwise visible
+// only as an app that cannot resolve its OIDC issuer; this makes it a system
+// warning with the observed sandbox upstreams attached.
+func logDNSDiagnostic(st *agentStack, logger *slog.Logger) {
+	if st.serverCfg.DNSDiagnostics == nil {
+		return
+	}
+	diag := st.serverCfg.DNSDiagnostics.Check(context.Background())
+	switch {
+	case diag.Diverged:
+		logger.Warn("container DNS resolver diverges from the host",
+			"host", diag.Host,
+			"container", diag.Container,
+			"container_nameservers", diag.ContainerNameservers,
+			"detail", diag.Detail)
+	case diag.Skipped:
+		logger.Debug("container DNS check skipped", "host", diag.Host, "detail", diag.Detail)
+	}
 }
 
 // shutdownAgentServer drains in-flight requests on the shutdown signal.

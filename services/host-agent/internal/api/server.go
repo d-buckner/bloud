@@ -17,6 +17,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/go-chi/chi/v5"
@@ -101,6 +102,13 @@ type ServerConfig struct {
 	// the dashboard behind the loading page for the length of a full
 	// convergence pass. See cmd/host-agent/dev_gate.go.
 	Gate <-chan struct{}
+
+	// DNSDiagnostics answers GET /api/system/diagnostics and is logged once at
+	// startup: it compares host and container resolution of the configured
+	// public host so a podman sandbox that captured stale resolver upstreams
+	// shows up as a system warning instead of only as an app that cannot
+	// resolve its OIDC issuer. Nil omits the endpoint.
+	DNSDiagnostics *system.DNSDiagnostics
 
 	// Authentik is the internal identity-provider client. When nil the
 	// router builds one from AuthentikToken and AuthentikPort, which is the

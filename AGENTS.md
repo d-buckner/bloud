@@ -795,7 +795,10 @@ combined with instance/SSH-target env vars). Instance overrides:
   `GET /api/apps` (catalog), `GET /api/apps/installed`,
   `GET /api/apps/{name}/metadata`, `POST /api/apps/{name}/install`,
   `POST /api/apps/{name}/uninstall`, `PATCH /api/apps/{name}/rename`,
-  home + logs routers.
+  home + logs routers, and `GET /api/system/diagnostics` (host vs. container
+  DNS resolution of the configured public host, so a podman sandbox that
+  captured stale resolver upstreams at boot is a system warning rather than
+  only an app that cannot resolve its OIDC issuer).
 - Admin: `POST /api/apps/refresh-catalog`, `GET /api/system/rebuild/stream`,
   settings (incl. `GET/PUT /api/settings/public-url`: the address setting),
   sharing, remote-apps routers.

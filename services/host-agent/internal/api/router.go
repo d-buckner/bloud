@@ -259,6 +259,9 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	// has an enabled upstream, so it reads the same store the settings module
 	// writes.
 	systemMod.SetAISettings(cfg.Settings)
+	// The container DNS diagnostic compares host and container resolution of
+	// the configured public host; nil omits the endpoint.
+	systemMod.SetDNSDiagnostics(cfg.DNSDiagnostics)
 
 	return &routerModules{
 		apps: appsMod,
@@ -351,6 +354,10 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 
 		// Authenticated non-streaming routes
 		auth := api.With(m.requestTimeout, m.authMiddleware)
+
+		// Operator-only diagnostics: unlike the public system-info routes,
+		// this reports resolver upstreams and container names.
+		auth.Get("/system/diagnostics", m.system.DiagnosticsHandler())
 
 		// User-accessible routes (registered directly)
 		NewAppsRouter(m.apps, auth)
