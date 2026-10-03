@@ -140,7 +140,7 @@ func buildAgentStack(logger *slog.Logger) *agentStack {
 	// configurator, so the LDAP token PostStart records is visible to the
 	// orchestrator without either of them holding a mutable map.
 	st.vars = buildTemplateVars(st.cfg)
-	st.registry = buildConfiguratorRegistry(st.cfg, logger, st.hosts, st.client)
+	st.registry = buildConfiguratorRegistry(st.cfg, logger, st.hosts, st.client, st.vars)
 
 	openAgentStoresInto(st, logger)
 
@@ -235,11 +235,19 @@ func newAgentPodmanClient(logger *slog.Logger) *podman.Client {
 // factories (apps/<name>/registration.go) and are instantiated lazily on
 // first lookup.
 //
+// vars is the same store the orchestrator renders container specs from, not a
+// fresh one. The authentik configurator writes the LDAP outpost token into it
+// during PostStart and the orchestrator reads {{authentikLdapToken}} when it
+// builds the outpost's container spec two seconds later; a second store would
+// take the write and the read to different objects, leave the placeholder
+// unresolved, and the outpost would come up permanently unable to fetch its
+// configuration. See the note on configurator.TemplateVars.
+//
 // restartContainer forces a running container to stop and start again, so its
 // process re-execs and re-reads on-disk config. Configurators use this where
 // the app's own in-app restart is unreliable under a container init (Home
 // Assistant). Stop grace lets the app shut down cleanly before SIGKILL.
-func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, client *podman.Client) *configurator.Registry {
+func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, client *podman.Client, vars *configurator.TemplateVars) *configurator.Registry {
 	restartContainer := func(ctx context.Context, name string) error {
 		if err := client.StopContainer(ctx, name, 30); err != nil {
 			return err
@@ -248,7 +256,7 @@ func buildConfiguratorRegistry(cfg *config.Config, logger *slog.Logger, hosts *h
 	}
 	registry := configurator.NewRegistry(logger,
 		appconfig.AppDeps(cfg, logger, hosts, restartContainer, client.ExecWithEnv))
-	appconfig.RegisterSystem(cfg, containerruntime.NewPodmanRuntime(client), buildTemplateVars(cfg))
+	appconfig.RegisterSystem(cfg, containerruntime.NewPodmanRuntime(client), vars)
 	return registry
 }
 
