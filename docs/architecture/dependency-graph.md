@@ -42,11 +42,13 @@ flowchart TD
     subgraph app_affine["AFFiNE"]
         c_affine_postgres["postgres"]
         c_affine_redis["redis"]
-        c_affine_search["search"]
         c_affine["affine"]
         c_affine --> c_affine_postgres
         c_affine --> c_affine_redis
-        c_affine --> c_affine_search
+    end
+
+    subgraph app_affine_mcp["AFFiNE MCP"]
+        c_affine_mcp["affine-mcp"]
     end
 
     subgraph app_calino["Calino"]
@@ -121,9 +123,10 @@ flowchart TD
     %% Cross-app integration edges
     app_affine -->|inference| ai_model
     app_affine -->|native-oidc| app_authentik
+    app_affine_mcp -->|appApi| app_affine
     app_calino -->|forward-auth| app_authentik
     app_calino -->|caldav| app_radicale
-    app_hermes -->|mcp| app_affine
+    app_hermes -->|mcp| app_affine_mcp
     app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
     app_homeassistant -->|native-oidc| app_authentik
@@ -142,6 +145,7 @@ flowchart TD
     app_sonarr -->|forward-auth| app_authentik
     app_sonarr -->|downloadClient| app_qbittorrent
     app_traefik -->|proxy| app_affine
+    app_traefik -->|proxy| app_affine_mcp
     app_traefik -->|proxy| app_authentik
     app_traefik -->|proxy| app_calino
     app_traefik -->|proxy| app_hermes

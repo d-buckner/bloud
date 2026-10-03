@@ -152,6 +152,44 @@ var contracts = []Contract{
 			{Key: "serverName"},
 		},
 	},
+
+	// A credential into another app's own API, for a companion that is not a
+	// browser and cannot join the identity provider: an MCP wrapper, a bot, a
+	// bridge process. The provider publishes the account's username as a value
+	// (it is visible in the provider's own UI, so it is not a secret) and its
+	// password as the secret a consumer authenticates with.
+	//
+	// This contract exists because "the provider is the app" (the shape the
+	// `mcp` contract prefers) does not fit a target whose own MCP server is
+	// missing, weaker, or read-only. Such a target needs a wrapper, and the
+	// wrapper needs a real credential into the target's API: that is precisely
+	// what no other contract carries. It is deliberately narrow: it hands over
+	// one account's password and nothing else, the account belongs to the
+	// provider and only the provider's own sign-in can validate it, and a
+	// consumer that does not require the secret gets the username with an empty
+	// password, the same rule every other contract follows (invariant 15).
+	//
+	// The password is the account's real password, not a Bloud invention. A
+	// string Bloud generated and published would authenticate against nothing.
+	// For a target that removed programmatic tokens (AFFiNE 0.27 removed its
+	// personal-access-token API), the account password is the only credential
+	// the target still validates.
+	{
+		Name:    "appApi",
+		Secrets: []string{"password"},
+		Values: []ValueSpec{
+			{Key: "username"},
+			// The scope the provider wants a companion to address by default,
+			// where the provider's API is organized into scopes. AFFiNE's is the
+			// shared workspace Bloud provisions. A companion whose target requires
+			// the scope on every call (the affine-mcp-server tools do) would
+			// otherwise have to discover the scopes and choose among them, which
+			// is exactly the ambiguity Bloud exists to remove. A provider with no
+			// scope simply never publishes it, and the companion leaves its own
+			// default unset.
+			{Key: "workspaceId"},
+		},
+	},
 }
 
 // ContractFor returns the contract with the given name.

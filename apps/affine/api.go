@@ -85,22 +85,6 @@ func (a *affineAPI) waitForOIDCPreflight(ctx context.Context) error {
 		Wait(ctx)
 }
 
-// --- MCP credential minting ---
-//
-// AFFiNE ships its own MCP server (verified on 0.27.4): a stateless
-// streamable-HTTP endpoint at /api/workspaces/<id>/mcp that authenticates a
-// `aff_mcp_v1.<credentialId>.<secret>` bearer. Bloud does not proxy it and
-// does not invent a credential for it. It signs in as the owner it
-// bootstrapped, asks AFFiNE to mint a scoped credential through AFFiNE's own
-// API, and publishes what comes back. That is the "real keys only" rule: the
-// published string is one AFFiNE created and validates, so revoking it in the
-// AFFiNE UI revokes MCP access and nothing else.
-
-// mcpPath builds the MCP endpoint path for one workspace.
-func mcpPath(workspaceID string) string {
-	return "/api/workspaces/" + workspaceID + "/mcp"
-}
-
 // signIn establishes the session the GraphQL calls run as. AFFiNE self-host
 // accepts a password sign-in (unlike AFFiNE Cloud, where Cloudflare blocks
 // programmatic sign-in), and the response sets both the session cookie and the
@@ -362,68 +346,6 @@ func multipartGraphQL(query string, variables map[string]any, varPath, filename 
 		return nil, "", err
 	}
 	return buf.Bytes(), w.FormDataContentType(), nil
-}
-
-// createMcpCredential mints a workspace-scoped MCP credential and returns the
-// bearer token. The token is revealed only by the call that creates it, which
-// is why the caller stores it rather than re-reading the credential list.
-//
-// READ_ONLY is deliberate and not a caution: on a stable release AFFiNE rejects
-// a READ_WRITE credential outright ("MCP write tools are not available")
-// unless the server runs in dev or canary, so asking for write would fail every
-// pass on the pinned image.
-func (a *affineAPI) createMcpCredential(ctx context.Context, workspaceID, name string, expirationDays int) (string, error) {
-	var out struct {
-		CreateMcpCredential struct {
-			Token string `json:"token"`
-		} `json:"createMcpCredential"`
-	}
-	err := a.graphql(ctx,
-		`mutation($input: CreateMcpCredentialInput!) { createMcpCredential(input: $input) { token } }`,
-		map[string]any{"input": map[string]any{
-			"name":           name,
-			"workspaceId":    workspaceID,
-			"accessMode":     "READ_ONLY",
-			"expirationDays": expirationDays,
-		}},
-		&out)
-	if err != nil {
-		return "", fmt.Errorf("minting the affine MCP credential: %w", err)
-	}
-	if out.CreateMcpCredential.Token == "" {
-		return "", fmt.Errorf("minting the affine MCP credential: empty token")
-	}
-	return out.CreateMcpCredential.Token, nil
-}
-
-// probeMCP calls tools/list against the workspace's MCP endpoint with the given
-// bearer. It distinguishes a credential that works from one that does not:
-// a live 200 means the published token is valid, and a 401/403 means it is
-// dead (revoked or expired) and a replacement should be minted. Any other
-// outcome is a transport or server fault, reported as retryLater so the caller
-// mints nothing rather than piling up spare credentials behind a blip.
-func (a *affineAPI) probeMCP(ctx context.Context, path, token string) (works bool, authRejected bool, err error) {
-	body, reqErr := a.cl.POST(path).
-		Anonymous().
-		Header("Authorization", "Bearer "+token).
-		Header("Accept", "application/json, text/event-stream").
-		JSON(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"method":  "tools/list",
-		}).
-		OK(http.StatusOK, http.StatusUnauthorized, http.StatusForbidden).
-		NoRetry().
-		Do(ctx)
-	if reqErr != nil {
-		return false, false, reqErr
-	}
-	switch {
-	case bytes.Contains(body, []byte(`"tools"`)):
-		return true, false, nil
-	default:
-		return false, true, nil
-	}
 }
 
 // --- BYOK inference provider ---

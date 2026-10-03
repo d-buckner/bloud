@@ -405,6 +405,61 @@ func TestBuildIntegrations_MCPTokenOnlyForDeclaredRequires(t *testing.T) {
 	assert.Equal(t, "/mcp", out.MCPServers[0].Path, "the non-secret values are still available")
 }
 
+// An appApi provider hands a companion the account it signs in with when it
+// cannot join the identity provider. The username is a non-secret runtime value
+// (the account the provider bootstrapped) and the password is the secret.
+func TestBuildIntegrations_AppAPIUsernameValueAndPasswordSecret(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "affine-mcp", nil)
+	install(t, store, "affine", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("affine-mcp", "appApi", catalog.Integration{Requires: requires("password")}, "affine"),
+		providerApp("affine", 3010, "appApi", catalog.ContractProvides{
+			Secrets:       []string{"password"},
+			RuntimeValues: []string{"username", "workspaceId"},
+		}),
+	)
+	require.NoError(t, secrets.SetAppContractValue("affine", "appApi", "username", "admin@affine.localhost"))
+	require.NoError(t, secrets.SetAppContractValue("affine", "appApi", "workspaceId", "ws-shared-1"))
+	secrets.publish("affine", "password", "owner-password")
+
+	out := orch.buildIntegrations("affine-mcp", consumerApp("affine-mcp", "appApi", catalog.Integration{Requires: requires("password")}, "affine"))
+	require.Len(t, out.AppAPIs, 1)
+	binding := out.AppAPIs[0]
+	assert.Equal(t, "admin@affine.localhost", binding.Username, "the username is a value, not a credential")
+	assert.Equal(t, "owner-password", binding.Password)
+	assert.Equal(t, "ws-shared-1", binding.WorkspaceID, "the provider's default scope travels with the credential")
+	assert.Equal(t, "http://apps-affine:3010", binding.BaseURL)
+}
+
+// A consumer that declares `appApi` without requiring the secret gets the
+// username and no password, the same least-privilege rule every other contract
+// enforces.
+func TestBuildIntegrations_AppAPIPasswordOnlyForDeclaredRequires(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "reader", nil)
+	install(t, store, "affine", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("reader", "appApi", catalog.Integration{}, "affine"),
+		providerApp("affine", 3010, "appApi", catalog.ContractProvides{
+			Secrets:       []string{"password"},
+			RuntimeValues: []string{"username", "workspaceId"},
+		}),
+	)
+	require.NoError(t, secrets.SetAppContractValue("affine", "appApi", "username", "admin@affine.localhost"))
+	require.NoError(t, secrets.SetAppContractValue("affine", "appApi", "workspaceId", "ws-shared-1"))
+	secrets.publish("affine", "password", "owner-password")
+
+	out := orch.buildIntegrations("reader", consumerApp("reader", "appApi", catalog.Integration{}, "affine"))
+	require.Len(t, out.AppAPIs, 1)
+	assert.Equal(t, "admin@affine.localhost", out.AppAPIs[0].Username)
+	assert.Equal(t, "ws-shared-1", out.AppAPIs[0].WorkspaceID, "the scope is a value, so a non-reader still gets it")
+	assert.Empty(t, out.AppAPIs[0].Password,
+		"declaring the contract does not by itself hand over the password")
+}
+
 // A CalDAV provider hands its consumer the address and the DAV root, and no
 // credential of any kind. The contract carries no secret because the credential
 // is the person's own password, which their client sends to the provider

@@ -26,11 +26,11 @@ func TestShippedCatalog_MCPProviderPublishesEveryBindingField(t *testing.T) {
 	require.True(t, known, "the mcp contract must be in the registry")
 	require.Equal(t, []string{"httpToken"}, spec.Secrets)
 
-	affine := apps["affine"]
-	require.NotNil(t, affine, "affine must be in the shipped catalog")
+	provider := apps["affine-mcp"]
+	require.NotNil(t, provider, "affine-mcp must be in the shipped catalog")
 
-	offered, ok := affine.Provides["mcp"]
-	require.True(t, ok, "affine must declare provides.mcp")
+	offered, ok := provider.Provides["mcp"]
+	require.True(t, ok, "affine-mcp must declare provides.mcp")
 
 	assert.Equal(t, spec.Secrets, offered.Secrets,
 		"the provider must offer exactly the contract's secrets")
@@ -47,13 +47,20 @@ func TestShippedCatalog_MCPProviderPublishesEveryBindingField(t *testing.T) {
 			}
 		}
 		assert.True(t, static || runtime,
-			"affine provides mcp but never fills %q: declare it in values or runtimeValues", declared.Key)
+			"affine-mcp provides mcp but never fills %q: declare it in values or runtimeValues", declared.Key)
 	}
 
-	assert.Equal(t, "affine", offered.Values["serverName"],
+	assert.Equal(t, "affine-mcp", offered.Values["serverName"],
 		"the tool namespace is the app's own name")
-	assert.Contains(t, offered.RuntimeValues, "path",
-		"the workspace-scoped path is created by AFFiNE, so it can only be a runtime value")
+	assert.Equal(t, "/mcp", offered.Values["path"],
+		"the wrapper serves one endpoint for every workspace, so its path is static")
+
+	// AFFiNE's own MCP server is deliberately not exposed: it is read-only and
+	// workspace-scoped, and the wrapper provides the contract instead.
+	affine := apps["affine"]
+	require.NotNil(t, affine, "affine must still be in the shipped catalog")
+	_, exposed := affine.Provides["mcp"]
+	assert.False(t, exposed, "affine must not provide mcp")
 }
 
 // TestShippedCatalog_MCPConsumerAsksForNoMoreThanItUses pins the harness side
@@ -78,7 +85,7 @@ func TestShippedCatalog_MCPConsumerAsksForNoMoreThanItUses(t *testing.T) {
 
 	found := false
 	for _, c := range integration.Compatible {
-		if c.App == "affine" {
+		if c.App == "affine-mcp" {
 			found = true
 		}
 	}

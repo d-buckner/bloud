@@ -318,6 +318,32 @@ type MCPBinding struct {
 	Path string
 }
 
+// AppAPIBinding is a credential into the provider's own API, for a companion
+// that is not a browser and cannot join the identity provider.
+//
+// It is the consumer-side half of the `appApi` contract: the target app mints
+// the account credential and publishes it, and a wrapper consumes it. The
+// binding carries the two fields a sign-in needs and nothing else. Both must be
+// present before the consumer writes anything: an empty password means "not
+// published yet", never an empty credential (the rule MCPBinding.Token follows
+// for the same reason).
+type AppAPIBinding struct {
+	ProviderRef
+	// Username is the account the credential belongs to, published as a
+	// non-secret contract value. Empty until the provider publishes it.
+	Username string
+	// Password is the account password, published under the provider's `appApi`
+	// contract. Empty while the provider has not published it, which a consumer
+	// must treat as "not ready" and write no credential, never as an empty one.
+	Password string
+	// WorkspaceID is the scope the provider wants a companion to address by
+	// default, published as a runtime value. AFFiNE's is the shared workspace
+	// Bloud provisions. Empty when the provider has no scope or has not
+	// published it yet, which a consumer reads as "not pinned" and leaves its
+	// own default unset rather than writing an empty scope.
+	WorkspaceID string
+}
+
 // CalDAVBinding is the DAV server a calendar or contacts client talks to.
 //
 // There is no credential field, and that is the contract, not a gap: a DAV
@@ -361,6 +387,7 @@ type Integrations struct {
 	ModelSources    []ModelSourceBinding
 	Inference       []InferenceBinding
 	MCPServers      []MCPBinding
+	AppAPIs         []AppAPIBinding
 	CalDAVServers   []CalDAVBinding
 }
 

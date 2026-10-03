@@ -55,9 +55,8 @@ func (s *pathRemovalSpy) RemoveHostPath(_ context.Context, path string) error {
 // host-agent user cannot delete. The runtime removes the app data directory as
 // the root of its user namespace, and it must do so only after the containers
 // are gone: emptying the volumes while a container is still alive leaves the
-// app free to write again as it shuts down (a live Manticore rewrites
-// manticore.json on SIGTERM), and those bytes are then unreachable to the
-// host user.
+// app free to write again as it shuts down (many images rewrite state files on
+// SIGTERM), and those bytes are then unreachable to the host user.
 func TestRemoveMultiContainerApp_ClearData_RemovesDataAfterContainers(t *testing.T) {
 	mockRuntime := new(MockContainerRuntime)
 	spy := &pathRemovalSpy{MockContainerRuntime: mockRuntime}

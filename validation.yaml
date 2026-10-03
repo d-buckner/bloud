@@ -125,6 +125,17 @@ apps:
       - apps/affine/**
     e2e-project: affine
 
+  # The third-party MCP wrapper for affine. It has no user login of its own
+  # (`none`: a harness authenticates to its MCP endpoint with a bearer Bloud
+  # generates), so there is no browser journey to gate. It is covered by the
+  # conformance harness, its configurator tests, and the shipped-catalog
+  # contract-declaration test that pins the appApi chain.
+  affine-mcp:
+    auth: none
+    validation-level: embed
+    files:
+      - apps/affine-mcp/**
+
   immich:
     auth: native-oidc
     validation-level: embed

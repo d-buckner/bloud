@@ -1,79 +1,80 @@
-> Status: Phase 1 and the AFFiNE chain shipped; further providers pending
+> Status: Phase 3 shipped. The provider is `apps/affine-mcp`; AFFiNE's built-in
+> MCP server and the Manticore search sidecar were removed. Phase 2 and 4 pending.
 
 # Plan: MCP as an ordinary catalog capability
 
 > The design lives in [features/mcp.md](../features/mcp.md): the contract
 > model, the credential boundary, the reachability story, and the security
 > properties. This file is the roadmap. It records the decisions and the order
-> they got built in; read the feature doc for how the thing works.
+> they got built in, including the reversal; read the feature doc for how the
+> thing works.
 
 ## The model
 
-An MCP server is a **capability an app provides**, not a separate app.
+An MCP server is a **capability an app provides**, not a hardcoded gateway.
 
 ```
-affine (provides mcp)  <──  hermes (integrates mcp, optional + multi)
+affine-mcp (provides mcp)  <──  hermes (integrates mcp, optional + multi)
 ```
 
-- The provider ships its own streamable-HTTP MCP endpoint and declares
-  `provides: mcp`. Its configurator mints a scoped credential through the
-  app's own API and publishes it.
+- The provider ships a streamable-HTTP MCP endpoint and declares
+  `provides: mcp`. Its configurator publishes the bearer its listener accepts.
 - A harness declares `mcp` as **optional and multi**, so each harness picks its
-  own set. A provider useful to Hermes need not appear in a more specialized
-  harness.
+  own set.
 
-Nothing here is a new kind of thing. The provider is an app; the credential is
-a published secret under a contract name; the consumer is an integration
-consumer.
+Nothing here is a new kind of thing. The provider is an app; the credential is a
+published secret under a contract name; the consumer is an integration consumer.
 
 ### What changed from the first draft
 
-The first draft (2026-10-01) assumed an MCP server had to be a separate app
-wrapping its target: `affine-mcp` with a required dependency on `affine`. That
-was written before the pinned image was inspected. Spiking
-`ghcr.io/toeverything/affine:0.27.4` found a first-party MCP server with its
-own scoped-credential mechanism, which removed most of the design:
+The first draft (2026-10-01) assumed the MCP server had to be a separate app
+wrapping its target: `affine-mcp` with a required dependency on `affine`. Spiking
+`ghcr.io/toeverything/affine:0.27.4` found a first-party MCP server, so the first
+shipping version used it instead and the wrapper was shelved.
 
-| First draft | Shipped |
-|---|---|
-| `affine-mcp` wrapper app with its own container | AFFiNE provides `mcp` directly |
-| `appApi` contract: the wrapper's credential into the target | Not added. Nothing needs it |
-| Bloud generates the wrapper's `httpToken` | AFFiNE mints it; Bloud publishes it |
-| `routing.public: false` to keep the wrapper unrouted | Not needed. The provider is a routed app |
-| Loopback-only port publish for the wrapper | Not needed. The harness dials `LocalURL` |
-| Vaultwarden-style dotenv delivery to the wrapper | Not needed. No second container |
-| Wrapper fails the pass when it cannot publish | Provider logs and swallows; the node is the app |
+That version worked, and it was narrower than the target: AFFiNE's own endpoint
+is `READ_ONLY` and workspace-scoped. So the wrapper came back, the built-in
+provider was removed, and the catalog now ships the shape the first draft
+sketched.
 
-The plumbing that survives is the plumbing the spike did not invalidate: the
-`mcp` contract, runtime-published values, the consumer filter, and the loader
-rule.
+| First draft | First shipped provider | Final (current) |
+|---|---|---|
+| `affine-mcp` wrapper app with its own container | AFFiNE provides `mcp` directly | `affine-mcp` provides `mcp` |
+| `appApi` contract for the wrapper's credential | Not added | `appApi` ships, carrying owner username, password, workspace id |
+| Bloud generates the wrapper's `httpToken` | AFFiNE mints it, Bloud publishes it | Bloud generates it and writes it into the wrapper's config |
+| Vaultwarden-style file delivery to the wrapper | Not needed | The wrapper reads its saved config file |
+| Wrapper fails the pass when it cannot publish | Provider logs and swallows | Wrapper fails its `/readyz` pass; AFFiNE swallows workspace settlement |
+| Manticore sidecar for `doc_search` | Ships, 713 MB | Removed with the built-in provider |
+
+The plumbing the spike did not invalidate survives unchanged: the `mcp`
+contract, runtime-published values, the consumer filter, and the loader rule.
 
 ## Decisions
 
-### 1. The provider is the app
+### 1. The provider is the app, when the app's server is enough
 
-A wrapper is the right shape for an app that has no MCP server and no way to
-mint a scoped credential. It is the wrong shape for one that ships both: it
-duplicates the trust boundary, it has to discover the workspace id over the same
-API anyway from outside the app that owns it, and it is one more image to vet
-that breaks when the target's API changes.
+The original rule: a wrapper is the right shape for an app that has no MCP
+server, and the wrong shape for one that ships both, because it duplicates the
+trust boundary and has to discover the workspace id from outside the app that
+owns it.
 
-So `affine` provides `mcp`. The wrapper shape stays available for a future
-target that needs it, and nothing in the plumbing depends on the provider being
-the app rather than a wrapper around it.
+AFFiNE has both, so `affine` provided `mcp`. The rule was correct as stated and
+insufficient as applied: it asked whether the app has a server, not whether the
+server is good enough. AFFiNE's is read-only, so a wrapper was worth the second
+container after all. See decision 11.
 
-### 2. No `appApi` contract
+### 2. No `appApi` contract (superseded)
 
 The first draft needed `appApi` because a wrapper required a credential into
-another app. With the provider being the app, the configurator talks to its own
-app with the credential it already bootstraps. There is no cross-app credential
-in this change.
+another app. With the provider being the app, the configurator talked to its own
+app with the credential it already bootstraps.
 
-Adding `appApi` now would be vocabulary ahead of code: a contract with no
-provider and no consumer, which is exactly why the previous `mcp` contract was
-removed in `27e2b8a`. It comes back the day a wrapper needs it.
+Adding `appApi` then would have been vocabulary ahead of code: a contract with
+no provider and no consumer, which is exactly why the previous `mcp` contract was
+removed in `27e2b8a`. It came back the day a wrapper needed it, which was one
+release later.
 
-### 3. `mcp` returns, with a provider this time, and without a composed URL
+### 3. `mcp` returns, without a composed URL
 
 ```go
 {Name: "mcp",
@@ -83,123 +84,140 @@ removed in `27e2b8a`. It comes back the day a wrapper needs it.
 
 The harness binding is `MCPBinding{ProviderRef, ServerName, Token, Path}`. The
 removed struct's `URL` field (`ref.BaseURL + path`) is **not** brought back.
-`BaseURL` is a network-scoped container name that a host-networked harness
-cannot resolve, so a composed URL would be right for some consumers and
-silently wrong for others. The binding carries `BaseURL`, `LocalURL`, and the
-path; the harness composes the address its own network namespace can dial.
+`BaseURL` is a network-scoped container name that a host-networked harness cannot
+resolve, so a composed URL would be right for some consumers and silently wrong
+for others. The binding carries `BaseURL`, `LocalURL`, and the path; the harness
+composes the address its own network namespace can dial.
 
-`mcp` declares no `SatisfiedBy`. The `inference` contract's promotion
-mechanism iterates every installed provider of the fallback contract and
-ignores the consumer's `compatible` list, which for a tool server means a
-harness could be pointed at an arbitrary provider and get a namespace of tools
-it never asked for. There is no meaningful fallback for "give me AFFiNE's
-documents."
+`mcp` declares no `SatisfiedBy`. The `inference` contract's promotion mechanism
+iterates every installed provider of the fallback contract and ignores the
+consumer's `compatible` list, which for a tool server means a harness could be
+pointed at an arbitrary provider and get a namespace of tools it never asked for.
+There is no meaningful fallback for "give me AFFiNE's documents."
 
 ### 4. Runtime-published values
 
-`path` is `/api/workspaces/<workspaceId>/mcp`, and the workspace id is
-assigned by AFFiNE in `PostStart`, after the catalog has loaded. It cannot
-live in `metadata.yaml`.
-
-`ContractProvides` gains `RuntimeValues []string` beside the static `Values`
+`ContractProvides` gained `RuntimeValues []string` beside the static `Values`
 map. The loader enforces that a runtime value is a single name, is a key the
 contract declares, and is not also declared statically. Resolution prefers the
-published value and falls back to static metadata, so a provider can move a
-value between channels without touching consumers.
+published value and falls back to static metadata, so a provider can move a value
+between channels without touching consumers.
 
-This is a general mechanism, not an MCP special case. Any contract value that
-only exists once the app is running uses it.
+The motivating case was the built-in provider's workspace-scoped `/path`, which
+AFFiNE assigned in `PostStart`. That provider is gone, and the mechanism is not:
+`appApi` publishes `username` and `workspaceId` at runtime, because only AFFiNE
+can produce them. The shipped `mcp` provider uses static values.
 
-### 5. The app mints the credential; Bloud publishes it
+### 5. Two credentials, and who generates each
 
 **Rule: the published `httpToken` is always a credential the provider itself
 validates.**
 
-Bloud could generate a random string and publish it. That would be a field
-named `token` that authenticates against nothing, and every consumer downstream
-would assume a scope it does not have.
+For `affine-mcp` the provider is a container Bloud configures, so Bloud
+generates the shared secret, writes it into the wrapper's config, and publishes
+the same value under `mcp.httpToken`. The listener validates what it was told,
+which is what makes the rule hold.
 
-Minting through the provider's own API buys revocation (the credential shows
-up in AFFiNE's own list, named `bloud`), provider-enforced scope
-(`READ_ONLY`, so the harness cannot write even if it wants to), and a real
-expiry. `READ_WRITE` is not available on a stable AFFiNE at all: it is
-rejected unless the server runs with `env.dev` or a canary channel.
+The outbound credential is separate, and is where the design is weakest. The
+wrapper needs AFFiNE's GraphQL API, which accepts a session cookie or a
+15-minute session JWT and nothing durable. AFFiNE's only scoped credential,
+`aff_mcp_v1.*`, is validated on its own MCP endpoint and nowhere else. So `appApi`
+publishes the bootstrap owner's password, and the wrapper carries no scoped,
+provider-revocable credential into AFFiNE. That is the open question in
+`features/mcp.md`, not a hidden property.
 
-`SetAppContractValue` stores contract-scoped values in
-`AppSecrets[app].PublishedValues[contract]`, separate from the flat
-`Published` map, so a value scoped to `mcp` cannot be read by a consumer of a
-different contract that reuses the key name.
+### 6. Provider failures and boundary failures
 
-### 6. Provider failures do not fail the node
+A wrapper's whole purpose is its MCP endpoint, so `affine-mcp` fails its pass
+when `/readyz` cannot reach AFFiNE, and the self-healing pass retries it.
 
-A wrapper's whole purpose is its MCP endpoint, so a wrapper that cannot publish
-a credential should fail the pass and retry. AFFiNE is not a wrapper: the node
-is the knowledge base itself, and a node serving its users fine should not land
-in ERROR because its MCP credential could not be minted.
+AFFiNE is not the provider anymore, but it still owns the shared workspace and
+the appApi values. Its configurator logs and swallows a failure to settle the
+workspace: the node is the knowledge base, and a knowledge base serving its users
+must not land in ERROR because a companion-facing value could not be published.
+The companion is protected by the empty-token and empty-scope filters.
 
-The consumer is protected regardless by the empty-token filter, so a broken
-credential registers no namespace rather than one that fails forever. What is
-given up is the reconciler's own failure signal, which is what the warning
-carries.
+### 7. Probe before minting (retired with the built-in provider)
 
-### 7. Probe before minting
+The built-in provider's `PostStart` called `tools/list` with the stored bearer
+before minting: 200 meant good, 401/403 meant replace, a transport fault meant
+keep. That mattered because AFFiNE keeps every credential it has ever issued and
+reveals the token only at creation, so minting per blip left an unbounded pile.
 
-`PostStart` calls `tools/list` with the stored bearer before minting anything:
-
-- **200**: good, mint nothing. A steady-state pass costs one round trip.
-- **401/403**: revoked or expired, mint a replacement.
-- **transport fault**: keep the stored credential, retry next pass.
-
-The third case is the one that matters. AFFiNE keeps every credential it has
-ever issued, and the token is revealed only by the creating call, so a
-configurator that minted on every network blip would leave an unbounded pile
-of live credentials that nothing cleans up.
+The wrapper's bearer is read back from the secrets store and never regenerated,
+so the same rule holds more simply: `ensureHTTPToken` returns the stored value
+when one exists.
 
 ### 8. The harness filters on `Installed`, token, and path
 
 `buildIntegrations` binds every compatible provider an optional contract
 declares, including providers that are not installed (they arrive with
-`Installed: false` so the consumer can prune entries Bloud wrote for them),
-and `publishedSecret` returns `""` for both "not required" and "not published
-yet."
+`Installed: false` so the consumer can prune entries Bloud wrote for them), and
+`publishedSecret` returns `""` for both "not required" and "not published yet."
 
 A harness must therefore skip an entry unless it is installed **and** has a
 published token **and** a published path. Writing an entry with an empty bearer
 registers a tool namespace that 401s forever.
 
-Hermes manages the namespace, not the section: the key a provider's
-`serverName` names is Bloud's to write and to remove, and an operator-added
-entry under any other name survives every pass.
+Hermes manages the namespace, not the section: the key a provider's `serverName`
+names is Bloud's to write and to remove, and an operator-added entry under any
+other name survives every pass.
 
 ### 9. The loader enforces the required-integration default
 
-This is the one place the design's safety property rested on a convention
-nothing enforced, and it is fixed regardless of the wrapper change.
+This is the one place the design's safety property rested on a convention nothing
+enforced, and it is fixed regardless of the provider.
 
-`PlanInstall` never sets `CanInstall: false` for an unmet required
-integration; it records a `Choice` and the orchestrator fills it from
-`choice.Recommended` (the `default: true` entry) via `buildIntegrationConfig`
-(`internal/engine/orchestrator/config_builder.go`), installing the provider
-first.
+`PlanInstall` never sets `CanInstall: false` for an unmet required integration; it
+records a `Choice` and the orchestrator fills it from `choice.Recommended` (the
+`default: true` entry) via `buildIntegrationConfig`
+(`internal/engine/orchestrator/config_builder.go`), installing the provider first.
 
 But `computeAppDeps` (`internal/engine/orchestrator/pipeline.go`) skips the
 `compatible` scan for **required** integrations and reads only the recorded
-integration config. So if no `compatible` entry carries `default: true`,
-nothing is recorded, **there is no graph edge at all**, and the consumer
-installs with no dependency: it resolves an empty credential on every pass and
-fails without ever producing a plan-time error.
+integration config. So if no `compatible` entry carries `default: true`, nothing
+is recorded, **there is no graph edge at all**, and the consumer installs with no
+dependency: it resolves an empty credential on every pass and fails without ever
+producing a plan-time error.
 
-**Shipped: the catalog loader rejects a `required: true` integration that does
-not declare exactly one `default: true` compatible entry.** That puts the
-failure at catalog load, where every other declaration error already lands.
+**Shipped: the catalog loader rejects a `required: true` integration that does not
+declare exactly one `default: true` compatible entry.** That puts the failure at
+catalog load, where every other declaration error already lands. `affine-mcp`'s
+`appApi` integration is the live user of this rule: it is what orders AFFiNE
+before the wrapper.
 
 ### 10. The vestigial env-file pair is deleted
 
-`internal/secrets/manager.go` carried a `writeEnvFiles` / `writeAppEnvFile`
-pair that wrote per-app `.env` files into the secrets directory, keyed on a
-hardcoded `knownApps` list whose only entry (`miniflux`) is not in the catalog
-and which no container spec mounts. Deleted. Left in place it reads like the
-intended pattern for shipping credentials into containers, and it is not.
+`internal/secrets/manager.go` carried a `writeEnvFiles` / `writeAppEnvFile` pair
+that wrote per-app `.env` files into the secrets directory, keyed on a hardcoded
+`knownApps` list whose only entry (`miniflux`) is not in the catalog and which no
+container spec mounts. Deleted. Left in place it reads like the intended pattern
+for shipping credentials into containers, and it is not.
+
+### 11. The built-in provider was removed
+
+AFFiNE's own MCP server is read-only, workspace-scoped, and, on a stable release,
+gated so that write tools are unavailable at all. The wrapper exposes 106
+read-write tools over the same workspace. Shipping both meant two namespaces for
+one target, one of them a subset of the other, so the built-in provider was
+removed from `apps/affine`.
+
+Three things had to move with it:
+
+- **The shared workspace does not.** AFFiNE's configurator still signs in,
+  settles the one shared workspace, and publishes it. What left was the credential
+  minting, not the workspace. `selectWorkspace` now uses `appApi.workspaceId` for
+  stickiness where it used the published MCP path.
+- **The Manticore sidecar does.** It existed only so the built-in `doc_search`
+  would answer. The wrapper's `search_docs` is a title search over workspace
+  metadata and needs no indexer. Removing it drops a 713 MB image and a container;
+  AFFiNE's in-app AI retrieval degrades, which is recorded in the feature doc.
+- **The `aff_mcp_v1` minting path does.** `createMcpCredential`, `probeMCP`, the
+  `copilot.enabled` MCP gate, and their tests left the app. `copilot.enabled`
+  itself stays: it also opens the BYOK AI surface the inference wiring uses.
+
+The lesson is recorded in decision 1: "does the app have its own MCP server" is
+the wrong question. "Is the app's server sufficient" is the right one.
 
 ## What shipped
 
@@ -211,54 +229,51 @@ intended pattern for shipping credentials into containers, and it is not.
 | `PublishedValues` bag, `Set/GetAppContractValue` | `internal/secrets/manager.go` |
 | `MCPBinding`, provider interface methods | `pkg/configurator/interface.go` |
 | `bindContract` mcp arm, `contractValue` resolution | `internal/engine/orchestrator/orchestrator.go` |
-| AFFiNE provider: copilot gate, workspace settle, credential mint, probe | `apps/affine/{metadata.yaml,configurator.go,api.go}` |
-| AFFiNE search sidecar (Manticore) so `doc_search` answers | `apps/affine/metadata.yaml` |
+| `appApi` contract, `AppAPIBinding`, resolver arm | `internal/catalog/contracts.go`, `pkg/configurator/interface.go`, `internal/engine/orchestrator/integrations.go` |
+| AFFiNE: owner credential + shared workspace under `appApi` | `apps/affine/{metadata.yaml,configurator.go}` |
+| `affine-mcp` wrapper: generated MCP bearer, config file, readiness probe | `apps/affine-mcp/` |
 | Hermes consumer: `mcp_servers` render, filter, namespace ownership | `apps/hermes/{metadata.yaml,configurator.go}` |
 | Shipped-catalog contract pairing tests | `internal/catalog/{mcp_contract_test.go,contract_declarations_test.go}` |
+| Removed: AFFiNE built-in provider, Manticore sidecar, `aff_mcp_v1` minting | `apps/affine/` |
 
-Tests cover: first pass creates and publishes, steady state mints nothing,
-revocation is replaced, a failed mint publishes nothing, a CSRF-demanding
-server is satisfied, a transport fault mints no spare, the workspace is
-sticky, operator MCP servers survive, an uninstalled provider leaves no entry,
-idempotency across passes, and rotation lands in the file.
+Tests cover: workspace settle creates and publishes, steady state creates
+nothing, the published workspace is sticky, a sign-in fault publishes nothing, a
+CSRF-demanding server is satisfied, the wrapper writes the config and persists
+its bearer without rotating it, an incomplete binding writes no credential, an
+uninstalled provider leaves no entry, and operator MCP servers survive.
 
 ## Next
 
-**Phase 2: multi-workspace endpoints.** Shipped state is one credential against
-one workspace, which means the agent sees one workspace and nothing else. The
-shape that fixes it is a typed list payload (`ValueSpec{Kind: List}` plus
-`SetAppContractList` and a `[]MCPEndpoint` binding), so one provider renders
-one harness namespace per workspace. Details and the reachability constraint
-are in
-[features/mcp.md](../features/mcp.md#workspace-scoping-and-why-one-credential-is-not-enough).
+**Phase 2: multi-workspace endpoints.** The wrapper already reaches every
+workspace the owner can see through one endpoint, and the agent's default is
+pinned to the shared one. Registering one harness namespace per workspace is a
+different shape: a typed list payload (`ValueSpec{Kind: List}` plus
+`SetAppContractList` and a `[]MCPEndpoint` binding). It is not built because the
+single-endpoint model covers the home-server case.
 
-The blocker on full coverage is upstream, not plumbing: AFFiNE's admin GraphQL
-surface is unreachable in the shipped build (`isAdminQuery` hardcoded false),
-so Bloud can only enumerate workspaces its own account belongs to. Visibility
-has to be granted by the operator inviting the Bloud account, which is the
-correct security posture regardless.
-
-**Phase 3: a wrapper, if a target needs one.** Only if a target worth
-integrating has no MCP server of its own. That is where `appApi` comes back,
-along with the Vaultwarden-style dotenv delivery pattern (the configurator
-writes a file into the app's own mounted config dir and the image loads it)
-and its two selection criteria: the image must read config from a file, and the
-`managedfile` mode depends on the reading uid.
+**Follow-up: dropping a container from metadata does not reap the running one.**
+The Manticore sidecar was removed from `apps/affine`'s metadata, but the
+orchestrator reconciles only the containers an app currently declares
+(`SyncContainerState` -> `inspectContainers` walks the catalog defs); there is no
+label-scoped sweep for a container that used to be declared. An existing install
+keeps running the orphan until it is removed by hand or the app is reinstalled,
+which is what the live verification had to do. A proper fix is an
+`io.bloud.app=<name>` orphan sweep in the reconcile path, general app-lifecycle
+work rather than MCP work.
 
 **Phase 4: loopback-only port publishing.** Publishing a container port on
-`127.0.0.1` instead of `0.0.0.0` is a missing capability worth having for
-every app (a live stack shows `0.0.0.0:9001->9000/tcp`). It is not MCP work.
-It was in the first draft because the wrapper shape needed it; it stands on its
-own merits now.
+`127.0.0.1` instead of `0.0.0.0` is a missing capability worth having for every
+app (a live stack shows `0.0.0.0:9222->9222/tcp`). It is not MCP work; it is a
+network-exposure reduction for every app.
 
 ## Non-goals
 
-- **Per-user MCP authorization.** One published credential means every agent
-  acts as one principal. Bloud has per-human SSO identity and no
-  per-harness-user MCP authorization. The plan states the boundary rather than
-  pretending it away: MCP credentials are instance-level service credentials.
-- **stdio transport.** A stdio-only MCP server cannot cross a container
-  boundary. Streamable HTTP is the only supported transport.
+- **Per-user MCP authorization.** One published credential means every agent acts
+  as one principal. Bloud has per-human SSO identity and no per-harness-user MCP
+  authorization. The plan states the boundary rather than pretending it away: MCP
+  credentials are instance-level service credentials.
+- **stdio transport.** A stdio-only MCP server cannot cross a container boundary.
+  Streamable HTTP is the only supported transport.
 - **Public MCP exposure beyond what the app already does.** The provider's MCP
   path is as reachable as the app itself, gated by its bearer rather than by
   network position. Deliberate extra lockdown for MCP endpoints specifically
@@ -267,17 +282,18 @@ own merits now.
 
 ## Open questions
 
-1. **Service account or owner account.** The credential is minted by the
-   bootstrap owner. A dedicated bot user would be separable in the audit log
-   and costs a first-class "service account" concept in the SSO module.
+1. **Service account or owner account.** `appApi` publishes the bootstrap owner's
+   password to `affine-mcp`, so the wrapper reaches AFFiNE with the owner's
+   authority and the tool profile is the only boundary. A dedicated bot user would
+   be separable in the audit log and could not administer the instance. AFFiNE
+   exposes no user-creation or token API for it, so it is blocked upstream.
 2. **Catalog presentation.** MCP providers are `productivity` or
    `infrastructure` with a tag, or a category of their own. UI-only, but it
    decides whether a catalog of ten providers reads as noise.
-3. **Health semantics.** A provider whose MCP credential is broken is not
-   unhealthy in a way a container probe can see, and the decision not to fail
-   the node makes that deliberate. Whether the dashboard should surface a
+3. **Health semantics.** The wrapper's `/readyz` probe covers "AFFiNE reachable",
+   not "the agent's calls succeed". Whether the dashboard should surface a
    per-contract "published / not published" indicator is a dashboard question.
-4. **Workspace policy.** Bloud adopts the first existing workspace rather than
-   always creating one, which is the least-surprising default for a single-user
-   home instance. Whether an operator should pick which workspace the agent
-   reads is a settings question this change deliberately does not answer.
+4. **Workspace policy.** Bloud pins the agent to the shared workspace it owns,
+   because an unpinned agent chooses per call and can choose wrong. Whether an
+   operator should be able to point it elsewhere is a settings question this
+   change deliberately does not answer.
