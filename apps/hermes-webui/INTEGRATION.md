@@ -34,51 +34,6 @@ read-only. The upstream init script stages the tree to `/tmp/hermes-agent-build`
 before installing, so a `:ro` mount is the supported shape, not a
 workaround; it warns when the mount is writable instead.
 
-## It requires Hermes (`integrations.agentGateway`)
-
-The image is a front end, so the app it fronts is a dependency, and the
-catalog says so with a required `agentGateway` integration whose default
-provider is `hermes`. That makes the relationship a graph edge rather than
-a paragraph of prose: Hermes converges ahead of this container, the
-dependency shows in `docs/architecture/dependency-graph.md`, and the
-install records the choice instead of leaving it implied.
-
-### Why it declares no `requires`
-
-A required contract hands over the provider's address. A credential comes
-only to a consumer that names it under `integrations.<contract>.requires`,
-and this app names nothing, so `AgentGatewayBinding.Token` is empty here.
-
-That is least privilege rather than an omission. This build runs the agent
-**in-process**, from the source tree `agent_source.go` installs, and never
-presents a bearer to anything. A consumer that will not use a credential
-should not hold one, and the loader would let it take one.
-
-### What turning the gateway backend on would take
-
-The app already supports it upstream. `api/gateway_chat.py` reads:
-
-| Variable | What it does |
-|---|---|
-| `HERMES_WEBUI_CHAT_BACKEND` | `gateway` routes browser chat turns over HTTP instead of in-process |
-| `HERMES_WEBUI_GATEWAY_BASE_URL` | the agent to dial |
-| `HERMES_WEBUI_GATEWAY_API_KEY` | the bearer, which must equal the agent's `API_SERVER_KEY` |
-
-and `api/agent_health.py` resolves a remote gateway from
-`GATEWAY_HEALTH_URL` / `HERMES_GATEWAY_HEALTH_URL` / `HERMES_API_URL`.
-
-The Bloud-side change is one metadata line (`requires: [httpToken]`), the
-three env entries rendered from the binding, and the container work to
-actually run Hermes' `api_server`. The credential itself needs nothing:
-Hermes mints it and publishes it today, which is the point of putting the
-contract in place before the consumer that will read it.
-
-Upstream's own `docs/architecture/agent-api-contract.md` is explicit that
-the source-tree share is still required and HTTP-only is the migration
-target, so `agent_source.go` is not retired by any of this. The two live
-together: the source tree for the in-process agent, the contract for the
-day the front end stops needing it.
-
 ## The agent source pin
 
 | | |
@@ -237,35 +192,7 @@ config (any settings change does), the file is `0600` and the host cannot
 read it. `readConfig` falls back to `base64` inside the container, which
 reads its own file without complaint.
 
-The fallback has to answer a second question too. A config that has not
-been written yet is **not visible as missing** from the host: the host
-cannot traverse into the directory at all, so `ENOENT` arrives as `EACCES`.
-An unconditional error on the container read therefore failed the node over
-a file that simply was not there yet, which is exactly how the first CI run
-of this app failed:
-
-```
-PostStart failed: reading .../data/config.yaml: permission denied
-  (reading it inside apps-hermes-webui failed too:
-   base64: /home/hermeswebui/.hermes/config.yaml: No such file or directory)
-```
-
-The container-side read is now a script that tests for the file and exits
-with a dedicated code (44) when it is absent, so "absent" is a distinct,
-deterministic answer rather than a string match against an error message
-that could change with locale. Absent means an empty document, which the
-merge then fills with the Bloud provider and writes back through the
-container.
-
-Verified against the live install after deleting the file out from under it:
-
-```
-the agent config does not exist yet; reading it through the container said so
-wrote the agent config through the running container
-the active agent profile is wired to Bloud's model  provider=custom:bloud
-```
-
-The bytes come back encoded on purpose too. `Deps.Exec` merges stdout and
+The read comes back encoded on purpose too. `Deps.Exec` merges stdout and
 stderr, so a runtime warning printed during the read would otherwise land
 inside the YAML and get written back over the real config. Encoded,
 contamination fails the decode instead of being merged.
@@ -289,82 +216,6 @@ $ curl -s http://127.0.0.1:8787/api/profiles | jq '.profiles[0]'
 `config.yaml`, and it reflected the write with no restart. That is why
 `PreStart` asks for a restart only for the agent source (a new tree has to
 be installed at boot) and never for a config change.
-
-## The model key is `default`, not `model`
-
-The agent reads its selected model from `model.default` inside
-`config.yaml`. Writing `model.model` does not work, and it does not fail
-loudly either. This was the second of the two bugs that made the reverted
-install useless, and it is the nastier of the pair because everything
-upstream of the chat request looks healthy:
-
-- the YAML is valid and parses;
-- `/api/profiles` reports the model, because that endpoint reads the file
-  back loosely;
-- the provider resolves, the endpoint is dialed, and the auth is fine;
-- the provider answers `HTTP 400: Invalid model name passed in model=`.
-
-The app's own resolver is the authority here. `api/config.py`:
-
-```python
-model_cfg = active_cfg.get("model", {})
-if isinstance(model_cfg, str):
-    default_model = model_cfg.strip()
-elif isinstance(model_cfg, dict):
-    cfg_default = str(model_cfg.get("default") or "").strip()
-```
-
-and the app's own settings write path writes `model_cfg["default"]`. The
-agent tree is looser, `model_cfg.get("default") or model_cfg.get("model")`,
-so `model` survives there as a legacy alias, but the alias is not universal:
-the webui resolver does not carry it, so a session is created with
-`model: ""` and every turn dies on the empty model name.
-
-Write the key every reader agrees on. `modelDefaultKey` names it in both
-this package and `apps/hermes` so the two configurators that write this
-file format cannot drift apart again.
-
-## The venv's `.deps_installed` marker can poison an install
-
-The image's entrypoint, `/hermeswebui_init.bash`, guards its dependency
-install with a marker file:
-
-```bash
-if [ -f /app/venv/.deps_installed ]; then
-  echo "== Dependencies already installed - skipping (fast restart)"
-else
-  uv pip install -r requirements.txt
-  # ... then the agent's [all] extra, from the mounted source ...
-  touch /app/venv/.deps_installed
-fi
-```
-
-The marker is touched **whether or not the agent source was found**. So if
-the first boot happens while the agent source is invisible - which is exactly
-what the umask problem above produces - the entrypoint prints
-`WARNING: hermes-agent source not found`, touches the marker anyway, and
-the agent's dependencies are never installed. Every restart after that takes
-the fast path and never retries. The app then serves, answers `/health` with
-`ok`, reports the right provider on `/api/profiles`, and fails every chat
-with:
-
-```
-AIAgent not available -- check that hermes-agent is on sys.path
-python: /app/venv/bin/python
-```
-
-because `run_agent.py` needs `python-dotenv` and the venv has no agent
-dependencies at all. Measured on the poisoned container: 58 packages in the
-venv, no `dotenv`. After a clean install with the source readable: 271
-packages, `Installed 98 packages` for the agent's extra.
-
-The fix is upstream of the marker: keep the agent source visible at first
-boot, which is what `ensureReadableRoot` on every pass buys. There is no
-Bloud-side repair of an already-poisoned venv, because repairing it means
-deleting the marker and restarting the container from a phase that is not
-`PostStart`, and `PostStart` cannot ask for that restart. A poisoned venv
-lives in the container's own writable layer, so recreating the container
-(which an uninstall followed by an install does) clears it.
 
 ## Why the SSO strategy is forward-auth
 
@@ -434,30 +285,6 @@ podman exec <ctr> sh -c "umask 022; printf %s '<b64>' | base64 -d > \
 own `static/favicon-512.png` from the `hermes-webui` repository, taken
 unmodified. `IconHandler` serves the file verbatim; nothing rescales it.
 
-This one gets checked rather than assumed, because the obvious follow-up
-("this app is a front end for Hermes, so it should wear Hermes' icon")
-replaces a real asset with a different design. The two are not the same
-mark:
-
-| file | sha256 | what it is |
-|---|---|---|
-| `apps/hermes/icon.png` | `a2d912b2…` | `selfh.st/icons` `hermes-agent.png`, verbatim. Black line art on transparency. |
-| `apps/hermes-webui/icon.png` | `771a8e1b…` | the image's own `/app/static/favicon-512.png`, verbatim. A filled, colored tile. |
-
-The webui hash is byte-for-byte the file the published image ships, so this
-is upstream's own artwork and not something invented here:
-
-```
-podman exec apps-hermes-webui sha256sum /app/static/favicon-512.png
-771a8e1b322eb6afa12198ffc6fe220132c8474afb60dd9f00814fe82f9b574f  /app/static/favicon-512.png
-```
-
-Replacing it with `hermes-agent.png` would give the dashboard two adjacent
-tiles wearing the same mark for two different things, and would drop the
-webui's real icon for the agent's. It stays as upstream ships it. If that
-call is ever revisited, the swap is `cp apps/hermes/icon.png
-apps/hermes-webui/icon.png` and nothing else.
-
 ## Verified on a real install
 
 Installed through the host-agent API on the native backend, no manual
@@ -483,41 +310,6 @@ The provider and model came from Bloud's Settings -> AI, written by the
 configurator and read back through the app's own endpoint. The host's
 inability to read the file it wrote is the permission contract above
 operating as designed.
-
-The bar that actually matters is a chat turn, not a config read. With the
-fixes in, a real round trip through the in-process agent and Bloud's
-inference endpoint:
-
-```
-$ curl -X POST http://localhost:8787/api/session/new -d '{}'
-  model = 'qwen3.8-flash-next'   provider = custom:bloud
-
-$ curl -X POST http://localhost:8787/api/chat/start \
-    -d '{"session_id":"<sid>","message":"Reply with exactly: PONG"}'
-  effective_model_provider = custom:bloud
-
-$ curl http://localhost:8787/api/session?session_id=<sid>
-  user      : Reply with exactly: PONG
-  assistant : PONG
-  tokens    : 12859 in / 21 out
-```
-
-The token counts are the part worth reading: they are the provider's, not
-the app's, so the turn really crossed the wire. Before the model-key fix the
-same call returned `Model not found: ... model=`.
-
-The forward-auth gate, exercised against the configured public host rather
-than the localhost built-in:
-
-```
-$ curl -i -H 'Host: hermes-webui.home.thebloud.org' http://127.0.0.1:8080/
-HTTP/1.1 302 Found
-Location: https://home.thebloud.org/application/o/authorize/?client_id=...&redirect_uri=https%3A%2F%2Fhermes-webui.home.thebloud.org%2Foutpost.goauthentik.io%2Fcallback...
-```
-
-The unauthenticated request is redirected to Authentik with the app's own
-proxy client and the original URL preserved in the outpost state, which is
-the gate doing its job rather than the app answering for itself.
 
 The ingress wiring, from the Traefik dynamic config the orchestrator
 generated:
@@ -545,17 +337,4 @@ hermes-webui-forwardauth:
 - **A model chosen inside the app outranks Bloud's default.** The
   configurator never overwrites a `model.provider` it did not write, and
   `PostStart` warns rather than fails when the active profile is not
-  Bloud's. The cost of that guard is stickiness: because Bloud writes
-  `model.provider` itself on the first pass, a later change to the
-  instance default model does not reach an app that already has a
-  selection. Making Bloud's own selection updatable without clobbering an
-  operator's is an open question, not a bug to paper over.
-- **`*.localhost` does not serve a forward-auth app under a public URL.**
-  Traefik's routes are domain-agnostic, so the router matches, but the
-  Authentik proxy outpost resolves the application by the request's host
-  and has no binding for the built-in. The request comes back 404 from
-  authentik (`domain_url: hermes-webui.localhost`) rather than redirecting.
-  This is not specific to this app: it is every forward-auth app, and it is
-  why the gate above was exercised with the configured public host. The
-  e2e suite passes because it runs with the localhost origin as the
-  instance's public URL, where the two agree.
+  Bloud's.
