@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import { describeApp } from '../lib/app-suite';
 import { expectInstalledInCatalog, expectRunningTile } from '../lib/apps';
 import { ensureInstalled, getAppStatus } from '../lib/api';
+import { appOrigin } from '../lib/origin';
 
 // Calino is a browser CalDAV client: a static bundle with no login of its own
 // and no storage on the server. Everything Bloud does for it happens at the
@@ -38,6 +39,27 @@ describeApp(
       const status = await getAppStatus('radicale');
       expect(status, 'radicale is a required provider of calino').not.toBeNull();
       await ensureInstalled('radicale');
+    });
+
+    test('serves the CORS preflight the browser client needs', async () => {
+      test.setTimeout(60_000);
+      // Calino is a static SPA, so its DAV calls cross origins and the browser
+      // refuses the response unless Radicale sends CORS headers. Assert the
+      // preflight through the real proxy: the header only helps if it survives
+      // Traefik. The preflight carries no credentials, so it must answer 200
+      // before the client has presented a password.
+      const res = await app.page.request.fetch(`${appOrigin('radicale')}/`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: appOrigin('calino'),
+          'Access-Control-Request-Method': 'PROPFIND',
+          'Access-Control-Request-Headers': 'authorization,depth',
+        },
+        failOnStatusCode: false,
+      });
+      expect(res.status(), 'the anonymous OPTIONS preflight must not require auth').toBe(200);
+      expect(res.headers()['access-control-allow-origin']).toBe('*');
+      expect(res.headers()['access-control-allow-headers']).toContain('authorization');
     });
 
     test('appears in the catalog as installed', async () => {
