@@ -18,7 +18,7 @@ Debian 13, x86_64.
 curl -fsSL https://raw.githubusercontent.com/d-buckner/bloud/main/install.sh | sudo sh
 ```
 
-Open the dashboard at localhost:8080. Set your host under Settings, then Hosts. Install Jellyfin.
+Open the dashboard at http://localhost:8080. Set your host under Settings, then Hosts. Install Jellyfin.
 
 That's the whole setup. What it does underneath: the installer fetches the published `.deb`
 and hands it to `apt`, which pulls the real dependency set (Podman 5, `uidmap`,
