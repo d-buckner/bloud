@@ -371,6 +371,25 @@ type CalDAVBinding struct {
 	Path string
 }
 
+// ICSFeedBinding is an ICS calendar feed a calendar server subscribes to on the
+// user's behalf. The consumer fetches the feed server-side and projects the
+// events into one of its own collections, so neither the feed URL nor its key
+// ever reaches a client.
+type ICSFeedBinding struct {
+	ProviderRef
+	// APIKey is the credential the provider's feed endpoint authenticates
+	// with, published under the `icsFeed` contract. Empty while the provider
+	// has not published it yet, which a consumer must treat as "not ready" and
+	// write no sync job for, never as an empty key.
+	APIKey string
+	// Path is the feed path on the provider's address. Absolute, so the feed
+	// URL is ProviderRef.BaseURL + Path with the key as a query parameter.
+	Path string
+	// DisplayName is what the consumer names the collection it creates for the
+	// feed, e.g. "Radarr Movies".
+	DisplayName string
+}
+
 // Integrations holds the resolved providers for every contract the app declares
 // in its catalog metadata, one typed slice per contract.
 //
@@ -389,6 +408,7 @@ type Integrations struct {
 	MCPServers      []MCPBinding
 	AppAPIs         []AppAPIBinding
 	CalDAVServers   []CalDAVBinding
+	ICSFeeds        []ICSFeedBinding
 }
 
 // AppState contains the inputs currently consumed by app configurators.

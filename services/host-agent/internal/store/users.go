@@ -4,6 +4,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -55,6 +56,24 @@ func (s *PreferencesStore) EnsureUser(username string) error {
 		return fmt.Errorf("failed to ensure user: %w", err)
 	}
 	return nil
+}
+
+// FirstUser returns the login name of the first user preferences row, which is
+// the operator who completed first-run setup: setup creates that row before any
+// other user can exist, and rowid tracks creation order. Empty when setup has
+// not run.
+func (s *PreferencesStore) FirstUser() (string, error) {
+	var username string
+	err := s.db.QueryRow(
+		"SELECT username FROM user_preferences ORDER BY rowid ASC LIMIT 1",
+	).Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to read the first user: %w", err)
+	}
+	return username, nil
 }
 
 // DeleteUser removes a user's preferences row (cascades to user_app_positions)

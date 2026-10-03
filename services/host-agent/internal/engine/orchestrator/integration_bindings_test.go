@@ -538,3 +538,62 @@ func TestBuildIntegrations_CalDAVProviderNotInstalled(t *testing.T) {
 	assert.False(t, out.CalDAVServers[0].Installed)
 	assert.Equal(t, "/", out.CalDAVServers[0].Path)
 }
+
+// An ICS feed binding carries the provider's address and the facts the
+// consumer needs to compose the feed URL and name the calendar it creates. The
+// key is resolved only because the consumer declared it.
+func TestBuildIntegrations_ICSFeedCarriesTheKeyAndFeedFacts(t *testing.T) {
+	consumer := consumerApp("radicale", "icsFeed", catalog.Integration{Requires: requires("apiKey")}, "radarr")
+	store := NewFakeAppStore()
+	install(t, store, "radicale", nil)
+	install(t, store, "radarr", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumer,
+		providerApp("radarr", 7878, "icsFeed", catalog.ContractProvides{
+			Secrets: []string{"apiKey"},
+			Values: map[string]string{
+				"path":        "/feed/v3/calendar/Radarr.ics",
+				"displayName": "Radarr Movies",
+			},
+		}),
+	)
+	secrets.publish("radarr", "apiKey", "radarr-key")
+
+	out := orch.buildIntegrations("radicale", consumer)
+
+	require.Len(t, out.ICSFeeds, 1)
+	feed := out.ICSFeeds[0]
+	assert.Equal(t, "radarr", feed.App)
+	assert.Equal(t, "apps-radarr", feed.Node)
+	assert.Equal(t, "http://apps-radarr:7878", feed.BaseURL, "the plugin fetches from the app network")
+	assert.Equal(t, "/feed/v3/calendar/Radarr.ics", feed.Path)
+	assert.Equal(t, "Radarr Movies", feed.DisplayName)
+	assert.Equal(t, "radarr-key", feed.APIKey, "the consumer declared it requires the key")
+}
+
+// Least privilege: a consumer that did not list apiKey under `requires` gets an
+// empty field, which it reads as "not published" and writes no sync job for.
+func TestBuildIntegrations_ICSFeedKeyOnlyForDeclaredRequires(t *testing.T) {
+	consumer := consumerApp("radicale", "icsFeed", catalog.Integration{}, "radarr")
+	store := NewFakeAppStore()
+	install(t, store, "radicale", nil)
+	install(t, store, "radarr", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumer,
+		providerApp("radarr", 7878, "icsFeed", catalog.ContractProvides{
+			Secrets: []string{"apiKey"},
+			Values: map[string]string{
+				"path":        "/feed/v3/calendar/Radarr.ics",
+				"displayName": "Radarr Movies",
+			},
+		}),
+	)
+	secrets.publish("radarr", "apiKey", "radarr-key")
+
+	out := orch.buildIntegrations("radicale", consumer)
+
+	require.Len(t, out.ICSFeeds, 1)
+	assert.Empty(t, out.ICSFeeds[0].APIKey)
+}

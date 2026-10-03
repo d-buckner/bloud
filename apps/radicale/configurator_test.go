@@ -301,6 +301,163 @@ func TestPostStartPassesWhenUnreachable(t *testing.T) {
 	require.NoError(t, c.PostStart(context.Background(), appState("", ldapOutput())))
 }
 
+// ---- ICS feed sync ----
+
+func feedBinding() configurator.ICSFeedBinding {
+	return configurator.ICSFeedBinding{
+		ProviderRef: configurator.ProviderRef{
+			Kind:      configurator.ProviderKindApp,
+			App:       "radarr",
+			Installed: true,
+			Node:      "apps-radarr",
+			Port:      7878,
+			BaseURL:   "http://apps-radarr:7878",
+		},
+		APIKey:      "abc123",
+		Path:        "/feed/v3/calendar/Radarr.ics",
+		DisplayName: "Radarr Movies",
+	}
+}
+
+func TestRenderConfigUsesTheICSSyncStorage(t *testing.T) {
+	got := renderConfig(5232, ldapOutput())
+
+	for _, want := range []string{
+		"type = radicale_ics_sync.storage",
+		"ics_config = /config/ics_sync.json",
+		"hash_db = /var/lib/radicale/collections/ics_sync_hashes.json",
+	} {
+		assert.Contains(t, got, want)
+	}
+}
+
+// Calino is a browser SPA: its DAV calls to radicale.<host> are cross-origin,
+// so without CORS headers the browser refuses the response and no calendar
+// ever appears. Radicale's [headers] section is applied to every response,
+// including the anonymous OPTIONS preflight, which is what makes the direct
+// (proxy-free) connection work.
+func TestRenderConfigAllowsBrowserDAVOrigins(t *testing.T) {
+	got := renderConfig(5232, ldapOutput())
+
+	for _, want := range []string{
+		"Access-Control-Allow-Origin = *",
+		"Access-Control-Allow-Methods = GET, HEAD, OPTIONS, PROPFIND, PROPPATCH, REPORT, PUT, DELETE, MKCALENDAR, MKCOL, MOVE, COPY",
+	} {
+		assert.Contains(t, got, want)
+	}
+	// The headers a DAV REPORT/PROPFIND preflight asks for, plus the response
+	// headers a sync client reads back (ETag, Sync-Token, DAV).
+	assert.Contains(t, got, "authorization")
+	assert.Contains(t, got, "depth")
+	assert.Contains(t, got, "Sync-Token")
+	assert.Contains(t, got, "ETag")
+}
+
+func TestRenderICSSyncComposesTheFeedURL(t *testing.T) {
+	got := renderICSSync("alice", []configurator.ICSFeedBinding{feedBinding()})
+
+	assert.Contains(t, got, `"feed": "http://apps-radarr:7878/feed/v3/calendar/Radarr.ics?apikey=abc123"`)
+	assert.Contains(t, got, `"collection": "alice/radarr"`)
+	assert.Contains(t, got, `"displayname": "Radarr Movies"`)
+	assert.Contains(t, got, `"sync_interval": 3600`)
+}
+
+func TestRenderICSSyncEscapesTheKey(t *testing.T) {
+	feed := feedBinding()
+	feed.APIKey = "a b&c"
+	got := renderICSSync("alice", []configurator.ICSFeedBinding{feed})
+	assert.Contains(t, got, "apikey=a+b%26c")
+}
+
+func TestRenderICSSyncSkipsIncompleteBindings(t *testing.T) {
+	cases := map[string]func(*configurator.ICSFeedBinding){
+		"not installed": func(f *configurator.ICSFeedBinding) { f.Installed = false },
+		"no key":        func(f *configurator.ICSFeedBinding) { f.APIKey = "" },
+		"no path":       func(f *configurator.ICSFeedBinding) { f.Path = "" },
+		"no address":    func(f *configurator.ICSFeedBinding) { f.BaseURL = "" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			feed := feedBinding()
+			mutate(&feed)
+			assert.Equal(t, "[]\n", renderICSSync("alice", []configurator.ICSFeedBinding{feed}))
+		})
+	}
+}
+
+func TestRenderICSSyncWithoutAnOwnerWritesNothing(t *testing.T) {
+	// No first-run user yet: there is no principal to own a collection, and a
+	// path like "/radarr" would be a top-level calendar Radicale cannot place.
+	assert.Equal(t, "[]\n", renderICSSync("", []configurator.ICSFeedBinding{feedBinding()}))
+}
+
+func TestRenderICSSyncIsDeterministic(t *testing.T) {
+	radarr := feedBinding()
+	sonarr := feedBinding()
+	sonarr.App = "sonarr"
+	sonarr.Path = "/feed/v3/calendar/Sonarr.ics"
+
+	first := renderICSSync("alice", []configurator.ICSFeedBinding{radarr, sonarr})
+	second := renderICSSync("alice", []configurator.ICSFeedBinding{sonarr, radarr})
+	assert.Equal(t, first, second, "job order must not depend on binding order")
+	assert.Less(t, strings.Index(first, "alice/radarr"), strings.Index(first, "alice/sonarr"))
+}
+
+// TestSyncPluginWritesThePackageInit guards the embed pattern: Go's `embed`
+// skips files whose names begin with `_` unless the pattern uses the `all:`
+// prefix, and without __init__.py Python imports radicale_ics_sync as a
+// namespace package with no __version__, so the plugin fails to load.
+func TestSyncPluginWritesThePackageInit(t *testing.T) {
+	dir := t.TempDir()
+
+	changed, err := syncPlugin(dir)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	raw, err := os.ReadFile(filepath.Join(dir, pluginDirName, "radicale_ics_sync", "__init__.py"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "__version__")
+}
+
+func TestPreStartWritesThePluginAndSyncJobs(t *testing.T) {
+	c, dataPath := newTestConfigurator(t, nil)
+	c.operatorUsername = func() string { return "alice" }
+	state := appState(dataPath, ldapOutput())
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+
+	result, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	assert.True(t, result.RestartNeeded, "a fresh config and plugin need a recreate")
+
+	storage, err := os.ReadFile(filepath.Join(dataPath, pluginDirName, "radicale_ics_sync", "storage.py"))
+	require.NoError(t, err, "the vendored plugin must be written where the mount expects it")
+	assert.Contains(t, string(storage), "radicale-ics-sync")
+
+	ics, err := os.ReadFile(filepath.Join(dataPath, "config", icsSyncFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(ics), "alice/radarr")
+
+	// A second identical pass must be a no-op, or every reconcile recreates
+	// the container.
+	result, err = c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	assert.False(t, result.RestartNeeded)
+}
+
+func TestPreStartRestartsWhenAFeedIsAdded(t *testing.T) {
+	c, dataPath := newTestConfigurator(t, nil)
+	c.operatorUsername = func() string { return "alice" }
+	state := appState(dataPath, ldapOutput())
+
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	result, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	assert.True(t, result.RestartNeeded, "the plugin starts one poller per job at boot, so a new feed needs a restart")
+}
+
 // ---- config/metadata agreement ----
 
 func TestProbePathIsNotASpecialRoute(t *testing.T) {

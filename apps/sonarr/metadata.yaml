@@ -46,6 +46,15 @@ sso:
 provides:
   pvr:
     secrets: [apiKey]
+  # The calendar feed the CalDAV server subscribes to on the user's behalf.
+  # Sonarr's feed endpoint authenticates with `?apikey=` because calendar
+  # clients cannot set headers; the key is the same one the `pvr` offer
+  # publishes, so no second credential exists to keep in sync.
+  icsFeed:
+    secrets: [apiKey]
+    values:
+      path: /feed/v3/calendar/Sonarr.ics
+      displayName: Sonarr Shows
 
 containers:
   - name: apps-sonarr

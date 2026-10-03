@@ -87,7 +87,9 @@ func RegisterSystem(
 // containerRunning (may be nil in CLI/tests) is the host-runtime callback
 // configurators use to tell a stopped container from a running one; it is
 // plumbed straight into Deps.ContainerRunning.
-func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, restartContainer func(ctx context.Context, name string) error, exec configurator.ExecFunc, containerRunning configurator.ContainerRunningFunc) configurator.Deps {
+// operatorUsername (may be nil in CLI/tests) returns the first-run operator's
+// login name, the principal apps that create per-user state act under.
+func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, restartContainer func(ctx context.Context, name string) error, exec configurator.ExecFunc, containerRunning configurator.ContainerRunningFunc, operatorUsername func() string) configurator.Deps {
 	primaryBaseURL := func() string {
 		if hosts != nil {
 			return hosts.Get().PrimaryBaseURL()
@@ -102,6 +104,7 @@ func AppDeps(cfg *config.Config, logger *slog.Logger, hosts *hostset.State, rest
 		Logger:           logger,
 		Secrets:          cfg.Secrets,
 		OperatorEmail:    cfg.AuthentikAdminEmail,
+		OperatorUsername: operatorUsername,
 		PrimaryBaseURL:   primaryBaseURL,
 		TraefikPort:      cfg.TraefikPort,
 		RestartContainer: restartContainer,
