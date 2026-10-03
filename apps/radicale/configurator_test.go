@@ -403,6 +403,22 @@ func TestRenderICSSyncIsDeterministic(t *testing.T) {
 	assert.Less(t, strings.Index(first, "alice/radarr"), strings.Index(first, "alice/sonarr"))
 }
 
+// TestSyncPluginWritesThePackageInit guards the embed pattern: Go's `embed`
+// skips files whose names begin with `_` unless the pattern uses the `all:`
+// prefix, and without __init__.py Python imports radicale_ics_sync as a
+// namespace package with no __version__, so the plugin fails to load.
+func TestSyncPluginWritesThePackageInit(t *testing.T) {
+	dir := t.TempDir()
+
+	changed, err := syncPlugin(dir)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	raw, err := os.ReadFile(filepath.Join(dir, pluginDirName, "radicale_ics_sync", "__init__.py"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "__version__")
+}
+
 func TestPreStartWritesThePluginAndSyncJobs(t *testing.T) {
 	c, dataPath := newTestConfigurator(t, nil)
 	c.operatorUsername = func() string { return "alice" }

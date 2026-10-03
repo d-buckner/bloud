@@ -244,10 +244,12 @@ func feedURL(feed configurator.ICSFeedBinding) string {
 }
 
 // pluginFS is the vendored radicale-ics-sync tree, embedded so the bytes the
-// container loads are the bytes this binary shipped with. See
-// apps/radicale/plugin/PROVENANCE.md for the two local modifications.
+// container loads are the bytes this binary shipped with. The `all:` prefix is
+// required: without it Go's embed skips files whose names begin with `_`, which
+// would drop __init__.py and make the package import as a namespace package
+// with no __version__. See apps/radicale/plugin/PROVENANCE.md.
 //
-//go:embed plugin
+//go:embed all:plugin
 var pluginFS embed.FS
 
 // syncPlugin writes the embedded plugin tree into <dataPath>/plugin. Radicale
