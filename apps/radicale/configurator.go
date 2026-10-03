@@ -439,20 +439,27 @@ func renderConfig(port int, ldap *configurator.LDAPOutput) string {
 	b.WriteString("# DAV clients.\n")
 	b.WriteString("type = internal\n\n")
 
+	writeCORSHeaders(&b)
+
+	b.WriteString("[logging]\n")
+	b.WriteString("level = info\n")
+	return b.String()
+}
+
+// writeCORSHeaders writes the [headers] section that lets a browser-based DAV
+// client (Calino) call the server cross-origin. Every request is authenticated
+// with Basic credentials the client sets explicitly, and the browser's
+// preflight is an anonymous OPTIONS that Radicale answers without auth, so a
+// wildcard origin exposes nothing a caller without the user's password can
+// read. Without these headers the browser refuses the cross-origin DAV call and
+// Calino shows an empty window.
+func writeCORSHeaders(b *strings.Builder) {
 	b.WriteString("[headers]\n")
-	b.WriteString("# CORS for browser-based DAV clients (Calino). Every request is\n")
-	b.WriteString("# authenticated with Basic credentials the client sets explicitly, and\n")
-	b.WriteString("# the browser's preflight is an anonymous OPTIONS that Radicale answers\n")
-	b.WriteString("# without auth, so a wildcard origin exposes nothing a caller without the\n")
-	b.WriteString("# user's password can read. Without these headers the browser refuses the\n")
-	b.WriteString("# cross-origin DAV call and Calino cannot show a calendar.\n")
+	b.WriteString("# Calino's browser-to-Radicale DAV calls are cross-origin; these\n")
+	b.WriteString("# headers are what make the browser expose the responses.\n")
 	b.WriteString("Access-Control-Allow-Origin = *\n")
 	b.WriteString("Access-Control-Allow-Methods = GET, HEAD, OPTIONS, PROPFIND, PROPPATCH, REPORT, PUT, DELETE, MKCALENDAR, MKCOL, MOVE, COPY\n")
 	b.WriteString("Access-Control-Allow-Headers = authorization, content-type, depth, destination, if-match, if-none-match, overwrite, prefer, x-requested-with\n")
 	b.WriteString("Access-Control-Expose-Headers = DAV, ETag, Sync-Token, Location, Content-Range, WWW-Authenticate, Allow\n")
 	b.WriteString("Access-Control-Max-Age = 86400\n\n")
-
-	b.WriteString("[logging]\n")
-	b.WriteString("level = info\n")
-	return b.String()
 }
