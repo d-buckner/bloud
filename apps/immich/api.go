@@ -44,8 +44,19 @@ func (a *immichAPI) createAdmin(ctx context.Context, name, email, password strin
 		// Immich has no dedicated code for "admin already exists"; it returns
 		// 400 with a message. Declared here so the idempotency is explicit and
 		// logged as already-converged rather than string-guessed at the call site.
+		//
+		// The message is not stable across releases: older builds answer "already
+		// has an admin", newer ones "admin setup is not available". Both mean an
+		// admin exists, which is exactly the state this call wants, so both are
+		// already-done. Matching only the older wording is what left every
+		// reconcile after the first install parking Immich in ERROR (#183).
 		AlreadyDoneFunc(func(s int, b []byte) bool {
-			return s == http.StatusBadRequest && strings.Contains(strings.ToLower(string(b)), "already has an admin")
+			if s != http.StatusBadRequest {
+				return false
+			}
+			msg := strings.ToLower(string(b))
+			return strings.Contains(msg, "already has an admin") ||
+				strings.Contains(msg, "admin setup is not available")
 		}).
 		Ensure(ctx)
 	return err
