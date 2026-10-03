@@ -343,7 +343,7 @@ func TestOrchestrator_WithinLevel_ConcurrentExecution(t *testing.T) {
 }
 
 // ============================================================================
-// Cycle 7: changedIds staleness
+// Cycle 7: changedIds staleness and the periodic PostStart resync
 // ============================================================================
 
 func TestOrchestrator_Staleness_AlreadyRunning_RerunPostStartWhenDepChanges(t *testing.T) {
@@ -389,18 +389,27 @@ func TestOrchestrator_Staleness_NoRerun_WhenDepErrors(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
+	to.registry.On("Get", "b").Return(new(MockConfigurator))
 	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), errors.New("a failed"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
-	// B's PostStart should NOT be called: A is not in changedIDs.
+	// B's resync is withheld: B's only dependency is sitting in ERROR, so a
+	// config diff against it is a guaranteed failure. The pass that heals A
+	// re-runs B's PostStart anyway, because a node that converges lands in
+	// changedIDs.
 	to.registry.AssertNotCalled(t, "Get", "b")
 }
 
-func TestOrchestrator_Staleness_SteadyState_NoRerun(t *testing.T) {
+// RUNNING means the lifecycle phases completed once, not that the app's config
+// still matches the outside world. A pass that changes nothing in the graph must
+// still give every running node its PostStart diff, or a Bloud user created
+// after the install never reaches the apps that sync membership from the
+// identity provider.
+func TestOrchestrator_Resync_SteadyState_RerunsPostStart(t *testing.T) {
 	to := newTestOrchestrator()
 
-	// Both A and B already RUNNING; no changes this cycle.
+	// Both A and B already RUNNING; nothing changes this cycle.
 	require.NoError(t, to.g.AddNode("a"))
 	require.NoError(t, to.g.AddNode("b"))
 	require.NoError(t, to.g.AddEdge("b", "a"))
@@ -409,10 +418,64 @@ func TestOrchestrator_Staleness_SteadyState_NoRerun(t *testing.T) {
 	require.NoError(t, to.g.SetActualStatus("a", graph.StatusRunning, ""))
 	require.NoError(t, to.g.SetActualStatus("b", graph.StatusRunning, ""))
 
+	mockA := new(MockConfigurator)
+	mockB := new(MockConfigurator)
+	to.registry.On("Get", "a").Return(mockA)
+	to.registry.On("Get", "b").Return(mockB)
+	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+	mockB.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
-	// Neither A nor B should have any configurator calls.
-	to.registry.AssertNotCalled(t, "Get", mock.Anything)
+	mockA.AssertNumberOfCalls(t, "PostStart", 1)
+	mockB.AssertNumberOfCalls(t, "PostStart", 1)
+	// The resync is PostStart only: PreStart is what can ask for a container
+	// recreate, so a steady-state pass must never run it.
+	mockA.AssertNotCalled(t, "PreStart", mock.Anything, mock.Anything)
+	mockB.AssertNotCalled(t, "PreStart", mock.Anything, mock.Anything)
+}
+
+// The resync is a tick, not a one-shot. Two passes in a row must give the same
+// running node two PostStart calls, which is what lets a diff notice a change
+// that arrived between them.
+func TestOrchestrator_Resync_RepeatsOnEveryPass(t *testing.T) {
+	to := newTestOrchestrator()
+
+	require.NoError(t, to.g.AddNode("a"))
+	require.NoError(t, to.g.SetTargetStatus("a", graph.StatusRunning))
+	require.NoError(t, to.g.SetActualStatus("a", graph.StatusRunning, ""))
+
+	mockA := new(MockConfigurator)
+	to.registry.On("Get", "a").Return(mockA)
+	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	mockA.AssertNumberOfCalls(t, "PostStart", 2)
+}
+
+// A resync that fails must not park a healthy running node in ERROR. The
+// failure belongs on the operation row, where it is diagnostic, and the node
+// stays RUNNING so the app keeps serving.
+func TestOrchestrator_Resync_FailureLeavesNodeRunning(t *testing.T) {
+	to := newTestOrchestrator()
+
+	require.NoError(t, to.g.AddNode("a"))
+	require.NoError(t, to.g.SetTargetStatus("a", graph.StatusRunning))
+	require.NoError(t, to.g.SetActualStatus("a", graph.StatusRunning, ""))
+
+	mockA := new(MockConfigurator)
+	to.registry.On("Get", "a").Return(mockA)
+	mockA.On("PostStart", mock.Anything, mock.Anything).Return(errors.New("provider unreachable"))
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	node, err := to.g.GetNode("a")
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	assert.Equal(t, graph.StatusRunning, node.ActualStatus,
+		"a failed resync is a logged diff, not a node fault")
 }
 
 // ============================================================================

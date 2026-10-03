@@ -274,6 +274,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 // target. Each step logs and continues: a half-removed app is repaired on the
 // next pass rather than abandoning the rest of the list.
 func (o *Orchestrator) convergeUninstalls(ctx context.Context, apps []*store.InstalledApp, appMap map[string]*store.InstalledApp, pendingClearData map[string]bool) {
+	removedAny := false
 	for _, app := range apps {
 		if app.Status != "uninstalling" {
 			continue
@@ -287,6 +288,17 @@ func (o *Orchestrator) convergeUninstalls(ctx context.Context, apps []*store.Ins
 			o.logger.Error("failed to uninstall app from store", "app", app.CatalogID, "error", err)
 		}
 		delete(appMap, app.CatalogID)
+		removedAny = true
+	}
+	// Routes are a function of the installed set, not of any configurator's
+	// PostStart. Regenerate them here, the moment the set is final, so a
+	// removed app stops being routed before Reconcile's resync work runs later
+	// this pass. Reconcile's own SyncRoutes is then a no-op: the bytes already
+	// match.
+	if removedAny {
+		if err := o.SyncRoutes(); err != nil {
+			o.logger.Warn("failed to sync routes after uninstall", "error", err)
+		}
 	}
 }
 

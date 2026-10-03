@@ -144,3 +144,47 @@ func TestRoutePurity_InactiveTailnetSkipsGateway(t *testing.T) {
 		"gateway untouched without a tailnet")
 	assert.Empty(t, tr.capturedDomain)
 }
+
+// Routes are a function of the installed set, not of any configurator's
+// PostStart. After an uninstall the removed app must stop being routed in the
+// same step that deletes its store row, not at the end of Reconcile after the
+// (now per-pass) PostStart resync has run: the integration tier's
+// uninstall-cleanup assertions read apps-routes.yml as soon as the app leaves
+// the installed list.
+func TestConvergeUninstalls_RegeneratesRoutesBeforeResync(t *testing.T) {
+	tr := &orderTracker{}
+	appStore := NewFakeAppStore()
+	require.NoError(t, appStore.Install("jellyfin", "Jellyfin", "1.0", nil, &store.InstallOptions{Port: 8096}))
+	require.NoError(t, appStore.UpdateStatus("jellyfin", "uninstalling"))
+
+	g := graph.New(graph.NewMapRepository())
+	require.NoError(t, g.AddNode("jellyfin"))
+
+	registry := new(MockConfiguratorRegistry)
+	registry.On("Get", "jellyfin").Return(nil)
+
+	orch := NewOrchestrator(
+		g,
+		registry,
+		NewFakeCatalogCache(),
+		"/tmp/bloud-test",
+		newTestLogger(),
+		OrchestratorConfig{
+			AppStore:   appStore,
+			TraefikGen: &orderGenerator{tr: tr},
+		},
+	)
+
+	apps, err := appStore.GetAll()
+	require.NoError(t, err)
+	appMap := map[string]*store.InstalledApp{"jellyfin": apps[0]}
+	orch.convergeUninstalls(context.Background(), apps, appMap, map[string]bool{"jellyfin": true})
+
+	assert.Contains(t, tr.calls, "generate-all",
+		"routes are regenerated in the uninstall step, before the resync runs")
+
+	ids, err := appStore.GetInstalledCatalogIDs()
+	require.NoError(t, err)
+	assert.NotContains(t, ids, "jellyfin",
+		"store row is gone before route generation reads the installed set")
+}

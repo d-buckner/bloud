@@ -268,11 +268,29 @@ func healNode(t *testing.T, g *graph.Graph, id string) *graph.Node {
 	return node
 }
 
+// countCalls counts how many times the shared configurator mock has had the
+// named method called since it was created. The idle-pass test needs a running
+// total rather than a per-pass one, because the fixture's mock is not reset
+// between the establishing pass and the pass under test.
+func countCalls(cfg *MockConfigurator, method string) int {
+	n := 0
+	for _, c := range cfg.Calls {
+		if c.Method == method {
+			n++
+		}
+	}
+	return n
+}
+
 // ── idempotence ───────────────────────────────────────────────────────
 
 // The deliverable test from the issue: a full pass over a healthy stack must
 // produce zero restarts, zero config writes, and zero graph transitions.
-// Every row of the required-behavior table is asserted here.
+//
+// It does re-run PostStart. RUNNING means the lifecycle phases completed once,
+// not that the app's config still matches the outside world, and the periodic
+// diff is a large part of what the idle pass is for. What it must not do is
+// touch the container or move a node's status.
 func TestSelfHeal_IdlePassChangesNothing(t *testing.T) {
 	f := newHealFixture(t, 0)
 
@@ -282,6 +300,8 @@ func TestSelfHeal_IdlePassChangesNothing(t *testing.T) {
 	require.Equal(t, graph.StatusRunning, healNode(t, f.g, healContainer).ActualStatus)
 	_, _, inspects := f.rt.counts()
 	require.Positive(t, inspects, "the pass must actually have looked at the container")
+	require.Equal(t, 1, countCalls(f.cfg, "PostStart"),
+		"a running node gets its PostStart diff on every pass")
 
 	// Reset every counter, then run the pass that is supposed to be silent.
 	f.repo.reset()
@@ -298,8 +318,13 @@ func TestSelfHeal_IdlePassChangesNothing(t *testing.T) {
 	assert.Equal(t, 0, ensures, "a healthy container must not be created or recreated")
 	assert.Equal(t, 0, removes, "a healthy container must not be removed")
 	assert.Zero(t, f.repo.writes(), "a converged node must not take a status transition")
-	f.cfg.AssertNumberOfCalls(t, "PreStart", 0)
-	f.cfg.AssertNumberOfCalls(t, "PostStart", 0)
+	// PreStart is the phase that can ask for a container recreate, so an idle
+	// pass must never run it. PostStart is the diff, and it runs exactly once
+	// more: the resync is one call per pass, not one per change.
+	assert.Equal(t, 0, countCalls(f.cfg, "PreStart"),
+		"an idle pass must not run PreStart: that is the phase that can restart the container")
+	assert.Equal(t, 2, countCalls(f.cfg, "PostStart"),
+		"an idle pass runs exactly one PostStart resync")
 
 	after := statRoutes(t, f.routes)
 	assert.True(t, before.ModTime().Equal(after.ModTime()),
