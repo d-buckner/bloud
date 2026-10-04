@@ -61,13 +61,35 @@ done
 fuser -k 3000/tcp 2>/dev/null || true
 sleep 1`
 
-// integrationWaitAgentScript waits for the validation host-agent API. First
-// boot pulls images and converges the system apps before the listener opens,
-// so this doubles as the bootstrap convergence gate.
-var integrationWaitAgentScript = `deadline=$((SECONDS + 1200))
-until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do
-  if ((SECONDS >= deadline)); then
-    journalctl --user -u bloud-validate-host-agent.service --no-pager -n 80 || true
+// integrationWaitAgentScript waits for the validation host-agent API and
+// streams the unit's journal while it waits, in one guest process. First boot
+// pulls images and converges the system apps before the listener opens, so
+// this doubles as the bootstrap convergence gate.
+//
+// The tailer must be the script's own child and the script must kill it before
+// it exits. Doing it the other way round -- a Go-side `journalctl -f` that the
+// poll cancels when the gate opens -- deadlocks the whole tier. `bash -c
+// "journalctl -f || true"` forks journalctl, the context kill reaches only
+// bash, and the orphaned journalctl keeps the stdout pipe open, so Go's copy
+// goroutine never sees EOF and `cmd.Wait()` blocks forever. That is exactly
+// how this tier hung at wait-for-convergence for the full job timeout. The EXIT
+// trap kills the tailer and waits for it, so the pipe is closed before the
+// shell exits and Wait() returns.
+//
+// stdout is the live journal stream; stderr is the timeout dump, which belongs
+// in the phase transcript rather than on the console.
+var integrationWaitAgentScript = `unit=` + integrationHostAgentUnit + `
+journalctl --user -u "$unit" -n 0 -f -o cat 2>/dev/null &
+follow=$!
+trap 'kill "$follow" 2>/dev/null; wait "$follow" 2>/dev/null' EXIT INT TERM
+deadline=$((SECONDS + 1200))
+while true; do
+  if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then
+    exit 0
+  fi
+  if (( SECONDS >= deadline )); then
+    echo "timed out after 1200s waiting for the validation host-agent to converge" >&2
+    journalctl --user -u "$unit" --no-pager -n 80 >&2
     exit 1
   fi
   sleep 5
@@ -84,6 +106,11 @@ done`
 // only a failing phase's output is replayed on the console. --verbose
 // streams live as well, for the case where waiting for the end is not good
 // enough.
+//
+// The two phases that run for minutes attach a liveFilter on top of that, so
+// "one line per phase" is the shape of a *finished* phase, not of a phase in
+// flight. See validate_progress.go for why the silence would be worse than
+// the noise.
 type integrationTranscript struct {
 	root   string
 	flags  validateFlags
@@ -95,16 +122,43 @@ func newIntegrationTranscript(root string, flags validateFlags) *integrationTran
 	return &integrationTranscript{root: root, flags: flags, start: time.Now()}
 }
 
+// liveFilter renders a phase's raw byte stream as live console progress while
+// the phase is still running. The two implementations are the test runner's
+// per-case lines and the host-agent's per-node lifecycle lines; both are the
+// state changes a watcher needs while a multi-minute phase is in flight.
+type liveFilter interface {
+	io.Writer
+	// Finish flushes any buffered partial line and writes the closing tally.
+	Finish()
+}
+
 // phase runs one step with its output captured. It returns the finished
 // phase record alongside the step's error, so a caller that has to record
 // the row itself (the test commands, which land in the ledger) does not
 // have to reach back into the transcript.
 func (t *integrationTranscript) phase(cmd manifestCommand, run func(out io.Writer) (int, error)) (ranCommand, error) {
+	return t.phaseLive(cmd, nil, run)
+}
+
+// phaseLive is phase with a live console filter attached. The filter sees the
+// subprocess's bytes as they arrive, which is the whole point: a captured
+// phase is silent until it ends, and the two longest phases in the tier run
+// for minutes. The raw bytes still land in the capture buffer either way, so
+// the filter is a view, not a replacement, and a failure still replays in
+// full.
+//
+// Verbose already streams the raw bytes live, so the filter would only
+// compete with them and is left out; JSON mode owns stdout and gets neither.
+func (t *integrationTranscript) phaseLive(cmd manifestCommand, live liveFilter, run func(out io.Writer) (int, error)) (ranCommand, error) {
 	start := time.Now()
 	var buf bytes.Buffer
 	w := io.Writer(&buf)
-	if t.flags.verbose {
+	switch {
+	case t.flags.verbose:
 		w = io.MultiWriter(os.Stdout, &buf)
+	case live != nil && !t.flags.json:
+		defer live.Finish()
+		w = io.MultiWriter(live, &buf)
 	}
 
 	code, err := run(w)
@@ -150,28 +204,18 @@ func (t *integrationTranscript) finish() {
 	}
 }
 
-// captureRun runs a spec through the executor and folds whatever it produced
-// into the phase's transcript. Verbose streams live; otherwise the bytes are
-// collected and surface only if the phase failed.
-func captureRun(ctx context.Context, ex executor.Executor, spec executor.RunSpec, out io.Writer, verbose bool) (int, error) {
-	if verbose {
-		err := ex.RunStream(ctx, spec, out, out)
-		return exitCodeOf(err), err
+// captureStream runs a spec with its output streamed through `out` as it is
+// produced rather than collected at the end. It is what a phase with a live
+// filter must use: `Run` buffers everything until the command returns, which
+// would deliver the whole test case list at once, after the run it was meant
+// to keep visibly alive.
+func captureStream(ctx context.Context, ex executor.Executor, spec executor.RunSpec, out io.Writer) (int, error) {
+	err := ex.RunStream(ctx, spec, out, out)
+	code := exitCodeOf(err)
+	if err == nil && code != 0 {
+		return code, fmt.Errorf("command exited with code %d", code)
 	}
-	res, err := ex.Run(ctx, spec)
-	if res.Stdout != "" {
-		_, _ = io.WriteString(out, res.Stdout)
-	}
-	if res.Stderr != "" {
-		_, _ = io.WriteString(out, res.Stderr)
-	}
-	if err != nil {
-		return exitCodeOf(err), err
-	}
-	if res.ExitCode != 0 {
-		return res.ExitCode, fmt.Errorf("command exited with code %d", res.ExitCode)
-	}
-	return 0, nil
+	return code, err
 }
 
 // exitCodeOf is the exit code carried by an exec error, or 1 for any other
@@ -373,9 +417,10 @@ func integrationRunTests(ctx context.Context, ex executor.Executor, tier manifes
 		if t.flags.explain && !t.flags.json {
 			fmt.Printf("    %s->%s %s: %s (cwd %s)\n", colorCyan, colorReset, cmd.ID, run, cmd.Cwd)
 		}
-		phase, err := t.phase(cmd, func(out io.Writer) (int, error) {
-			return captureRun(ctx, ex, executor.RunSpec{Command: run, Dir: cmd.Cwd, Env: testEnv}, out, t.flags.verbose)
-		})
+		phase, err := t.phaseLive(cmd, newTestProgress(os.Stdout, devColorEnabled(os.Stdout)),
+			func(out io.Writer) (int, error) {
+				return captureStream(ctx, ex, executor.RunSpec{Command: run, Dir: cmd.Cwd, Env: testEnv}, out)
+			})
 		result.Commands = append(result.Commands, phase.result())
 		if err != nil {
 			return 1
@@ -467,7 +512,21 @@ func bringUpAndTest(ctx context.Context, root string, tier manifestTier, result 
 	// First boot converges the system apps before the listener opens, so
 	// this is also the bootstrap gate.
 	if _, err := t.phase(bringUpPhase("wait-for-convergence", "poll GET :3000/api/health until the first pass ends"),
-		onlyErr(func(out io.Writer) error { return integrationWaitForAgent(ctx, ex, out) })); err != nil {
+		onlyErr(func(out io.Writer) error {
+			// The journal follower feeds the live filter *and* the transcript,
+			// so bring-up is on the console as progress and in the log file as
+			// evidence. The poll itself stays off the console: its only output is
+			// the timeout dump, which the failure block replays. Verbose already
+			// streams the raw journal and JSON owns stdout, so in neither case
+			// does the filter get a turn.
+			follow := io.Writer(out)
+			if !t.flags.json && !t.flags.verbose {
+				filter := newAgentProgress(os.Stdout, devColorEnabled(os.Stdout))
+				defer filter.Finish()
+				follow = io.MultiWriter(filter, out)
+			}
+			return integrationWaitForAgent(ctx, ex, out, follow)
+		})); err != nil {
 		return 1, err.Error()
 	}
 
@@ -510,20 +569,23 @@ func integrationProvisionVM(ctx context.Context, t *integrationTranscript) (back
 }
 
 // integrationWaitForAgent blocks until the validation host-agent reports
-// healthy, writing whatever the wait script said on failure into the
-// transcript so the timeout is not silent.
-func integrationWaitForAgent(ctx context.Context, ex executor.Executor, out io.Writer) error {
-	res, err := ex.Run(ctx, executor.RunSpec{Command: integrationWaitAgentScript})
-	if err == nil && res.ExitCode == 0 {
+// healthy, streaming the unit's journal into `live` while it waits. The API is
+// behind the bootstrap gate for exactly this period, so the journal is the
+// only thing that says which node is coming up and which one is stuck; without
+// it the longest phase in the tier is a blank console.
+//
+// This is one streaming call, not a follower goroutine plus a poll. The wait
+// script owns its own tailer and kills it before exiting, which is what keeps
+// the pipe closing; see integrationWaitAgentScript for the deadlock that the
+// split-process version caused. The script's stdout is the journal stream and
+// its stderr is the timeout dump, so the dump lands in the phase transcript
+// rather than on the console, and the timeout is never silent.
+func integrationWaitForAgent(ctx context.Context, ex executor.Executor, out io.Writer, live io.Writer) error {
+	err := ex.RunStream(ctx, executor.RunSpec{Command: integrationWaitAgentScript}, live, out)
+	if err == nil {
 		return nil
 	}
-	if detail := strings.TrimSpace(res.Stdout); detail != "" {
-		_, _ = io.WriteString(out, detail+"\n")
-	}
-	if detail := strings.TrimSpace(res.Stderr); detail != "" {
-		_, _ = io.WriteString(out, detail+"\n")
-	}
-	return fmt.Errorf("validation host-agent did not become healthy")
+	return fmt.Errorf("validation host-agent did not become healthy: %w", err)
 }
 
 // integrationStopService stops the validation unit. The runtime dir and its

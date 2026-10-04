@@ -234,7 +234,39 @@ line per command plus a pass/fail summary, with the full per-command output
 dumped only for failures and mirrored to `.bloud/logs/validate-<tier>.log`.
 The integration tier uses the same split for its bring-up phases (provision,
 preflight, build, deploy, start, wait-for-convergence) as for the test command
-itself, so a 10-minute run that goes well is ten lines.
+itself. A short phase is one line. The two long ones are not, because a phase
+that runs for minutes with nothing printed is worse than noisy: in GitHub
+Actions a step that writes nothing for 10 minutes is killed by the runner's
+idle timeout, so a slow-but-healthy convergence reads as a hung job and the
+evidence of what it was waiting on never appears. So those two phases stream
+their state changes live (`cli/validate_progress.go`):
+
+- `wait-for-convergence` follows the validation unit's journal (`journalctl
+  --user -u bloud-validate-host-agent.service -n 0 -f -o cat`) while the
+  health poll runs, and prints the orchestrator's records as they land: the
+  convergence step, and each node moving through `PreStart` /
+  `EnsureContainer` / `HealthCheck` to `RUNNING`. The API is behind the
+  bootstrap gate for exactly this window, so the journal is the only thing
+  that can say which node is stuck. The follow and the poll are **one guest
+  script**, not a Go-side follower process cancelled when the poll ends: a
+  `journalctl -f` started by `bash -c` is a grandchild of the CLI, so the
+  context kill reaches the shell and leaves journalctl holding the stdout
+  pipe open. Go's copy goroutine then never sees EOF, `cmd.Wait()` never
+  returns, and the tier hangs to the CI job timeout. The script owns its
+  tailer and kills and reaps it in an `EXIT` trap, which is what closes the
+  pipe before the shell exits.
+- the test phase streams `go test -v` as one line per case at start and
+  finish (`▶` / `✓` / `✗` / `⊘`, with the per-case duration), plus a tally.
+  A run where the `-test.run` regex matched nothing says so out loud rather
+  than exiting 0 looking like a pass.
+
+Both are filters over the same captured bytes, not a replacement for the
+capture: the raw stream still lands in the phase transcript and in
+`.bloud/logs/validate-integration.log`, and a failing phase still replays in
+full. There is deliberately no heartbeat: both producers emit real events
+often enough to keep the console visibly alive. `--verbose` skips the filters
+entirely and streams raw, which is the right thing when the filter itself is
+what you are debugging.
 
 The integration tier builds no frontend. The fast tier's `web-build` command
 already gates the production bundle whenever web files change, and no
