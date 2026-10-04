@@ -15,7 +15,16 @@
 # The tier runs on the native backend: a throwaway GitHub runner is the one
 # place the no-VM trade-off is acceptable (AGENTS.md). It deploys host-agent
 # and the catalog as a systemd user service in /var/tmp/bloud-validate-runtime
-# and installs Jellyfin through POST /api/apps/jellyfin/install.
+# and installs an app through the real host-agent API.
+#
+# One matrix leg per app group. The test binary otherwise runs every app's
+# install/reconcile journey serially in a single 15-minute pass; here each
+# group gets its own runner and its own runtime, so the wall clock is the
+# slowest group instead of the sum. Each leg pays the fixed first-boot cost
+# (build + system convergence), which is the trade for the parallel wall
+# clock. The `--test-run` regex maps to the test functions in
+# services/host-agent/internal/e2e/*_test.go and is verified by
+# TestWithTestRunFilter in cli/validate_test.go.
 #
 # No Node.js here on purpose. The tier builds two Go binaries and copies them
 # in; it ships no dashboard, so it needs no frontend toolchain. The
@@ -40,11 +49,27 @@ jobs:
     # runner image is part of this job's contract, and the label migrates in
     # October 2026.
     runs-on: ubuntu-24.04
-    # Worst case is the sum of the pieces, not the test timeout alone:
-    # local Go builds (~4m on a cold cache) + deploy (~1m) + first-boot
-    # convergence, which the tier allows 20m for, + the 30m test timeout in
-    # validation.yaml.
-    timeout-minutes: 70
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: system
+            test-run: 'TestSystemApps|TestAuthentik|TestLDAPAuth'
+          - group: jellyfin
+            test-run: 'TestJellyfin|TestCrashRecovery|TestInstallLiveStateStream'
+          - group: affine
+            test-run: 'TestAffine'
+          - group: paperless
+            test-run: 'TestPaperlessNgx'
+          - group: radicale
+            test-run: 'TestRadicale'
+          - group: vaultwarden
+            test-run: 'TestVaultwarden'
+          - group: media-stack
+            test-run: 'TestMediaStack'
+          - group: catalog
+            test-run: 'TestCatalogUpdate'
 
     steps:
       - name: Checkout
@@ -99,10 +124,10 @@ jobs:
           sudo rm -rf /var/tmp/bloud-validate-runtime
           sudo chown -R "$USER" /var/tmp
 
-      - name: Validate (integration tier)
+      - name: Validate (integration tier, ${{ matrix.group }})
         env:
           BLOUD_BACKEND: native
-        run: ./bloud validate --tier integration
+        run: ./bloud validate --tier integration --test-run "${{ matrix.test-run }}"
 
       - name: Show the validation ledger
         if: always()
@@ -113,9 +138,9 @@ jobs:
       - name: Debug on failure
         if: failure()
         run: |
-          echo "=== Validation host-agent journal ==="
+          echo "=== Validation host-agent journal (${{ matrix.group }}) ==="
           journalctl --user -u bloud-validate-host-agent.service --no-pager 2>&1 \
-            | grep -iE 'jellyfin|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|"level":"(error|warn)"' \
+            | grep -iE '${{ matrix.group }}|lifecycle phase|healthcheck|poststart|prestart|ensurecontainer|convergence|intent|route|waiting for|wizard|"level":"(error|warn)"' \
             | tail -300 || true
           echo "=== Full journal tail ==="
           journalctl --user -u bloud-validate-host-agent.service --no-pager -n 120 2>&1 || true
@@ -133,7 +158,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: integration-validation-ledger
+          name: integration-validation-ledger-${{ matrix.group }}
           path: .bloud/validation/
           if-no-files-found: ignore
           retention-days: 14

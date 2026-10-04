@@ -7,6 +7,36 @@ import (
 	"testing"
 )
 
+func TestWithTestRunFilter(t *testing.T) {
+	cases := []struct {
+		name   string
+		run    string
+		filter string
+		want   string
+	}{
+		{name: "empty filter leaves the command untouched", run: "./t.test -test.v", filter: "", want: "./t.test -test.v"},
+		{name: "filter is appended single-quoted", run: "./t.test -test.v -test.timeout 30m", filter: "TestJellyfin|TestCrashRecovery", want: "./t.test -test.v -test.timeout 30m -test.run 'TestJellyfin|TestCrashRecovery'"},
+		{name: "embedded single quote is escaped", run: "./t.test", filter: "a'b", want: "./t.test -test.run 'a'\\''b'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := withTestRunFilter(tc.run, tc.filter); got != tc.want {
+				t.Errorf("withTestRunFilter(%q, %q) = %q, want %q", tc.run, tc.filter, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseValidateFlagsTestRun(t *testing.T) {
+	flags := parseValidateFlags([]string{"--tier", "integration", "--test-run", "TestAffine|TestRadicale"})
+	if flags.testRun != "TestAffine|TestRadicale" {
+		t.Errorf("testRun = %q, want %q", flags.testRun, "TestAffine|TestRadicale")
+	}
+	if flags.tier != "integration" {
+		t.Errorf("tier = %q, want integration", flags.tier)
+	}
+}
+
 func TestRunCommandsPreservesManifestOrder(t *testing.T) {
 	root := t.TempDir()
 	cmds := []manifestCommand{

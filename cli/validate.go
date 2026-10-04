@@ -22,6 +22,7 @@ type validateFlags struct {
 	explain bool
 	dryRun  bool
 	since   string
+	testRun string
 	verbose bool
 }
 
@@ -77,6 +78,11 @@ func parseValidateFlags(args []string) validateFlags {
 			if i+1 < len(args) {
 				i++
 				f.since = args[i]
+			}
+		case "--test-run":
+			if i+1 < len(args) {
+				i++
+				f.testRun = args[i]
 			}
 		case "--verbose", "-v":
 			f.verbose = true
