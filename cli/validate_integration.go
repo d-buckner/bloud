@@ -88,10 +88,11 @@ type integrationTranscript struct {
 	root   string
 	flags  validateFlags
 	phases []ranCommand
+	start  time.Time
 }
 
 func newIntegrationTranscript(root string, flags validateFlags) *integrationTranscript {
-	return &integrationTranscript{root: root, flags: flags}
+	return &integrationTranscript{root: root, flags: flags, start: time.Now()}
 }
 
 // phase runs one step with its output captured. It returns the finished
@@ -145,7 +146,7 @@ func bringUpPhase(id, detail string) manifestCommand {
 func (t *integrationTranscript) finish() {
 	logPath := writeValidateLog(t.root, "integration", t.phases)
 	if !t.flags.json {
-		printValidateSummary("integration", t.phases, logPath)
+		printValidateSummary("integration", t.phases, logPath, time.Since(t.start))
 	}
 }
 

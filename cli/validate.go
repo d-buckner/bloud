@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -264,17 +263,61 @@ type ranCommand struct {
 	failed   bool
 }
 
-// parallelism returns how many light commands may run at once. Light commands
-// are single-threaded, so the runner's core count is the natural ceiling;
-// BLOUD_CHECK_JOBS (the same switch scripts/checks.mjs honours) overrides it,
-// which lets a human cap the fan-out on a small or shared runner.
-func parallelism() int {
+// lightParallelism returns how many light commands may run at once. Light
+// commands are single-threaded, and the heavy Go jobs already occupy every core
+// during their compile phase, so the default is deliberately one: a single
+// light job tucked into the heavy job's slack costs a fraction of a core, where
+// a NumCPU-sized pool fully oversubscribes the machine and slows the heavy job
+// (measured: go test went 40s -> 73s alongside a 4-wide pool). BLOUD_CHECK_JOBS
+// overrides for a host with headroom to spare.
+func lightParallelism() int {
 	if n := os.Getenv("BLOUD_CHECK_JOBS"); n != "" {
 		if v, err := strconv.Atoi(n); err == nil && v > 0 {
 			return v
 		}
 	}
-	return runtime.NumCPU()
+	return 1
+}
+
+// partitionHeavyLight splits command indices by weight: heavy commands run one
+// at a time (they parallelise internally), light commands run in a small pool
+// alongside them.
+func partitionHeavyLight(commands []manifestCommand) (heavy, light []int) {
+	for i, cmd := range commands {
+		if cmd.Heavy {
+			heavy = append(heavy, i)
+		} else {
+			light = append(light, i)
+		}
+	}
+	return heavy, light
+}
+
+// runLightCommands starts the light-command worker pool and returns the
+// WaitGroup the caller waits on after running the heavy commands. The pool
+// writes into results by manifest index, so the ledger order is untouched.
+func runLightCommands(root string, commands []manifestCommand, light []int, flags validateFlags, results []ranCommand) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	if len(light) == 0 {
+		return &wg
+	}
+	jobs := make(chan int)
+	for w := 0; w < lightParallelism() && w < len(light); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				results[i] = runManifestCommand(root, commands[i], flags)
+			}
+		}()
+	}
+	go func() {
+		for _, i := range light {
+			jobs <- i
+		}
+		close(jobs)
+	}()
+	return &wg
 }
 
 func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
@@ -290,45 +333,17 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 		}
 	}
 
-	// Heavy commands parallelise internally and would fight each other for the
-	// cores if run together, so they run one at a time. Light commands are
-	// single-threaded; they run in a pool alongside the current heavy command,
-	// hiding their serial wall-clock behind the work that dominates the tier.
-	// The ledger and the summary keep manifest order regardless of the order
-	// the commands actually finish in.
-	var heavy, light []int
-	for i, cmd := range commands {
-		if cmd.Heavy {
-			heavy = append(heavy, i)
-		} else {
-			light = append(light, i)
-		}
-	}
-
+	// Heavy commands run one at a time; the light pool fills the slack. The
+	// ledger and the summary keep manifest order regardless of finish order.
+	start := time.Now()
+	heavy, light := partitionHeavyLight(commands)
 	results := make([]ranCommand, len(commands))
-	var wg sync.WaitGroup
-	if len(light) > 0 {
-		jobs := make(chan int)
-		for w := 0; w < parallelism() && w < len(light); w++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for i := range jobs {
-					results[i] = runManifestCommand(root, commands[i], flags)
-				}
-			}()
-		}
-		go func() {
-			for _, i := range light {
-				jobs <- i
-			}
-			close(jobs)
-		}()
-	}
+	wg := runLightCommands(root, commands, light, flags, results)
 	for _, i := range heavy {
 		results[i] = runManifestCommand(root, commands[i], flags)
 	}
 	wg.Wait()
+	wallClock := time.Since(start)
 
 	exitCode := 0
 	ran := make([]ranCommand, 0, len(commands))
@@ -343,7 +358,7 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 
 	logPath := writeValidateLog(root, result.Tier, ran)
 	if !flags.json {
-		printValidateSummary(result.Tier, ran, logPath)
+		printValidateSummary(result.Tier, ran, logPath, wallClock)
 	}
 	return exitCode
 }
@@ -351,11 +366,9 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 // printValidateSummary is the signal the tier owes the reader: did it pass or
 // fail, how long it took, and, when it failed, the output of only the failing
 // commands. The per-command verdicts were already printed as they ran.
-func printValidateSummary(tier string, ran []ranCommand, logPath string) {
+func printValidateSummary(tier string, ran []ranCommand, logPath string, wallClock time.Duration) {
 	var failed []ranCommand
-	var total time.Duration
 	for _, r := range ran {
-		total += r.duration
 		if r.failed {
 			failed = append(failed, r)
 		}
@@ -370,14 +383,14 @@ func printValidateSummary(tier string, ran []ranCommand, logPath string) {
 	fmt.Printf("  %s\n", strings.Repeat("-", 60))
 	if len(failed) == 0 {
 		fmt.Printf("validate: %s tier passed, %d/%d checks in %s\n",
-			tier, len(ran), len(ran), total.Round(time.Millisecond))
+			tier, len(ran), len(ran), wallClock.Round(time.Millisecond))
 	} else {
 		names := make([]string, 0, len(failed))
 		for _, r := range failed {
 			names = append(names, r.cmd.ID)
 		}
 		fmt.Printf("validate: %s tier failed, %d/%d checks in %s; failed: %s\n",
-			tier, len(ran)-len(failed), len(ran), total.Round(time.Millisecond), strings.Join(names, ", "))
+			tier, len(ran)-len(failed), len(ran), wallClock.Round(time.Millisecond), strings.Join(names, ", "))
 	}
 	if logPath != "" {
 		fmt.Printf("full output: %s\n", logPath)

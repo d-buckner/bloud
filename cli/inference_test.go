@@ -117,12 +117,10 @@ func TestTriggeredCommandsWildcard(t *testing.T) {
 }
 
 // TestRealManifestInference loads the repo's own validation.yaml and pins the
-// properties the changed tier relies on: every fast-tier command is reachable
-// from some path, web files do not drag in the Go suite, and a docs-only change
-// triggers only the whole-tree catch-all. If a future edit to validation.yaml
-// breaks one of these, this test fails before CI starts silently skipping (or
-// over-running) checks.
-func TestRealManifestInference(t *testing.T) {
+// realManifest loads the repo's validation.yaml, skipping when no project root
+// is available (e.g. a vendored test run).
+func realManifest(t *testing.T) *validationManifest {
+	t.Helper()
 	root, err := getProjectRoot()
 	if err != nil {
 		t.Skipf("no project root available: %v", err)
@@ -131,14 +129,19 @@ func TestRealManifestInference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadManifest: %v", err)
 	}
+	return manifest
+}
 
+// TestRealManifestEveryCommandReachable pins that no fast-tier command is
+// orphaned: each must be reachable from some inference path or from the `*`
+// wildcard. A command nobody can trigger is a check CI silently never runs.
+func TestRealManifestEveryCommandReachable(t *testing.T) {
+	manifest := realManifest(t)
 	fast, ok := manifest.Tiers["fast"]
 	if !ok {
 		t.Fatal("no fast tier in validation.yaml")
 	}
 
-	// Every fast-tier command ID must be reachable from some trigger list or
-	// from the wildcard.
 	reachable := map[string]bool{"*": true}
 	for _, p := range manifest.Inference.Paths {
 		for _, trig := range p.Triggers {
@@ -150,30 +153,42 @@ func TestRealManifestInference(t *testing.T) {
 			t.Errorf("fast-tier command %q is not reachable from any inference path", cmd.ID)
 		}
 	}
+}
 
-	// A web-only change must not pull in the host-agent Go suite.
-	webTriggers, _, _ := inferTriggers([]string{"services/host-agent/web/src/App.svelte"}, manifest)
-	if webTriggers["go-host-agent"] || webTriggers["go-host-agent-race"] || webTriggers["go-lint-host-agent"] {
-		t.Errorf("web change pulled in the Go suite: %v", webTriggers)
+// TestRealManifestWebChangeSkipsGoSuite pins the most-specific-wins rule: a web
+// change must trigger the web checks, not the host-agent Go suite.
+func TestRealManifestWebChangeSkipsGoSuite(t *testing.T) {
+	manifest := realManifest(t)
+	triggers, _, _ := inferTriggers([]string{"services/host-agent/web/src/App.svelte"}, manifest)
+	if triggers["go-host-agent"] || triggers["go-host-agent-race"] || triggers["go-lint-host-agent"] {
+		t.Errorf("web change pulled in the Go suite: %v", triggers)
 	}
-	if !webTriggers["web-build"] {
-		t.Errorf("web change did not trigger web-build: %v", webTriggers)
+	if !triggers["web-build"] {
+		t.Errorf("web change did not trigger web-build: %v", triggers)
 	}
+}
 
-	// A docs-only change must trigger only the whole-tree catch-all.
-	docTriggers, _, _ := inferTriggers([]string{"docs/plans/something.md"}, manifest)
-	for id := range docTriggers {
+// TestRealManifestDocsChangeOnlyCatchAll pins that a docs change triggers the
+// whole-tree catch-all checks and no module command.
+func TestRealManifestDocsChangeOnlyCatchAll(t *testing.T) {
+	manifest := realManifest(t)
+	triggers, _, _ := inferTriggers([]string{"docs/plans/something.md"}, manifest)
+	for id := range triggers {
 		if id == "go-host-agent" || id == "go-apps" || id == "go-cli" || id == "web-build" || id == "gofmt" {
-			t.Errorf("docs change triggered a module command %q: %v", id, docTriggers)
+			t.Errorf("docs change triggered a module command %q: %v", id, triggers)
 		}
 	}
-	if !docTriggers["prose-lint"] || !docTriggers["file-length"] {
-		t.Errorf("docs change missing a whole-tree check: %v", docTriggers)
+	if !triggers["prose-lint"] || !triggers["file-length"] {
+		t.Errorf("docs change missing a whole-tree check: %v", triggers)
 	}
+}
 
-	// A root config file must trigger the full tier.
-	pkgTriggers, _, _ := inferTriggers([]string{"package.json"}, manifest)
-	if !pkgTriggers["*"] {
-		t.Errorf("package.json change did not trigger the wildcard: %v", pkgTriggers)
+// TestRealManifestRootConfigTriggersWildcard pins that a root config file
+// triggers the full tier.
+func TestRealManifestRootConfigTriggersWildcard(t *testing.T) {
+	manifest := realManifest(t)
+	triggers, _, _ := inferTriggers([]string{"package.json"}, manifest)
+	if !triggers["*"] {
+		t.Errorf("package.json change did not trigger the wildcard: %v", triggers)
 	}
 }
