@@ -91,8 +91,8 @@ tiers:
   integration:
     # Commands run inside the guest against the validation runtime deployed
     # by the tier (see cli/validate.go, runIntegrationTier). cwd is a guest
-    # absolute path; BLOUD_DATA_DIR, BLOUD_TRAEFIK_DYNAMIC_DIR, and
-    # BLOUD_E2E_HOST_AGENT_UNIT are injected by the tier.
+    # absolute path; BLOUD_DATA_DIR, BLOUD_APPS_DIR, BLOUD_TRAEFIK_DYNAMIC_DIR,
+    # and BLOUD_E2E_HOST_AGENT_UNIT are injected by the tier.
     commands:
       - id: e2e-host-agent
         cwd: /var/tmp/bloud-validate-runtime/bin
