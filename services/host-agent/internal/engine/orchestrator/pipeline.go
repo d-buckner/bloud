@@ -4,6 +4,8 @@ package orchestrator
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
@@ -303,32 +305,19 @@ func (o *Orchestrator) convergeUninstalls(ctx context.Context, apps []*store.Ins
 	}
 }
 
-// intentTypeName returns a human-readable name for an intent type.
+// intentTypeName returns a human-readable name for an intent type, derived
+// from the type's own name rather than a parallel switch. The sealed Intent
+// set is enumerated exactly once (in applyIntents); deriving the log name here
+// means a new intent type can no longer drift from its drain arm: the name
+// follows the type for free, and every concrete type ends in "Intent" by the
+// convention in intent.go.
 func intentTypeName(intent Intent) string {
-	switch intent.(type) {
-	case InstallAppIntent:
-		return "InstallApp"
-	case UninstallAppIntent:
-		return "UninstallApp"
-	case RenameAppIntent:
-		return "RenameApp"
-	case SetTailnetIntent:
-		return "SetTailnet"
-	case DeleteTailnetIntent:
-		return "DeleteTailnet"
-	case AddRemoteAppIntent:
-		return "AddRemoteApp"
-	case DeleteRemoteAppIntent:
-		return "DeleteRemoteApp"
-	case ClearAppDataIntent:
-		return "ClearAppData"
-	case SetPublicURLIntent:
-		return "SetPublicURL"
-	case SetInferenceIntent:
-		return "SetInference"
-	case ReconcileIntent:
-		return "Reconcile"
-	default:
+	if intent == nil {
 		return "Unknown"
 	}
+	name := reflect.TypeOf(intent).Name()
+	if name == "" {
+		return "Unknown"
+	}
+	return strings.TrimSuffix(name, "Intent")
 }
