@@ -20,7 +20,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/inference"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/system"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/testdb"
@@ -60,40 +59,22 @@ func (f *fakeSystemOrchestrator) NodePhases() map[string]string {
 	return f.phases
 }
 
-// FakeGateway is a fake gateway manager for testing.
-type FakeGateway struct {
-	running bool
-	domain  string
-}
-
-func (f *FakeGateway) EnsureRunning(_ context.Context) error              { return nil }
-func (f *FakeGateway) Stop(_ context.Context) error                       { return nil }
-func (f *FakeGateway) StopAndPurge(_ context.Context) error               { return nil }
-func (f *FakeGateway) IsRunning(_ context.Context) bool                   { return f.running }
-func (f *FakeGateway) GetTailnetDomain(_ context.Context) (string, error) { return f.domain, nil }
-
-var _ sharing.GatewayManagerInterface = (*FakeGateway)(nil)
-
 // ---- New system module helper ----
 
 func newSystemModule(t *testing.T, opts systemModuleOpts) *systemModule {
 	t.Helper()
 	appStore := NewFakeAppStore()
 	catalogCache := NewFakeCatalogCache()
-	gateway := &FakeGateway{running: true, domain: "bloud.ts.net"}
-	tailnetStore := &FakeTailnetStore{}
 	orch := newFakeSystemOrchestrator()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	return &systemModule{
-		appStore:     appStore,
-		catalog:      catalogCache,
-		gateway:      gateway,
-		tailnetStore: tailnetStore,
-		orch:         orch,
-		healthCheck:  opts.healthCheck,
-		aiSettings:   opts.aiSettings,
-		logger:       logger,
+		appStore:    appStore,
+		catalog:     catalogCache,
+		orch:        orch,
+		healthCheck: opts.healthCheck,
+		aiSettings:  opts.aiSettings,
+		logger:      logger,
 	}
 }
 
@@ -284,12 +265,6 @@ func TestSystemHTTP_DeveloperGraph_WithApps(t *testing.T) {
 	appStore.AddApp(&store.InstalledApp{
 		CatalogID: "jellyfin", DisplayName: "Jellyfin", IsSystem: false, Status: "running",
 	})
-
-	// Add a tailnet connection
-	tailnetStore := mod.tailnetStore.(*FakeTailnetStore)
-	tailnetStore.active = &store.TailnetConnection{
-		ID: "ts-1", Name: "My Tailscale", Type: "tailscale", Status: "active",
-	}
 
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
@@ -594,42 +569,6 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresInferenceConsumers(t *testing
 	assert.True(t, graphEdgePresent(resp.Edges, "hermes", AINodeID))
 	assert.True(t, graphEdgePresent(resp.Edges, "affine", AINodeID),
 		"affine declares source: instance with no `default: true`; the edge must not depend on the flag")
-}
-
-func TestSystemHTTP_DeveloperGraph_WithTailnetNodes(t *testing.T) {
-	mod := newSystemModule(t, systemModuleOpts{})
-
-	// Add traefik + a shared app with tailnet ID
-	appStore := mod.appStore.(*FakeAppStore)
-	appStore.AddApp(&store.InstalledApp{
-		CatalogID: "traefik", DisplayName: "Traefik", IsSystem: true, Status: "running",
-	})
-	appStore.AddApp(&store.InstalledApp{
-		CatalogID: "jellyfin", DisplayName: "Jellyfin", IsSystem: false, Status: "running",
-		TailnetID: "tn-1",
-	})
-
-	r := chi.NewRouter()
-	NewSystemRouter(mod, r)
-
-	req := httptest.NewRequest("GET", "/system/developer", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp developerGraph
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-
-	// Should have a ts:jellyfin tunnel node
-	hasTSNode := false
-	for _, n := range resp.Nodes {
-		if n.ID == "ts:jellyfin" {
-			hasTSNode = true
-			break
-		}
-	}
-	assert.True(t, hasTSNode, "should have ts:jellyfin tunnel node")
 }
 
 func TestSystemHTTP_DeveloperGraph_ContainerNodes(t *testing.T) {

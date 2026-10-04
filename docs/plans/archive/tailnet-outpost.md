@@ -1,4 +1,6 @@
-> Status: draft
+> Status: retired. The sharing, tailnet, and remote-app subsystems this plan
+> served were removed from the product; the design is kept for a possible
+> revisit and describes code that no longer exists.
 
 # Plan: Standalone Proxy Outpost for Tailnet Auth
 

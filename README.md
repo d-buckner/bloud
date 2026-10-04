@@ -137,7 +137,6 @@ Alpha in specific ways, so you know which gaps you're signing up for.
 - **No TLS.** Plain HTTP only, and this is the biggest gap. Let's Encrypt on Traefik, or
   Tailscale Serve, is the planned follow-up. Fine on your LAN if you accept it; not acceptable
   off-LAN.
-- **Sharing in progress.** Core sharing works. Tailnet outpost auth is still in development.
 - **No `bloud init`.** First-run host config happens in the dashboard.
 - **Debian 13 only.** A support contract has to be true somewhere before it spreads.
 - **The loop is not yet hardened against every failure mode.** The auth bypass is remotely
@@ -185,7 +184,6 @@ you want your software to have, I understand and this project may not be for you
 - [docs/specs/reconciler-spec.md](docs/specs/reconciler-spec.md): reconciler subsystem design
 - [docs/architecture/overview.md](docs/architecture/overview.md): component overview
 - [docs/guides/contributing-apps.md](docs/guides/contributing-apps.md): how to add an app
-- [docs/features/sharing.md](docs/features/sharing.md): federated sharing design
 
 ## license
 

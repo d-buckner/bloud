@@ -742,14 +742,16 @@ combined with instance/SSH-target env vars). Instance overrides:
     does not run.** Deploy location (not code concern) is what earns a
     directory under `services/`. SSO, orchestrator, API, and store run on the
     same box as host-agent → they stay packages under `internal/` or
-    subcommands of the host-agent binary. A remote tailnet outpost or control
+    subcommands of the host-agent binary. A remote outpost or control
     plane (a different machine) earns its own `services/<name>/` module when
     it gets built.
-14. **Wire contracts stay stdlib-only.** Token formats, gateway protocol
-    constants, and share-envelope types must not import
-    `store`/`config`/host-agent-internal machinery, so a future extraction to
-    a shared `pkg/` or module is a move, not a surgery.
-    `internal/sharing/token.go` (pure stdlib) is the exemplar.
+14. **Shared packages stay free of host-agent internals.** Anything under `pkg/`
+    is a candidate for extraction to a shared `pkg/` module, so it must not
+    import `store`/`config`/host-agent-internal machinery: a token format,
+    protocol constant, or envelope type that reaches for the store cannot be
+    moved without a surgery. `pkg/` importing only `pkg/` (and stdlib) is the
+    rule, and it holds today: `pkg/appclient`, `pkg/managedfile`, and
+    `pkg/slug` pull in nothing from `internal/`.
 15. **Cross-app wiring goes through typed integration contracts.** A contract
     (`internal/catalog/contracts.go`) is the one place the vocabulary lives: the
     label a consumer declares under `integrations:`, the secret names a provider
@@ -803,13 +805,13 @@ combined with instance/SSH-target env vars). Instance overrides:
   `GET /api/apps` (catalog), `GET /api/apps/installed`,
   `GET /api/apps/{name}/metadata`, `POST /api/apps/{name}/install`,
   `POST /api/apps/{name}/uninstall`, `PATCH /api/apps/{name}/rename`,
-  home + logs routers, and `GET /api/system/diagnostics` (host vs. container
+  home router, and `GET /api/system/diagnostics` (host vs. container
   DNS resolution of the configured public host, so a podman sandbox that
   captured stale resolver upstreams at boot is a system warning rather than
   only an app that cannot resolve its OIDC issuer).
 - Admin: `POST /api/apps/refresh-catalog`, `GET /api/system/rebuild/stream`,
   settings (incl. `GET/PUT /api/settings/public-url`: the address setting),
-  sharing, remote-apps routers.
+  and the user-management router.
 
 ## Adding an app
 
@@ -934,8 +936,6 @@ HKDF-derived credentials make restart reconstruction work, so only
 ERROR-terminal semantics is lost. §C1's inert install path is fixed: the router
 wires the catalog graph). Highlights:
 
-- Sharing/guest API handlers write stores directly: a deliberate, documented
-  boundary (pure store writes, synchronous invite tokens), not intent-queue drift.
 - ~~Config ships hardcoded fallback secrets~~ **Fixed 2026-09-14**: `config.Load`
   is fallible with no static fallback (env > `secrets.json` > error). Still open:
   one literal fallback survives in `sso.DeriveSecret`, and loopback requests are
@@ -967,7 +967,7 @@ to the right doc. When a doc moves, update it in both places.
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|
 |Build the .deb release package|[operations/packaging.md](docs/operations/packaging.md)|
-|Sharing/federation (in progress)|[features/sharing.md](docs/features/sharing.md)|
+|Sharing/federation (removed)|archived design in [docs/plans/archive/](docs/plans/archive/)|
 |MCP servers as catalog apps (shipped: `apps/affine-mcp` providers, Hermes consumes)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
 | Dated review findings|[specs/review-2026-09-17.md](docs/specs/review-2026-09-17.md)|

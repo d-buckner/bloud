@@ -139,16 +139,11 @@ Intent types (`intent.go`):
 - **InstallAppIntent**: install an app by name
 - **UninstallAppIntent**: remove an app (with optional `clearData`)
 - **RenameAppIntent**: change an app's display name
-- **SetTailnetIntent / DeleteTailnetIntent**: tailnet configuration changes
-- **AddRemoteAppIntent / DeleteRemoteAppIntent**: remote app management
 - **ClearAppDataIntent**: wipe app data
 - **ReconcileIntent**: the periodic self-heal trigger. It carries no
   request; the value is the convergence pass that follows. Routing the
   timer through the queue rather than calling the loop directly is what
   keeps the orchestrator the single writer.
-- *(Share/guest records are not intents by design: pure store writes with no
-  lifecycle side effects, and invite creation returns its token synchronously.
-  The sharing API writes them directly; see docs/specs/review-2026-09-17.md §C3)*
 
 The loop is not purely reactive. An idle timer submits a `ReconcileIntent`
 when nothing else has converged recently (`BLOUD_RECONCILE_INTERVAL`,
@@ -161,7 +156,7 @@ assumed (`orchestrator/selfheal_test.go`).
 
 The orchestrator drains the intent queue, applies intents to stores (desired state), then
 converges actual state toward desired: sync container state, handle uninstalls, populate
-the graph, converge tailnet, run a topological reconcile pass (per-level concurrent,
+the graph, run a topological reconcile pass (per-level concurrent,
 phases `INITIALIZING→PRESTART→STARTING→POSTSTART→RUNNING`), and finally regenerate
 Traefik routes before promoting nodes to RUNNING.
 
@@ -269,7 +264,7 @@ configurators.
 
 Manages the Authentik identity provider via its REST API. Key operations:
 `EnsureLDAPInfrastructure`, `EnsureBloudOAuthApp` (idempotent OIDC bootstrap), SSO
-provisioning, and forward-auth provider creation for tailnet access.
+provisioning, and forward-auth provider creation.
 
 ### App Store (`internal/store/`)
 

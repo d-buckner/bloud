@@ -18,7 +18,6 @@ Supporting documents provide rationale, detail, and implementation records:
 
 - `docs/architecture/overview.md`: component overview and diagram
 - `docs/guides/contributing-apps.md`: how to add a new app
-- `docs/features/sharing.md`: sharing architecture and federation design
 - `docs/specs/reconciler-spec.md`: intent-driven reconciler architecture (implemented)
 
 Supporting documents must defer to this file and must not introduce new authoritative
@@ -47,8 +46,7 @@ Completed:
   frontend tests, and frontend checks.
 - Intent-driven reconciler architecture is implemented and merged. All mutations flow through
   a typed intent queue with debounce. The reconciler is the single writer to all stores and
-  the single executor of all side effects. Intent types cover install, uninstall, rename,
-  tailnet, remote apps, shares, and clear-data.
+  the single executor of all side effects.
 - PreStart/PostStart configurator contracts exist as optional interfaces. Jellyfin and
   Navidrome configurators implement them.
 - Portable application manifests exist as `metadata.yaml` per app with container specs,
@@ -56,13 +54,9 @@ Completed:
 - The Podman API adapter is working. The orchestrator creates containers and
   manages the container lifecycle directly through Podman.
 - Domain-agnostic Traefik routing with HostRegexp patterns is implemented. Apps are
-  accessible via any origin (localhost, tailnet FQDN, custom domain).
+  accessible via any origin (localhost, LAN address, custom domain).
 - Developer graph API and frontend visualization are implemented with app boxes holding
   container nodes, connection nodes, and integration edges.
-- Two-layer Tailscale sharing architecture is implemented: per-app tailnet nodes for
-  outbound sharing, gateway with SOCKS5 proxy for inbound remote app consumption on LAN.
-- Sharing data model is implemented: remote_apps, guests, shares, tailnet_connections
-  tables in SQLite.
 - E2E lifecycle testing framework works against Lima VM with Playwright browser tests.
 
 Not yet implemented:
@@ -70,12 +64,8 @@ Not yet implemented:
 - Durable desired and observed integration revisions with invalidation tracking
 - Typed provider outputs and secret references passed to configurators
 - Configurator `changed` return value for selective restart
-- Persistent proxy port assignment on `remote_apps` table (currently ephemeral)
-- Standalone proxy outpost for tailnet forward-auth (in development)
-- Multiple tailnet connections (data model supports it, UI/runtime handle only one)
 - `.deb` packaging and `bloud init` with preflight checks
 - Clean Debian VM acceptance testing
-- SSO identity model for guests (Authentik-backed accounts, per-app auth provisioning)
 
 ## Product Promise
 
@@ -299,12 +289,11 @@ application support contract must distinguish browser shared login from native-c
 
 #### Domain-Agnostic Traefik Routing
 
-Traefik routes are **domain-agnostic**: they work from any origin (localhost, tailnet FQDN,
-tailnet IP, custom domain) without configuration changes.
+Traefik routes are **domain-agnostic**: they work from any origin (localhost, LAN address,
+custom domain) without configuration changes.
 
 **App routes** use `HostRegexp('^{appId}\\.')` with priority 200. This matches any host
-starting with the app's subdomain prefix: `jellyfin.localhost`, `jellyfin.bloud.co`,
-`jellyfin.<tailnet-fqdn>`, etc.
+starting with the app's subdomain prefix: `jellyfin.localhost`, `jellyfin.bloud.co`, etc.
 
 **Base routes** (dashboard, API, auth, UI catch-all) use `PathPrefix` only: no Host
 constraint. Their priorities (1–96) are lower than app routes (200), so app subdomain routes
@@ -326,11 +315,6 @@ priority 300, higher than app routes so they take precedence for their specific 
   `127.0.0.1` per RFC 6761.
 - **Custom domain:** Configure wildcard DNS (`*.bloud.co → host IP`). Subdomains work
   immediately via HostRegexp.
-- **Tailnet (gateway FQDN):** The gateway container runs Tailscale Serve
-  (`TS_SERVE_CONFIG`), serving HTTPS on port 443 with Tailscale-issued TLS certs, proxying
-  to Traefik on localhost. Dashboard and embedded apps work at the gateway FQDN. App
-  subdomain access over tailnet (e.g., `jellyfin.<tailnet-fqdn>`) requires wildcard DNS
-  resolution; a future change will add self-hosted CoreDNS with Tailscale split DNS.
 
 ### Developer Graph
 
@@ -362,7 +346,6 @@ Current connection node types:
 | Connection | Node ID | Source |
 |---|---|---|
 | Local access | `conn:local` | Synthetic; present when Traefik is installed. Display name is the browser's `window.location.hostname`. Routes to Traefik. |
-| Tailnet | `conn:tailnet:<id>` | One per active tailnet connection. Display name and status from `tailnet_connections` store. Edges point to each app whose `tailnet_id` matches. |
 
 #### Edge Derivation
 
@@ -379,204 +362,18 @@ Integration, connection, and tunnel edges connect app nodes (the app is the unit
 integration). Container edges stay inside one app box and encode that app's own
 `dependsOn` graph.
 
-Connection edges use the connection type as the label (`route` for local, `tailnet` for
-tailnet connections). Connection nodes are always the edge source; apps are the target.
+Connection edges use the `route` label. Connection nodes are always the edge source; apps are
+the target.
 
 #### Subgraph Layout
 
 App nodes are grouped in a single outer subgraph. Each app that has containers is drawn as
 a box: the app node is the parent, sized to fit its container nodes, and the containers are
 laid out inside it with their own dagre pass (top-down `dependsOn`). Apps without
-containers, and synthetic nodes (tunnels, tailnet gateway), stay flat. Connection nodes are
+containers, and synthetic nodes, stay flat. Connection nodes are
 positioned outside and above the subgraph. The frontend uses dagre for deterministic
 layout of the app boxes within the subgraph, and manual positioning for connection nodes.
 
-
-#### Future Direction: Connection Subgraphs
-
-Connection nodes are designed to evolve into subgraphs. Each connection will eventually
-contain user nodes representing the individuals who access applications through that
-ingress point. This models the relationship between communities (local users, tailnet
-members, shared-link recipients) and the applications they can reach.
-
-Sharing within a community is bidirectional. The host shares apps outward to community
-members, and members may share their own apps back. A tailnet connection subgraph would
-contain user nodes with edges in both directions: outbound edges from local apps to
-remote users who can access them, and inbound edges from remote users' shared apps to
-the local host. This makes the developer graph a complete view of what is available
-across a community, not just what the host is serving.
-
-This future structure supports:
-
-- Per-connection access control and visibility
-- User-to-application permission edges
-- Community-scoped sharing policies
-- Bidirectional app sharing within a community
-
-The current flat connection-node model is forward-compatible with this expansion.
-
-### Sharing and Federation
-
-Bloud acts as a Tailscale gateway: it proxies shared apps through Traefik so that devices
-on the local network (TVs, phones, game consoles) can access remote apps without needing
-Tailscale installed. Remote apps appear at local subdomains like
-`jellyfin-johan.bloud.local`.
-
-#### Sharing Identity Model
-
-Sharing identity works in two tiers:
-
-**Current (first release):** Social trust + Tailscale node sharing. Invite tokens are
-unsigned base64 JSON containing app metadata and a Tailscale node share link. Network access
-is gated by Tailscale's own node sharing auth. A `guests` table tracks who has been shared
-what, purely for the host's reference (a contact book). No Bloud account creation on the
-remote side.
-
-**Future:** Full SSO identity model backed by Authentik. The owner creates an invite that
-authorizes creation of a Bloud user on the host instance. The guest redeems the token,
-creates or binds a Bloud account, and receives access through Bloud's authentication layer.
-Downstream applications are provisioned from that Bloud identity according to their declared
-authentication capability:
-
-| Capability | Bloud behavior |
-|---|---|
-| Native OIDC/SAML | Register the app with Authentik and use real browser SSO. |
-| Trusted header auth | Protect the app with Authentik forward auth, strip client identity headers at the proxy, inject a mapped identity header, and pre-create or auto-create the app-local user as needed. |
-| LDAP | Provision or expose the Bloud/Authentik identity through the LDAP integration contract. |
-| App admin API only | Create an app-local user with an app-specific random secret; the user never supplies or sees that secret unless the app has no better login model. |
-| No external auth or provisioning API | Gate network access through Bloud, but treat app-local login as a degraded/manual integration. |
-
-For trusted header apps, forward auth and header auth are distinct requirements. Forward auth
-only decides whether a request may pass. The application is logged in as the mapped user only
-if it explicitly supports a trusted identity header such as `Remote-User`,
-`X-WEBAUTH-USER`, or an app-configured equivalent. Manifests must declare the supported
-header name, trusted-proxy requirements, auto-user behavior, and any bypass paths for native
-client APIs.
-
-The proxy must always remove inbound identity headers from client requests, inject Bloud's
-own identity header only after successful authentication, and ensure the upstream app is
-reachable only through the trusted proxy path. Bloud must not make user-supplied downstream
-passwords the default provisioning primitive.
-
-#### Two-Layer Tailscale Architecture
-
-Sharing uses two independent layers of Tailscale instances:
-
-| Layer | Purpose | Scope | Managed by |
-|---|---|---|---|
-| **App tailnet nodes** | Granular per-app sharing (host publishes apps) | One per shared app | Orchestrator |
-| **Gateway** (`bloud`) | Network connectivity for consuming remote apps (LAN proxy) + dashboard access | One per tailnet connection | Orchestrator via `RegenerateRoutes()` |
-
-Both layers run on the **host network** and proxy upstream to Traefik. This keeps Traefik
-as the single routing/middleware layer for all traffic: local, tailnet, and remote.
-
-```text
-Upstream topology (per-app tailnet node):
-  tailnet user → ts-{app} (host network) → Traefik (localhost:8080) → app container
-
-Gateway:
-  tailnet user → ts-gateway (host network, hostname "bloud") → Traefik (localhost:8080) → dashboard
-```
-
-App tailnet nodes are per-app Tailscale instances that join a tailnet and serve the app via
-Tailscale Serve. Each tailnet node runs on the host network and proxies HTTPS traffic to
-Traefik, which routes to the correct app based on the Host header. The tailnet node's
-`TS_HOSTNAME` is the bare app name (e.g., `jellyfin`), giving the app a clean MagicDNS
-name like `jellyfin.tailnet.ts.net`. The HostRegexp routing already in Traefik
-(`^jellyfin\.`) matches this naturally.
-
-The gateway (hostname `bloud`, container name `ts-gateway`) is a Tailscale instance that
-runs in userspace mode on the host network. It serves two purposes:
-1. **Dashboard access** via `bloud.tailnet.ts.net` (proxies to Traefik like tailnet nodes).
-2. **SOCKS5 proxy for remote app consumption on the LAN**. The gateway exposes a SOCKS5
-   proxy at `localhost:1055`. Per-remote-app reverse proxies (managed by
-   `RemoteProxyManager`) listen on localhost ports and dial through the SOCKS5 proxy to
-   reach remote tailnet nodes. Traefik routes to `http://localhost:{proxyPort}` instead of
-   directly to tailnet URLs. This means devices on the local network (TVs, phones, game
-   consoles) can access remote apps through normal subdomain URLs without needing
-   Tailscale installed: the gateway handles the tailnet hop on their behalf.
-
-The `tailnet_connections` store in Settings is the single source of truth for both layers.
-Each connection entry provides the auth key for app tailnet nodes (outbound sharing) and the
-gateway connectivity for remote apps (inbound consumption to LAN).
-
-#### Sharing Flow (Host Side)
-
-1. Host right-clicks an installed app and selects "Share".
-2. ShareModal opens: host selects an existing guest from the dropdown (or creates a new
-   one), then enters the Tailscale node share link.
-3. Host-agent creates a share record (linking guest + app) and generates an unsigned base64
-   invite token containing: appId, appName, hostLabel, tailnetAddr, nodeShareLink.
-4. Host copies the token and sends it to the guest out-of-band.
-
-#### Remote App Flow (Guest Side)
-
-1. Guest opens "Add Shared App" modal (defaults to token paste mode).
-2. Guest pastes the invite token; modal decodes it and shows confirmation:
-   "{hostLabel} wants to share {appName}".
-3. Guest clicks the Tailscale share link to accept network access.
-4. Guest clicks "Add"; Bloud creates a remote app record in the `remote_apps` table with
-   a monotonically assigned `proxy_port` (starting from 10100, never reused).
-5. `RegenerateRoutes()` ensures the gateway container is running, then reconciles
-   reverse proxies: each remote app gets a localhost listener on its assigned port
-   that dials through the gateway's SOCKS5 proxy to reach the remote tailnet node.
-6. Traefik route generation includes the remote app: subdomain
-   `{appId}-{hostLabel-slug}.<any-domain>` proxies to `http://localhost:{proxyPort}`.
-7. The app appears on the home page in the "Shared Apps" section.
-8. Local devices access the remote app at its local subdomain without needing Tailscale.
-9. Manual entry mode is still available as a fallback.
-
-```text
-Browser → Traefik (:8080)
-             ↓ HostRegexp(`^jellyfin-johan\.`)
-         localhost:{proxyPort}          ← host-agent reverse proxy
-             ↓ SOCKS5 (localhost:1055)
-         ts-gateway container           ← userspace Tailscale
-             ↓ tailnet
-         ts-jellyfin.tail1275sa.ts.net  ← remote tailnet node
-             ↓
-         Jellyfin on remote host
-```
-
-#### Data Model
-
-- **`remote_apps`**: Stores remote app records: app identity, host label, tailnet node
-  address, proxy port, status. Each record generates a Traefik route. The `proxy_port` is
-  monotonically assigned at creation time (`MAX(proxy_port) + 1`, starting from 10100) and
-  never reused, ensuring stable port assignments across restarts.
-- **`guests`**: Contact book of people the host shares apps with. Each guest has a name
-  and UUID. The `shares` table references guests by ID, enabling "who has access to what"
-  queries.
-- **`shares`**: Stores outbound share records: which local apps are shared and to whom.
-  References `guests.id` via `guest_id`.
-- **`tailnet_connections`**: Stores tailnet connection config: auth key, control URL, type
-  (Tailscale or Headscale). Used for app tailnet nodes (outbound sharing) and the gateway
-  (inbound remote app consumption on LAN).
-
-The `apps` and `remote_apps` tables remain separate. Local apps have container lifecycle,
-integration configs, dependency graph participation, and SSO provisioning. Remote apps are
-a tailnet address, a proxy port, and an access binding. These are fundamentally different
-lifecycles, and merging them would require type-discriminator guards on every query touching
-local app state. Route generation in `RegenerateRoutes()` queries both tables and derives
-routes at generation time: no separate routes table is needed.
-
-Auth keys are never exposed through the API. The frontend receives only a boolean
-`hasAuthKey` indicating whether a key is configured.
-
-#### Not Yet Implemented
-
-- **Persistent proxy port on `remote_apps`**: The `proxy_port` column needs to be added
-  to the `remote_apps` table schema. Currently, proxy ports are assigned ephemerally by
-  `RemoteProxyManager` at reconciliation time and may shift when apps are added or removed.
-- **Standalone proxy outpost for tailnet forward-auth**: A dedicated Authentik outpost
-  container for tailnet auth, separate from the embedded outpost that handles local auth.
-  This enables remote users to log in via `bloud.{tailnet_domain}` instead of being
-  redirected to unreachable `localhost:8080`. In active development.
-- **Multiple tailnet connections**: The data model supports multiple entries, but the UI
-  and runtime currently handle only one active connection.
-- **SSO identity model**: Guest Bloud accounts backed by Authentik, per-app auth
-  provisioning via OIDC/SAML/LDAP/header auth.
-- **Guest management UI**: Dedicated view showing guests and their active shares.
 
 ### Reconciliation Flow
 
@@ -602,11 +399,9 @@ store mutations. No side effects: just store writes that represent desired state
    c. Health check
    d. PostStart configuration (API calls, integration setup)
    e. SSO provisioning
-   f. Tailnet node management (if tailnet active)
-4. Handle uninstalls: stop tailnet node, remove container, delete from store
-5. Routing convergence: ensure gateway, reconcile remote proxies, regenerate Traefik routes
+4. Handle uninstalls: stop the container, delete the store row
+5. Routing convergence: regenerate Traefik routes
 6. Optional dependency dispatch: reconfigure apps when optional providers become healthy
-7. Tailnet teardown: if tailnet deleted, stop and purge all nodes and gateway
 ```
 
 Intents are debounced (~5 seconds) so rapid mutations coalesce into a single convergence
@@ -1022,7 +817,6 @@ Each phase ends with an automated gate.
 | Phase 3: Implement the Engine | Complete; Podman management working on Lima VM |
 | Phase 4: Port Jellyfin | Complete; LDAP SSO, E2E lifecycle tests passing |
 | Phase 5: Port Navidrome | Complete; forward-auth SSO, E2E tests passing |
-| Phase 6: Implement Sharing and Federation | In progress; core sharing works, tailnet outpost auth in development |
 | Phase 7: Package and Release | Not started |
 
 Phase work may overlap only when it does not bypass an earlier phase's release gate or create
@@ -1058,7 +852,7 @@ semantics implemented and tested. PreStart/PostStart configurator interfaces def
 - Collapse all mutation paths into an intent-driven reconciler.
 - Make the reconciler the single writer to all stores and single executor of side effects.
 - Implement intent queue with debounce, convergence loop, and dependency-ordered execution.
-- Cover all operations: install, uninstall, rename, tailnet, remote apps, shares, clear-data.
+- Cover all operations: install, uninstall, rename, address, inference, and reconcile.
 
 Gate:
 
@@ -1105,24 +899,6 @@ Gate:
 
 **Status:** Complete. Navidrome uses forward-auth via Authentik with `/rest/` bypass for
 Subsonic clients. E2E test covers install and forward-auth login flow.
-
-### Phase 6: Implement Sharing and Federation
-
-- Implement per-app tailnet nodes for outbound sharing.
-- Implement gateway with SOCKS5 proxy for inbound remote app consumption.
-- Implement domain-agnostic routing so apps work from any origin.
-- Add sharing UI (invite tokens, guest management, remote app addition).
-- Implement standalone proxy outpost for tailnet forward-auth.
-
-Gate:
-
-- A shared app is accessible from a remote tailnet peer. Remote apps are accessible from
-  local network devices through the gateway proxy. Forward-auth apps authenticate correctly
-  over tailnet.
-
-**Status:** In progress. Core sharing infrastructure implemented: tailnet nodes, gateway,
-SOCKS5 reverse proxies, remote app management, invite tokens, domain-agnostic routing.
-Standalone proxy outpost for tailnet forward-auth is in active development.
 
 ### Phase 7: Package and Release
 

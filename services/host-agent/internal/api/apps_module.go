@@ -24,8 +24,6 @@ import (
 var (
 	// errAppNotFound is returned when an app is missing from the catalog.
 	errAppNotFound = errors.New("app not found in catalog")
-	// errRemoteAppNotFound is returned when a remote app is missing from the store.
-	errRemoteAppNotFound = errors.New("remote app not found")
 )
 
 // IntentRef is a lightweight reference to an enqueued orchestrator intent.

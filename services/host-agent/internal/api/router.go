@@ -20,7 +20,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/netutil"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
@@ -35,15 +34,13 @@ var devDashboardHTML []byte
 
 // routerOptions are optional overrides for NewRouter, used mainly in tests.
 type routerOptions struct {
-	catalog        catalog.CacheInterface
-	appStore       store.AppStoreInterface
-	positionStore  store.PositionStoreInterface
-	prefsStore     store.PreferencesStoreInterface
-	sessionStore   store.SessionStoreInterface
-	remoteAppStore store.RemoteAppStoreInterface
-	tailnetStore   *store.TailnetStore
-	orch           interface{} // any orchestratorCaller implementation
-	authConfig     *AuthRef
+	catalog       catalog.CacheInterface
+	appStore      store.AppStoreInterface
+	positionStore store.PositionStoreInterface
+	prefsStore    store.PreferencesStoreInterface
+	sessionStore  store.SessionStoreInterface
+	orch          interface{} // any orchestratorCaller implementation
+	authConfig    *AuthRef
 }
 
 // routerDeps bundles every store, client, and collaborator that NewRouter's
@@ -51,20 +48,18 @@ type routerOptions struct {
 // DB" defaulting lives here so NewRouter stays focused on wiring modules and
 // routes.
 type routerDeps struct {
-	appStore       store.AppStoreInterface
-	eventsBus      *eventbus.Bus
-	positionStore  store.PositionStoreInterface
-	prefsStore     store.PreferencesStoreInterface
-	sessionStore   store.SessionStoreInterface
-	tailnetStore   *store.TailnetStore
-	remoteAppStore store.RemoteAppStoreInterface
-	catalogCache   catalog.CacheInterface
-	authentik      *authentik.Client
-	authRef        *AuthRef
-	orchCaller     orchestratorCaller
-	realOrch       *orchestrator.Orchestrator
-	secrets        configurator.AppSecretsProvider
-	settingsStore  store.SettingsStoreInterface
+	appStore      store.AppStoreInterface
+	eventsBus     *eventbus.Bus
+	positionStore store.PositionStoreInterface
+	prefsStore    store.PreferencesStoreInterface
+	sessionStore  store.SessionStoreInterface
+	catalogCache  catalog.CacheInterface
+	authentik     *authentik.Client
+	authRef       *AuthRef
+	orchCaller    orchestratorCaller
+	realOrch      *orchestrator.Orchestrator
+	secrets       configurator.AppSecretsProvider
+	settingsStore store.SettingsStoreInterface
 }
 
 func buildRouterDeps(
@@ -114,10 +109,6 @@ func buildStoreDeps(d *routerDeps, db *sql.DB, cfg ServerConfig, options *router
 	if d.sessionStore == nil {
 		d.sessionStore = store.NewSessionStore(db)
 	}
-	d.tailnetStore = options.tailnetStore
-	if d.tailnetStore == nil {
-		d.tailnetStore = store.NewTailnetStore(db)
-	}
 	d.secrets = cfg.Secrets
 	d.settingsStore = cfg.Settings
 
@@ -125,11 +116,6 @@ func buildStoreDeps(d *routerDeps, db *sql.DB, cfg ServerConfig, options *router
 	if d.catalogCache == nil {
 		d.catalogCache = catalog.NewMemoryCache()
 		refreshCatalogHelper(d.catalogCache, logger, cfg.AppsDir)
-	}
-
-	d.remoteAppStore = options.remoteAppStore
-	if d.remoteAppStore == nil {
-		d.remoteAppStore = store.NewRemoteAppStore(db)
 	}
 }
 
@@ -205,16 +191,13 @@ func NewRouter(
 // routerModules is the set of domain modules the router registers, plus the
 // two middleware chains they share.
 type routerModules struct {
-	apps       *appsModule
-	auth       *authModule
-	home       *homeModuleSimple
-	events     *eventsModule
-	logs       *logsModule
-	remoteApps *remoteAppsModule
-	settings   *settingsModule
-	ai         *aiSettingsModule
-	sharing    *sharingModule
-	system     *systemModule
+	apps     *appsModule
+	auth     *authModule
+	home     *homeModuleSimple
+	events   *eventsModule
+	settings *settingsModule
+	ai       *aiSettingsModule
+	system   *systemModule
 
 	requestTimeout func(http.Handler) http.Handler
 	authMiddleware func(http.Handler) http.Handler
@@ -250,9 +233,7 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	if deps.realOrch != nil {
 		systemOrch = deps.realOrch
 	}
-	gateway := sharing.NewGatewayManager(nil, nil, func() string { return "" },
-		sharing.DefaultGatewaySOCKSPort, cfg.TraefikPort, cfg.DataDir, logger)
-	systemMod := NewSystemModule(deps.appStore, deps.catalogCache, gateway, deps.tailnetStore, systemOrch, logger)
+	systemMod := NewSystemModule(deps.appStore, deps.catalogCache, systemOrch, logger)
 	// The health endpoint answers from the same check main.go runs, so a dead
 	// intent loop cannot read healthy over HTTP.
 	systemMod.SetHealthCheck(func() error {
@@ -273,10 +254,8 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 		home: homeMod,
 		// The SSE snapshot is the same payload the home route serves, so the
 		// events module reads the home module rather than a second builder.
-		events:     NewEventsModule(deps.eventsBus, homeMod.GetLayout, logger),
-		logs:       NewLogsModule(deps.appStore, logger),
-		remoteApps: NewRemoteAppsModule(deps.remoteAppStore, deps.catalogCache, deps.orchCaller, logger),
-		settings: NewSettingsModule(deps.tailnetStore, deps.prefsStore, deps.sessionStore, deps.authentik,
+		events: NewEventsModule(deps.eventsBus, homeMod.GetLayout, logger),
+		settings: NewSettingsModule(deps.prefsStore, deps.sessionStore, deps.authentik,
 			deps.orchCaller, deps.authRef, cfg.Hosts, cfg.Settings, cfg.Port, logger),
 		ai: &aiSettingsModule{
 			settingsStore: cfg.Settings,
@@ -286,8 +265,6 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 			orch:          deps.orchCaller,
 			logger:        logger,
 		},
-		sharing: NewSharingModule(store.NewShareStore(db), store.NewGuestStore(db),
-			deps.appStore, deps.catalogCache, nil, cfg.HostLabel, cfg.SSOHostSecret, logger),
 		system:         systemMod,
 		realOrch:       deps.realOrch,
 		authMiddleware: authMiddlewareFn(deps.sessionStore, logger, cfg.TrustedLocalNets, cfg.APIToken),
@@ -362,8 +339,7 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 		// timeout: these are long-lived streams, not single requests.
 		stream := api.With(m.authMiddleware)
 		NewEventsRouter(m.events, stream)
-		stream.Get("/apps/{name}/logs", m.logs.StreamLogsHandler())
-		stream.Get("/system/status/stream", m.logs.SystemStatusStreamHandler())
+		stream.Get("/system/status/stream", m.system.SystemStatusStreamHandler())
 
 		// Non-streaming public routes. The setup pair must be reachable before
 		// any credential exists: first-run has no user to authenticate as.
@@ -392,8 +368,6 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
 		NewSettingsRouter(m.settings, admin)
 		RegisterAIRoutes(m.ai, admin)
-		NewSharingRouter(m.sharing, admin)
-		NewRemoteAppsRouter(m.remoteApps, admin)
 	})
 }
 

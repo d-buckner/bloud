@@ -169,7 +169,7 @@ func TestReconcileCatalogUpdates_PruneRemoveErrorKeepsNode(t *testing.T) {
 }
 
 // A container that shares the io.bloud.app label but was never a lifecycle
-// node (a tailnet node, the proxy outpost) is not pruned.
+// node is somebody else's and is not pruned.
 func TestReconcileCatalogUpdates_DoesNotPruneAuxiliaryContainers(t *testing.T) {
 	apps := NewFakeAppStore()
 	apps.AddApp(&store.InstalledApp{CatalogID: "demo", DisplayName: "Demo", Status: "running"})
@@ -185,11 +185,11 @@ func TestReconcileCatalogUpdates_DoesNotPruneAuxiliaryContainers(t *testing.T) {
 		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}})
 
 	rev := specRevisionFor(t, orch, def, "demo")
-	// ts-demo is a tailnet node: it carries io.bloud.app=demo but has no graph
-	// node, so it must not be treated as a removed app container.
+	// aux-demo carries io.bloud.app=demo but has no graph node, so it must not
+	// be treated as a removed app container.
 	rt.On("ListContainers", mock.Anything).Return([]containerruntime.ContainerInfo{
 		{Name: "apps-demo-a", Labels: map[string]string{containerruntime.AppLabel: "demo", containerruntime.SpecRevisionLabel: rev}},
-		{Name: "ts-demo", Labels: map[string]string{containerruntime.AppLabel: "demo"}},
+		{Name: "aux-demo", Labels: map[string]string{containerruntime.AppLabel: "demo"}},
 	}, nil)
 
 	orch.reconcileCatalogUpdates(context.Background(), toAppMap(apps))

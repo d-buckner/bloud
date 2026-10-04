@@ -10,25 +10,17 @@
 		app: App | null;
 		position: { x: number; y: number };
 		onRename?: (app: App) => void;
-		onShare?: (app: App) => void;
 		onUninstall?: (app: App) => void;
 		onClose?: () => void;
 	}
 
-	let { app, position, onRename, onShare, onUninstall, onClose }: Props = $props();
+	let { app, position, onRename, onUninstall, onClose }: Props = $props();
 
 	let menuEl = $state<HTMLDivElement>();
 
 	function handleRename() {
 		if (app) {
 			onRename?.(app);
-			onClose?.();
-		}
-	}
-
-	function handleShare() {
-		if (app) {
-			onShare?.(app);
 			onClose?.();
 		}
 	}
@@ -69,10 +61,6 @@
 		<button class="context-item" onclick={handleRename}>
 			<Icon name="edit" size={16} />
 			Rename
-		</button>
-		<button class="context-item" onclick={handleShare}>
-			<Icon name="share" size={16} />
-			Share
 		</button>
 		<hr class="context-divider" />
 		<button class="context-item danger" onclick={handleUninstall}>

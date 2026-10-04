@@ -24,7 +24,6 @@ type InstalledApp struct {
 	Operation         *Operation        `json:"operation,omitempty"`
 	Port              int               `json:"port,omitempty"`
 	IsSystem          bool              `json:"is_system"`
-	TailnetID         string            `json:"tailnet_id,omitempty"`
 	IntegrationConfig map[string]string `json:"integration_config,omitempty"`
 	InstalledAt       time.Time         `json:"installed_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
@@ -55,7 +54,7 @@ func (s *AppStore) notify() {
 
 func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 	rows, err := s.db.Query(`
-		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.tailnet_id, a.integration_config, a.installed_at, a.updated_at,
+		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.integration_config, a.installed_at, a.updated_at,
 			op.id, op.type, op.phase, op.status, op.retryable, op.cause, op.started_at, op.updated_at
 		FROM apps a
 		LEFT JOIN operations op ON op.app_name = a.catalog_id
@@ -81,7 +80,7 @@ func (s *AppStore) GetAll() ([]*InstalledApp, error) {
 // GetByCatalogID returns an installed app by catalog ID
 func (s *AppStore) GetByCatalogID(catalogID string) (*InstalledApp, error) {
 	row := s.db.QueryRow(`
-		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.tailnet_id, a.integration_config, a.installed_at, a.updated_at,
+		SELECT a.id, a.catalog_id, a.display_name, a.version, a.status, a.last_error, a.port, a.is_system, a.integration_config, a.installed_at, a.updated_at,
 			op.id, op.type, op.phase, op.status, op.retryable, op.cause, op.started_at, op.updated_at
 		FROM apps a
 		LEFT JOIN operations op ON op.app_name = a.catalog_id
@@ -220,15 +219,6 @@ func (s *AppStore) EnsureSystemApp(catalogID, displayName string, port int) erro
 	}
 
 	s.notify()
-	return nil
-}
-
-// SetTailnetID updates the tailnet_id for an installed app
-func (s *AppStore) SetTailnetID(catalogID, tailnetID string) error {
-	_, err := s.db.Exec(`UPDATE apps SET tailnet_id = ? WHERE catalog_id = ?`, tailnetID, catalogID)
-	if err != nil {
-		return fmt.Errorf("failed to set tailnet_id: %w", err)
-	}
 	return nil
 }
 
@@ -373,7 +363,6 @@ func (s *AppStore) scanAppColumns(scan func(dest ...any) error) (*InstalledApp, 
 		&app.LastError,
 		&port,
 		&app.IsSystem,
-		&app.TailnetID,
 		&configJSON,
 		&installedAt,
 		&updatedAt,

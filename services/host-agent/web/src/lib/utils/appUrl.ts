@@ -11,37 +11,16 @@ export function getAppUrl(appName: string, path: string = ''): string {
 	const { hostname, port, protocol } = window.location;
 	const portSuffix = port ? `:${port}` : '';
 	const pathPrefix = path && !path.startsWith('/') ? '/' : '';
-	// For Tailscale MagicDNS tailnet domains (bloud.foo.ts.net, always 4
-	// labels ending in .ts.net), strip the "bloud." prefix so apps use the
-	// tailnet domain (e.g., navidrome.foo.ts.net). Any other hostname
-	// (localhost, bloud.local, or a custom domain like bloud.example.com) is
-	// used as-is.
+	// Wildcard-domain strip: when the instance is reached on a name of the form
+	// bloud.<base> (bloud.foo.ts.net, bloud.example.com with wildcard DNS),
+	// apps live under <base> directly, so drop the "bloud." prefix. Any other
+	// hostname (localhost, bloud.local, a bare custom domain) is used as-is.
+	// The >= 4 label guard keeps a two-label base like "ts.net" from being
+	// stripped down to nothing.
 	const labels = hostname.split('.');
 	const baseDomain =
 		hostname.startsWith('bloud.') && hostname.endsWith('.ts.net') && labels.length >= 4
 			? labels.slice(1).join('.')
 			: hostname;
 	return `${protocol}//${appName}.${baseDomain}${portSuffix}${pathPrefix}${path}`;
-}
-
-/**
- * Build a subdomain URL for a remote (shared) app.
- * The subdomain is "{appId}-{hostLabel-slug}.{hostname}".
- *
- * @param appId - The app identifier (e.g., "jellyfin")
- * @param hostLabel - The remote host label (e.g., "Johan")
- * @returns Full URL like "http://jellyfin-johan.localhost:8080"
- */
-export function getRemoteAppUrl(appId: string, hostLabel: string): string {
-	const slug = `${appId}-${slugify(hostLabel)}`;
-	const { hostname, port, protocol } = window.location;
-	const portSuffix = port ? `:${port}` : '';
-	return `${protocol}//${slug}.${hostname}${portSuffix}`;
-}
-
-function slugify(s: string): string {
-	return s
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-|-$/g, '');
 }

@@ -68,7 +68,6 @@ version: 1.0.0
 	router, _ := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.catalog = fCatalog
 		o.appStore = NewFakeAppStore()
-		o.remoteAppStore = NewFakeRemoteAppStore()
 	})
 	return &Server{cfg: cfg, router: router, db: db, logger: logger}
 }
@@ -122,7 +121,6 @@ func TestRouter_UnauthenticatedRouteClassification(t *testing.T) {
 		{http.MethodPost, "/api/apps/refresh-catalog", http.StatusUnauthorized, "admin surface"},
 		{http.MethodGet, "/api/settings/public-url", http.StatusUnauthorized, "admin surface"},
 		{http.MethodGet, "/api/admin/users", http.StatusUnauthorized, "admin surface"},
-		{http.MethodGet, "/api/sharing/shares", http.StatusUnauthorized, "admin surface"},
 		{http.MethodGet, "/api/user/home", http.StatusUnauthorized, "authenticated"},
 		{http.MethodGet, "/api/apps/events", http.StatusUnauthorized, "SSE stream is authenticated"},
 	}

@@ -4,24 +4,20 @@
 	import { browser } from '$app/environment';
 	import GridStackGrid from '$lib/components/GridStackGrid.svelte';
 	import AppContextMenu from '$lib/components/AppContextMenu.svelte';
-	import RemoteAppCard from '$lib/components/RemoteAppCard.svelte';
 	import LoadingGrid from '$lib/components/LoadingGrid.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
 	import UninstallModal from '$lib/components/UninstallModal.svelte';
 	import RenameModal from '$lib/components/RenameModal.svelte';
-	import ShareModal from '$lib/components/ShareModal.svelte';
 	import AppInstallModal from '$lib/components/AppInstallModal.svelte';
 	import WidgetPicker from '$lib/widgets/WidgetPicker.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import { AppStatus, type App, type RemoteApp } from '$lib/types';
+	import { AppStatus, type App } from '$lib/types';
 	import { visibleApps as apps, loading, error } from '$lib/stores/apps';
 	import { enabledWidgetIds } from '$lib/stores/grid';
 	import { installApp, uninstallApp, renameApp } from '$lib/clients/appFacade';
 	import { getAppUrl } from '$lib/utils/appUrl';
-	import { getRemoteAppUrl } from '$lib/utils/appUrl';
-	import { fetchRemoteApps, removeRemoteApp } from '$lib/clients/remoteAppClient';
 
 	// Clicking an in-flight or unhealthy tile opens the live install view
 	// (investigation is the point); clicking a running tile opens the app.
@@ -40,8 +36,6 @@
 	let uninstallAppName = $state<string | null>(null);
 	let renameAppName = $state<string | null>(null);
 	let renameCurrentDisplayName = $state<string>('');
-	let shareApp = $state<App | null>(null);
-	let removeRemoteAppTarget = $state<RemoteApp | null>(null);
 	let showWidgetPicker = $state(false);
 	let installModalApp = $state<App | null>(null);
 
@@ -52,9 +46,6 @@
 		if (!id) return null;
 		return $apps.find((a) => a.catalog_id === id) ?? installModalApp;
 	});
-
-	// Remote apps
-	let remoteApps = $state<RemoteApp[]>([]);
 
 	let mounted = $state(false);
 
@@ -68,13 +59,8 @@
 		return [noun(appCount, 'app'), noun(widgetCount, 'widget')].join(' · ');
 	});
 
-	onMount(async () => {
+	onMount(() => {
 		mounted = true;
-		try {
-			remoteApps = await fetchRemoteApps();
-		} catch {
-			// Remote apps are optional: don't block the page
-		}
 	});
 
 	function handleAppClick(app: App) {
@@ -109,10 +95,6 @@
 		renameCurrentDisplayName = app.display_name;
 	}
 
-	function handleShareClick(app: App) {
-		shareApp = app;
-	}
-
 	function handleUninstallClick(app: App) {
 		uninstallAppName = app.catalog_id;
 	}
@@ -133,26 +115,7 @@
 		}
 	}
 
-	function handleRemoteAppClick(app: RemoteApp) {
-		if (!browser) return;
-		window.open(getRemoteAppUrl(app.app_id, app.host_label), '_blank');
-	}
-
-	function handleRemoveRemoteApp(app: RemoteApp) {
-		removeRemoteAppTarget = app;
-	}
-
-	async function doRemoveRemoteApp(id: string) {
-		try {
-			await removeRemoteApp(id);
-			remoteApps = remoteApps.filter((a) => a.id !== id);
-		} catch (err) {
-			console.error('Remove remote app failed:', err);
-		}
-	}
-
-	// Derived state for empty check
-	let isEmpty = $derived($apps.length === 0 && remoteApps.length === 0 && $enabledWidgetIds.length === 0);
+	let isEmpty = $derived($apps.length === 0 && $enabledWidgetIds.length === 0);
 </script>
 
 <svelte:head>
@@ -179,21 +142,6 @@
 		<EmptyState />
 	{:else}
 		<GridStackGrid onAppClick={handleAppClick} onAppContextMenu={handleContextMenu} />
-
-		{#if remoteApps.length > 0}
-			<section class="remote-apps-section">
-				<h2 class="section-title">Shared apps</h2>
-				<div class="remote-apps-grid">
-					{#each remoteApps as app (app.id)}
-						<RemoteAppCard
-							{app}
-							onclick={() => handleRemoteAppClick(app)}
-							onremove={handleRemoveRemoteApp}
-						/>
-					{/each}
-				</div>
-			</section>
-		{/if}
 	{/if}
 </div>
 
@@ -201,7 +149,6 @@
 	app={contextMenuApp}
 	position={contextMenuPos}
 	onRename={handleRenameClick}
-	onShare={handleShareClick}
 	onUninstall={handleUninstallClick}
 	onClose={() => (contextMenuApp = null)}
 />
@@ -219,20 +166,10 @@
 	onrename={doRename}
 />
 
-<ShareModal app={shareApp} onclose={() => (shareApp = null)} />
-
 <AppInstallModal
 	app={installModalLiveApp}
 	onclose={() => (installModalApp = null)}
 	onretry={handleRetryInstall}
-/>
-
-<UninstallModal
-	appName={removeRemoteAppTarget ? `${removeRemoteAppTarget.app_name} (${removeRemoteAppTarget.host_label})` : null}
-	onclose={() => (removeRemoteAppTarget = null)}
-	onuninstall={() => {
-		if (removeRemoteAppTarget) doRemoveRemoteApp(removeRemoteAppTarget.id);
-	}}
 />
 
 <WidgetPicker open={showWidgetPicker} onclose={() => (showWidgetPicker = false)} />
@@ -270,28 +207,6 @@
 		color: var(--color-text-muted);
 	}
 
-	.remote-apps-section {
-		margin-top: var(--space-2xl);
-		padding-top: var(--space-xl);
-		border-top: 1px solid var(--color-border);
-	}
-
-	.section-title {
-		margin: 0 0 var(--space-md);
-		font-family: var(--font-sans);
-		font-size: 0.75rem;
-		font-weight: 500;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--color-text-muted);
-	}
-
-	.remote-apps-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-		gap: var(--space-md);
-	}
-
 	@media (max-width: 768px) {
 		.page {
 			padding: var(--space-xl) var(--space-md);
@@ -301,10 +216,6 @@
 			flex-direction: column;
 			align-items: flex-start;
 			gap: var(--space-md);
-		}
-
-		.remote-apps-grid {
-			grid-template-columns: 1fr;
 		}
 	}
 </style>

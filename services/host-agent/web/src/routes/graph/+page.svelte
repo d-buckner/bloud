@@ -85,7 +85,7 @@
 	onMount(() => {
 		loadCatalogGraph()
 			.then((graph) => {
-				const layout = layoutGraph(graph, window.location.hostname);
+				const layout = layoutGraph(graph);
 				nodes = layout.nodes;
 				edges = layout.edges;
 			})

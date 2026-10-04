@@ -6,7 +6,6 @@
 	import { isAdmin } from '$lib/stores/user';
 	import AddressSettingsSection from '$lib/components/AddressSettingsSection.svelte';
 	import AISettingsSection from '$lib/components/AISettingsSection.svelte';
-	import TailnetSettingsSection from '$lib/components/TailnetSettingsSection.svelte';
 	import UsersSettingsSection from '$lib/components/UsersSettingsSection.svelte';
 
 	// The page is a shell: the admin gate and the page header. Every settings
@@ -40,7 +39,6 @@
 	{#if ready}
 		<AddressSettingsSection />
 		<AISettingsSection />
-		<TailnetSettingsSection />
 		<UsersSettingsSection />
 	{/if}
 </div>

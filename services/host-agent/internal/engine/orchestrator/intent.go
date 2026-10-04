@@ -8,11 +8,6 @@ import (
 
 // Intent represents a mutation request to be processed by the orchestrator.
 // The interface is sealed via the unexported intentMarker() method.
-//
-// Boundary: share/guest records are intentionally NOT intents. They are pure store
-// writes with no lifecycle side effects (no containers, routing, or reconciliation),
-// and invite creation must return its JWT token synchronously: the sharing API
-// writes them directly. See docs/specs/review-2026-09-17.md §C3 and reconciler-spec.md Open Q2.
 type Intent interface {
 	intentMarker()
 	IntentID() string
@@ -65,69 +60,6 @@ func (RenameAppIntent) intentMarker() {}
 
 func NewRenameAppIntent(appName string, displayName string) RenameAppIntent {
 	return RenameAppIntent{intentBase: newIntentBase(), AppName: appName, DisplayName: displayName}
-}
-
-// SetTailnetIntent requests configuring the tailnet connection.
-type SetTailnetIntent struct {
-	intentBase
-	Name       string
-	Type       string
-	AuthKey    string
-	ControlURL string
-}
-
-func (SetTailnetIntent) intentMarker() {}
-
-func NewSetTailnetIntent(name, typ, authKey, controlURL string) SetTailnetIntent {
-	return SetTailnetIntent{
-		intentBase: newIntentBase(),
-		Name:       name,
-		Type:       typ,
-		AuthKey:    authKey,
-		ControlURL: controlURL,
-	}
-}
-
-// DeleteTailnetIntent requests removal of the tailnet configuration.
-type DeleteTailnetIntent struct {
-	intentBase
-}
-
-func (DeleteTailnetIntent) intentMarker() {}
-
-func NewDeleteTailnetIntent() DeleteTailnetIntent {
-	return DeleteTailnetIntent{intentBase: newIntentBase()}
-}
-
-// AddRemoteAppIntent requests adding a remote app from another host.
-type AddRemoteAppIntent struct {
-	intentBase
-	AppID       string
-	TailnetAddr string
-	HostLabel   string
-}
-
-func (AddRemoteAppIntent) intentMarker() {}
-
-func NewAddRemoteAppIntent(appID, tailnetAddr, hostLabel string) AddRemoteAppIntent {
-	return AddRemoteAppIntent{
-		intentBase:  newIntentBase(),
-		AppID:       appID,
-		TailnetAddr: tailnetAddr,
-		HostLabel:   hostLabel,
-	}
-}
-
-// DeleteRemoteAppIntent requests removal of a remote app.
-type DeleteRemoteAppIntent struct {
-	intentBase
-	RemoteAppID string
-}
-
-func (DeleteRemoteAppIntent) intentMarker() {}
-
-func NewDeleteRemoteAppIntent(remoteAppID string) DeleteRemoteAppIntent {
-	return DeleteRemoteAppIntent{intentBase: newIntentBase(), RemoteAppID: remoteAppID}
 }
 
 // ClearAppDataIntent requests clearing an app's data directory.
@@ -216,10 +148,6 @@ var (
 	_ Intent = InstallAppIntent{}
 	_ Intent = UninstallAppIntent{}
 	_ Intent = RenameAppIntent{}
-	_ Intent = SetTailnetIntent{}
-	_ Intent = DeleteTailnetIntent{}
-	_ Intent = AddRemoteAppIntent{}
-	_ Intent = DeleteRemoteAppIntent{}
 	_ Intent = ClearAppDataIntent{}
 	_ Intent = SetPublicURLIntent{}
 	_ Intent = SetInferenceIntent{}

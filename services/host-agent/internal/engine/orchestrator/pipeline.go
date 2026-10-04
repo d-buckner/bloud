@@ -22,14 +22,6 @@ func (o *Orchestrator) applyIntents(intents []Intent, pendingClearData map[strin
 			o.applyInstallIntent(i)
 		case UninstallAppIntent:
 			o.applyUninstallIntent(i, pendingClearData)
-		case SetTailnetIntent:
-			o.applySetTailnetIntent(i)
-		case DeleteTailnetIntent:
-			o.applyDeleteTailnetIntent()
-		case AddRemoteAppIntent:
-			o.applyAddRemoteAppIntent(i)
-		case DeleteRemoteAppIntent:
-			o.applyDeleteRemoteAppIntent(i)
 		case RenameAppIntent:
 			o.applyRenameAppIntent(i)
 		case SetPublicURLIntent:
@@ -239,12 +231,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	o.reconcileCatalogUpdates(ctx, appMap)
 	o.populateGraphNodes(appMap)
 
-	// Step 4: Converge tailnet nodes/gateway/proxies.
-	o.logger.Info("convergence step", "step", "converge-tailnet")
-	o.recordActivity("converge_step", "converge-tailnet")
-	o.convergeTailnet(ctx)
-
-	// Step 5: Update catalog graph with current installed list.
+	// Step 4: Update catalog graph with current installed list.
 	o.logger.Info("convergence step", "step", "update-graph")
 	o.recordActivity("converge_step", "update-graph")
 	if o.catalogGraph != nil {
@@ -252,19 +239,11 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 		o.catalogGraph.SetInstalled(installed)
 	}
 
-	// Step 6: Run reconcile pass, which drives per-app lifecycle phases and regenerates routes.
+	// Step 5: Run reconcile pass, which drives per-app lifecycle phases and regenerates routes.
 	o.logger.Info("convergence step", "step", "reconcile")
 	o.recordActivity("converge_step", "reconcile")
 	if err := o.Reconcile(ctx); err != nil {
 		o.logger.Warn("reconcile failed", "error", err)
-	}
-
-	// Step 7: Provision forward_domain SSO for tailnet access (best-effort).
-	if o.provisionTailnetSSO(ctx) {
-		o.logger.Info("convergence step", "step", "sync-routes-tailnet")
-		if err := o.SyncRoutes(); err != nil {
-			o.logger.Warn("failed to sync routes after tailnet SSO", "error", err)
-		}
 	}
 
 	duration := time.Since(start)

@@ -106,8 +106,6 @@ type agentStack struct {
 	eventsBus  *eventbus.Bus
 	app        *store.AppStore
 	catalog    *catalog.MemoryCache
-	tailnet    *store.TailnetStore
-	remoteApp  *store.RemoteAppStore
 	authClient *authentik.Client
 	authRef    *api.AuthRef
 	orch       *orchestrator.Orchestrator
@@ -188,8 +186,6 @@ func openAgentStoresInto(st *agentStack, logger *slog.Logger) {
 		logger.Error("failed to load the app catalog", "apps_dir", st.cfg.AppsDir, "error", err)
 		os.Exit(1)
 	}
-	st.tailnet = store.NewTailnetStore(st.database)
-	st.remoteApp = store.NewRemoteAppStore(st.database)
 }
 
 // setupLogging installs the JSON logger the whole process writes through.
@@ -302,8 +298,6 @@ func agentServerConfig(st *agentStack) api.ServerConfig {
 		SSOIssuerURL:          cfg.SSOIssuerURL,
 		AuthentikToken:        cfg.AuthentikToken,
 		AuthentikPort:         cfg.AuthentikPort,
-		TSAuthKey:             cfg.TSAuthKey,
-		HostLabel:             cfg.HostLabel,
 		TrustedLocalNets:      cfg.TrustedLocalNets,
 		APIToken:              cfg.APIToken,
 		Hosts:                 st.hosts,
@@ -316,8 +310,6 @@ func agentServerConfig(st *agentStack) api.ServerConfig {
 		Secrets:               cfg.Secrets,
 		AppStore:              st.app,
 		CatalogCache:          st.catalog,
-		TailnetStore:          st.tailnet,
-		RemoteAppStore:        st.remoteApp,
 	}
 }
 
@@ -333,7 +325,6 @@ func (st *agentStack) wireInput() wire.Input {
 		ContainerRuntime:  st.runtime,
 		EventsBus:         st.eventsBus,
 		Authentik:         st.authClient,
-		TailnetStore:      st.tailnet,
 		Settings:          st.settings,
 		Hosts:             st.hosts,
 		AppsDir:           cfg.AppsDir,
@@ -341,7 +332,6 @@ func (st *agentStack) wireInput() wire.Input {
 		TraefikDynamicDir: cfg.TraefikDynamicDir,
 		TraefikPort:       cfg.TraefikPort,
 		ReconcileInterval: cfg.ReconcileInterval,
-		TSAuthKey:         cfg.TSAuthKey,
 		LDAPOutput:        cfg.LDAPOutput(),
 		TemplateVars:      st.vars,
 		SSOBaseURL:        cfg.SSOBaseURL,

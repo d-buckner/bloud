@@ -33,7 +33,6 @@
 		{ href: '/', label: 'Home', icon: 'home', adminOnly: false },
 		{ href: '/catalog', label: 'Catalog', icon: 'store', adminOnly: false },
 		{ href: '/settings', label: 'Settings', icon: 'settings', adminOnly: true },
-		{ href: '/community', label: 'Community', icon: 'users', adminOnly: true },
 		{ href: '/developer', label: 'Developer', icon: 'terminal', adminOnly: true }
 	];
 

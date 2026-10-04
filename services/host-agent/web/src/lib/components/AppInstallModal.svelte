@@ -26,12 +26,6 @@
 		return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 	}
 
-	function openLogs() {
-		if (!app) return;
-		// The logs endpoint is an SSE text stream; a plain tab renders it.
-		window.open(`/api/apps/${app.catalog_id}/logs`, '_blank');
-	}
-
 	async function doRetry() {
 		if (!app || retrying) return;
 		retrying = true;
@@ -117,18 +111,14 @@
 			{/if}
 		</div>
 
-		<footer class="modal-footer">
-			<button class="btn btn-secondary" onclick={openLogs}>
-				<Icon name="external-link" size={16} />
-				View logs
-			</button>
-			{#if isFailed}
+		{#if isFailed}
+			<footer class="modal-footer">
 				<button class="btn btn-primary" onclick={doRetry} disabled={retrying}>
 					<Icon name="refresh" size={16} />
 					{#if retrying}Retrying...{:else}Retry install{/if}
 				</button>
-			{/if}
-		</footer>
+			</footer>
+		{/if}
 	{/if}
 </Modal>
 
@@ -342,15 +332,5 @@
 	.btn-primary:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
-	}
-
-	.btn-secondary {
-		background: var(--color-bg-elevated);
-		color: var(--color-text);
-		border-color: var(--color-border);
-	}
-
-	.btn-secondary:hover {
-		background: var(--color-bg-subtle);
 	}
 </style>

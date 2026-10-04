@@ -154,7 +154,7 @@ existing deployment is byte-identical to today.
   touches Authentik provisioning and every native-oidc app config. It is the
   remaining half of invariant 10's TLS story and deserves its own plan.
 - **TLS at Traefik.** Bloud ships no certificate resolver and no ACME story.
-- **Tailscale Serve.** Covered by [the tailnet outpost plan](../tailnet-outpost.md).
+- **Tailscale Serve.** Covered by [the tailnet outpost plan](tailnet-outpost.md).
 
 ## Verification
 

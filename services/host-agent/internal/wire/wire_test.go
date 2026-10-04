@@ -79,7 +79,6 @@ func baseInput(t *testing.T) Input {
 		ContainerRuntime:  &recordingRuntime{},
 		EventsBus:         eventbus.New(),
 		Authentik:         authentik.NewClient("http://127.0.0.1:9999", "test-token"),
-		TailnetStore:      store.NewTailnetStore(db),
 		Settings:          store.NewSettingsStore(db),
 		Hosts:             hostset.NewState(hostset.Default()),
 		AppsDir:           appsDir,
@@ -103,8 +102,6 @@ func TestBuildReturnsAWiredOrchestrator(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Orchestrator, "Build must return an orchestrator")
-	assert.NotNil(t, out.Gateway, "the gateway is part of the wiring the builder owns")
-	assert.NotNil(t, out.TailnetNode, "the tailnet node is part of the wiring the builder owns")
 }
 
 // Build must not drive anything. A builder that converged on its way out would
@@ -134,16 +131,13 @@ func TestBuildWithoutAuthentikDisablesBothSSOProvisioners(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Nil(t, out.Config.SSO.SSO, "no identity provider means no SSO provisioner")
-	assert.Nil(t, out.Config.SSO.ForwardDomainSSO,
-		"no identity provider means no forward-domain provisioner")
 }
 
-func TestBuildWithAuthentikWiresBothSSOProvisioners(t *testing.T) {
+func TestBuildWithAuthentikWiresTheSSOProvisioner(t *testing.T) {
 	out, err := Build(baseInput(t))
 	require.NoError(t, err)
 
 	assert.NotNil(t, out.Config.SSO.SSO)
-	assert.NotNil(t, out.Config.SSO.ForwardDomainSSO)
 }
 
 // The supplied runtime wins over the podman fallback, so a caller that owns
@@ -185,7 +179,6 @@ func TestBuildRejectsMissingRequiredFields(t *testing.T) {
 		{"db", func(in *Input) { in.DB = nil }, "DB is required"},
 		{"registry", func(in *Input) { in.Registry = nil }, "Registry is required"},
 		{"catalog cache", func(in *Input) { in.CatalogCache = nil }, "CatalogCache is required"},
-		{"tailnet store", func(in *Input) { in.TailnetStore = nil }, "TailnetStore is required"},
 	}
 
 	for _, tc := range cases {

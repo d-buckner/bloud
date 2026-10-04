@@ -34,9 +34,9 @@ var Migrations = []Migration{
 		_, err := tx.Exec(SQL)
 		return err
 	}},
-	{2, "legacy: apps.tailnet_id", ensureColumn("apps", "tailnet_id", "TEXT DEFAULT ''")},
-	{3, "legacy: shares.node_share_link", ensureColumn("shares", "node_share_link", "TEXT NOT NULL DEFAULT ''")},
-	{4, "legacy: shares.guest_label renamed to guest_id", renameColumn("shares", "guest_label", "guest_id")},
+	{2, "retired: apps.tailnet_id (sharing removed in 11)", retiredChange},
+	{3, "retired: shares.node_share_link (sharing removed in 11)", retiredChange},
+	{4, "retired: shares.guest_label rename (sharing removed in 11)", retiredChange},
 	{5, "legacy: apps.last_error", ensureColumn("apps", "last_error", "TEXT NOT NULL DEFAULT ''")},
 	{6, "fix: user_app_positions shape fork", fixUserAppPositionsShape},
 	{7, "operations: durable lifecycle operation state", func(tx *sql.Tx) error {
@@ -56,6 +56,55 @@ var Migrations = []Migration{
 	{8, "hosts.scheme", ensureColumnIfTable("hosts", "scheme", "TEXT NOT NULL DEFAULT ''")},
 	{9, "collapse hosts table into settings.public_url", collapseHostsToPublicURL},
 	{10, "apps.sso_strategy", ensureColumn("apps", "sso_strategy", "TEXT NOT NULL DEFAULT ''")},
+	{11, "remove sharing: drop shares, guests, tailnet_connections, remote_apps", dropSharingSchema},
+}
+
+// retiredChange is the body of a ledger entry whose subject no longer
+// exists. The sharing subsystem was removed outright, so the legacy
+// upgrades that used to shape its tables have nothing left to do on any
+// database: a fresh install never creates them, and an upgraded database
+// has them dropped by version 11. The entries stay so the version
+// numbering does not shift; only the change is gone. Running the old
+// change now would not be a no-op, it would fail: ensureColumn refuses a
+// table that is not there.
+func retiredChange(*sql.Tx) error { return nil }
+
+// dropSharingSchema removes the durable state of the sharing and
+// federation subsystem: the invite/share records, the guest book, the
+// tailnet connections, the remote apps added from other hosts, and the
+// per-app column that recorded which tailnet an app rode.
+//
+// The tables are dropped rather than left behind unused, so nothing can
+// read a shape the code no longer writes: the sharing module, the
+// tailnet managers, and the remote-proxy pool are all gone, and a row
+// left behind would describe a tunnel nothing runs. Child rows go with
+// the parent (shares reference guests and apps), so shares is dropped
+// first and the apps row itself is untouched.
+//
+// Every drop is existence-guarded, so the migration is a verified no-op
+// on a database where schema.sql already created the final shape.
+func dropSharingSchema(tx *sql.Tx) error {
+	for _, table := range []string{"shares", "guests", "tailnet_connections", "remote_apps"} {
+		ok, err := tableExists(tx, table)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`DROP TABLE %s`, table)); err != nil {
+			return fmt.Errorf("drop %s: %w", table, err)
+		}
+	}
+
+	ok, err := columnExists(tx, "apps", "tailnet_id")
+	if err != nil || !ok {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE apps DROP COLUMN tailnet_id`); err != nil {
+		return fmt.Errorf("drop apps.tailnet_id: %w", err)
+	}
+	return nil
 }
 
 // collapseHostsToPublicURL replaces the multi-row hosts table with a single
@@ -232,29 +281,6 @@ func ensureColumnIfTable(table, column, definition string) func(*sql.Tx) error {
 			return err
 		}
 		_, err = tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
-		return err
-	}
-}
-
-// renameColumn returns a migration that renames oldName to newName when
-// the old column is present and the new one is not.
-func renameColumn(table, oldName, newName string) func(*sql.Tx) error {
-	return func(tx *sql.Tx) error {
-		hasOld, err := columnExists(tx, table, oldName)
-		if err != nil {
-			return err
-		}
-		if !hasOld {
-			return nil // already renamed (or table rebuilt in final shape)
-		}
-		hasNew, err := columnExists(tx, table, newName)
-		if err != nil {
-			return err
-		}
-		if hasNew {
-			return fmt.Errorf("%s.%s and %s.%s both present; ambiguous state", table, oldName, table, newName)
-		}
-		_, err = tx.Exec(fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s", table, oldName, newName))
 		return err
 	}
 }

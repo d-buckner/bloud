@@ -53,9 +53,7 @@ type RuntimeConfig struct {
 // intent from and writes lifecycle state to. Nil disables the subsystem that
 // reads the field.
 type StoresConfig struct {
-	AppStore       store.AppStoreInterface
-	TailnetStore   store.TailnetStoreInterface
-	RemoteAppStore store.RemoteAppStoreInterface
+	AppStore store.AppStoreInterface
 	// Settings persists the instance-level settings, including the public
 	// address (nil = not supported).
 	Settings store.SettingsStoreInterface
@@ -67,22 +65,12 @@ type StoresConfig struct {
 	Secrets configurator.AppSecretsProvider
 }
 
-// TailnetConfig groups the federation and remote-proxy collaborators.
-type TailnetConfig struct {
-	TailnetNode     TailnetNodeEnsurer
-	Gateway         GatewayManager
-	RemoteProxy     RemoteProxyManager
-	ProxyOutpost    ProxyOutpostEnsurer
-	ActiveTailnetID func() string // returns the active tailnet connection ID (empty if none)
-}
-
 // SSOConfig groups the identity-provider provisioning and the OIDC/LDAP
 // outputs handed to app configurators. The SSOBaseURL/SSOAuthentikURL/
 // SSOIssuerURL strings are the legacy single-host settings; Hosts supersedes
 // them when non-nil.
 type SSOConfig struct {
-	SSO              SSOProvisioner
-	ForwardDomainSSO ForwardDomainProvisioner
+	SSO SSOProvisioner
 	// LDAPOutput is the LDAP provider endpoint injected into apps with LDAP
 	// SSO strategy. Nil when no LDAP provider is configured.
 	LDAPOutput      *configurator.LDAPOutput
