@@ -434,6 +434,30 @@ podman exec <ctr> sh -c "umask 022; printf %s '<b64>' | base64 -d > \
 own `static/favicon-512.png` from the `hermes-webui` repository, taken
 unmodified. `IconHandler` serves the file verbatim; nothing rescales it.
 
+This one gets checked rather than assumed, because the obvious follow-up
+("this app is a front end for Hermes, so it should wear Hermes' icon")
+replaces a real asset with a different design. The two are not the same
+mark:
+
+| file | sha256 | what it is |
+|---|---|---|
+| `apps/hermes/icon.png` | `a2d912b2…` | `selfh.st/icons` `hermes-agent.png`, verbatim. Black line art on transparency. |
+| `apps/hermes-webui/icon.png` | `771a8e1b…` | the image's own `/app/static/favicon-512.png`, verbatim. A filled, colored tile. |
+
+The webui hash is byte-for-byte the file the published image ships, so this
+is upstream's own artwork and not something invented here:
+
+```
+podman exec apps-hermes-webui sha256sum /app/static/favicon-512.png
+771a8e1b322eb6afa12198ffc6fe220132c8474afb60dd9f00814fe82f9b574f  /app/static/favicon-512.png
+```
+
+Replacing it with `hermes-agent.png` would give the dashboard two adjacent
+tiles wearing the same mark for two different things, and would drop the
+webui's real icon for the agent's. It stays as upstream ships it. If that
+call is ever revisited, the swap is `cp apps/hermes/icon.png
+apps/hermes-webui/icon.png` and nothing else.
+
 ## Verified on a real install
 
 Installed through the host-agent API on the native backend, no manual
