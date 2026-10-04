@@ -215,6 +215,28 @@ var contracts = []Contract{
 			{Key: "workspaceId"},
 		},
 	},
+
+	// A scoped credential the provider mints through its own API, for a
+	// companion that is not a browser. This is the token-based sibling of
+	// appApi, and the preferred of the two whenever the target can issue one.
+	//
+	// appApi exists for a target whose only durable credential is an account
+	// password (AFFiNE removed its personal-access-token API). A target that
+	// mints scoped, revocable credentials of its own (Immich's API keys)
+	// publishes one here instead, and the difference is not cosmetic: the
+	// provider owns the credential's lifetime, so revocation is
+	// provider-enforced and the operator can see and revoke it in the target's
+	// own UI. A password handed to a companion has neither property.
+	//
+	// `token` is the credential the provider minted and validates. A consumer
+	// presents it however its target's API expects (an `x-api-key` header for
+	// Immich, a bearer token elsewhere); the contract deliberately does not
+	// name the transport, because the two apps agree on it through the
+	// credential's own documentation, not through Bloud.
+	{
+		Name:    "appToken",
+		Secrets: []string{"token"},
+	},
 }
 
 // ContractFor returns the contract with the given name.

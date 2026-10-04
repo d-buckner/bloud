@@ -72,6 +72,12 @@ flowchart TD
         c_immich_server --> c_immich_redis
     end
 
+    subgraph app_immich_mcp["Immich MCP"]
+        c_immich_mcp_upstream["upstream"]
+        c_immich_mcp["immich-mcp"]
+        c_immich_mcp_upstream --> c_immich_mcp
+    end
+
     subgraph app_jellyfin["Jellyfin"]
         c_jellyfin["jellyfin"]
     end
@@ -131,6 +137,7 @@ flowchart TD
     app_hermes -->|native-oidc| app_authentik
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
+    app_immich_mcp -->|appToken| app_immich
     app_jellyfin -->|ldap| app_authentik
     app_navidrome -->|forward-auth| app_authentik
     app_paperless_ngx -->|native-oidc| app_authentik
@@ -152,6 +159,7 @@ flowchart TD
     app_traefik -->|proxy| app_hermes
     app_traefik -->|proxy| app_homeassistant
     app_traefik -->|proxy| app_immich
+    app_traefik -->|proxy| app_immich_mcp
     app_traefik -->|proxy| app_jellyfin
     app_traefik -->|proxy| app_navidrome
     app_traefik -->|proxy| app_paperless_ngx

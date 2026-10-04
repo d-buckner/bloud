@@ -47,12 +47,13 @@ integrations:
     requires:
       - httpToken
     compatible:
-      # The wrapper is the only AFFiNE MCP provider. AFFiNE's own server is not
+      # Every MCP-capable app in the catalog. AFFiNE's own server is not
       # exposed: it is read-only and workspace-scoped, and `apps/affine-mcp`
       # offers a far wider read-write surface over the same workspace. Listing
-      # it here is what lets Hermes register the namespace; `mcp` is optional
+      # them here is what lets Hermes register each namespace; `mcp` is optional
       # and multi, so neither app is required.
       - app: affine-mcp
+      - app: immich-mcp
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider

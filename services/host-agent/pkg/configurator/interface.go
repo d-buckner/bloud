@@ -344,6 +344,21 @@ type AppAPIBinding struct {
 	WorkspaceID string
 }
 
+// AppTokenBinding is a scoped credential the provider minted through its own
+// API for a companion that is not a browser. It is the consumer-side half of
+// the `appToken` contract and the token-based sibling of AppAPIBinding.
+//
+// It carries one field because that is the whole payload: the provider owns
+// the credential's lifetime, and a token needs no username or scope beside it
+// the way an account password does.
+type AppTokenBinding struct {
+	ProviderRef
+	// Token is the credential the provider minted and validates. Empty while
+	// the provider has not published one yet, which a consumer must treat as
+	// "not ready" and write no credential, never as an empty one.
+	Token string
+}
+
 // CalDAVBinding is the DAV server a calendar or contacts client talks to.
 //
 // There is no credential field, and that is the contract, not a gap: a DAV
@@ -407,6 +422,7 @@ type Integrations struct {
 	Inference       []InferenceBinding
 	MCPServers      []MCPBinding
 	AppAPIs         []AppAPIBinding
+	AppTokens       []AppTokenBinding
 	CalDAVServers   []CalDAVBinding
 	ICSFeeds        []ICSFeedBinding
 }

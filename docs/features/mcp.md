@@ -1,7 +1,7 @@
 # Bloud MCP
 
-**Status:** Shipped. `apps/affine-mcp` provides the `mcp` contract; AFFiNE's own MCP server is deliberately not exposed.
-**Last updated:** 2026-10-03
+**Status:** Shipped. `apps/affine-mcp` and `apps/immich-mcp` provide the `mcp` contract; AFFiNE's own MCP server is deliberately not exposed.
+**Last updated:** 2026-10-04
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md)
 
 ---
@@ -14,6 +14,7 @@ each provider as a tool namespace.
 
 ```
 affine-mcp (provides mcp)  <──  hermes (integrates mcp, optional + multi)
+immich-mcp (provides mcp)  <──  hermes
 ```
 
 AFFiNE ships its own MCP server, and the first version of this design used it:
@@ -26,6 +27,15 @@ provider is now `apps/affine-mcp`, the third-party
 [affine-mcp-server](https://github.com/DAWNCR0W/affine-mcp-server), which speaks
 AFFiNE's GraphQL and WebSocket APIs directly and exposes a far wider read-write
 surface.
+
+The second provider, `apps/immich-mcp`, is the same shape over a different
+target: the third-party [ImmichMCP](https://github.com/barryw/ImmichMCP) speaks
+Immich's REST API, and it is the only way to give an agent the photo library.
+Two things make it a useful contrast to AFFiNE's case. It needs no password into
+the target, because Immich mints scoped API keys and publishes one under the
+[`appToken` contract](#the-apptoken-contract); and its upstream serves `/mcp`
+with no authentication of its own, so the app runs an authenticated edge in
+front of it (see below).
 
 Nothing in the chain is a new kind of thing. The provider is an ordinary catalog
 app; its inbound bearer is an ordinary published secret under a contract name;
@@ -45,6 +55,24 @@ from the target's API. It buys the tool surface the built-in server does not
 have. Those trade-offs are recorded here rather than hidden:
 [plans/mcp-integrations.md](../plans/mcp-integrations.md) carries the decision
 history, including the point where the built-in provider was removed.
+
+### Why a provider can need an edge container
+
+The rule above is about the *tool server*. `immich-mcp` adds one more container
+for a different reason: the upstream [ImmichMCP](https://github.com/barryw/ImmichMCP)
+serves `/mcp` with no authentication at all. Publishing that port would put a
+full read-write Immich surface on the network and make the `mcp` contract's
+`httpToken` decorative, which is exactly what **Real keys only** below forbids.
+
+So the app runs the tool server with no published port, behind a Caddy
+container that owns the app's port, requires the bearer on every request but its
+own liveness path, and refuses the rest with 401. The edge is part of the
+provider: the credential Bloud publishes is checked by a container the app runs,
+and the tool server is unreachable from anywhere but the edge. `apps/immich-mcp`'s
+`INTEGRATION.md` covers the arrangement in detail.
+
+This is a workaround for an upstream gap, not a pattern to copy: a tool server
+that authenticates its own listener needs no edge.
 
 ### What removing the built-in server also removed
 
@@ -141,9 +169,9 @@ metadata (`contractValue` in `internal/engine/orchestrator/orchestrator.go`). A
 provider can move a value from runtime to static, or the reverse, without
 touching consumers.
 
-The shipped `mcp` provider uses both static values (`/mcp`, `affine-mcp`),
-because the wrapper serves one endpoint for every workspace. The mechanism is
-still load-bearing: `appApi` publishes `username` and `workspaceId` at runtime,
+The shipped `mcp` providers use both static values (`/mcp`, and their own
+namespace), because each serves one endpoint for its whole target. The mechanism
+is still load-bearing: `appApi` publishes `username` and `workspaceId` at runtime,
 because those are facts only AFFiNE can produce. The built-in MCP server used it
 for a workspace-scoped `path`, which is the shape this section was written for
 and remains available to a future provider.
@@ -225,6 +253,44 @@ c.secrets.SetAppContractValue("affine", "appApi", "workspaceId", sharedWorkspace
 
 ---
 
+## The `appToken` contract
+
+The token-based sibling of `appApi`, for a companion whose target can issue
+scoped credentials of its own. Immich is that target: it mints API keys through
+its own API, so `apps/immich` publishes one instead of handing over the account
+password.
+
+```go
+// internal/catalog/contracts.go
+{
+    Name:    "appToken",
+    Secrets: []string{"token"},
+}
+```
+
+The payload is one field (`AppTokenBinding.Token`) and the address, because
+there is no username or scope beside a minted token the way there is beside an
+account password. The provider owns the credential's lifetime: `apps/immich`'s
+configurator mints the key on its first pass, re-mints it when Immich rejects
+the stored one, and the operator can see and revoke it in Immich's own API-keys
+screen. That is strictly better than a password for the reason the credential
+boundary states: revocation is provider-enforced and visible.
+
+A provider that has not minted a key yet leaves the token empty, and the
+consumer treats an empty token as "not ready" and writes nothing, the same rule
+`mcp` follows.
+
+**Which account the key belongs to.** Immich offers no API to mint a key for
+another account, and the operator's Immich account is created by OIDC login, so
+the only account Bloud can mint for is its internal bootstrap admin. Because an
+Immich API key acts as its owner, `immich-mcp`'s tools see that admin's library
+rather than the operator's. The follow-up is to make the operator's SSO identity
+the admin account (Immich links an OIDC login to an existing user with the same
+email), which `configurator.Deps.OperatorEmail` already supports; it is not done
+here because it changes the identity of an existing install's admin account.
+
+---
+
 ## The Credential Boundary
 
 The rule that governs every provider:
@@ -237,6 +303,11 @@ binding under `provides.mcp.secrets.httpToken`. The wrapper then requires that
 bearer on every `/mcp` request, so the credential is validated by the thing that
 was told it. Persisting it in the secrets store is what keeps a harness's
 registered namespace valid across restarts.
+
+For `immich-mcp` it is the same generation and the same store, written into the
+Caddy edge's config file: the upstream has no authentication to write a bearer
+into, so the app runs a listener that does. The rule is about who validates the
+credential, not about which container implements the check.
 
 ```go
 c.secrets.SetAppSecret(appName, "httpToken", token)
@@ -340,6 +411,20 @@ loopback-only port publish would tighten this for every app; it is not MCP work.
 
 Steps 4 and 5 before step 7 are the graph edges. Without them Hermes would
 render nothing and pick the namespace up on a later pass.
+
+### Install (`immich-mcp`)
+
+1. Immich's `PostStart` mints a scoped API key, stores it, and publishes it
+   under `provides.appToken.secrets.token`.
+2. `immich-mcp`'s `PreStart` reads the resolved `appToken` binding, generates
+   and publishes its own `httpToken`, and writes two files: the upstream's
+   `appsettings.json` (the Immich address and the minted key) and the edge's
+   `Caddyfile` (the bearer it will require).
+3. The edge starts and answers its own liveness probe. The upstream
+   `dependsOn` it, so it starts second, with its config already on disk, and its
+   `/health/ready` health check proves it can reach Immich.
+4. Hermes' `PreStart` reads `Integrations.MCPServers` and renders
+   `mcp_servers.immich-mcp` alongside `affine-mcp`.
 
 ### Reconcile
 

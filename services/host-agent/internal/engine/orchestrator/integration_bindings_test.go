@@ -460,6 +460,53 @@ func TestBuildIntegrations_AppAPIPasswordOnlyForDeclaredRequires(t *testing.T) {
 		"declaring the contract does not by itself hand over the password")
 }
 
+// An appToken provider mints a scoped credential through its own API and hands
+// it to the companion that cannot join the identity provider. The payload is
+// the credential itself: there is no username or scope beside it, unlike appApi,
+// because a minted token needs neither.
+func TestBuildIntegrations_AppTokenSecretOnly(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "immich-mcp", nil)
+	install(t, store, "immich", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("immich-mcp", "appToken", catalog.Integration{Requires: requires("token")}, "immich"),
+		providerApp("immich", 2283, "appToken", catalog.ContractProvides{
+			Secrets: []string{"token"},
+		}),
+	)
+	secrets.publish("immich", "token", "immich-api-key-1")
+
+	out := orch.buildIntegrations("immich-mcp", consumerApp("immich-mcp", "appToken", catalog.Integration{Requires: requires("token")}, "immich"))
+	require.Len(t, out.AppTokens, 1)
+	assert.Equal(t, "immich-api-key-1", out.AppTokens[0].Token)
+	assert.Equal(t, "http://apps-immich:2283", out.AppTokens[0].BaseURL)
+}
+
+// A consumer that declares `appToken` without requiring the secret gets the
+// address and no credential, the same least-privilege rule every other contract
+// enforces.
+func TestBuildIntegrations_AppTokenOnlyForDeclaredRequires(t *testing.T) {
+	store := NewFakeAppStore()
+	install(t, store, "reader", nil)
+	install(t, store, "immich", nil)
+
+	orch, secrets := bindingsOrchestrator(t, store,
+		consumerApp("reader", "appToken", catalog.Integration{}, "immich"),
+		providerApp("immich", 2283, "appToken", catalog.ContractProvides{
+			Secrets: []string{"token"},
+		}),
+	)
+	secrets.publish("immich", "token", "immich-api-key-1")
+
+	out := orch.buildIntegrations("reader", consumerApp("reader", "appToken", catalog.Integration{}, "immich"))
+	require.Len(t, out.AppTokens, 1)
+	assert.Empty(t, out.AppTokens[0].Token,
+		"declaring the contract does not by itself hand over the token")
+	assert.Equal(t, "http://apps-immich:2283", out.AppTokens[0].BaseURL,
+		"the address still arrives, which is what a prune needs")
+}
+
 // A CalDAV provider hands its consumer the address and the DAV root, and no
 // credential of any kind. The contract carries no secret because the credential
 // is the person's own password, which their client sends to the provider

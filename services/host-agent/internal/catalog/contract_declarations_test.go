@@ -92,3 +92,43 @@ func TestShippedCatalog_AppAPIWiring(t *testing.T) {
 		"the wrapper's namespace must differ from affine's or a harness would collide")
 	assert.Equal(t, "/mcp", offered.Values["path"])
 }
+
+// TestShippedCatalog_AppTokenWiring pins the token-based companion chain: Immich
+// mints a scoped API key and publishes it under `appToken`, and immich-mcp
+// consumes exactly that credential to reach Immich's API.
+//
+// The generic pairing test above cannot see this either. A provider that forgot
+// to declare the contract, or a consumer that required a secret name the
+// contract does not carry, loads fine and simply resolves an empty token every
+// pass; the wrapper then starts unable to authenticate and the failure surfaces
+// as a 401 from Immich rather than as a catalog error.
+func TestShippedCatalog_AppTokenWiring(t *testing.T) {
+	apps, err := NewLoader(realCatalogDir(t)).LoadAll()
+	require.NoError(t, err)
+
+	spec, known := ContractFor("appToken")
+	require.True(t, known, "appToken must be in the registry")
+	require.Equal(t, []string{"token"}, spec.Secrets)
+
+	immich := apps["immich"]
+	require.NotNil(t, immich, "immich must be in the shipped catalog")
+	offer, ok := immich.Provides["appToken"]
+	require.True(t, ok, "immich must provide appToken")
+	assert.Equal(t, spec.Secrets, offer.Secrets,
+		"the provider must publish exactly the contract's secret")
+
+	wrapper := apps["immich-mcp"]
+	require.NotNil(t, wrapper, "immich-mcp must be in the shipped catalog")
+	integration, ok := wrapper.Integrations["appToken"]
+	require.True(t, ok, "immich-mcp must declare integrations.appToken")
+	assert.True(t, integration.Required,
+		"the wrapper cannot authenticate without Immich's key, so the contract is required")
+	assert.Equal(t, []string{"token"}, integration.Requires,
+		"the minted credential is the whole consumer surface")
+
+	offered, ok := wrapper.Provides["mcp"]
+	require.True(t, ok, "immich-mcp must provide mcp")
+	assert.Equal(t, "immich-mcp", offered.Values["serverName"],
+		"the wrapper's namespace must not collide with Immich's or another provider's")
+	assert.Equal(t, "/mcp", offered.Values["path"])
+}
