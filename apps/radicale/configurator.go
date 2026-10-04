@@ -85,6 +85,11 @@ type Configurator struct {
 	// Empty before setup: there is no account to own a collection yet.
 	operatorUsername func() string
 
+	// restartContainerFn stops and starts the running container through the
+	// host runtime, forcing Radicale to re-read ics_sync.json. Nil in CLI/tests;
+	// PostStart treats nil as "cannot apply now".
+	restartContainerFn func(ctx context.Context, name string) error
+
 	// baseURL is a test seam: when set, the client resolves to it instead of
 	// localhost:port. Never used to build request URLs by hand.
 	baseURL string
@@ -100,9 +105,10 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		logger = slog.Default()
 	}
 	c := &Configurator{
-		port:             port,
-		logger:           logger.With("app", appName),
-		operatorUsername: deps.OperatorUsername,
+		port:               port,
+		logger:             logger.With("app", appName),
+		operatorUsername:   deps.OperatorUsername,
+		restartContainerFn: deps.RestartContainer,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -287,11 +293,32 @@ func syncPlugin(dataPath string) (bool, error) {
 	return changed, nil
 }
 
-// PostStart checks the running server for the one property that matters: an
-// unauthenticated request for a collection is refused. That is a behavioral
+// PostStart does two jobs. First it re-renders the feed sync jobs against the
+// live bindings and restarts the container when they changed: the jobs depend
+// on which feed providers (Radarr, Sonarr) are installed, the vendored plugin
+// reads its config only at process start, and the orchestrator's PostStart-only
+// resync is the only hook a RUNNING node gets after a provider is installed or
+// removed. Then it checks the running server for the one property that matters:
+// an unauthenticated request for a collection is refused. That is a behavioral
 // assertion about the process, not a re-read of the file that was written, so
 // it catches a container that came up on a stale or ignored config.
-func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
+func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	if state != nil && state.DataPath != "" {
+		icsChanged, err := c.syncICSFeeds(filepath.Join(state.DataPath, "config", icsSyncFileName), state)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", icsSyncFileName, err)
+		}
+		if icsChanged {
+			c.logger.Info("feed sync jobs changed; restarting Radicale to apply")
+			if err := c.restartContainer(ctx); err != nil {
+				return fmt.Errorf("feed sync written but the container could not be restarted: %w", err)
+			}
+			// The server is restarting; probing it now would race. The next
+			// reconciliation pass re-probes once it is serving again.
+			return nil
+		}
+	}
+
 	status, err := c.api.probeUnauthenticated(ctx)
 	if err != nil {
 		// Liveness is the health check's job, and PostStart runs after it
@@ -318,6 +345,17 @@ func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) 
 		return fmt.Errorf("radicale answered an unauthenticated collection request with %d; "+
 			"the generated [auth] section is not in effect and the server is open", status)
 	}
+}
+
+// restartContainer stops and starts the running container through the host
+// runtime so Radicale re-reads ics_sync.json, whose jobs the plugin loads once
+// at process start. It mirrors the Home Assistant pattern: the configurator
+// owns the restart decision, the runtime performs the side effect.
+func (c *Configurator) restartContainer(ctx context.Context) error {
+	if c.restartContainerFn == nil {
+		return errors.New("no container restart callback")
+	}
+	return c.restartContainerFn(ctx, c.Name())
 }
 
 // syncLdapSecret keeps the secret file equal to the LDAP reader password the

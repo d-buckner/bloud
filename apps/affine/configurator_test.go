@@ -85,7 +85,7 @@ func TestRenderConfigFile_WithOIDC(t *testing.T) {
 		ClientSecret: "secret-value",
 		IssuerURL:    "http://sso.localhost:8080/application/o/affine/",
 	}
-	content, err := renderConfigFile("http://affine.localhost:8080", oidc)
+	content, err := renderConfigFile("http://affine.localhost:8080", oidc, nil)
 	require.NoError(t, err)
 
 	var cfg struct {
@@ -120,7 +120,7 @@ func TestRenderConfigFile_WithOIDC(t *testing.T) {
 }
 
 func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
-	content, err := renderConfigFile("http://affine.localhost:8080", nil)
+	content, err := renderConfigFile("http://affine.localhost:8080", nil, nil)
 	require.NoError(t, err)
 
 	var cfg map[string]any
@@ -136,6 +136,94 @@ func TestRenderConfigFile_WithoutOIDC(t *testing.T) {
 
 	_, hasOAuth := cfg["oauth"]
 	assert.False(t, hasOAuth, "oauth section must be absent without SSO")
+}
+
+func installedCalDAVBinding() configurator.CalDAVBinding {
+	return configurator.CalDAVBinding{
+		ProviderRef: configurator.ProviderRef{
+			App:       "radicale",
+			Installed: true,
+			Node:      "apps-radicale",
+			Port:      5232,
+			BaseURL:   "http://apps-radicale:5232",
+		},
+		Path: "/",
+	}
+}
+
+func TestRenderConfigFile_WithCalDAV(t *testing.T) {
+	caldav := installedCalDAVBinding()
+	content, err := renderConfigFile("http://affine.localhost:8080", nil, &caldav)
+	require.NoError(t, err)
+
+	var cfg map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &cfg))
+	calendar, ok := cfg["calendar"].(map[string]any)
+	require.True(t, ok, "calendar section must be present when a DAV provider is installed")
+	caldavCfg, ok := calendar["caldav"].(map[string]any)
+	require.True(t, ok)
+
+	assert.Equal(t, true, caldavCfg["enabled"])
+	assert.Equal(t, false, caldavCfg["allowCustomProvider"])
+	assert.Equal(t, true, caldavCfg["allowInsecureHttp"])
+	assert.Equal(t, false, caldavCfg["blockPrivateNetwork"])
+
+	providers, ok := caldavCfg["providers"].([]any)
+	require.True(t, ok, "providers must be an array")
+	require.Len(t, providers, 1)
+	provider := providers[0].(map[string]any)
+	assert.Equal(t, "radicale", provider["id"])
+	assert.Equal(t, "Bloud Calendar", provider["label"])
+	// AFFiNE's server fetches the calendar over the container network, so the
+	// address is the DAV server's node, not a browser-facing subdomain.
+	assert.Equal(t, "http://apps-radicale:5232/", provider["serverUrl"])
+	assert.Equal(t, "basic", provider["authType"])
+}
+
+func TestRenderConfigFile_WithoutCalDAV(t *testing.T) {
+	content, err := renderConfigFile("http://affine.localhost:8080", nil, nil)
+	require.NoError(t, err)
+	var cfg map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &cfg))
+	_, hasCalendar := cfg["calendar"]
+	assert.False(t, hasCalendar, "no DAV provider means no calendar block, so AFFiNE keeps it disabled")
+}
+
+func TestRenderCalDAVBlock_RequiresInstalledProvider(t *testing.T) {
+	assert.Nil(t, renderCalDAVBlock(nil))
+
+	notInstalled := installedCalDAVBinding()
+	notInstalled.Installed = false
+	assert.Nil(t, renderCalDAVBlock(&notInstalled))
+
+	noAddress := installedCalDAVBinding()
+	noAddress.BaseURL = ""
+	assert.Nil(t, renderCalDAVBlock(&noAddress))
+}
+
+func TestPostStart_RestartsWhenCalDAVProviderAppears(t *testing.T) {
+	dataPath := t.TempDir()
+	c := NewConfigurator(0, configurator.Deps{PrimaryBaseURL: staticBaseURL("http://localhost:8080"), Logger: quietLogger()})
+	var restarted []string
+	c.restartContainerFn = func(_ context.Context, name string) error {
+		restarted = append(restarted, name)
+		return nil
+	}
+
+	state := &configurator.AppState{DataPath: dataPath}
+	// PreStart writes the config with no calendar block.
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+
+	// A provider appears after AFFiNE is already RUNNING: the resync rewrites
+	// config.json and restarts, returning before any network work.
+	state.Integrations.CalDAVServers = []configurator.CalDAVBinding{installedCalDAVBinding()}
+	require.NoError(t, c.PostStart(context.Background(), state))
+	assert.Equal(t, []string{nodeName}, restarted)
+
+	content, err := os.ReadFile(filepath.Join(dataPath, "config", configFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), `"serverUrl": "http://apps-radicale:5232/"`)
 }
 
 func TestPreStart_WritesConfigAndReportsChange(t *testing.T) {

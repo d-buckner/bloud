@@ -4,6 +4,7 @@ package radicale
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -299,6 +300,64 @@ func TestPostStartPassesWhenUnreachable(t *testing.T) {
 	// PostStart runs after it passes, so a failure here is a race.
 	c, _ := newTestConfigurator(t, nil)
 	require.NoError(t, c.PostStart(context.Background(), appState("", ldapOutput())))
+}
+
+// TestPostStartRestartsWhenFeedsChange is the propagation path for the calendar
+// aggregation: a RUNNING Radicale only ever gets a PostStart resync when a feed
+// provider (Radarr, Sonarr) is installed or removed, so the feed jobs have to be
+// re-rendered here, not only in PreStart. A change requires a container restart
+// because the vendored plugin reads ics_sync.json once at process start.
+func TestPostStartRestartsWhenFeedsChange(t *testing.T) {
+	c, dataPath := newTestConfigurator(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="Bloud"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	c.operatorUsername = func() string { return "alice" }
+
+	var restarted []string
+	c.restartContainerFn = func(_ context.Context, name string) error {
+		restarted = append(restarted, name)
+		return nil
+	}
+
+	// No feeds yet: PreStart already wrote the empty job list, so the resync
+	// changes nothing and the probe still runs.
+	state := appState(dataPath, ldapOutput())
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+
+	require.NoError(t, c.PostStart(context.Background(), state))
+	assert.Empty(t, restarted, "no feeds means no restart")
+
+	// A feed provider appears: the resync writes ics_sync.json and restarts.
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	require.NoError(t, c.PostStart(context.Background(), state))
+	assert.Equal(t, []string{nodeName}, restarted)
+
+	ics, err := os.ReadFile(filepath.Join(dataPath, "config", icsSyncFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(ics), "alice/radarr")
+
+	// Steady state: an unchanged job list must not restart the container again.
+	restarted = nil
+	require.NoError(t, c.PostStart(context.Background(), state))
+	assert.Empty(t, restarted)
+}
+
+func TestPostStartRestartFailureIsAnError(t *testing.T) {
+	c, dataPath := newTestConfigurator(t, nil)
+	c.operatorUsername = func() string { return "alice" }
+	c.restartContainerFn = func(_ context.Context, _ string) error {
+		return errors.New("runtime refused")
+	}
+	state := appState(dataPath, ldapOutput())
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+
+	err = c.PostStart(context.Background(), state)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not be restarted")
 }
 
 // ---- ICS feed sync ----

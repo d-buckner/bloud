@@ -99,7 +99,7 @@ it, authentication fails on a directory that is otherwise correct.
 | `realm` | `Bloud` | Shows up in the client's password prompt |
 | `[storage] filesystem_folder` | `/var/lib/radicale/collections` | The one tree the container writes |
 | `[storage] type` | `radicale_ics_sync.storage` | The vendored plugin; see [Aggregated calendar feeds](#aggregated-calendar-feeds) |
-| `[storage] ics_config` | `/config/ics_sync.json` | The sync jobs `PreStart` writes |
+| `[storage] ics_config` | `/config/ics_sync.json` | The sync jobs Bloud writes (PreStart + the PostStart resync) |
 | `[storage] hash_db` | `/var/lib/radicale/collections/ics_sync_hashes.json` | Inside the persisted tree, so deletions survive a restart |
 | `[rights] type` | `owner_only` | See [Isolation model](#isolation-model) |
 | `[web] type` | `internal` | Radicale's built-in browser UI at `/.web/` |
@@ -134,18 +134,21 @@ embedded in the host-agent binary, written into `<appDataDir>/plugin` by
 [`plugin/PROVENANCE.md`](plugin/PROVENANCE.md) for the pinned version and the
 two local changes.
 
-What `PreStart` writes:
+`PreStart` writes the plugin tree and an initial `config/ics_sync.json`, one
+job per feed binding. The feed URL is the provider's container address plus its
+declared path, with the API key as the `?apikey=` query parameter the Servarr
+feed endpoint requires. A feed with no published key yet is skipped rather than
+written with an empty one.
 
-- `config/ics_sync.json`, one job per feed binding. The feed URL is the
-  provider's container address plus its declared path, with the API key as the
-  `?apikey=` query parameter the Servarr feed endpoint requires. A feed with no
-  published key yet is skipped rather than written with an empty one.
-- the plugin tree above.
-
-A change to either asks the orchestrator to recreate the container, because the
-plugin starts one polling thread per job when the storage backend is
-constructed. The writes are compared and idempotent, so a steady-state
-reconciliation changes nothing.
+The feed list is not fixed at install time: Radarr and Sonarr are installed
+after Radicale more often than before it, and the orchestrator's only hook for
+a RUNNING node is the PostStart resync, which never re-runs PreStart. So
+`PostStart` re-renders `ics_sync.json` against the live bindings and restarts
+the container when the bytes changed. PreStart still owns the first write (and
+the recreate when the file changes before boot); PostStart owns the change that
+happens after boot. A change requires a restart because the plugin starts one
+polling thread per job when the storage backend is constructed. The writes are
+compared and idempotent, so a steady-state reconciliation changes nothing.
 
 ### Who owns the synced calendars, and how they get created
 
@@ -259,7 +262,3 @@ key only when the consumer required it.
 - **TLS.** Bloud serves plain HTTP today, so `ldap_security = none` on the
   internal hop matches. When Bloud serves HTTPS, the internal hop is still
   inside the container network, so this does not have to change with it.
-- **Reaching Radicale from a browser app cross-origin.** The synced calendars
-  are visible to any DAV client that can reach `radicale.<host>`; Calino's
-  browser-to-Radicale call is still missing CORS. See
-  [`apps/calino/INTEGRATION.md`](../calino/INTEGRATION.md#what-is-not-wired).
