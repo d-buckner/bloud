@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: backrest
+displayName: Backrest
+description: Web UI for restic, preconfigured to back up every app's data
+category: security
+port: 9898
+estimatedSizeMB: 150
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  sso:
+    required: false
+    multi: false
+    compatible:
+      - app: authentik
+        default: true
+
+# Backrest has no OIDC support and no header-trust mode, so the browser gate is
+# the proxy's: forward-auth in front of the whole origin, the same shape as
+# Calino and the Servarr apps. Backrest's own login is disabled by the config
+# the configurator seeds, because a proxy already authenticated the request and
+# a second, generated credential would only lock the operator out: nothing in
+# the UI surfaces the password.
+#
+# The trade-off is recorded here because it is invisible in the manifest: Bloud
+# routes every app through Traefik at http://localhost:<port>, so the app port
+# is published on the host, and that path never passes the forward-auth gate.
+# On the LAN, <host>:9898 is an unauthenticated Backrest that can restore,
+# delete, and reconfigure backups. That is the same trust boundary as every
+# other published app port, and it is accepted deliberately; see INTEGRATION.md
+# for the full reasoning.
+sso:
+  strategy: forward-auth
+
+containers:
+  - name: apps-backrest
+    image: docker.io/garethgeorge/backrest:v1.14.1
+    network: apps-net
+    restartPolicy: always
+    ports:
+      # Published on the host because that is how Traefik reaches every app
+      # (the generated route targets http://localhost:<port>). It is also what
+      # bypasses forward-auth; see the sso block above.
+      - host: 9898
+        container: 9898
+    environment:
+      TZ: Etc/UTC
+      # cmd/docker-entrypoint sets these defaults itself; they are made explicit
+      # so the mounts below and the container agree on the same paths.
+      BACKREST_PORT: "0.0.0.0:9898"
+      BACKREST_DATA: /data
+      BACKREST_CONFIG: /config/config.json
+      XDG_CACHE_HOME: /cache
+      # rclone and ssh read their configuration out of $HOME. A persistent mount
+      # keeps a remote added in the UI (an SFTP key, an rclone remote) across a
+      # container recreate.
+      HOME: /userdata
+    volumes:
+      # Backrest's own state: its sqlite operations database and the restic
+      # binary it manages (the image bakes one into /bin at build time).
+      - source: "{{appDataDir}}/data"
+        destination: /data
+      # The generated config. PreStart seeds it once and Backrest owns it after
+      # that: it rewrites the file on every change, so the configurator must
+      # never overwrite it, or it would discard the repositories and plans the
+      # user added in the UI.
+      - source: "{{appDataDir}}/config"
+        destination: /config
+      - source: "{{appDataDir}}/cache"
+        destination: /cache
+      - source: "{{appDataDir}}/userdata"
+        destination: /userdata
+      # Every app's private tree, read-only. This is the one deliberate
+      # exception to invariant 15: a backup tool's job is to read the other
+      # apps' data, and it is handed that reach as a read-only bind rather than
+      # a filesystem path, so the write side stays closed. The seeded plan
+      # excludes /bloud/apps/backrest, so Backrest never snapshots its own
+      # state or the repository password in its config.
+      - source: "{{dataDir}}/apps"
+        destination: /bloud/apps
+        options: [ro]
+      # The default restic repository. It sits on the same disk as the data it
+      # protects, which does not survive that disk failing: it is a zero-setup
+      # starting point, not an offsite copy. A real destination (S3, B2, SFTP,
+      # a mounted disk) is added in the UI.
+      - source: "{{dataDir}}/backups"
+        destination: /repos
+    healthCheck:
+      # The web UI shell. Backrest serves its embedded bundle at / as soon as
+      # the process listens, independently of any repository being configured,
+      # so a 200 proves the server is up rather than that a backup ever ran.
+      # The image installs curl.
+      test: ["CMD-SHELL", "curl -sf -o /dev/null http://localhost:9898/ || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 12

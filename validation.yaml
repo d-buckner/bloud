@@ -136,6 +136,18 @@ apps:
     files:
       - apps/affine-mcp/**
 
+  # Backrest is a restic web UI with no login of its own that the configurator
+  # seeds a repository and an all-apps plan into. The browser gate is
+  # forward-auth, so it validates like navidrome; its own login is disabled and
+  # the configurator tests pin the seeded config. No Playwright project yet: a
+  # browser journey would have to configure a repository and run a backup, which
+  # belongs on the native-backups design rather than on this app.
+  backrest:
+    auth: forward-auth
+    validation-level: embed
+    files:
+      - apps/backrest/**
+
   immich:
     auth: native-oidc
     validation-level: embed

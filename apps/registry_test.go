@@ -34,6 +34,7 @@ func TestNodeNamesStable(t *testing.T) {
 	assert.Equal(t, []string{
 		"apps-affine",
 		"apps-affine-mcp",
+		"apps-backrest",
 		"apps-calino",
 		"apps-hermes",
 		"apps-homeassistant",
