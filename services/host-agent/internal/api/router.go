@@ -210,6 +210,15 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	appsMod := NewAppsModule(deps.catalogCache, deps.appStore, deps.orchCaller, logger)
 	appsMod.SetAppsDir(cfg.AppsDir)
 	appsMod.SetDataDir(cfg.DataDir)
+	// The pre-flight plans read the dependency graph the orchestrator owns,
+	// so the API answers against the same installed set the next install
+	// will be planned against rather than a second graph that can fall
+	// behind. The nil check is on the concrete pointer: assigning a nil
+	// *Orchestrator to the interface field would yield a non-nil interface
+	// holding a nil pointer and defeat the handler's 503 guard.
+	if deps.realOrch != nil {
+		appsMod.SetPlanSource(deps.realOrch)
+	}
 	// Catalog size fallback: resolve undeclared estimates from local images.
 	if sizeClient, err := podman.NewClient(); err == nil {
 		appsMod.SetImageSizeResolver(func(ctx context.Context, image string) (int64, bool) {

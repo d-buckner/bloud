@@ -39,6 +39,16 @@ type orchestratorCaller interface {
 	Submit(intent orchestrator.Intent)
 }
 
+// planSource supplies the dependency-graph plans behind the pre-flight
+// install and uninstall views. The orchestrator implements it. The API reads
+// a plan rather than computing one so the resolver stays single: the client
+// has the catalog but not buildIntegrationConfig or computeAppDeps, and a
+// second implementation in TypeScript would drift on the first metadata edit.
+type planSource interface {
+	PlanInstall(appName string) (*catalog.InstallPlan, error)
+	PlanRemove(appName string) (*catalog.RemovePlan, error)
+}
+
 // AppsModule encapsulates all app catalog and lifecycle operations.
 // It is a deep module: the implementation hides catalog lookups, store
 // queries, orchestrator interactions, and filesystem operations for orphaned
@@ -57,6 +67,11 @@ type appsModule struct {
 	// imageSizeResolver returns the on-disk size (bytes) of a locally
 	// present image. Nil disables the catalog size fallback.
 	imageSizeResolver func(ctx context.Context, image string) (int64, bool)
+	// plans answers what an install or uninstall would do before it is
+	// committed. Nil means no plan source was wired, which the handlers
+	// report as 503 rather than as an empty plan: "nothing to install" and
+	// "nothing was able to tell me" must not look the same.
+	plans planSource
 }
 
 func NewAppsModule(
@@ -321,6 +336,70 @@ func (m *appsModule) IconHandler() http.HandlerFunc {
 	}
 }
 
+// SetPlanSource wires the dependency-graph reader used by the install-plan
+// and remove-plan routes. Callers must pass a non-nil implementation: a nil
+// *Orchestrator assigned to this interface field would be a non-nil interface
+// holding a nil pointer, and the 503 guard below would not fire.
+func (m *appsModule) SetPlanSource(s planSource) {
+	m.plans = s
+}
+
+// InstallPlanHandler reports what installing the named app would do, before
+// anything is committed: the providers it needs, which of them are already
+// installed, which integrations still need an operator choice, and which
+// installed apps would be reconfigured as a result.
+//
+// The plan is advisory. It is computed now and the install happens later, and
+// applyInstallIntent re-plans on its own rather than trusting this snapshot.
+func (m *appsModule) InstallPlanHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+		if _, err := m.catalog.Get(name); err != nil {
+			respondError(w, http.StatusNotFound, "app not found")
+			return
+		}
+		if m.plans == nil {
+			respondError(w, http.StatusServiceUnavailable, "install plans unavailable")
+			return
+		}
+		plan, err := m.plans.PlanInstall(name)
+		if err != nil {
+			m.logger.Error("failed to compute install plan", "app", name, "error", err)
+			respondError(w, http.StatusInternalServerError, "failed to compute install plan")
+			return
+		}
+		respondJSON(w, http.StatusOK, plan)
+	}
+}
+
+// RemovePlanHandler reports what removing the named app would do: which
+// installed apps would lose an integration, and whether the removal is
+// blocked because some app requires this provider with no alternative.
+//
+// Read-only. Nothing in the uninstall path enforces CanRemove yet, so today
+// this tells the operator what the planner believes without changing what a
+// removal does. Enforcement is a separate, deliberate change.
+func (m *appsModule) RemovePlanHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+		if _, err := m.catalog.Get(name); err != nil {
+			respondError(w, http.StatusNotFound, "app not found")
+			return
+		}
+		if m.plans == nil {
+			respondError(w, http.StatusServiceUnavailable, "remove plans unavailable")
+			return
+		}
+		plan, err := m.plans.PlanRemove(name)
+		if err != nil {
+			m.logger.Error("failed to compute remove plan", "app", name, "error", err)
+			respondError(w, http.StatusInternalServerError, "failed to compute remove plan")
+			return
+		}
+		respondJSON(w, http.StatusOK, plan)
+	}
+}
+
 // NewAppsRouter registers all app-related routes on the given router. It is
 // mounted on the member router; admin-only app routes (refresh-catalog) are
 // registered by the caller on the admin router so the two sets cannot collide.
@@ -328,6 +407,8 @@ func NewAppsRouter(mod *appsModule, r chi.Router) {
 	r.Get("/apps", mod.GetCatalogHandler())
 	r.Get("/apps/installed", mod.GetInstalledHandler())
 	r.Get("/apps/{name}/metadata", mod.AppMetadataHandler())
+	r.Get("/apps/{name}/install-plan", mod.InstallPlanHandler())
+	r.Get("/apps/{name}/remove-plan", mod.RemovePlanHandler())
 	r.Get("/apps/{name}/icon", mod.IconHandler())
 	r.Post("/apps/{name}/install", mod.InstallHandler())
 	r.Post("/apps/{name}/uninstall", mod.UninstallHandler())
