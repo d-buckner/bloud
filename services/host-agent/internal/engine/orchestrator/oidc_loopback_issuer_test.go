@@ -47,7 +47,7 @@ func newIssuerTestOrchestratorWith(t *testing.T, hs hostset.HostSet) *Orchestrat
 		catCache,
 		t.TempDir(),
 		newTestLogger(),
-		OrchestratorConfig{Hosts: state, SSOHostSecret: "test-host-secret"},
+		OrchestratorConfig{SSO: SSOConfig{SSOHostSecret: "test-host-secret"}, Hosts: HostsConfig{Hosts: state}},
 	)
 }
 

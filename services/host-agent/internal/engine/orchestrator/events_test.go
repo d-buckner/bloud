@@ -30,10 +30,7 @@ func newEventTestOrchestrator(t *testing.T) (*Orchestrator, *graph.Graph, *FakeA
 		nil,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			AppStore: fakeStore,
-			Events:   bus,
-		},
+		OrchestratorConfig{Tuning: TuningConfig{Events: bus}, Stores: StoresConfig{AppStore: fakeStore}},
 	)
 	return orch, g, fakeStore, bus
 }
@@ -155,11 +152,7 @@ func TestOrchestrator_PullProgressPublishedWithOwningApp(t *testing.T) {
 		nil,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			AppStore:   NewFakeAppStore(),
-			Containers: runtime,
-			Events:     bus,
-		},
+		OrchestratorConfig{Tuning: TuningConfig{Events: bus}, Runtime: RuntimeConfig{Containers: runtime}, Stores: StoresConfig{AppStore: NewFakeAppStore()}},
 	)
 
 	// Multi-container node: the pull is attributed to the owning app, not the
@@ -195,7 +188,7 @@ func TestOrchestrator_PullProgressUnknownContainerFallsBackToNodeID(t *testing.T
 		nil,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{AppStore: NewFakeAppStore(), Containers: runtime, Events: bus},
+		OrchestratorConfig{Tuning: TuningConfig{Events: bus}, Runtime: RuntimeConfig{Containers: runtime}, Stores: StoresConfig{AppStore: NewFakeAppStore()}},
 	)
 
 	events, cancel := bus.Subscribe()

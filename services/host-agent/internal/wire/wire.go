@@ -308,39 +308,51 @@ func buildOrchestratorConfig(
 	}
 
 	return orchestrator.OrchestratorConfig{
-		SelfHealInterval: resolveSelfHealInterval(in.ReconcileInterval),
-		LDAPOutput:       in.LDAPOutput,
-		Containers:       runtime,
-		TemplateVars:     in.TemplateVars,
-		Secrets:          in.Secrets,
-		AppStore:         in.AppStore,
-		Operations:       store.NewOperationStore(in.DB),
-		Events:           in.EventsBus,
-		CatalogGraph:     catalogGraph,
-		TailnetStore:     in.TailnetStore,
-		RemoteAppStore:   store.NewRemoteAppStore(in.DB),
-		TailnetNode:      managers.Node,
-		Gateway:          managers.Gateway,
-		RemoteProxy:      managers.RemoteProxy,
-		ProxyOutpost:     sharing.NewProxyOutpostManager(runtime, in.Logger),
-		ForwardDomainSSO: forwardDomainSSO,
-		SSO:              ssoProvisioner,
-		SSOBaseURL:       in.SSOBaseURL,
-		SSOHostSecret:    in.SSOHostSecret,
-		SSOAuthentikURL:  in.SSOAuthentikURL,
-		SSOIssuerURL:     in.SSOIssuerURL,
-		TraefikPort:      in.TraefikPort,
-		TraefikGen:       traefikgen.NewGenerator(traefikConfigPath),
-		ActiveTailnetID: func() string {
-			conn, err := in.TailnetStore.GetActive()
-			if err != nil || conn == nil {
-				return ""
-			}
-			return conn.ID
+		Tuning: orchestrator.TuningConfig{
+			SelfHealInterval: resolveSelfHealInterval(in.ReconcileInterval),
+			Events:           in.EventsBus,
 		},
-		Hosts:          in.Hosts,
-		Settings:       in.Settings,
-		OnHostsChanged: in.OnHostsChanged,
+		Runtime: orchestrator.RuntimeConfig{
+			Containers:   runtime,
+			TemplateVars: in.TemplateVars,
+			TraefikGen:   traefikgen.NewGenerator(traefikConfigPath),
+			TraefikPort:  in.TraefikPort,
+		},
+		Stores: orchestrator.StoresConfig{
+			AppStore:       in.AppStore,
+			TailnetStore:   in.TailnetStore,
+			RemoteAppStore: store.NewRemoteAppStore(in.DB),
+			Settings:       in.Settings,
+			Operations:     store.NewOperationStore(in.DB),
+			Secrets:        in.Secrets,
+		},
+		Tailnet: orchestrator.TailnetConfig{
+			TailnetNode:  managers.Node,
+			Gateway:      managers.Gateway,
+			RemoteProxy:  managers.RemoteProxy,
+			ProxyOutpost: sharing.NewProxyOutpostManager(runtime, in.Logger),
+			ActiveTailnetID: func() string {
+				conn, err := in.TailnetStore.GetActive()
+				if err != nil || conn == nil {
+					return ""
+				}
+				return conn.ID
+			},
+		},
+		SSO: orchestrator.SSOConfig{
+			SSO:              ssoProvisioner,
+			ForwardDomainSSO: forwardDomainSSO,
+			LDAPOutput:       in.LDAPOutput,
+			SSOBaseURL:       in.SSOBaseURL,
+			SSOHostSecret:    in.SSOHostSecret,
+			SSOAuthentikURL:  in.SSOAuthentikURL,
+			SSOIssuerURL:     in.SSOIssuerURL,
+		},
+		Hosts: orchestrator.HostsConfig{
+			Hosts:          in.Hosts,
+			OnHostsChanged: in.OnHostsChanged,
+		},
+		CatalogGraph: catalogGraph,
 	}
 }
 

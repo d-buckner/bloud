@@ -4,11 +4,14 @@
 # by ./bloud validate. Do NOT add test, lint, or build steps here -- add a
 # command to validation.yaml instead, so local runs and CI stay identical.
 #
-# The fast tier covers: host-agent tests, orchestrator race tests, apps tests,
-# cli tests, golangci-lint (cyclop), gofmt, web unit tests, svelte-check, ESLint,
-# the static production build, the license-header check, the prose lint (Vale,
-# docs plus source comments), the em dash check, the docs link check, and the
-# generated README dependency graph.
+# This job runs the changed tier: the subset of the fast tier that the pushed
+# files actually trigger, inferred from the same validation.yaml paths the
+# local default and the pre-push hook use. A feature-branch push diffs from the
+# merge base with main (the whole PR, not just the last commit); a main push
+# diffs from the previous tip; and a run with no base at all (workflow_dispatch
+# on main) falls back to the full fast tier. The inference is complete by
+# construction: the `**` catch-all always runs the whole-tree checks, and a
+# change to a root config or script file triggers the full tier.
 name: CI
 
 on:
@@ -23,6 +26,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # Full history so `git merge-base origin/main HEAD` can resolve the
+          # PR's diff base on a feature-branch push.
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -52,5 +59,16 @@ jobs:
       - name: Build the bloud CLI
         run: npm run cli:build
 
-      - name: Validate (fast tier)
-        run: ./bloud validate --tier fast
+      - name: Validate (changed tier)
+        env:
+          BEFORE: ${{ github.event.before }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            base="$(git merge-base origin/main HEAD)"
+            ./bloud validate --tier changed --since "$base"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            ./bloud validate --tier changed --since "$BEFORE"
+          else
+            ./bloud validate --tier fast
+          fi

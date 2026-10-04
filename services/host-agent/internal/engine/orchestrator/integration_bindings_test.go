@@ -107,7 +107,7 @@ func bindingsOrchestrator(t *testing.T, appStore *FakeAppStore, apps ...*catalog
 		cache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{AppStore: appStore, Secrets: secrets},
+		OrchestratorConfig{Stores: StoresConfig{AppStore: appStore, Secrets: secrets}},
 	)
 	// Every binding test gets a settings store so the instance can act as a
 	// contract provider; an empty map reads as "nothing configured".
@@ -511,7 +511,7 @@ func TestBuildIntegrations_CalDAVPublicURLFollowsTheLiveHostSet(t *testing.T) {
 		cache,
 		t.TempDir(),
 		newTestLogger(),
-		OrchestratorConfig{AppStore: store, Hosts: hostset.NewState(hostset.New(public))},
+		OrchestratorConfig{Stores: StoresConfig{AppStore: store}, Hosts: HostsConfig{Hosts: hostset.NewState(hostset.New(public))}},
 	)
 
 	out := orch.buildIntegrations("calino", consumerApp("calino", "caldav", catalog.Integration{}, "radicale"))

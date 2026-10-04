@@ -71,8 +71,8 @@ func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName stri
 				o.logger.Warn("configurator remove failed", "container", def.Name, "error", err)
 			}
 		}
-		if o.config.Containers != nil {
-			if err := o.config.Containers.Remove(ctx, def.Name); err != nil {
+		if o.config.Runtime.Containers != nil {
+			if err := o.config.Runtime.Containers.Remove(ctx, def.Name); err != nil {
 				o.logger.Warn("failed to remove container", "container", def.Name, "error", err)
 			}
 		}
@@ -103,8 +103,8 @@ func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName stri
 // while it shuts down (many images rewrite state files on SIGTERM), and those
 // bytes are then unreachable to the host user.
 func (o *Orchestrator) removeAppData(ctx context.Context, path string) error {
-	if o.config.Containers != nil {
-		if remover, ok := o.config.Containers.(containerruntime.PathRemover); ok {
+	if o.config.Runtime.Containers != nil {
+		if remover, ok := o.config.Runtime.Containers.(containerruntime.PathRemover); ok {
 			return remover.RemoveHostPath(ctx, path)
 		}
 	}

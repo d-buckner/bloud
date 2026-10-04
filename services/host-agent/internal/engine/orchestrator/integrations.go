@@ -38,8 +38,8 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 		o.logger.Info("SSO enabled for app", "app", id, "strategy", catalogApp.SSO.Strategy)
 		switch catalogApp.SSO.Strategy {
 		case "ldap":
-			if o.config.LDAPOutput != nil {
-				state.LDAP = o.config.LDAPOutput
+			if o.config.SSO.LDAPOutput != nil {
+				state.LDAP = o.config.SSO.LDAPOutput
 			}
 		case "native-oidc":
 			if inputs := o.oidcInputsForApp(catalogApp, o.resolveSSOURLs()); inputs != nil && len(inputs.RedirectURIs) > 0 {

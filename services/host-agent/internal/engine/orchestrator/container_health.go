@@ -75,7 +75,7 @@ func convertHealthCheckTest(test []string) []string {
 // runContainerHealthCheck polls the health check command inside the named container
 // until it passes or retries are exhausted, respecting context cancellation.
 func (o *Orchestrator) runContainerHealthCheck(ctx context.Context, containerName string, hc *catalog.ContainerHealthCheck) error {
-	if o.config.Containers == nil {
+	if o.config.Runtime.Containers == nil {
 		return nil
 	}
 	interval := time.Duration(hc.Interval) * time.Second
@@ -101,7 +101,7 @@ func (o *Orchestrator) runContainerHealthCheck(ctx context.Context, containerNam
 		}
 		execCtx, cancel := context.WithTimeout(ctx, timeout)
 		execCmd := convertHealthCheckTest(hc.Test)
-		err := o.config.Containers.Exec(execCtx, containerName, execCmd)
+		err := o.config.Runtime.Containers.Exec(execCtx, containerName, execCmd)
 		cancel()
 		if err == nil {
 			return nil

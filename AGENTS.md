@@ -224,11 +224,11 @@ pruned to the newest 20).
 | Tier | Command | What happens |
 |---|---|---|
 | `fast` (~30s) | `./bloud validate --tier fast` | host-agent go tests, orchestrator race tests, apps go tests, cli go tests, Go lint (golangci-lint cyclop complexity gate + nolintlint, `.golangci.yml`), Go formatting (gofmt), web vitest + svelte-check, license header check, image pin check, file length ratchet, prose lint (Vale), em dash check, docs link check, generated-doc check (`depgraph --check` + `catalogdoc --check`) |
-| `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps; unmapped files drop confidence to "medium" |
-| `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent and the integration test binary locally (no frontend build, see below); deploys them plus the app catalog to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) with `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install Jellyfin through the real API) |
+| `changed` (default) | `./bloud validate` | `git diff` (default base `HEAD`; `--since <ref>`) → infer commands via `inference.paths` globs in validation.yaml; reports risk areas + affected apps. The `**` catch-all always runs the whole-tree checks, and a root config/script change triggers the full tier, so no file is ever unmapped. CI runs this tier (not `fast`) with the merge-base as the diff base on branches |
+| `integration` | `./bloud validate --tier integration` | Requires the VM: builds host-agent and the integration test binary locally (no frontend build, see below); deploys them plus the app catalog to the guest's `/var/tmp/bloud-validate-runtime` behind a systemd user service (`bloud-validate-host-agent.service`) with `init-secrets`; waits for API convergence; then runs the prebuilt test binary in the VM (the tests install an app through the real API). `--test-run <regex>` narrows the suite to one app group, so CI runs one matrix leg per group in parallel |
 
 Flags: `--tier fast|changed|integration`, `--app <name>`, `--dry-run`, `--explain`,
-`--json`, `--since <ref>`, `--verbose` / `-v` (stream each command's raw output;
+`--json`, `--since <ref>`, `--test-run <regex>`, `--verbose` / `-v` (stream each command's raw output;
 `BLOUD_VALIDATE_VERBOSE=1` does the same). The console is quiet by default: one
 line per command plus a pass/fail summary, with the full per-command output
 dumped only for failures and mirrored to `.bloud/logs/validate-<tier>.log`.
@@ -237,12 +237,12 @@ preflight, build, deploy, start, wait-for-convergence) as for the test command
 itself, so a 10-minute run that goes well is ten lines.
 
 The integration tier builds no frontend. The fast tier's `web-build` command
-already gates the production bundle on every push, and no integration test
-reads the dashboard, so rebuilding the same artifact here would prove the same
-thing twice and add a minute of vite chunk listing to the log. The validation
-runtime is deployed without `web/build`, so host-agent serves its documented
-missing-build fallback page (invariant 11), and the CI job that runs the tier
-installs no Node.js at all.
+already gates the production bundle whenever web files change, and no
+integration test reads the dashboard, so rebuilding the same artifact here
+would prove the same thing twice and add a minute of vite chunk listing to the
+log. The validation runtime is deployed without `web/build`, so host-agent
+serves its documented missing-build fallback page (invariant 11), and the CI
+job that runs the tier installs no Node.js at all.
 
 Run individual suites directly (from the repo root unless noted):
 
@@ -284,11 +284,13 @@ when an app is removed rather than edited, and the file-length baseline has to
 be reconciled against every governed file or a deleted exempt file leaves a
 stale ceiling behind. All three cost well under a second.
 
-Neither hook is the gate. CI runs the full `./bloud validate --tier fast` plus
-integration and e2e on every push, so `git commit --no-verify` costs you a few
-seconds of feedback, not correctness. That is deliberate: a hook nobody can
-bypass is a hook people disable globally, and then the hygiene layer is gone for
-everyone.
+Neither hook is the gate. CI runs `./bloud validate --tier changed` (the
+subset of the fast tier the pushed files trigger, complete by construction: the
+`**` catch-all always runs the whole-tree checks and a root config change runs
+the full tier) plus integration and e2e on every push, so
+`git commit --no-verify` costs you a few seconds of feedback, not correctness.
+That is deliberate: a hook nobody can bypass is a hook people disable globally,
+and then the hygiene layer is gone for everyone.
 
 By hand: `npm run test:precommit` runs every check over the whole tree (the
 shape CI mirrors); `npm run checks:commit` and `npm run checks:push` run the two
@@ -884,8 +886,11 @@ combined with instance/SSH-target env vars). Instance overrides:
 The integration tier (`./bloud validate --tier integration`) and the Go tests
 in `services/host-agent/internal/e2e/` provision their runtime the same way a
 real install works: deploy host-agent + catalog into the VM as a systemd user
-service, install Jellyfin through `POST /api/apps/jellyfin/install`, let the
-orchestrator converge, then run the behavioral tests inside the VM.
+service, install an app through the real host-agent API, let the orchestrator
+converge, then run the behavioral tests inside the VM. CI runs one matrix leg
+per app group (see `.github/workflows/integration.yml`), each with its own
+runner and runtime, so the wall clock is the slowest group rather than the sum
+of every app's install/reconcile journey.
 
 The old `dev/compose.yml` static stack (shared postgres/redis/authentik/jellyfin)
 was retired in 2026-08: it bypassed the catalog planner, the orchestrator

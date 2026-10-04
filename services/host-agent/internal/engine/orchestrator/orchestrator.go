@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
-	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
@@ -56,89 +55,18 @@ type ActivityEvent struct {
 }
 
 // OrchestratorConfig is the complete set of tunable parameters and optional
-// dependencies for the Orchestrator. Nil/zero fields disable the corresponding
-// subsystem. All fields are set at construction time via NewOrchestrator.
+// dependencies for the Orchestrator, grouped by subsystem. Nil/zero fields
+// disable the corresponding subsystem. All fields are set at construction time
+// via NewOrchestrator. The subsystem structs live in config.go.
 type OrchestratorConfig struct {
-	// ── Tunable parameters ───────────────────────────────────────────────
-
-	// HealthCheckTimeout limits how long each app's HealthCheck can run.
-	// Zero means no timeout (the caller's context deadline applies).
-	HealthCheckTimeout time.Duration
-	// PostStartBudget bounds how long a node's PostStart finalization wait may run
-	// before the framework cancels it, so the budget is uniform across apps and
-	// Stop() can still interrupt the call. Zero means use DefaultPostStartBudget.
-	PostStartBudget time.Duration
-
-	// LDAPOutput is the LDAP provider endpoint injected into apps with
-	// LDAP SSO strategy. Nil when no LDAP provider is configured.
-	LDAPOutput *configurator.LDAPOutput
-
-	// SelfHealInterval is how long the instance may sit without a
-	// convergence pass before the self-healing timer submits one. Zero
-	// means no periodic pass: the value has to be asked for, so a
-	// hand-built orchestrator (every unit test) stays quiet, while
-	// wire.Build always supplies DefaultSelfHealInterval unless the
-	// deployment set BLOUD_RECONCILE_INTERVAL. See startSelfHealing.
-	SelfHealInterval time.Duration
-
-	// ── Container runtime ────────────────────────────────────────────────
-
-	// Containers is the container runtime used to create app containers from
-	// catalog specs. Nil disables catalog-driven container creation.
-	Containers containerruntime.Runtime
-
-	// TemplateVars are the extra variables container-spec templates render
-	// with (postgresPassword and the authentik values). It is a store, not a
-	// bare map, because one of its values is written at runtime by the
-	// authentik configurator while the orchestrator reads the rest.
-	TemplateVars *configurator.TemplateVars
-
-	// ── Converge dependencies (nil = subsystem disabled) ─────────────────
-
-	// Events is the bus used to broadcast lifecycle transitions and activity
-	// to API subscribers (SSE). Nil disables event publishing.
-	Events *eventbus.Bus
-
-	AppStore         store.AppStoreInterface
-	CatalogGraph     catalog.AppGraphInterface
-	TailnetStore     store.TailnetStoreInterface
-	RemoteAppStore   store.RemoteAppStoreInterface
-	TailnetNode      TailnetNodeEnsurer
-	Gateway          GatewayManager
-	RemoteProxy      RemoteProxyManager
-	ProxyOutpost     ProxyOutpostEnsurer
-	ForwardDomainSSO ForwardDomainProvisioner
-	SSO              SSOProvisioner
-	SSOBaseURL       string // base URL for building app subdomain URLs (e.g. "http://localhost:8080")
-	SSOHostSecret    string // master secret for deriving deterministic per-app OIDC client secrets
-	SSOAuthentikURL  string // browser-accessible Authentik URL for OIDC issuer/discovery
-	SSOIssuerURL     string // OIDC issuer base URL reachable from app containers (empty = SSOAuthentikURL)
-	// TraefikPort is the port the public entrypoint listens on. LAN IP base URLs
-	// are built on it: the primary host's URL port describes the public origin,
-	// not the socket a client on the LAN reaches. See HostSet.AllBaseURLs.
-	TraefikPort     int
-	TraefikGen      traefikgen.GeneratorInterface
-	ActiveTailnetID func() string // returns the active tailnet connection ID (empty if none)
-
-	// Secrets is the host secret store. Integration bindings resolve a
-	// provider's published credentials from it (configurator.AppSecretsProvider),
-	// so a consumer never reads a provider's files. Nil disables publishing:
-	// bindings still carry the provider's identity and address.
-	Secrets configurator.AppSecretsProvider
-
-	// Hosts is the live address state. When non-nil it supersedes the
-	// SSOBaseURL/SSOAuthentikURL/SSOIssuerURL strings above.
-	Hosts *hostset.State
-	// Settings persists the instance-level settings, including the public
-	// address (nil = not supported).
-	Settings store.SettingsStoreInterface
-	// OnHostsChanged fires after a SetPublicURL intent is applied (e.g. to
-	// re-ensure the dashboard OAuth app with the new redirect URIs).
-	OnHostsChanged func()
-
-	// Operations persists durable lifecycle operation state
-	// (current-or-last drive per app). Nil disables the recorder.
-	Operations *store.OperationStore
+	Tuning  TuningConfig
+	Runtime RuntimeConfig
+	Stores  StoresConfig
+	Tailnet TailnetConfig
+	SSO     SSOConfig
+	Hosts   HostsConfig
+	// CatalogGraph is the install/remove planner. Nil disables planning.
+	CatalogGraph catalog.AppGraphInterface
 }
 
 // Orchestrator drives app nodes through their lifecycle phases in dependency
@@ -249,28 +177,28 @@ func NewOrchestrator(
 		dataDir:          dataDir,
 		logger:           logger,
 		config:           config,
-		appStore:         config.AppStore,
-		secrets:          config.Secrets,
+		appStore:         config.Stores.AppStore,
+		secrets:          config.Stores.Secrets,
 		catalogGraph:     config.CatalogGraph,
-		tailnetStore:     config.TailnetStore,
-		remoteAppStore:   config.RemoteAppStore,
-		tailnetNode:      config.TailnetNode,
-		gateway:          config.Gateway,
-		remoteProxy:      config.RemoteProxy,
-		proxyOutpost:     config.ProxyOutpost,
-		forwardDomainSSO: config.ForwardDomainSSO,
-		sso:              config.SSO,
-		ssoBaseURL:       config.SSOBaseURL,
-		ssoHostSecret:    config.SSOHostSecret,
-		ssoAuthentikURL:  config.SSOAuthentikURL,
-		ssoIssuerURL:     config.SSOIssuerURL,
-		traefikGen:       config.TraefikGen,
-		activeTailnetID:  config.ActiveTailnetID,
-		hosts:            config.Hosts,
-		settings:         config.Settings,
-		onHostsChanged:   config.OnHostsChanged,
+		tailnetStore:     config.Stores.TailnetStore,
+		remoteAppStore:   config.Stores.RemoteAppStore,
+		tailnetNode:      config.Tailnet.TailnetNode,
+		gateway:          config.Tailnet.Gateway,
+		remoteProxy:      config.Tailnet.RemoteProxy,
+		proxyOutpost:     config.Tailnet.ProxyOutpost,
+		forwardDomainSSO: config.SSO.ForwardDomainSSO,
+		sso:              config.SSO.SSO,
+		ssoBaseURL:       config.SSO.SSOBaseURL,
+		ssoHostSecret:    config.SSO.SSOHostSecret,
+		ssoAuthentikURL:  config.SSO.SSOAuthentikURL,
+		ssoIssuerURL:     config.SSO.SSOIssuerURL,
+		traefikGen:       config.Runtime.TraefikGen,
+		activeTailnetID:  config.Tailnet.ActiveTailnetID,
+		hosts:            config.Hosts.Hosts,
+		settings:         config.Stores.Settings,
+		onHostsChanged:   config.Hosts.OnHostsChanged,
 		queue:            NewIntentQueue(DefaultDebounce),
-		events:           config.Events,
+		events:           config.Tuning.Events,
 		started:          make(chan struct{}),
 		ready:            make(chan struct{}),
 		done:             make(chan struct{}),
@@ -350,8 +278,8 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	// the drive died mid-phase (phase writes happen before entering the
 	// phase). Flip those to failed/retryable for diagnostic continuity;
 	// normal convergence re-drives the work.
-	if o.config.Operations != nil {
-		if n, err := o.config.Operations.MarkOrphansInterrupted(); err != nil {
+	if o.config.Stores.Operations != nil {
+		if n, err := o.config.Stores.Operations.MarkOrphansInterrupted(); err != nil {
 			o.logger.Error("operation recorder: orphan sweep failed", "error", err)
 		} else if n > 0 {
 			o.logger.Warn("operation recorder: flipped interrupted operations", "count", n)

@@ -27,6 +27,11 @@ type manifestCommand struct {
 	ID  string `yaml:"id"`
 	Cwd string `yaml:"cwd"`
 	Run string `yaml:"run"`
+	// Heavy marks a command that parallelises internally across every core
+	// (go test, golangci-lint) and must therefore not share the machine with
+	// another heavy command. The fast tier runs heavy commands one at a time
+	// and runs light commands concurrently alongside them; see runCommands.
+	Heavy bool `yaml:"heavy"`
 }
 
 type manifestInference struct {
@@ -61,28 +66,34 @@ func loadManifest(root string) (*validationManifest, error) {
 // --- Fast tier ---
 
 // inferTriggers maps changed files through the manifest's inference globs:
-// which validation command IDs are triggered, which risk areas are hit,
-// and which files matched no pattern at all.
+// which validation command IDs are triggered and which risk areas are hit.
+//
+// The `**` catch-all matches every file and its checks are whole-tree on
+// purpose (doc links, prose, image pins, file length), so its triggers are
+// applied once for every run. The remaining patterns are module globs ordered
+// most-specific first: the first one to match a file claims it, so
+// services/host-agent/web/** claims web files before services/host-agent/**
+// would sweep them into the Go suite.
 func inferTriggers(changedFiles []string, manifest *validationManifest) (map[string]bool, []string, []string) {
 	triggeredIDs := map[string]bool{}
 	riskAreaSet := map[string]bool{}
-	var unmapped []string
+
+	for _, p := range manifest.Inference.Paths {
+		if p.Pattern == "**" {
+			addTriggers(p, triggeredIDs, riskAreaSet)
+			break
+		}
+	}
 
 	for _, f := range changedFiles {
-		matched := false
 		for _, p := range manifest.Inference.Paths {
-			if pathMatches(f, p.Pattern) {
-				matched = true
-				for _, t := range p.Triggers {
-					triggeredIDs[t] = true
-				}
-				for _, r := range p.RiskAreas {
-					riskAreaSet[r] = true
-				}
+			if p.Pattern == "**" {
+				continue
 			}
-		}
-		if !matched {
-			unmapped = append(unmapped, f)
+			if pathMatches(f, p.Pattern) {
+				addTriggers(p, triggeredIDs, riskAreaSet)
+				break
+			}
 		}
 	}
 
@@ -91,7 +102,20 @@ func inferTriggers(changedFiles []string, manifest *validationManifest) (map[str
 		riskAreas = append(riskAreas, r)
 	}
 	sort.Strings(riskAreas)
-	return triggeredIDs, riskAreas, unmapped
+	// No file is ever unmapped: the `**` catch-all matches everything, so the
+	// confidence stays "high". The slice is kept for the ledger's shape.
+	return triggeredIDs, riskAreas, nil
+}
+
+// addTriggers merges a pattern's trigger IDs and risk areas into the running
+// sets.
+func addTriggers(p manifestPath, triggeredIDs map[string]bool, riskAreaSet map[string]bool) {
+	for _, t := range p.Triggers {
+		triggeredIDs[t] = true
+	}
+	for _, r := range p.RiskAreas {
+		riskAreaSet[r] = true
+	}
 }
 
 // detectAffectedApps returns the sorted names of catalog apps whose file

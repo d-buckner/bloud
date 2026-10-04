@@ -28,11 +28,7 @@ func newRecordingOrchestrator(t *testing.T, ops *store.OperationStore, apps stor
 	registry := new(MockConfiguratorRegistry)
 	orch := NewOrchestrator(
 		g, registry, nil, "/tmp/bloud-test", newTestLogger(),
-		OrchestratorConfig{
-			HealthCheckTimeout: 100 * time.Millisecond,
-			Operations:         ops,
-			AppStore:           apps,
-		},
+		OrchestratorConfig{Tuning: TuningConfig{HealthCheckTimeout: 100 * time.Millisecond}, Stores: StoresConfig{Operations: ops, AppStore: apps}},
 	)
 	return orch, g, registry
 }

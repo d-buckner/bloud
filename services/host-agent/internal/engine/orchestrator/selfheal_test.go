@@ -248,12 +248,7 @@ func newHealFixture(t *testing.T, interval time.Duration) *healFixture {
 
 	routesPath := t.TempDir() + "/apps-routes.yml"
 
-	orch := NewOrchestrator(g, registry, cat, t.TempDir(), newTestLogger(), OrchestratorConfig{
-		AppStore:         apps,
-		Containers:       rt,
-		TraefikGen:       traefikgen.NewGenerator(routesPath),
-		SelfHealInterval: interval,
-	})
+	orch := NewOrchestrator(g, registry, cat, t.TempDir(), newTestLogger(), OrchestratorConfig{Tuning: TuningConfig{SelfHealInterval: interval}, Runtime: RuntimeConfig{Containers: rt, TraefikGen: traefikgen.NewGenerator(routesPath)}, Stores: StoresConfig{AppStore: apps}})
 
 	return &healFixture{orch: orch, g: g, repo: repo, apps: apps, cat: cat, rt: rt, cfg: cfg, routes: routesPath}
 }
@@ -352,7 +347,7 @@ func TestSelfHeal_NothingInstalledIsSilent(t *testing.T) {
 	f := newHealFixture(t, 0)
 	apps := NewFakeAppStore()
 	f.orch.appStore = apps
-	f.orch.config.AppStore = apps
+	f.orch.config.Stores.AppStore = apps
 
 	require.NotPanics(t, func() { f.converge(NewReconcileIntent()) })
 	ensures, removes, _ := f.rt.counts()
@@ -407,7 +402,7 @@ func TestSelfHeal_RetriesARetryableFailure(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	ops := store.NewOperationStore(db)
 	f := newHealFixture(t, 0)
-	f.orch.config.Operations = ops
+	f.orch.config.Stores.Operations = ops
 
 	// Reproduce the reported state: node in ERROR, row says a retry may help.
 	require.NoError(t, f.g.SetActualStatus(healContainer, graph.StatusError, "permission denied"))
@@ -432,7 +427,7 @@ func TestSelfHeal_LeavesNonRetryableFailureTerminal(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	ops := store.NewOperationStore(db)
 	f := newHealFixture(t, 0)
-	f.orch.config.Operations = ops
+	f.orch.config.Stores.Operations = ops
 
 	require.NoError(t, f.g.SetActualStatus(healContainer, graph.StatusError, "unsupported license"))
 	require.NoError(t, ops.Start(healApp, "op-1", store.OpTypeInstall, store.OpPhasePrestart))
@@ -450,7 +445,7 @@ func TestSelfHeal_DoesNotResurrectAnUninstallingApp(t *testing.T) {
 	db := testdb.SetupTestDB(t)
 	ops := store.NewOperationStore(db)
 	f := newHealFixture(t, 0)
-	f.orch.config.Operations = ops
+	f.orch.config.Stores.Operations = ops
 
 	require.NoError(t, f.g.SetActualStatus(healContainer, graph.StatusError, "boom"))
 	require.NoError(t, f.apps.UpdateStatus(healApp, "uninstalling"))

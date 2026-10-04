@@ -50,7 +50,7 @@ func TestReconcileCatalogUpdates_ResetsOnlyChangedNode(t *testing.T) {
 
 	rt := new(MockContainerRuntime)
 	orch := NewOrchestrator(g, new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, Containers: rt})
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}})
 
 	revA := specRevisionFor(t, orch, defA, "demo")
 	rt.On("ListContainers", mock.Anything).Return([]containerruntime.ContainerInfo{
@@ -81,7 +81,7 @@ func TestReconcileCatalogUpdates_NoDiffIsStable(t *testing.T) {
 
 	rt := new(MockContainerRuntime)
 	orch := NewOrchestrator(g, new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, Containers: rt})
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}})
 
 	rev := specRevisionFor(t, orch, def, "demo")
 	rt.On("ListContainers", mock.Anything).Return([]containerruntime.ContainerInfo{
@@ -114,7 +114,7 @@ func TestReconcileCatalogUpdates_PrunesRemovedContainer(t *testing.T) {
 	registry := new(MockConfiguratorRegistry)
 	registry.On("Get", mock.Anything).Return(nil)
 	orch := NewOrchestrator(g, registry, cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, Containers: rt})
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}})
 
 	rev := specRevisionFor(t, orch, def, "demo")
 	rt.On("ListContainers", mock.Anything).Return([]containerruntime.ContainerInfo{
@@ -152,7 +152,7 @@ func TestReconcileCatalogUpdates_PruneRemoveErrorKeepsNode(t *testing.T) {
 	registry := new(MockConfiguratorRegistry)
 	registry.On("Get", mock.Anything).Return(nil)
 	orch := NewOrchestrator(g, registry, cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, Containers: rt})
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}})
 
 	rev := specRevisionFor(t, orch, def, "demo")
 	rt.On("ListContainers", mock.Anything).Return([]containerruntime.ContainerInfo{
@@ -182,7 +182,7 @@ func TestReconcileCatalogUpdates_DoesNotPruneAuxiliaryContainers(t *testing.T) {
 
 	rt := new(MockContainerRuntime)
 	orch := NewOrchestrator(g, new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, Containers: rt})
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}})
 
 	rev := specRevisionFor(t, orch, def, "demo")
 	// ts-demo is a tailnet node: it carries io.bloud.app=demo but has no graph
@@ -210,7 +210,7 @@ func TestReconcileCatalogUpdates_CatalogMissDoesNothing(t *testing.T) {
 	rt.On("ListContainers", mock.Anything).Return(nil, nil)
 
 	orch := NewOrchestrator(graph.New(graph.NewMapRepository()), new(MockConfiguratorRegistry), NewFakeCatalogCache(), t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, Containers: rt})
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}})
 
 	require.NotPanics(t, func() {
 		orch.reconcileCatalogUpdates(context.Background(), toAppMap(apps))
@@ -232,7 +232,7 @@ func TestResetForSSOChange_ResetsPrimaryNode(t *testing.T) {
 	seedRunningNode(t, g, "demo", graph.StatusRunning)
 
 	orch := NewOrchestrator(g, new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps})
+		OrchestratorConfig{Stores: StoresConfig{AppStore: apps}})
 
 	orch.resetForSSOChange("demo", demoApp)
 
@@ -254,7 +254,7 @@ func TestResetForSSOChange_NoChangeDoesNothing(t *testing.T) {
 	seedRunningNode(t, g, "demo", graph.StatusRunning)
 
 	orch := NewOrchestrator(g, new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps})
+		OrchestratorConfig{Stores: StoresConfig{AppStore: apps}})
 
 	// Empty stored strategy: first convergence, nothing to reset.
 	orch.resetForSSOChange("demo", demoApp)
@@ -284,7 +284,7 @@ func TestReconcileSSOStrategy_DeprovisionsOldAndRecordsNew(t *testing.T) {
 	sso.On("Deprovision", "demo", "Demo", "forward-auth").Return(nil)
 
 	orch := NewOrchestrator(graph.New(graph.NewMapRepository()), new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, SSO: sso})
+		OrchestratorConfig{SSO: SSOConfig{SSO: sso}, Stores: StoresConfig{AppStore: apps}})
 
 	orch.reconcileSSOStrategy(context.Background(), "demo")
 
@@ -308,7 +308,7 @@ func TestReconcileSSOStrategy_ToNoneDeprovisionsOld(t *testing.T) {
 	sso.On("Deprovision", "demo", "Demo", "native-oidc").Return(nil)
 
 	orch := NewOrchestrator(graph.New(graph.NewMapRepository()), new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
-		OrchestratorConfig{AppStore: apps, SSO: sso})
+		OrchestratorConfig{SSO: SSOConfig{SSO: sso}, Stores: StoresConfig{AppStore: apps}})
 
 	orch.reconcileSSOStrategy(context.Background(), "demo")
 

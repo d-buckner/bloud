@@ -2,21 +2,38 @@
 tiers:
   fast:
     commands:
+      # `heavy: true` marks a command that parallelises internally across every
+      # core (go test, golangci-lint) and must not run alongside another heavy
+      # command. The fast tier runs heavy commands one at a time and runs the
+      # light commands concurrently with them; see runCommands in cli/validate.go.
       - id: go-host-agent
         cwd: services/host-agent
         run: go test ./...
+        heavy: true
       - id: go-host-agent-race
         cwd: services/host-agent
         run: go test -race ./internal/engine/orchestrator/... ./internal/catalog/...
+        heavy: true
       - id: go-apps
         cwd: apps
         run: go test ./...
+        heavy: true
       - id: go-cli
         cwd: cli
         run: go test ./...
-      - id: go-lint
+        heavy: true
+      - id: go-lint-host-agent
         cwd: .
-        run: npm run lint:go
+        run: npm run lint:go:host-agent
+        heavy: true
+      - id: go-lint-apps
+        cwd: .
+        run: npm run lint:go:apps
+        heavy: true
+      - id: go-lint-cli
+        cwd: .
+        run: npm run lint:go:cli
+        heavy: true
       # gofmt owns Go layout, and nothing enforced it before, so the tree had
       # drifted (20 files when this command landed).
       - id: gofmt
@@ -100,22 +117,40 @@ tiers:
 
 inference:
   paths:
+    # Module globs are ordered most-specific first: the first one to match a
+    # file claims it (see inferTriggers in cli/inference.go), so a web file
+    # triggers the web checks and not the host-agent Go suite.
     - pattern: "services/host-agent/web/**"
       triggers: [web-unit, web-check-host-agent, web-lint, web-build]
     - pattern: "services/host-agent/**"
-      triggers: [go-host-agent, go-host-agent-race, go-lint, gofmt]
+      triggers: [go-host-agent, go-host-agent-race, go-lint-host-agent, gofmt]
     - pattern: "apps/**"
-      triggers: [go-apps, go-lint, gofmt]
+      triggers: [go-apps, go-lint-apps, gofmt]
       riskAreas: [app-install, embed]
     - pattern: "cli/**"
-      triggers: [go-cli, go-lint, gofmt]
+      triggers: [go-cli, go-lint-cli, gofmt]
     - pattern: "e2e/**"
       triggers: []
       riskAreas: [playwright]
+    # Root-level config and script files can break any check, so they trigger
+    # the whole tier. A `*` trigger means "every command" (see triggeredCommands
+    # in cli/validate.go).
+    - pattern: "package.json"
+      triggers: ["*"]
+    - pattern: "package-lock.json"
+      triggers: ["*"]
+    - pattern: "validation.yaml"
+      triggers: ["*"]
+    - pattern: "scripts/**"
+      triggers: ["*"]
+    # The lint config governs all three modules' lint runs.
+    - pattern: ".golangci.yml"
+      triggers: [go-lint-host-agent, go-lint-apps, go-lint-cli]
     - pattern: "**"
-      # These ride the catch-all: any change can invalidate a doc, and the
-      # matcher has no recursive `**/*.md` form (see pathMatches in cli).
-      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, depgraph-check, catalogdoc-check]
+      # These ride the catch-all: any change can invalidate a doc, a link, an
+      # image pin, or a file-length ceiling, and the matcher has no recursive
+      # `**/*.md` form (see pathMatches in cli).
+      triggers: [license-headers, prose-lint, no-emdash, docs-links, image-pins, file-length, depgraph-check, catalogdoc-check]
 
 apps:
   affine:

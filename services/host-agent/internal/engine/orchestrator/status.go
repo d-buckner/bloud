@@ -75,10 +75,10 @@ func (o *Orchestrator) setupNodeEvents() {
 // the event bus so SSE subscribers see live pull percentages. Runtimes that
 // don't implement PullProgressReporter (e.g. test doubles) are skipped.
 func (o *Orchestrator) setupPullEvents() {
-	if o.events == nil || o.config.Containers == nil {
+	if o.events == nil || o.config.Runtime.Containers == nil {
 		return
 	}
-	reporter, ok := o.config.Containers.(containerruntime.PullProgressReporter)
+	reporter, ok := o.config.Runtime.Containers.(containerruntime.PullProgressReporter)
 	if !ok {
 		return
 	}

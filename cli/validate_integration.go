@@ -88,10 +88,11 @@ type integrationTranscript struct {
 	root   string
 	flags  validateFlags
 	phases []ranCommand
+	start  time.Time
 }
 
 func newIntegrationTranscript(root string, flags validateFlags) *integrationTranscript {
-	return &integrationTranscript{root: root, flags: flags}
+	return &integrationTranscript{root: root, flags: flags, start: time.Now()}
 }
 
 // phase runs one step with its output captured. It returns the finished
@@ -145,7 +146,7 @@ func bringUpPhase(id, detail string) manifestCommand {
 func (t *integrationTranscript) finish() {
 	logPath := writeValidateLog(t.root, "integration", t.phases)
 	if !t.flags.json {
-		printValidateSummary("integration", t.phases, logPath)
+		printValidateSummary("integration", t.phases, logPath, time.Since(t.start))
 	}
 }
 
@@ -355,6 +356,11 @@ systemctl --user enable --now %[1]s`, integrationHostAgentUnit),
 // integrationRunTests runs the tier's commands against the deployed
 // runtime, each as one transcript phase. It returns 0 when every command
 // passed, 1 on the first failure (remaining commands are skipped).
+//
+// A --test-run filter narrows the suite to one app group, so the integration
+// tier can be fanned out across a CI matrix (one runner per group) instead of
+// running every app's install/reconcile journey serially in a single 15-minute
+// binary.
 func integrationRunTests(ctx context.Context, ex executor.Executor, tier manifestTier, rt string, result *ValidateResult, t *integrationTranscript) int {
 	testEnv := map[string]string{
 		"BLOUD_DATA_DIR":            rt + "/data",
@@ -363,11 +369,12 @@ func integrationRunTests(ctx context.Context, ex executor.Executor, tier manifes
 		"BLOUD_E2E_HOST_AGENT_UNIT": integrationHostAgentUnit,
 	}
 	for _, cmd := range tier.Commands {
+		run := withTestRunFilter(cmd.Run, t.flags.testRun)
 		if t.flags.explain && !t.flags.json {
-			fmt.Printf("    %s->%s %s: %s (cwd %s)\n", colorCyan, colorReset, cmd.ID, cmd.Run, cmd.Cwd)
+			fmt.Printf("    %s->%s %s: %s (cwd %s)\n", colorCyan, colorReset, cmd.ID, run, cmd.Cwd)
 		}
 		phase, err := t.phase(cmd, func(out io.Writer) (int, error) {
-			return captureRun(ctx, ex, executor.RunSpec{Command: cmd.Run, Dir: cmd.Cwd, Env: testEnv}, out, t.flags.verbose)
+			return captureRun(ctx, ex, executor.RunSpec{Command: run, Dir: cmd.Cwd, Env: testEnv}, out, t.flags.verbose)
 		})
 		result.Commands = append(result.Commands, phase.result())
 		if err != nil {
@@ -375,6 +382,16 @@ func integrationRunTests(ctx context.Context, ex executor.Executor, tier manifes
 		}
 	}
 	return 0
+}
+
+// withTestRunFilter appends a -test.run regex to a test command, single-quoted
+// so the shell does not treat the `|` alternation as a pipe. An empty filter
+// leaves the command untouched (run the whole suite).
+func withTestRunFilter(run, filter string) string {
+	if filter == "" {
+		return run
+	}
+	return run + " -test.run '" + strings.ReplaceAll(filter, "'", "'\\''") + "'"
 }
 
 func runIntegrationRuntime(root string, tier manifestTier, result *ValidateResult, flags validateFlags) (int, string) {
