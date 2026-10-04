@@ -271,3 +271,50 @@ func TestAppStore_ReadsJoinOperations(t *testing.T) {
 	require.NotNil(t, all[0].Operation)
 	assert.Equal(t, OpStatusFailed, all[0].Operation.Status)
 }
+
+func TestAppStore_Install_RunningAppNotDowngraded(t *testing.T) {
+	db := testdb.SetupTestDB(t)
+	store := NewAppStore(db)
+
+	require.NoError(t, store.Install("radarr", "Radarr", "5.0.0", nil, nil))
+	require.NoError(t, store.UpdateStatus("radarr", AppStatusRunning))
+
+	// A reinstall of a running app must not downgrade it back to installing:
+	// the store owns this invariant so no caller has to remember it.
+	require.NoError(t, store.Install("radarr", "Radarr", "5.0.1", nil, nil))
+	app, err := store.GetByCatalogID("radarr")
+	require.NoError(t, err)
+	assert.Equal(t, AppStatusRunning, app.Status)
+	assert.Equal(t, "5.0.1", app.Version)
+}
+
+func TestAppStore_ScanPathsAgree(t *testing.T) {
+	db := testdb.SetupTestDB(t)
+	store := NewAppStore(db)
+	ops := NewOperationStore(db)
+
+	require.NoError(t, store.Install("radarr", "Radarr", "5.0.0",
+		map[string]string{"downloadClient": "qbittorrent"}, &InstallOptions{Port: 7878}))
+	require.NoError(t, ops.Start("radarr", "op-1", OpTypeInstall, OpPhaseTopology))
+
+	all, err := store.GetAll()
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+
+	one, err := store.GetByCatalogID("radarr")
+	require.NoError(t, err)
+	require.NotNil(t, one)
+
+	// Both scan paths (Rows and Row) fold the same row shape, including the
+	// joined Operation: the two reads must never disagree.
+	assert.Equal(t, all[0].CatalogID, one.CatalogID)
+	assert.Equal(t, all[0].Status, one.Status)
+	assert.Equal(t, all[0].Port, one.Port)
+	assert.Equal(t, all[0].IntegrationConfig, one.IntegrationConfig)
+	require.NotNil(t, one.Operation)
+	require.NotNil(t, all[0].Operation)
+	assert.Equal(t, all[0].Operation.ID, one.Operation.ID)
+	assert.Equal(t, all[0].Operation.Type, one.Operation.Type)
+	assert.Equal(t, all[0].Operation.Phase, one.Operation.Phase)
+	assert.Equal(t, all[0].Operation.Status, one.Operation.Status)
+}
