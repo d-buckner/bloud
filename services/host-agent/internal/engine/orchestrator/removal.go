@@ -86,6 +86,35 @@ func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName stri
 		if err := o.removeAppData(ctx, dataDir); err != nil {
 			o.logger.Warn("failed to remove data directory", "app", appName, "path", dataDir, "error", err)
 		}
+		if err := o.clearOwnedSharedData(ctx, appName); err != nil {
+			o.logger.Warn("failed to remove shared data owned by the app", "app", appName, "error", err)
+		}
+	}
+	return nil
+}
+
+// clearOwnedSharedData removes the shared trees this app declared under
+// ownsSharedData, as the last step of a clear-data uninstall. A tree another
+// installed app still mounts is left in place and logged: the claim of
+// ownership is checked against reality rather than trusted, because acting on
+// a wrong one would destroy a different app's state.
+func (o *Orchestrator) clearOwnedSharedData(ctx context.Context, appName string) error {
+	if o.appStore == nil {
+		return nil
+	}
+	installed, err := o.appStore.GetInstalledCatalogIDs()
+	if err != nil {
+		return fmt.Errorf("list installed apps: %w", err)
+	}
+	paths, err := catalog.SharedDataToClear(o.catalog, installed, o.dataDir, appName)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err := o.removeAppData(ctx, path); err != nil {
+			return fmt.Errorf("remove shared tree %s: %w", path, err)
+		}
+		o.logger.Info("removed shared data tree owned by the uninstalled app", "app", appName, "path", path)
 	}
 	return nil
 }

@@ -235,19 +235,46 @@ func (m *appsModule) ClearData(name string) (*IntentRef, error) {
 
 	// Orphaned data: remove the app's private data directory directly. This
 	// is the writable tree under BLOUD_DATA_DIR, never the catalog.
-	if m.dataDir != "" {
-		appDataDir := dirs.AppDataDir(m.dataDir, name)
-		if _, err := os.Stat(appDataDir); err == nil {
-			if err := os.RemoveAll(appDataDir); err != nil {
-				m.logger.Error("failed to remove orphaned data dir", "app", name, "error", err)
-				return nil, fmt.Errorf("failed to remove data directory: %w", err)
-			}
-			m.logger.Info("removed orphaned app data", "app", name, "path", appDataDir)
-			return &IntentRef{ID: ""}, nil
+	if m.dataDir == "" {
+		return nil, fmt.Errorf("app %q not installed and no data directory found", name)
+	}
+	targets := []string{}
+	if appDataDir := dirs.AppDataDir(m.dataDir, name); dirExists(appDataDir) {
+		targets = append(targets, appDataDir)
+	}
+	// A shared tree this app declared it owns is orphaned by the same act, and
+	// is otherwise unreachable: nothing else scans outside apps/<name>, so it
+	// would survive and be silently reused by the next install.
+	installed, err := m.appStore.GetInstalledCatalogIDs()
+	if err != nil {
+		return nil, fmt.Errorf("list installed apps: %w", err)
+	}
+	owned, err := catalog.SharedDataToClear(m.catalog, installed, m.dataDir, name)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range owned {
+		if dirExists(path) {
+			targets = append(targets, path)
 		}
 	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("app %q not installed and no data directory found", name)
+	}
+	for _, path := range targets {
+		if err := os.RemoveAll(path); err != nil {
+			m.logger.Error("failed to remove orphaned data dir", "app", name, "error", err)
+			return nil, fmt.Errorf("failed to remove data directory: %w", err)
+		}
+		m.logger.Info("removed orphaned app data", "app", name, "path", path)
+	}
+	return &IntentRef{ID: ""}, nil
+}
 
-	return nil, fmt.Errorf("app %q not installed and no data directory found", name)
+// dirExists reports whether path is present as a directory.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // buildLaunchPaths builds a map of catalog ID → SSO launch path.

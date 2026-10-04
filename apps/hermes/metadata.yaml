@@ -68,6 +68,16 @@ integrations:
 provides:
   agentHome: {}
 
+# The agent home is a shared tree, not this app's private state: the web UI
+# mounts the same path. apps/hermes is the only Bloud writer of it, so it
+# owns the lifecycle: a clear-data uninstall of hermes takes the brain with
+# it instead of stranding it outside apps/hermes where no cleanup path looks.
+# The claim is checked at removal time -- while hermes-webui is still
+# installed the required agentHome edge blocks this uninstall anyway, and if
+# any other installed app mounted the same path the tree would be left alone.
+ownsSharedData:
+  - "{{dataDir}}/hermes/home"
+
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider
 # accepts an https issuer anywhere, but a plain http issuer only on a literal

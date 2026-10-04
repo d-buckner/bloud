@@ -179,3 +179,116 @@ func TestRemoveMultiContainerApp_ClearData_IgnoresForeignVolumes(t *testing.T) {
 		"only the app data directory is handed to the runtime")
 	mockRuntime.AssertExpectations(t)
 }
+
+// newSharedDataRemoveOrchestrator wires an orchestrator with an app store, so
+// the shared-tree ownership check has something to consult.
+func newSharedDataRemoveOrchestrator(t *testing.T, runtime containerruntime.Runtime, appStore *FakeAppStore) (*Orchestrator, *MockCatalogCache, string) {
+	t.Helper()
+	dataDir := t.TempDir()
+	registry := new(MockConfiguratorRegistry)
+	catalogCache := new(MockCatalogCache)
+	orch := NewOrchestrator(
+		graph.New(graph.NewMapRepository()),
+		registry,
+		catalogCache,
+		dataDir,
+		newTestLogger(),
+		OrchestratorConfig{Containers: runtime, AppStore: appStore},
+	)
+	registry.On("Get", mock.Anything).Return(nil).Maybe()
+	return orch, catalogCache, dataDir
+}
+
+func hermesCatalogApp() *catalog.App {
+	return &catalog.App{
+		CatalogID:      "hermes",
+		OwnsSharedData: []string{"{{dataDir}}/hermes/home"},
+		Containers: []catalog.ContainerDef{{
+			Name:  "apps-hermes",
+			Image: "nousresearch/hermes-agent:1",
+			Volumes: []catalog.ContainerVolume{
+				{Source: "{{dataDir}}/hermes/home", Destination: "/opt/data"},
+			},
+		}},
+	}
+}
+
+// TestRemoveMultiContainerApp_ClearData_RemovesOwnedSharedTree covers the
+// other half of the shared-tree rule: a tree the app declares it owns is not
+// left stranded outside apps/<name>, where no later cleanup path looks and a
+// reinstall would silently reuse it.
+func TestRemoveMultiContainerApp_ClearData_RemovesOwnedSharedTree(t *testing.T) {
+	spy := &pathRemovalSpy{MockContainerRuntime: new(MockContainerRuntime)}
+	appStore := NewFakeAppStore()
+	require.NoError(t, appStore.Install("hermes", "Hermes", "1.0", nil, nil))
+	orch, cache, dataDir := newSharedDataRemoveOrchestrator(t, spy, appStore)
+	cache.On("Get", "hermes").Return(hermesCatalogApp(), nil)
+
+	home := dirs.HermesHomeDir(dataDir)
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.yaml"), []byte("mcp_servers: {}"), 0o644))
+	spy.MockContainerRuntime.On("Remove", mock.Anything, "apps-hermes").Return(nil)
+
+	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "hermes", hermesCatalogApp().Containers, true))
+
+	_, err := os.Stat(home)
+	assert.True(t, os.IsNotExist(err), "the shared tree the app owns is cleared with it")
+	assert.Equal(t, []string{
+		"remove-host-path:" + dirs.AppDataDir(dataDir, "hermes"),
+		"remove-host-path:" + home,
+	}, spy.events, "the private tree goes first, then the shared tree it owns")
+}
+
+// TestRemoveMultiContainerApp_ClearData_LeavesSharedTreeStillMounted verifies
+// the ownership claim is checked against reality: while another installed app
+// mounts the same path, clearing this one must not take it.
+func TestRemoveMultiContainerApp_ClearData_LeavesSharedTreeStillMounted(t *testing.T) {
+	spy := &pathRemovalSpy{MockContainerRuntime: new(MockContainerRuntime)}
+	appStore := NewFakeAppStore()
+	require.NoError(t, appStore.Install("hermes", "Hermes", "1.0", nil, nil))
+	require.NoError(t, appStore.Install("other", "Other", "1.0", nil, nil))
+	orch, cache, dataDir := newSharedDataRemoveOrchestrator(t, spy, appStore)
+	cache.On("Get", "hermes").Return(hermesCatalogApp(), nil)
+	cache.On("Get", "other").Return(&catalog.App{
+		CatalogID: "other",
+		Containers: []catalog.ContainerDef{{
+			Name:  "apps-other",
+			Image: "other:1",
+			Volumes: []catalog.ContainerVolume{
+				{Source: "{{dataDir}}/hermes/home", Destination: "/mnt/brain"},
+			},
+		}},
+	}, nil)
+
+	home := dirs.HermesHomeDir(dataDir)
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.yaml"), []byte("keep me"), 0o644))
+	spy.MockContainerRuntime.On("Remove", mock.Anything, "apps-hermes").Return(nil)
+
+	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "hermes", hermesCatalogApp().Containers, true))
+
+	_, err := os.Stat(filepath.Join(home, "config.yaml"))
+	assert.NoError(t, err, "a tree another installed app mounts survives the owner's clear-data")
+	assert.Equal(t, []string{"remove-host-path:" + dirs.AppDataDir(dataDir, "hermes")}, spy.events,
+		"only the private tree is handed to the runtime")
+}
+
+// TestRemoveMultiContainerApp_KeepData_NeverTouchesSharedTree pins that the
+// shared tree is only ever in scope when clearData is set.
+func TestRemoveMultiContainerApp_KeepData_NeverTouchesSharedTree(t *testing.T) {
+	mockRuntime := new(MockContainerRuntime)
+	appStore := NewFakeAppStore()
+	require.NoError(t, appStore.Install("hermes", "Hermes", "1.0", nil, nil))
+	orch, cache, dataDir := newSharedDataRemoveOrchestrator(t, mockRuntime, appStore)
+	cache.On("Get", "hermes").Return(hermesCatalogApp(), nil)
+
+	home := dirs.HermesHomeDir(dataDir)
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.yaml"), []byte("keep me"), 0o644))
+	mockRuntime.On("Remove", mock.Anything, "apps-hermes").Return(nil)
+
+	require.NoError(t, orch.removeMultiContainerApp(context.Background(), "hermes", hermesCatalogApp().Containers, false))
+
+	_, err := os.Stat(filepath.Join(home, "config.yaml"))
+	assert.NoError(t, err, "a keep-data uninstall never reaches the shared tree")
+}

@@ -121,6 +121,20 @@ which report what the running server resolved out of the shared
 `config.yaml`. `PostStart` logs both, so "one brain, two surfaces" is
 visible in the reconciliation log rather than assumed.
 
+### Uninstall is safe from this side
+
+Removing the front end must never destroy the agent behind it, and it does
+not. The shared home is a foreign volume from `apps/hermes-webui`'s point of
+view, and `clearData` only ever removes `apps/<name>` -- a rule pinned by
+`TestRemoveMultiContainerApp_ClearData_IgnoresForeignVolumes`. Uninstalling
+this app, even with data cleared, takes the agent source and the workspace
+and leaves `hermes/home` byte for byte.
+
+The reverse direction is blocked rather than merely safe: `agentHome` is a
+required edge, so Hermes cannot be uninstalled while this app is installed
+(`TestPlanRemove_HermesBlockedByInstalledWebUI`). A front end with no agent
+is not a thing worth shipping.
+
 ## The agent source pin
 
 | | |

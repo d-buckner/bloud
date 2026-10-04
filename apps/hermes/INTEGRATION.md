@@ -73,6 +73,39 @@ Note this is not the `WANTED_UID=0` path, which does not work: the webui's
 init re-execs through `su` and the second phase dies in an `rsync` fork.
 Uid 1000 is a normal drop, not a refusal to drop.
 
+### Uninstall: the owner takes the tree with it
+
+Moving the state out of `apps/hermes/data` also moved it out of the set of
+paths `clearData` touches, which is a real hazard: a clear-data uninstall
+would leave the agent's memory, config, and sessions sitting at
+`hermes/home` where no later cleanup path looks, and a reinstall would
+silently pick the old brain back up. "Uninstall everything and start
+fresh" would not be fresh.
+
+`ownsSharedData` in `metadata.yaml` is the fix. It names the shared trees
+this app is the writer of and therefore owns the lifecycle of, and a
+clear-data uninstall removes them alongside `apps/hermes`:
+
+```yaml
+ownsSharedData:
+  - "{{dataDir}}/hermes/home"
+```
+
+The claim is checked at removal time, not trusted. `catalog.SharedDataToClear`
+drops any tree another installed app still mounts, so an app cannot destroy
+a neighbour's state by misdeclaring ownership -- the guard is the mount list,
+not the declaration. A keep-data uninstall never reaches the tree at all.
+
+The two directions of the split therefore behave differently, and both
+correctly:
+
+| | |
+|---|---|
+| Uninstall `hermes-webui` | the brain survives, untouched. A front end is removable without harming the agent. |
+| Uninstall `hermes` while the web UI is installed | blocked by the required `agentHome` edge. |
+| Uninstall `hermes`, clear data | `apps/hermes` and `hermes/home` both go. |
+| Uninstall `hermes`, keep data | the brain stays, and a reinstall reuses it deliberately. |
+
 ## The data-directory ownership contract (issue #136)
 
 The host agent reads and rewrites `config.yaml` on **every** reconciliation

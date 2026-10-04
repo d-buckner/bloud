@@ -596,3 +596,72 @@ func TestAppsModule_ClearData_OrphanUsesDataDirNotCatalog(t *testing.T) {
 	assert.NoError(t, err,
 		"data cleanup must never delete the catalog source directory")
 }
+
+// TestAppsModule_ClearData_OrphanRemovesOwnedSharedTree covers the shared
+// tree in the orphan branch. Once the app is gone the tree it owns is
+// unreachable by every other path -- nothing scans outside apps/<name> -- so
+// clearing an orphan has to reach it or it survives to be silently reused by
+// the next install.
+func TestAppsModule_ClearData_OrphanRemovesOwnedSharedTree(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{
+		CatalogID:      "hermes",
+		OwnsSharedData: []string{"{{dataDir}}/hermes/home"},
+	})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	dataDir := t.TempDir()
+
+	home := dirs.HermesHomeDir(dataDir)
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.yaml"), []byte("mcp_servers: {}"), 0o644))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+	mod.SetDataDir(dataDir)
+
+	_, err := mod.ClearData("hermes")
+	require.NoError(t, err, "an orphan with only a shared tree is still clearable")
+
+	_, err = os.Stat(home)
+	assert.True(t, os.IsNotExist(err), "the orphaned shared tree the app owned is removed")
+}
+
+// TestAppsModule_ClearData_OrphanLeavesSharedTreeStillMounted verifies the
+// ownership claim is checked against the installed set even in the orphan
+// branch: another app still mounting the tree keeps it alive.
+func TestAppsModule_ClearData_OrphanLeavesSharedTreeStillMounted(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{
+		CatalogID:      "hermes",
+		OwnsSharedData: []string{"{{dataDir}}/hermes/home"},
+	})
+	addAppToCache(cache, &catalog.App{
+		CatalogID: "consumer",
+		Containers: []catalog.ContainerDef{{
+			Name:  "apps-consumer",
+			Image: "consumer:1",
+			Volumes: []catalog.ContainerVolume{
+				{Source: "{{dataDir}}/hermes/home", Destination: "/mnt/brain"},
+			},
+		}},
+	})
+	appStore := NewFakeAppStore()
+	require.NoError(t, appStore.Install("consumer", "Consumer", "1.0", nil, nil))
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	dataDir := t.TempDir()
+
+	home := dirs.HermesHomeDir(dataDir)
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.yaml"), []byte("keep"), 0o644))
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+	mod.SetDataDir(dataDir)
+
+	_, err := mod.ClearData("hermes")
+	require.Error(t, err, "nothing left to clear: the shared tree is protected by a live mount")
+
+	_, err = os.Stat(filepath.Join(home, "config.yaml"))
+	assert.NoError(t, err, "a tree an installed app mounts is never removed")
+}

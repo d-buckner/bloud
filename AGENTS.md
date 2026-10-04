@@ -764,8 +764,15 @@ combined with instance/SSH-target env vars). Instance overrides:
     `bindContract`. An app **never** reads or writes another app's files: not
     that app's data directory (`dataDir/<app>`), not a config file, whatever its
     format. The shared trees Bloud owns for the whole stack (`media/`,
-    `downloads/`) are declared as volumes in metadata; they are not an app's
-    private state. It also **never** probes a provider's port to decide whether
+    `downloads/`, `hermes/home`) are declared as volumes in metadata; they are
+    not an app's private state. Because a shared tree sits outside
+    `apps/<name>`, the `clearData` removal that backs an uninstall never
+    reaches it: correct for a tree an app merely consumes, and a trap for one
+    it writes. The app that owns a shared tree declares it under
+    `ownsSharedData` and a clear-data uninstall removes those trees too, and
+    `catalog.SharedDataToClear` drops any of them another installed app still
+    mounts, so the claim is checked against the live mount list rather than
+    trusted. It also **never** probes a provider's port to decide whether
     it is installed: `Installed` is that answer, and it is the same condition as
     the graph edge. A probe cannot separate "not installed" from "restarting",
     so keying a prune off it deletes wiring that is still wanted. The bindings
@@ -810,7 +817,9 @@ combined with instance/SSH-target env vars). Instance overrides:
    `integrations` (a contract name: `{required, multi,
    compatible: [{app, default}]}`), `provides` (per contract: the `secrets` this
    app publishes and the `values` it declares for the apps that integrate with
-   it, see invariant 15), `containers[]`
+   it, see invariant 15), `ownsSharedData` (the shared trees outside
+   `apps/<name>` that this app writes and therefore owns the lifecycle of;
+   a clear-data uninstall removes them, see invariant 15), `containers[]`
    (`name`, `image` (**pin versions**; a rolling tag fails `npm run
    check:image-pins`), `command`, `network`/`networks`,
    `restartPolicy`, `environment`, `extraHosts`, `ports`, `volumes`,

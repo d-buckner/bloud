@@ -29,6 +29,13 @@ type App struct {
 	Integrations    map[string]Integration `yaml:"integrations" json:"integrations"`
 	Provides        Provides               `yaml:"provides,omitempty" json:"provides,omitempty"`
 	Containers      []ContainerDef         `yaml:"containers,omitempty" json:"containers,omitempty"`
+	// OwnsSharedData names the shared trees, outside apps/<name>, that this
+	// app is the writer of and therefore owns the lifecycle of. A clear-data
+	// uninstall removes these alongside the app's own data directory, unless
+	// another installed app still mounts the same path. Declaring a tree the
+	// app only reads would let its uninstall destroy another app's state, so
+	// the claim is checked against every installed mount at removal time.
+	OwnsSharedData []string `yaml:"ownsSharedData,omitempty" json:"ownsSharedData,omitempty"`
 }
 
 // ContainerDef describes one container in a multi-container app.
