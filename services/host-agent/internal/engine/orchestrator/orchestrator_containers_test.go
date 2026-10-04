@@ -59,7 +59,7 @@ func TestSyncContainerState_CatalogMissDoesNotPanic(t *testing.T) {
 	rt.AssertNotCalled(t, "Inspect", mock.Anything, mock.Anything)
 	row, err := apps.GetByCatalogID("ghost")
 	require.NoError(t, err)
-	assert.Equal(t, "running", row.Status, "a catalog miss must not alter the stored status")
+	assert.Equal(t, store.AppStatusRunning, row.Status, "a catalog miss must not alter the stored status")
 }
 
 // The repair path itself, pinned alongside the guard: a single-container app
@@ -82,7 +82,7 @@ func TestSyncContainerState_SingleContainerGoneMarksStopped(t *testing.T) {
 
 	row, err := apps.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
-	assert.Equal(t, "stopped", row.Status, "a vanished container must be re-driveable")
+	assert.Equal(t, store.AppStatusStopped, row.Status, "a vanished container must be re-driveable")
 }
 
 // A multi-container app is no longer out of scope. Each of its nodes drifts
@@ -211,7 +211,7 @@ func TestSyncContainerState_UninstallingAppIsNotRedriven(t *testing.T) {
 		"an uninstalling app must never be pushed back onto the lifecycle path")
 	row, err := apps.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
-	assert.Equal(t, "uninstalling", row.Status,
+	assert.Equal(t, store.AppStatusUninstalling, row.Status,
 		"the row is only removed once every container is gone")
 }
 
@@ -241,5 +241,5 @@ func TestSyncContainerState_RunningNodeWithRunningContainerIsUntouched(t *testin
 	assert.Empty(t, node.Error)
 	row, err := apps.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
-	assert.Equal(t, "running", row.Status)
+	assert.Equal(t, store.AppStatusRunning, row.Status)
 }

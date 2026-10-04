@@ -12,12 +12,12 @@ import (
 
 // InstalledApp represents an app installed on this host
 type InstalledApp struct {
-	ID          int    `json:"id"`
-	CatalogID   string `json:"catalog_id"`
-	DisplayName string `json:"display_name"`
-	Version     string `json:"version"`
-	Status      string `json:"status"`
-	LastError   string `json:"last_error,omitempty"`
+	ID          int       `json:"id"`
+	CatalogID   string    `json:"catalog_id"`
+	DisplayName string    `json:"display_name"`
+	Version     string    `json:"version"`
+	Status      AppStatus `json:"status"`
+	LastError   string    `json:"last_error,omitempty"`
 	// Operation is the current-or-last lifecycle drive for this app
 	// (docs/plans/operation-state-design.md). Read-side join; writes
 	// belong to the orchestrator's operation recorder only.
@@ -182,7 +182,7 @@ func (s *AppStore) SetLastError(catalogID, lastError string) error {
 }
 
 // UpdateStatus updates the status of an installed app
-func (s *AppStore) UpdateStatus(catalogID, status string) error {
+func (s *AppStore) UpdateStatus(catalogID string, status AppStatus) error {
 	result, err := s.db.Exec(`
 		UPDATE apps SET status = ?, updated_at = datetime('now')
 		WHERE catalog_id = ?

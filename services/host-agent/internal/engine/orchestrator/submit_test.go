@@ -45,7 +45,7 @@ func TestOrchestrator_SubmitInstall_RecordsRowBeforeEnqueue(t *testing.T) {
 	app, err := fakeStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	require.NotNil(t, app)
-	assert.Equal(t, "installing", app.Status)
+	assert.Equal(t, store.AppStatusInstalling, app.Status)
 	assert.Equal(t, "Jellyfin", app.DisplayName)
 	assert.Equal(t, "10.11.11", app.Version)
 	assert.Equal(t, 8096, app.Port)
@@ -67,7 +67,7 @@ func TestOrchestrator_SubmitInstall_ReinstallIsIdempotent(t *testing.T) {
 	all, err := fakeStore.GetAll()
 	require.NoError(t, err)
 	require.Len(t, all, 1, "re-submit upserts, never duplicates")
-	assert.Equal(t, "installing", all[0].Status)
+	assert.Equal(t, store.AppStatusInstalling, all[0].Status)
 	assert.Empty(t, all[0].LastError, "reinstall clears last_error")
 	assert.Equal(t, 2, orch.queue.PendingCount())
 }
@@ -86,7 +86,7 @@ func TestOrchestrator_SubmitInstall_RunningAppNotDowngraded(t *testing.T) {
 	// drain path's skip check (applyInstallIntent) relies on the status
 	// staying "running", and a no-op install never transitions the graph
 	// node, so a downgrade would leave the app stuck at "installing".
-	assert.Equal(t, "running", app.Status)
+	assert.Equal(t, store.AppStatusRunning, app.Status)
 	assert.Equal(t, 1, orch.queue.PendingCount())
 }
 

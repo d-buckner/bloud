@@ -50,7 +50,7 @@ func (m *MockAppStore) Install(name, displayName, version string, integrationCon
 	return args.Error(0)
 }
 
-func (m *MockAppStore) UpdateStatus(name, status string) error {
+func (m *MockAppStore) UpdateStatus(name string, status store.AppStatus) error {
 	args := m.Called(name, status)
 	return args.Error(0)
 }

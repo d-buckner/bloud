@@ -343,7 +343,7 @@ func TestSelfHeal_IdlePassChangesNothing(t *testing.T) {
 	// And the pass must not have disturbed the app row either.
 	row, err := f.apps.GetByCatalogID(healApp)
 	require.NoError(t, err)
-	assert.Equal(t, "running", row.Status)
+	assert.Equal(t, store.AppStatusRunning, row.Status)
 }
 
 // A pass over an empty instance (nothing installed at all) must complete and
@@ -594,7 +594,7 @@ func TestApplyIntents_ReconcileIntentWritesNoStores(t *testing.T) {
 	after, err := f.apps.GetAll()
 	require.NoError(t, err)
 	require.Len(t, after, len(before))
-	assert.Equal(t, "running", after[0].Status)
+	assert.Equal(t, store.AppStatusRunning, after[0].Status)
 	assert.Empty(t, pending, "a reconcile intent must not queue any data clearing")
 }
 

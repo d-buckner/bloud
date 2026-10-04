@@ -323,7 +323,7 @@ func (o *Orchestrator) recordInstallNow(appName string) {
 	// intent as a no-op. Downgrading to "installing" here would make the
 	// drain run a full install that never transitions the graph node, and
 	// the app would be stuck at "installing".
-	if existing, _ := o.appStore.GetByCatalogID(appName); existing != nil && existing.Status == "running" {
+	if existing, _ := o.appStore.GetByCatalogID(appName); existing != nil && existing.Status == store.AppStatusRunning {
 		return
 	}
 	if err := o.appStore.Install(app.CatalogID, app.DisplayName, app.Version, nil, &store.InstallOptions{

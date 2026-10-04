@@ -44,7 +44,7 @@ func (o *Orchestrator) ensureTailnetNodes(ctx context.Context, conn *store.Tailn
 		return
 	}
 	for _, app := range apps {
-		if app.IsSystem || app.Status != "running" {
+		if app.IsSystem || app.Status != store.AppStatusRunning {
 			continue
 		}
 		o.logger.Info("ensuring tailnet node", "app", app.CatalogID)

@@ -471,7 +471,7 @@ func (m *systemModule) appNodes(
 		nodes = append(nodes, graphNode{
 			ID:          app.CatalogID,
 			DisplayName: app.DisplayName,
-			Status:      app.Status,
+			Status:      string(app.Status),
 			IsSystem:    app.IsSystem,
 			NodeType:    "app",
 		})
@@ -490,7 +490,7 @@ func (m *systemModule) appNodes(
 				appName:     app.CatalogID,
 				displayName: app.DisplayName,
 				tailnetID:   app.TailnetID,
-				status:      app.Status,
+				status:      string(app.Status),
 			})
 		}
 
@@ -521,7 +521,7 @@ func (m *systemModule) containerNodes(app *store.InstalledApp, phases map[string
 		return []graphNode{{
 			ID:          app.CatalogID,
 			DisplayName: app.DisplayName,
-			Status:      app.Status,
+			Status:      string(app.Status),
 			IsSystem:    app.IsSystem,
 			NodeType:    "container",
 			ParentID:    app.CatalogID,
@@ -533,7 +533,7 @@ func (m *systemModule) containerNodes(app *store.InstalledApp, phases map[string
 	for _, def := range defs {
 		status := phases[def.Name]
 		if status == "" {
-			status = app.Status
+			status = string(app.Status)
 		}
 		nodes = append(nodes, graphNode{
 			ID:          def.Name,

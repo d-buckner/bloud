@@ -461,7 +461,7 @@ func (f *FakeAppStore) Install(catalogID, displayName, version string, integrati
 	return nil
 }
 
-func (f *FakeAppStore) UpdateStatus(name, status string) error {
+func (f *FakeAppStore) UpdateStatus(name string, status store.AppStatus) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if app, ok := f.apps[name]; ok {

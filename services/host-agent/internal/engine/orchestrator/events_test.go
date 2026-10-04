@@ -51,7 +51,7 @@ func TestOrchestrator_NodeError_SetsLastErrorAndPublishesNodeEvent(t *testing.T)
 	app, err := fakeStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	require.NotNil(t, app)
-	assert.Equal(t, "error", app.Status)
+	assert.Equal(t, store.AppStatusError, app.Status)
 	assert.Equal(t, "image pull timed out", app.LastError)
 
 	// The node transition must be published with the user-facing phase.
@@ -79,7 +79,7 @@ func TestOrchestrator_NodeRunning_ClearsLastError(t *testing.T) {
 	app, err := fakeStore.GetByCatalogID("jellyfin")
 	require.NoError(t, err)
 	require.NotNil(t, app)
-	assert.Equal(t, "running", app.Status)
+	assert.Equal(t, store.AppStatusRunning, app.Status)
 	assert.Empty(t, app.LastError)
 }
 
