@@ -64,6 +64,13 @@ jobs:
             test-run: 'TestPaperlessNgx'
           - group: radicale
             test-run: 'TestRadicale'
+          # The aggregation test gets its own runtime rather than sharing the
+          # radicale leg. It installs and uninstalls three apps around a
+          # container that the radicale unit tests also drive, and that churn
+          # showed up as a connection reset mid-test: the app row says running
+          # while a config-change restart is still cycling the container.
+          - group: calendar-aggregation
+            test-run: 'TestCalendarAggregation'
           - group: vaultwarden
             test-run: 'TestVaultwarden'
           - group: media-stack

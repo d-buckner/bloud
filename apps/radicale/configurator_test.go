@@ -314,7 +314,6 @@ func TestPostStartRestartsWhenFeedsChange(t *testing.T) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="Bloud"`)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
-	c.operatorUsername = func() string { return "alice" }
 
 	var restarted []string
 	c.restartContainerFn = func(_ context.Context, name string) error {
@@ -338,7 +337,7 @@ func TestPostStartRestartsWhenFeedsChange(t *testing.T) {
 
 	ics, err := os.ReadFile(filepath.Join(dataPath, "config", icsSyncFileName))
 	require.NoError(t, err)
-	assert.Contains(t, string(ics), "alice/radarr")
+	assert.Contains(t, string(ics), calendarOwner+"/radarr")
 
 	// Steady state: an unchanged job list must not restart the container again.
 	restarted = nil
@@ -348,7 +347,6 @@ func TestPostStartRestartsWhenFeedsChange(t *testing.T) {
 
 func TestPostStartRestartFailureIsAnError(t *testing.T) {
 	c, dataPath := newTestConfigurator(t, nil)
-	c.operatorUsername = func() string { return "alice" }
 	c.restartContainerFn = func(_ context.Context, _ string) error {
 		return errors.New("runtime refused")
 	}
@@ -360,27 +358,6 @@ func TestPostStartRestartFailureIsAnError(t *testing.T) {
 	err = c.PostStart(context.Background(), state)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "could not be restarted")
-}
-
-func TestRenderShares(t *testing.T) {
-	feeds := []configurator.ICSFeedBinding{feedBinding()}
-	got := renderShares("alice", feeds)
-
-	// The header pins the column order Radicale's csv backend reads.
-	assert.True(t, strings.HasPrefix(got, sharesCSVHeader+"\n"))
-	// One map share: the operator's collection mounted into the agent's tree,
-	// read-only, enabled on both sides.
-	assert.Contains(t, got, "map;/caldav-service/radarr/;/alice/radarr/;none;alice;caldav-service;Rr;True;True;False;False;0;0;{};{}\n")
-}
-
-func TestRenderSharesSkipsIncompleteFeedsAndNoOwner(t *testing.T) {
-	// No operator yet: header only, no share rows.
-	assert.Equal(t, sharesCSVHeader+"\n", renderShares("", []configurator.ICSFeedBinding{feedBinding()}))
-
-	// An incomplete feed (no key) is skipped, not shared with an empty URL.
-	noKey := feedBinding()
-	noKey.APIKey = ""
-	assert.Equal(t, sharesCSVHeader+"\n", renderShares("alice", []configurator.ICSFeedBinding{noKey}))
 }
 
 // ---- ICS feed sync ----
@@ -436,10 +413,12 @@ func TestRenderConfigAllowsBrowserDAVOrigins(t *testing.T) {
 }
 
 func TestRenderICSSyncComposesTheFeedURL(t *testing.T) {
-	got := renderICSSync("alice", []configurator.ICSFeedBinding{feedBinding()})
+	got := renderICSSync([]configurator.ICSFeedBinding{feedBinding()})
 
 	assert.Contains(t, got, `"feed": "http://apps-radarr:7878/feed/v3/calendar/Radarr.ics?apikey=abc123"`)
-	assert.Contains(t, got, `"collection": "alice/radarr"`)
+	// The job targets the shared-calendar owner, not whoever set the box up,
+	// which is what makes the synced feeds shareable at all.
+	assert.Contains(t, got, `"collection": "`+calendarOwner+`/radarr"`)
 	assert.Contains(t, got, `"displayname": "Radarr Movies"`)
 	assert.Contains(t, got, `"sync_interval": 3600`)
 }
@@ -447,7 +426,7 @@ func TestRenderICSSyncComposesTheFeedURL(t *testing.T) {
 func TestRenderICSSyncEscapesTheKey(t *testing.T) {
 	feed := feedBinding()
 	feed.APIKey = "a b&c"
-	got := renderICSSync("alice", []configurator.ICSFeedBinding{feed})
+	got := renderICSSync([]configurator.ICSFeedBinding{feed})
 	assert.Contains(t, got, "apikey=a+b%26c")
 }
 
@@ -462,15 +441,18 @@ func TestRenderICSSyncSkipsIncompleteBindings(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			feed := feedBinding()
 			mutate(&feed)
-			assert.Equal(t, "[]\n", renderICSSync("alice", []configurator.ICSFeedBinding{feed}))
+			assert.Equal(t, "[]\n", renderICSSync([]configurator.ICSFeedBinding{feed}))
 		})
 	}
 }
 
-func TestRenderICSSyncWithoutAnOwnerWritesNothing(t *testing.T) {
-	// No first-run user yet: there is no principal to own a collection, and a
-	// path like "/radarr" would be a top-level calendar Radicale cannot place.
-	assert.Equal(t, "[]\n", renderICSSync("", []configurator.ICSFeedBinding{feedBinding()}))
+func TestRenderICSSyncDoesNotWaitForAFirstRunUser(t *testing.T) {
+	// The feeds used to land under the operator's account, so nothing could be
+	// synced until somebody claimed the instance. They now land under the
+	// service account that owns them, so a feed is worth syncing the moment its
+	// provider publishes it.
+	assert.Contains(t, renderICSSync([]configurator.ICSFeedBinding{feedBinding()}),
+		calendarOwner+"/radarr")
 }
 
 func TestRenderICSSyncIsDeterministic(t *testing.T) {
@@ -479,10 +461,11 @@ func TestRenderICSSyncIsDeterministic(t *testing.T) {
 	sonarr.App = "sonarr"
 	sonarr.Path = "/feed/v3/calendar/Sonarr.ics"
 
-	first := renderICSSync("alice", []configurator.ICSFeedBinding{radarr, sonarr})
-	second := renderICSSync("alice", []configurator.ICSFeedBinding{sonarr, radarr})
+	first := renderICSSync([]configurator.ICSFeedBinding{radarr, sonarr})
+	second := renderICSSync([]configurator.ICSFeedBinding{sonarr, radarr})
 	assert.Equal(t, first, second, "job order must not depend on binding order")
-	assert.Less(t, strings.Index(first, "alice/radarr"), strings.Index(first, "alice/sonarr"))
+	assert.Less(t, strings.Index(first, calendarOwner+"/radarr"),
+		strings.Index(first, calendarOwner+"/sonarr"))
 }
 
 // TestSyncPluginWritesThePackageInit guards the embed pattern: Go's `embed`
@@ -503,7 +486,6 @@ func TestSyncPluginWritesThePackageInit(t *testing.T) {
 
 func TestPreStartWritesThePluginAndSyncJobs(t *testing.T) {
 	c, dataPath := newTestConfigurator(t, nil)
-	c.operatorUsername = func() string { return "alice" }
 	state := appState(dataPath, ldapOutput())
 	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
 
@@ -517,7 +499,7 @@ func TestPreStartWritesThePluginAndSyncJobs(t *testing.T) {
 
 	ics, err := os.ReadFile(filepath.Join(dataPath, "config", icsSyncFileName))
 	require.NoError(t, err)
-	assert.Contains(t, string(ics), "alice/radarr")
+	assert.Contains(t, string(ics), calendarOwner+"/radarr")
 
 	// A second identical pass must be a no-op, or every reconcile recreates
 	// the container.
@@ -528,7 +510,6 @@ func TestPreStartWritesThePluginAndSyncJobs(t *testing.T) {
 
 func TestPreStartRestartsWhenAFeedIsAdded(t *testing.T) {
 	c, dataPath := newTestConfigurator(t, nil)
-	c.operatorUsername = func() string { return "alice" }
 	state := appState(dataPath, ldapOutput())
 
 	_, err := c.PreStart(context.Background(), state)

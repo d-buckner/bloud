@@ -75,6 +75,10 @@ type Config struct {
 	// CalDAV service account password, for the machine client (caldav-mcp)
 	// that reads the operator's calendars on the agent's behalf.
 	CalDAVServicePassword string
+	// CalendarServicePassword is the credential of the account that owns the
+	// shared calendar collections (the aggregated feeds and the family
+	// calendar) which Radicale map-shares to every Bloud user.
+	CalendarServicePassword string
 	// PostgresPassword is the resolved password for the shared Postgres instance.
 	// Exposed so bootstrapInfra can template it into the container spec.
 	PostgresPassword string
@@ -132,30 +136,31 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Port:                   getEnvAsInt("BLOUD_PORT", 3000),
-		DataDir:                dataDir,
-		AppsDir:                appsDir,
-		TraefikDynamicDir:      getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
-		TrustedLocalNets:       splitNets(getEnv("BLOUD_TRUSTED_LOCAL_NETS", "")),
-		TrustedProxyNets:       splitNets(getEnv("BLOUD_TRUSTED_PROXY_NETS", "")),
-		PublicScheme:           getEnv("BLOUD_PUBLIC_SCHEME", ""),
-		ReconcileInterval:      getEnvDuration("BLOUD_RECONCILE_INTERVAL", 0),
-		SSOHostSecret:          sec.ssoHostSecret,
-		SSOBaseURL:             getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
-		SSOAuthentikURL:        getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
-		SSOIssuerURL:           getEnv("BLOUD_SSO_ISSUER_URL", ""),
-		AuthentikToken:         authentikToken,
-		BaseDomain:             baseDomain,
-		TraefikPort:            getEnvAsInt("BLOUD_TRAEFIK_PORT", 80),
-		AuthentikPort:          getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
-		AuthentikAdminPassword: sec.authentikAdmin,
-		AuthentikAdminEmail:    adminEmail,
-		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
-		LDAPBindPassword:       sec.ldapBindPassword,
-		CalDAVServicePassword:  sec.caldavServicePassword,
-		PostgresPassword:       sec.postgresPassword,
-		APIToken:               sec.apiToken,
-		Secrets:                secretsMgr,
+		Port:                    getEnvAsInt("BLOUD_PORT", 3000),
+		DataDir:                 dataDir,
+		AppsDir:                 appsDir,
+		TraefikDynamicDir:       getEnv("BLOUD_TRAEFIK_DYNAMIC_DIR", filepath.Join(dataDir, "traefik", "dynamic")),
+		TrustedLocalNets:        splitNets(getEnv("BLOUD_TRUSTED_LOCAL_NETS", "")),
+		TrustedProxyNets:        splitNets(getEnv("BLOUD_TRUSTED_PROXY_NETS", "")),
+		PublicScheme:            getEnv("BLOUD_PUBLIC_SCHEME", ""),
+		ReconcileInterval:       getEnvDuration("BLOUD_RECONCILE_INTERVAL", 0),
+		SSOHostSecret:           sec.ssoHostSecret,
+		SSOBaseURL:              getEnv("BLOUD_SSO_BASE_URL", "http://localhost:8080"),
+		SSOAuthentikURL:         getEnv("BLOUD_SSO_AUTHENTIK_URL", "http://localhost:8080"),
+		SSOIssuerURL:            getEnv("BLOUD_SSO_ISSUER_URL", ""),
+		AuthentikToken:          authentikToken,
+		BaseDomain:              baseDomain,
+		TraefikPort:             getEnvAsInt("BLOUD_TRAEFIK_PORT", 80),
+		AuthentikPort:           getEnvAsInt("BLOUD_AUTHENTIK_PORT", 9001),
+		AuthentikAdminPassword:  sec.authentikAdmin,
+		AuthentikAdminEmail:     adminEmail,
+		LDAPHost:                getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
+		LDAPBindPassword:        sec.ldapBindPassword,
+		CalDAVServicePassword:   sec.caldavServicePassword,
+		CalendarServicePassword: sec.calendarServicePassword,
+		PostgresPassword:        sec.postgresPassword,
+		APIToken:                sec.apiToken,
+		Secrets:                 secretsMgr,
 	}
 
 	return cfg, nil
@@ -237,12 +242,13 @@ func getSecret(envKey, secretValue string) (string, error) {
 // resolvedSecrets is the set of secrets config requires from the secrets
 // manager before it can build a Config.
 type resolvedSecrets struct {
-	postgresPassword      string
-	ssoHostSecret         string
-	authentikAdmin        string
-	ldapBindPassword      string
-	caldavServicePassword string
-	apiToken              string
+	postgresPassword        string
+	ssoHostSecret           string
+	authentikAdmin          string
+	ldapBindPassword        string
+	caldavServicePassword   string
+	calendarServicePassword string
+	apiToken                string
 }
 
 // loadRequiredSecrets resolves every secret config refuses to start without.
@@ -270,6 +276,9 @@ func loadRequiredSecrets(mgr *secrets.Manager) (resolvedSecrets, error) {
 		return out, err
 	}
 	if out.caldavServicePassword, err = getSecret("BLOUD_CALDAV_SERVICE_PASSWORD", mgr.GetCalDAVServicePassword()); err != nil {
+		return out, err
+	}
+	if out.calendarServicePassword, err = getSecret("BLOUD_CALENDAR_SERVICE_PASSWORD", mgr.GetCalendarServicePassword()); err != nil {
 		return out, err
 	}
 	if out.apiToken, err = getSecret("BLOUD_API_TOKEN", mgr.GetAPIToken()); err != nil {

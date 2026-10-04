@@ -30,15 +30,16 @@ const secretAPIToken = "apiToken"
 // come from the host-agent config (and the shared template-variable store)
 // rather than from Deps, which carries only the generic host services.
 type Params struct {
-	Port                  int
-	BootstrapPassword     string
-	BootstrapEmail        string
-	TokenKey              string                     // API token key for host-agent
-	LDAPBindPassword      string                     // LDAP bind password for service account
-	CalDAVServicePassword string                     // CalDAV service account password (caldav-mcp reads the operator's calendars)
-	BrandingCSS           string                     // Inline CSS to push to Authentik brand API
-	AppsDir               string                     // Path to the apps directory (for auth.yaml blueprint)
-	TemplateVars          *configurator.TemplateVars // Store; PostStart records the LDAP outpost token
+	Port                    int
+	BootstrapPassword       string
+	BootstrapEmail          string
+	TokenKey                string                     // API token key for host-agent
+	LDAPBindPassword        string                     // LDAP bind password for service account
+	CalDAVServicePassword   string                     // CalDAV service account password (caldav-mcp reads the operator's calendars)
+	CalendarServicePassword string                     // Shared-calendar owner account password (owns the feeds and the family calendar)
+	BrandingCSS             string                     // Inline CSS to push to Authentik brand API
+	AppsDir                 string                     // Path to the apps directory (for auth.yaml blueprint)
+	TemplateVars            *configurator.TemplateVars // Store; PostStart records the LDAP outpost token
 }
 
 // ServerConfigurator handles the apps-authentik-server container lifecycle.
@@ -173,8 +174,8 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 		return fmt.Errorf("ensure LDAP infrastructure: %w", err)
 	}
 
-	// Step 5b: Create the CalDAV service account and publish its credential.
-	if err := c.ensureCalDAVServiceAccount(ctx, client); err != nil {
+	// Step 5b: Create the service accounts and publish their credentials.
+	if err := c.ensureServiceAccounts(ctx, client); err != nil {
 		return err
 	}
 
@@ -234,6 +235,22 @@ func (c *ServerConfigurator) ensureEmbeddedOutpostHost(ctx context.Context, clie
 	return nil
 }
 
+// ensureServiceAccounts provisions the service accounts Bloud creates in its
+// own name and publishes each one's credential.
+//
+// Both are plain directory users, so Radicale authenticates them over LDAP like
+// any other account; what each may read is decided by the rights model and the
+// shares, not by the account. They stay separate accounts on purpose: the
+// CalDAV one is the agent's read-only credential, and the calendar one owns
+// the writable shared collections. Merging them would make the agent's
+// read-only grant a policy note instead of a boundary.
+func (c *ServerConfigurator) ensureServiceAccounts(ctx context.Context, client *authentikClient.Client) error {
+	if err := c.ensureCalDAVServiceAccount(ctx, client); err != nil {
+		return err
+	}
+	return c.ensureCalendarServiceAccount(ctx, client)
+}
+
 // ensureCalDAVServiceAccount provisions the caldav-service account and publishes
 // its password under the radicale app scope, where the caldav-mcp consumer reads
 // it through the appApi offer. The account is a plain directory user, so
@@ -246,6 +263,27 @@ func (c *ServerConfigurator) ensureCalDAVServiceAccount(ctx context.Context, cli
 	if c.deps.Secrets != nil {
 		if err := c.deps.Secrets.SetAppSecret("radicale", "password", c.params.CalDAVServicePassword); err != nil {
 			return fmt.Errorf("publish CalDAV service password: %w", err)
+		}
+	}
+	return nil
+}
+
+// ensureCalendarServiceAccount provisions the account that owns the shared
+// calendar collections and publishes its credential under the radicale app
+// scope so the Radicale configurator can create the family calendar over DAV
+// as that account.
+//
+// It is published as an app secret rather than through a contract because no
+// consumer should hold it. The `appApi` offer deliberately stays the agent's
+// read-only credential; this one can write, and advertising it in a contract is
+// how a write credential ends up in a container that was only meant to read.
+func (c *ServerConfigurator) ensureCalendarServiceAccount(ctx context.Context, client *authentikClient.Client) error {
+	if err := client.EnsureCalendarServiceAccount(ctx, c.params.CalendarServicePassword); err != nil {
+		return fmt.Errorf("ensure calendar service account: %w", err)
+	}
+	if c.deps.Secrets != nil {
+		if err := c.deps.Secrets.SetAppSecret("radicale", authentikClient.CalendarOwnerSecretKey, c.params.CalendarServicePassword); err != nil {
+			return fmt.Errorf("publish shared-calendar owner password: %w", err)
 		}
 	}
 	return nil
