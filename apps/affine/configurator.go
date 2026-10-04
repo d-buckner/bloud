@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -85,6 +86,11 @@ type Configurator struct {
 	logger     *slog.Logger
 	api        *affineAPI
 
+	// restartContainerFn stops and starts the server container through the host
+	// runtime, forcing AFFiNE to re-read config.json. Nil in CLI/tests; PostStart
+	// treats nil as "cannot apply now".
+	restartContainerFn func(ctx context.Context, name string) error
+
 	// baseURL is a test seam: when set, the API client resolves to it
 	// instead of localhost:port. Never used to build request URLs by hand.
 	baseURL string
@@ -108,11 +114,12 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		adminEmail = fallbackAdminEmail
 	}
 	c := &Configurator{
-		port:       port,
-		ssoBaseURL: deps.PrimaryBaseURL,
-		secrets:    deps.Secrets,
-		adminEmail: adminEmail,
-		logger:     logger.With("app", "affine"),
+		port:               port,
+		ssoBaseURL:         deps.PrimaryBaseURL,
+		secrets:            deps.Secrets,
+		adminEmail:         adminEmail,
+		logger:             logger.With("app", "affine"),
+		restartContainerFn: deps.RestartContainer,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -134,6 +141,17 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
+// restartContainer stops and starts the server container through the host
+// runtime so AFFiNE re-reads config.json, which it loads once at process start.
+// It mirrors the Home Assistant pattern: the configurator owns the restart
+// decision, the runtime performs the side effect.
+func (c *Configurator) restartContainer(ctx context.Context) error {
+	if c.restartContainerFn == nil {
+		return errors.New("no container restart callback")
+	}
+	return c.restartContainerFn(ctx, c.Name())
+}
+
 // appExternalURL returns the public URL the browser uses to reach AFFiNE,
 // e.g. "http://affine.localhost:8080". It must match the OIDC redirect URI
 // base registered by the host-agent (app subdomain + callbackPath).
@@ -146,19 +164,32 @@ func (c *Configurator) appExternalURL() string {
 // configChanged=true when the file content changed so the orchestrator
 // recreates the container.
 func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
-	path := filepath.Join(state.DataPath, "config", configFileName)
-	content, err := renderConfigFile(c.appExternalURL(), state.OIDC)
+	changed, err := c.syncConfigFile(state)
 	if err != nil {
 		return configurator.NoRestart(), err
 	}
+	return configurator.RestartIf(changed, "AFFiNE config file rewritten"), nil
+}
+
+// syncConfigFile renders the application config from the live inputs and writes
+// it, returning whether the file changed. PreStart calls it before the
+// container starts; PostStart calls it again on the resync so a provider that
+// appeared or disappeared after AFFiNE was already RUNNING (the CalDAV server)
+// rewrites the config and restarts the container.
+func (c *Configurator) syncConfigFile(state *configurator.AppState) (bool, error) {
+	path := filepath.Join(state.DataPath, "config", configFileName)
+	content, err := renderConfigFile(c.appExternalURL(), state.OIDC, caldavBinding(state))
+	if err != nil {
+		return false, err
+	}
 	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeHostOnly)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing config file: %w", err)
+		return false, fmt.Errorf("writing config file: %w", err)
 	}
 	if changed {
 		c.logger.Info("wrote AFFiNE config file", "path", path, "sso", state.OIDC != nil)
 	}
-	return configurator.RestartIf(changed, "AFFiNE config file rewritten"), nil
+	return changed, nil
 }
 
 // PostStart verifies the server answers, creates the first-run owner
@@ -167,6 +198,23 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 // authorization URL, which proves config.json loaded, issuer discovery
 // succeeded, and the PKCE flow is ready. Idempotent on every reconciliation.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	// The CalDAV provider (Radicale) can be installed or removed after AFFiNE
+	// is already RUNNING, and config.json is read only at process start. Re-render
+	// it against the live bindings and restart when the calendar block changed,
+	// the same PostStart-only propagation the orchestrator gives Radicale's feed
+	// sync. A restart skips the rest of this pass: the server is re-exec'ing.
+	changed, err := c.syncConfigFile(state)
+	if err != nil {
+		return err
+	}
+	if changed {
+		c.logger.Info("AFFiNE config changed; restarting to apply")
+		if err := c.restartContainer(ctx); err != nil {
+			return fmt.Errorf("config rewritten but the container could not be restarted: %w", err)
+		}
+		return nil
+	}
+
 	if err := c.api.waitServer(ctx); err != nil {
 		return fmt.Errorf("waiting for affine server: %w", err)
 	}
@@ -666,7 +714,7 @@ func (c *Configurator) removeByokState(state *configurator.AppState) {
 
 // renderConfigFile renders the AFFiNE config.json. Only keys that override
 // defaults are set; AFFiNE merges the file over its built-in defaults.
-func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) (string, error) {
+func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput, caldav *configurator.CalDAVBinding) (string, error) {
 	cfg := map[string]any{
 		"server": map[string]any{
 			"externalUrl": externalURL,
@@ -730,6 +778,9 @@ func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) (string
 			},
 		}
 	}
+	if block := renderCalDAVBlock(caldav); block != nil {
+		cfg["calendar"] = map[string]any{"caldav": block}
+	}
 	// json.Marshal sorts map keys alphabetically, so the rendering is
 	// deterministic: an unchanged config never churns the file across
 	// reconciliation cycles.
@@ -738,4 +789,48 @@ func renderConfigFile(externalURL string, oidc *configurator.OIDCOutput) (string
 		return "", fmt.Errorf("rendering config file: %w", err)
 	}
 	return string(out) + "\n", nil
+}
+
+// caldavBinding returns the CalDAV provider AFFiNE's built-in calendar dials,
+// or nil when the catalog declares no provider or the app has none bound. The
+// calendar is an optional AFFiNE feature, so an absent provider is not an
+// error: the config renders no calendar block and AFFiNE keeps it disabled.
+func caldavBinding(state *configurator.AppState) *configurator.CalDAVBinding {
+	if state == nil || len(state.Integrations.CalDAVServers) == 0 {
+		return nil
+	}
+	binding := state.Integrations.CalDAVServers[0]
+	return &binding
+}
+
+// renderCalDAVBlock renders AFFiNE's calendar.caldav config block, or nil when
+// no provider is installed. The block is a single preset pointing at the DAV
+// server Bloud resolved: AFFiNE's own server fetches the calendar on the user's
+// behalf, so the address is the container-network one and the SSRF guard is
+// opened only for that one server (custom providers stay disabled).
+//
+// Two flags are deliberate. `allowInsecureHttp` because Bloud serves plain http,
+// and `blockPrivateNetwork: false` because the DAV server is a private address
+// from the container's vantage point. The guard exists to stop a user from
+// pointing AFFiNE at arbitrary private services; with `allowCustomProvider:
+// false` only the preset below can ever be dialed, so the relaxation is scoped
+// to the one address Bloud itself wrote.
+func renderCalDAVBlock(binding *configurator.CalDAVBinding) map[string]any {
+	if binding == nil || !binding.Installed || binding.BaseURL == "" {
+		return nil
+	}
+	return map[string]any{
+		"enabled":             true,
+		"allowCustomProvider": false,
+		"providers": []any{
+			map[string]any{
+				"id":        "radicale",
+				"label":     "Bloud Calendar",
+				"serverUrl": binding.BaseURL + binding.Path,
+				"authType":  "basic",
+			},
+		},
+		"allowInsecureHttp":   true,
+		"blockPrivateNetwork": false,
+	}
 }

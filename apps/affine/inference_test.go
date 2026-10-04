@@ -307,7 +307,7 @@ func TestEnsureInferenceProvider_KeylessGatewayRegisters(t *testing.T) {
 // The config.json half: without the byok policy the server refuses a custom
 // endpoint, so the flags are part of the contract, not decoration.
 func TestRenderConfigFile_OpensCustomEndpointPolicy(t *testing.T) {
-	content, err := renderConfigFile("http://affine.localhost:8080", nil)
+	content, err := renderConfigFile("http://affine.localhost:8080", nil, nil)
 	require.NoError(t, err)
 
 	var cfg map[string]any

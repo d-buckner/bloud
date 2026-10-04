@@ -75,6 +75,22 @@ unchanged config never churns the file across reconciliation cycles.
         "allowPrivateNetwork": true
       }
     }
+  },
+  "calendar": {
+    "caldav": {
+      "enabled": true,
+      "allowCustomProvider": false,
+      "providers": [
+        {
+          "id": "radicale",
+          "label": "Bloud Calendar",
+          "serverUrl": "http://apps-radicale:5232/",
+          "authType": "basic"
+        }
+      ],
+      "allowInsecureHttp": true,
+      "blockPrivateNetwork": false
+    }
   }
 }
 ```
@@ -94,6 +110,39 @@ unchanged config never churns the file across reconciliation cycles.
   supported way around that.
 - The `copilot.byok` block is the server policy for the built-in AI; see
   [Built-in AI](#built-in-ai-bring-your-own-endpoint).
+- The `calendar.caldav` block wires AFFiNE's built-in CalDAV client to the
+  Radicale server Bloud resolved (see [Calendar](#calendar-caldav)). It is
+  present only when a CalDAV provider is installed.
+
+## Calendar (CalDAV)
+
+AFFiNE 0.27 ships a built-in CalDAV client: its server syncs a DAV account on
+the user's behalf and serves the events to its own frontend, so the calendars
+Bloud already aggregates in Radicale (Radarr, Sonarr) appear in AFFiNE without
+pasting a server address into every client. The `caldav` integration in
+`metadata.yaml` declares the contract; the configurator renders the
+`calendar.caldav` preset above.
+
+Three details are load-bearing:
+
+- **The address is the container network, not a browser origin.** AFFiNE's
+  server fetches the calendar, so `serverUrl` is the DAV server's own node
+  (`http://apps-radicale:5232/`), which the AFFiNE container resolves on
+  `apps-net`. This is why no `extraHosts` entry and no public domain are needed.
+- **`allowInsecureHttp: true` and `blockPrivateNetwork: false` are scoped, not
+  open.** Bloud serves plain http and the DAV server is a private address from
+  AFFiNE's vantage point, so both guards have to be relaxed. The relaxation is
+  safe because `allowCustomProvider: false` means the only address the CalDAV
+  module can ever dial is the preset Bloud itself wrote; AFFiNE's SSRF guard
+  exists for untrusted custom providers, which are turned off.
+- **The credential is the user's own password.** The preset is `authType:
+  basic`, and the account the user connects is their Bloud login, which
+  Radicale verifies against the identity provider over LDAP. Bloud hands over
+  no machine credential, which is the whole point of the `caldav` contract.
+
+Like Radicale's feed sync, the calendar block is written by `PreStart` for the
+first boot and re-rendered by `PostStart` (with a container restart) when a
+CalDAV provider is installed or removed after AFFiNE is already running.
 
 ## The shared workspace
 

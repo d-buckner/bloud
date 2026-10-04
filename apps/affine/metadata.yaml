@@ -40,6 +40,20 @@ integrations:
       - apiKey
     compatible:
       - source: instance
+  # AFFiNE 0.27 ships a built-in CalDAV client: the server syncs a DAV account
+  # on the user's behalf and serves the events to its own frontend. Declaring
+  # the contract gets the DAV server's address and orders the install; the
+  # configurator writes the `calendar.caldav` preset into config.json so the
+  # operator's AFFiNE account is one click from the calendars Bloud already
+  # aggregates. Optional: AFFiNE is a knowledge base first, and a calendar is
+  # a feature it can serve without a DAV server, so an install with no
+  # Radicale simply keeps the calendar disabled.
+  caldav:
+    required: false
+    multi: false
+    compatible:
+      - app: radicale
+        default: true
 
 # AFFiNE's own MCP server is deliberately not exposed. Its endpoint is
 # read-only and workspace-scoped, so `apps/affine-mcp` provides the `mcp`

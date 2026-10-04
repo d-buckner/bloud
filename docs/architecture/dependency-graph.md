@@ -123,6 +123,7 @@ flowchart TD
     %% Cross-app integration edges
     app_affine -->|inference| ai_model
     app_affine -->|native-oidc| app_authentik
+    app_affine -->|caldav| app_radicale
     app_affine_mcp -->|appApi| app_affine
     app_calino -->|forward-auth| app_authentik
     app_calino -->|caldav| app_radicale
