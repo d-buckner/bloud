@@ -347,16 +347,19 @@ func TestCatalogUpdate_RemovedContainer(t *testing.T) {
 	waitAppRunning(t, fixtureApp, 3*time.Minute)
 	requireContainerExists(t, "apps-e2e-catalog-fixture-c")
 
-	// Witness the data before the prune rather than only checking the directory
-	// afterwards. The dropped container shares the app's data tree with the
-	// survivors, so a prune that reached for the mount source (or the tree above
-	// it) takes the witness with it, and a tree that was never created fails here
-	// instead of quietly satisfying the check later.
-	dataTree := appDataDir(fixtureApp)
-	if _, err := os.Stat(filepath.Join(dataTree, "data")); err != nil {
+	// Seed the witness inside the shared mount source, not beside it. Every
+	// fixture container mounts the same tree, so a prune that cleans up "its
+	// own" mount destroys data the survivors are still using, and that is the
+	// bug worth catching. A witness parked outside the mount survives it.
+	//
+	// The pre-prune stat is what keeps this honest about the precondition: the
+	// orchestrator creates apps/<app> only as a side effect of rendering a
+	// directory mount, so a fixture with no volumes has no tree to witness.
+	sharedTree := filepath.Join(appDataDir(fixtureApp), "data")
+	if _, err := os.Stat(sharedTree); err != nil {
 		t.Fatalf("install should have created the shared data mount source: %v", err)
 	}
-	witness := filepath.Join(dataTree, "prune-witness.txt")
+	witness := filepath.Join(sharedTree, "prune-witness.txt")
 	const witnessBody = "still here"
 	if err := os.WriteFile(witness, []byte(witnessBody), 0644); err != nil {
 		t.Fatalf("seeding app data: %v", err)
