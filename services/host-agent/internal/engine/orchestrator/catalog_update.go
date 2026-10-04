@@ -188,8 +188,8 @@ func (o *Orchestrator) resetForSSOChange(appID string, catalogApp *catalog.App) 
 // app deprovisions exactly once.
 //
 // Provider names embed the display name, so deprovisioning uses the catalog's
-// current display name. That leaves the pre-existing rename gap unchanged: a
-// renamed app's old provider is not found, and neither is it newly created here.
+// display name, which is the name the provider was created with: a rename
+// through RenameAppIntent changes only the store's name, never the catalog's.
 func (o *Orchestrator) reconcileSSOStrategy(ctx context.Context, id string) {
 	appID := o.ownerApp(id)
 	if o.appStore == nil || o.catalog == nil {
