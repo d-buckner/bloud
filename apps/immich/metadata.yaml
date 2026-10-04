@@ -26,16 +26,6 @@ integrations:
       - app: authentik
         default: true
 
-# Immich mints scoped API keys, so a companion (apps/immich-mcp) gets one
-# instead of the account password `appApi` hands to a target with no token API.
-# The key belongs to the internal bootstrap admin, because Immich offers no way
-# to mint one for the operator's OIDC account; see the configurator and
-# apps/immich-mcp/INTEGRATION.md for that boundary. The credential's lifetime is
-# Immich's: the operator can see and revoke it in Immich's own API-keys screen.
-provides:
-  appToken:
-    secrets: [token]
-
 containers:
   - name: apps-immich-postgres
     image: docker.io/pgvector/pgvector:pg16

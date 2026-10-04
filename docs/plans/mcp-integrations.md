@@ -1,6 +1,5 @@
-> Status: Phase 3 shipped. The providers are `apps/affine-mcp` and
-> `apps/immich-mcp`; AFFiNE's built-in MCP server and the Manticore search
-> sidecar were removed. Phase 2 and 4 pending.
+> Status: Phase 3 shipped. The provider is `apps/affine-mcp`; AFFiNE's built-in
+> MCP server and the Manticore search sidecar were removed. Phase 2 and 4 pending.
 
 # Plan: MCP as an ordinary catalog capability
 
@@ -233,9 +232,6 @@ the wrong question. "Is the app's server sufficient" is the right one.
 | `appApi` contract, `AppAPIBinding`, resolver arm | `internal/catalog/contracts.go`, `pkg/configurator/interface.go`, `internal/engine/orchestrator/integrations.go` |
 | AFFiNE: owner credential + shared workspace under `appApi` | `apps/affine/{metadata.yaml,configurator.go}` |
 | `affine-mcp` wrapper: generated MCP bearer, config file, readiness probe | `apps/affine-mcp/` |
-| `appToken` contract, `AppTokenBinding`, resolver arm | `internal/catalog/contracts.go`, `pkg/configurator/interface.go`, `internal/engine/orchestrator/integrations.go` |
-| Immich: minted, revocable API key under `appToken` | `apps/immich/{metadata.yaml,configurator.go,api.go}` |
-| `immich-mcp` wrapper: authenticated Caddy edge over an unauthenticated tool server | `apps/immich-mcp/` |
 | Hermes consumer: `mcp_servers` render, filter, namespace ownership | `apps/hermes/{metadata.yaml,configurator.go}` |
 | Shipped-catalog contract pairing tests | `internal/catalog/{mcp_contract_test.go,contract_declarations_test.go}` |
 | Removed: AFFiNE built-in provider, Manticore sidecar, `aff_mcp_v1` minting | `apps/affine/` |

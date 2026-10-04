@@ -89,7 +89,6 @@ to mention it.
 - **Hermes**: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard
 - **Home Assistant**: Open-source home automation platform
 - **Immich**: Self-hosted photo and video management
-- **Immich MCP**: MCP tool server for Immich, so an agent can search, upload, and organise a photo library
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
 - **Navidrome**: Modern music server and streamer compatible with Subsonic/Airsonic clients
 - **Paperless-ngx**: Document management system that turns scans and PDFs into a searchable archive
@@ -123,7 +122,7 @@ It's built for things you have the right to use.
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
 | **Native OIDC** | AFFiNE, Hermes, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
-| **App-local accounts** | AFFiNE MCP, Immich MCP |
+| **App-local accounts** | AFFiNE MCP |
 <!-- END GENERATED LOGIN TABLE -->
 
 Clients that speak a native protocol, a Subsonic player or a TV app talking to Jellyfin, keep

@@ -276,16 +276,6 @@ func (o *Orchestrator) bindContract(
 			Password:    o.publishedSecret(providerID, contract, offer, requires),
 			WorkspaceID: o.contractValue(providerID, contract, offer, "workspaceId"),
 		})
-	case "appToken":
-		// The token-based sibling of appApi: the provider minted a scoped
-		// credential through its own API, so the payload is that credential and
-		// nothing else. No value arm because there is no username or scope beside
-		// it; a consumer that did not require the secret gets an empty token and
-		// writes nothing.
-		out.AppTokens = append(out.AppTokens, configurator.AppTokenBinding{
-			ProviderRef: ref,
-			Token:       o.publishedSecret(providerID, contract, offer, requires),
-		})
 	case "caldav":
 		// No secret arm: the `caldav` contract publishes none, because the
 		// credential is the person's own password and it never crosses an app

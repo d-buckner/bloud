@@ -6,13 +6,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/bootstrap"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/managedfile"
@@ -28,12 +26,6 @@ const (
 	bootstrapAdminEmail = "bloud-admin@localhost"
 	bootstrapAdminName  = "Bloud Admin"
 )
-
-// companionKeyName is the name of the API key Immich mints for a companion app
-// (the `appToken` contract, consumed by apps/immich-mcp). The name is the only
-// handle Bloud has on a key after Immich reveals its secret once, so it is a
-// constant and repeated minting clears the previous one by name.
-const companionKeyName = "bloud-immich-mcp"
 
 // configFileName is the Immich config file written in PreStart and mounted
 // into the server container at /config/immich/immich-config.yaml.
@@ -123,17 +115,17 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	return configurator.RestartIf(changed, "Immich OAuth config rewritten"), nil
 }
 
-// PostStart bootstraps the server admin and publishes the scoped API key a
-// companion consumes. Immich shows a first-admin registration page until an
-// admin exists, so SSO login would be unreachable without the first step. The
-// sequence and the failure policy live in pkg/bootstrap; this only maps them
-// onto Immich's API, after the server is reachable.
+// PostStart bootstraps the server admin. Immich shows a first-admin
+// registration page until an admin exists, so SSO login would be unreachable
+// without this step. The sequence and the failure policy live in
+// pkg/bootstrap; this only maps them onto Immich's API, after the server is
+// reachable.
 func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
 	if err := c.api.waitServer(ctx); err != nil {
 		return fmt.Errorf("waiting for immich server: %w", err)
 	}
 
-	session, _, err := bootstrap.Ensure(ctx, c.logger, appName, c.secrets,
+	_, _, err := bootstrap.Ensure(ctx, c.logger, appName, c.secrets,
 		bootstrap.Account{FullName: bootstrapAdminName, Email: bootstrapAdminEmail},
 		bootstrap.Ops{
 			Login: func(ctx context.Context, acct bootstrap.Account, password string) (string, error) {
@@ -143,70 +135,7 @@ func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) 
 				return c.api.createAdmin(ctx, acct.FullName, acct.Email, password)
 			},
 		})
-	if err != nil {
-		return err
-	}
-
-	// The admin session is what mints a companion key, so a pass without one
-	// cannot publish a credential. That is a reported condition, not a node
-	// failure: the app serves its SSO users regardless, and the self-healing
-	// pass retries.
-	c.ensureCompanionToken(ctx, session)
-	return nil
-}
-
-// ensureCompanionToken mints the scoped API key a companion app authenticates
-// with and publishes it under the `appToken` contract, reusing the stored one
-// while Immich still accepts it.
-//
-// The key belongs to Bloud's internal Immich admin: Immich provides no API to
-// mint a key for another account, and the operator's account is an OIDC user
-// whose password Bloud never sees. A companion therefore acts as that admin and
-// sees that account's library, which is the limitation apps/immich-mcp
-// documents. Linking the operator's SSO identity to the admin account (Immich
-// links an OIDC login to an existing user with the same email) is the follow-up
-// that would make the companion act as the operator.
-//
-// Failures are logged and swallowed, the same policy AFFiNE's appApi publisher
-// follows: the node is the photo library itself, and a library that serves its
-// users must not land in ERROR because a companion-facing credential could not
-// be minted. The companion is protected by the empty-token rule and writes no
-// credential until one is published.
-func (c *Configurator) ensureCompanionToken(ctx context.Context, session string) {
-	if c.secrets == nil {
-		c.logger.Warn("cannot publish the Immich appToken: no secrets provider")
-		return
-	}
-	if session == "" {
-		c.logger.Warn("cannot publish the Immich appToken: no admin session")
-		return
-	}
-
-	if existing := c.secrets.GetAppSecret(appName, "token"); existing != "" {
-		err := c.api.validateAPIKey(ctx, existing)
-		if err == nil {
-			return
-		}
-		// Only a rejection means the key is gone. A transport fault or a 5xx is
-		// Immich being unavailable, and rotating the key on that would restart
-		// the wrapper for nothing and orphan a working credential.
-		if status := appclient.StatusOf(err); status != http.StatusUnauthorized && status != http.StatusForbidden {
-			c.logger.Warn("could not validate the published Immich appToken; keeping it", "err", err)
-			return
-		}
-		c.logger.Warn("the published Immich appToken was rejected; minting a replacement")
-	}
-
-	key, err := c.api.replaceCompanionKey(ctx, session, companionKeyName)
-	if err != nil {
-		c.logger.Warn("could not mint the Immich appToken", "err", err)
-		return
-	}
-	if err := c.secrets.SetAppSecret(appName, "token", key); err != nil {
-		c.logger.Warn("could not publish the Immich appToken", "err", err)
-		return
-	}
-	c.logger.Info("published the Immich appToken", "key", companionKeyName)
+	return err
 }
 
 // ensureMountMarkers creates the upload subfolders and .immich marker files

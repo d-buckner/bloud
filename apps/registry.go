@@ -27,7 +27,6 @@ import (
 	_ "codeberg.org/d-buckner/bloud/apps/hermes"
 	_ "codeberg.org/d-buckner/bloud/apps/homeassistant"
 	_ "codeberg.org/d-buckner/bloud/apps/immich"
-	_ "codeberg.org/d-buckner/bloud/apps/immich-mcp"
 	_ "codeberg.org/d-buckner/bloud/apps/jellyfin"
 	_ "codeberg.org/d-buckner/bloud/apps/navidrome"
 	_ "codeberg.org/d-buckner/bloud/apps/paperless-ngx"
@@ -57,7 +56,6 @@ func NodeNames() []string {
 		"apps-calino",
 		"apps-hermes",
 		"apps-homeassistant",
-		"apps-immich-mcp",
 		"apps-immich-server",
 		"apps-jellyfin",
 		"apps-navidrome",
