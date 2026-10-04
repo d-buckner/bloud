@@ -52,21 +52,14 @@ type ContainerMetadata struct {
 // The generated block in the target document. Everything between these two
 // markers is replaced by `bloud depgraph --write` and compared by
 // `--check`, so the rest of the file is untouched. The default target is the
-// docs page that holds the text form of the graph; the README embeds the
-// rendered image instead, so a catalog change moves the picture, not the
-// README's prose.
+// README: the diagram is Mermaid, which GitHub renders inline, so the bytes
+// the generator produce are the picture readers see. Nothing renders it
+// separately, so there is no committed image that can lag the catalog and no
+// browser in the loop to keep working.
 const (
 	graphBeginMarker = "<!-- BEGIN GENERATED DEPENDENCY GRAPH -->"
 	graphEndMarker   = "<!-- END GENERATED DEPENDENCY GRAPH -->"
-	graphDefaultFile = "docs/architecture/dependency-graph.md"
-)
-
-// Where the rendered picture lives. The README embeds the image instead of the
-// text diagram, so a catalog change moves the picture and leaves the README's
-// prose alone.
-const (
-	graphDefaultReadme = "README.md"
-	graphImage         = "docs/assets/dependency-graph.png"
+	graphDefaultFile = "README.md"
 )
 
 // graphMode is what a `bloud depgraph` run does with the rendered diagram.
@@ -77,7 +70,7 @@ const (
 	graphModeWrite
 	graphModeCheck
 	// graphModeJSON emits the catalog in the shape the dashboard's
-	// developer graph consumes, which is what the browser renderer reads.
+	// developer graph consumes.
 	graphModeJSON
 )
 
@@ -162,8 +155,8 @@ func cmdDepGraph(args []string) int {
 	}
 }
 
-// printCatalogGraphJSON emits the catalog in the shape the browser renderer
-// consumes: nodes and edges, not a Mermaid string.
+// printCatalogGraphJSON emits the catalog in the shape the dashboard's own
+// developer graph consumes: nodes and edges, not a Mermaid string.
 func printCatalogGraphJSON(apps map[string]*AppMetadata) int {
 	encoded, err := renderCatalogGraphJSON(apps)
 	if err != nil {
@@ -183,7 +176,7 @@ func printDepGraphUsage() {
 	fmt.Println("  --check      Exit 1 when the target file's block is not what the")
 	fmt.Println("               catalog produces right now (the PR-time gate)")
 	fmt.Println("  --json       Print the whole catalog as the developer-graph JSON")
-	fmt.Println("               the browser renderer consumes (nodes + edges)")
+	fmt.Println("               the dashboard consumes (nodes + edges)")
 	fmt.Println("  --target     File to write or check (default: " + graphDefaultFile + ")")
 }
 

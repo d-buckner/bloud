@@ -1,19 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Keeps every generated doc current. On every merge to main it rewrites the
-# README's catalog list and one-login table, rewrites the text form of the
-# dependency graph, renders the graph picture in a headless browser, and
-# commits the results.
+# README's catalog list, its one-login table, and the dependency graph
+# diagram, then commits the results.
 #
 # Three artifacts, one source: apps/*/metadata.yaml. `bloud catalogdoc
 # --write` rewrites the two README blocks between their markers; `bloud
-# depgraph --write` rewrites the graph in
-# docs/architecture/dependency-graph.md; and the picture is the dashboard's
-# own developer graph: the same Svelte components and the same dagre layout,
-# fed a snapshot of the whole catalog (`bloud depgraph --json`, which emits
-# the shape /api/system/developer returns) instead of one instance's
-# installed apps. Rendering it in a real browser is what makes the README
-# image and the dashboard the same drawing rather than two descriptions of it.
+# depgraph --write` rewrites the graph block in the README's "the full
+# graph" section. The diagram is Mermaid, which GitHub renders inline, so
+# the committed bytes are the picture and nothing has to draw it. An earlier
+# shape of this job rendered the graph as a PNG in a headless browser using
+# the dashboard's own components; that made the artifact a binary blob that
+# CI had to build a frontend and install Chromium to produce, and a reader
+# could not see the topology in the diff. The Mermaid block replaced it.
 #
 # The PR-time gate is `./bloud depgraph --check` and `./bloud catalogdoc
 # --check` in the fast validation tier; this job is the safety net that
@@ -35,17 +34,10 @@ on:
     paths:
       # What the artifacts depict: the catalog topology and per-app metadata.
       - 'apps/**/metadata.yaml'
-      # The generators that write the README blocks and the text graph.
+      # The generators that write the README blocks and the graph diagram.
       - 'cli/depgraph.go'
       - 'cli/catalogdoc.go'
       - 'cli/genblock.go'
-      # What draws the picture. A change here can change the pixels without
-      # changing the catalog, so the committed image has to follow it too.
-      - 'services/host-agent/web/src/routes/graph/**'
-      - 'services/host-agent/web/src/lib/graph/**'
-      - 'services/host-agent/web/src/lib/timeline/graphLayout.ts'
-      - 'services/host-agent/web/src/lib/utils/statusColor.ts'
-      - 'scripts/render-graph.mjs'
       - '.github/workflows/generated-docs.yml'
 
 permissions:
@@ -84,45 +76,21 @@ jobs:
       - name: Build the bloud CLI
         run: npm run cli:build
 
-      - name: Refresh the text graph
+      - name: Refresh the dependency graph diagram
         run: ./bloud depgraph --write
 
       - name: Refresh the README blocks
         run: ./bloud catalogdoc --write
 
-      - name: Derive the catalog snapshot
-        run: |
-          set -euo pipefail
-          mkdir -p .bloud
-          ./bloud depgraph --json > .bloud/catalog-graph.json
-          node -e '
-            const g = JSON.parse(require("fs").readFileSync(".bloud/catalog-graph.json", "utf8"));
-            if (!g.nodes?.length) throw new Error("empty catalog snapshot");
-            console.log(`snapshot: ${g.nodes.length} nodes, ${g.edges.length} edges`);
-          '
-
-      - name: Build the frontend
-        run: npm run build --workspace=@bloud/host-agent-web
-
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Render the README image in a browser
-        run: |
-          set -euo pipefail
-          node scripts/render-graph.mjs \
-            --graph .bloud/catalog-graph.json \
-            --output docs/assets/dependency-graph.png
-
       - name: Commit the refresh
         run: |
           set -euo pipefail
-          if git diff --quiet -- README.md docs/architecture/dependency-graph.md docs/assets/dependency-graph.png; then
+          if git diff --quiet -- README.md; then
             echo "generated docs already current; nothing to commit"
             exit 0
           fi
           git config user.name "generated docs bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md docs/architecture/dependency-graph.md docs/assets/dependency-graph.png
+          git add README.md
           git commit --no-verify -m "docs: refresh generated docs [skip ci]"
           git push origin HEAD:main

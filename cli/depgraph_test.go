@@ -748,12 +748,11 @@ func TestWriteAndCheckGraphBlock(t *testing.T) {
 	}
 }
 
-// The committed graph doc must carry what the current catalog produces. This is
-// the same invariant `./bloud depgraph --check` enforces in the fast tier,
-// asserted here too so a `go test ./...` catches it. The README is not part
-// of this check: it embeds the rendered image, and the image is regenerated
-// by CI rather than gated on every PR.
-func TestRepoGraphDocIsCurrent(t *testing.T) {
+// The committed README must carry the graph the current catalog produces. This
+// is the same invariant `./bloud depgraph --check` enforces in the fast tier,
+// asserted here too so a `go test ./...` catches it. The README is the only
+// home of the diagram now, so a stale README is a stale graph.
+func TestRepoREADMEGraphIsCurrent(t *testing.T) {
 	root, err := getProjectRoot()
 	if err != nil {
 		t.Fatalf("project root: %v", err)
@@ -767,28 +766,33 @@ func TestRepoGraphDocIsCurrent(t *testing.T) {
 	}
 }
 
-// The README must embed the rendered image and must not still carry a text
-// diagram: the README stops changing when the catalog does only if the
-// generated mermaid is out of it.
-func TestRepoREADMEEmbedsTheGraphImage(t *testing.T) {
+// The README draws the graph with the Mermaid block itself rather than with a
+// rendered picture. GitHub renders the fence inline, so there is no image
+// artifact between the catalog and what a reader sees, and nothing is left
+// behind pointing at the PNG that used to be committed.
+func TestRepoREADMEDiagramIsMermaidNotAnImage(t *testing.T) {
 	root, err := getProjectRoot()
 	if err != nil {
 		t.Fatalf("project root: %v", err)
 	}
-	readme, err := os.ReadFile(filepath.Join(root, graphDefaultReadme))
+	readme, err := os.ReadFile(filepath.Join(root, graphDefaultFile))
 	if err != nil {
 		t.Fatalf("read README: %v", err)
 	}
 	body := string(readme)
 
-	if !strings.Contains(body, "("+graphImage+")") {
-		t.Errorf("README does not embed %s", graphImage)
+	block, ok := extractGraphBlock(body)
+	if !ok {
+		t.Fatalf("README has no generated dependency graph block: run ./bloud depgraph --write")
 	}
-	if strings.Contains(body, "```mermaid") {
-		t.Error("README still carries a mermaid diagram; the generated graph belongs in the docs page")
+	if !strings.Contains(block, "```mermaid") {
+		t.Error("the generated block in the README is not a Mermaid diagram")
 	}
-	if _, err := os.Stat(filepath.Join(root, graphImage)); err != nil {
-		t.Errorf("the embedded image %s is missing: run npm run graph:image", graphImage)
+	if strings.Contains(body, "dependency-graph.png") {
+		t.Error("README still points at the rendered graph image; the Mermaid block replaced it")
+	}
+	if strings.Contains(body, "graph:image") {
+		t.Error("README still tells readers to run the removed image renderer (npm run graph:image)")
 	}
 }
 
