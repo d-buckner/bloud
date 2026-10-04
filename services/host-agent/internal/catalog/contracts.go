@@ -102,28 +102,6 @@ var contracts = []Contract{
 		SatisfiedBy: []string{"modelSource"},
 	},
 
-	// The control-plane listener of a running agent, for a front end that
-	// drives it. The provider is the agent; the consumer is its UI.
-	//
-	// The provider owns the gateway end to end. It mints the credential,
-	// hands it to its own listener, and publishes it here. A consumer never
-	// configures a gateway it is not running, and never reaches into the
-	// provider's `.env` or config file to find the key out: the only thing a
-	// front end gets is what the agent chose to publish. That is why this is
-	// a contract rather than a shared file, and why the secret is the
-	// provider's to mint even though the consumer is the one that will
-	// eventually present it.
-	//
-	// `path` is the API root on the provider's address. Declared rather than
-	// assumed so a provider that mounts its surface somewhere else states its
-	// own truth instead of every consumer guessing the shape of the one agent
-	// in this catalog.
-	{
-		Name:    "agentGateway",
-		Secrets: []string{"httpToken"},
-		Values:  []ValueSpec{{Key: "path", AbsolutePath: true}},
-	},
-
 	// A CalDAV/CardDAV server: the endpoint a calendar or contacts client
 	// speaks DAV to. Provided by the DAV server itself (Radicale), consumed
 	// by anything that wants to show the user the calendars Bloud already

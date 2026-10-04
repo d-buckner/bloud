@@ -3,7 +3,6 @@
 package catalog
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -198,88 +197,5 @@ func TestPlanRemove_AllowedWithAlternative(t *testing.T) {
 	}
 	if len(plan.WillUnconfigure) != 1 {
 		t.Fatalf("expected 1 unconfigure, got %d", len(plan.WillUnconfigure))
-	}
-}
-
-// The shipped Hermes pair, asserted against the real catalog rather than a
-// synthetic graph. The claim under test is about what those two metadata
-// files say, so a synthetic graph would test the planner (already covered)
-// and leave the dependency itself unpinned.
-func TestPlanInstall_ShippedHermesWebUIRequiresHermes(t *testing.T) {
-	g, err := NewLoader(realCatalogDir(t)).LoadGraph()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Nothing installed: the required contract has to surface as a choice
-	// naming Hermes as the thing to install, because that is what the
-	// orchestrator records and then records as a dependency first.
-	g.SetInstalled(nil)
-	plan, err := g.PlanInstall("hermes-webui")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var choice *IntegrationChoice
-	for i := range plan.Choices {
-		if plan.Choices[i].Integration == "agentGateway" {
-			choice = &plan.Choices[i]
-		}
-	}
-	if choice == nil {
-		t.Fatalf("installing hermes-webui produced no agentGateway choice: %+v", plan.Choices)
-	}
-	if !choice.Required {
-		t.Error("the agentGateway choice must be required: the front end has no agent without it")
-	}
-	if choice.Recommended != "hermes" {
-		t.Errorf("recommended provider = %q, want hermes", choice.Recommended)
-	}
-}
-
-// Removing the agent out from under an installed front end is the case the
-// required flag exists to stop. No alternative provider is shipped, so
-// there is nothing to fall back to and the removal has to be refused.
-func TestPlanRemove_HermesBlockedByInstalledWebUI(t *testing.T) {
-	g, err := NewLoader(realCatalogDir(t)).LoadGraph()
-	if err != nil {
-		t.Fatal(err)
-	}
-	g.SetInstalled([]string{"hermes", "hermes-webui"})
-
-	plan, err := g.PlanRemove("hermes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.CanRemove {
-		t.Fatalf("removing Hermes under an installed Hermes Web UI was allowed: %+v", plan)
-	}
-	var named bool
-	for _, b := range plan.Blockers {
-		if strings.Contains(b, "hermes-webui") && strings.Contains(b, "agentGateway") {
-			named = true
-		}
-	}
-	if !named {
-		t.Errorf("blockers do not name the dependent and its contract: %v", plan.Blockers)
-	}
-}
-
-// With the front end gone the agent is nothing but itself again, and the
-// block has to lift. A blocker that outlives its dependent is a blocker that
-// can never be cleared.
-func TestPlanRemove_HermesAllowedOnceWebUIIsGone(t *testing.T) {
-	g, err := NewLoader(realCatalogDir(t)).LoadGraph()
-	if err != nil {
-		t.Fatal(err)
-	}
-	g.SetInstalled([]string{"hermes"})
-
-	plan, err := g.PlanRemove("hermes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !plan.CanRemove {
-		t.Errorf("Hermes with no installed front end is still blocked: %v", plan.Blockers)
 	}
 }

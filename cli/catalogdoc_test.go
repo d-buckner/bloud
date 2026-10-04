@@ -586,9 +586,8 @@ func TestRepoLoginTableCoversEveryUserApp(t *testing.T) {
 	userApps, _ := splitCatalog(apps)
 
 	// Count exact table entries rather than substrings: a display name can
-	// contain another ("AFFiNE" is a prefix of "AFFiNE MCP", and "Hermes"
-	// is a prefix of "Hermes Web UI"), and a raw strings.Count would read
-	// that as a duplicate that is not one.
+	// contain another ("AFFiNE" is a prefix of "AFFiNE MCP"), and a raw
+	// strings.Count would read that as a duplicate.
 	entries := map[string]int{}
 	for _, line := range strings.Split(rendered, "\n") {
 		if !strings.HasPrefix(line, "| **") {
