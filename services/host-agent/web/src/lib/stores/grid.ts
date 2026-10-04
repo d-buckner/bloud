@@ -16,11 +16,13 @@ export type { GridElement };
 /** App tiles are uniform: one grid cell, not resizable. */
 const APP_SIZE = 1;
 
-/** Turn the snapshot's app list into grid tiles, skipping system apps. */
+/** Turn the snapshot's app list into grid tiles, skipping system apps and the
+ * headless ones the catalog says have no UI to open. Both are installed and
+ * reported; neither is something the grid can render as a clickable tile. */
 function appElements(apps: HomeApp[]): GridElement[] {
 	const elements: GridElement[] = [];
 	for (const app of apps) {
-		if (app.is_system) continue;
+		if (app.is_system || app.headless) continue;
 		elements.push({
 			type: 'app',
 			id: app.catalog_id,

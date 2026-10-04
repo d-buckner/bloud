@@ -561,6 +561,12 @@ combined with instance/SSH-target env vars). Instance overrides:
 5. **Catalog is disk-driven.** Apps are discovered from `apps/*/metadata.yaml`
    into an in-memory cache; `POST /api/apps/refresh-catalog` or restart to pick
    up changes. System apps set `isSystem: true` (hidden from the user catalog).
+   A `headless: true` app is a different cut: it stays in the catalog and on
+   every API read, and only the dashboard grid leaves it out, because there is
+   no page for its tile to open. The flag reaches the browser on the installed
+   app payload (`installedAppResponse` and the home snapshot); the grid store
+   and `visibleApps` both skip it, and `appFacade` skips the optimistic tile
+   add so an install never flashes one.
    Bootstrap (system infra: Traefik + deps) converges **before the API is
    usable**: the listener opens at process start but serves a static loading
    page (and 503 for `/api` and `/health`) until the orchestrator reports
@@ -808,7 +814,9 @@ combined with instance/SSH-target env vars). Instance overrides:
 1. `apps/<name>/metadata.yaml`. Full field reference in
    `services/host-agent/internal/catalog/models.go` (source of truth):
    `name`, `displayName`, `description`, `category` (media | productivity |
-   security | infrastructure), `port`, `isSystem`, `sso`
+   security | infrastructure), `port`, `isSystem`, `headless` (no browser UI:
+   installed, reconciled, and routed like any other app, but no dashboard tile),
+   `sso`
    (`strategy`, `callbackPath`, `userCreation`, `bypassPaths`, `env` mappings),
    `integrations` (a contract name: `{required, multi,
    compatible: [{app, default}]}`), `provides` (per contract: the `secrets` this

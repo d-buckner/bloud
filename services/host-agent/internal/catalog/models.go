@@ -29,6 +29,13 @@ type App struct {
 	Integrations    map[string]Integration `yaml:"integrations" json:"integrations"`
 	Provides        Provides               `yaml:"provides,omitempty" json:"provides,omitempty"`
 	Containers      []ContainerDef         `yaml:"containers,omitempty" json:"containers,omitempty"`
+	// Headless marks an app with no browser UI of its own: there is nothing
+	// to open, so the dashboard draws no tile for it once installed. The app
+	// is otherwise ordinary: it stays in the catalog, in
+	// GET /api/apps/installed, and in the developer graph, and it installs,
+	// reconciles, and routes like every other app. Wrapper and service-shaped
+	// apps (affine-mcp) set it. Absent means the app has a UI worth a tile.
+	Headless bool `yaml:"headless,omitempty" json:"headless,omitempty"`
 }
 
 // ContainerDef describes one container in a multi-container app.

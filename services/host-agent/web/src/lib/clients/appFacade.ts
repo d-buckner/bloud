@@ -73,7 +73,12 @@ function applyInstalledApp(app: App | null, name: string): void {
 		updated_at: now
 	};
 	apps.update((current) => upsertApp(current, entry));
-	gridElements.addApp(entry.catalog_id);
+	// A headless app gets no tile, so the optimistic add is skipped: adding it
+	// here would put a tile on screen for the install and take it away again on
+	// the next snapshot.
+	if (!entry.headless) {
+		gridElements.addApp(entry.catalog_id);
+	}
 }
 
 function upsertApp(current: App[], entry: App): App[] {

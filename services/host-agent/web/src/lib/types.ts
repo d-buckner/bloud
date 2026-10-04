@@ -23,6 +23,13 @@ export interface App {
 	last_error?: string;
 	port?: number;
 	is_system: boolean;
+	/**
+	 * Catalog-derived: the app has no browser UI of its own. The home grid
+	 * leaves such an app out, because a tile is an invitation to open a page
+	 * that does not exist. The app is otherwise ordinary, and it stays in the
+	 * `apps` store so its status still drives toasts and install progress.
+	 */
+	headless?: boolean;
 	integration_config?: Record<string, string>;
 	installed_at: string;
 	updated_at: string;

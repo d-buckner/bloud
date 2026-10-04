@@ -153,7 +153,7 @@ func (m *appsModule) GetInstalled() ([]installedAppResponse, error) {
 			userApps = append(userApps, app)
 		}
 	}
-	return enrichApps(userApps, m.buildLaunchPaths(), m.catalogMissing(userApps)), nil
+	return enrichApps(userApps, m.buildLaunchPaths(), m.catalogMissing(userApps), m.buildHeadlessSet()), nil
 }
 
 // catalogMissing returns the installed apps that have no catalog entry, so the
@@ -185,7 +185,8 @@ func (m *appsModule) AppMetadata(name string) (*catalog.App, error) {
 // current app record is read back and returned alongside the intent ref so
 // the 202 response carries it.
 func (m *appsModule) Install(name string) (*IntentRef, *installedAppResponse, error) {
-	if _, err := m.catalog.Get(name); err != nil {
+	def, err := m.catalog.Get(name)
+	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %s", errAppNotFound, name)
 	}
 	if m.orch == nil {
@@ -197,7 +198,7 @@ func (m *appsModule) Install(name string) (*IntentRef, *installedAppResponse, er
 
 	var app *installedAppResponse
 	if row, err := m.appStore.GetByCatalogID(name); err == nil && row != nil {
-		app = &installedAppResponse{InstalledApp: row}
+		app = &installedAppResponse{InstalledApp: row, Headless: def.Headless}
 		if path, ok := m.buildLaunchPaths()[name]; ok {
 			app.SSOLaunchPath = path
 		}
@@ -279,6 +280,26 @@ func (m *appsModule) buildLaunchPaths() map[string]string {
 		}
 	}
 	return paths
+}
+
+// buildHeadlessSet indexes the catalog ids of apps that declare no browser UI,
+// so every installed-app read can mark them without re-walking the catalog per
+// app. A nil catalog (the catalog-less test wiring) yields an empty set.
+func (m *appsModule) buildHeadlessSet() map[string]bool {
+	headless := make(map[string]bool)
+	if m.catalog == nil {
+		return headless
+	}
+	apps, err := m.catalog.GetAll()
+	if err != nil {
+		return headless
+	}
+	for _, a := range apps {
+		if a.Headless {
+			headless[a.CatalogID] = true
+		}
+	}
+	return headless
 }
 
 // ---- HTTP handler methods (on concrete type, not interface) ----
@@ -440,18 +461,22 @@ func (m *appsModule) RefreshCatalogHandler() http.HandlerFunc {
 // installedAppResponse extends InstalledApp with catalog-derived fields.
 type installedAppResponse struct {
 	*store.InstalledApp
-	SSOLaunchPath  string `json:"sso_launch_path,omitempty"`
-	CatalogMissing bool   `json:"catalog_missing,omitempty"`
+	SSOLaunchPath string `json:"sso_launch_path,omitempty"`
+	// Headless is the catalog's answer to "is there a UI to open?". The
+	// dashboard keeps such an app off the grid but still reports its status.
+	Headless       bool `json:"headless,omitempty"`
+	CatalogMissing bool `json:"catalog_missing,omitempty"`
 }
 
-// enrichApps enriches installed apps with SSO launch paths and the
-// catalog-missing flag from the catalog.
-func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string, catalogMissing map[string]bool) []installedAppResponse {
+// enrichApps enriches installed apps with SSO launch paths, the
+// catalog-missing flag, and the catalog's headless marking.
+func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string, catalogMissing map[string]bool, headless map[string]bool) []installedAppResponse {
 	result := make([]installedAppResponse, 0, len(apps))
 	for _, app := range apps {
 		result = append(result, installedAppResponse{
 			InstalledApp:   app,
 			SSOLaunchPath:  launchPaths[app.CatalogID],
+			Headless:       headless[app.CatalogID],
 			CatalogMissing: catalogMissing[app.CatalogID],
 		})
 	}

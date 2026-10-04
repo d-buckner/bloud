@@ -147,6 +147,11 @@ A few friendly defaults worth knowing:
   your app, automatically.
 - `isSystem: true` hides an app from the user-facing catalog (used for
   infrastructure like traefik and authentik).
+- `headless: true` keeps an installed app off the dashboard grid. Use it when
+  the app has no browser UI: a tile is an invitation to open a page that does
+  not exist. Nothing else about the app changes. It stays in the catalog and in
+  `GET /api/apps/installed`, it shows in the developer graph, and it installs,
+  reconciles, and routes like every other app. `affine-mcp` sets it.
 - The `healthCheck` numbers are seconds. Pick a check the image can actually
   run. Many slim images lack curl, but their own runtime works (immich uses
   `node -e ...fetch`, home assistant uses `python3`); see the reference apps.

@@ -18,6 +18,16 @@ type homeModuleSimple struct {
 	appStore       store.AppStoreInterface
 	getLaunchPaths func() map[string]string
 	logger         *slog.Logger
+	// getHeadless returns the catalog ids of apps that have no browser UI of
+	// their own. Optional: with no lookup wired, nothing is marked headless.
+	getHeadless func() map[string]bool
+}
+
+// SetHeadlessLookup wires the catalog-derived headless set so the home payload
+// can carry it. The dashboard draws no tile for a headless app; the app stays
+// in the payload, so its status and the event stream still describe it.
+func (m *homeModuleSimple) SetHeadlessLookup(fn func() map[string]bool) {
+	m.getHeadless = fn
 }
 
 // NewHomeModule creates a new HomeModule.
@@ -63,6 +73,7 @@ func (m *homeModuleSimple) GetLayout(username string) (*homeResponse, error) {
 // SSO launch path the dashboard opens it on.
 func (m *homeModuleSimple) homeAppItems(apps []*store.InstalledApp, posMap map[string]store.Position) []appWithPosition {
 	launchPaths := m.getLaunchPaths()
+	headless := m.headlessIDs()
 	items := make([]appWithPosition, 0, len(apps))
 	for _, app := range apps {
 		if app.IsSystem {
@@ -73,6 +84,7 @@ func (m *homeModuleSimple) homeAppItems(apps []*store.InstalledApp, posMap map[s
 		items = append(items, appWithPosition{
 			InstalledApp:  app,
 			SSOLaunchPath: launchPaths[app.CatalogID],
+			Headless:      headless[app.CatalogID],
 			X:             pos.X,
 			Y:             pos.Y,
 			W:             w,
@@ -80,6 +92,16 @@ func (m *homeModuleSimple) homeAppItems(apps []*store.InstalledApp, posMap map[s
 		})
 	}
 	return items
+}
+
+// headlessIDs returns the catalog ids marked headless, or an empty set when no
+// lookup is wired. A nil map reads as false for every key, so the caller needs
+// no guard.
+func (m *homeModuleSimple) headlessIDs() map[string]bool {
+	if m.getHeadless == nil {
+		return nil
+	}
+	return m.getHeadless()
 }
 
 // homeWidgetItems picks the widget-typed positions out of the user's full set.
@@ -174,10 +196,13 @@ func (m *homeModuleSimple) SetLayoutHandler() http.HandlerFunc {
 type appWithPosition struct {
 	*store.InstalledApp
 	SSOLaunchPath string `json:"sso_launch_path,omitempty"`
-	X             *int   `json:"x"`
-	Y             *int   `json:"y"`
-	W             int    `json:"w"`
-	H             int    `json:"h"`
+	// Headless is catalog-derived: the app has no UI to open, so the
+	// dashboard leaves it off the grid.
+	Headless bool `json:"headless,omitempty"`
+	X        *int `json:"x"`
+	Y        *int `json:"y"`
+	W        int  `json:"w"`
+	H        int  `json:"h"`
 }
 
 type widgetPosition struct {
