@@ -56,6 +56,11 @@ func (r *recordingRuntime) Exec(_ context.Context, name string, _ []string) erro
 	return nil
 }
 
+func (r *recordingRuntime) ListContainers(_ context.Context) ([]containerruntime.ContainerInfo, error) {
+	r.calls = append(r.calls, "ListContainers")
+	return nil, nil
+}
+
 // baseInput returns a fully populated Input: every required field set, and
 // every optional collaborator present so a test that removes one is asserting
 // a deliberate difference rather than an accident.

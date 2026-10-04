@@ -55,6 +55,7 @@ var Migrations = []Migration{
 	}},
 	{8, "hosts.scheme", ensureColumnIfTable("hosts", "scheme", "TEXT NOT NULL DEFAULT ''")},
 	{9, "collapse hosts table into settings.public_url", collapseHostsToPublicURL},
+	{10, "apps.sso_strategy", ensureColumn("apps", "sso_strategy", "TEXT NOT NULL DEFAULT ''")},
 }
 
 // collapseHostsToPublicURL replaces the multi-row hosts table with a single

@@ -234,6 +234,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 	// Nodes and edges are populated here so the Orchestrator enforces dependency ordering.
 	o.logger.Info("convergence step", "step", "set-graph-targets")
 	o.recordActivity("converge_step", "set-graph-targets")
+	o.reconcileCatalogUpdates(ctx, appMap)
 	o.populateGraphNodes(appMap)
 
 	// Step 4: Converge tailnet nodes/gateway/proxies.

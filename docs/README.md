@@ -23,6 +23,8 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Dated review findings | [specs/review.md](specs/review.md) |
 | Latest architecture/code review (2026-09-19) | [specs/review-2026-09-19.md](specs/review-2026-09-19.md) |
 | CI flakiness: measured root causes and the fix order | [plans/ci-flakiness-reduction.md](plans/ci-flakiness-reduction.md) |
+| How catalog changes apply to running installs | [plans/catalog-update-reconciliation.md](plans/catalog-update-reconciliation.md) |
+| How Bloud ships and updates via apt | [plans/apt-repository.md](plans/apt-repository.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections

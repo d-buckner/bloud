@@ -75,6 +75,16 @@ func (m *MockAppStore) UpdateDisplayName(name, displayName string) error {
 	return args.Error(0)
 }
 
+func (m *MockAppStore) GetSSOStrategy(catalogID string) (string, error) {
+	args := m.Called(catalogID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAppStore) SetSSOStrategy(catalogID, strategy string) error {
+	args := m.Called(catalogID, strategy)
+	return args.Error(0)
+}
+
 func (m *MockAppStore) Uninstall(name string) error {
 	args := m.Called(name)
 	return args.Error(0)
@@ -309,6 +319,11 @@ func (m *MockSSOProvisioner) EnsureNativeOIDC(ctx context.Context, appName, disp
 	return args.Error(0)
 }
 
+func (m *MockSSOProvisioner) Deprovision(ctx context.Context, appName, displayName, ssoStrategy string) error {
+	args := m.Called(appName, displayName, ssoStrategy)
+	return args.Error(0)
+}
+
 // MockConfiguratorRegistry implements configurator.RegistryInterface for testing
 type MockConfiguratorRegistry struct {
 	mock.Mock
@@ -426,6 +441,14 @@ func (m *MockContainerRuntime) Remove(ctx context.Context, name string) error {
 func (m *MockContainerRuntime) Inspect(ctx context.Context, name string) (containerruntime.State, error) {
 	args := m.Called(ctx, name)
 	return args.Get(0).(containerruntime.State), args.Error(1)
+}
+
+func (m *MockContainerRuntime) ListContainers(ctx context.Context) ([]containerruntime.ContainerInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]containerruntime.ContainerInfo), args.Error(1)
 }
 
 func (m *MockContainerRuntime) Exec(ctx context.Context, name string, cmd []string) error {

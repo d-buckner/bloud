@@ -49,6 +49,10 @@ func (f *FakeRuntime) Exec(_ context.Context, _ string, _ []string) error {
 	return nil
 }
 
+func (f *FakeRuntime) ListContainers(_ context.Context) ([]container.ContainerInfo, error) {
+	return nil, nil
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 func newTestManager(t *testing.T, rt *FakeRuntime) *TailnetNodeManager {

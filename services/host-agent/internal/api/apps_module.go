@@ -140,7 +140,8 @@ func (m *appsModule) GetCatalog(ctx context.Context) ([]*catalog.App, error) {
 	return apps, nil
 }
 
-// GetInstalled returns installed user apps enriched with SSO launch paths.
+// GetInstalled returns installed user apps enriched with SSO launch paths and
+// a catalog-missing flag.
 func (m *appsModule) GetInstalled() ([]installedAppResponse, error) {
 	all, err := m.appStore.GetAll()
 	if err != nil {
@@ -152,7 +153,22 @@ func (m *appsModule) GetInstalled() ([]installedAppResponse, error) {
 			userApps = append(userApps, app)
 		}
 	}
-	return enrichApps(userApps, m.buildLaunchPaths()), nil
+	return enrichApps(userApps, m.buildLaunchPaths(), m.catalogMissing(userApps)), nil
+}
+
+// catalogMissing returns the installed apps that have no catalog entry, so the
+// dashboard can badge an app whose directory was removed or renamed.
+func (m *appsModule) catalogMissing(apps []*store.InstalledApp) map[string]bool {
+	missing := make(map[string]bool)
+	if m.catalog == nil {
+		return missing
+	}
+	for _, app := range apps {
+		if _, err := m.catalog.Get(app.CatalogID); err != nil {
+			missing[app.CatalogID] = true
+		}
+	}
+	return missing
 }
 
 // AppMetadata returns the catalog definition for an app by name.
@@ -412,6 +428,11 @@ func (m *appsModule) RefreshCatalogHandler() http.HandlerFunc {
 			respondError(w, http.StatusInternalServerError, "failed to refresh catalog")
 			return
 		}
+		// Apply the refreshed catalog promptly rather than waiting for the
+		// next periodic pass.
+		if m.orch != nil {
+			m.orch.Submit(orchestrator.NewReconcileIntent())
+		}
 		respondJSON(w, http.StatusOK, map[string]string{"status": "catalog refreshed"})
 	}
 }
@@ -419,16 +440,19 @@ func (m *appsModule) RefreshCatalogHandler() http.HandlerFunc {
 // installedAppResponse extends InstalledApp with catalog-derived fields.
 type installedAppResponse struct {
 	*store.InstalledApp
-	SSOLaunchPath string `json:"sso_launch_path,omitempty"`
+	SSOLaunchPath  string `json:"sso_launch_path,omitempty"`
+	CatalogMissing bool   `json:"catalog_missing,omitempty"`
 }
 
-// enrichApps enriches installed apps with SSO launch paths from the catalog.
-func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string) []installedAppResponse {
+// enrichApps enriches installed apps with SSO launch paths and the
+// catalog-missing flag from the catalog.
+func enrichApps(apps []*store.InstalledApp, launchPaths map[string]string, catalogMissing map[string]bool) []installedAppResponse {
 	result := make([]installedAppResponse, 0, len(apps))
 	for _, app := range apps {
 		result = append(result, installedAppResponse{
-			InstalledApp:  app,
-			SSOLaunchPath: launchPaths[app.CatalogID],
+			InstalledApp:   app,
+			SSOLaunchPath:  launchPaths[app.CatalogID],
+			CatalogMissing: catalogMissing[app.CatalogID],
 		})
 	}
 	return result

@@ -62,4 +62,11 @@ type SSOProvisioner interface {
 	// callback (all base URLs plus the direct-port debug URL). tuning carries the
 	// app's optional extra scopes and access token lifetime (zero = defaults).
 	EnsureNativeOIDC(ctx context.Context, appName, displayName, clientID, clientSecret string, redirectURIs []string, launchURL string, tuning authentik.OIDCTuning) error
+
+	// Deprovision removes the SSO provider and application an app's previous
+	// strategy created, so a strategy change converges away from the old
+	// wiring. Implementations must be idempotent: deleting a provider that is
+	// already gone is a no-op. Strategies with no per-app provider ("none",
+	// "ldap") deprovision nothing.
+	Deprovision(ctx context.Context, appName, displayName, ssoStrategy string) error
 }

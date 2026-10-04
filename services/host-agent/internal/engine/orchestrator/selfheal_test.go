@@ -138,6 +138,16 @@ func (r *liveRuntime) Inspect(_ context.Context, name string) (containerruntime.
 	return st, nil
 }
 
+func (r *liveRuntime) ListContainers(_ context.Context) ([]containerruntime.ContainerInfo, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]containerruntime.ContainerInfo, 0, len(r.states))
+	for name := range r.states {
+		out = append(out, containerruntime.ContainerInfo{Name: name})
+	}
+	return out, nil
+}
+
 func (r *liveRuntime) Exec(_ context.Context, _ string, _ []string) error { return nil }
 
 // passRecorder watches LastConverged and records every distinct value, which

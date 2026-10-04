@@ -57,12 +57,13 @@ type VolumeMount struct {
 
 // Container represents a running or stopped container
 type Container struct {
-	ID      string   `json:"Id"`
-	Names   []string `json:"Names"`
-	Image   string   `json:"Image"`
-	State   string   `json:"State"`
-	Status  string   `json:"Status"`
-	Created string   `json:"Created"`
+	ID      string            `json:"Id"`
+	Names   []string          `json:"Names"`
+	Image   string            `json:"Image"`
+	State   string            `json:"State"`
+	Status  string            `json:"Status"`
+	Created string            `json:"Created"`
+	Labels  map[string]string `json:"labels,omitempty"`
 }
 
 // ContainerDetails contains the inspect fields needed by runtime reconciliation.

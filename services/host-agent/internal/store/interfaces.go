@@ -14,6 +14,8 @@ type AppStoreInterface interface {
 	SetTailnetID(catalogID, tailnetID string) error
 	UpdateIntegrationConfig(catalogID string, config map[string]string) error
 	UpdateDisplayName(catalogID, displayName string) error
+	GetSSOStrategy(catalogID string) (string, error)
+	SetSSOStrategy(catalogID, strategy string) error
 	Uninstall(catalogID string) error
 	IsInstalled(catalogID string) (bool, error)
 	SetOnChange(fn func())

@@ -336,7 +336,7 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 		Networks:      networks,
 		Command:       def.Command,
 		RestartPolicy: def.RestartPolicy,
-		Labels:        map[string]string{"io.bloud.app": appCatalogID},
+		Labels:        map[string]string{containerruntime.AppLabel: appCatalogID},
 	}
 	for _, port := range def.Ports {
 		spec.Ports = append(spec.Ports, containerruntime.Port{
