@@ -12,7 +12,7 @@ import (
 // Boundary: share/guest records are intentionally NOT intents. They are pure store
 // writes with no lifecycle side effects (no containers, routing, or reconciliation),
 // and invite creation must return its JWT token synchronously: the sharing API
-// writes them directly. See docs/specs/review.md §C3 and reconciler-spec.md Open Q2.
+// writes them directly. See docs/specs/review-2026-09-17.md §C3 and reconciler-spec.md Open Q2.
 type Intent interface {
 	intentMarker()
 	IntentID() string

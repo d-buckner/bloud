@@ -20,7 +20,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Sharing/federation (in progress) | [features/sharing.md](features/sharing.md) |
 | How MCP servers work in Bloud (design, not yet built) | [features/mcp.md](features/mcp.md) |
 | Dashboard layout + widgets | [features/dashboard.md](features/dashboard.md) |
-| Dated review findings | [specs/review.md](specs/review.md) |
+| Dated review findings | [specs/review-2026-09-17.md](specs/review-2026-09-17.md) |
 | Latest architecture/code review (2026-09-19) | [specs/review-2026-09-19.md](specs/review-2026-09-19.md) |
 | Design & code review, APoSD lens (2026-10-03) | [specs/review-2026-10-03-aposd.md](specs/review-2026-10-03-aposd.md) |
 | CI flakiness: measured root causes and the fix order | [plans/ci-flakiness-reduction.md](plans/ci-flakiness-reduction.md) |

@@ -135,7 +135,7 @@ Good parallel `task` batch once Phases 1–3 land (disjoint files).
 1. **`plans/` status pass:** header on all 8 files; landed move to
    `plans/archive/`. Known: `qemu-backend`, `local-backend` → landed.
    Judge `control-plane-auth` / `tailnet-outpost` honestly: draft ≠ landed.
-2. **Single debt ledger:** annotate resolved findings in `specs/review.md`
+2. **Single debt ledger:** annotate resolved findings in `specs/review-2026-09-17.md`
    inline or fold remaining into `docs/operations/tech-debt.md`. One ledger,
    not two.
 3. **CI dedup:** diff `.github/workflows/` vs `.forgejo/workflows/` first;

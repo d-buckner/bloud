@@ -922,7 +922,7 @@ driver). Two earlier claims are
 corrected in the ledger: the `user_app_positions` fork fix is a no-op (the grid
 shape already existed), and the derived OAuth client secret *is* currently
 persisted. Review findings:
-[`docs/specs/review.md`](docs/specs/review.md) and the newer
+[`docs/specs/review-2026-09-17.md`](docs/specs/review-2026-09-17.md) and the newer
 [`docs/specs/review-2026-09-19.md`](docs/specs/review-2026-09-19.md) (e.g. §C2
 in-memory `MapRepository`, which the 2026-09-16 re-audit reframes:
 HKDF-derived credentials make restart reconstruction work, so only
@@ -965,6 +965,6 @@ to the right doc. When a doc moves, update it in both places.
 |Sharing/federation (in progress)|[features/sharing.md](docs/features/sharing.md)|
 |MCP servers as catalog apps (shipped: `apps/affine-mcp` providers, Hermes consumes)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
-| Dated review findings|[specs/review.md](docs/specs/review.md)|
+| Dated review findings|[specs/review-2026-09-17.md](docs/specs/review-2026-09-17.md)|
 | Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|
 | In-flight designs | [plans/](docs/plans/) |
