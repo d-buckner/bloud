@@ -9,7 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -185,8 +188,14 @@ func changedConfidence(unmapped []string) (string, string) {
 	return "high", "all changed files mapped to validation commands"
 }
 
-// triggeredCommands keeps the tier's commands the changed files selected.
+// triggeredCommands keeps the tier's commands the changed files selected. A
+// wildcard `*` trigger means "every command": a change to a root-level config
+// or script file (package.json, validation.yaml, scripts/) can break any
+// check, so the changed tier falls back to the full tier.
 func triggeredCommands(tier manifestTier, triggeredIDs map[string]bool) []manifestCommand {
+	if triggeredIDs["*"] {
+		return append([]manifestCommand(nil), tier.Commands...)
+	}
 	var commands []manifestCommand
 	for _, cmd := range tier.Commands {
 		if triggeredIDs[cmd.ID] {
@@ -255,19 +264,76 @@ type ranCommand struct {
 	failed   bool
 }
 
-func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
-	exitCode := 0
-	var ran []ranCommand
+// parallelism returns how many light commands may run at once. Light commands
+// are single-threaded, so the runner's core count is the natural ceiling;
+// BLOUD_CHECK_JOBS (the same switch scripts/checks.mjs honours) overrides it,
+// which lets a human cap the fan-out on a small or shared runner.
+func parallelism() int {
+	if n := os.Getenv("BLOUD_CHECK_JOBS"); n != "" {
+		if v, err := strconv.Atoi(n); err == nil && v > 0 {
+			return v
+		}
+	}
+	return runtime.NumCPU()
+}
 
+func runCommands(root string, commands []manifestCommand, result *ValidateResult, flags validateFlags) int {
 	if !flags.json {
 		fmt.Printf("  %s\n", strings.Repeat("-", 60))
 	}
 
-	for _, cmd := range commands {
-		if flags.explain && !flags.json {
+	// The explain line is a plan, printed up front in manifest order so it
+	// stays readable while the commands themselves run concurrently.
+	if flags.explain && !flags.json {
+		for _, cmd := range commands {
 			fmt.Printf("    %s→%s %s: %s\n", colorCyan, colorReset, cmd.ID, cmd.Run)
 		}
-		r := runManifestCommand(root, cmd, flags)
+	}
+
+	// Heavy commands parallelise internally and would fight each other for the
+	// cores if run together, so they run one at a time. Light commands are
+	// single-threaded; they run in a pool alongside the current heavy command,
+	// hiding their serial wall-clock behind the work that dominates the tier.
+	// The ledger and the summary keep manifest order regardless of the order
+	// the commands actually finish in.
+	var heavy, light []int
+	for i, cmd := range commands {
+		if cmd.Heavy {
+			heavy = append(heavy, i)
+		} else {
+			light = append(light, i)
+		}
+	}
+
+	results := make([]ranCommand, len(commands))
+	var wg sync.WaitGroup
+	if len(light) > 0 {
+		jobs := make(chan int)
+		for w := 0; w < parallelism() && w < len(light); w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					results[i] = runManifestCommand(root, commands[i], flags)
+				}
+			}()
+		}
+		go func() {
+			for _, i := range light {
+				jobs <- i
+			}
+			close(jobs)
+		}()
+	}
+	for _, i := range heavy {
+		results[i] = runManifestCommand(root, commands[i], flags)
+	}
+	wg.Wait()
+
+	exitCode := 0
+	ran := make([]ranCommand, 0, len(commands))
+	for i := range commands {
+		r := results[i]
 		ran = append(ran, r)
 		result.Commands = append(result.Commands, r.result())
 		if r.failed {
@@ -276,7 +342,6 @@ func runCommands(root string, commands []manifestCommand, result *ValidateResult
 	}
 
 	logPath := writeValidateLog(root, result.Tier, ran)
-
 	if !flags.json {
 		printValidateSummary(result.Tier, ran, logPath)
 	}
@@ -425,6 +490,11 @@ func runManifestCommand(root string, cmd manifestCommand, flags validateFlags) r
 	return ranCommand{cmd: cmd, output: buf.String(), duration: dur, exitCode: exitCode, failed: failed}
 }
 
+// reportMu serialises reportCommand's line so concurrent commands cannot
+// interleave mid-line on the console (the fast tier runs light commands in
+// parallel now).
+var reportMu sync.Mutex
+
 // reportCommand prints the one-line console result for a validation command.
 // A command that never spawned has no duration worth reporting, so `note`
 // carries the reason instead.
@@ -432,6 +502,8 @@ func reportCommand(flags validateFlags, id, status string, ms int64, note string
 	if flags.json {
 		return
 	}
+	reportMu.Lock()
+	defer reportMu.Unlock()
 	icon := colorGreen + "✓" + colorReset
 	if status == "fail" {
 		icon = colorRed + "✗" + colorReset
