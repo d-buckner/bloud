@@ -4,8 +4,8 @@ package catalog
 
 // AppGraph manages app relationships and dependency resolution
 type AppGraph struct {
-	Apps      map[string]*AppDefinition `json:"apps"`
-	Installed []string                  `json:"installed"`
+	Apps      map[string]*App `json:"apps"`
+	Installed []string        `json:"installed"`
 
 	// Reverse index: app -> who integrates with it
 	dependents   map[string][]IntegrationRef
@@ -13,16 +13,16 @@ type AppGraph struct {
 }
 
 // NewGraph creates a new AppGraph from a slice of app definitions
-func NewGraph(apps []*AppDefinition) *AppGraph {
+func NewGraph(apps []*App) *AppGraph {
 	g := &AppGraph{
-		Apps:         make(map[string]*AppDefinition),
+		Apps:         make(map[string]*App),
 		Installed:    []string{},
 		dependents:   make(map[string][]IntegrationRef),
 		installedSet: make(map[string]bool),
 	}
 
 	for _, app := range apps {
-		g.Apps[app.Name] = app
+		g.Apps[app.CatalogID] = app
 		g.buildDependents(app)
 	}
 
@@ -30,11 +30,11 @@ func NewGraph(apps []*AppDefinition) *AppGraph {
 }
 
 // buildDependents populates the reverse index for an app
-func (g *AppGraph) buildDependents(app *AppDefinition) {
+func (g *AppGraph) buildDependents(app *App) {
 	for intName, integration := range app.Integrations {
 		for _, compat := range integration.Compatible {
 			g.dependents[compat.App] = append(g.dependents[compat.App], IntegrationRef{
-				App:         app.Name,
+				App:         app.CatalogID,
 				Integration: intName,
 			})
 		}
@@ -96,6 +96,6 @@ func (g *AppGraph) GetCompatibleApps(appName string, integrationName string) (in
 	return installed, available
 }
 
-func (g *AppGraph) GetApps() map[string]*AppDefinition {
+func (g *AppGraph) GetApps() map[string]*App {
 	return g.Apps
 }

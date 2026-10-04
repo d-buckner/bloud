@@ -7,12 +7,12 @@ import (
 )
 
 func TestNewGraph_BuildsDependents(t *testing.T) {
-	apps := []*AppDefinition{
+	apps := []*App{
 		{
-			Name: "qbittorrent",
+			CatalogID: "qbittorrent",
 		},
 		{
-			Name: "radarr",
+			CatalogID: "radarr",
 			Integrations: map[string]Integration{
 				"downloadClient": {
 					Required: true,
@@ -43,11 +43,11 @@ func TestNewGraph_BuildsDependents(t *testing.T) {
 }
 
 func TestFindDependents_OnlyReturnsInstalled(t *testing.T) {
-	apps := []*AppDefinition{
-		{Name: "qbittorrent"},
-		{Name: "jellyfin"},
+	apps := []*App{
+		{CatalogID: "qbittorrent"},
+		{CatalogID: "jellyfin"},
 		{
-			Name: "radarr",
+			CatalogID: "radarr",
 			Integrations: map[string]Integration{
 				"downloadClient": {
 					Compatible: []CompatibleApp{{App: "qbittorrent"}},
@@ -55,7 +55,7 @@ func TestFindDependents_OnlyReturnsInstalled(t *testing.T) {
 			},
 		},
 		{
-			Name: "jellyseerr",
+			CatalogID: "jellyseerr",
 			Integrations: map[string]Integration{
 				"mediaServer": {
 					Compatible: []CompatibleApp{{App: "jellyfin"}},
@@ -84,11 +84,11 @@ func TestFindDependents_OnlyReturnsInstalled(t *testing.T) {
 }
 
 func TestGetCompatibleApps_SplitsByInstalled(t *testing.T) {
-	apps := []*AppDefinition{
-		{Name: "qbittorrent"},
-		{Name: "deluge"},
+	apps := []*App{
+		{CatalogID: "qbittorrent"},
+		{CatalogID: "deluge"},
 		{
-			Name: "radarr",
+			CatalogID: "radarr",
 			Integrations: map[string]Integration{
 				"downloadClient": {
 					Compatible: []CompatibleApp{

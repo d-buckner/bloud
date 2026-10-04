@@ -378,51 +378,18 @@ func valueKeys(contract Contract) string {
 	return strings.Join(names, ", ")
 }
 
-// LoadGraph loads app definitions and builds an AppGraph
+// LoadGraph loads every catalog app (the same model LoadAll produces) and
+// builds the dependency graph the install/remove planners read. It is a thin
+// wrapper over LoadAll rather than a second walker: one loader, one model, so
+// the planner and the reconciler can no longer disagree by construction.
 func (l *Loader) LoadGraph() (*AppGraph, error) {
-	entries, err := os.ReadDir(l.appsDir)
+	apps, err := l.LoadAll()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read apps directory: %w", err)
+		return nil, err
 	}
-
-	var apps []*AppDefinition
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		metadataPath := filepath.Join(l.appsDir, entry.Name(), "metadata.yaml")
-		if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
-			continue
-		}
-
-		app, err := l.loadAppDefinition(metadataPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load %s: %w", entry.Name(), err)
-		}
-
-		apps = append(apps, app)
+	list := make([]*App, 0, len(apps))
+	for _, app := range apps {
+		list = append(list, app)
 	}
-
-	return NewGraph(apps), nil
-}
-
-// loadAppDefinition loads a single AppDefinition from a YAML file
-func (l *Loader) loadAppDefinition(filePath string) (*AppDefinition, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	var app AppDefinition
-	if err := yaml.Unmarshal(data, &app); err != nil {
-		return nil, fmt.Errorf("failed to parse YAML: %w", err)
-	}
-
-	if app.Name == "" {
-		return nil, fmt.Errorf("app name is required")
-	}
-
-	return &app, nil
+	return NewGraph(list), nil
 }

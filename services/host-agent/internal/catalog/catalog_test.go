@@ -283,17 +283,22 @@ func TestLoader_ValidateApp_OIDCTuning(t *testing.T) {
 	}
 }
 
-// setupTestGraphCatalog creates a catalog with AppDefinition format
+// setupTestGraphCatalog creates a catalog directory of minimal full App
+// entries (identity fields plus integrations) for graph/planner tests.
 func setupTestGraphCatalog(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	apps := map[string]string{
 		"qbittorrent": `name: qbittorrent
-image: lscr.io/linuxserver/qbittorrent:latest
+displayName: qBittorrent
+description: BitTorrent client
+category: media
 integrations: {}
 `,
 		"radarr": `name: radarr
-image: lscr.io/linuxserver/radarr:latest
+displayName: Radarr
+description: Movie manager
+category: media
 integrations:
   downloadClient:
     required: true
@@ -304,7 +309,9 @@ integrations:
       - app: deluge
 `,
 		"jellyseerr": `name: jellyseerr
-image: fallenbagel/jellyseerr:latest
+displayName: Jellyseerr
+description: Media requests
+category: media
 integrations:
   pvr:
     required: true
@@ -312,6 +319,7 @@ integrations:
     compatible:
       - app: radarr
         category: movies
+        default: true
       - app: sonarr
         category: tv
 `,
@@ -356,6 +364,28 @@ func TestLoader_LoadGraph(t *testing.T) {
 	deps := graph.FindDependents("qbittorrent")
 	assert.Len(t, deps, 1)
 	assert.Equal(t, "radarr", deps[0].Target)
+}
+
+// TestLoadGraphAndLoadAllAgree pins the one-model invariant: the planner's
+// graph and the reconciler's cache are built from the same LoadAll walk, so
+// they must describe the same apps, identities, and integrations.
+func TestLoadGraphAndLoadAllAgree(t *testing.T) {
+	catalogDir := setupTestGraphCatalog(t)
+	loader := NewLoader(catalogDir)
+
+	all, err := loader.LoadAll()
+	require.NoError(t, err)
+
+	graph, err := loader.LoadGraph()
+	require.NoError(t, err)
+
+	require.Len(t, graph.Apps, len(all), "graph and cache must describe the same apps")
+	for name, app := range all {
+		gApp, ok := graph.Apps[name]
+		require.True(t, ok, "graph missing %s", name)
+		assert.Equal(t, app.CatalogID, gApp.CatalogID)
+		assert.Equal(t, app.Integrations, gApp.Integrations)
+	}
 }
 
 // realCatalogDir resolves the repository's apps/ directory from the test's
