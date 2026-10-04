@@ -83,6 +83,12 @@ when registered, `Containers.Remove`, and `graph.DeleteNode` (the
 `removeMultiContainerApp` for a subset. **Do not delete data**: the app still
 exists and a dropped sidecar may share `apps/<app>/`.
 
+The `io.bloud.app` label is shared by auxiliaries (tailnet nodes, the proxy
+outpost), so the diff requires a second signal: the container must also be a
+graph node, which only `containers:`-declared containers ever were. A failed
+`Containers.Remove` keeps the node, so the next pass retries rather than
+leaking the container.
+
 The container set is its own record: no table can go stale the way a stored
 snapshot can, because the diff is always against what is actually running.
 

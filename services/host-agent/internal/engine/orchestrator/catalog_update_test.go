@@ -135,9 +135,9 @@ func TestReconcileCatalogUpdates_PrunesRemovedContainer(t *testing.T) {
 	assert.Equal(t, graph.StatusRunning, nodeA.ActualStatus)
 }
 
-// A failed container removal (the container is already gone) still deletes the
-// node: the node is the durable orphan, and its deletion is the point.
-func TestReconcileCatalogUpdates_PruneRemoveErrorStillDeletesNode(t *testing.T) {
+// A failed container removal keeps the node, so the next pass retries rather
+// than leaking the container: the node is the retry signal.
+func TestReconcileCatalogUpdates_PruneRemoveErrorKeepsNode(t *testing.T) {
 	apps := NewFakeAppStore()
 	apps.AddApp(&store.InstalledApp{CatalogID: "demo", DisplayName: "Demo", Status: "running"})
 	cat := NewFakeCatalogCache()
@@ -161,13 +161,43 @@ func TestReconcileCatalogUpdates_PruneRemoveErrorStillDeletesNode(t *testing.T) 
 	}, nil)
 	rt.On("Remove", mock.Anything, "apps-demo-removed").Return(assert.AnError)
 
-	require.NotPanics(t, func() {
-		orch.reconcileCatalogUpdates(context.Background(), toAppMap(apps))
-	})
+	orch.reconcileCatalogUpdates(context.Background(), toAppMap(apps))
 
 	node, err := g.GetNode("apps-demo-removed")
 	require.NoError(t, err)
-	assert.Nil(t, node, "the node is deleted even when the container removal fails")
+	assert.NotNil(t, node, "the node stays so the next pass retries the removal")
+}
+
+// A container that shares the io.bloud.app label but was never a lifecycle
+// node (a tailnet node, the proxy outpost) is not pruned.
+func TestReconcileCatalogUpdates_DoesNotPruneAuxiliaryContainers(t *testing.T) {
+	apps := NewFakeAppStore()
+	apps.AddApp(&store.InstalledApp{CatalogID: "demo", DisplayName: "Demo", Status: "running"})
+	cat := NewFakeCatalogCache()
+	def := catalog.ContainerDef{Name: "apps-demo-a", Image: "alpine:3.20"}
+	cat.AddApp(&catalog.App{CatalogID: "demo", Containers: []catalog.ContainerDef{def}})
+
+	g := graph.New(graph.NewMapRepository())
+	seedRunningNode(t, g, "apps-demo-a", graph.StatusRunning)
+
+	rt := new(MockContainerRuntime)
+	orch := NewOrchestrator(g, new(MockConfiguratorRegistry), cat, t.TempDir(), newTestLogger(),
+		OrchestratorConfig{AppStore: apps, Containers: rt})
+
+	rev := specRevisionFor(t, orch, def, "demo")
+	// ts-demo is a tailnet node: it carries io.bloud.app=demo but has no graph
+	// node, so it must not be treated as a removed app container.
+	rt.On("ListContainers", mock.Anything).Return([]containerruntime.ContainerInfo{
+		{Name: "apps-demo-a", Labels: map[string]string{containerruntime.AppLabel: "demo", containerruntime.SpecRevisionLabel: rev}},
+		{Name: "ts-demo", Labels: map[string]string{containerruntime.AppLabel: "demo"}},
+	}, nil)
+
+	orch.reconcileCatalogUpdates(context.Background(), toAppMap(apps))
+
+	rt.AssertNotCalled(t, "Remove", mock.Anything, mock.Anything)
+	node, err := g.GetNode("apps-demo-a")
+	require.NoError(t, err)
+	assert.Equal(t, graph.StatusRunning, node.ActualStatus)
 }
 
 // An installed app with no catalog entry is left alone: nothing is pruned or

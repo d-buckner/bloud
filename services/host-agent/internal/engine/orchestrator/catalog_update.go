@@ -51,11 +51,17 @@ func (o *Orchestrator) reconcileAppCatalogUpdate(ctx context.Context, appID stri
 	defs := catalogApp.ContainerDefs()
 
 	// Case B: prune containers this app owns but the catalog no longer declares.
+	// A container is only a candidate when it was once a declared lifecycle
+	// node: auxiliary containers (tailnet nodes, the proxy outpost) share the
+	// io.bloud.app label but never had a graph node.
 	for name, info := range byName {
 		if info.Labels[containerruntime.AppLabel] != appID {
 			continue
 		}
 		if hasContainerDef(defs, name) {
+			continue
+		}
+		if node, _ := o.graph.GetNode(name); node == nil {
 			continue
 		}
 		o.pruneContainer(ctx, appID, name)
@@ -98,6 +104,8 @@ func (o *Orchestrator) pruneContainer(ctx context.Context, appID, name string) {
 	if o.config.Containers != nil {
 		if err := o.config.Containers.Remove(ctx, name); err != nil {
 			o.logger.Warn("catalog update: failed to remove container", "container", name, "error", err)
+			// Keep the node: it is the retry signal for the next pass.
+			return
 		}
 	}
 
