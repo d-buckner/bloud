@@ -148,7 +148,7 @@ Intent types (`intent.go`):
   keeps the orchestrator the single writer.
 - *(Share/guest records are not intents by design: pure store writes with no
   lifecycle side effects, and invite creation returns its token synchronously.
-  The sharing API writes them directly; see docs/specs/review.md §C3)*
+  The sharing API writes them directly; see docs/specs/review-2026-09-17.md §C3)*
 
 The loop is not purely reactive. An idle timer submits a `ReconcileIntent`
 when nothing else has converged recently (`BLOUD_RECONCILE_INTERVAL`,
@@ -276,7 +276,7 @@ provisioning, and forward-auth provider creation for tailnet access.
 SQLite-backed persistence for installed apps, their status, and resolved integration
 bindings. The orchestrator reads desired state from here and (as single writer) is the
 only author of lifecycle status. Schema lives in `internal/db/schema.sql`. The lifecycle
-orchestrator currently uses an in-memory repository (see docs/specs/review.md §C2).
+orchestrator currently uses an in-memory repository (see docs/specs/review-2026-09-17.md §C2).
 
 ### Container Runtime (`internal/container/`, `internal/engine/orchestrator/`)
 
