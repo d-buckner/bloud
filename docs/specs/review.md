@@ -14,18 +14,20 @@
 > The single living ledger for backend debt and its repayment plan is
 > [`docs/operations/tech-debt.md`](../operations/tech-debt.md). Do not
 > add new findings here; add them there. Findings below are annotated with
-> their status as of the last sync (2026-09-17) so this snapshot can be
+> their status as of the last sync (2026-10-03) so this snapshot can be
 > read without mistaking resolved items for live ones:
 >
 > | Finding | Status |
 > |---|---|
 > | C1 install path inert | **RESOLVED**: the router wires the catalog graph |
-> | C2 graph durability | **OPEN**: `router.go` still builds `graph.NewMapRepository()` |
+> | C2 graph durability | **OPEN**: the running orchestrator still builds `graph.NewMapRepository()` |
 > | C3 share/guest writes bypass the queue | **BY DESIGN**: deliberate, documented boundary (pure store writes, synchronous invite tokens) |
 > | C4 hardcoded fallback secrets | **RESOLVED 2026-09-14**: `config.Load` is fallible: env > `secrets.json` > error |
-> | H1 loopback grants admin | **OPEN**: `isLocalRequest` bypass still live at `router.go:544` |
+> | H1 loopback grants admin | **RESOLVED 2026-09-19**: admin now requires the API token *and* a trusted position; `middleware.RealIP` deleted. See the ledger's "Biggest Debt" section |
 > | H2 `apps.status` overloaded / no operation-state model | **RESOLVED 2026-09-17**: separate `operations` row per app (`store/operations.go` + orchestrator recorder, PR #86); `apps.status` narrowed to the user-facing projection |
-> | H3–H4, M1–M6 | **OPEN**: tracked in the ledger |
+> | H3–H4, M1, M3, M4, M6 | **OPEN**: tracked in the ledger |
+> | M2 docs drift | **RESOLVED 2026**: doc-update commit refreshed the reconciler/orchestrator naming (inline note below) |
+> | M5 `SyncContainerState` skips multi-container apps | **RESOLVED 2026-09-27**: every declared container is now inspected and repaired (ledger item 8) |
 
 
 
@@ -323,6 +325,13 @@ this as an explicit trust boundary and scope what loopback requests can do.
 
 **Priority: P2.**
 
+> **Resolved (2026-09-19):** the loopback-only admin bypass is closed. Admin now
+> requires the API token *and* a trusted position (loopback or
+> `TrustedLocalNets`), `middleware.RealIP` was deleted so `r.RemoteAddr` is the
+> real TCP peer again, and an empty configured token disables the position path
+> entirely (fail closed). See the ledger's "Biggest Debt" section for the full
+> fix surface and the live verification.
+
 ### H2: `apps.status` is overloaded; no separate operation-state model
 
 **Where:** `store/apps.go` + `schema.sql`: a single `status` string holds
@@ -439,6 +448,11 @@ separate concern from app Redis. Worth an explicit name/ownership distinction.
 (`len(defs) != 1 → continue`); multi-container apps rely on graph events. That means a
 crashed multi-container app is not re-aligned on startup by the sync path: a durability
 gap for the newer multi-container model.
+
+> **Resolved (2026-09-27):** the multi-container skip is gone. Every declared
+> container is inspected and each node repaired independently (a `RUNNING` node
+> whose container is not running is reset to `INITIALIZING` so the same pass
+> re-drives it). See ledger item 8.
 
 ### M6: Gateway/proxy/outpost lifecycle is complex for MVP
 

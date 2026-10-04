@@ -216,11 +216,12 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 func (c *Configurator) Name() string { return "apps-your-app" }
 
 // PreStart runs before the container starts: directories, config files,
-// certificates. Return changed=true when you modified a file the container
-// reads at boot; that tells the orchestrator to (re)start the container so
-// it picks your changes up.
-func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (bool, error) {
-    return false, nil
+// certificates. Report RestartNeeded only when the running container must be
+// recreated to pick up the change; writing a file is not by itself a recreate
+// signal (the container may re-read it on its own). The reason travels to the
+// orchestrator log, so a recreate is traceable to what asked for it.
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
+    return configurator.NoRestart(), nil
 }
 
 // PostStart runs after the container is healthy: API calls, integrations,
