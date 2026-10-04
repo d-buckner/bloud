@@ -80,3 +80,97 @@ func (a *immichAPI) login(ctx context.Context, email, password string) (string, 
 	}
 	return out.AccessToken, nil
 }
+
+// apiKeyInfo is one API key as Immich lists it. Immich reveals a key's secret
+// exactly once, at creation, so a listed key never carries its value; only the
+// id and the name survive for anything but the creation response.
+type apiKeyInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// listAPIKeys returns every API key the session's user owns.
+func (a *immichAPI) listAPIKeys(ctx context.Context, session string) ([]apiKeyInfo, error) {
+	var out []apiKeyInfo
+	err := a.cl.GET("/api/api-keys").
+		Header("Authorization", "Bearer "+session).
+		OK(http.StatusOK).
+		DoInto(ctx, &out)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// deleteAPIKey removes one key by id.
+func (a *immichAPI) deleteAPIKey(ctx context.Context, session, id string) error {
+	return a.cl.DELETE("/api/api-keys/"+id).
+		Header("Authorization", "Bearer "+session).
+		OK(http.StatusNoContent, http.StatusOK).
+		Exec(ctx)
+}
+
+// mintAPIKey creates a key with full permissions and returns its secret, the
+// only time Immich ever reveals it.
+//
+// The permission set is `all` rather than a curated list because the principal
+// is Bloud's own internal admin: an API key cannot exceed the account that owns
+// it, so scoping below `all` would not reduce what the key can reach, only
+// which of the account's own powers the companion may use. The wrapper exposes
+// the full read-write tool surface and upstream adds tools between releases, so
+// a curated list would go stale as a silent 403. The operator revokes the key
+// in Immich's own UI, which is what a provider-minted, provider-revocable
+// credential buys over a password.
+func (a *immichAPI) mintAPIKey(ctx context.Context, session, name string) (string, error) {
+	var out struct {
+		ID     string `json:"id"`
+		Secret string `json:"secret"`
+	}
+	err := a.cl.POST("/api/api-keys").
+		Header("Authorization", "Bearer "+session).
+		JSON(map[string]any{"name": name, "permissions": []string{"all"}}).
+		OK(http.StatusCreated).
+		DoInto(ctx, &out)
+	if err != nil {
+		return "", err
+	}
+	if out.Secret == "" {
+		return "", fmt.Errorf("immich returned a key with no secret")
+	}
+	return out.Secret, nil
+}
+
+// validateAPIKey reports whether a stored key still authenticates. Immich
+// answers 200 for a live key and 401 for one that was deleted or revoked in its
+// UI, which is the only signal that a published token has gone stale.
+func (a *immichAPI) validateAPIKey(ctx context.Context, key string) error {
+	return a.cl.GET("/api/api-keys/me").
+		Header("x-api-key", key).
+		NoRetry().
+		OK(http.StatusOK).
+		Exec(ctx)
+}
+
+// replaceCompanionKey mints a fresh key under name, removing any existing keys
+// that already carry it first so repeated replacement leaves exactly one behind.
+//
+// An orphan is possible on the replacement path: the key Bloud holds may have
+// been deleted in Immich's UI while an older same-named key still exists, and
+// Immich cannot hand back a secret it has already shown, so the only way to a
+// working credential is a new key. Clearing by name before minting keeps the
+// companion's footprint to one row in Immich's API-keys screen.
+func (a *immichAPI) replaceCompanionKey(ctx context.Context, session, name string) (string, error) {
+	existing, err := a.listAPIKeys(ctx, session)
+	if err != nil {
+		return "", err
+	}
+	for _, key := range existing {
+		if key.Name != name {
+			continue
+		}
+		if err := a.deleteAPIKey(ctx, session, key.ID); err != nil {
+			return "", err
+		}
+	}
+	return a.mintAPIKey(ctx, session, name)
+}

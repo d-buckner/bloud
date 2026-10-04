@@ -45,6 +45,7 @@ var conformanceTable = []appSpec{
 	{Dir: "hermes", Node: "apps-hermes", DefaultPort: 9119, WithSSO: true},
 	{Dir: "homeassistant", Node: "apps-homeassistant", DefaultPort: 8123, WithSSO: true, Preseed: preseedHAComponent},
 	{Dir: "immich", Node: "apps-immich-server", DefaultPort: 2283, WithSSO: true},
+	{Dir: "immich-mcp", Node: "apps-immich-mcp", DefaultPort: 9223},
 	{Dir: "jellyfin", Node: "apps-jellyfin", DefaultPort: 8096},
 	{Dir: "navidrome", Node: "apps-navidrome", DefaultPort: 4533},
 	{Dir: "paperless-ngx", Node: "apps-paperless-ngx", DefaultPort: 8000, WithSSO: true},
