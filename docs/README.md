@@ -25,6 +25,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | CI flakiness: measured root causes and the fix order | [plans/ci-flakiness-reduction.md](plans/ci-flakiness-reduction.md) |
 | How catalog changes apply to running installs | [plans/catalog-update-reconciliation.md](plans/catalog-update-reconciliation.md) |
 | How Bloud ships and updates via apt | [plans/apt-repository.md](plans/apt-repository.md) |
+| Making installs show what they will do | [plans/install-experience.md](plans/install-experience.md) |
 | In-flight designs | [plans/](plans/) |
 
 ## Sections
