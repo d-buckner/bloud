@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -256,14 +257,17 @@ func (p *agentProgress) Finish() { p.w.Flush() }
 // line handles one line of the agent's log.
 func (p *agentProgress) line(raw string) {
 	line := strings.TrimSpace(raw)
-	if line == "" || !strings.HasPrefix(line, "{") {
-		p.emitPlain(raw)
+	if line == "" {
+		return
+	}
+	if !strings.HasPrefix(line, "{") {
+		p.emitPlain(line)
 		return
 	}
 
 	var rec map[string]any
 	if err := json.Unmarshal([]byte(line), &rec); err != nil {
-		p.emitPlain(raw)
+		p.emitPlain(line)
 		return
 	}
 
@@ -340,12 +344,22 @@ func formatRecordFields(rec map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
+// podmanEventLine matches the libpod event stream that the container library
+// writes straight to the agent's stdout: a timestamp, then `container <event>
+// <64-hex-id> (labels...)`. It is not the agent's judgment about anything,
+// and during bring-up it is dozens of lines per node, each carrying every
+// container label -- enough to bury the lifecycle transitions this filter
+// exists to surface. The raw bytes still land in the phase transcript, so
+// the evidence is one file away; it just does not occupy the console.
+var podmanEventLine = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ .* container \w+ [0-9a-f]{64}( |$)`)
+
 // emitPlain prints a line the agent wrote that is not a JSON record. The
 // agent's own stdout can carry non-JSON (a panic trace, a child process
-// writing to the same fd), and dropping it would hide the one line that
-// explains a crash.
+// writing to the same fd), and dropping that would hide the one line that
+// explains a crash. Podman's event stream is the exception, and the reason
+// it is called out separately rather than just not matching.
 func (p *agentProgress) emitPlain(raw string) {
-	if strings.TrimSpace(raw) == "" {
+	if podmanEventLine.MatchString(raw) {
 		return
 	}
 	p.w.emit("!", colorYellow, strings.TrimSpace(raw), "")

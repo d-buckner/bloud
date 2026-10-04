@@ -450,3 +450,45 @@ func TestWaitScriptBoundsItsOwnRun(t *testing.T) {
 		t.Errorf("the wait script lost its deadline:\n%s", integrationWaitAgentScript)
 	}
 }
+
+// TestAgentProgressDropsThePodmanEventStream pins the noise the first CI run
+// exposed: libpod writes its event stream straight to the agent's stdout, and
+// every `container exec` / `exec_died` arrived on the console as a warning
+// carrying the container's full label set. Dozens of those per node buries
+// the lifecycle transitions the filter exists to surface.
+func TestAgentProgressDropsThePodmanEventStream(t *testing.T) {
+	in := strings.Join([]string{
+		"2026-10-04 22:01:50.060576845 +0000 UTC m=+0.040945645 container exec 19390c596e61d83d9584cc61bda36708a227210f80f4b159553fb4fd279d7fa7 (image=docker.io/library/redis:7-alpine, name=apps-authentik-redis, io.bloud.managed=true)",
+		"2026-10-04 22:01:50.112575171 +0000 UTC m=+0.046296456 container exec_died 19390c596e61d83d9584cc61bda36708a227210f80f4b159553fb4fd279d7fa7 (image=docker.io/library/redis:7-alpine, name=apps-authentik-redis)",
+		`{"level":"INFO","msg":"lifecycle phase: HealthCheck","app":"apps-authentik-redis"}`,
+		"",
+	}, "\n")
+
+	var buf bytes.Buffer
+	p := newAgentProgress(&buf, false)
+	_, _ = p.Write([]byte(in))
+	p.Finish()
+
+	got := buf.String()
+	if strings.Contains(got, "container exec") || strings.Contains(got, "io.bloud.spec-revision") {
+		t.Errorf("the podman event stream reached the console:\n%s", got)
+	}
+	if !regexp.MustCompile(`· apps-authentik-redis\s+HealthCheck`).MatchString(got) {
+		t.Errorf("dropping the event stream must not drop the real progress:\n%s", got)
+	}
+}
+
+// TestAgentProgressKeepsAnUnexplainedCrash: the podman filter is specific to
+// that event shape. A panic trace on the agent's stdout is the one thing the
+// console must never lose, so it still surfaces.
+func TestAgentProgressKeepsAnUnexplainedCrash(t *testing.T) {
+	var buf bytes.Buffer
+	p := newAgentProgress(&buf, false)
+	_, _ = p.Write([]byte("goroutine 1 [running]:\nmain.main()\n\tpanic: something\n"))
+	p.Finish()
+
+	got := buf.String()
+	if !strings.Contains(got, "panic: something") || !strings.Contains(got, "goroutine 1") {
+		t.Errorf("a crash trace was dropped:\n%s", got)
+	}
+}
