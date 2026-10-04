@@ -31,7 +31,7 @@ func newRemoveTestOrchestrator(t *testing.T, runtime containerruntime.Runtime) (
 		catalogCache,
 		dataDir,
 		newTestLogger(),
-		OrchestratorConfig{Containers: runtime},
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: runtime}},
 	)
 	return orch, registry, dataDir
 }

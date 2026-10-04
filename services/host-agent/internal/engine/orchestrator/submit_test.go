@@ -24,7 +24,7 @@ func newSubmitTestOrchestrator(t *testing.T) (*Orchestrator, *FakeAppStore, *Fak
 		fakeCatalog,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{AppStore: fakeStore},
+		OrchestratorConfig{Stores: StoresConfig{AppStore: fakeStore}},
 	)
 	return orch, fakeStore, fakeCatalog
 }

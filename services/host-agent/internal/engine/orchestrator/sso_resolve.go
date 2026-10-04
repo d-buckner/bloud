@@ -49,8 +49,8 @@ func (o *Orchestrator) resolveSSOURLs() ssoURLs {
 		legacy, _ = hostset.ParsePublicURL(hostset.DefaultPublicURL)
 	}
 	return ssoURLs{
-		hostSet:      hostset.New(legacy).WithServedPort(o.config.TraefikPort),
-		baseURLs:     append([]string{o.ssoBaseURL}, netutil.LANBaseURLs(o.config.TraefikPort)...),
+		hostSet:      hostset.New(legacy).WithServedPort(o.config.Runtime.TraefikPort),
+		baseURLs:     append([]string{o.ssoBaseURL}, netutil.LANBaseURLs(o.config.Runtime.TraefikPort)...),
 		hostSecret:   o.ssoHostSecret,
 		authentikURL: o.ssoAuthentikURL,
 		issuerURL:    o.ssoIssuerURL,

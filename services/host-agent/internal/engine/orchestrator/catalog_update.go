@@ -18,11 +18,11 @@ import (
 // the primary node when an app's SSO strategy changed. The diff is against the
 // live container set and the stored sso_strategy, never a persisted snapshot.
 func (o *Orchestrator) reconcileCatalogUpdates(ctx context.Context, appMap map[string]*store.InstalledApp) {
-	if o.config.Containers == nil || o.catalog == nil {
+	if o.config.Runtime.Containers == nil || o.catalog == nil {
 		return
 	}
 
-	containers, err := o.config.Containers.ListContainers(ctx)
+	containers, err := o.config.Runtime.Containers.ListContainers(ctx)
 	if err != nil {
 		o.logger.Warn("catalog update: failed to list containers", "error", err)
 		return
@@ -101,8 +101,8 @@ func (o *Orchestrator) pruneContainer(ctx context.Context, appID, name string) {
 		}
 	}
 
-	if o.config.Containers != nil {
-		if err := o.config.Containers.Remove(ctx, name); err != nil {
+	if o.config.Runtime.Containers != nil {
+		if err := o.config.Runtime.Containers.Remove(ctx, name); err != nil {
 			o.logger.Warn("catalog update: failed to remove container", "container", name, "error", err)
 			// Keep the node: it is the retry signal for the next pass.
 			return

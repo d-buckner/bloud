@@ -27,7 +27,7 @@ func newSyncOrchestratorWithGraph(g *graph.Graph, apps *FakeAppStore, cat catalo
 		cat,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{AppStore: apps, Containers: rt},
+		OrchestratorConfig{Runtime: RuntimeConfig{Containers: rt}, Stores: StoresConfig{AppStore: apps}},
 	)
 }
 

@@ -33,7 +33,7 @@ import (
 // and the app stays dead forever. It is a no-op when the container runtime
 // or app store is not configured.
 func (o *Orchestrator) SyncContainerState(ctx context.Context) {
-	if o.config.Containers == nil || o.appStore == nil || o.catalog == nil {
+	if o.config.Runtime.Containers == nil || o.appStore == nil || o.catalog == nil {
 		return
 	}
 
@@ -115,7 +115,7 @@ func (o *Orchestrator) syncAppContainers(ctx context.Context, app *store.Install
 func (o *Orchestrator) inspectContainers(ctx context.Context, appID string, defs []catalog.ContainerDef) map[string]containerruntime.State {
 	states := make(map[string]containerruntime.State, len(defs))
 	for _, def := range defs {
-		state, err := o.config.Containers.Inspect(ctx, def.Name)
+		state, err := o.config.Runtime.Containers.Inspect(ctx, def.Name)
 		if err != nil {
 			o.logger.Warn("failed to inspect container during sync",
 				"app", appID, "container", def.Name, "error", err)

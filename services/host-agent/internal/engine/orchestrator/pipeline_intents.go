@@ -136,7 +136,7 @@ func (o *Orchestrator) applySetPublicURLIntent(intent SetPublicURLIntent) {
 	// set is built from scratch. A set that lost it would render the detected
 	// LAN URLs on port 80 while the entrypoint serves something else, and the
 	// redirect URIs would be re-registered against a port nothing answers on.
-	hs := hostset.New(public).WithServedPort(o.config.TraefikPort)
+	hs := hostset.New(public).WithServedPort(o.config.Runtime.TraefikPort)
 
 	// No-op guard: skip the side effects when the derived address did not
 	// change. The base URL is compared rather than the raw string, so a save

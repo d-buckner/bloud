@@ -90,12 +90,18 @@ func newRouteSyncOrchestrator(tailnetID string) (*Orchestrator, *orderTracker) {
 		"/tmp/bloud-test",
 		newTestLogger(),
 		OrchestratorConfig{
-			AppStore:        appStore,
-			RemoteAppStore:  remoteStore,
-			Gateway:         &orderGateway{tr: tr, dom: "box.ts.net"},
-			RemoteProxy:     &orderProxy{tr: tr, portMap: map[string]int{"jellyfin-rem": 5001}},
-			TraefikGen:      &orderGenerator{tr: tr},
-			ActiveTailnetID: func() string { return tailnetID },
+			Stores: StoresConfig{
+				AppStore:       appStore,
+				RemoteAppStore: remoteStore,
+			},
+			Tailnet: TailnetConfig{
+				Gateway:         &orderGateway{tr: tr, dom: "box.ts.net"},
+				RemoteProxy:     &orderProxy{tr: tr, portMap: map[string]int{"jellyfin-rem": 5001}},
+				ActiveTailnetID: func() string { return tailnetID },
+			},
+			Runtime: RuntimeConfig{
+				TraefikGen: &orderGenerator{tr: tr},
+			},
 		},
 	)
 	return orch, tr
@@ -169,10 +175,7 @@ func TestConvergeUninstalls_RegeneratesRoutesBeforeResync(t *testing.T) {
 		NewFakeCatalogCache(),
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			AppStore:   appStore,
-			TraefikGen: &orderGenerator{tr: tr},
-		},
+		OrchestratorConfig{Runtime: RuntimeConfig{TraefikGen: &orderGenerator{tr: tr}}, Stores: StoresConfig{AppStore: appStore}},
 	)
 
 	apps, err := appStore.GetAll()

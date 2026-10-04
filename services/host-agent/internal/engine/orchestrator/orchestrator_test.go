@@ -37,7 +37,7 @@ func newTestOrchestrator() *testOrchestrator {
 		nil, // no catalog needed for these tests
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{HealthCheckTimeout: 100 * time.Millisecond},
+		OrchestratorConfig{Tuning: TuningConfig{HealthCheckTimeout: 100 * time.Millisecond}},
 	)
 	return &testOrchestrator{orch: orch, g: g, registry: registry}
 }
@@ -623,10 +623,7 @@ func TestOrchestrator_PreStartChanged_TriggersContainerRemoveBeforeEnsure(t *tes
 		catalogCache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			HealthCheckTimeout: 100 * time.Millisecond,
-			Containers:         mockRuntime,
-		},
+		OrchestratorConfig{Tuning: TuningConfig{HealthCheckTimeout: 100 * time.Millisecond}, Runtime: RuntimeConfig{Containers: mockRuntime}},
 	)
 
 	// Set up a multi-container app: "myapp" owns container "apps-myapp-server".
@@ -683,10 +680,7 @@ func TestOrchestrator_PreStartNotChanged_NoContainerRemove(t *testing.T) {
 		catalogCache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			HealthCheckTimeout: 100 * time.Millisecond,
-			Containers:         mockRuntime,
-		},
+		OrchestratorConfig{Tuning: TuningConfig{HealthCheckTimeout: 100 * time.Millisecond}, Runtime: RuntimeConfig{Containers: mockRuntime}},
 	)
 
 	containerName := "apps-myapp-server"
@@ -737,11 +731,7 @@ func TestOrchestrator_EnsureSSO_UsesCatalogIDForContainerNode(t *testing.T) {
 		catalogCache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			SSO:                ssoMock,
-			SSOBaseURL:         "http://localhost:8080",
-			HealthCheckTimeout: 100 * time.Millisecond,
-		},
+		OrchestratorConfig{Tuning: TuningConfig{HealthCheckTimeout: 100 * time.Millisecond}, SSO: SSOConfig{SSO: ssoMock, SSOBaseURL: "http://localhost:8080"}},
 	)
 
 	// navidrome is defined with a containers list, so its graph node is the
@@ -779,12 +769,7 @@ func TestOrchestrator_EnsureSSO_SkipsNonPrimaryContainerNodes(t *testing.T) {
 		catalogCache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			SSO:             ssoMock,
-			SSOBaseURL:      "http://localhost:8080",
-			SSOHostSecret:   "test-secret",
-			SSOAuthentikURL: "http://localhost:9001",
-		},
+		OrchestratorConfig{SSO: SSOConfig{SSO: ssoMock, SSOBaseURL: "http://localhost:8080", SSOHostSecret: "test-secret", SSOAuthentikURL: "http://localhost:9001"}},
 	)
 
 	// Multi-container app: SSO must be provisioned exactly once, on the
@@ -825,12 +810,7 @@ func TestOrchestrator_EnsureSSO_PassesDeclaredOIDCTuning(t *testing.T) {
 		catalogCache,
 		"/tmp/bloud-test",
 		newTestLogger(),
-		OrchestratorConfig{
-			SSO:             ssoMock,
-			SSOBaseURL:      "http://localhost:8080",
-			SSOHostSecret:   "test-secret",
-			SSOAuthentikURL: "http://localhost:9001",
-		},
+		OrchestratorConfig{SSO: SSOConfig{SSO: ssoMock, SSOBaseURL: "http://localhost:8080", SSOHostSecret: "test-secret", SSOAuthentikURL: "http://localhost:9001"}},
 	)
 
 	// An app that declares sso.scopes / sso.accessTokenMinutes reaches the
@@ -923,7 +903,7 @@ func TestContainerSpecFromDef_NoNetwork(t *testing.T) {
 // longer set their own deadline; the budget is what bounds a hung finalization.
 func TestOrchestrator_PostStart_ApppliesBudgetDeadline(t *testing.T) {
 	to := newTestOrchestrator()
-	to.orch.config.PostStartBudget = 250 * time.Millisecond
+	to.orch.config.Tuning.PostStartBudget = 250 * time.Millisecond
 
 	require.NoError(t, to.g.AddNode("app"))
 	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
@@ -958,7 +938,7 @@ func TestOrchestrator_PostStart_ApppliesBudgetDeadline(t *testing.T) {
 // left at POSTSTART_CONFIG to re-converge on the next start (R3).
 func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing.T) {
 	to := newTestOrchestrator()
-	to.orch.config.PostStartBudget = 5 * time.Second
+	to.orch.config.Tuning.PostStartBudget = 5 * time.Second
 
 	require.NoError(t, to.g.AddNode("app"))
 	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
@@ -998,7 +978,7 @@ func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing
 // genuine timeout and surfaces as ERROR (the app never finished finalizing).
 func TestOrchestrator_PostStart_BudgetExpiryWithLiveParentIsError(t *testing.T) {
 	to := newTestOrchestrator()
-	to.orch.config.PostStartBudget = 50 * time.Millisecond
+	to.orch.config.Tuning.PostStartBudget = 50 * time.Millisecond
 
 	require.NoError(t, to.g.AddNode("app"))
 	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))

@@ -47,7 +47,7 @@ const DefaultSelfHealInterval = 60 * time.Second
 // submitting, the loop waits for that pass to finish before re-arming, so a
 // slow convergence cannot turn into a tight submit cycle.
 func (o *Orchestrator) startSelfHealing(ctx context.Context) {
-	interval := o.config.SelfHealInterval
+	interval := o.config.Tuning.SelfHealInterval
 	if interval <= 0 {
 		o.logger.Info("self-healing pass disabled", "interval", interval.String())
 		return
@@ -122,7 +122,7 @@ func (o *Orchestrator) signalConverged() {
 // Nodes owned by an app that is being uninstalled are skipped: re-driving one
 // would fight the removal that is already queued in the same pass.
 func (o *Orchestrator) retryErroredNodes() {
-	if o.graph == nil || o.config.Operations == nil {
+	if o.graph == nil || o.config.Stores.Operations == nil {
 		return
 	}
 	nodes, err := o.graph.Nodes()
@@ -146,7 +146,7 @@ func (o *Orchestrator) retryErroredNodes() {
 				"node", node.ID, "app", owner)
 			continue
 		}
-		op, err := o.config.Operations.Get(owner)
+		op, err := o.config.Stores.Operations.Get(owner)
 		if err != nil {
 			o.logger.Warn("self-heal: failed to read operation row", "app", owner, "error", err)
 			continue
