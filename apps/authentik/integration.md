@@ -44,6 +44,33 @@ apps-redis ──────┤
 Auto-generates OAuth2/OIDC configs for apps. Example:
 `~/.local/share/bloud/authentik-blueprints/actual-budget.yaml`
 
+## Login Session Duration
+
+A Bloud login lasts **90 days**. `apps/authentik/auth.yaml` declares
+`session_duration: days=90` on the `default-authentication-login` stage, the
+stage that calls `request.session.set_expiry()` and therefore decides how long
+the session behind every SSO round trip lives. Upstream authentik ships that
+stage with `seconds=0`, which ends the session when the browser closes.
+
+The blueprint is the mechanism rather than a `PostStart` PATCH because
+authentik's own worker reconciles it: the file watcher applies the blueprint
+when the file hash changes and the hourly discovery schedule catches anything
+missed. Verified against a live instance: a `session_duration` patched away from
+the blueprint's value through the API is put back by the next apply, so the
+declaration in the repo is what wins.
+
+What this does not change:
+
+- **Access and refresh tokens.** Those are per-app and stay short (`minutes=5`
+  access, `days=30` refresh). An app whose own token expired redirects to
+  authentik, which mints a new one silently while the session above is valid, so
+  the user does not see a login page.
+- **Remember me.** `remember_me_offset` stays zero, so the toggle is not shown.
+  The 90 days is granted on every login rather than offered as a choice, which
+  keeps a single lifetime in play instead of two.
+- **Existing sessions.** A session issued before the change keeps its old
+  expiry; the new duration applies to logins from that point on.
+
 ## SSO Integration for Other Apps
 
 1. Add to app's `metadata.yaml`:

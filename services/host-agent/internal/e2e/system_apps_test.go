@@ -90,6 +90,70 @@ func TestAuthentikLDAPOutpostCreated(t *testing.T) {
 	t.Logf("LDAP outpost present: %s (pk=%s)", outpostResp.Results[0].Name, outpostResp.Results[0].PK)
 }
 
+// TestAuthentikLoginSessionDuration verifies that a converged instance logs
+// people in for 90 days. Bloud declares session_duration on the login stage of
+// the authentication flow blueprint it mounts (apps/authentik/auth.yaml); this
+// asserts the value actually landed in the identity provider rather than only
+// in the file on disk.
+//
+// The blueprint is applied by authentik's worker, not by the host agent, so the
+// assertion polls: the apply can trail the server's readiness probe.
+func TestAuthentikLoginSessionDuration(t *testing.T) {
+	token := authentikToken(t)
+
+	const want = "days=90"
+	deadline := time.Now().Add(3 * time.Minute)
+	var got string
+	for {
+		got = authentikLoginSessionDuration(t, token)
+		if got == want {
+			t.Logf("login session duration is %s", got)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("login session duration = %q, want %q: the blueprint did not apply the "+
+				"session duration to the login stage", got, want)
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// authentikLoginSessionDuration reads the login stage's session_duration through
+// the Authentik API.
+func authentikLoginSessionDuration(t *testing.T, token string) string {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+		authentikURL+"/api/v3/stages/user_login/?search=default-authentication-login", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET stages/user_login: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET stages/user_login: status %d: %s", resp.StatusCode, body)
+	}
+
+	var stageResp struct {
+		Results []struct {
+			Name            string `json:"name"`
+			SessionDuration string `json:"session_duration"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&stageResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(stageResp.Results) == 0 {
+		t.Fatal("no default-authentication-login stage found after convergence")
+	}
+	return stageResp.Results[0].SessionDuration
+}
+
 // TestAuthentikAdminLogin verifies real password authentication through the
 // Authentik flow executor (not just API health or token access).
 func TestAuthentikAdminLogin(t *testing.T) {

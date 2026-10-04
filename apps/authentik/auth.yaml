@@ -3,8 +3,21 @@
 # Replaces /blueprints/default/flow-default-authentication-flow.yaml inside the container
 # so username-only identification is set at the source rather than fighting ordering.
 #
-# The only change from the upstream default is user_fields: [username] instead of
-# [email, username]. Everything else is identical to the Authentik upstream file.
+# Two deliberate deviations from the upstream default file:
+#
+#   1. user_fields: [username] instead of [email, username].
+#   2. session_duration: days=90 on the login stage, so a Bloud login outlives
+#      a browser restart by three months instead of ending when the browser
+#      closes (upstream default: seconds=0).
+#
+# Everything else is identical to the Authentik upstream file.
+#
+# The session duration belongs here rather than in a PostStart PATCH because the
+# login stage is what authentik's own session expiry reads
+# (UserLoginStageView.set_session_duration), and the blueprint is re-applied by
+# the worker on every file change and on the hourly discovery schedule, so the
+# value converges without the host agent having to police it.
+#
 # Flow title is intentionally left as "Welcome to authentik!"; PostStart sets it
 # to "Sign in to Bloud" via API, which serves as the smoke test synchronization signal
 # (CSS is applied before the title is set).
@@ -48,7 +61,9 @@ entries:
     name: default-authentication-identification
   id: default-authentication-identification
   model: authentik_stages_identification.identificationstage
-- identifiers:
+- attrs:
+    session_duration: days=90
+  identifiers:
     name: default-authentication-login
   id: default-authentication-login
   model: authentik_stages_user_login.userloginstage
