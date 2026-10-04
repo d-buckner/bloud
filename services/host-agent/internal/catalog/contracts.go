@@ -102,26 +102,30 @@ var contracts = []Contract{
 		SatisfiedBy: []string{"modelSource"},
 	},
 
-	// The control-plane listener of a running agent, for a front end that
-	// drives it. The provider is the agent; the consumer is its UI.
+	// The state tree of a running agent, shared with a front end that drives
+	// it. The provider is the agent; the consumer is its UI.
 	//
-	// The provider owns the gateway end to end. It mints the credential,
-	// hands it to its own listener, and publishes it here. A consumer never
-	// configures a gateway it is not running, and never reaches into the
-	// provider's `.env` or config file to find the key out: the only thing a
-	// front end gets is what the agent chose to publish. That is why this is
-	// a contract rather than a shared file, and why the secret is the
-	// provider's to mint even though the consumer is the one that will
-	// eventually present it.
+	// This contract carries no payload, and that is the whole point. A front
+	// end that shares the agent's home does not need an address, a port, or a
+	// credential: it needs the same tree the agent reads, so config, memory,
+	// skills, sessions, and the MCP namespaces written for the agent are all
+	// the front end's without a second wiring step. What the contract buys is
+	// the *relationship*: a typed, required graph edge that orders the agent
+	// first and names which app owns the shared state, instead of leaving a
+	// shared mount pointing at a path some other app happens to own.
 	//
-	// `path` is the API root on the provider's address. Declared rather than
-	// assumed so a provider that mounts its surface somewhere else states its
-	// own truth instead of every consumer guessing the shape of the one agent
-	// in this catalog.
+	// It is deliberately not a gateway. An agent's OpenAI-compatible listener
+	// turns the agent into an opaque model endpoint: the front end loses the
+	// sessions, the memory, and the tool namespaces that make it a front end
+	// for *this* agent rather than for any model. Sharing the home keeps all
+	// of it. The shape is upstream's own two- and three-container topology, in
+	// which every surface mounts one `hermes-home`.
+	//
+	// The tree itself is declared in metadata as a shared volume, the way
+	// `media/` and `downloads/` are, because it is not any one app's private
+	// state. The contract is what makes that sharing intentional.
 	{
-		Name:    "agentGateway",
-		Secrets: []string{"httpToken"},
-		Values:  []ValueSpec{{Key: "path", AbsolutePath: true}},
+		Name: "agentHome",
 	},
 
 	// A CalDAV/CardDAV server: the endpoint a calendar or contacts client

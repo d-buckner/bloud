@@ -18,8 +18,14 @@ const healthPath = "/health"
 // profilesPath is the endpoint that reports which Hermes profile the running
 // server resolved, including the provider and model it read out of
 // config.yaml. It is the only place the app states, in its own words, that
-// the agent config Bloud wrote actually took effect.
+// the shared agent config actually took effect.
 const profilesPath = "/api/profiles"
+
+// mcpServersPath reports the MCP servers the running agent has in its
+// config.yaml, with live connection state. It is the read that shows the
+// shared $HERMES_HOME working: whatever Bloud wrote for Hermes, this front
+// end sees, because it is the same file.
+const mcpServersPath = "/api/mcp/servers"
 
 // healthResponse is the subset of /health this app is checked on. The
 // endpoint also carries stream and run counters that mean nothing to a
@@ -86,5 +92,29 @@ func (a *webuiAPI) health(ctx context.Context) (healthResponse, error) {
 func (a *webuiAPI) profiles(ctx context.Context) (profilesResponse, error) {
 	var out profilesResponse
 	err := a.cl.GET(profilesPath).OK(http.StatusOK).DoInto(ctx, &out)
+	return out, err
+}
+
+// mcpServersResponse is the shape of /api/mcp/servers. The app masks
+// credentials in the entries it returns, so nothing sensitive is modeled
+// here even by accident.
+type mcpServersResponse struct {
+	Servers []mcpServerEntry `json:"servers"`
+}
+
+// mcpServerEntry is one MCP server as the app reports it. `Status` is the
+// app's own verdict: active, configured, disabled, or invalid_config.
+type mcpServerEntry struct {
+	Name      string `json:"name"`
+	Transport string `json:"transport"`
+	Enabled   bool   `json:"enabled"`
+	Active    bool   `json:"active"`
+	Status    string `json:"status"`
+}
+
+// mcpServers fetches the agent's MCP server inventory.
+func (a *webuiAPI) mcpServers(ctx context.Context) (mcpServersResponse, error) {
+	var out mcpServersResponse
+	err := a.cl.GET(mcpServersPath).OK(http.StatusOK).DoInto(ctx, &out)
 	return out, err
 }

@@ -5,17 +5,12 @@ package hermeswebui
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +18,6 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // ---- helpers ----
@@ -56,241 +50,39 @@ func newTestConfigurator(t *testing.T, app http.Handler) *Configurator {
 	return c
 }
 
-// inferenceState builds an app state carrying one instance inference
-// binding, the shape the orchestrator produces from Settings -> AI.
-func inferenceState(dataDir, endpoint, apiKey, model string) *configurator.AppState {
-	return &configurator.AppState{
-		DataPath: dataDir,
-		Integrations: configurator.Integrations{
-			Inference: []configurator.InferenceBinding{{
-				Endpoint:     endpoint,
-				APIKey:       apiKey,
-				DefaultModel: model,
-			}},
-		},
-	}
+// appHandler serves a fixed document per path and 404 elsewhere, so a pass
+// can be run against a stand-in for the whole app surface.
+func appHandler(documents map[string]string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := documents[r.URL.Path]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
 }
 
-// readConfigFile reads back the config the configurator wrote.
-func readConfigFile(t *testing.T, dataDir string) map[string]any {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(dataDir, "data", configFileName))
-	require.NoError(t, err, "the configurator should have written the agent config")
-	doc, err := parseConfig(raw)
-	require.NoError(t, err)
-	return doc
-}
+// healthy is the baseline every PostStart test starts from.
+const healthy = `{"status":"ok"}`
 
-// bloudProvider pulls the Bloud provider entry out of a config document.
-func bloudProvider(t *testing.T, doc map[string]any) map[string]any {
-	t.Helper()
-	providers, ok := doc[inferenceProvidersKey].(map[string]any)
-	require.True(t, ok, "config has no %q section", inferenceProvidersKey)
-	entry, ok := providers[inferenceProviderKey].(map[string]any)
-	require.True(t, ok, "config has no %q provider entry", inferenceProviderKey)
-	return entry
-}
+// ---- ownership of the agent config ----
 
-// ---- inference wiring ----
-
-func TestPreStartRegistersTheBloudProvider(t *testing.T) {
+// TestPreStartWritesNoAgentConfig is the ownership assertion the shared
+// home depends on. apps/hermes owns config.yaml; this app only reads it.
+// A second writer on one file is a churn loop, and worse, it would let the
+// front end silently overwrite what the agent's own convergence produced.
+func TestPreStartWritesNoAgentConfig(t *testing.T) {
 	dataDir := t.TempDir()
-	require.NoError(t, SeedInstalledAgentSource(filepath.Join(dataDir, agentSourceDirName)))
 	c := newTestConfigurator(t, nil)
 
-	_, err := c.PreStart(context.Background(),
-		inferenceState(dataDir, "https://ai.example.test/v1", "sk-test-123", "model-a"))
-	require.NoError(t, err)
-
-	entry := bloudProvider(t, readConfigFile(t, dataDir))
-	assert.Equal(t, "Bloud", entry["name"])
-	assert.Equal(t, inferenceAPIMode, entry["api_mode"])
-	assert.Equal(t, "https://ai.example.test/v1", entry["base_url"])
-	assert.Equal(t, "sk-test-123", entry["api_key"])
-	assert.Equal(t, "model-a", entry["default_model"])
-	assert.Equal(t, true, entry["discover_models"],
-		"the agent should refresh its model list from the endpoint rather than trust a snapshot")
-
-	model, ok := readConfigFile(t, dataDir)["model"].(map[string]any)
-	require.True(t, ok, "config has no model selection")
-	assert.Equal(t, inferenceProviderSlug, model["provider"])
-	assert.Equal(t, "model-a", model[modelDefaultKey],
-		"the selected model has to land on the key the agent actually reads")
-}
-
-func TestPreStartAdoptsNoModelTheInstanceDidNotSupply(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, SeedInstalledAgentSource(filepath.Join(dataDir, agentSourceDirName)))
-	c := newTestConfigurator(t, nil)
-
-	_, err := c.PreStart(context.Background(), inferenceState(dataDir, "https://ai.example.test/v1", "k", ""))
-	require.NoError(t, err)
-
-	doc := readConfigFile(t, dataDir)
-	assert.NotContains(t, bloudProvider(t, doc), "default_model",
-		"an empty instance default must not be written as a model")
-	assert.NotContains(t, doc, "model",
-		"with no default to adopt, no model selection should be invented")
-}
-
-func TestPreStartLeavesAnOperatorChosenModelAlone(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, SeedInstalledAgentSource(filepath.Join(dataDir, agentSourceDirName)))
-	cfgDir := filepath.Join(dataDir, "data")
-	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, configFileName),
-		[]byte("model:\n  provider: openrouter\n  default: human-picked-model\n"), 0o644))
-
-	c := newTestConfigurator(t, nil)
-	_, err := c.PreStart(context.Background(), inferenceState(dataDir, "https://ai.example.test/v1", "k", "model-a"))
-	require.NoError(t, err)
-
-	model := readConfigFile(t, dataDir)["model"].(map[string]any)
-	assert.Equal(t, "openrouter", model["provider"],
-		"a model chosen by the operator outranks the Bloud default")
-	assert.Equal(t, "human-picked-model", model[modelDefaultKey])
-
-	assert.Contains(t, bloudProvider(t, readConfigFile(t, dataDir)), "base_url",
-		"the Bloud provider stays registered so switching back in the UI needs no re-typing")
-}
-
-func TestPreStartStripsOnlyWhatBloudWrote(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, SeedInstalledAgentSource(filepath.Join(dataDir, agentSourceDirName)))
-	cfgDir := filepath.Join(dataDir, "data")
-	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, configFileName), []byte(
-		"providers:\n"+
-			"  bloud:\n    base_url: https://old.test/v1\n"+
-			"  other:\n    base_url: https://theirs.test/v1\n"+
-			"model:\n  provider: custom:bloud\n  default: old-model\n"), 0o644))
-
-	c := newTestConfigurator(t, nil)
-	// No inference binding: the managed block and the selection Bloud made
-	// both go away.
 	_, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: dataDir})
 	require.NoError(t, err)
 
-	doc := readConfigFile(t, dataDir)
-	providers, ok := doc[inferenceProvidersKey].(map[string]any)
-	require.True(t, ok)
-	assert.NotContains(t, providers, inferenceProviderKey, "the Bloud entry should be stripped")
-	assert.Contains(t, providers, "other", "a provider someone else added survives")
-
-	assert.NotContains(t, doc, "model",
-		"the selection Bloud wrote should be removed, and the empty section with it")
-}
-
-func TestPreStartKeepsAnOperatorModelWhenInferenceGoesAway(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, SeedInstalledAgentSource(filepath.Join(dataDir, agentSourceDirName)))
-	cfgDir := filepath.Join(dataDir, "data")
-	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, configFileName),
-		[]byte("model:\n  provider: openrouter\n  default: theirs\n"), 0o644))
-
-	c := newTestConfigurator(t, nil)
-	_, err := c.PreStart(context.Background(), &configurator.AppState{DataPath: dataDir})
-	require.NoError(t, err)
-
-	model := readConfigFile(t, dataDir)["model"].(map[string]any)
-	assert.Equal(t, "openrouter", model["provider"],
-		"removing Bloud's inference must not delete a selection Bloud did not write")
-}
-
-func TestPreStartConfigConvergesAfterOneWrite(t *testing.T) {
-	dataDir := t.TempDir()
-	require.NoError(t, SeedInstalledAgentSource(filepath.Join(dataDir, agentSourceDirName)))
-	c := newTestConfigurator(t, nil)
-	state := inferenceState(dataDir, "https://ai.example.test/v1", "k", "model-a")
-
-	first, err := c.PreStart(context.Background(), state)
-	require.NoError(t, err)
-	assert.False(t, first.RestartNeeded,
-		"a config write needs no restart: the app re-reads config.yaml rather than caching it at boot")
-
-	cfgPath := filepath.Join(dataDir, "data", configFileName)
-	before, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-
-	second, err := c.PreStart(context.Background(), state)
-	require.NoError(t, err)
-	assert.False(t, second.RestartNeeded, "a second pass over unchanged intent must ask for nothing")
-
-	after, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	assert.Equal(t, string(before), string(after), "the file must not be rewritten on a no-op pass")
-}
-
-// TestWriteConfigDefersWhenTheHostCannotWriteAndMayNotExec covers the order
-// the two phases depend on: PreStart meets a container-owned directory and
-// leaves it alone rather than failing the pass, because the container it
-// would have to exec into may not exist yet.
-func TestWriteConfigDefersWhenTheHostCannotWriteAndMayNotExec(t *testing.T) {
-	c := newTestConfigurator(t, nil)
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("x: 1\n"), 0o600))
-	require.NoError(t, os.Chmod(filepath.Dir(cfgPath), 0o500))
-	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(cfgPath), 0o755) })
-
-	changed, err := c.writeConfig(context.Background(), cfgPath, []byte("y: 2\n"), false)
-	require.NoError(t, err, "a refused host write is not a failed pass when exec is not authorized")
-	assert.False(t, changed)
-}
-
-// TestWriteConfigGoesThroughTheContainerWhenAuthorized is the whole reason
-// PostStart owns the config convergence: once the agent owns its home, the
-// container is the only writer, and the payload has to reach it encoded.
-func TestWriteConfigGoesThroughTheContainerWhenAuthorized(t *testing.T) {
-	var gotCmd []string
-	c := newTestConfigurator(t, nil)
-	c.exec = func(_ context.Context, container string, _ map[string]string, cmd []string) ([]byte, error) {
-		gotCmd = append([]string{container}, cmd...)
-		return nil, nil
-	}
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("x: 1\n"), 0o600))
-	require.NoError(t, os.Chmod(filepath.Dir(cfgPath), 0o500))
-	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(cfgPath), 0o755) })
-
-	want := []byte("providers:\n  bloud:\n    base_url: https://x.test/v1\n")
-	changed, err := c.writeConfig(context.Background(), cfgPath, want, true)
-	require.NoError(t, err)
-	assert.True(t, changed, "a write that lands inside the container is a change")
-
-	assert.Equal(t, nodeName, gotCmd[0], "the write must target this app's own container")
-	require.Len(t, gotCmd, 4)
-	assert.Equal(t, "sh", gotCmd[1])
-	assert.Equal(t, "-c", gotCmd[2])
-
-	decoded := decodeExecPayload(t, gotCmd[3])
-	assert.Equal(t, string(want), decoded,
-		"the document must arrive byte-for-byte through the base64 channel")
-}
-
-// decodeExecPayload pulls the payload back out of the shell command the
-// configurator built, so the test asserts on the bytes the container would
-// write rather than on the command's shape.
-func decodeExecPayload(t *testing.T, script string) string {
-	t.Helper()
-	match := regexp.MustCompile(`printf %s '([A-Za-z0-9+/=]+)'`).FindStringSubmatch(script)
-	require.Len(t, match, 2, "the script should carry a base64 payload: %s", script)
-	raw, err := base64.StdEncoding.DecodeString(match[1])
-	require.NoError(t, err)
-	return string(raw)
-}
-
-func TestWriteConfigReportsARefusalWithNoExecChannel(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{})
-	c.exec = nil
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("x: 1\n"), 0o600))
-	require.NoError(t, os.Chmod(filepath.Dir(cfgPath), 0o500))
-	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(cfgPath), 0o755) })
-
-	_, err := c.writeConfig(context.Background(), cfgPath, []byte("y: 2\n"), true)
-	require.Error(t, err, "with no exec channel a refused write has nowhere to go")
-	assert.Contains(t, err.Error(), "INTEGRATION.md")
+	_, statErr := os.Stat(filepath.Join(dataDir, "data", "config.yaml"))
+	assert.True(t, os.IsNotExist(statErr),
+		"the web UI must not write the agent config; Hermes owns the shared $HERMES_HOME")
 }
 
 // ---- agent source ----
@@ -391,23 +183,8 @@ func TestPreStartWithoutAnAssetInstallerDoesNotFail(t *testing.T) {
 
 // ---- post-start ----
 
-// jsonHandler serves one JSON document at one path and 404 elsewhere.
-func jsonHandler(t *testing.T, path string, payload any) http.Handler {
-	t.Helper()
-	body, err := json.Marshal(payload)
-	require.NoError(t, err)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != path {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
-	})
-}
-
 func TestPostStartRejectsAnUnhealthyApp(t *testing.T) {
-	c := newTestConfigurator(t, jsonHandler(t, healthPath, healthResponse{Status: "degraded"}))
+	c := newTestConfigurator(t, appHandler(map[string]string{healthPath: `{"status":"degraded"}`}))
 	err := c.PostStart(context.Background(), nil)
 	require.Error(t, err, "an app that reports itself unhealthy must not pass verification")
 	assert.Contains(t, err.Error(), "degraded")
@@ -419,261 +196,91 @@ func TestPostStartToleratesAnUnreachableApp(t *testing.T) {
 		"a transport failure right after the health check passed is a race, not a fault")
 }
 
-func TestPostStartReportsTheWiredProfile(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case healthPath:
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		case profilesPath:
-			_, _ = w.Write([]byte(`{"active":"default","profiles":[{"name":"default","is_default":true,` +
-				`"is_active":true,"provider":"custom:bloud","model":"model-a"}]}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
+// TestPostStartReportsTheSharedProfile is the read-back of the shared home:
+// the profile the running server resolved is the shared config.yaml as the
+// agent read it, so logging it is what makes "one brain, two surfaces"
+// visible rather than assumed.
+func TestPostStartReportsTheSharedProfile(t *testing.T) {
+	c := newTestConfigurator(t, appHandler(map[string]string{
+		healthPath: healthy,
+		profilesPath: `{"active":"default","profiles":[{"name":"default","is_default":true,` +
+			`"is_active":true,"provider":"custom:bloud","model":"model-a"}]}`,
+	}))
 	logger, buf := logSink(t)
-	c := newTestConfigurator(t, handler)
 	c.logger = logger
 
-	dataDir := t.TempDir()
-	require.NoError(t, c.PostStart(context.Background(), inferenceState(dataDir, "https://x.test/v1", "k", "model-a")))
-	assert.Contains(t, buf.String(), "wired to Bloud's model")
+	require.NoError(t, c.PostStart(context.Background(), nil))
+	assert.Contains(t, buf.String(), "shared agent profile")
 	assert.Contains(t, buf.String(), "model-a")
+	assert.Contains(t, buf.String(), "custom:bloud")
 }
 
-func TestPostStartWarnsWhenTheProfileIsNotBlouds(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case healthPath:
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		case profilesPath:
-			_, _ = w.Write([]byte(`{"active":"default","profiles":[{"name":"default","is_default":true,` +
-				`"is_active":true,"provider":"openrouter","model":"theirs"}]}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
+// TestPostStartReportsTheSharedMCPServers is the assertion behind the whole
+// design: an MCP namespace written for Hermes shows up here with no wiring
+// on this side. The web UI reads the same config.yaml, so the namespaces
+// and their live state come straight through its own endpoint.
+func TestPostStartReportsTheSharedMCPServers(t *testing.T) {
+	c := newTestConfigurator(t, appHandler(map[string]string{
+		healthPath: healthy,
+		mcpServersPath: `{"servers":[{"name":"affine-mcp","transport":"http","enabled":true,` +
+			`"active":true,"status":"active"},{"name":"other","transport":"http","enabled":true,` +
+			`"active":false,"status":"configured"}]}`,
+	}))
 	logger, buf := logSink(t)
-	c := newTestConfigurator(t, handler)
 	c.logger = logger
 
-	require.NoError(t, c.PostStart(context.Background(),
-		inferenceState(t.TempDir(), "https://x.test/v1", "k", "model-a")),
-		"an operator-chosen model is not an error")
-	assert.Contains(t, buf.String(), "not using the Bloud provider")
+	require.NoError(t, c.PostStart(context.Background(), nil))
+	assert.Contains(t, buf.String(), "MCP namespaces")
+	assert.Contains(t, buf.String(), "affine-mcp=active")
+	assert.Contains(t, buf.String(), "other=configured")
 }
 
-func TestProviderIsBloud(t *testing.T) {
-	assert.True(t, providerIsBloud("bloud"))
-	assert.True(t, providerIsBloud("custom:bloud"))
-	assert.True(t, providerIsBloud("  Custom:Bloud  "))
-	assert.False(t, providerIsBloud("openrouter"))
-	assert.False(t, providerIsBloud(""))
-	assert.False(t, providerIsBloud("bloud-but-not-really"))
+// TestPostStartNotesAnEmptyMCPHome keeps the empty case a statement rather
+// than a silence or a failure. Hermes' `mcp` contract is optional, so an
+// instance with no MCP-capable app has nothing to share, and that is a
+// valid state an operator should be told about in one line.
+func TestPostStartNotesAnEmptyMCPHome(t *testing.T) {
+	c := newTestConfigurator(t, appHandler(map[string]string{
+		healthPath:     healthy,
+		mcpServersPath: `{"servers":[]}`,
+	}))
+	logger, buf := logSink(t)
+	c.logger = logger
+
+	require.NoError(t, c.PostStart(context.Background(), nil))
+	assert.Contains(t, buf.String(), "carries no MCP servers")
 }
 
-// ---- config document helpers ----
+// TestPostStartToleratesAnUnreadableMCPList keeps a missing endpoint from
+// failing a node that is otherwise healthy. The report is diagnostics; an
+// older image without the route must not turn into a terminal ERROR.
+func TestPostStartToleratesAnUnreadableMCPList(t *testing.T) {
+	c := newTestConfigurator(t, appHandler(map[string]string{healthPath: healthy}))
+	logger, buf := logSink(t)
+	c.logger = logger
 
-// TestReadConfigTreatsAMissingFileAsAbsent is the CI regression. The host
-// cannot stat inside a directory it does not own, so a config that has not
-// been written yet arrives as EACCES rather than ENOENT. Falling back to
-// the container is the only way to tell "absent" from "unreadable", and
-// absent has to mean an empty document rather than a failed node.
-func TestReadConfigTreatsAMissingFileAsAbsent(t *testing.T) {
-	c := newTestConfigurator(t, nil)
-	c.exec = func(_ context.Context, _ string, _ map[string]string, _ []string) ([]byte, error) {
-		return nil, errors.New("podman exec apps-hermes-webui [...]: exit status 44")
-	}
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-	// No execute bit, so traversal is refused and the read comes back EACCES
-	// rather than ENOENT. That is the shape the real directory has: owned by
-	// a uid the host agent is not. A test could not fake the ownership, so
-	// it fakes the permission that produces the same error.
-	require.NoError(t, os.Chmod(dir, 0o600))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
-
-	raw, err := c.readConfig(context.Background(), cfgPath, true)
-	require.NoError(t, err, "an absent config is not a failed read")
-	assert.Nil(t, raw)
+	require.NoError(t, c.PostStart(context.Background(), nil))
+	assert.Contains(t, buf.String(), "could not read the MCP server list")
 }
 
-func TestReadConfigStillReportsARealExecFailure(t *testing.T) {
-	c := newTestConfigurator(t, nil)
-	c.exec = func(_ context.Context, _ string, _ map[string]string, _ []string) ([]byte, error) {
-		return nil, errors.New("podman exec: container not running: exit status 1")
-	}
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.Chmod(dir, 0o600))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+// ---- response shapes ----
 
-	_, err := c.readConfig(context.Background(), cfgPath, true)
-	require.Error(t, err, "only the dedicated absent code means absent")
-	assert.NotErrorIs(t, err, errConfigUnknown,
-		"a container that answered wrongly is a real failure, not an unknown")
+func TestProfilesActivePrefersTheActiveFlag(t *testing.T) {
+	raw := `{"active":"b","profiles":[` +
+		`{"name":"a","is_default":true,"is_active":false},` +
+		`{"name":"b","is_default":false,"is_active":true}]}`
+	var resp profilesResponse
+	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
+
+	active, ok := resp.active()
+	require.True(t, ok)
+	assert.Equal(t, "b", active.Name)
 }
 
-// TestReadConfigIsUnknownBeforeTheContainerExists is the reinstall case that
-// put the node in ERROR. The previous install left $HERMES_HOME owned by the
-// container's uid, so the next install's PreStart gets EACCES, and there is
-// no container to exec into yet. That is "unknown", not "empty" and not
-// "dead": the caller has to write nothing.
-func TestReadConfigIsUnknownBeforeTheContainerExists(t *testing.T) {
-	for name, exec := range map[string]configurator.ExecFunc{
-		"no exec at all": nil,
-		"no container": func(_ context.Context, _ string, _ map[string]string, _ []string) ([]byte, error) {
-			return nil, errors.New(`podman exec apps-hermes-webui [...]: exit status 125: ` +
-				`Error: no container with name or ID "apps-hermes-webui" found: no such container`)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			c := newTestConfigurator(t, nil)
-			c.exec = exec
-			dir := t.TempDir()
-			cfgPath := filepath.Join(dir, "config.yaml")
-			require.NoError(t, os.Chmod(dir, 0o600))
-			t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
-
-			_, err := c.readConfig(context.Background(), cfgPath, false)
-			require.ErrorIs(t, err, errConfigUnknown,
-				"pre-start cannot resolve a refused read, so it must report unknown")
-		})
-	}
-}
-
-// TestConvergeWritesNothingWhenTheConfigIsUnknown is the guard that keeps a
-// blind write from clobbering a config the host cannot see. The agent may
-// hold an operator's model choice in that file; converging from an empty
-// read would replace it, so the whole pass has to be a no-op.
-func TestConvergeWritesNothingWhenTheConfigIsUnknown(t *testing.T) {
-	var wrote bool
-	c := newTestConfigurator(t, nil)
-	c.exec = func(_ context.Context, _ string, _ map[string]string, cmd []string) ([]byte, error) {
-		if strings.Contains(strings.Join(cmd, " "), "base64 -d") {
-			wrote = true
-		}
-		return nil, errors.New(`exit status 125: no such container`)
-	}
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-	require.NoError(t, os.Chmod(dataDir, 0o600))
-	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) })
-
-	changed, err := c.convergeConfig(context.Background(), dir,
-		inferenceState(dir, "https://ai.example.test/v1", "sk-k", "m"), false)
-	require.NoError(t, err, "an unknown config is not a failed pass")
-	assert.False(t, changed)
-	assert.False(t, wrote, "nothing may be written when the current content is unknown")
-}
-
-// TestConvergeWritesAnAbsentConfigThroughTheContainer walks the whole path
-// the failed install took: the host cannot read the directory, the file is
-// not there, and the converged document has to land via exec.
-func TestConvergeWritesAnAbsentConfigThroughTheContainer(t *testing.T) {
-	var written string
-	c := newTestConfigurator(t, nil)
-	c.exec = func(_ context.Context, _ string, _ map[string]string, cmd []string) ([]byte, error) {
-		joined := strings.Join(cmd, " ")
-		if strings.Contains(joined, "base64 -d") {
-			written = decodeExecPayload(t, cmd[len(cmd)-1])
-			return nil, nil
-		}
-		// The read script's "no such file" answer.
-		return nil, errors.New("exit status 44")
-	}
-	// The host cannot write the directory either, so the write must go exec.
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-	require.NoError(t, os.Chmod(dataDir, 0o600))
-	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) })
-
-	changed, err := c.convergeConfig(context.Background(), dir,
-		inferenceState(dir, "https://ai.example.test/v1", "sk-k", "m"), true)
-	require.NoError(t, err)
-	assert.True(t, changed)
-	assert.Contains(t, written, "base_url: https://ai.example.test/v1",
-		"the converged document is what should reach the container")
-}
-
-func TestParseConfigTreatsEmptyAsEmptyDocument(t *testing.T) {
-	for _, raw := range []string{"", "   \n", "\n# only a comment\n"} {
-		doc, err := parseConfig([]byte(raw))
-		require.NoError(t, err)
-		assert.NotNil(t, doc)
-		assert.Empty(t, doc)
-	}
-}
-
-func TestConvergeConfigPreservesUnrelatedKeys(t *testing.T) {
-	dataDir := t.TempDir()
-	cfgDir := filepath.Join(dataDir, "data")
-	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, configFileName),
-		[]byte("memory:\n  enabled: true\nuser:\n  name: someone\n"), 0o644))
-
-	c := newTestConfigurator(t, nil)
-	changed, err := c.convergeConfig(context.Background(), dataDir,
-		inferenceState(dataDir, "https://x.test/v1", "k", "m"), false)
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	doc := readConfigFile(t, dataDir)
-	assert.Equal(t, map[string]any{"enabled": true}, doc["memory"])
-	assert.Equal(t, map[string]any{"name": "someone"}, doc["user"])
-	assert.Contains(t, bloudProvider(t, doc), "base_url")
-
-	// And a second pass over the same intent writes nothing.
-	changed, err = c.convergeConfig(context.Background(), dataDir,
-		inferenceState(dataDir, "https://x.test/v1", "k", "m"), false)
-	require.NoError(t, err)
-	assert.False(t, changed)
-}
-
-// TestConfigRoundTripsThroughYAML guards the assumption the whole merge rests
-// on: that marshaling the parsed document back out re-parses to the same
-// document, which is what makes "changed" mean a real difference.
-func TestConfigRoundTripsThroughYAML(t *testing.T) {
-	doc := map[string]any{}
-	applyInference(doc, configurator.InferenceBinding{
-		Endpoint:     "https://x.test/v1",
-		APIKey:       "k",
-		DefaultModel: "m",
-	})
-	out, err := yaml.Marshal(doc)
-	require.NoError(t, err)
-
-	again, err := parseConfig(out)
-	require.NoError(t, err)
-	assert.Equal(t, doc, again)
-}
-
-// TestVersionMarkerNamesBothPinHalves keeps the marker honest: it has to
-// carry the tag and the digest, or a bump of one leaves the other unable to
-// invalidate the installed tree.
-func TestVersionMarkerNamesBothPinHalves(t *testing.T) {
-	assert.Contains(t, versionMarker, agentSourceTag)
-	assert.Contains(t, versionMarker, agentSourceSHA256)
-}
-
-// TestAgentSourceURLCarriesTheTag guards against a URL that drifted off its
-// own constant, which would pin one version in the marker and fetch another.
-func TestAgentSourceURLCarriesTheTag(t *testing.T) {
-	assert.Contains(t, agentSourceURL, agentSourceTag)
-	assert.Contains(t, agentSourceURL, "NousResearch/hermes-agent")
-}
-
-// TestDefaultPortMatchesRegistration is a local restatement of what the
-// conformance harness checks against metadata, kept here so a change in this
-// package fails fast in its own test run.
-func TestDefaultPortMatchesRegistration(t *testing.T) {
-	c := NewConfigurator(0, configurator.Deps{})
-	assert.Equal(t, defaultPort, c.port)
-	assert.Equal(t, nodeName, c.Name())
-	assert.Equal(t, fmt.Sprintf("http://localhost:%d", defaultPort),
-		fmt.Sprintf("http://localhost:%d", c.port))
+func TestMcpServerSummaryNamesState(t *testing.T) {
+	resp := mcpServersResponse{Servers: []mcpServerEntry{
+		{Name: "affine-mcp", Status: "active"},
+		{Name: "gone", Status: "disabled"},
+	}}
+	assert.Equal(t, []string{"affine-mcp=active", "gone=disabled"}, mcpServerSummary(resp))
 }

@@ -34,50 +34,92 @@ read-only. The upstream init script stages the tree to `/tmp/hermes-agent-build`
 before installing, so a `:ro` mount is the supported shape, not a
 workaround; it warns when the mount is writable instead.
 
-## It requires Hermes (`integrations.agentGateway`)
+## It shares Hermes' home (`integrations.agentHome`)
 
 The image is a front end, so the app it fronts is a dependency, and the
-catalog says so with a required `agentGateway` integration whose default
+catalog says so with a required `agentHome` integration whose default
 provider is `hermes`. That makes the relationship a graph edge rather than
 a paragraph of prose: Hermes converges ahead of this container, the
 dependency shows in `docs/architecture/dependency-graph.md`, and the
 install records the choice instead of leaving it implied.
 
-### Why it declares no `requires`
+The contract carries **no payload**. That is the whole design, not an
+omission. A front end that shares the agent's `$HERMES_HOME` needs no
+address, no port, and no bearer. It needs the same tree:
 
-A required contract hands over the provider's address. A credential comes
-only to a consumer that names it under `integrations.<contract>.requires`,
-and this app names nothing, so `AgentGatewayBinding.Token` is empty here.
+```yaml
+# apps/hermes
+- source: "{{dataDir}}/hermes/home"
+  destination: /opt/data
 
-That is least privilege rather than an omission. This build runs the agent
-**in-process**, from the source tree `agent_source.go` installs, and never
-presents a bearer to anything. A consumer that will not use a credential
-should not hold one, and the loader would let it take one.
+# apps/hermes-webui
+- source: "{{dataDir}}/hermes/home"
+  destination: /home/hermeswebui/.hermes
+```
 
-### What turning the gateway backend on would take
+One `config.yaml`, one memory, one skill set, one session store, one
+`mcp_servers` map. An MCP server added for Hermes is in this UI on the
+same pass with no wiring here at all, because this UI is not synchronising
+with the agent's configuration -- it is reading it.
 
-The app already supports it upstream. `api/gateway_chat.py` reads:
+### This is upstream's own topology, not a Bloud invention
 
-| Variable | What it does |
-|---|---|
-| `HERMES_WEBUI_CHAT_BACKEND` | `gateway` routes browser chat turns over HTTP instead of in-process |
-| `HERMES_WEBUI_GATEWAY_BASE_URL` | the agent to dial |
-| `HERMES_WEBUI_GATEWAY_API_KEY` | the bearer, which must equal the agent's `API_SERVER_KEY` |
+`/apptoo/docker-compose.two-container.yml` and
+`docker-compose.three-container.yml` both mount one `hermes-home` volume
+across the agent and the web UI:
 
-and `api/agent_health.py` resolves a remote gateway from
-`GATEWAY_HEALTH_URL` / `HERMES_GATEWAY_HEALTH_URL` / `HERMES_API_URL`.
+> All three share the same hermes-home volume so config, sessions, skills,
+> and memory are consistent across all surfaces.
 
-The Bloud-side change is one metadata line (`requires: [httpToken]`), the
-three env entries rendered from the binding, and the container work to
-actually run Hermes' `api_server`. The credential itself needs nothing:
-Hermes mints it and publishes it today, which is the point of putting the
-contract in place before the consumer that will read it.
+Bloud's shared tree is that volume. The tree sits outside `apps/` because
+it belongs to neither app, which is the same rule that puts `media/` and
+`downloads/` outside `apps/`.
 
-Upstream's own `docs/architecture/agent-api-contract.md` is explicit that
-the source-tree share is still required and HTTP-only is the migration
-target, so `agent_source.go` is not retired by any of this. The two live
-together: the source tree for the in-process agent, the contract for the
-day the front end stops needing it.
+### Why this is not the gateway
+
+The other way to connect a second front end is Hermes' `api_server`, an
+OpenAI-compatible listener. It was tried and removed. A gateway flattens
+the agent into a model endpoint: the front end posts a prompt and gets a
+completion, and loses the sessions, the memory, the skills, and the tool
+namespaces that make it a front end for *this* agent rather than for any
+model behind a chat-completions URL.
+
+Upstream keeps the gateway for its own purposes -- `HERMES_API_URL` feeds
+the Tasks/System pill and cron ticking -- and that is the correct scope for
+it: a status readout. It is the wrong scope for chat. Bloud wires neither,
+because the shared home makes both unnecessary for the surfaces we ship.
+
+### The uid alignment the sharing costs
+
+Two containers on one tree must run as the same uid, or the first to chown
+it locks the others out of their own config. The images disagree by
+default: this image runs as `hermeswebui` (uid 1024), the agent as
+`hermes` (uid 10000), and under rootless podman those are two different
+host uids.
+
+Both are set to 1000 in `metadata.yaml` -- `WANTED_UID`/`WANTED_GID` here,
+`HERMES_UID`/`HERMES_GID` on the agent -- so both containers land on the
+same host uid and the shared tree is writable by both. Upstream states the
+same requirement in their compose files: "ALL containers that write to the
+same host directory must run as the same UID/GID."
+
+`WANTED_UID=0` is **not** a way through. It keeps the tree host-owned and
+breaks the boot: the init script re-execs through `su` and the second
+phase dies in `rsync: [Receiver] fork failed ... Resource temporarily
+unavailable`. Uid 1000 is a normal privilege drop, which is what works.
+
+### The web UI writes nothing to the shared config
+
+`apps/hermes` is the only Bloud writer of `config.yaml`. This app's
+configurator installs the agent source and reads back what the running app
+resolved; it has no write path to the shared file. Two configurators
+writing one file is a churn loop, and worse, it would let the front end
+silently overwrite what the agent's own convergence produced.
+
+The read-back is `GET /api/profiles` and `GET /api/mcp/servers`, both of
+which report what the running server resolved out of the shared
+`config.yaml`. `PostStart` logs both, so "one brain, two surfaces" is
+visible in the reconciliation log rather than assumed.
 
 ## The agent source pin
 
@@ -180,95 +222,28 @@ again. Three things look like fixes and are not:
   fixer in `api/startup.py:fix_credential_permissions`, which touches
   `.env`, `auth.json`, `.signing_key` and friends. It says nothing about
   the directory, and setting it does not make the directory writable.
-- **`WANTED_UID` / `WANTED_GID`** do control the drop target, and setting
-  them to `0` does keep the tree host-owned. It also breaks the boot: the
-  init script re-execs itself through `su`, and the second phase dies in
+- **`WANTED_UID` / `WANTED_GID`** do control the drop target, and this is
+  the knob Bloud actually uses -- set to `1000`, not `0`, to line this
+  container up with `HERMES_UID` on the agent so both can write the shared
+  tree. Setting them to `0` is a different thing and does not work: it
+  keeps the tree host-owned and breaks the boot, because the init script
+  re-execs itself through `su` and the second phase dies in
   `rsync: [Receiver] fork failed ... Resource temporarily unavailable`.
-  Not a usable escape hatch.
 
-So the rule the configurator follows is a simple one:
+So the rule that follows from all of this, for the app that *does* own the
+file:
 
 > **The host can write `config.yaml` before the agent's first start. After
 > that, the write goes through the running container.**
 
-`PreStart` seeds the file while the host still owns the tree, which is what
-makes a fresh install come up with the instance's model already wired.
-`PostStart` does the real convergence against a live container, because
-the PostStart resync is the only thing that re-runs on a steady-state
-running node, and a change to Settings -> AI has to reach an app that was
-installed weeks ago.
+That rule belongs to `apps/hermes`, which is the writer of the shared
+`config.yaml`. This app has no write path to it at all, which is the point
+of the shared home: the front end reads what the agent's own convergence
+wrote rather than racing it.
 
-### Writing through the container
-
-`Deps.Exec` has no stdin channel, so the document travels inside the
-command line, base64-encoded. The base64 alphabet contains no quote, so
-the single quotes around it need no escaping and no byte of the YAML can
-reach the shell.
-
-The mode needs setting explicitly, and this is the trap that cost the most
-time. A shell redirection **does not change the mode of a file that
-already exists**; it only truncates. Writing into a pre-existing
-root-owned `0600` file left it `0600`, and the app, running as uid 1024,
-could not read its own config. The shipped command sets the mode after the
-write:
-
-```sh
-umask 022
-printf %s '<base64>' | base64 -d > /home/hermeswebui/.hermes/config.yaml
-chmod 644 /home/hermeswebui/.hermes/config.yaml
-```
-
-`644` is `managedfile.ModeSharedConfig`, and it is right here for the same
-reason it is right on the host side: the writer and the reader are
-different uids, and the file's readability is bounded by the `0700`
-directory it lives in, not by its own mode.
-
-Verified from the worst case, a pre-existing `0600 root` file:
-
-```
-PRE:  600 root /home/hermeswebui/.hermes/config.yaml
-POST: 644 root /home/hermeswebui/.hermes/config.yaml
-```
-
-### Reading it back
-
-The same asymmetry runs the other way: once the app has rewritten its own
-config (any settings change does), the file is `0600` and the host cannot
-read it. `readConfig` falls back to `base64` inside the container, which
-reads its own file without complaint.
-
-The fallback has to answer a second question too. A config that has not
-been written yet is **not visible as missing** from the host: the host
-cannot traverse into the directory at all, so `ENOENT` arrives as `EACCES`.
-An unconditional error on the container read therefore failed the node over
-a file that simply was not there yet, which is exactly how the first CI run
-of this app failed:
-
-```
-PostStart failed: reading .../data/config.yaml: permission denied
-  (reading it inside apps-hermes-webui failed too:
-   base64: /home/hermeswebui/.hermes/config.yaml: No such file or directory)
-```
-
-The container-side read is now a script that tests for the file and exits
-with a dedicated code (44) when it is absent, so "absent" is a distinct,
-deterministic answer rather than a string match against an error message
-that could change with locale. Absent means an empty document, which the
-merge then fills with the Bloud provider and writes back through the
-container.
-
-Verified against the live install after deleting the file out from under it:
-
-```
-the agent config does not exist yet; reading it through the container said so
-wrote the agent config through the running container
-the active agent profile is wired to Bloud's model  provider=custom:bloud
-```
-
-The bytes come back encoded on purpose too. `Deps.Exec` merges stdout and
-stderr, so a runtime warning printed during the read would otherwise land
-inside the YAML and get written back over the real config. Encoded,
-contamination fails the decode instead of being merged.
+The measurement above is still worth keeping, because it is what tells you
+why a second writer would have to go through the container too, and why
+two of them on one file is a churn loop rather than a feature.
 
 ## The app re-reads its config live
 
@@ -320,9 +295,10 @@ so `model` survives there as a legacy alias, but the alias is not universal:
 the webui resolver does not carry it, so a session is created with
 `model: ""` and every turn dies on the empty model name.
 
-Write the key every reader agrees on. `modelDefaultKey` names it in both
-this package and `apps/hermes` so the two configurators that write this
-file format cannot drift apart again.
+Write the key every reader agrees on. `modelDefaultKey` names it in
+`apps/hermes`, the one Bloud writer of this file format. The web UI reads
+the same key through its own resolver and writes nothing, so there is no
+second configurator left to drift.
 
 ## The venv's `.deps_installed` marker can poison an install
 
@@ -415,17 +391,16 @@ The measurements above, as commands:
 podman run --rm -v $PWD:/home/hermeswebui/.hermes/hermes-agent:ro \
   ghcr.io/nesquena/hermes-webui:0.52.113
 
-# Who owns the home after the agent has run
-podman exec <ctr> id hermeswebui            # uid=1024(hermeswebui)
-stat -c '%a %u:%g' $BLOUD_DATA_DIR/apps/hermes-webui/data   # 700, a subuid
+# Both containers land on one uid in the shared tree
+podman exec <webui> id                      # uid=1000(...) after the drop
+podman exec <hermes>  id hermes             # uid=1000(hermes) after the remap
+stat -c '%a %u:%g' $BLOUD_DATA_DIR/hermes/home               # one owner, both containers
 
-# The app's own account of the config it read
-podman exec <ctr> curl -s http://127.0.0.1:8787/api/profiles
+# The app's own account of the shared config it read
+podman exec <webui> curl -s http://127.0.0.1:8787/api/profiles
 
-# The refusal and the escape
-echo x > $BLOUD_DATA_DIR/apps/hermes-webui/data/config.yaml   # Permission denied
-podman exec <ctr> sh -c "umask 022; printf %s '<b64>' | base64 -d > \
-  /home/hermeswebui/.hermes/config.yaml; chmod 644 /home/hermeswebui/.hermes/config.yaml"
+# The proof the sharing works: the agent's MCP namespaces, seen from the UI
+podman exec <webui> curl -s http://127.0.0.1:8787/api/mcp/servers
 ```
 
 ## Icon
@@ -540,16 +515,19 @@ hermes-webui-forwardauth:
   An agent that writes files should write them where its own backup
   covers them. Wiring it at the shared libraries is a deliberate future
   decision, not an oversight.
-- **One inference binding.** The agent takes one provider from Bloud; the
-  instance's other AI settings are not mapped.
-- **A model chosen inside the app outranks Bloud's default.** The
-  configurator never overwrites a `model.provider` it did not write, and
-  `PostStart` warns rather than fails when the active profile is not
-  Bloud's. The cost of that guard is stickiness: because Bloud writes
-  `model.provider` itself on the first pass, a later change to the
-  instance default model does not reach an app that already has a
-  selection. Making Bloud's own selection updatable without clobbering an
-  operator's is an open question, not a bug to paper over.
+- **The model is Hermes' setting, not this app's.** The agent takes the one
+  provider and the one model `apps/hermes` writes into the shared
+  `config.yaml`. A model chosen inside this UI and Bloud's instance
+  default are the same file's two keys, and the stickiness rule lives on
+  the writer: `apps/hermes` never overwrites a `model.provider` it did
+  not write. Making Bloud's default updatable without clobbering an
+  operator's choice is an open question on that app, not on this one.
+- **Two containers, one tree, one uid.** The sharing is only safe while
+  `WANTED_UID` here and `HERMES_UID` on the agent agree. If either is
+  changed alone, the container that starts second loses access to a tree
+  the other one chowned. The failure is loud -- a `PermissionError` on
+  `config.yaml` at import -- but it is a coupling an operator can break
+  from two different places, and nothing in Bloud asserts the pair today.
 - **`*.localhost` does not serve a forward-auth app under a public URL.**
   Traefik's routes are domain-agnostic, so the router matches, but the
   Authentik proxy outpost resolves the application by the request's host

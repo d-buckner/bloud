@@ -24,12 +24,54 @@ single process. The pieces that matter for the integration:
   actual service. The orchestrator's `restartPolicy: always` keeps the whole
   stack up; s6 supervises the dashboard inside it.
 
-## State / volume
+## State / volume: a shared tree, not this app's private one
 
-`HERMES_HOME=/opt/data`, mounted from `{{appDataDir}}/data`. Hermes seeds its
-own `config.yaml`, memory, skills, and SQLite session store there on first boot.
-Bloud writes **only** the SSO keys into that `config.yaml` (see below); every
-other key belongs to the user and is preserved untouched.
+`HERMES_HOME=/opt/data`, mounted from `{{dataDir}}/hermes/home` -- **not**
+from `{{appDataDir}}/data`. That is the load-bearing line in this app.
+
+The Hermes agent's home is a shared tree that Bloud owns for the whole
+stack, the same way `media/` and `downloads/` are shared. `apps/hermes`
+and `apps/hermes-webui` both mount it as their `$HERMES_HOME`, so there is
+one `config.yaml`, one memory, one skill set, one session store, and one
+`mcp_servers` map behind both surfaces. `dirs.HermesHomeDir` is the single
+definition of the path.
+
+What that buys is the property the two-app split only works if it has: an
+MCP server added for Hermes is in the web UI on the same pass, with no
+wiring on the web UI's side. The front end is not syncing with the agent,
+it is reading the agent's file.
+
+`apps/hermes` is the **only** Bloud writer of that file. Hermes seeds its
+own `config.yaml`, memory, skills, and SQLite session store there on first
+boot; Bloud writes the SSO keys, the inference provider block, and the
+MCP namespaces into it, and every other key belongs to the user and is
+preserved untouched. Giving the front end a second writer would be a churn
+loop and an ownership lie, so it has none -- see
+`apps/hermes-webui/INTEGRATION.md`.
+
+### The uid alignment the sharing costs
+
+Two containers on one tree must run as the same uid, or the first to chown
+it locks the others out of their own config. The images disagree by
+default: `nousresearch/hermes-agent` runs as `hermes` (uid 10000) and
+`nesquena/hermes-webui` runs as `hermeswebui` (uid 1024), which under
+rootless podman are two different host uids.
+
+Both images ship a remap knob, and both are set to 1000 in `metadata.yaml`:
+
+| Container | Knob | Effect |
+|---|---|---|
+| `apps-hermes` | `HERMES_UID` / `HERMES_GID` | `stage2-hook.sh` does `usermod`/`groupmod` plus a targeted chown |
+| `apps-hermes-webui` | `WANTED_UID` / `WANTED_GID` | the init script drops privileges to that uid |
+
+Container uid 1000 maps to the same host uid in both, so the shared tree is
+writable by both. This is upstream's own requirement, stated in their
+two- and three-container compose files: "ALL containers that write to the
+same host directory must run as the same UID/GID."
+
+Note this is not the `WANTED_UID=0` path, which does not work: the webui's
+init re-execs through `su` and the second phase dies in an `rsync` fork.
+Uid 1000 is a normal drop, not a refusal to drop.
 
 ## The data-directory ownership contract (issue #136)
 
@@ -355,98 +397,49 @@ model:
 own, so an operator who picked a different provider keeps it. `discover_models`
 keeps the model list live from the endpoint rather than a snapshot.
 
-## The gateway credential (`provides: agentGateway`)
+## Why there is no gateway (`provides: agentHome`, not a listener)
 
-The Hermes gateway has a key-authed control-plane listener: `api_server`,
-which refuses to start with a key shorter than 16 characters. The webui
-front end and anything else that wants to drive the agent needs that key, so
-the question is who owns it.
+Hermes has a key-authed control-plane listener, `api_server`, which is an
+OpenAI-compatible endpoint. Bloud does not use it, and the reason is worth
+writing down because the gateway is the obvious thing to reach for when a
+second front end shows up.
 
-**Hermes does.** That is what `provides: agentGateway` says, and it is why
-the credential is minted here rather than somewhere downstream: a consumer
-should never reach into this app's dotfile to find a secret out, and this
-app should not have to trust a key somebody else chose for it.
+A gateway turns the agent into an opaque model endpoint. The front end
+posts a prompt and gets a completion. It loses the sessions, the memory,
+the skills, and the tool namespaces -- everything that makes it a front end
+for *this* agent rather than for any model behind a chat-completions URL.
+For a product whose whole differentiator is that Bloud holds the
+integration knowledge and keeps the surfaces coherent, routing the front
+end through a flattened model API throws away exactly the part that is the
+point.
 
-### Why Bloud mints it instead of reading it back
+The alternative is the one upstream ships: **share the home**. The web UI
+mounts the same `$HERMES_HOME`, reads the same `config.yaml`, and runs the
+agent against it. Every surface sees the same everything because there is
+one everything. That is what `provides: agentHome` declares -- the shared
+state tree and the graph edge that orders the agent first -- and it carries
+no payload on purpose: no address, no port, no bearer.
 
-The image mints its own key when nothing is there:
+### What was removed with it
 
-```sh
-# /opt/hermes/docker/stage2-hook.sh
-elif ! grep -q '^API_SERVER_KEY=..*' "$HERMES_HOME/.env" 2>/dev/null; then
-    ...
-    printf 'API_SERVER_KEY=%s\n' "$_gen_key" >> "$HERMES_HOME/.env"
-```
+An earlier revision minted an `API_SERVER_KEY` into `$HERMES_HOME/.env` and
+published it under an `agentGateway` contract so a front end could dial
+`api_server`. That machinery is gone: the contract, the credential minting
+and re-assertion, and the binding type. Two things worth keeping in mind if
+anyone reaches to bring it back:
 
-That key is unreachable from the host, and not in the way `config.yaml`
-is. The same hook tightens the file on every boot:
+- The `.env` file is not writable from the host after first boot. The
+  image's `stage2-hook.sh` chowns it to the runtime user and `chmod 600`s
+  it on **every** start, unconditionally ("so a host-mounted `.env` that
+  was world-readable gets tightened"). Under rootless podman that is a host
+  uid in the subuid range the agent is not, so the value can only be
+  asserted through the running container.
+- The OpenAI-compatible root `api_server` mirrors its surface under is
+  `/v1` (`SHARED_LISTENER_MIRROR_PATHS` in `gateway/config.py`), not the
+  `:9119` dashboard port this app's `port` names.
 
-> `.env holds API keys and secrets - restrict to owner-only access.`
-> Applied unconditionally (not only on first-seed) so a host-mounted `.env`
-> that was world-readable gets tightened
-
-`chown hermes:hermes` plus `chmod 600`, every start, whether or not
-anything changed. Under rootless podman that `hermes` is a host uid inside
-the subuid range and the host agent is not it, so the file is not merely
-unreadable, it is unwritable too. There is no `HERMES_HOME_MODE`-shaped
-override for this: that variable governs the credential-file *fixer*, and
-this is not the fixer, it is the hook.
-
-So the direction has to be the other way. Bloud mints the credential into
-its own secrets store (`SetAppSecret("hermes", "httpToken", ...)`), seeds
-it into `$HERMES_HOME/.env` as `API_SERVER_KEY`, and publishes the same
-value under the contract. The image's generation branch then never fires,
-because a non-empty key is already there, and the value the contract hands
-out is the value the listener authenticates with.
-
-### The seeding window
-
-`PreStart` on a fresh install is the last moment the host can write that
-file. From the second boot the hook has chowned it, so `seedGatewayCredential`
-checks the host read and treats `EACCES` as the normal steady state rather
-than a failure, and `convergeGatewayEnv` in `PostStart` re-asserts the key
-through the running container, which reads and writes its own file without
-complaint.
-
-The re-assertion is what makes the published value the *effective* one.
-Without it, delete `.env` after first boot and the image mints its own on
-the next start while the contract keeps handing out the old secret: a
-credential that quietly stops meaning anything. That is the failure this
-half exists to close.
-
-`PostStart` warns rather than fails on a bad convergence. The dashboard is
-what this node serves to a user and it is healthy by the time the write is
-attempted; parking a working install in a terminal `ERROR` because one
-write into the app's own dotfile did not land would trade a working thing
-for a louder one. The next pass retries.
-
-### The merge
-
-`.env` is Hermes' file and Bloud is a guest in it, so
-`mergeGatewayEnvKey` replaces the one line this app claims and preserves
-every other line verbatim and in place. Two details that are load-bearing:
-
-- **Duplicates collapse to one.** `python-dotenv` takes the last match, so
-  a file that grew a new `API_SERVER_KEY` on every pass would silently
-  change which credential is effective. The merge keeps exactly one.
-- **The merge is a fixed point.** Re-running it over its own output moves
-  no bytes, which is what lets a steady-state reconciliation pass write
-  nothing at all. Asserted per case in `gateway_test.go`.
-
-### What is not running
-
-Bloud does not start the gateway process. This container runs the dashboard
-only (`HERMES_DASHBOARD=1` with a parked main program), and the dashboard
-serves chat in-process rather than through `api_server`. The credential is
-provisioned ahead of the listener on purpose: the day the gateway comes up,
-it comes up with the instance's key rather than one the image invented
-behind a `0600` file, and the contract already names the value.
-
-`path: /v1` in the `provides:` entry is the OpenAI-compatible root
-`api_server` mirrors its surface under (`SHARED_LISTENER_MIRROR_PATHS` in
-`gateway/config.py`), not the `:9119` dashboard port this app's `port`
-names. It is declared rather than assumed so a consumer concatenates a
-truth this app stated instead of a shape it guessed.
+Neither is a reason to prefer the gateway. They are notes on why the
+previous revision cost what it did.
 
 ## Health check
 

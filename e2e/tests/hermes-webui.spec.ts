@@ -27,7 +27,7 @@ describeApp(
     });
 
     test('brought Hermes in as the agent it fronts', async () => {
-      // The required `agentGateway` contract means installing the front end
+      // The required `agentHome` contract means installing the front end
       // resolves Hermes as its provider and records it first, so a
       // hermes-webui install is also what puts the agent on the instance.
       // Asserted as an observable outcome rather than a metadata read,

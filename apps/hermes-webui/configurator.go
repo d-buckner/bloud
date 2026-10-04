@@ -5,16 +5,18 @@
 // Hermes Web UI is a browser front end for the Hermes agent. The image is
 // only the front end: the agent itself is a Python source tree the
 // entrypoint installs into the venv it builds on first boot, from wherever
-// it is mounted. So this configurator has two jobs the metadata cannot do.
+// it is mounted.
 //
-// PreStart puts the agent source in place, from a pinned, digest-verified
-// archive, and converges the agent's own config.yaml with the model Bloud's
-// AI settings point at. PostStart asks the running app, through its own
-// profile endpoint, whether the agent it resolved is the one Bloud
-// configured.
+// The app shares its $HERMES_HOME with apps/hermes rather than keeping its
+// own, which is what makes it a front end instead of a second agent: one
+// config.yaml, one memory, one session store, one set of MCP namespaces.
+// That sharing decides this configurator's shape. It owns exactly two things
+// -- putting the pinned agent source where the entrypoint can build from it,
+// and reading back what the running app resolved -- and it owns no write
+// path to the agent's configuration, because apps/hermes is that writer.
 //
-// The full story, including why the SSO strategy is forward-auth rather than
-// the app's own OIDC client, is in INTEGRATION.md.
+// The full story, including why the SSO strategy is forward-auth rather
+// than the app's own OIDC client, is in INTEGRATION.md.
 package hermeswebui
 
 import (
@@ -49,11 +51,6 @@ type Configurator struct {
 	// CLI or unit-test context is detected; see canInstallAssets.
 	assets appasset.Installer
 
-	// exec runs a command inside the running container. It is the fallback
-	// reader for config.yaml, which the host agent cannot read once the
-	// container owns it (see readConfig). Nil in CLI/test contexts.
-	exec configurator.ExecFunc
-
 	// baseURL is a test seam: when set, the API client resolves to it
 	// instead of localhost:port.
 	baseURL string
@@ -72,7 +69,6 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		port:   port,
 		logger: logger.With("app", appName),
 		assets: deps.Assets,
-		exec:   deps.Exec,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -95,21 +91,17 @@ func (c *Configurator) canInstallAssets() bool {
 	return c.assets.CacheDir != ""
 }
 
-// PreStart makes the two things true that the container needs before it
-// starts: the agent source is mounted in from a tree Bloud installed, and
-// the agent's config.yaml carries the Bloud model if the host still owns
-// the file.
+// PreStart puts the agent source in place. That is all this app owns.
 //
-// The config half is a seed, not a convergence. Before the first start the
-// host owns the whole app tree and can write the file directly, which is
-// what makes a fresh install come up with the instance's model already
-// wired. After that first start the agent owns it and PreStart cannot write
-// it any more, so it logs and leaves the real convergence to PostStart,
-// which runs against a live container.
+// It does not write the agent's config.yaml, because it does not own that
+// file. This container mounts the same $HERMES_HOME tree apps/hermes does,
+// and Hermes is the writer: the SSO block, the model selection, and every
+// MCP namespace Bloud resolves for Hermes land in that one file, and this
+// UI reads them from there. Two configurators writing one file is a churn
+// loop and an ownership lie, so there is one.
 //
-// Only the agent source asks for a restart. A config change does not: the
-// app reads config.yaml live rather than caching it at boot, which was
-// measured, not assumed.
+// Only the agent source asks for a restart. A new source tree has to be
+// installed at boot, when the entrypoint builds the venv from it.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	if state == nil {
 		return configurator.NoRestart(), nil
@@ -120,32 +112,26 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return configurator.NoRestart(), err
 	}
 
-	if _, err := c.convergeConfig(ctx, state.DataPath, state, false); err != nil {
-		return configurator.NoRestart(), err
-	}
-
 	return configurator.RestartIf(agentChanged, "Hermes agent source installed"), nil
 }
 
-// PostStart converges the agent config against the instance's AI settings
-// and verifies the app is serving the model that was written.
+// PostStart verifies the app is serving, then reads back the two things the
+// shared-home design is supposed to produce: the agent profile the app
+// resolved out of the shared config.yaml, and the MCP namespaces it can see.
 //
-// This is where the config work has to live. The PostStart resync re-runs
-// on every pass over a running node, which is the only way a change to
-// Settings -> AI reaches an app that is already installed, and the running
-// container is the only process with a right to write its own config file.
-// No restart is asked for, because none is needed: the app re-reads the
-// file rather than holding a boot-time snapshot.
+// Both reads are reports, not gates. This app owns neither the model choice
+// nor the MCP set; Hermes writes them. Failing this node over a value that
+// lives in another app's convergence would blame the wrong thing. What the
+// reads buy is visibility: if the shared tree is not really shared, or
+// Hermes never wrote what it should have, the log says so instead of the
+// operator finding out by opening the chat and seeing no tools.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	if err := c.verifyServing(ctx); err != nil {
 		return err
 	}
 
-	if _, err := c.convergeConfig(ctx, dataDirOf(state), state, true); err != nil {
-		return err
-	}
-
-	c.reportAgentProfile(ctx, state)
+	c.reportAgentProfile(ctx)
+	c.reportMCPServers(ctx)
 	return nil
 }
 
@@ -169,32 +155,14 @@ func (c *Configurator) verifyServing(ctx context.Context) error {
 	return nil
 }
 
-// dataDirOf returns the app's own data directory, or an empty string when
-// there is no state to speak of.
-func dataDirOf(state *configurator.AppState) string {
-	if state == nil {
-		return ""
-	}
-	return state.DataPath
-}
-
 // reportAgentProfile reads the app's own view of the agent it resolved and
-// says whether it matches the Bloud inference binding.
-//
-// The read is a report rather than a gate. A model the operator picked
-// inside the app outranks Bloud's default by design, and parking a working
-// container in a terminal ERROR because someone chose differently in the UI
-// would be the worse failure.
-func (c *Configurator) reportAgentProfile(ctx context.Context, state *configurator.AppState) {
-	_, hasInference := inferenceBinding(state)
-	if !hasInference {
-		c.logger.Info("no Bloud inference binding; the agent is left on whatever model it was configured with")
-		return
-	}
-
+// logs it. The profile is the shared config.yaml as the running server read
+// it, so this is where "the two containers share one brain" is either
+// visible or visibly broken.
+func (c *Configurator) reportAgentProfile(ctx context.Context) {
 	profiles, err := c.api.profiles(ctx)
 	if err != nil {
-		c.logger.Warn("could not read the agent profile list to verify the model wiring",
+		c.logger.Warn("could not read the agent profile list to verify the shared agent config",
 			"path", profilesPath, "error", err)
 		return
 	}
@@ -203,24 +171,42 @@ func (c *Configurator) reportAgentProfile(ctx context.Context, state *configurat
 		c.logger.Warn("the app reported no Hermes profiles; the agent has nothing to run")
 		return
 	}
-
-	if !providerIsBloud(active.Provider) {
-		c.logger.Warn("the active agent profile is not using the Bloud provider; "+
-			"a model chosen inside the app outranks the instance default",
-			"profile", active.Name, "provider", active.Provider, "model", active.Model,
-			"expectedProvider", inferenceProviderSlug)
-		return
-	}
-	c.logger.Info("the active agent profile is wired to Bloud's model",
+	c.logger.Info("the web UI resolved the shared agent profile",
 		"profile", active.Name, "provider", active.Provider, "model", active.Model)
 }
 
-// providerIsBloud reports whether a provider string the app reported refers
-// to the Bloud entry. The app renders the selection slug in more than one
-// shape across its endpoints (the bare key and the `custom:`-qualified
-// slug), so both are accepted; anything else is a provider someone chose by
-// hand.
-func providerIsBloud(reported string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(reported))
-	return trimmed == inferenceProviderKey || trimmed == strings.ToLower(inferenceProviderSlug)
+// reportMCPServers logs the MCP namespaces the running agent can see. This
+// is the read that proves the shared home works: the set is whatever Bloud
+// wrote into the shared config.yaml for Hermes, surfaced through the web
+// UI's own endpoint.
+//
+// A warning rather than a failure when the list is empty. Hermes' `mcp` is
+// an optional contract, so an instance with no MCP-capable app installed
+// has nothing to share, and that is a valid state rather than a broken one.
+func (c *Configurator) reportMCPServers(ctx context.Context) {
+	servers, err := c.api.mcpServers(ctx)
+	if err != nil {
+		c.logger.Warn("could not read the MCP server list to verify the shared agent config",
+			"path", mcpServersPath, "error", err)
+		return
+	}
+	if len(servers.Servers) == 0 {
+		c.logger.Info("the shared agent home carries no MCP servers; installing an "+
+			"MCP-capable app will reach this UI without a change here",
+			"path", mcpServersPath)
+		return
+	}
+	c.logger.Info("the web UI sees Hermes' MCP namespaces through the shared agent home",
+		"servers", mcpServerSummary(servers))
+}
+
+// mcpServerSummary renders the namespaces and their state for the log line,
+// so an operator can tell "configured" from "active" without opening the
+// UI.
+func mcpServerSummary(r mcpServersResponse) []string {
+	out := make([]string, 0, len(r.Servers))
+	for _, s := range r.Servers {
+		out = append(out, s.Name+"="+s.Status)
+	}
+	return out
 }

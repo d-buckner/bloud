@@ -19,34 +19,25 @@ integrations:
     compatible:
       - app: authentik
         default: true
-  # The agent this UI drives needs a model, and the instance is the provider.
-  # `source: instance` means the resolver reads Bloud's own AI settings
-  # (Settings -> AI), so there is no container to order on the graph; the
-  # edge to the AI Model node is the wiring, and the configurator writes the
-  # endpoint and key into the agent's config.yaml.
-  inference:
-    required: false
-    multi: false
-    requires:
-      - apiKey
-    compatible:
-      - source: instance
-        default: true
-
   # The agent this UI is a front end for. Required: the image ships no agent
   # of its own, so an install with nothing behind it is a chat window with
   # nobody answering. The edge orders Hermes ahead of this container on the
   # graph and makes the dependency visible instead of implied.
   #
-  # It declares no `requires`, so it gets the gateway address and no
-  # credential. This build runs the agent in-process from the source tree
-  # Bloud installs (agent_source.go) rather than dialing the gateway, and a
-  # consumer that will not present a bearer should not be handed one. The
-  # whole metadata change that turns the gateway backend on later is one
-  # `requires: [httpToken]` line plus the app's own
-  # HERMES_WEBUI_CHAT_BACKEND / GATEWAY_BASE_URL env: the credential is
-  # already minted and published by Hermes, which owns it.
-  agentGateway:
+  # The contract carries no payload because the sharing is the payload: this
+  # container mounts the same $HERMES_HOME tree Hermes does (see the
+  # `hermes/home` volume below), so it reads the same config.yaml. The SSO
+  # block, the model selection, and every MCP namespace Bloud writes for
+  # Hermes are live here on the same pass, with no wiring on this side. An MCP
+  # server added in Hermes shows up in this UI without a change to this app.
+  #
+  # This is deliberately not the agent's OpenAI-compatible gateway. That
+  # would flatten the agent into a model endpoint and drop the sessions,
+  # memory, and tool namespaces that make this a front end for *this* agent
+  # rather than for any model. It is also upstream's own topology: their two-
+  # and three-container compose files mount one `hermes-home` across every
+  # surface. See INTEGRATION.md.
+  agentHome:
     required: true
     multi: false
     compatible:
@@ -79,14 +70,17 @@ containers:
       # upstream lays it out.
       HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui
       HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
-      # No permission-relaxing variable goes here, because none works. Once
-      # the agent has run it owns $HERMES_HOME: the tree is chowned to the
-      # image's runtime user, which under rootless podman is a host subuid
-      # the host agent is not, and the directory ends up 0700. The host can
-      # write config.yaml before that first start and never again, so the
-      # configurator writes it through the running container instead. See
-      # INTEGRATION.md for the measurement.
-      #
+      # The uid every container mounting the shared hermes/home tree must run
+      # as, matching HERMES_UID/HERMES_GID on apps/hermes. This image's
+      # runtime user is 1024 and the agent's is 10000; unaligned, they are
+      # two different host uids under rootless podman and whichever one
+      # chowns the shared tree first locks the other out of its own config.
+      # Set to 1000 on both sides, both containers land on the same host uid,
+      # and the tree is writable by both. Note this is the opposite of the
+      # WANTED_UID=0 experiment recorded in INTEGRATION.md: uid 0 breaks the
+      # init script's `su` re-exec, uid 1000 does not.
+      WANTED_UID: "1000"
+      WANTED_GID: "1000"
       # The agent source is installed from a source checkout (see the
       # agent-src mount and INTEGRATION.md), and that checkout's setup.py
       # refuses to build a wheel outside a Nix sandbox. This is the
@@ -96,9 +90,13 @@ containers:
       - host: 8787
         container: 8787
     volumes:
-      # $HERMES_HOME: the agent's config.yaml, memory, skills, session store,
-      # and the webui's own state directory.
-      - source: "{{appDataDir}}/data"
+      # $HERMES_HOME, shared with apps/hermes. Same tree, same config.yaml:
+      # the SSO block, the model, the memory, the sessions, and the
+      # mcp_servers Bloud writes for Hermes are what this UI reads, which is
+      # why an MCP server added on the agent side needs no change here. The
+      # tree lives outside apps/ because it belongs to neither app; see
+      # dirs.HermesHomeDir.
+      - source: "{{dataDir}}/hermes/home"
         destination: /home/hermeswebui/.hermes
       # The Hermes agent source the webui installs into its venv at first
       # boot. Read-only: the webui only reads this tree to build against it,

@@ -133,9 +133,8 @@ flowchart TD
     app_hermes -->|mcp| app_affine_mcp
     app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
-    app_hermes_webui -->|inference| ai_model
     app_hermes_webui -->|forward-auth| app_authentik
-    app_hermes_webui -->|agentGateway| app_hermes
+    app_hermes_webui -->|agentHome| app_hermes
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
     app_jellyfin -->|ldap| app_authentik

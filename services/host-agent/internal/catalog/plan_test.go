@@ -222,15 +222,15 @@ func TestPlanInstall_ShippedHermesWebUIRequiresHermes(t *testing.T) {
 
 	var choice *IntegrationChoice
 	for i := range plan.Choices {
-		if plan.Choices[i].Integration == "agentGateway" {
+		if plan.Choices[i].Integration == "agentHome" {
 			choice = &plan.Choices[i]
 		}
 	}
 	if choice == nil {
-		t.Fatalf("installing hermes-webui produced no agentGateway choice: %+v", plan.Choices)
+		t.Fatalf("installing hermes-webui produced no agentHome choice: %+v", plan.Choices)
 	}
 	if !choice.Required {
-		t.Error("the agentGateway choice must be required: the front end has no agent without it")
+		t.Error("the agentHome choice must be required: the front end has no agent without it")
 	}
 	if choice.Recommended != "hermes" {
 		t.Errorf("recommended provider = %q, want hermes", choice.Recommended)
@@ -256,7 +256,7 @@ func TestPlanRemove_HermesBlockedByInstalledWebUI(t *testing.T) {
 	}
 	var named bool
 	for _, b := range plan.Blockers {
-		if strings.Contains(b, "hermes-webui") && strings.Contains(b, "agentGateway") {
+		if strings.Contains(b, "hermes-webui") && strings.Contains(b, "agentHome") {
 			named = true
 		}
 	}

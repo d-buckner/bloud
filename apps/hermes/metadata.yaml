@@ -54,27 +54,19 @@ integrations:
       # and multi, so neither app is required.
       - app: affine-mcp
 
-# What Hermes hands the front ends that drive it. The gateway is Hermes' own
-# process and Hermes' own secret: the image's stage2 hook will mint an
-# API_SERVER_KEY into $HERMES_HOME/.env if nothing is there, and a key that
-# lives only in a file Bloud cannot read back is a key Bloud cannot publish.
-# So the configurator mints one through the secrets store, writes it into
-# that .env before the container starts, and publishes it here as the same
-# credential under a name a consumer is allowed to ask for.
+# What Hermes hands the front ends that drive it: its own state tree. The
+# sharing is declared here rather than as a credential because a front end
+# that mounts $HERMES_HOME needs no address and no bearer. It reads the same
+# config.yaml, so the SSO block, the model selection, and every MCP
+# namespace written for this agent are live in the front end on the same
+# pass, with no wiring on that side at all.
 #
-# `path` is the OpenAI-compatible root the gateway's api_server mirrors its
-# surface under (/v1), not the dashboard port this app's `port` names.
-#
-# Bloud does not start the gateway process today: this container runs the
-# dashboard only. The credential is provisioned so that the day the listener
-# comes up it authenticates with the key the instance holds, rather than with
-# one the image invented behind a 0640 file. See INTEGRATION.md.
+# Bloud does not expose the agent's OpenAI-compatible gateway, and this is
+# not that: the gateway would flatten the agent into a model endpoint and
+# drop the sessions, memory, and tool namespaces that make a front end
+# useful. See INTEGRATION.md.
 provides:
-  agentGateway:
-    secrets:
-      - httpToken
-    values:
-      path: /v1
+  agentHome: {}
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider
@@ -138,8 +130,20 @@ containers:
       # every boot, which is what makes it hold: a one-shot chmod from the
       # host is re-tightened by the next container start.
       HERMES_HOME_MODE: "0777"
+      # The uid every container mounting the shared hermes/home tree must run
+      # as. The agent image's runtime user is 10000 and the web UI's is
+      # 1024, so left alone they are two different host uids under rootless
+      # podman and the first to chown the shared tree locks the other out.
+      # Both images take a remap knob (here: usermod/groupmod plus a targeted
+      # chown; in apps/hermes-webui: WANTED_UID/WANTED_GID), and both are
+      # set to 1000 so both containers land on the same host uid.
+      HERMES_UID: "1000"
+      HERMES_GID: "1000"
     volumes:
-      - source: "{{appDataDir}}/data"
+      # The shared Hermes agent home, outside apps/ on purpose. hermes and
+      # hermes-webui both mount this as $HERMES_HOME: one config, one memory,
+      # one session store, one set of MCP namespaces. See dirs.HermesHomeDir.
+      - source: "{{dataDir}}/hermes/home"
         destination: /opt/data
     healthCheck:
       # /api/health is the upstream public liveness path, exempt from the

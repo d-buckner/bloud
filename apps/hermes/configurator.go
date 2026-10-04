@@ -57,11 +57,6 @@ type Configurator struct {
 	logger     *slog.Logger
 	api        *hermesAPI
 
-	// secrets mints and holds the gateway credential this app publishes
-	// under its `agentGateway` contract. Nil in CLI/test contexts, where
-	// there is no instance to own a credential.
-	secrets configurator.AppSecretsProvider
-
 	// exec runs a command inside the running Hermes container. It is the
 	// fallback reader for config.yaml, which the host agent cannot read once
 	// the container owns it (see readConfig). Nil in CLI/test contexts, where
@@ -91,7 +86,6 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 		ssoBaseURL: deps.PrimaryBaseURL,
 		logger:     logger.With("app", "hermes"),
 		exec:       deps.Exec,
-		secrets:    deps.Secrets,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
 		if c.baseURL != "" {
@@ -184,43 +178,28 @@ const containerReadUnavailable = " (Hermes' container init chowns config.yaml to
 	"every start, which under rootless podman is a host uid in the subuid range the agent is not; the file can only " +
 	"be read through the running container - see apps/hermes/INTEGRATION.md)"
 
-// PreStart does the two things that have to be true before the container
-// comes up: Bloud's managed keys are merged into Hermes' config.yaml so the
-// dashboard boots with the self-hosted OIDC provider configured, and the
-// gateway credential this app owns is seeded into the file Hermes reads it
-// from. Either one moving asks the orchestrator to (re)create the container
-// so Hermes re-reads both.
+// PreStart merges Bloud's managed keys into Hermes' config.yaml so the
+// dashboard boots with the self-hosted OIDC provider configured, the
+// instance's model selected, and every MCP namespace Bloud provides
+// registered. A file that actually moved asks the orchestrator to
+// (re)create the container so Hermes re-reads it.
 //
-// The two tracks are independent on purpose. The config half changes when
-// SSO, the model, or the MCP wiring changes; the credential half changes
-// once per install and then never again. A pass that found the config
-// already converged still has to run the seed, which is why the seed is not
-// behind that early return.
+// This is the only writer of the agent's configuration on the Bloud side.
+// hermes-webui mounts the same $HERMES_HOME tree and reads this same file,
+// so what is written here is what the web UI shows: an MCP server added for
+// Hermes is in the web UI on the next pass with no wiring of its own. See
+// INTEGRATION.md.
 func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	file, err := c.convergeConfigFile(ctx, state)
 	if err != nil {
 		return configurator.NoRestart(), err
 	}
-
-	// The gateway credential runs on its own track. It changes for a reason
-	// that has nothing to do with the SSO, inference, and MCP keys merged
-	// into config.yaml, and folding it behind a "config unchanged" early
-	// return would skip the seed on exactly the passes that needed it.
-	envChanged, err := c.seedGatewayCredential(state)
-	if err != nil {
-		return configurator.NoRestart(), err
-	}
-
-	switch {
-	case file.changed:
-		c.logger.Info("updated Hermes config", "path", file.path, "sso", file.ssoActive,
-			"inference", file.hasInference, "mcpServers", mcpServerNames(state))
-		return configurator.RestartIf(true, "Hermes config rewritten"), nil
-	case envChanged:
-		return configurator.RestartIf(true, "Hermes gateway credential seeded"), nil
-	default:
+	if !file.changed {
 		return configurator.NoRestart(), nil
 	}
+	c.logger.Info("updated Hermes config", "path", file.path, "sso", file.ssoActive,
+		"inference", file.hasInference, "mcpServers", mcpServerNames(state))
+	return configurator.RestartIf(true, "Hermes config rewritten"), nil
 }
 
 // fileConvergence is what one pass over config.yaml produced: whether the
@@ -414,24 +393,6 @@ func mcpServerEntry(b configurator.MCPBinding) (map[string]any, bool) {
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	if err := c.api.waitDashboard(ctx); err != nil {
 		return fmt.Errorf("waiting for hermes dashboard: %w", err)
-	}
-
-	// The gateway credential is re-asserted here rather than only in
-	// PreStart, because from the second boot on the host cannot write the
-	// file at all and only the running container can. It runs ahead of the
-	// SSO early-return below: the credential has nothing to do with SSO, and
-	// a Hermes with SSO disabled still owns a gateway.
-	//
-	// A failure is warned about rather than failed over. The dashboard is
-	// what this node serves to a user, and it is up and healthy by the time
-	// this runs; parking it in a terminal ERROR because one write into the
-	// app's own dotfile did not land would trade a working install for a
-	// louder one. The next pass retries, and the warning names what is at
-	// stake so the drift is visible rather than absorbed.
-	if err := c.convergeGatewayEnv(ctx); err != nil {
-		c.logger.Warn("could not re-assert the Hermes gateway credential; "+
-			"the value published under agentGateway may not be the one the gateway would use",
-			"path", gatewayEnvContainerPath, "error", err)
 	}
 
 	if state == nil || !state.SSOEnabled || state.OIDC == nil {
