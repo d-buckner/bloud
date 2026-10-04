@@ -30,6 +30,14 @@ const (
 	fixtureOAuth2ProviderName = "E2E Catalog Fixture OAuth2 Provider"
 )
 
+// Every fixture container bind-mounts the app's shared data tree. The mount is
+// part of the fixture rather than of one test because the orchestrator creates
+// apps/<app> only as a side effect of rendering a directory mount: a fixture
+// with no volumes has no data directory at all, and a "the data survived" check
+// against a directory that was never there cannot fail. It is on every container
+// because the variants are diffs of one another: a mount present in one and
+// absent in the next is a spec change, and the tests that assert only the
+// intended container was recreated would then fail on the mount.
 const fixtureV1 = `name: e2e-catalog-fixture
 displayName: E2E Catalog Fixture
 description: Integration fixture for catalog-update reconciliation
@@ -44,19 +52,29 @@ containers:
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
   - name: apps-e2e-catalog-fixture-b
     image: docker.io/alpine:3.20
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
   - name: apps-e2e-catalog-fixture-c
     image: docker.io/alpine:3.20
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
 `
 
-// fixtureV2 drops container c.
+// fixtureV2 drops container c; a and b are otherwise byte-identical to v1, so
+// the only thing the reconciler sees is the removed node.
 const fixtureV2 = `name: e2e-catalog-fixture
 displayName: E2E Catalog Fixture
 description: Integration fixture for catalog-update reconciliation
@@ -71,11 +89,17 @@ containers:
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
   - name: apps-e2e-catalog-fixture-b
     image: docker.io/alpine:3.20
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
 `
 
 // fixtureImageBump bumps container a's image only.
@@ -93,16 +117,25 @@ containers:
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
   - name: apps-e2e-catalog-fixture-b
     image: docker.io/alpine:3.20
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
   - name: apps-e2e-catalog-fixture-c
     image: docker.io/alpine:3.20
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
 `
 
 // fixtureForwardAuth is fixtureV1 under a forward-auth strategy.
@@ -120,11 +153,17 @@ containers:
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
   - name: apps-e2e-catalog-fixture-b
     image: docker.io/alpine:3.20
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
 `
 
 // fixtureNativeOIDC is fixtureForwardAuth flipped to native-oidc.
@@ -142,11 +181,17 @@ containers:
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
   - name: apps-e2e-catalog-fixture-b
     image: docker.io/alpine:3.20
     command: ["sleep", "infinity"]
     network: apps-net
     restartPolicy: always
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
 `
 
 func requireCatalogDir(t *testing.T) {
@@ -302,6 +347,21 @@ func TestCatalogUpdate_RemovedContainer(t *testing.T) {
 	waitAppRunning(t, fixtureApp, 3*time.Minute)
 	requireContainerExists(t, "apps-e2e-catalog-fixture-c")
 
+	// Witness the data before the prune rather than only checking the directory
+	// afterwards. The dropped container shares the app's data tree with the
+	// survivors, so a prune that reached for the mount source (or the tree above
+	// it) takes the witness with it, and a tree that was never created fails here
+	// instead of quietly satisfying the check later.
+	dataTree := appDataDir(fixtureApp)
+	if _, err := os.Stat(filepath.Join(dataTree, "data")); err != nil {
+		t.Fatalf("install should have created the shared data mount source: %v", err)
+	}
+	witness := filepath.Join(dataTree, "prune-witness.txt")
+	const witnessBody = "still here"
+	if err := os.WriteFile(witness, []byte(witnessBody), 0644); err != nil {
+		t.Fatalf("seeding app data: %v", err)
+	}
+
 	writeFixture(t, fixtureV2)
 	refreshCatalog(t)
 
@@ -309,8 +369,8 @@ func TestCatalogUpdate_RemovedContainer(t *testing.T) {
 	requireContainerExists(t, "apps-e2e-catalog-fixture-a")
 	requireContainerExists(t, "apps-e2e-catalog-fixture-b")
 
-	if _, err := os.Stat(appDataDir(fixtureApp)); err != nil {
-		t.Errorf("app data dir must survive a container prune: %v", err)
+	if got, err := os.ReadFile(witness); err != nil || string(got) != witnessBody {
+		t.Errorf("app data must survive a container prune: got %q (err %v)", got, err)
 	}
 }
 
