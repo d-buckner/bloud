@@ -45,10 +45,10 @@ func opCause(nodeID, owner string, err error) error {
 
 // recordOpStart begins a new operation row for the owning app.
 func (o *Orchestrator) recordOpStart(appName, opType, phase string) {
-	if o.config.Operations == nil {
+	if o.config.Stores.Operations == nil {
 		return
 	}
-	if err := o.config.Operations.Start(appName, newOperationID(), opType, phase); err != nil {
+	if err := o.config.Stores.Operations.Start(appName, newOperationID(), opType, phase); err != nil {
 		o.logger.Warn("operation recorder: start failed", "app", appName, "type", opType, "error", err)
 	}
 }
@@ -60,10 +60,10 @@ func (o *Orchestrator) recordOpStart(appName, opType, phase string) {
 // phase update; the row is diagnostic, convergence is idempotent, so
 // the mixing is harmless.
 func (o *Orchestrator) ensureOpDrive(appName string) {
-	if o.config.Operations == nil {
+	if o.config.Stores.Operations == nil {
 		return
 	}
-	op, err := o.config.Operations.Get(appName)
+	op, err := o.config.Stores.Operations.Get(appName)
 	if err != nil {
 		o.logger.Warn("operation recorder: read failed", "app", appName, "error", err)
 		return
@@ -77,20 +77,20 @@ func (o *Orchestrator) ensureOpDrive(appName string) {
 // recordOpPhase advances the running operation row into a new phase.
 // Only running rows move; terminal rows are never resurrected.
 func (o *Orchestrator) recordOpPhase(appName, phase string) {
-	if o.config.Operations == nil {
+	if o.config.Stores.Operations == nil {
 		return
 	}
-	if err := o.config.Operations.AdvancePhase(appName, phase); err != nil {
+	if err := o.config.Stores.Operations.AdvancePhase(appName, phase); err != nil {
 		o.logger.Warn("operation recorder: phase failed", "app", appName, "phase", phase, "error", err)
 	}
 }
 
 // recordOpFail marks the running operation failed at the named phase.
 func (o *Orchestrator) recordOpFail(appName, phase string, cause error, retryable bool) {
-	if o.config.Operations == nil || cause == nil {
+	if o.config.Stores.Operations == nil || cause == nil {
 		return
 	}
-	if err := o.config.Operations.Fail(appName, phase, cause.Error(), retryable); err != nil {
+	if err := o.config.Stores.Operations.Fail(appName, phase, cause.Error(), retryable); err != nil {
 		o.logger.Warn("operation recorder: fail failed", "app", appName, "phase", phase, "error", err)
 	}
 }
@@ -98,10 +98,10 @@ func (o *Orchestrator) recordOpFail(appName, phase string, cause error, retryabl
 // recordOpComplete marks the running operation complete. Called where
 // the app reaches its converged state; only touches running rows.
 func (o *Orchestrator) recordOpComplete(appName string) {
-	if o.config.Operations == nil {
+	if o.config.Stores.Operations == nil {
 		return
 	}
-	if err := o.config.Operations.Complete(appName); err != nil {
+	if err := o.config.Stores.Operations.Complete(appName); err != nil {
 		o.logger.Warn("operation recorder: complete failed", "app", appName, "error", err)
 	}
 }
@@ -110,10 +110,10 @@ func (o *Orchestrator) recordOpComplete(appName string) {
 // re-run succeeds without having started a new drive: the previous
 // failure is no longer the app's last word.
 func (o *Orchestrator) healOp(appName string) {
-	if o.config.Operations == nil {
+	if o.config.Stores.Operations == nil {
 		return
 	}
-	if err := o.config.Operations.ResolveFailed(appName); err != nil {
+	if err := o.config.Stores.Operations.ResolveFailed(appName); err != nil {
 		o.logger.Warn("operation recorder: heal failed", "app", appName, "error", err)
 	}
 }

@@ -133,8 +133,8 @@ func TestBuildWithoutAuthentikDisablesBothSSOProvisioners(t *testing.T) {
 	out, err := Build(in)
 	require.NoError(t, err)
 
-	assert.Nil(t, out.Config.SSO, "no identity provider means no SSO provisioner")
-	assert.Nil(t, out.Config.ForwardDomainSSO,
+	assert.Nil(t, out.Config.SSO.SSO, "no identity provider means no SSO provisioner")
+	assert.Nil(t, out.Config.SSO.ForwardDomainSSO,
 		"no identity provider means no forward-domain provisioner")
 }
 
@@ -142,8 +142,8 @@ func TestBuildWithAuthentikWiresBothSSOProvisioners(t *testing.T) {
 	out, err := Build(baseInput(t))
 	require.NoError(t, err)
 
-	assert.NotNil(t, out.Config.SSO)
-	assert.NotNil(t, out.Config.ForwardDomainSSO)
+	assert.NotNil(t, out.Config.SSO.SSO)
+	assert.NotNil(t, out.Config.SSO.ForwardDomainSSO)
 }
 
 // The supplied runtime wins over the podman fallback, so a caller that owns
@@ -156,7 +156,7 @@ func TestBuildUsesTheSuppliedRuntime(t *testing.T) {
 	out, err := Build(in)
 	require.NoError(t, err)
 
-	assert.Same(t, rt, out.Config.Containers)
+	assert.Same(t, rt, out.Config.Runtime.Containers)
 }
 
 // A host-change callback is how the API layer re-ensures its OAuth app after
@@ -170,8 +170,8 @@ func TestBuildPassesTheHostChangeCallback(t *testing.T) {
 	out, err := Build(in)
 	require.NoError(t, err)
 
-	require.NotNil(t, out.Config.OnHostsChanged)
-	out.Config.OnHostsChanged()
+	require.NotNil(t, out.Config.Hosts.OnHostsChanged)
+	out.Config.Hosts.OnHostsChanged()
 	assert.True(t, called, "the callback must reach the orchestrator config intact")
 }
 
@@ -223,5 +223,5 @@ func TestBuildSetsSelfHealInterval(t *testing.T) {
 
 	out, err := Build(in)
 	require.NoError(t, err)
-	assert.Equal(t, 7*time.Second, out.Config.SelfHealInterval)
+	assert.Equal(t, 7*time.Second, out.Config.Tuning.SelfHealInterval)
 }

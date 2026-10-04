@@ -69,7 +69,7 @@ func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
 // while the budget independently caps a hung finalization. The framework, not
 // the app, owns this ceiling; apps use the ctx they are given directly.
 func (o *Orchestrator) runPostStart(ctx context.Context, cfg configurator.NodeLifecycle, state *configurator.AppState) error {
-	budget := o.config.PostStartBudget
+	budget := o.config.Tuning.PostStartBudget
 	if budget <= 0 {
 		budget = DefaultPostStartBudget
 	}
@@ -81,7 +81,7 @@ func (o *Orchestrator) runPostStart(ctx context.Context, cfg configurator.NodeLi
 // ensureContainerFromDef ensures a container exists and is running from a ContainerDef,
 // creating required networks and mount directories first.
 func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.ContainerDef, appCatalogID string) error {
-	if o.config.Containers == nil {
+	if o.config.Runtime.Containers == nil {
 		return nil
 	}
 
@@ -93,7 +93,7 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 	}
 	o.ensureMountDirs(def.Name, spec)
 
-	if _, err := o.config.Containers.Ensure(ctx, spec); err != nil {
+	if _, err := o.config.Runtime.Containers.Ensure(ctx, spec); err != nil {
 		return fmt.Errorf("ensure container: %w", err)
 	}
 	return nil
@@ -104,7 +104,7 @@ func (o *Orchestrator) ensureContainerFromDef(ctx context.Context, def *catalog.
 // mount directories are created, so callers can use it to diff a desired spec
 // against a running container without side effects.
 func (o *Orchestrator) computeContainerSpec(def *catalog.ContainerDef, appCatalogID string) (containerruntime.Spec, error) {
-	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.TemplateVars)
+	spec, err := ContainerSpecFromDef(*def, appCatalogID, o.dataDir, o.config.Runtime.TemplateVars)
 	if err != nil {
 		return containerruntime.Spec{}, fmt.Errorf("build container spec: %w", err)
 	}
@@ -129,7 +129,7 @@ func (o *Orchestrator) ensureNetworksForContainer(ctx context.Context, def *cata
 		if network == "host" {
 			continue // host network mode doesn't need to be created
 		}
-		if err := o.config.Containers.EnsureNetwork(ctx, network); err != nil {
+		if err := o.config.Runtime.Containers.EnsureNetwork(ctx, network); err != nil {
 			o.logger.Warn("failed to ensure network", "container", def.Name, "network", network, "error", err)
 		}
 	}
@@ -293,7 +293,7 @@ func (o *Orchestrator) runContainerPhases(ctx context.Context, id, owner string,
 	if prestart.RestartNeeded {
 		o.logger.Info("PreStart requires recreate, removing container",
 			"app", id, "reason", prestart.Reason)
-		_ = o.config.Containers.Remove(ctx, def.Name)
+		_ = o.config.Runtime.Containers.Remove(ctx, def.Name)
 	}
 	o.logger.Info("lifecycle phase: EnsureContainer", "app", id)
 	o.recordOpPhase(owner, store.OpPhaseTopology)
@@ -312,9 +312,9 @@ func (o *Orchestrator) runHealthPhase(ctx context.Context, id, owner string, def
 	o.logger.Info("lifecycle phase: HealthCheck", "app", id)
 	o.recordOpPhase(owner, store.OpPhaseHealth)
 	healthCtx := ctx
-	if o.config.HealthCheckTimeout > 0 {
+	if o.config.Tuning.HealthCheckTimeout > 0 {
 		var cancel context.CancelFunc
-		healthCtx, cancel = context.WithTimeout(ctx, o.config.HealthCheckTimeout)
+		healthCtx, cancel = context.WithTimeout(ctx, o.config.Tuning.HealthCheckTimeout)
 		defer cancel()
 	}
 	if def.HealthCheck != nil {
