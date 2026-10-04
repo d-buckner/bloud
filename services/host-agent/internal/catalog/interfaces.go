@@ -46,7 +46,7 @@ type AppGraphInterface interface {
 	GetCompatibleApps(appName string, integrationName string) (installed []CompatibleApp, available []CompatibleApp)
 
 	// GetApps returns all app definitions
-	GetApps() map[string]*AppDefinition
+	GetApps() map[string]*App
 }
 
 // Compile-time assertion that AppGraph implements AppGraphInterface

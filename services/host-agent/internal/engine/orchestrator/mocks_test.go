@@ -192,12 +192,12 @@ func (m *MockAppGraph) GetCompatibleApps(appName string, integrationName string)
 	return installed, available
 }
 
-func (m *MockAppGraph) GetApps() map[string]*catalog.AppDefinition {
+func (m *MockAppGraph) GetApps() map[string]*catalog.App {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil
 	}
-	return args.Get(0).(map[string]*catalog.AppDefinition)
+	return args.Get(0).(map[string]*catalog.App)
 }
 
 // MockTraefikGenerator implements traefikgen.GeneratorInterface for testing

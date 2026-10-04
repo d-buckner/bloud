@@ -248,14 +248,14 @@ type FakeAppGraph struct {
 	installPlans  map[string]*catalog.InstallPlan
 	removePlans   map[string]*catalog.RemovePlan
 	installedApps []string
-	apps          map[string]*catalog.AppDefinition
+	apps          map[string]*catalog.App
 }
 
 func NewFakeAppGraph() *FakeAppGraph {
 	return &FakeAppGraph{
 		installPlans: make(map[string]*catalog.InstallPlan),
 		removePlans:  make(map[string]*catalog.RemovePlan),
-		apps:         make(map[string]*catalog.AppDefinition),
+		apps:         make(map[string]*catalog.App),
 	}
 }
 
@@ -312,7 +312,7 @@ func (f *FakeAppGraph) GetCompatibleApps(appName string, integrationName string)
 	return nil, nil
 }
 
-func (f *FakeAppGraph) GetApps() map[string]*catalog.AppDefinition {
+func (f *FakeAppGraph) GetApps() map[string]*catalog.App {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.apps

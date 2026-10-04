@@ -7,13 +7,13 @@ import (
 )
 
 func buildTestGraph() *AppGraph {
-	apps := []*AppDefinition{
-		{Name: "qbittorrent"},
-		{Name: "deluge"},
-		{Name: "jellyfin"},
-		{Name: "plex"},
+	apps := []*App{
+		{CatalogID: "qbittorrent"},
+		{CatalogID: "deluge"},
+		{CatalogID: "jellyfin"},
+		{CatalogID: "plex"},
 		{
-			Name: "radarr",
+			CatalogID: "radarr",
 			Integrations: map[string]Integration{
 				"downloadClient": {
 					Required: true,
@@ -26,7 +26,7 @@ func buildTestGraph() *AppGraph {
 			},
 		},
 		{
-			Name: "sonarr",
+			CatalogID: "sonarr",
 			Integrations: map[string]Integration{
 				"downloadClient": {
 					Required: true,
@@ -38,7 +38,7 @@ func buildTestGraph() *AppGraph {
 			},
 		},
 		{
-			Name: "jellyseerr",
+			CatalogID: "jellyseerr",
 			Integrations: map[string]Integration{
 				"mediaServer": {
 					Required: true,

@@ -2,12 +2,6 @@
 
 package catalog
 
-// AppDefinition represents an application in the catalog
-type AppDefinition struct {
-	Name         string                 `yaml:"name" json:"name"`
-	Integrations map[string]Integration `yaml:"integrations" json:"integrations"`
-}
-
 // Integration defines how an app connects to other apps.
 type Integration struct {
 	Required bool `yaml:"required" json:"required"`
