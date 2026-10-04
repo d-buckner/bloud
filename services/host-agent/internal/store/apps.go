@@ -88,7 +88,7 @@ func (s *AppStore) GetByCatalogID(catalogID string) (*InstalledApp, error) {
 		WHERE a.catalog_id = ?`, catalogID)
 
 	app, err := s.scanAppRow(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -142,17 +142,18 @@ func (s *AppStore) Install(catalogID, displayName, version string, integrationCo
 
 	_, err = s.db.Exec(`
 		INSERT INTO apps (catalog_id, display_name, version, status, port, is_system, integration_config)
-		VALUES (?, ?, ?, 'installing', ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(catalog_id) DO UPDATE SET
 			display_name = excluded.display_name,
 			version = excluded.version,
-			status = 'installing',
+			status = CASE WHEN apps.status = ? THEN ? ELSE ? END,
 			last_error = '',
 			port = excluded.port,
 			is_system = excluded.is_system,
 			integration_config = excluded.integration_config,
 			updated_at = datetime('now')
-	`, catalogID, displayName, version, port, isSystem, string(configJSON))
+	`, catalogID, displayName, version, AppStatusInstalling, port, isSystem, string(configJSON),
+		AppStatusRunning, AppStatusRunning, AppStatusInstalling)
 	if err != nil {
 		return fmt.Errorf("failed to insert app: %w", err)
 	}
@@ -340,60 +341,22 @@ func parseSQLiteTime(s string) time.Time {
 }
 
 func (s *AppStore) scanApp(rows *sql.Rows) (*InstalledApp, error) {
-	var app InstalledApp
-	var port sql.NullInt64
-	var configJSON sql.NullString
-	var installedAt, updatedAt string
-	var opID, opType, opPhase, opStatus, opCause, opStarted, opUpdated sql.NullString
-	var opRetry sql.NullInt64
-
-	err := rows.Scan(
-		&app.ID,
-		&app.CatalogID,
-		&app.DisplayName,
-		&app.Version,
-		&app.Status,
-		&app.LastError,
-		&port,
-		&app.IsSystem,
-		&app.TailnetID,
-		&configJSON,
-		&installedAt,
-		&updatedAt,
-		&opID,
-		&opType,
-		&opPhase,
-		&opStatus,
-		&opRetry,
-		&opCause,
-		&opStarted,
-		&opUpdated,
-	)
+	app, err := s.scanAppColumns(rows.Scan)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan app: %w", err)
 	}
-
-	app.InstalledAt = parseSQLiteTime(installedAt)
-	app.UpdatedAt = parseSQLiteTime(updatedAt)
-
-	if port.Valid {
-		app.Port = int(port.Int64)
-	}
-
-	if configJSON.Valid && configJSON.String != "" {
-		if err := json.Unmarshal([]byte(configJSON.String), &app.IntegrationConfig); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal integration config: %w", err)
-		}
-	}
-
-	if opID.Valid {
-		app.Operation = opFromJoin(app.CatalogID, opID, opType, opPhase, opStatus, opRetry, opCause, opStarted, opUpdated)
-	}
-
-	return &app, nil
+	return app, nil
 }
 
 func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
+	return s.scanAppColumns(row.Scan)
+}
+
+// scanAppColumns scans one apps+operations row through the provided scanner
+// and folds it into an InstalledApp. Both *sql.Rows and *sql.Row satisfy the
+// scan func, so the column order and post-processing live exactly once: a
+// schema change touches one Scan list, not two near-identical copies.
+func (s *AppStore) scanAppColumns(scan func(dest ...any) error) (*InstalledApp, error) {
 	var app InstalledApp
 	var port sql.NullInt64
 	var configJSON sql.NullString
@@ -401,7 +364,7 @@ func (s *AppStore) scanAppRow(row *sql.Row) (*InstalledApp, error) {
 	var opID, opType, opPhase, opStatus, opCause, opStarted, opUpdated sql.NullString
 	var opRetry sql.NullInt64
 
-	err := row.Scan(
+	err := scan(
 		&app.ID,
 		&app.CatalogID,
 		&app.DisplayName,
