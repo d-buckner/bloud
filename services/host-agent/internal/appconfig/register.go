@@ -63,14 +63,15 @@ func RegisterSystem(
 
 	configurator.RegisterFactory("apps-authentik-server", func(deps configurator.Deps) (configurator.NodeLifecycle, error) {
 		return authentik.NewServerConfigurator(deps, authentik.Params{
-			Port:              cfg.AuthentikPort,
-			BootstrapPassword: cfg.AuthentikAdminPassword,
-			BootstrapEmail:    cfg.AuthentikAdminEmail,
-			TokenKey:          cfg.AuthentikToken,
-			LDAPBindPassword:  cfg.LDAPBindPassword,
-			BrandingCSS:       static.AuthentikBrandingCSS,
-			AppsDir:           cfg.AppsDir,
-			TemplateVars:      templateVars,
+			Port:                  cfg.AuthentikPort,
+			BootstrapPassword:     cfg.AuthentikAdminPassword,
+			BootstrapEmail:        cfg.AuthentikAdminEmail,
+			TokenKey:              cfg.AuthentikToken,
+			LDAPBindPassword:      cfg.LDAPBindPassword,
+			CalDAVServicePassword: cfg.CalDAVServicePassword,
+			BrandingCSS:           static.AuthentikBrandingCSS,
+			AppsDir:               cfg.AppsDir,
+			TemplateVars:          templateVars,
 		}), nil
 	})
 }

@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: caldav-mcp
+displayName: CalDAV MCP
+description: MCP tool server for the calendars Bloud already serves, so agents read and write events and to-dos
+category: productivity
+port: 9333
+estimatedSizeMB: 150
+
+# No browser UI: the wrapper serves an MCP endpoint and nothing to click, so the
+# dashboard draws no tile for it. It is otherwise an ordinary app: installed,
+# reconciled, and routed like every other.
+headless: true
+
+# A wrapper, not the calendar server itself: caldav-mcp is a stdio MCP server,
+# so this app runs it behind supergateway (which bridges stdio to streamable
+# HTTP and enforces the bearer). The wrapper is not a browser and cannot join
+# the identity provider, so it authenticates to Radicale with the caldav-service
+# account credential, published under Radicale's `appApi` offer; the DAV address
+# comes from the `caldav` contract.
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # The DAV server's address. `caldav` carries no credential (a browser client
+  # authenticates the person), so this is only the address.
+  caldav:
+    required: true
+    multi: false
+    compatible:
+      - app: radicale
+        default: true
+  # The machine credential: Radicale publishes the caldav-service account's
+  # username (a value) and password (the secret). `requires: [password]` is the
+  # whole dependency; the username arrives without being asked for, and an empty
+  # password means "not ready", never an empty credential.
+  appApi:
+    required: true
+    multi: false
+    requires:
+      - password
+    compatible:
+      - app: radicale
+        default: true
+
+# The `mcp` contract a harness (Hermes) consumes, under a `caldav-mcp` namespace.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: caldav-mcp
+      path: /mcp
+
+containers:
+  - name: apps-caldav-mcp
+    image: ghcr.io/supercorp-ai/supergateway:4.1.0
+    network: apps-net
+    restartPolicy: always
+    command:
+      # The image's entrypoint is already `supergateway`; these are its flags.
+      # `--stdio` runs the generated /config/run.sh (which exports the CALDAV_*
+      # environment and execs caldav-mcp) and bridges it to streamable HTTP.
+      - --stdio
+      - sh /config/run.sh
+      - --outputTransport
+      - streamableHttp
+      - --streamableHttpPath
+      - /mcp
+      - --port
+      - "8000"
+      - --healthEndpoint
+      - /healthz
+    ports:
+      - host: 9333
+        container: 8000
+    volumes:
+      # The configurator writes run.sh (the CALDAV_* environment for the stdio
+      # server) into this mounted dir.
+      - source: "{{appDataDir}}/config"
+        destination: /config
+    healthCheck:
+      # /healthz is the gateway's own liveness path, answered "ok" while it is
+      # up and serving.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/healthz | grep -q ok"]
+      interval: 5
+      timeout: 10
+      retries: 30

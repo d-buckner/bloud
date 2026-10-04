@@ -51,6 +51,10 @@ flowchart TD
         c_affine_mcp["affine-mcp"]
     end
 
+    subgraph app_caldav_mcp["CalDAV MCP"]
+        c_caldav_mcp["caldav-mcp"]
+    end
+
     subgraph app_calino["Calino"]
         c_calino["calino"]
     end
@@ -125,6 +129,8 @@ flowchart TD
     app_affine -->|native-oidc| app_authentik
     app_affine -->|caldav| app_radicale
     app_affine_mcp -->|appApi| app_affine
+    app_caldav_mcp -->|appApi| app_radicale
+    app_caldav_mcp -->|caldav| app_radicale
     app_calino -->|forward-auth| app_authentik
     app_calino -->|caldav| app_radicale
     app_hermes -->|mcp| app_affine_mcp
@@ -149,6 +155,7 @@ flowchart TD
     app_traefik -->|proxy| app_affine
     app_traefik -->|proxy| app_affine_mcp
     app_traefik -->|proxy| app_authentik
+    app_traefik -->|proxy| app_caldav_mcp
     app_traefik -->|proxy| app_calino
     app_traefik -->|proxy| app_hermes
     app_traefik -->|proxy| app_homeassistant

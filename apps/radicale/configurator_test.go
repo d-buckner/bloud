@@ -85,6 +85,8 @@ func TestRenderConfigWithLDAPWiresTheAuthentikOutpost(t *testing.T) {
 		"hosts = 0.0.0.0:5232",
 		"filesystem_folder = /var/lib/radicale/collections",
 		"type = owner_only",
+		"type = csv",
+		"collection_by_map = true",
 		"type = internal",
 	} {
 		assert.Contains(t, got, want, "rendered config must carry %q", want)
@@ -358,6 +360,27 @@ func TestPostStartRestartFailureIsAnError(t *testing.T) {
 	err = c.PostStart(context.Background(), state)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "could not be restarted")
+}
+
+func TestRenderShares(t *testing.T) {
+	feeds := []configurator.ICSFeedBinding{feedBinding()}
+	got := renderShares("alice", feeds)
+
+	// The header pins the column order Radicale's csv backend reads.
+	assert.True(t, strings.HasPrefix(got, sharesCSVHeader+"\n"))
+	// One map share: the operator's collection mounted into the agent's tree,
+	// read-only, enabled on both sides.
+	assert.Contains(t, got, "map;/caldav-service/radarr/;/alice/radarr/;none;alice;caldav-service;Rr;True;True;False;False;0;0;{};{}\n")
+}
+
+func TestRenderSharesSkipsIncompleteFeedsAndNoOwner(t *testing.T) {
+	// No operator yet: header only, no share rows.
+	assert.Equal(t, sharesCSVHeader+"\n", renderShares("", []configurator.ICSFeedBinding{feedBinding()}))
+
+	// An incomplete feed (no key) is skipped, not shared with an empty URL.
+	noKey := feedBinding()
+	noKey.APIKey = ""
+	assert.Equal(t, sharesCSVHeader+"\n", renderShares("alice", []configurator.ICSFeedBinding{noKey}))
 }
 
 // ---- ICS feed sync ----

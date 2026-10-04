@@ -171,9 +171,13 @@ removed here too. Events the user creates belong in their own calendar.
 ## Isolation model
 
 `owner_only` means a user can read and write only under their own top-level
-path (`/<username>/...`). There is no sharing, no public calendars, and no
-cross-user read in the default configuration. A calendar that two people
-share is a follow-up that needs a rights backend change, not a setting.
+path (`/<username>/...`), so one Bloud account cannot read another's calendar
+or contacts by default. Cross-user access goes through Radicale's **native
+sharing** instead: the configurator enables `[sharing] type = csv` with map
+shares and writes `sharing.csv`, mounting the operator's synced feed
+collections into the agent's (`caldav-service`) tree as read-only virtual
+collections. The rights model stays `owner_only`; sharing is what makes the
+agent's `list-calendars` see the feeds.
 
 This was verified against a live install: `ldap-service` requesting
 `/admin/` gets `403 Forbidden`, not `401`. The identity was fine; the rights
@@ -253,9 +257,10 @@ key only when the consumer required it.
 
 ## What is not wired
 
-- **Sharing.** `owner_only` has no sharing. Radicale supports a `from_file`
-  rights backend that would express it; that is a deliberate change to the
-  rights model, not a default.
+- **Sharing across the whole family.** Sharing is wired for the agent only (the synced
+  feeds map-shared to `caldav-service`). Mounting those same feeds into every
+  Bloud user's tree is the remaining step; see the open item in the calendar
+  aggregation plan.
 - **Address book clients that need vCard directory lookup.** Radicale serves
   contacts as a DAV collection; it is not a global address book that other
   apps query.
