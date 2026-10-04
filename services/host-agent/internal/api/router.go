@@ -239,6 +239,9 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	}
 
 	homeMod := NewHomeModule(deps.positionStore, deps.appStore, catalogLaunchPaths(deps.catalogCache), logger)
+	// The home payload marks the apps the catalog says have no UI, so the
+	// dashboard can leave them off the grid without learning the catalog.
+	homeMod.SetHeadlessLookup(catalogHeadlessSet(deps.catalogCache))
 
 	// The developer graph renders each app's containers with their live
 	// lifecycle phase, so the system module needs the real orchestrator.
@@ -307,6 +310,26 @@ func catalogLaunchPaths(cache catalog.CacheInterface) func() map[string]string {
 			}
 		}
 		return paths
+	}
+}
+
+// catalogHeadlessSet indexes the catalog ids of apps declared headless, so the
+// home payload can carry the flag without the frontend knowing where it comes
+// from. A missing catalog yields an empty set: nothing is hidden.
+func catalogHeadlessSet(cache catalog.CacheInterface) func() map[string]bool {
+	return func() map[string]bool {
+		headless := make(map[string]bool)
+		if cache == nil {
+			return headless
+		}
+		if catalogApps, err := cache.GetAll(); err == nil {
+			for _, ca := range catalogApps {
+				if ca.Headless {
+					headless[ca.CatalogID] = true
+				}
+			}
+		}
+		return headless
 	}
 }
 

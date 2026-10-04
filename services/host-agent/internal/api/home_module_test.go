@@ -71,6 +71,56 @@ func TestHomeModule_GetLayout_Empty(t *testing.T) {
 	assert.Len(t, layout.Apps, 0)
 }
 
+// TestHomeModule_GetLayout_Headless pins the flag the dashboard reads to keep a
+// UI-less app off the grid. The app stays in the payload, because its status
+// still drives the snapshot and the transition toasts; only the flag changes
+// what renders. The wire shape is asserted too, since the frontend reads it
+// straight out of the JSON.
+func TestHomeModule_GetLayout_Headless(t *testing.T) {
+	posStore := NewFakePositionStore()
+	appStore := NewFakeAppStore()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	appStore.AddApp(&store.InstalledApp{CatalogID: "affine-mcp", DisplayName: "AFFiNE MCP"})
+	appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin"})
+
+	mod := NewHomeModule(posStore, appStore, func() map[string]string { return nil }, logger)
+	mod.SetHeadlessLookup(func() map[string]bool { return map[string]bool{"affine-mcp": true} })
+
+	layout, err := mod.GetLayout("alice")
+	require.NoError(t, err)
+	require.Len(t, layout.Apps, 2, "a headless app is still installed, so it stays in the payload")
+
+	marked := map[string]bool{}
+	for _, app := range layout.Apps {
+		marked[app.CatalogID] = app.Headless
+	}
+	assert.True(t, marked["affine-mcp"])
+	assert.False(t, marked["jellyfin"])
+
+	payload, err := json.Marshal(layout)
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"headless":true`)
+	assert.NotContains(t, string(payload), `"headless":false`, "omitempty keeps the payload unchanged for every app with a UI")
+}
+
+// TestHomeModule_GetLayout_WithoutHeadlessLookup keeps the setter optional: a
+// module wired without one marks nothing, so the payload is what it was before
+// the flag existed.
+func TestHomeModule_GetLayout_WithoutHeadlessLookup(t *testing.T) {
+	posStore := NewFakePositionStore()
+	appStore := NewFakeAppStore()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	appStore.AddApp(&store.InstalledApp{CatalogID: "affine-mcp", DisplayName: "AFFiNE MCP"})
+
+	mod := NewHomeModule(posStore, appStore, func() map[string]string { return nil }, logger)
+	layout, err := mod.GetLayout("alice")
+	require.NoError(t, err)
+	require.Len(t, layout.Apps, 1)
+	assert.False(t, layout.Apps[0].Headless)
+}
+
 func TestHomeModule_SetLayout(t *testing.T) {
 	posStore := NewFakePositionStore()
 	appStore := NewFakeAppStore()

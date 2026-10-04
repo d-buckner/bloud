@@ -309,6 +309,57 @@ func TestAppsModule_GetInstalled_CatalogMissing(t *testing.T) {
 	}
 }
 
+// TestAppsModule_GetInstalled_Headless pins the flag the dashboard reads to
+// keep a UI-less app off the grid. The catalog decides it; the installed read
+// carries it; an app the catalog does not mark stays unmarked, and an installed
+// app with no catalog entry at all is not headless either.
+func TestAppsModule_GetInstalled_Headless(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{CatalogID: "affine-mcp", DisplayName: "AFFiNE MCP", Headless: true})
+	addAppToCache(cache, &catalog.App{CatalogID: "jellyfin", DisplayName: "Jellyfin"})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	appStore.AddApp(&store.InstalledApp{CatalogID: "affine-mcp", DisplayName: "AFFiNE MCP"})
+	appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin"})
+	appStore.AddApp(&store.InstalledApp{CatalogID: "ghost", DisplayName: "Ghost"})
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+
+	installed, err := mod.GetInstalled()
+	require.NoError(t, err)
+	require.Len(t, installed, 3)
+
+	marked := map[string]bool{}
+	for _, app := range installed {
+		marked[app.CatalogID] = app.Headless
+	}
+	assert.True(t, marked["affine-mcp"], "a headless catalog entry must arrive marked")
+	assert.False(t, marked["jellyfin"], "an app with a UI must not be marked")
+	assert.False(t, marked["ghost"], "no catalog entry means nothing marks it headless")
+}
+
+// TestAppsModule_Install_CarriesHeadless covers the optimistic path: the 202
+// response is what puts the tile on the grid without a poll, so a headless app
+// must arrive marked there too or it flashes on screen until the next snapshot.
+func TestAppsModule_Install_CarriesHeadless(t *testing.T) {
+	cache := NewFakeCatalogCache()
+	addAppToCache(cache, &catalog.App{CatalogID: "affine-mcp", DisplayName: "AFFiNE MCP", Headless: true})
+	appStore := NewFakeAppStore()
+	orch := newFakeOrchestrator()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	appStore.AddApp(&store.InstalledApp{CatalogID: "affine-mcp", DisplayName: "AFFiNE MCP", Status: "installing"})
+
+	mod := NewAppsModule(cache, appStore, orch, logger)
+
+	_, app, err := mod.Install("affine-mcp")
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	assert.True(t, app.Headless)
+}
+
 func TestAppsModule_GetInstalled_Empty(t *testing.T) {
 	cache := NewFakeCatalogCache()
 	appStore := NewFakeAppStore()

@@ -6,6 +6,13 @@ category: productivity
 port: 9222
 estimatedSizeMB: 150
 
+# No browser UI: the wrapper serves an MCP endpoint and nothing you can click. The
+# dashboard therefore draws no tile for it, since a tile is an invitation to open
+# a page that does not exist. Everything else about the app is ordinary: it stays
+# in the catalog, in GET /api/apps/installed, and in the developer graph, and
+# Bloud installs, reconciles, and routes it like every other app.
+headless: true
+
 # A wrapper, not the app: it ships no AFFiNE of its own and exists only to put a
 # richer MCP tool surface in front of one. AFFiNE provides `mcp` directly (the
 # design's preferred shape), so this app is the documented fallback for a target

@@ -15,6 +15,10 @@ Hermes can register it as a tool namespace.
 - MCP endpoint: `http://<host>:9222/mcp`, bearer-authenticated
 - SSO strategy: `none` (there is no user-facing login; a harness authenticates
   with the bearer Bloud generates)
+- Dashboard: `headless: true`. The wrapper serves an MCP endpoint and no page,
+  so the dashboard draws no tile for it. The app is otherwise ordinary: it
+  stays in the catalog, in `GET /api/apps/installed`, and in the developer
+  graph, and Bloud installs, reconciles, and routes it like every other app.
 
 ## Why a wrapper
 

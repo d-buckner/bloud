@@ -3,10 +3,36 @@
 package catalog
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// TestApp_HeadlessField covers both ends of the contract: `headless: true` in a
+// metadata.yaml reaches the struct, and the JSON omits the key when it is not
+// set, so the wire shape is unchanged for every app that has a UI.
+func TestApp_HeadlessField(t *testing.T) {
+	var withFlag App
+	require.NoError(t, yaml.Unmarshal([]byte("name: affine-mcp\nheadless: true\n"), &withFlag))
+	assert.True(t, withFlag.Headless)
+
+	var withoutFlag App
+	require.NoError(t, yaml.Unmarshal([]byte("name: jellyfin\n"), &withoutFlag))
+	assert.False(t, withoutFlag.Headless)
+
+	out, err := json.Marshal(withoutFlag)
+	require.NoError(t, err)
+	assert.False(t, strings.Contains(string(out), "headless"),
+		"an unset flag must not appear on the wire: %s", out)
+
+	out, err = json.Marshal(withFlag)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"headless":true`)
+}
 
 func TestContainerDefs_PluralReturnsDirectly(t *testing.T) {
 	app := &App{

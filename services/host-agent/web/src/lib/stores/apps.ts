@@ -22,7 +22,17 @@ export const loading = writable(true);
 // Error state
 export const error = writable<string | null>(null);
 
-// Derived store - apps visible on home screen (excludes system apps and uninstalling)
-export const visibleApps = derived(apps, ($apps) =>
-	$apps.filter((a) => !a.is_system && a.status !== 'uninstalling')
-);
+// Derived store - apps visible on home screen.
+//
+// Three exclusions: system apps, apps mid-uninstall, and headless apps. The
+// headless case is the app that has nothing to open (affine-mcp serves an MCP
+// endpoint and no page), so a tile would only be a broken link. It stays in the
+// `apps` store above, where its status still drives the toasts and the install
+// progress view.
+export const visibleApps = derived(apps, ($apps) => $apps.filter(isGridApp));
+
+// isGridApp is the single answer to "does this app get a tile?". Exported pure
+// so the rule is testable without a store round trip.
+export function isGridApp(app: App): boolean {
+	return !app.is_system && !app.headless && app.status !== 'uninstalling';
+}
