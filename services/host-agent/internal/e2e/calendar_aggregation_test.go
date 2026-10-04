@@ -445,23 +445,32 @@ func waitForFeedJobs(t *testing.T, owner string) {
 	}
 }
 
-// waitForSyncedCollections polls the operator's DAV tree until the plugin has
-// created the two synced calendars. The listing is a Depth 1 PROPFIND, which is
-// what a calendar client performs to enumerate a user's calendars.
-func waitForSyncedCollections(t *testing.T, operator, password string) {
+// waitForSyncedCollections polls the recipient's DAV tree until the synced
+// calendars appear in it. The listing is a Depth 1 PROPFIND, which is what a
+// calendar client performs to enumerate a user's calendars.
+//
+// It retries through a transport failure on purpose. The pass that adds the
+// feed jobs restarts Radicale, and the node is promoted before the container
+// is answering again, so a single PROPFIND here can land on a socket that is
+// mid-teardown. That is a restart the test caused itself, not a missing
+// collection.
+func waitForSyncedCollections(t *testing.T, user, password string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Minute)
+	var lastStatus int
+	var lastBody string
 	for {
-		res, body := davRequestDepth(t, "PROPFIND", "/"+operator+"/", operator, password, "1")
-		if res.StatusCode == http.StatusMultiStatus &&
-			strings.Contains(body, operator+"/radarr") &&
-			strings.Contains(body, operator+"/sonarr") {
-			t.Log("Radarr and Sonarr collections appear in the operator's DAV tree")
+		status, body := davGetRetry(t, "/"+user+"/", user, password)
+		lastStatus, lastBody = status, body
+		if status == http.StatusMultiStatus &&
+			strings.Contains(body, user+"/radarr") &&
+			strings.Contains(body, user+"/sonarr") {
+			t.Log("Radarr and Sonarr collections appear in the recipient's DAV tree")
 			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("synced collections never appeared under /%s/ (last status %d):\n%s",
-				operator, res.StatusCode, body)
+				user, lastStatus, lastBody)
 		}
 		time.Sleep(5 * time.Second)
 	}
