@@ -86,7 +86,7 @@ break the moment a browser is on `https://`:
 | OAuth redirect URIs | `services/host-agent/internal/sso/oidc.go`, `OIDCInputsForApp` registers `appSubdomainURL(baseURL) + callbackPath` per base URL | Registered as `http://jellyfin.<host>/...` while the browser is on `https://`: `redirect_uri_mismatch`, login dies at the provider |
 | Dashboard OAuth app and `meta_launch_url` | `services/host-agent/internal/sso/blueprint.go` | Launch links bounce the browser off the secure origin |
 | OIDC issuer | `HostSet.IssuerBaseURL`, baked into every native-oidc app config and used for discovery | The issuer string says `http://`; strict clients reject it |
-| Authentik's own generated URLs | the flow documented in [`upstream-proxy-headers.md`](upstream-proxy-headers.md) | Authentik reads the request as HTTP and emits `http://` URLs that an HTTPS page blocks as mixed content |
+| Authentik's own generated URLs | the flow documented in [`upstream-proxy-headers.md`](archive/upstream-proxy-headers.md) | Authentik reads the request as HTTP and emits `http://` URLs that an HTTPS page blocks as mixed content |
 
 `apps/vaultwarden/INTEGRATION.md` already proves this is the whole gap. An
 unmodified Vaultwarden behind a Traefik TLS entrypoint with a self-signed
@@ -138,7 +138,7 @@ Add a browser-facing scheme to the host set and derive every URL from it.
   > the entrypoint port, because a LAN client reaching the box by address has no
   > TLS terminator in front of it. See the "Follow-up: the LAN IP entries
   > inherited the public scheme" section of
-  > [`proxied-scheme-urls.md`](proxied-scheme-urls.md).
+  > [`proxied-scheme-urls.md`](archive/proxied-scheme-urls.md).
 - The scheme is instance-wide, not per host. One instance is served one way: the
   same Traefik or the same upstream proxy serves every host in the set. Per-host
   schemes would allow a state no topology produces and would make `IssuerBaseURL`
