@@ -674,7 +674,7 @@ combined with instance/SSH-target env vars). Instance overrides:
    the gateway and a pinned TLS dial lands on a port nothing answers. The pin
    stays for plain-http issuers. `HostSet.ProxyConsistency` /
    `Deployability` report the layers that disagree at startup; see
-   [`docs/plans/proxied-scheme-urls.md`](docs/plans/proxied-scheme-urls.md). An app with
+   [`docs/plans/archive/proxied-scheme-urls.md`](docs/plans/archive/proxied-scheme-urls.md). An app with
    `sso.loopbackIssuer` instead takes `http://localhost:<compat port>` and gets
    no `extraHosts` entry: it shares the host network namespace, where localhost
    is already the host. That substitution is gated on the deployment being plain
@@ -720,7 +720,7 @@ combined with instance/SSH-target env vars). Instance overrides:
     access policy is forgeable from inside those ranges, so do not write one that
     matters. Trust is still scoped to the source address: the generated config
     never emits `forwardedHeaders.insecure: true`. See
-    [`docs/plans/upstream-proxy-headers.md`](docs/plans/upstream-proxy-headers.md).
+    [`docs/plans/archive/upstream-proxy-headers.md`](docs/plans/archive/upstream-proxy-headers.md).
     Measured on the real proxied install: before the default, 55 of 55 requests
     from the terminator arrived at Authentik as `scheme: "http"`; after, the
     same request arrives as `scheme: "https"`.

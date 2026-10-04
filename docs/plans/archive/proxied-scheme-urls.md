@@ -2,7 +2,7 @@
 > the startup diagnostic. The dial-plan question this plan left open is resolved:
 > a proxied https issuer is deployable without TLS at Traefik, because the
 > container resolves the issuer the same way the browser does. TLS at Traefik
-> remains a separate non-goal, tracked in [tls.md](tls.md).
+> remains a separate non-goal, tracked in [tls.md](../tls.md).
 
 # Plan: Make derived URLs survive a TLS-terminating proxy
 

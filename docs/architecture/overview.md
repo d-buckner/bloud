@@ -158,9 +158,6 @@ so the interval is a floor on the gap between passes rather than a
 schedule that can stack one behind a user-triggered pass. The pass itself
 must be free when reality already matches intent, and that is asserted, not
 assumed (`orchestrator/selfheal_test.go`).
-- *(Share/guest records are not intents by design: pure store writes with no
-  lifecycle side effects, and invite creation returns its token synchronously.
-  The sharing API writes them directly; see docs/specs/review.md §C3)*
 
 The orchestrator drains the intent queue, applies intents to stores (desired state), then
 converges actual state toward desired: sync container state, handle uninstalls, populate
@@ -206,7 +203,7 @@ static container definitions (API calls, credential rotation, plugin setup).
 ```go
 type NodeLifecycle interface {
     Name() string
-    PreStart(ctx context.Context, state *AppState) (changed bool, err error)
+    PreStart(ctx context.Context, state *AppState) (PreStartResult, error)
     PostStart(ctx context.Context, state *AppState) error
 }
 ```
@@ -223,7 +220,9 @@ type AppState struct {
     DataPath      string
     BloudDataPath string
     SSOEnabled    bool
-    LDAP          *LDAPOutput  // host, port, baseDN, bindUser, bindPassword
+    LDAP          *LDAPOutput   // host, port, baseDN, bindUser, bindPassword
+    OIDC          *OIDCOutput   // clientID, clientSecret, issuerURL, redirectURI
+    Integrations  Integrations  // typed resolved providers, one slice per contract
 }
 ```
 

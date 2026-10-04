@@ -1,4 +1,4 @@
-> Status: accepted (implemented on this PR; move to `plans/archive/` once merged)
+> Status: accepted and implemented (landed in `plans/archive/`)
 
 # Plan: Trust an upstream reverse proxy's forwarded headers
 
@@ -18,7 +18,7 @@ Three facts combine:
    `http://localhost:8080` for `localhost` and `http://<host>` for everything
    else, and `HostSet.IssuerBaseURL` returns the primary host's base URL for a
    non-localhost primary. There is no scheme knob, by design:
-   [the 2026-09-19 review](../specs/review-2026-09-19.md) records "hardcode `http`, which matches
+   [the 2026-09-19 review](../../specs/review-2026-09-19.md) records "hardcode `http`, which matches
    reality: invariant 10 says no TLS ships today".
 
 2. **Traefik discards the proxy's `X-Forwarded-*` headers.** The generated
@@ -154,7 +154,7 @@ existing deployment is byte-identical to today.
   touches Authentik provisioning and every native-oidc app config. It is the
   remaining half of invariant 10's TLS story and deserves its own plan.
 - **TLS at Traefik.** Bloud ships no certificate resolver and no ACME story.
-- **Tailscale Serve.** Covered by [the tailnet outpost plan](tailnet-outpost.md).
+- **Tailscale Serve.** Covered by [the tailnet outpost plan](../tailnet-outpost.md).
 
 ## Verification
 

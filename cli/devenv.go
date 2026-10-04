@@ -19,7 +19,7 @@ var devPassthroughEnv = []string{
 	// deployment keeps the real scheme instead of rewriting X-Forwarded-Proto
 	// to http. Without this the setting cannot reach the host-agent at all on
 	// the VM backends or the e2e systemd unit, so a https instance would always
-	// derive an http issuer. See docs/plans/upstream-proxy-headers.md.
+	// derive an http issuer. See docs/plans/archive/upstream-proxy-headers.md.
 	"BLOUD_TRUSTED_PROXY_NETS",
 	// The deployment-wide public scheme (http|https) for a TLS-terminating
 	// proxy. Per-host schemes saved in Settings win over it.

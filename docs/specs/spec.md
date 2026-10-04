@@ -259,14 +259,16 @@ startup configuration.
 It may write files, environment, certificates, credentials, or other startup inputs.
 It runs only after the application's required providers are healthy, so it may also
 idempotently provision provider-side resources such as a database, user, or API credential.
-It returns whether managed output changed:
+It reports whether the running container must be recreated, and why:
 
 ```go
-PreStartConfig(ctx, state) (changed bool, err error)
+PreStart(ctx, state) (PreStartResult, error)
 ```
 
-When prestart configuration changes, the orchestrator restarts only affected services, in
-dependency order.
+When PreStart reports `RestartNeeded`, the orchestrator recreates only the affected
+containers, in dependency order. Writing a file is not by itself a recreate signal:
+the `RestartNeeded` field is named for the orchestrator's side effect, not for what the
+configurator did to disk.
 
 #### PostStart Configuration
 
@@ -276,7 +278,7 @@ It performs idempotent runtime operations such as API calls, resource registrati
 inter-application linking:
 
 ```go
-PostStartConfig(ctx, state) error
+PostStart(ctx, state) error
 ```
 
 PostStart configuration does not itself require a restart.

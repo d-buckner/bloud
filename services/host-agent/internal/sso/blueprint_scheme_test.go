@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Part B of the proxied-scheme plan (docs/plans/proxied-scheme-urls.md).
+// Part B of the proxied-scheme plan (docs/plans/archive/proxied-scheme-urls.md).
 //
 // Part A pinned what HostSet derives. This pins what actually reaches Authentik,
 // because a correct derivation can still be rendered into the wrong artifact, and
