@@ -332,8 +332,9 @@ func TestPhaseLiveVerboseShowsRawAndSkipsTheFilter(t *testing.T) {
 }
 
 // waitFake stands in for the guest during the convergence wait: it streams a
-// journal when asked to follow, and answers the health poll on command. It is
-// what makes the follower/poll concurrency testable without a VM.
+// journal on stdout and a timeout dump on stderr, and answers the health poll
+// on command. It is what makes the wait's streaming shape testable without a
+// VM.
 type waitFake struct {
 	healthOK bool
 	journal  []string
@@ -341,16 +342,14 @@ type waitFake struct {
 	ran      []string
 }
 
-// record notes a command the fake was asked to run. The follower and the poll
-// run concurrently, so the record needs the lock the real executor does not
-// need because it never shares one.
+// record notes a command the fake was asked to run.
 func (f *waitFake) record(cmd string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ran = append(f.ran, cmd)
 }
 
-// commands returns a snapshot of what ran, taken under the lock.
+// commands returns a snapshot of what ran.
 func (f *waitFake) commands() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -359,30 +358,25 @@ func (f *waitFake) commands() []string {
 
 func (f *waitFake) Run(_ context.Context, spec executor.RunSpec) (executor.ExecResult, error) {
 	f.record(spec.Command)
-	if !f.healthOK {
-		return executor.ExecResult{ExitCode: 1, Stdout: "deadline exceeded"}, errors.New("exit status 1")
-	}
-	return executor.ExecResult{ExitCode: 0}, nil
+	return executor.ExecResult{}, nil
 }
 
-func (f *waitFake) RunStream(ctx context.Context, spec executor.RunSpec, stdout, _ io.Writer) error {
+func (f *waitFake) RunStream(_ context.Context, spec executor.RunSpec, stdout, stderr io.Writer) error {
 	f.record(spec.Command)
-	if !strings.Contains(spec.Command, "journalctl") {
-		return nil
-	}
 	for _, l := range f.journal {
 		_, _ = io.WriteString(stdout, l+"\n")
 	}
-	// A real `journalctl -f` does not return until it is told to. The test
-	// hangs if the wait phase forgets to cancel the follower.
-	<-ctx.Done()
-	return ctx.Err()
+	if !f.healthOK {
+		_, _ = io.WriteString(stderr, "timed out after 1200s waiting for the validation host-agent\n")
+		return errors.New("exit status 1")
+	}
+	return nil
 }
 
 func (f *waitFake) CopyTo(context.Context, string, string) error   { return nil }
 func (f *waitFake) CopyFrom(context.Context, string, string) error { return nil }
 
-func TestWaitForAgentStreamsTheJournalWhilePollingHealth(t *testing.T) {
+func TestWaitForAgentStreamsTheJournalWhileWaiting(t *testing.T) {
 	f := &waitFake{healthOK: true, journal: []string{
 		`{"level":"INFO","msg":"lifecycle phase: PreStart","app":"traefik"}`,
 		`{"level":"INFO","msg":"marking node RUNNING after route generation","app":"traefik"}`,
@@ -400,14 +394,17 @@ func TestWaitForAgentStreamsTheJournalWhilePollingHealth(t *testing.T) {
 	if !strings.Contains(got, "RUNNING") {
 		t.Errorf("the node never showed as RUNNING:\n%s", got)
 	}
-	var followed bool
-	for _, c := range f.commands() {
-		if strings.Contains(c, "journalctl") && strings.Contains(c, integrationHostAgentUnit) {
-			followed = true
-		}
+	// One call, not a follower process plus a poll: the shell that owns the
+	// tailer is the shell that polls, so it can kill the tailer on the way out.
+	if n := len(f.commands()); n != 1 {
+		t.Errorf("the wait should be one streaming call, got %d: %v", n, f.commands())
 	}
-	if !followed {
-		t.Errorf("the follower should tail the validation unit, ran: %v", f.commands())
+	cmd := f.commands()[0]
+	if !strings.Contains(cmd, "journalctl") || !strings.Contains(cmd, integrationHostAgentUnit) {
+		t.Errorf("the wait should tail the validation unit, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "http://localhost:3000/api/health") {
+		t.Errorf("the wait should poll the health endpoint, got: %s", cmd)
 	}
 }
 
@@ -421,7 +418,35 @@ func TestWaitForAgentKeepsTheTimeoutEvidenceInTheTranscript(t *testing.T) {
 	if err == nil {
 		t.Fatal("a failed health poll must fail the phase")
 	}
-	if !strings.Contains(transcript.String(), "deadline exceeded") {
+	if !strings.Contains(transcript.String(), "timed out after 1200s") {
 		t.Errorf("the timeout evidence did not reach the transcript:\n%s", transcript.String())
+	}
+}
+
+// TestWaitScriptReapsItsOwnTailer pins the deadlock that the split-process
+// version of this code caused. A `journalctl -f` started by a shell is a
+// grandchild of the Go process: cancelling the context kills the shell and
+// leaves journalctl holding the stdout pipe open, so Go's copy goroutine
+// never sees EOF, cmd.Wait() never returns, and the tier hangs until the CI
+// job timeout. The script must kill the tailer it started and wait for it on
+// every exit path, so the pipe is closed before the shell exits.
+func TestWaitScriptReapsItsOwnTailer(t *testing.T) {
+	trap := `trap 'kill "$follow" 2>/dev/null; wait "$follow" 2>/dev/null' EXIT INT TERM`
+	if !strings.Contains(integrationWaitAgentScript, trap) {
+		t.Errorf("the wait script must kill and reap its journal follower on EXIT, INT, and TERM:\n%s",
+			integrationWaitAgentScript)
+	}
+	if !strings.Contains(integrationWaitAgentScript, "journalctl --user -u \"$unit\" -n 0 -f -o cat 2>/dev/null &") {
+		t.Errorf("the follower must run as a background job the trap can reach:\n%s",
+			integrationWaitAgentScript)
+	}
+}
+
+// TestWaitScriptBoundsItsOwnRun: the deadline is the tier's contract for how
+// long first boot may take. It lives in the script, so a tailer that somehow
+// survives still cannot outlive the wait.
+func TestWaitScriptBoundsItsOwnRun(t *testing.T) {
+	if !strings.Contains(integrationWaitAgentScript, "SECONDS >= deadline") {
+		t.Errorf("the wait script lost its deadline:\n%s", integrationWaitAgentScript)
 	}
 }

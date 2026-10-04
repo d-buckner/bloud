@@ -247,7 +247,14 @@ their state changes live (`cli/validate_progress.go`):
   convergence step, and each node moving through `PreStart` /
   `EnsureContainer` / `HealthCheck` to `RUNNING`. The API is behind the
   bootstrap gate for exactly this window, so the journal is the only thing
-  that can say which node is stuck.
+  that can say which node is stuck. The follow and the poll are **one guest
+  script**, not a Go-side follower process cancelled when the poll ends: a
+  `journalctl -f` started by `bash -c` is a grandchild of the CLI, so the
+  context kill reaches the shell and leaves journalctl holding the stdout
+  pipe open. Go's copy goroutine then never sees EOF, `cmd.Wait()` never
+  returns, and the tier hangs to the CI job timeout. The script owns its
+  tailer and kills and reaps it in an `EXIT` trap, which is what closes the
+  pipe before the shell exits.
 - the test phase streams `go test -v` as one line per case at start and
   finish (`▶` / `✓` / `✗` / `⊘`, with the per-case duration), plus a tally.
   A run where the `-test.run` regex matched nothing says so out loud rather

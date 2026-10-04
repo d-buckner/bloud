@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -62,13 +61,35 @@ done
 fuser -k 3000/tcp 2>/dev/null || true
 sleep 1`
 
-// integrationWaitAgentScript waits for the validation host-agent API. First
-// boot pulls images and converges the system apps before the listener opens,
-// so this doubles as the bootstrap convergence gate.
-var integrationWaitAgentScript = `deadline=$((SECONDS + 1200))
-until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do
-  if ((SECONDS >= deadline)); then
-    journalctl --user -u bloud-validate-host-agent.service --no-pager -n 80 || true
+// integrationWaitAgentScript waits for the validation host-agent API and
+// streams the unit's journal while it waits, in one guest process. First boot
+// pulls images and converges the system apps before the listener opens, so
+// this doubles as the bootstrap convergence gate.
+//
+// The tailer must be the script's own child and the script must kill it before
+// it exits. Doing it the other way round -- a Go-side `journalctl -f` that the
+// poll cancels when the gate opens -- deadlocks the whole tier. `bash -c
+// "journalctl -f || true"` forks journalctl, the context kill reaches only
+// bash, and the orphaned journalctl keeps the stdout pipe open, so Go's copy
+// goroutine never sees EOF and `cmd.Wait()` blocks forever. That is exactly
+// how this tier hung at wait-for-convergence for the full job timeout. The EXIT
+// trap kills the tailer and waits for it, so the pipe is closed before the
+// shell exits and Wait() returns.
+//
+// stdout is the live journal stream; stderr is the timeout dump, which belongs
+// in the phase transcript rather than on the console.
+var integrationWaitAgentScript = `unit=` + integrationHostAgentUnit + `
+journalctl --user -u "$unit" -n 0 -f -o cat 2>/dev/null &
+follow=$!
+trap 'kill "$follow" 2>/dev/null; wait "$follow" 2>/dev/null' EXIT INT TERM
+deadline=$((SECONDS + 1200))
+while true; do
+  if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then
+    exit 0
+  fi
+  if (( SECONDS >= deadline )); then
+    echo "timed out after 1200s waiting for the validation host-agent to converge" >&2
+    journalctl --user -u "$unit" --no-pager -n 80 >&2
     exit 1
   fi
   sleep 5
@@ -547,54 +568,24 @@ func integrationProvisionVM(ctx context.Context, t *integrationTranscript) (back
 	return bk, name, nil
 }
 
-// integrationJournalFollowScript tails the validation unit's journal for the
-// duration of the convergence wait. `-o cat` drops journalctl's own prefix so
-// every line is the agent's own JSON record, which is what the progress
-// filter parses. `2>/dev/null || true` keeps it best effort: where a user
-// journal is unavailable the follower exits at once and the health poll still
-// decides the phase on its own.
-var integrationJournalFollowScript = "journalctl --user -u " + integrationHostAgentUnit +
-	" -n 0 -f -o cat 2>/dev/null || true"
-
 // integrationWaitForAgent blocks until the validation host-agent reports
-// healthy, writing whatever the wait script said on failure into the
-// transcript so the timeout is not silent.
-//
-// While it waits it also follows the agent's journal into `live`. The API is
+// healthy, streaming the unit's journal into `live` while it waits. The API is
 // behind the bootstrap gate for exactly this period, so the journal is the
 // only thing that says which node is coming up and which one is stuck; without
 // it the longest phase in the tier is a blank console.
+//
+// This is one streaming call, not a follower goroutine plus a poll. The wait
+// script owns its own tailer and kills it before exiting, which is what keeps
+// the pipe closing; see integrationWaitAgentScript for the deadlock that the
+// split-process version caused. The script's stdout is the journal stream and
+// its stderr is the timeout dump, so the dump lands in the phase transcript
+// rather than on the console, and the timeout is never silent.
 func integrationWaitForAgent(ctx context.Context, ex executor.Executor, out io.Writer, live io.Writer) error {
-	streamCtx, stopFollow := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_ = ex.RunStream(streamCtx, executor.RunSpec{Command: integrationJournalFollowScript}, live, io.Discard)
-	}()
-
-	err := pollIntegrationAgent(ctx, ex, out)
-	stopFollow()
-	wg.Wait()
-	return err
-}
-
-// pollIntegrationAgent is the bootstrap gate wait: poll the health endpoint
-// until it answers, or until the deadline gives up. The wait script dumps the
-// unit's journal on timeout, so that output goes to the phase transcript and
-// the timeout is never silent.
-func pollIntegrationAgent(ctx context.Context, ex executor.Executor, out io.Writer) error {
-	res, err := ex.Run(ctx, executor.RunSpec{Command: integrationWaitAgentScript})
-	if err == nil && res.ExitCode == 0 {
+	err := ex.RunStream(ctx, executor.RunSpec{Command: integrationWaitAgentScript}, live, out)
+	if err == nil {
 		return nil
 	}
-	if detail := strings.TrimSpace(res.Stdout); detail != "" {
-		_, _ = io.WriteString(out, detail+"\n")
-	}
-	if detail := strings.TrimSpace(res.Stderr); detail != "" {
-		_, _ = io.WriteString(out, detail+"\n")
-	}
-	return fmt.Errorf("validation host-agent did not become healthy")
+	return fmt.Errorf("validation host-agent did not become healthy: %w", err)
 }
 
 // integrationStopService stops the validation unit. The runtime dir and its
