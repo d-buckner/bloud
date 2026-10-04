@@ -114,7 +114,7 @@ func TestAppsModule_Install_EnqueuesIntent(t *testing.T) {
 	// intent ref.
 	require.NotNil(t, app)
 	assert.Equal(t, "jellyfin", app.CatalogID)
-	assert.Equal(t, "installing", app.Status)
+	assert.Equal(t, store.AppStatusInstalling, app.Status)
 }
 
 func TestAppsModule_Install_NotFound(t *testing.T) {

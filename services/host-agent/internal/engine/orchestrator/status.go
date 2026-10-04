@@ -9,6 +9,7 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
+	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
 // setupStatusSync registers a graph event handler that keeps the app store's
@@ -25,11 +26,11 @@ func (o *Orchestrator) setupStatusSync() {
 			// Single-container node: direct status mapping.
 			switch node.ActualStatus {
 			case graph.StatusRunning:
-				_ = o.appStore.UpdateStatus(appID, "running")
+				_ = o.appStore.UpdateStatus(appID, store.AppStatusRunning)
 				_ = o.appStore.SetLastError(appID, "")
 				o.recordOpComplete(appID)
 			case graph.StatusError:
-				_ = o.appStore.UpdateStatus(appID, "error")
+				_ = o.appStore.UpdateStatus(appID, store.AppStatusError)
 				_ = o.appStore.SetLastError(appID, node.Error)
 			}
 			return
@@ -38,11 +39,11 @@ func (o *Orchestrator) setupStatusSync() {
 		// Error fires immediately on any container; running only when all are up.
 		switch node.ActualStatus {
 		case graph.StatusError:
-			_ = o.appStore.UpdateStatus(appID, "error")
+			_ = o.appStore.UpdateStatus(appID, store.AppStatusError)
 			_ = o.appStore.SetLastError(appID, node.Error)
 		case graph.StatusRunning:
 			if o.allContainersRunning(appID) {
-				_ = o.appStore.UpdateStatus(appID, "running")
+				_ = o.appStore.UpdateStatus(appID, store.AppStatusRunning)
 				_ = o.appStore.SetLastError(appID, "")
 				o.recordOpComplete(appID)
 			}

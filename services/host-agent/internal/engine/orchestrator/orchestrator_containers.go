@@ -79,7 +79,7 @@ func (o *Orchestrator) syncAppContainers(ctx context.Context, app *store.Install
 
 	// An app being uninstalled is never re-driven: its containers are on
 	// the way out, and re-creating them here would fight the removal.
-	if app.Status == "uninstalling" {
+	if app.Status == store.AppStatusUninstalling {
 		if containersAllGone(states) {
 			o.logger.Info("cleaning up uninstalled app", "app", app.CatalogID)
 			_ = o.appStore.Uninstall(app.CatalogID)
@@ -88,17 +88,17 @@ func (o *Orchestrator) syncAppContainers(ctx context.Context, app *store.Install
 	}
 
 	switch {
-	case app.Status == "running" && !containersAllRunning(states):
+	case app.Status == store.AppStatusRunning && !containersAllRunning(states):
 		// Reality disagrees with the store: the app is not up.
 		o.logger.Info("container gone, marking as stopped", "app", app.CatalogID)
-		_ = o.appStore.UpdateStatus(app.CatalogID, "stopped")
+		_ = o.appStore.UpdateStatus(app.CatalogID, store.AppStatusStopped)
 
-	case app.Status == "stopped" && containersAllRunning(states):
+	case app.Status == store.AppStatusStopped && containersAllRunning(states):
 		// Container recovered externally after a clean stop → mark running.
 		// "stopped" only applies to apps that previously completed full lifecycle,
 		// so no lifecycle re-run is needed.
 		o.logger.Info("container recovered, marking as running", "app", app.CatalogID)
-		_ = o.appStore.UpdateStatus(app.CatalogID, "running")
+		_ = o.appStore.UpdateStatus(app.CatalogID, store.AppStatusRunning)
 	}
 
 	for _, def := range defs {

@@ -92,7 +92,7 @@ func (f *FakeAppStore) Install(catalogID, displayName, version string, integrati
 	return nil
 }
 
-func (f *FakeAppStore) UpdateStatus(name, status string) error {
+func (f *FakeAppStore) UpdateStatus(name string, status store.AppStatus) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if app, ok := f.apps[name]; ok {
@@ -213,7 +213,7 @@ func (f *FakeAppStore) getAll() ([]*appEntry, error) {
 	for _, app := range f.apps {
 		entries = append(entries, &appEntry{
 			CatalogID: app.CatalogID,
-			Status:    app.Status,
+			Status:    string(app.Status),
 			IsSystem:  app.IsSystem,
 		})
 	}

@@ -212,5 +212,5 @@ func (o *Orchestrator) isUninstalling(appName string) bool {
 	if err != nil || app == nil {
 		return false
 	}
-	return app.Status == "uninstalling"
+	return app.Status == store.AppStatusUninstalling
 }

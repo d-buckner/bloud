@@ -25,7 +25,7 @@ func TestAppStore_Install(t *testing.T) {
 	assert.Equal(t, "radarr", app.CatalogID)
 	assert.Equal(t, "Radarr", app.DisplayName)
 	assert.Equal(t, "5.0.0", app.Version)
-	assert.Equal(t, "installing", app.Status)
+	assert.Equal(t, AppStatusInstalling, app.Status)
 	assert.Equal(t, 7878, app.Port)
 	assert.False(t, app.IsSystem)
 	assert.Equal(t, "qbittorrent", app.IntegrationConfig["downloadClient"])
@@ -102,7 +102,7 @@ func TestAppStore_GetByCatalogID(t *testing.T) {
 		"downloadClient": "qbittorrent",
 	}, &InstallOptions{Port: 7878})
 	require.NoError(t, err)
-	require.NoError(t, store.UpdateStatus("radarr", "running"))
+	require.NoError(t, store.UpdateStatus("radarr", AppStatusRunning))
 
 	app, err := store.GetByCatalogID("radarr")
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func TestAppStore_GetByCatalogID(t *testing.T) {
 	assert.Equal(t, "radarr", app.CatalogID)
 	assert.Equal(t, "Radarr", app.DisplayName)
 	assert.Equal(t, "5.0.0", app.Version)
-	assert.Equal(t, "running", app.Status)
+	assert.Equal(t, AppStatusRunning, app.Status)
 	assert.Equal(t, 7878, app.Port)
 	assert.False(t, app.IsSystem)
 	assert.Equal(t, "qbittorrent", app.IntegrationConfig["downloadClient"])
@@ -148,11 +148,11 @@ func TestAppStore_UpdateStatus(t *testing.T) {
 	store := NewAppStore(db)
 
 	require.NoError(t, store.Install("radarr", "Radarr", "", nil, nil))
-	require.NoError(t, store.UpdateStatus("radarr", "running"))
+	require.NoError(t, store.UpdateStatus("radarr", AppStatusRunning))
 
 	app, err := store.GetByCatalogID("radarr")
 	require.NoError(t, err)
-	assert.Equal(t, "running", app.Status)
+	assert.Equal(t, AppStatusRunning, app.Status)
 }
 
 func TestAppStore_Uninstall(t *testing.T) {
@@ -213,7 +213,7 @@ func TestAppStore_EnsureSystemApp(t *testing.T) {
 	app, err := store.GetByCatalogID("postgres")
 	require.NoError(t, err)
 	require.NotNil(t, app)
-	assert.Equal(t, "running", app.Status)
+	assert.Equal(t, AppStatusRunning, app.Status)
 	assert.True(t, app.IsSystem)
 	assert.Equal(t, 5432, app.Port)
 }

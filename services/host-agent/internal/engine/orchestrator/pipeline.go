@@ -56,7 +56,7 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 	appName := intent.AppName
 
 	// Skip if already running.
-	if existing, _ := o.appStore.GetByCatalogID(appName); existing != nil && existing.Status == "running" {
+	if existing, _ := o.appStore.GetByCatalogID(appName); existing != nil && existing.Status == store.AppStatusRunning {
 		o.logger.Info("app already running, skipping install intent", "app", appName)
 		return
 	}
@@ -134,7 +134,7 @@ func (o *Orchestrator) applyUninstallIntent(intent UninstallAppIntent, pendingCl
 	if o.appStore == nil {
 		return
 	}
-	if err := o.appStore.UpdateStatus(intent.AppName, "uninstalling"); err != nil {
+	if err := o.appStore.UpdateStatus(intent.AppName, store.AppStatusUninstalling); err != nil {
 		o.logger.Error("failed to mark app as uninstalling", "app", intent.AppName, "error", err)
 		return
 	}
@@ -152,7 +152,7 @@ func (o *Orchestrator) recordIntent(appName string, integrations map[string]stri
 	if err != nil {
 		return err
 	}
-	if existing != nil && existing.Status == "running" {
+	if existing != nil && existing.Status == store.AppStatusRunning {
 		o.logger.Info("skipping record: app already running", "app", appName)
 		return nil
 	}
@@ -277,7 +277,7 @@ func (o *Orchestrator) convergeFromStores(ctx context.Context, pendingClearData 
 func (o *Orchestrator) convergeUninstalls(ctx context.Context, apps []*store.InstalledApp, appMap map[string]*store.InstalledApp, pendingClearData map[string]bool) {
 	removedAny := false
 	for _, app := range apps {
-		if app.Status != "uninstalling" {
+		if app.Status != store.AppStatusUninstalling {
 			continue
 		}
 		clearData := pendingClearData[app.CatalogID]
