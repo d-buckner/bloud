@@ -1,7 +1,9 @@
 # Bloud MCP
 
-**Status:** Shipped. `apps/affine-mcp` provides the `mcp` contract; AFFiNE's own MCP server is deliberately not exposed.
-**Last updated:** 2026-10-03
+**Status:** Shipped. Two providers today: `apps/affine-mcp` and
+`apps/caldav-mcp`, both consumed by Hermes. AFFiNE's own MCP server is
+deliberately not exposed.
+**Last updated:** 2026-10-11
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md)
 
 ---
@@ -13,8 +15,17 @@ provides the `mcp` contract**. A harness consumes that contract and registers
 each provider as a tool namespace.
 
 ```
-affine-mcp (provides mcp)  <──  hermes (integrates mcp, optional + multi)
+affine-mcp  (provides mcp)  <──┐
+                               ├──  hermes (integrates mcp, optional + multi)
+caldav-mcp  (provides mcp)  <──┘
 ```
+
+`multi: true` is what makes that a fan-in rather than a choice. The resolver
+binds every compatible provider an optional contract declares, and Hermes
+writes one `mcp_servers` entry per provider under that provider's
+`serverName`. Installing a new MCP-capable app gives the agent a new namespace
+without any change to Hermes, and uninstalling one removes its entry on the
+next pass instead of leaving a tool the agent keeps trying to call.
 
 AFFiNE ships its own MCP server, and the first version of this design used it:
 `apps/affine` minted a scoped `aff_mcp_v1.<credentialId>.<secret>` bearer through
@@ -119,6 +130,7 @@ integrations:
     requires: [httpToken]
     compatible:
       - app: affine-mcp
+      - app: caldav-mcp
 ```
 
 `requires: [httpToken]` is the whole consumer surface. Declaring a contract gets
@@ -424,6 +436,10 @@ Hermes reads `mcp_servers` from its own `config.yaml`:
 mcp_servers:
   affine-mcp:
     url: http://localhost:9222/mcp
+    headers:
+      Authorization: Bearer <generated>
+  caldav-mcp:
+    url: http://localhost:9333/mcp
     headers:
       Authorization: Bearer <generated>
 ```

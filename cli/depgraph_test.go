@@ -297,6 +297,52 @@ func TestDefaultProviderPrefersDefaultFlag(t *testing.T) {
 	}
 }
 
+// A `multi: true` integration binds every compatible provider the resolver
+// can find, so the graph has to draw all of them. Drawing only the default
+// made Radicale's icsFeed contract look like it synced Radarr alone when it
+// syncs Sonarr too, and hid the calendar MCP from a reader trying to see how
+// Hermes gets its tools.
+func TestDrawnProvidersExpandsMultiIntegrations(t *testing.T) {
+	multi := Integration{
+		Multi:      true,
+		Compatible: []CompatibleApp{{App: "radarr"}, {App: "sonarr"}},
+	}
+	got := drawnProviders(multi)
+	want := []string{"radarr", "sonarr"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("drawnProviders(multi) = %v, want %v", got, want)
+	}
+}
+
+// A single-provider integration must not fan out. Drawing every compatible
+// alternative would show wiring that never happens, which is worse than
+// showing nothing.
+func TestDrawnProvidersKeepsSingleIntegrationsNarrow(t *testing.T) {
+	single := Integration{
+		Compatible: []CompatibleApp{{App: "alt"}, {App: "chosen", Default: true}},
+	}
+	got := drawnProviders(single)
+	if len(got) != 1 || got[0] != "chosen" {
+		t.Errorf("drawnProviders(single) = %v, want [chosen]", got)
+	}
+	if got := drawnProviders(Integration{}); len(got) != 0 {
+		t.Errorf("drawnProviders(empty) = %v, want none", got)
+	}
+}
+
+// A multi integration pointing at the instance's own settings still maps to
+// the AI node rather than to an empty app name.
+func TestDrawnProvidersMapsInstanceSource(t *testing.T) {
+	multi := Integration{
+		Multi:      true,
+		Compatible: []CompatibleApp{{Source: "instance"}, {App: "real"}},
+	}
+	got := drawnProviders(multi)
+	if len(got) != 2 || got[0] != instanceProviderNodeID || got[1] != "real" {
+		t.Errorf("drawnProviders(instance+app) = %v, want [%s real]", got, instanceProviderNodeID)
+	}
+}
+
 // The browser renderer feeds this JSON into the dashboard's own graph
 // components, so the shape has to match what /api/system/developer returns:
 // app nodes keyed by catalog id, container nodes keyed by container name and

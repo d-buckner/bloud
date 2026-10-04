@@ -53,6 +53,13 @@ integrations:
       # it here is what lets Hermes register the namespace; `mcp` is optional
       # and multi, so neither app is required.
       - app: affine-mcp
+      # The calendar. Radicale holds the family calendar and the synced
+      # Radarr/Sonarr feeds, and `apps/caldav-mcp` exposes them as a tool
+      # namespace, which is what turns "what's on the shared calendar this
+      # week?" into something the agent can actually answer. Declared rather
+      # than hardwired: install the MCP app and the agent gains the namespace,
+      # uninstall it and the entry is removed on the next pass.
+      - app: caldav-mcp
 
 # SSO joins Authentik through the Hermes dashboard's bundled self-hosted
 # OIDC provider (public authorization-code + PKCE client). That provider
