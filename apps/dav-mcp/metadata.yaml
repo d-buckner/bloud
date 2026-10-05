@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: dav-mcp
+displayName: DAV MCP
+description: MCP tool server for the calendars and contacts Bloud already serves, so agents read and write events, to-dos, and address books
+category: productivity
+port: 9333
+estimatedSizeMB: 170
+
+# No browser UI: the wrapper serves an MCP endpoint and nothing to click, so the
+# dashboard draws no tile for it. It is otherwise an ordinary app: installed,
+# reconciled, and routed like every other.
+headless: true
+
+# A wrapper, not the calendar server itself. dav-mcp serves streamable HTTP
+# directly, so there is no bridge process in front of it: the app is one
+# container that speaks MCP on one port and CalDAV/CardDAV out to Radicale.
+# The wrapper is not a browser and cannot join the identity provider, so it
+# authenticates to Radicale with the caldav-service account credential,
+# published under Radicale's `appApi` offer; the DAV address comes from the
+# `caldav` contract.
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+  # The DAV server's address. `caldav` carries no credential (a browser client
+  # authenticates the person), so this is only the address.
+  caldav:
+    required: true
+    multi: false
+    compatible:
+      - app: radicale
+        default: true
+  # The machine credential: Radicale publishes the caldav-service account's
+  # username (a value) and password (the secret). `requires: [password]` is the
+  # whole dependency; the username arrives without being asked for, and an empty
+  # password means "not ready", never an empty credential.
+  appApi:
+    required: true
+    multi: false
+    requires:
+      - password
+    compatible:
+      - app: radicale
+        default: true
+
+# The `mcp` contract a harness (Hermes) consumes, under a `dav-mcp` namespace.
+provides:
+  mcp:
+    secrets: [httpToken]
+    values:
+      serverName: dav-mcp
+      path: /mcp
+
+containers:
+  - name: apps-dav-mcp
+    # dav-mcp 4.1.2, distroless (non-root uid 65532, no shell, no package
+    # manager). Pinned to the exact release rather than the `4.1` minor line or
+    # `latest` so the bytes are reviewable and a bump is a deliberate change.
+    image: ghcr.io/philflowio/dav-mcp:4.1.2
+    network: apps-net
+    restartPolicy: always
+    ports:
+      - host: 9333
+        container: 9333
+    environment:
+      # Everything here is static. The two values that are not, the DAV
+      # credential and the MCP bearer, arrive through the env file below:
+      # `environment:` can only render {{appDataDir}} and the process-start
+      # template vars, and both of those values are resolved bindings.
+      NODE_ENV: production
+      # Radicale answers Basic challenges through its LDAP backend. Basic is
+      # also the safe default against a Digest-only server: dav-mcp switches to
+      # Digest by itself when the 401 offers nothing else.
+      AUTH_METHOD: Basic
+      # Serves on the same port the host publishes, so there is no translation
+      # layer to keep straight and no collision with the host-agent's 3000 on
+      # the native backend.
+      PORT: "9333"
+    # Written by the configurator on every pass: the resolved `caldav` address
+    # and `appApi` credential, plus the MCP bearer this app generates and
+    # publishes. dav-mcp reads its whole configuration from process env and
+    # nothing else, so this is the only way a resolved binding reaches it.
+    # The file lives in the app's own data tree and is not mounted: the runtime
+    # reads it on the host and passes the values in at create time.
+    envFile: "{{appDataDir}}/config/env"
+    healthCheck:
+      # Exec form, because the image has no shell and no wget: CMD-SHELL would
+      # fail outright here. This is the image's own healthcheck, with the port
+      # fixed to the one we set above rather than read from the environment.
+      #
+      # /health is served unauthenticated and says nothing about the DAV
+      # server: it answers 200 as long as the process is up. That is the right
+      # job for a liveness probe. The functional gate is the MCP handshake in
+      # PostStart, where a failure can be reported without flapping the
+      # container.
+      test:
+        [
+          "CMD",
+          "/nodejs/bin/node",
+          "-e",
+          "require('http').get('http://127.0.0.1:9333/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1));",
+        ]
+      interval: 5
+      timeout: 10
+      # The port binds only after dav-mcp has logged into Radicale, which at
+      # four LDAP binds is around 18s here. The retries cover that window; the
+      # login itself is what issue #237 is about.
+      retries: 30

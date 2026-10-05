@@ -31,7 +31,7 @@ package catalog
 // it, the install path always passes nil user choices, and treating the
 // recorded value as authoritative hid a provider installed after the record
 // was written (Hermes recorded `mcp: affine-mcp` when that was the only MCP
-// provider, so `caldav-mcp` never drew). The record is now write-only
+// provider, so `dav-mcp` never drew). The record is now write-only
 // provenance, and resolution reads this declaration plus what is installed.
 func DeclaredProviders(integration Integration) []BoundProvider {
 	var out []BoundProvider

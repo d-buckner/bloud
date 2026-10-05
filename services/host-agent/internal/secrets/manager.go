@@ -36,7 +36,7 @@ type Secrets struct {
 	// LDAP bind password for apps to authenticate via LDAP
 	LDAPBindPassword string `json:"ldapBindPassword"`
 
-	// CalDAV service account password for the machine client (caldav-mcp) that
+	// CalDAV service account password for the machine client (dav-mcp) that
 	// reads the operator's calendars on the agent's behalf.
 	CalDAVServicePassword string `json:"caldavServicePassword"`
 

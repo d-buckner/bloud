@@ -299,12 +299,12 @@ func TestPreStartPicksUpWorkspaceChange(t *testing.T) {
 func caldavBinding() configurator.MCPBinding {
 	return configurator.MCPBinding{
 		ProviderRef: configurator.ProviderRef{
-			App:       "caldav-mcp",
+			App:       "dav-mcp",
 			Installed: true,
-			BaseURL:   "http://apps-caldav-mcp:9333",
+			BaseURL:   "http://apps-dav-mcp:9333",
 			LocalURL:  "http://localhost:9333",
 		},
-		ServerName: "caldav-mcp",
+		ServerName: "dav-mcp",
 		Token:      "caldav-bearer",
 		Path:       "/mcp",
 	}
@@ -312,7 +312,7 @@ func caldavBinding() configurator.MCPBinding {
 
 // The install-order case the config resync exists for. Hermes was installed
 // first, so its config.yaml was written with the one MCP namespace that
-// existed at the time, and caldav-mcp arrived afterwards. The next pass
+// existed at the time, and dav-mcp arrived afterwards. The next pass
 // resolves the new binding, and PreStart has to both write the namespace and
 // ask for the restart that makes Hermes re-read the file. While the resync ran
 // PostStart only, this is exactly the pass that did nothing, and the calendar
@@ -324,7 +324,7 @@ func TestPreStartPicksUpProviderInstalledLater(t *testing.T) {
 	if _, err := c.PreStart(context.Background(), mcpState(dir, affineBinding())); err != nil {
 		t.Fatalf("PreStart: %v", err)
 	}
-	if hasNamespace(readConfigDoc(t, dir), "caldav-mcp") {
+	if hasNamespace(readConfigDoc(t, dir), "dav-mcp") {
 		t.Fatal("the later provider must not be present before it is installed")
 	}
 
@@ -337,14 +337,14 @@ func TestPreStartPicksUpProviderInstalledLater(t *testing.T) {
 	}
 
 	doc := readConfigDoc(t, dir)
-	for _, name := range []string{"affine", "caldav-mcp"} {
+	for _, name := range []string{"affine", "dav-mcp"} {
 		if !hasNamespace(doc, name) {
 			t.Errorf("%s missing from %s after its provider was installed", name, mcpServersKey)
 		}
 	}
-	srv := nested(t, doc, mcpServersKey, "caldav-mcp")
+	srv := nested(t, doc, mcpServersKey, "dav-mcp")
 	if srv["url"] != "http://localhost:9333/mcp" {
-		t.Errorf("url = %v, want the caldav-mcp endpoint", srv["url"])
+		t.Errorf("url = %v, want the dav-mcp endpoint", srv["url"])
 	}
 }
 

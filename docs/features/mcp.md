@@ -1,7 +1,7 @@
 # Bloud MCP
 
 **Status:** Shipped. Two providers today: `apps/affine-mcp` and
-`apps/caldav-mcp`, both consumed by Hermes. AFFiNE's own MCP server is
+`apps/dav-mcp`, both consumed by Hermes. AFFiNE's own MCP server is
 deliberately not exposed.
 **Last updated:** 2026-10-11
 **Roadmap:** [plans/mcp-integrations.md](../plans/mcp-integrations.md)
@@ -17,7 +17,7 @@ each provider as a tool namespace.
 ```
 affine-mcp  (provides mcp)  <──┐
                                ├──  hermes (integrates mcp, optional + multi)
-caldav-mcp  (provides mcp)  <──┘
+dav-mcp  (provides mcp)  <──┘
 ```
 
 Dependencies are a set, not a menu: the resolver binds every compatible
@@ -130,7 +130,7 @@ integrations:
     requires: [httpToken]
     compatible:
       - app: affine-mcp
-      - app: caldav-mcp
+      - app: dav-mcp
 ```
 
 `requires: [httpToken]` is the whole consumer surface. Declaring a contract gets
@@ -453,7 +453,7 @@ mcp_servers:
     url: http://localhost:9222/mcp
     headers:
       Authorization: Bearer <generated>
-  caldav-mcp:
+  dav-mcp:
     url: http://localhost:9333/mcp
     headers:
       Authorization: Bearer <generated>

@@ -6,7 +6,7 @@ import (
 	"context"
 )
 
-// CalDAVServiceUsername is the login name of the service account the caldav-mcp
+// CalDAVServiceUsername is the login name of the service account the dav-mcp
 // wrapper uses to read the operator's calendars. It is a plain directory user
 // (type service_account), so Radicale authenticates it over LDAP like any other
 // account and the rights model decides what it can see. The matching rights

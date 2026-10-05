@@ -35,7 +35,7 @@ type Params struct {
 	BootstrapEmail          string
 	TokenKey                string                     // API token key for host-agent
 	LDAPBindPassword        string                     // LDAP bind password for service account
-	CalDAVServicePassword   string                     // CalDAV service account password (caldav-mcp reads the operator's calendars)
+	CalDAVServicePassword   string                     // CalDAV service account password (dav-mcp reads the operator's calendars)
 	CalendarServicePassword string                     // Shared-calendar owner account password (owns the feeds and the family calendar)
 	BrandingCSS             string                     // Inline CSS to push to Authentik brand API
 	AppsDir                 string                     // Path to the apps directory (for auth.yaml blueprint)
@@ -252,7 +252,7 @@ func (c *ServerConfigurator) ensureServiceAccounts(ctx context.Context, client *
 }
 
 // ensureCalDAVServiceAccount provisions the caldav-service account and publishes
-// its password under the radicale app scope, where the caldav-mcp consumer reads
+// its password under the radicale app scope, where the dav-mcp consumer reads
 // it through the appApi offer. The account is a plain directory user, so
 // Radicale authenticates it over LDAP like any other account; the map share the
 // Radicale configurator writes is what bounds what it can read.

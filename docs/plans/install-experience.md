@@ -112,7 +112,7 @@ thing is listed. "AFFiNE MCP: attached to Hermes, added when you installed
 AFFiNE," with an Uninstall affordance.
 
 This matters more than it looks. The catalog currently carries `affine-mcp` and
-`caldav-mcp` with `headless: true`, which means they are in the catalog and the
+`dav-mcp` with `headless: true`, which means they are in the catalog and the
 API with no dashboard tile. They are discoverable only by going looking, and
 nothing there explains why they exist. If the pre-flight checkbox is the primary
 path, the catalog entry stops being the discovery surface and becomes the audit

@@ -243,9 +243,12 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 	}
 
 	spec := containerruntime.Spec{
-		Name:          def.Name,
-		Image:         def.Image,
-		Environment:   env,
+		Name:        def.Name,
+		Image:       def.Image,
+		Environment: env,
+		// Rendered like every other templated field: the file lives under the
+		// app's own data tree, so its path carries {{appDataDir}}.
+		EnvFile:       render(def.EnvFile),
 		ExtraHosts:    def.ExtraHosts,
 		Networks:      networks,
 		Entrypoint:    def.Entrypoint,
