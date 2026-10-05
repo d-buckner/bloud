@@ -162,7 +162,7 @@ func (c *Client) ensureIdentificationStageUsernameOnly(ctx context.Context, stag
 	}
 
 	return c.cl.PATCH("/api/v3/stages/identification/" + stageUUID + "/").
-		JSON(map[string]interface{}{"user_fields": []string{"username"}}).
+		JSON(map[string]any{"user_fields": []string{"username"}}).
 		OK(http.StatusOK).
 		Exec(ctx)
 }

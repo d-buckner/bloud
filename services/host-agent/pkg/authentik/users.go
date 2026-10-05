@@ -33,7 +33,7 @@ func (c *Client) addUserToGroup(ctx context.Context, userID int, groupName strin
 // (e.g. AFFiNE) require a valid RFC-style email to create app accounts.
 func (c *Client) CreateUser(ctx context.Context, username, password string) (int, error) {
 	// Create the user
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"username":  username,
 		"name":      username,
 		"email":     c.ManagedUserEmail(username),

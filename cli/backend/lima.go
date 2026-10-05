@@ -31,24 +31,24 @@ func NewLimaBackend(instance, projectDir string) *LimaBackend {
 
 // Create ensures the Lima VM exists and is running.
 func (b *LimaBackend) Create(ctx context.Context) error {
-	out, err := b.run(ctx, "limactl", "list", "--json")
+	out, err := b.run(ctx, "list", "--json")
 	if err != nil {
 		return fmt.Errorf("failed to list Lima VMs: %w", err)
 	}
 
 	if !executor.IsVMNamePresent(out, b.instance) {
-		if _, err := b.run(ctx, "limactl", "create", "--name="+b.instance,
+		if _, err := b.run(ctx, "create", "--name="+b.instance,
 			filepath.Join(b.projectDir, "dev", "lima.yaml")); err != nil {
 			return fmt.Errorf("failed to create Lima VM: %w", err)
 		}
 	}
 	if !executor.IsVMNameRunning(out, b.instance) {
-		if _, err := b.run(ctx, "limactl", "start", b.instance); err != nil {
+		if _, err := b.run(ctx, "start", b.instance); err != nil {
 			return fmt.Errorf("failed to start Lima VM: %w", err)
 		}
 	}
 
-	out, err = b.run(ctx, "limactl", "list", "--json")
+	out, err = b.run(ctx, "list", "--json")
 	if err != nil {
 		return fmt.Errorf("failed to verify Lima VM: %w", err)
 	}
@@ -59,7 +59,7 @@ func (b *LimaBackend) Create(ctx context.Context) error {
 }
 
 func (b *LimaBackend) Destroy(ctx context.Context) error {
-	if _, err := b.run(ctx, "limactl", "delete", "--force", b.instance); err != nil {
+	if _, err := b.run(ctx, "delete", "--force", b.instance); err != nil {
 		return fmt.Errorf("failed to delete Lima VM: %w", err)
 	}
 	return nil
@@ -92,13 +92,15 @@ func (b *LimaBackend) Host() executor.Host {
 	)
 }
 
-func (b *LimaBackend) run(ctx context.Context, name string, args ...string) (string, error) {
-	cmd := b.newCmd(ctx, name, args...)
+// run executes limactl with args and returns its combined output. The binary
+// name is fixed: this backend only ever drives limactl.
+func (b *LimaBackend) run(ctx context.Context, args ...string) (string, error) {
+	cmd := b.newCmd(ctx, "limactl", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("%s: %s: %w", name, strings.TrimSpace(stderr.String()), err)
+		return stdout.String(), fmt.Errorf("limactl: %s: %w", strings.TrimSpace(stderr.String()), err)
 	}
 	return stdout.String(), nil
 }

@@ -109,7 +109,7 @@ func runFastTier(root string, manifest *validationManifest, flags validateFlags)
 	}
 
 	if flags.dryRun {
-		printDryRun("fast", tier.Commands, nil, nil, flags)
+		printDryRun("fast", tier.Commands, nil, nil)
 		return 0
 	}
 
@@ -157,7 +157,7 @@ func runChangedTier(root string, manifest *validationManifest, flags validateFla
 	commands := triggeredCommands(manifest.Tiers["fast"], triggeredIDs)
 
 	if flags.dryRun {
-		printDryRun("changed", commands, result.RiskAreas, changedFiles, flags)
+		printDryRun("changed", commands, result.RiskAreas, changedFiles)
 		return 0
 	}
 	printChangedPlan(flags, result, commands, changedFiles)
@@ -239,7 +239,7 @@ func runIntegrationTier(root string, manifest *validationManifest, flags validat
 	}
 
 	if flags.dryRun {
-		printDryRun("integration", tier.Commands, nil, nil, flags)
+		printDryRun("integration", tier.Commands, nil, nil)
 		return 0
 	}
 
@@ -550,7 +550,7 @@ func (r ranCommand) result() CommandResult {
 	}
 }
 
-func printDryRun(tier string, commands []manifestCommand, riskAreas []string, changedFiles []string, flags validateFlags) {
+func printDryRun(tier string, commands []manifestCommand, riskAreas []string, changedFiles []string) {
 	fmt.Printf("Tier: %s (dry-run)\n", tier)
 	if len(changedFiles) > 0 {
 		fmt.Printf("Changed files: %d\n", len(changedFiles))

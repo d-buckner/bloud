@@ -94,7 +94,7 @@ func (c *Client) ensureLDAPProvider(ctx context.Context) (int, error) {
 	}
 
 	// Create the provider
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":               ldapProviderName,
 		"authorization_flow": authFlowID,
 		"invalidation_flow":  invalidFlowID,
@@ -125,7 +125,7 @@ func (c *Client) ensureLDAPApplication(ctx context.Context, providerID int) erro
 	}
 
 	// Create the application
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":               ldapApplicationName,
 		"slug":               ldapApplicationSlug,
 		"provider":           providerID,
@@ -150,7 +150,7 @@ func (c *Client) ensureLDAPServiceAccount(ctx context.Context) (int, error) {
 	}
 
 	// Create the service account
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"username":  ldapServiceUsername,
 		"name":      "LDAP Service Account",
 		"path":      "users",
@@ -179,7 +179,7 @@ func (c *Client) ensureLDAPServiceToken(ctx context.Context, userID int, passwor
 	}
 
 	// Create the token
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"identifier": ldapServiceTokenID,
 		"user":       userID,
 		"intent":     "app_password",
@@ -205,11 +205,11 @@ func (c *Client) ensureLDAPOutpost(ctx context.Context, providerID int) error {
 	}
 
 	// Create the outpost
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":      ldapOutpostName,
 		"type":      "ldap",
 		"providers": []int{providerID},
-		"config": map[string]interface{}{
+		"config": map[string]any{
 			"authentik_host": c.baseURL,
 			"log_level":      "info",
 		},

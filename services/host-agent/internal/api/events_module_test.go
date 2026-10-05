@@ -95,12 +95,12 @@ func TestEventsModule_StreamSnapshotAndEvents(t *testing.T) {
 	}
 	mod := NewEventsModule(bus, layout, newTestSlogger())
 
-	srv := httptest.NewServer(http.HandlerFunc(mod.StreamHandler()))
+	srv := httptest.NewServer(mod.StreamHandler())
 	defer srv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/apps/events", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/apps/events", nil)
 	require.NoError(t, err)
 	// The client connects over loopback, which is only a trusted *position*:
 	// the credential is the API token (PR 4).
@@ -243,7 +243,7 @@ func TestEventsHTTP_StreamSnapshotAndResync(t *testing.T) {
 func TestEventsHTTP_RequiresAuth(t *testing.T) {
 	router, _ := newEventsTestRouterMux(t)
 
-	req := httptest.NewRequest("GET", "/api/apps/events", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/apps/events", nil)
 	// httptest default RemoteAddr (192.0.2.1) is not loopback → no bypass.
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)

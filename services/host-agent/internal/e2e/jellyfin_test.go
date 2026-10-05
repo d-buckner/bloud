@@ -106,7 +106,7 @@ func jellyfinLDAPLoginAs(t *testing.T, username, password string) {
 	}
 
 	body := fmt.Sprintf(`{"Username":%q,"Pw":%q}`, username, password)
-	req, err := http.NewRequestWithContext(context.Background(), "POST",
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func authenticateJellyfin(t *testing.T) string {
 		t.Fatal("no Jellyfin admin password in secrets.json (appSecrets.jellyfin.adminPassword)")
 	}
 	body := fmt.Sprintf(`{"Username":%q,"Pw":%q}`, bootstrapUsername, pw)
-	req, err := http.NewRequestWithContext(context.Background(), "POST",
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		jellyfinURL+"/Users/AuthenticateByName", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func authenticateJellyfin(t *testing.T) string {
 
 func getVirtualFolders(t *testing.T, token string) []virtualFolder {
 	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), "GET", jellyfinURL+"/Library/VirtualFolders", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, jellyfinURL+"/Library/VirtualFolders", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func getVirtualFolders(t *testing.T, token string) []virtualFolder {
 func getLDAPPluginConfig(t *testing.T, token string) ldapPluginConfig {
 	t.Helper()
 	url := fmt.Sprintf("%s/Plugins/%s/Configuration", jellyfinURL, ldapPluginID)
-	req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

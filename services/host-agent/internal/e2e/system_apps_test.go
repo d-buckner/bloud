@@ -58,7 +58,7 @@ func TestAuthentikHealthCheck(t *testing.T) {
 func TestAuthentikLDAPOutpostCreated(t *testing.T) {
 	token := authentikToken(t)
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET",
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		authentikURL+"/api/v3/outposts/instances/?search=LDAP", nil)
 	if err != nil {
 		t.Fatal(err)

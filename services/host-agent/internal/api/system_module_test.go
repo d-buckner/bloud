@@ -170,7 +170,7 @@ func TestSystemHTTP_Health(t *testing.T) {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -194,7 +194,7 @@ func TestSystemHTTP_Health_Unhealthy(t *testing.T) {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -213,7 +213,7 @@ func TestSystemHTTP_Health_UnwiredCheck(t *testing.T) {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -231,7 +231,7 @@ func TestSystemHTTP_Status(t *testing.T) {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/system/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/system/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -245,7 +245,7 @@ func TestSystemHTTP_Storage(t *testing.T) {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/system/storage", nil)
+	req := httptest.NewRequest(http.MethodGet, "/system/storage", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -259,7 +259,7 @@ func TestSystemHTTP_DeveloperGraph_Empty(t *testing.T) {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/system/developer", nil)
+	req := httptest.NewRequest(http.MethodGet, "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -281,7 +281,7 @@ func TestSystemHTTP_DeveloperGraph_WithApps(t *testing.T) {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/system/developer", nil)
+	req := httptest.NewRequest(http.MethodGet, "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -299,7 +299,7 @@ func fetchDeveloperGraph(t *testing.T, mod *systemModule) developerGraph {
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/system/developer", nil)
+	req := httptest.NewRequest(http.MethodGet, "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -725,7 +725,7 @@ func TestSystemHTTP_DeveloperGraph_ContainerNodes(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
-	req := httptest.NewRequest("GET", "/system/developer", nil)
+	req := httptest.NewRequest(http.MethodGet, "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -759,7 +759,7 @@ func TestSystemHTTP_DeveloperGraph_ContainersWithoutCatalogEntry(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewSystemRouter(mod, r)
-	req := httptest.NewRequest("GET", "/system/developer", nil)
+	req := httptest.NewRequest(http.MethodGet, "/system/developer", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

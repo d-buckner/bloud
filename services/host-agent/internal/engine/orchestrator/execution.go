@@ -73,11 +73,7 @@ func (o *Orchestrator) runResync(ctx context.Context, id string) bool {
 		return false
 	}
 	appID := o.ownerApp(id)
-	state, err := o.buildAppState(id)
-	if err != nil {
-		o.logger.Warn("resync: failed to build state", "app", id, "error", err)
-		return false
-	}
+	state := o.buildAppState(id)
 
 	prestart, ok := o.runResyncPreStart(ctx, id, appID, cfg, state)
 	if !ok {
@@ -114,7 +110,7 @@ func (o *Orchestrator) runResyncPreStart(ctx context.Context, id, appID string, 
 	if err != nil {
 		o.logger.Warn("resync: PreStart failed", "app", id, "error", err)
 		o.ensureOpDrive(appID)
-		o.recordOpFail(appID, store.OpPhasePrestart, opCause(id, appID, err), true)
+		o.recordOpFail(appID, store.OpPhasePrestart, opCause(id, appID, err))
 		return configurator.PreStartResult{}, false
 	}
 	o.logger.Info("resync: PreStart complete",
@@ -178,7 +174,7 @@ func (o *Orchestrator) runResyncPostStart(ctx context.Context, id, appID string,
 	if err := o.runPostStart(ctx, cfg, state); err != nil {
 		o.logger.Warn("resync: PostStart failed", "app", id, "error", err)
 		o.ensureOpDrive(appID)
-		o.recordOpFail(appID, store.OpPhasePoststart, opCause(id, appID, err), true)
+		o.recordOpFail(appID, store.OpPhasePoststart, opCause(id, appID, err))
 		return
 	}
 	o.healOp(appID)
@@ -358,13 +354,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	// a fresh count.
 	o.clearResyncWatch(id)
 
-	state, err := o.buildAppState(id)
-	if err != nil {
-		o.logger.Error("failed to build app state", "app", id, "error", err)
-		_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-		o.recordOpFail(owner, store.OpPhasePlanning, opCause(id, owner, err), true)
-		return false
-	}
+	state := o.buildAppState(id)
 
 	prestart, ok := o.runPreStartPhase(ctx, id, owner, cfg, state)
 	if !ok {
@@ -400,7 +390,7 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 func (o *Orchestrator) failNode(id, owner, phase string, err error, msg string) {
 	o.logger.Warn(msg, "app", id, "error", err)
 	_ = o.graph.SetActualStatus(id, graph.StatusError, err.Error())
-	o.recordOpFail(owner, phase, opCause(id, owner, err), true)
+	o.recordOpFail(owner, phase, opCause(id, owner, err))
 }
 
 // runPreStartPhase runs the configurator's PreStart and reports whether the
@@ -480,7 +470,7 @@ func (o *Orchestrator) runPostStartPhase(ctx context.Context, id, owner string, 
 	if err := o.runPostStart(ctx, cfg, state); err != nil {
 		if ctx.Err() != nil {
 			o.logger.Info("PostStart interrupted by shutdown; leaving status for re-converge", "app", id, "error", err)
-			o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, fmt.Errorf("interrupted by shutdown: %w", err)), true)
+			o.recordOpFail(owner, store.OpPhasePoststart, opCause(id, owner, fmt.Errorf("interrupted by shutdown: %w", err)))
 			return false
 		}
 		o.failNode(id, owner, store.OpPhasePoststart, err, "PostStart failed")

@@ -182,7 +182,7 @@ func (s *SessionStore) PurgeExpired() (int64, error) {
 // startup; the goroutine exits when the context is done.
 func StartSessionPurger(ctx context.Context, s *SessionStore, logger *slog.Logger) {
 	go func() {
-		purgeExpiredSessions(ctx, s, logger)
+		purgeExpiredSessions(s, logger)
 		ticker := time.NewTicker(sessionPurgeInterval)
 		defer ticker.Stop()
 		for {
@@ -190,13 +190,13 @@ func StartSessionPurger(ctx context.Context, s *SessionStore, logger *slog.Logge
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				purgeExpiredSessions(ctx, s, logger)
+				purgeExpiredSessions(s, logger)
 			}
 		}
 	}()
 }
 
-func purgeExpiredSessions(ctx context.Context, s *SessionStore, logger *slog.Logger) {
+func purgeExpiredSessions(s *SessionStore, logger *slog.Logger) {
 	n, err := s.PurgeExpired()
 	if err != nil {
 		logger.Error("session purge failed", "error", err)

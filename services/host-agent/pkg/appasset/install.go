@@ -59,7 +59,7 @@ func (in Installer) Install(ctx context.Context, a Asset) (bool, error) {
 	}
 
 	if a.Kind == Zip {
-		return in.commitZip(ctx, a, payload.tempPath)
+		return in.commitZip(a, payload.tempPath)
 	}
 	return in.commitFile(a, payload.tempPath)
 }
@@ -215,7 +215,7 @@ func (in Installer) commitFile(a Asset, tempPath string) (bool, error) {
 
 // commitZip unpacks the staged archive into a staging dir, runs Verify, then
 // atomically replaces Dest with the staged tree.
-func (in Installer) commitZip(ctx context.Context, a Asset, archivePath string) (bool, error) {
+func (in Installer) commitZip(a Asset, archivePath string) (bool, error) {
 	parent := filepath.Dir(a.Dest)
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return false, err

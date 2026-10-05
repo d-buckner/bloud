@@ -52,7 +52,7 @@ func TestSettingsHTTP_SetupStatus_NoUsers(t *testing.T) {
 	r := chi.NewRouter()
 	NewSetupRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/setup/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/setup/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -73,7 +73,7 @@ func TestSettingsHTTP_SetupStatus_AuthReadyReflectsSharedRef(t *testing.T) {
 	NewSetupRouter(mod, r)
 
 	getAuthReady := func() bool {
-		req := httptest.NewRequest("GET", "/setup/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "/setup/status", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		var resp SetupStatusResponse
@@ -97,7 +97,7 @@ func TestSettingsHTTP_SetupStatus_WithUsers(t *testing.T) {
 	r := chi.NewRouter()
 	NewSetupRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/setup/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/setup/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -115,7 +115,7 @@ func TestSettingsHTTP_CreateFirstUser_AlreadySetup(t *testing.T) {
 	NewSetupRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -130,7 +130,7 @@ func TestSettingsHTTP_CreateFirstUser_NoAuthentik(t *testing.T) {
 	NewSetupRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -144,7 +144,7 @@ func TestSettingsHTTP_CreateFirstUser_InvalidUsername(t *testing.T) {
 	NewSetupRouter(mod, r)
 
 	body := `{"username":"ab","password":"password123"}`
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -158,7 +158,7 @@ func TestSettingsHTTP_CreateFirstUser_ShortPassword(t *testing.T) {
 	NewSetupRouter(mod, r)
 
 	body := `{"username":"bob","password":"short"}`
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -173,7 +173,7 @@ func TestSettingsHTTP_CreateFirstUser_Success(t *testing.T) {
 	NewSetupRouter(mod, r)
 
 	body := `{"username":"admin","password":"securepass123"}`
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -202,7 +202,7 @@ func TestSettingsHTTP_CreateFirstUser_AdoptsExistingUser(t *testing.T) {
 	NewSetupRouter(mod, r)
 
 	body := `{"username":"admin","password":"password"}`
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -230,7 +230,7 @@ func TestSettingsHTTP_ListUsers_NoAuthentik(t *testing.T) {
 	r := chi.NewRouter()
 	NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/admin/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -242,7 +242,7 @@ func TestSettingsHTTP_ListUsers_Empty(t *testing.T) {
 	r := chi.NewRouter()
 	NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/admin/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -257,7 +257,7 @@ func TestSettingsHTTP_ListUsers_WithUsers(t *testing.T) {
 	r := chi.NewRouter()
 	NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/admin/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -271,7 +271,7 @@ func TestSettingsHTTP_CreateManagedUser_NoAuthentik(t *testing.T) {
 	NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -285,7 +285,7 @@ func TestSettingsHTTP_CreateManagedUser_MissingFields(t *testing.T) {
 	NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob"}`
-	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -299,7 +299,7 @@ func TestSettingsHTTP_CreateManagedUser_InvalidRole(t *testing.T) {
 	NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123","role":"superadmin"}`
-	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -313,7 +313,7 @@ func TestSettingsHTTP_CreateManagedUser_DefaultRole(t *testing.T) {
 	NewSettingsRouter(mod, r)
 
 	body := `{"username":"bob","password":"password123"}`
-	req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -330,7 +330,7 @@ func TestSettingsHTTP_DeleteManagedUser_SelfDelete(t *testing.T) {
 		Username: "alice",
 		Role:     store.RoleAdmin,
 	})
-	req := httptest.NewRequest("DELETE", "/admin/users/alice", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/alice", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -343,7 +343,7 @@ func TestSettingsHTTP_DeleteManagedUser_NoAuthentik(t *testing.T) {
 	r := chi.NewRouter()
 	NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/admin/users/alice", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/alice", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -355,7 +355,7 @@ func TestSettingsHTTP_DeleteManagedUser_Success(t *testing.T) {
 	r := chi.NewRouter()
 	NewSettingsRouter(mod, r)
 
-	req := httptest.NewRequest("DELETE", "/admin/users/alice", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/alice", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -369,7 +369,7 @@ func TestSettingsHTTP_SetUserRole_NoAuthentik(t *testing.T) {
 	NewSettingsRouter(mod, r)
 
 	body := `{"role":"admin"}`
-	req := httptest.NewRequest("PUT", "/admin/users/alice/role", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/admin/users/alice/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -383,7 +383,7 @@ func TestSettingsHTTP_SetUserRole_InvalidRole(t *testing.T) {
 	NewSettingsRouter(mod, r)
 
 	body := `{"role":"superadmin"}`
-	req := httptest.NewRequest("PUT", "/admin/users/alice/role", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/admin/users/alice/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -397,7 +397,7 @@ func TestSettingsHTTP_SetUserRole_NotFound(t *testing.T) {
 	NewSettingsRouter(mod, r)
 
 	body := `{"role":"admin"}`
-	req := httptest.NewRequest("PUT", "/admin/users/nonexistent/role", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/admin/users/nonexistent/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -416,7 +416,7 @@ func TestSettingsHTTP_SetUserRole_Success(t *testing.T) {
 	}
 
 	body := `{"role":"admin"}`
-	req := httptest.NewRequest("PUT", "/admin/users/bob/role", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/admin/users/bob/role", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -490,7 +490,7 @@ func TestSetupRouter_IsSeparateFromAdminRouter(t *testing.T) {
 	}
 
 	t.Run("admin routes are absent from the public router", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/settings/public-url", nil)
+		req := httptest.NewRequest(http.MethodGet, "/settings/public-url", nil)
 		w := httptest.NewRecorder()
 		public.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code, "the public bootstrap router must expose only the setup pair")

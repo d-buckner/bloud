@@ -78,7 +78,7 @@ func (c *MemoryCache) GetAllAsJSON() ([]byte, error) {
 		return nil, err
 	}
 
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"apps": apps,
 	})
 }

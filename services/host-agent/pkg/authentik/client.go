@@ -110,7 +110,7 @@ func (c *Client) IsAvailable(ctx context.Context) bool {
 
 // createBloudApplication creates the Authentik application for Bloud
 func (c *Client) createBloudApplication(ctx context.Context, providerID int) error {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":               bloudAppName,
 		"slug":               bloudAppSlug,
 		"provider":           providerID,

@@ -21,6 +21,22 @@
 # Tests are excluded from funlen (see exclusions): a table-driven test
 # legitimately runs long, and the cap is about production code.
 #
+# Three linters beyond the size caps gate mechanical drift:
+#   - unconvert: a redundant type conversion is a leftover from a type
+#     change or an over-eager write; it costs a reader a double-take for
+#     nothing. No false positives worth naming.
+#   - usestdlibvars: a string or number literal where the standard library
+#     names the constant ("GET", 200) is a spelling mistake waiting to
+#     diverge from http.MethodGet / http.StatusOK. No false positives worth
+#     naming.
+#   - unparam: a parameter a function never reads, or a result that is
+#     always nil or always one value, is dead code that mis-states the
+#     function's contract. It is excluded from tests (see exclusions): a
+#     table-driven test helper is often parameterised one step beyond its
+#     call sites for readability, and unparam cannot tell that apart from a
+#     production function whose parameter is simply dead. The one
+#     production exception is //nolint'd at its site with the reason.
+#
 # Not enabled, and why: `lll` (line length) measures 212 non-test and 202
 # test lines over 120 columns, spread across 63 non-test files, which is a
 # mechanical wrap of a different scale than the rest of this list. Comment
@@ -35,6 +51,9 @@ linters:
     - nestif
     - nolintlint
     - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
   settings:
     cyclop:
       # Fail any function with cyclomatic complexity > 15.
@@ -109,9 +128,11 @@ linters:
     rules:
       # forbidigo targets app configurators: tests and the host-agent/cli
       # modules legitimately write files and spawn processes. Paths are
-      # module-relative (apps/, services/host-agent/, cli/).
+      # module-relative (apps/, services/host-agent/, cli/). unparam joins
+      # the test exclusion because a test helper is often generalised past
+      # its current call sites on purpose (see the header).
       - path: '_test\.go$'
-        linters: [forbidigo, funlen]
+        linters: [forbidigo, funlen, unparam]
       - path: '^(services|cli)/'
         linters: [forbidigo]
 

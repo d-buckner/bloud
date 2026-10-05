@@ -74,6 +74,8 @@ func loadManifest(root string) (*validationManifest, error) {
 // most-specific first: the first one to match a file claims it, so
 // services/host-agent/web/** claims web files before services/host-agent/**
 // would sweep them into the Go suite.
+//
+//nolint:unparam // the third result is always nil today, but keeps the ledger's unmappedFiles field and the medium-confidence path in shape
 func inferTriggers(changedFiles []string, manifest *validationManifest) (map[string]bool, []string, []string) {
 	triggeredIDs := map[string]bool{}
 	riskAreaSet := map[string]bool{}

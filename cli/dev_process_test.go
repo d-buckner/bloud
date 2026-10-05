@@ -90,9 +90,7 @@ func TestRestartableCmdChildRunsInItsOwnProcessGroup(t *testing.T) {
 		t.Errorf("child shares the CLI process group (%d); a group signal would hit the CLI too", childGroup)
 	}
 
-	if err := c.Stop(5 * time.Second); err != nil {
-		t.Fatalf("stop: %v", err)
-	}
+	c.Stop(5 * time.Second)
 	if c.Running() {
 		t.Error("still Running() after Stop")
 	}
@@ -104,9 +102,7 @@ func TestRestartableCmdStopKillsWholeTree(t *testing.T) {
 	dir := t.TempDir()
 	c, grandchild := startTree(t, dir)
 
-	if err := c.Stop(5 * time.Second); err != nil {
-		t.Fatalf("stop: %v", err)
-	}
+	c.Stop(5 * time.Second)
 	waitProcessGone(t, grandchild)
 	waitUntil(t, 5*time.Second, "the flock is released", func() bool {
 		return !lockHeld(filepath.Join(dir, "tree.lock"))
@@ -124,9 +120,7 @@ func TestRestartableCmdForceKillsWholeTree(t *testing.T) {
 	waitUntil(t, 5*time.Second, "the flock is released", func() bool {
 		return !lockHeld(filepath.Join(dir, "tree.lock"))
 	})
-	if err := c.Stop(2 * time.Second); err != nil {
-		t.Fatalf("stop after force: %v", err)
-	}
+	c.Stop(2 * time.Second)
 }
 
 // lockHeld reports whether some other process holds an exclusive flock on path.

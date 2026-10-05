@@ -155,7 +155,7 @@ func (c *Client) createNativeProvider(ctx context.Context, providerName, clientI
 	}
 	scopeMappings = append(scopeMappings, extraMappings...)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":                       providerName,
 		"authorization_flow":         authFlowID,
 		"invalidation_flow":          invalidationFlowID,
@@ -200,7 +200,7 @@ func (c *Client) ensureProviderTuning(ctx context.Context, providerID int, tunin
 		return fmt.Errorf("fetching provider: %w", err)
 	}
 
-	patch := map[string]interface{}{}
+	patch := map[string]any{}
 
 	mappings := append([]string(nil), provider.PropertyMappings...)
 	have := make(map[string]bool, len(mappings))
@@ -243,7 +243,7 @@ func (c *Client) ensureOIDCApplication(ctx context.Context, slug, displayName st
 		return err // transport error: don't attempt create on an unreachable server
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":               displayName,
 		"slug":               slug,
 		"provider":           providerID,

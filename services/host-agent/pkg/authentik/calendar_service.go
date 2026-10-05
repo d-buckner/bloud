@@ -54,7 +54,7 @@ func (c *Client) ensureServiceAccount(ctx context.Context, username, displayName
 		return err
 	}
 	if userID == 0 {
-		payload := map[string]interface{}{
+		payload := map[string]any{
 			"username":  username,
 			"name":      displayName,
 			"path":      "users",

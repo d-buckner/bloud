@@ -10,7 +10,7 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 )
 
-// Operation-state recording (docs/plans/operation-state-design.md).
+// Operation-state recording (docs/plans/archive/operation-state-design.md).
 //
 // The drive path reports phase boundaries through these helpers; the
 // operations row is authoritative for failure context and
@@ -85,12 +85,15 @@ func (o *Orchestrator) recordOpPhase(appName, phase string) {
 	}
 }
 
-// recordOpFail marks the running operation failed at the named phase.
-func (o *Orchestrator) recordOpFail(appName, phase string, cause error, retryable bool) {
+// recordOpFail marks the running operation failed at the named phase. Every
+// failure the orchestrator records is retryable: the self-healing timer drives
+// the retry, so a failure row is the signal to run again rather than a
+// terminal verdict.
+func (o *Orchestrator) recordOpFail(appName, phase string, cause error) {
 	if o.config.Stores.Operations == nil || cause == nil {
 		return
 	}
-	if err := o.config.Stores.Operations.Fail(appName, phase, cause.Error(), retryable); err != nil {
+	if err := o.config.Stores.Operations.Fail(appName, phase, cause.Error(), true); err != nil {
 		o.logger.Warn("operation recorder: fail failed", "app", appName, "phase", phase, "error", err)
 	}
 }

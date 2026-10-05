@@ -416,15 +416,15 @@ func TestAppsHTTP_ListInstalledApps(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("GET", "/apps/installed", nil)
+	req := httptest.NewRequest(http.MethodGet, "/apps/installed", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
+	var resp map[string]any
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
-	apps, ok := resp["apps"].([]interface{})
+	apps, ok := resp["apps"].([]any)
 	require.True(t, ok)
 	assert.Len(t, apps, 1)
 }
@@ -442,7 +442,7 @@ func TestAppsHTTP_Install_Returns202WithAppRecord(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/apps/jellyfin/install", nil)
+	req := httptest.NewRequest(http.MethodPost, "/apps/jellyfin/install", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -473,7 +473,7 @@ func TestAppsHTTP_Install_NotFound(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/apps/nonexistent/install", nil)
+	req := httptest.NewRequest(http.MethodPost, "/apps/nonexistent/install", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -491,7 +491,7 @@ func TestAppsHTTP_Uninstall_Returns202(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/apps/jellyfin/uninstall", strings.NewReader(`{"clearData":true}`))
+	req := httptest.NewRequest(http.MethodPost, "/apps/jellyfin/uninstall", strings.NewReader(`{"clearData":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -511,7 +511,7 @@ func TestAppsHTTP_Rename_Returns202(t *testing.T) {
 	NewAppsRouter(appMod, r)
 
 	body := `{"displayName":"My Jellyfin"}`
-	req := httptest.NewRequest("PATCH", "/apps/jellyfin/rename", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, "/apps/jellyfin/rename", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -531,7 +531,7 @@ func TestAppsHTTP_Rename_MissingDisplayName(t *testing.T) {
 	NewAppsRouter(appMod, r)
 
 	body := `{"displayName":""}`
-	req := httptest.NewRequest("PATCH", "/apps/jellyfin/rename", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, "/apps/jellyfin/rename", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -551,7 +551,7 @@ func TestAppsHTTP_AppMetadata(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("GET", "/apps/jellyfin/metadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/apps/jellyfin/metadata", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -578,7 +578,7 @@ func TestAppsHTTP_Icon_ServesFile(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/apps/jellyfin/icon", nil)
+	req := httptest.NewRequest(http.MethodGet, "/apps/jellyfin/icon", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -599,7 +599,7 @@ func TestAppsHTTP_Icon_Missing(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(mod, r)
 
-	req := httptest.NewRequest("GET", "/apps/jellyfin/icon", nil)
+	req := httptest.NewRequest(http.MethodGet, "/apps/jellyfin/icon", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -622,7 +622,7 @@ func TestAppsHTTP_RefreshCatalogIsNotOnTheMemberRouter(t *testing.T) {
 	r := chi.NewRouter()
 	NewAppsRouter(appMod, r)
 
-	req := httptest.NewRequest("POST", "/apps/refresh-catalog", nil)
+	req := httptest.NewRequest(http.MethodPost, "/apps/refresh-catalog", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

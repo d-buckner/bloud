@@ -269,7 +269,7 @@ func (c *restartableCmd) Running() bool {
 // for a clean exit, then SIGKILLs the group. Grace matters: host-agent's
 // shutdown path stops its orchestrator loop, and killing it earlier would turn
 // every reload into a forced kill.
-func (c *restartableCmd) Stop(grace time.Duration) error {
+func (c *restartableCmd) Stop(grace time.Duration) {
 	c.mu.Lock()
 	cmd := c.cmd
 	done := c.done
@@ -277,7 +277,7 @@ func (c *restartableCmd) Stop(grace time.Duration) error {
 	c.mu.Unlock()
 
 	if cmd == nil || cmd.Process == nil {
-		return nil
+		return
 	}
 	signalTree(cmd, syscall.SIGTERM)
 
@@ -295,7 +295,6 @@ func (c *restartableCmd) Stop(grace time.Duration) error {
 	c.done = nil
 	c.stopping = false
 	c.mu.Unlock()
-	return nil
 }
 
 // Force SIGKILLs the child's whole process group without waiting for anything.

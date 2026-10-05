@@ -6,7 +6,7 @@ package store
 // of an installed app. It is derived from graph node status by the orchestrator
 // (the single writer), not a convergence-control input; the graph node's status
 // remains authoritative for convergence control (see
-// docs/plans/operation-state-design.md §4).
+// docs/plans/archive/operation-state-design.md §4).
 type AppStatus string
 
 // App status values. The set is closed: a status outside these five is a

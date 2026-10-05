@@ -37,7 +37,7 @@ func postCreateFirstUser(t *testing.T, mod *settingsModule, host string) *httpte
 	NewSetupRouter(mod, r)
 
 	body := `{"username":"admin","password":"securepass123"}`
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if host != "" {
 		req.Host = host
@@ -104,7 +104,7 @@ func TestCreateFirstUser_NoAdoptionWhenAlreadySet(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewSetupRouter(mod, r)
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Host = "bloud.example.com"
@@ -230,7 +230,7 @@ func TestAuthLoginNeverMovesTheAddress(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Get("/auth/login", authMod.LoginHandler())
-	req := httptest.NewRequest("GET", "/auth/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
 	req.Host = "evil.example"
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -247,7 +247,7 @@ func TestAdoptFirstRunHostLoggerUnusedWithoutHostState(t *testing.T) {
 	// Guard the nil-hostState path directly so a future refactor that moves
 	// the check does not silently drop it.
 	mod := &settingsModule{logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))}
-	req := httptest.NewRequest("POST", "/setup/create-user", nil)
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", nil)
 	req.Host = "bloud.example.com"
 	assert.Equal(t, "", mod.adoptFirstRunHost(req))
 }
@@ -261,7 +261,7 @@ func TestCreateFirstUser_AdoptsHTTPSSchemeFromForwardedProto(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewSetupRouter(mod, r)
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Host = "bloud.example.com"
@@ -280,7 +280,7 @@ func TestCreateFirstUser_AdoptsSchemeFromFirstForwardedHop(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewSetupRouter(mod, r)
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Proto", "https, http")
 	req.Host = "bloud.example.com"
@@ -299,7 +299,7 @@ func TestCreateFirstUser_AdoptsHTTPSSchemeFromTLS(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewSetupRouter(mod, r)
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Host = "bloud.example.com"
 	req.TLS = &tls.ConnectionState{}
@@ -319,7 +319,7 @@ func TestCreateFirstUser_GarbageForwardedSchemeFallsBackToHTTP(t *testing.T) {
 
 	r := chi.NewRouter()
 	NewSetupRouter(mod, r)
-	req := httptest.NewRequest("POST", "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
+	req := httptest.NewRequest(http.MethodPost, "/setup/create-user", strings.NewReader(`{"username":"admin","password":"securepass123"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Proto", "ftp")
 	req.Host = "bloud.example.com"

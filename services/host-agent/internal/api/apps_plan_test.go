@@ -68,10 +68,10 @@ func newPlanRouter(t *testing.T, installed []string, wirePlans bool) *chi.Mux {
 	return r
 }
 
-func getJSON(t *testing.T, r *chi.Mux, path string, out interface{}) int {
+func getJSON(t *testing.T, r *chi.Mux, path string, out any) int {
 	t.Helper()
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	if w.Code == http.StatusOK {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), out))
 	}
@@ -153,11 +153,11 @@ func TestPlanHandlers_UnknownAppIs404(t *testing.T) {
 	r := newPlanRouter(t, nil, true)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/apps/not-a-real-app/install-plan", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/apps/not-a-real-app/install-plan", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/apps/not-a-real-app/remove-plan", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/apps/not-a-real-app/remove-plan", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -170,7 +170,7 @@ func TestPlanHandlers_UnwiredSourceIs503(t *testing.T) {
 
 	for _, path := range []string{"/apps/radarr/install-plan", "/apps/radarr/remove-plan"} {
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code, path)
 		assert.NotContains(t, w.Body.String(), `"canInstall"`, path)
 	}
@@ -183,6 +183,6 @@ func TestPlanHandlers_UnknownAppCheckedBeforeSource(t *testing.T) {
 	r := newPlanRouter(t, nil, false)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/apps/not-a-real-app/install-plan", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/apps/not-a-real-app/install-plan", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
