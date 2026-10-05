@@ -27,27 +27,29 @@ func integrationEdges(apps map[string]*AppMetadata) []graphEdge {
 		app := apps[appName]
 		for _, integrationName := range sortedKeys(app.Integrations) {
 			integration := app.Integrations[integrationName]
-			provider := defaultProvider(integration)
-			if provider == "" || provider == appName || !providerIsDrawn(apps, provider) {
-				continue
-			}
 
 			label := integrationName
 			if integrationName == "sso" {
 				label = ssoEdgeLabel(app)
 			}
 
-			from, to := appName, provider
-			if integrationName == "proxy" {
-				from, to = to, from
-			}
+			for _, provider := range drawnProviders(integration) {
+				if provider == "" || provider == appName || !providerIsDrawn(apps, provider) {
+					continue
+				}
 
-			key := from + "->" + to + "|" + label
-			if seen[key] {
-				continue
+				from, to := appName, provider
+				if integrationName == "proxy" {
+					from, to = to, from
+				}
+
+				key := from + "->" + to + "|" + label
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				edges = append(edges, graphEdge{from: from, to: to, label: label})
 			}
-			seen[key] = true
-			edges = append(edges, graphEdge{from: from, to: to, label: label})
 		}
 	}
 
@@ -67,6 +69,34 @@ func integrationEdges(apps map[string]*AppMetadata) []graphEdge {
 // default: the entry flagged default, or the first compatible entry when
 // none is. The value is a graph node id, so an instance-source entry comes
 // back as the AI Model node rather than as an empty app name.
+// drawnProviders returns the providers an integration's edge set should
+// include.
+//
+// A single-provider integration draws its default only. That is the app it
+// binds to, and drawing every compatible alternative would show wiring that
+// never happens.
+//
+// A `multi: true` integration draws every compatible provider, because that
+// is what the resolver does: an optional contract binds every compatible
+// provider the metadata declares and the consumer iterates the whole slice.
+// Drawing only the default hid real wiring. Radicale's icsFeed contract
+// declares both Radarr and Sonarr and syncs both into the shared calendar, but
+// the graph drew one edge and read as though only Radarr's calendar ever
+// arrived.
+func drawnProviders(integration Integration) []string {
+	if integration.Multi {
+		out := make([]string, 0, len(integration.Compatible))
+		for _, compat := range integration.Compatible {
+			out = append(out, providerNodeID(compat))
+		}
+		return out
+	}
+	if provider := defaultProvider(integration); provider != "" {
+		return []string{provider}
+	}
+	return nil
+}
+
 func defaultProvider(integration Integration) string {
 	for _, compat := range integration.Compatible {
 		if compat.Default {

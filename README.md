@@ -176,19 +176,23 @@ flowchart TD
     app_hermes -->|mcp| app_affine_mcp
     app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
+    app_hermes -->|mcp| app_caldav_mcp
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
     app_jellyfin -->|ldap| app_authentik
     app_navidrome -->|forward-auth| app_authentik
     app_paperless_ngx -->|native-oidc| app_authentik
     app_prowlarr -->|forward-auth| app_authentik
+    app_prowlarr -->|pvr| app_radarr
     app_prowlarr -->|pvr| app_sonarr
     app_qbittorrent -->|forward-auth| app_authentik
     app_radarr -->|forward-auth| app_authentik
     app_radarr -->|downloadClient| app_qbittorrent
     app_radicale -->|ldap| app_authentik
     app_radicale -->|icsFeed| app_radarr
+    app_radicale -->|icsFeed| app_sonarr
     app_seerr -->|mediaServer| app_jellyfin
+    app_seerr -->|pvr| app_radarr
     app_seerr -->|pvr| app_sonarr
     app_sonarr -->|forward-auth| app_authentik
     app_sonarr -->|downloadClient| app_qbittorrent

@@ -28,7 +28,11 @@ type SSOConfig struct {
 
 // Integration defines how an app connects to other apps
 type Integration struct {
-	Required   bool            `yaml:"required"`
+	Required bool `yaml:"required"`
+	// Multi says the consumer takes every compatible provider at once rather
+	// than picking one. The graph has to know, because it decides whether to
+	// draw one edge or several.
+	Multi      bool            `yaml:"multi"`
 	Compatible []CompatibleApp `yaml:"compatible"`
 }
 
