@@ -309,9 +309,9 @@ target with no owner credential renders no pairs (so the container parks
 rather than failing on every connection), that incomplete feeds are skipped,
 that the render is order-independent, and that the config and the status
 directory land where the mounts expect them. `configurator_test.go` covers the
-server side: the storage section is the native filesystem backend with no
-trace of the retired plugin, and the sharing database is re-rendered on every
-pass.
+server side: the storage section is Radicale's own `multifilesystem` backend
+with no trace of the retired plugin, and the sharing database is re-rendered on
+every pass.
 `services/host-agent/internal/engine/orchestrator/integration_bindings_test.go`
 asserts the `icsFeed` binding carries the address, path, display name, and the
 key only when the consumer required it.

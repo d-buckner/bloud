@@ -411,11 +411,18 @@ func renderConfig(port int, ldap *configurator.LDAPOutput) string {
 	}
 
 	b.WriteString("[storage]\n")
-	b.WriteString("# Radicale's own filesystem backend. Feeds used to arrive through a\n")
-	b.WriteString("# vendored plugin that wrapped this backend and wrote into it from\n")
-	b.WriteString("# inside the server process; they now arrive over CalDAV from a\n")
-	b.WriteString("# sidecar, which is why the server is back to being plain Radicale.\n")
-	b.WriteString("type = filesystem\n")
+	// One raw string rather than a WriteString per line: funlen counts
+	// statements, and a comment block should not be what pushes a renderer
+	// over its budget.
+	b.WriteString(`# Radicale's own backend. Feeds used to arrive through a vendored
+# plugin that wrapped this backend and wrote into it from inside the server
+# process; they now arrive over CalDAV from a sidecar, which is why the server
+# is back to being plain Radicale. The type name is "multifilesystem", not
+# "filesystem": those two are the only internal storage types Radicale
+# registers, and an unrecognized one fails at startup rather than at first
+# request.
+`)
+	b.WriteString("type = multifilesystem\n")
 	fmt.Fprintf(&b, "filesystem_folder = %s\n\n", containerStorageDir)
 
 	b.WriteString("[rights]\n")

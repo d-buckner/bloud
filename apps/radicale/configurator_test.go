@@ -397,8 +397,11 @@ func feedBinding() configurator.ICSFeedBinding {
 func TestRenderConfigUsesTheNativeFilesystemStorage(t *testing.T) {
 	got := renderConfig(5232, ldapOutput())
 
-	assert.Contains(t, got, "type = filesystem")
+	assert.Contains(t, got, "type = multifilesystem")
 	assert.Contains(t, got, "filesystem_folder = /var/lib/radicale/collections")
+	// `filesystem` is not a type Radicale knows. It registers exactly two
+	// internal storage backends, and a name outside that set fails at startup.
+	assert.NotContains(t, got, "type = filesystem\n")
 	for _, gone := range []string{"radicale_ics_sync", "ics_config", "hash_db"} {
 		assert.NotContains(t, got, gone, "the vendored plugin is retired")
 	}
