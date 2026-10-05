@@ -62,8 +62,13 @@ jobs:
             test-run: 'TestAffine'
           - group: paperless
             test-run: 'TestPaperlessNgx'
+          # The aggregation test is here rather than in its own leg because it
+          # is the calendar half of the same story: it installs Radicale and
+          # asserts what lands in it and who can see it. It was silently
+          # outside every regex before, which is how a test ends up not
+          # protecting anything.
           - group: radicale
-            test-run: 'TestRadicale'
+            test-run: 'TestRadicale|TestCalendarAggregation'
           - group: vaultwarden
             test-run: 'TestVaultwarden'
           - group: media-stack
