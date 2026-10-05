@@ -78,7 +78,7 @@ func getJSON(t *testing.T, r *chi.Mux, path string, out interface{}) int {
 	return w.Code
 }
 
-func TestInstallPlanHandler_ReportsChoiceWhenNothingInstalled(t *testing.T) {
+func TestInstallPlanHandler_ReportsRequiredProviderWhenNothingInstalled(t *testing.T) {
 	r := newPlanRouter(t, nil, true)
 
 	var plan catalog.InstallPlan
@@ -87,26 +87,23 @@ func TestInstallPlanHandler_ReportsChoiceWhenNothingInstalled(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "radarr", plan.App)
 	assert.True(t, plan.CanInstall)
-	require.Len(t, plan.Choices, 1, "a required integration with no provider installed must surface as a choice")
-	assert.Equal(t, "downloadClient", plan.Choices[0].Integration)
-	assert.True(t, plan.Choices[0].Required)
-	assert.Len(t, plan.Choices[0].Available, 2)
-	assert.Equal(t, "qbittorrent", plan.Choices[0].Recommended, "the metadata default must carry through")
+	require.Len(t, plan.RequiredProviders, 1, "a required integration with no provider installed must install its declared default")
+	assert.Equal(t, "downloadClient", plan.RequiredProviders[0].Integration)
+	assert.Equal(t, "qbittorrent", plan.RequiredProviders[0].Source, "the metadata default must carry through")
 	assert.Empty(t, plan.AutoConfig)
 }
 
 func TestInstallPlanHandler_ReflectsTheInstalledSet(t *testing.T) {
 	// The same request against a graph where the provider is already present
-	// must resolve to auto-config rather than a choice: the plan reads the
-	// live graph the orchestrator keeps current, not a snapshot taken at
-	// router construction.
+	// must wire it rather than install it: the plan reads the live graph the
+	// orchestrator keeps current, not a snapshot taken at router construction.
 	r := newPlanRouter(t, []string{"qbittorrent"}, true)
 
 	var plan catalog.InstallPlan
 	require.Equal(t, http.StatusOK, getJSON(t, r, "/apps/radarr/install-plan", &plan))
 
 	assert.True(t, plan.CanInstall)
-	assert.Empty(t, plan.Choices, "nothing to choose once exactly one compatible provider is installed")
+	assert.Empty(t, plan.RequiredProviders, "nothing to install once the provider is present")
 	require.Len(t, plan.AutoConfig, 1)
 	assert.Equal(t, "qbittorrent", plan.AutoConfig[0].Source)
 	assert.Equal(t, "downloadClient", plan.AutoConfig[0].Integration)

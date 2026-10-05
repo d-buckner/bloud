@@ -80,7 +80,6 @@ func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) co
 		return out
 	}
 	installed := installedSet(installedApps)
-	choices := integrationChoices(installedApps, app)
 
 	for contract, integration := range catalogApp.Integrations {
 		if contract == "inference" {
@@ -88,12 +87,12 @@ func (o *Orchestrator) buildIntegrations(app string, catalogApp *catalog.App) co
 			// that can be served by a provider the consumer never named: a
 			// gateway app, the instance setting, or promotion from an
 			// installed modelSource.
-			if binding, ok := o.resolveInference(integration, choices[contract], installed, app); ok {
+			if binding, ok := o.resolveInference(integration, installed, app); ok {
 				out.Inference = append(out.Inference, binding)
 			}
 			continue
 		}
-		o.bindAppProviders(&out, contract, integration, choices[contract], installed, app)
+		o.bindAppProviders(&out, contract, integration, installed, app)
 	}
 	return out
 }
@@ -107,21 +106,10 @@ func installedSet(apps []*store.InstalledApp) map[string]bool {
 	return out
 }
 
-// integrationChoices returns the provider choices one app recorded, keyed by
-// contract name. An app that is not installed has recorded none.
-func integrationChoices(apps []*store.InstalledApp, app string) map[string]string {
-	for _, a := range apps {
-		if a.CatalogID == app {
-			return a.IntegrationConfig
-		}
-	}
-	return map[string]string{}
-}
-
 // bindAppProviders binds every declared provider of one contract that is a
 // real, installed, non-self app.
-func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract string, integration catalog.Integration, choice string, installed map[string]bool, app string) {
-	for _, src := range resolveProviders(integration, choice) {
+func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract string, integration catalog.Integration, installed map[string]bool, app string) {
+	for _, src := range resolveProviders(integration) {
 		// An app cannot be its own provider: a self-edge would also make
 		// the graph order the node after itself.
 		if src.kind == configurator.ProviderKindApp && src.id == app {
@@ -152,8 +140,8 @@ func (o *Orchestrator) bindAppProviders(out *configurator.Integrations, contract
 // One binding, not several: a consumer dialing two inference endpoints has no
 // defined meaning, so the multi case is resolved here rather than pushed onto
 // every configurator.
-func (o *Orchestrator) resolveInference(integration catalog.Integration, choice string, installed map[string]bool, consumer string) (configurator.InferenceBinding, bool) {
-	for _, src := range resolveProviders(integration, choice) {
+func (o *Orchestrator) resolveInference(integration catalog.Integration, installed map[string]bool, consumer string) (configurator.InferenceBinding, bool) {
+	for _, src := range resolveProviders(integration) {
 		if src.isInstance() || src.id == consumer || !installed[src.id] {
 			continue
 		}
@@ -364,25 +352,25 @@ func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installe
 	return ref
 }
 
-// resolveProviders returns the providers an integration binds, in declaration
-// order, whichever of them are available.
+// resolveProviders returns the providers an integration declares, in
+// declaration order.
 //
-// The rule is catalog.BoundProviders, shared with computeAppDeps and with the
-// developer graph's edge builder so the three cannot disagree: the recorded
-// choice, plus, for an *optional* contract, every compatible provider the
-// metadata declares. A required contract binds only what was chosen, so a
-// binding can never describe a provider the graph does not order.
+// The rule is catalog.DeclaredProviders, shared with computeAppDeps and with
+// the developer graph's edge builder so the three cannot disagree. The set is
+// the declaration: every compatible provider. Whether each one is actually
+// wired is the caller's question, answered by whether it is installed (or,
+// for the instance, configured).
 //
 // A `source: instance` entry becomes an instance providerSource. It carries no
 // node and produces no graph edge, which is why computeAppDeps filters on kind.
-func resolveProviders(integration catalog.Integration, choice string) []providerSource {
+func resolveProviders(integration catalog.Integration) []providerSource {
 	var out []providerSource
-	for _, bound := range catalog.BoundProviders(integration, choice) {
-		if bound.IsInstance() {
+	for _, declared := range catalog.DeclaredProviders(integration) {
+		if declared.IsInstance() {
 			out = append(out, instanceSource())
 			continue
 		}
-		out = append(out, appSource(bound.App))
+		out = append(out, appSource(declared.App))
 	}
 	return out
 }

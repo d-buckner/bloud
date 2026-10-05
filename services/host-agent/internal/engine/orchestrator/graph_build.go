@@ -117,13 +117,7 @@ func (o *Orchestrator) primaryContainerNode(appName string) string {
 // computeAppDeps builds a map of app name → list of installed dependency names.
 func computeAppDeps(apps map[string]*store.InstalledApp, catalogCache catalog.CacheInterface) map[string][]string {
 	deps := make(map[string][]string)
-	for name, app := range apps {
-		for _, source := range app.IntegrationConfig {
-			if _, installed := apps[source]; installed {
-				deps[name] = append(deps[name], source)
-			}
-		}
-
+	for name := range apps {
 		if catalogCache == nil {
 			continue
 		}
@@ -131,21 +125,27 @@ func computeAppDeps(apps map[string]*store.InstalledApp, catalogCache catalog.Ca
 		if err != nil || catalogApp == nil {
 			continue
 		}
+		// The set model: a dependency is every declared compatible provider
+		// that is installed. `required` only installs the provider with the
+		// consumer; it does not change which installed providers are ordered.
+		seen := make(map[string]bool)
 		for _, integration := range catalogApp.Integrations {
-			if integration.Required {
-				continue
-			}
-			for _, compatible := range integration.Compatible {
-				// An instance provider has no container and therefore no
-				// node to order. Filtering on the source rather than relying
-				// on `apps[""]` missing keeps the invariant explicit: the
-				// graph never gains a phantom node for a setting.
-				if compatible.Source == catalog.InstanceProviderSource {
+			for _, declared := range catalog.DeclaredProviders(integration) {
+				// An instance provider has no container and therefore no node
+				// to order. Filtering on the source rather than relying on
+				// `apps[""]` missing keeps the invariant explicit: the graph
+				// never gains a phantom node for a setting.
+				if declared.Source != "" {
 					continue
 				}
-				if _, installed := apps[compatible.App]; installed {
-					deps[name] = append(deps[name], compatible.App)
+				if _, installed := apps[declared.App]; !installed {
+					continue
 				}
+				if seen[declared.App] {
+					continue
+				}
+				seen[declared.App] = true
+				deps[name] = append(deps[name], declared.App)
 			}
 		}
 	}

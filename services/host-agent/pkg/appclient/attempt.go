@@ -65,10 +65,19 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, readErr := io.ReadAll(resp.Body)
+	body, readErr := x.readBody(resp)
 	if readErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return result{}, ctxErr
+		}
+		// A wait against a streaming endpoint (server-sent events) can hit the
+		// per-request deadline after the answer already arrived: the server
+		// keeps the stream open and never reaches EOF. In wait mode, hand the
+		// partial body to the readiness predicate instead of discarding it, so
+		// a complete answer is judged on its own merits rather than on the
+		// stream's refusal to end.
+		if x.ready != nil && len(body) > 0 {
+			return result{status: resp.StatusCode, body: body}, nil
 		}
 		return result{}, x.httpError(req, resp.StatusCode, capBody([]byte("read body: "+readErr.Error())), attempt)
 	}
@@ -106,6 +115,33 @@ func (x *Call) httpError(req *http.Request, status int, body []byte, attempt int
 		Status:  status,
 		Body:    body,
 		Attempt: attempt,
+	}
+}
+
+// readBody reads the response body. In wait mode it stops at the first chunk
+// the readiness predicate accepts, so a server-sent-events stream that stays
+// open after its answer does not hold the read open until an EOF that may
+// never come. Non-wait calls read to EOF exactly as before.
+func (x *Call) readBody(resp *http.Response) ([]byte, error) {
+	if x.ready == nil {
+		return io.ReadAll(resp.Body)
+	}
+	var acc []byte
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			acc = append(acc, buf[:n]...)
+			if x.ready(resp.StatusCode, acc) {
+				return acc, nil
+			}
+		}
+		if err == io.EOF {
+			return acc, nil
+		}
+		if err != nil {
+			return acc, err
+		}
 	}
 }
 

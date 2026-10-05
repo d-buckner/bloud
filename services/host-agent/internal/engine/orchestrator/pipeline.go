@@ -76,20 +76,22 @@ func (o *Orchestrator) applyInstallIntent(intent InstallAppIntent) {
 		return
 	}
 
-	integrations := buildIntegrationConfig(nil, plan.AutoConfig, plan.Choices)
-	o.logger.Info("install plan resolved", "app", appName, "deps", len(integrations), "integrations", integrations)
+	o.logger.Info("install plan resolved", "app", appName, "required", len(plan.RequiredProviders), "wired", len(plan.AutoConfig))
 
-	// Record dependency providers first.
-	for _, provider := range integrations {
-		o.logger.Info("recording dependency provider", "app", appName, "provider", provider)
-		if err := o.recordIntent(provider, nil); err != nil {
-			o.logger.Error("failed to record dependency", "app", provider, "error", err)
+	// Record required providers first: installing the consumer installs them
+	// with it, and the graph must order them before the consumer. The wired
+	// (already installed) providers need no record.
+	for _, provider := range plan.RequiredProviders {
+		o.logger.Info("recording required provider", "app", appName, "provider", provider.Source)
+		if err := o.recordIntent(provider.Source, nil); err != nil {
+			o.logger.Error("failed to record required provider", "app", appName, "provider", provider.Source, "error", err)
 			return
 		}
 	}
 
-	// Record the target app with its integrations.
-	if err := o.recordIntent(appName, integrations); err != nil {
+	// Record the target app. It carries no recorded integration config: the
+	// wiring is the declared compatible set, not a value chosen at install.
+	if err := o.recordIntent(appName, nil); err != nil {
 		o.logger.Error("failed to record app", "app", appName, "error", err)
 	}
 }

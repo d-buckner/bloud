@@ -197,19 +197,18 @@ func validateIntegrations(app *App) error {
 // validateRequiredDefault enforces that a required integration names exactly
 // one default provider.
 //
-// The default is what the orchestrator records as the provider of a required
-// contract (buildIntegrationConfig reads choice.Recommended), and for a required
-// integration the recorded choice is the *only* source of the graph edge:
-// computeAppDeps skips the compatible scan entirely in that case. So an
-// integration marked required but carrying no default records nothing, produces
-// no edge, and the app installs with no dependency at all. It then resolves an
-// empty credential on every pass and fails forever without ever producing a
-// plan-time error, which is the worst shape a metadata mistake can have: the
-// symptom is nowhere near the cause.
+// The default is what the install plan installs alongside a consumer of a
+// required contract with nothing installed yet (PlanInstall's
+// RequiredProviders). The set model wires every installed declared provider,
+// but a required contract has to be able to say *which* provider to install
+// when none is present, and that is exactly one default. An integration marked
+// required but carrying no default installs with no dependency at all, then
+// resolves an empty credential on every pass and fails forever without ever
+// producing a plan-time error, which is the worst shape a metadata mistake can
+// have: the symptom is nowhere near the cause.
 //
-// Exactly one, not "at least one": two defaults make the recorded choice
-// ambiguous, and which one wins would depend on iteration order over the
-// compatible list.
+// Exactly one, not "at least one": two defaults make the install ambiguous,
+// and which one wins would depend on iteration order over the compatible list.
 func validateRequiredDefault(name string, integration Integration) error {
 	if !integration.Required {
 		return nil

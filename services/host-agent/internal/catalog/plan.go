@@ -12,40 +12,17 @@ type InstallPlan struct {
 	// Why can't we install (if CanInstall is false)
 	Blockers []string `json:"blockers"`
 
-	// Integrations that need user choice
-	Choices []IntegrationChoice `json:"choices"`
+	// RequiredProviders are the declared default providers of required
+	// contracts that are not installed yet. Installing the app installs these
+	// with it, one entry per contract.
+	RequiredProviders []ConfigTask `json:"requiredProviders"`
 
-	// Auto-resolved integrations (exactly one compatible app installed)
+	// AutoConfig are the installed providers the app wires to: every installed
+	// compatible provider, one entry each.
 	AutoConfig []ConfigTask `json:"autoConfig"`
 
 	// Installed apps that will be configured to use this new app
 	Dependents []ConfigTask `json:"dependents"`
-}
-
-// IntegrationChoice presents options when multiple compatible apps exist
-type IntegrationChoice struct {
-	Integration string         `json:"integration"`
-	Required    bool           `json:"required"`
-	Installed   []ChoiceOption `json:"installed"`
-	Available   []ChoiceOption `json:"available"`
-	Recommended string         `json:"recommended,omitempty"`
-}
-
-// ChoiceOption is a single option in an integration choice
-type ChoiceOption struct {
-	App      string `json:"app"`
-	Source   string `json:"source,omitempty"`
-	Default  bool   `json:"default"`
-	Category string `json:"category,omitempty"`
-}
-
-// choiceOption projects a compatible-provider declaration into the UI-facing
-// choice shape. The conversion is deliberate rather than a field-by-field
-// literal: Go ignores struct tags when converting, so the differing yaml tags
-// on CompatibleApp do not block it, and adding a field to either struct breaks
-// this line instead of silently going un-carried.
-func choiceOption(c CompatibleApp) ChoiceOption {
-	return ChoiceOption(c)
 }
 
 // RemovePlan describes what will happen when removing an app
@@ -66,46 +43,43 @@ func (g *AppGraph) PlanInstall(appName string) (*InstallPlan, error) {
 	}
 
 	plan := &InstallPlan{
-		App:        appName,
-		CanInstall: true,
-		Choices:    []IntegrationChoice{},
-		AutoConfig: []ConfigTask{},
-		Dependents: []ConfigTask{},
+		App:               appName,
+		CanInstall:        true,
+		Blockers:          []string{},
+		RequiredProviders: []ConfigTask{},
+		AutoConfig:        []ConfigTask{},
+		Dependents:        []ConfigTask{},
 	}
 
 	for intName, integration := range app.Integrations {
-		installed, available := g.GetCompatibleApps(appName, intName)
+		installed, _ := g.GetCompatibleApps(appName, intName)
 
-		switch {
-		case len(installed) == 0 && integration.Required:
-			// Nothing installed, required - need to choose what to install
-			plan.Choices = append(plan.Choices, makeChoice(intName, integration, installed, available))
-
-		case len(installed) == 0 && !integration.Required:
-			// Nothing installed, not required - skip
-			continue
-
-		case len(installed) == 1:
-			// Exactly one installed - auto-configure
-			plan.AutoConfig = append(plan.AutoConfig, ConfigTask{
-				Target:      appName,
-				Source:      installed[0].App,
-				Integration: intName,
-			})
-
-		case len(installed) > 1 && !integration.Multi:
-			// Multiple installed but can only use one - need to choose
-			plan.Choices = append(plan.Choices, makeChoice(intName, integration, installed, available))
-
-		case len(installed) > 1 && integration.Multi:
-			// Multiple installed and can use all - auto-configure all
-			for _, opt := range installed {
-				plan.AutoConfig = append(plan.AutoConfig, ConfigTask{
+		if len(installed) == 0 {
+			if !integration.Required {
+				// Nothing installed, not required: nothing to wire, nothing to
+				// install. The app simply runs without that provider.
+				continue
+			}
+			// Required and nothing installed: the declared default provider is
+			// installed with the app. There is no choice to make.
+			if provider := defaultProvider(integration); provider != "" {
+				plan.RequiredProviders = append(plan.RequiredProviders, ConfigTask{
 					Target:      appName,
-					Source:      opt.App,
+					Source:      provider,
 					Integration: intName,
 				})
 			}
+			continue
+		}
+
+		// The set model: every installed compatible provider is wired. Nothing
+		// is picked among them.
+		for _, opt := range installed {
+			plan.AutoConfig = append(plan.AutoConfig, ConfigTask{
+				Target:      appName,
+				Source:      opt.App,
+				Integration: intName,
+			})
 		}
 	}
 
@@ -113,6 +87,20 @@ func (g *AppGraph) PlanInstall(appName string) (*InstallPlan, error) {
 	plan.Dependents = g.FindDependents(appName)
 
 	return plan, nil
+}
+
+// defaultProvider returns the provider an integration resolves to by default:
+// the entry flagged default. A required integration is validated at load to
+// carry exactly one, so the answer is unambiguous. The value is a catalog app
+// ID; an instance-source default comes back empty because there is no app to
+// install for it.
+func defaultProvider(integration Integration) string {
+	for _, compat := range integration.Compatible {
+		if compat.Default {
+			return compat.App
+		}
+	}
+	return ""
 }
 
 // PlanRemove computes what happens when removing an app
@@ -167,27 +155,4 @@ func (g *AppGraph) findAlternatives(appName, integrationName, excluding string) 
 	}
 
 	return alternatives
-}
-
-func makeChoice(intName string, integration Integration, installed, available []CompatibleApp) IntegrationChoice {
-	choice := IntegrationChoice{
-		Integration: intName,
-		Required:    integration.Required,
-	}
-
-	for _, c := range installed {
-		choice.Installed = append(choice.Installed, choiceOption(c))
-		if c.Default {
-			choice.Recommended = c.App
-		}
-	}
-
-	for _, c := range available {
-		choice.Available = append(choice.Available, choiceOption(c))
-		if c.Default && choice.Recommended == "" {
-			choice.Recommended = c.App
-		}
-	}
-
-	return choice
 }

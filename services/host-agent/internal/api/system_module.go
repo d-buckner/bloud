@@ -270,13 +270,13 @@ type integrationTarget struct {
 // buildGraphEdges derives the integration edges for a single app, keeping only
 // those whose provider is actually a node in the payload.
 //
-// The catalog declaration drives it, through the same rule the orchestrator
-// uses to bind providers (see integrationTargets). The choice recorded in
-// IntegrationConfig is authoritative only for a *required* contract, which
-// binds exactly the one provider that was chosen; an optional contract keeps
-// its recorded choice and gains every compatible provider that appears later.
-// With nothing recorded the declared compatible list is drawn, which is why the
-// instance's own AI provider reaches the graph without a `default: true`
+// The catalog declaration drives it, through the same set rule the
+// orchestrator uses to bind providers (see integrationTargets): every
+// declared compatible provider. No provider is ever "chosen"; whether an edge
+// draws is whether the provider is installed, which is exactly what `present`
+// answers below.
+//
+// The instance's own AI provider reaches the graph without a `default: true`
 // anywhere: an app that declares `source: instance` declares a wiring that
 // exists the moment the setting is populated, and a display keyed on the
 // default flag would hide it.
@@ -307,30 +307,21 @@ func (m *systemModule) buildGraphEdges(app *store.InstalledApp, present map[stri
 // integrationTargets lists the provider nodes each of the app's declared
 // integrations resolves to, deduplicated, in a deterministic order.
 //
-// The rule is the orchestrator's, read from catalog.BoundProviders rather
-// than restated here: the recorded choice plus, for an *optional* contract,
-// every compatible provider the metadata declares. A required contract binds
-// only the one provider that was chosen. The display has to read the same
-// rule or it draws a picture of wiring that is not there:
+// The rule is the orchestrator's, read from catalog.DeclaredProviders rather
+// than restated here: every declared compatible provider. No provider is ever
+// chosen. Whether an edge actually draws is decided later, in buildGraphEdges,
+// against the set of nodes the payload contains, which is the installed set
+// plus the AI Model node when the instance provides one.
 //
-//   - Treating the recorded choice as authoritative for every contract hides
-//     a provider installed after the choice was made. Hermes recorded
-//     `mcp: affine-mcp` when that was the only MCP provider in the catalog;
-//     installing `caldav-mcp` later wired it into the agent, and the graph
-//     kept drawing one edge. That was issue #233.
-//   - Dropping the recorded choice for a `multi` contract instead of adding
-//     to it would show a provider the consumer does not use when the operator
-//     picked one of several.
+// This is what #233 was about: the old code treated the value recorded in
+// IntegrationConfig as the chosen provider for every contract, so Hermes
+// recorded `mcp: affine-mcp` when that was the only MCP provider and the
+// graph kept drawing one edge after `caldav-mcp` was installed and wired.
+// The recorded value is now write-only provenance, and nothing here reads it.
 //
-// The one place the display is deliberately wider than the resolver is a
-// *required* contract with nothing recorded: the resolver binds nothing there,
-// because no choice was ever made, while the display draws the declared
-// provider, which is what the install plan installs for a required contract
-// and what the graph edge therefore orders. Showing "no wiring" for an app
-// that cannot install without its provider would be the worse lie.
-//
-// An app the catalog does not describe falls back to what its install recorded,
-// which is all the display has for it.
+// An app the catalog does not describe falls back to what its install
+// recorded, which is the only wiring the display can name for an app whose
+// declaration is gone.
 func (m *systemModule) integrationTargets(app *store.InstalledApp) []integrationTarget {
 	var targets []integrationTarget
 	seen := make(map[string]bool)
@@ -358,23 +349,8 @@ func (m *systemModule) integrationTargets(app *store.InstalledApp) []integration
 	sort.Strings(labels)
 
 	for _, label := range labels {
-		bound := catalog.BoundProviders(def.Integrations[label], app.IntegrationConfig[label])
-		if len(bound) == 0 {
-			// A required contract with nothing recorded. The resolver binds
-			// nothing there, but the install plan cannot have installed this
-			// app without its provider, so the declaration is what the graph
-			// edge really represents.
-			for _, compat := range def.Integrations[label].Compatible {
-				add(label, providerNodeID(compat))
-			}
-			continue
-		}
-		for _, provider := range bound {
-			node := provider.App
-			if provider.Source != "" {
-				node = AINodeID
-			}
-			add(label, node)
+		for _, provider := range catalog.DeclaredProviders(def.Integrations[label]) {
+			add(label, providerNodeID(provider))
 		}
 	}
 	return targets
@@ -414,14 +390,14 @@ func providerNodes(apps []*store.InstalledApp, aiShown bool) map[string]bool {
 	return present
 }
 
-// providerNodeID maps one compatible entry to the graph node that stands for
-// it. A catalog app is its own node; `source: instance` is not an app, so it
+// providerNodeID maps one provider to the graph node that stands for it. A
+// catalog app is its own node; the instance provider is not an app, so it
 // maps to the AI Model node the instance provides.
-func providerNodeID(compat catalog.CompatibleApp) string {
-	if compat.Source != "" {
+func providerNodeID(provider catalog.BoundProvider) string {
+	if provider.Source != "" {
 		return AINodeID
 	}
-	return compat.App
+	return provider.App
 }
 
 // DeveloperGraphHandler returns the lifecycle graph for the developer dashboard.

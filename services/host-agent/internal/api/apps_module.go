@@ -42,8 +42,8 @@ type orchestratorCaller interface {
 // planSource supplies the dependency-graph plans behind the pre-flight
 // install and uninstall views. The orchestrator implements it. The API reads
 // a plan rather than computing one so the resolver stays single: the client
-// has the catalog but not buildIntegrationConfig or computeAppDeps, and a
-// second implementation in TypeScript would drift on the first metadata edit.
+// has the catalog but not the orchestrator's graph, and a second
+// implementation in TypeScript would drift on the first metadata edit.
 type planSource interface {
 	PlanInstall(appName string) (*catalog.InstallPlan, error)
 	PlanRemove(appName string) (*catalog.RemovePlan, error)

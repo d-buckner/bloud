@@ -181,10 +181,11 @@ func TestBuildIntegrations_UnpublishedSecretIsEmpty(t *testing.T) {
 	assert.Empty(t, out.MediaServers[0].AdminPassword)
 }
 
-// A required contract binds the provider that was chosen for it; an optional one
-// binds everything the metadata declares, which is the same set the dependency
-// edges order.
-func TestBuildIntegrations_FollowsChoiceForRequiredContracts(t *testing.T) {
+// The set model: every installed declared provider binds, whatever a defunct
+// choice system recorded. The stale `downloadClient: deluge` record is ignored,
+// and both installed download clients bind; an optional contract does the same
+// for the providers it declares.
+func TestBuildIntegrations_BindsEveryInstalledDeclaredProvider(t *testing.T) {
 	consumer := consumerApp("radarr", "downloadClient", catalog.Integration{Required: true}, "qbittorrent", "deluge")
 	consumer.Integrations["pvr"] = catalog.Integration{
 		Compatible: []catalog.CompatibleApp{{App: "prowlarr"}},
@@ -204,9 +205,11 @@ func TestBuildIntegrations_FollowsChoiceForRequiredContracts(t *testing.T) {
 
 	out := orch.buildIntegrations("radarr", consumer)
 
-	require.Len(t, out.DownloadClients, 1, "a required contract binds only the chosen provider")
-	assert.Equal(t, "deluge", out.DownloadClients[0].App)
-	require.Len(t, out.PVRs, 1, "an optional contract binds the compatible providers")
+	require.Len(t, out.DownloadClients, 2, "every installed declared provider binds; nothing is chosen")
+	assert.ElementsMatch(t,
+		[]string{out.DownloadClients[0].App, out.DownloadClients[1].App},
+		[]string{"qbittorrent", "deluge"})
+	require.Len(t, out.PVRs, 1, "an optional contract binds the declared providers")
 	assert.Equal(t, "prowlarr", out.PVRs[0].App)
 }
 

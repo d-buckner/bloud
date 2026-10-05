@@ -526,49 +526,45 @@ func TestSystemHTTP_DeveloperGraph_MultiProviderContractDrawsEveryInstalledProvi
 	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "radarr"))
 }
 
-// A recorded choice is authoritative for a *required* contract, which binds
-// exactly the one provider that was picked. Drawing the compatible list
-// alongside it would show wiring the resolver never creates: a required
-// contract is a slot with one occupant, and the operator filled it.
-func TestSystemHTTP_DeveloperGraph_RecordedChoiceWinsForRequiredContract(t *testing.T) {
+// A required contract draws its installed declared provider, not a provider
+// a defunct choice system recorded. The record names deluge, which is not
+// even installed; the wiring is the declaration intersected with the installed
+// set, so only qbittorrent draws.
+func TestSystemHTTP_DeveloperGraph_RequiredContractDrawsTheInstalledProvider(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
-	for _, id := range []string{"sonarr", "radarr"} {
-		mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
-			CatalogID: id, DisplayName: id, Status: "running",
-		})
-	}
 	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
-		CatalogID:         "prowlarr",
-		DisplayName:       "Prowlarr",
+		CatalogID: "qbittorrent", DisplayName: "qBittorrent", Status: "running",
+	})
+	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
+		CatalogID:         "radarr",
+		DisplayName:       "Radarr",
 		Status:            "running",
-		IntegrationConfig: map[string]string{"pvr": "radarr"},
+		IntegrationConfig: map[string]string{"downloadClient": "deluge"},
 	})
 	mod.catalog.(*FakeCatalogCache).AddApp(&catalog.App{
-		CatalogID:   "prowlarr",
-		DisplayName: "Prowlarr",
+		CatalogID:   "radarr",
+		DisplayName: "Radarr",
 		Integrations: map[string]catalog.Integration{
-			"pvr": {
+			"downloadClient": {
 				Required:   true,
-				Compatible: []catalog.CompatibleApp{{App: "sonarr"}, {App: "radarr"}},
+				Compatible: []catalog.CompatibleApp{{App: "qbittorrent", Default: true}},
 			},
 		},
 	})
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "radarr"))
-	assert.False(t, graphEdgePresent(resp.Edges, "prowlarr", "sonarr"),
-		"a required contract binds only the provider chosen for it")
+	assert.True(t, graphEdgePresent(resp.Edges, "radarr", "qbittorrent"),
+		"the installed declared provider draws")
+	assert.False(t, graphEdgePresent(resp.Edges, "radarr", "deluge"),
+		"the stale record names a provider that is not installed; it draws no edge")
 }
 
-// An optional contract draws the recorded choice *and* every installed
-// compatible provider, because that is what the resolver binds: the recorded
-// choice plus the whole compatible list. Treating the recorded value as a
-// replacement hid every provider installed after the choice was made, which
-// is issue #233: Hermes recorded `mcp: affine-mcp` when that was the only MCP
-// provider in the catalog, and installing caldav-mcp later wired it into the
-// agent without changing the recorded value.
-func TestSystemHTTP_DeveloperGraph_OptionalContractDrawsChoiceAndEveryCompatibleProvider(t *testing.T) {
+// An optional contract draws every installed declared provider. The value
+// recorded at install time names one of them, but the set is the declaration:
+// nothing is chosen, and a provider installed later is wiring that exists.
+// This is the #233 shape with the catalog shrunk to a fake.
+func TestSystemHTTP_DeveloperGraph_OptionalContractDrawsEveryInstalledProvider(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
 	for _, id := range []string{"sonarr", "radarr"} {
 		mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
@@ -594,18 +590,16 @@ func TestSystemHTTP_DeveloperGraph_OptionalContractDrawsChoiceAndEveryCompatible
 
 	resp := fetchDeveloperGraph(t, mod)
 
-	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "radarr"),
-		"the recorded choice still draws")
+	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "radarr"))
 	assert.True(t, graphEdgePresent(resp.Edges, "prowlarr", "sonarr"),
-		"an optional contract binds every compatible provider, so a provider installed "+
-			"after the recorded choice was made must draw too")
+		"every installed declared provider draws; the recorded value does not trim the set")
 }
 
-// The recorded choice of an optional contract is not a licence to draw a
-// provider that is not installed: the compatible list still passes through the
-// installed-node filter, so a late-installed provider that is absent produces
-// no edge into empty space.
-func TestSystemHTTP_DeveloperGraph_OptionalContractStillFiltersUninstalledCompatible(t *testing.T) {
+// A declared provider that is not installed is a possibility the metadata
+// allows, not a wiring that exists, so it gets no edge. The set model is
+// declaration intersected with the installed set, and the second half of that
+// intersection must still hold.
+func TestSystemHTTP_DeveloperGraph_DeclaredButUninstalledProviderDrawsNoEdge(t *testing.T) {
 	mod := newSystemModule(t, systemModuleOpts{})
 	mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
 		CatalogID:         "prowlarr",
@@ -624,15 +618,15 @@ func TestSystemHTTP_DeveloperGraph_OptionalContractStillFiltersUninstalledCompat
 	resp := fetchDeveloperGraph(t, mod)
 
 	assert.False(t, graphEdgePresent(resp.Edges, "prowlarr", "radarr"),
-		"a recorded choice naming a node that is not in the payload draws no edge")
+		"radarr is declared but not installed, so nothing may point at a node absent from the payload")
 	assert.False(t, graphEdgePresent(resp.Edges, "prowlarr", "sonarr"))
 }
 
 // The real catalog through the real cache, pinning the exact wiring issue #233
 // reported: Hermes' install row carries `mcp: affine-mcp` from a time before
-// caldav-mcp existed, and the graph must still draw hermes -> caldav-mcp,
-// because apps/hermes/metadata.yaml declares caldav-mcp under an optional
-// multi contract and the orchestrator binds it.
+// caldav-mcp existed. The set model reads the declaration plus the installed
+// set and ignores that stale record, so the graph must draw
+// hermes -> caldav-mcp alongside hermes -> affine-mcp.
 func TestSystemHTTP_DeveloperGraph_RealCatalogWiresCalendarMcpIntoHermes(t *testing.T) {
 	cache := catalog.NewMemoryCache()
 	require.NoError(t, cache.Refresh(catalog.NewLoader(filepath.Join("..", "..", "..", "..", "apps"))))
@@ -651,7 +645,8 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresCalendarMcpIntoHermes(t *test
 			CatalogID: id, DisplayName: id, Status: "running",
 		})
 	}
-	// The stale recorded choice from before caldav-mcp shipped.
+	// The stale recorded value from before caldav-mcp shipped. It must be
+	// ignored: the wiring is the declaration intersected with the installed set.
 	require.NoError(t, mod.appStore.UpdateIntegrationConfig(
 		"hermes", map[string]string{"mcp": "affine-mcp"},
 	))
@@ -660,8 +655,8 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresCalendarMcpIntoHermes(t *test
 
 	assert.True(t, graphEdgePresent(resp.Edges, "hermes", "affine-mcp"))
 	assert.True(t, graphEdgePresent(resp.Edges, "hermes", "caldav-mcp"),
-		"caldav-mcp is installed and declared compatible under an optional contract, "+
-			"so the orchestrator wires it and the graph must draw it")
+		"caldav-mcp is installed and declared compatible, so the orchestrator wires it "+
+			"and the graph must draw it regardless of the stale record")
 	assert.Equal(t, "mcp", graphEdgeLabel(resp.Edges, "hermes", "caldav-mcp"))
 }
 
