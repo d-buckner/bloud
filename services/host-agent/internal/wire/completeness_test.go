@@ -26,6 +26,11 @@ var optionalConfigFields = map[string]string{
 	// override it, so a zero here means "use the default", not "unset".
 	"HealthCheckTimeout": "zero means no per-app health timeout; the caller's context deadline applies",
 	"PostStartBudget":    "zero means NewOrchestrator applies DefaultPostStartBudget",
+	// The resync warning threshold is not a per-deployment knob today: the
+	// product value is DefaultResyncRestartWarnAt and the watchdog applies it
+	// when this stays zero. It is a field rather than a constant so a future
+	// operator override has somewhere to land without a new seam.
+	"ResyncRestartWarnAt": "zero means the watchdog applies DefaultResyncRestartWarnAt",
 }
 
 // forEachExportedField walks every exported field of OrchestratorConfig,

@@ -134,15 +134,18 @@ catalog presence), so the only thing left running is their container.
 
 ## What this deliberately does not do
 
-- **Provider-identity propagation to `PreStart` consumers.** Hermes bakes
-  `inference` and `mcp` into `config.yaml` in `PreStart`, so a catalog-app
-  provider change (an Ollama port, an MCP path) needs a full re-drive that the
-  periodic resync does not give it. The PostStart consumers (Seerr, Prowlarr,
-  Sonarr, Radarr, Navidrome, AFFiNE, Calino) and the instance-inference case
-  (`resetInferenceConsumers` on `SetInferenceIntent`) are already covered. The
-  general case is a clean follow-up that extends `resetInferenceConsumers` to
-  fire on catalog-app provider changes; it needs a small per-app digest of the
-  resolved bindings, not this plan.
+- **Provider-identity propagation to `PreStart` consumers.** ~~Not done.~~
+  **Done, by a different route than the one sketched here.** Hermes bakes
+  `inference` and `mcp` into `config.yaml` in `PreStart`, so a provider change
+  (an MCP app installed later, an MCP path, a rotated bearer) needs a full
+  re-drive that the old PostStart-only resync did not give it. Rather than
+  digesting resolved bindings per app, the resync now runs `PreStart` as well
+  as `PostStart` for every node at `RUNNING` on every pass
+  (`execution.go:runResync`), and recreates the container only when `PreStart`
+  reports `RestartNeeded`. That covers the provider-change case, the
+  drift-between-binding-and-config case, and the instance-inference case in one
+  mechanism. `resetInferenceConsumers` stays: it is the prompt path for a
+  settings save, and the resync is the floor that catches what no intent raised.
 - **Parameter-only SSO changes** (scopes, access-token lifetime, bypass paths):
   these are reconciled by the idempotent `Ensure*` on the next full lifecycle,
   and a scope tweak on a RUNNING app is low-stakes. A strategy change is the

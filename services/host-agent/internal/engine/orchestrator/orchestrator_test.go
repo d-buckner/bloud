@@ -366,14 +366,19 @@ func TestOrchestrator_Staleness_AlreadyRunning_RerunPostStartWhenDepChanges(t *t
 	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
-	// B should only re-run PostStart; no other phases.
+	// B is at RUNNING, so it gets the config resync: PreStart to diff the
+	// files it manages against the new state, and PostStart to diff the rest.
+	mockB.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
 	mockA.AssertExpectations(t)
 	mockB.AssertExpectations(t)
-	mockB.AssertNotCalled(t, "PreStart", mock.Anything, mock.Anything)
+	// The resync runs PreStart. That is the whole point of it: a provider that
+	// appeared after this node converged only reaches this node's config through
+	// PreStart.
+	mockB.AssertNumberOfCalls(t, "PreStart", 1)
 }
 
 func TestOrchestrator_Staleness_NoRerun_WhenDepErrors(t *testing.T) {
@@ -422,6 +427,8 @@ func TestOrchestrator_Resync_SteadyState_RerunsPostStart(t *testing.T) {
 	mockB := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
 	to.registry.On("Get", "b").Return(mockB)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
+	mockB.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 	mockB.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
@@ -429,10 +436,11 @@ func TestOrchestrator_Resync_SteadyState_RerunsPostStart(t *testing.T) {
 
 	mockA.AssertNumberOfCalls(t, "PostStart", 1)
 	mockB.AssertNumberOfCalls(t, "PostStart", 1)
-	// The resync is PostStart only: PreStart is what can ask for a container
-	// recreate, so a steady-state pass must never run it.
-	mockA.AssertNotCalled(t, "PreStart", mock.Anything, mock.Anything)
-	mockB.AssertNotCalled(t, "PreStart", mock.Anything, mock.Anything)
+	// The resync runs PreStart as well as PostStart. PreStart is what can ask
+	// for a container recreate, and a steady-state pass reports no change, so
+	// the pass reads as a diff and disturbs nothing.
+	mockA.AssertNumberOfCalls(t, "PreStart", 1)
+	mockB.AssertNumberOfCalls(t, "PreStart", 1)
 }
 
 // The resync is a tick, not a one-shot. Two passes in a row must give the same
@@ -447,11 +455,13 @@ func TestOrchestrator_Resync_RepeatsOnEveryPass(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(nil)
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 	require.NoError(t, to.orch.Reconcile(context.Background()))
 
+	mockA.AssertNumberOfCalls(t, "PreStart", 2)
 	mockA.AssertNumberOfCalls(t, "PostStart", 2)
 }
 
@@ -467,6 +477,7 @@ func TestOrchestrator_Resync_FailureLeavesNodeRunning(t *testing.T) {
 
 	mockA := new(MockConfigurator)
 	to.registry.On("Get", "a").Return(mockA)
+	mockA.On("PreStart", mock.Anything, mock.Anything).Return(configurator.NoRestart(), nil)
 	mockA.On("PostStart", mock.Anything, mock.Anything).Return(errors.New("provider unreachable"))
 
 	require.NoError(t, to.orch.Reconcile(context.Background()))

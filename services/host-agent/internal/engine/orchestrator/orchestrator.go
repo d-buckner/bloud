@@ -45,6 +45,11 @@ type OrchestratorStatus struct {
 	// LastConverged is when the most recent convergence pass completed
 	// (zero until the first one finishes).
 	LastConverged time.Time `json:"lastConverged"`
+	// ResyncRestartSignals lists the nodes whose consecutive resync restarts
+	// crossed the warning threshold: they keep reporting a config change that
+	// never settles. The restarts still happen; this is the record that says
+	// something is wrong. Empty when no node has crossed the threshold.
+	ResyncRestartSignals []ResyncRestartSignal `json:"resyncRestartSignals,omitempty"`
 }
 
 // ActivityEvent records a single orchestrator lifecycle event.
@@ -88,9 +93,10 @@ type OrchestratorConfig struct {
 //     recorded failure is marked retryable. See retryErroredNodes.
 //   - A node whose dependency is in ERROR is also skipped (blocked).
 //
-// Staleness: if a node is already RUNNING and one of its dependencies
-// completes successfully this pass, the node re-runs PostStart to pick up
-// any new configuration exposed by that dependency.
+// Staleness: a node that is already RUNNING is not assumed to still match the
+// catalog or its providers. Every pass re-runs its PreStart and PostStart (the
+// resync), and the container is recreated only when PreStart reports the config
+// actually changed. See runResync.
 type Orchestrator struct {
 	// Core lifecycle fields
 	graph    *graph.Graph
@@ -149,6 +155,12 @@ type Orchestrator struct {
 	// lets the health and developer surfaces tell a dead loop from a
 	// healthy idle one.
 	lastConverged atomic.Pointer[time.Time]
+
+	// resync restart watchdog: raises a signal when one node keeps restarting
+	// from the resync. It never withholds a restart. Built lazily so a
+	// hand-constructed Orchestrator has a working one. See resync_watchdog.go.
+	resyncWatchOnce  sync.Once
+	resyncWatchValue *resyncWatch
 }
 
 // NewOrchestrator creates a fully-configured Orchestrator backed by the

@@ -294,6 +294,71 @@ func TestPreStartPicksUpWorkspaceChange(t *testing.T) {
 	}
 }
 
+// caldavBinding is the second MCP provider: the calendar namespace, installed
+// after the harness was already running.
+func caldavBinding() configurator.MCPBinding {
+	return configurator.MCPBinding{
+		ProviderRef: configurator.ProviderRef{
+			App:       "caldav-mcp",
+			Installed: true,
+			BaseURL:   "http://apps-caldav-mcp:9333",
+			LocalURL:  "http://localhost:9333",
+		},
+		ServerName: "caldav-mcp",
+		Token:      "caldav-bearer",
+		Path:       "/mcp",
+	}
+}
+
+// The install-order case the config resync exists for. Hermes was installed
+// first, so its config.yaml was written with the one MCP namespace that
+// existed at the time, and caldav-mcp arrived afterwards. The next pass
+// resolves the new binding, and PreStart has to both write the namespace and
+// ask for the restart that makes Hermes re-read the file. While the resync ran
+// PostStart only, this is exactly the pass that did nothing, and the calendar
+// tools never appeared until Hermes was restarted by hand.
+func TestPreStartPicksUpProviderInstalledLater(t *testing.T) {
+	dir := t.TempDir()
+	c := mcpHermes()
+
+	if _, err := c.PreStart(context.Background(), mcpState(dir, affineBinding())); err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if hasNamespace(readConfigDoc(t, dir), "caldav-mcp") {
+		t.Fatal("the later provider must not be present before it is installed")
+	}
+
+	changed, err := c.PreStart(context.Background(), mcpState(dir, affineBinding(), caldavBinding()))
+	if err != nil {
+		t.Fatalf("PreStart: %v", err)
+	}
+	if !changed.RestartNeeded {
+		t.Fatal("a provider installed after the harness must rewrite the config and restart Hermes to pick it up")
+	}
+
+	doc := readConfigDoc(t, dir)
+	for _, name := range []string{"affine", "caldav-mcp"} {
+		if !hasNamespace(doc, name) {
+			t.Errorf("%s missing from %s after its provider was installed", name, mcpServersKey)
+		}
+	}
+	srv := nested(t, doc, mcpServersKey, "caldav-mcp")
+	if srv["url"] != "http://localhost:9333/mcp" {
+		t.Errorf("url = %v, want the caldav-mcp endpoint", srv["url"])
+	}
+}
+
+// hasNamespace reports whether the rendered config carries a live entry for
+// one MCP server name.
+func hasNamespace(doc map[string]any, name string) bool {
+	servers, ok := doc[mcpServersKey].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = servers[name]
+	return ok
+}
+
 // A trailing slash on the provider address must not produce a doubled slash in
 // the composed URL, which would be a 404 nothing downstream explains.
 func TestMCPEntryTrimsTrailingSlash(t *testing.T) {
