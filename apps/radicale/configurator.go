@@ -297,9 +297,9 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 }
 
 // restartContainer stops and starts the running container through the host
-// runtime so Radicale re-reads ics_sync.json, whose jobs the plugin loads once
-// at process start. It mirrors the Home Assistant pattern: the configurator
-// owns the restart decision, the runtime performs the side effect.
+// runtime so Radicale re-reads its config, which it loads once at process
+// start. It mirrors the Home Assistant pattern: the configurator owns the
+// restart decision, the runtime performs the side effect.
 func (c *Configurator) restartContainer(ctx context.Context) error {
 	if c.restartContainerFn == nil {
 		return errors.New("no container restart callback")

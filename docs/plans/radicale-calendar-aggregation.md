@@ -118,11 +118,11 @@ caldav: {
   nothing in it is blocked by it either. See the "What is not wired" section
   of `apps/calino/INTEGRATION.md`.
 
-## The plugin: `radicale-ics-sync`
+## The sync engine: `pimsync` (superseding `radicale-ics-sync`)
 
-This already exists: `radicale-ics-sync` on PyPI (v0.1.0, 2026-06-20). It
-is a **storage** plugin that wraps the filesystem backend and syncs external
-feeds into existing collections.
+The first cut vendored `radicale-ics-sync`, a Python **storage** plugin that
+wrapped the filesystem backend and pulled feeds into it from inside the server
+process:
 
 ```ini
 [storage]
@@ -131,35 +131,49 @@ filesystem_folder = /data/collections
 ics_config = /config/ics_sync.json
 ```
 
-```json
-[
-  {
-    "feed": "https://radarr.example/feed/v3/calendar/Radarr.ics?apikey=...",
-    "collection": "alice/radarr",
-    "sync_interval": 3600,
-    "include_patterns": [],
-    "exclude_patterns": []
-  }
-]
+That is retired. It meant shipping third-party Python inside the Radicale
+container, carrying `PYTHONPATH`, and paying a server restart every time the
+feed list changed. The replacement is [`pimsync`](https://pimsync.org), a
+standalone CalDAV/CardDAV sync daemon that reads a declarative config and runs
+beside the server as a sidecar.
+
+```scfg
+storage radarr {
+  type webcal
+  url "https://radarr.example/feed/v3/calendar/Radarr.ics?apikey=..."
+  collection_id radarr
+  interval 3600
+}
+
+pair radarr {
+  storage_a radarr
+  storage_b bloud
+  collection "radarr"
+  one_way
+}
 ```
 
 Properties that matter for this design:
 
-- **`ics_sync.json` changes require a restart.** This maps directly onto
-  `configurator.MustRestart` in `PreStart`. The existing no-op-if-unchanged
-  contract is a good fit.
-- **The collection must already exist.** The plugin will not create it.
-  Something has to `MKCALENDAR` first, which needs the server running, so it
-  lands in `PostStart`, not `PreStart`. That is a real sequencing constraint.
-- **The API key stays on the server.** It appears only in `ics_sync.json`.
-  Clients never see it. This is strictly better than the pointer model, which
-  broadcasts the key to every enrolled device.
-- **Filtering is `SUMMARY`-only.** `LOCATION` and `DESCRIPTION` are not
-  supported yet.
-- **Local edits are overwritten.** The README headline claims local changes
-  survive; the limitations section says upstream changes fully overwrite local
-  edits and field-level merge is only planned. Treat synced calendars as
-  read-only regardless of what the client offers.
+- **No server restart to change the feed list.** The sidecar re-reads its own
+  config; Radicale never learns that a feed was added. The restart the plugin
+  needed is gone.
+- **The target collection is created for you.** `create_collection` in
+  `vstorage` (pimsync's storage layer) issues the `MKCALENDAR` when the
+  target is missing, so the sequencing constraint that pushed plugin work into
+  `PostStart` does not apply.
+- **The API key stays on the server.** It appears only in `pimsync.conf`, in
+  the app's own data tree. Clients never see it. This is strictly better than
+  the pointer model, which broadcasts the key to every enrolled device.
+- **`one_way` is what makes a feed read-only.** Without it pimsync reconciles
+  both directions; with it, local edits cannot leak upstream into a feed Bloud
+  does not own.
+- **Filtering is not a feed-side feature.** The plugin's `SUMMARY`-only
+  patterns are gone along with the plugin; nothing in the catalog depends on
+  them.
+
+See `apps/radicale/INTEGRATION.md` for the shipped shape: image provenance,
+the entrypoint override, and why the container parks when there are no pairs.
 
 ## What Bloud does
 
@@ -188,13 +202,13 @@ integrations:
     requires: [apiKey]
 ```
 
-**The configurator writes the plugin config.** `renderConfig` gains
-`type = radicale_ics_sync.storage` and a `ics_config` path; `PreStart`
-renders the resolved bindings into `ics_sync.json` beside the existing
-`ldap-secret`, and returns `MustRestart` when the bytes change. Nothing else
-in the reconciler changes.
+**The sidecar's config is generated, the server's is untouched.** Radicale's
+`renderConfig` goes back to `type = multifilesystem`, its own backend, with no
+plugin hooks. `PimsyncConfigurator.PreStart` renders the resolved bindings
+into `pimsync/pimsync.conf` in the app's data tree and mounts it read-only at
+`/etc/pimsync`.
 
-**The address must be public.** The feed URL written into `ics_sync.json` is
+**The address must be public.** The feed URL written into `pimsync.conf` is
 the Traefik-fronted public URL, not `LocalURL`. AFFiNE's
 `blockPrivateNetwork` default is the reason that rule needs to be explicit in
 the contract rather than left to each consumer.
