@@ -58,10 +58,19 @@ containers:
     image: ghcr.io/supercorp-ai/supergateway:4.1.0
     network: apps-net
     restartPolicy: always
+    # The image's own entrypoint is `supergateway`, which would bind the port
+    # before the bridged package exists on disk. This wrapper installs the pin
+    # into the persistent /runtime prefix once and then execs the gateway with
+    # the flags below, so no MCP session ever waits on npm resolution. Run
+    # through /bin/sh so the managed file does not need the executable bit.
+    entrypoint:
+      - /bin/sh
+      - /config/entrypoint.sh
     command:
-      # The image's entrypoint is already `supergateway`; these are its flags.
-      # `--stdio` runs the generated /config/run.sh (which exports the CALDAV_*
-      # environment and execs caldav-mcp) and bridges it to streamable HTTP.
+      # These are supergateway's flags, handed to it by the entrypoint wrapper.
+      # `--stdio` runs the generated /config/run.sh (which exports the
+      # CALDAV_* environment and execs the installed caldav-mcp entrypoint)
+      # and bridges it to streamable HTTP.
       - --stdio
       - sh /config/run.sh
       - --outputTransport
@@ -76,13 +85,21 @@ containers:
       - host: 9333
         container: 8000
     volumes:
-      # The configurator writes run.sh (the CALDAV_* environment for the stdio
-      # server) into this mounted dir.
+      # The configurator writes the entrypoint wrapper and run.sh (the CALDAV_*
+      # environment for the stdio server) into this mounted dir.
       - source: "{{appDataDir}}/config"
         destination: /config
+      # The persistent npm prefix. It lives in the app's own data tree so the
+      # package install survives a container recreate: the cost is paid once per
+      # pin rather than once per spawn, and a restart needs no registry.
+      - source: "{{appDataDir}}/runtime"
+        destination: /runtime
     healthCheck:
       # /healthz is the gateway's own liveness path, answered "ok" while it is
-      # up and serving.
+      # up and serving. It says nothing about the bridged server, which is why
+      # the functional gate is the MCP handshake in PostStart: this probe keeps
+      # the container honest about the process it runs, and a cheap per-spawn
+      # MCP round trip every 5s is not what a liveness probe should be.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/healthz | grep -q ok"]
       interval: 5
       timeout: 10
