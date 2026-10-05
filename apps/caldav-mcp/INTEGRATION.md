@@ -42,17 +42,51 @@ the agent's own tree as a read-only virtual collection, which is what makes
 
 ## The generated files
 
-PreStart writes `run.sh` into `<appDataDir>/config`, mounted at `/config` and
-invoked by supergateway as the stdio server. The dynamic CalDAV environment is
-exported there because the password is a resolved binding, not a static value
-metadata.yaml can carry:
+PreStart writes three managed files. Two go in `<appDataDir>/config`, mounted at
+`/config`; the third is the manifest for the persistent npm prefix at
+`<appDataDir>/runtime`, mounted at `/runtime`.
+
+`entrypoint.sh` runs before the gateway and installs the pinned package once:
+
+```sh
+#!/bin/sh
+set -eu
+
+PREFIX='/runtime'
+MARKER="$PREFIX/.installed-0.10.0"
+ENTRY='/runtime/node_modules/caldav-mcp/dist/index.js'
+
+if [ ! -f "$MARKER" ] || [ ! -f "$ENTRY" ]; then
+  npm install --prefix "$PREFIX" --no-audit --no-fund --loglevel error
+  rm -f "$PREFIX"/.installed-*
+  touch "$MARKER"
+fi
+
+exec supergateway "$@"
+```
+
+`run.sh` is the stdio server the gateway bridges. The dynamic CalDAV environment
+is exported there because the password is a resolved binding, not a static value
+metadata.yaml can carry, and the last line execs the installed file directly:
 
 ```sh
 #!/bin/sh
 export CALDAV_BASE_URL='http://apps-radicale:5232/'
 export CALDAV_USERNAME='caldav-service'
 export CALDAV_PASSWORD='<secret>'
-exec npx -y caldav-mcp@0.10.0
+exec node /runtime/node_modules/caldav-mcp/dist/index.js
+```
+
+`runtime/package.json` is the pin the install reads:
+
+```json
+{
+  "name": "bloud-caldav-mcp-runtime",
+  "private": true,
+  "dependencies": {
+    "caldav-mcp": "0.10.0"
+  }
+}
 ```
 
 Radicale's configurator also writes `sharing.csv` (the sharing database) into
@@ -64,15 +98,75 @@ published under `provides.mcp`. A credential that has not landed yet is omitted
 rather than written empty, and the next pass restarts the container once it
 arrives.
 
+## Why the install sits in the entrypoint
+
+The install belongs before the gateway binds, not in the stdio command, because
+the port is what everything else waits on. Supergateway listens only after the
+wrapper execs it, so a reachable port means the bridged package is already on
+disk and every MCP session spawns a resident file.
+
+In `run.sh` the install would land on the first session's critical path instead,
+which is the shape that broke: `npx -y` resolves the package against the npm
+registry on **every spawn**, not once, so the cost was paid before the child
+could answer the first `initialize`, and it exceeded the MCP client's connect
+timeout. Measured on the supergateway 4.1.0 image, same host, same package:
+
+| Spawn path | Time to `initialize` answer |
+|---|---|
+| `npx -y caldav-mcp@0.10.0` (before) | ~6.9s cold here, ~19-23s as reported in the field |
+| `node <prefix>/dist/index.js` (after) | ~0.85s |
+
+The prefix lives in the app's own data tree, so it survives a container recreate:
+a warm boot skips the install entirely and reaches a listening gateway in about
+1.1s, with no registry contact at all. The marker file is named for the pin, so
+a version bump reinstalls rather than silently reusing the previous tree, and the
+entry file is checked alongside the marker so a half-populated prefix reinstalls
+instead of exec'ing a missing file.
+
+## Why the readiness probe is the MCP handshake
+
+`/healthz` is answered by supergateway itself and says nothing about the process
+it bridges. Measured against a bridge whose child cannot start:
+
+```
+GET  /healthz   -> 200                       # the old probe: "healthy"
+POST /mcp       -> {"error":{"code":-32603,"message":"MCP server process failed"}}
+```
+
+Both are HTTP 200. A status-code probe cannot tell a serving MCP server from a
+gateway standing over a dead child, so the orchestrator promoted nodes that could
+not serve a single request. PostStart now POSTs a real `initialize` to the same
+path a harness calls and requires `result.serverInfo` back, and reads the
+JSON-RPC envelope rather than the status line, so an `error` is a failure. It
+runs on every resync pass too, so a bridge that stops serving after it
+converged is surfaced rather than left silently up.
+
+The container health check stays on `/healthz`. It reports the process the
+container runs, which is the thing a liveness probe should report, and a fresh
+stdio spawn plus a CalDAV discovery every 5 seconds is not what liveness should
+cost.
+
+## The reported version string
+
+`serverInfo.version` reads `0.1.0` while the package is `0.10.0`. This is
+upstream's own reporting bug: the string is hardcoded in the published
+`dist/index.js` (`version: "0.1.0"`) and is not derived from the package
+version, so every release of `caldav-mcp` reports `0.1.0`. The pin in
+`runtime/package.json` is authoritative for what runs. The readiness probe
+checks `serverInfo.name`, not the version, so it does not inherit the bug.
+
 ## Trade-offs
 
-- `supergateway`'s image is pinned, but caldav-mcp itself is launched with
-  `npx -y caldav-mcp@0.10.0` at boot, so the container downloads the pinned
-  package on first start. The version is fixed rather than rolling, but this is
-  a runtime network dependency the rest of the catalog avoids (the Radicale
-  plugin is vendored instead). Accepted because caldav-mcp is a Node package
-  with no prebuilt HTTP image; a custom image would reintroduce the image
-  pipeline Bloud does not own.
+- **The install needs the npm registry once per pin.** The prefix is populated on
+  first start, so a fresh install requires registry reachability and a restart
+  does not. This replaces the previous shape, where the registry sat on the
+  critical path of every spawn. It is still a runtime network dependency the
+  rest of the catalog avoids (the Radicale plugin is vendored instead),
+  accepted because caldav-mcp is a Node package with no prebuilt HTTP image and
+  a custom image would reintroduce the image pipeline Bloud does not own.
+- **Transitive dependencies float within their own ranges.** The direct pin is
+  exact; the 119 packages it pulls resolve at install time. Reproducibility is
+  per-install rather than byte-exact across installs.
 - **The MCP bearer is published but not enforced.** supergateway 4.1.0 (the
   latest release) has no `--apiKey` flag, so the per-server `env`/`apiKey` config
   file landed only on its `main` branch, which `check:image-pins` rejects as
@@ -82,6 +176,17 @@ arrives.
   enforcement lands when a supergateway release carries `--apiKey`.
 - **Agent access is read-only.** The map share grants `Rr`, so the agent can
   read the feeds but not write them.
+
+## Verification
+
+Covered by `apps/caldav-mcp/configurator_test.go`: the run script and its
+never-through-the-resolver guard, the manifest pin, the entrypoint marker and its
+upgrade path, and the readiness predicate driven by payloads captured from a
+live bridge (serving, dead child, keepalive-only). Plus `apps/radicale/
+configurator_test.go` (the sharing CSV) and the conformance harness. Live
+against the supergateway 4.1.0 image: cold start installs into the prefix and
+reaches a listening gateway in ~9.5s, warm boot skips the install and reaches it
+in ~1.1s, and `initialize` answers in ~0.85s through the bridge.
 
 ## Verification
 

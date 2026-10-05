@@ -38,19 +38,42 @@ const (
 
 	// configFileName is the shell script supergateway runs as its stdio server.
 	// It exports the dynamic CALDAV_* environment (the password is a resolved
-	// binding, not a static value metadata.yaml can carry) and execs the pinned
-	// package.
+	// binding, not a static value metadata.yaml can carry) and execs the
+	// package already installed in the persistent prefix.
 	configFileName = "run.sh"
+
+	// entrypointFileName is the script the container entrypoint runs ahead of
+	// the gateway: it installs the pinned package into the persistent prefix
+	// once, then execs supergateway with the flags metadata.yaml passes on.
+	entrypointFileName = "entrypoint.sh"
+
+	// runtimeManifestName is the npm manifest that pins the bridged package.
+	// It is a managed file so the pin reads as a declared artifact in the
+	// app's data tree rather than as a fragment of a shell string.
+	runtimeManifestName = "package.json"
+
+	// runtimeDir is the subdirectory of the app data tree that holds the npm
+	// prefix, and runtimePrefix its container path. The prefix outlives the
+	// container, so the install is once per pin, not once per spawn.
+	runtimeDir          = "runtime"
+	runtimePrefix       = "/runtime"
+	runtimeManifestPath = runtimeDir + "/" + runtimeManifestName
+
+	// caldavPackage and caldavVersion are the pinned npm coordinates. The
+	// version is exact, not a range, so what installs is what the pin names.
+	caldavPackage = "caldav-mcp"
+	caldavVersion = "0.10.0"
+
+	// caldavPin is the coordinate as it reads in logs and in the manifest.
+	caldavPin = caldavPackage + "@" + caldavVersion
+
+	// caldavEntry is the package's own CLI entrypoint inside the prefix: the
+	// file run.sh execs directly, with no resolver in front of it.
+	caldavEntry = runtimePrefix + "/node_modules/" + caldavPackage + "/dist/index.js"
 
 	// httpTokenKey is the secret name the `mcp` contract carries. It must match
 	// the contract registry and metadata.yaml's provides.mcp.secrets.
 	httpTokenKey = "httpToken"
-
-	// caldavPackage is the pinned npm package the run script launches.
-	caldavPackage = "caldav-mcp@0.10.0"
-
-	// healthEndpoint is the gateway's liveness probe, which PostStart checks.
-	healthEndpoint = "/healthz"
 )
 
 // Configurator handles the caldav-mcp node lifecycle: write the supergateway
@@ -93,8 +116,10 @@ func (c *Configurator) Name() string {
 	return nodeName
 }
 
-// PreStart writes the supergateway config so the container comes up bridging
-// caldav-mcp over streamable HTTP and already enforcing Bloud's bearer.
+// PreStart writes the three files the container reads at start: the npm manifest
+// that pins the bridged server, the entrypoint that installs it once into the
+// persistent prefix, and the stdio run script that exports the CalDAV
+// environment and execs the installed entrypoint directly.
 //
 // The bearer is generated on the first pass and reused afterwards, so a restart
 // does not invalidate the namespace a harness registered. The CalDAV address
@@ -116,29 +141,47 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		c.logger.Warn("caldav-mcp: no published caldav-service credential yet; writing an unauthenticated config")
 	}
 
-	content, err := renderRunScript(baseURL, hasAddress, cred, hasCred)
+	runScript, err := renderRunScript(baseURL, hasAddress, cred, hasCred)
 	if err != nil {
 		return configurator.NoRestart(), err
 	}
 
-	path := filepath.Join(state.DataPath, "config", configFileName)
-	changed, err := managedfile.Write(path, []byte(content), managedfile.ModeSharedConfig)
-	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("writing %s config: %w", appName, err)
+	files := []struct {
+		path    string
+		content string
+	}{
+		{filepath.Join(state.DataPath, runtimeManifestPath), renderRuntimeManifest()},
+		{filepath.Join(state.DataPath, "config", entrypointFileName), renderEntrypointScript()},
+		{filepath.Join(state.DataPath, "config", configFileName), runScript},
+	}
+
+	changed := false
+	for _, f := range files {
+		wrote, err := managedfile.Write(f.path, []byte(f.content), managedfile.ModeSharedConfig)
+		if err != nil {
+			return configurator.NoRestart(), fmt.Errorf("writing %s config: %w", appName, err)
+		}
+		changed = changed || wrote
 	}
 	if !changed {
 		return configurator.NoRestart(), nil
 	}
-	c.logger.Info("wrote caldav-mcp config", "path", path, "address", hasAddress, "credential", hasCred)
+	c.logger.Info("wrote caldav-mcp config", "dir", filepath.Join(state.DataPath, "config"),
+		"address", hasAddress, "credential", hasCred)
 	return configurator.MustRestart("caldav-mcp config rewritten"), nil
 }
 
-// PostStart verifies the gateway is serving its health endpoint. A wrapper that
-// is not serving is not doing its job, so a failing probe is returned and the
-// node is retried by the self-healing pass.
+// PostStart verifies the bridged server answers the MCP handshake. The gateway's
+// own /healthz is not enough: it returns 200 while the stdio child is absent,
+// dead, or still resolving, so a probe against it promotes a node that cannot
+// serve a single MCP request. This POSTs a real `initialize` to the same path a
+// harness calls and requires the server's own identity back.
+//
+// Because PostStart also runs on every resync pass, a bridge that stops serving
+// after it converged is surfaced rather than left silently up.
 func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) error {
-	if err := c.api.waitReady(ctx); err != nil {
-		return fmt.Errorf("waiting for the caldav-mcp gateway: %w", err)
+	if err := c.api.waitServing(ctx); err != nil {
+		return fmt.Errorf("waiting for the caldav-mcp server: %w", err)
 	}
 	c.logger.Info("caldav-mcp is serving MCP")
 	return nil
@@ -235,6 +278,62 @@ func renderRunScript(baseURL string, hasAddress bool, cred configurator.AppAPIBi
 		}
 		fmt.Fprintf(&b, "export %s='%s'\n", kv[0], kv[1])
 	}
-	fmt.Fprintf(&b, "exec npx -y %s\n", caldavPackage)
+	fmt.Fprintf(&b, "exec node %s\n", caldavEntry)
 	return b.String(), nil
+}
+
+// renderRuntimeManifest renders the npm manifest that pins the bridged server.
+// The version is exact rather than a range, so the install resolves the pin and
+// nothing looser. It is written by hand rather than marshalled so the bytes are
+// stable and reviewable: a map marshal would reorder on any key change and make a
+// no-op resync look like a rewrite.
+func renderRuntimeManifest() string {
+	return fmt.Sprintf(`{
+  "name": "bloud-%s-runtime",
+  "private": true,
+  "dependencies": {
+    "%s": "%s"
+  }
+}
+`, caldavPackage, caldavPackage, caldavVersion)
+}
+
+// renderEntrypointScript renders the container entrypoint: the one-time install
+// of the pinned package into the persistent prefix, then the gateway.
+//
+// The install belongs here rather than in the stdio command because supergateway
+// binds its port only after this script execs it, so a reachable port means the
+// bridged package is already on disk. In run.sh it would land on the first MCP
+// session's critical path, which is the cost this removes: `npx -y` resolves the
+// package against the registry on every spawn, and that round trip exceeded the
+// MCP client's connect timeout.
+//
+// The marker is named for the pinned version so a bump reinstalls rather than
+// silently reusing the previous tree, and the entry file is checked alongside it
+// so a half-populated prefix reinstalls instead of exec'ing a missing file.
+func renderEntrypointScript() string {
+	return fmt.Sprintf(`#!/bin/sh
+# Generated by Bloud; rewritten on every reconciliation.
+#
+# Installs the pinned MCP server into the persistent prefix once, then execs the
+# gateway with the flags metadata.yaml passes to this container.
+set -eu
+
+PREFIX='%s'
+MARKER="$PREFIX/.installed-%s"
+ENTRY='%s'
+
+if [ ! -f "$MARKER" ] || [ ! -f "$ENTRY" ]; then
+  echo "caldav-mcp: installing %s into $PREFIX" >&2
+  if ! npm install --prefix "$PREFIX" --no-audit --no-fund --loglevel error; then
+    echo "caldav-mcp: %s failed to install; the MCP server cannot start" >&2
+    exit 1
+  fi
+  rm -f "$PREFIX"/.installed-*
+  touch "$MARKER"
+  echo "caldav-mcp: %s installed" >&2
+fi
+
+exec supergateway "$@"
+`, runtimePrefix, caldavVersion, caldavEntry, caldavPin, caldavPin, caldavPin)
 }
