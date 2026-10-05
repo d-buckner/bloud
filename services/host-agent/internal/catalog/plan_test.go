@@ -62,6 +62,9 @@ func buildTestGraph() *AppGraph {
 	return NewGraph(apps)
 }
 
+// A required contract with nothing installed resolves to its declared default
+// provider, which installing the app installs with it. There is no choice: the
+// default is the only candidate the loader permits for a required contract.
 func TestPlanInstall_MissingRequiredDependency(t *testing.T) {
 	g := buildTestGraph()
 	// No download clients installed
@@ -72,16 +75,19 @@ func TestPlanInstall_MissingRequiredDependency(t *testing.T) {
 	}
 
 	if !plan.CanInstall {
-		t.Error("expected CanInstall true (user can choose to install dependency)")
+		t.Error("expected CanInstall true (the required provider installs with the app)")
 	}
-	if len(plan.Choices) != 1 {
-		t.Fatalf("expected 1 choice, got %d", len(plan.Choices))
+	if len(plan.RequiredProviders) != 1 {
+		t.Fatalf("expected 1 required provider, got %d", len(plan.RequiredProviders))
 	}
-	if plan.Choices[0].Integration != "downloadClient" {
-		t.Errorf("expected downloadClient choice, got %s", plan.Choices[0].Integration)
+	if plan.RequiredProviders[0].Integration != "downloadClient" {
+		t.Errorf("expected downloadClient, got %s", plan.RequiredProviders[0].Integration)
 	}
-	if plan.Choices[0].Recommended != "qbittorrent" {
-		t.Errorf("expected qbittorrent recommended, got %s", plan.Choices[0].Recommended)
+	if plan.RequiredProviders[0].Source != "qbittorrent" {
+		t.Errorf("expected the default qbittorrent, got %s", plan.RequiredProviders[0].Source)
+	}
+	if len(plan.AutoConfig) != 0 {
+		t.Errorf("expected no wired providers yet, got %d", len(plan.AutoConfig))
 	}
 }
 
@@ -97,18 +103,20 @@ func TestPlanInstall_AutoConfigWhenOneInstalled(t *testing.T) {
 	if !plan.CanInstall {
 		t.Error("expected CanInstall true")
 	}
-	if len(plan.Choices) != 0 {
-		t.Errorf("expected no choices, got %d", len(plan.Choices))
+	if len(plan.RequiredProviders) != 0 {
+		t.Errorf("expected no required providers, got %d", len(plan.RequiredProviders))
 	}
 	if len(plan.AutoConfig) != 1 {
-		t.Fatalf("expected 1 auto config, got %d", len(plan.AutoConfig))
+		t.Fatalf("expected 1 wired provider, got %d", len(plan.AutoConfig))
 	}
 	if plan.AutoConfig[0].Source != "qbittorrent" {
 		t.Errorf("expected qbittorrent source, got %s", plan.AutoConfig[0].Source)
 	}
 }
 
-func TestPlanInstall_ChoiceWhenMultipleInstalled(t *testing.T) {
+// The set model: when both compatible providers are installed, both wire.
+// Nothing is picked, and the required flag does not trim the set.
+func TestPlanInstall_WiresEveryInstalledProvider(t *testing.T) {
 	g := buildTestGraph()
 	g.SetInstalled([]string{"qbittorrent", "deluge"})
 
@@ -117,12 +125,11 @@ func TestPlanInstall_ChoiceWhenMultipleInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// radarr.downloadClient.multi is false, so need to choose
-	if len(plan.Choices) != 1 {
-		t.Fatalf("expected 1 choice, got %d", len(plan.Choices))
+	if len(plan.RequiredProviders) != 0 {
+		t.Fatalf("expected no required providers, got %d", len(plan.RequiredProviders))
 	}
-	if len(plan.Choices[0].Installed) != 2 {
-		t.Errorf("expected 2 installed options, got %d", len(plan.Choices[0].Installed))
+	if len(plan.AutoConfig) != 2 {
+		t.Fatalf("expected both installed providers to wire, got %d", len(plan.AutoConfig))
 	}
 }
 
@@ -135,7 +142,8 @@ func TestPlanInstall_AutoConfigAllWhenMultiTrue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// jellyseerr.pvr.multi is true, so auto-config both
+	// jellyseerr.pvr is a set: both installed PVRs wire, plus the installed
+	// media server.
 	pvrConfigs := 0
 	for _, cfg := range plan.AutoConfig {
 		if cfg.Integration == "pvr" {
@@ -143,7 +151,7 @@ func TestPlanInstall_AutoConfigAllWhenMultiTrue(t *testing.T) {
 		}
 	}
 	if pvrConfigs != 2 {
-		t.Errorf("expected 2 pvr auto configs, got %d", pvrConfigs)
+		t.Errorf("expected 2 pvr wired providers, got %d", pvrConfigs)
 	}
 }
 

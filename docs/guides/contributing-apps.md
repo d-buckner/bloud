@@ -504,11 +504,13 @@ Every binding embeds `ProviderRef`, the part that is the same for all of them:
 | `Port` | Its published port, from its metadata |
 | `BaseURL` / `LocalURL` | `http://<Node>:<Port>` (what your app stores) and `http://localhost:<Port>` (what your configurator calls) |
 
-A contract holds **one binding per provider**: for an optional contract that is
-every declared compatible app in the catalog, and for a required contract it is
-the provider chosen at install time. `Installed` distinguishes the ones that are
-actually there, and a payload the provider has not published yet is empty, which
-means "not ready", never "use this empty credential".
+A contract holds **one binding per provider**: every declared compatible app
+that is installed. The set model is the whole rule, and it has no exceptions
+for `required`: a required contract only means installing the consumer also
+installs the provider's declared default, never that other installed providers
+are ignored. `Installed` distinguishes the ones that are actually there, and a
+payload the provider has not published yet is empty, which means "not ready",
+never "use this empty credential".
 
 `requires` is what keeps a payload least privilege: declaring a contract gets an
 app the provider's address, and nothing more. Only the credentials you list are

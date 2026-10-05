@@ -76,10 +76,10 @@ Verified against the tree and the pinned image at the time of writing.
   primary graph node, which is also its container name on the shared network",
   and `BaseURL` is `http://<Node>:<Port>`. This is the field set that a
   non-container provider cannot fill.
-- **`resolveProviders` returns app IDs.** It reads `choice` plus
-  `integration.Compatible[].App` (the latter only when the integration is not
-  required), and each ID is then looked up with `catalog.Get`. A provider that is
-  not a catalog app has no way through this function today.
+- **`resolveProviders` returns app IDs.** It reads every
+  `integration.Compatible[]` entry (the set model via `catalog.DeclaredProviders`),
+  and each ID is then looked up with `catalog.Get`. A provider that is not a
+  catalog app has no way through this function today.
 - **`publishedSecret` resolves one secret per contract**, from the *provider's*
   app-secret scope: `secrets.GetAppSecret(providerID, spec.Secrets[0])`. That
   detail decides the shape of the gateway key question below.

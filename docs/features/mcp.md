@@ -20,9 +20,9 @@ affine-mcp  (provides mcp)  <──┐
 caldav-mcp  (provides mcp)  <──┘
 ```
 
-`multi: true` is what makes that a fan-in rather than a choice. The resolver
-binds every compatible provider an optional contract declares, and Hermes
-writes one `mcp_servers` entry per provider under that provider's
+Dependencies are a set, not a menu: the resolver binds every compatible
+provider a contract declares, whether it is marked `multi` or not. Hermes
+writes one `mcp_servers` entry per installed provider under that provider's
 `serverName`. Installing a new MCP-capable app gives the agent a new namespace
 without any change to Hermes, and uninstalling one removes its entry on the
 next pass instead of leaving a tool the agent keeps trying to call.
@@ -81,9 +81,9 @@ over workspace metadata and is unaffected.
   static metadata; some only exist once the app is running. Both are declared at
   catalog load, and the loader checks that every value the contract declares is
   covered by one channel or the other.
-- **Harnesses choose their own tool sets.** `multi: true` on the consumer side
-  means Hermes takes every MCP provider the instance offers while a specialized
-  harness takes two.
+- **Harnesses pick their own tool sets.** The consumer's `compatible:` list, not
+  a runtime choice, is what makes Hermes take every MCP provider the instance
+  offers; a specialized harness declares a narrower list.
 - **One published credential means one principal.** No per-user MCP
   authorization. A stated limit, not an oversight.
 

@@ -2,10 +2,22 @@
 
 package catalog
 
-// BoundProviders returns the providers one integration binds, given the
-// provider the install recorded for it. This is the whole rule, in one place,
-// because three consumers need to agree on it and two separate bugs (#227,
-// #233) came from copies of it drifting:
+// DeclaredProviders returns the providers an integration declares, in
+// declaration order, deduplicated, with the instance provider mapped like a
+// catalog one.
+//
+// This is the whole integration model in one place, and the model is: a
+// dependency set, not a menu. An app declares every provider that can satisfy
+// a contract under `compatible:`, and every one of them is a provider. Bloud
+// never picks one. Whether each provider is actually wired is answered the
+// same way by every consumer: a catalog app is wired when it is installed,
+// and the instance is wired when the operator has configured it. `required`
+// only says whether installing the consumer also installs the provider; it
+// plays no part in the set returned here.
+//
+// Three consumers have to agree on this, and two separate bugs (#227 in the
+// CLI's graph generator, #233 in the developer graph) came from copies of it
+// drifting:
 //
 //   - the orchestrator's resolver, which hands a consumer its bindings
 //     (`engine/orchestrator/integrations.go:resolveProviders`);
@@ -14,26 +26,14 @@ package catalog
 //   - the developer graph, which has to draw what the resolver actually
 //     wired rather than what it guesses.
 //
-// The rule: the recorded choice is authoritative only for a *required*
-// contract, which is a slot with one occupant and the operator filled it. An
-// *optional* contract binds the recorded choice **and** every compatible
-// provider the metadata declares, because the consumer iterates the whole
-// slice and a provider installed later is wiring that starts existing on the
-// next pass. Hermes recorded `mcp: affine-mcp` back when that was the only
-// MCP provider in the catalog; installing `caldav-mcp` wired it into the
-// agent without touching the recorded value, and a display that stopped at
-// the recorded value showed one edge where the resolver bound two.
-//
-// A required contract with nothing recorded binds nothing: no choice was ever
-// made, and inventing one here would put a provider in a consumer's binding
-// that nobody picked. A display that wants to show the provider a required
-// contract cannot install without should say so from the declaration, not by
-// widening this function.
-//
-// Entries are returned in binding order (the recorded choice first, then the
-// declaration order of the compatible list) and deduplicated, so a choice
-// that also appears in `compatible` yields one provider, not two.
-func BoundProviders(integration Integration, choice string) []BoundProvider {
+// There used to be a fourth input, a recorded "choice" per contract in
+// `IntegrationConfig`. That choice system was never built: there is no UI for
+// it, the install path always passes nil user choices, and treating the
+// recorded value as authoritative hid a provider installed after the record
+// was written (Hermes recorded `mcp: affine-mcp` when that was the only MCP
+// provider, so `caldav-mcp` never drew). The record is now write-only
+// provenance, and resolution reads this declaration plus what is installed.
+func DeclaredProviders(integration Integration) []BoundProvider {
 	var out []BoundProvider
 	add := func(p BoundProvider) {
 		for _, existing := range out {
@@ -44,12 +44,6 @@ func BoundProviders(integration Integration, choice string) []BoundProvider {
 		out = append(out, p)
 	}
 
-	if choice != "" {
-		add(BoundProvider{App: choice})
-	}
-	if integration.Required {
-		return out
-	}
 	for _, compatible := range integration.Compatible {
 		if compatible.Source != "" {
 			// A non-app provider carries no catalog ID: naming one here would
@@ -62,16 +56,15 @@ func BoundProviders(integration Integration, choice string) []BoundProvider {
 	return out
 }
 
-// BoundProvider is one provider an integration binds: a catalog app, or the
-// instance itself for a `source: instance` entry.
+// BoundProvider is one provider an integration declares: a catalog app, or
+// the instance itself for a `source: instance` entry.
 //
 // Source carries the provider-source kind for a non-app provider and is empty
 // for a catalog app, which is what lets each consumer map this to its own
 // vocabulary (a `providerSource` in the orchestrator, a graph node ID in the
 // display) without either of them re-deriving the rule.
 type BoundProvider struct {
-	// App is the catalog app ID, or the instance source name when Source is
-	// set.
+	// App is the catalog app ID. Empty when Source is set.
 	App string
 	// Source is the provider source as declared (`InstanceProviderSource`),
 	// empty for a catalog app.

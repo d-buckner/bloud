@@ -121,7 +121,7 @@ func TestConverge_InstallWithDeps_ResolvesDependenciesAndInstallsInOrder(t *test
 	h.catalogGraph.SetInstallPlan("radarr", &catalog.InstallPlan{
 		App:        "radarr",
 		CanInstall: true,
-		AutoConfig: []catalog.ConfigTask{
+		RequiredProviders: []catalog.ConfigTask{
 			{Target: "radarr", Source: "qbittorrent", Integration: "download_client"},
 		},
 	})
@@ -129,11 +129,11 @@ func TestConverge_InstallWithDeps_ResolvesDependenciesAndInstallsInOrder(t *test
 	h.orch.converge(context.Background(), []Intent{NewInstallAppIntent("radarr")})
 
 	dep, _ := h.appStore.GetByCatalogID("qbittorrent")
-	require.NotNil(t, dep, "dependency should be recorded in store")
+	require.NotNil(t, dep, "the required provider should be recorded in the store")
 
 	app, _ := h.appStore.GetByCatalogID("radarr")
 	require.NotNil(t, app, "target app should be recorded in store")
-	assert.Equal(t, "qbittorrent", app.IntegrationConfig["download_client"])
+	assert.Empty(t, app.IntegrationConfig, "the set model records no per-contract choice")
 
 	assert.Equal(t, graph.StatusRunning, h.graphTarget("qbittorrent"), "qbittorrent target should be RUNNING")
 	assert.Equal(t, graph.StatusRunning, h.graphTarget("radarr"), "radarr target should be RUNNING")
@@ -148,14 +148,14 @@ func TestConverge_TwoInstallsShareDep_DepInstalledOnce(t *testing.T) {
 	h.catalogGraph.SetInstallPlan("radarr", &catalog.InstallPlan{
 		App:        "radarr",
 		CanInstall: true,
-		AutoConfig: []catalog.ConfigTask{
+		RequiredProviders: []catalog.ConfigTask{
 			{Target: "radarr", Source: "qbittorrent", Integration: "download_client"},
 		},
 	})
 	h.catalogGraph.SetInstallPlan("sonarr", &catalog.InstallPlan{
 		App:        "sonarr",
 		CanInstall: true,
-		AutoConfig: []catalog.ConfigTask{
+		RequiredProviders: []catalog.ConfigTask{
 			{Target: "sonarr", Source: "qbittorrent", Integration: "download_client"},
 		},
 	})

@@ -845,6 +845,15 @@ combined with instance/SSH-target env vars). Instance overrides:
     for a contract mirror `computeAppDeps`, so they never describe a provider
     the graph does not order.
 
+    **Dependencies are a set, not a menu.** An app declares every provider
+    that can satisfy a contract under `compatible:`, Bloud wires every one of
+    them that is installed (and the instance, when declared), and it never
+    picks one. `required` only says whether installing the consumer also
+    installs the provider's declared default; it never trims the set. There is
+    no choice system and never was: the recorded `integration_config` value is
+    write-only provenance, never a resolution input (the resolver, the
+    dependency edges, and the developer graph all read `catalog.DeclaredProviders`).
+
 ## host-agent HTTP API (port 3000)
 
 - Public: `GET /health`, `GET /auth/login`, `GET /auth/callback`,
