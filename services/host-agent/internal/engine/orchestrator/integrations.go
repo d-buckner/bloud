@@ -367,36 +367,22 @@ func (o *Orchestrator) providerRef(appID string, provider *catalog.App, installe
 // resolveProviders returns the providers an integration binds, in declaration
 // order, whichever of them are available.
 //
-// The set mirrors the dependency edges computeAppDeps builds for the same
-// contract: the recorded choice, plus, for an *optional* contract, every
-// compatible provider the metadata declares. A required contract binds only what
-// was chosen, so a binding can never describe a provider the graph does not
-// order.
+// The rule is catalog.BoundProviders, shared with computeAppDeps and with the
+// developer graph's edge builder so the three cannot disagree: the recorded
+// choice, plus, for an *optional* contract, every compatible provider the
+// metadata declares. A required contract binds only what was chosen, so a
+// binding can never describe a provider the graph does not order.
 //
 // A `source: instance` entry becomes an instance providerSource. It carries no
 // node and produces no graph edge, which is why computeAppDeps filters on kind.
 func resolveProviders(integration catalog.Integration, choice string) []providerSource {
 	var out []providerSource
-	add := func(src providerSource) {
-		for _, existing := range out {
-			if existing == src {
-				return
-			}
+	for _, bound := range catalog.BoundProviders(integration, choice) {
+		if bound.IsInstance() {
+			out = append(out, instanceSource())
+			continue
 		}
-		out = append(out, src)
-	}
-
-	if choice != "" {
-		add(appSource(choice))
-	}
-	if !integration.Required {
-		for _, compatible := range integration.Compatible {
-			if compatible.Source == catalog.InstanceProviderSource {
-				add(instanceSource())
-				continue
-			}
-			add(appSource(compatible.App))
-		}
+		out = append(out, appSource(bound.App))
 	}
 	return out
 }
