@@ -109,7 +109,13 @@ containers:
     # a crash loop. So this parks while there is nothing to sync, and starts
     # the daemon when a feed provider turns up. A daemon that dies is retried
     # on the next turn of the loop rather than taking the container down.
+    #
+    # tini is kept from the image's own entrypoint. It is what reaps children
+    # and forwards signals to them; a bare /bin/sh as PID 1 would leave the
+    # daemon running until the grace period expired on every stop.
     entrypoint:
+      - /sbin/tini
+      - --
       - /bin/sh
       - -c
     command:
