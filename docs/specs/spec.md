@@ -350,19 +350,21 @@ Current connection node types:
 #### Edge Derivation
 
 Integration edges are derived from the same rule the orchestrator uses to bind
-providers, read from `catalog.BoundProviders` rather than restated in the
-display: the provider recorded in the app's `IntegrationConfig`, plus, for an
-*optional* contract, every compatible provider the catalog declares. A
-required contract draws only the provider recorded for it, because that is a
-slot with one occupant. A contract that is required and has recorded nothing
-draws its declared provider, which is what the install plan installs for a
-required contract and what the graph edge therefore orders.
+providers, read from `catalog.DeclaredProviders` rather than restated in the
+display. The rule is the set model: **dependencies are a set, not a menu.** An
+app declares every provider that can satisfy a contract under `compatible:`,
+and every one of them that is installed draws an edge; the instance provider
+draws when the operator has configured it. Bloud never picks one, and
+`required` only says whether installing the consumer also installs the
+provider, never which installed provider gets an edge.
 
 The shared helper is the point. The resolver, the dependency edges that order
-those bindings, and this display all need the same rule, and two separate bugs
-(#227 in the CLI's graph generator, #233 in this builder) came from copies of
-it drifting. A late-installed provider of an optional integration is real
-wiring, and the graph has to show it.
+those bindings, and this display all read the same declaration, and two
+separate bugs (#227 in the CLI's graph generator, #233 in this builder) came
+from copies of the rule drifting. There is no choice system and never was: the
+recorded `integration_config` value is write-only provenance, not a resolution
+input, so a provider installed after another is wiring that exists and the
+graph has to show it.
 
 Edge labels use the integration type name, with two exceptions:
 

@@ -45,7 +45,7 @@ func TestPlanInstall_DelegatesToTheLiveGraph(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	assert.Equal(t, "radarr", plan.App)
-	assert.Empty(t, plan.Choices, "qbittorrent is installed, so the required slot resolves without a choice")
+	assert.Empty(t, plan.RequiredProviders, "qbittorrent is installed, so nothing needs to install with it")
 	require.Len(t, plan.AutoConfig, 1)
 	assert.Equal(t, "qbittorrent", plan.AutoConfig[0].Source)
 }
@@ -97,11 +97,11 @@ func TestPlans_ReflectLaterInstalls(t *testing.T) {
 
 	before, err := o.PlanInstall("radarr")
 	require.NoError(t, err)
-	require.Len(t, before.Choices, 1, "no provider installed yet, so the operator must choose")
+	require.Len(t, before.RequiredProviders, 1, "no provider installed yet, so it installs with the app")
 
 	g.SetInstalled([]string{"qbittorrent"})
 	after, err := o.PlanInstall("radarr")
 	require.NoError(t, err)
-	assert.Empty(t, after.Choices, "the provider is installed now, so the choice is gone")
+	assert.Empty(t, after.RequiredProviders, "the provider is installed now, so nothing installs with it")
 	require.Len(t, after.AutoConfig, 1)
 }
