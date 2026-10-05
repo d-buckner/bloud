@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/catalog"
@@ -62,10 +63,10 @@ func (o *Orchestrator) runConfigurator(ctx context.Context, id string) bool {
 // harness asserts a second PreStart pass asks for no recreate for every app in
 // the catalog, so a steady-state resync is a read-only diff.
 //
-// A restart is capped by the resync breaker, because the one failure mode this
-// path can create that the old one could not is a restart loop: an app that
-// rewrites the file Bloud manages while it is running makes every pass report a
-// change. See resync_breaker.go.
+// The one failure mode this path can create that the old one could not is a
+// restart loop: an app that rewrites the file Bloud manages while it is running
+// makes every pass report a change. That is watched and surfaced, never
+// suppressed. See resync_watchdog.go.
 func (o *Orchestrator) runResync(ctx context.Context, id string) bool {
 	cfg := o.registry.Get(id)
 	if cfg == nil {
@@ -83,8 +84,8 @@ func (o *Orchestrator) runResync(ctx context.Context, id string) bool {
 		return false
 	}
 	if !prestart.RestartNeeded {
-		// Nothing changed: the app converged, so any earlier trip is stale.
-		o.clearResyncBreaker(id)
+		// Nothing changed: the app converged, so any earlier signal is stale.
+		o.clearResyncWatch(id)
 		o.runResyncPostStart(ctx, id, appID, cfg, state)
 		return false
 	}
@@ -125,30 +126,33 @@ func (o *Orchestrator) runResyncPreStart(ctx context.Context, id, appID string, 
 // After the restart the node sits at STARTING, not RUNNING: it left RUNNING on
 // the way in, so it has to be promoted on the way out the same way a normal
 // drive promotes. Returning true is what puts it in changedIDs.
+// A restart is never withheld, but it is counted: a node that keeps restarting
+// from the resync crosses the watchdog threshold and raises a signal, because
+// the one failure mode this path can create that the old one could not is a
+// restart loop -- an app that rewrites the file Bloud manages while it runs
+// makes every pass report a change. See resync_watchdog.go for why counting is
+// the right response and suppressing is not.
 func (o *Orchestrator) runResyncRestart(ctx context.Context, id, appID string, cfg configurator.NodeLifecycle, state *configurator.AppState, prestart configurator.PreStartResult) bool {
 	def, appCatalogID := o.containerDefForNode(id)
 	if def == nil {
 		// No container to recreate: the config change is on disk, and
 		// PostStart still gets its diff. Nothing to restart means nothing to
-		// count against the breaker.
+		// count against the watchdog.
 		o.logger.Info("resync: PreStart asks for a restart but the node has no container def",
 			"app", id, "reason", prestart.Reason)
 		o.runResyncPostStart(ctx, id, appID, cfg, state)
 		return false
 	}
 
-	decision, record := o.allowResyncRestart(id, prestart.Reason)
-	switch decision {
-	case resyncTrippedNow:
-		o.logger.Warn("resync restart denied by the breaker; the config diff is not converging",
-			"app", id, "restarts", record.Restarts, "reason", record.Reason,
-			"note", "this is the shape of an app that rewrites the file Bloud manages; "+
-				"Bloud will stop restarting it until a resync converges or an install drives it")
-		o.recordActivity("resync_breaker_tripped", id+": "+record.Reason)
-		return false
-	case resyncAlreadyTripped:
-		o.logger.Info("resync restart still suppressed by the breaker", "app", id, "reason", prestart.Reason)
-		return false
+	// The restart happens either way. The watchdog only decides whether this
+	// pass is loud enough to tell somebody about.
+	if raised, signal := o.noteResyncRestart(id, prestart.Reason); raised {
+		o.logger.Warn("resync has restarted this node repeatedly without converging",
+			"app", id, "restarts", signal.Restarts, "reason", signal.Reason,
+			"note", "a burst of real changes looks like this too; if the managed file keeps moving with no operator action, "+
+				"the configurator is racing the app it manages")
+		o.recordActivity("resync_restart_watch",
+			id+": "+strconv.Itoa(signal.Restarts)+" consecutive resync restarts: "+signal.Reason)
 	}
 
 	if !o.runContainerPhases(ctx, id, appID, def, appCatalogID, prestart) {
@@ -333,10 +337,10 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 	o.ensureOpDrive(owner)
 
 	// A full drive is an intentional event: an install, a reboot, a crash
-	// recovery, or an explicit reset. Whatever the resync breaker was
-	// guarding, this pass is not the loop it tripped on, so the node gets a
-	// fresh allowance.
-	o.clearResyncBreaker(id)
+	// recovery, or an explicit reset. Whatever the resync watchdog was
+	// watching, this pass is not the loop it is watching for, so the node gets
+	// a fresh count.
+	o.clearResyncWatch(id)
 
 	state, err := o.buildAppState(id)
 	if err != nil {

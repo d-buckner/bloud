@@ -194,12 +194,12 @@ func (o *Orchestrator) Status() OrchestratorStatus {
 	o.activityMu.Unlock()
 
 	return OrchestratorStatus{
-		QueueDepth:     o.queue.PendingCount(),
-		IsConverging:   o.converging.Load(),
-		RecentActivity: recent,
-		LoopStopped:    o.Stopped(),
-		LastConverged:  o.LastConverged(),
-		ResyncBreakers: o.ResyncBreakers(),
+		QueueDepth:           o.queue.PendingCount(),
+		IsConverging:         o.converging.Load(),
+		RecentActivity:       recent,
+		LoopStopped:          o.Stopped(),
+		LastConverged:        o.LastConverged(),
+		ResyncRestartSignals: o.ResyncRestartSignals(),
 	}
 }
 

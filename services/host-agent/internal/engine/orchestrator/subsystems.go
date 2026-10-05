@@ -22,11 +22,11 @@ type TuningConfig struct {
 	// PostStartBudget bounds how long a node's PostStart finalization wait may
 	// run before the framework cancels it. Zero means DefaultPostStartBudget.
 	PostStartBudget time.Duration
-	// ResyncRestartCap is how many consecutive resync-triggered restarts one
-	// node may get before the breaker stops granting them. Zero means
-	// DefaultResyncRestartCap. Lower it to catch a non-converging config diff
-	// sooner; raise it only if an app legitimately restarts in a burst.
-	ResyncRestartCap int
+	// ResyncRestartWarnAt is how many consecutive resync-triggered restarts
+	// one node accumulates before the watchdog raises a signal. Zero means
+	// DefaultResyncRestartWarnAt. It changes nothing about whether a restart
+	// happens: the watchdog observes and reports, it never withholds.
+	ResyncRestartWarnAt int
 	// SelfHealInterval is how long the instance may sit without a convergence
 	// pass before the self-healing timer submits one. Zero means no periodic
 	// pass (a hand-built orchestrator stays quiet); wire.Build always supplies

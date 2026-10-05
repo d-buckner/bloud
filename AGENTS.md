@@ -594,15 +594,20 @@ combined with instance/SSH-target env vars). Instance overrides:
    rather than restarting on its own, and `managedfile.Write` reports
    `changed=false` when the bytes already match, so a steady-state resync is a
    read-only diff that touches no container and no node status. The resync is
-   withheld when a direct dependency is in `ERROR`. Because the resync can now
-   restart a container, a breaker caps consecutive resync restarts per node at
-   `DefaultResyncRestartCap` (2) and refuses more: an app that rewrites the
-   file Bloud manages while it runs would otherwise restart once a minute
-   forever, and the conformance harness cannot see that because it runs
-   `PreStart` against a data directory with no live app inside it. A tripped
-   breaker is surfaced on the developer status snapshot
-   (`OrchestratorStatus.ResyncBreakers`) and cleared by a pass that converges
-   or by a full lifecycle drive.
+   withheld when a direct dependency is in `ERROR`. Because the resync can
+   restart a container it is watched, never suppressed: a node that crosses
+   `DefaultResyncRestartWarnAt` (5) consecutive resync restarts raises a WARN,
+   an activity event, and an entry on the developer status snapshot
+   (`OrchestratorStatus.ResyncRestartSignals`), and the boundary repeats every
+   threshold after so a runaway loop keeps announcing itself. A pass that
+   converges, or a full lifecycle drive, clears the accounting. **Do not turn
+   this back into a cap.** Consecutive resync restarts are also exactly what a
+   sequence of legitimate changes looks like, and the engine cannot tell them
+   apart because a configurator's inputs include live reads the engine never
+   sees. A cap of two once denied the third of three real changes to Radicale's
+   `sharing.csv` -- which Radicale reads only at startup, verified by hand --
+   and left the container serving a tree that disagreed with the file on disk
+   until the next install. See `resync_watchdog.go`.
 3. **Apps own their infrastructure.** Apps that need databases declare their own
    postgres/redis containers in `containers:` (e.g. Immich: pgvector postgres +
    redis + server + ML). There is no shared per-app database in the product path.

@@ -372,12 +372,17 @@ only, a node at `RUNNING` never re-ran `PreStart`, so Hermes kept serving the
 `mcp_servers` map written before the provider existed and a namespace added
 later appeared only after a Hermes restart.
 
-The resync can therefore restart a container, which is what the resync breaker
-caps: two consecutive resync-triggered restarts per node, then refusal with a
-WARN and an entry on the developer status snapshot
-(`OrchestratorStatus.ResyncBreakers`). The loop it stops is an app that
-rewrites the file Bloud manages while it runs, which no offline test can see.
-A pass that converges, or a full lifecycle drive, clears the accounting.
+The resync can therefore restart a container, so it is watched: a node crossing
+five consecutive resync-triggered restarts raises a WARN and an entry on the
+developer status snapshot (`OrchestratorStatus.ResyncRestartSignals`), and the
+boundary repeats so a runaway loop keeps announcing itself. The condition it
+watches for is an app that rewrites the file Bloud manages while it runs,
+which no offline test can see. **The restart is never withheld.** A cap was
+tried first and it broke the feature it was guarding: three consecutive real
+changes to Radicale's `sharing.csv` (operator created, feeds landing, second
+user created) each genuinely required a restart, because Radicale reads that
+file only at startup, and the third was refused. A pass that converges, or a
+full lifecycle drive, clears the accounting.
 
 The self-healing pass (`selfheal.go`) submits a `ReconcileIntent` on an idle
 timer; the pass it triggers retries `ERROR` nodes and resyncs every healthy one.

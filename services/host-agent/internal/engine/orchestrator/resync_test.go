@@ -5,7 +5,8 @@ package orchestrator
 // The resync is the path every already-RUNNING node takes on every pass: it
 // re-runs PreStart and PostStart, and recreates the container only when
 // PreStart reports that the config actually changed. These cover that path and
-// the breaker that stops it when a config diff never converges.
+// the watchdog that makes a non-converging diff loud without ever withholding
+// a restart that was legitimately asked for.
 
 import (
 	"context"
@@ -82,8 +83,9 @@ type resyncHarness struct {
 	rt   *liveRuntime
 }
 
-// newResyncHarness builds the harness. restartCap of 0 leaves the default cap.
-func newResyncHarness(t *testing.T, restartCap int) *resyncHarness {
+// newResyncHarness builds the harness. warnAt of 0 leaves the default warning
+// threshold.
+func newResyncHarness(t *testing.T, warnAt int) *resyncHarness {
 	t.Helper()
 
 	g := graph.New(graph.NewMapRepository())
@@ -109,7 +111,7 @@ func newResyncHarness(t *testing.T, restartCap int) *resyncHarness {
 	registry.On("Get", mock.Anything).Return(cfg).Maybe()
 
 	orch := NewOrchestrator(g, registry, cat, t.TempDir(), newTestLogger(), OrchestratorConfig{
-		Tuning:  TuningConfig{HealthCheckTimeout: 100 * time.Millisecond, ResyncRestartCap: restartCap},
+		Tuning:  TuningConfig{HealthCheckTimeout: 100 * time.Millisecond, ResyncRestartWarnAt: warnAt},
 		Runtime: RuntimeConfig{Containers: rt},
 		Stores:  StoresConfig{AppStore: apps},
 	})
@@ -181,68 +183,85 @@ func TestResync_ChangeRecreatesContainerAndPromotesNode(t *testing.T) {
 	assert.Equal(t, 1, postStarts, "PostStart still runs after the restart")
 }
 
-// The breaker is what makes the resync safe to run at all. A configurator that
-// reports a change every pass would otherwise restart its container once a
-// minute forever, and the shape that produces is an app that rewrites the file
-// Bloud manages while it runs.
-func TestResync_BreakerCapsConsecutiveRestarts(t *testing.T) {
-	h := newResyncHarness(t, 0)
+// Nothing withholds a restart. A configurator that reports a change every pass
+// gets a restart every pass, however long that goes on, because the engine
+// cannot tell a non-converging diff from a burst of legitimate changes and the
+// cost of guessing wrong is a container serving config that disagrees with the
+// file on disk. This is the property that replaced a cap, and the calendar
+// aggregation test is what forced it: three consecutive real changes to
+// Radicale's sharing.csv, each of which genuinely required a restart.
+func TestResync_RestartsAreNeverWithheld(t *testing.T) {
+	h := newResyncHarness(t, 2)
 	h.cfg.setPrestart(configurator.MustRestart("config rewritten"), nil)
 
-	h.pass(t)
-	h.pass(t)
-	firstEnsures, removes, _ := h.rt.counts()
-	require.Equal(t, 2, removes, "the cap grants two consecutive restarts")
-	require.Equal(t, 2, firstEnsures, "each remove was paired with the create that replaced it")
-
-	h.rt.resetCounts()
-	h.pass(t)
-
-	ensures, removes, _ := h.rt.counts()
-	assert.Equal(t, 0, removes, "the third consecutive restart is refused")
-	assert.Equal(t, 0, ensures, "and nothing is created in its place")
-	assert.Equal(t, graph.StatusRunning, h.status(t), "a refused restart leaves the running app alone")
-
-	breakers := h.orch.ResyncBreakers()
-	require.Len(t, breakers, 1, "the trip is surfaced")
-	assert.Equal(t, resyncNode, breakers[0].Node)
-	assert.Equal(t, "config rewritten", breakers[0].Reason)
-	assert.Equal(t, 2, breakers[0].Restarts)
+	for i := 1; i <= 4; i++ {
+		h.rt.resetCounts()
+		h.pass(t)
+		_, removes, _ := h.rt.counts()
+		assert.Equal(t, 1, removes, "pass %d still restarts: the watchdog observes, it does not decide", i)
+		assert.Equal(t, graph.StatusRunning, h.status(t), "pass %d leaves the node RUNNING", i)
+	}
 }
 
-// A pass that converges clears the accounting, so a breaker that tripped while
-// an app was thrashing does not permanently disable restarts for an app that
-// later settles.
-func TestResync_ConvergedPassClearsBreaker(t *testing.T) {
-	h := newResyncHarness(t, 0)
+// The watchdog raises a signal once the consecutive count crosses the
+// threshold, and keeps raising it every threshold after, because the condition
+// it watches for does not stop on its own.
+func TestResync_WatchdogSignalsAtThreshold(t *testing.T) {
+	h := newResyncHarness(t, 2)
+	h.cfg.setPrestart(configurator.MustRestart("config rewritten"), nil)
+
+	h.pass(t)
+	assert.Empty(t, h.orch.ResyncRestartSignals(), "one restart is what a change costs; nothing to say")
+
+	h.pass(t)
+	signals := h.orch.ResyncRestartSignals()
+	require.Len(t, signals, 1, "the second consecutive restart crosses the threshold")
+	assert.Equal(t, resyncNode, signals[0].Node)
+	assert.Equal(t, "config rewritten", signals[0].Reason)
+	assert.Equal(t, 2, signals[0].Restarts)
+
+	h.pass(t)
+	require.Len(t, h.orch.ResyncRestartSignals(), 1)
+	assert.Equal(t, 2, h.orch.ResyncRestartSignals()[0].Restarts, "no new crossing at three")
+
+	h.pass(t)
+	require.Len(t, h.orch.ResyncRestartSignals(), 1)
+	assert.Equal(t, 4, h.orch.ResyncRestartSignals()[0].Restarts, "the boundary repeats, so a runaway loop keeps announcing itself")
+}
+
+// A pass that converges clears the accounting, so a node that was flagged while
+// thrashing does not stay flagged once it settles.
+func TestResync_ConvergedPassClearsWatch(t *testing.T) {
+	h := newResyncHarness(t, 2)
 	h.cfg.setPrestart(configurator.MustRestart("config rewritten"), nil)
 
 	h.pass(t)
 	h.pass(t)
-	h.pass(t)
-	require.Len(t, h.orch.ResyncBreakers(), 1)
+	require.Len(t, h.orch.ResyncRestartSignals(), 1)
 
 	h.cfg.setPrestart(configurator.NoRestart(), nil)
 	h.pass(t)
-	assert.Empty(t, h.orch.ResyncBreakers(), "a converged pass clears the trip")
+	assert.Empty(t, h.orch.ResyncRestartSignals(), "a converged pass clears the signal")
 
 	h.rt.resetCounts()
 	h.cfg.setPrestart(configurator.MustRestart("config rewritten again"), nil)
 	h.pass(t)
 	_, removes, _ := h.rt.counts()
-	assert.Equal(t, 1, removes, "a later real change is granted again after the clear")
+	assert.Equal(t, 1, removes, "a later real change still restarts")
+	assert.Empty(t, h.orch.ResyncRestartSignals(), "and the count restarted from zero, not from four")
 }
 
 // A full lifecycle drive is an intentional event: an install, a reboot, a
-// crash recovery, or an explicit reset. It clears the breaker on the way in,
-// so the resync accounting never suppresses a restart a drive itself asked for.
-func TestResync_FullDriveClearsBreaker(t *testing.T) {
-	h := newResyncHarness(t, 0)
+// crash recovery, or an explicit reset. It clears the accounting on the way
+// in, so the resync count never carries a drive's own restarts into the
+// watchdog's view of the node.
+func TestResync_FullDriveClearsWatch(t *testing.T) {
+	h := newResyncHarness(t, 2)
 	h.cfg.setPrestart(configurator.MustRestart("config rewritten"), nil)
 
 	h.pass(t)
 	h.pass(t)
-	require.Equal(t, 2, func() int { _, r, _ := h.rt.counts(); return r }())
+	require.Len(t, h.orch.ResyncRestartSignals(), 1)
 
 	// Simulate the node dropping out of RUNNING, which is what an install
 	// retry or a reboot does, and let the pass drive it fully.
@@ -251,14 +270,15 @@ func TestResync_FullDriveClearsBreaker(t *testing.T) {
 	h.pass(t)
 	_, removes, _ := h.rt.counts()
 	require.Equal(t, 1, removes, "the drive restarts as it always has")
-	require.Empty(t, h.orch.ResyncBreakers(), "the drive reset the accounting")
+	require.Empty(t, h.orch.ResyncRestartSignals(), "the drive reset the accounting")
 
-	// Back at RUNNING, the resync has its full allowance again.
+	// Back at RUNNING, the resync count starts from zero again.
 	require.NoError(t, h.g.SetActualStatus(resyncNode, graph.StatusRunning, ""))
 	h.rt.resetCounts()
 	h.pass(t)
 	_, removes, _ = h.rt.counts()
-	assert.Equal(t, 1, removes, "the resync restart allowance was reset by the drive")
+	assert.Equal(t, 1, removes, "the resync still restarts after the drive")
+	assert.Empty(t, h.orch.ResyncRestartSignals(), "the count began again at one, below the threshold")
 }
 
 // A failed PreStart on the resync path is not a reason to take a serving app
@@ -306,29 +326,25 @@ func TestResync_RestartRequestWithoutContainerDef(t *testing.T) {
 	assert.Equal(t, 0, removes, "there is no container to remove")
 	_, postStarts := cfg.counts()
 	assert.Equal(t, 1, postStarts, "PostStart still runs")
-	assert.Empty(t, orch.ResyncBreakers(), "nothing was restarted, so nothing is counted")
+	assert.Empty(t, orch.ResyncRestartSignals(), "nothing was restarted, so nothing is counted")
 }
 
-// The cap is configurable, so an operator can catch a non-converging diff
-// sooner or tolerate a burst of legitimate restarts.
-func TestResync_CapIsConfigurable(t *testing.T) {
+// The threshold is configurable, so an operator can raise the alarm sooner on
+// a box where a restart is expensive, or later on one where bursts are normal.
+func TestResync_WarnAtIsConfigurable(t *testing.T) {
 	h := newResyncHarness(t, 1)
 	h.cfg.setPrestart(configurator.MustRestart("config rewritten"), nil)
 
 	h.pass(t)
 	_, removes, _ := h.rt.counts()
-	require.Equal(t, 1, removes, "a cap of one grants exactly one restart")
-
-	h.rt.resetCounts()
-	h.pass(t)
-	_, removes, _ = h.rt.counts()
-	assert.Equal(t, 0, removes, "the second is refused")
-	require.Len(t, h.orch.ResyncBreakers(), 1)
+	require.Equal(t, 1, removes, "a threshold of one still restarts")
+	require.Len(t, h.orch.ResyncRestartSignals(), 1, "and signals on the very first restart")
+	assert.Equal(t, 1, h.orch.ResyncRestartSignals()[0].Restarts)
 }
 
-// The breaker record has to survive being read from the status snapshot, since
-// that is the surface an operator sees.
-func TestResync_BreakerSurfacesInStatus(t *testing.T) {
+// The signal has to survive being read from the status snapshot, since that is
+// the surface an operator sees.
+func TestResync_SignalsSurfaceInStatus(t *testing.T) {
 	h := newResyncHarness(t, 1)
 	h.cfg.setPrestart(configurator.MustRestart("config rewritten"), nil)
 
@@ -336,7 +352,8 @@ func TestResync_BreakerSurfacesInStatus(t *testing.T) {
 	h.pass(t)
 
 	status := h.orch.Status()
-	require.Len(t, status.ResyncBreakers, 1)
-	assert.Equal(t, resyncNode, status.ResyncBreakers[0].Node)
+	require.Len(t, status.ResyncRestartSignals, 1, "one record per node, holding the latest crossing")
+	assert.Equal(t, resyncNode, status.ResyncRestartSignals[0].Node)
+	assert.Equal(t, 2, status.ResyncRestartSignals[0].Restarts)
 	assert.Contains(t, status.RecentActivity[len(status.RecentActivity)-1].Detail, resyncNode)
 }
