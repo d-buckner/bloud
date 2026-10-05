@@ -99,6 +99,12 @@ func assertSharedWithASecondUser(t *testing.T) {
 
 	waitForShareRows(t, fellow)
 
+	// A new recipient changes sharing.csv, and a changed sharing.csv restarts
+	// Radicale. The app row says running before the container is answering
+	// again, so the first DAV call after a share change lands on a socket that
+	// is mid-teardown. Wait for the server rather than the row.
+	waitForDAVReady(t, "/"+fellow+"/", fellow, fellowPass)
+
 	// The recipient's own home listing is exactly what a calendar client reads.
 	// Depth 1 on /<user>/ must show the family calendar and both feeds, which
 	// is the whole promise: add one CalDAV account, inherit the household.
@@ -114,6 +120,65 @@ func assertSharedWithASecondUser(t *testing.T) {
 
 	assertFamilyCalendarIsWritable(t, fellow, fellowPass)
 	assertFeedIsReadOnly(t, fellow, fellowPass)
+}
+
+// davTry performs a DAV request without failing the test on a transport
+// error, so a caller can retry through a container restart.
+func davTry(method, path, user, pass, body string) (int, string, error) {
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, radicaleURL+path, reader)
+	if err != nil {
+		return 0, "", err
+	}
+	if user != "" {
+		req.SetBasicAuth(user, pass)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "text/calendar")
+	} else {
+		req.Header.Set("Depth", "1")
+	}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("redirected; a DAV request must not be bounced to a login page")
+		},
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return res.StatusCode, "", err
+	}
+	return res.StatusCode, string(raw), nil
+}
+
+// waitForDAVReady blocks until Radicale answers a request at path instead of
+// resetting the connection. It exists because the thing a test can check
+// first (the app row) is not the thing that is ready first (the socket): a
+// share or config change restarts the container while the orchestrator has
+// already promoted the node.
+func waitForDAVReady(t *testing.T, path, user, pass string) {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Minute)
+	var lastErr error
+	for {
+		status, _, err := davTry("PROPFIND", path, user, pass, "")
+		if err == nil && status != 0 {
+			return
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			t.Fatalf("Radicale never started answering %s: %v", path, lastErr)
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 // createManagedUser adds a Bloud user through the admin API. The integration
@@ -184,14 +249,14 @@ func assertFamilyCalendarIsWritable(t *testing.T, user, password string) {
 	href := fmt.Sprintf("bloud-family-%d.ics", time.Now().UnixNano())
 	path := "/" + user + "/family/" + href
 
-	res, body := davPut(t, path, user, password, icsEvent("bloud-family-"+href, "Family test event"))
-	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusNoContent {
-		t.Fatalf("PUT %s = %d, want 201; the family share is not writable\n%s", path, res.StatusCode, body)
+	status, body := davPutRetry(t, path, user, password, icsEvent("bloud-family-"+href, "Family test event"))
+	if status != http.StatusCreated && status != http.StatusNoContent {
+		t.Fatalf("PUT %s = %d, want 201; the family share is not writable\n%s", path, status, body)
 	}
 
-	res, listing := davRequestDepth(t, "PROPFIND", "/"+user+"/family/", user, password, "1")
-	if res.StatusCode != http.StatusMultiStatus || !strings.Contains(listing, href) {
-		t.Errorf("the event is not listed in %s (status %d):\n%s", path, res.StatusCode, listing)
+	status, listing := davGetRetry(t, "/"+user+"/family/", user, password)
+	if status != http.StatusMultiStatus || !strings.Contains(listing, href) {
+		t.Errorf("the event is not listed in %s (status %d):\n%s", path, status, listing)
 	}
 }
 
@@ -203,12 +268,45 @@ func assertFeedIsReadOnly(t *testing.T, user, password string) {
 	href := fmt.Sprintf("bloud-should-not-land-%d.ics", time.Now().UnixNano())
 	path := "/" + user + "/radarr/" + href
 
-	res, body := davPut(t, path, user, password, icsEvent("bloud-should-not-land-"+href, "Must not persist"))
-	if res.StatusCode == http.StatusForbidden || res.StatusCode == http.StatusMethodNotAllowed ||
-		res.StatusCode == http.StatusUnauthorized {
+	status, body := davPutRetry(t, path, user, password, icsEvent("bloud-should-not-land-"+href, "Must not persist"))
+	if status == http.StatusForbidden || status == http.StatusMethodNotAllowed ||
+		status == http.StatusUnauthorized {
 		return
 	}
-	t.Fatalf("PUT %s = %d, want a refusal; the read-only feed share is writable\n%s", path, res.StatusCode, body)
+	t.Fatalf("PUT %s = %d, want a refusal; the read-only feed share is writable\n%s", path, status, body)
+}
+
+// davPutRetry writes a calendar item, retrying a transport failure. A restart
+// that lands between two assertions is not a statement about the permission
+// model, so it gets retried rather than reported.
+func davPutRetry(t *testing.T, path, user, password, body string) (int, string) {
+	t.Helper()
+	return davRetry(t, "PUT", path, user, password, body)
+}
+
+// davGetRetry lists a collection, retrying a transport failure.
+func davGetRetry(t *testing.T, path, user, password string) (int, string) {
+	t.Helper()
+	return davRetry(t, "PROPFIND", path, user, password, "")
+}
+
+// davRetry keeps trying until the server answers. The deadline is generous
+// because the alternative is a test that fails on a restart it caused itself.
+func davRetry(t *testing.T, method, path, user, password, body string) (int, string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	var lastErr error
+	for {
+		status, respBody, err := davTry(method, path, user, password, body)
+		if err == nil {
+			return status, respBody
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			t.Fatalf("%s %s never reached Radicale: %v", method, path, lastErr)
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 // icsEvent renders a minimal single-event iCalendar document.
@@ -224,33 +322,6 @@ func icsEvent(uid, summary string) string {
 		"SUMMARY:" + summary + "\r\n" +
 		"END:VEVENT\r\n" +
 		"END:VCALENDAR\r\n"
-}
-
-// davPut uploads a calendar item with Basic credentials.
-func davPut(t *testing.T, path, user, password, body string) (*http.Response, string) {
-	t.Helper()
-	req, err := http.NewRequest("PUT", radicaleURL+path, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("build PUT %s: %v", path, err)
-	}
-	req.SetBasicAuth(user, password)
-	req.Header.Set("Content-Type", "text/calendar")
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return errors.New("redirected; a DAV request must not be bounced to a login page")
-		},
-	}
-	res, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("PUT %s: %v", path, err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if err != nil {
-		t.Fatalf("read PUT %s body: %v", path, err)
-	}
-	return res, string(raw)
 }
 
 // createFirstRunOperator performs the first-run setup POST the browser wizard
