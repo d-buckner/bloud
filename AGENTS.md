@@ -593,7 +593,15 @@ combined with instance/SSH-target env vars). Instance overrides:
    recreated only when `PreStart` reports `RestartNeeded`: it reports that
    rather than restarting on its own, and `managedfile.Write` reports
    `changed=false` when the bytes already match, so a steady-state resync is a
-   read-only diff that touches no container and no node status. The resync is
+   read-only diff that touches no container and no node status. Both
+   configurator phases run under the framework's `AppPhaseBudget`
+   (`configurator.PhaseBudget`, default 5m each), because the orchestrator is
+   the single writer: a wedged `PreStart` -- a hung `podman exec`, a
+   black-holed app API -- would otherwise hold every install, uninstall, and
+   address change queued behind it with nothing to cut it off. An app's
+   declared `appclient.Within` wait must fit inside that budget with room to
+   spare, and `apps/configtest/waitbudget_test.go` fails the build if it does
+   not. The resync is
    withheld when a direct dependency is in `ERROR`. Because the resync can
    restart a container it is watched, never suppressed: a node that crosses
    `DefaultResyncRestartWarnAt` (5) consecutive resync restarts raises a WARN,

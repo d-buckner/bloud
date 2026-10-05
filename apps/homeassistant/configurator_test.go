@@ -91,7 +91,7 @@ func newTestConfigurator(t *testing.T, zipBody []byte, zipSHA string) *Configura
 }
 
 // testCtx bounds a PostStart wait the way the orchestrator does: a deadline on the
-// pass context. The framework's PostStartBudget is the ceiling, and tests
+// pass context. The framework's AppPhaseBudget is the ceiling, and tests
 // reproduce it here.
 func testCtx(t *testing.T, d time.Duration) (context.Context, context.CancelFunc) {
 	t.Helper()

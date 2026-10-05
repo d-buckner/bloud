@@ -105,7 +105,12 @@ func (o *Orchestrator) runResync(ctx context.Context, id string) bool {
 // stays RUNNING for the next pass to retry.
 func (o *Orchestrator) runResyncPreStart(ctx context.Context, id, appID string, cfg configurator.NodeLifecycle, state *configurator.AppState) (configurator.PreStartResult, bool) {
 	o.logger.Info("resync: running PreStart", "app", id)
-	prestart, err := cfg.PreStart(ctx, state)
+	// PreStart is app-supplied code on the periodic path now, so it gets the
+	// same ceiling PostStart has always had. Without one, a wedged podman exec
+	// or a black-holed app API stalls the whole intent queue.
+	pctx, cancel := o.appPhaseCtx(ctx)
+	defer cancel()
+	prestart, err := cfg.PreStart(pctx, state)
 	if err != nil {
 		o.logger.Warn("resync: PreStart failed", "app", id, "error", err)
 		o.ensureOpDrive(appID)
@@ -180,17 +185,28 @@ func (o *Orchestrator) runResyncPostStart(ctx context.Context, id, appID string,
 	o.logger.Info("resync: PostStart complete", "app", id)
 }
 
-// runPostStart invokes a configurator's PostStart bounded by the framework's
-// PostStartBudget (DefaultPostStartBudget when unset). The budget ctx is
-// derived from the pass ctx, so a Stop()-cancellation propagates immediately
-// while the budget independently caps a hung finalization. The framework, not
-// the app, owns this ceiling; apps use the ctx they are given directly.
-func (o *Orchestrator) runPostStart(ctx context.Context, cfg configurator.NodeLifecycle, state *configurator.AppState) error {
-	budget := o.config.Tuning.PostStartBudget
+// appPhaseCtx derives the per-phase budget context the framework owns. Every
+// configurator call -- PreStart and PostStart alike -- runs inside one, so an
+// app whose phase wedges gets cancelled instead of holding the single-writer
+// queue open forever.
+//
+// The framework, not the app, owns this ceiling. The budget ctx is derived
+// from the pass ctx, so a Stop()-cancellation still propagates immediately
+// while the budget independently caps a hung phase. Each phase gets its own
+// full allowance: see configurator.PhaseBudget for why that was chosen over a
+// shared per-app pool.
+func (o *Orchestrator) appPhaseCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	budget := o.config.Tuning.AppPhaseBudget
 	if budget <= 0 {
-		budget = DefaultPostStartBudget
+		budget = DefaultAppPhaseBudget
 	}
-	bctx, cancel := context.WithTimeout(ctx, budget)
+	return context.WithTimeout(ctx, budget)
+}
+
+// runPostStart invokes a configurator's PostStart under the framework's
+// per-phase budget.
+func (o *Orchestrator) runPostStart(ctx context.Context, cfg configurator.NodeLifecycle, state *configurator.AppState) error {
+	bctx, cancel := o.appPhaseCtx(ctx)
 	defer cancel()
 	return cfg.PostStart(bctx, state)
 }
@@ -396,7 +412,9 @@ func (o *Orchestrator) runPreStartPhase(ctx context.Context, id, owner string, c
 	o.logger.Info("lifecycle phase: PreStart", "app", id)
 	o.recordOpPhase(owner, store.OpPhasePrestart)
 	_ = o.graph.SetActualStatus(id, graph.StatusPreStartConfig, "")
-	prestart, err := cfg.PreStart(ctx, state)
+	pctx, cancel := o.appPhaseCtx(ctx)
+	defer cancel()
+	prestart, err := cfg.PreStart(pctx, state)
 	if err != nil {
 		o.failNode(id, owner, store.OpPhasePrestart, err, "PreStart failed")
 		return configurator.PreStartResult{}, false
@@ -450,7 +468,7 @@ func (o *Orchestrator) runHealthPhase(ctx context.Context, id, owner string, def
 	return true
 }
 
-// runPostStartPhase runs finalization under the framework's PostStartBudget so
+// runPostStartPhase runs finalization under the framework's AppPhaseBudget so
 // the wait is bounded and Stop() can interrupt it (apps no longer detach their
 // own contexts). A failure whose cause is the canceled pass context is an
 // interruption, not a fault: leave the node where it is so the next start

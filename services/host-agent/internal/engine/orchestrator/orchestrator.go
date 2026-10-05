@@ -16,21 +16,21 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 const maxOrchestratorEvents = 20
 
-// DefaultPostStartBudget bounds a node's PostStart finalization when the
-// configured OrchestratorConfig.PostStartBudget is zero.
+// DefaultAppPhaseBudget bounds one configurator phase -- PreStart or PostStart
+// -- for one app on one pass, when the configured
+// OrchestratorConfig.AppPhaseBudget is zero.
 //
-// It is appclient.MaxWaitBudget rather than a smaller number of its own
-// choosing: an app's declared readiness wait (appclient.Within) has to fit under
-// this ceiling or the framework cancels it before its own deadline can fire. The
-// two constants are deliberately the same value, pinned by the apps/configtest
-// harness rule that checks every declared wait against MaxWaitBudget.
-const DefaultPostStartBudget = appclient.MaxWaitBudget
+// It is configurator.PhaseBudget rather than a number of the orchestrator's own
+// choosing so the ceiling apps compile against is the same value the framework
+// enforces, and the apps/configtest harness rule that checks every declared
+// wait can read it from the same place. See that constant for why the unit is
+// the app and why each phase gets its own full allowance.
+const DefaultAppPhaseBudget = configurator.PhaseBudget
 
 // OrchestratorStatus is a snapshot of the orchestrator's current state for
 // the developer API.

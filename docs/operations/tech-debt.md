@@ -778,9 +778,10 @@ app: a wait that gives up at 30 s returns an error from `PostStart`, the
 node goes to `ERROR`, and `collectWorkForLevel` skips `ERROR` nodes forever
 ("ERROR is terminal: never retry without an explicit status reset"). Immich,
 AFFiNE and Hermes all declared a five-minute budget that did nothing about
-it. The ceiling is now single-sourced (`MaxWaitBudget` == the orchestrator's
-`DefaultPostStartBudget`) and the harness refuses a declared wait that could
-not run.
+it. The ceiling is now single-sourced (`configurator.PhaseBudget` == the
+orchestrator's `DefaultAppPhaseBudget`, 5m per configurator phase) and the
+harness refuses a declared wait that could not run inside it. `MaxWaitBudget`
+(10m) remains the library ceiling on any single `Within()` wait.
 
 ### 4. Durability substrate (P1, item 5): DONE 2026-09-20 (PR 7)
 
