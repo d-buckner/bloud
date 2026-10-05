@@ -18,19 +18,20 @@ import (
 )
 
 // TestCalendarAggregation is the end-to-end proof of the calendar story: a
-// Radarr and a Sonarr each publish an ICS feed, Radicale's vendored storage
-// plugin subscribes to both server-side, and the events land in collections
-// under the operator's own DAV account where any CalDAV client (Calino,
-// AFFiNE, Thunderbird) sees them.
+// Radarr and a Sonarr each publish an ICS feed, Radicale subscribes to both
+// server-side, and the events land in collections owned by the shared
+// calendar account and mounted into every Bloud user's tree, where any
+// CalDAV client (Calino, AFFiNE, Thunderbird) sees them.
 //
 // It exercises the real product path: install intents, the graph ordering
 // Radicale after its feed providers, PreStart rendering ics_sync.json, and the
 // PostStart resync that re-renders it and restarts Radicale when the providers
 // appear after it is already RUNNING.
 func TestCalendarAggregation(t *testing.T) {
-	// The synced collections live under the account of the user who completed
-	// first-run setup. The integration runtime has no browser wizard, so this
-	// performs the same first-run POST the e2e lifecycle does.
+	// The first-run operator is created because the runtime has no browser
+	// wizard, not because the synced collections belong to them. They live
+	// under calendar-service; the operator sees them the same way everybody
+	// else does, as a mount in their own tree.
 	const operator = "e2eoperator"
 	const operatorPassword = "e2eoperator123"
 	createFirstRunOperator(t, operator, operatorPassword)
@@ -67,7 +68,7 @@ func TestCalendarAggregation(t *testing.T) {
 
 	// The resync re-renders ics_sync.json and restarts Radicale, so the jobs
 	// appear a pass or two after the providers converge.
-	waitForFeedJobs(t, operator)
+	waitForFeedJobs(t, "calendar-service")
 
 	// The plugin's first sync creates the collections (even an empty feed still
 	// proves the fetch → parse → collection-create chain ran). PROPFIND Depth 1
@@ -339,12 +340,15 @@ func readICSSyncJobs(t *testing.T) []icsSyncJob {
 }
 
 // waitForFeedJobs polls until Radicale's rendered sync config carries one job
-// for Radarr and one for Sonarr, both under the operator's account.
-func waitForFeedJobs(t *testing.T, operator string) {
+// per provider, each targeting the shared owner's tree. It is the operator's
+// successor as the argument: the feeds are no longer synced into whoever
+// claimed the instance first, they are synced into the account that owns them
+// and shared out from there.
+func waitForFeedJobs(t *testing.T, owner string) {
 	t.Helper()
 	want := map[string]string{
-		"radarr": operator + "/radarr",
-		"sonarr": operator + "/sonarr",
+		"radarr": owner + "/radarr",
+		"sonarr": owner + "/sonarr",
 	}
 	deadline := time.Now().Add(5 * time.Minute)
 	for {
