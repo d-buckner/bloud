@@ -349,14 +349,30 @@ Current connection node types:
 
 #### Edge Derivation
 
-Integration edges are derived from the app's `IntegrationConfig` (runtime bindings) with
-catalog defaults as fallback. Edge labels use the integration type name, with two
-exceptions:
+Integration edges are derived from the same rule the orchestrator uses to bind
+providers, read from `catalog.BoundProviders` rather than restated in the
+display: the provider recorded in the app's `IntegrationConfig`, plus, for an
+*optional* contract, every compatible provider the catalog declares. A
+required contract draws only the provider recorded for it, because that is a
+slot with one occupant. A contract that is required and has recorded nothing
+draws its declared provider, which is what the install plan installs for a
+required contract and what the graph edge therefore orders.
+
+The shared helper is the point. The resolver, the dependency edges that order
+those bindings, and this display all need the same rule, and two separate bugs
+(#227 in the CLI's graph generator, #233 in this builder) came from copies of
+it drifting. A late-installed provider of an optional integration is real
+wiring, and the graph has to show it.
+
+Edge labels use the integration type name, with two exceptions:
 
 - **SSO edges** use the catalog SSO strategy as the label (`forward-auth`, `ldap`,
   `native-oidc`) instead of the generic `sso`.
 - **Proxy edges** have reversed direction: the proxy (e.g., Traefik) is the source and
   the proxied app is the target.
+
+Every candidate edge passes through the set of nodes the payload actually
+contains, so an edge never names a provider the browser was not given.
 
 Integration, connection, and tunnel edges connect app nodes (the app is the unit of
 integration). Container edges stay inside one app box and encode that app's own
