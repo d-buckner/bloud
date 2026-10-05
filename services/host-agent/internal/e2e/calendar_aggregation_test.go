@@ -24,9 +24,9 @@ import (
 // CalDAV client (Calino, AFFiNE, Thunderbird) sees them.
 //
 // It exercises the real product path: install intents, the graph ordering
-// Radicale after its feed providers, PreStart rendering ics_sync.json, and the
-// PostStart resync that re-renders it and restarts Radicale when the providers
-// appear after it is already RUNNING.
+// Radicale after its feed providers, PreStart rendering the sidecar's
+// pimsync.conf, and the PostStart resync that re-renders it when the
+// providers appear after Radicale is already RUNNING.
 func TestCalendarAggregation(t *testing.T) {
 	// The first-run operator is created because the runtime has no browser
 	// wizard, not because the synced collections belong to them. They live
@@ -66,12 +66,13 @@ func TestCalendarAggregation(t *testing.T) {
 	waitFeedServesCalendar(t, "radarr", "http://localhost:7878", "/feed/v3/calendar/Radarr.ics")
 	waitFeedServesCalendar(t, "sonarr", "http://localhost:8989", "/feed/v3/calendar/Sonarr.ics")
 
-	// The resync re-renders ics_sync.json and restarts Radicale, so the jobs
-	// appear a pass or two after the providers converge.
+	// The resync re-renders the sidecar's config, so the pairs appear a pass or
+	// two after the providers converge.
 	waitForFeedJobs(t, "calendar-service")
 
-	// The plugin's first sync creates the collections (even an empty feed still
-	// proves the fetch → parse → collection-create chain ran). PROPFIND Depth 1
+	// The sidecar's first sync creates the collections (even an empty feed
+	// still proves the fetch → parse → collection-create chain ran). PROPFIND
+	// Depth 1
 	// on the operator's tree must list both calendars, which is the exact shape
 	// a CalDAV client reads.
 	waitForSyncedCollections(t, operator, operatorPassword)
@@ -390,59 +391,126 @@ func waitFeedServesCalendar(t *testing.T, appID, baseURL, feedPath string) {
 	}
 }
 
-// icsSyncJob is one entry of Radicale's ics_sync.json, the config the vendored
-// plugin reads. Only the fields this test asserts are modeled.
-type icsSyncJob struct {
-	Feed       string `json:"feed"`
-	Collection string `json:"collection"`
+// pimsyncPair is one `pair` block from the rendered pimsync.conf. The config
+// is scfg, a flat `key value` format, so this reads the block by hand rather
+// than pulling in a parser for a format with no Go library.
+type pimsyncPair struct {
+	name     string
+	storageA string
+	storageB string
+	oneWay   bool
 }
 
-// readICSSyncJobs parses Radicale's rendered ics_sync.json.
-func readICSSyncJobs(t *testing.T) []icsSyncJob {
+// readPimsyncConf returns the sidecar's rendered config from the app's own
+// data tree, or empty when it is not there yet. The file is written by the
+// sidecar's PreStart, so its contents are the evidence that the pass ran and
+// knew about the feeds.
+func readPimsyncConf(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(appDataDir("radicale"), "config", "ics_sync.json")
+	path := filepath.Join(appDataDir("radicale"), "pimsync", "pimsync.conf")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		// A missing file is not a failure here: the sidecar's first pass may not
+		// have run yet, and the caller polls.
+		t.Logf("pimsync config not readable yet: %v", err)
+		return ""
 	}
-	var jobs []icsSyncJob
-	if err := json.Unmarshal(data, &jobs); err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	return jobs
+	return string(data)
 }
 
-// waitForFeedJobs polls until Radicale's rendered sync config carries one job
-// per provider, each targeting the shared owner's tree. It is the operator's
-// successor as the argument: the feeds are no longer synced into whoever
-// claimed the instance first, they are synced into the account that owns them
-// and shared out from there.
+// pimsyncTargetURL is the `url` of the CalDAV target storage block. That path
+// is where ownership of the synced collections lives: a target under
+// /calendar-service/ means the feeds land in the shared account's tree, not
+// in whoever claimed the instance first.
+func pimsyncTargetURL(t *testing.T) string {
+	t.Helper()
+	inTarget := false
+	for _, line := range strings.Split(readPimsyncConf(t), "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "storage ") && strings.HasSuffix(trimmed, "{"):
+			inTarget = strings.HasPrefix(trimmed, "storage bloud {")
+		case trimmed == "}":
+			inTarget = false
+		case inTarget && strings.HasPrefix(trimmed, "url "):
+			return strings.Trim(strings.TrimPrefix(trimmed, "url "), `"`)
+		}
+	}
+	return ""
+}
+
+// readPimsyncPairs parses the `pair` blocks out of the sidecar's config.
+func readPimsyncPairs(t *testing.T) []pimsyncPair {
+	t.Helper()
+	var pairs []pimsyncPair
+	var cur *pimsyncPair
+	for _, line := range strings.Split(readPimsyncConf(t), "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "pair ") && strings.HasSuffix(trimmed, "{"):
+			name := strings.TrimSuffix(strings.TrimPrefix(trimmed, "pair "), "{")
+			cur = &pimsyncPair{name: strings.TrimSpace(name)}
+		case cur == nil:
+			continue
+		case trimmed == "}":
+			pairs = append(pairs, *cur)
+			cur = nil
+		case strings.HasPrefix(trimmed, "storage_a "):
+			cur.storageA = strings.TrimPrefix(trimmed, "storage_a ")
+		case strings.HasPrefix(trimmed, "storage_b "):
+			cur.storageB = strings.TrimPrefix(trimmed, "storage_b ")
+		case trimmed == "one_way":
+			cur.oneWay = true
+		}
+	}
+	return pairs
+}
+
+// waitForFeedJobs polls until the sidecar's rendered config carries one
+// one-way pair per provider, each pushing into the shared owner's tree. It is
+// the operator's successor as the argument: the feeds are no longer synced
+// into whoever claimed the instance first, they are synced into the account
+// that owns them and shared out from there.
 func waitForFeedJobs(t *testing.T, owner string) {
 	t.Helper()
-	want := map[string]string{
-		"radarr": owner + "/radarr",
-		"sonarr": owner + "/sonarr",
-	}
+	want := []string{"radarr", "sonarr"}
+	found := map[string]bool{}
 	deadline := time.Now().Add(5 * time.Minute)
 	for {
-		jobs := readICSSyncJobs(t)
-		found := map[string]bool{}
-		for _, job := range jobs {
-			for app, collection := range want {
-				if job.Collection == collection {
-					found[app] = true
+		target := pimsyncTargetURL(t)
+		if !strings.Contains(target, "/"+owner+"/") {
+			t.Logf("pimsync target %q does not name owner %q yet", target, owner)
+		} else {
+			for _, pair := range readPimsyncPairs(t) {
+				if !contains(want, pair.name) || found[pair.name] {
+					continue
 				}
+				if pair.storageA != pair.name || pair.storageB != "bloud" || !pair.oneWay {
+					t.Fatalf("pimsync pair %q has the wrong shape: storage_a=%q storage_b=%q one_way=%v",
+						pair.name, pair.storageA, pair.storageB, pair.oneWay)
+				}
+				found[pair.name] = true
+				t.Logf("pimsync pair %s: %s -> %s (%s), one_way",
+					pair.name, pair.storageA, pair.storageB, target)
 			}
 		}
 		if found["radarr"] && found["sonarr"] {
-			t.Logf("ics_sync.json carries %d feed job(s)", len(jobs))
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("ics_sync.json never carried both feeds (have %d job(s): %+v)", len(jobs), jobs)
+			t.Fatalf("pimsync.conf never carried both one-way feed pairs into %q (found: %v)", owner, found)
 		}
 		time.Sleep(5 * time.Second)
 	}
+}
+
+func contains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // waitForSyncedCollections polls the recipient's DAV tree until the synced

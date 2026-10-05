@@ -33,16 +33,26 @@ func repoAppsDir(t *testing.T) string {
 	return ""
 }
 
-// plannedNode returns the graph node the orchestrator would create for an
-// app's primary service: the last container definition for a multi-container
-// app, or the catalog ID when the app declares no containers. This mirrors
-// the orchestrator's own primaryContainerNode convention.
-func plannedNode(catalogID string, app *catalog.App) string {
+// plannedNodes returns every graph node the orchestrator would create for an
+// app: one per container definition, or the catalog ID when the app declares
+// no containers.
+//
+// This is deliberately all of them rather than the app's "primary" node. The
+// orchestrator creates a node per container, and an app can legitimately own
+// more than one node that has a configurator (Radicale and its sync sidecar,
+// for example) alongside nodes that never need one (a bundled postgres). A
+// heuristic that looked at only the primary node could not tell those apart,
+// and it read a second configured node as a stale registry entry.
+func plannedNodes(catalogID string, app *catalog.App) []string {
 	defs := app.ContainerDefs()
 	if len(defs) == 0 {
-		return catalogID
+		return []string{catalogID}
 	}
-	return defs[len(defs)-1].Name
+	nodes := make([]string, 0, len(defs))
+	for _, def := range defs {
+		nodes = append(nodes, def.Name)
+	}
+	return nodes
 }
 
 // TestEveryPlannedNodeHasAConfigurator pins the agreement between the
@@ -55,10 +65,10 @@ func plannedNode(catalogID string, app *catalog.App) string {
 // this refactor failed exactly that way for every app in the catalog, and
 // nothing noticed because nothing asserted the two lists agree.
 //
-// System apps are excluded. Authentik's last container is
-// apps-authentik-ldap while its registered configurator node is
-// apps-authentik-server, and that mismatch is a separate open item, not
-// something this test should pass judgment on.
+// System apps are excluded. Authentik's configurator is registered under
+// apps-authentik-server while its other containers are not configured at all,
+// and that mismatch is a separate open item, not something this test should
+// pass judgment on.
 func TestEveryPlannedNodeHasAConfigurator(t *testing.T) {
 	apps.RegisterAll()
 	registry := configurator.NewRegistry(slog.New(slog.DiscardHandler), configurator.Deps{})
@@ -68,15 +78,38 @@ func TestEveryPlannedNodeHasAConfigurator(t *testing.T) {
 		t.Fatalf("load catalog: %v", err)
 	}
 
+	declared := map[string]bool{}
+	for _, name := range apps.NodeNames() {
+		declared[name] = true
+	}
+
 	planned := map[string]string{}
 	for id, app := range all {
 		if app.IsSystem {
 			continue
 		}
-		node := plannedNode(id, app)
-		planned[node] = id
-		if !registry.Has(node) {
-			t.Errorf("app %q plans node %q, but no configurator factory is registered for it: the install would run unconfigured", id, node)
+		nodes := plannedNodes(id, app)
+		for _, node := range nodes {
+			planned[node] = id
+			// A container the registry claims to configure must actually have
+			// a factory. Containers it says nothing about (a bundled database)
+			// are not this test's business.
+			if declared[node] && !registry.Has(node) {
+				t.Errorf("app %q plans node %q which the registry declares, but no configurator factory is registered for it: the install would run unconfigured", id, node)
+			}
+		}
+		// And the app must be reachable: at least one of its nodes has to be
+		// one the registry knows, or nothing configures it however many
+		// containers it ships.
+		configured := false
+		for _, node := range nodes {
+			if declared[node] && registry.Has(node) {
+				configured = true
+				break
+			}
+		}
+		if !configured {
+			t.Errorf("app %q plans %v, none of which is a registered configurator node: the install would run unconfigured", id, nodes)
 		}
 	}
 
@@ -91,8 +124,16 @@ func TestEveryPlannedNodeHasAConfigurator(t *testing.T) {
 	}
 }
 
-// TestRegistryNodeListMatchesCatalogExactly requires the two lists to be the
-// same size in both directions, not merely to overlap.
+// TestRegistryNodeListMatchesCatalogExactly requires every node the user-app
+// registry declares to be a node the catalog actually plans. A declared node
+// nothing plans is a stale entry: it survives an app's removal or rename and
+// keeps asserting a shape the catalog stopped having.
+//
+// The reverse direction is not a set equality on purpose. The catalog plans
+// containers no configurator exists for (a bundled postgres needs none), so
+// "planned" is a strict superset of "declared". The half that matters, that
+// every app has at least one configured node, is asserted in
+// TestEveryPlannedNodeHasAConfigurator.
 func TestRegistryNodeListMatchesCatalogExactly(t *testing.T) {
 	apps.RegisterAll()
 
@@ -106,19 +147,15 @@ func TestRegistryNodeListMatchesCatalogExactly(t *testing.T) {
 		if app.IsSystem {
 			continue
 		}
-		planned[plannedNode(id, app)] = true
-	}
-
-	declared := map[string]bool{}
-	for _, n := range apps.NodeNames() {
-		if declared[n] {
-			t.Errorf("apps.NodeNames() lists %q twice", n)
+		for _, node := range plannedNodes(id, app) {
+			planned[node] = true
 		}
-		declared[n] = true
 	}
 
-	if len(declared) != len(planned) {
-		t.Errorf("registry declares %d nodes, the catalog plans %d", len(declared), len(planned))
+	for _, n := range apps.NodeNames() {
+		if !planned[n] {
+			t.Errorf("the user-app registry declares node %q, but no non-system app in the catalog plans it: a stale or mistyped entry in apps.NodeNames()", n)
+		}
 	}
 }
 
@@ -143,8 +180,14 @@ func TestCatalogIDIsNotANodeName(t *testing.T) {
 		if registry.Has(id) {
 			t.Errorf("app %q: the catalog ID unexpectedly resolves to a configurator; the node-name distinction this test guards would be meaningless", id)
 		}
-		if !registry.Has(plannedNode(id, app)) {
-			t.Errorf("app %q: the planned node %q should resolve", id, plannedNode(id, app))
+		configured := false
+		for _, node := range plannedNodes(id, app) {
+			if registry.Has(node) {
+				configured = true
+			}
+		}
+		if !configured {
+			t.Errorf("app %q: none of its planned nodes %v resolves to a configurator", id, plannedNodes(id, app))
 		}
 		checked++
 	}

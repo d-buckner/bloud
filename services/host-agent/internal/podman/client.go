@@ -36,6 +36,7 @@ type ContainerConfig struct {
 	Volumes       []VolumeMount     `json:"mounts,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Networks      []string          `json:"networks,omitempty"`
+	Entrypoint    []string          `json:"entrypoint,omitempty"`
 	Command       []string          `json:"command,omitempty"`
 	RestartPolicy string            `json:"restart_policy,omitempty"`
 }
@@ -526,6 +527,9 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 		spec["labels"] = config.Labels
 	}
 	addNetworkNamespace(spec, config)
+	if len(config.Entrypoint) > 0 {
+		spec["entrypoint"] = config.Entrypoint
+	}
 	if len(config.Command) > 0 {
 		spec["command"] = config.Command
 	}

@@ -17,4 +17,12 @@ func init() {
 	configurator.MustRegisterFactory(nodeName, func(deps configurator.Deps) configurator.NodeLifecycle {
 		return NewConfigurator(0, deps)
 	})
+	// The feed-sync sidecar is a second node in the same app. It gets its own
+	// configurator rather than being configured by the Radicale one, so its
+	// config is rendered by the pass that owns the container that reads it.
+	// Both resolve to this app's data tree and bindings, because the
+	// orchestrator maps a component node to its owning catalog app.
+	configurator.MustRegisterFactory(pimsyncNodeName, func(deps configurator.Deps) configurator.NodeLifecycle {
+		return NewPimsyncConfigurator(deps)
+	})
 }

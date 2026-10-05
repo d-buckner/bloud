@@ -147,7 +147,9 @@ flowchart TD
     end
 
     subgraph app_radicale["Radicale"]
+        c_radicale_pimsync["pimsync"]
         c_radicale["radicale"]
+        c_radicale_pimsync --> c_radicale
     end
 
     subgraph app_seerr["Seerr"]

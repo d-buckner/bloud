@@ -11,18 +11,14 @@ package radicale
 
 import (
 	"context"
-	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -58,11 +54,6 @@ const (
 	// container. The host side is <appDataDir>/collections.
 	containerStorageDir = "/var/lib/radicale/collections"
 
-	// icsSyncFileName is the sync-job config the vendored plugin reads from the
-	// config dir. A change requires a Radicale restart: the plugin starts one
-	// polling thread per job when the storage backend is constructed.
-	icsSyncFileName = "ics_sync.json"
-
 	// sharesDirName is the sharing database directory under the storage tree,
 	// where Radicale's csv sharing backend defaults its database to.
 	sharesDirName = "collection-db"
@@ -70,15 +61,6 @@ const (
 	// sharesFileName is the csv sharing database Radicale reads at startup. It
 	// lives in the writable storage tree (not the read-only config dir).
 	sharesFileName = "sharing.csv"
-
-	// pluginDirName is the host-side directory the embedded plugin tree is
-	// written into; metadata.yaml mounts it at /plugins and sets
-	// PYTHONPATH=/plugins so Radicale can import it by dotted module path.
-	pluginDirName = "plugin"
-
-	// icsSyncIntervalSeconds is how often the plugin refetches a feed. One
-	// hour is the plugin's own default and is plenty for release calendars.
-	icsSyncIntervalSeconds = 3600
 )
 
 type Configurator struct {
@@ -93,8 +75,8 @@ type Configurator struct {
 	secrets configurator.AppSecretsProvider
 
 	// restartContainerFn stops and starts the running container through the
-	// host runtime, forcing Radicale to re-read ics_sync.json. Nil in CLI/tests;
-	// PostStart treats nil as "cannot apply now".
+	// host runtime, forcing Radicale to re-read its sharing database. Nil in
+	// CLI/tests; PostStart treats nil as "cannot apply now".
 	restartContainerFn func(ctx context.Context, name string) error
 
 	// baseURL is a test seam: when set, the client resolves to it instead of
@@ -170,41 +152,19 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", cfgPath, err)
 	}
 
-	icsChanged, err := c.syncICSFeeds(filepath.Join(configDir, icsSyncFileName), state)
-	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("write %s: %w", icsSyncFileName, err)
-	}
-
 	sharesChanged, err := c.syncShares(ctx, state.DataPath, state)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", sharesFileName, err)
 	}
 
-	pluginChanged, err := syncPlugin(state.DataPath)
-	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("write %s: %w", pluginDirName, err)
-	}
-
-	if !cfgChanged && !secretChanged && !icsChanged && !sharesChanged && !pluginChanged {
+	if !cfgChanged && !secretChanged && !sharesChanged {
 		return configurator.NoRestart(), nil
 	}
 
 	c.logger.Info("wrote Radicale config", "path", cfgPath,
 		"auth", authType(state.LDAP), "secretChanged", secretChanged,
-		"feedsChanged", icsChanged, "sharesChanged", sharesChanged, "pluginChanged", pluginChanged)
+		"sharesChanged", sharesChanged)
 	return configurator.MustRestart("Radicale config rewritten"), nil
-}
-
-// syncICSFeeds renders the feed sync jobs into the config dir. Returns true
-// when the file changed.
-//
-// The jobs land in the shared-calendar owner's tree, not the operator's. That
-// is what lets the feeds be shared rather than be one person's private
-// calendars, and it is why the job list no longer waits on first-run setup:
-// a feed is worth syncing as soon as its provider publishes it, whether or not
-// anybody has claimed the instance yet.
-func (c *Configurator) syncICSFeeds(path string, state *configurator.AppState) (bool, error) {
-	return managedfile.Write(path, []byte(renderICSSync(feedsOf(state))), managedfile.ModeSharedConfig)
 }
 
 // feedsOf reads the resolved icsFeed bindings off the app state, tolerating
@@ -245,45 +205,7 @@ func (c *Configurator) syncShares(ctx context.Context, dataPath string, state *c
 // radicale/sharing/__init__.py DB_FIELDS_V1.
 const sharesCSVHeader = "ShareType;PathOrToken;PathMapped;Conversion;Owner;User;Permissions;EnabledByOwner;EnabledByUser;HiddenByOwner;HiddenByUser;TimestampCreated;TimestampUpdated;Properties;Actions"
 
-// icsSyncJob is one entry of the plugin's ics_sync.json.
-type icsSyncJob struct {
-	Feed         string `json:"feed"`
-	Collection   string `json:"collection"`
-	SyncInterval int    `json:"sync_interval"`
-	DisplayName  string `json:"displayname,omitempty"`
-}
-
-// renderICSSync renders the sync jobs the vendored plugin reads. A feed is
-// skipped until it is fully bound (installed, addressed, with a published
-// key); a job with an empty key would make the plugin retry a 401 forever.
-// Every job targets the shared-calendar owner's tree, so the synced feeds are
-// shared collections from the moment they exist rather than one account's
-// private calendars. The output is sorted by collection so re-rendering the
-// same bindings is byte-identical and asks for no restart.
-func renderICSSync(feeds []configurator.ICSFeedBinding) string {
-	jobs := make([]icsSyncJob, 0, len(feeds))
-	for _, feed := range feeds {
-		if !feedComplete(feed) {
-			continue
-		}
-		jobs = append(jobs, icsSyncJob{
-			Feed:         feedURL(feed),
-			Collection:   calendarOwner + "/" + feed.App,
-			SyncInterval: icsSyncIntervalSeconds,
-			DisplayName:  feed.DisplayName,
-		})
-	}
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Collection < jobs[j].Collection })
-	raw, err := json.MarshalIndent(jobs, "", "  ")
-	if err != nil {
-		// A slice of strings and an int cannot fail to marshal; keep a valid
-		// empty document rather than return an error nothing can act on.
-		return "[]\n"
-	}
-	return string(raw) + "\n"
-}
-
-// feedURL composes the URL the plugin dials: the provider's container address
+// feedURL composes the URL the sync dials: the provider's container address
 // plus the declared path, with the key as a query parameter. The Servarr feed
 // endpoint accepts no header auth, which is why the key travels in the URL.
 func feedURL(feed configurator.ICSFeedBinding) string {
@@ -295,74 +217,24 @@ func feedURL(feed configurator.ICSFeedBinding) string {
 	return u + sep + "apikey=" + url.QueryEscape(feed.APIKey)
 }
 
-// pluginFS is the vendored radicale-ics-sync tree, embedded so the bytes the
-// container loads are the bytes this binary shipped with. The `all:` prefix is
-// required: without it Go's embed skips files whose names begin with `_`, which
-// would drop __init__.py and make the package import as a namespace package
-// with no __version__. See apps/radicale/plugin/PROVENANCE.md.
-//
-//go:embed all:plugin
-var pluginFS embed.FS
-
-// syncPlugin writes the embedded plugin tree into <dataPath>/plugin. Radicale
-// imports it at process start, so a changed byte needs a recreate, which the
-// caller signals alongside the config write.
-func syncPlugin(dataPath string) (bool, error) {
-	destRoot := filepath.Join(dataPath, pluginDirName)
-	changed := false
-	err := fs.WalkDir(pluginFS, pluginDirName, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(pluginDirName, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(destRoot, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		raw, err := pluginFS.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		wrote, err := managedfile.Write(target, raw, managedfile.ModeSharedConfig)
-		if err != nil {
-			return err
-		}
-		changed = changed || wrote
-		return nil
-	})
-	if err != nil {
-		return false, err
-	}
-	return changed, nil
-}
-
-// resyncGeneratedConfig re-renders the feed sync jobs and the sharing database
-// against the live bindings and restarts the container when either changed. The
-// jobs depend on which feed providers are installed, and the shares depend on
-// the operator and the feeds; both are read at process start, so a change needs
-// a restart. Returns true when the container was restarted, in which case the
-// caller should skip probing it this pass.
+// resyncGeneratedConfig re-renders the sharing database against the live
+// bindings and restarts the container when it changed. The shares depend on
+// which users exist and which feeds are installed, and Radicale reads them at
+// process start, so a change needs a restart. Returns true when the container
+// was restarted, in which case the caller should skip probing it this pass.
 func (c *Configurator) resyncGeneratedConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
 	if state == nil || state.DataPath == "" {
 		return false, nil
-	}
-	configDir := filepath.Join(state.DataPath, "config")
-	icsChanged, err := c.syncICSFeeds(filepath.Join(configDir, icsSyncFileName), state)
-	if err != nil {
-		return false, fmt.Errorf("write %s: %w", icsSyncFileName, err)
 	}
 	sharesChanged, err := c.syncShares(ctx, state.DataPath, state)
 	if err != nil {
 		return false, fmt.Errorf("write %s: %w", sharesFileName, err)
 	}
-	if !icsChanged && !sharesChanged {
+	if !sharesChanged {
 		return false, nil
 	}
 	c.logger.Info("generated config changed; restarting Radicale to apply",
-		"feedsChanged", icsChanged, "sharesChanged", sharesChanged)
+		"sharesChanged", sharesChanged)
 	if err := c.restartContainer(ctx); err != nil {
 		return false, fmt.Errorf("config rewritten but the container could not be restarted: %w", err)
 	}
@@ -425,9 +297,9 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 }
 
 // restartContainer stops and starts the running container through the host
-// runtime so Radicale re-reads ics_sync.json, whose jobs the plugin loads once
-// at process start. It mirrors the Home Assistant pattern: the configurator
-// owns the restart decision, the runtime performs the side effect.
+// runtime so Radicale re-reads its config, which it loads once at process
+// start. It mirrors the Home Assistant pattern: the configurator owns the
+// restart decision, the runtime performs the side effect.
 func (c *Configurator) restartContainer(ctx context.Context) error {
 	if c.restartContainerFn == nil {
 		return errors.New("no container restart callback")
@@ -539,13 +411,19 @@ func renderConfig(port int, ldap *configurator.LDAPOutput) string {
 	}
 
 	b.WriteString("[storage]\n")
-	b.WriteString("# The vendored ics-sync storage plugin wraps Radicale's filesystem backend\n")
-	b.WriteString("# and projects external ICS feeds into collections under the operator's\n")
-	b.WriteString("# account. See apps/radicale/plugin/PROVENANCE.md.\n")
-	b.WriteString("type = radicale_ics_sync.storage\n")
-	fmt.Fprintf(&b, "filesystem_folder = %s\n", containerStorageDir)
-	fmt.Fprintf(&b, "ics_config = %s/%s\n", containerConfigDir, icsSyncFileName)
-	fmt.Fprintf(&b, "hash_db = %s/ics_sync_hashes.json\n\n", containerStorageDir)
+	// One raw string rather than a WriteString per line: funlen counts
+	// statements, and a comment block should not be what pushes a renderer
+	// over its budget.
+	b.WriteString(`# Radicale's own backend. Feeds used to arrive through a vendored
+# plugin that wrapped this backend and wrote into it from inside the server
+# process; they now arrive over CalDAV from a sidecar, which is why the server
+# is back to being plain Radicale. The type name is "multifilesystem", not
+# "filesystem": those two are the only internal storage types Radicale
+# registers, and an unrecognized one fails at startup rather than at first
+# request.
+`)
+	b.WriteString("type = multifilesystem\n")
+	fmt.Fprintf(&b, "filesystem_folder = %s\n\n", containerStorageDir)
 
 	b.WriteString("[rights]\n")
 	b.WriteString("type = owner_only\n\n")
