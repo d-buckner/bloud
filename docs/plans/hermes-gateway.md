@@ -1,7 +1,8 @@
-> Status: research. No code written. Verified against the pinned image
-> `docker.io/nousresearch/hermes-agent:v2026.9.14` (code_version 0.21.3),
-> upstream issues, the Hermex client source, and Bloud's own Authentik
-> blueprint templates, 2026-10-05.
+> Status: goal 1 implemented in this branch (the `offline_access` + 90 day
+> lifetime fix, see "Goal 1" below). Goal 2 is still research. Verified
+> against the pinned image `docker.io/nousresearch/hermes-agent:v2026.9.14`
+> (code_version 0.21.3), upstream issues, the Hermex client source, and
+> Bloud's own Authentik blueprint templates, 2026-10-05.
 
 # Research: Hermes for native clients (Desktop app, Hermex)
 
