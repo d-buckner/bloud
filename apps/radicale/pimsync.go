@@ -56,11 +56,15 @@ const (
 	// shared calendar account inside the Radicale this sidecar belongs to.
 	pimsyncStorageName = "bloud"
 
-	// pimsyncSyncIntervalSeconds is how often pimsync re-reads a feed it
-	// cannot monitor. A webcal resource has no change notification, so this
-	// is a poll. One hour matches what the plugin did and is plenty for
-	// release calendars.
-	pimsyncSyncIntervalSeconds = 3600
+	// pimsyncSyncIntervalSeconds is the poll cadence declared for a feed. A
+	// webcal resource has no change notification, so this is a poll.
+	//
+	// It matches the sidecar's own loop period rather than the hour the
+	// retired plugin used. The loop is what actually drives the sync (see the
+	// entrypoint in metadata.yaml); keeping this value equal means the two
+	// never disagree, and it stops an hour-long interval from becoming the
+	// retry delay if anything ever runs the daemon directly.
+	pimsyncSyncIntervalSeconds = 60
 )
 
 // pimsyncHeader is the banner atop every rendered config. It is the only

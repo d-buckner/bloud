@@ -107,12 +107,21 @@ containers:
     # contract, and it is necessary rather than merely tidy: `pimsync daemon`
     # with zero pairs returns immediately, which under restartPolicy=always is
     # a crash loop. So this parks while there is nothing to sync, and starts
-    # the daemon when a feed provider turns up. A daemon that dies is retried
-    # on the next turn of the loop rather than taking the container down.
+    # syncing when a feed provider turns up.
+    #
+    # `sync` in a loop, not `daemon`. The daemon is the wrong shape here: if
+    # the CalDAV target is unreachable when it starts, it initialises the pair
+    # and then sits there without erroring, so the next attempt is not until
+    # the storage interval, an hour later. That is not a hypothetical. The
+    # sidecar's own PostStart restarts it when the feed list changes, and the
+    # Radicale node restarts when its shares change, which is the same pass,
+    # so the sidecar routinely comes up against a calendar server that is not
+    # answering yet. A bounded `sync` per turn means a failed attempt costs
+    # one sleep, not an hour.
     #
     # tini is kept from the image's own entrypoint. It is what reaps children
     # and forwards signals to them; a bare /bin/sh as PID 1 would leave the
-    # daemon running until the grace period expired on every stop.
+    # sync running until the grace period expired on every stop.
     entrypoint:
       - /sbin/tini
       - --
@@ -122,9 +131,9 @@ containers:
       - |
         while :; do
           if grep -q '^pair ' /etc/pimsync/pimsync.conf 2>/dev/null; then
-            /usr/local/bin/pimsync -c /etc/pimsync/pimsync.conf -v warn daemon || true
+            /usr/local/bin/pimsync -c /etc/pimsync/pimsync.conf -v warn sync || true
           fi
-          sleep 30
+          sleep 60
         done
     volumes:
       # The rendered config, read-only. Written by the sidecar's own PreStart.

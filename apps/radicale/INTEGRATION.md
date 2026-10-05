@@ -159,14 +159,29 @@ rather than a conflict to resolve, and items the feed does not have are
 removed. That is what makes the sync never produce a conflict nobody is around
 to settle.
 
-### Why the container parks instead of idling
+### Why the container runs a sync loop instead of the daemon
 
 `pimsync daemon` with zero configured pairs exits immediately with an error,
 which under `restartPolicy: always` is a crash loop. A Bloud instance with no
 feed provider installed is a completely ordinary state, so the container's
 entrypoint is a loop that checks the rendered config for `pair` blocks: with
-none it sleeps, with any it runs the daemon. A daemon that dies is retried on
-the next turn rather than taking the container down.
+none it sleeps, with any it syncs.
+
+It runs `sync` once per turn rather than `daemon`, and that was learned the
+hard way. Point the daemon at a CalDAV target that is not reachable when it
+starts and it logs the pair initialisation and then sits there: no error, no
+exit, nothing. The container looks healthy and the next attempt is not until
+the storage interval. That is not an exotic case here. The sidecar's own
+PostStart restarts it when the feed list changes and the Radicale node
+restarts when its shares change, and those land on the same pass, so the
+sidecar routinely comes up against a calendar server that is still coming up.
+A bounded `sync` per turn turns that into one 60 second sleep instead of an
+hour of silence:
+
+```
+ERROR [pimsync] Synchronising pair probe: Discovery failed for storage A: ... (Connect)
+exit=0 elapsed=1s
+```
 
 That is also why the catalog grew an `entrypoint` field. The image's own
 entrypoint is a supervision script driven by a pile of `PIMSYNC_*`
