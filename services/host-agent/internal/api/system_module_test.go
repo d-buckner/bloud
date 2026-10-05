@@ -624,9 +624,9 @@ func TestSystemHTTP_DeveloperGraph_DeclaredButUninstalledProviderDrawsNoEdge(t *
 
 // The real catalog through the real cache, pinning the exact wiring issue #233
 // reported: Hermes' install row carries `mcp: affine-mcp` from a time before
-// caldav-mcp existed. The set model reads the declaration plus the installed
+// dav-mcp existed. The set model reads the declaration plus the installed
 // set and ignores that stale record, so the graph must draw
-// hermes -> caldav-mcp alongside hermes -> affine-mcp.
+// hermes -> dav-mcp alongside hermes -> affine-mcp.
 func TestSystemHTTP_DeveloperGraph_RealCatalogWiresCalendarMcpIntoHermes(t *testing.T) {
 	cache := catalog.NewMemoryCache()
 	require.NoError(t, cache.Refresh(catalog.NewLoader(filepath.Join("..", "..", "..", "..", "apps"))))
@@ -636,16 +636,16 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresCalendarMcpIntoHermes(t *test
 	mcp := hermesDef.Integrations["mcp"]
 	require.True(t, mcp.Multi, "hermes' mcp contract is expected to be multi")
 	require.False(t, mcp.Required, "hermes' mcp contract is expected to be optional")
-	require.Contains(t, compatibleAppNames(mcp), "caldav-mcp")
+	require.Contains(t, compatibleAppNames(mcp), "dav-mcp")
 
 	mod := newSystemModule(t, systemModuleOpts{})
 	mod.catalog = cache
-	for _, id := range []string{"hermes", "affine-mcp", "caldav-mcp", "traefik", "authentik"} {
+	for _, id := range []string{"hermes", "affine-mcp", "dav-mcp", "traefik", "authentik"} {
 		mod.appStore.(*FakeAppStore).AddApp(&store.InstalledApp{
 			CatalogID: id, DisplayName: id, Status: "running",
 		})
 	}
-	// The stale recorded value from before caldav-mcp shipped. It must be
+	// The stale recorded value from before dav-mcp shipped. It must be
 	// ignored: the wiring is the declaration intersected with the installed set.
 	require.NoError(t, mod.appStore.UpdateIntegrationConfig(
 		"hermes", map[string]string{"mcp": "affine-mcp"},
@@ -654,10 +654,10 @@ func TestSystemHTTP_DeveloperGraph_RealCatalogWiresCalendarMcpIntoHermes(t *test
 	resp := fetchDeveloperGraph(t, mod)
 
 	assert.True(t, graphEdgePresent(resp.Edges, "hermes", "affine-mcp"))
-	assert.True(t, graphEdgePresent(resp.Edges, "hermes", "caldav-mcp"),
-		"caldav-mcp is installed and declared compatible, so the orchestrator wires it "+
+	assert.True(t, graphEdgePresent(resp.Edges, "hermes", "dav-mcp"),
+		"dav-mcp is installed and declared compatible, so the orchestrator wires it "+
 			"and the graph must draw it regardless of the stale record")
-	assert.Equal(t, "mcp", graphEdgeLabel(resp.Edges, "hermes", "caldav-mcp"))
+	assert.Equal(t, "mcp", graphEdgeLabel(resp.Edges, "hermes", "dav-mcp"))
 }
 
 // compatibleAppNames lists the catalog apps an integration's compatible list

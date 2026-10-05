@@ -72,7 +72,7 @@ type Config struct {
 	// LDAP configuration
 	LDAPHost         string // LDAP outpost hostname (default: apps-authentik-ldap)
 	LDAPBindPassword string
-	// CalDAV service account password, for the machine client (caldav-mcp)
+	// CalDAV service account password, for the machine client (dav-mcp)
 	// that reads the operator's calendars on the agent's behalf.
 	CalDAVServicePassword string
 	// CalendarServicePassword is the credential of the account that owns the

@@ -5,6 +5,7 @@ package container
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 
@@ -256,4 +257,135 @@ func TestPodmanRuntimeEnsureWithoutReporterUsesPlainPull(t *testing.T) {
 	// No reporter registered: the plain pull path is used and no progress is
 	// recorded.
 	assert.Empty(t, client.progress)
+}
+
+func writeEnvFile(t *testing.T, content string) string {
+	t.Helper()
+	path := t.TempDir() + "/env"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+func TestPodmanRuntimeEnsureMergesEnvFileOverDeclaredEnvironment(t *testing.T) {
+	envFile := writeEnvFile(t, "# generated\nCALDAV_PASSWORD='from-the-file'\nBEARER_TOKEN=bearer-from-file\n")
+	client := &fakePodmanClient{}
+	rt := newPodmanRuntime(client)
+
+	_, err := rt.Ensure(context.Background(), Spec{
+		Name:        "apps-dav-mcp",
+		Image:       "ghcr.io/philflowio/dav-mcp:4.1.2",
+		Environment: map[string]string{"PORT": "9333", "CALDAV_PASSWORD": "static-default"},
+		EnvFile:     envFile,
+	})
+	require.NoError(t, err)
+	require.Len(t, client.created, 1)
+
+	env := client.created[0].Env
+	// The file wins: it carries resolved truth and must not be shadowed by a
+	// static default of the same name.
+	assert.Equal(t, "from-the-file", env["CALDAV_PASSWORD"])
+	assert.Equal(t, "bearer-from-file", env["BEARER_TOKEN"])
+	// Declared environment survives the merge.
+	assert.Equal(t, "9333", env["PORT"])
+}
+
+func TestPodmanRuntimeEnsureFailsOnMissingEnvFile(t *testing.T) {
+	missing := t.TempDir() + "/absent-env"
+	client := &fakePodmanClient{}
+	rt := newPodmanRuntime(client)
+
+	_, err := rt.Ensure(context.Background(), Spec{
+		Name:    "apps-dav-mcp",
+		Image:   "ghcr.io/philflowio/dav-mcp:4.1.2",
+		EnvFile: missing,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read env file")
+	// A container created without the file it asked for would start
+	// half-configured, so nothing may have been created at all.
+	assert.Empty(t, client.created)
+}
+
+func TestPodmanRuntimeEnvFileContentsDoNotMoveTheSpecRevision(t *testing.T) {
+	envFile := writeEnvFile(t, "CALDAV_PASSWORD=first\n")
+	spec := Spec{Name: "apps-dav-mcp", Image: "img", EnvFile: envFile}
+
+	before, err := spec.Revision()
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(envFile, []byte("CALDAV_PASSWORD=rotated\n"), 0o600))
+	after, err := spec.Revision()
+	require.NoError(t, err)
+
+	// Rotating a credential in the file is not catalog spec drift. The
+	// configurator reports the recreate; the renderer must not invent one, or
+	// the catalog-update diff would reset nodes on every rotation.
+	assert.Equal(t, before, after)
+
+	// The path itself is in the revision: pointing at a different file is a
+	// real spec change.
+	other := spec
+	other.EnvFile = writeEnvFile(t, "CALDAV_PASSWORD=first\n")
+	otherRev, err := other.Revision()
+	require.NoError(t, err)
+	assert.NotEqual(t, before, otherRev)
+}
+
+func TestParseEnvFile(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    map[string]string
+		wantErr string
+	}{
+		{
+			name:    "comments and blanks ignored",
+			content: "# comment\n\nA=1\n  \nB=2\n",
+			want:    map[string]string{"A": "1", "B": "2"},
+		},
+		{
+			name:    "single and double quotes stripped",
+			content: "A='quoted'\nB=\"double\"\n",
+			want:    map[string]string{"A": "quoted", "B": "double"},
+		},
+		{
+			name:    "value containing equals signs",
+			content: "TOKEN=abc=def=ghi\n",
+			want:    map[string]string{"TOKEN": "abc=def=ghi"},
+		},
+		{
+			name:    "empty value is kept",
+			content: "EMPTY=\n",
+			want:    map[string]string{"EMPTY": ""},
+		},
+		{
+			name:    "line with no equals is rejected",
+			content: "A=1\nNOT_AN_ASSIGNMENT\n",
+			wantErr: "line 2: expected KEY=value",
+		},
+		{
+			name:    "empty key is rejected",
+			content: "=orphan\n",
+			wantErr: "line 1: empty key",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeEnvFile(t, tc.content)
+			got, err := parseEnvFile(path)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestParseEnvFileMissingFile(t *testing.T) {
+	_, err := parseEnvFile(t.TempDir() + "/nope")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read env file")
 }

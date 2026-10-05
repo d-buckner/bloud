@@ -1,6 +1,21 @@
 # Plan: Expose the calendars to agents via caldav-mcp
 
-> Status: draft
+> Status: superseded. Shipped on a different base.
+>
+> This plan specified `io.github.dominik1001/caldav-mcp` v0.10.0 bridged by
+> supergateway. That shape never converged: it blocks the MCP `initialize`
+> handshake on a full DAV login (24.4s measured) against a 15s client timeout.
+> The shipped app wraps `PhilflowIO/dav-mcp` instead, which binds its port
+> before it logs in. See
+> [caldav-mcp-dav-mcp.md](../caldav-mcp-dav-mcp.md) for the port and
+> [apps/dav-mcp/INTEGRATION.md](../../../apps/dav-mcp/INTEGRATION.md) for
+> the live-verified shape.
+>
+> The shipped app is also renamed: the catalog entry is `dav-mcp`, not
+> `caldav-mcp`, because the wrapped package changed and the old name described a
+> package that is no longer in the tree. The body of this plan keeps naming
+> `caldav-mcp` where it means the upstream npm package, which is what it was
+> written against.
 
 ## Goal
 

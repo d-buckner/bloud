@@ -50,7 +50,7 @@ func (o *Orchestrator) runConfigurator(ctx context.Context, id string) bool {
 // files it writes move without raising any intent that would drive this node.
 // The case that motivated it is a provider installed after its consumer. Hermes
 // renders its `mcp_servers` map in PreStart from the resolved `mcp` contract,
-// and installing caldav-mcp afterwards resolves a new binding for it, but
+// and installing dav-mcp afterwards resolves a new binding for it, but
 // Hermes sits at RUNNING. A resync that only ran PostStart could observe the
 // new binding and still leave Hermes running on the config written before that
 // app existed, so the namespace never arrived. The same shape covers a
