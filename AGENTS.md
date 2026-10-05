@@ -472,12 +472,12 @@ Validation:  validate [flags]     Tiered validation (default --tier changed)
 Other:       depgraph             Full dependency graph from app metadata
                                  (no flag: print the Mermaid form to stdout)
             depgraph --write     Refresh the generated block in the target doc
-                                 (default docs/architecture/dependency-graph.md)
+                                 (default README.md)
             depgraph --check     Exit 1 when that doc is not what the catalog
                                  produces (the fast-tier gate; the
                                  merge-to-main job commits the refresh)
             depgraph --json      The whole catalog as the developer-graph JSON
-                                 (nodes + edges) the browser renderer consumes
+                                 (nodes + edges) the dashboard consumes
             depgraph --target F  File to write or check
             catalogdoc           README's catalog list + one-login table,
                                  generated from apps/*/metadata.yaml
@@ -488,11 +488,13 @@ Other:       depgraph             Full dependency graph from app metadata
             catalogdoc --target F File to write or check
 ```
 
-The README's graph is an image, not a text diagram: `docs/assets/dependency-graph.png`,
-rendered in a headless browser from the `--json` snapshot by `scripts/render-graph.mjs`,
-using the dashboard's own graph components (`services/host-agent/web/src/routes/graph/`).
-`npm run graph:image` rebuilds it locally (it needs Playwright's Chromium). The text form of
-the graph is what `depgraph --write` / `--check` govern.
+The README's graph is a Mermaid diagram, embedded directly in the `## the full graph` section
+between the generated-block markers. GitHub renders the fence inline, so the committed bytes are
+the picture: nothing draws a PNG in a browser to produce it, the topology is readable in the
+diff, and `depgraph --write` / `--check` govern the same artifact a reader sees. An earlier
+shape of this committed `docs/assets/dependency-graph.png`, rendered headlessly from the
+`--json` snapshot with the dashboard's own graph components; that pipeline, its renderer
+script, and the `/graph` route built to be its render target are all gone.
 
 The README's `## catalog` list and `## one login` table are generated the same way, from the
 same `apps/*/metadata.yaml`, by `catalogdoc`. Each block sits between HTML comment markers
@@ -516,10 +518,9 @@ of. The overrides are also printed on every `--write` / `--check` run.
 
 The `generated-docs` workflow regenerates all of it on merge to `main`, scoped by path to
 what the artifacts depend on: `apps/**/metadata.yaml`, the generators (`cli/depgraph.go`,
-`cli/catalogdoc.go`, `cli/genblock.go`), the graph components
-(`web/src/routes/graph/`, `web/src/lib/graph/`, `graphLayout.ts`, `statusColor.ts`),
-`scripts/render-graph.mjs`, and the workflow itself. A merge that touches none of those
-leaves the committed artifacts untouched.
+`cli/catalogdoc.go`, `cli/genblock.go`), and the workflow itself. A merge that touches none
+of those leaves the committed artifacts untouched. The job needs Go and the CLI: no frontend
+build, no browser, no Chromium install.
 
 The CLI resolves the project root from cwd using the `rootMarkers` list in
 `cli/dev.go` (stable root-level files such as `validation.yaml` and
@@ -962,7 +963,7 @@ to the right doc. When a doc moves, update it in both places.
 | What are we building / release plan | [specs/spec.md](docs/specs/spec.md) |
 | Orchestrator/reconciler design | [specs/reconciler-spec.md](docs/specs/reconciler-spec.md) |
 | Component overview + data flows | [architecture/overview.md](docs/architecture/overview.md) |
-| The full app + container graph (generated) | [architecture/dependency-graph.md](docs/architecture/dependency-graph.md) (image in [README.md#the-full-graph](README.md#the-full-graph)) |
+| The full app + container graph (generated) | [README.md#the-full-graph](README.md#the-full-graph) (the Mermaid block `depgraph --write` refreshes) |
 | How to add an app | [guides/contributing-apps.md](docs/guides/contributing-apps.md) |
 | Multi-container app model | [specs/app-spec.md](docs/specs/app-spec.md) |
 |Backend debt + repayment plan|[operations/tech-debt.md](docs/operations/tech-debt.md)|

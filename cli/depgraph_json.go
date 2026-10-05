@@ -9,9 +9,9 @@ import (
 
 // catalogGraphNode is one node of the catalog snapshot, in the shape the
 // dashboard's developer graph consumes (see
-// services/host-agent/internal/api/system_module.go). The browser renderer
-// feeds this straight into the same layout and node components the live
-// dashboard uses, so the README image and the dashboard cannot drift apart.
+// services/host-agent/internal/api/system_module.go). A catalog dump and a
+// live instance's status feed go through the same layout and node components,
+// which is why the JSON describes topology rather than a picture.
 type catalogGraphNode struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`

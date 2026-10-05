@@ -3,7 +3,6 @@
 	import '../app.css';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
-	import { page } from '$app/state';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
@@ -23,12 +22,6 @@
 
 	let { children }: { children: Snippet } = $props();
 
-	// The graph renderer is a picture, not a session: it draws the catalog with
-	// the dashboard's own components and has no API to talk to, so it gets no
-	// shell, no setup wizard, and no auth round trip (which would otherwise
-	// bounce the render straight to /auth/login).
-	const bare = $derived(page.url.pathname.startsWith('/graph'));
-
 	let sidebarCollapsed = $state(false);
 	let setupRequired = $state(false);
 	let loading = $state(true);
@@ -36,7 +29,6 @@
 
 	// Check setup status and auth, then initialize app if ready
 	onMount(() => {
-		if (bare) return;
 		checkStatusAndAuth();
 
 		return () => {
@@ -86,9 +78,7 @@
 	}
 </script>
 
-{#if bare}
-	{@render children()}
-{:else if loading}
+{#if loading}
 	<div class="loading">
 		<div class="spinner"></div>
 	</div>
