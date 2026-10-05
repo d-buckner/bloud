@@ -131,10 +131,12 @@ func createManagedUser(t *testing.T, username, password string) {
 	t.Logf("created the second Bloud user %q", username)
 }
 
-// readSharingCSV reads the sharing database the configurator owns.
+// readSharingCSV reads the sharing database the configurator owns. Radicale's
+// csv backend lives in a `collection-db` directory under the storage tree,
+// not in the tree root.
 func readSharingCSV(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(appDataDir("radicale"), "collections", "sharing.csv")
+	path := filepath.Join(appDataDir("radicale"), "collections", "collection-db", "sharing.csv")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
