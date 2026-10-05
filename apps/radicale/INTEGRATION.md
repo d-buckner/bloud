@@ -175,10 +175,20 @@ sets the argument list the entrypoint receives, not the entrypoint itself.
 Overriding it keeps Bloud out of that env-var contract entirely.
 
 The feed list is not fixed at install time: Radarr and Sonarr are installed
-after Radicale more often than before it. That is fine here in a way it was not
-with the plugin, because the sidecar's config is re-rendered by its own
-`PreStart` on every pass that touches the node, and the change lands as a
-recreate of the sidecar rather than a restart of the calendar server.
+after Radicale more often than before it. That makes the sidecar's render a
+resync, not a one-shot. `writeConfig` is called from `PreStart` and from
+`PostStart`, and `PostStart` restarts the daemon when the bytes moved.
+
+Both call sites are load-bearing, and the reason is invariant 2: a node
+sitting at `RUNNING` only gets the `PostStart` resync, never `PreStart`
+again. The providers converge on their own schedule and routinely finish
+after the sidecar is already up, so a renderer wired only into `PreStart`
+writes a parked config on the first pass and never revisits it. That is the
+bug this closes: the file on disk stayed empty of pairs while both feeds were
+installed and serving fine, and the aggregation test timed out looking for
+pairs nothing would ever write. `managedfile.Write` reporting `changed=false`
+on identical bytes is what keeps the resync from restarting a healthy daemon
+every 60 seconds.
 
 ### Who owns the synced calendars, and how they get created
 

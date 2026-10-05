@@ -4,6 +4,7 @@ package radicale
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,8 +252,93 @@ func TestPimsyncConfiguratorNameIsTheSidecarNode(t *testing.T) {
 	assert.Equal(t, pimsyncNodeName, newPimsyncConfigurator(t, nil).Name())
 }
 
-func TestPimsyncPostStartIsANoOp(t *testing.T) {
-	// The sidecar's useful state is the sync itself, asserted end to end by
-	// the aggregation integration test rather than re-derived here.
+func TestPimsyncPostStartResyncRendersFeedsThatArrivedAfterPreStart(t *testing.T) {
+	// The regression this guards: a node at RUNNING only gets the PostStart
+	// resync, never PreStart again. The feed providers converge on their own
+	// schedule and routinely finish after the sidecar is up, so if the render
+	// lived only in PreStart the config on disk stayed parked with no pairs
+	// while radarr and sonarr were installed and serving fine.
+	dataPath := t.TempDir()
+	var restarted []string
+	c := newPimsyncConfigurator(t, pimsyncOwnerSecrets("owner-secret"))
+	c.restartContainerFn = func(_ context.Context, name string) error {
+		restarted = append(restarted, name)
+		return nil
+	}
+	state := &configurator.AppState{DataPath: dataPath}
+
+	// First pass: no providers yet, so PreStart parks the config.
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+	parked, err := os.ReadFile(filepath.Join(dataPath, pimsyncConfigDirName, pimsyncConfigFileName))
+	require.NoError(t, err)
+	require.NotContains(t, string(parked), "pair ")
+
+	// The providers land. Only PostStart runs from here on.
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	require.NoError(t, c.PostStart(context.Background(), state))
+
+	after, err := os.ReadFile(filepath.Join(dataPath, pimsyncConfigDirName, pimsyncConfigFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(after), "pair radarr",
+		"the resync must pick up a provider that converged after the sidecar did")
+	assert.Equal(t, []string{pimsyncNodeName}, restarted,
+		"the daemon reads its config at boot, so a changed config means a restart")
+}
+
+func TestPimsyncPostStartDoesNotRestartAnUnchangedDaemon(t *testing.T) {
+	// Without the changed=false contract this would restart the sidecar on
+	// every 60 second self-heal pass, which is worse than the bug.
+	dataPath := t.TempDir()
+	var restarted []string
+	c := newPimsyncConfigurator(t, pimsyncOwnerSecrets("owner-secret"))
+	c.restartContainerFn = func(_ context.Context, name string) error {
+		restarted = append(restarted, name)
+		return nil
+	}
+	state := &configurator.AppState{DataPath: dataPath}
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+
+	require.NoError(t, c.PostStart(context.Background(), state))
+	require.NoError(t, c.PostStart(context.Background(), state))
+	assert.Empty(t, restarted, "an unchanged config must not disturb the daemon")
+}
+
+func TestPimsyncPostStartFailsWhenTheRestartFails(t *testing.T) {
+	// A config the daemon cannot be restarted onto is not applied. Reporting
+	// success would leave the pass believing the feeds were wired.
+	dataPath := t.TempDir()
+	c := newPimsyncConfigurator(t, pimsyncOwnerSecrets("owner-secret"))
+	c.restartContainerFn = func(context.Context, string) error {
+		return errors.New("runtime refused")
+	}
+	state := &configurator.AppState{DataPath: dataPath}
+
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	err = c.PostStart(context.Background(), state)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not be restarted")
+}
+
+func TestPimsyncPostStartWithoutARestartCallbackIsAnError(t *testing.T) {
+	// The production Deps always carry one. A nil here means a configurator
+	// built without its restart wiring, and silently skipping the restart is
+	// how the parked-forever bug comes back.
+	c := NewPimsyncConfigurator(configurator.Deps{Logger: quietLogger(), Secrets: pimsyncOwnerSecrets("s")})
+	state := &configurator.AppState{DataPath: t.TempDir()}
+	_, err := c.PreStart(context.Background(), state)
+	require.NoError(t, err)
+
+	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
+	require.Error(t, c.PostStart(context.Background(), state))
+}
+
+func TestPimsyncPostStartToleratesNoState(t *testing.T) {
 	require.NoError(t, newPimsyncConfigurator(t, nil).PostStart(context.Background(), nil))
 }

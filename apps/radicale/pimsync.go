@@ -4,6 +4,7 @@ package radicale
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -224,6 +225,12 @@ type PimsyncConfigurator struct {
 	// shared-calendar owner credential lands. Nil in tests and CLI runs;
 	// that reads as "not yet", which renders a parked config.
 	secrets configurator.AppSecretsProvider
+
+	// restartContainerFn restarts the sidecar through the host runtime.
+	// pimsync reads its config once at process start, and a node that is
+	// already RUNNING only re-runs PostStart, so without this a feed added
+	// after the sidecar converged would sit in a file the daemon never reads.
+	restartContainerFn func(ctx context.Context, name string) error
 }
 
 // NewPimsyncConfigurator builds the sidecar's configurator from host Deps.
@@ -233,8 +240,9 @@ func NewPimsyncConfigurator(deps configurator.Deps) *PimsyncConfigurator {
 		logger = slog.Default()
 	}
 	return &PimsyncConfigurator{
-		logger:  logger.With("app", pimsyncNodeName),
-		secrets: deps.Secrets,
+		logger:             logger.With("app", pimsyncNodeName),
+		secrets:            deps.Secrets,
+		restartContainerFn: deps.RestartContainer,
 	}
 }
 
@@ -268,36 +276,75 @@ func (c *PimsyncConfigurator) PreStart(
 		return configurator.NoRestart(), fmt.Errorf("open %s for the container user: %w", statusDir, err)
 	}
 
+	changed, err := c.writeConfig(state)
+	if err != nil {
+		return configurator.NoRestart(), err
+	}
+	if !changed {
+		return configurator.NoRestart(), nil
+	}
+	return configurator.MustRestart("pimsync config rewritten"), nil
+}
+
+// PostStart re-renders the config against the live bindings and restarts the
+// daemon when they moved.
+//
+// This is not redundant with PreStart. PreStart runs on the passes that touch
+// the node, but a node sitting at RUNNING only gets the PostStart resync
+// (orchestrator/levels.go:readyForPostStartResync), never PreStart again.
+// The feed providers converge on their own schedule and routinely finish after
+// the sidecar is already up, so PostStart is the only pass that ever sees the
+// moment radarr and sonarr become available. A renderer that only ran in
+// PreStart would write a config with no pairs and never revisit it, which is
+// the failure this replaced: the file on disk stayed parked while the feeds
+// were installed and serving just fine.
+//
+// The restart is the daemon's, not the server's. pimsync has no config
+// reload, so applying a change means a fresh process.
+func (c *PimsyncConfigurator) PostStart(ctx context.Context, state *configurator.AppState) error {
+	changed, err := c.writeConfig(state)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	c.logger.Info("pimsync config changed after convergence; restarting the sidecar to apply")
+	if c.restartContainerFn == nil {
+		return errors.New("pimsync config changed but no container restart callback is wired")
+	}
+	if err := c.restartContainerFn(ctx, c.Name()); err != nil {
+		return fmt.Errorf("config rewritten but the sidecar could not be restarted: %w", err)
+	}
+	return nil
+}
+
+// writeConfig renders the desired config and puts it on disk, reporting
+// whether the bytes changed. managedfile.Write reports changed=false when the
+// file already matches, which is what keeps a resync pass from restarting a
+// healthy daemon every 60 seconds.
+func (c *PimsyncConfigurator) writeConfig(state *configurator.AppState) (bool, error) {
+	if state == nil || state.DataPath == "" {
+		return false, nil
+	}
 	desired, err := renderPimsyncConf(c.target(), feedsOf(state))
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("render %s: %w", pimsyncConfigFileName, err)
+		return false, fmt.Errorf("render %s: %w", pimsyncConfigFileName, err)
 	}
 
-	path := filepath.Join(configDir, pimsyncConfigFileName)
+	path := filepath.Join(state.DataPath, pimsyncConfigDirName, pimsyncConfigFileName)
 	// ModeSharedConfig because the reader is the container process, which is
 	// not the host uid that wrote the file. The credential in it is bounded
 	// by the app's own data tree, which is the same boundary the LDAP reader
 	// secret and the feed keys already sit behind.
 	changed, err := managedfile.Write(path, []byte(desired), managedfile.ModeSharedConfig)
 	if err != nil {
-		return configurator.NoRestart(), fmt.Errorf("write %s: %w", path, err)
+		return false, fmt.Errorf("write %s: %w", path, err)
 	}
-	if !changed {
-		return configurator.NoRestart(), nil
+	if changed {
+		c.logger.Info("wrote pimsync config", "path", path)
 	}
-
-	c.logger.Info("wrote pimsync config", "path", path)
-	return configurator.MustRestart("pimsync config rewritten"), nil
-}
-
-// PostStart has nothing to verify.
-//
-// The sidecar's useful state is the sync itself, which happens on pimsync's
-// own schedule and is visible as events appearing in the target collections
-// -- asserted end-to-end by the aggregation integration test rather than
-// re-derived here from a file this configurator wrote.
-func (c *PimsyncConfigurator) PostStart(_ context.Context, _ *configurator.AppState) error {
-	return nil
+	return changed, nil
 }
 
 // target composes the CalDAV target from what the configurator can see: the
