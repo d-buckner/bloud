@@ -54,6 +54,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # e2e/ is a standalone package, not an npm workspace, so the root
+      # install above does not install it. Playwright runs with cwd=e2e
+      # (cli/e2e.go) and its config imports @playwright/test, so that import
+      # needs e2e's own node_modules; without it it falls through to whatever
+      # the root happens to hoist, which is a dependency on a package the
+      # suite does not declare here. Installing locally also pins the browser
+      # step below to e2e's own playwright rather than one npx fetches.
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:

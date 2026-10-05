@@ -17,6 +17,20 @@ func cmdE2E(args []string) int {
 		return 1
 	}
 
+	// The Playwright suite is its own npm package rather than a workspace, so
+	// nothing installs it as a side effect of the root install. Check before
+	// provisioning anything: without the check the failure is an
+	// ERR_MODULE_NOT_FOUND from inside Playwright's config loader minutes
+	// into a run that has already built and deployed a runtime, and it names
+	// neither the missing package nor the command that installs it. `affected`
+	// is exempt because it only reads validation.yaml and prints a list.
+	if len(args) == 0 || args[0] != "affected" {
+		if err := requireE2EDeps(root); err != nil {
+			errorf("%v", err)
+			return 1
+		}
+	}
+
 	if len(args) > 0 && args[0] == "lifecycle" {
 		if err := runLifecycle(root, args[1:]); err != nil {
 			errorf("Lifecycle E2E failed: %v", err)
@@ -55,6 +69,20 @@ func cmdE2E(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// requireE2EDeps checks that the Playwright suite's own package is installed.
+// e2e/ is a standalone npm package, not one of the root workspaces, so the
+// root install does not cover it. The check exists because the failure it
+// prevents is opaque: Playwright resolves the config, the config's import of
+// @playwright/test misses, and the run dies with ERR_MODULE_NOT_FOUND after
+// the caller has already built and deployed a runtime.
+func requireE2EDeps(root string) error {
+	spec := filepath.Join(root, "e2e", "node_modules", "@playwright", "test")
+	if _, err := os.Stat(spec); err != nil {
+		return fmt.Errorf("the Playwright suite is not installed: run `npm --prefix e2e ci`")
+	}
+	return nil
 }
 
 func runPlaywright(root, username, password, apiToken string) error {

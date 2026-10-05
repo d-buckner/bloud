@@ -408,6 +408,12 @@ cache, so `go run gotest.tools/gotestsum` works offline.
 
 ### Playwright e2e (`e2e/`)
 
+- `e2e/` is a standalone npm package, not one of the root workspaces, so the
+  root install does not cover it: install it with `npm --prefix e2e ci`
+  (`npm run setup` does) and CI installs it in every job that launches a
+  browser. The suite resolves `@playwright/test` from `e2e/node_modules`
+  rather than from a root hoist, which is also why the root no longer carries
+  Playwright now that the graph image renderer is gone.
 - Browser tests target the **public port**: `BLOUD_URL` (default
   `http://localhost:8080`): user journeys go through Traefik.
 - API helpers target the **internal port**: `BLOUD_API_URL` (default
