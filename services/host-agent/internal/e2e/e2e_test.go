@@ -247,7 +247,7 @@ func agentPost(t *testing.T, url, contentType string, body io.Reader) *http.Resp
 func waitHTTP(timeout time.Duration, url string) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 		if err != nil {
 			return err
 		}

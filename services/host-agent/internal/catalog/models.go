@@ -22,7 +22,7 @@ type App struct {
 	Dependencies    []string               `yaml:"dependencies" json:"dependencies"`
 	Resources       Resources              `yaml:"resources" json:"resources"`
 	SSO             SSO                    `yaml:"sso" json:"sso"`
-	DefaultConfig   map[string]interface{} `yaml:"defaultConfig" json:"defaultConfig"`
+	DefaultConfig   map[string]any         `yaml:"defaultConfig" json:"defaultConfig"`
 	Docs            Docs                   `yaml:"docs" json:"docs"`
 	Tags            []string               `yaml:"tags" json:"tags"`
 	Routing         *Routing               `yaml:"routing,omitempty" json:"routing,omitempty"`

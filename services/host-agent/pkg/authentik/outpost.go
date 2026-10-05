@@ -95,14 +95,14 @@ func (c *Client) EnsureEmbeddedOutpostHost(ctx context.Context, baseURL string) 
 		return fmt.Errorf("fetching outpost: %w", err)
 	}
 
-	var full map[string]interface{}
+	var full map[string]any
 	if err := json.Unmarshal(body, &full); err != nil {
 		return fmt.Errorf("parsing outpost: %w", err)
 	}
 
-	config, _ := full["config"].(map[string]interface{})
+	config, _ := full["config"].(map[string]any)
 	if config == nil {
-		config = make(map[string]interface{})
+		config = make(map[string]any)
 	}
 	if config["authentik_host"] == baseURL {
 		return nil // Already set correctly
@@ -120,7 +120,7 @@ func (c *Client) EnsureEmbeddedOutpostHost(ctx context.Context, baseURL string) 
 // updateOutpostProviders updates the providers list for an outpost
 func (c *Client) updateOutpostProviders(ctx context.Context, outpostPK string, providers []int) error {
 	return c.cl.PATCH("/api/v3/outposts/instances/" + outpostPK + "/").
-		JSON(map[string]interface{}{"providers": providers}).
+		JSON(map[string]any{"providers": providers}).
 		OK(http.StatusOK).
 		Exec(ctx)
 }

@@ -26,7 +26,7 @@ func (o *Orchestrator) RemoveApp(ctx context.Context, appName string, clearData 
 	// fresh drive so a failed removal never goes untracked.
 	o.ensureOpDrive(appName)
 	if err := o.removeApp(ctx, appName, clearData); err != nil {
-		o.recordOpFail(appName, store.OpPhaseTopology, err, true)
+		o.recordOpFail(appName, store.OpPhaseTopology, err)
 		return err
 	}
 	o.recordOpComplete(appName)
@@ -48,10 +48,7 @@ func (o *Orchestrator) removeApp(ctx context.Context, appName string, clearData 
 	// Single-container (or system) app. Only a configurator that owns teardown
 	// gets a Remove call; container and data removal are the orchestrator's.
 	if r, ok := o.registry.Get(appName).(configurator.Remover); ok {
-		state, err := o.buildAppState(appName)
-		if err != nil {
-			return fmt.Errorf("build app state: %w", err)
-		}
+		state := o.buildAppState(appName)
 		if err := r.Remove(ctx, state, clearData); err != nil {
 			return fmt.Errorf("remove app %q: %w", appName, err)
 		}
@@ -64,10 +61,8 @@ func (o *Orchestrator) removeApp(ctx context.Context, appName string, clearData 
 func (o *Orchestrator) removeMultiContainerApp(ctx context.Context, appName string, defs []catalog.ContainerDef, clearData bool) error {
 	for _, def := range defs {
 		if r, ok := o.registry.Get(def.Name).(configurator.Remover); ok {
-			state, err := o.buildAppState(def.Name)
-			if err != nil {
-				o.logger.Warn("failed to build state for container removal", "container", def.Name, "error", err)
-			} else if err := r.Remove(ctx, state, clearData); err != nil {
+			state := o.buildAppState(def.Name)
+			if err := r.Remove(ctx, state, clearData); err != nil {
 				o.logger.Warn("configurator remove failed", "container", def.Name, "error", err)
 			}
 		}

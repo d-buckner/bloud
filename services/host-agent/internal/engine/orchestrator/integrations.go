@@ -14,14 +14,14 @@ import (
 
 // buildAppState constructs a configurator.AppState for the given app ID
 // using catalog metadata when available.
-func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) {
+func (o *Orchestrator) buildAppState(id string) *configurator.AppState {
 	state := &configurator.AppState{
 		DataPath:      dirs.AppDataDir(o.dataDir, o.ownerApp(id)),
 		BloudDataPath: o.dataDir,
 	}
 
 	if o.catalog == nil {
-		return state, nil
+		return state
 	}
 
 	catalogApp, err := o.catalog.Get(id)
@@ -29,7 +29,7 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 		catalogApp, err = o.catalog.Get(o.ownerApp(id))
 	}
 	if err != nil || catalogApp == nil {
-		return state, nil
+		return state
 	}
 
 	ssoEnabled := catalogApp.SSO.Strategy != "" && catalogApp.SSO.Strategy != "none"
@@ -55,7 +55,7 @@ func (o *Orchestrator) buildAppState(id string) (*configurator.AppState, error) 
 
 	state.Integrations = o.buildIntegrations(catalogApp.CatalogID, catalogApp)
 
-	return state, nil
+	return state
 }
 
 // buildIntegrations resolves an app's integration contracts into typed

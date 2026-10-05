@@ -45,7 +45,7 @@ const (
 // This row is authoritative for failure context and user-intent
 // outcome ONLY. Graph node status remains authoritative for convergence
 // control; no consumer may read both to decide one thing (see
-// docs/plans/operation-state-design.md §4).
+// docs/plans/archive/operation-state-design.md §4).
 type Operation struct {
 	AppName   string `json:"app"`
 	ID        string `json:"id"`

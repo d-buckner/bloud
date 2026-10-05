@@ -119,7 +119,7 @@ func TestClient_ListContainers(t *testing.T) {
 }
 
 func TestClient_CreateContainer(t *testing.T) {
-	var receivedSpec map[string]interface{}
+	var receivedSpec map[string]any
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/libpod/containers/create" && r.Method == http.MethodPost {
@@ -385,10 +385,10 @@ func TestBuildContainerSpec_MultipleNetworks(t *testing.T) {
 
 	spec := buildContainerSpec(config)
 
-	netns, ok := spec["netns"].(map[string]interface{})
+	netns, ok := spec["netns"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "bridge", netns["nsmode"])
-	networks, ok := spec["networks"].(map[string]map[string]interface{})
+	networks, ok := spec["networks"].(map[string]map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, networks, "authentik-internal")
 	assert.Contains(t, networks, "apps-net")
@@ -403,7 +403,7 @@ func TestBuildContainerSpec_HostNetwork(t *testing.T) {
 
 	spec := buildContainerSpec(config)
 
-	netns, ok := spec["netns"].(map[string]interface{})
+	netns, ok := spec["netns"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "host", netns["nsmode"])
 	assert.NotContains(t, spec, "networks")

@@ -100,7 +100,7 @@ func runHotReload(ctx context.Context, opts hotReloadOptions) int {
 	childDone, err := child.Start()
 	if err != nil {
 		c.StepFailed("host-agent", "", 0, err)
-		_ = vite.Stop(gracefulStopTimeout)
+		vite.Stop(gracefulStopTimeout)
 		return 1
 	}
 	c.Step("host-agent", "API http://localhost:3000", 0)
@@ -150,8 +150,8 @@ func (l *reloadLoop) run(ctx context.Context, childDone, viteDone <-chan struct{
 		case <-ctx.Done():
 			l.console.Note("stopping the dev loop")
 			l.console.SuppressAgentLog(true)
-			_ = l.child.Stop(gracefulStopTimeout)
-			_ = l.vite.Stop(gracefulStopTimeout)
+			l.child.Stop(gracefulStopTimeout)
+			l.vite.Stop(gracefulStopTimeout)
 			return 0
 
 		case batch := <-l.changes:
@@ -275,9 +275,7 @@ func (l *reloadLoop) onViteDeath(ctx context.Context) (<-chan struct{}, bool) {
 // restartChild stops the current child and starts a fresh one from the binary
 // on disk. The gap between them is the whole reload window.
 func restartChild(c *restartableCmd) (<-chan struct{}, error) {
-	if err := c.Stop(gracefulStopTimeout); err != nil {
-		return nil, err
-	}
+	c.Stop(gracefulStopTimeout)
 	return c.Start()
 }
 

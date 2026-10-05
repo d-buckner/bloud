@@ -519,7 +519,7 @@ func bringUpAndTest(ctx context.Context, root string, tier manifestTier, result 
 			// the timeout dump, which the failure block replays. Verbose already
 			// streams the raw journal and JSON owns stdout, so in neither case
 			// does the filter get a turn.
-			follow := io.Writer(out)
+			follow := out
 			if !t.flags.json && !t.flags.verbose {
 				filter := newAgentProgress(os.Stdout, devColorEnabled(os.Stdout))
 				defer filter.Finish()

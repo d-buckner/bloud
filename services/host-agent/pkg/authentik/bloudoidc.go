@@ -142,7 +142,7 @@ func (c *Client) createBloudOAuth2Provider(ctx context.Context, redirectURIs []s
 		})
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":                       bloudProviderName,
 		"authorization_flow":         authFlowID,
 		"invalidation_flow":          invalidFlowID,
@@ -177,7 +177,7 @@ func (c *Client) updateBloudOAuth2ProviderRedirectURIs(ctx context.Context, prov
 	}
 
 	return c.cl.PATCH(fmt.Sprintf("/api/v3/providers/oauth2/%d/", providerID)).
-		JSON(map[string]interface{}{"redirect_uris": uriEntries}).
+		JSON(map[string]any{"redirect_uris": uriEntries}).
 		OK(http.StatusOK).
 		Exec(ctx)
 }

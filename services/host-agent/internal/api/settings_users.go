@@ -26,7 +26,7 @@ func (m *settingsModule) ListUsersHandler() http.HandlerFunc {
 			return
 		}
 
-		respondJSON(w, http.StatusOK, map[string]interface{}{
+		respondJSON(w, http.StatusOK, map[string]any{
 			"users": users,
 		})
 	}
@@ -79,7 +79,7 @@ func (m *settingsModule) CreateManagedUserHandler() http.HandlerFunc {
 			m.logger.Error("failed to create local user preferences", "error", err)
 		}
 
-		respondJSON(w, http.StatusCreated, map[string]interface{}{
+		respondJSON(w, http.StatusCreated, map[string]any{
 			"id":       userID,
 			"username": req.Username,
 			"role":     req.Role,
@@ -189,7 +189,7 @@ func (m *settingsModule) SetUserRoleHandler() http.HandlerFunc {
 			}
 		}
 
-		respondJSON(w, http.StatusOK, map[string]interface{}{
+		respondJSON(w, http.StatusOK, map[string]any{
 			"username": username,
 			"role":     req.Role,
 		})

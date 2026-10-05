@@ -20,7 +20,7 @@ func putPublicURL(t *testing.T, mod *settingsModule, body string) *httptest.Resp
 	t.Helper()
 	r := chi.NewRouter()
 	r.Put("/settings/public-url", mod.SetPublicURLHandler())
-	req := httptest.NewRequest("PUT", "/settings/public-url", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/settings/public-url", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -31,7 +31,7 @@ func getPublicURL(t *testing.T, mod *settingsModule) *httptest.ResponseRecorder 
 	t.Helper()
 	r := chi.NewRouter()
 	r.Get("/settings/public-url", mod.GetPublicURLHandler())
-	req := httptest.NewRequest("GET", "/settings/public-url", nil)
+	req := httptest.NewRequest(http.MethodGet, "/settings/public-url", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w

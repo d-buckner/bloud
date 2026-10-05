@@ -111,7 +111,7 @@ func (c *Client) waitForwardAuthProviderReady(ctx context.Context, host, scheme 
 
 // createProxyProvider creates a new Authentik proxy provider in forward_single mode.
 func (c *Client) createProxyProvider(ctx context.Context, name, externalHost, authFlowID, invalidationFlowID string) (int, error) {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":               name,
 		"authorization_flow": authFlowID,
 		"invalidation_flow":  invalidationFlowID,
@@ -139,7 +139,7 @@ func (c *Client) ensureProxyApplication(ctx context.Context, slug, displayName s
 	}
 
 	// Create application
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":               displayName,
 		"slug":               slug,
 		"provider":           providerID,

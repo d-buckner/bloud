@@ -424,7 +424,7 @@ func (m *appsModule) GetCatalogHandler() http.HandlerFunc {
 			respondError(w, http.StatusInternalServerError, "failed to get apps")
 			return
 		}
-		respondJSON(w, http.StatusOK, map[string]interface{}{"apps": apps})
+		respondJSON(w, http.StatusOK, map[string]any{"apps": apps})
 	}
 }
 
@@ -436,7 +436,7 @@ func (m *appsModule) GetInstalledHandler() http.HandlerFunc {
 			respondError(w, http.StatusInternalServerError, "failed to get apps")
 			return
 		}
-		respondJSON(w, http.StatusOK, map[string]interface{}{"apps": installed})
+		respondJSON(w, http.StatusOK, map[string]any{"apps": installed})
 	}
 }
 

@@ -8,7 +8,7 @@
 // (verb + path + expected outcome), so the transport mechanics live in exactly
 // one place instead of being re-implemented per app.
 //
-// See docs/plans/app-client.md for the design rationale.
+// See docs/plans/archive/app-client.md for the design rationale.
 package appclient
 
 import (

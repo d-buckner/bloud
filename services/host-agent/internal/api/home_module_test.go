@@ -145,7 +145,7 @@ func TestHomeHTTP_GetLayout(t *testing.T) {
 	NewHomeRouter(mod, r)
 
 	// Add a fake user to context
-	req := httptest.NewRequest("GET", "/user/home", nil)
+	req := httptest.NewRequest(http.MethodGet, "/user/home", nil)
 	user := &store.User{Username: "alice", Role: store.RoleMember}
 	ctx := context.WithValue(req.Context(), userContextKey, user)
 	req = req.WithContext(ctx)
@@ -171,7 +171,7 @@ func TestHomeHTTP_SetLayout(t *testing.T) {
 	NewHomeRouter(mod, r)
 
 	body := `[]`
-	req := httptest.NewRequest("PUT", "/user/layout", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/user/layout", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -190,7 +190,7 @@ func TestHomeHTTP_SetLayout_InvalidBody(t *testing.T) {
 	NewHomeRouter(mod, r)
 
 	body := `not-json`
-	req := httptest.NewRequest("PUT", "/user/layout", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/user/layout", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

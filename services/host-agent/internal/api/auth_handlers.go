@@ -69,7 +69,7 @@ func (m *authModule) GetCurrentUserHandler() http.HandlerFunc {
 			return
 		}
 
-		respondJSON(w, http.StatusOK, map[string]interface{}{
+		respondJSON(w, http.StatusOK, map[string]any{
 			"id":       session.UserID,
 			"username": session.Username,
 			"role":     session.Role,

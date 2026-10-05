@@ -39,7 +39,7 @@ type routerOptions struct {
 	positionStore store.PositionStoreInterface
 	prefsStore    store.PreferencesStoreInterface
 	sessionStore  store.SessionStoreInterface
-	orch          interface{} // any orchestratorCaller implementation
+	orch          any // any orchestratorCaller implementation
 	authConfig    *AuthRef
 }
 
@@ -169,7 +169,7 @@ func NewRouter(
 	// ---- Wire middleware and routes ----
 
 	r := chi.NewRouter()
-	applyRouterMiddleware(r, deps.sessionStore, logger, cfg)
+	applyRouterMiddleware(r)
 
 	// Public routes
 	pub := r.With(mods.requestTimeout)
@@ -320,7 +320,7 @@ func catalogHeadlessSet(cache catalog.CacheInterface) func() map[string]bool {
 }
 
 // applyRouterMiddleware installs the shared middleware stack.
-func applyRouterMiddleware(r *chi.Mux, sessionStore store.SessionStoreInterface, logger *slog.Logger, cfg ServerConfig) {
+func applyRouterMiddleware(r *chi.Mux) {
 	r.Use(middleware.RequestID)
 	// NOTE: no middleware.RealIP. It rewrites r.RemoteAddr from client-supplied
 	// True-Client-IP / X-Real-IP / X-Forwarded-For, and RemoteAddr is the input
@@ -614,7 +614,7 @@ func adminMiddlewareFn(next http.Handler) http.Handler {
 
 // ---- HTTP response helpers ----
 
-func respondJSON(w http.ResponseWriter, status int, data interface{}) {
+func respondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)

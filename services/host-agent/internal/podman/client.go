@@ -503,8 +503,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 }
 
 // buildContainerSpec converts our simple config to Podman's container spec
-func buildContainerSpec(config ContainerConfig) map[string]interface{} {
-	spec := map[string]interface{}{
+func buildContainerSpec(config ContainerConfig) map[string]any {
+	spec := map[string]any{
 		"image": config.Image,
 		"name":  config.Name,
 	}
@@ -542,13 +542,13 @@ func buildContainerSpec(config ContainerConfig) map[string]interface{} {
 
 // addPortMappings writes the port map, leaving the host port and protocol off
 // when the caller left them unset so Podman chooses them.
-func addPortMappings(spec map[string]interface{}, config ContainerConfig) {
+func addPortMappings(spec map[string]any, config ContainerConfig) {
 	if len(config.Ports) == 0 {
 		return
 	}
-	var portMappings []map[string]interface{}
+	var portMappings []map[string]any
 	for _, p := range config.Ports {
-		pm := map[string]interface{}{
+		pm := map[string]any{
 			"container_port": p.ContainerPort,
 		}
 		if p.HostPort > 0 {
@@ -563,13 +563,13 @@ func addPortMappings(spec map[string]interface{}, config ContainerConfig) {
 }
 
 // addVolumeMounts writes the bind and volume mounts.
-func addVolumeMounts(spec map[string]interface{}, config ContainerConfig) {
+func addVolumeMounts(spec map[string]any, config ContainerConfig) {
 	if len(config.Volumes) == 0 {
 		return
 	}
-	var mounts []map[string]interface{}
+	var mounts []map[string]any
 	for _, v := range config.Volumes {
-		mount := map[string]interface{}{
+		mount := map[string]any{
 			"source":      v.Source,
 			"destination": v.Destination,
 			"type":        v.Type,
@@ -585,17 +585,17 @@ func addVolumeMounts(spec map[string]interface{}, config ContainerConfig) {
 // addNetworkNamespace resolves the network namespace mode: host for a lone
 // "host" network, an explicit bridge plus the named networks otherwise, and
 // nothing at all for an empty list, which leaves Podman's own default.
-func addNetworkNamespace(spec map[string]interface{}, config ContainerConfig) {
+func addNetworkNamespace(spec map[string]any, config ContainerConfig) {
 	switch {
 	case len(config.Networks) == 0:
 		// default networking
 	case len(config.Networks) == 1 && config.Networks[0] == "host":
-		spec["netns"] = map[string]interface{}{"nsmode": "host"}
+		spec["netns"] = map[string]any{"nsmode": "host"}
 	default:
-		spec["netns"] = map[string]interface{}{"nsmode": "bridge"}
-		networks := make(map[string]map[string]interface{}, len(config.Networks))
+		spec["netns"] = map[string]any{"nsmode": "bridge"}
+		networks := make(map[string]map[string]any, len(config.Networks))
 		for _, network := range config.Networks {
-			networks[network] = map[string]interface{}{}
+			networks[network] = map[string]any{}
 		}
 		spec["networks"] = networks
 	}

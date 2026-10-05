@@ -283,7 +283,7 @@ func (s *apiServer) mux() http.Handler {
 func (s *apiServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff == "" {
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"message":"API running."}`)
 		return
 	}
@@ -321,7 +321,7 @@ func (s *apiServer) handleOnboardingStatus(w http.ResponseWriter, r *http.Reques
 		// pending; onboarding must NOT be re-run.
 		userDone = "true"
 	}
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, `[{"step":"user","done":`+userDone+`},{"step":"core_config","done":false},{"step":"analytics","done":false},{"step":"integration","done":false}]`)
 }
 
@@ -339,7 +339,7 @@ func (s *apiServer) handleOnboardingStep(w http.ResponseWriter, r *http.Request)
 		_, _ = io.WriteString(w, `{"message":"step already done"}`)
 		return
 	}
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, `{}`)
 }
 
@@ -360,7 +360,7 @@ func (s *apiServer) handleOnboardingUsers(w http.ResponseWriter, r *http.Request
 		_, _ = io.WriteString(w, `{"message":"User step already done"}`)
 		return
 	}
-	w.WriteHeader(201)
+	w.WriteHeader(http.StatusCreated)
 	_, _ = io.WriteString(w, `{"auth_code":"code123"}`)
 }
 
@@ -381,7 +381,7 @@ func (s *apiServer) handleToken(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"error":"invalid_request"}`)
 		return
 	}
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, `{"access_token":"tok","token_type":"Bearer","refresh_token":"rtok","expires_in":1800}`)
 }
 
@@ -551,7 +551,7 @@ func readStoredJSON(t *testing.T, path string) map[string]any {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(b, &m))
 	return m
 }
@@ -560,9 +560,9 @@ func readStoredJSON(t *testing.T, path string) map[string]any {
 // the config document's "data" object.
 func configBlock(t *testing.T, doc map[string]any, key string) map[string]any {
 	t.Helper()
-	d, ok := doc["data"].(map[string]interface{})
+	d, ok := doc["data"].(map[string]any)
 	require.True(t, ok, "config file has no data section")
-	v, ok := d[key].(map[string]interface{})
+	v, ok := d[key].(map[string]any)
 	require.True(t, ok, "missing %v section", key)
 	return v
 }
@@ -611,7 +611,7 @@ func TestPreStartPatchesStoredConfig(t *testing.T) {
 	doc := readStoredJSON(t, path)
 	hcfg := configBlock(t, doc, "stable")
 	assert.Equal(t, true, hcfg["use_x_forwarded_for"])
-	assert.Equal(t, []interface{}{"10.0.0.0/8"}, hcfg["trusted_proxies"])
+	assert.Equal(t, []any{"10.0.0.0/8"}, hcfg["trusted_proxies"])
 	assert.Equal(t, "keep", hcfg["custom_key"])
 	assert.Equal(t, float64(8123), hcfg["server_port"])
 
@@ -660,7 +660,7 @@ func TestPostStartAppliesConfigAndRestarts(t *testing.T) {
 	doc := readStoredJSON(t, storedPath)
 	h := configBlock(t, doc, "stable")
 	assert.Equal(t, true, h["use_x_forwarded_for"])
-	assert.Equal(t, []interface{}{"10.0.0.0/8"}, h["trusted_proxies"])
+	assert.Equal(t, []any{"10.0.0.0/8"}, h["trusted_proxies"])
 
 	// and the container was restarted through the runtime (by its own name)
 	fakeSrv.mu.Lock()
@@ -846,7 +846,7 @@ func TestPreStartForcesRecreateWhenRunningProcessStale(t *testing.T) {
 // containers during recovery.
 func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 	}))
 	url := srv.URL
 	srv.Close() // closed port → connection refused
@@ -868,7 +868,7 @@ func TestPreStartDoesNotForceWhenProcessUnreachable(t *testing.T) {
 // waits above depend on.)
 func TestProbeProxyTrustStates(t *testing.T) {
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer live.Close()
 	c := NewConfigurator(0, configurator.Deps{Secrets: &fakeSecrets{}})
@@ -880,7 +880,7 @@ func TestProbeProxyTrustStates(t *testing.T) {
 	assert.NoError(t, perr)
 
 	stale := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(400)
+		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer stale.Close()
 	c.baseURLOverride = stale.URL

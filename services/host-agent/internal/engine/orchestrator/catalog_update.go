@@ -93,10 +93,8 @@ func (o *Orchestrator) pruneContainer(ctx context.Context, appID, name string) {
 	o.logger.Info("catalog update: pruning removed container", "app", appID, "container", name)
 
 	if r, ok := o.registry.Get(name).(configurator.Remover); ok {
-		state, err := o.buildAppState(appID)
-		if err != nil {
-			o.logger.Warn("catalog update: failed to build state for removal", "container", name, "error", err)
-		} else if err := r.Remove(ctx, state, false); err != nil {
+		state := o.buildAppState(appID)
+		if err := r.Remove(ctx, state, false); err != nil {
 			o.logger.Warn("catalog update: configurator remove failed", "container", name, "error", err)
 		}
 	}

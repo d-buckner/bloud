@@ -264,8 +264,7 @@ func TestBuildAppState_CarriesIntegrationBindings(t *testing.T) {
 	)
 	secrets.publish("radarr", "apiKey", "radarr-key")
 
-	state, err := orch.buildAppState("seerr")
-	require.NoError(t, err)
+	state := orch.buildAppState("seerr")
 	require.Len(t, state.Integrations.PVRs, 1)
 	assert.Equal(t, "radarr-key", state.Integrations.PVRs[0].APIKey)
 }

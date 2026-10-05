@@ -556,7 +556,7 @@ func TestConfigurator_SetPluginConfiguration(t *testing.T) {
 	var receivedConfig LDAPConfig
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
+		if r.Method != http.MethodPost {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
 
@@ -622,7 +622,7 @@ func TestConfigurator_DeleteUser(t *testing.T) {
 	deletedUserID := ""
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "DELETE" {
+		if r.Method != http.MethodDelete {
 			t.Errorf("Expected DELETE, got %s", r.Method)
 		}
 
@@ -652,14 +652,14 @@ func TestConfigurator_DeleteBootstrapAdmin(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/Users" && r.Method == "GET":
+		case r.URL.Path == "/Users" && r.Method == http.MethodGet:
 			users := []User{
 				{ID: "keep-me", Name: "admin"},
 				{ID: "delete-me", Name: bootstrapUsername},
 			}
 			_ = json.NewEncoder(w).Encode(users)
 
-		case strings.HasPrefix(r.URL.Path, "/Users/") && r.Method == "DELETE":
+		case strings.HasPrefix(r.URL.Path, "/Users/") && r.Method == http.MethodDelete:
 			userID := strings.TrimPrefix(r.URL.Path, "/Users/")
 			if userID != "delete-me" {
 				t.Errorf("Expected to delete 'delete-me', got '%s'", userID)
@@ -936,7 +936,7 @@ func TestConfigurator_ConfigureLDAP_AlreadyConfigured(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(resp)
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
-			if r.Method == "GET" {
+			if r.Method == http.MethodGet {
 				_ = json.NewEncoder(w).Encode(desiredLDAPConfig(ldap))
 			} else {
 				// POST should not be called
@@ -1013,10 +1013,10 @@ func TestConfigurator_ConfigureLDAP_FullFlow(t *testing.T) {
 
 		case "/Plugins/" + ldapPluginID + "/Configuration":
 			switch r.Method {
-			case "GET":
+			case http.MethodGet:
 				// Return unconfigured LDAP
 				_ = json.NewEncoder(w).Encode(LDAPConfig{})
-			case "POST":
+			case http.MethodPost:
 				_ = json.NewDecoder(r.Body).Decode(&receivedConfig)
 				w.WriteHeader(http.StatusNoContent)
 			}

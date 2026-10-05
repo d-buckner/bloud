@@ -180,7 +180,7 @@ func (b *QEMUBackend) ensureSeed(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read public key: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(b.dir, "user-data"), []byte(buildUserData(b.instance, b.projectDir, strings.TrimSpace(string(pub)), os.Geteuid())), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(b.dir, "user-data"), []byte(buildUserData(b.projectDir, strings.TrimSpace(string(pub)), os.Geteuid())), 0o644); err != nil {
 		return fmt.Errorf("write user-data: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(b.dir, "meta-data"), []byte("instance-id: "+b.instance+"\nlocal-hostname: "+b.instance+"\n"), 0o644); err != nil {
@@ -424,7 +424,7 @@ func (b *QEMUBackend) sshTarget() string { return qemuSSHUser + "@127.0.0.1" }
 // host-agent's podman client needs /run/user/1000/podman/podman.sock), and a
 // ready marker. The project is copied in later via rsync (syncProject), not a
 // live mount.
-func buildUserData(instance, projectDir, pubKey string, hostUID int) string {
+func buildUserData(projectDir, pubKey string, hostUID int) string {
 	return fmt.Sprintf(`#cloud-config
 disable_root: true
 ssh_pwauth: false

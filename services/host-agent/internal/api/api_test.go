@@ -625,16 +625,16 @@ func TestAPI_ListApps(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string]interface{}
+	var response map[string]any
 	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
 
-	apps, ok := response["apps"].([]interface{})
+	apps, ok := response["apps"].([]any)
 	require.True(t, ok, "response should contain apps array")
 	require.Len(t, apps, 1, "should have exactly 1 app")
 
 	// Check first app
-	app := apps[0].(map[string]interface{})
+	app := apps[0].(map[string]any)
 	assert.Equal(t, "test-app", app["catalogId"])
 	assert.Equal(t, "Test App", app["displayName"])
 }
@@ -645,11 +645,11 @@ func TestAPI_ListInstalledApps_Empty(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string]interface{}
+	var response map[string]any
 	err := json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
 
-	apps, ok := response["apps"].([]interface{})
+	apps, ok := response["apps"].([]any)
 	require.True(t, ok, "response should contain apps array")
 	assert.Empty(t, apps, "should have 0 installed apps")
 }
@@ -660,7 +660,7 @@ func TestAPI_SystemStatus(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var stats map[string]interface{}
+	var stats map[string]any
 	err := json.NewDecoder(w.Body).Decode(&stats)
 	require.NoError(t, err)
 
@@ -676,7 +676,7 @@ func TestAPI_Storage(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var storage map[string]interface{}
+	var storage map[string]any
 	err := json.NewDecoder(w.Body).Decode(&storage)
 	require.NoError(t, err)
 
@@ -741,11 +741,11 @@ tags:
 	// Verify new app is in catalog
 	w = serverRequest(t, server, "GET", "/api/apps", nil)
 
-	var response map[string]interface{}
+	var response map[string]any
 	err = json.NewDecoder(w.Body).Decode(&response)
 	require.NoError(t, err)
 
-	apps, ok := response["apps"].([]interface{})
+	apps, ok := response["apps"].([]any)
 	require.True(t, ok, "response should contain apps array")
 	assert.Len(t, apps, 2, "should have 2 apps after refresh")
 }
@@ -756,7 +756,7 @@ func TestAPI_AppMetadata(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var app map[string]interface{}
+	var app map[string]any
 	err := json.NewDecoder(w.Body).Decode(&app)
 	require.NoError(t, err)
 
@@ -886,7 +886,7 @@ func TestAPI_Callback_NoAuthConfig(t *testing.T) {
 func TestAPI_Logout_ClearsCookie(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	req := httptest.NewRequest("POST", "/auth/logout", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	req.Host = "localhost:8080"
 	// No session cookie: handler just redirects to /
 	w := httptest.NewRecorder()
@@ -901,13 +901,13 @@ func TestAPI_Logout_ClearsCookie(t *testing.T) {
 
 func TestGetUserFromContext(t *testing.T) {
 	t.Run("no user in context", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		user := getUserFromContext(req.Context())
 		assert.Nil(t, user)
 	})
 
 	t.Run("user in context", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		expectedUser := &store.User{
 			Username: "testuser",
 		}
@@ -942,13 +942,13 @@ func TestHandleListInstalledApps_IncludesSSOLaunchPath(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var response map[string]interface{}
+	var response map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 
-	apps, ok := response["apps"].([]interface{})
+	apps, ok := response["apps"].([]any)
 	require.True(t, ok)
 	require.Len(t, apps, 1)
-	app := apps[0].(map[string]interface{})
+	app := apps[0].(map[string]any)
 	assert.Equal(t, "oauth2/oidc/redirect", app["sso_launch_path"])
 }
 

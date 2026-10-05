@@ -19,7 +19,7 @@ type InstalledApp struct {
 	Status      AppStatus `json:"status"`
 	LastError   string    `json:"last_error,omitempty"`
 	// Operation is the current-or-last lifecycle drive for this app
-	// (docs/plans/operation-state-design.md). Read-side join; writes
+	// (docs/plans/archive/operation-state-design.md). Read-side join; writes
 	// belong to the orchestrator's operation recorder only.
 	Operation         *Operation        `json:"operation,omitempty"`
 	Port              int               `json:"port,omitempty"`

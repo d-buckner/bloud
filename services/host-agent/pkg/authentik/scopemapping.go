@@ -121,7 +121,7 @@ func (c *Client) ensureBloudEmailScopeMapping(ctx context.Context) (string, erro
 		}
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":       bloudEmailScopeMappingName,
 		"scope_name": "email",
 		"expression": bloudEmailScopeMappingExpression,
@@ -212,7 +212,7 @@ func (c *Client) ensureProviderEmailScopeMapping(ctx context.Context, providerID
 		}
 	}
 
-	if err := c.cl.PATCH(reqPath).JSON(map[string]interface{}{"property_mappings": mappings}).OK(http.StatusOK).Exec(ctx); err != nil {
+	if err := c.cl.PATCH(reqPath).JSON(map[string]any{"property_mappings": mappings}).OK(http.StatusOK).Exec(ctx); err != nil {
 		return fmt.Errorf("patching provider property mappings: %w", err)
 	}
 	return nil
