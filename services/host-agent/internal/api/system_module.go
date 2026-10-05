@@ -270,15 +270,16 @@ type integrationTarget struct {
 // buildGraphEdges derives the integration edges for a single app, keeping only
 // those whose provider is actually a node in the payload.
 //
-// The catalog declaration drives it. The choice recorded in IntegrationConfig
-// is authoritative when present, because that is the provider the orchestrator
-// actually wired. With no recorded choice the rule mirrors the orchestrator's
-// resolveProviders, which binds every compatible provider of an optional
-// contract rather than only its declared default. That is why the instance's
-// own AI provider reaches the graph without a `default: true` anywhere: an app
-// that declares `source: instance` declares a wiring that exists the moment
-// the setting is populated, and a display keyed on the default flag would hide
-// it.
+// The catalog declaration drives it, through the same rule the orchestrator
+// uses to bind providers (see integrationTargets). The choice recorded in
+// IntegrationConfig is authoritative only for a *required* contract, which
+// binds exactly the one provider that was chosen; an optional contract keeps
+// its recorded choice and gains every compatible provider that appears later.
+// With nothing recorded the declared compatible list is drawn, which is why the
+// instance's own AI provider reaches the graph without a `default: true`
+// anywhere: an app that declares `source: instance` declares a wiring that
+// exists the moment the setting is populated, and a display keyed on the
+// default flag would hide it.
 //
 // Every candidate then passes through `present`, so an edge only ever names a
 // node the browser was also given.
@@ -305,6 +306,28 @@ func (m *systemModule) buildGraphEdges(app *store.InstalledApp, present map[stri
 
 // integrationTargets lists the provider nodes each of the app's declared
 // integrations resolves to, deduplicated, in a deterministic order.
+//
+// The rule is the orchestrator's, read from catalog.BoundProviders rather
+// than restated here: the recorded choice plus, for an *optional* contract,
+// every compatible provider the metadata declares. A required contract binds
+// only the one provider that was chosen. The display has to read the same
+// rule or it draws a picture of wiring that is not there:
+//
+//   - Treating the recorded choice as authoritative for every contract hides
+//     a provider installed after the choice was made. Hermes recorded
+//     `mcp: affine-mcp` when that was the only MCP provider in the catalog;
+//     installing `caldav-mcp` later wired it into the agent, and the graph
+//     kept drawing one edge. That was issue #233.
+//   - Dropping the recorded choice for a `multi` contract instead of adding
+//     to it would show a provider the consumer does not use when the operator
+//     picked one of several.
+//
+// The one place the display is deliberately wider than the resolver is a
+// *required* contract with nothing recorded: the resolver binds nothing there,
+// because no choice was ever made, while the display draws the declared
+// provider, which is what the install plan installs for a required contract
+// and what the graph edge therefore orders. Showing "no wiring" for an app
+// that cannot install without its provider would be the worse lie.
 //
 // An app the catalog does not describe falls back to what its install recorded,
 // which is all the display has for it.
@@ -335,12 +358,23 @@ func (m *systemModule) integrationTargets(app *store.InstalledApp) []integration
 	sort.Strings(labels)
 
 	for _, label := range labels {
-		if chosen, recorded := app.IntegrationConfig[label]; recorded {
-			add(label, chosen)
+		bound := catalog.BoundProviders(def.Integrations[label], app.IntegrationConfig[label])
+		if len(bound) == 0 {
+			// A required contract with nothing recorded. The resolver binds
+			// nothing there, but the install plan cannot have installed this
+			// app without its provider, so the declaration is what the graph
+			// edge really represents.
+			for _, compat := range def.Integrations[label].Compatible {
+				add(label, providerNodeID(compat))
+			}
 			continue
 		}
-		for _, compat := range def.Integrations[label].Compatible {
-			add(label, providerNodeID(compat))
+		for _, provider := range bound {
+			node := provider.App
+			if provider.Source != "" {
+				node = AINodeID
+			}
+			add(label, node)
 		}
 	}
 	return targets
