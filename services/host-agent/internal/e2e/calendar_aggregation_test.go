@@ -43,7 +43,12 @@ func TestCalendarAggregation(t *testing.T) {
 
 	for _, app := range []string{"sonarr", "radarr"} {
 		postJSON(t, hostAgentURL+"/api/apps/"+app+"/install", `{}`, http.StatusAccepted)
-		waitAppRunning(t, app, 6*time.Minute)
+		// Twelve minutes, not the six a warm cache needs. The linuxserver
+		// images are a few hundred MB and a cold pull on a shared runner took
+		// over five on its own, which put a six-minute budget inside the
+		// pull's own shadow: the test would fail for the runner's network
+		// rather than for anything Bloud did.
+		waitAppRunning(t, app, 12*time.Minute)
 	}
 
 	t.Cleanup(func() {

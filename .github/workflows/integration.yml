@@ -62,13 +62,15 @@ jobs:
             test-run: 'TestAffine'
           - group: paperless
             test-run: 'TestPaperlessNgx'
-          # The aggregation test is here rather than in its own leg because it
-          # is the calendar half of the same story: it installs Radicale and
-          # asserts what lands in it and who can see it. It was silently
-          # outside every regex before, which is how a test ends up not
-          # protecting anything.
           - group: radicale
-            test-run: 'TestRadicale|TestCalendarAggregation'
+            test-run: 'TestRadicale'
+          # The aggregation test gets its own runtime rather than sharing the
+          # radicale leg. It installs and uninstalls three apps around a
+          # container that the radicale unit tests also drive, and that churn
+          # showed up as a connection reset mid-test: the app row says running
+          # while a config-change restart is still cycling the container.
+          - group: calendar-aggregation
+            test-run: 'TestCalendarAggregation'
           - group: vaultwarden
             test-run: 'TestVaultwarden'
           - group: media-stack
