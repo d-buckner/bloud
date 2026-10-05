@@ -356,6 +356,36 @@ func syncPlugin(dataPath string) (bool, error) {
 	return changed, nil
 }
 
+// resyncGeneratedConfig re-renders the feed sync jobs and the sharing database
+// against the live bindings and restarts the container when either changed. The
+// jobs depend on which feed providers are installed, and the shares depend on
+// the operator and the feeds; both are read at process start, so a change needs
+// a restart. Returns true when the container was restarted, in which case the
+// caller should skip probing it this pass.
+func (c *Configurator) resyncGeneratedConfig(ctx context.Context, state *configurator.AppState) (bool, error) {
+	if state == nil || state.DataPath == "" {
+		return false, nil
+	}
+	configDir := filepath.Join(state.DataPath, "config")
+	icsChanged, err := c.syncICSFeeds(filepath.Join(configDir, icsSyncFileName), state)
+	if err != nil {
+		return false, fmt.Errorf("write %s: %w", icsSyncFileName, err)
+	}
+	sharesChanged, err := c.syncShares(state.DataPath, state)
+	if err != nil {
+		return false, fmt.Errorf("write %s: %w", sharesFileName, err)
+	}
+	if !icsChanged && !sharesChanged {
+		return false, nil
+	}
+	c.logger.Info("generated config changed; restarting Radicale to apply",
+		"feedsChanged", icsChanged, "sharesChanged", sharesChanged)
+	if err := c.restartContainer(ctx); err != nil {
+		return false, fmt.Errorf("config rewritten but the container could not be restarted: %w", err)
+	}
+	return true, nil
+}
+
 // PostStart does two jobs. First it re-renders the feed sync jobs against the
 // live bindings and restarts the container when they changed: the jobs depend
 // on which feed providers (Radarr, Sonarr) are installed, the vendored plugin
@@ -366,32 +396,14 @@ func syncPlugin(dataPath string) (bool, error) {
 // assertion about the process, not a re-read of the file that was written, so
 // it catches a container that came up on a stale or ignored config.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
-	if state != nil && state.DataPath != "" {
-		configDir := filepath.Join(state.DataPath, "config")
-		changed := false
-
-		icsChanged, err := c.syncICSFeeds(filepath.Join(configDir, icsSyncFileName), state)
-		if err != nil {
-			return fmt.Errorf("write %s: %w", icsSyncFileName, err)
-		}
-		changed = changed || icsChanged
-
-		sharesChanged, err := c.syncShares(state.DataPath, state)
-		if err != nil {
-			return fmt.Errorf("write %s: %w", sharesFileName, err)
-		}
-		changed = changed || sharesChanged
-
-		if changed {
-			c.logger.Info("generated config changed; restarting Radicale to apply",
-				"feedsChanged", icsChanged, "sharesChanged", sharesChanged)
-			if err := c.restartContainer(ctx); err != nil {
-				return fmt.Errorf("config rewritten but the container could not be restarted: %w", err)
-			}
-			// The server is restarting; probing it now would race. The next
-			// reconciliation pass re-probes once it is serving again.
-			return nil
-		}
+	restarted, err := c.resyncGeneratedConfig(ctx, state)
+	if err != nil {
+		return err
+	}
+	if restarted {
+		// The server is restarting; probing it now would race. The next
+		// reconciliation pass re-probes once it is serving again.
+		return nil
 	}
 
 	status, err := c.api.probeUnauthenticated(ctx)
@@ -548,13 +560,7 @@ func renderConfig(port int, ldap *configurator.LDAPOutput) string {
 	b.WriteString("[rights]\n")
 	b.WriteString("type = owner_only\n\n")
 
-	b.WriteString("[sharing]\n")
-	b.WriteString("# The csv backend with map shares: Bloud writes sharing.csv as the single\n")
-	b.WriteString("# writer, and Radicale mounts each shared collection as a virtual\n")
-	b.WriteString("# collection in the recipient's own tree, so discovery lists it.\n")
-	b.WriteString("type = csv\n")
-	b.WriteString("collection_by_map = true\n")
-	b.WriteString("permit_create_map = true\n\n")
+	writeSharingConfig(&b)
 
 	b.WriteString("[web]\n")
 	b.WriteString("# The built-in web UI: create and manage calendars and address books\n")
@@ -567,6 +573,20 @@ func renderConfig(port int, ldap *configurator.LDAPOutput) string {
 	b.WriteString("[logging]\n")
 	b.WriteString("level = info\n")
 	return b.String()
+}
+
+// writeSharingConfig writes the [sharing] section that enables Radicale's
+// native map shares. The configurator is the single writer of sharing.csv;
+// Radicale reads it at startup and never writes it back unless its own sharing
+// API is used, which Bloud does not call.
+func writeSharingConfig(b *strings.Builder) {
+	b.WriteString("[sharing]\n")
+	b.WriteString("# The csv backend with map shares: Bloud writes sharing.csv as the single\n")
+	b.WriteString("# writer, and Radicale mounts each shared collection as a virtual\n")
+	b.WriteString("# collection in the recipient's own tree, so discovery lists it.\n")
+	b.WriteString("type = csv\n")
+	b.WriteString("collection_by_map = true\n")
+	b.WriteString("permit_create_map = true\n\n")
 }
 
 // writeCORSHeaders writes the [headers] section that lets a browser-based DAV

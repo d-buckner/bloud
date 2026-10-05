@@ -173,28 +173,14 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 		return fmt.Errorf("ensure LDAP infrastructure: %w", err)
 	}
 
-	// Step 5b: Create the CalDAV service account and publish its credential
-	// for the caldav-mcp wrapper. The account is a plain directory user, so
-	// Radicale authenticates it over LDAP and its rights rule (rendered by the
-	// Radicale configurator) is what bounds what it can read. The credential is
-	// stored under the radicale app scope because that is the app whose `appApi`
-	// offer the caldav-mcp consumer reads it from.
-	if err := client.EnsureCalDAVServiceAccount(ctx, c.params.CalDAVServicePassword); err != nil {
-		return fmt.Errorf("ensure CalDAV service account: %w", err)
-	}
-	if c.deps.Secrets != nil {
-		if err := c.deps.Secrets.SetAppSecret("radicale", "password", c.params.CalDAVServicePassword); err != nil {
-			return fmt.Errorf("publish CalDAV service password: %w", err)
-		}
+	// Step 5b: Create the CalDAV service account and publish its credential.
+	if err := c.ensureCalDAVServiceAccount(ctx, client); err != nil {
+		return err
 	}
 
 	// Step 6: Set embedded outpost host.
-	if c.deps.PrimaryBaseURL != nil {
-		if baseURL := c.deps.PrimaryBaseURL(); baseURL != "" {
-			if err := client.EnsureEmbeddedOutpostHost(ctx, baseURL); err != nil {
-				return fmt.Errorf("set embedded outpost host: %w", err)
-			}
-		}
+	if err := c.ensureEmbeddedOutpostHost(ctx, client); err != nil {
+		return err
 	}
 
 	// Step 7: Get the LDAP outpost token and record it in the template-variable
@@ -228,6 +214,39 @@ func (c *ServerConfigurator) runDjangoShell(ctx context.Context, env map[string]
 	}
 	if !strings.Contains(strings.TrimSpace(string(out)), "OK") {
 		return fmt.Errorf("django shell failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// ensureEmbeddedOutpostHost points the embedded outpost at the instance's
+// public base URL. It is a no-op when no base URL is available.
+func (c *ServerConfigurator) ensureEmbeddedOutpostHost(ctx context.Context, client *authentikClient.Client) error {
+	if c.deps.PrimaryBaseURL == nil {
+		return nil
+	}
+	baseURL := c.deps.PrimaryBaseURL()
+	if baseURL == "" {
+		return nil
+	}
+	if err := client.EnsureEmbeddedOutpostHost(ctx, baseURL); err != nil {
+		return fmt.Errorf("set embedded outpost host: %w", err)
+	}
+	return nil
+}
+
+// ensureCalDAVServiceAccount provisions the caldav-service account and publishes
+// its password under the radicale app scope, where the caldav-mcp consumer reads
+// it through the appApi offer. The account is a plain directory user, so
+// Radicale authenticates it over LDAP like any other account; the map share the
+// Radicale configurator writes is what bounds what it can read.
+func (c *ServerConfigurator) ensureCalDAVServiceAccount(ctx context.Context, client *authentikClient.Client) error {
+	if err := client.EnsureCalDAVServiceAccount(ctx, c.params.CalDAVServicePassword); err != nil {
+		return fmt.Errorf("ensure CalDAV service account: %w", err)
+	}
+	if c.deps.Secrets != nil {
+		if err := c.deps.Secrets.SetAppSecret("radicale", "password", c.params.CalDAVServicePassword); err != nil {
+			return fmt.Errorf("publish CalDAV service password: %w", err)
+		}
 	}
 	return nil
 }
