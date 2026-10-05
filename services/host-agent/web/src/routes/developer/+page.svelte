@@ -39,7 +39,7 @@
 		inflight = true;
 		try {
 			const graph = await fetchDeveloperGraph();
-			const layout = layoutGraph(graph, window.location.hostname);
+			const layout = layoutGraph(graph);
 			nodes = layout.nodes;
 			edges = layout.edges;
 			graphKey = nodes.map((n) => `${n.id}:${n.data?.status ?? ''}`).join(',');

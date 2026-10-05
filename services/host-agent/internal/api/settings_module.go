@@ -27,10 +27,9 @@ type AuthentikUserManagerInterface interface {
 	FindUserID(ctx context.Context, username string) (int, error)
 }
 
-// SettingsModule encapsulates all settings operations: tailnet management,
-// host (domain) configuration, initial setup wizard, and user administration.
+// SettingsModule encapsulates all settings operations: host (domain)
+// configuration, the initial setup wizard, and user administration.
 type settingsModule struct {
-	tailnetStore    store.TailnetStoreInterface
 	prefsStore      store.PreferencesStoreInterface
 	sessionStore    store.SessionStoreInterface
 	authentikClient AuthentikUserManagerInterface
@@ -46,7 +45,6 @@ type settingsModule struct {
 }
 
 func NewSettingsModule(
-	tailnetStore store.TailnetStoreInterface,
 	prefsStore store.PreferencesStoreInterface,
 	sessionStore store.SessionStoreInterface,
 	authClient AuthentikUserManagerInterface,
@@ -58,7 +56,6 @@ func NewSettingsModule(
 	logger *slog.Logger,
 ) *settingsModule {
 	return &settingsModule{
-		tailnetStore:    tailnetStore,
 		prefsStore:      prefsStore,
 		sessionStore:    sessionStore,
 		authentikClient: authClient,
@@ -71,7 +68,7 @@ func NewSettingsModule(
 	}
 }
 
-// ---- Tailnet ----
+// ---- Setup ----
 
 // SetupStatusHandler returns whether initial setup is required.
 func (m *settingsModule) SetupStatusHandler() http.HandlerFunc {
@@ -130,10 +127,6 @@ func NewSetupRouter(mod *settingsModule, r chi.Router) {
 func NewSettingsRouter(mod *settingsModule, r chi.Router) {
 	r.Get("/settings/public-url", mod.GetPublicURLHandler())
 	r.Put("/settings/public-url", mod.SetPublicURLHandler())
-
-	r.Get("/settings/tailnet", mod.GetTailnetHandler())
-	r.Post("/settings/tailnet", mod.SetTailnetHandler())
-	r.Delete("/settings/tailnet", mod.DeleteTailnetHandler())
 
 	r.Get("/admin/users", mod.ListUsersHandler())
 	r.Post("/admin/users", mod.CreateManagedUserHandler())

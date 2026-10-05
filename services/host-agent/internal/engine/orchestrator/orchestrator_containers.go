@@ -14,11 +14,8 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/dirs"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/graph"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/slug"
 )
 
 // SyncContainerState aligns DB state and the lifecycle graph with actual
@@ -174,58 +171,17 @@ func (o *Orchestrator) repairDriftedNode(nodeID string, state containerruntime.S
 	return true
 }
 
-// tailnetActive reports whether a tailnet is currently connected.
-func (o *Orchestrator) tailnetActive() bool {
-	return o.activeTailnetID != nil && o.activeTailnetID() != ""
-}
-
-// SyncRoutes is the full route-sync entry point. The runtime steps the
-// route config depends on run first, as explicit named steps: bring up
-// the gateway (best-effort), reconcile the remote-app reverse proxies,
-// and discover the tailnet domain. Only then is the pure config write
-// performed. Callers use this; RegenerateRoutes itself never touches
-// the runtime.
+// SyncRoutes writes the Traefik dynamic config for the installed set. It
+// is the convergence-facing entry point for route generation, and it is
+// pure with respect to the runtime: it starts nothing and mutates no
+// containers. That purity is the contract the tech-debt ledger holds this
+// step to (docs/operations/tech-debt.md, "route-generation side
+// effects"): route config is a function of the installed set and the
+// catalog, so a pass with nothing to change writes nothing and a crash
+// mid-pass leaves no half-applied runtime state behind.
+//
+// No-op when traefikGen is not configured.
 func (o *Orchestrator) SyncRoutes() error {
-	o.ensureGateway()
-	remoteRoutes := o.reconcileRemoteProxies()
-	tailnetDomain := o.resolveTailnetDomain()
-	return o.RegenerateRoutes(remoteRoutes, tailnetDomain)
-}
-
-// ensureGateway brings up the tailnet gateway when a tailnet is active.
-// The gateway provides the SOCKS5 proxy that lets remote apps (shared
-// from other hosts) be proxied through Traefik to the LAN. Best-effort:
-// an unavailable gateway is logged, not fatal: routes for local apps
-// are still written.
-func (o *Orchestrator) ensureGateway() {
-	if o.gateway == nil || !o.tailnetActive() {
-		return
-	}
-	if err := o.gateway.EnsureRunning(context.Background()); err != nil {
-		o.logger.Warn("gateway not available", "error", err)
-	}
-}
-
-// resolveTailnetDomain discovers the tailnet MagicDNS domain used for
-// tailnet-specific routes (forward-auth via the standalone proxy
-// outpost). Only meaningful while the gateway runs; returns "" otherwise.
-func (o *Orchestrator) resolveTailnetDomain() string {
-	if o.gateway == nil || !o.tailnetActive() {
-		return ""
-	}
-	domain, err := o.gateway.GetTailnetDomain(context.Background())
-	if err != nil {
-		return ""
-	}
-	return domain
-}
-
-// RegenerateRoutes writes the Traefik dynamic config for all installed
-// apps. Pure with respect to the runtime: it starts nothing and mutates
-// no proxies. Everything runtime-shaped that the config depends on
-// (remote proxy port assignments, the tailnet domain) is passed in by
-// the caller (see SyncRoutes). No-op when traefikGen is not configured.
-func (o *Orchestrator) RegenerateRoutes(remoteRoutes []traefikgen.RemoteAppRoute, tailnetDomain string) error {
 	if o.traefikGen == nil {
 		return nil
 	}
@@ -244,49 +200,7 @@ func (o *Orchestrator) RegenerateRoutes(remoteRoutes []traefikgen.RemoteAppRoute
 		authentikEnabled = authentikEnabled || name == "authentik"
 	}
 	o.traefikGen.SetAuthentikEnabled(authentikEnabled)
-	return o.traefikGen.GenerateAll(apps, remoteRoutes, tailnetDomain)
-}
-
-// reconcileRemoteProxies reconciles the reverse proxies for remote
-// (shared) apps (a runtime mutation) and translates the resulting
-// port assignments into Traefik routes. Returns nil when no remote app
-// store is configured.
-func (o *Orchestrator) reconcileRemoteProxies() []traefikgen.RemoteAppRoute {
-	if o.remoteAppStore == nil {
-		return nil
-	}
-	remoteApps, err := o.remoteAppStore.List()
-	if err != nil {
-		o.logger.Warn("failed to list remote apps for route generation", "error", err)
-		return nil
-	}
-
-	// Build proxy targets for reconciliation.
-	var targets []sharing.ProxyTarget
-	for _, ra := range remoteApps {
-		targets = append(targets, sharing.ProxyTarget{
-			ID:         ra.AppID + "-" + slug.Slugify(ra.HostLabel),
-			TailnetURL: "https://" + ra.TailnetAddr,
-		})
-	}
-
-	if o.remoteProxy == nil {
-		return nil
-	}
-
-	// Reconcile reverse proxies: returns port assignments. With no
-	// targets this stops all proxies.
-	portMap := o.remoteProxy.Reconcile(targets)
-	var remoteRoutes []traefikgen.RemoteAppRoute
-	for _, t := range targets {
-		if port, ok := portMap[t.ID]; ok {
-			remoteRoutes = append(remoteRoutes, traefikgen.RemoteAppRoute{
-				ID:       t.ID,
-				ProxyURL: fmt.Sprintf("http://localhost:%d", port),
-			})
-		}
-	}
-	return remoteRoutes
+	return o.traefikGen.Generate(apps)
 }
 
 // ContainerSpecFromDef builds a container spec from a ContainerDef.

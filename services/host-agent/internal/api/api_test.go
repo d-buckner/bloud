@@ -119,15 +119,6 @@ func (f *FakeAppStore) EnsureSystemApp(catalogID, displayName string, port int) 
 	return nil
 }
 
-func (f *FakeAppStore) SetTailnetID(name, tailnetID string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if app, ok := f.apps[name]; ok {
-		app.TailnetID = tailnetID
-	}
-	return nil
-}
-
 func (f *FakeAppStore) UpdateIntegrationConfig(name string, config map[string]string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -218,75 +209,6 @@ func (f *FakeAppStore) getAll() ([]*appEntry, error) {
 		})
 	}
 	return entries, nil
-}
-
-// FakeRemoteAppStore implements store.RemoteAppStoreInterface for testing
-type FakeRemoteAppStore struct {
-	mu   sync.RWMutex
-	apps map[string]*store.RemoteApp
-}
-
-func NewFakeRemoteAppStore() *FakeRemoteAppStore {
-	return &FakeRemoteAppStore{
-		apps: make(map[string]*store.RemoteApp),
-	}
-}
-
-func (f *FakeRemoteAppStore) Create(app store.RemoteApp) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.apps[app.ID] = &app
-	return nil
-}
-
-func (f *FakeRemoteAppStore) GetByID(id string) (*store.RemoteApp, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	if app, ok := f.apps[id]; ok {
-		return app, nil
-	}
-	return nil, nil
-}
-
-func (f *FakeRemoteAppStore) List() ([]*store.RemoteApp, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	var apps []*store.RemoteApp
-	for _, app := range f.apps {
-		apps = append(apps, app)
-	}
-	return apps, nil
-}
-
-func (f *FakeRemoteAppStore) SetCredential(id string, encryptedCred []byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if app, ok := f.apps[id]; ok {
-		app.EncryptedCred = encryptedCred
-		app.Status = "active"
-		return nil
-	}
-	return fmt.Errorf("remote app not found: %s", id)
-}
-
-func (f *FakeRemoteAppStore) SetStatus(id, status string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if app, ok := f.apps[id]; ok {
-		app.Status = status
-		return nil
-	}
-	return fmt.Errorf("remote app not found: %s", id)
-}
-
-func (f *FakeRemoteAppStore) Delete(id string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.apps[id]; !ok {
-		return fmt.Errorf("remote app not found: %s", id)
-	}
-	delete(f.apps, id)
-	return nil
 }
 
 // FakePreferencesStore implements store.PreferencesStoreInterface for testing
@@ -468,24 +390,19 @@ tags:
 	// Create a fake app store
 	fAppStore := NewFakeAppStore()
 
-	// Create a fake remote app store
-	fRemoteStore := NewFakeRemoteAppStore()
-
 	// Create a fake orchestrator (no-op, returns nil orchestrator for modules)
 	router, _ := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.catalog = fCatalog
 		o.appStore = fAppStore
-		o.remoteAppStore = fRemoteStore
 	})
 	server := &Server{
-		cfg:            cfg,
-		router:         router,
-		db:             db,
-		catalog:        fCatalog,
-		appStore:       fAppStore,
-		orch:           nil,
-		remoteAppStore: fRemoteStore,
-		logger:         logger,
+		cfg:      cfg,
+		router:   router,
+		db:       db,
+		catalog:  fCatalog,
+		appStore: fAppStore,
+		orch:     nil,
+		logger:   logger,
 	}
 	return server, tmpDir
 }
@@ -502,37 +419,9 @@ func initTestDB(db *sql.DB) error {
 			last_error TEXT NOT NULL DEFAULT '',
 			port INTEGER,
 			is_system INTEGER DEFAULT 0,
-			tailnet_id TEXT,
 			integration_config TEXT,
 			installed_at TEXT DEFAULT (datetime('now')),
 			updated_at TEXT DEFAULT (datetime('now'))
-		)`,
-		`CREATE TABLE IF NOT EXISTS remote_apps (
-			id TEXT PRIMARY KEY,
-			host_label TEXT NOT NULL,
-			app_id TEXT NOT NULL,
-			app_name TEXT,
-			sso_strategy TEXT,
-			bypass_paths TEXT,
-			tailnet_addr TEXT,
-			encrypted_cred BLOB,
-			status TEXT DEFAULT 'inactive',
-			created_at TEXT DEFAULT (datetime('now'))
-		)`,
-		`CREATE TABLE IF NOT EXISTS shares (
-			id TEXT PRIMARY KEY,
-			app_id TEXT NOT NULL,
-			sso_strategy TEXT,
-			guest_id TEXT,
-			node_share_link TEXT,
-			status TEXT DEFAULT 'active',
-			created_at TEXT DEFAULT (datetime('now')),
-			revoked_at TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS guests (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			created_at TEXT DEFAULT (datetime('now'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS user_app_positions (
 			username TEXT NOT NULL,
@@ -543,16 +432,6 @@ func initTestDB(db *sql.DB) error {
 			w INTEGER DEFAULT 1,
 			h INTEGER DEFAULT 1,
 			PRIMARY KEY (username, element_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS tailnet_connections (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			type TEXT NOT NULL,
-			auth_key TEXT,
-			control_url TEXT,
-			status TEXT DEFAULT 'inactive',
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS user_preferences (
 			username TEXT PRIMARY KEY
@@ -600,12 +479,9 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 
 	fCatalog := NewFakeCatalogCache()
 	fAppStore := NewFakeAppStore()
-	fRemoteStore := NewFakeRemoteAppStore()
-
 	router, _ := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.catalog = fCatalog
 		o.appStore = fAppStore
-		o.remoteAppStore = fRemoteStore
 		// No orchestrator is supplied, so the modules get none. The API
 		// cannot construct one itself (main.go builds it in
 		// internal/wire), which is what keeps a live convergence
@@ -613,13 +489,12 @@ func setupTestServerWithFakes(t *testing.T) (*Server, string) {
 		// with sqlite writes.
 	})
 	server := &Server{
-		cfg:            cfg,
-		router:         router,
-		db:             db,
-		catalog:        fCatalog,
-		appStore:       fAppStore,
-		remoteAppStore: fRemoteStore,
-		logger:         logger,
+		cfg:      cfg,
+		router:   router,
+		db:       db,
+		catalog:  fCatalog,
+		appStore: fAppStore,
+		logger:   logger,
 	}
 	return server, tmpDir
 }
@@ -688,23 +563,19 @@ tags:
 	require.NoError(t, fCatalog.Refresh(loader))
 
 	fAppStore := NewFakeAppStore()
-	fRemoteStore := NewFakeRemoteAppStore()
-
 	router, _ := NewRouter(db, cfg, logger, func(o *routerOptions) {
 		o.catalog = fCatalog
 		o.appStore = fAppStore
-		o.remoteAppStore = fRemoteStore
 		o.orch = &fakeOrchestratorForTest{}
 	})
 	server := &Server{
-		cfg:            cfg,
-		router:         router,
-		db:             db,
-		catalog:        fCatalog,
-		appStore:       fAppStore,
-		orch:           nil,
-		remoteAppStore: fRemoteStore,
-		logger:         logger,
+		cfg:      cfg,
+		router:   router,
+		db:       db,
+		catalog:  fCatalog,
+		appStore: fAppStore,
+		orch:     nil,
+		logger:   logger,
 	}
 	return server, tmpDir
 }

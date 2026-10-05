@@ -11,7 +11,6 @@ import (
 	containerruntime "codeberg.org/d-buckner/bloud/services/host-agent/internal/container"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sso"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
@@ -62,11 +61,6 @@ func (m *MockAppStore) SetLastError(name, lastError string) error {
 
 func (m *MockAppStore) UpdateIntegrationConfig(name string, config map[string]string) error {
 	args := m.Called(name, config)
-	return args.Error(0)
-}
-
-func (m *MockAppStore) SetTailnetID(name, tailnetID string) error {
-	args := m.Called(name, tailnetID)
 	return args.Error(0)
 }
 
@@ -207,11 +201,6 @@ type MockTraefikGenerator struct {
 
 func (m *MockTraefikGenerator) Generate(apps []*catalog.App) error {
 	args := m.Called(apps)
-	return args.Error(0)
-}
-
-func (m *MockTraefikGenerator) GenerateAll(apps []*catalog.App, remoteApps []traefikgen.RemoteAppRoute, tailnetDomain string) error {
-	args := m.Called(apps, remoteApps, tailnetDomain)
 	return args.Error(0)
 }
 
@@ -360,36 +349,6 @@ func (m *MockConfiguratorRegistry) Names() []string {
 
 func (m *MockConfiguratorRegistry) Register(c configurator.Configurator) {
 	m.Called(c)
-}
-
-// MockGatewayManager implements sharing.GatewayManagerInterface for testing
-type MockGatewayManager struct {
-	mock.Mock
-}
-
-func (m *MockGatewayManager) EnsureRunning(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockGatewayManager) Stop(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockGatewayManager) StopAndPurge(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockGatewayManager) IsRunning(ctx context.Context) bool {
-	args := m.Called(ctx)
-	return args.Bool(0)
-}
-
-func (m *MockGatewayManager) GetTailnetDomain(ctx context.Context) (string, error) {
-	args := m.Called(ctx)
-	return args.String(0), args.Error(1)
 }
 
 // MockConfigurator implements configurator.Configurator for testing

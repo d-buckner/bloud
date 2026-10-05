@@ -33,31 +33,15 @@ const boxSize = (style: unknown): { width: number; height: number } => {
 };
 
 describe('detectUserConnection', () => {
-	const tailnet = conn('conn:tailnet:abc');
 	const local = conn('conn:local');
-	const g = (nodes: GraphNode[], tailnetDomain?: string): DeveloperGraph => ({
-		nodes,
-		edges: [],
-		tailnetDomain
+	const g = (nodes: GraphNode[]): DeveloperGraph => ({ nodes, edges: [] });
+
+	it('returns the LAN connection', () => {
+		expect(detectUserConnection(g([local]))).toBe('conn:local');
 	});
 
-	it('returns the tailnet connection when the host is under the tailnet domain', () => {
-		const graph = g([tailnet, local], 'ts1.ts.net');
-		expect(detectUserConnection(graph, 'bloud.ts1.ts.net')).toBe('conn:tailnet:abc');
-	});
-
-	it('falls back to LAN when the host is not under the tailnet domain', () => {
-		const graph = g([tailnet, local], 'ts1.ts.net');
-		expect(detectUserConnection(graph, 'bloud.local')).toBe('conn:local');
-	});
-
-	it('falls back to LAN when there is no tailnet connection node', () => {
-		const graph = g([local], 'ts1.ts.net');
-		expect(detectUserConnection(graph, 'bloud.ts1.ts.net')).toBe('conn:local');
-	});
-
-	it('returns null when neither connection exists', () => {
-		expect(detectUserConnection(g([node('a')]), 'bloud.local')).toBeNull();
+	it('returns null when no connection exists', () => {
+		expect(detectUserConnection(g([node('a')]))).toBeNull();
 	});
 });
 
@@ -67,14 +51,11 @@ describe('layoutGraph: apps present', () => {
 			node('a'),
 			node('b'),
 			node('c', { status: 'stopped' }),
-			conn('conn:local'),
-			conn('conn:tailnet:z')
+			conn('conn:local')
 		],
-		edges: [edge('a', 'b'), edge('b', 'c')],
-		tailnetDomain: 'ts1.ts.net'
+		edges: [edge('a', 'b'), edge('b', 'c')]
 	};
-	// Operator reaches through the tailnet connection.
-	const { nodes, edges } = layoutGraph(graph, 'bloud.ts1.ts.net');
+	const { nodes, edges } = layoutGraph(graph);
 
 	it('creates the apps group and parents every app under it', () => {
 		expect(byId(nodes, '__apps_group')?.type).toBe('group');
@@ -83,10 +64,10 @@ describe('layoutGraph: apps present', () => {
 		}
 	});
 
-	it('places every connection in one horizontal row above the group', () => {
-		const conns = [byId(nodes, 'conn:local'), byId(nodes, 'conn:tailnet:z')];
-		const ys = conns.map((c) => c!.position.y);
-		expect(new Set(ys).size).toBe(1); // all connections share one y
+	it('places the connection in the row above the group', () => {
+		const c = byId(nodes, 'conn:local');
+		expect(c).toBeDefined();
+		expect(c!.position.y).toBeLessThan(byId(nodes, '__apps_group')!.position.y);
 	});
 
 	it('stacks the You node 124px above the connection row', () => {
@@ -111,7 +92,7 @@ describe('layoutGraph: apps present', () => {
 
 	it('adds an animated You→connection edge by the connection status', () => {
 		const youEdge = edges.find((e) => e.id === 'e-you');
-		expect(youEdge).toMatchObject({ source: '__you__', target: 'conn:tailnet:z', animated: true });
+		expect(youEdge).toMatchObject({ source: '__you__', target: 'conn:local', animated: true });
 	});
 });
 
@@ -128,9 +109,8 @@ describe('layoutGraph: service node edges', () => {
 			conn('conn:local')
 		],
 		edges: [edge('hermes', 'ai:instance'), edge('affine', 'ai:instance')],
-		tailnetDomain: 'ts1.ts.net'
 	};
-	const { edges } = layoutGraph(graph, 'bloud.local');
+	const { edges } = layoutGraph(graph);
 
 	it('animates a running consumer\'s edge into the service node', () => {
 		const e = edges.find((x) => x.source === 'hermes' && x.target === 'ai:instance');
@@ -159,7 +139,7 @@ describe('layoutGraph: app boxes', () => {
 			edge('immich', 'jellyfin')
 		]
 	};
-	const { nodes } = layoutGraph(graph, 'bloud.local');
+	const { nodes } = layoutGraph(graph);
 	const boxSize = (id: string) => {
 		const style = byId(nodes, id)!.style as string;
 		return {
@@ -220,7 +200,7 @@ describe('layoutGraph: container whose app is missing', () => {
 		],
 		edges: []
 	};
-	const { nodes } = layoutGraph(graph, 'bloud.local');
+	const { nodes } = layoutGraph(graph);
 
 	it('lays the orphan out under the group instead of dropping it', () => {
 		expect(byId(nodes, 'apps-ghost-server')).toMatchObject({
@@ -248,7 +228,7 @@ describe('layoutGraph: service nodes', () => {
 		],
 		edges: [edge('hermes', 'ai:instance')]
 	};
-	const { nodes, edges } = layoutGraph(graph, 'bloud.local');
+	const { nodes, edges } = layoutGraph(graph);
 
 	it('lays the service outside the apps group, below it, as a flat node', () => {
 		const service = byId(nodes, 'ai:instance')!;
@@ -275,19 +255,19 @@ describe('layoutGraph: service nodes', () => {
 	});
 
 	it('lays a service out even when nothing points at it', () => {
-		const lonely = layoutGraph(
-			{ nodes: [node('a'), node('ai:instance', { nodeType: 'service' })], edges: [] },
-			'bloud.local'
-		);
+		const lonely = layoutGraph({
+			nodes: [node('a'), node('ai:instance', { nodeType: 'service' })],
+			edges: []
+		});
 		expect(byId(lonely.nodes, 'ai:instance')).toMatchObject({ type: 'app' });
 		expect(byId(lonely.nodes, 'ai:instance')!.parentId).toBeUndefined();
 	});
 
 	it('still lays the service out when there are no apps at all', () => {
-		const noApps = layoutGraph(
-			{ nodes: [conn('conn:local'), node('ai:instance', { nodeType: 'service' })], edges: [] },
-			'bloud.local'
-		);
+		const noApps = layoutGraph({
+			nodes: [conn('conn:local'), node('ai:instance', { nodeType: 'service' })],
+			edges: []
+		});
 		expect(byId(noApps.nodes, 'ai:instance')).toBeDefined();
 		expect(byId(noApps.nodes, 'ai:instance')!.position.y).toBeGreaterThan(
 			byId(noApps.nodes, 'conn:local')!.position.y
@@ -297,15 +277,14 @@ describe('layoutGraph: service nodes', () => {
 
 describe('layoutGraph: connections only (no apps)', () => {
 	const graph: DeveloperGraph = {
-		nodes: [conn('conn:local'), conn('conn:tailnet:z')],
+		nodes: [conn('conn:local')],
 		edges: []
 	};
-	const { nodes, edges } = layoutGraph(graph, 'bloud.local'); // LAN
+	const { nodes, edges } = layoutGraph(graph);
 
 	it('omits the group and rows connections from the origin', () => {
 		expect(nodes.some((n) => n.type === 'group')).toBe(false);
 		expect(byId(nodes, 'conn:local')!.position).toEqual({ x: 0, y: 0 });
-		expect(byId(nodes, 'conn:tailnet:z')!.position.x).toBe(NODE_WIDTH + 60);
 	});
 
 	it('puts the You node above the LAN connection at the origin column', () => {

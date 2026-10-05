@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, describe, expect, it } from 'vitest';
-import { getAppUrl, getRemoteAppUrl } from '../appUrl';
+import { getAppUrl } from '../appUrl';
 
 // Minimal window.location stub (tests run in a node environment without a DOM).
 function setLocation(hostname: string, port = '8080', protocol = 'http:') {
@@ -42,12 +42,5 @@ describe('getAppUrl', () => {
 	it('appends paths with a leading slash', () => {
 		setLocation('bloud.local', '');
 		expect(getAppUrl('jellyfin', 'settings')).toBe('http://jellyfin.bloud.local/settings');
-	});
-});
-
-describe('getRemoteAppUrl', () => {
-	it('builds slug subdomains on the current host', () => {
-		setLocation('bloud.local', '');
-		expect(getRemoteAppUrl('jellyfin', 'Johan')).toBe('http://jellyfin-johan.bloud.local');
 	});
 });

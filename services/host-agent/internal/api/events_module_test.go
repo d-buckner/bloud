@@ -190,7 +190,6 @@ func newEventsTestRouterMux(t *testing.T) (http.Handler, *FakeAppStore) {
 	router, _ := NewRouter(db, cfg, newTestSlogger(), func(o *routerOptions) {
 		o.catalog = fCatalog
 		o.appStore = fAppStore
-		o.remoteAppStore = NewFakeRemoteAppStore()
 	})
 	return router, fAppStore
 }

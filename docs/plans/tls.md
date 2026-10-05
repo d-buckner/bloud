@@ -273,7 +273,9 @@ independently.
 - **HSTS policy, TLS version pinning, cipher tuning.** Deployment-level knobs; the
   default should be sane, but a policy UI is not part of this.
 - **Tailscale Serve.** Already provides publicly trusted `ts.net` certificates for
-  remote access. Covered by [`tailnet-outpost.md`](tailnet-outpost.md) and
-  compatible with this design.
+  remote access. The tailnet integration that used it was removed from the
+  product; the design is kept in
+  [`tailnet-outpost.md`](archive/tailnet-outpost.md) and is compatible with
+  this design should the feature return.
 - **Automatic DNS provider detection or a certificate management UI.** Enabling
   TLS means naming a provider and supplying a scoped token.

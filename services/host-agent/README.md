@@ -193,7 +193,6 @@ services/host-agent/
 │   ├── podman/                # Podman API client
 │   ├── schema/                # Embedded schema.sql + versioned migration ledger
 │   ├── secrets/               # Secrets manager and env-file generation
-│   ├── sharing/               # Sharing & remote apps
 │   ├── sso/                   # SSO/Authentik integration
 │   ├── store/                 # SQLite persistence
 │   ├── system/                # Cached system metrics (CPU, memory, disk)
@@ -215,7 +214,7 @@ Key runtime concepts:
 - **Dependency graph**: each `containers:` entry is one node, `dependsOn` builds the DAG, and the orchestrator converges nodes in topological order
 - **Intent queue**: all mutations flow through typed intents with a 750 ms debounce window; the orchestrator is the single writer
 - **Configurators** implement `PreStart`/`PostStart`/`Remove` per container node and must be idempotent, since they run on every reconciliation cycle; container lifecycle is metadata-driven
-- **App Store** (`internal/store/`): SQLite persistence for installed apps, lifecycle status, operations, sessions, hosts, shares, guests, remote apps, and dashboard layout positions
+- **App Store** (`internal/store/`): SQLite persistence for installed apps, lifecycle status, operations, sessions, and dashboard layout positions
 - **Container Runtime**: Podman containers created and managed directly by the orchestrator
 
 ## API Endpoints
@@ -247,7 +246,6 @@ result arrives on the event stream or by polling.
 - `GET /api/apps/:name/metadata`: Full metadata for one catalog app
 - `GET /api/apps/:name/icon`: App icon
 - `GET /api/apps/events`: Server-sent app status stream
-- `GET /api/apps/:name/logs`: Server-sent container log stream
 - `POST /api/apps/:name/install`: Install an app (`202`)
 - `POST /api/apps/:name/uninstall`: Uninstall an app (`202`, optional `clearData` in the body)
 - `PATCH /api/apps/:name/rename`: Rename an app (`202`)
@@ -262,15 +260,7 @@ result arrives on the event stream or by polling.
 - `POST /api/apps/refresh-catalog`: Reload the catalog from disk
 - `GET /api/system/rebuild/stream`: Server-sent frontend rebuild stream
 - `GET /api/settings/public-url`, `PUT /api/settings/public-url`: The address setting (one URL: scheme, host, and the public proxy port; see AGENTS.md invariant 9)
-- `GET /api/settings/tailnet`, `POST /api/settings/tailnet`, `DELETE /api/settings/tailnet`: Tailnet connection for sharing
 - `GET /api/admin/users`, `POST /api/admin/users`, `DELETE /api/admin/users/:username`, `PUT /api/admin/users/:username/role`: User management
-
-### Sharing (admin)
-
-- `GET /api/sharing/community`, `POST /api/sharing/invites`: Community graph and invites
-- `GET /api/sharing/shares`, `DELETE /api/sharing/shares/:id`: List and revoke shares
-- `GET /api/sharing/guests`, `POST /api/sharing/guests`: List and create guests
-- `GET /api/sharing/remote-apps`, `POST /api/sharing/remote-apps`, `DELETE /api/sharing/remote-apps/:id`: Remote apps from sharing guests
 
 ## Testing
 

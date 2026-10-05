@@ -36,19 +36,6 @@ export interface App {
 	sso_launch_path?: string;
 }
 
-// Remote app (shared from another host)
-export interface RemoteApp {
-	id: string;
-	host_label: string;
-	app_id: string;
-	app_name: string;
-	sso_strategy: string;
-	bypass_paths: string[];
-	tailnet_addr: string;
-	status: string;
-	created_at: string;
-}
-
 // Catalog types (matches Go catalog.App struct)
 export interface CatalogApp {
 	catalogId: string;
@@ -91,23 +78,6 @@ export interface HealthCheck {
 export interface Docs {
 	url?: string;
 	setup?: string;
-}
-
-// Guest (contact book entry)
-export interface Guest {
-	id: string;
-	name: string;
-	created_at: string;
-}
-
-// Invite token payload (HMAC-SHA256 signed, base64url-encoded JSON)
-export interface InvitePayload {
-	appId: string;
-	appName: string;
-	hostLabel: string;
-	tailnetAddr: string;
-	nodeShareLink: string;
-	exp: number;
 }
 
 // Intent response (returned by install/uninstall endpoints).

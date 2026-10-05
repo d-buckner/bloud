@@ -46,16 +46,11 @@ interface BoxLayout {
 }
 
 /**
- * Which connection node the operator is reaching the host through: the tailnet
- * connection when `hostname` falls under the tailnet domain, else the LAN
- * connection, else none.
+ * Which connection node the operator is reaching the host through. The
+ * instance has one mapping, the LAN connection; it returns null when the
+ * graph carries none.
  */
-export function detectUserConnection(graph: DeveloperGraph, hostname: string): string | null {
-	const tailnetDomain = graph.tailnetDomain;
-	if (tailnetDomain && hostname.endsWith(tailnetDomain)) {
-		const tailnetConn = graph.nodes.find((n) => n.id.startsWith('conn:tailnet:'));
-		if (tailnetConn) return tailnetConn.id;
-	}
+export function detectUserConnection(graph: DeveloperGraph): string | null {
 	const localConn = graph.nodes.find((n) => n.id === 'conn:local');
 	return localConn ? localConn.id : null;
 }
@@ -298,7 +293,7 @@ function appTiles(
 }
 
 /** Lay the whole developer graph out to xyflow nodes + edges. */
-export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: Node[]; edges: Edge[] } {
+export function layoutGraph(graph: DeveloperGraph): { nodes: Node[]; edges: Edge[] } {
 	const appNodes = graph.nodes.filter((n) => n.nodeType === 'app');
 	const connectionNodes = graph.nodes.filter((n) => n.nodeType === 'connection');
 	// A service is a provider the instance supplies itself rather than an app it
@@ -310,7 +305,7 @@ export function layoutGraph(graph: DeveloperGraph, hostname: string): { nodes: N
 	const groupNodeIds = new Set(appNodes.map((n) => n.id));
 	const { byApp, loose } = groupContainers(graph.nodes, groupNodeIds);
 	const { boxes, sizes } = measureTopLevel(appNodes, byApp, loose, graph.edges);
-	const userConnectionId = detectUserConnection(graph, hostname);
+	const userConnectionId = detectUserConnection(graph);
 	const dataFor = makeDataFor(graph, userConnectionId);
 
 	const topLevelIds = [...groupNodeIds, ...loose.map((n) => n.id)];

@@ -93,9 +93,9 @@ curl -H 'True-Client-IP: 127.0.0.1' http://<box>:8080/api/apps/installed
 ```
 
 That request is admin. So is `POST /api/apps/immich/uninstall` with
-`clearData`, `PUT /api/settings/public-url`, `POST /api/admin/users` (persist as a
-real Authentik admin), tailnet keys, shares, remote apps. `:3000` binds every
-interface (`internal/api/server.go:108`), so the direct path works too, and any
+`clearData`, `PUT /api/settings/public-url`, and `POST /api/admin/users`
+(persist as a real Authentik admin). `:3000` binds every interface
+(`internal/api/server.go:108`), so the direct path works too, and any
 app container can reach the host gateway.
 
 **Fix surface (measured).** `r.RemoteAddr` has exactly two consumers in all of
@@ -260,7 +260,7 @@ below (C1-C14) rather than ranked here.
 | 12 | ~~Two `AppState` builders that disagree on SSO: the CLI path reads legacy `SSOBaseURL`, ignoring admin-set hosts~~ **FIXED 2026-09-25**: the second builder went with the CLI path. `orchestrator.buildAppState` is the only one, and it resolves SSO through the live host set. | P2→closed | `orchestrator.go` `buildAppState` / `resolveSSOURLs` |
 | 13 | ~~An admin-selected **built-in** primary host is never persisted → primary silently reverts to `localhost` on restart, changing the OIDC issuer~~ **CLOSED 2026-09-26 by the model change**: there is no primary selection any more. The address is one URL stored at `settings['public_url']`, and whatever the operator typed is what gets persisted and read back, so there is no built-in-versus-stored case left to get wrong. | P2→closed | `store/settings.go`; `orchestrator/pipeline.go` `applySetPublicURLIntent` |
 | 14 | System-app hiding keys off `category == "infrastructure"`, which no `metadata.yaml` sets (traefik is `network`, authentik is `security`) → both appear as installable user apps, contradicting invariant 5 | P2 | `catalog/cache.go:70-103`; `api/apps_module.go:101` |
-| 15 | Sharing module and system module are wired with `nil` (tailnet node, graph, orchestrator) → `POST /api/sharing/invites` always 503 | P2 | `router.go:224-229`; `sharing_module.go:227-229` |
+| 15 | ~~Sharing module and system module are wired with `nil` (tailnet node, graph, orchestrator) → `POST /api/sharing/invites` always 503~~ **CLOSED 2026-10-05 by removal**: the sharing subsystem never worked end to end and was deleted from the product rather than repaired. The design notes are archived in `docs/plans/archive/` | P2→closed | `internal/sharing/` (deleted) |
 | 16 | `ClearAppDataIntent` is dropped by the drain switch (logged "unhandled"), and `appsModule.ClearData` is unreachable **and** targets `<appsDir>/<name>` (the catalog dir) instead of the data dir: a latent destroyer of `apps/<name>/` | P2 | `intent.go:132-142`; `pipeline.go:31-49`; `apps_module.go:209-245` |
 | 17 | `sso.DeriveSecret` still contains a literal fallback secret; unreachable behind current guards, so invariant 8 now survives only by caller discipline | P2 | `sso/blueprint.go:293-297` |
 | 18 | Generated Traefik YAML is hand-assembled with app names unquoted and never parsed before the write; no strict YAML decode or metadata validation at load (port, image pin, container name, SSO strategy) | P2 | `traefikgen/generator.go:44-60,216-224`; `catalog/loader.go:110-130` |
@@ -281,20 +281,14 @@ so "risk×cheapness" here means "how much do they slow the next change".
 | # | Item | Sev | Evidence |
 |---|---|---|---|
 | 26 | ~~Two catalog models of the same `metadata.yaml`: `App` (`models.go`) and `AppDefinition` (`types.go`), loaded by two near-identical walkers (`LoadAll` → `map[string]*App`, `LoadGraph` → `[]*AppDefinition`). The planner reads one graph, the reconciler the other, so they can disagree by construction, and a new top-level metadata field must be added to both structs, both yaml tags, and both loaders~~ **FIXED 2026-10-04**: `AppGraph` now operates on `*App` (via `CatalogID`), `LoadGraph` is a thin wrapper over `LoadAll`, and `AppDefinition`/`loadAppDefinition` are deleted; `TestLoadGraphAndLoadAllAgree` pins the one-model invariant (#206) | P2→closed | `catalog/graph.go`; `catalog/loader.go`; `catalog/types.go` |
-| 27 | `OrchestratorConfig` is 29 fields and `wire.Input` is 25, hand-copied field-by-field in `buildOrchestratorConfig`. `wire.Output.Config` exists only so a completeness test can assert every field was wired: the test is a symptom that the surface is too wide to wire by eye, and a forgotten field is a runtime nil-deref. Group into subsystem structs (SSO, tailnet, proxy, stores…) so `wire.Input` composes them and the nil-disables decision moves into each subsystem's zero value | P2 | `orchestrator/orchestrator.go` `OrchestratorConfig`; `wire/wire.go` `Input`/`buildOrchestratorConfig`/`Output.Config`; `wire/completeness_test.go` |
+| 27 | `OrchestratorConfig` is 29 fields and `wire.Input` is 25, hand-copied field-by-field in `buildOrchestratorConfig`. `wire.Output.Config` exists only so a completeness test can assert every field was wired: the test is a symptom that the surface is too wide to wire by eye, and a forgotten field is a runtime nil-deref. Group into subsystem structs (SSO, stores…) so `wire.Input` composes them and the nil-disables decision moves into each subsystem's zero value | P2 | `orchestrator/orchestrator.go` `OrchestratorConfig`; `wire/wire.go` `Input`/`buildOrchestratorConfig`/`Output.Config`; `wire/completeness_test.go` |
 | 28 | ~~The sealed `Intent` set is enumerated in two parallel switches: `applyIntents` (the drain) and `intentTypeName` (logging). Adding a twelfth intent forgotten in one of the two compiles clean and fails only at runtime~~ **FIXED 2026-10-04**: `intentTypeName` is derived from the concrete type (`strings.TrimSuffix(reflect.TypeOf(...).Name(), "Intent")`), so the set is enumerated once; `TestIntentTypeName_AllTypes` pins every name (#204) | P3→closed | `orchestrator/pipeline.go` `intentTypeName` |
 | 29 | ~~`AppStore`'s 20-column `SELECT … LEFT JOIN operations` appears verbatim in `GetAll` and `GetByCatalogID`, and `scanApp`/`scanAppRow` are near-identical ~55-line copies of the same `Scan` order and post-processing~~ **FIXED 2026-10-04**: `scanAppColumns(scan func(...any) error)` holds the Scan order and post-processing once; `TestAppStore_ScanPathsAgree` pins `GetAll`/`GetByCatalogID` agreement (#205) | P3→closed | `store/apps.go` `scanAppColumns` |
 | 30 | ~~The invariant "a running app is never downgraded to `installing`" is enforced by two orchestrator callers, each with its own guard and comment, because `AppStore.Install` unconditionally sets `status='installing'` on conflict~~ **FIXED 2026-10-04**: `Install` preserves the running status via a `CASE` in the `ON CONFLICT`; `TestAppStore_Install_RunningAppNotDowngraded` pins it at the store (#205) | P2→closed | `store/apps.go` `Install` |
-| 31 | `AppStoreInterface` is a 15-method single interface consumed by the orchestrator and the API layer, which use different subsets; method names leak table columns rather than caller intent. **DEFERRED 2026-10-04**: the interface is consumed by 8+ modules (orchestrator + apps/home/system/logs/sharing/settings) with overlapping subsets, so a clean two-role split does not emerge; forcing one adds churn without a consumer benefit. Revisit only if it grows | P3 | `store/interfaces.go` `AppStoreInterface` |
+| 31 | `AppStoreInterface` is a 15-method single interface consumed by the orchestrator and the API layer, which use different subsets; method names leak table columns rather than caller intent. **DEFERRED 2026-10-04**: the interface is consumed by 7+ modules (orchestrator + apps/home/system/settings) with overlapping subsets, so a clean two-role split does not emerge; forcing one adds churn without a consumer benefit. Revisit only if it grows | P3 | `store/interfaces.go` `AppStoreInterface` |
 | 32 | ~~Store statuses/phases are bare strings compared to literals throughout, while the graph layer already has a typed status; a typo in a status literal is a silent non-convergence~~ **FIXED 2026-10-04**: `apps.status` is now `store.AppStatus` with a closed set of five values (`store/status.go`); `TestAppStatusClosedSet` pins the set. Operation type/phase/status were already typed constants (#203) | P2→closed | `store/status.go`; `store/apps.go` `InstalledApp.Status`; `store/apps.go` `UpdateStatus` |
 | 33 | `appclient.Call` is one struct carrying three modes: plain request, declared-idempotency request, and readiness wait: with fields inert in the modes they do not serve (`ready`/`interval`/`stable`/`tolerateFailures`/`Within`) and invariants spanning modes (`retriesAllowed` reasons over `ready`/`noRetry`/`declaredContract`/verb at once). Split wait mode into a `Wait` builder that wraps a plain `Call` | P3 | `pkg/appclient/call.go` |
 | 34 | The operation recorder keys its row on the owning app (`ownerApp(id)`), one row per app, while `processLevel` dispatches nodes concurrently: so N nodes of a multi-container app contend on one `UPDATE … WHERE app_name=?`. Item 5's `busy_timeout` fix made writes wait instead of fail, but the unit-of-work mismatch and the arbitrary-survivor ambiguity remain. Key per node and aggregate to the app at read time | P2 | `orchestrator/operation_recorder.go:79` `recordOpPhase`; `orchestrator/container_health.go:22` `ownerApp`; `orchestrator/levels.go` `processLevel` |
-
-**Documented exception (not debt).** Share/guest/preference handlers write their
-stores directly, bypassing the intent queue. Verified non-racing: the
-orchestrator has no share/guest dependency, so nothing else writes those tables.
-The dead `CreateShareIntent`/`RevokeShareIntent` types were deleted; this stays
-a deliberate boundary, and **no new direct-write domain should be added**.
 
 ## Configurator-layer conformance debt (2026-09-20)
 
@@ -644,8 +638,8 @@ the pre-fix Exec-loop tree):
 
 - every connection in a widened pool reports `foreign_keys=1` and
   `busy_timeout=5000` (not just the boot connection);
-- a fresh connection rejects an orphan `shares` insert and the
-  `guests` DELETE actually cascades to the dependent share;
+- a fresh connection rejects an orphan `user_app_positions` insert and the
+  `user_preferences` DELETE actually cascades to the dependent position;
 - a write contended by a held RESERVED lock blocks in the busy handler
   and succeeds after the commit, instead of failing instantly with
   `SQLITE_BUSY`.
@@ -661,17 +655,13 @@ the surviving phase value is last-writer-wins by ledger semantics.
 The "Biggest Debt" of the previous version, a route config step that
 silently started gateways and mutated proxies, is closed:
 
-- `RegenerateRoutes(remoteRoutes, tailnetDomain)`
-  (`internal/engine/orchestrator/orchestrator_containers.go`) is pure
-  with respect to the runtime: no gateway calls, no proxy mutation. All
-  runtime-shaped inputs are passed in by the caller.
-- `SyncRoutes()` owns the explicit ordering the old interleaving only
-  accidentally provided: `ensureGateway()` → `reconcileRemoteProxies()`
-  (the former `buildRemoteRoutes`, named for what it does) →
-  `resolveTailnetDomain()` → config write.
-- Contract tests (`route_sync_test.go`): the pure generator touches zero
-  runtime fakes even when gateway/proxy are configured; SyncRoutes order
-  and input piping; inactive tailnet skips the gateway entirely.
+- `SyncRoutes()` (`internal/engine/orchestrator/orchestrator_containers.go`)
+  is pure with respect to the runtime: no gateway calls, no proxy mutation.
+  It reads the installed set from the store and hands it to the generator;
+  the config write is its only effect.
+- Contract tests (`route_sync_test.go`): the sync starts no runtime and writes
+  only the route config; an uninstall stops routing the removed app in the same
+  step that deletes its store row.
 
 *Still open from this area:* `SyncRoutes` errors are logged only, promotion to
 RUNNING is unconditional, and the generated YAML is never validated (item 18).
@@ -851,7 +841,8 @@ host secret and host set. Persisting derived state creates a second source of
 truth and every disagreement becomes a reconciliation bug, so delete the
 `oauthClientSecret` write (and the literal fallback in `DeriveSecret`). What is
 genuinely worth persisting is state we do not derive because something else
-issued it: remote proxy port assignments, the tailnet domain, gateway state.
+issued it: an upstream provider's own credential, a certificate the CA
+returned, a version pin chosen at install.
 
 ### 8. Honest surfaces and dead code (items 13-16, 18-23)
 

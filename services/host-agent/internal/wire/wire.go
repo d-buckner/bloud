@@ -2,9 +2,8 @@
 
 // Package wire builds the host-agent runtime's orchestrator. It owns the whole
 // dependency set: the lifecycle graph, the catalog dependency graph, the
-// container runtime, the tailnet node, the gateway, the remote proxy, the
-// proxy outpost, the Traefik route generator, the durable operation store,
-// the SSO provisioner, and the one-shot auth-key migration.
+// container runtime, the Traefik route generator, the durable operation
+// store, and the SSO provisioner.
 //
 // This is the only place a fully wired orchestrator is constructed. The API
 // layer receives one instead of building its own, so there is no second copy
@@ -31,27 +30,25 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/eventbus"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/hostset"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/podman"
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/sharing"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/traefikgen"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
-	"github.com/google/uuid"
 )
 
 // Input is everything Build needs to construct a fully wired orchestrator.
 //
-// The zero value is not usable: Logger, DB, Registry, CatalogCache, and
-// TailnetStore are required. Optional collaborators disable the subsystem
-// that reads them rather than failing the build, which is how a runtime
-// without an identity provider, or without federation, still comes up.
+// The zero value is not usable: Logger, DB, Registry, and CatalogCache are
+// required. Optional collaborators disable the subsystem that reads them
+// rather than failing the build, which is how a runtime without an
+// identity provider still comes up.
 type Input struct {
 	// Logger is where construction and the orchestrator's own lifecycle log.
 	Logger *slog.Logger
 
-	// DB is the open SQLite handle. The operation store and the remote-app
-	// store are built on it inside Build, so callers need not know which
-	// stores the orchestrator owns.
+	// DB is the open SQLite handle. The operation store is built on it
+	// inside Build, so callers need not know which stores the orchestrator
+	// owns.
 	DB *sql.DB
 
 	// AppStore is the installed-app store the orchestrator reads intent from
@@ -81,10 +78,6 @@ type Input struct {
 	// still boots.
 	Authentik *authentik.Client
 
-	// TailnetStore holds federation connections. Required: the active
-	// connection drives the auth-key and tailnet-ID callbacks.
-	TailnetStore *store.TailnetStore
-
 	// Settings persists the instance settings, including the public address.
 	// Nil disables the address endpoints.
 	Settings store.SettingsStoreInterface
@@ -102,11 +95,6 @@ type Input struct {
 	TraefikDynamicDir string
 	// TraefikPort is the port Traefik serves on inside the runtime.
 	TraefikPort int
-
-	// TSAuthKey is the legacy single tailscale auth key from the
-	// environment. When set and no stored connection exists, Build migrates
-	// it into the tailnet store.
-	TSAuthKey string
 
 	// LDAPOutput is the LDAP provider endpoint handed to apps whose SSO
 	// strategy is ldap.
@@ -148,14 +136,6 @@ type Output struct {
 	// Orchestrator is fully wired but not started. The caller starts it.
 	Orchestrator *orchestrator.Orchestrator
 
-	// Gateway and TailnetNode are the same instances the orchestrator
-	// drives. They are exposed so other consumers can be pointed at the
-	// real ones: the sharing module currently builds its own with nil
-	// collaborators, which is why invite creation answers 503 (open ledger
-	// item 15).
-	Gateway     *sharing.GatewayManager
-	TailnetNode *sharing.TailnetNodeManager
-
 	// Config is the exact OrchestratorConfig the orchestrator was built
 	// with. It is exposed so a test can assert that every field the type
 	// declares was deliberately set, which is the guard that keeps a newly
@@ -179,8 +159,6 @@ func validateInput(in Input) error {
 		return fmt.Errorf("wire: Registry is required")
 	case in.CatalogCache == nil:
 		return fmt.Errorf("wire: CatalogCache is required")
-	case in.TailnetStore == nil:
-		return fmt.Errorf("wire: TailnetStore is required")
 	}
 	return nil
 }
@@ -195,17 +173,12 @@ func Build(in Input) (*Output, error) {
 	traefikConfigPath := filepath.Join(in.TraefikDynamicDir, "apps-routes.yml")
 	logger.Info("orchestrator paths", "traefikConfigPath", traefikConfigPath)
 
-	runtime, client, err := resolveRuntime(in)
+	runtime, err := resolveRuntime(in)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := migrateLegacyAuthKey(in.TailnetStore, in.TSAuthKey, logger); err != nil {
-		return nil, err
-	}
-
-	managers := buildSharingManagers(in, runtime, client)
-	config := buildOrchestratorConfig(in, runtime, managers, loadCatalogGraph(in, logger), traefikConfigPath)
+	config := buildOrchestratorConfig(in, runtime, loadCatalogGraph(in, logger), traefikConfigPath)
 
 	orch := orchestrator.NewOrchestrator(
 		graph.New(graph.NewMapRepository()),
@@ -219,60 +192,22 @@ func Build(in Input) (*Output, error) {
 
 	return &Output{
 		Orchestrator: orch,
-		Gateway:      managers.Gateway,
-		TailnetNode:  managers.Node,
 		Config:       config,
 	}, nil
 }
 
 // resolveRuntime picks the container runtime: the one supplied, or a Podman
-// runtime over a client built here. The client comes back either way because it
-// also backs the exec callback the sharing managers need, which the runtime
-// abstraction does not carry.
-func resolveRuntime(in Input) (containerruntime.Runtime, *podman.Client, error) {
+// runtime built here. An appliance that cannot start a container has nothing
+// to converge, so a failure here is fatal rather than degraded.
+func resolveRuntime(in Input) (containerruntime.Runtime, error) {
+	if in.ContainerRuntime != nil {
+		return in.ContainerRuntime, nil
+	}
 	client, err := podman.NewClient()
 	if err != nil {
-		in.Logger.Warn("podman client unavailable", "error", err)
+		return nil, fmt.Errorf("wire: container runtime unavailable: %w", err)
 	}
-	if in.ContainerRuntime != nil {
-		return in.ContainerRuntime, client, nil
-	}
-	if client == nil {
-		return nil, nil, fmt.Errorf("wire: container runtime unavailable (no podman client)")
-	}
-	return containerruntime.NewPodmanRuntime(client), client, nil
-}
-
-// sharingManagers bundles the tailnet-facing managers the orchestrator drives
-// on behalf of an app.
-type sharingManagers struct {
-	Node        *sharing.TailnetNodeManager
-	Gateway     *sharing.GatewayManager
-	RemoteProxy *sharing.RemoteProxyManager
-}
-
-// buildSharingManagers wires the tailnet node, the SOCKS gateway, and the
-// remote-proxy pool. All three read the active connection through the store on
-// every call rather than capturing the key at build time, so a rotation takes
-// effect without a restart.
-func buildSharingManagers(in Input, runtime containerruntime.Runtime, client *podman.Client) sharingManagers {
-	authKeyFn := func() string {
-		conn, err := in.TailnetStore.GetActive()
-		if err != nil || conn == nil {
-			return ""
-		}
-		return conn.AuthKey
-	}
-	var exec sharing.ContainerExec
-	if client != nil {
-		exec = client
-	}
-	socksAddr := fmt.Sprintf("localhost:%d", sharing.DefaultGatewaySOCKSPort)
-	return sharingManagers{
-		Node:        sharing.NewTailnetNodeManager(runtime, exec, authKeyFn, in.TraefikPort, in.DataDir, in.Logger),
-		Gateway:     sharing.NewGatewayManager(runtime, exec, authKeyFn, sharing.DefaultGatewaySOCKSPort, in.TraefikPort, in.DataDir, in.Logger),
-		RemoteProxy: sharing.NewRemoteProxyManager(socksAddr, sharing.DefaultRemoteProxyBasePort, in.Logger),
-	}
+	return containerruntime.NewPodmanRuntime(client), nil
 }
 
 // loadCatalogGraph builds the dependency graph the install and uninstall
@@ -290,21 +225,18 @@ func loadCatalogGraph(in Input, logger *slog.Logger) *catalog.AppGraph {
 }
 
 // buildOrchestratorConfig fills the orchestrator's config from the wire input.
-// The two SSO interfaces come from the same Authentik client when one was
-// supplied; both stay nil otherwise, which disables SSO provisioning while the
-// runtime still boots.
+// The SSO provisioner comes from the Authentik client when one was supplied;
+// it stays nil otherwise, which disables SSO provisioning while the runtime
+// still boots.
 func buildOrchestratorConfig(
 	in Input,
 	runtime containerruntime.Runtime,
-	managers sharingManagers,
 	catalogGraph *catalog.AppGraph,
 	traefikConfigPath string,
 ) orchestrator.OrchestratorConfig {
 	var ssoProvisioner orchestrator.SSOProvisioner
-	var forwardDomainSSO orchestrator.ForwardDomainProvisioner
 	if in.Authentik != nil {
 		ssoProvisioner = in.Authentik
-		forwardDomainSSO = in.Authentik
 	}
 
 	return orchestrator.OrchestratorConfig{
@@ -319,34 +251,18 @@ func buildOrchestratorConfig(
 			TraefikPort:  in.TraefikPort,
 		},
 		Stores: orchestrator.StoresConfig{
-			AppStore:       in.AppStore,
-			TailnetStore:   in.TailnetStore,
-			RemoteAppStore: store.NewRemoteAppStore(in.DB),
-			Settings:       in.Settings,
-			Operations:     store.NewOperationStore(in.DB),
-			Secrets:        in.Secrets,
-		},
-		Tailnet: orchestrator.TailnetConfig{
-			TailnetNode:  managers.Node,
-			Gateway:      managers.Gateway,
-			RemoteProxy:  managers.RemoteProxy,
-			ProxyOutpost: sharing.NewProxyOutpostManager(runtime, in.Logger),
-			ActiveTailnetID: func() string {
-				conn, err := in.TailnetStore.GetActive()
-				if err != nil || conn == nil {
-					return ""
-				}
-				return conn.ID
-			},
+			AppStore:   in.AppStore,
+			Settings:   in.Settings,
+			Operations: store.NewOperationStore(in.DB),
+			Secrets:    in.Secrets,
 		},
 		SSO: orchestrator.SSOConfig{
-			SSO:              ssoProvisioner,
-			ForwardDomainSSO: forwardDomainSSO,
-			LDAPOutput:       in.LDAPOutput,
-			SSOBaseURL:       in.SSOBaseURL,
-			SSOHostSecret:    in.SSOHostSecret,
-			SSOAuthentikURL:  in.SSOAuthentikURL,
-			SSOIssuerURL:     in.SSOIssuerURL,
+			SSO:             ssoProvisioner,
+			LDAPOutput:      in.LDAPOutput,
+			SSOBaseURL:      in.SSOBaseURL,
+			SSOHostSecret:   in.SSOHostSecret,
+			SSOAuthentikURL: in.SSOAuthentikURL,
+			SSOIssuerURL:    in.SSOIssuerURL,
 		},
 		Hosts: orchestrator.HostsConfig{
 			Hosts:          in.Hosts,
@@ -367,29 +283,4 @@ func resolveSelfHealInterval(in time.Duration) time.Duration {
 		return orchestrator.DefaultSelfHealInterval
 	}
 	return in
-}
-
-// migrateLegacyAuthKey moves a BLOUD_TS_AUTHKEY environment value into the
-// tailnet connections store, so a deployment configured the old way keeps
-// working once connections are managed through the store. It is a no-op when
-// no key is set or a connection already exists.
-func migrateLegacyAuthKey(tailnetStore *store.TailnetStore, authKey string, logger *slog.Logger) error {
-	if authKey == "" {
-		return nil
-	}
-	active, _ := tailnetStore.GetActive()
-	if active != nil {
-		return nil
-	}
-	if err := tailnetStore.Create(store.TailnetConnection{
-		ID:      uuid.New().String(),
-		Name:    "Default",
-		Type:    "tailscale",
-		AuthKey: authKey,
-		Status:  "active",
-	}); err != nil {
-		return fmt.Errorf("wire: migrate BLOUD_TS_AUTHKEY to tailnet_connections store: %w", err)
-	}
-	logger.Info("migrated BLOUD_TS_AUTHKEY to tailnet_connections store")
-	return nil
 }

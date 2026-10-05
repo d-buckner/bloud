@@ -523,145 +523,6 @@ func TestGenerator_Generate_ForwardAuth_AuthentikDisabled(t *testing.T) {
 	}
 }
 
-func TestGenerator_GenerateAll_RemoteApps(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	remoteApps := []RemoteAppRoute{
-		{
-			ID:       "jellyfin-johan",
-			ProxyURL: "http://localhost:10100",
-		},
-	}
-
-	g := NewGenerator(configPath)
-	err := g.GenerateAll(nil, remoteApps, "")
-	if err != nil {
-		t.Fatalf("GenerateAll failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	contentStr := string(content)
-
-	// Check remote router
-	if !strings.Contains(contentStr, "shared-jellyfin-johan:") {
-		t.Error("Expected shared-jellyfin-johan router")
-	}
-	if !strings.Contains(contentStr, `rule: "HostRegexp(`+"`^jellyfin-johan\\\\.`"+`)"`) {
-		t.Error("Expected HostRegexp rule for jellyfin-johan")
-	}
-	if !strings.Contains(contentStr, "priority: 200") {
-		t.Error("Expected priority 200 on remote router")
-	}
-	if !strings.Contains(contentStr, "service: shared-jellyfin-johan") {
-		t.Error("Expected service reference to shared-jellyfin-johan")
-	}
-
-	// Check remote service points to localhost proxy
-	if !strings.Contains(contentStr, `url: "http://localhost:10100"`) {
-		t.Error("Expected localhost proxy URL for remote service")
-	}
-}
-
-func TestGenerator_GenerateAll_MixedLocalAndRemote(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	apps := []*catalog.App{
-		{CatalogID: "miniflux", Port: 8085, IsSystem: false},
-	}
-
-	remoteApps := []RemoteAppRoute{
-		{
-			ID:       "jellyfin-johan",
-			ProxyURL: "http://localhost:10100",
-		},
-	}
-
-	g := NewGenerator(configPath)
-	err := g.GenerateAll(apps, remoteApps, "")
-	if err != nil {
-		t.Fatalf("GenerateAll failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	contentStr := string(content)
-
-	// Local app routes
-	if !strings.Contains(contentStr, "miniflux:") {
-		t.Error("Expected miniflux router")
-	}
-	if !strings.Contains(contentStr, `url: "http://localhost:8085"`) {
-		t.Error("Expected miniflux service URL")
-	}
-
-	// Remote app routes
-	if !strings.Contains(contentStr, "shared-jellyfin-johan:") {
-		t.Error("Expected shared-jellyfin-johan router")
-	}
-	if !strings.Contains(contentStr, `url: "http://localhost:10100"`) {
-		t.Error("Expected localhost proxy URL for remote service")
-	}
-}
-
-func TestGenerator_GenerateAll_RemoteAppsSorted(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	remoteApps := []RemoteAppRoute{
-		{ID: "navidrome-anna", ProxyURL: "http://localhost:10101"},
-		{ID: "jellyfin-johan", ProxyURL: "http://localhost:10100"},
-	}
-
-	g := NewGenerator(configPath)
-	err := g.GenerateAll(nil, remoteApps, "")
-	if err != nil {
-		t.Fatalf("GenerateAll failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	contentStr := string(content)
-
-	jellyfinIdx := strings.Index(contentStr, "shared-jellyfin-johan:")
-	navidromeIdx := strings.Index(contentStr, "shared-navidrome-anna:")
-
-	if jellyfinIdx > navidromeIdx {
-		t.Error("Remote routers should be sorted alphabetically by ID")
-	}
-}
-
-func TestGenerator_GenerateAll_EmptyRemoteApps(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "apps-routes.yml")
-
-	g := NewGenerator(configPath)
-	err := g.GenerateAll(nil, nil, "")
-	if err != nil {
-		t.Fatalf("GenerateAll failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-
-	if !strings.Contains(string(content), "# No routable apps installed") {
-		t.Errorf("Expected 'No routable apps' message, got:\n%s", content)
-	}
-}
-
 func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps-routes.yml")
@@ -693,13 +554,13 @@ func TestGenerator_Generate_NoMiddlewaresSection_WhenNoneNeeded(t *testing.T) {
 // file Traefik watches on every pass: identical bytes, new mtime, so the
 // whole dynamic config reloads once a minute forever. A pass with nothing to
 // change has to leave the file alone.
-func TestGenerator_GenerateAll_SkipsWriteWhenUnchanged(t *testing.T) {
+func TestGenerator_Generate_SkipsWriteWhenUnchanged(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "apps-routes.yml")
 	apps := []*catalog.App{{CatalogID: "jellyfin", Port: 8096}}
 
 	g := NewGenerator(configPath)
-	if err := g.GenerateAll(apps, nil, ""); err != nil {
-		t.Fatalf("first GenerateAll: %v", err)
+	if err := g.Generate(apps); err != nil {
+		t.Fatalf("first Generate: %v", err)
 	}
 	first, err := os.Stat(configPath)
 	if err != nil {
@@ -710,8 +571,8 @@ func TestGenerator_GenerateAll_SkipsWriteWhenUnchanged(t *testing.T) {
 	// this test runs on.
 	time.Sleep(30 * time.Millisecond)
 
-	if err := g.GenerateAll(apps, nil, ""); err != nil {
-		t.Fatalf("second GenerateAll: %v", err)
+	if err := g.Generate(apps); err != nil {
+		t.Fatalf("second Generate: %v", err)
 	}
 	second, err := os.Stat(configPath)
 	if err != nil {
@@ -725,23 +586,23 @@ func TestGenerator_GenerateAll_SkipsWriteWhenUnchanged(t *testing.T) {
 
 // The skip must be a content comparison, not a "the file exists" one: a
 // different app set has to land on disk.
-func TestGenerator_GenerateAll_RewritesWhenContentDiffers(t *testing.T) {
+func TestGenerator_Generate_RewritesWhenContentDiffers(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "apps-routes.yml")
 
 	g := NewGenerator(configPath)
-	if err := g.GenerateAll([]*catalog.App{{CatalogID: "jellyfin", Port: 8096}}, nil, ""); err != nil {
-		t.Fatalf("first GenerateAll: %v", err)
+	if err := g.Generate([]*catalog.App{{CatalogID: "jellyfin", Port: 8096}}); err != nil {
+		t.Fatalf("first Generate: %v", err)
 	}
 	before, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 
-	if err := g.GenerateAll([]*catalog.App{
+	if err := g.Generate([]*catalog.App{
 		{CatalogID: "jellyfin", Port: 8096},
 		{CatalogID: "navidrome", Port: 4533},
-	}, nil, ""); err != nil {
-		t.Fatalf("second GenerateAll: %v", err)
+	}); err != nil {
+		t.Fatalf("second Generate: %v", err)
 	}
 	after, err := os.ReadFile(configPath)
 	if err != nil {

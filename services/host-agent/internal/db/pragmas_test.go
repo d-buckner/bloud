@@ -80,10 +80,14 @@ func TestInitDB_PragmasApplyToEveryPooledConnection(t *testing.T) {
 }
 
 // TestInitDB_ForeignKeyCascadeWorksOnEveryConnection exercises the
-// exact structural loss the ledger recorded: guests -> shares
-// ON DELETE CASCADE, whose orphan rows silently accumulate when
-// foreign_keys is off. On a connection without enforcement the orphan
-// insert is accepted and the parent delete leaves the orphan behind.
+// exact structural loss the ledger recorded: a cascade whose orphan rows
+// silently accumulate when foreign_keys is off. On a connection without
+// enforcement the orphan insert is accepted and the parent delete leaves
+// the orphan behind.
+//
+// The fixture is user_preferences -> user_app_positions, the live cascade
+// pair in the baseline. It replaced guests -> shares, which left the schema
+// with the sharing feature.
 func TestInitDB_ForeignKeyCascadeWorksOnEveryConnection(t *testing.T) {
 	database, err := InitDB(t.TempDir())
 	require.NoError(t, err)
@@ -95,31 +99,25 @@ func TestInitDB_ForeignKeyCascadeWorksOnEveryConnection(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = seed.Close() }()
 	_, err = seed.ExecContext(ctx,
-		`INSERT INTO apps (catalog_id, display_name) VALUES ('cascade-probe', 'cascade probe')`)
+		`INSERT INTO user_preferences (username) VALUES ('cascade-probe')`)
 	require.NoError(t, err)
 	_, err = seed.ExecContext(ctx,
-		`INSERT INTO guests (id, name) VALUES ('probe-guest', 'probe')`)
-	require.NoError(t, err)
-	var appID int64
-	require.NoError(t, seed.QueryRowContext(ctx,
-		`SELECT id FROM apps WHERE catalog_id = 'cascade-probe'`).Scan(&appID))
-	_, err = seed.ExecContext(ctx,
-		`INSERT INTO shares (id, app_id, guest_id) VALUES ('probe-share', ?, 'probe-guest')`, appID)
+		`INSERT INTO user_app_positions (username, element_id, element_type) VALUES ('cascade-probe', 'w1', 'widget')`)
 	require.NoError(t, err)
 
-	// A distinct connection must enforce the FK: a share pointing at a
-	// nonexistent guest is rejected outright.
+	// A distinct connection must enforce the FK: a position pointing at a
+	// nonexistent preference is rejected outright.
 	other, err := database.Conn(ctx)
 	require.NoError(t, err)
 	defer func() { _ = other.Close() }()
 	_, err = other.ExecContext(ctx,
-		`INSERT INTO shares (id, app_id, guest_id) VALUES ('orphan-share', ?, 'missing-guest')`, appID)
+		`INSERT INTO user_app_positions (username, element_id, element_type) VALUES ('missing-user', 'w2', 'widget')`)
 	require.Error(t, err, "with foreign_keys off, the orphan insert is silently accepted")
 	require.ErrorContains(t, err, "FOREIGN KEY")
 
 	// And the cascade must fire on this connection too: deleting the
-	// parent removes the dependent share.
-	res, err := other.ExecContext(ctx, `DELETE FROM guests WHERE id = 'probe-guest'`)
+	// parent removes the dependent position.
+	res, err := other.ExecContext(ctx, `DELETE FROM user_preferences WHERE username = 'cascade-probe'`)
 	require.NoError(t, err)
 	rows, err := res.RowsAffected()
 	require.NoError(t, err)
@@ -127,8 +125,8 @@ func TestInitDB_ForeignKeyCascadeWorksOnEveryConnection(t *testing.T) {
 
 	var remaining int
 	require.NoError(t, seed.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM shares WHERE guest_id = 'probe-guest'`).Scan(&remaining))
-	require.Equal(t, 0, remaining, "cascade must remove the dependent share")
+		`SELECT COUNT(*) FROM user_app_positions WHERE username = 'cascade-probe'`).Scan(&remaining))
+	require.Equal(t, 0, remaining, "cascade must remove the dependent position")
 }
 
 // TestInitDB_ContendedWriteWaitsInsteadOfFailingBusy proves

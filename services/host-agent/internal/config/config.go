@@ -75,10 +75,6 @@ type Config struct {
 	// CalDAV service account password, for the machine client (caldav-mcp)
 	// that reads the operator's calendars on the agent's behalf.
 	CalDAVServicePassword string
-	// Tailscale auth key for tailnet node containers (empty = sharing disabled)
-	TSAuthKey string
-	// HostLabel is the display name for this host in invite tokens (e.g. "Alice's Server")
-	HostLabel string
 	// PostgresPassword is the resolved password for the shared Postgres instance.
 	// Exposed so bootstrapInfra can template it into the container spec.
 	PostgresPassword string
@@ -157,8 +153,6 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       sec.ldapBindPassword,
 		CalDAVServicePassword:  sec.caldavServicePassword,
-		TSAuthKey:              getEnv("BLOUD_TS_AUTHKEY", ""),
-		HostLabel:              getEnv("BLOUD_HOST_LABEL", hostname()),
 		PostgresPassword:       sec.postgresPassword,
 		APIToken:               sec.apiToken,
 		Secrets:                secretsMgr,
@@ -282,15 +276,6 @@ func loadRequiredSecrets(mgr *secrets.Manager) (resolvedSecrets, error) {
 		return out, err
 	}
 	return out, nil
-}
-
-// hostname returns the OS hostname or "bloud" as fallback.
-func hostname() string {
-	h, err := os.Hostname()
-	if err != nil || h == "" {
-		return "bloud"
-	}
-	return h
 }
 
 // getEnvAsInt reads an environment variable as an integer or returns a default value

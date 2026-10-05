@@ -27,15 +27,14 @@ import (
 // wiring is performed by NewRouter; Server retains the runtime state needed
 // by main.go (orchestrator lifecycle, health checks).
 type Server struct {
-	cfg            ServerConfig
-	router         *chi.Mux
-	db             *sql.DB
-	catalog        catalog.CacheInterface
-	appStore       appStoreHelper
-	orch           *orchestrator.Orchestrator
-	remoteAppStore store.RemoteAppStoreInterface
-	authConfig     *AuthRef
-	logger         *slog.Logger
+	cfg        ServerConfig
+	router     *chi.Mux
+	db         *sql.DB
+	catalog    catalog.CacheInterface
+	appStore   appStoreHelper
+	orch       *orchestrator.Orchestrator
+	authConfig *AuthRef
+	logger     *slog.Logger
 }
 
 // appStoreHelper provides minimal app store access for health checks.
@@ -63,8 +62,6 @@ type ServerConfig struct {
 	SSOIssuerURL      string
 	AuthentikToken    string
 	AuthentikPort     int
-	TSAuthKey         string
-	HostLabel         string
 	// Hosts is the live address state (the public URL behind which SSO URLs are
 	// derived); nil disables the address endpoints and URL resolution.
 	Hosts    *hostset.State
@@ -127,21 +124,14 @@ type ServerConfig struct {
 	// stream listens to. main.go builds them once and hands the same
 	// pointers to both. When nil the router constructs its own, which is the
 	// path tests take.
-	AppStore       store.AppStoreInterface
-	CatalogCache   catalog.CacheInterface
-	TailnetStore   *store.TailnetStore
-	RemoteAppStore store.RemoteAppStoreInterface
+	AppStore     store.AppStoreInterface
+	CatalogCache catalog.CacheInterface
 }
 
 // NewServer creates a new HTTP server instance. It delegates dependency
 // initialization and route wiring to NewRouter, then returns a Server
 // with the necessary fields populated for main.go.
 func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
-	remoteAppStore := cfg.RemoteAppStore
-	if remoteAppStore == nil {
-		remoteAppStore = store.NewRemoteAppStore(db)
-	}
-
 	authClient := cfg.Authentik
 	if authClient == nil {
 		authClient = NewAuthentikClient(cfg.AuthentikPort, cfg.AuthentikToken, cfg.BaseDomain)
@@ -152,21 +142,18 @@ func NewServer(db *sql.DB, cfg ServerConfig, logger *slog.Logger) *Server {
 	}
 
 	router, orch := NewRouter(db, cfg, logger, func(o *routerOptions) {
-		o.remoteAppStore = remoteAppStore
 		o.authConfig = authRef
 		o.appStore = cfg.AppStore
 		o.catalog = cfg.CatalogCache
-		o.tailnetStore = cfg.TailnetStore
 	})
 
 	s := &Server{
-		cfg:            cfg,
-		router:         router,
-		db:             db,
-		orch:           orch,
-		remoteAppStore: remoteAppStore,
-		authConfig:     authRef,
-		logger:         logger,
+		cfg:        cfg,
+		router:     router,
+		db:         db,
+		orch:       orch,
+		authConfig: authRef,
+		logger:     logger,
 	}
 
 	return s

@@ -21,11 +21,6 @@ const (
 	ldapServiceTokenID  = "ldap-service-bind-token"
 )
 
-// Proxy outpost constants for tailnet forward_domain auth
-const (
-	proxyOutpostName = "Bloud Tailnet Proxy Outpost"
-)
-
 // EnsureLDAPInfrastructure creates the LDAP provider, application, outpost, and service account
 // if they don't already exist. This is idempotent - safe to call multiple times.
 func (c *Client) EnsureLDAPInfrastructure(ctx context.Context, ldapBindPassword string) error {

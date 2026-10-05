@@ -240,11 +240,10 @@
 </section>
 
 <style>
-	/* The section shell matches the other settings sections (Address, Tailnet,
-	   Users) exactly: same measure, same separator, same heading and
-	   description type. This component renders between Address and Tailnet, so
-	   it has to carry its own rule -- the page's separator selector does not
-	   reach into a child component's scoped styles. */
+	/* The section shell matches the other settings sections (Address, Users)
+	   exactly: same measure, same separator, same heading and description
+	   type. This component has to carry its own rule -- the page's separator
+	   selector does not reach into a child component's scoped styles. */
 	.section {
 		max-width: 560px;
 		margin-top: var(--space-2xl);
@@ -427,8 +426,8 @@
 		font-weight: 500;
 	}
 
-	/* Consumers render as rows in an elevated card, the way the Users list and
-	   the tailnet connection card do, rather than as a bare list. */
+	/* Consumers render as rows in an elevated card, the way the Users list
+	   does, rather than as a bare list. */
 	.served-list {
 		display: flex;
 		flex-direction: column;

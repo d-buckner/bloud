@@ -52,8 +52,8 @@ func (o *Orchestrator) reconcileAppCatalogUpdate(ctx context.Context, appID stri
 
 	// Case B: prune containers this app owns but the catalog no longer declares.
 	// A container is only a candidate when it was once a declared lifecycle
-	// node: auxiliary containers (tailnet nodes, the proxy outpost) share the
-	// io.bloud.app label but never had a graph node.
+	// node: a labeled container that never had a graph node is somebody else's,
+	// and pruning it here would be guessing.
 	for name, info := range byName {
 		if info.Labels[containerruntime.AppLabel] != appID {
 			continue

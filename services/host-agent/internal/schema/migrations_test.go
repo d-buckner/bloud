@@ -102,7 +102,7 @@ func TestMigrate_FreshDatabaseWalksFullLedger(t *testing.T) {
 func TestMigrate_LegacyColumnsAdded(t *testing.T) {
 	db := openRawDB(t)
 
-	// Pre-ledger tables missing the later columns.
+	// Pre-ledger apps table missing the column migration 5 adds.
 	if _, err := db.Exec(`CREATE TABLE apps (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		catalog_id TEXT NOT NULL UNIQUE,
@@ -117,46 +117,17 @@ func TestMigrate_LegacyColumnsAdded(t *testing.T) {
 	)`); err != nil {
 		t.Fatalf("create legacy apps: %v", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE shares (
-		id TEXT PRIMARY KEY,
-		app_id INTEGER NOT NULL,
-		sso_strategy TEXT NOT NULL DEFAULT 'native-oidc',
-		guest_label TEXT NOT NULL DEFAULT '',
-		status TEXT NOT NULL DEFAULT 'active',
-		created_at TEXT,
-		revoked_at TEXT
-	)`); err != nil {
-		t.Fatalf("create legacy shares: %v", err)
-	}
-	// user_preferences is required by the grid DDL's FK target.
-	if _, err := db.Exec(`CREATE TABLE user_preferences (
-		username TEXT PRIMARY KEY,
-		layout TEXT DEFAULT '[]',
-		created_at TEXT DEFAULT (datetime('now'))
-	)`); err != nil {
-		t.Fatalf("create user_preferences: %v", err)
-	}
 
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	for _, want := range []struct{ table, column string }{
-		{"apps", "tailnet_id"},
-		{"apps", "last_error"},
-		{"shares", "node_share_link"},
-		{"shares", "guest_id"},
-	} {
-		has, err := columnExists(db, want.table, want.column)
-		if err != nil {
-			t.Fatalf("columnExists %s.%s: %v", want.table, want.column, err)
-		}
-		if !has {
-			t.Errorf("%s.%s missing after migration", want.table, want.column)
-		}
+	has, err := columnExists(db, "apps", "last_error")
+	if err != nil {
+		t.Fatalf("columnExists apps.last_error: %v", err)
 	}
-	if has, _ := columnExists(db, "shares", "guest_label"); has {
-		t.Error("shares.guest_label should have been renamed away")
+	if !has {
+		t.Error("apps.last_error missing after migration")
 	}
 }
 

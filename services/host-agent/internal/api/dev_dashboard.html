@@ -45,10 +45,6 @@
   button.primary:hover { background: #2ea043; }
 
   .empty { color: #8b949e; font-size: 0.85rem; padding: 16px 0; text-align: center; }
-  .log-viewer { display: none; grid-column: 1 / -1; }
-  .log-viewer.active { display: block; }
-  .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .log-output { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; line-height: 1.5; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
   .toast { position: fixed; bottom: 24px; right: 24px; padding: 10px 16px; border-radius: 6px; font-size: 0.85rem; z-index: 100; animation: fade-in 0.2s; }
   .toast.success { background: #0d3321; border: 1px solid #2ea043; color: #3fb950; }
   .toast.error { background: #3d1117; border: 1px solid #f85149; color: #f85149; }
@@ -86,13 +82,6 @@
   <div class="panel">
     <h2>Installed Apps</h2>
     <div id="installed"><div class="empty">No apps installed</div></div>
-  </div>
-  <div class="panel log-viewer" id="log-panel">
-    <div class="log-header">
-      <h2>Logs: <span id="log-app-name"></span></h2>
-      <button onclick="closeLogs()">Close</button>
-    </div>
-    <div class="log-output" id="log-output"></div>
   </div>
 </div>
 
@@ -178,43 +167,10 @@ appES.onmessage = (e) => {
         <div class="app-desc">Port ${app.port || '?'}</div>
       </div>
       <span class="badge ${badgeClass(app.status)}">${esc(app.status)}</span>
-      <button onclick="showLogs('${app.name}')">Logs</button>
       <button class="danger" onclick="uninstall('${app.name}')">Uninstall</button>
     </div>
   `).join('');
 };
-
-// --- Log viewer ---
-let logController = null;
-
-function showLogs(name) {
-  closeLogs();
-  document.getElementById('log-app-name').textContent = name;
-  document.getElementById('log-output').textContent = '';
-  document.getElementById('log-panel').classList.add('active');
-
-  logController = new AbortController();
-  fetch(`/api/apps/${name}/logs`, { signal: logController.signal })
-    .then(res => {
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      const output = document.getElementById('log-output');
-      function read() {
-        reader.read().then(({ done, value }) => {
-          if (done) return;
-          output.textContent += decoder.decode(value, { stream: true });
-          output.scrollTop = output.scrollHeight;
-          read();
-        }).catch(() => {});
-      }
-      read();
-    }).catch(() => {});
-}
-
-function closeLogs() {
-  if (logController) { logController.abort(); logController = null; }
-  document.getElementById('log-panel').classList.remove('active');
-}
 
 // --- Helpers ---
 function badgeClass(s) {

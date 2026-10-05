@@ -32,7 +32,6 @@ export interface OrchestratorStatus {
 export interface DeveloperGraph {
 	nodes: GraphNode[];
 	edges: GraphEdge[];
-	tailnetDomain?: string;
 	orchestrator?: OrchestratorStatus;
 }
 

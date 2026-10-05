@@ -7,10 +7,9 @@
 > **orchestrator** (`internal/engine/orchestrator/`). The intent queue, single-writer model, and
 > convergence loop described below are exactly what the orchestrator implements today.
 > Read this as the architecture-as-built, with the component name updated to *orchestrator*.
-> Two deviations from this spec are now permanent and documented in [review-2026-09-17.md](review-2026-09-17.md): share/guest
-> writes stay direct in the API (the unused `CreateShareIntent`/`RevokeShareIntent`
-> types were deleted 2026-09-14), and the lifecycle
-> graph uses an in-memory repository rather than its SQLite backing.
+> One deviation from this spec is now permanent and documented in
+> [review-2026-09-17.md](review-2026-09-17.md): the lifecycle graph uses an
+> in-memory repository rather than its SQLite backing.
 
 ## Motivation
 
@@ -21,10 +20,9 @@ The host-agent currently has three inconsistent patterns for mutations and side 
    lifecycle synchronously (record intent, create container, health check, post-start
    config, update status). The reconciler runs *after* as a convergence safety net.
 
-2. **API handlers doing direct store writes + side effects.** Tailnet settings
-   (`handleSetTailnet`) write to the tailnet store then spawn async goroutines to start
-   sidecars and ensure gateway/proxies. Remote app handlers write to the remote app store
-   then call `RegenerateRoutes()`. Rename writes directly to the app store.
+2. **API handlers doing direct store writes + side effects.** Rename wrote directly to
+   the app store, and route regeneration was called from the handler that changed the
+   thing being routed.
 
 3. **Reconciler as post-hoc convergence.** The reconciler runs PreStart, HealthCheck, and
    PostStart in dependency order for all installed apps. It is triggered after
@@ -32,8 +30,8 @@ The host-agent currently has three inconsistent patterns for mutations and side 
 
 This split creates several problems:
 
-- **Race conditions.** A tailnet save spawns async goroutines that read from app stores
-  while an install is concurrently writing to them. The mutex only serializes
+- **Race conditions.** A settings save spawned async goroutines that read from app
+  stores while an install was concurrently writing to them. The mutex only serialized
   install/uninstall, not the other mutation paths.
 - **No transactional guarantees.** There is no mechanism to ensure that a set of related
   mutations (install app + regenerate routes + start sidecar) either all complete or are
@@ -59,12 +57,12 @@ all side effects. Everything else is a reader that submits intents.
 - **Intent:** A typed, immutable request describing a desired state change. Created by API
   handlers, enqueued for the reconciler to process. Intents carry an ID for
   logging/debugging.
-- **Store (desired state):** The database records (apps, tailnet connections, remote apps,
-  shares). These represent what the world *should* look like. Only the reconciler writes
+- **Store (desired state):** The database records (apps, settings, sessions).
+  These represent what the world *should* look like. Only the reconciler writes
   to stores.
-- **Runtime (actual state):** The containers, sidecars, gateway, Traefik config, health
-  endpoints. This is what the world *actually* looks like. The reconciler reads runtime
-  state and converges it to match the stores.
+- **Runtime (actual state):** The containers and Traefik config. This is what the world
+  *actually* looks like. The reconciler reads runtime state and converges it to match
+  the stores.
 - **Convergence:** The process of diffing desired state (stores) against actual state
   (runtime) and executing idempotent steps to make actual match desired.
 
@@ -85,9 +83,6 @@ effects, which the reconciler serializes.
 
 Stores affected:
 - `AppStoreInterface` (`store/interfaces.go`): all write methods
-- `TailnetStoreInterface` (`store/interfaces.go`): Create, Delete
-- `RemoteAppStoreInterface` (`store/interfaces.go`): Create, Delete, SetCredential, SetStatus
-- `ShareStoreInterface` (`store/interfaces.go`): Create, Revoke
 
 Stores **not** affected (remain directly writable):
 - `PreferencesStoreInterface`: user layout preferences have no side effects and no
@@ -162,8 +157,6 @@ store writes that represent what the world *should* look like.
 Examples:
 - `InstallAppIntent{AppName: "radarr"}` -> `appStore.Install("radarr", ...)`
 - `UninstallAppIntent{AppName: "radarr"}` -> `appStore.UpdateStatus("radarr", "uninstalling")`
-- `SetTailnetIntent{...}` -> `tailnetStore.Create(conn)`
-- `AddRemoteAppIntent{...}` -> `remoteAppStore.Create(app)`
 
 If three install intents arrive in quick succession, they all get drained, the store
 reflects all three, and one convergence pass handles them all.
@@ -187,26 +180,18 @@ Read all stores. Read runtime state. Diff. Execute idempotent steps:
    - HealthCheck: wait for app to be healthy
    - PostStart: configure via APIs
    - SSO provisioning (if applicable)
-   - Sidecar management (if tailnet is active)
    - Update status to `running`
 
 4. **Handle uninstalls.** For each app marked `uninstalling`:
-   - Stop sidecar (if running)
    - Remove container
    - Delete from store
    - Optionally delete data directory and database
 
 5. **Routing convergence.** After all app state is settled:
-   - Ensure gateway running (if tailnet active)
-   - Reconcile remote app proxies
    - Regenerate Traefik routes
 
 6. **Optional dependency dispatch.** Detect apps that transitioned to healthy this cycle.
    Notify parent apps with optional integrations to reconfigure.
-
-7. **Tailnet teardown.** If tailnet was deleted (no active connection in store but
-   sidecars/gateway exist in runtime), stop and purge all sidecars, gateway, and remote
-   proxies.
 
 ## Intent Catalog
 
@@ -232,30 +217,6 @@ type RenameAppIntent struct {
     ID          string
     AppName     string
     DisplayName string
-}
-
-type SetTailnetIntent struct {
-    ID         string
-    Name       string
-    Type       string // "tailscale" or "headscale"
-    AuthKey    string
-    ControlURL string
-}
-
-type DeleteTailnetIntent struct {
-    ID string
-}
-
-type AddRemoteAppIntent struct {
-    ID          string
-    AppID       string
-    TailnetAddr string
-    HostLabel   string
-}
-
-type DeleteRemoteAppIntent struct {
-    ID          string
-    RemoteAppID string
 }
 
 type ClearAppDataIntent struct {
@@ -285,12 +246,6 @@ truth for this catalog; the list above omits the settings intents
 | `handleUninstall` | Parse clearData, `EnqueueUninstall()`, wait for result, return `UninstallResult` | Enqueue `UninstallAppIntent`, return 202 |
 | `handleClearData` | If installed: enqueue uninstall. Else: direct FS + DB cleanup | Enqueue `ClearAppDataIntent`, return 202 |
 | `handleRename` | Direct `appStore.UpdateDisplayName()` | Enqueue `RenameAppIntent`, return 202 |
-| `handleSetTailnet` | Validate, store write, async sidecar + gateway goroutines | Validate, enqueue `SetTailnetIntent`, return 202 |
-| `handleDeleteTailnet` | Store delete, sync stop/purge sidecars + gateway + proxies | Enqueue `DeleteTailnetIntent`, return 202 |
-| `handleAddRemoteApp` | Validate, store write, `RegenerateRoutes()` | Validate, enqueue `AddRemoteAppIntent`, return 202 |
-| `handleDeleteRemoteApp` | Store delete, `RegenerateRoutes()` | Enqueue `DeleteRemoteAppIntent`, return 202 |
-| `handleCreateInvite` | Validate, store write, generate token | **Stays direct**: token must return synchronously (no intent; see Open Q2) |
-| `handleRevokeShare` | `shareStore.Revoke()` | **Stays direct**: pure store write (no intent; see Open Q2) |
 | `handlePlanInstall` | Read-only dependency planning | **Removed** |
 | `handlePlanRemove` | Read-only removal impact analysis | **Removed** |
 
@@ -320,13 +275,13 @@ Helper methods on Server that perform side effects are removed:
 On startup, the reconciler runs a convergence pass with no intents in the queue. This
 replaces the current `SyncContainerState()` + `ReconcileState()` calls. The convergence
 loop naturally handles: fixing DB status for crashed containers, restarting stopped apps,
-regenerating routes, ensuring sidecars for the active tailnet connection.
+regenerating routes.
 
 ## What Doesn't Change
 
 - **Read endpoints.** All GET handlers continue reading from stores directly. No change
   to `handleListApps`, `handleListInstalledApps`, `handleAppMetadata`,
-  `handleGetTailnet`, `handleListRemoteApps`, `handleListShares`, etc.
+  `handleListApps`, and the other read-only handlers.
 - **SSE stream.** `AppEventHub` continues broadcasting on store changes. The reconciler
   writes to stores, which triggers `onChange`, which triggers `Broadcast()`, which pushes
   to SSE subscribers. The frontend receives status updates exactly as it does today.
@@ -382,7 +337,6 @@ Reconciler wakes up
         |   |   | appStore.UpdateStatus("starting") -> SSE broadcast
         |   |   | HealthCheck -> wait for ready
         |   |   | PostStart -> configure via API
-        |   |   | Start sidecar (if tailnet active)
         |   |   | appStore.UpdateStatus("running") -> SSE broadcast
         |   |
         |   +-- Level 1: radarr
@@ -391,7 +345,6 @@ Reconciler wakes up
         |       | appStore.UpdateStatus("starting") -> SSE broadcast
         |       | HealthCheck -> wait for ready
         |       | PostStart -> configure (add qbittorrent as download client)
-        |       | Start sidecar (if tailnet active)
         |       | appStore.UpdateStatus("running") -> SSE broadcast
         |
         +-- Routing convergence
@@ -533,49 +486,6 @@ the result. Remove `handlePlanInstall` and `handlePlanRemove` endpoints.
 
 ---
 
-### Phase 4: Tailnet + Sidecars Through Reconciler
-
-**What:** `handleSetTailnet` and `handleDeleteTailnet` become intent submitters.
-Convergence handles: start sidecars for running apps when tailnet is active, stop/purge
-sidecars when tailnet is deleted, ensure gateway, reconcile remote proxies.
-
-Remove `ensureSidecarsForRunningApps()`, `ensureGatewayAndProxies()`,
-`stopAllSidecarsAndPurge()` from Server.
-
-**Auto-verify:**
-- Unit tests: `SetTailnetIntent` drain writes to tailnet store
-- Unit tests: convergence sees active tailnet + running apps without sidecars -> starts
-  sidecars
-- Unit tests: convergence sees no tailnet + existing sidecars -> stops and purges
-- `./bloud validate --tier fast` passes
-
-**Manual:**
-- Configure a tailnet in the UI, verify sidecars start (`podman ps` in VM)
-- Delete the tailnet, verify sidecars stop and purge
-- Install an app while tailnet is active, verify sidecar starts automatically during
-  convergence
-
----
-
-### Phase 5: Remote Apps + Routing Through Reconciler
-
-**What:** `handleAddRemoteApp` and `handleDeleteRemoteApp` become intent submitters.
-Routing convergence (gateway, remote proxies, Traefik config) runs as part of the
-convergence pass, not as ad-hoc calls scattered across handlers.
-
-**Auto-verify:**
-- Unit tests: `AddRemoteAppIntent` drain writes to remote app store
-- Unit tests: convergence regenerates routes when remote app store has entries
-- Unit tests: convergence ensures gateway when tailnet active + remote apps exist
-- `./bloud validate --tier fast` passes
-
-**Manual:**
-- Add a remote app, verify Traefik routes update (check routes config file in VM)
-- Delete a remote app, verify routes update
-- Add two remote apps rapidly, verify one route regeneration (check logs)
-
----
-
 ### Phase 6: Remaining Intents + Cleanup
 
 **What:** Move remaining operations into intents:
@@ -597,8 +507,7 @@ Then cleanup:
 - `./bloud e2e lifecycle` passes
 
 **Manual:**
-- Full walkthrough: install app, rename it, configure tailnet, add remote app, uninstall,
-  clear data
+- Full walkthrough: install app, rename it, uninstall, clear data
 - Verify no goroutines doing store writes outside the reconciler (code review)
 
 ---
@@ -608,13 +517,3 @@ Then cleanup:
 1. **Phase 3 sub-phasing.** Phase 3 is split into 3a (build the new path, test in
    isolation) and 3b (cut over live handlers). This avoids a risky single-step cutover.
 
-2. **Share intents.** `handleCreateInvite` currently generates a JWT token and returns it
-   in the response. If it becomes an intent with a 202, the caller doesn't get the token
-   back synchronously. Since this is a store write with no side effects (no containers, no
-   routing, no reconciliation needed), it may be better to keep share creation as a direct
-   operation outside the reconciler. Same for `handleRevokeShare`.
-
-   **Resolved (2026):** the implementation kept share/guest writes direct in the
-   API. **Cleanup (2026-09-14):** the unused `CreateShareIntent`/`RevokeShareIntent`
-   types were deleted from `intent.go`; the direct-write boundary is documented
-   there and in docs/specs/review-2026-09-17.md §C3.

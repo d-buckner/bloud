@@ -17,13 +17,13 @@
 //
 // Where it looks: the `containers[].image` entries of `apps/*/metadata.yaml`
 // (the catalog the planner turns into container specs) and registry-qualified
-// image literals in non-test Go under `apps/` and `services/` (the sharing
-// sidecar images live in Go constants, not in the catalog).
+// image literals in non-test Go under `apps/` and `services/` (an image pulled
+// from a Go constant is as much a product dependency as one in the catalog).
 //
 // Exceptions are declared in EXCEPTIONS below, each with a reason. The check
 // prints them on every run so a floating tag is never invisible, and it fails an
 // exception that matches nothing, so the list cannot rot into a claim about code
-// that no longer exists.
+// that no longer exists. The list is empty today: nothing in the product floats.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -60,20 +60,7 @@ const FLOATING = [
 // Deliberate exceptions. Matching is by image ref; `file` narrows it to one
 // declaration site so an exception cannot silently cover a second copy of the
 // same image elsewhere.
-const EXCEPTIONS = [
-  {
-    ref: 'docker.io/tailscale/tailscale:stable',
-    file: 'services/host-agent/internal/sharing/tailnet_node.go',
-    reason:
-      'Strategic: the tailnet node must track the Tailscale stable channel. A ' +
-      'pinned client drifts from the coordination server and from the peers it ' +
-      'tunnels to, and the failure shows up as broken transport rather than as ' +
-      'a version mismatch. Every stable release is a supported one, and the node ' +
-      'carries no version-sensitive contract of its own. Re-review this if the ' +
-      'node ever starts pinning ACL or key material that a Tailscale upgrade ' +
-      'could change.',
-  },
-];
+const EXCEPTIONS = [];
 
 // Registries the catalog actually pulls from. A ref that is not registry-qualified
 // in a Go line is a string that merely looks like an image, so the qualifier is

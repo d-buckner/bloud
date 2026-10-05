@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/d-buckner/bloud/services/host-agent/internal/engine/orchestrator"
 	"codeberg.org/d-buckner/bloud/services/host-agent/internal/store"
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/authentik"
 	"github.com/go-chi/chi/v5"
@@ -23,7 +22,6 @@ import (
 
 func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
 	t.Helper()
-	tailnetStore := &FakeTailnetStore{}
 	prefsStore := NewFakePreferencesStore()
 	var sessionStore store.SessionStoreInterface = nil // nil for tests: session invalidation tested via direct fakes
 	authClient := NewFakeSettingsAuthentikClient()
@@ -35,7 +33,6 @@ func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
 	}
 
 	return &settingsModule{
-		tailnetStore:    tailnetStore,
 		prefsStore:      prefsStore,
 		sessionStore:    sessionStore,
 		authentikClient: authClient,
@@ -46,194 +43,6 @@ func newSettingsModule(t *testing.T, authConfig *AuthConfig) *settingsModule {
 		selfPort: 3000,
 		logger:   logger,
 	}
-}
-
-// FakeTailnetStore is an in-memory tailnet store for testing.
-type FakeTailnetStore struct {
-	active *store.TailnetConnection
-}
-
-func (f *FakeTailnetStore) Create(conn store.TailnetConnection) error {
-	f.active = &conn
-	return nil
-}
-
-func (f *FakeTailnetStore) GetByID(id string) (*store.TailnetConnection, error) {
-	if f.active != nil && f.active.ID == id {
-		return f.active, nil
-	}
-	return nil, nil
-}
-
-func (f *FakeTailnetStore) GetActive() (*store.TailnetConnection, error) {
-	return f.active, nil
-}
-
-func (f *FakeTailnetStore) List() ([]*store.TailnetConnection, error) {
-	if f.active == nil {
-		return nil, nil
-	}
-	return []*store.TailnetConnection{f.active}, nil
-}
-
-func (f *FakeTailnetStore) Delete(id string) error {
-	if f.active != nil && f.active.ID == id {
-		f.active = nil
-	}
-	return nil
-}
-
-var _ store.TailnetStoreInterface = (*FakeTailnetStore)(nil)
-
-// ---- Tailnet tests ----
-
-func TestSettingsHTTP_GetTailnet_None(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	req := httptest.NewRequest("GET", "/settings/tailnet", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp interface{}
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestSettingsHTTP_GetTailnet_WithData(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	mod.tailnetStore.(*FakeTailnetStore).active = &store.TailnetConnection{
-		ID:      "ts-1",
-		Name:    "My Tailscale",
-		Type:    "tailscale",
-		AuthKey: "tskey-auth-xyz",
-		Status:  "active",
-	}
-
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	req := httptest.NewRequest("GET", "/settings/tailnet", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp tailnetResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "ts-1", resp.ID)
-	assert.Equal(t, "My Tailscale", resp.Name)
-	assert.True(t, resp.HasAuthKey)
-}
-
-func TestSettingsHTTP_SetTailnet_InvalidType(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	body := `{"name":"test","type":"vpn","authKey":"key"}`
-	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSettingsHTTP_SetTailnet_MissingAuthKey(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	body := `{"name":"test","type":"tailscale"}`
-	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSettingsHTTP_SetTailnet_HeadscaleMissingControlURL(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	body := `{"name":"test","type":"headscale","authKey":"key"}`
-	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSettingsHTTP_SetTailnet_NoOrchestrator(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	mod.orch = nil
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	body := `{"name":"test","type":"tailscale","authKey":"key"}`
-	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestSettingsHTTP_SetTailnet_Valid(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	body := `{"name":"My TS","type":"tailscale","authKey":"tskey-auth-xyz"}`
-	req := httptest.NewRequest("POST", "/settings/tailnet", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code)
-	var resp map[string]string
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp["intentId"])
-}
-
-func TestSettingsHTTP_DeleteTailnet_None(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	req := httptest.NewRequest("DELETE", "/settings/tailnet", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestSettingsHTTP_DeleteTailnet_Valid(t *testing.T) {
-	mod := newSettingsModule(t, nil)
-	mod.tailnetStore.(*FakeTailnetStore).active = &store.TailnetConnection{
-		ID:      "ts-1",
-		Name:    "My TS",
-		Type:    "tailscale",
-		AuthKey: "key",
-		Status:  "active",
-	}
-
-	r := chi.NewRouter()
-	NewSettingsRouter(mod, r)
-
-	req := httptest.NewRequest("DELETE", "/settings/tailnet", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code)
 }
 
 // ---- Setup wizard tests ----
@@ -626,9 +435,6 @@ func TestSettingsRouter_RegistersRoutes(t *testing.T) {
 		method string
 		path   string
 	}{
-		{"GET", "/settings/tailnet"},
-		{"POST", "/settings/tailnet"},
-		{"DELETE", "/settings/tailnet"},
 		{"GET", "/admin/users"},
 		{"POST", "/admin/users"},
 		{"DELETE", "/admin/users/alice"},
@@ -694,7 +500,6 @@ func TestSetupRouter_IsSeparateFromAdminRouter(t *testing.T) {
 // ---- Interface contract ----
 
 var _ = io.EOF
-var _ = orchestrator.NewSetTailnetIntent
 var _ = chi.NewRouter
 var _ store.PreferencesStoreInterface = (*FakePreferencesStore)(nil)
 

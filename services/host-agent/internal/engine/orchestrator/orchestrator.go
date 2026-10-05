@@ -62,7 +62,6 @@ type OrchestratorConfig struct {
 	Tuning  TuningConfig
 	Runtime RuntimeConfig
 	Stores  StoresConfig
-	Tailnet TailnetConfig
 	SSO     SSOConfig
 	Hosts   HostsConfig
 	// CatalogGraph is the install/remove planner. Nil disables planning.
@@ -105,24 +104,18 @@ type Orchestrator struct {
 	secrets configurator.AppSecretsProvider
 
 	// Intent processing fields
-	queue            *IntentQueue
-	events           *eventbus.Bus
-	appStore         store.AppStoreInterface
-	catalogGraph     catalog.AppGraphInterface
-	tailnetStore     store.TailnetStoreInterface
-	remoteAppStore   store.RemoteAppStoreInterface
-	tailnetNode      TailnetNodeEnsurer
-	gateway          GatewayManager
-	remoteProxy      RemoteProxyManager
-	proxyOutpost     ProxyOutpostEnsurer
-	forwardDomainSSO ForwardDomainProvisioner
-	sso              SSOProvisioner
-	ssoBaseURL       string
-	ssoHostSecret    string
-	ssoAuthentikURL  string
-	ssoIssuerURL     string
-	traefikGen       traefikgen.GeneratorInterface
-	activeTailnetID  func() string
+	queue         *IntentQueue
+	events        *eventbus.Bus
+	appStore      store.AppStoreInterface
+	catalogGraph  catalog.AppGraphInterface
+	sso           SSOProvisioner
+	ssoBaseURL    string
+	ssoHostSecret string
+	// ssoAuthentikURL is the browser-accessible Authentik URL used for OIDC
+	// discovery; ssoIssuerURL is the issuer reachable from app containers.
+	ssoAuthentikURL string
+	ssoIssuerURL    string
+	traefikGen      traefikgen.GeneratorInterface
 
 	// Live address state (nil = legacy single-URL mode from config).
 	hosts          *hostset.State
@@ -171,39 +164,31 @@ func NewOrchestrator(
 	config OrchestratorConfig,
 ) *Orchestrator {
 	o := &Orchestrator{
-		graph:            g,
-		registry:         registry,
-		catalog:          catalogCache,
-		dataDir:          dataDir,
-		logger:           logger,
-		config:           config,
-		appStore:         config.Stores.AppStore,
-		secrets:          config.Stores.Secrets,
-		catalogGraph:     config.CatalogGraph,
-		tailnetStore:     config.Stores.TailnetStore,
-		remoteAppStore:   config.Stores.RemoteAppStore,
-		tailnetNode:      config.Tailnet.TailnetNode,
-		gateway:          config.Tailnet.Gateway,
-		remoteProxy:      config.Tailnet.RemoteProxy,
-		proxyOutpost:     config.Tailnet.ProxyOutpost,
-		forwardDomainSSO: config.SSO.ForwardDomainSSO,
-		sso:              config.SSO.SSO,
-		ssoBaseURL:       config.SSO.SSOBaseURL,
-		ssoHostSecret:    config.SSO.SSOHostSecret,
-		ssoAuthentikURL:  config.SSO.SSOAuthentikURL,
-		ssoIssuerURL:     config.SSO.SSOIssuerURL,
-		traefikGen:       config.Runtime.TraefikGen,
-		activeTailnetID:  config.Tailnet.ActiveTailnetID,
-		hosts:            config.Hosts.Hosts,
-		settings:         config.Stores.Settings,
-		onHostsChanged:   config.Hosts.OnHostsChanged,
-		queue:            NewIntentQueue(DefaultDebounce),
-		events:           config.Tuning.Events,
-		started:          make(chan struct{}),
-		ready:            make(chan struct{}),
-		done:             make(chan struct{}),
-		healWake:         make(chan struct{}, 1),
-		containerOwner:   make(map[string]string),
+		graph:           g,
+		registry:        registry,
+		catalog:         catalogCache,
+		dataDir:         dataDir,
+		logger:          logger,
+		config:          config,
+		appStore:        config.Stores.AppStore,
+		secrets:         config.Stores.Secrets,
+		catalogGraph:    config.CatalogGraph,
+		sso:             config.SSO.SSO,
+		ssoBaseURL:      config.SSO.SSOBaseURL,
+		ssoHostSecret:   config.SSO.SSOHostSecret,
+		ssoAuthentikURL: config.SSO.SSOAuthentikURL,
+		ssoIssuerURL:    config.SSO.SSOIssuerURL,
+		traefikGen:      config.Runtime.TraefikGen,
+		hosts:           config.Hosts.Hosts,
+		settings:        config.Stores.Settings,
+		onHostsChanged:  config.Hosts.OnHostsChanged,
+		queue:           NewIntentQueue(DefaultDebounce),
+		events:          config.Tuning.Events,
+		started:         make(chan struct{}),
+		ready:           make(chan struct{}),
+		done:            make(chan struct{}),
+		healWake:        make(chan struct{}, 1),
+		containerOwner:  make(map[string]string),
 	}
 	o.setupStatusSync()
 	o.setupNodeEvents()
@@ -404,11 +389,8 @@ func (o *Orchestrator) Reconcile(ctx context.Context) error {
 		}
 	}
 
-	// Sync routes now that all lifecycle phases are complete: the
-	// runtime steps (gateway, remote proxies) run first, then the pure
-	// config write. Deferring this, and the RUNNING promotion below,
-	// ensures the UI never shows an app as "installed" before its
-	// Traefik routes are live.
+	// Sync routes now that all lifecycle phases are complete, so the UI never
+	// shows an app as "installed" before its Traefik routes are live.
 	if err := o.SyncRoutes(); err != nil {
 		o.logger.Warn("route sync failed", "error", err)
 	}
