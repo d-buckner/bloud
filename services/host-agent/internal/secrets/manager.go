@@ -40,6 +40,14 @@ type Secrets struct {
 	// reads the operator's calendars on the agent's behalf.
 	CalDAVServicePassword string `json:"caldavServicePassword"`
 
+	// CalendarServicePassword is the credential of the account that *owns* the
+	// shared calendar collections: the aggregated feeds and the family calendar
+	// that Radicale map-shares to every Bloud user. It is deliberately not the
+	// CalDAV service account's password: that one is the agent's read-only
+	// credential, and an owner that can write would make the agent's read-only
+	// grant a policy note instead of a boundary.
+	CalendarServicePassword string `json:"calendarServicePassword"`
+
 	// Master secret for deriving per-app OAuth client secrets
 	SSOHostSecret string `json:"ssoHostSecret"`
 
@@ -164,6 +172,7 @@ func secretTable(s *Secrets) []secretField {
 		{&s.LDAPOutpostToken, 48},
 		{&s.LDAPBindPassword, 32},
 		{&s.CalDAVServicePassword, 32},
+		{&s.CalendarServicePassword, 32},
 		{&s.SSOHostSecret, 64},
 		{&s.APIToken, 48},
 	}
@@ -246,6 +255,8 @@ func (m *Manager) Get(name string) string {
 		return m.secrets.LDAPBindPassword
 	case "caldavServicePassword":
 		return m.secrets.CalDAVServicePassword
+	case "calendarServicePassword":
+		return m.secrets.CalendarServicePassword
 	case "ssoHostSecret":
 		return m.secrets.SSOHostSecret
 	case "apiToken":
@@ -287,6 +298,11 @@ func (m *Manager) GetLDAPBindPassword() string {
 // GetCalDAVServicePassword returns the CalDAV service account password.
 func (m *Manager) GetCalDAVServicePassword() string {
 	return m.Get("caldavServicePassword")
+}
+
+// GetCalendarServicePassword returns the shared-calendar owner account password.
+func (m *Manager) GetCalendarServicePassword() string {
+	return m.Get("calendarServicePassword")
 }
 
 // GetSSOHostSecret returns the master secret for OAuth client secret derivation.

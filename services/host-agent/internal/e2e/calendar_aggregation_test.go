@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,6 +69,180 @@ func TestCalendarAggregation(t *testing.T) {
 	// on the operator's tree must list both calendars, which is the exact shape
 	// a CalDAV client reads.
 	waitForSyncedCollections(t, operator, operatorPassword)
+
+	// The whole family sees the same thing. A second Bloud user, created after
+	// Radicale converged, must find the feeds and the family calendar mounted
+	// in their own tree once the resync picks them up.
+	assertSharedWithASecondUser(t)
+}
+
+// assertSharedWithASecondUser is the behavioral half of #215. Everything above
+// proves the feeds sync in; this proves they arrive in somebody else's tree.
+//
+// The second user is created through the admin API after Radicale is already
+// RUNNING, which is the case a static share list would miss: the recipient set
+// is read from the identity provider on the resync, not captured at install.
+func assertSharedWithASecondUser(t *testing.T) {
+	t.Helper()
+
+	const (
+		fellow     = "e2efamily"
+		fellowPass = "e2efamily123"
+	)
+	createManagedUser(t, fellow, fellowPass)
+
+	waitForShareRows(t, fellow)
+
+	// The recipient's own home listing is exactly what a calendar client reads.
+	// Depth 1 on /<user>/ must show the family calendar and both feeds, which
+	// is the whole promise: add one CalDAV account, inherit the household.
+	res, listing := davRequestDepth(t, "PROPFIND", "/"+fellow+"/", fellow, fellowPass, "1")
+	if res.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND /%s/ = %d, want 207\n%s", fellow, res.StatusCode, listing)
+	}
+	for _, want := range []string{"family", "radarr", "sonarr"} {
+		if !strings.Contains(listing, fellow+"/"+want) {
+			t.Errorf("shared collection %q is missing from /%s/:\n%s", want, fellow, listing)
+		}
+	}
+
+	assertFamilyCalendarIsWritable(t, fellow, fellowPass)
+	assertFeedIsReadOnly(t, fellow, fellowPass)
+}
+
+// createManagedUser adds a Bloud user through the admin API. The integration
+// runtime reaches the agent over loopback, which is the trusted position the
+// admin router accepts, so no session is needed.
+func createManagedUser(t *testing.T, username, password string) {
+	t.Helper()
+	body := fmt.Sprintf(`{"username":%q,"password":%q,"role":"member"}`, username, password)
+	resp := agentPost(t, hostAgentURL+"/api/admin/users", "application/json", strings.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /api/admin/users for %q = %d: %s", username, resp.StatusCode, data)
+	}
+	t.Logf("created the second Bloud user %q", username)
+}
+
+// readSharingCSV reads the sharing database the configurator owns.
+func readSharingCSV(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(appDataDir("radicale"), "collections", "sharing.csv")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(raw)
+}
+
+// waitForShareRows polls until the sharing database carries the recipient's
+// family mount and both feed mounts. The recipient set is re-read on the
+// PostStart resync, so a user added after the last pass shows up one cycle
+// later, and the resync restarts the container on the change.
+func waitForShareRows(t *testing.T, recipient string) {
+	t.Helper()
+	want := []string{
+		"map;/" + recipient + "/family/;",
+		"map;/" + recipient + "/radarr/;",
+		"map;/" + recipient + "/sonarr/;",
+	}
+	deadline := time.Now().Add(6 * time.Minute)
+	for {
+		csv := readSharingCSV(t)
+		missing := make([]string, 0, len(want))
+		for _, w := range want {
+			if !strings.Contains(csv, w) {
+				missing = append(missing, w)
+			}
+		}
+		if len(missing) == 0 {
+			t.Logf("sharing.csv carries the family mounts for %q", recipient)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sharing.csv never carried %v for %q; have:\n%s", missing, recipient, csv)
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// assertFamilyCalendarIsWritable puts an event into the shared family
+// calendar through the recipient's mount. A read-write map share that cannot
+// actually be written is the failure this asserts against, and it is the thing
+// that makes the family calendar a calendar rather than another feed.
+func assertFamilyCalendarIsWritable(t *testing.T, user, password string) {
+	t.Helper()
+	href := fmt.Sprintf("bloud-family-%d.ics", time.Now().UnixNano())
+	path := "/" + user + "/family/" + href
+
+	res, body := davPut(t, path, user, password, icsEvent("bloud-family-"+href, "Family test event"))
+	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusNoContent {
+		t.Fatalf("PUT %s = %d, want 201; the family share is not writable\n%s", path, res.StatusCode, body)
+	}
+
+	res, listing := davRequestDepth(t, "PROPFIND", "/"+user+"/family/", user, password, "1")
+	if res.StatusCode != http.StatusMultiStatus || !strings.Contains(listing, href) {
+		t.Errorf("the event is not listed in %s (status %d):\n%s", path, res.StatusCode, listing)
+	}
+}
+
+// assertFeedIsReadOnly keeps the write grant above honest: the feeds are
+// projections of someone else's system, and a user writing into one would be
+// overwritten on the next sync anyway. Better refused now than silently lost.
+func assertFeedIsReadOnly(t *testing.T, user, password string) {
+	t.Helper()
+	href := fmt.Sprintf("bloud-should-not-land-%d.ics", time.Now().UnixNano())
+	path := "/" + user + "/radarr/" + href
+
+	res, body := davPut(t, path, user, password, icsEvent("bloud-should-not-land-"+href, "Must not persist"))
+	if res.StatusCode == http.StatusForbidden || res.StatusCode == http.StatusMethodNotAllowed ||
+		res.StatusCode == http.StatusUnauthorized {
+		return
+	}
+	t.Fatalf("PUT %s = %d, want a refusal; the read-only feed share is writable\n%s", path, res.StatusCode, body)
+}
+
+// icsEvent renders a minimal single-event iCalendar document.
+func icsEvent(uid, summary string) string {
+	return "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//Bloud//e2e//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:" + uid + "\r\n" +
+		"DTSTAMP:20260101T000000Z\r\n" +
+		"DTSTART:20260101T100000Z\r\n" +
+		"DTEND:20260101T110000Z\r\n" +
+		"SUMMARY:" + summary + "\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+}
+
+// davPut uploads a calendar item with Basic credentials.
+func davPut(t *testing.T, path, user, password, body string) (*http.Response, string) {
+	t.Helper()
+	req, err := http.NewRequest("PUT", radicaleURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build PUT %s: %v", path, err)
+	}
+	req.SetBasicAuth(user, password)
+	req.Header.Set("Content-Type", "text/calendar")
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("redirected; a DAV request must not be bounced to a login page")
+		},
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("PUT %s: %v", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		t.Fatalf("read PUT %s body: %v", path, err)
+	}
+	return res, string(raw)
 }
 
 // createFirstRunOperator performs the first-run setup POST the browser wizard

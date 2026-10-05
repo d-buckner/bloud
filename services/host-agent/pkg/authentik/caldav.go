@@ -4,8 +4,6 @@ package authentik
 
 import (
 	"context"
-	"fmt"
-	"net/http"
 )
 
 // CalDAVServiceUsername is the login name of the service account the caldav-mcp
@@ -21,29 +19,5 @@ const CalDAVServiceUsername = "caldav-service"
 // sufficient, because Authentik's LDAP outpost in direct bind mode requires the
 // user's actual password.
 func (c *Client) EnsureCalDAVServiceAccount(ctx context.Context, password string) error {
-	userID, err := c.findUserID(ctx, CalDAVServiceUsername)
-	if err != nil {
-		return err
-	}
-	if userID == 0 {
-		payload := map[string]interface{}{
-			"username":  CalDAVServiceUsername,
-			"name":      "CalDAV Service Account",
-			"path":      "users",
-			"type":      "service_account",
-			"is_active": true,
-		}
-		var result struct {
-			PK int `json:"pk"`
-		}
-		if err := c.cl.POST("/api/v3/core/users/").JSON(payload).OK(http.StatusCreated).DoInto(ctx, &result); err != nil {
-			return fmt.Errorf("creating CalDAV service account: %w", err)
-		}
-		userID = result.PK
-	}
-
-	if err := c.setUserPassword(ctx, userID, password); err != nil {
-		return fmt.Errorf("setting CalDAV service account password: %w", err)
-	}
-	return nil
+	return c.ensureServiceAccount(ctx, CalDAVServiceUsername, "CalDAV Service Account", password)
 }

@@ -152,32 +152,58 @@ compared and idempotent, so a steady-state reconciliation changes nothing.
 
 ### Who owns the synced calendars, and how they get created
 
-The collection path is `<operator>/<provider>`, under the account of the user
-who completed first-run setup (`PreferencesStore.FirstUser`). It has to be the
-operator's own tree: `owner_only` rights mean a collection anywhere else is
-invisible to the account they actually sign in with.
+The collection path is `calendar-service/<provider>`, under a Bloud service
+account rather than under a person. That choice is the whole sharing story: a
+collection is only shareable if its owner is not somebody's private tree, and
+the alternative (the first-run operator owns it) makes the family's calendars
+a side effect of who set the box up first.
 
-Bloud cannot create that collection over the DAV API. After first-run the
-bootstrap `akadmin` account is deleted and Bloud never stores the operator's
-password, so there is no credential to `MKCALENDAR` with. The plugin runs
-inside the storage layer with write access, so the vendored copy creates the
-calendar itself on the first sync (see `plugin/PROVENANCE.md`). That is the
-one Bloud-side change to upstream; the alternative, a configurator that holds
-a user's password, is the thing the `caldav` contract exists to avoid.
+`calendar-service` is provisioned by the Authentik configurator alongside
+`ldap-service` and `caldav-service`, from the top-level
+`calendarServicePassword` secret. Its credential is published into Radicale's
+own app-secret scope (`authentik.CalendarOwnerSecretKey`) and is deliberately
+not offered through any contract: it can write, and advertising a write
+credential in a contract is how it ends up in a container that was only meant
+to read.
+
+The family calendar is created over DAV, by the configurator, as that
+account, in `PostStart`. That is the one point in the lifecycle where the
+server is up and the credential exists. It is idempotent (PROPFIND, then
+MKCALENDAR only if absent) and it warns rather than fails, so a pass that
+cannot reach the server leaves the node converged and retries next time.
 
 Synced calendars are read-only projections: an event removed upstream is
-removed here too. Events the user creates belong in their own calendar.
+removed here too.
 
 ## Isolation model
 
 `owner_only` means a user can read and write only under their own top-level
 path (`/<username>/...`), so one Bloud account cannot read another's calendar
 or contacts by default. Cross-user access goes through Radicale's **native
-sharing** instead: the configurator enables `[sharing] type = csv` with map
-shares and writes `sharing.csv`, mounting the operator's synced feed
-collections into the agent's (`caldav-service`) tree as read-only virtual
-collections. The rights model stays `owner_only`; sharing is what makes the
-agent's `list-calendars` see the feeds.
+sharing**: the configurator enables `[sharing] type = csv` with map shares
+and writes `sharing.csv`, mounting each shared collection into every
+recipient's own tree as a virtual collection. The rights model stays
+`owner_only`; sharing is what makes `list-calendars` see anything outside
+your own tree.
+
+The recipients are every active Bloud user plus the agent's service account,
+and the grants are:
+
+| Collection | Grant | Who |
+|---|---|---|
+| `calendar-service/<feed>` | `Rr` read-only | every user, and the agent |
+| `calendar-service/family` | `RWrw` read-write | every user, and the agent |
+
+The family calendar is the thing people add events to, and it is where
+agent-created events land. The feeds stay read-only for everyone: they are
+projections of someone else's system.
+
+The user list comes from the identity provider through the `sso` binding's
+`apiToken`, the same path AFFiNE's shared-workspace invites take. Inactive
+accounts are dropped. Because that list is what every share is rendered from,
+a failed read is treated as *unknown* rather than as *empty*: the file already
+on disk is left untouched instead of being rewritten with nobody in it. A
+provider that blinks must not take the family's calendars away.
 
 This was verified against a live install: `ldap-service` requesting
 `/admin/` gets `403 Forbidden`, not `401`. The identity was fine; the rights
@@ -257,13 +283,17 @@ key only when the consumer required it.
 
 ## What is not wired
 
-- **Sharing across the whole family.** Sharing is wired for the agent only (the synced
-  feeds map-shared to `caldav-service`). Mounting those same feeds into every
-  Bloud user's tree is the remaining step; see the open item in the calendar
-  aggregation plan.
 - **Address book clients that need vCard directory lookup.** Radicale serves
   contacts as a DAV collection; it is not a global address book that other
   apps query.
 - **TLS.** Bloud serves plain HTTP today, so `ldap_security = none` on the
   internal hop matches. When Bloud serves HTTPS, the internal hop is still
   inside the container network, so this does not have to change with it.
+- **Migration of pre-existing feed collections.** Installs made before the
+  shared-calendar owner existed have their synced feeds under the operator's
+  tree. They re-sync under `calendar-service/` and the old collections are
+  left behind. Alpha: documented, not migrated.
+- **A user who already owns a collection named `family`.** The family
+  calendar is mounted at `/<user>/family/`, so a personal collection with
+  that name collides with the mount. Nothing detects it; the name is reserved
+  by convention.

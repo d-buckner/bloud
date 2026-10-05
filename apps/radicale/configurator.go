@@ -63,11 +63,6 @@ const (
 	// polling thread per job when the storage backend is constructed.
 	icsSyncFileName = "ics_sync.json"
 
-	// caldavServiceUsername is the login name of the agent's service account.
-	// It must match pkg/authentik.CalDAVServiceUsername and the appApi offer in
-	// this app's metadata.
-	caldavServiceUsername = "caldav-service"
-
 	// sharesDirName is the sharing database directory under the storage tree,
 	// where Radicale's csv sharing backend defaults its database to.
 	sharesDirName = "collection-db"
@@ -91,12 +86,11 @@ type Configurator struct {
 	logger *slog.Logger
 	api    *radicaleAPI
 
-	// operatorUsername returns the login name of the user who completed
-	// first-run setup, which is the Radicale principal the synced calendar
-	// collections live under. It is a function so a user created after the
-	// agent started is seen on the next pass, not captured at construction.
-	// Empty before setup: there is no account to own a collection yet.
-	operatorUsername func() string
+	// secrets reads this app's own secret scope. It is how the shared-calendar
+	// owner credential, published by the Authentik configurator during its own
+	// convergence, reaches the call that creates the family calendar. Nil in
+	// CLI and test contexts; the sharing paths treat that as "not yet".
+	secrets configurator.AppSecretsProvider
 
 	// restartContainerFn stops and starts the running container through the
 	// host runtime, forcing Radicale to re-read ics_sync.json. Nil in CLI/tests;
@@ -120,7 +114,7 @@ func NewConfigurator(port int, deps configurator.Deps) *Configurator {
 	c := &Configurator{
 		port:               port,
 		logger:             logger.With("app", appName),
-		operatorUsername:   deps.OperatorUsername,
+		secrets:            deps.Secrets,
 		restartContainerFn: deps.RestartContainer,
 	}
 	c.api = newAPI(deps.HTTP, func() string {
@@ -139,7 +133,7 @@ func (c *Configurator) Name() string {
 // PreStart lays out the app's data tree and writes the config the container
 // boots from. It runs on every reconciliation, so a pass that finds the files
 // already correct changes nothing and asks for no recreate.
-func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
+func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppState) (configurator.PreStartResult, error) {
 	configDir := filepath.Join(state.DataPath, "config")
 	storageDir := filepath.Join(state.DataPath, "collections")
 	for _, dir := range []string{configDir, storageDir} {
@@ -181,7 +175,7 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", icsSyncFileName, err)
 	}
 
-	sharesChanged, err := c.syncShares(state.DataPath, state)
+	sharesChanged, err := c.syncShares(ctx, state.DataPath, state)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", sharesFileName, err)
 	}
@@ -201,64 +195,55 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 	return configurator.MustRestart("Radicale config rewritten"), nil
 }
 
-// syncICSFeeds renders the feed sync jobs from the resolved bindings and the
-// operator's collection path. Returns true when the file changed.
+// syncICSFeeds renders the feed sync jobs into the config dir. Returns true
+// when the file changed.
+//
+// The jobs land in the shared-calendar owner's tree, not the operator's. That
+// is what lets the feeds be shared rather than be one person's private
+// calendars, and it is why the job list no longer waits on first-run setup:
+// a feed is worth syncing as soon as its provider publishes it, whether or not
+// anybody has claimed the instance yet.
 func (c *Configurator) syncICSFeeds(path string, state *configurator.AppState) (bool, error) {
-	owner := ""
-	if c.operatorUsername != nil {
-		owner = c.operatorUsername()
+	return managedfile.Write(path, []byte(renderICSSync(feedsOf(state))), managedfile.ModeSharedConfig)
+}
+
+// feedsOf reads the resolved icsFeed bindings off the app state, tolerating
+// the nil state a bare test pass hands over.
+func feedsOf(state *configurator.AppState) []configurator.ICSFeedBinding {
+	if state == nil {
+		return nil
 	}
-	var feeds []configurator.ICSFeedBinding
-	if state != nil {
-		feeds = state.Integrations.ICSFeeds
-	}
-	return managedfile.Write(path, []byte(renderICSSync(owner, feeds)), managedfile.ModeSharedConfig)
+	return state.Integrations.ICSFeeds
 }
 
 // syncShares renders the csv sharing database and writes it into the writable
 // storage tree. Bloud is the single writer: Radicale reads it at startup and
 // never writes it back unless its own sharing API is used, which Bloud does not
 // call. A change needs a restart, exactly like the feed jobs and the rights.
-func (c *Configurator) syncShares(dataPath string, state *configurator.AppState) (bool, error) {
-	owner := ""
-	if c.operatorUsername != nil {
-		owner = c.operatorUsername()
-	}
-	var feeds []configurator.ICSFeedBinding
-	if state != nil {
-		feeds = state.Integrations.ICSFeeds
-	}
+//
+// When the user list cannot be read, the file that is already on disk is left
+// exactly as it is and the call reports no change. Rendering an empty list
+// because the identity provider was briefly unreachable would take every
+// shared calendar away from every user, and a transport error says nothing
+// about who should hold a share. A file that does not exist yet is still
+// written, header-only, so the sharing backend always has a database to read
+// rather than a missing one.
+func (c *Configurator) syncShares(ctx context.Context, dataPath string, state *configurator.AppState) (bool, error) {
 	path := filepath.Join(dataPath, "collections", sharesDirName, sharesFileName)
-	return managedfile.Write(path, []byte(renderShares(owner, feeds)), managedfile.ModeSharedConfig)
+	recipients, enumerated := c.calendarRecipients(ctx, state)
+	if !enumerated {
+		if _, err := os.Stat(path); err == nil {
+			c.logger.Warn("radicale sharing: user list unavailable, keeping the shares already on disk")
+			return false, nil
+		}
+	}
+	return managedfile.Write(path, []byte(renderShares(recipients, feedsOf(state))), managedfile.ModeSharedConfig)
 }
 
 // sharesCSVHeader is the semicolon-delimited header Radicale's csv sharing
 // backend writes and reads. The field order and names are pinned by
 // radicale/sharing/__init__.py DB_FIELDS_V1.
 const sharesCSVHeader = "ShareType;PathOrToken;PathMapped;Conversion;Owner;User;Permissions;EnabledByOwner;EnabledByUser;HiddenByOwner;HiddenByUser;TimestampCreated;TimestampUpdated;Properties;Actions"
-
-// renderShares renders the csv sharing database: one map share per feed,
-// mounting the operator's synced collection into the agent's own tree as a
-// read-only virtual collection. That is what makes `list-calendars` (which
-// enumerates the authenticated principal's own home) show the feeds.
-func renderShares(owner string, feeds []configurator.ICSFeedBinding) string {
-	var b strings.Builder
-	b.WriteString(sharesCSVHeader)
-	b.WriteString("\n")
-	if owner == "" {
-		return b.String()
-	}
-	for _, feed := range feeds {
-		if !feed.Installed || feed.APIKey == "" || feed.Path == "" || feed.BaseURL == "" {
-			continue
-		}
-		// PathOrToken is the virtual path in the recipient's tree; PathMapped is
-		// the owner's real collection. Both end with a slash.
-		fmt.Fprintf(&b, "map;/%s/%s/;/%s/%s/;none;%s;%s;Rr;True;True;False;False;0;0;{};{}\n",
-			caldavServiceUsername, feed.App, owner, feed.App, owner, caldavServiceUsername)
-	}
-	return b.String()
-}
 
 // icsSyncJob is one entry of the plugin's ics_sync.json.
 type icsSyncJob struct {
@@ -269,26 +254,24 @@ type icsSyncJob struct {
 }
 
 // renderICSSync renders the sync jobs the vendored plugin reads. A feed is
-// skipped until it is fully bound (installed, addressed, with a published key);
-// a job with an empty key would make the plugin retry a 401 forever. With no
-// operator account yet there is no principal to own a collection, so the list
-// is empty and the next pass (after first-run) fills it in. The output is
-// sorted by collection so re-rendering the same bindings is byte-identical and
-// asks for no restart.
-func renderICSSync(owner string, feeds []configurator.ICSFeedBinding) string {
+// skipped until it is fully bound (installed, addressed, with a published
+// key); a job with an empty key would make the plugin retry a 401 forever.
+// Every job targets the shared-calendar owner's tree, so the synced feeds are
+// shared collections from the moment they exist rather than one account's
+// private calendars. The output is sorted by collection so re-rendering the
+// same bindings is byte-identical and asks for no restart.
+func renderICSSync(feeds []configurator.ICSFeedBinding) string {
 	jobs := make([]icsSyncJob, 0, len(feeds))
-	if owner != "" {
-		for _, feed := range feeds {
-			if !feed.Installed || feed.APIKey == "" || feed.Path == "" || feed.BaseURL == "" {
-				continue
-			}
-			jobs = append(jobs, icsSyncJob{
-				Feed:         feedURL(feed),
-				Collection:   owner + "/" + feed.App,
-				SyncInterval: icsSyncIntervalSeconds,
-				DisplayName:  feed.DisplayName,
-			})
+	for _, feed := range feeds {
+		if !feedComplete(feed) {
+			continue
 		}
+		jobs = append(jobs, icsSyncJob{
+			Feed:         feedURL(feed),
+			Collection:   calendarOwner + "/" + feed.App,
+			SyncInterval: icsSyncIntervalSeconds,
+			DisplayName:  feed.DisplayName,
+		})
 	}
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Collection < jobs[j].Collection })
 	raw, err := json.MarshalIndent(jobs, "", "  ")
@@ -371,7 +354,7 @@ func (c *Configurator) resyncGeneratedConfig(ctx context.Context, state *configu
 	if err != nil {
 		return false, fmt.Errorf("write %s: %w", icsSyncFileName, err)
 	}
-	sharesChanged, err := c.syncShares(state.DataPath, state)
+	sharesChanged, err := c.syncShares(ctx, state.DataPath, state)
 	if err != nil {
 		return false, fmt.Errorf("write %s: %w", sharesFileName, err)
 	}
@@ -404,6 +387,13 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		// The server is restarting; probing it now would race. The next
 		// reconciliation pass re-probes once it is serving again.
 		return nil
+	}
+
+	// The shared family calendar has to be created by the account that owns it,
+	// over the running server, so this is the one point in the lifecycle where it
+	// can happen. It is idempotent and it warns rather than fails.
+	if err := c.ensureFamilyCalendar(ctx); err != nil {
+		return err
 	}
 
 	status, err := c.api.probeUnauthenticated(ctx)

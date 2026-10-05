@@ -16,6 +16,14 @@ integrations:
   sso:
     required: false
     multi: false
+    # The shared calendar has to know who the Bloud users are, and the identity
+    # provider is the only place that answer lives. Declaring the contract alone
+    # gets the provider's address; `apiToken` is what lets the configurator
+    # read the user list it map-shares to (invariant 15). Without it the
+    # shares stay exactly as they were on the last pass that could read the
+    # directory, rather than collapsing to nobody.
+    requires:
+      - apiToken
     compatible:
       - app: authentik
         default: true

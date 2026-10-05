@@ -65,6 +65,15 @@ func (c *Client) PATCH(path string) *Call { return &Call{c: c, method: http.Meth
 
 func (c *Client) DELETE(path string) *Call { return &Call{c: c, method: http.MethodDelete, path: path} }
 
+// Method starts a call with an explicit HTTP verb. The five named verbs cover
+// the REST shapes; a configurator that talks to the app it configures also
+// meets methods outside that set, and WebDAV is the common one (PROPFIND,
+// MKCALENDAR, REPORT). Everything else about the call is the same: the same
+// modifiers, the same outcome contract, the same retry policy.
+func (c *Client) Method(method, path string) *Call {
+	return &Call{c: c, method: method, path: path}
+}
+
 // --- request body / modifiers ---
 
 // JSON sets a JSON request body and Content-Type: application/json.
