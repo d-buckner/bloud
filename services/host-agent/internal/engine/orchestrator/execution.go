@@ -15,52 +15,165 @@ import (
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
-// runConfigurator drives a single node through its lifecycle, or re-runs
-// PostStart only for a node that is already RUNNING (the resync case).
-// Returns true only when the node successfully transitions to its target status
-// for the first time this pass (a PostStart resync returns false).
+// runConfigurator drives a single node through its lifecycle, or re-runs its
+// config phases for a node that is already RUNNING (the resync case).
+//
+// Returns true when the node reached its target status this pass, which is what
+// puts it in changedIDs and gets it promoted to RUNNING after routes sync. A
+// resync that changed nothing returns false; a resync that recreated the
+// container returns true, because the node left RUNNING on the way through the
+// restart and has to come back.
 func (o *Orchestrator) runConfigurator(ctx context.Context, id string) bool {
 	node, err := o.graph.GetNode(id)
 	if err != nil || node == nil {
 		return false
 	}
 
-	// Already at target: re-run PostStart only, so the configurator gets its
-	// diff against the outside world without disturbing the container.
+	// Already at target: re-run the config phases, so the configurator gets
+	// its diff against the outside world. The container is left alone unless
+	// PreStart says the config changed.
 	if node.ActualStatus == graph.StatusRunning && node.TargetStatus == graph.StatusRunning {
-		o.logger.Info("dispatching PostStart resync", "app", id)
-		o.runPostStartOnly(ctx, id)
-		return false // resyncs don't propagate changedIDs further
+		o.logger.Info("dispatching config resync", "app", id)
+		return o.runResync(ctx, id)
 	}
 
 	o.logger.Info("dispatching full lifecycle", "app", id, "actual", node.ActualStatus, "target", node.TargetStatus)
 	return o.runFullLifecycle(ctx, id, node)
 }
 
-// runPostStartOnly re-runs PostStart for an already-RUNNING node: because a
-// direct dependency just became available, or because the periodic pass is
-// giving the configurator its diff against the outside world. The container is
-// left alone either way.
-func (o *Orchestrator) runPostStartOnly(ctx context.Context, id string) {
+// runResync re-runs the config phases for an already-RUNNING node: PreStart,
+// then PostStart, with the container recreated only if PreStart reports that
+// the config actually changed.
+//
+// PreStart belongs here for the same reason PostStart does: the inputs to the
+// files it writes move without raising any intent that would drive this node.
+// The case that motivated it is a provider installed after its consumer. Hermes
+// renders its `mcp_servers` map in PreStart from the resolved `mcp` contract,
+// and installing caldav-mcp afterwards resolves a new binding for it, but
+// Hermes sits at RUNNING. A resync that only ran PostStart could observe the
+// new binding and still leave Hermes running on the config written before that
+// app existed, so the namespace never arrived. The same shape covers a
+// provider's address changing or a credential being rotated.
+//
+// The cost is one PreStart per running app per pass, which is affordable
+// because the same contract that makes the PostStart resync affordable makes
+// this one: PreStart is required to be idempotent, and `managedfile.Write`
+// reports changed=false when the bytes already match. The shared conformance
+// harness asserts a second PreStart pass asks for no recreate for every app in
+// the catalog, so a steady-state resync is a read-only diff.
+//
+// A restart is capped by the resync breaker, because the one failure mode this
+// path can create that the old one could not is a restart loop: an app that
+// rewrites the file Bloud manages while it is running makes every pass report a
+// change. See resync_breaker.go.
+func (o *Orchestrator) runResync(ctx context.Context, id string) bool {
 	cfg := o.registry.Get(id)
 	if cfg == nil {
-		return
+		return false
 	}
 	appID := o.ownerApp(id)
 	state, err := o.buildAppState(id)
 	if err != nil {
-		o.logger.Warn("PostStart resync: failed to build state", "app", id, "error", err)
-		return
+		o.logger.Warn("resync: failed to build state", "app", id, "error", err)
+		return false
 	}
-	o.logger.Info("PostStart resync: running PostStart", "app", id)
+
+	prestart, ok := o.runResyncPreStart(ctx, id, appID, cfg, state)
+	if !ok {
+		return false
+	}
+	if !prestart.RestartNeeded {
+		// Nothing changed: the app converged, so any earlier trip is stale.
+		o.clearResyncBreaker(id)
+		o.runResyncPostStart(ctx, id, appID, cfg, state)
+		return false
+	}
+	return o.runResyncRestart(ctx, id, appID, cfg, state, prestart)
+}
+
+// runResyncPreStart runs PreStart on the resync path and reports whether the
+// resync may continue.
+//
+// A failure here is handled differently from the full-lifecycle path on
+// purpose. There, a failed PreStart parks the node in ERROR because the
+// container has not started and must not start on a config that could not be
+// written. Here the container is up and serving: a failed config diff means
+// the wiring is stale, not that the app is down. Taking a working app to ERROR
+// because an update failed would be a worse outcome than the status quo, so
+// the failure is recorded as retryable on the operation row and the node
+// stays RUNNING for the next pass to retry.
+func (o *Orchestrator) runResyncPreStart(ctx context.Context, id, appID string, cfg configurator.NodeLifecycle, state *configurator.AppState) (configurator.PreStartResult, bool) {
+	o.logger.Info("resync: running PreStart", "app", id)
+	prestart, err := cfg.PreStart(ctx, state)
+	if err != nil {
+		o.logger.Warn("resync: PreStart failed", "app", id, "error", err)
+		o.ensureOpDrive(appID)
+		o.recordOpFail(appID, store.OpPhasePrestart, opCause(id, appID, err), true)
+		return configurator.PreStartResult{}, false
+	}
+	o.logger.Info("resync: PreStart complete",
+		"app", id,
+		"restart_needed", prestart.RestartNeeded,
+		"restart_reason", prestart.Reason)
+	return prestart, true
+}
+
+// runResyncRestart carries out the recreate PreStart asked for, then runs
+// PostStart. Returns true when the node came back through the restart and
+// finalization cleanly, so the pass promotes it to RUNNING.
+//
+// After the restart the node sits at STARTING, not RUNNING: it left RUNNING on
+// the way in, so it has to be promoted on the way out the same way a normal
+// drive promotes. Returning true is what puts it in changedIDs.
+func (o *Orchestrator) runResyncRestart(ctx context.Context, id, appID string, cfg configurator.NodeLifecycle, state *configurator.AppState, prestart configurator.PreStartResult) bool {
+	def, appCatalogID := o.containerDefForNode(id)
+	if def == nil {
+		// No container to recreate: the config change is on disk, and
+		// PostStart still gets its diff. Nothing to restart means nothing to
+		// count against the breaker.
+		o.logger.Info("resync: PreStart asks for a restart but the node has no container def",
+			"app", id, "reason", prestart.Reason)
+		o.runResyncPostStart(ctx, id, appID, cfg, state)
+		return false
+	}
+
+	decision, record := o.allowResyncRestart(id, prestart.Reason)
+	switch decision {
+	case resyncTrippedNow:
+		o.logger.Warn("resync restart denied by the breaker; the config diff is not converging",
+			"app", id, "restarts", record.Restarts, "reason", record.Reason,
+			"note", "this is the shape of an app that rewrites the file Bloud manages; "+
+				"Bloud will stop restarting it until a resync converges or an install drives it")
+		o.recordActivity("resync_breaker_tripped", id+": "+record.Reason)
+		return false
+	case resyncAlreadyTripped:
+		o.logger.Info("resync restart still suppressed by the breaker", "app", id, "reason", prestart.Reason)
+		return false
+	}
+
+	if !o.runContainerPhases(ctx, id, appID, def, appCatalogID, prestart) {
+		return false
+	}
+	return o.runPostStartPhase(ctx, id, appID, cfg, state)
+}
+
+// runResyncPostStart re-runs PostStart for a resync that needed no restart:
+// the periodic pass giving the configurator its diff against the outside
+// world. The container is left alone.
+//
+// A failure is recorded as retryable and leaves the node RUNNING, the same
+// convention as before: the app is serving, only the finalization did not
+// complete.
+func (o *Orchestrator) runResyncPostStart(ctx context.Context, id, appID string, cfg configurator.NodeLifecycle, state *configurator.AppState) {
+	o.logger.Info("resync: running PostStart", "app", id)
 	if err := o.runPostStart(ctx, cfg, state); err != nil {
-		o.logger.Warn("PostStart resync: PostStart failed", "app", id, "error", err)
+		o.logger.Warn("resync: PostStart failed", "app", id, "error", err)
 		o.ensureOpDrive(appID)
 		o.recordOpFail(appID, store.OpPhasePoststart, opCause(id, appID, err), true)
 		return
 	}
 	o.healOp(appID)
-	o.logger.Info("PostStart resync: PostStart complete", "app", id)
+	o.logger.Info("resync: PostStart complete", "app", id)
 }
 
 // runPostStart invokes a configurator's PostStart bounded by the framework's
@@ -218,6 +331,12 @@ func (o *Orchestrator) runFullLifecycle(ctx context.Context, id string, node *gr
 
 	owner := o.ownerApp(id)
 	o.ensureOpDrive(owner)
+
+	// A full drive is an intentional event: an install, a reboot, a crash
+	// recovery, or an explicit reset. Whatever the resync breaker was
+	// guarding, this pass is not the loop it tripped on, so the node gets a
+	// fresh allowance.
+	o.clearResyncBreaker(id)
 
 	state, err := o.buildAppState(id)
 	if err != nil {

@@ -45,6 +45,10 @@ type OrchestratorStatus struct {
 	// LastConverged is when the most recent convergence pass completed
 	// (zero until the first one finishes).
 	LastConverged time.Time `json:"lastConverged"`
+	// ResyncBreakers lists the nodes whose resync restart breaker has
+	// tripped: they keep reporting a config change that never converges, so
+	// Bloud stopped restarting them. Empty when every resync converged.
+	ResyncBreakers []ResyncBreakerState `json:"resyncBreakers,omitempty"`
 }
 
 // ActivityEvent records a single orchestrator lifecycle event.
@@ -88,9 +92,10 @@ type OrchestratorConfig struct {
 //     recorded failure is marked retryable. See retryErroredNodes.
 //   - A node whose dependency is in ERROR is also skipped (blocked).
 //
-// Staleness: if a node is already RUNNING and one of its dependencies
-// completes successfully this pass, the node re-runs PostStart to pick up
-// any new configuration exposed by that dependency.
+// Staleness: a node that is already RUNNING is not assumed to still match the
+// catalog or its providers. Every pass re-runs its PreStart and PostStart (the
+// resync), and the container is recreated only when PreStart reports the config
+// actually changed. See runResync.
 type Orchestrator struct {
 	// Core lifecycle fields
 	graph    *graph.Graph
@@ -149,6 +154,12 @@ type Orchestrator struct {
 	// lets the health and developer surfaces tell a dead loop from a
 	// healthy idle one.
 	lastConverged atomic.Pointer[time.Time]
+
+	// resync restart breaker: stops restarting a node whose config diff
+	// never converges. Built lazily so a hand-constructed Orchestrator has a
+	// working one. See resync_breaker.go.
+	breakerOnce  sync.Once
+	breakerValue *resyncBreaker
 }
 
 // NewOrchestrator creates a fully-configured Orchestrator backed by the

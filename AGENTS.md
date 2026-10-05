@@ -577,21 +577,32 @@ combined with instance/SSH-target env vars). Instance overrides:
    author of lifecycle status and the only executor of side effects. API handlers
    submit intents (202 accepted) and return current state; they must not write
    stores directly or advance app status.
-2. **Configurators are idempotent.** `PreStart`/`PostStart` run on *every*
-   reconciliation that touches the node (install, crash recovery, reboot), and
-   `PostStart` additionally runs on **every** pass for a node already at
-   `RUNNING`: the PostStart resync
-   (`orchestrator/levels.go:readyForPostStartResync`). A configurator that
-   can't run twice is a bug. The resync is what makes the periodic self-healing
-   pass (~60s, see invariant 8) a real diff against the outside world instead
-   of a no-op, because the outside world moves without raising an intent: a
-   user created in Settings after the install, a credential rotated by hand, a
-   provider's address changed. It re-runs `PostStart` only, never `PreStart`,
-   so `PreStart` stays the only phase that can restart a container, and it is
-   withheld when a direct dependency is in `ERROR`. `PreStart` reports
-   `RestartNeeded` rather than restarting on its own, and `managedfile.Write`
-   reports `changed=false` when the bytes already match, for exactly this
-   reason.
+2. **Configurators are idempotent.** `PreStart` and `PostStart` run on *every*
+   pass that touches the node, including every pass for a node already at
+   `RUNNING`: the config resync (`orchestrator/levels.go:readyForConfigResync`
+   → `orchestrator/execution.go:runResync`). A configurator that can't run
+   twice is a bug. The resync is what makes the periodic self-healing pass
+   (~60s, see invariant 8) a real diff against the outside world instead of a
+   no-op, because the outside world moves without raising an intent: a user
+   created in Settings after the install, a credential rotated by hand, a
+   provider's address changed, a provider app installed after this one.
+   `PreStart` is part of the resync because it is the only phase that writes
+   the files an app reads at boot, so it is the only way a later-resolved
+   binding can reach them (an MCP server installed after its harness reaches
+   Hermes' `mcp_servers` this way, and nothing else). The container is
+   recreated only when `PreStart` reports `RestartNeeded`: it reports that
+   rather than restarting on its own, and `managedfile.Write` reports
+   `changed=false` when the bytes already match, so a steady-state resync is a
+   read-only diff that touches no container and no node status. The resync is
+   withheld when a direct dependency is in `ERROR`. Because the resync can now
+   restart a container, a breaker caps consecutive resync restarts per node at
+   `DefaultResyncRestartCap` (2) and refuses more: an app that rewrites the
+   file Bloud manages while it runs would otherwise restart once a minute
+   forever, and the conformance harness cannot see that because it runs
+   `PreStart` against a data directory with no live app inside it. A tripped
+   breaker is surfaced on the developer status snapshot
+   (`OrchestratorStatus.ResyncBreakers`) and cleared by a pass that converges
+   or by a full lifecycle drive.
 3. **Apps own their infrastructure.** Apps that need databases declare their own
    postgres/redis containers in `containers:` (e.g. Immich: pgvector postgres +
    redis + server + ML). There is no shared per-app database in the product path.

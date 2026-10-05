@@ -199,6 +199,7 @@ func (o *Orchestrator) Status() OrchestratorStatus {
 		RecentActivity: recent,
 		LoopStopped:    o.Stopped(),
 		LastConverged:  o.LastConverged(),
+		ResyncBreakers: o.ResyncBreakers(),
 	}
 }
 

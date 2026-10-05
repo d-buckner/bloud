@@ -355,22 +355,32 @@ render nothing and pick the namespace up on a later pass.
 
 ### Reconcile
 
-`PreStart` and `PostStart` run on every pass that **drives** a node. That
-qualifier is load-bearing and was measured, not assumed: a node already at
-`RUNNING` contributes no work to a pass (`reconcile pass started` followed by
-`level work collected: work: 0` on every level). What drives a node is a
-transition: a host-agent restart, a crash recovery, a reinstall, or an intent
-that re-plans it. A container restarted out from under the agent does not count
-either, because the graph still believes the node is `RUNNING`.
-
-The self-healing pass (`selfheal.go`) submits a `ReconcileIntent` on an idle
-timer, and it drives exactly one thing: `retryErroredNodes()`, which begins
-`if node.ActualStatus != graph.StatusError { continue }`. Healthy nodes are never
-touched.
+Every pass re-runs both config phases for every node that is already `RUNNING`:
+the config resync (`levels.go:readyForConfigResync` → `execution.go:runResync`).
+The container is recreated only when `PreStart` reports `RestartNeeded`, so a
+steady-state pass reads, changes nothing, and disturbs nothing.
 
 A steady-state `affine-mcp` pass re-reads the `appApi` binding, rewrites the
 config file only if its bytes changed, and probes `/readyz`. The bearer is read
 back, never regenerated, so a restart does not invalidate the namespace.
+
+That the resync includes `PreStart` is what makes install order stop mattering.
+A provider that appears after its consumer resolves a new binding on the next
+pass, and the consumer's `PreStart` is the only thing that can write that
+binding into the file its app reads at boot. While the resync ran `PostStart`
+only, a node at `RUNNING` never re-ran `PreStart`, so Hermes kept serving the
+`mcp_servers` map written before the provider existed and a namespace added
+later appeared only after a Hermes restart.
+
+The resync can therefore restart a container, which is what the resync breaker
+caps: two consecutive resync-triggered restarts per node, then refusal with a
+WARN and an entry on the developer status snapshot
+(`OrchestratorStatus.ResyncBreakers`). The loop it stops is an app that
+rewrites the file Bloud manages while it runs, which no offline test can see.
+A pass that converges, or a full lifecycle drive, clears the accounting.
+
+The self-healing pass (`selfheal.go`) submits a `ReconcileIntent` on an idle
+timer; the pass it triggers retries `ERROR` nodes and resyncs every healthy one.
 
 The workspace is sticky: the workspace AFFiNE already published wins as long as
 it still exists, so a workspace the operator creates later cannot silently move
