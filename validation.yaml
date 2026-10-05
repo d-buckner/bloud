@@ -136,6 +136,17 @@ apps:
     files:
       - apps/affine-mcp/**
 
+  # The third-party MCP wrapper for the calendars. No user login of its own
+  # (`none`: a harness authenticates to the MCP endpoint with a bearer Bloud
+  # generates), so there is no browser journey to gate. It is covered by the
+  # conformance harness, its configurator tests, and the shipped-catalog
+  # contract-declaration test that pins the caldav + appApi chain.
+  caldav-mcp:
+    auth: none
+    validation-level: embed
+    files:
+      - apps/caldav-mcp/**
+
   immich:
     auth: native-oidc
     validation-level: embed

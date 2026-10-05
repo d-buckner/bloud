@@ -63,6 +63,19 @@ const (
 	// polling thread per job when the storage backend is constructed.
 	icsSyncFileName = "ics_sync.json"
 
+	// caldavServiceUsername is the login name of the agent's service account.
+	// It must match pkg/authentik.CalDAVServiceUsername and the appApi offer in
+	// this app's metadata.
+	caldavServiceUsername = "caldav-service"
+
+	// sharesDirName is the sharing database directory under the storage tree,
+	// where Radicale's csv sharing backend defaults its database to.
+	sharesDirName = "collection-db"
+
+	// sharesFileName is the csv sharing database Radicale reads at startup. It
+	// lives in the writable storage tree (not the read-only config dir).
+	sharesFileName = "sharing.csv"
+
 	// pluginDirName is the host-side directory the embedded plugin tree is
 	// written into; metadata.yaml mounts it at /plugins and sets
 	// PYTHONPATH=/plugins so Radicale can import it by dotted module path.
@@ -168,18 +181,23 @@ func (c *Configurator) PreStart(_ context.Context, state *configurator.AppState)
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", icsSyncFileName, err)
 	}
 
+	sharesChanged, err := c.syncShares(state.DataPath, state)
+	if err != nil {
+		return configurator.NoRestart(), fmt.Errorf("write %s: %w", sharesFileName, err)
+	}
+
 	pluginChanged, err := syncPlugin(state.DataPath)
 	if err != nil {
 		return configurator.NoRestart(), fmt.Errorf("write %s: %w", pluginDirName, err)
 	}
 
-	if !cfgChanged && !secretChanged && !icsChanged && !pluginChanged {
+	if !cfgChanged && !secretChanged && !icsChanged && !sharesChanged && !pluginChanged {
 		return configurator.NoRestart(), nil
 	}
 
 	c.logger.Info("wrote Radicale config", "path", cfgPath,
 		"auth", authType(state.LDAP), "secretChanged", secretChanged,
-		"feedsChanged", icsChanged, "pluginChanged", pluginChanged)
+		"feedsChanged", icsChanged, "sharesChanged", sharesChanged, "pluginChanged", pluginChanged)
 	return configurator.MustRestart("Radicale config rewritten"), nil
 }
 
@@ -195,6 +213,51 @@ func (c *Configurator) syncICSFeeds(path string, state *configurator.AppState) (
 		feeds = state.Integrations.ICSFeeds
 	}
 	return managedfile.Write(path, []byte(renderICSSync(owner, feeds)), managedfile.ModeSharedConfig)
+}
+
+// syncShares renders the csv sharing database and writes it into the writable
+// storage tree. Bloud is the single writer: Radicale reads it at startup and
+// never writes it back unless its own sharing API is used, which Bloud does not
+// call. A change needs a restart, exactly like the feed jobs and the rights.
+func (c *Configurator) syncShares(dataPath string, state *configurator.AppState) (bool, error) {
+	owner := ""
+	if c.operatorUsername != nil {
+		owner = c.operatorUsername()
+	}
+	var feeds []configurator.ICSFeedBinding
+	if state != nil {
+		feeds = state.Integrations.ICSFeeds
+	}
+	path := filepath.Join(dataPath, "collections", sharesDirName, sharesFileName)
+	return managedfile.Write(path, []byte(renderShares(owner, feeds)), managedfile.ModeSharedConfig)
+}
+
+// sharesCSVHeader is the semicolon-delimited header Radicale's csv sharing
+// backend writes and reads. The field order and names are pinned by
+// radicale/sharing/__init__.py DB_FIELDS_V1.
+const sharesCSVHeader = "ShareType;PathOrToken;PathMapped;Conversion;Owner;User;Permissions;EnabledByOwner;EnabledByUser;HiddenByOwner;HiddenByUser;TimestampCreated;TimestampUpdated;Properties;Actions"
+
+// renderShares renders the csv sharing database: one map share per feed,
+// mounting the operator's synced collection into the agent's own tree as a
+// read-only virtual collection. That is what makes `list-calendars` (which
+// enumerates the authenticated principal's own home) show the feeds.
+func renderShares(owner string, feeds []configurator.ICSFeedBinding) string {
+	var b strings.Builder
+	b.WriteString(sharesCSVHeader)
+	b.WriteString("\n")
+	if owner == "" {
+		return b.String()
+	}
+	for _, feed := range feeds {
+		if !feed.Installed || feed.APIKey == "" || feed.Path == "" || feed.BaseURL == "" {
+			continue
+		}
+		// PathOrToken is the virtual path in the recipient's tree; PathMapped is
+		// the owner's real collection. Both end with a slash.
+		fmt.Fprintf(&b, "map;/%s/%s/;/%s/%s/;none;%s;%s;Rr;True;True;False;False;0;0;{};{}\n",
+			caldavServiceUsername, feed.App, owner, feed.App, owner, caldavServiceUsername)
+	}
+	return b.String()
 }
 
 // icsSyncJob is one entry of the plugin's ics_sync.json.
@@ -304,14 +367,26 @@ func syncPlugin(dataPath string) (bool, error) {
 // it catches a container that came up on a stale or ignored config.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
 	if state != nil && state.DataPath != "" {
-		icsChanged, err := c.syncICSFeeds(filepath.Join(state.DataPath, "config", icsSyncFileName), state)
+		configDir := filepath.Join(state.DataPath, "config")
+		changed := false
+
+		icsChanged, err := c.syncICSFeeds(filepath.Join(configDir, icsSyncFileName), state)
 		if err != nil {
 			return fmt.Errorf("write %s: %w", icsSyncFileName, err)
 		}
-		if icsChanged {
-			c.logger.Info("feed sync jobs changed; restarting Radicale to apply")
+		changed = changed || icsChanged
+
+		sharesChanged, err := c.syncShares(state.DataPath, state)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", sharesFileName, err)
+		}
+		changed = changed || sharesChanged
+
+		if changed {
+			c.logger.Info("generated config changed; restarting Radicale to apply",
+				"feedsChanged", icsChanged, "sharesChanged", sharesChanged)
 			if err := c.restartContainer(ctx); err != nil {
-				return fmt.Errorf("feed sync written but the container could not be restarted: %w", err)
+				return fmt.Errorf("config rewritten but the container could not be restarted: %w", err)
 			}
 			// The server is restarting; probing it now would race. The next
 			// reconciliation pass re-probes once it is serving again.
@@ -396,9 +471,9 @@ func authType(ldap *configurator.LDAPOutput) string {
 // carries for Authentik's LDAP outpost, which serves createTimestamp and
 // modifyTimestamp in a shape ldap3 rejects.
 //
-// `rights = owner_only` is the isolation model: a user's collections live
-// under their own top-level path and nothing else is reachable, so one Bloud
-// account cannot read another's calendar or contacts.
+// `rights = owner_only` is the isolation model: each user owns their own tree.
+// Cross-user access goes through Radicale's native sharing (the map shares the
+// configurator writes), not through the rights model.
 //
 // With no LDAP provider bound the config denies everything rather than
 // falling back to Radicale's default of no authentication. An installed app
@@ -472,6 +547,14 @@ func renderConfig(port int, ldap *configurator.LDAPOutput) string {
 
 	b.WriteString("[rights]\n")
 	b.WriteString("type = owner_only\n\n")
+
+	b.WriteString("[sharing]\n")
+	b.WriteString("# The csv backend with map shares: Bloud writes sharing.csv as the single\n")
+	b.WriteString("# writer, and Radicale mounts each shared collection as a virtual\n")
+	b.WriteString("# collection in the recipient's own tree, so discovery lists it.\n")
+	b.WriteString("type = csv\n")
+	b.WriteString("collection_by_map = true\n")
+	b.WriteString("permit_create_map = true\n\n")
 
 	b.WriteString("[web]\n")
 	b.WriteString("# The built-in web UI: create and manage calendars and address books\n")

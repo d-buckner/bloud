@@ -347,6 +347,9 @@ func validateContractValues(name string, contract Contract, offer ContractProvid
 		}
 		value, ok := offer.Values[want.Key]
 		if !ok || value == "" {
+			if want.Optional {
+				continue // an optional value a provider has no fact for is omitted
+			}
 			return fmt.Errorf("provides.%s.values must declare %q, which this contract carries (or list it under runtimeValues if the app mints it at runtime)", name, want.Key)
 		}
 		if want.AbsolutePath && !strings.HasPrefix(value, "/") {

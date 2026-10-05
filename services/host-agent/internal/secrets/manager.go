@@ -36,6 +36,10 @@ type Secrets struct {
 	// LDAP bind password for apps to authenticate via LDAP
 	LDAPBindPassword string `json:"ldapBindPassword"`
 
+	// CalDAV service account password for the machine client (caldav-mcp) that
+	// reads the operator's calendars on the agent's behalf.
+	CalDAVServicePassword string `json:"caldavServicePassword"`
+
 	// Master secret for deriving per-app OAuth client secrets
 	SSOHostSecret string `json:"ssoHostSecret"`
 
@@ -159,6 +163,7 @@ func secretTable(s *Secrets) []secretField {
 		{&s.AuthentikBootstrapToken, 48},
 		{&s.LDAPOutpostToken, 48},
 		{&s.LDAPBindPassword, 32},
+		{&s.CalDAVServicePassword, 32},
 		{&s.SSOHostSecret, 64},
 		{&s.APIToken, 48},
 	}
@@ -239,6 +244,8 @@ func (m *Manager) Get(name string) string {
 		return m.secrets.LDAPOutpostToken
 	case "ldapBindPassword":
 		return m.secrets.LDAPBindPassword
+	case "caldavServicePassword":
+		return m.secrets.CalDAVServicePassword
 	case "ssoHostSecret":
 		return m.secrets.SSOHostSecret
 	case "apiToken":
@@ -275,6 +282,11 @@ func (m *Manager) GetLDAPOutpostToken() string {
 // GetLDAPBindPassword returns the LDAP bind password.
 func (m *Manager) GetLDAPBindPassword() string {
 	return m.Get("ldapBindPassword")
+}
+
+// GetCalDAVServicePassword returns the CalDAV service account password.
+func (m *Manager) GetCalDAVServicePassword() string {
+	return m.Get("caldavServicePassword")
 }
 
 // GetSSOHostSecret returns the master secret for OAuth client secret derivation.

@@ -72,6 +72,9 @@ type Config struct {
 	// LDAP configuration
 	LDAPHost         string // LDAP outpost hostname (default: apps-authentik-ldap)
 	LDAPBindPassword string
+	// CalDAV service account password, for the machine client (caldav-mcp)
+	// that reads the operator's calendars on the agent's behalf.
+	CalDAVServicePassword string
 	// Tailscale auth key for tailnet node containers (empty = sharing disabled)
 	TSAuthKey string
 	// HostLabel is the display name for this host in invite tokens (e.g. "Alice's Server")
@@ -153,6 +156,7 @@ func LoadWithLogger(logger *slog.Logger) (*Config, error) {
 		AuthentikAdminEmail:    adminEmail,
 		LDAPHost:               getEnv("BLOUD_LDAP_HOST", "apps-authentik-ldap"),
 		LDAPBindPassword:       sec.ldapBindPassword,
+		CalDAVServicePassword:  sec.caldavServicePassword,
 		TSAuthKey:              getEnv("BLOUD_TS_AUTHKEY", ""),
 		HostLabel:              getEnv("BLOUD_HOST_LABEL", hostname()),
 		PostgresPassword:       sec.postgresPassword,
@@ -239,11 +243,12 @@ func getSecret(envKey, secretValue string) (string, error) {
 // resolvedSecrets is the set of secrets config requires from the secrets
 // manager before it can build a Config.
 type resolvedSecrets struct {
-	postgresPassword string
-	ssoHostSecret    string
-	authentikAdmin   string
-	ldapBindPassword string
-	apiToken         string
+	postgresPassword      string
+	ssoHostSecret         string
+	authentikAdmin        string
+	ldapBindPassword      string
+	caldavServicePassword string
+	apiToken              string
 }
 
 // loadRequiredSecrets resolves every secret config refuses to start without.
@@ -268,6 +273,9 @@ func loadRequiredSecrets(mgr *secrets.Manager) (resolvedSecrets, error) {
 		return out, err
 	}
 	if out.ldapBindPassword, err = getSecret("BLOUD_LDAP_BIND_PASSWORD", mgr.GetLDAPBindPassword()); err != nil {
+		return out, err
+	}
+	if out.caldavServicePassword, err = getSecret("BLOUD_CALDAV_SERVICE_PASSWORD", mgr.GetCalDAVServicePassword()); err != nil {
 		return out, err
 	}
 	if out.apiToken, err = getSecret("BLOUD_API_TOKEN", mgr.GetAPIToken()); err != nil {

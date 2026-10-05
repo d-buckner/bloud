@@ -46,6 +46,11 @@ type ValueSpec struct {
 	// AbsolutePath requires an absolute path, for a value that is concatenated
 	// onto an address (a consumer would otherwise receive an unusable URL).
 	AbsolutePath bool
+	// Optional marks a value a provider may omit because it simply has no such
+	// fact to declare (a companion's target with no scope, for example). An
+	// omitted optional value reads as an empty field on the binding, never as
+	// an error.
+	Optional bool
 }
 
 // contracts is the integration vocabulary. Order is not significant.
@@ -206,13 +211,9 @@ var contracts = []Contract{
 			{Key: "username"},
 			// The scope the provider wants a companion to address by default,
 			// where the provider's API is organized into scopes. AFFiNE's is the
-			// shared workspace Bloud provisions. A companion whose target requires
-			// the scope on every call (the affine-mcp-server tools do) would
-			// otherwise have to discover the scopes and choose among them, which
-			// is exactly the ambiguity Bloud exists to remove. A provider with no
-			// scope simply never publishes it, and the companion leaves its own
-			// default unset.
-			{Key: "workspaceId"},
+			// shared workspace Bloud provisions. A provider with no scope omits
+			// it; the companion leaves its own default unset.
+			{Key: "workspaceId", Optional: true},
 		},
 	},
 }

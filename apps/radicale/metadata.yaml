@@ -53,14 +53,26 @@ sso:
   strategy: ldap
 
 # What this server offers to the apps that integrate with it as a calendar
-# server. No secrets: Radicale authenticates the person with the password
-# their client sends, verified against the identity provider over LDAP, so
-# there is no machine credential here to hand out and no reason there should
-# be. The DAV root is the one fact a consumer cannot guess, so it is declared.
+# server.
+#
+# `caldav` carries no secret: a browser or desktop client authenticates the
+# person with the password they send, verified against the identity provider
+# over LDAP, so there is no machine credential to hand out there. The DAV root
+# is the one fact a consumer cannot guess, so it is declared.
+#
+# `appApi` is the separate machine credential: the username and password of the
+# caldav-service account Bloud provisions, for a companion that is not a
+# browser (caldav-mcp) and therefore cannot join the identity provider. The
+# password is published by the Authentik configurator; the rights model scopes
+# what the account can read.
 provides:
   caldav:
     values:
       path: /
+  appApi:
+    secrets: [password]
+    values:
+      username: caldav-service
 
 containers:
   - name: apps-radicale

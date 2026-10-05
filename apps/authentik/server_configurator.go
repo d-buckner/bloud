@@ -30,14 +30,15 @@ const secretAPIToken = "apiToken"
 // come from the host-agent config (and the shared template-variable store)
 // rather than from Deps, which carries only the generic host services.
 type Params struct {
-	Port              int
-	BootstrapPassword string
-	BootstrapEmail    string
-	TokenKey          string                     // API token key for host-agent
-	LDAPBindPassword  string                     // LDAP bind password for service account
-	BrandingCSS       string                     // Inline CSS to push to Authentik brand API
-	AppsDir           string                     // Path to the apps directory (for auth.yaml blueprint)
-	TemplateVars      *configurator.TemplateVars // Store; PostStart records the LDAP outpost token
+	Port                  int
+	BootstrapPassword     string
+	BootstrapEmail        string
+	TokenKey              string                     // API token key for host-agent
+	LDAPBindPassword      string                     // LDAP bind password for service account
+	CalDAVServicePassword string                     // CalDAV service account password (caldav-mcp reads the operator's calendars)
+	BrandingCSS           string                     // Inline CSS to push to Authentik brand API
+	AppsDir               string                     // Path to the apps directory (for auth.yaml blueprint)
+	TemplateVars          *configurator.TemplateVars // Store; PostStart records the LDAP outpost token
 }
 
 // ServerConfigurator handles the apps-authentik-server container lifecycle.
@@ -170,6 +171,21 @@ func (c *ServerConfigurator) PostStart(ctx context.Context, state *configurator.
 	// Step 5: Create LDAP infrastructure.
 	if err := client.EnsureLDAPInfrastructure(ctx, c.params.LDAPBindPassword); err != nil {
 		return fmt.Errorf("ensure LDAP infrastructure: %w", err)
+	}
+
+	// Step 5b: Create the CalDAV service account and publish its credential
+	// for the caldav-mcp wrapper. The account is a plain directory user, so
+	// Radicale authenticates it over LDAP and its rights rule (rendered by the
+	// Radicale configurator) is what bounds what it can read. The credential is
+	// stored under the radicale app scope because that is the app whose `appApi`
+	// offer the caldav-mcp consumer reads it from.
+	if err := client.EnsureCalDAVServiceAccount(ctx, c.params.CalDAVServicePassword); err != nil {
+		return fmt.Errorf("ensure CalDAV service account: %w", err)
+	}
+	if c.deps.Secrets != nil {
+		if err := c.deps.Secrets.SetAppSecret("radicale", "password", c.params.CalDAVServicePassword); err != nil {
+			return fmt.Errorf("publish CalDAV service password: %w", err)
+		}
 	}
 
 	// Step 6: Set embedded outpost host.
