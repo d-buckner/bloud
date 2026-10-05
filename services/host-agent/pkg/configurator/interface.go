@@ -7,6 +7,7 @@ package configurator
 
 import (
 	"context"
+	"time"
 )
 
 // AppSecretsProvider provides access to app-specific secrets.
@@ -90,6 +91,30 @@ func (r PreStartResult) Or(other PreStartResult) PreStartResult {
 	}
 	return other
 }
+
+// PhaseBudget is how long the framework lets one NodeLifecycle phase run for
+// one app before cancelling it. It applies to PreStart and to PostStart, each
+// with its own full allowance.
+//
+// The unit is the app, not the pass. The orchestrator is the single writer, so
+// a configurator that hangs does not hang one app: it hangs every install,
+// uninstall, and address change queued behind it, with nothing to cut it off.
+// These two phases are the only ones that run app-supplied code, and they were
+// the only ones with no ceiling. Container ops and health checks are out of
+// scope because they already carry their own bounds (HealthCheckTimeout and the
+// per-container healthCheck.timeout).
+//
+// Each phase gets the full budget independently rather than drawing from one
+// shared per-app pool, so a slow PreStart cannot leave PostStart short of the
+// room a declared readiness wait needs. The trade is that one app's worst case
+// is two budgets rather than one, which buys never having to attribute a
+// deadline to the phase that did not consume the time.
+//
+// An app's own declared readiness wait (appclient.Within) has to fit inside
+// this ceiling or the framework cancels it before its own deadline can fire.
+// The apps/configtest harness enforces that against this constant, so a wait
+// that could never complete fails the build instead of the install.
+const PhaseBudget = 5 * time.Minute
 
 // NodeLifecycle handles the lifecycle of a single app node.
 // All methods must be idempotent - safe to call repeatedly.

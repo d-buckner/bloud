@@ -243,7 +243,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 // PostStart waits for the HTTP API, completes first-run onboarding headlessly,
 // and verifies the OIDC provider is registered.
 //
-// It runs under the framework's PostStartBudget: the orchestrator bounds the
+// It runs under the framework's AppPhaseBudget: the orchestrator bounds the
 // finalization wait and cancels it on shutdown, so the app uses the pass ctx
 // directly rather than detaching with WithoutCancel + its own deadline. The
 // retry loops survive the pass because the pass ctx is process-scoped (only

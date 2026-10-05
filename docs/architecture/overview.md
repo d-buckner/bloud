@@ -240,9 +240,10 @@ code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
   Retries with backoff, per-request timeouts, declarative outcome contracts
   (`OK`/`AlreadyDone`), auth (`TokenSpec` with 401 refresh covering every header
   dialect), and "still booting / already done" handling live here rather than in
-  each app. A PostStart finalization is bounded by the orchestrator's
-  `PostStartBudget` (default 150s); configurators use the passed ctx directly
-  and never detach with `context.Background()`/`WithoutCancel`.
+  each app. Each configurator phase is bounded by the orchestrator's
+  `AppPhaseBudget` (default 5m per phase, `configurator.PhaseBudget`);
+  configurators use the passed ctx directly and never detach with
+  `context.Background()`/`WithoutCancel`.
 - **`pkg/appasset`**: static-file install. `deps.Assets.Install(ctx, Asset{…})`
   sources bytes remotely, from `go:embed`, or locally into a content-addressed
   cache under `BLOUD_DATA_DIR`; a required `SHA256` guards the payload (a

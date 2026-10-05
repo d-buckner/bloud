@@ -130,7 +130,7 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 
 // PostStart completes the Jellyfin setup wizard and configures LDAP.
 //
-// It runs under the framework's PostStartBudget: the orchestrator bounds the
+// It runs under the framework's AppPhaseBudget: the orchestrator bounds the
 // finalization wait and cancels it on shutdown, so the app uses the pass ctx
 // directly rather than detaching with its own Background deadline. The wizard
 // readiness waits survive a pass because the pass ctx is process-scoped (only

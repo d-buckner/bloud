@@ -51,7 +51,7 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *affineAPI {
 func (a *affineAPI) waitServer(ctx context.Context) error {
 	return a.cl.GET("/info").
 		Interval(2 * time.Second).
-		Within(5 * time.Minute).
+		Within(4 * time.Minute).
 		Ready(appclient.StatusIs(http.StatusOK)).
 		Wait(ctx)
 }

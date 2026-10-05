@@ -14,22 +14,30 @@ import (
 	"time"
 
 	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/appclient"
+	"codeberg.org/d-buckner/bloud/services/host-agent/pkg/configurator"
 )
 
 // AssertWaitBudgetsReachable is the guard against reintroducing the failure
 // this refactor removed.
 //
 // An app's readiness wait is only honest if the framework lets it run for as
-// long as it declares. The orchestrator cancels every PostStart at
-// DefaultPostStartBudget, which is appclient.MaxWaitBudget by construction.
-// A wait declared longer than that can never expire on its own: the framework
-// kills it first, and the declared number is decoration. That is exactly how
-// Timeout(5 * time.Minute) ended up meaning nothing.
+// long as it declares. The orchestrator bounds every configurator phase --
+// PreStart and PostStart -- at DefaultAppPhaseBudget, which is
+// configurator.PhaseBudget by construction. A wait declared longer than that
+// can never expire on its own: the framework kills it first, and the declared
+// number is decoration. That is exactly how Timeout(5 * time.Minute) ended up
+// meaning nothing.
 //
-// So: no app may declare a wait budget above MaxWaitBudget. The check reads
-// the source rather than trusting a comment, and it fails on a budget it
-// cannot evaluate instead of skipping it, so the rule cannot be dodged by
-// writing the duration in a shape this file does not understand.
+// The rule is strict inequality. A wait equal to the phase budget has no
+// headroom: the framework's deadline and the wait's own expiry land on the same
+// instant, so a slow-but-healthy first boot loses a race it should have won.
+// Declared waits must fit inside the phase with room to spare.
+//
+// So: no app may declare a wait budget at or above PhaseBudget, and none may
+// exceed the library ceiling either. The check reads the source rather than
+// trusting a comment, and it fails on a budget it cannot evaluate instead of
+// skipping it, so the rule cannot be dodged by writing the duration in a shape
+// this file does not understand.
 func TestAssertWaitBudgetsReachable(t *testing.T) {
 	root := appsRoot(t)
 
@@ -74,8 +82,12 @@ func TestAssertWaitBudgetsReachable(t *testing.T) {
 				return true
 			}
 			findings = append(findings, finding{pos: fset.Position(call.Pos()).String(), budget: d})
+			if d >= configurator.PhaseBudget {
+				t.Errorf("%s: wait budget %s does not fit inside the framework's per-phase budget %s; the framework cancels the phase at that ceiling, so this wait can never expire on its own. Lower the wait, or raise configurator.PhaseBudget deliberately and say why.",
+					fset.Position(call.Pos()), d, configurator.PhaseBudget)
+			}
 			if d > appclient.MaxWaitBudget {
-				t.Errorf("%s: wait budget %s exceeds appclient.MaxWaitBudget %s; the framework cancels PostStart at that ceiling, so this wait can never expire on its own. Raise MaxWaitBudget (and DefaultPostStartBudget with it) deliberately, or lower the wait.",
+				t.Errorf("%s: wait budget %s exceeds appclient.MaxWaitBudget %s, the library ceiling on any single declared wait.",
 					fset.Position(call.Pos()), d, appclient.MaxWaitBudget)
 			}
 			return true
@@ -87,7 +99,7 @@ func TestAssertWaitBudgetsReachable(t *testing.T) {
 	if len(findings) == 0 {
 		t.Fatalf("no Within() wait budgets found under %s; the harness is not looking at the right tree", root)
 	}
-	t.Logf("checked %d declared wait budgets against MaxWaitBudget %s", len(findings), appclient.MaxWaitBudget)
+	t.Logf("checked %d declared wait budgets against the per-phase budget %s", len(findings), configurator.PhaseBudget)
 	for _, f := range findings {
 		t.Logf("  %s: %s", f.pos, f.budget)
 	}

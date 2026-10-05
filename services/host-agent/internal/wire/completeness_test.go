@@ -22,10 +22,10 @@ import (
 // question you have to remember to ask.
 var optionalConfigFields = map[string]string{
 	// Both budgets are deliberately zero: NewOrchestrator substitutes the
-	// framework default (DefaultPostStartBudget) when a caller does not
+	// framework default (DefaultAppPhaseBudget) when a caller does not
 	// override it, so a zero here means "use the default", not "unset".
 	"HealthCheckTimeout": "zero means no per-app health timeout; the caller's context deadline applies",
-	"PostStartBudget":    "zero means NewOrchestrator applies DefaultPostStartBudget",
+	"AppPhaseBudget":     "zero means NewOrchestrator applies DefaultAppPhaseBudget",
 	// The resync warning threshold is not a per-deployment knob today: the
 	// product value is DefaultResyncRestartWarnAt and the watchdog applies it
 	// when this stays zero. It is a field rather than a constant so a future

@@ -234,11 +234,16 @@ func (c *Configurator) PreStart(ctx context.Context, state *configurator.AppStat
 // check-then-act: verify each desired setting via the app's API, apply only
 // what is missing, and be a clean no-op when everything is already in place.
 //
-// The framework gives you a generous budget (PostStartBudget, default 150 s)
-// and passes an already-bounded context: use it directly for all your work,
-// and it will cancel cleanly if the host shuts down. A run interrupted by
-// shutdown is simply re-converged on the next start, so nothing is lost and
-// there is no need to detach or background long work.
+// The framework gives you a generous budget (AppPhaseBudget, default 5 min per
+// configurator phase) and passes an already-bounded context: use it directly
+// for all your work, and it will cancel cleanly if the host shuts down. A run
+// interrupted by shutdown is simply re-converged on the next start, so nothing
+// is lost and there is no need to detach or background long work.
+//
+// If you wait on the app with appclient.Within, your declared wait must fit
+// inside that budget with room to spare. The apps/configtest harness fails the
+// build otherwise, because a wait the framework cancels first is a wait that
+// can never succeed.
 func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppState) error {
     return nil
 }

@@ -906,15 +906,15 @@ func TestContainerSpecFromDef_NoNetwork(t *testing.T) {
 }
 
 // ============================================================================
-// S9: framework-owned PostStartBudget + shutdown-interrupt semantics
+// S9: framework-owned AppPhaseBudget + shutdown-interrupt semantics
 // ============================================================================
 
 // TestOrchestrator_PostStart_ApppliesBudgetDeadline asserts the framework hands
-// the configurator a context carrying the configured PostStartBudget. Apps no
+// the configurator a context carrying the configured AppPhaseBudget. Apps no
 // longer set their own deadline; the budget is what bounds a hung finalization.
 func TestOrchestrator_PostStart_ApppliesBudgetDeadline(t *testing.T) {
 	to := newTestOrchestrator()
-	to.orch.config.Tuning.PostStartBudget = 250 * time.Millisecond
+	to.orch.config.Tuning.AppPhaseBudget = 250 * time.Millisecond
 
 	require.NoError(t, to.g.AddNode("app"))
 	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
@@ -943,13 +943,87 @@ func TestOrchestrator_PostStart_ApppliesBudgetDeadline(t *testing.T) {
 	assert.LessOrEqual(t, remaining, 250*time.Millisecond)
 }
 
+// TestOrchestrator_PreStart_ApppliesBudgetDeadline asserts the same ceiling
+// covers PreStart. PreStart is app-supplied code that now runs on every pass,
+// and it is where the blocking calls live -- podman exec to read a file the
+// host cannot, an app API to enumerate users -- so it needs the bound more than
+// PostStart does. Without one, a wedged PreStart holds the single-writer queue
+// open indefinitely.
+func TestOrchestrator_PreStart_ApppliesBudgetDeadline(t *testing.T) {
+	to := newTestOrchestrator()
+	to.orch.config.Tuning.AppPhaseBudget = 250 * time.Millisecond
+
+	require.NoError(t, to.g.AddNode("app"))
+	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
+
+	mockCfg := new(MockConfigurator)
+	to.registry.On("Get", "app").Return(mockCfg)
+
+	var hadDeadline bool
+	var remaining time.Duration
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			dl, ok := ctx.Deadline()
+			hadDeadline = ok
+			if ok {
+				remaining = time.Until(dl)
+			}
+		}).
+		Return(configurator.NoRestart(), nil)
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	assert.True(t, hadDeadline, "framework must hand PreStart a context with a deadline")
+	assert.Greater(t, remaining.Milliseconds(), int64(0))
+	assert.LessOrEqual(t, remaining, 250*time.Millisecond)
+}
+
+// TestOrchestrator_ResyncPreStart_ApppliesBudgetDeadline covers the periodic
+// path specifically: a node already at RUNNING gets its own budgeted ctx for
+// the resync's PreStart, not the raw pass context. This is the call that runs
+// every ~60s for every installed app, so it is the one where a missing bound
+// would eventually be hit.
+func TestOrchestrator_ResyncPreStart_ApppliesBudgetDeadline(t *testing.T) {
+	to := newTestOrchestrator()
+	to.orch.config.Tuning.AppPhaseBudget = 300 * time.Millisecond
+
+	require.NoError(t, to.g.AddNode("app"))
+	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
+	require.NoError(t, to.g.SetActualStatus("app", graph.StatusRunning, ""))
+
+	mockCfg := new(MockConfigurator)
+	to.registry.On("Get", "app").Return(mockCfg)
+
+	var hadDeadline bool
+	var remaining time.Duration
+	mockCfg.On("PreStart", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			dl, ok := ctx.Deadline()
+			hadDeadline = ok
+			if ok {
+				remaining = time.Until(dl)
+			}
+		}).
+		Return(configurator.NoRestart(), nil)
+	mockCfg.On("PostStart", mock.Anything, mock.Anything).Return(nil)
+
+	require.NoError(t, to.orch.Reconcile(context.Background()))
+
+	assert.True(t, hadDeadline, "the resync must not hand PreStart the unbounded pass context")
+	assert.Greater(t, remaining.Milliseconds(), int64(0))
+	assert.LessOrEqual(t, remaining, 300*time.Millisecond)
+}
+
 // TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError asserts a
 // shutdown cancellation of the pass context during a running PostStart is an
 // interruption, not a fault: the node is NOT parked in terminal ERROR; it is
 // left at POSTSTART_CONFIG to re-converge on the next start (R3).
 func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing.T) {
 	to := newTestOrchestrator()
-	to.orch.config.Tuning.PostStartBudget = 5 * time.Second
+	to.orch.config.Tuning.AppPhaseBudget = 5 * time.Second
 
 	require.NoError(t, to.g.AddNode("app"))
 	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))
@@ -989,7 +1063,7 @@ func TestOrchestrator_PostStart_ShutdownInterruptLeavesStatusNonError(t *testing
 // genuine timeout and surfaces as ERROR (the app never finished finalizing).
 func TestOrchestrator_PostStart_BudgetExpiryWithLiveParentIsError(t *testing.T) {
 	to := newTestOrchestrator()
-	to.orch.config.Tuning.PostStartBudget = 50 * time.Millisecond
+	to.orch.config.Tuning.AppPhaseBudget = 50 * time.Millisecond
 
 	require.NoError(t, to.g.AddNode("app"))
 	require.NoError(t, to.g.SetTargetStatus("app", graph.StatusRunning))

@@ -19,9 +19,10 @@ type TuningConfig struct {
 	// HealthCheckTimeout limits how long each app's HealthCheck can run.
 	// Zero means no timeout (the caller's context deadline applies).
 	HealthCheckTimeout time.Duration
-	// PostStartBudget bounds how long a node's PostStart finalization wait may
-	// run before the framework cancels it. Zero means DefaultPostStartBudget.
-	PostStartBudget time.Duration
+	// AppPhaseBudget bounds one configurator phase -- PreStart or PostStart --
+	// for one app before the framework cancels it. Each phase gets its own full
+	// allowance. Zero means DefaultAppPhaseBudget.
+	AppPhaseBudget time.Duration
 	// ResyncRestartWarnAt is how many consecutive resync-triggered restarts
 	// one node accumulates before the watchdog raises a signal. Zero means
 	// DefaultResyncRestartWarnAt. It changes nothing about whether a restart
