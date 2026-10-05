@@ -40,8 +40,14 @@ type App struct {
 
 // ContainerDef describes one container in a multi-container app.
 type ContainerDef struct {
-	Name          string                `yaml:"name" json:"name"`
-	Image         string                `yaml:"image" json:"image"`
+	Name  string `yaml:"name" json:"name"`
+	Image string `yaml:"image" json:"image"`
+	// Entrypoint replaces the image's own entrypoint. It is a different thing
+	// from Command, which only replaces the argument list the entrypoint
+	// receives, and the two are not interchangeable: an image whose entrypoint
+	// is a supervision script cannot be redirected by passing it arguments.
+	// Unset means keep whatever the image declares.
+	Entrypoint    []string              `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
 	Command       []string              `yaml:"command,omitempty" json:"command,omitempty"`
 	Network       string                `yaml:"network,omitempty" json:"network,omitempty"`
 	Networks      []string              `yaml:"networks,omitempty" json:"networks,omitempty"`

@@ -66,6 +66,7 @@ func NodeNames() []string {
 		"apps-qbittorrent",
 		"apps-radarr",
 		"apps-radicale",
+		"apps-radicale-pimsync",
 		"apps-seerr",
 		"apps-sonarr",
 		"apps-vaultwarden",

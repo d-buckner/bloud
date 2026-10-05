@@ -37,6 +37,7 @@ type Spec struct {
 	Mounts        []Mount
 	Labels        map[string]string
 	Networks      []string
+	Entrypoint    []string
 	Command       []string
 	RestartPolicy string
 }
@@ -341,6 +342,7 @@ func toPodmanConfig(spec Spec, revision string) podman.ContainerConfig {
 		ExtraHosts:    spec.ExtraHosts,
 		Labels:        labels,
 		Networks:      spec.Networks,
+		Entrypoint:    spec.Entrypoint,
 		Command:       spec.Command,
 		RestartPolicy: spec.RestartPolicy,
 	}

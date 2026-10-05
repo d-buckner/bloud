@@ -46,6 +46,7 @@ func TestNodeNamesStable(t *testing.T) {
 		"apps-qbittorrent",
 		"apps-radarr",
 		"apps-radicale",
+		"apps-radicale-pimsync",
 		"apps-seerr",
 		"apps-sonarr",
 		"apps-vaultwarden",

@@ -98,9 +98,7 @@ it, authentication fails on a directory that is otherwise correct.
 | `ldap_security` | `none` | No StartTLS on the internal hop |
 | `realm` | `Bloud` | Shows up in the client's password prompt |
 | `[storage] filesystem_folder` | `/var/lib/radicale/collections` | The one tree the container writes |
-| `[storage] type` | `radicale_ics_sync.storage` | The vendored plugin; see [Aggregated calendar feeds](#aggregated-calendar-feeds) |
-| `[storage] ics_config` | `/config/ics_sync.json` | The sync jobs Bloud writes (PreStart + the PostStart resync) |
-| `[storage] hash_db` | `/var/lib/radicale/collections/ics_sync_hashes.json` | Inside the persisted tree, so deletions survive a restart |
+| `[storage] type` | `filesystem` | Radicale's own backend. Feeds arrive over CalDAV from a sidecar, not through a plugin; see [Aggregated calendar feeds](#aggregated-calendar-feeds) |
 | `[rights] type` | `owner_only` | See [Isolation model](#isolation-model) |
 | `[web] type` | `internal` | Radicale's built-in browser UI at `/.web/` |
 | `[headers] Access-Control-Allow-*` | CORS allow-list | Lets a browser SPA (Calino) call the DAV endpoint cross-origin; see [Browser clients](#browser-clients) |
@@ -124,31 +122,63 @@ adds one CalDAV account and inherits a calendar per feed, without pasting a
 webcal URL into every device and without the feed's API key ever reaching a
 client.
 
-The fetching is done by a vendored storage plugin,
-[`radicale-ics-sync`](https://pypi.org/project/radicale-ics-sync/), which
-wraps Radicale's filesystem backend. It is vendored rather than built into a
-custom image so Bloud ships no image pipeline of its own: the source is
-embedded in the host-agent binary, written into `<appDataDir>/plugin` by
-`PreStart`, mounted read-only at `/plugins`, and made importable with
-`PYTHONPATH=/plugins`. See
-[`plugin/PROVENANCE.md`](plugin/PROVENANCE.md) for the pinned version and the
-two local changes.
+The fetching is done by [`pimsync`](https://pimsync.whynothugo.nl/), running
+as a sidecar container that talks to the server over CalDAV the way any client
+does. It is not a plugin.
 
-`PreStart` writes the plugin tree and an initial `config/ics_sync.json`, one
-job per feed binding. The feed URL is the provider's container address plus its
-declared path, with the API key as the `?apikey=` query parameter the Servarr
-feed endpoint requires. A feed with no published key yet is skipped rather than
-written with an empty one.
+The previous implementation vendored `radicale-ics-sync`, a Python storage
+plugin that wrapped Radicale's filesystem backend from inside the server
+process. That coupling cost more than it saved: the sync shared a lifetime and
+a failure domain with the server it fed, it could only place collections by
+reaching into the storage layer, and every change to it meant shipping Python
+bytes inside the host-agent binary. pimsync creates the collection it fills
+over the protocol, restarts without disturbing the server, and is maintained
+upstream.
+
+Upstream publishes no container image, so Bloud runs
+[`bleala/pimsync`](https://hub.docker.com/r/bleala/pimsync), a signed
+multi-arch wrapper around upstream `0.6.0`, pinned by index digest. See
+[Image provenance](#image-provenance).
+
+### How the sidecar is wired
+
+`apps-radicale-pimsync` is a second graph node in the same app. It depends on
+`apps-radicale` and shares the app's data tree, so its own `PreStart` renders
+its own config and reports `RestartNeeded` when that config changes. The
+Radicale node no longer sees feed bindings at all: it serves whatever the
+sidecar wrote.
+
+The rendered file is `<appDataDir>/pimsync/pimsync.conf`, mounted read-only
+at `/etc/pimsync/pimsync.conf`, and `<appDataDir>/pimsync-status` is mounted
+writable for pimsync's own sync-state database.
+
+Each feed becomes one read-only `webcal` storage and one `one_way` pair that
+pushes it into the CalDAV target. `one_way` matters: a feed is a projection of
+somebody else's system, so a change on the target side is drift to overwrite
+rather than a conflict to resolve, and items the feed does not have are
+removed. That is what makes the sync never produce a conflict nobody is around
+to settle.
+
+### Why the container parks instead of idling
+
+`pimsync daemon` with zero configured pairs exits immediately with an error,
+which under `restartPolicy: always` is a crash loop. A Bloud instance with no
+feed provider installed is a completely ordinary state, so the container's
+entrypoint is a loop that checks the rendered config for `pair` blocks: with
+none it sleeps, with any it runs the daemon. A daemon that dies is retried on
+the next turn rather than taking the container down.
+
+That is also why the catalog grew an `entrypoint` field. The image's own
+entrypoint is a supervision script driven by a pile of `PIMSYNC_*`
+environment variables, and passing arguments cannot replace it: `command`
+sets the argument list the entrypoint receives, not the entrypoint itself.
+Overriding it keeps Bloud out of that env-var contract entirely.
 
 The feed list is not fixed at install time: Radarr and Sonarr are installed
-after Radicale more often than before it, and the orchestrator's only hook for
-a RUNNING node is the PostStart resync, which never re-runs PreStart. So
-`PostStart` re-renders `ics_sync.json` against the live bindings and restarts
-the container when the bytes changed. PreStart still owns the first write (and
-the recreate when the file changes before boot); PostStart owns the change that
-happens after boot. A change requires a restart because the plugin starts one
-polling thread per job when the storage backend is constructed. The writes are
-compared and idempotent, so a steady-state reconciliation changes nothing.
+after Radicale more often than before it. That is fine here in a way it was not
+with the plugin, because the sidecar's config is re-rendered by its own
+`PreStart` on every pass that touches the node, and the change lands as a
+recreate of the sidecar rather than a restart of the calendar server.
 
 ### Who owns the synced calendars, and how they get created
 
@@ -273,13 +303,40 @@ using the deployment's own generated config:
 The same assertions are in `services/host-agent/internal/e2e/radicale_test.go`
 (integration tier) and `e2e/tests/radicale.spec.ts` (browser tier).
 
-`apps/radicale/configurator_test.go` covers the feed path: the storage section
-names the plugin, the sync jobs compose the feed URL with the escaped key, an
-incomplete binding writes no job, and the plugin tree plus `ics_sync.json` are
-written once and recreated (not rewritten) on a change.
+`apps/radicale/pimsync_test.go` covers the sidecar: the scfg quoting rules,
+that each feed renders one `webcal` storage and one `one_way` pair, that a
+target with no owner credential renders no pairs (so the container parks
+rather than failing on every connection), that incomplete feeds are skipped,
+that the render is order-independent, and that the config and the status
+directory land where the mounts expect them. `configurator_test.go` covers the
+server side: the storage section is the native filesystem backend with no
+trace of the retired plugin, and the sharing database is re-rendered on every
+pass.
 `services/host-agent/internal/engine/orchestrator/integration_bindings_test.go`
 asserts the `icsFeed` binding carries the address, path, display name, and the
 key only when the consumer required it.
+
+## Image provenance
+
+`docker.io/bleala/pimsync` at index digest
+`sha256:0a92e4a733a101daf8ccd141e84894908791f831f7b7b7f067e357bcee48171b`.
+
+Upstream [`pimsync`](https://pimsync.whynothugo.nl/) publishes no container
+image. This is [Bleala/Pimsync-DOCKERIZED](https://github.com/Bleala/Pimsync-DOCKERIZED)
+release `1.0.9`, which packages upstream pimsync `0.6.0`. The wrapper is
+multi-arch (`amd64`, `arm64`) and cosign-signed upstream.
+
+It is pinned by digest rather than by tag for the usual reason, and one that is
+specific here: the tag tracks a wrapper release, and a wrapper release can move
+underneath us while the packaged pimsync version stays the same. The digest
+fixes both at once.
+
+The trade-off is that this is a third-party image, not one Bloud builds. It is
+used because Bloud has no image-build infrastructure and the alternative, a
+Bloud-owned `Containerfile`, would be a bigger thing to own than the sync
+itself. The image runs as its own unprivileged uid (`1000`), reads only the
+rendered config and its own status directory, and reaches nothing but the
+Radicale container and the feed providers.
 
 ## What is not wired
 

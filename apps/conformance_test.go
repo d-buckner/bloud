@@ -53,6 +53,9 @@ var conformanceTable = []appSpec{
 	{Dir: "qbittorrent", Node: "apps-qbittorrent", DefaultPort: 8081},
 	{Dir: "radarr", Node: "apps-radarr", DefaultPort: 7878},
 	{Dir: "radicale", Node: "apps-radicale", DefaultPort: 5232, WithSSO: true, WithLDAP: true},
+	// The feed-sync sidecar shares the radicale directory and the app's port
+	// belongs to the server, so it declares no default port of its own.
+	{Dir: "radicale", Node: "apps-radicale-pimsync"},
 	{Dir: "seerr", Node: "apps-seerr", DefaultPort: 5055},
 	{Dir: "sonarr", Node: "apps-sonarr", DefaultPort: 8989},
 	{Dir: "vaultwarden", Node: "apps-vaultwarden", DefaultPort: 8222, WithSSO: true},

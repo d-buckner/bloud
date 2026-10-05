@@ -307,9 +307,15 @@ func TestPostStartPassesWhenUnreachable(t *testing.T) {
 // TestPostStartRestartsWhenFeedsChange is the propagation path for the calendar
 // aggregation: a RUNNING Radicale only ever gets a PostStart resync when a feed
 // provider (Radarr, Sonarr) is installed or removed, so the feed jobs have to be
-// re-rendered here, not only in PreStart. A change requires a container restart
-// because the vendored plugin reads ics_sync.json once at process start.
-func TestPostStartRestartsWhenFeedsChange(t *testing.T) {
+// The sharing database is re-rendered on every pass, not only in PreStart. A
+// change requires a container restart because Radicale reads it at process
+// start.
+func TestPostStartRestartsWhenSharesChange(t *testing.T) {
+	directory := authentikDirectory(t, []map[string]any{
+		{"pk": 1, "username": "alice", "is_active": true, "type": "internal"},
+	})
+	t.Cleanup(directory.Close)
+
 	c, dataPath := newTestConfigurator(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="Bloud"`)
 		w.WriteHeader(http.StatusUnauthorized)
@@ -321,36 +327,42 @@ func TestPostStartRestartsWhenFeedsChange(t *testing.T) {
 		return nil
 	}
 
-	// No feeds yet: PreStart already wrote the empty job list, so the resync
-	// changes nothing and the probe still runs.
 	state := appState(dataPath, ldapOutput())
+	state.Integrations.SSO = ssoState(t, directory.URL).Integrations.SSO
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
 
-	require.NoError(t, c.PostStart(context.Background(), state))
-	assert.Empty(t, restarted, "no feeds means no restart")
-
-	// A feed provider appears: the resync writes ics_sync.json and restarts.
+	// A feed provider appears, which changes who the shares cover, so the
+	// resync rewrites sharing.csv and restarts.
 	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
 	require.NoError(t, c.PostStart(context.Background(), state))
 	assert.Equal(t, []string{nodeName}, restarted)
 
-	ics, err := os.ReadFile(filepath.Join(dataPath, "config", icsSyncFileName))
+	sharing, err := os.ReadFile(filepath.Join(
+		dataPath, "collections", sharesDirName, sharesFileName,
+	))
 	require.NoError(t, err)
-	assert.Contains(t, string(ics), calendarOwner+"/radarr")
+	assert.Contains(t, string(sharing), "/"+calendarOwner+"/radarr/")
+	assert.Contains(t, string(sharing), ";alice;")
 
-	// Steady state: an unchanged job list must not restart the container again.
+	// Steady state: an unchanged share list must not restart the container.
 	restarted = nil
 	require.NoError(t, c.PostStart(context.Background(), state))
 	assert.Empty(t, restarted)
 }
 
 func TestPostStartRestartFailureIsAnError(t *testing.T) {
+	directory := authentikDirectory(t, []map[string]any{
+		{"pk": 1, "username": "alice", "is_active": true, "type": "internal"},
+	})
+	t.Cleanup(directory.Close)
+
 	c, dataPath := newTestConfigurator(t, nil)
 	c.restartContainerFn = func(_ context.Context, _ string) error {
 		return errors.New("runtime refused")
 	}
 	state := appState(dataPath, ldapOutput())
+	state.Integrations.SSO = ssoState(t, directory.URL).Integrations.SSO
 	_, err := c.PreStart(context.Background(), state)
 	require.NoError(t, err)
 	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
@@ -378,15 +390,17 @@ func feedBinding() configurator.ICSFeedBinding {
 	}
 }
 
-func TestRenderConfigUsesTheICSSyncStorage(t *testing.T) {
+// The server is plain Radicale again. Feeds used to arrive through a vendored
+// plugin that wrapped this backend and wrote into it from inside the server
+// process; they now arrive over CalDAV from a sidecar, so nothing here should
+// reference that plugin.
+func TestRenderConfigUsesTheNativeFilesystemStorage(t *testing.T) {
 	got := renderConfig(5232, ldapOutput())
 
-	for _, want := range []string{
-		"type = radicale_ics_sync.storage",
-		"ics_config = /config/ics_sync.json",
-		"hash_db = /var/lib/radicale/collections/ics_sync_hashes.json",
-	} {
-		assert.Contains(t, got, want)
+	assert.Contains(t, got, "type = filesystem")
+	assert.Contains(t, got, "filesystem_folder = /var/lib/radicale/collections")
+	for _, gone := range []string{"radicale_ics_sync", "ics_config", "hash_db"} {
+		assert.NotContains(t, got, gone, "the vendored plugin is retired")
 	}
 }
 
@@ -410,115 +424,6 @@ func TestRenderConfigAllowsBrowserDAVOrigins(t *testing.T) {
 	assert.Contains(t, got, "depth")
 	assert.Contains(t, got, "Sync-Token")
 	assert.Contains(t, got, "ETag")
-}
-
-func TestRenderICSSyncComposesTheFeedURL(t *testing.T) {
-	got := renderICSSync([]configurator.ICSFeedBinding{feedBinding()})
-
-	assert.Contains(t, got, `"feed": "http://apps-radarr:7878/feed/v3/calendar/Radarr.ics?apikey=abc123"`)
-	// The job targets the shared-calendar owner, not whoever set the box up,
-	// which is what makes the synced feeds shareable at all.
-	assert.Contains(t, got, `"collection": "`+calendarOwner+`/radarr"`)
-	assert.Contains(t, got, `"displayname": "Radarr Movies"`)
-	assert.Contains(t, got, `"sync_interval": 3600`)
-}
-
-func TestRenderICSSyncEscapesTheKey(t *testing.T) {
-	feed := feedBinding()
-	feed.APIKey = "a b&c"
-	got := renderICSSync([]configurator.ICSFeedBinding{feed})
-	assert.Contains(t, got, "apikey=a+b%26c")
-}
-
-func TestRenderICSSyncSkipsIncompleteBindings(t *testing.T) {
-	cases := map[string]func(*configurator.ICSFeedBinding){
-		"not installed": func(f *configurator.ICSFeedBinding) { f.Installed = false },
-		"no key":        func(f *configurator.ICSFeedBinding) { f.APIKey = "" },
-		"no path":       func(f *configurator.ICSFeedBinding) { f.Path = "" },
-		"no address":    func(f *configurator.ICSFeedBinding) { f.BaseURL = "" },
-	}
-	for name, mutate := range cases {
-		t.Run(name, func(t *testing.T) {
-			feed := feedBinding()
-			mutate(&feed)
-			assert.Equal(t, "[]\n", renderICSSync([]configurator.ICSFeedBinding{feed}))
-		})
-	}
-}
-
-func TestRenderICSSyncDoesNotWaitForAFirstRunUser(t *testing.T) {
-	// The feeds used to land under the operator's account, so nothing could be
-	// synced until somebody claimed the instance. They now land under the
-	// service account that owns them, so a feed is worth syncing the moment its
-	// provider publishes it.
-	assert.Contains(t, renderICSSync([]configurator.ICSFeedBinding{feedBinding()}),
-		calendarOwner+"/radarr")
-}
-
-func TestRenderICSSyncIsDeterministic(t *testing.T) {
-	radarr := feedBinding()
-	sonarr := feedBinding()
-	sonarr.App = "sonarr"
-	sonarr.Path = "/feed/v3/calendar/Sonarr.ics"
-
-	first := renderICSSync([]configurator.ICSFeedBinding{radarr, sonarr})
-	second := renderICSSync([]configurator.ICSFeedBinding{sonarr, radarr})
-	assert.Equal(t, first, second, "job order must not depend on binding order")
-	assert.Less(t, strings.Index(first, calendarOwner+"/radarr"),
-		strings.Index(first, calendarOwner+"/sonarr"))
-}
-
-// TestSyncPluginWritesThePackageInit guards the embed pattern: Go's `embed`
-// skips files whose names begin with `_` unless the pattern uses the `all:`
-// prefix, and without __init__.py Python imports radicale_ics_sync as a
-// namespace package with no __version__, so the plugin fails to load.
-func TestSyncPluginWritesThePackageInit(t *testing.T) {
-	dir := t.TempDir()
-
-	changed, err := syncPlugin(dir)
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	raw, err := os.ReadFile(filepath.Join(dir, pluginDirName, "radicale_ics_sync", "__init__.py"))
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), "__version__")
-}
-
-func TestPreStartWritesThePluginAndSyncJobs(t *testing.T) {
-	c, dataPath := newTestConfigurator(t, nil)
-	state := appState(dataPath, ldapOutput())
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
-
-	result, err := c.PreStart(context.Background(), state)
-	require.NoError(t, err)
-	assert.True(t, result.RestartNeeded, "a fresh config and plugin need a recreate")
-
-	storage, err := os.ReadFile(filepath.Join(dataPath, pluginDirName, "radicale_ics_sync", "storage.py"))
-	require.NoError(t, err, "the vendored plugin must be written where the mount expects it")
-	assert.Contains(t, string(storage), "radicale-ics-sync")
-
-	ics, err := os.ReadFile(filepath.Join(dataPath, "config", icsSyncFileName))
-	require.NoError(t, err)
-	assert.Contains(t, string(ics), calendarOwner+"/radarr")
-
-	// A second identical pass must be a no-op, or every reconcile recreates
-	// the container.
-	result, err = c.PreStart(context.Background(), state)
-	require.NoError(t, err)
-	assert.False(t, result.RestartNeeded)
-}
-
-func TestPreStartRestartsWhenAFeedIsAdded(t *testing.T) {
-	c, dataPath := newTestConfigurator(t, nil)
-	state := appState(dataPath, ldapOutput())
-
-	_, err := c.PreStart(context.Background(), state)
-	require.NoError(t, err)
-
-	state.Integrations.ICSFeeds = []configurator.ICSFeedBinding{feedBinding()}
-	result, err := c.PreStart(context.Background(), state)
-	require.NoError(t, err)
-	assert.True(t, result.RestartNeeded, "the plugin starts one poller per job at boot, so a new feed needs a restart")
 }
 
 // ---- config/metadata agreement ----

@@ -82,7 +82,56 @@ provides:
     values:
       username: caldav-service
 
+# Order matters here. The last container in this list is the app's primary
+# node: it is what other apps' dependency edges on `radicale` resolve to, and
+# what SSO resolution keys off. The server keeps that position; the sidecar
+# comes first.
 containers:
+  # The feed sync. A separate container rather than a plugin inside Radicale:
+  # it speaks CalDAV to the running server the way any client does, so it can
+  # be restarted without disturbing the server, and it creates the collection
+  # it fills instead of reaching into the storage layer to place one.
+  - name: apps-radicale-pimsync
+    # Upstream pimsync publishes no container image. This is
+    # Bleala/Pimsync-DOCKERIZED 1.0.9, which packages upstream pimsync
+    # 0.6.0, pinned by the multi-arch index digest so the bytes are fixed
+    # regardless of how the tags move. See the Image provenance section of
+    # INTEGRATION.md.
+    image: docker.io/bleala/pimsync@sha256:0a92e4a733a101daf8ccd141e84894908791f831f7b7b7f067e357bcee48171b
+    network: apps-net
+    restartPolicy: always
+    dependsOn:
+      - apps-radicale
+    # The image's own entrypoint is a supervision script driven by a pile of
+    # PIMSYNC_* environment variables. Replacing it keeps Bloud out of that
+    # contract, and it is necessary rather than merely tidy: `pimsync daemon`
+    # with zero pairs returns immediately, which under restartPolicy=always is
+    # a crash loop. So this parks while there is nothing to sync, and starts
+    # the daemon when a feed provider turns up. A daemon that dies is retried
+    # on the next turn of the loop rather than taking the container down.
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        while :; do
+          if grep -q '^pair ' /etc/pimsync/pimsync.conf 2>/dev/null; then
+            /usr/local/bin/pimsync -c /etc/pimsync/pimsync.conf -v warn daemon || true
+          fi
+          sleep 30
+        done
+    volumes:
+      # The rendered config, read-only. Written by the sidecar's own PreStart.
+      - source: "{{appDataDir}}/pimsync"
+        destination: /etc/pimsync
+        options: [ro]
+      # pimsync's status database. The container writes it as its own uid
+      # 1000, which under rootless podman is a subordinate uid the host agent
+      # cannot become, so the configurator opens the directory rather than
+      # owning it.
+      - source: "{{appDataDir}}/pimsync-status"
+        destination: /var/lib/pimsync
+
   - name: apps-radicale
     # The upstream image is built with the bcrypt, argon2, and ldap extras
     # (see .github/workflows/docker-publish.yml in Kozea/Radicale), which is
@@ -95,13 +144,9 @@ containers:
     command:
       - --config
       - /config/config
-    # The vendored radicale-ics-sync storage plugin. Its source is embedded in
-    # the host-agent binary and written into <appDataDir>/plugin by PreStart, so
-    # the mount always carries the bytes that shipped with this agent. Radicale
-    # imports it by dotted module path; PYTHONPATH is what makes /plugins
-    # importable, since the image's venv path changes with its Python version.
-    environment:
-      PYTHONPATH: /plugins
+    # Radicale reads no environment variables for its settings, so nothing
+    # here is configuration; the app is configured entirely by the INI file
+    # mounted at /config.
     ports:
       - host: 5232
         container: 5232
@@ -115,10 +160,6 @@ containers:
       # back into its own configuration.
       - source: "{{appDataDir}}/config"
         destination: /config
-        options: [ro]
-      # The vendored ics-sync plugin, read-only. Written by PreStart.
-      - source: "{{appDataDir}}/plugin"
-        destination: /plugins
         options: [ro]
     healthCheck:
       # GET / answers 302 to the built-in web UI once the server is listening.

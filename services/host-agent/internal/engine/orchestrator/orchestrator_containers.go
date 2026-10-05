@@ -248,6 +248,7 @@ func ContainerSpecFromDef(def catalog.ContainerDef, appCatalogID string, dataDir
 		Environment:   env,
 		ExtraHosts:    def.ExtraHosts,
 		Networks:      networks,
+		Entrypoint:    def.Entrypoint,
 		Command:       def.Command,
 		RestartPolicy: def.RestartPolicy,
 		Labels:        map[string]string{containerruntime.AppLabel: appCatalogID},
