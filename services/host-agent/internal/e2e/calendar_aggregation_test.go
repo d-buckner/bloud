@@ -473,30 +473,44 @@ func readPimsyncPairs(t *testing.T) []pimsyncPair {
 // that owns them and shared out from there.
 func waitForFeedJobs(t *testing.T, owner string) {
 	t.Helper()
-	want := map[string]bool{"radarr": false, "sonarr": false}
+	want := []string{"radarr", "sonarr"}
+	found := map[string]bool{}
 	deadline := time.Now().Add(5 * time.Minute)
 	for {
 		target := pimsyncTargetURL(t)
-		if strings.Contains(target, "/"+owner+"/") {
-			for _, pair := range readPimsyncPairs(t) {
-				if want[pair.name] && pair.storageA == pair.name &&
-					pair.storageB == "bloud" && pair.oneWay {
-					want[pair.name] = true
-					t.Logf("pimsync pair %s: %s -> %s (%s), one_way",
-						pair.name, pair.storageA, pair.storageB, target)
-				}
-			}
-		} else {
+		if !strings.Contains(target, "/"+owner+"/") {
 			t.Logf("pimsync target %q does not name owner %q yet", target, owner)
+		} else {
+			for _, pair := range readPimsyncPairs(t) {
+				if !contains(want, pair.name) || found[pair.name] {
+					continue
+				}
+				if pair.storageA != pair.name || pair.storageB != "bloud" || !pair.oneWay {
+					t.Fatalf("pimsync pair %q has the wrong shape: storage_a=%q storage_b=%q one_way=%v",
+						pair.name, pair.storageA, pair.storageB, pair.oneWay)
+				}
+				found[pair.name] = true
+				t.Logf("pimsync pair %s: %s -> %s (%s), one_way",
+					pair.name, pair.storageA, pair.storageB, target)
+			}
 		}
-		if want["radarr"] && want["sonarr"] {
+		if found["radarr"] && found["sonarr"] {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("pimsync.conf never carried both one-way feed pairs into %q (missing: %v)", owner, want)
+			t.Fatalf("pimsync.conf never carried both one-way feed pairs into %q (found: %v)", owner, found)
 		}
 		time.Sleep(5 * time.Second)
 	}
+}
+
+func contains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // waitForSyncedCollections polls the recipient's DAV tree until the synced
