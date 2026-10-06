@@ -24,6 +24,16 @@ func writeMetadataApp(t *testing.T, metadata string) string {
 	return dir
 }
 
+// writeAppDir drops one named app into an existing apps directory, so a test
+// can build a catalog of more than one app. The name goes in the directory,
+// which is what the loader enumerates.
+func writeAppDir(t *testing.T, dir, name, metadata string) {
+	t.Helper()
+	appDir := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(appDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(appDir, "metadata.yaml"), []byte(metadata), 0o644))
+}
+
 // TestValidateApp_LoopbackIssuerRequiresHostNetwork pins the coupling between
 // the loopback issuer and host networking: the issuer is
 // http://localhost:<Traefik port>, which reaches Traefik only from inside the

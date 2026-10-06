@@ -410,9 +410,12 @@ type ICSFeedBinding struct {
 	// Path is the feed path on the provider's address. Absolute, so the feed
 	// URL is ProviderRef.BaseURL + Path with the key as a query parameter.
 	Path string
-	// DisplayName is what the consumer names the collection it creates for the
-	// feed, e.g. "Radarr Movies".
-	DisplayName string
+	// CalendarName is the collection the consumer creates for the feed. It
+	// serves as both the collection's path segment and the display name a
+	// calendar client shows, which is why one declaration covers both and the
+	// two cannot be edited apart. Path-segment-safe by contract, so it can be
+	// concatenated into a location rather than only used as a label.
+	CalendarName string
 }
 
 // Integrations holds the resolved providers for every contract the app declares

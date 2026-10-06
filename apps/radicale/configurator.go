@@ -268,6 +268,11 @@ func (c *Configurator) PostStart(ctx context.Context, state *configurator.AppSta
 		return err
 	}
 
+	// The feed collections get the same treatment, for the same reason, and
+	// for one the family calendar does not have: pimsync cannot name the
+	// collection it syncs into.
+	c.ensureFeedCalendars(ctx, feedsOf(state))
+
 	status, err := c.api.probeUnauthenticated(ctx)
 	if err != nil {
 		// Liveness is the health check's job, and PostStart runs after it

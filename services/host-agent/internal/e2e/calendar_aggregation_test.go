@@ -113,7 +113,7 @@ func assertSharedWithASecondUser(t *testing.T) {
 	if res.StatusCode != http.StatusMultiStatus {
 		t.Fatalf("PROPFIND /%s/ = %d, want 207\n%s", fellow, res.StatusCode, listing)
 	}
-	for _, want := range []string{"family", "radarr", "sonarr"} {
+	for _, want := range []string{"family", "Movies", "Shows"} {
 		if !strings.Contains(listing, fellow+"/"+want) {
 			t.Errorf("shared collection %q is missing from /%s/:\n%s", want, fellow, listing)
 		}
@@ -218,8 +218,8 @@ func waitForShareRows(t *testing.T, recipient string) {
 	t.Helper()
 	want := []string{
 		"map;/" + recipient + "/family/;",
-		"map;/" + recipient + "/radarr/;",
-		"map;/" + recipient + "/sonarr/;",
+		"map;/" + recipient + "/Movies/;",
+		"map;/" + recipient + "/Shows/;",
 	}
 	deadline := time.Now().Add(6 * time.Minute)
 	for {
@@ -267,7 +267,7 @@ func assertFamilyCalendarIsWritable(t *testing.T, user, password string) {
 func assertFeedIsReadOnly(t *testing.T, user, password string) {
 	t.Helper()
 	href := fmt.Sprintf("bloud-should-not-land-%d.ics", time.Now().UnixNano())
-	path := "/" + user + "/radarr/" + href
+	path := "/" + user + "/Movies/" + href
 
 	status, body := davPutRetry(t, path, user, password, icsEvent("bloud-should-not-land-"+href, "Must not persist"))
 	if status == http.StatusForbidden || status == http.StatusMethodNotAllowed ||
@@ -395,10 +395,11 @@ func waitFeedServesCalendar(t *testing.T, appID, baseURL, feedPath string) {
 // is scfg, a flat `key value` format, so this reads the block by hand rather
 // than pulling in a parser for a format with no Go library.
 type pimsyncPair struct {
-	name     string
-	storageA string
-	storageB string
-	oneWay   bool
+	name       string
+	storageA   string
+	storageB   string
+	collection string
+	oneWay     bool
 }
 
 // readPimsyncConf returns the sidecar's rendered config from the app's own
@@ -459,6 +460,8 @@ func readPimsyncPairs(t *testing.T) []pimsyncPair {
 			cur.storageA = strings.TrimPrefix(trimmed, "storage_a ")
 		case strings.HasPrefix(trimmed, "storage_b "):
 			cur.storageB = strings.TrimPrefix(trimmed, "storage_b ")
+		case strings.HasPrefix(trimmed, "collection "):
+			cur.collection = strings.Trim(strings.TrimPrefix(trimmed, "collection "), "\"")
 		case trimmed == "one_way":
 			cur.oneWay = true
 		}
@@ -474,6 +477,9 @@ func readPimsyncPairs(t *testing.T) []pimsyncPair {
 func waitForFeedJobs(t *testing.T, owner string) {
 	t.Helper()
 	want := []string{"radarr", "sonarr"}
+	// The pair keeps the provider's name; the collection inside it takes the
+	// name the provider declared, which is what the user reads.
+	wantCollection := map[string]string{"radarr": "Movies", "sonarr": "Shows"}
 	found := map[string]bool{}
 	deadline := time.Now().Add(5 * time.Minute)
 	for {
@@ -488,6 +494,10 @@ func waitForFeedJobs(t *testing.T, owner string) {
 				if pair.storageA != pair.name || pair.storageB != "bloud" || !pair.oneWay {
 					t.Fatalf("pimsync pair %q has the wrong shape: storage_a=%q storage_b=%q one_way=%v",
 						pair.name, pair.storageA, pair.storageB, pair.oneWay)
+				}
+				if got, expected := pair.collection, wantCollection[pair.name]; got != expected {
+					t.Fatalf("pimsync pair %q syncs into collection %q, want the provider-declared %q",
+						pair.name, got, expected)
 				}
 				found[pair.name] = true
 				t.Logf("pimsync pair %s: %s -> %s (%s), one_way",
@@ -531,8 +541,8 @@ func waitForSyncedCollections(t *testing.T, user, password string) {
 		status, body := davGetRetry(t, "/"+user+"/", user, password)
 		lastStatus, lastBody = status, body
 		if status == http.StatusMultiStatus &&
-			strings.Contains(body, user+"/radarr") &&
-			strings.Contains(body, user+"/sonarr") {
+			strings.Contains(body, user+"/Movies") &&
+			strings.Contains(body, user+"/Shows") {
 			t.Log("Radarr and Sonarr collections appear in the recipient's DAV tree")
 			return
 		}

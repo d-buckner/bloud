@@ -75,12 +75,13 @@ func TestRenderPimsyncConfProjectsEachFeedIntoTheTarget(t *testing.T) {
 	assert.Contains(t, got, `    username "calendar-service"`)
 	assert.Contains(t, got, `    password "owner-secret"`)
 
-	// The feed: read-only, named after the app that publishes it.
+	// The feed block keeps the provider's name; the collection inside it takes
+	// the provider-declared calendar name.
 	assert.Contains(t, got, "storage radarr {")
 	assert.Contains(t, got, "    type webcal")
 	assert.Contains(t, got,
 		`    url "http://apps-radarr:7878/feed/v3/calendar/Radarr.ics?apikey=abc123"`)
-	assert.Contains(t, got, `    collection_id "radarr"`)
+	assert.Contains(t, got, `    collection_id "Movies"`)
 
 	// The pair: one-way, feed first. one_way is what makes the target a
 	// projection rather than a merge, so a feed never produces a conflict
@@ -88,7 +89,7 @@ func TestRenderPimsyncConfProjectsEachFeedIntoTheTarget(t *testing.T) {
 	assert.Contains(t, got, "pair radarr {")
 	assert.Contains(t, got, "    storage_a radarr")
 	assert.Contains(t, got, "    storage_b bloud")
-	assert.Contains(t, got, `    collection "radarr"`)
+	assert.Contains(t, got, `    collection "Movies"`)
 	assert.Contains(t, got, "    one_way")
 }
 

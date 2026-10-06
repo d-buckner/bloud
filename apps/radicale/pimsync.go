@@ -189,7 +189,10 @@ func writeFeedBlocks(b *strings.Builder, feed configurator.ICSFeedBinding) error
 	if err != nil {
 		return fmt.Errorf("feed %s url: %w", name, err)
 	}
-	collID, err := scfgQuote(name)
+	// The block keeps the provider's name, because that is the identity the
+	// job belongs to; the collection takes the provider-declared calendar
+	// name, because that is the name a person reads in their calendar app.
+	collID, err := scfgQuote(feed.CalendarName)
 	if err != nil {
 		return fmt.Errorf("feed %s collection id: %w", name, err)
 	}

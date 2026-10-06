@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,7 +36,7 @@ func TestRenderSharesMountsEverySharedCollectionIntoEveryTree(t *testing.T) {
 				user, calendarOwner, calendarOwner, user, writableShare),
 			"%s should hold the family calendar read-write", user)
 		assert.Contains(t, got,
-			fmt.Sprintf("map;/%s/radarr/;/%s/radarr/;none;%s;%s;%s;True;True;False;False;0;0;{};{}\n",
+			fmt.Sprintf("map;/%s/Movies/;/%s/Movies/;none;%s;%s;%s;True;True;False;False;0;0;{};{}\n",
 				user, calendarOwner, calendarOwner, user, readOnlyShare),
 			"%s should hold the feed read-only", user)
 	}
@@ -47,7 +48,7 @@ func TestRenderSharesMountsEverySharedCollectionIntoEveryTree(t *testing.T) {
 		fmt.Sprintf("map;/%s/family/;/%s/family/;none;%s;%s;%s;True;True;False;False;0;0;{};{}\n",
 			agentUsername, calendarOwner, calendarOwner, agentUsername, writableShare))
 	assert.Contains(t, got,
-		fmt.Sprintf("map;/%s/radarr/;/%s/radarr/;none;%s;%s;%s;True;True;False;False;0;0;{};{}\n",
+		fmt.Sprintf("map;/%s/Movies/;/%s/Movies/;none;%s;%s;%s;True;True;False;False;0;0;{};{}\n",
 			agentUsername, calendarOwner, calendarOwner, agentUsername, readOnlyShare))
 }
 
@@ -303,4 +304,153 @@ func TestEnsureFamilyCalendarSurvivesAServerError(t *testing.T) {
 	require.NoError(t, c.ensureFamilyCalendar(context.Background()),
 		"a failed family-calendar pass warns and retries next time; it must not park the calendar in ERROR")
 	assert.Equal(t, []string{"PROPFIND"}, seen)
+}
+
+// ---- feed calendar pre-creation ----
+
+// davBodyRecorder answers the DAV calls the collection-creation path makes and
+// records the verb, the path, and the MKCALENDAR body, because the display
+// name is carried in the body and nowhere else.
+func davBodyRecorder(t *testing.T, propfindStatus int, seen *[]string, bodies *map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen = append(*seen, r.Method+" "+r.URL.Path)
+		switch r.Method {
+		case "PROPFIND":
+			w.WriteHeader(propfindStatus)
+		case "MKCALENDAR":
+			body := make([]byte, r.ContentLength)
+			_, _ = io.ReadFull(r.Body, body)
+			(*bodies)[r.URL.Path] = string(body)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+}
+
+func feedWith(name, calendarName string) configurator.ICSFeedBinding {
+	f := feedBinding()
+	f.App = name
+	f.Node = "apps-" + name
+	f.BaseURL = "http://apps-" + name + ":7878"
+	f.CalendarName = calendarName
+	return f
+}
+
+// The collection has to be created by Bloud rather than left to the sync
+// sidecar, and it has to carry the provider's declared name as its display
+// name. pimsync cannot do either: a webcal source has no display name to
+// sync, and a collection Radicale makes for itself derives one from the path,
+// which is how `calendar-service/radarr` reached a family member's calendar.
+func TestEnsureFeedCalendarsCreatesEachCollectionNamed(t *testing.T) {
+	var seen []string
+	bodies := map[string]string{}
+	server := davBodyRecorder(t, http.StatusNotFound, &seen, &bodies)
+	defer server.Close()
+
+	c, _ := newTestConfigurator(t, nil)
+	c.baseURL = server.URL
+	c.secrets = ownerSecrets()
+
+	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{
+		feedWith("radarr", "Movies"),
+		feedWith("sonarr", "Shows"),
+	})
+
+	assert.Equal(t, []string{
+		"PROPFIND /" + calendarOwner + "/Movies/",
+		"MKCALENDAR /" + calendarOwner + "/Movies/",
+		"PROPFIND /" + calendarOwner + "/Shows/",
+		"MKCALENDAR /" + calendarOwner + "/Shows/",
+	}, seen)
+	assert.Contains(t, bodies["/"+calendarOwner+"/Movies/"], "<D:displayname>Movies</D:displayname>")
+	assert.Contains(t, bodies["/"+calendarOwner+"/Shows/"], "<D:displayname>Shows</D:displayname>")
+}
+
+func TestEnsureFeedCalendarsIsANoOpWhenTheCollectionExists(t *testing.T) {
+	var seen []string
+	bodies := map[string]string{}
+	server := davBodyRecorder(t, http.StatusMultiStatus, &seen, &bodies)
+	defer server.Close()
+
+	c, _ := newTestConfigurator(t, nil)
+	c.baseURL = server.URL
+	c.secrets = ownerSecrets()
+
+	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{feedWith("radarr", "Movies")})
+
+	assert.Equal(t, []string{"PROPFIND /" + calendarOwner + "/Movies/"}, seen,
+		"an existing collection must not be re-created")
+	assert.Empty(t, bodies)
+}
+
+func TestEnsureFeedCalendarsSkipsAnIncompleteFeed(t *testing.T) {
+	var seen []string
+	bodies := map[string]string{}
+	server := davBodyRecorder(t, http.StatusNotFound, &seen, &bodies)
+	defer server.Close()
+
+	c, _ := newTestConfigurator(t, nil)
+	c.baseURL = server.URL
+	c.secrets = ownerSecrets()
+
+	noKey := feedWith("radarr", "Movies")
+	noKey.APIKey = ""
+	notInstalled := feedWith("sonarr", "Shows")
+	notInstalled.Installed = false
+
+	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{noKey, notInstalled})
+	assert.Empty(t, seen, "a feed that cannot sync creates nothing")
+}
+
+// A server error on one feed must not stop the others: the family calendar and
+// every other collection still need their pass, and parking the whole node in
+// ERROR because one MKCALENDAR failed is worse than retrying next time.
+func TestEnsureFeedCalendarsContinuesPastAServerError(t *testing.T) {
+	var seen []string
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		switch r.Method {
+		case "PROPFIND":
+			if calls == 0 {
+				calls++
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		case "MKCALENDAR":
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	c, _ := newTestConfigurator(t, nil)
+	c.baseURL = server.URL
+	c.secrets = ownerSecrets()
+
+	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{
+		feedWith("radarr", "Movies"),
+		feedWith("sonarr", "Shows"),
+	})
+
+	assert.Contains(t, seen, "MKCALENDAR /"+calendarOwner+"/Shows/",
+		"the second feed still gets created after the first errored")
+}
+
+func TestEnsureFeedCalendarsWithoutACredentialMakesNoCalls(t *testing.T) {
+	var seen []string
+	bodies := map[string]string{}
+	server := davBodyRecorder(t, http.StatusNotFound, &seen, &bodies)
+	defer server.Close()
+
+	c, _ := newTestConfigurator(t, nil)
+	c.baseURL = server.URL
+	c.secrets = &fakeSecrets{values: map[string]string{}}
+
+	c.ensureFeedCalendars(context.Background(), []configurator.ICSFeedBinding{feedWith("radarr", "Movies")})
+	assert.Empty(t, seen)
 }

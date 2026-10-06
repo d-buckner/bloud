@@ -555,8 +555,8 @@ func TestBuildIntegrations_ICSFeedCarriesTheKeyAndFeedFacts(t *testing.T) {
 		providerApp("radarr", 7878, "icsFeed", catalog.ContractProvides{
 			Secrets: []string{"apiKey"},
 			Values: map[string]string{
-				"path":        "/feed/v3/calendar/Radarr.ics",
-				"displayName": "Radarr Movies",
+				"path":         "/feed/v3/calendar/Radarr.ics",
+				"calendarName": "Movies",
 			},
 		}),
 	)
@@ -570,7 +570,7 @@ func TestBuildIntegrations_ICSFeedCarriesTheKeyAndFeedFacts(t *testing.T) {
 	assert.Equal(t, "apps-radarr", feed.Node)
 	assert.Equal(t, "http://apps-radarr:7878", feed.BaseURL, "the plugin fetches from the app network")
 	assert.Equal(t, "/feed/v3/calendar/Radarr.ics", feed.Path)
-	assert.Equal(t, "Radarr Movies", feed.DisplayName)
+	assert.Equal(t, "Movies", feed.CalendarName)
 	assert.Equal(t, "radarr-key", feed.APIKey, "the consumer declared it requires the key")
 }
 
@@ -587,8 +587,8 @@ func TestBuildIntegrations_ICSFeedKeyOnlyForDeclaredRequires(t *testing.T) {
 		providerApp("radarr", 7878, "icsFeed", catalog.ContractProvides{
 			Secrets: []string{"apiKey"},
 			Values: map[string]string{
-				"path":        "/feed/v3/calendar/Radarr.ics",
-				"displayName": "Radarr Movies",
+				"path":         "/feed/v3/calendar/Radarr.ics",
+				"calendarName": "Movies",
 			},
 		}),
 	)
