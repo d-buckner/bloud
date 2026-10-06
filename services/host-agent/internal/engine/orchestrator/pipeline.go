@@ -264,6 +264,18 @@ func (o *Orchestrator) convergeUninstalls(ctx context.Context, apps []*store.Ins
 			continue
 		}
 		clearData := pendingClearData[app.CatalogID]
+		// Deprovision the identity-provider objects first, before anything is
+		// torn down. If this fails the pass leaves reality as it was and
+		// retries on the next cycle: deleting the store row anyway would lose
+		// the only anchor a retry could hang off, and an OAuth2 provider is a
+		// live client credential with redirect URIs. A deferred uninstall is
+		// visible and self-healing; an orphaned provider is neither.
+		if err := o.deprovisionAppSSO(ctx, app); err != nil {
+			o.logger.Warn("uninstall: SSO deprovision failed, deferring the uninstall for retry",
+				"app", app.CatalogID, "error", err)
+			o.recordOpFail(app.CatalogID, store.OpPhaseTopology, err)
+			continue
+		}
 		if err := o.RemoveApp(ctx, app.CatalogID, clearData); err != nil {
 			o.logger.Error("failed to remove app", "app", app.CatalogID, "error", err)
 		}
