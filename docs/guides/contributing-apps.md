@@ -611,6 +611,15 @@ the catalog load, so mistakes surface at startup rather than as a binding that i
 quietly half-empty. The orchestrator reads the required secret names from there
 too, which is why no consumer ever writes a secret name.
 
+A value's *shape* is declared alongside it. `AbsolutePath` requires a leading
+slash, for a value that gets concatenated onto an address. `PathSegment`
+requires a value usable verbatim as one URL path segment, for a value that
+becomes a **location** rather than a label: no separator, no whitespace, no
+traversal. `icsFeed.calendarName` sets it, because that name is where the
+collection lives as well as what it is called, and a declared `../..` should
+fail the load and name the app that declared it rather than quietly escape a
+shared tree at runtime.
+
 Adding a **provider of an existing contract** is metadata only. Adding a new
 contract is three small edits: an entry in that registry, a payload type in
 `pkg/configurator`, and one arm in the orchestrator's `bindContract`. Do not

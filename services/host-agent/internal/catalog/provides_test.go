@@ -153,6 +153,35 @@ containers:
 			provides: "  caldav:\n    secrets: [password]\n    values: {path: /}",
 			wantErr:  `provides.caldav publishes "password", which this contract does not carry`,
 		},
+		{
+			name: "icsFeed with the facts this contract carries",
+			port: "7878",
+			provides: "  icsFeed:\n    secrets: [apiKey]\n" +
+				"    values: {path: /feed/v3/calendar/Radarr.ics, calendarName: Movies}",
+		},
+		{
+			name: "icsFeed with no calendar name",
+			port: "7878",
+			provides: "  icsFeed:\n    secrets: [apiKey]\n" +
+				"    values: {path: /feed/v3/calendar/Radarr.ics}",
+			wantErr: `provides.icsFeed.values must declare "calendarName"`,
+		},
+		{
+			// The name becomes a path segment in a shared tree, so a value that
+			// cannot be one is refused here rather than escaping at runtime.
+			name: "icsFeed with a calendar name that is not a path segment",
+			port: "7878",
+			provides: "  icsFeed:\n    secrets: [apiKey]\n" +
+				"    values: {path: /f.ics, calendarName: \"../admin\"}",
+			wantErr: "provides.icsFeed.values.calendarName must be usable as a single path segment",
+		},
+		{
+			name: "icsFeed with a spaced calendar name",
+			port: "7878",
+			provides: "  icsFeed:\n    secrets: [apiKey]\n" +
+				"    values: {path: /f.ics, calendarName: \"My Movies\"}",
+			wantErr: "provides.icsFeed.values.calendarName must be usable as a single path segment",
+		},
 	}
 
 	for _, tc := range cases {
@@ -184,6 +213,52 @@ containers:
 	apps, err := NewLoader(writeMetadataApp(t, metadata)).LoadAll()
 	require.NoError(t, err)
 	assert.Empty(t, apps["sso-app"].Provides)
+}
+
+// TestValidateSharedNamespaces catches two providers claiming one collection.
+//
+// A per-app check cannot see this: each metadata file is valid on its own, and
+// the collision only exists in the tree. At runtime it would read as one feed
+// quietly absorbing another's events, with nothing in either app's own state
+// to explain it.
+func TestValidateSharedNamespaces(t *testing.T) {
+	feed := func(name, calendarName string) string {
+		return fmt.Sprintf(`name: %s
+displayName: %s
+description: An app
+category: media
+port: 7878
+provides:
+  icsFeed:
+    secrets: [apiKey]
+    values:
+      path: /feed.ics
+      calendarName: %s
+containers:
+  - name: apps-%s
+    image: example/%s:1.0
+`, name, name, calendarName, name, name)
+	}
+
+	t.Run("distinct names load", func(t *testing.T) {
+		dir := t.TempDir()
+		writeAppDir(t, dir, "radarr", feed("radarr", "Movies"))
+		writeAppDir(t, dir, "sonarr", feed("sonarr", "Shows"))
+		apps, err := NewLoader(dir).LoadAll()
+		require.NoError(t, err)
+		assert.Len(t, apps, 2)
+	})
+
+	t.Run("a duplicate name fails the load", func(t *testing.T) {
+		dir := t.TempDir()
+		writeAppDir(t, dir, "radarr", feed("radarr", "Movies"))
+		writeAppDir(t, dir, "sonarr", feed("sonarr", "Movies"))
+		_, err := NewLoader(dir).LoadAll()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `both declare icsFeed calendarName "Movies"`)
+		assert.Contains(t, err.Error(), "radarr")
+		assert.Contains(t, err.Error(), "sonarr")
+	})
 }
 
 // TestValidateApp_Requires pins the consumer side of least privilege: an app

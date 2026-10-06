@@ -50,11 +50,14 @@ provides:
   # Sonarr's feed endpoint authenticates with `?apikey=` because calendar
   # clients cannot set headers; the key is the same one the `pvr` offer
   # publishes, so no second credential exists to keep in sync.
+  #
+  # `calendarName` is what the collection is called and where it lives, so a
+  # family member sees "Shows" rather than the service account's path.
   icsFeed:
     secrets: [apiKey]
     values:
       path: /feed/v3/calendar/Sonarr.ics
-      displayName: Sonarr Shows
+      calendarName: Shows
 
 containers:
   - name: apps-sonarr
