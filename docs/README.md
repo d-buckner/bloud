@@ -17,6 +17,7 @@ enumerating these files, so docs can move without leaving the agent guide stale.
 | Multi-container app model | [specs/app-spec.md](specs/app-spec.md) |
 | Backend debt + repayment plan | [operations/tech-debt.md](operations/tech-debt.md) |
 | Build the .deb release package | [operations/packaging.md](operations/packaging.md) |
+| Back up, restore, and update an install | [operations/backup-restore.md](operations/backup-restore.md) |
 | How MCP servers work in Bloud (design, not yet built) | [features/mcp.md](features/mcp.md) |
 | Dashboard layout + widgets | [features/dashboard.md](features/dashboard.md) |
 | Agent API + multi-port apps (`extraPorts`, the `agentApi` contract) | [features/agent-api.md](features/agent-api.md) |
