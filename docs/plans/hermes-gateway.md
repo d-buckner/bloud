@@ -1,8 +1,15 @@
-> Status: goal 1 implemented in this branch (the `offline_access` + 90 day
-> lifetime fix, see "Goal 1" below). Goal 2 is still research. Verified
-> against the pinned image `docker.io/nousresearch/hermes-agent:v2026.9.14`
+> Status: goal 1 shipped (#241, the `offline_access` + 90 day lifetime fix,
+> see "Goal 1" below). Goal 2 is split: the OpenAI-compatible agent API path
+> shipped (#245) as the `extraPorts` primitive plus the `agentApi` contract,
+> which is the third-party story for any OpenAI-format client. The Hermex
+> path specifically is still a decision, not built: it wants a second,
+> non-SSO credential on an app Bloud already SSOs, plus a dashboard reveal
+> for it. See "Goal 2" and open question 3.
+>
+> Verified against the pinned image `docker.io/nousresearch/hermes-agent:v2026.9.14`
 > (code_version 0.21.3), upstream issues, the Hermex client source, and
-> Bloud's own Authentik blueprint templates, 2026-10-05.
+> Bloud's own Authentik blueprint templates, 2026-10-05. The network claims
+> were re-verified against the live rootless podman environment during #245.
 
 # Research: Hermes for native clients (Desktop app, Hermex)
 
@@ -296,9 +303,9 @@ that currently says "no gateway required".
 | `offline_access` in `managedScopes` + `sso.scopes` in metadata | Goal 1 | ~1 day | live verification |
 | `sso.accessTokenMinutes` for Hermes | Goal 1 mitigation | included | nothing |
 | `basic` provider + secret lifecycle + credential reveal | Goal 2 (Hermex) | 2 to 4 days | a security decision |
-| Multi-port route generation in `traefikgen` | generic OpenAI clients | 3 to 5 days | nothing (platform work) |
-| Gateway API server + key | generic OpenAI clients | ~1 day | the route work |
-| `HERMES_GATEWAY_BOOTSTRAP_STATE=running` | cron / automations | 0.5 day | nothing |
+| Multi-port route generation, shipped as `extraPorts` (#245) | generic OpenAI clients | done | nothing |
+| Gateway API server + key, shipped (#245) | generic OpenAI clients | done | nothing |
+| Gateway enablement, shipped as `command: ["gateway", "run"]` (#245) | cron / automations | done | nothing |
 
 ## Recommended order
 
@@ -309,8 +316,13 @@ that currently says "no gateway required".
    true, adds no listener.
 3. **Goal 2 after a decision.** The Hermex path is cheap but opens a non-SSO
    credential door. Get the call before the code.
-4. **Multi-port routing as platform work regardless.** It is the shape that
-   makes third-party integration a supported thing rather than a per-app hack.
+4. **Multi-port routing as platform work regardless.** Shipped in #245 as
+   `extraPorts`. It is the shape that makes third-party integration a
+   supported thing rather than a per-app hack. Note that the gateway itself was
+   enabled by making `gateway run` the container's main program rather than by
+   `HERMES_GATEWAY_BOOTSTRAP_STATE`: keeping the dashboard and the gateway in
+   one container is what the dashboard's liveness check needs, and splitting
+   them trips upstream #73796.
 
 ## Open questions
 
