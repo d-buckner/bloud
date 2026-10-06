@@ -29,6 +29,14 @@ type App struct {
 	Integrations    map[string]Integration `yaml:"integrations" json:"integrations"`
 	Provides        Provides               `yaml:"provides,omitempty" json:"provides,omitempty"`
 	Containers      []ContainerDef         `yaml:"containers,omitempty" json:"containers,omitempty"`
+	// ExtraPorts are the non-UI ports an app exposes for other apps to
+	// connect to. `port` is the UI: the dashboard opens it, Traefik routes
+	// the app's root to it, and it is the thing a person clicks. That
+	// single-port model stops being enough once an app serves a second thing
+	// worth wiring, which is the case for Hermes: a browser dashboard on one
+	// port and an OpenAI-compatible agent API on another, and a consumer
+	// wants the second one. See ExtraPort.
+	ExtraPorts []ExtraPort `yaml:"extraPorts,omitempty" json:"extraPorts,omitempty"`
 	// Headless marks an app with no browser UI of its own: there is nothing
 	// to open, so the dashboard draws no tile for it once installed. The app
 	// is otherwise ordinary: it stays in the catalog, in
@@ -108,6 +116,49 @@ func (a *App) HasHostNetworkedContainer() bool {
 		}
 	}
 	return false
+}
+
+// ExtraPort is one non-UI port an app exposes for other apps to connect to.
+//
+// It is declared at the app level rather than as a container `ports:` entry
+// because those are different facts with different blast radii. A `ports:`
+// entry publishes a port to the host, which is precisely what an agent API
+// with terminal access must not do: it would sit on the LAN guarded by one
+// bearer token. An ExtraPort is published to Bloud's consumers instead.
+// Traefik reaches it on the loopback the app already binds, and a consumer
+// dials it through the app's own public origin, so the port never gains a
+// reach it was not declared to have.
+//
+// The name is the handle a provider binds a contract to (`provides:
+// <contract>: port: gateway`), which is what lets the contract say *which*
+// surface it means without either side hardcoding a number. An app with one
+// port needs no ExtraPort at all: the contract resolves against `port`, the
+// same way it always has.
+type ExtraPort struct {
+	// Name is how a contract offer refers to this port. A single lowercase
+	// word, unique within the app.
+	Name string `yaml:"name" json:"name"`
+	// Port is the TCP port the app listens on.
+	Port int `yaml:"port" json:"port"`
+	// PathPrefix is the URL prefix Traefik routes to this port on the app's
+	// own subdomain, e.g. `/v1` for an OpenAI-compatible API served beside
+	// a dashboard. It is stated once here rather than also on the contract
+	// because the route Traefik installs and the path a consumer appends are
+	// the same fact: declaring it twice is how they drift.
+	PathPrefix string `yaml:"pathPrefix,omitempty" json:"pathPrefix,omitempty"`
+}
+
+// ExtraPort returns the named extra port, or nil when the app declares no
+// such port. A nil return is the caller's signal that the name does not
+// resolve, which the loader rejects up front; it is not a condition a
+// runtime path has to guess at.
+func (a *App) ExtraPort(name string) *ExtraPort {
+	for i := range a.ExtraPorts {
+		if a.ExtraPorts[i].Name == name {
+			return &a.ExtraPorts[i]
+		}
+	}
+	return nil
 }
 
 // ContainerPort maps a host port to a container port.

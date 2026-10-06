@@ -92,6 +92,35 @@ sso:
   # what made the Desktop app re-authenticate constantly.
   accessTokenMinutes: 129600
 
+# What this app hands other apps: the agent's OpenAI-compatible API, served on
+# the gateway's own port rather than on the dashboard port the UI lives on.
+# `port: gateway` names the extraPorts entry below, so the number lives in one
+# place; the address a consumer dials is composed from it and its pathPrefix by
+# the resolver, and Traefik routes that prefix here.
+#
+# `apiKey` is the bearer the agent listener authenticates with. Hermes mints
+# it on first boot into $HERMES_HOME/.env (the image generates one when none
+# is present), and the configurator reads it back out and publishes it here,
+# so the credential stays Hermes-owned and Bloud only relays it. See
+# INTEGRATION.md for why Bloud does not write that file.
+provides:
+  agentApi:
+    port: gateway
+    secrets:
+      - apiKey
+
+# The agent API is a second surface on the same container, on a port that is
+# not the dashboard's. It is declared here rather than as a container `ports:`
+# entry on purpose: a `ports:` entry would publish 8642 to the host, putting
+# an agent with terminal access directly on the LAN behind one bearer token.
+# An extraPort is published to Bloud's consumers instead: Traefik reaches it
+# on the loopback Hermes already binds, and consumers dial it through the
+# app's routed origin.
+extraPorts:
+  - name: gateway
+    port: 8642
+    pathPrefix: /v1
+
 containers:
   - name: apps-hermes
     image: docker.io/nousresearch/hermes-agent:v2026.9.14
@@ -108,7 +137,17 @@ containers:
     # program is a parked sleep: the interactive `hermes` TUI the
     # empty CMD would start needs a TTY and would exit immediately
     # headless. Dashboard chat runs in-process; no gateway required.
-    command: ["sleep", "infinity"]
+    # The gateway is the container's main program. The API server is a
+    # gateway platform adapter, so nothing answers on 8642 until the
+    # gateway runs: the dashboard alone does not start it. `gateway run`
+    # is the foreground form the image documents for containers, and the
+    # entrypoint dispatch passes `command:` through as `hermes <args>`.
+    #
+    # This replaces the parked `sleep infinity` that ran when the dashboard
+    # was the only surface Bloud needed. It also brings the messaging
+    # gateways with it: any platform the operator configures now actually
+    # connects, which is the point of the app rather than a side effect.
+    command: ["gateway", "run"]
     environment:
       HERMES_DASHBOARD: "1"
       HERMES_DASHBOARD_PORT: "9119"
@@ -118,6 +157,12 @@ containers:
       # dashboard.public_url, and the self-hosted OIDC provider it writes into
       # config.yaml satisfies it.
       HERMES_DASHBOARD_HOST: "127.0.0.1"
+      # The agent API's own port. Left at the image default of 8642 and
+      # bound to loopback, which is what keeps it reachable by Traefik (in
+      # the same host namespace) and unreachable by anything else. Not
+      # published, so no `ports:` entry exists for it and the LAN never
+      # sees it; consumers arrive through the routed /v1 prefix instead.
+      API_SERVER_PORT: "8642"
       # The data-directory permission contract. Hermes secures $HERMES_HOME to
       # 0700 for a bare-metal install, and the host agent cannot undo that from
       # outside: the directory belongs to the container's uid mapped into the

@@ -207,28 +207,47 @@ tests, plus the decision, plus whatever the credential reveal costs.
 
 ### The other third-party path: the OpenAI-compatible API server
 
-The gateway can expose an OpenAI-compatible endpoint
-(`API_SERVER_ENABLED=true`, `API_SERVER_KEY`, port 8642) that any
-OpenAI-format frontend can drive. That is the generic answer to "third-party
-apps", with a cleaner auth story than a shared dashboard password: a scoped
-bearer token, no login page.
+**Shipped.** This is the path Bloud took, and the diagnosis below was wrong in
+a way worth recording, because it pointed at the wrong layer.
 
-It is blocked on a Bloud platform limitation.
-`internal/traefikgen/generator.go` emits exactly one backend per app,
-`http://localhost:<app.Port>`, from the single `port` field in
-`metadata.yaml`. There is no multi-port route model, so a second service port
-cannot be proxied. The two ways out both cost real work:
+The gateway exposes an OpenAI-compatible endpoint on port 8642 that any
+OpenAI-format frontend can drive: a scoped bearer token, no login page. It is
+offered under a new `agentApi` contract rather than folded into `inference`, on
+a newly declared `extraPorts` surface, routed through Traefik. See
+[`docs/features/agent-api.md`](../features/agent-api.md) for the platform
+shape and `apps/hermes/INTEGRATION.md` for the app-specific facts.
 
-- **Extend route generation** to multiple named ports per app (metadata
-  schema, catalog validation, generator, docs, tests): 3 to 5 days of platform
-  work, and it benefits every future multi-port app.
-- **Bind `0.0.0.0:8642` and skip the proxy.** Trivial under `network: host`,
-  and it puts a raw agent API with terminal-execution capability directly on
-  the LAN, outside Traefik and outside Bloud's entire value proposition. Not a
-  real option.
+**The blocker named here was not the blocker.** App-to-app traffic never touches
+Traefik, so "one backend per app" was not what stopped a consumer from dialing
+the agent. The real constraint was a network-namespace boundary: Hermes runs
+`network: host` for its loopback OIDC issuer, and a host-networked container is
+not resolvable by container name from `apps-net`. Verified against the live
+podman environment:
 
-**Estimate: 3 to 5 days** for the route work, then about a day to wire the API
-server and its key.
+| Test, from an `apps-net` container | Result |
+|---|---|
+| resolve `apps-traefik` (host-net) | does not resolve |
+| reach a host-net service bound `0.0.0.0` via `host.containers.internal` | reachable |
+| reach a host-net service bound `127.0.0.1` | not reachable |
+| bind the `apps-net` gateway from a host-net container | fails, not an address in that namespace |
+| attach one container to both `host` and a bridge | rejected by podman |
+| override `localhost` with `--add-host` from a bridge container | silently ignored |
+
+That last row is why the loopback issuer cannot be rescued on a bridge network,
+and it is what made routing through the proxy the only shape that keeps Hermes
+where it is.
+
+Two corrections to the text above, both verified against the pinned image:
+
+- There is **no `API_SERVER_ENABLED` flag**. The adapter starts when
+  `API_SERVER_KEY` is usable, meaning at least 16 characters
+  (`gateway/config.py::_has_usable_api_server_key`). A short key is not a weak
+  credential, it is a missing one.
+- The gateway is not an s6 service. It runs as the container's **main program**
+  (`command: ["gateway", "run"]`), not via `HERMES_GATEWAY_BOOTSTRAP_STATE`
+  alongside a parked `sleep`. Keeping dashboard and gateway in one container is
+  deliberate: the dashboard's liveness check needs a shared PID namespace, and
+  splitting them trips upstream #73796.
 
 ## The messaging gateway (worth doing, unrelated to both goals)
 

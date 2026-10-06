@@ -132,6 +132,49 @@ var contracts = []Contract{
 		SatisfiedBy: []string{"modelSource"},
 	},
 
+	// An agent endpoint: an OpenAI-compatible API whose far side is not a
+	// model but an agent, which answers in the same wire format and then goes
+	// and does things. Provided by an app that runs one (Hermes' gateway),
+	// consumed by anything that wants to route work to that agent instead of
+	// to a bare completion endpoint.
+	//
+	// This is a separate contract from `inference` on purpose, and the reason
+	// is what a consumer is agreeing to when it dials. `inference` means "a
+	// model I can run completions against": harmless to point a summarizer
+	// at, and a consumer has no reason to ask what is behind it. `agentApi`
+	// means "a thing with tools, memory, and often a terminal, that happens
+	// to speak OpenAI". Folding the two together would let a consumer that
+	// asked for a model be handed an agent that can execute commands, and
+	// nothing in the metadata would have said so. Invariant 15 makes a new
+	// capability a new contract entry for exactly this reason.
+	//
+	// There is no `SatisfiedBy`. No other contract in the registry can stand
+	// in for an agent: promoting `inference` or `modelSource` into this slot
+	// would hand a consumer a raw model where it asked for an agent, and it
+	// could not tell the difference until it sent a tool call and got a
+	// completion back.
+	//
+	// `apiKey` is the bearer the provider's own agent listener expects. It is
+	// minted and published by the provider, so revoking it revokes agent
+	// access and nothing else: it is not the provider's admin credential and
+	// never a credential of anything behind it.
+	//
+	// The contract carries no `path` value. The endpoint prefix is a property
+	// of the port the provider serves this contract on, so it is declared
+	// once on that `extraPorts` entry and read from there; declaring it here
+	// as well would give the Traefik route and the consumer's URL two
+	// sources to drift apart.
+	{
+		Name:    "agentApi",
+		Secrets: []string{"apiKey"},
+		Values: []ValueSpec{
+			// The model id a consumer should request. Optional because an
+			// agent may have no preference and a consumer's own default
+			// then stands.
+			{Key: "modelName", Optional: true},
+		},
+	},
+
 	// A CalDAV/CardDAV server: the endpoint a calendar or contacts client
 	// speaks DAV to. Provided by the DAV server itself (Radicale), consumed
 	// by anything that wants to show the user the calendars Bloud already

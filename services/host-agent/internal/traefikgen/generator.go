@@ -104,6 +104,15 @@ func (g *Generator) writeRouters(b *strings.Builder, routableApps []*catalog.App
 	b.WriteString("  routers:\n")
 	for _, app := range routableApps {
 		g.writeRouter(b, app, g.authentikEnabled)
+		// A second surface on the same host gets its own router, keyed on the
+		// path prefix the app declared for that port. This is the shape the
+		// forward-auth outpost and bypass routers already use: the app's root
+		// stays its UI, and a prefix branches off to another backend. The
+		// higher priority is what makes the branch win over the catch-all UI
+		// router rather than race it.
+		for _, ep := range app.ExtraPorts {
+			g.writeExtraPortRouter(b, app, ep)
+		}
 		if app.SSO.Strategy == "forward-auth" && g.authentikEnabled {
 			// Forward-auth apps need a second, higher-priority router that passes
 			// /outpost.goauthentik.io/ requests directly to Authentik. Without this,
@@ -145,6 +154,9 @@ func (g *Generator) writeServices(b *strings.Builder, routableApps []*catalog.Ap
 	b.WriteString("\n  services:\n")
 	for _, app := range routableApps {
 		g.writeService(b, app)
+		for _, ep := range app.ExtraPorts {
+			g.writeExtraPortService(b, app, ep)
+		}
 	}
 
 	// Add the shared authentik-outpost service if any forward-auth apps are installed
@@ -203,6 +215,17 @@ func (g *Generator) writeRouter(b *strings.Builder, app *catalog.App, authentikE
 	}
 
 	fmt.Fprintf(b, "      service: %s\n", app.CatalogID)
+}
+
+// writeExtraPortRouter writes the router for one of an app's declared extra
+// ports: the same host the UI answers on, branched by path prefix to that
+// port's backend. Named `<app>-<port>` so it reads as belonging to the app
+// and to that surface specifically.
+func (g *Generator) writeExtraPortRouter(b *strings.Builder, app *catalog.App, ep catalog.ExtraPort) {
+	fmt.Fprintf(b, "    %s-%s:\n", app.CatalogID, ep.Name)
+	fmt.Fprintf(b, "      rule: \"HostRegexp(`^%s\\\\.`) && PathPrefix(`%s`)\"\n", app.CatalogID, ep.PathPrefix)
+	b.WriteString("      priority: 300\n")
+	fmt.Fprintf(b, "      service: %s-%s\n", app.CatalogID, ep.Name)
 }
 
 // writeMiddleware writes the middleware configuration for an app
@@ -274,6 +297,18 @@ func (g *Generator) writeService(b *strings.Builder, app *catalog.App) {
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
 	fmt.Fprintf(b, "          - url: \"http://localhost:%d\"\n", app.Port)
+}
+
+// writeExtraPortService writes the load-balancer service for one of an app's
+// extra ports. Same loopback dial plan as the UI service: Traefik shares the
+// host namespace and reaches the app on the port it binds there, so an extra
+// port bound to 127.0.0.1 is reachable through this route and still reaches
+// nobody else.
+func (g *Generator) writeExtraPortService(b *strings.Builder, app *catalog.App, ep catalog.ExtraPort) {
+	fmt.Fprintf(b, "    %s-%s:\n", app.CatalogID, ep.Name)
+	b.WriteString("      loadBalancer:\n")
+	b.WriteString("        servers:\n")
+	fmt.Fprintf(b, "          - url: \"http://localhost:%d\"\n", ep.Port)
 }
 
 // Preview generates a preview of what the config will look like

@@ -410,6 +410,128 @@ model:
 own, so an operator who picked a different provider keeps it. `discover_models`
 keeps the model list live from the endpoint rather than a snapshot.
 
+## The agent API contract (`provides: agentApi`, served on `extraPorts.gateway`)
+
+Hermes' gateway exposes an **OpenAI-compatible API server** (`gateway/platforms/api_server.py`),
+and that is the surface other Bloud apps connect to. It is a different thing
+from the dashboard, on a different port, and it is offered under its own
+contract rather than folded into `inference`. See
+[`docs/features/agent-api.md`](../../docs/features/agent-api.md) for the
+platform-side reasoning; this section records the Hermes-specific facts.
+
+### The gateway has to actually run
+
+The API server is a **gateway platform adapter**. The dashboard does not start
+it, so nothing answers on 8642 while the container runs a parked `sleep`. The
+container's main program is now `gateway run`, which the image's entrypoint
+dispatch passes through as `hermes gateway run`:
+
+```yaml
+command: ["gateway", "run"]
+```
+
+The image is an s6-overlay stack whose two static services are `dashboard` and
+a no-op `main-hermes`; the gateway is not one of them. It runs as the
+container's main program, which is the upstream pattern for "the container exits
+when the program exits". The practical consequence inside one container is that
+the dashboard and the gateway share a PID namespace, which is exactly what the
+dashboard's gateway-liveness check needs. Splitting them into two containers
+breaks that check (upstream [#73796](https://github.com/NousResearch/hermes-agent/issues/73796),
+reported as the dashboard showing the gateway "stopped"), so Bloud does not
+split them.
+
+Bringing the gateway up also means any messaging platform the operator
+configures now actually connects. That was never happening under `sleep
+infinity`. It is the point of the app rather than a side effect, but it is a
+behavior change worth naming: installs that had a dashboard-only container now
+run a live gateway.
+
+### The key is the enable switch, and Hermes owns it
+
+There is no `API_SERVER_ENABLED` flag. The adapter starts when
+`API_SERVER_KEY` is **usable**, which the image defines as at least 16
+characters (`gateway/config.py::_has_usable_api_server_key`, mirroring
+`has_usable_secret(min_length=16)`). A short key is not a weak credential here,
+it is a missing one: the adapter silently does not start.
+
+Bloud does not write that key. Hermes generates one into `$HERMES_HOME/.env` on
+first boot when none is present, then guards the file `0600` owned by the
+container's mapped uid and **re-tightens it on every start**. A host-side write
+is `EPERM` after the first boot, so writing would fight the app forever. The
+configurator reads the key back through the container (the same channel
+`config.yaml` uses for the same reason) and publishes it under the contract:
+
+```go
+c.secrets.SetAppSecret("hermes", "apiKey", key)
+```
+
+That keeps Hermes the authority over its own credential and makes Bloud a
+relay. It also means rotation is Hermes' action, and the next resync picks the
+new value up. A missing key is not fatal: the gateway simply has no API server,
+consumers get no binding, and they treat that as "not ready". Failing the node
+over it would take the dashboard down for an integration nobody is using yet.
+
+### Why the port is an `extraPort` and not a published port
+
+This is the security-relevant part of the shape. The agent behind this endpoint
+has tools, memory, and terminal access. Publishing 8642 to the host would put
+it on the LAN guarded by one bearer token, which is the same failure class that
+got `HERMES_DASHBOARD_INSECURE` removed upstream.
+
+So the port is declared as a named extra port and is **never published**:
+
+```yaml
+extraPorts:
+  - name: gateway
+    port: 8642
+    pathPrefix: /v1
+```
+
+`API_SERVER_PORT` is set and the bind stays at the image default of
+`127.0.0.1` (`DEFAULT_HOST` in `gateway/platforms/api_server.py`). Traefik
+shares the host network namespace, so it reaches that loopback bind; nothing
+outside the box can.
+
+| Surface | Port | Bind | Reachable from |
+|---|---|---|---|
+| Dashboard (UI) | 9119 | `127.0.0.1` | Traefik, routed at `hermes.<host>` |
+| Agent API | 8642 | `127.0.0.1` | Traefik, routed at `hermes.<host>/v1` |
+
+A consumer dials `http://hermes.<host>:8080/v1` with the bearer. Its
+container gets `hermes.<host>:host-gateway` in `extra_hosts` so that name
+resolves under plain http, which is the same pin `IssuerExtraHost` adds for the
+OIDC issuer. Under a https public URL no pin is added and the name resolves to
+the real terminator.
+
+### Why Hermes stays on `network: host`
+
+Unchanged by this work, and load-bearing for two independent reasons now:
+
+1. The dashboard's OIDC issuer is the host loopback (`sso.loopbackIssuer`),
+   and only inside the host network namespace does `localhost:8080` reach
+   Traefik. Podman will not let a bridge container override `localhost` in
+   `/etc/hosts` (verified: `--add-host localhost:...` is ignored, the default
+   entries stay), so there is no bridge-network form of this.
+2. Traefik reaches both of Hermes' ports on the loopback of the namespace it
+   shares with Hermes. On a bridge network Traefik could not reach either one
+   without a published port.
+
+### What a consumer sees
+
+`integrations.agentApi` resolves to an `AgentAPIBinding`:
+
+| Field | Value |
+|---|---|
+| `Endpoint` | `http://hermes.<host>:8080/v1` |
+| `APIKey` | the bearer Hermes minted |
+| `ModelName` | empty unless the provider publishes one |
+
+`Endpoint` is composed by the resolver rather than left for the consumer to
+assemble. `ProviderRef.BaseURL` is a container-DNS address (`http://apps-hermes:8642`)
+and that is the one address a consumer **cannot** dial, because Hermes is not on
+the app network. Handing over a base and a path and letting the consumer compose
+would have it build the wrong thing by default.
+
 ## Health check
 
 `GET /api/health` on `:9119`, loopback. Upstream declares this path a **public

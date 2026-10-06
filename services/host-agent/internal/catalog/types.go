@@ -35,6 +35,19 @@ type Provides map[string]ContractProvides
 
 // ContractProvides is what a provider offers under one contract.
 type ContractProvides struct {
+	// Port names which of the provider's ports this contract is served on.
+	// It is an ExtraPort name, not a number: the resolver looks the name up
+	// in the provider's `extraPorts` and composes the address from what it
+	// finds there. Empty means the app's main `port`, which is the case for
+	// every contract in the catalog until an app serves more than one thing.
+	//
+	// Naming a port rather than repeating one is what keeps a multi-port
+	// provider honest: the number lives in exactly one place, so a consumer
+	// cannot be handed an address for a surface the provider moved, renamed,
+	// or never exposed. A name that resolves to nothing fails the catalog
+	// load rather than reaching a consumer as an address that connects to
+	// nothing.
+	Port string `yaml:"port,omitempty" json:"port,omitempty"`
 	// Secrets lists the credentials this app publishes for this contract. A
 	// value is stored under the app's own name in the host secret store (the app
 	// writes it with SetAppSecret, or the host already generated it) and reaches

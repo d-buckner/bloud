@@ -826,7 +826,8 @@ combined with instance/SSH-target env vars). Instance overrides:
     resolved**: declaring a contract gets an app the provider's address, never a
     credential by default. The orchestrator resolves each declared contract into
     `AppState.Integrations`, **one typed slice per contract** (`PVRs`,
-    `MediaServers`, `DownloadClients`, `SSO`, `ModelSources`, `Inference`),
+    `MediaServers`, `DownloadClients`, `SSO`, `ModelSources`, `Inference`,
+    `AgentAPIs`),
     each binding embedding `ProviderRef` (`App`, `Installed`, `Node`, `Port`,
     `BaseURL`, `LocalURL` where `BaseURL` is what the app stores and
     `LocalURL` what the configurator calls) plus that contract's payload.
@@ -844,6 +845,22 @@ combined with instance/SSH-target env vars). Instance overrides:
     so keying a prune off it deletes wiring that is still wanted. The bindings
     for a contract mirror `computeAppDeps`, so they never describe a provider
     the graph does not order.
+
+    **A contract is served on a named port, not always the UI port.** `port:` in
+    metadata is the UI: the dashboard opens it and Traefik routes the app's root
+    to it. An app that exposes a second surface declares it under `extraPorts:`
+    (`{name, port, pathPrefix}`) and binds the offer with `provides: <contract>:
+    port: <name>`. The loader rejects an offer naming a port the app does not
+    declare rather than falling back to the UI port, because a fallback hands the
+    consumer an address that connects, speaks the wrong protocol, and points at
+    an app that did nothing wrong. An extra port is **not** a container `ports:`
+    entry: that publishes to the host and therefore to the LAN. An extra port is
+    reached through the routed `<prefix>` on the app's own subdomain, so it gains
+    no reach it was not declared to have. `traefikgen` emits the second router
+    for it (priority above the UI catch-all), and a consumer container gets the
+    `host-gateway` extraHosts pin for that hostname under plain http, the same
+    mechanism `IssuerExtraHost` uses, because the routed name is not a container
+    name and has no DNS record of its own.
 
     **Dependencies are a set, not a menu.** An app declares every provider
     that can satisfy a contract under `compatible:`, Bloud wires every one of
@@ -1042,6 +1059,7 @@ to the right doc. When a doc moves, update it in both places.
 |Sharing/federation (removed)|archived design in [docs/plans/archive/](docs/plans/archive/)|
 |MCP servers as catalog apps (shipped: `apps/affine-mcp` providers, Hermes consumes)|[features/mcp.md](docs/features/mcp.md)|
 |Dashboard grid + widgets|[features/dashboard.md](docs/features/dashboard.md)|
+| Agent API + multi-port apps (`extraPorts`, `agentApi` contract) | [features/agent-api.md](docs/features/agent-api.md) |
 | Dated review findings|[specs/review-2026-09-17.md](docs/specs/review-2026-09-17.md)|
 | Latest architecture/code review (2026-09-19)|[specs/review-2026-09-19.md](docs/specs/review-2026-09-19.md)|
 | In-flight designs | [plans/](docs/plans/) |
