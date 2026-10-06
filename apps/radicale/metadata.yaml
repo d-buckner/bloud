@@ -70,7 +70,7 @@ sso:
 #
 # `appApi` is the separate machine credential: the username and password of the
 # caldav-service account Bloud provisions, for a companion that is not a
-# browser (caldav-mcp) and therefore cannot join the identity provider. The
+# browser (dav-mcp) and therefore cannot join the identity provider. The
 # password is published by the Authentik configurator; the rights model scopes
 # what the account can read.
 provides:

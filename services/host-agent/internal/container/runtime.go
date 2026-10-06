@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -29,9 +30,16 @@ const (
 
 // Spec is the runtime-neutral desired state for one container.
 type Spec struct {
-	Name          string
-	Image         string
-	Environment   map[string]string
+	Name        string
+	Image       string
+	Environment map[string]string
+	// EnvFile is a host path holding additional KEY=value lines merged into
+	// Environment at create time, the file winning on a name clash. It is how a
+	// resolved contract binding reaches an image that reads nothing but its
+	// process environment. The revision hashes this path, not the file's
+	// contents, so rotating a credential there is not catalog spec drift; the
+	// configurator owns the recreate signal. See catalog.ContainerDef.EnvFile.
+	EnvFile       string
 	ExtraHosts    []string
 	Ports         []Port
 	Mounts        []Mount
@@ -197,25 +205,39 @@ func (r *PodmanRuntime) Ensure(ctx context.Context, spec Spec) (EnsureResult, er
 		return EnsureResult{}, fmt.Errorf("refusing to recreate unmanaged container %q", spec.Name)
 	}
 
-	// Pull before anything is destroyed. The old order removed the running
-	// container and then pulled, so a registry outage, a rate limit or a
-	// digest mismatch left the app with no container and no rollback.
-	if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
-		return EnsureResult{}, err
-	}
-	if current != nil {
-		if err := r.client.RemoveContainer(ctx, spec.Name, true); err != nil {
-			return EnsureResult{}, err
-		}
-	}
-	if _, err := r.client.CreateContainer(ctx, toPodmanConfig(spec, revision)); err != nil {
-		return EnsureResult{}, err
-	}
-	if err := r.client.StartContainer(ctx, spec.Name); err != nil {
+	if err := r.replaceContainer(ctx, spec, revision, current != nil); err != nil {
 		return EnsureResult{}, err
 	}
 	result.Started = true
 	return result, nil
+}
+
+// replaceContainer pulls the image, removes the container being replaced, then
+// creates and starts the new one. Split out of Ensure because the env-file merge
+// is a decision point of its own and this path already carried most of that
+// function's branches.
+func (r *PodmanRuntime) replaceContainer(
+	ctx context.Context, spec Spec, revision string, hadCurrent bool,
+) error {
+	// Pull before anything is destroyed. The old order removed the running
+	// container and then pulled, so a registry outage, a rate limit or a
+	// digest mismatch left the app with no container and no rollback.
+	if err := r.pullImage(ctx, spec.Name, spec.Image); err != nil {
+		return err
+	}
+	if hadCurrent {
+		if err := r.client.RemoveContainer(ctx, spec.Name, true); err != nil {
+			return err
+		}
+	}
+	config := toPodmanConfig(spec, revision)
+	if err := applyEnvFile(&config, spec.EnvFile); err != nil {
+		return fmt.Errorf("container %q: %w", spec.Name, err)
+	}
+	if _, err := r.client.CreateContainer(ctx, config); err != nil {
+		return err
+	}
+	return r.client.StartContainer(ctx, spec.Name)
 }
 
 func (r *PodmanRuntime) EnsureNetwork(ctx context.Context, name string) error {
@@ -335,10 +357,14 @@ func toPodmanConfig(spec Spec, revision string) podman.ContainerConfig {
 	}
 	labels[ManagedLabel] = "true"
 	labels[SpecRevisionLabel] = revision
+	env := make(map[string]string, len(spec.Environment))
+	for key, value := range spec.Environment {
+		env[key] = value
+	}
 	config := podman.ContainerConfig{
 		Name:          spec.Name,
 		Image:         spec.Image,
-		Env:           spec.Environment,
+		Env:           env,
 		ExtraHosts:    spec.ExtraHosts,
 		Labels:        labels,
 		Networks:      spec.Networks,
@@ -362,4 +388,70 @@ func toPodmanConfig(spec Spec, revision string) podman.ContainerConfig {
 		})
 	}
 	return config
+}
+
+// applyEnvFile merges the KEY=value lines in envFile into config.Env, the file
+// taking precedence over entries the spec declared directly. An empty path is a
+// no-op, since most containers declare no env file.
+//
+// A declared path that cannot be read is an error rather than a silent skip: a
+// container created without the file it asked for starts half-configured and
+// fails somewhere far from the cause.
+func applyEnvFile(config *podman.ContainerConfig, envFile string) error {
+	if envFile == "" {
+		return nil
+	}
+	values, err := parseEnvFile(envFile)
+	if err != nil {
+		return err
+	}
+	if config.Env == nil {
+		config.Env = map[string]string{}
+	}
+	for key, value := range values {
+		config.Env[key] = value
+	}
+	return nil
+}
+
+// parseEnvFile reads a podman-style env file: one KEY=value per line, blank
+// lines and `#` comments ignored, one layer of surrounding quotes stripped from
+// the value. A line with no `=` is rejected rather than skipped, so a malformed
+// generated file fails the create loudly instead of quietly dropping a variable
+// the app then reads as unset.
+func parseEnvFile(path string) (map[string]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read env file %s: %w", path, err)
+	}
+	out := make(map[string]string)
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("env file %s line %d: expected KEY=value, got %q", path, i+1, line)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("env file %s line %d: empty key", path, i+1)
+		}
+		out[key] = unquoteEnvValue(value)
+	}
+	return out, nil
+}
+
+// unquoteEnvValue strips one layer of matching single or double quotes and
+// returns the remainder. An unquoted value comes back as it went in.
+func unquoteEnvValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		if (strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)) ||
+			(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }

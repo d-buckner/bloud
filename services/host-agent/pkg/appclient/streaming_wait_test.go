@@ -26,7 +26,7 @@ func TestReadyWaitStopsAtStreamedResultWithoutEOF(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(
 			": keepalive\n\nevent: message\n" +
-				"data: {\"result\":{\"serverInfo\":{\"name\":\"caldav-mcp\"}},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"))
+				"data: {\"result\":{\"serverInfo\":{\"name\":\"dav-mcp\"}},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -43,7 +43,7 @@ func TestReadyWaitStopsAtStreamedResultWithoutEOF(t *testing.T) {
 		Header("Accept", "application/json, text/event-stream").
 		Timeout(2 * time.Second). // shorter than the stream the server holds open
 		Ready(func(status int, body []byte) bool {
-			return status == http.StatusOK && strings.Contains(string(body), `"name":"caldav-mcp"`)
+			return status == http.StatusOK && strings.Contains(string(body), `"name":"dav-mcp"`)
 		}).
 		Wait(context.Background())
 
@@ -79,7 +79,7 @@ func TestReadyWaitKeepalivesAloneAreNotReady(t *testing.T) {
 		Body([]byte(`{}`), "application/json").
 		Header("Accept", "application/json, text/event-stream").
 		Ready(func(status int, body []byte) bool {
-			return strings.Contains(string(body), `"name":"caldav-mcp"`)
+			return strings.Contains(string(body), `"name":"dav-mcp"`)
 		}).
 		Wait(ctx)
 

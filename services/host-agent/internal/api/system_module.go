@@ -316,7 +316,7 @@ func (m *systemModule) buildGraphEdges(app *store.InstalledApp, present map[stri
 // This is what #233 was about: the old code treated the value recorded in
 // IntegrationConfig as the chosen provider for every contract, so Hermes
 // recorded `mcp: affine-mcp` when that was the only MCP provider and the
-// graph kept drawing one edge after `caldav-mcp` was installed and wired.
+// graph kept drawing one edge after `dav-mcp` was installed and wired.
 // The recorded value is now write-only provenance, and nothing here reads it.
 //
 // An app the catalog does not describe falls back to what its install

@@ -26,10 +26,10 @@ func TestDeclaredProviders_ListsEveryCompatibleProvider(t *testing.T) {
 	integration := Integration{
 		Required:   true,
 		Multi:      true,
-		Compatible: []CompatibleApp{{App: "affine-mcp"}, {App: "caldav-mcp"}},
+		Compatible: []CompatibleApp{{App: "affine-mcp"}, {App: "dav-mcp"}},
 	}
 
-	assert.Equal(t, []string{"affine-mcp", "caldav-mcp"}, appsOf(DeclaredProviders(integration)))
+	assert.Equal(t, []string{"affine-mcp", "dav-mcp"}, appsOf(DeclaredProviders(integration)))
 }
 
 // The same declaration returns the same set whether the contract is required
@@ -101,5 +101,5 @@ func TestDeclaredProviders_RealCatalogDeclaresEveryMcpProvider(t *testing.T) {
 		require.False(t, p.IsInstance(), "hermes' mcp contract declares no instance provider")
 		names = append(names, p.App)
 	}
-	assert.Equal(t, []string{"affine-mcp", "caldav-mcp"}, names)
+	assert.Equal(t, []string{"affine-mcp", "dav-mcp"}, names)
 }

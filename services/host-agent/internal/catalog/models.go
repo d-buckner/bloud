@@ -47,17 +47,35 @@ type ContainerDef struct {
 	// receives, and the two are not interchangeable: an image whose entrypoint
 	// is a supervision script cannot be redirected by passing it arguments.
 	// Unset means keep whatever the image declares.
-	Entrypoint    []string              `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
-	Command       []string              `yaml:"command,omitempty" json:"command,omitempty"`
-	Network       string                `yaml:"network,omitempty" json:"network,omitempty"`
-	Networks      []string              `yaml:"networks,omitempty" json:"networks,omitempty"`
-	RestartPolicy string                `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
-	Environment   map[string]string     `yaml:"environment,omitempty" json:"environment,omitempty"`
-	ExtraHosts    []string              `yaml:"extraHosts,omitempty" json:"extraHosts,omitempty"` // host:ip entries (e.g. "sso.localhost:host-gateway")
-	Ports         []ContainerPort       `yaml:"ports,omitempty" json:"ports,omitempty"`
-	Volumes       []ContainerVolume     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	DependsOn     []string              `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	HealthCheck   *ContainerHealthCheck `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	Entrypoint    []string          `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
+	Command       []string          `yaml:"command,omitempty" json:"command,omitempty"`
+	Network       string            `yaml:"network,omitempty" json:"network,omitempty"`
+	Networks      []string          `yaml:"networks,omitempty" json:"networks,omitempty"`
+	RestartPolicy string            `yaml:"restartPolicy,omitempty" json:"restartPolicy,omitempty"`
+	Environment   map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
+	// EnvFile names a host path holding additional `KEY=value` lines for the
+	// container's environment. It exists for an image that takes its whole
+	// configuration through process environment variables and nothing else,
+	// where some of those values are resolved contract bindings rather than
+	// static metadata: `environment:` can only render {{dataDir}},
+	// {{appDataDir}} and the process-start TemplateVars, so a resolved binding
+	// has no way in. The configurator writes the file and reports a recreate
+	// when it changes.
+	//
+	// The spec revision hashes the *path*, never the contents, so rotating a
+	// credential in the file does not read as catalog spec drift. The recreate
+	// signal is the configurator's, not the renderer's, which is what keeps the
+	// catalog-update diff comparing like for like.
+	//
+	// Values from the file override same-named entries in `environment:`: the
+	// file carries resolved truth and must not be shadowed by a static default.
+	// A declared file that does not exist is an error, not a silent no-op.
+	EnvFile     string                `yaml:"envFile,omitempty" json:"envFile,omitempty"`
+	ExtraHosts  []string              `yaml:"extraHosts,omitempty" json:"extraHosts,omitempty"` // host:ip entries (e.g. "sso.localhost:host-gateway")
+	Ports       []ContainerPort       `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Volumes     []ContainerVolume     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	DependsOn   []string              `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	HealthCheck *ContainerHealthCheck `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
 }
 
 // ContainerHealthCheck defines a container-level health check command.

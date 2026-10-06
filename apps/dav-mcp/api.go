@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-package caldavmcp
+package davmcp
 
 import (
 	"context"
@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	// mcpEndpoint is the streamable-HTTP path supergateway bridges to the
-	// stdio child. Probing it rather than the gateway's own health path is the
-	// point: this is the same endpoint a harness calls, so an answer here is
-	// the only evidence that the bridged caldav-mcp process actually starts.
+	// mcpEndpoint is the streamable-HTTP path the server exposes. Probing it
+	// rather than its own health path is the point: this is the same endpoint a
+	// harness calls, so an answer here is the only evidence that the server can
+	// actually serve MCP and not merely answer a liveness ping.
 	mcpEndpoint = "/mcp"
 
 	// acceptStreams is what an MCP streamable-HTTP client must offer. A server
@@ -38,25 +38,35 @@ type mcpAPI struct {
 	cl *appclient.Client
 }
 
-// newAPI builds the probe client against the gateway's own port.
+// newAPI builds the probe client against the server's own port.
 func newAPI(f configurator.ClientFactory, baseURLFn func() string) *mcpAPI {
 	return &mcpAPI{cl: f.New(appclient.Spec{Name: appName, BaseURLFn: baseURLFn})}
 }
 
-// waitServing polls the MCP endpoint until the bridged server completes the
-// handshake with its own identity, or the budget runs out.
+// waitServing polls the MCP endpoint until the server completes the handshake
+// with its own identity, or the budget runs out.
 //
-// The budget covers a cold container start, where the entrypoint installs the
-// pinned package before the gateway binds, plus the server's own startup. It is
-// not a budget for npm resolution on a session: that happens before the port is
-// reachable at all.
-func (a *mcpAPI) waitServing(ctx context.Context) error {
-	return a.cl.POST(mcpEndpoint).
+// The bearer is the app's own MCP credential. The server enforces it on /mcp,
+// so presenting it is part of what the probe proves: an unauthenticated probe
+// would report a healthy node that every real consumer is about to be refused
+// by.
+//
+// The budget is short on purpose. The port binds only after the server has
+// logged into Radicale, and the container health check already covers that
+// window, so by the time PostStart runs the endpoint is answering. What is left
+// to wait for is a process that is up but not yet serving, not a cold start.
+// The old 120s existed for a bridge that installed an npm package before it
+// bound its port; nothing here does that.
+func (a *mcpAPI) waitServing(ctx context.Context, bearer string) error {
+	call := a.cl.POST(mcpEndpoint).
 		Body([]byte(initializeRequest), "application/json").
 		Header("Accept", acceptStreams).
-		Within(120 * time.Second).
-		Ready(mcpHandshakeOK).
-		Wait(ctx)
+		Within(30 * time.Second).
+		Ready(mcpHandshakeOK)
+	if bearer != "" {
+		call = call.Header("Authorization", "Bearer "+bearer)
+	}
+	return call.Wait(ctx)
 }
 
 // mcpHandshakeOK reports whether the response is a successful MCP `initialize`
