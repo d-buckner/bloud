@@ -4,6 +4,7 @@
 	import { browser } from '$app/environment';
 	import GridStackGrid from '$lib/components/GridStackGrid.svelte';
 	import AppContextMenu from '$lib/components/AppContextMenu.svelte';
+	import ClientAccessModal from '$lib/components/ClientAccessModal.svelte';
 	import LoadingGrid from '$lib/components/LoadingGrid.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
@@ -36,6 +37,7 @@
 	let uninstallAppName = $state<string | null>(null);
 	let renameAppName = $state<string | null>(null);
 	let renameCurrentDisplayName = $state<string>('');
+	let clientAccessApp = $state<App | null>(null);
 	let showWidgetPicker = $state(false);
 	let installModalApp = $state<App | null>(null);
 
@@ -99,6 +101,10 @@
 		uninstallAppName = app.catalog_id;
 	}
 
+	function handleClientAccessClick(app: App) {
+		clientAccessApp = app;
+	}
+
 	// Modal actions
 	async function doUninstall(appName: string) {
 		try {
@@ -150,7 +156,14 @@
 	position={contextMenuPos}
 	onRename={handleRenameClick}
 	onUninstall={handleUninstallClick}
+	onClientAccess={handleClientAccessClick}
 	onClose={() => (contextMenuApp = null)}
+/>
+
+<ClientAccessModal
+	appName={clientAccessApp?.catalog_id ?? null}
+	displayName={clientAccessApp?.display_name ?? ''}
+	onclose={() => (clientAccessApp = null)}
 />
 
 <UninstallModal

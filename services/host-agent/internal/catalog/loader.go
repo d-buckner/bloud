@@ -361,6 +361,9 @@ func validateProvides(app *App) error {
 		if err := validateContractSecrets(name, contract, offer); err != nil {
 			return err
 		}
+		if err := validateClientAccess(name, offer); err != nil {
+			return err
+		}
 		resolvedPort, err := resolveOfferPort(app, name, offer)
 		if err != nil {
 			return err
@@ -418,6 +421,71 @@ func validateContractSecrets(name string, contract Contract, offer ContractProvi
 				name, want, offer.Secrets)
 		}
 	}
+	return nil
+}
+
+// validateClientAccess checks a provider's claim that one of its published
+// credentials is meant to be handed to a client a human holds.
+//
+// The bar is deliberately higher than the one on the rest of the offer. A
+// machine-only credential that is misconfigured shows up as a broken
+// integration and gets fixed. A human-facing credential that is
+// misconfigured shows up as a secret printed on a screen without a truthful
+// sentence about what it opens, and the person holding it has no way to find
+// that out. So every field here that a reveal surface depends on is required
+// rather than defaulted, and an enum that is not one of the three known
+// values fails the load rather than silently reading as the safe default.
+func validateClientAccess(name string, offer ContractProvides) error {
+	access := offer.ClientAccess
+	if access == nil {
+		return nil
+	}
+
+	// A client credential is a credential. A block on an offer that
+	// publishes nothing would reveal an empty string, which reads as a bug in
+	// the reveal surface rather than as a provider that has no secret to give.
+	if len(offer.Secrets) == 0 {
+		return fmt.Errorf("provides.%s.clientAccess declares a client credential, but this offer publishes no secrets to reveal", name)
+	}
+
+	if access.Secret == "" {
+		if len(offer.Secrets) > 1 {
+			return fmt.Errorf("provides.%s.clientAccess must name which secret it describes with `secret:`; this offer publishes %v", name, offer.Secrets)
+		}
+	} else if !slices.Contains(offer.Secrets, access.Secret) {
+		return fmt.Errorf("provides.%s.clientAccess.secret names %q, which this offer does not publish (it publishes %v)",
+			name, access.Secret, offer.Secrets)
+	}
+
+	switch access.Reveal {
+	case ClientRevealNever, ClientRevealOnce, ClientRevealAlways, "":
+	default:
+		return fmt.Errorf("provides.%s.clientAccess.reveal must be one of %q, %q, %q (got %q)",
+			name, ClientRevealNever, ClientRevealOnce, ClientRevealAlways, access.Reveal)
+	}
+
+	switch access.Rotate {
+	case ClientRotateBloud, ClientRotateProvider, ClientRotateNone, "":
+	default:
+		return fmt.Errorf("provides.%s.clientAccess.rotate must be one of %q, %q, %q (got %q)",
+			name, ClientRotateBloud, ClientRotateProvider, ClientRotateNone, access.Rotate)
+	}
+
+	switch access.Snippet {
+	case SnippetURLAndPassword, SnippetURLAndKey, SnippetConfigBlock, "":
+	default:
+		return fmt.Errorf("provides.%s.clientAccess.snippet must be one of %q, %q, %q, or empty (got %q)",
+			name, SnippetURLAndPassword, SnippetURLAndKey, SnippetConfigBlock, access.Snippet)
+	}
+
+	// The disclosure is not optional once something can be shown. A reveal
+	// surface with no `reaches` would render a secret and no explanation of
+	// it, which is the failure this field exists to prevent.
+	if access.Revealable() && strings.TrimSpace(access.Reaches) == "" {
+		return fmt.Errorf("provides.%s.clientAccess.reaches must say what holding this credential grants when reveal is not %q",
+			name, ClientRevealNever)
+	}
+
 	return nil
 }
 

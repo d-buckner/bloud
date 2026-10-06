@@ -77,9 +77,18 @@ func (o *Orchestrator) runResync(ctx context.Context, id string) bool {
 	appID := o.ownerApp(id)
 	state := o.buildAppState(id)
 
+	// A pending session revoke outranks the config diff: it is an explicit
+	// operator request, and it has to run before the recreate it forces so the
+	// app comes back with an emptied store rather than the one it cached in
+	// memory at boot.
+	revoked, revokeReason := o.handlePendingSessionRevoke(ctx, id, cfg)
+
 	prestart, ok := o.runResyncPreStart(ctx, id, appID, cfg, state)
 	if !ok {
 		return false
+	}
+	if revoked {
+		prestart = configurator.MustRestart(revokeReason).Or(prestart)
 	}
 	if !prestart.RestartNeeded {
 		// Nothing changed: the app converged, so any earlier signal is stale.

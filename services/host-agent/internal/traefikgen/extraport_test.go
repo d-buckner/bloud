@@ -76,7 +76,11 @@ func TestGenerate_NoExtraPortsIsUnchanged(t *testing.T) {
 	g := NewGenerator("/tmp/unused-routes.yml")
 	out := g.Preview([]*catalog.App{{CatalogID: "sonarr", Port: 8989}})
 
-	assert.NotContains(t, out, "sonarr-", "no extra-port artifacts for an app that declares none")
+	// An app with no extra ports gets no `<app>-<port>` router or service. The
+	// assertion names the extra-port artifact rather than any `sonarr-`
+	// substring, because the waiting-page middleware (`sonarr-loading`) is
+	// emitted for every app and legitimately starts with the app id.
+	assert.NotContains(t, out, "sonarr-gateway", "no extra-port artifacts for an app that declares none")
 	assert.Contains(t, out, `          - url: "http://localhost:8989"`)
 }
 

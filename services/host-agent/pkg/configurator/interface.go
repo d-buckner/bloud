@@ -116,6 +116,26 @@ func (r PreStartResult) Or(other PreStartResult) PreStartResult {
 // that could never complete fails the build instead of the install.
 const PhaseBudget = 5 * time.Minute
 
+// SessionRevoker is implemented by configurators whose app keeps a session
+// store that Bloud can clear. It is optional and separate from NodeLifecycle
+// for the same reason Remover is: most apps have nothing to revoke through the
+// host, and an interface every configurator had to implement would be noise.
+//
+// Revocation is the only operation that ends a live session. Rotating a
+// credential does not, because a session is signed under the app's own key and
+// records no binding to the credential that minted it, so there is nothing to
+// join a revoked credential against. Clearing the store is what makes those
+// sessions stop verifying.
+//
+// Implementations must be idempotent: the orchestrator calls this from the
+// resync path, and a second call against an already-empty store must succeed.
+type SessionRevoker interface {
+	// RevokeSessions clears the app's persisted sessions. It runs before the
+	// container is recreated, so the app comes back with an empty store rather
+	// than one it re-read from disk at boot.
+	RevokeSessions(ctx context.Context, state *AppState) error
+}
+
 // NodeLifecycle handles the lifecycle of a single app node.
 // All methods must be idempotent - safe to call repeatedly.
 type NodeLifecycle interface {

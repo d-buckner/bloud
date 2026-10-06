@@ -197,3 +197,35 @@ func TestHomeHTTP_SetLayout_InvalidBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// TestHomeModule_GetLayout_ClientAccess pins the flag the dashboard's
+// right-click menu reads to offer the reveal surface only for apps that publish
+// a clientAccess credential. The wire shape is asserted too, since the frontend
+// reads it straight out of the JSON.
+func TestHomeModule_GetLayout_ClientAccess(t *testing.T) {
+	posStore := NewFakePositionStore()
+	appStore := NewFakeAppStore()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	appStore.AddApp(&store.InstalledApp{CatalogID: "hermes-webui", DisplayName: "Hermes Web UI"})
+	appStore.AddApp(&store.InstalledApp{CatalogID: "jellyfin", DisplayName: "Jellyfin"})
+
+	mod := NewHomeModule(posStore, appStore, func() map[string]string { return nil }, logger)
+	mod.SetClientAccessLookup(func() map[string]bool { return map[string]bool{"hermes-webui": true} })
+
+	layout, err := mod.GetLayout("alice")
+	require.NoError(t, err)
+	require.Len(t, layout.Apps, 2)
+
+	marked := map[string]bool{}
+	for _, app := range layout.Apps {
+		marked[app.CatalogID] = app.HasClientAccess
+	}
+	assert.True(t, marked["hermes-webui"])
+	assert.False(t, marked["jellyfin"])
+
+	payload, err := json.Marshal(layout)
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"has_client_access":true`)
+	assert.NotContains(t, string(payload), `"has_client_access":false`)
+}

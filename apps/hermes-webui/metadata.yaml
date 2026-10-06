@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: hermes-webui
+displayName: Hermes Web UI
+description: Browser and mobile front end for the Hermes agent, with SSO sign-in and a dedicated client password
+category: productivity
+port: 8787
+estimatedSizeMB: 1500
+
+# Two audiences, two credentials, one app. A browser signs in with the identity
+# provider; a native client that cannot join the provider signs in with a
+# password Bloud mints and reveals once. Both work at the same time because the
+# app treats its auth methods as a set rather than a switch: `is_auth_enabled()`
+# is an OR across password, passkeys, OIDC, and trusted-header auth.
+#
+# The browser path is native-oidc. The app validates its own outbound OIDC URLs
+# and is strict about it: it requires https and rejects hosts that resolve to
+# local addresses. That makes this app unusable against `http://sso.localhost`
+# and against a LAN-issued certificate, and usable against a real https public
+# URL, which is what a real Bloud deployment fronts Traefik with. There is no
+# dev flag that relaxes this; see INTEGRATION.md.
+sso:
+  strategy: native-oidc
+  callbackPath: /api/auth/oidc/callback
+  userCreation: true
+
+integrations:
+  proxy:
+    required: true
+    multi: false
+    compatible:
+      - app: traefik
+        default: true
+
+  # The agent connection. This is the app's backend, not an optional extra:
+  # without it the web UI has nothing to talk to and no turn completes. The
+  # webui dials Hermes' OpenAI-compatible gateway over the routed /v1 prefix
+  # rather than running the agent in-process or sharing $HERMES_HOME, so the
+  # two containers stay independently restartable and neither mounts the
+  # other's private tree.
+  #
+  # `requires: [apiKey]` is the whole consumer surface. The endpoint arrives
+  # without being asked for, and an empty key means "provider not ready",
+  # never an empty credential handed to the app. The graph edge this required
+  # integration produces is what orders Hermes first, so the bearer is
+  # published before this app's PreStart reads it.
+  agentApi:
+    required: true
+    multi: false
+    requires:
+      - apiKey
+    compatible:
+      - app: hermes
+        default: true
+
+# The credential a human copies onto a phone. This is the provisioned half of
+# the client-credentials pattern: Bloud mints the value, stores it, delivers
+# it, and reveals it once. It is not a relay of a credential the app generated
+# for itself, and it is not the `agentApi` bearer above (that one is this app's
+# own upstream, never shown to a user and useless to a phone).
+#
+# `reveal: once` is survivable because a session and the password that created
+# it are independent: the session is an HMAC under the app's own signing key,
+# and its stored record carries no reference to the credential. Rotate the
+# password and a phone that is already signed in keeps working, so losing the
+# password is not losing the device.
+#
+# `rotate: bloud` means Bloud owns the value and can regenerate it. Note what
+# rotation does NOT do in this version: it does not end live sessions. See the
+# pilot plan's "Follow-up: rotation should revoke".
+provides:
+  clientPassword:
+    secrets:
+      - password
+    clientAccess:
+      secret: password
+      reveal: once
+      rotate: bloud
+      label: "Mobile client password"
+      reaches: "this web UI as one shared account, with the same access as any signed-in user"
+      snippet: url-and-password
+
+containers:
+  - name: apps-hermes-webui
+    image: ghcr.io/nesquena/hermes-webui:0.52.113
+    network: apps-net
+    restartPolicy: always
+    # The image's own init is a bash script that does a uid/gid handoff before
+    # it execs the app, and it takes no config file for the per-install
+    # credentials. So Bloud writes a dotenv file into the app's data dir and
+    # sources it here before handing control back to the image's init.
+    #
+    # This is the repo's rule for credentials: delivered through a file the
+    # configurator writes, never through the container-spec template. It buys
+    # three things at once. The secret never appears in the container spec, so
+    # `podman inspect` on the host shows an env with no password in it. The
+    # configurator can rewrite the file on rotation without touching metadata.
+    # And `managedfile.Write` reports changed=false when the bytes already
+    # match, which makes a steady-state resync a read-only diff that asks for
+    # no recreate.
+    #
+    # `set -a` marks every subsequently-sourced assignment for export, which
+    # is what the app needs: it reads these with os.getenv.
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        set -eu
+        if [ -f /config/bloud.env ]; then
+          set -a
+          . /config/bloud.env
+          set +a
+        fi
+        exec /hermeswebui_init.bash
+    environment:
+      # Every value here is static. Anything that varies per install or can be
+      # rotated lives in /config/bloud.env, written by the configurator.
+      #
+      # The app's state directory: settings.json, .sessions.json, and
+      # .signing_key all land under here. Pointed at a Bloud-managed volume so
+      # sessions and the signing key survive a container recreate, which is
+      # what keeps a signed-in phone working across a restart.
+      HERMES_WEBUI_STATE_DIR: /data
+      # Bound on all interfaces inside apps-net. Traefik runs in the host
+      # network namespace and reaches this app by dialing localhost on the
+      # published port, the same loopback contract as every other apps-net
+      # app: the `ports:` entry below binds the port to the host, and nothing
+      # else on the LAN can reach it because it is not a public host address.
+      HERMES_WEBUI_HOST: 0.0.0.0
+      HERMES_WEBUI_PORT: "8787"
+    ports:
+      - host: 8787
+        container: 8787
+    volumes:
+      - source: "{{appDataDir}}/data"
+        destination: /data
+      - source: "{{appDataDir}}/config"
+        destination: /config
+        options: [ro]
+    healthCheck:
+      # /health is in the app's PUBLIC_PATHS, so the probe answers without a
+      # session. Safe for external probing by design.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8787/health || exit 1"]
+      interval: 5
+      timeout: 10
+      retries: 60

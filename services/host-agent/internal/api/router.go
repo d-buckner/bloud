@@ -203,6 +203,12 @@ type routerModules struct {
 	settings *settingsModule
 	ai       *aiSettingsModule
 	system   *systemModule
+	// clientCreds serves the reveal surface for credentials a provider
+	// declares under `clientAccess`. It is its own module rather than a route
+	// on settings because its dependency set is the catalog plus the secret
+	// store, and it is the only surface in the API whose whole job is to hand
+	// out a secret under a policy.
+	clientCreds *clientCredentialsModule
 
 	requestTimeout func(http.Handler) http.Handler
 	authMiddleware func(http.Handler) http.Handler
@@ -239,6 +245,9 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 	// The home payload marks the apps the catalog says have no UI, so the
 	// dashboard can leave them off the grid without learning the catalog.
 	homeMod.SetHeadlessLookup(catalogHeadlessSet(deps.catalogCache))
+	// And the apps that publish a clientAccess credential, so the right-click
+	// menu offers the reveal surface only for those.
+	homeMod.SetClientAccessLookup(catalogClientAccessSet(deps.catalogCache))
 
 	// The developer graph renders each app's containers with their live
 	// lifecycle phase, so the system module needs the real orchestrator.
@@ -279,7 +288,9 @@ func buildRouterModules(db *sql.DB, cfg ServerConfig, logger *slog.Logger, deps 
 			orch:          deps.orchCaller,
 			logger:        logger,
 		},
-		system:         systemMod,
+		system: systemMod,
+		clientCreds: NewClientCredentialsModule(deps.catalogCache, deps.secrets,
+			cfg.Settings, cfg.Hosts, deps.orchCaller, logger),
 		realOrch:       deps.realOrch,
 		authMiddleware: authMiddlewareFn(deps.sessionStore, logger, cfg.TrustedLocalNets, cfg.APIToken),
 		// No global request timeout on the router: SSE streams must outlive a
@@ -321,6 +332,27 @@ func catalogHeadlessSet(cache catalog.CacheInterface) func() map[string]bool {
 			}
 		}
 		return headless
+	}
+}
+
+// catalogClientAccessSet indexes the catalog ids of apps that publish a
+// clientAccess credential, so the home payload can carry the flag and the
+// dashboard's right-click menu can offer the reveal surface only where it is
+// declared. A missing catalog yields an empty set: nothing is offered.
+func catalogClientAccessSet(cache catalog.CacheInterface) func() map[string]bool {
+	return func() map[string]bool {
+		set := make(map[string]bool)
+		if cache == nil {
+			return set
+		}
+		if catalogApps, err := cache.GetAll(); err == nil {
+			for _, ca := range catalogApps {
+				if ca.HasClientAccess() {
+					set[ca.CatalogID] = true
+				}
+			}
+		}
+		return set
 	}
 }
 
@@ -382,6 +414,12 @@ func (m *routerModules) registerRoutes(r chi.Router) {
 		admin.Get("/system/rebuild/stream", rebuildStreamHandler())
 		NewSettingsRouter(m.settings, admin)
 		RegisterAIRoutes(m.ai, admin)
+
+		// Client credentials: reveal and rotate for credentials a provider
+		// declares under `clientAccess`. Admin-only, because the reveal
+		// endpoint returns a live credential, and the admin position is the
+		// only thing standing between that and any authenticated user.
+		m.clientCreds.Register(admin)
 	})
 }
 

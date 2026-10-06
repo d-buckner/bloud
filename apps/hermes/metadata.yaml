@@ -108,6 +108,13 @@ provides:
     port: gateway
     secrets:
       - apiKey
+    runtimeValues:
+      # The default model Hermes is actually running, so a consumer front end
+      # can preset its own model picker to the same model rather than
+      # defaulting to whatever a discovered list happens to order first. It is
+      # a runtime value because it comes from the Bloud inference binding, not
+      # from static catalog metadata.
+      - modelName
 
 # The agent API is a second surface on the same container, on a port that is
 # not the dashboard's. It is declared here rather than as a container `ports:`

@@ -11,10 +11,11 @@
 		position: { x: number; y: number };
 		onRename?: (app: App) => void;
 		onUninstall?: (app: App) => void;
+		onClientAccess?: (app: App) => void;
 		onClose?: () => void;
 	}
 
-	let { app, position, onRename, onUninstall, onClose }: Props = $props();
+	let { app, position, onRename, onUninstall, onClientAccess, onClose }: Props = $props();
 
 	let menuEl = $state<HTMLDivElement>();
 
@@ -28,6 +29,13 @@
 	function handleUninstall() {
 		if (app) {
 			onUninstall?.(app);
+			onClose?.();
+		}
+	}
+
+	function handleClientAccess() {
+		if (app) {
+			onClientAccess?.(app);
 			onClose?.();
 		}
 	}
@@ -62,6 +70,12 @@
 			<Icon name="edit" size={16} />
 			Rename
 		</button>
+		{#if app.has_client_access}
+			<button class="context-item" onclick={handleClientAccess}>
+				<Icon name="key" size={16} />
+				Client access
+			</button>
+		{/if}
 		<hr class="context-divider" />
 		<button class="context-item danger" onclick={handleUninstall}>
 			<Icon name="trash" size={16} />

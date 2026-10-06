@@ -128,6 +128,10 @@ type Orchestrator struct {
 	settings       store.SettingsStoreInterface
 	onHostsChanged func()
 
+	// sessionRevokes carries session-revoke requests from the drain phase to
+	// the convergence pass that performs them. See session_revoke.go.
+	sessionRevokes *revokeTracker
+
 	// Start/Stop lifecycle
 	cancel  context.CancelFunc
 	started chan struct{}

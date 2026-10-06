@@ -30,6 +30,8 @@ export interface App {
 	 * `apps` store so its status still drives toasts and install progress.
 	 */
 	headless?: boolean;
+	/** Catalog-derived: the app publishes a credential for a human-held client. */
+	has_client_access?: boolean;
 	integration_config?: Record<string, string>;
 	installed_at: string;
 	updated_at: string;

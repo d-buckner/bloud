@@ -118,6 +118,20 @@ func (a *App) HasHostNetworkedContainer() bool {
 	return false
 }
 
+// HasClientAccess reports whether any contract this app provides carries a
+// clientAccess block, i.e. a credential meant to reach a client a human holds.
+// The dashboard uses it to decide whether the right-click menu offers the
+// reveal surface, so an app that never declared the pattern does not grow a
+// dead menu item.
+func (a *App) HasClientAccess() bool {
+	for _, offer := range a.Provides {
+		if offer.ClientAccess != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtraPort is one non-UI port an app exposes for other apps to connect to.
 //
 // It is declared at the app level rather than as a container `ports:` entry

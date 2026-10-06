@@ -103,6 +103,10 @@ flowchart TD
         c_hermes["hermes"]
     end
 
+    subgraph app_hermes_webui["Hermes Web UI"]
+        c_hermes_webui["hermes-webui"]
+    end
+
     subgraph app_homeassistant["Home Assistant"]
         c_homeassistant["homeassistant"]
     end
@@ -179,6 +183,7 @@ flowchart TD
     app_hermes -->|inference| ai_model
     app_hermes -->|native-oidc| app_authentik
     app_hermes -->|mcp| app_dav_mcp
+    app_hermes_webui -->|agentApi| app_hermes
     app_homeassistant -->|native-oidc| app_authentik
     app_immich -->|native-oidc| app_authentik
     app_jellyfin -->|ldap| app_authentik
@@ -204,6 +209,7 @@ flowchart TD
     app_traefik -->|proxy| app_calino
     app_traefik -->|proxy| app_dav_mcp
     app_traefik -->|proxy| app_hermes
+    app_traefik -->|proxy| app_hermes_webui
     app_traefik -->|proxy| app_homeassistant
     app_traefik -->|proxy| app_immich
     app_traefik -->|proxy| app_jellyfin
@@ -243,6 +249,7 @@ to mention it.
 - **Calino**: Browser calendar for the CalDAV calendars Bloud already serves
 - **DAV MCP**: MCP tool server for the calendars and contacts Bloud already serves, so agents read and write events, to-dos, and address books
 - **Hermes**: Self-improving AI agent with persistent memory, scheduled automations, and a web dashboard
+- **Hermes Web UI**: Browser and mobile front end for the Hermes agent, with SSO sign-in and a dedicated client password
 - **Home Assistant**: Open-source home automation platform
 - **Immich**: Self-hosted photo and video management
 - **Jellyfin**: Free software media system for streaming movies, TV, and music
@@ -277,7 +284,7 @@ It's built for things you have the right to use.
 |---|---|
 | **LDAP** | Jellyfin, Radicale, Seerr |
 | **Forward auth** | Calino, Navidrome, Prowlarr, qBittorrent, Radarr, Sonarr |
-| **Native OIDC** | AFFiNE, Hermes, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
+| **Native OIDC** | AFFiNE, Hermes, Hermes Web UI, Home Assistant, Immich, Paperless-ngx, Vaultwarden |
 | **App-local accounts** | AFFiNE MCP, DAV MCP |
 <!-- END GENERATED LOGIN TABLE -->
 
