@@ -32,7 +32,7 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *mcpAPI {
 // budget is short.
 func (a *mcpAPI) waitReady(ctx context.Context) error {
 	return a.cl.GET(readyPath).
+		Wait(appclient.StatusIs(http.StatusOK)).
 		Within(60 * time.Second).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 }

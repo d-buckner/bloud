@@ -236,13 +236,17 @@ code never touches raw `net/http` or hand-rolls downloads, waits, or retries:
 - **`pkg/appclient`**: a typed HTTP surface. A `Client` (built from `deps.HTTP`,
   a shared-transport factory) issues `Call`s with a verb and exactly one
   terminal: `Do` (raw body), `DoInto` (JSON decode), `Ensure` (idempotent
-  create-or-verify), or `Wait` (poll a readiness predicate until ready/deadline).
-  Retries with backoff, per-request timeouts, declarative outcome contracts
-  (`OK`/`AlreadyDone`), auth (`TokenSpec` with 401 refresh covering every header
-  dialect), and "still booting / already done" handling live here rather than in
-  each app. Each configurator phase is bounded by the orchestrator's
-  `AppPhaseBudget` (default 5m per phase, `configurator.PhaseBudget`);
-  configurators use the passed ctx directly and never detach with
+  create-or-verify), `Exec` (side effect only), or `Stream` (hand the body to
+  a reader). Readiness polling is a separate value built from a call,
+  `Call.Wait(predicate)`, which carries the poll-only knobs (`Interval`,
+  `Within`, `Stable`, `TolerateFailures`) and terminates with `Do(ctx)`; a
+  `Call` itself carries no wait state. Retries with backoff, per-request
+  timeouts, declarative outcome contracts (`OK`/`AlreadyDone`), auth
+  (`TokenSpec` with 401 refresh covering every header dialect), and "still
+  booting / already done" handling live here rather than in each app. Each
+  configurator phase is bounded by the orchestrator's `AppPhaseBudget`
+  (default 5m per phase, `configurator.PhaseBudget`); configurators use the
+  passed ctx directly and never detach with
   `context.Background()`/`WithoutCancel`.
 - **`pkg/appasset`**: static-file install. `deps.Assets.Install(ctx, Asset{…})`
   sources bytes remotely, from `go:embed`, or locally into a content-addressed

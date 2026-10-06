@@ -232,9 +232,9 @@ func (c *Configurator) PostStart(ctx context.Context, _ *configurator.AppState) 
 func (c *Configurator) waitWebUIReachable(ctx context.Context) error {
 	return c.api.GET("/api/v2/app/version").
 		Anonymous().
+		Wait(appclient.StatusIs(http.StatusOK)).
 		WithRetry(versionWaitPolicy(c.pollInterval)).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // versionWaitPolicy bounds the WebUI verification poll. The cadence is constant

@@ -15,9 +15,9 @@ import (
 )
 
 // These tests pin the two budgets a readiness wait actually has: the
-// per-request deadline (Timeout) and the total wait budget (Within). Before
+// per-request deadline (Timeout) and the total wait budget (Wait.Within). Before
 // this existed neither was wired: Timeout stored a value nothing read, and a
-// Ready() wait ran on DefaultRetry's 5 attempts / 30s, so an app whose
+// readiness wait ran on DefaultRetry's 5 attempts / 30s, so an app whose
 // first boot outlasted that landed in a terminal ERROR the orchestrator
 // never retries.
 
@@ -94,50 +94,53 @@ func TestTimeout_CanExtendPastTheClientDefault(t *testing.T) {
 	require.NoError(t, err, "Timeout() must be able to extend past the client default")
 }
 
-func TestReady_DefaultsThePolicyToWaitPolicy(t *testing.T) {
+func TestWait_DefaultsThePolicyToWaitPolicy(t *testing.T) {
 	c := New(Spec{Name: "test", BaseURL: "http://localhost"})
 
-	call := c.GET("/x").Ready(StatusIs(http.StatusOK))
-	pol := call.effectivePolicy()
+	w := c.GET("/x").Wait(StatusIs(http.StatusOK))
+	pol := w.effectivePolicy()
 
 	assert.Equal(t, WaitPolicy.Deadline, pol.Deadline,
-		"a Ready() wait must default to WaitPolicy's deadline, not DefaultRetry's 30s")
+		"a wait must default to WaitPolicy's deadline, not DefaultRetry's 30s")
 	assert.Equal(t, WaitPolicy.MaxAttempts, pol.MaxAttempts,
-		"a Ready() wait must not be capped at DefaultRetry's 5 attempts")
+		"a wait must not be capped at DefaultRetry's 5 attempts")
 }
 
-func TestWithRetry_StillWinsOverTheReadyDefault(t *testing.T) {
+func TestWithRetry_StillWinsOverTheWaitDefault(t *testing.T) {
 	c := New(Spec{Name: "test", BaseURL: "http://localhost"})
 	custom := RetryPolicy{MaxAttempts: 7, Deadline: 42 * time.Second, Initial: time.Second, MaxInterval: 2 * time.Second, Factor: 1.5}
 
-	// Explicit policy before Ready().
-	before := c.GET("/x").WithRetry(custom).Ready(StatusIs(http.StatusOK))
+	// Explicit policy declared on the call before the wait is built.
+	before := c.GET("/x").WithRetry(custom).Wait(StatusIs(http.StatusOK))
 	assert.Equal(t, 7, before.effectivePolicy().MaxAttempts)
 	assert.Equal(t, 42*time.Second, before.effectivePolicy().Deadline)
 
-	// Explicit policy after Ready() also wins.
-	after := c.GET("/x").Ready(StatusIs(http.StatusOK)).WithRetry(custom)
+	// Explicit policy declared on the wait itself also wins.
+	after := c.GET("/x").Wait(StatusIs(http.StatusOK)).WithRetry(custom)
 	assert.Equal(t, 7, after.effectivePolicy().MaxAttempts)
 }
 
 func TestWithin_SetsTheWaitDeadline(t *testing.T) {
 	c := New(Spec{Name: "test", BaseURL: "http://localhost"})
 
-	call := c.GET("/x").Within(4 * time.Minute).Ready(StatusIs(http.StatusOK))
-	assert.Equal(t, 4*time.Minute, call.effectivePolicy().Deadline)
+	w := c.GET("/x").Wait(StatusIs(http.StatusOK)).Within(4 * time.Minute)
+	assert.Equal(t, 4*time.Minute, w.effectivePolicy().Deadline)
 
-	// Order-independent: Within after Ready sets the same thing.
-	call2 := c.GET("/x").Ready(StatusIs(http.StatusOK)).Within(4 * time.Minute)
-	assert.Equal(t, 4*time.Minute, call2.effectivePolicy().Deadline)
+	// Order-independent against a policy on the call: Within narrows the
+	// deadline of whatever policy the wait started from.
+	w2 := c.GET("/x").WithRetry(RetryPolicy{MaxAttempts: 9}).
+		Wait(StatusIs(http.StatusOK)).Within(4 * time.Minute)
+	assert.Equal(t, 4*time.Minute, w2.effectivePolicy().Deadline)
+	assert.Equal(t, 9, w2.effectivePolicy().MaxAttempts)
 }
 
 func TestWithin_AboveMaxWaitBudgetFailsAtWait(t *testing.T) {
 	c := New(Spec{Name: "test", BaseURL: "http://localhost"})
 	c.WithSleeper(func(time.Duration) {})
 
-	err := c.GET("/x").Within(MaxWaitBudget + time.Minute).
-		Ready(StatusIs(http.StatusOK)).
-		Wait(context.Background())
+	err := c.GET("/x").Wait(StatusIs(http.StatusOK)).
+		Within(MaxWaitBudget + time.Minute).
+		Do(context.Background())
 
 	require.Error(t, err, "a wait budget the framework cannot honor must fail loudly, not truncate")
 	assert.Contains(t, err.Error(), "MaxWaitBudget")
@@ -171,15 +174,15 @@ func TestWait_PerRequestTimeoutIsTransientNotTerminal(t *testing.T) {
 
 	err := c.GET("/status").
 		Timeout(50 * time.Millisecond).
+		Wait(StatusIs(http.StatusOK)).
 		Within(10 * time.Second).
-		Ready(StatusIs(http.StatusOK)).
-		Wait(context.Background())
+		Do(context.Background())
 
 	require.NoError(t, err, "a slow first probe must not end the wait")
 	assert.GreaterOrEqual(t, calls.Load(), int32(2), "the wait must have polled past the timed-out probe")
 }
 
-// TestWait_PollsPastFiveAttempts pins that a Ready() wait is not bounded by
+// TestWait_PollsPastFiveAttempts pins that a readiness wait is not bounded by
 // DefaultRetry's 5-attempt cap, which is what truncated cold boots.
 func TestWait_PollsPastFiveAttempts(t *testing.T) {
 	var calls atomic.Int32
@@ -195,7 +198,7 @@ func TestWait_PollsPastFiveAttempts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	err := c.GET("/status").Ready(StatusIs(http.StatusOK)).Wait(ctx)
+	err := c.GET("/status").Wait(StatusIs(http.StatusOK)).Do(ctx)
 	require.Error(t, err, "a server that never becomes ready must eventually fail")
 	assert.Greater(t, int(calls.Load()), 5,
 		"a readiness wait must keep polling past DefaultRetry's 5 attempts (got %d)", calls.Load())
@@ -219,9 +222,9 @@ func TestWait_CallerContextStillTerminal(t *testing.T) {
 	cancel()
 
 	err := c.GET("/status").Timeout(50 * time.Millisecond).
+		Wait(StatusIs(http.StatusOK)).
 		Within(10 * time.Second).
-		Ready(StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 	require.Error(t, err, "a canceled caller context must end the wait immediately")
 	assert.LessOrEqual(t, calls.Load(), int32(1), "must not keep polling after cancellation")
 }

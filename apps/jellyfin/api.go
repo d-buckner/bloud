@@ -104,11 +104,11 @@ func (a *jellyfinAPI) getSystemInfo(ctx context.Context) (*SystemInfo, error) {
 func (a *jellyfinAPI) waitForSystemInfo(ctx context.Context) (*SystemInfo, error) {
 	var info SystemInfo
 	err := a.cl.GET("/System/Info/Public").
-		WithRetry(systemInfoWaitPolicy).
-		Ready(func(status int, body []byte) bool {
+		Wait(func(status int, body []byte) bool {
 			return status == http.StatusOK && json.Unmarshal(body, &info) == nil
 		}).
-		Wait(ctx)
+		WithRetry(systemInfoWaitPolicy).
+		Do(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -128,9 +128,7 @@ func (a *jellyfinAPI) awaitWizardCompletion(ctx context.Context, info *SystemInf
 	// The error is deliberately ignored: a slow cold start that outlives the
 	// attempt cap falls through rather than bricking the install.
 	_ = a.cl.GET("/System/Info/Public").
-		WithRetry(wizardCheckPolicy).
-		TolerateFailures().
-		Ready(func(status int, body []byte) bool {
+		Wait(func(status int, body []byte) bool {
 			var next SystemInfo
 			if status != http.StatusOK || json.Unmarshal(body, &next) != nil {
 				return false
@@ -138,7 +136,9 @@ func (a *jellyfinAPI) awaitWizardCompletion(ctx context.Context, info *SystemInf
 			cur = &next
 			return next.StartupWizardCompleted
 		}).
-		Wait(ctx)
+		WithRetry(wizardCheckPolicy).
+		TolerateFailures().
+		Do(ctx)
 	if cur != nil && cur.StartupWizardCompleted {
 		return cur
 	}
@@ -151,12 +151,12 @@ func (a *jellyfinAPI) awaitWizardCompletion(ctx context.Context, info *SystemInf
 // already complete, declared via AlreadyDone so the wait converges on it.
 func (a *jellyfinAPI) waitForStartupWizardReady(ctx context.Context) error {
 	return a.cl.GET("/Startup/Configuration").
-		WithRetry(wizardReadyPolicy).
 		AlreadyDone(http.StatusUnauthorized).
-		Ready(func(status int, body []byte) bool {
+		Wait(func(status int, body []byte) bool {
 			return status == http.StatusOK && appclient.JSONValid(status, body)
 		}).
-		Wait(ctx)
+		WithRetry(wizardReadyPolicy).
+		Do(ctx)
 }
 
 // --- setup wizard steps ---
@@ -182,9 +182,9 @@ func (a *jellyfinAPI) setStartupUser(ctx context.Context, username, password str
 	// POST below is the authoritative, idempotent step, so the wait's terminal
 	// error is deliberately ignored.
 	_ = a.cl.GET("/Startup/User").
+		Wait(appclient.StatusIs(http.StatusOK)).
 		WithRetry(startupUserPolicy).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 	return a.cl.POST("/Startup/User").
 		JSON(map[string]string{"Name": username, "Password": password}).
 		OK(http.StatusOK, http.StatusNoContent).

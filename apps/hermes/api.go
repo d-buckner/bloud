@@ -30,10 +30,10 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *hermesAPI {
 // which can take a while.
 func (a *hermesAPI) waitDashboard(ctx context.Context) error {
 	return a.cl.GET("/api/health").
+		Wait(appclient.StatusIs(http.StatusOK)).
 		Interval(2 * time.Second).
 		Within(4 * time.Minute).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // dashboardStatus is the subset of GET /api/status Bloud checks. The fields
@@ -50,12 +50,12 @@ type dashboardStatus struct {
 func (a *hermesAPI) waitSelfHostedProvider(ctx context.Context) error {
 	var st dashboardStatus
 	return a.cl.GET("/api/status").
-		Interval(2 * time.Second).
-		Within(4 * time.Minute).
-		Ready(appclient.DecodeInto(&st, func() bool {
+		Wait(appclient.DecodeInto(&st, func() bool {
 			return st.AuthRequired && hasSelfHostedProvider(st.AuthProviders)
 		})).
-		Wait(ctx)
+		Interval(2 * time.Second).
+		Within(4 * time.Minute).
+		Do(ctx)
 }
 
 // hasSelfHostedProvider reports whether the providers list names the
