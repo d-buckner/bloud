@@ -72,8 +72,8 @@ func TestAffineConfiguredByConfigurator(t *testing.T) {
 }
 
 // TestAffineUninstallCleanup uninstalls AFFiNE through the API and asserts
-// the full cleanup: store entry, all three containers, data directory, and
-// routes.
+// the full cleanup: store entry, all three containers, data directory,
+// routes, and the identity-provider objects Bloud created for it on install.
 func TestAffineUninstallCleanup(t *testing.T) {
 	postJSON(t, hostAgentURL+"/api/apps/affine/uninstall",
 		`{"clearData":true}`, http.StatusAccepted)
@@ -115,6 +115,36 @@ func TestAffineUninstallCleanup(t *testing.T) {
 		}
 	}
 	t.Log("affine fully uninstalled: store, containers, data, and routes cleaned up")
+
+	// The IdP objects are the part that used to be left behind. An OAuth2
+	// provider is a live client credential with redirect URIs: orphaned, it
+	// is stale trust in Authentik with no app behind it, invisible to the
+	// dashboard and growing across install/uninstall cycles.
+	if authentikApplicationExists(t, "affine") {
+		t.Errorf("Authentik application %q still exists after uninstall", "affine")
+	}
+	if p := authentikProviderOrNil(t, "AFFiNE OAuth2 Provider"); p != nil {
+		t.Errorf("Authentik OAuth2 provider %q still exists after uninstall", p.Name)
+	}
+	t.Log("affine SSO deprovisioned: Authentik application and OAuth2 provider are gone")
+}
+
+// authentikApplicationExists reports whether Authentik still has an
+// application with the given slug.
+func authentikApplicationExists(t *testing.T, slug string) bool {
+	t.Helper()
+	var list struct {
+		Results []struct {
+			Slug string `json:"slug"`
+		} `json:"results"`
+	}
+	authentikAPI(t, "/api/v3/core/applications/?search="+url.QueryEscape(slug), &list)
+	for _, a := range list.Results {
+		if a.Slug == slug {
+			return true
+		}
+	}
+	return false
 }
 
 // expectedAffineCallbackURL mirrors apps/affine's configurator derivation:

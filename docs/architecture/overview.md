@@ -266,6 +266,22 @@ Manages the Authentik identity provider via its REST API. Key operations:
 `EnsureLDAPInfrastructure`, `EnsureBloudOAuthApp` (idempotent OIDC bootstrap), SSO
 provisioning, and forward-auth provider creation.
 
+`DeleteAppSSO` is the uninstall counterpart: it removes the application and the
+per-app provider the strategy created (`native-oidc` → OAuth2 provider,
+`forward-auth` → proxy provider; `ldap` and `none` own none). It deletes the
+provider **before** the application on purpose, because deleting the application
+clears the `assigned_application_slug` link the lookup reads.
+
+That link is also why the cleanup survives a rename. A provider's *name* embeds
+the app's display name, so keying the delete on the name strands the credential
+whenever the catalog renames an app: the search asks for a string nothing
+produces any more, finds nothing, and reports success. The application link
+carries the catalog ID, which cannot change, so it is the primary key and the
+name-based delete is only a fallback for a provider Bloud did not create.
+`convergeUninstalls` calls it with the strategy read from the store, which is
+the record of what was provisioned; the catalog entry may be refreshed or gone
+by the time an uninstall converges.
+
 ### App Store (`internal/store/`)
 
 SQLite-backed persistence for installed apps, their status, and resolved integration

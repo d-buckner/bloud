@@ -85,6 +85,13 @@ func (c *Client) ManagedUserEmail(username string) string {
 type ProviderResponse struct {
 	PK   int    `json:"pk"`
 	Name string `json:"name"`
+	// AssignedApplicationSlug is the slug of the application this provider is
+	// attached to, empty when it is attached to none. Bloud always links a
+	// per-app provider to the per-app application, which makes this the
+	// stable key for uninstall cleanup: the provider's *name* embeds the
+	// display name, the application link embeds the catalog ID, and only one
+	// of those two can never change.
+	AssignedApplicationSlug string `json:"assigned_application_slug"`
 }
 
 // PaginatedResponse represents a paginated Authentik API response
