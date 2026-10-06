@@ -45,7 +45,12 @@ func (x *Call) requestContext(caller context.Context) (context.Context, context.
 // ctx is the caller's context. The per-request deadline is derived from it and
 // is never consulted for terminality: exceeding it is a transient failure, so a
 // slow attempt cannot end a readiness wait that still has budget left.
-func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
+//
+// ready is the readiness predicate when this attempt is one probe of a Wait, and
+// nil for a plain call. It is a parameter rather than a Call field because it
+// changes only how the response body is read (see readBody); the request itself
+// is identical either way.
+func (x *Call) attemptOnce(ctx context.Context, attempt int, ready ReadyFunc) (result, error) {
 	reqCtx, cancel := x.requestContext(ctx)
 	defer cancel()
 
@@ -65,7 +70,7 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, readErr := x.readBody(resp)
+	body, readErr := x.readBody(resp, ready)
 	if readErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return result{}, ctxErr
@@ -76,7 +81,7 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
 		// partial body to the readiness predicate instead of discarding it, so
 		// a complete answer is judged on its own merits rather than on the
 		// stream's refusal to end.
-		if x.ready != nil && len(body) > 0 {
+		if ready != nil && len(body) > 0 {
 			return result{status: resp.StatusCode, body: body}, nil
 		}
 		return result{}, x.httpError(req, resp.StatusCode, capBody([]byte("read body: "+readErr.Error())), attempt)
@@ -86,7 +91,7 @@ func (x *Call) attemptOnce(ctx context.Context, attempt int) (result, error) {
 	if resp.StatusCode == http.StatusUnauthorized && x.c.spec.Tokens != nil && !x.anonymous && !x.tokenRetried {
 		x.tokenRetried = true
 		x.c.spec.Tokens.Source.Invalidate()
-		return x.attemptOnce(ctx, attempt)
+		return x.attemptOnce(ctx, attempt, ready)
 	}
 
 	oc := x.classify(resp.StatusCode, body)
@@ -118,12 +123,13 @@ func (x *Call) httpError(req *http.Request, status int, body []byte, attempt int
 	}
 }
 
-// readBody reads the response body. In wait mode it stops at the first chunk
-// the readiness predicate accepts, so a server-sent-events stream that stays
-// open after its answer does not hold the read open until an EOF that may
-// never come. Non-wait calls read to EOF exactly as before.
-func (x *Call) readBody(resp *http.Response) ([]byte, error) {
-	if x.ready == nil {
+// readBody reads the response body. When ready is non-nil (a wait probe) it
+// stops at the first chunk the readiness predicate accepts, so a
+// server-sent-events stream that stays open after its answer does not hold the
+// read open until an EOF that may never come. A plain call (ready == nil) reads
+// to EOF exactly as before.
+func (x *Call) readBody(resp *http.Response, ready ReadyFunc) ([]byte, error) {
+	if ready == nil {
 		return io.ReadAll(resp.Body)
 	}
 	var acc []byte
@@ -132,7 +138,7 @@ func (x *Call) readBody(resp *http.Response) ([]byte, error) {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			acc = append(acc, buf[:n]...)
-			if x.ready(resp.StatusCode, acc) {
+			if ready(resp.StatusCode, acc) {
 				return acc, nil
 			}
 		}

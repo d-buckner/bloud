@@ -599,7 +599,7 @@ combined with instance/SSH-target env vars). Instance overrides:
    the single writer: a wedged `PreStart` -- a hung `podman exec`, a
    black-holed app API -- would otherwise hold every install, uninstall, and
    address change queued behind it with nothing to cut it off. An app's
-   declared `appclient.Within` wait must fit inside that budget with room to
+   declared `appclient` `Wait.Within` budget must fit inside that budget with room to
    spare, and `apps/configtest/waitbudget_test.go` fails the build if it does
    not. The resync is
    withheld when a direct dependency is in `ERROR`. Because the resync can

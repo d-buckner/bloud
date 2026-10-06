@@ -42,10 +42,10 @@ func TestReadyWaitStopsAtStreamedResultWithoutEOF(t *testing.T) {
 		Body([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`), "application/json").
 		Header("Accept", "application/json, text/event-stream").
 		Timeout(2 * time.Second). // shorter than the stream the server holds open
-		Ready(func(status int, body []byte) bool {
+		Wait(func(status int, body []byte) bool {
 			return status == http.StatusOK && strings.Contains(string(body), `"name":"dav-mcp"`)
 		}).
-		Wait(context.Background())
+		Do(context.Background())
 
 	require.NoError(t, err)
 	assert.Less(t, time.Since(start), 2*time.Second,
@@ -78,10 +78,10 @@ func TestReadyWaitKeepalivesAloneAreNotReady(t *testing.T) {
 	err := c.POST("/mcp").
 		Body([]byte(`{}`), "application/json").
 		Header("Accept", "application/json, text/event-stream").
-		Ready(func(status int, body []byte) bool {
+		Wait(func(status int, body []byte) bool {
 			return strings.Contains(string(body), `"name":"dav-mcp"`)
 		}).
-		Wait(ctx)
+		Do(ctx)
 
 	require.Error(t, err, "keepalives without a result must not read as ready")
 }

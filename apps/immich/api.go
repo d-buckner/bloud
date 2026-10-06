@@ -29,10 +29,10 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *immichAPI {
 // boot runs database migrations, which can take a while.
 func (a *immichAPI) waitServer(ctx context.Context) error {
 	return a.cl.GET("/api/server/ping").
+		Wait(appclient.StatusIs(http.StatusOK)).
 		Interval(2 * time.Second).
 		Within(4 * time.Minute).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // createAdmin registers the first admin. Only works while no admin exists;

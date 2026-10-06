@@ -63,10 +63,10 @@ func newAPI(f configurator.ClientFactory, baseURLFn func() string) *paperlessNgx
 // generous.
 func (a *paperlessNgxAPI) waitServer(ctx context.Context) error {
 	return a.cl.GET(signInPath).
+		Wait(appclient.StatusIs(http.StatusOK)).
 		Interval(2 * time.Second).
 		WithRetry(appclient.WaitPolicy).
-		Ready(appclient.StatusIs(http.StatusOK)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // waitProviderAdvertised waits until the sign-in page offers the SSO button.
@@ -76,12 +76,12 @@ func (a *paperlessNgxAPI) waitServer(ctx context.Context) error {
 // PAPERLESS_SOCIALACCOUNT_PROVIDERS configured it.
 func (a *paperlessNgxAPI) waitProviderAdvertised(ctx context.Context) error {
 	return a.cl.GET(signInPath).
-		Interval(3 * time.Second).
-		WithRetry(appclient.WaitPolicy).
-		Ready(func(status int, body []byte) bool {
+		Wait(func(status int, body []byte) bool {
 			return status == http.StatusOK && bytes.Contains(body, []byte(providerLoginPath))
 		}).
-		Wait(ctx)
+		Interval(3 * time.Second).
+		WithRetry(appclient.WaitPolicy).
+		Do(ctx)
 }
 
 // probeProviderLogin submits the SSO button's form and requires the app to hand

@@ -103,10 +103,10 @@ func (c *Client) waitForwardAuthProviderReady(ctx context.Context, host, scheme 
 		Header("X-Forwarded-Method", http.MethodGet).
 		Header("X-Forwarded-Uri", "/").
 		OK(http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect).
-		Ready(appclient.StatusIn(http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect)).
+		Wait(appclient.StatusIn(http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect)).
 		Interval(2 * time.Second).
 		Within(forwardAuthProbeBudget).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // createProxyProvider creates a new Authentik proxy provider in forward_single mode.

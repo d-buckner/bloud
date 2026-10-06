@@ -96,9 +96,9 @@ func TestWait_ConvergesOnStable(t *testing.T) {
 		_, _ = w.Write([]byte("ready"))
 	}))
 	err := c.GET("/status").
-		Ready(func(s int, b []byte) bool { return string(b) == "ready" }).
+		Wait(func(s int, b []byte) bool { return string(b) == "ready" }).
 		Stable(2).
-		Wait(context.Background())
+		Do(context.Background())
 	require.NoError(t, err)
 	// 3 pending + 2 ready consecutive = 5.
 	assert.Equal(t, int32(5), atomic.LoadInt32(&calls))
@@ -119,9 +119,9 @@ func TestWait_StableDoesNotReturnOnOscillation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	err := c.GET("/osc").
-		Ready(func(s int, b []byte) bool { return string(b) == "ready" }).
+		Wait(func(s int, b []byte) bool { return string(b) == "ready" }).
 		Stable(2).
-		Wait(ctx)
+		Do(ctx)
 	require.Error(t, err, "oscillating body never satisfies Stable(2)")
 }
 
@@ -139,9 +139,9 @@ func TestWait_TolerateFailuresReturnsNilAfterGoodRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
 	err := c.GET("/tol").
-		Ready(func(s int, b []byte) bool { return false }). // never ready
+		Wait(func(s int, b []byte) bool { return false }). // never ready
 		TolerateFailures().
-		Wait(ctx)
+		Do(ctx)
 	require.NoError(t, err, "tolerate + a good read earlier → nil on timeout")
 	assert.Greater(t, atomic.LoadInt32(&calls), int32(1))
 }
@@ -152,15 +152,23 @@ func TestWait_AlreadyDoneReturnsNil(t *testing.T) {
 	}))
 	err := c.GET("/startup").
 		AlreadyDone(http.StatusUnauthorized).
-		Ready(func(s int, b []byte) bool { return false }).
-		Wait(context.Background())
+		Wait(func(s int, b []byte) bool { return false }).
+		Do(context.Background())
 	require.NoError(t, err, "AlreadyDone short-circuits the wait")
 }
 
-func TestWait_WithoutReadyErrors(t *testing.T) {
-	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	err := c.GET("/x").Wait(context.Background())
-	require.Error(t, err)
+// The old TestWait_WithoutReadyErrors asserted that Wait() with no predicate
+// returned an error. That state is no longer representable: the predicate is a
+// required argument of Call.Wait, so the mistake the test guarded against is a
+// compile error rather than a runtime one. A wait built through the builder
+// always has one.
+func TestWait_PredicateIsRequiredAtBuildTime(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	w := c.GET("/x").Wait(StatusIs(http.StatusOK))
+	require.NotNil(t, w.ready, "a Wait built through Call.Wait always carries its predicate")
+	require.NoError(t, w.Do(context.Background()))
 }
 
 func TestPredicates(t *testing.T) {

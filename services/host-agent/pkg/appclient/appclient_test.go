@@ -106,8 +106,8 @@ func TestWithRetry_FactorUnset_KeepsDeclaredInterval(t *testing.T) {
 
 	err := c.GET("/x").
 		WithRetry(RetryPolicy{MaxAttempts: 4, Initial: 30 * time.Millisecond, MaxInterval: 30 * time.Millisecond}).
-		Ready(func(status int, body []byte) bool { return status == http.StatusOK }).
-		Wait(context.Background())
+		Wait(func(status int, body []byte) bool { return status == http.StatusOK }).
+		Do(context.Background())
 
 	require.Error(t, err)
 	assert.Equal(t,

@@ -50,8 +50,8 @@ var DefaultRetry = RetryPolicy{
 // of silently truncating at runtime.
 const MaxWaitBudget = 10 * time.Minute
 
-// WaitPolicy is the default for calls marked with Ready(): long and generous,
-// because the job is "wait out an app boot", not "paper over a blip".
+// WaitPolicy is the default for a readiness Wait built by Call.Wait: long and
+// generous, because the job is "wait out an app boot", not "paper over a blip".
 var WaitPolicy = RetryPolicy{
 	MaxAttempts: 0,
 	Deadline:    3 * time.Minute,

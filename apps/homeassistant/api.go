@@ -57,9 +57,9 @@ func fixedWaitPolicy(iv time.Duration) appclient.RetryPolicy {
 func (a *haAPI) waitAPI(ctx context.Context, iv time.Duration) error {
 	return a.cl.GET("/api/").
 		AlreadyDoneFunc(func(status int, _ []byte) bool { return status < 500 }).
-		Ready(appclient.StatusLT(500)).
+		Wait(appclient.StatusLT(500)).
 		WithRetry(fixedWaitPolicy(iv)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // waitProxyTrust polls the forwarded-header probe until the running process
@@ -73,9 +73,9 @@ func (a *haAPI) waitProxyTrust(ctx context.Context, iv time.Duration) error {
 	return a.cl.GET("/api/").
 		Header("X-Forwarded-For", xffProbeAddr).
 		AlreadyDoneFunc(func(status int, _ []byte) bool { return status != http.StatusBadRequest && status < 500 }).
-		Ready(appclient.StatusNot(http.StatusBadRequest)).
+		Wait(appclient.StatusNot(http.StatusBadRequest)).
 		WithRetry(fixedWaitPolicy(iv)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // waitOIDCReady verifies the OIDC auth provider is live by probing
@@ -84,9 +84,9 @@ func (a *haAPI) waitProxyTrust(ctx context.Context, iv time.Duration) error {
 // route 404s while HA is still booting, so it is retried until the deadline.
 func (a *haAPI) waitOIDCReady(ctx context.Context, iv time.Duration) error {
 	return a.cl.GET("/auth/oidc/welcome").
-		Ready(appclient.StatusIs(http.StatusOK)).
+		Wait(appclient.StatusIs(http.StatusOK)).
 		WithRetry(fixedWaitPolicy(iv)).
-		Wait(ctx)
+		Do(ctx)
 }
 
 // probeProxyTrust is a single-shot version of the trust read used by PreStart's

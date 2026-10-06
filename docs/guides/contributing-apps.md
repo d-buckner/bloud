@@ -293,9 +293,13 @@ ended with exactly one terminal:
 | `.Do(ctx)` | fire the request, return the raw body `([]byte, error)` |
 | `.DoInto(ctx, &out)` | decode a JSON response into `out` |
 | `.Ensure(ctx)` | create-or-verify an idempotent resource (`(bool, error)`) |
-| `.Wait(ctx)` | poll a readiness predicate until ready or the deadline |
 | `.Exec(ctx)` | fire for the side effect only; the body is discarded (`error`) |
 | `.Stream(ctx, consume)` | hand a successful (2xx) body to `consume(io.Reader)` for downloads/hashing without buffering |
+
+Everything a `Call` carries is request-shaped: the verb, the target, the body,
+the auth position, the per-request `Timeout`, and the outcome contract. The
+things that only mean something while you poll for a state change live on a
+separate `Wait` value, built from a call with `.Wait(predicate)` (see below).
 
 Status handling is **declarative**: describe what each status code *means* for
 your call instead of parsing bodies by hand. Attach the outcome contract before
@@ -313,28 +317,43 @@ That `.AlreadyDone(...)` pattern pairs beautifully with the idempotent-cycle
 design: on the first reconciliation it creates, on every one after that it
 reports "already done" without treating the 409 as an error.
 
-Readiness polling is built in, so waiting for a service to come up is one
-declaration:
+Readiness polling is a `Wait` over a `Call`: the call says what to probe, the
+wait says what "up" looks like and for how long to keep asking. The predicate
+is an argument to `.Wait(...)`, so a wait cannot be built without one.
 
 ```go
 // Poll until the OIDC discovery document answers with an "issuer".
 err := c.api.GET("/.well-known/openid-configuration").
-    Ready(appclient.JSONHas("issuer")).
+    Wait(appclient.JSONHas("issuer")).
     Interval(2 * time.Second).
-    Wait(ctx)
+    Within(4 * time.Minute).
+    Do(ctx)
 ```
 
-Handy declared modifiers as you need them:
+Declared `Wait` modifiers as you need them:
 
-- `AlreadyDoneFunc(pred)`: for APIs with no distinct "already exists" status
-  code; match on the body instead.
-- `Stable(n)`: require n consecutive good polls before a wait returns,
+- `Interval(d)`: the poll cadence, overriding the policy's backoff starting
+  point.
+- `Within(d)`: the total wall-clock budget across all polls. It must fit
+  inside the configurator phase budget; `apps/configtest` fails the build if
+  it cannot.
+- `Stable(n)`: require n consecutive good polls before the wait returns,
   useful when a value settles slowly or oscillates during boot.
 - `TolerateFailures()`: once a good read has been observed, let a later
   timeout land non-fatally (fall through with the last good value).
+- `WithRetry(policy)`: replace `WaitPolicy` for this wait.
+
+Declared `Call` modifiers as you need them:
+
+- `AlreadyDoneFunc(pred)`: for APIs with no distinct "already exists" status
+  code; match on the body instead.
 - `Anonymous()`: skip auth on a single call (e.g. the login request that
   obtains the token).
-- `RetryStatus(...)` / `WithRetry(policy)`: tune retry behavior per call.
+- `RetryStatus(...)`: add statuses to the transient set.
+- `Timeout(d)`: the per-request deadline, distinct from the wait's total
+  budget. A wait built from a call that declared `WithRetry` inherits that
+  policy, so `GET(p).WithRetry(pol).Wait(pred)` and
+  `GET(p).Wait(pred).WithRetry(pol)` are the same wait.
 
 Auth (`Authorization: Bearer …`, custom header formats, and 401 token
 refresh) is a `TokenSpec` configured once on the client rather than
