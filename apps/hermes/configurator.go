@@ -35,9 +35,22 @@ const (
 	// file by its in-container path, not the host path.
 	containerHome = "/opt/data"
 	// managedScopes is the OIDC scope set written into the self-hosted
-	// provider block (matches the Hermes default; stated explicitly so the
-	// managed block is unambiguous).
-	managedScopes = "openid profile email"
+	// provider block. openid/profile/email are what Hermes requests by
+	// default; offline_access is the load-bearing one.
+	//
+	// Without it Authentik never issues a refresh token, so when the access
+	// token expires the dashboard has nothing to rotate with:
+	// middleware._attempt_refresh returns nil on the empty refresh token and
+	// the client is thrown into a fresh SSO round trip (audit:
+	// session_verify_failure reason=no_provider_recognises, then login_start
+	// reason=auto_sso). In a browser that bounce is nearly invisible. In the
+	// macOS Desktop app it is a login prompt on every token expiry, which at
+	// Bloud's 5 minute default meant every five minutes.
+	//
+	// It must contain every entry of metadata.yaml's sso.scopes, which is
+	// what makes the host-agent attach those scopes to the provider (a test
+	// pins the two together).
+	managedScopes = "openid profile email offline_access"
 )
 
 // Configurator handles the Hermes node lifecycle. Hermes owns most of

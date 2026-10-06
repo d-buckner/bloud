@@ -601,6 +601,64 @@ func TestMetadata_DeclaresTheDataDirPermissionContract(t *testing.T) {
 	}
 }
 
+// TestMetadata_ScopeSetAndLifetimeMatchTheConfigurator: the scope set the
+// configurator writes into Hermes' config.yaml and the scope set metadata.yaml
+// asks the host-agent to attach to the Authentik provider are two halves of one
+// contract. A scope the app requests but the provider does not carry is dropped
+// by the IdP in silence, and the refresh token never arrives; a scope the
+// provider carries that the app never asks for is a declaration that does
+// nothing. Both fail here rather than in someone's login loop.
+func TestMetadata_ScopeSetAndLifetimeMatchTheConfigurator(t *testing.T) {
+	raw, err := os.ReadFile("metadata.yaml")
+	if err != nil {
+		t.Fatalf("reading metadata.yaml: %v", err)
+	}
+	var m struct {
+		SSO struct {
+			Strategy           string   `yaml:"strategy"`
+			Scopes             []string `yaml:"scopes"`
+			AccessTokenMinutes int      `yaml:"accessTokenMinutes"`
+		} `yaml:"sso"`
+	}
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parsing metadata.yaml: %v", err)
+	}
+	if m.SSO.Strategy != "native-oidc" {
+		t.Fatalf("sso.strategy = %q, want native-oidc: scopes and accessTokenMinutes are only valid for that strategy", m.SSO.Strategy)
+	}
+
+	requested := strings.Fields(managedScopes)
+	for _, scope := range m.SSO.Scopes {
+		if !strings.Contains(strings.Join(requested, " "), scope) {
+			t.Errorf("sso.scopes asks the provider for %q, which managedScopes never requests", scope)
+		}
+	}
+	for _, scope := range requested {
+		if scope == "openid" || scope == "profile" || scope == "email" {
+			continue // carried by every native-oidc provider, no declaration needed
+		}
+		found := false
+		for _, declared := range m.SSO.Scopes {
+			if declared == scope {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("managedScopes requests %q but sso.scopes does not declare it: the provider would not carry it", scope)
+		}
+	}
+
+	// The lifetime is the other half of the symptom. Bloud's native-oidc
+	// default is 5 minutes, and the dashboard session tracks it, so anything
+	// at or under that is the bug we are fixing.
+	if m.SSO.AccessTokenMinutes <= 5 {
+		t.Errorf("sso.accessTokenMinutes = %d, want well beyond the 5 minute Bloud default: the dashboard session lifetime follows the access token's exp", m.SSO.AccessTokenMinutes)
+	}
+	if want := 90 * 24 * 60; m.SSO.AccessTokenMinutes != want {
+		t.Errorf("sso.accessTokenMinutes = %d, want %d (90 days)", m.SSO.AccessTokenMinutes, want)
+	}
+}
+
 func TestPermissionHint_NamesTheContractOnEPERM(t *testing.T) {
 	perm := &fs.PathError{Op: "open", Path: "/opt/data/config.yaml", Err: fs.ErrPermission}
 	hint := permissionHint(fmt.Errorf("writing %s: %w", "/opt/data/config.yaml", perm))

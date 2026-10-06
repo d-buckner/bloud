@@ -300,6 +300,61 @@ issuer.
 > an attack vector). It is accepted and ignored. Bloud never sets it; the gate
 > stays on and is satisfied by the self-hosted OIDC provider.
 
+### The refresh token is the session (`sso.scopes: [offline_access]`)
+
+The dashboard session lifetime tracks the OIDC **access token's** `exp`
+(`hermes_cli/dashboard_auth/request_utils.py:access_token_max_age`), and the
+session cookie's `Max-Age` follows it. So the question "how long until I have
+to sign in again?" is answered by the access token lifetime, unless a refresh
+token exists to rotate the session silently.
+
+Bloud shipped neither half of that. `managedScopes` was `"openid profile
+email"` with no `offline_access`, so Authentik never issued a refresh token,
+and the native-oidc provider default was `access_token_validity: minutes=5`. At
+every five-minute boundary the middleware reached its refresh path with an
+empty refresh token (`middleware.py:_attempt_refresh` begins `if not
+refresh_token: return None`) and fell through to a fresh SSO round trip. The
+audit trail is the signature:
+
+```
+{"event":"session_verify_failure","reason":"no_provider_recognises"}
+{"event":"login_start","provider":"self-hosted","reason":"auto_sso"}
+```
+
+In a browser the auto-SSO bounce is a redirect nobody notices. In the macOS
+Desktop app it is a login prompt, on a five-minute cadence. Upstream carries
+the same report against Authentik as
+[#90000](https://github.com/NousResearch/hermes-agent/issues/90000) ("The
+failure occurs exactly 5 minutes after login, matching the Authentik access
+token lifetime"), and the same missing-scope class against Google as #83294
+and #100147.
+
+**Both halves are required, and they are pinned together by a test.**
+
+| Half | Where | What it does |
+|---|---|---|
+| Provider side | `metadata.yaml` `sso.scopes: [offline_access]` | Flows through `OIDCInputs.ExtraScopes` into `authentik.OIDCTuning.ExtraScopes`, which adds Authentik's `offline_access` scope mapping to the provider's `property_mappings`. `extraScopeMappings` fails the pass loudly if the mapping does not exist, so a typo cannot silently drop the scope. |
+| Request side | `configurator.go` `managedScopes` | The scope string written into `dashboard.oauth.self_hosted.scopes`, which is what Hermes actually sends in the authorize request. |
+
+A scope the app requests but the provider does not carry is dropped by the IdP
+in silence and the refresh token never arrives. A scope the provider carries
+that the app never asks for does nothing. `TestMetadata_ScopeSetAndLifetimeMatchTheConfigurator`
+fails on either.
+
+`accessTokenMinutes: 129600` (90 days) is the other half of the symptom. The
+session tracks the access token, so this is how long a sign-in lasts before
+anything has to be rotated at all. With `offline_access` in place the refresh
+token can extend a session past it too; the long lifetime is what makes the
+number the user experiences be 90 days rather than the provider default of 5
+minutes.
+
+An existing install picks both up on the next reconciliation pass without a
+reinstall: `ensureProviderTuning` adds the scope mapping and patches
+`access_token_validity` on the already-created provider, and the configurator
+rewrites `config.yaml`. The one thing that does not retroactively fix is a
+session already signed with the old short token; that client re-authenticates
+once and gets the new lifetime.
+
 ## The inference provider contract (`providers.bloud` + `model.provider: custom:bloud`)
 
 Bloud registers its inference endpoint as a named entry in Hermes' v12
@@ -368,7 +423,7 @@ The image is pinned to a `vYYYY.M.D` release tag (see `metadata.yaml`). Hermes
 tags roughly weekly. Before bumping, re-read
 `website/docs/user-guide/features/web-dashboard.md`
 (`#self-hosted-oidc-provider`) and the `plugins/dashboard_auth/self_hosted`
-plugin in the target tag, and confirm two things that this integration depends
+plugin in the target tag, and confirm three things that this integration depends
 on:
 
 1. The issuer rule is still "https, or http only on a literal loopback
@@ -376,6 +431,13 @@ on:
    needed.
 2. The `dashboard.oauth.self_hosted.*` config keys, the `/auth/callback` path,
    and the `auth_providers` field of `/api/status` are unchanged.
+3. The refresh path still rotates a session with the provider's refresh token.
+   This is what keeps a sign-in lasting 90 days instead of one access-token
+   lifetime, and upstream's handling of it is the origin of the constant
+   re-authentication this integration works around. If a bump changes
+   `access_token_max_age`, `_attempt_refresh`, or how `refresh_token_from`
+   treats a rotated token, re-verify against a live install past the old
+   boundary and watch for `session_verify_failure reason=no_provider_recognises`.
 
 ## Testing
 
@@ -384,7 +446,12 @@ contract: SSO on writes the self-hosted provider keys (issuer, client_id,
 scopes) plus `public_url`; a second pass over an unchanged file reports
 `changed=false` (no churn); the user's own keys survive the merge; SSO off
 strips the managed keys and creates nothing when there is nothing to strip; a
-corrupt existing file errors rather than being clobbered. PostStart is covered
+corrupt existing file errors rather than being clobbered.
+`TestMetadata_ScopeSetAndLifetimeMatchTheConfigurator` pins the two halves of
+the refresh contract together: every scope in `metadata.yaml`'s `sso.scopes`
+is one `managedScopes` requests, every non-default scope in `managedScopes` is
+one the provider was told to carry, and `accessTokenMinutes` is well past the
+5 minute Bloud default. PostStart is covered
 against a fake dashboard: it passes when `/api/status` reports the gate on with
 the `self-hosted` provider, fails when the provider is absent (e.g. only
 `basic`), and skips the provider check when SSO is off.

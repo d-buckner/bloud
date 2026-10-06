@@ -79,6 +79,18 @@ sso:
   callbackPath: /auth/callback
   providerName: Bloud SSO
   userCreation: true
+  # offline_access is what makes Authentik issue a refresh token, so the
+  # dashboard session can be rotated instead of re-authenticated. The
+  # matching request side is managedScopes in configurator.go; the two are
+  # pinned together by a test, and the failure mode without this line is
+  # documented in INTEGRATION.md.
+  scopes:
+    - offline_access
+  # 90 days (129600 minutes). The dashboard session lifetime tracks the
+  # access token's exp, so this is how long a sign-in lasts before anything
+  # has to be rotated. Bloud's native-oidc default is 5 minutes, which is
+  # what made the Desktop app re-authenticate constantly.
+  accessTokenMinutes: 129600
 
 containers:
   - name: apps-hermes
